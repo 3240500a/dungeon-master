@@ -1,0 +1,10 @@
+[
+  {
+    "id": "crypt",
+    "name": "Древняя крипта",
+    "tileset": "tiles-crypt",
+    "monsterPool": ["skeleton", "zombie", "dark-archer"],
+    "dropBias": 1.0,
+    "modifiers": []
+  }
+]

@@ -1,0 +1,17 @@
+import { defineConfig } from 'vite';
+import { resolve } from 'node:path';
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@dm/shared': resolve(__dirname, '../shared/src/index.ts'),
+    },
+  },
+  server: {
+    // Проксируем /api на сервер, чтобы «Применить в игру» слало оверрайды в живой конфиг
+    // (игра серверно-авторитетна — правки должны дойти до сервера, а не только до клиента).
+    proxy: {
+      '/api': 'http://localhost:3001',
+    },
+  },
+});

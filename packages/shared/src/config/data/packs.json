@@ -1,0 +1,6 @@
+[
+  { "roomType": "small", "min": 2, "max": 4, "champion": false },
+  { "roomType": "large", "min": 4, "max": 7, "champion": false },
+  { "roomType": "treasure", "min": 1, "max": 3, "champion": false },
+  { "roomType": "boss", "min": 5, "max": 8, "champion": true }
+]

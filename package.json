@@ -1,0 +1,32 @@
+{
+  "name": "dungeon-master",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Браузерный dungeon-crawler в духе Diablo 2 (модульный, data-driven)",
+  "workspaces": [
+    "packages/shared",
+    "packages/client",
+    "packages/server",
+    "packages/editor"
+  ],
+  "scripts": {
+    "dev": "concurrently -n client,server -c cyan,magenta \"npm:dev:client\" \"npm:dev:server\"",
+    "dev:client": "npm run dev -w @dm/client",
+    "dev:server": "npm run dev -w @dm/server",
+    "editor": "npm run dev -w @dm/editor",
+    "build": "npm run build -w @dm/shared && npm run build -w @dm/client",
+    "start": "tsx packages/server/src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "tsx packages/server/src/sim-cli.ts",
+    "lint": "eslint ."
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

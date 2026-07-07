@@ -1,0 +1,476 @@
+[
+  {
+    "id": "dagger",
+    "kind": "weapon",
+    "name": "Кинжал",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "dagger",
+    "damageType": "physical",
+    "weight": "superlight",
+    "physSub": "piercing",
+    "scaleAttr": "dexterity",
+    "lowHpBonusPct": 0.25,
+    "hands": 1,
+    "gridW": 1,
+    "gridH": 2,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 3 },
+      { "stat": "maxDamage", "kind": "flat", "value": 6 },
+      { "stat": "attackSpeed", "kind": "increased", "value": 0.2 },
+      { "stat": "critChance", "kind": "flat", "value": 0.12 },
+      { "stat": "blockChance", "kind": "flat", "value": 0.03 }
+    ],
+    "requirements": { "dexterity": 14 }
+  },
+  {
+    "id": "short-sword",
+    "kind": "weapon",
+    "name": "Короткий меч",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "sword",
+    "damageType": "physical",
+    "weight": "medium",
+    "physSub": "slashing",
+    "hands": 1,
+    "gridW": 1,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 5 },
+      { "stat": "maxDamage", "kind": "flat", "value": 9 },
+      { "stat": "blockChance", "kind": "flat", "value": 0.08 },
+      { "stat": "accuracy", "kind": "flat", "value": 15 }
+    ],
+    "requirements": { "strength": 16 }
+  },
+  {
+    "id": "mace",
+    "kind": "weapon",
+    "name": "Булава",
+    "gender": "f",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "mace",
+    "damageType": "physical",
+    "weight": "medium",
+    "physSub": "crushing",
+    "stunChance": 0.08,
+    "armorPenPct": 0.2,
+    "hands": 1,
+    "gridW": 1,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 5 },
+      { "stat": "maxDamage", "kind": "flat", "value": 11 },
+      { "stat": "attackSpeed", "kind": "increased", "value": -0.1 },
+      { "stat": "blockChance", "kind": "flat", "value": 0.04 }
+    ],
+    "requirements": { "strength": 20 }
+  },
+  {
+    "id": "hand-axe",
+    "kind": "weapon",
+    "name": "Ручной топор",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "axe",
+    "damageType": "physical",
+    "weight": "light",
+    "physSub": "chopping",
+    "arcMult": 1.6,
+    "hands": 1,
+    "gridW": 1,
+    "gridH": 2,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 4 },
+      { "stat": "maxDamage", "kind": "flat", "value": 10 }
+    ],
+    "requirements": { "strength": 18 }
+  },
+  {
+    "id": "spear",
+    "kind": "weapon",
+    "name": "Копьё",
+    "gender": "n",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "spear",
+    "damageType": "physical",
+    "weight": "heavy",
+    "physSub": "piercing",
+    "reachMult": 1.5,
+    "hands": 2,
+    "gridW": 1,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 7 },
+      { "stat": "maxDamage", "kind": "flat", "value": 17 },
+      { "stat": "attackSpeed", "kind": "increased", "value": -0.05 }
+    ],
+    "requirements": { "strength": 22, "dexterity": 8 }
+  },
+  {
+    "id": "greatsword",
+    "kind": "weapon",
+    "name": "Двуручный меч",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "sword",
+    "damageType": "physical",
+    "weight": "heavy",
+    "physSub": "slashing",
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 11 },
+      { "stat": "maxDamage", "kind": "flat", "value": 19 },
+      { "stat": "blockChance", "kind": "flat", "value": 0.06 },
+      { "stat": "accuracy", "kind": "flat", "value": 20 }
+    ],
+    "requirements": { "strength": 35 }
+  },
+  {
+    "id": "battle-axe",
+    "kind": "weapon",
+    "name": "Боевой топор",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "axe",
+    "damageType": "physical",
+    "weight": "heavy",
+    "physSub": "chopping",
+    "arcMult": 1.8,
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 12 },
+      { "stat": "maxDamage", "kind": "flat", "value": 24 },
+      { "stat": "attackSpeed", "kind": "increased", "value": -0.2 }
+    ],
+    "requirements": { "strength": 42 }
+  },
+  {
+    "id": "war-hammer",
+    "kind": "weapon",
+    "name": "Боевой молот",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "mace",
+    "damageType": "physical",
+    "weight": "heavy",
+    "physSub": "crushing",
+    "stunChance": 0.15,
+    "armorPenPct": 0.3,
+    "knockback": 40,
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 13 },
+      { "stat": "maxDamage", "kind": "flat", "value": 23 },
+      { "stat": "attackSpeed", "kind": "increased", "value": -0.25 }
+    ],
+    "requirements": { "strength": 46 }
+  },
+  {
+    "id": "halberd",
+    "kind": "weapon",
+    "name": "Алебарда",
+    "gender": "f",
+    "slot": "weapon",
+    "weaponType": "melee",
+    "weaponClass": "spear",
+    "damageType": "physical",
+    "weight": "heavy",
+    "physSub": "chopping",
+    "reachMult": 1.3,
+    "arcMult": 1.5,
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 11 },
+      { "stat": "maxDamage", "kind": "flat", "value": 23 },
+      { "stat": "attackSpeed", "kind": "increased", "value": -0.18 }
+    ],
+    "requirements": { "strength": 30, "dexterity": 12 }
+  },
+  {
+    "id": "short-bow",
+    "kind": "weapon",
+    "name": "Короткий лук",
+    "slot": "weapon",
+    "weaponType": "ranged",
+    "weaponClass": "bow",
+    "damageType": "physical",
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 3 },
+      { "stat": "maxDamage", "kind": "flat", "value": 7 },
+      { "stat": "attackSpeed", "kind": "increased", "value": 0.1 }
+    ],
+    "requirements": { "dexterity": 15 }
+  },
+  {
+    "id": "long-bow",
+    "kind": "weapon",
+    "name": "Длинный лук",
+    "slot": "weapon",
+    "weaponType": "ranged",
+    "weaponClass": "bow",
+    "damageType": "physical",
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 6 },
+      { "stat": "maxDamage", "kind": "flat", "value": 13 },
+      { "stat": "attackSpeed", "kind": "increased", "value": 0.08 }
+    ],
+    "requirements": { "dexterity": 28 }
+  },
+  {
+    "id": "crossbow",
+    "kind": "weapon",
+    "name": "Арбалет",
+    "slot": "weapon",
+    "weaponType": "ranged",
+    "weaponClass": "crossbow",
+    "damageType": "physical",
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 8 },
+      { "stat": "maxDamage", "kind": "flat", "value": 16 }
+    ],
+    "requirements": { "dexterity": 22, "strength": 10 }
+  },
+  {
+    "id": "apprentice-wand",
+    "kind": "weapon",
+    "name": "Жезл огня",
+    "slot": "weapon",
+    "weaponType": "magic",
+    "weaponClass": "wand",
+    "damageType": "fire",
+    "hands": 1,
+    "gridW": 1,
+    "gridH": 2,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 4 },
+      { "stat": "maxDamage", "kind": "flat", "value": 8 }
+    ],
+    "requirements": { "intelligence": 15 }
+  },
+  {
+    "id": "storm-wand",
+    "kind": "weapon",
+    "name": "Жезл молний",
+    "slot": "weapon",
+    "weaponType": "magic",
+    "weaponClass": "wand",
+    "damageType": "lightning",
+    "hands": 1,
+    "gridW": 1,
+    "gridH": 2,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 3 },
+      { "stat": "maxDamage", "kind": "flat", "value": 12 }
+    ],
+    "requirements": { "intelligence": 20 }
+  },
+  {
+    "id": "frost-staff",
+    "kind": "weapon",
+    "name": "Посох льда",
+    "slot": "weapon",
+    "weaponType": "magic",
+    "weaponClass": "staff",
+    "damageType": "cold",
+    "hands": 2,
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "minDamage", "kind": "flat", "value": 6 },
+      { "stat": "maxDamage", "kind": "flat", "value": 12 }
+    ],
+    "requirements": { "intelligence": 24 }
+  },
+  {
+    "id": "wooden-shield",
+    "kind": "shield",
+    "name": "Деревянный щит",
+    "slot": "offhand",
+    "shieldClass": "medium",
+    "gridW": 2,
+    "gridH": 2,
+    "baseStats": [
+      { "stat": "armor", "kind": "flat", "value": 8 },
+      { "stat": "blockChance", "kind": "flat", "value": 0.3 }
+    ],
+    "requirements": { "strength": 8, "dexterity": 8 }
+  },
+  {
+    "id": "buckler",
+    "kind": "shield",
+    "name": "Баклер",
+    "slot": "offhand",
+    "shieldClass": "light",
+    "gridW": 2,
+    "gridH": 2,
+    "baseStats": [
+      { "stat": "armor", "kind": "flat", "value": 4 },
+      { "stat": "blockChance", "kind": "flat", "value": 0.2 }
+    ],
+    "requirements": { "dexterity": 12 }
+  },
+  {
+    "id": "tower-shield",
+    "kind": "shield",
+    "name": "Башенный щит",
+    "slot": "offhand",
+    "shieldClass": "heavy",
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [
+      { "stat": "armor", "kind": "flat", "value": 16 },
+      { "stat": "blockChance", "kind": "flat", "value": 0.4 }
+    ],
+    "requirements": { "strength": 20 }
+  },
+  {
+    "id": "leather-cap",
+    "kind": "armor",
+    "name": "Кожаный шлем",
+    "slot": "helm",
+    "armorClass": "leather",
+    "gridW": 2,
+    "gridH": 2,
+    "baseStats": [{ "stat": "armor", "kind": "flat", "value": 5 }],
+    "requirements": {}
+  },
+  {
+    "id": "leather-armor",
+    "kind": "armor",
+    "name": "Кожаный доспех",
+    "slot": "chest",
+    "armorClass": "leather",
+    "gridW": 2,
+    "gridH": 3,
+    "baseStats": [{ "stat": "armor", "kind": "flat", "value": 12 }],
+    "requirements": {}
+  },
+  {
+    "id": "leather-gloves",
+    "kind": "armor",
+    "name": "Кожаные перчатки",
+    "gender": "p",
+    "slot": "gloves",
+    "armorClass": "leather",
+    "gridW": 2,
+    "gridH": 2,
+    "baseStats": [{ "stat": "armor", "kind": "flat", "value": 3 }],
+    "requirements": {}
+  },
+  {
+    "id": "leather-boots",
+    "kind": "armor",
+    "name": "Кожаные сапоги",
+    "gender": "p",
+    "slot": "boots",
+    "armorClass": "leather",
+    "gridW": 2,
+    "gridH": 2,
+    "baseStats": [
+      { "stat": "armor", "kind": "flat", "value": 3 },
+      { "stat": "moveSpeed", "kind": "increased", "value": 0.05 }
+    ],
+    "requirements": {}
+  },
+  {
+    "id": "leather-belt",
+    "kind": "armor",
+    "name": "Кожаный пояс",
+    "slot": "belt",
+    "armorClass": "leather",
+    "beltSlots": 4,
+    "gridW": 2,
+    "gridH": 1,
+    "baseStats": [
+      { "stat": "armor", "kind": "flat", "value": 4 },
+      { "stat": "maxHp", "kind": "flat", "value": 10 }
+    ],
+    "requirements": {}
+  },
+  {
+    "id": "simple-ring",
+    "kind": "jewelry",
+    "name": "Простое кольцо",
+    "gender": "n",
+    "slot": "ring",
+    "gridW": 1,
+    "gridH": 1,
+    "baseStats": [],
+    "requirements": {}
+  },
+  {
+    "id": "simple-amulet",
+    "kind": "jewelry",
+    "name": "Простой амулет",
+    "slot": "amulet",
+    "gridW": 1,
+    "gridH": 1,
+    "baseStats": [],
+    "requirements": {}
+  },
+  {
+    "id": "minor-healing-potion",
+    "kind": "consumable",
+    "name": "Малое зелье лечения",
+    "gender": "n",
+    "gridW": 1,
+    "gridH": 1,
+    "baseStats": [],
+    "requirements": {},
+    "use": { "heal": 60, "healPct": 0.2 }
+  },
+  {
+    "id": "healing-potion",
+    "kind": "consumable",
+    "name": "Зелье лечения",
+    "gender": "n",
+    "gridW": 1,
+    "gridH": 1,
+    "baseStats": [],
+    "requirements": {},
+    "use": { "heal": 140, "healPct": 0.4 }
+  },
+  {
+    "id": "mana-potion",
+    "kind": "consumable",
+    "name": "Зелье маны",
+    "gender": "n",
+    "gridW": 1,
+    "gridH": 1,
+    "baseStats": [],
+    "requirements": {},
+    "use": { "mana": 80, "manaPct": 0.4 }
+  },
+  {
+    "id": "antidote",
+    "kind": "consumable",
+    "name": "Противоядие",
+    "gender": "n",
+    "gridW": 1,
+    "gridH": 1,
+    "baseStats": [],
+    "requirements": {},
+    "use": { "cure": true, "heal": 20 }
+  }
+]

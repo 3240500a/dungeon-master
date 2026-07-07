@@ -1,0 +1,37 @@
+[
+  {
+    "id": "main-1-clear-crypt",
+    "name": "Первый спуск",
+    "description": "Спуститесь в крипту и уничтожьте нежить.",
+    "objectives": [
+      {
+        "id": "kill-skeletons",
+        "type": "kill",
+        "target": "skeleton",
+        "amount": 5
+      }
+    ],
+    "reward": {
+      "gold": 100,
+      "xp": 120
+    },
+    "next": "main-2-go-deeper"
+  },
+  {
+    "id": "main-2-go-deeper",
+    "name": "Глубже во тьму",
+    "description": "Достигните 2-го этажа крипты.",
+    "objectives": [
+      {
+        "id": "reach-2",
+        "type": "reach-floor",
+        "amount": 2
+      }
+    ],
+    "reward": {
+      "gold": 150,
+      "xp": 250,
+      "skillPoints": 1
+    }
+  }
+]

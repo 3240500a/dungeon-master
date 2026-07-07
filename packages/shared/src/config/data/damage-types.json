@@ -1,0 +1,7 @@
+[
+  { "id": "physical", "name": "Физический", "short": "физ.", "color": "#c9c9d4", "ailment": null },
+  { "id": "fire", "name": "Огонь", "short": "огонь", "color": "#d85a30", "ailment": "burn" },
+  { "id": "cold", "name": "Холод", "short": "холод", "color": "#378add", "ailment": "freeze" },
+  { "id": "lightning", "name": "Молния", "short": "молния", "color": "#ef9f27", "ailment": "shock" },
+  { "id": "poison", "name": "Яд", "short": "яд", "color": "#639922", "ailment": "poison" }
+]

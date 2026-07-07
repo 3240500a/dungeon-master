@@ -1,0 +1,7 @@
+[
+  { "id": "quilted", "name": "Стёганая", "move": 0, "atk": 0, "evade": 0.02, "noise": -0.05, "poise": { "wound": 0.015, "bleed": 0.015, "sunder": 0.015, "daze": 0.015 } },
+  { "id": "leather", "name": "Кожаная", "move": 0, "atk": 0, "evade": 0.04, "noise": -0.04, "poise": { "wound": 0.06, "bleed": 0.02, "sunder": 0.02, "daze": 0.02 } },
+  { "id": "chain", "name": "Кольчуга", "move": -0.015, "atk": -0.01, "evade": 0, "noise": 0.02, "poise": { "wound": 0.03, "bleed": 0.07, "sunder": 0.03, "daze": 0.03 } },
+  { "id": "segmented", "name": "Сегментная", "move": -0.03, "atk": -0.025, "evade": -0.03, "noise": 0.07, "poise": { "wound": 0.04, "bleed": 0.04, "sunder": 0.08, "daze": 0.04 } },
+  { "id": "plate", "name": "Латная", "move": -0.045, "atk": -0.035, "evade": -0.06, "noise": 0.11, "poise": { "wound": 0.05, "bleed": 0.05, "sunder": 0.05, "daze": 0.09 } }
+]

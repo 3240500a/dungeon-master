@@ -1,0 +1,9 @@
+[
+  { "id": "t0", "name": "Сломанный", "minItemLevel": 1, "statMult": 1.0, "reqMult": 1.0 },
+  { "id": "t1", "name": "Старый", "minItemLevel": 8, "statMult": 1.3, "reqMult": 1.2 },
+  { "id": "t2", "name": "Крепкий", "minItemLevel": 18, "statMult": 1.8, "reqMult": 1.5 },
+  { "id": "t3", "name": "Отличный", "minItemLevel": 30, "statMult": 2.5, "reqMult": 2.0 },
+  { "id": "t4", "name": "Мастерский", "minItemLevel": 45, "statMult": 3.4, "reqMult": 2.7 },
+  { "id": "t5", "name": "Элитный", "minItemLevel": 62, "statMult": 4.6, "reqMult": 3.5 },
+  { "id": "t6", "name": "Мифический", "minItemLevel": 80, "statMult": 6.0, "reqMult": 4.5 }
+]

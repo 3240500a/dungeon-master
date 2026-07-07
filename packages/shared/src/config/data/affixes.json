@@ -1,0 +1,66 @@
+[
+  {
+    "id": "of-strength", "kind": "suffix", "stat": "strength", "modKind": "flat",
+    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 8, "ilvl": 5 }]
+  },
+  {
+    "id": "of-dexterity", "kind": "suffix", "stat": "dexterity", "modKind": "flat",
+    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 8, "ilvl": 5 }]
+  },
+  {
+    "id": "of-intelligence", "kind": "suffix", "stat": "intelligence", "modKind": "flat",
+    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 8, "ilvl": 5 }]
+  },
+  {
+    "id": "hearty", "kind": "prefix", "stat": "maxHp", "modKind": "flat",
+    "tiers": [{ "min": 5, "max": 12, "ilvl": 1 }, { "min": 13, "max": 25, "ilvl": 5 }]
+  },
+  {
+    "id": "sharp", "kind": "prefix", "stat": "maxDamage", "modKind": "flat",
+    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 7, "ilvl": 5 }]
+  },
+  {
+    "id": "deadly", "kind": "prefix", "stat": "critChance", "modKind": "flat",
+    "tiers": [{ "min": 0.02, "max": 0.05, "ilvl": 1 }]
+  },
+  {
+    "id": "precise", "kind": "suffix", "stat": "accuracy", "modKind": "flat",
+    "tiers": [{ "min": 5, "max": 15, "ilvl": 1 }, { "min": 15, "max": 35, "ilvl": 5 }]
+  },
+  {
+    "id": "evasive", "kind": "suffix", "stat": "evade", "modKind": "flat",
+    "tiers": [{ "min": 5, "max": 12, "ilvl": 1 }, { "min": 12, "max": 28, "ilvl": 5 }]
+  },
+  {
+    "id": "flaming", "kind": "prefix", "stat": "addFire", "modKind": "flat",
+    "tiers": [{ "min": 2, "max": 5, "ilvl": 1 }, { "min": 5, "max": 12, "ilvl": 5 }]
+  },
+  {
+    "id": "frozen", "kind": "prefix", "stat": "addCold", "modKind": "flat",
+    "tiers": [{ "min": 2, "max": 5, "ilvl": 1 }, { "min": 5, "max": 12, "ilvl": 5 }]
+  },
+  {
+    "id": "shocking", "kind": "prefix", "stat": "addLightning", "modKind": "flat",
+    "tiers": [{ "min": 1, "max": 7, "ilvl": 1 }, { "min": 4, "max": 16, "ilvl": 5 }]
+  },
+  {
+    "id": "venomous", "kind": "prefix", "stat": "addPoison", "modKind": "flat",
+    "tiers": [{ "min": 2, "max": 4, "ilvl": 1 }, { "min": 4, "max": 10, "ilvl": 5 }]
+  },
+  {
+    "id": "of-fire-ward", "kind": "suffix", "stat": "resFire", "modKind": "flat",
+    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+  },
+  {
+    "id": "of-cold-ward", "kind": "suffix", "stat": "resCold", "modKind": "flat",
+    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+  },
+  {
+    "id": "of-storm-ward", "kind": "suffix", "stat": "resLightning", "modKind": "flat",
+    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+  },
+  {
+    "id": "of-poison-ward", "kind": "suffix", "stat": "resPoison", "modKind": "flat",
+    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+  }
+]

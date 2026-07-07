@@ -1,0 +1,138 @@
+import type { Item } from '../types/items.js';
+import type { QuestDef } from '../types/quest.js';
+import type { DamageType } from '../types/combat.js';
+import type { ScaledMonster } from '../types/world.js';
+import type { SaveState } from '../types/save.js';
+import type { DebuffState } from '../world/debuffs.js';
+import type { Grid } from '../world/grid.js';
+import type { DecorObject } from '../dungeon/generate.js';
+import type { PlayerInput, SessionEvent } from './session.js';
+
+/**
+ * Сетевой протокол кооп-сервера (MP-2). Кадры JSON, авторитет — сервер: клиент шлёт
+ * ввод/команды, получает снапшоты мира + события + свой авторитетный сейв. View-типы
+ * несут ТОЛЬКО изменяемые поля сущностей (без тяжёлого `save`), грид/декор — один раз
+ * при входе в область (`FloorInit`). Общие типы для клиента и сервера.
+ */
+
+/** Версия протокола (несовместимые правки — инкремент). */
+export const PROTOCOL_VERSION = 1;
+
+// ── View-типы (то, что едет в снапшоте, по id) ──────────────────────────────
+export interface PlayerView {
+  id: string;
+  classId: string;
+  x: number;
+  y: number;
+  facing: number;
+  hp: number;
+  mana: number;
+  alive: boolean;
+  debuffs: DebuffState;
+  toggles: string[];
+}
+export interface MonsterView {
+  id: number;
+  x: number;
+  y: number;
+  facing: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  stun: boolean;
+  debuffs: DebuffState;
+}
+export interface ProjView {
+  id: number;
+  x: number;
+  y: number;
+  owner: 'player' | 'monster';
+  /** Доминирующая стихия пакета — для цвета вида. */
+  dom: DamageType;
+}
+export interface DropView {
+  id: number;
+  x: number;
+  y: number;
+  item: Item;
+}
+export interface PeerLite {
+  id: string;
+  classId: string;
+  name: string;
+}
+
+/** Область комнаты и её геометрия (шлётся один раз при входе). */
+export interface FloorInit {
+  area: 'town' | 'dungeon';
+  depth: number;
+  grid: Grid;
+  spawn: { x: number; y: number };
+  stairs?: { x: number; y: number };
+  decor: DecorObject[];
+  monsters: { id: number; def: ScaledMonster; x: number; y: number }[];
+  /** Запертые ворота (клетки грида) — для рендера/открытия по `doorOpened`. */
+  doors: { id: number; cells: { cx: number; cy: number }[] }[];
+  /** Рычаги (мировые координаты) — спрайт + интерактив «[E] Рычаг», открывает свою дверь. */
+  levers: { id: number; x: number; y: number; doorId: number }[];
+}
+
+/** Полный снапшот мира за тик. */
+export interface WorldSnapshot {
+  tick: number;
+  players: PlayerView[];
+  monsters: MonsterView[];
+  projectiles: ProjView[];
+  drops: DropView[];
+}
+
+// ── Команды города (авторитетно исполняет сервер) ───────────────────────────
+export type TownCommand =
+  | { cmd: 'buy'; uid: string }
+  | { cmd: 'sell'; uid: string }
+  | { cmd: 'equip'; uid: string }
+  | { cmd: 'unequip'; slot: string }
+  | { cmd: 'allocAttr'; attr: string }
+  | { cmd: 'respec' }
+  | { cmd: 'allocPassive'; nodeId: string }
+  | { cmd: 'allocSkill'; nodeId: string }
+  | { cmd: 'useConsumable'; uid: string }
+  | { cmd: 'moveBelt'; uid: string }
+  | { cmd: 'moveItem'; uid: string; x: number; y: number }
+  | { cmd: 'bind'; slot: number; value: string | null }
+  | { cmd: 'pickup'; dropId: number }
+  | { cmd: 'drop'; uid: string }
+  | { cmd: 'acceptQuest'; questId: string }
+  | { cmd: 'turnInQuest'; questId: string };
+
+// ── Кадры клиент → сервер ───────────────────────────────────────────────────
+export type ClientFrame =
+  // Клиент аутентифицируется токеном сессии + charId. Сервер проверяет ВЛАДЕНИЕ персонажем и
+  // грузит его сейв из БД (создание персонажа — по HTTP, см. `/api/characters`). Анти-чит.
+  | { t: 'join'; roomCode?: string; token: string; charId: string }
+  | { t: 'input'; seq: number; input: PlayerInput }
+  | { t: 'cmd'; command: TownCommand }
+  | { t: 'descend'; difficultyId?: string }
+  | { t: 'return' }
+  | { t: 'lever'; leverId: number }
+  | { t: 'vote'; accept: boolean }
+  | { t: 'leave' };
+
+// ── Кадры сервер → клиент ───────────────────────────────────────────────────
+export type ServerFrame =
+  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerLite[]; save: SaveState }
+  | { t: 'snapshot'; snap: WorldSnapshot }
+  | { t: 'events'; events: SessionEvent[] }
+  | { t: 'saveUpdate'; save: SaveState }
+  | { t: 'shop'; items: Item[] }
+  | { t: 'questBoard'; quests: QuestDef[] }
+  | { t: 'peerJoined'; peer: PeerLite }
+  | { t: 'peerLeft'; id: string }
+  | { t: 'areaChanged'; floor: FloorInit }
+  | { t: 'doorOpened'; doorId: number }
+  // Смерть игрока: потери + режим возрождения (город=соло/вайп, иначе ждать пати на след. этаже).
+  | { t: 'died'; goldLost: number; itemsLost: number; toTown: boolean }
+  | { t: 'voteStart'; kind: 'descend' | 'town'; by: string; needed: number }
+  | { t: 'voteUpdate'; yes: number; total: number }
+  | { t: 'voteEnd'; passed: boolean }
+  | { t: 'error'; code: string; msg: string };

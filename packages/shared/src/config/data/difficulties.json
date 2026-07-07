@@ -1,0 +1,46 @@
+[
+  {
+    "id": "easy",
+    "name": "Лёгкая",
+    "offsetMode": "percent",
+    "offset": -0.1,
+    "floorStep": 1,
+    "goldMult": 0.9,
+    "ilvlBonus": -1,
+    "magicFind": 0.9,
+    "unlockFloor": 0
+  },
+  {
+    "id": "normal",
+    "name": "Средняя",
+    "offsetMode": "flat",
+    "offset": 0,
+    "floorStep": 1,
+    "goldMult": 1,
+    "ilvlBonus": 0,
+    "magicFind": 1,
+    "unlockFloor": 0
+  },
+  {
+    "id": "hard",
+    "name": "Сложная",
+    "offsetMode": "flat",
+    "offset": 5,
+    "floorStep": 1.5,
+    "goldMult": 1.25,
+    "ilvlBonus": 2,
+    "magicFind": 1.25,
+    "unlockFloor": 8
+  },
+  {
+    "id": "nightmare",
+    "name": "Кошмар",
+    "offsetMode": "flat",
+    "offset": 12,
+    "floorStep": 2,
+    "goldMult": 1.6,
+    "ilvlBonus": 5,
+    "magicFind": 1.6,
+    "unlockFloor": 8
+  }
+]

@@ -1,0 +1,39 @@
+[
+  {
+    "id": "warrior",
+    "name": "Воин",
+    "startAttributes": { "strength": 25, "dexterity": 15, "intelligence": 10, "vitality": 20 },
+    "startWeaponId": "short-sword",
+    "activeTreeId": "warrior",
+    "sprite": "player-warrior",
+    "derived": { "hpBase": 0, "hpPerVitality": 7, "hpPerLevel": 9, "manaBase": 0, "manaPerIntelligence": 2, "manaPerLevel": 1 }
+  },
+  {
+    "id": "mage",
+    "name": "Маг",
+    "startAttributes": { "strength": 10, "dexterity": 12, "intelligence": 28, "vitality": 15 },
+    "startWeaponId": "apprentice-wand",
+    "activeTreeId": "mage",
+    "sprite": "player-mage",
+    "derived": { "hpBase": 0, "hpPerVitality": 4, "hpPerLevel": 4, "manaBase": 0, "manaPerIntelligence": 5, "manaPerLevel": 5 }
+  },
+  {
+    "id": "archer",
+    "name": "Лучник",
+    "startAttributes": { "strength": 14, "dexterity": 26, "intelligence": 12, "vitality": 16 },
+    "startWeaponId": "short-bow",
+    "activeTreeId": "archer",
+    "sprite": "player-archer",
+    "derived": { "hpBase": 0, "hpPerVitality": 5, "hpPerLevel": 6, "manaBase": 0, "manaPerIntelligence": 3, "manaPerLevel": 3 }
+  },
+  {
+    "id": "zastupnik",
+    "name": "Заступник",
+    "startAttributes": { "strength": 28, "dexterity": 12, "intelligence": 12, "vitality": 22 },
+    "startWeaponId": "mace",
+    "activeTreeId": "zastupnik",
+    "sprite": "player-warrior",
+    "affinity": ["undead", "demon"],
+    "derived": { "hpBase": 0, "hpPerVitality": 7, "hpPerLevel": 10, "manaBase": 0, "manaPerIntelligence": 3, "manaPerLevel": 2 }
+  }
+]

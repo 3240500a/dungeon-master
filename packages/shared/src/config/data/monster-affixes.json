@@ -1,0 +1,40 @@
+[
+  {
+    "id": "fiery",
+    "name": "Огненный",
+    "mult": { "minDamage": 1.15, "maxDamage": 1.15, "hp": 1.1 },
+    "add": { "resFire": 0.5 },
+    "damageType": "fire"
+  },
+  {
+    "id": "icy",
+    "name": "Ледяной",
+    "mult": { "minDamage": 1.1, "maxDamage": 1.1, "moveSpeed": 0.85 },
+    "add": { "resCold": 0.5 },
+    "damageType": "cold"
+  },
+  {
+    "id": "swift",
+    "name": "Быстрый",
+    "mult": { "attackSpeed": 1.35, "moveSpeed": 1.35 },
+    "add": { "evade": 10 }
+  },
+  {
+    "id": "armored",
+    "name": "Бронированный",
+    "mult": { "hp": 1.25, "armor": 2 },
+    "add": { "armor": 12 }
+  },
+  {
+    "id": "vigorous",
+    "name": "Живучий",
+    "mult": { "hp": 1.6 },
+    "add": {}
+  },
+  {
+    "id": "accurate",
+    "name": "Меткий",
+    "mult": { "minDamage": 1.1, "maxDamage": 1.1 },
+    "add": { "accuracy": 45, "critChance": 0.05 }
+  }
+]

@@ -1,0 +1,6 @@
+[
+  { "id": "normal", "name": "Обычный", "color": "#ffffff", "threshold": 1.0, "minAffixes": 0, "maxAffixes": 0, "priceMult": 1 },
+  { "id": "magic", "name": "Магический", "color": "#6a8ad0", "threshold": 0.40, "minAffixes": 1, "maxAffixes": 2, "priceMult": 1.6 },
+  { "id": "rare", "name": "Редкий", "color": "#ffd24b", "threshold": 0.12, "minAffixes": 3, "maxAffixes": 5, "priceMult": 2.4 },
+  { "id": "unique", "name": "Уникальный", "color": "#d08030", "threshold": 0.02, "minAffixes": 0, "maxAffixes": 0, "priceMult": 4 }
+]

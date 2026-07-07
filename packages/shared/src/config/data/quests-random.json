@@ -1,0 +1,44 @@
+[
+  {
+    "id": "rnd-cull",
+    "objectiveType": "kill",
+    "amountRange": [
+      5,
+      12
+    ],
+    "targetPool": [
+      "skeleton",
+      "zombie",
+      "dark-archer"
+    ],
+    "rewardGoldRange": [
+      50,
+      150
+    ],
+    "rewardXpRange": [
+      80,
+      180
+    ],
+    "rewardItemPool": [
+      "leather-cap",
+      "simple-ring"
+    ]
+  },
+  {
+    "id": "rnd-delve",
+    "objectiveType": "reach-floor",
+    "amountRange": [
+      2,
+      4
+    ],
+    "targetPool": [],
+    "rewardGoldRange": [
+      80,
+      200
+    ],
+    "rewardXpRange": [
+      110,
+      240
+    ]
+  }
+]

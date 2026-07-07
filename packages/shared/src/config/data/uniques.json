@@ -1,0 +1,12 @@
+[
+  {
+    "id": "gorefang",
+    "name": "Кровожад",
+    "baseId": "short-sword",
+    "fixedAffixes": [
+      { "kind": "prefix", "modifier": { "stat": "maxDamage", "kind": "flat", "value": 10 } },
+      { "kind": "prefix", "modifier": { "stat": "critChance", "kind": "flat", "value": 0.08 } },
+      { "kind": "suffix", "modifier": { "stat": "strength", "kind": "flat", "value": 10 } }
+    ]
+  }
+]
