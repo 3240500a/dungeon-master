@@ -1,4 +1,8 @@
 import Phaser from 'phaser';
+// Заголовочные шрифты (локальный бандл): латиница — Cinzel, кириллица — Ruslan Display.
+// @font-face регистрируются импортом CSS; фактическая загрузка ждётся в BootScene.
+import '@fontsource/cinzel/400.css';
+import '@fontsource/ruslan-display/400.css';
 import { App } from './core/app.js';
 import { BootScene } from './scenes/BootScene.js';
 import { PreloadScene } from './scenes/PreloadScene.js';
@@ -15,6 +19,7 @@ import { skillsPanel } from './modules/skills/skillsPanel.js';
 import { shopPanel } from './modules/town/shopPanel.js';
 import { forgePanel } from './modules/town/forgePanel.js';
 import { difficultyPanel } from './modules/town/difficultyPanel.js';
+import { stashPanel } from './modules/town/stashPanel.js';
 import { questLogPanel } from './modules/quests/questLogPanel.js';
 import { SfxController } from './modules/sfx/sfx.js';
 import { GameLog } from './ui/gameLog.js';
@@ -63,6 +68,7 @@ domUi.register('shop', shopPanel);
 domUi.register('forge', forgePanel);
 domUi.register('quests', questLogPanel);
 domUi.register('difficulty', difficultyPanel);
+domUi.register('stash', stashPanel);
 
 // Глобальные контроллеры уровня приложения (живут между сценами). Онлайн-игра:
 // прогрессия/лут/сейв — авторитетно на сервере (клиентских наград/синка нет).

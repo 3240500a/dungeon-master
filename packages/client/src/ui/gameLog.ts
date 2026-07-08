@@ -2,13 +2,13 @@ import type { LogKind } from '@dm/shared';
 import type { App } from '../core/app.js';
 
 const KIND_COLOR: Record<LogKind, string> = {
-  'dmg-out': '#dcdce4',
-  'dmg-in': '#ff8080',
-  kill: '#ffd24b',
-  xp: '#7ac07a',
-  gold: '#caa64b',
-  loot: '#7cc4ff',
-  system: '#9a9a9a',
+  'dmg-out': '#e6ddc9',
+  'dmg-in': '#c85a48',
+  kill: '#dca94b',
+  xp: '#8aa84a',
+  gold: '#dca94b',
+  loot: '#7fa8d0',
+  system: '#8f897c',
 };
 
 const MAX_LINES = 200;
@@ -25,9 +25,9 @@ export class GameLog {
     this.box = document.createElement('div');
     this.box.style.cssText =
       'position:fixed;left:12px;bottom:30px;width:360px;height:168px;overflow-y:auto;' +
-      'background:rgba(10,10,16,0.55);border:0.5px solid #2c2c3a;border-radius:8px;' +
+      'background:rgba(14,17,23,0.6);border:0.5px solid #2b323f;border-radius:8px;' +
       'padding:6px 9px;font-size:12px;line-height:1.45;z-index:40;' +
-      'font-family:system-ui,sans-serif;color:#c8c8d0;scrollbar-width:thin;pointer-events:auto';
+      'font-family:system-ui,sans-serif;color:#d8d0bf;scrollbar-width:thin;pointer-events:auto';
     root.appendChild(this.box);
     app.bus.on('log:message', ({ text, kind }) => this.push(text, kind));
   }

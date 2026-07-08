@@ -32,16 +32,16 @@ export class UIScene extends Phaser.Scene {
     this.hpBar = this.add.graphics();
     this.manaBar = this.add.graphics();
     this.xpBar = this.add.graphics();
-    this.label = this.add.text(16, 12, '', { fontSize: '14px', color: '#e8e8f0' });
-    this.hpText = this.add.text(0, 0, '', { fontSize: '11px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
-    this.manaText = this.add.text(0, 0, '', { fontSize: '10px', color: '#ffffff' }).setOrigin(0.5);
-    this.debuffText = this.add.text(16, 82, '', { fontSize: '14px', color: '#ffb0a0' });
-    // Индикатор активных аур/стоек (тоглов) под полосами.
-    this.auraText = this.add.text(16, 100, '', { fontSize: '12px', color: '#8fb8ff' });
+    this.label = this.add.text(16, 12, '', { fontSize: '14px', color: '#e6ddc9' });
+    this.hpText = this.add.text(0, 0, '', { fontSize: '11px', color: '#f2ede1', fontStyle: 'bold' }).setOrigin(0.5);
+    this.manaText = this.add.text(0, 0, '', { fontSize: '10px', color: '#f2ede1' }).setOrigin(0.5);
+    this.debuffText = this.add.text(16, 82, '', { fontSize: '14px', color: '#e8907c' });
+    // Индикатор активных аур/стоек (тоглов) под полосами — факельным амбером.
+    this.auraText = this.add.text(16, 100, '', { fontSize: '12px', color: '#e39a3c' });
     this.hint = this.add
       .text(16, 0, 'WASD — движение · ЛКМ/ПКМ — назначенное действие · Shift/Space/Alt — доп.слоты · E — действие · I — инвентарь · K — скиллы', {
         fontSize: '12px',
-        color: '#8a8a9a',
+        color: '#8f897c',
       })
       .setOrigin(0, 1);
     this.scale.on('resize', () => this.layoutHint());
@@ -82,10 +82,10 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x000000, 0.5).fillRect(x, y, w, h);
     if (reservedFrac > 0) {
       const rw = w * Phaser.Math.Clamp(reservedFrac, 0, 1);
-      g.fillStyle(0x3a2a5a, 0.9).fillRect(x + w - rw, y, rw, h); // зарезервированная доля
+      g.fillStyle(0x2a3550, 0.9).fillRect(x + w - rw, y, rw, h); // зарезервированная доля
     }
     const frac = maxMana > 0 ? mana / maxMana : 0;
-    g.fillStyle(0x4b7bcf, 1).fillRect(x, y, w * Phaser.Math.Clamp(frac, 0, 1), h);
+    g.fillStyle(0x5b83b8, 1).fillRect(x, y, w * Phaser.Math.Clamp(frac, 0, 1), h);
     g.lineStyle(1, 0x000000, 0.8).strokeRect(x, y, w, h);
   }
 
@@ -111,9 +111,9 @@ export class UIScene extends Phaser.Scene {
 
     const reservedFrac = state.reservedManaFracProvider();
     const reserved = Math.round(d.maxMana * reservedFrac);
-    this.drawBar(this.hpBar, 16, 34, 220, 16, state.hp / d.maxHp, 0xcf4b4b);
+    this.drawBar(this.hpBar, 16, 34, 220, 16, state.hp / d.maxHp, 0xc85a48);
     this.drawManaBar(16, 54, 220, 12, state.mana, d.maxMana, reservedFrac);
-    this.drawBar(this.xpBar, 16, 70, 220, 6, xpFrac, 0xcaa64b);
+    this.drawBar(this.xpBar, 16, 70, 220, 6, xpFrac, 0xdca94b);
     this.hpText.setPosition(16 + 110, 34 + 8).setText(`${Math.round(state.hp)} / ${Math.round(d.maxHp)}`);
     this.manaText.setPosition(16 + 110, 54 + 6).setText(
       reserved > 0

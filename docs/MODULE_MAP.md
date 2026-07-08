@@ -28,12 +28,12 @@
 | skills-passive | client/src/modules/skills-passive | skills-passive | — | state:changed | stats | skills.test.ts | готово |
 | skills (panel) | client/src/modules/skills | skills-active, skills-passive | state:changed | state:changed | — | skills.test.ts | готово |
 | progression | client/src/modules/progression | balance, classes | monster:died | player:levelup, state:changed | xp, stats | formulas.test.ts | готово |
-| town | client/src/modules/town | items.base, affixes, uniques, dungeons, balance | ui:open | state:changed, gold:changed | itemgen | formulas.test.ts | готово |
+| town | client/src/modules/town | items.base, affixes, uniques, dungeons, balance (+ balance.stash) | ui:open | state:changed, gold:changed, stashOpen/stashMove (cmd) | itemgen, economy/stashActions | formulas.test.ts, stashActions.test.ts | готово (+ ОБЩИЙ сундук на аккаунт: 2 вкладки 20×12, кадр `stash`, БД `account_stash`) |
 | quests | client/src/modules/quests (вью) + shared/economy/questLogic (авторитет) | quests.main, quests.random, items.base | — (трекинг на сервере) | log:message | questLogic | questLogic.test.ts | готово |
 | death | client/src/modules/death | balance | player:died | state:changed | — | penalty.test.ts | готово |
 | auth | client/src/modules/auth + server (users/sessions/characters) | classes (для create) | — | — (fetch `/api`) | newCharacterSave, password (scrypt) | password.test.ts, newCharacter.test.ts | готово |
 | sfx | client/src/modules/sfx | — | monster:died, player:damaged, item:picked, gold:changed, player:levelup | — | — | — | готово |
-| server | server/src | balance (xpTable) | WS join/cmd/…, HTTP auth | snapshot/events/saveUpdate/… | saveStateSchema, newCharacterSave, questLogic | password.test.ts | готово |
+| server | server/src | balance (xpTable) | WS join/cmd/…, HTTP auth | snapshot/events/saveUpdate/stash/… | saveStateSchema, newCharacterSave, questLogic, stashActions | password.test.ts | готово (+ таблица `account_stash`, `net/accountStash.ts`) |
 | editor | editor/src | все схемы (shared) | — | (BroadcastChannel→config:reloaded) | — | form.test.ts | готово |
 
 > Обновляй эту таблицу при каждом изменении модуля (Definition of Done).

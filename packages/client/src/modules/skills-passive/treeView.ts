@@ -76,7 +76,7 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
     const bothOn = (state.save.passiveSkills[a] ?? 0) > 0 && (state.save.passiveSkills[b] ?? 0) > 0;
     const line = svg('line', {
       x1: na.x, y1: na.y, x2: nb.x, y2: nb.y,
-      stroke: bothOn ? '#7fd67f' : '#3a3a4a',
+      stroke: bothOn ? '#8aa84a' : '#3e4756',
       'stroke-width': bothOn ? 3 : 1.5,
     });
     g.appendChild(line);
@@ -90,10 +90,10 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
     const isEntry = tree.entryNodes.includes(node.id);
     const r = node.notable ? 15 : isEntry ? 12 : 9;
 
-    let fill = '#20202a';
-    let stroke = '#33333f';
-    if (allocated) { fill = node.notable ? COLORS.gold : '#7fd67f'; stroke = '#0a0a0a'; }
-    else if (available) { fill = '#26304a'; stroke = '#9fc0ff'; }
+    let fill = '#1a1f29';
+    let stroke = '#3e4756';
+    if (allocated) { fill = node.notable ? COLORS.gold : '#8aa84a'; stroke = '#0a0a0a'; }
+    else if (available) { fill = '#1e2a3a'; stroke = '#6f9bcf'; }
     if (isEntry && !allocated) stroke = COLORS.gold;
 
     const circle = svg('circle', {
@@ -113,7 +113,7 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
         ? 'макс. ранг'
         : `след. ранг: ${nextCost} зол. + 1 очко`;
       return `<div style="color:${node.notable ? COLORS.gold : COLORS.text};font-weight:bold">${node.name}</div>` +
-        `<div style="color:#b8b8c8">${node.description}</div>` +
+        `<div style="color:#c4bca8">${node.description}</div>` +
         `<div style="color:#9aa;margin-top:3px">ранг ${rank}/${maxRank} · ${costLine}</div>` +
         (eff ? `<div style="color:#8fd">${eff}</div>` : '');
     });

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { App } from '../core/app.js';
 import { makeButton } from './ui/button.js';
 import { listCharacters, deleteCharacter, logout, type CharacterSummary } from '../modules/auth/authApi.js';
+import { FONT_TITLE } from '../ui/kit.js';
 
 const MAX_CHARS = 5;
 
@@ -47,7 +48,7 @@ export class CharacterSelectScene extends Phaser.Scene {
   private info(text: string, retry = false): void {
     this.children.removeAll(true);
     const { width, height } = this.scale;
-    this.add.text(width / 2, height * 0.45, text, { fontSize: '18px', color: '#b8b8c8', align: 'center' }).setOrigin(0.5);
+    this.add.text(width / 2, height * 0.45, text, { fontSize: '18px', color: '#c4bca8', align: 'center' }).setOrigin(0.5);
     if (retry) makeButton(this, width / 2, height * 0.58, 'Повторить', () => { this.info('Загрузка…'); void this.loadRoster(); });
     makeButton(this, width * 0.12, height * 0.9, 'Назад', () => this.scene.start('MainMenu'));
   }
@@ -57,8 +58,8 @@ export class CharacterSelectScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const app = App.from(this);
 
-    this.add.text(width / 2, height * 0.1, 'Выбор персонажа', { fontSize: '32px', color: '#e8e8f0' }).setOrigin(0.5);
-    this.add.text(width * 0.88, height * 0.1, app.auth!.username, { fontSize: '14px', color: '#8a8a9a' }).setOrigin(0.5);
+    this.add.text(width / 2, height * 0.1, 'Выбор персонажа', { fontFamily: FONT_TITLE, fontSize: '32px', color: '#e0b45a' }).setOrigin(0.5);
+    this.add.text(width * 0.88, height * 0.1, app.auth!.username, { fontSize: '14px', color: '#8f897c' }).setOrigin(0.5);
 
     // ── Список слева ─────────────────────────────────────
     const listX = width * 0.26;
@@ -66,7 +67,7 @@ export class CharacterSelectScene extends Phaser.Scene {
     const rowH = 62;
     this.chars.forEach((c, i) => this.slotRow(c, i, listX, top + i * rowH));
     if (this.chars.length === 0) {
-      this.add.text(listX, top, '— Нет персонажей —', { fontSize: '14px', color: '#666', fontStyle: 'italic' }).setOrigin(0.5);
+      this.add.text(listX, top, '— Нет персонажей —', { fontSize: '14px', color: '#6a655c', fontStyle: 'italic' }).setOrigin(0.5);
     }
     makeButton(this, listX, top + MAX_CHARS * rowH + 24, '+ Создать персонажа',
       () => this.scene.start('ClassSelect'), { enabled: this.chars.length < MAX_CHARS });
@@ -75,7 +76,7 @@ export class CharacterSelectScene extends Phaser.Scene {
     const sel = this.chars[this.selected] ?? null;
     const ax = width * 0.68;
     if (sel) this.renderAvatar(sel, ax, height);
-    else this.add.text(ax, height * 0.45, 'Создайте персонажа.', { fontSize: '18px', color: '#8a8a9a', align: 'center' }).setOrigin(0.5);
+    else this.add.text(ax, height * 0.45, 'Создайте персонажа.', { fontSize: '18px', color: '#8f897c', align: 'center' }).setOrigin(0.5);
 
     // ── Кнопки снизу ─────────────────────────────────────
     makeButton(this, width * 0.6, height * 0.9, 'Играть', () => this.play(), { enabled: !!sel });
@@ -88,20 +89,20 @@ export class CharacterSelectScene extends Phaser.Scene {
     const w = 300;
     const h = 54;
     const container = this.add.container(x, y);
-    const bg = this.add.rectangle(0, 0, w, h, 0x1c1c26)
-      .setStrokeStyle(this.selected === i ? 2 : 1, this.selected === i ? 0x6a8ad0 : 0x2c2c3a);
+    const bg = this.add.rectangle(0, 0, w, h, 0x171b24)
+      .setStrokeStyle(this.selected === i ? 2 : 1, this.selected === i ? 0xe39a3c : 0x2b323f);
     bg.setInteractive({ useHandCursor: true });
     bg.on('pointerdown', () => { this.selected = i; this.buildUI(); });
     container.add(bg);
     container.add(this.add.image(-w / 2 + 26, 0, this.classSprite(c.classId)));
-    container.add(this.add.text(-w / 2 + 50, -12, c.name, { fontSize: '16px', color: '#e8e8f0' }));
-    container.add(this.add.text(-w / 2 + 50, 8, `${this.className(c.classId)} · Ур. ${c.level}`, { fontSize: '12px', color: '#8a8a9a' }));
+    container.add(this.add.text(-w / 2 + 50, -12, c.name, { fontSize: '16px', color: '#e6ddc9' }));
+    container.add(this.add.text(-w / 2 + 50, 8, `${this.className(c.classId)} · Ур. ${c.level}`, { fontSize: '12px', color: '#8f897c' }));
   }
 
   private renderAvatar(c: CharacterSummary, x: number, height: number): void {
     this.add.image(x, height * 0.34, this.classSprite(c.classId)).setScale(6);
-    this.add.text(x, height * 0.5, c.name, { fontSize: '26px', color: '#e8e8f0' }).setOrigin(0.5);
-    this.add.text(x, height * 0.56, `${this.className(c.classId)} · Уровень ${c.level}`, { fontSize: '15px', color: '#8a8a9a' }).setOrigin(0.5);
+    this.add.text(x, height * 0.5, c.name, { fontSize: '26px', color: '#e6ddc9' }).setOrigin(0.5);
+    this.add.text(x, height * 0.56, `${this.className(c.classId)} · Уровень ${c.level}`, { fontSize: '15px', color: '#8f897c' }).setOrigin(0.5);
   }
 
   private play(): void {

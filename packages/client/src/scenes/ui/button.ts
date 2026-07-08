@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { FONT_TITLE } from '../../ui/kit.js';
 
 /** Простая текстовая кнопка для сцен-меню (Phaser-объект). */
 export function makeButton(
@@ -12,17 +13,19 @@ export function makeButton(
   const enabled = opts.enabled ?? true;
   const text = scene.add
     .text(x, y, label, {
+      fontFamily: FONT_TITLE, // медиевальные капители в меню
       fontSize: '22px',
-      color: enabled ? '#e8e8f0' : '#666',
-      backgroundColor: '#1c1c26',
+      color: enabled ? '#e6ddc9' : '#6a655c', // тёплый пергамент
+      backgroundColor: '#1a1f29', // камень
       padding: { x: 18, y: 10 },
     })
     .setOrigin(0.5);
 
   if (enabled) {
     text.setInteractive({ useHandCursor: true });
-    text.on('pointerover', () => text.setBackgroundColor('#2c2c3a'));
-    text.on('pointerout', () => text.setBackgroundColor('#1c1c26'));
+    // Hover — текст загорается факельным амбером.
+    text.on('pointerover', () => text.setBackgroundColor('#232a36').setColor('#e39a3c'));
+    text.on('pointerout', () => text.setBackgroundColor('#1a1f29').setColor('#e6ddc9'));
     text.on('pointerdown', onClick);
   }
   return text;

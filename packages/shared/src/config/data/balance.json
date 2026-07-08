@@ -125,6 +125,11 @@
     "cols": 10,
     "rows": 6
   },
+  "stash": {
+    "tabs": 2,
+    "cols": 20,
+    "rows": 12
+  },
   "autoPickup": [
     "rare",
     "unique"

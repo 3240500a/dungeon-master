@@ -31,7 +31,7 @@ export class Monster {
     this.def = def;
     this.hp = def.hp;
     this.special = def.rarity === 'champion' || def.affixes.length > 0;
-    this.nameColor = def.rarity === 'champion' ? '#ffd24b' : this.special ? '#7cc4ff' : '#cfcfcf';
+    this.nameColor = def.rarity === 'champion' ? '#dca94b' : this.special ? '#6f9bcf' : '#c4bca8';
     this.facing = Math.random() * Math.PI * 2;
     const tex = scene.textures.exists(def.sprite) ? def.sprite : 'mob-skeleton';
     this.sprite = scene.add.sprite(x, y, tex).setDepth(4);

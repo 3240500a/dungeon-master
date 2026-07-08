@@ -68,7 +68,7 @@ function triggerLine(t: Trigger, rank: number): string {
 /** Подробное описание узла: тип/урон/скорость/эффекты для активок; моды — для мастерств. */
 function describeNode(app: App, node: SkillNode): HTMLElement {
   const state = app.state!;
-  const box = mk('div', `font-size:12px;color:#b8b8c8;margin:4px 0;line-height:1.5`);
+  const box = mk('div', `font-size:12px;color:#c4bca8;margin:4px 0;line-height:1.5`);
   const active = node.effect.active;
 
   // ── Мастерство / условный сет-бонус (модификаторы + реактивные триггеры) ──
@@ -179,7 +179,7 @@ function nodeRow(app: App, node: Node): HTMLElement {
   const head = mk('div', 'display:flex;align-items:center;gap:10px');
   head.append(skillIcon(node, 30));
   const titleWrap = mk('div', 'flex:1');
-  titleWrap.append(mk('b', `display:block;color:${locked ? '#666' : isActive ? '#e8e8f0' : '#c9e6ff'}`, node.name));
+  titleWrap.append(mk('b', `display:block;color:${locked ? '#6a655c' : isActive ? '#e6ddc9' : '#c4bca8'}`, node.name));
   head.append(titleWrap, mk('span', `font-size:12px;color:${COLORS.dim}`, `ранг ${rank}/${node.maxRank}`));
   row.append(head);
   row.append(describeNode(app, node));

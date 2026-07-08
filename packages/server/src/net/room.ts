@@ -4,6 +4,7 @@ import {
   GameSession, generateDungeon, spawnPacks, townLayout, serializeWorld, floorInit,
   generateItem, itemFromBaseId, createRng,
   buyItem, sellItem, equip, unequip, allocAttr, respec, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
+  stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
   isDifficultyUnlocked, applyDeathPenalty,
   PROTOCOL_VERSION,
@@ -12,6 +13,7 @@ import {
   type DecorObject,
 } from '@dm/shared';
 import { putCharacter } from '../db/db.js';
+import { loadAccountStash, saveAccountStash } from './accountStash.js';
 
 const TICK_MS = 1000 / 30;
 const TICK_DT = TICK_MS / 1000;
@@ -202,6 +204,13 @@ export class Room {
       case 'allocSkill': r = allocActive(this.cfg, save, command.nodeId); break;
       case 'moveBelt': r = moveToBelt(save, command.uid); break;
       case 'moveItem': r = moveInventoryItem(this.cfg, save, command.uid, command.x, command.y); break;
+      case 'stashOpen': this.sendStash(pid); r = { ok: true }; break;
+      case 'stashMove': {
+        const stash = loadAccountStash(c.userId, this.cfg);
+        r = stashMove(this.cfg, save, stash, command.uid, command.dst, command.x, command.y);
+        if (r.ok) { saveAccountStash(c.userId, stash); this.sendStash(pid); } // инвентарь уедет в sendSave ниже
+        break;
+      }
       case 'bind': r = setBinding(save, command.slot, command.value); break;
       case 'drop': r = this.session.dropToGround(pid, command.uid) ? { ok: true } : { ok: false, reason: 'Нет предмета' }; break;
       case 'useConsumable': r = this.useConsumable(pid, command.uid); break;
@@ -430,6 +439,14 @@ export class Room {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (c && p) this.send(c.ws, { t: 'saveUpdate', save: p.save });
+  }
+  /** Шлёт клиенту полный слепок его аккаунт-сундука (на stashOpen и после stashMove). */
+  private sendStash(pid: string): void {
+    const c = this.clients.get(pid);
+    if (!c) return;
+    const stash = loadAccountStash(c.userId, this.cfg);
+    const d = stashDims(this.cfg);
+    this.send(c.ws, { t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg) });
   }
   private broadcastQuestBoard(): void {
     this.broadcast({ t: 'questBoard', quests: this.questBoard });

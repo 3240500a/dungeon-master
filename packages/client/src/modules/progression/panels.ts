@@ -18,7 +18,7 @@ function attributesBlock(app: App): HTMLElement {
   const state = app.state!;
   const box = document.createElement('div');
   const title = document.createElement('div');
-  title.innerHTML = `<b>Атрибуты</b> · нераспределённых очков: <b style="color:#ffd24b">${state.save.unspentAttributePoints}</b>`;
+  title.innerHTML = `<b>Атрибуты</b> · нераспределённых очков: <b style="color:#dca94b">${state.save.unspentAttributePoints}</b>`;
   title.style.marginBottom = '8px';
   box.appendChild(title);
 
@@ -32,7 +32,7 @@ function attributesBlock(app: App): HTMLElement {
     plus.textContent = '+';
     plus.disabled = state.save.unspentAttributePoints <= 0;
     plus.style.cssText =
-      'width:26px;height:26px;cursor:pointer;background:#2c2c3a;color:#e8e8f0;border:1px solid #3c3c4a;border-radius:4px';
+      'width:26px;height:26px;cursor:pointer;background:#2b323f;color:#e6ddc9;border:1px solid #3e4756;border-radius:4px';
     plus.addEventListener('click', () => {
       if (state.save.unspentAttributePoints > 0) app.sendCmd({ cmd: 'allocAttr', attr });
     });
@@ -47,9 +47,9 @@ function derivedBlock(app: App): HTMLElement {
   const state = app.state!;
   const d = state.derived();
   const box = document.createElement('div');
-  box.style.cssText = 'margin-top:12px;font-size:13px;color:#b8b8c8;line-height:1.6';
+  box.style.cssText = 'margin-top:12px;font-size:13px;color:#c4bca8;line-height:1.6';
   box.innerHTML = `
-    Уровень: <b style="color:#e8e8f0">${state.save.level}</b> ·
+    Уровень: <b style="color:#e6ddc9">${state.save.level}</b> ·
     Опыт: ${state.save.xp}<br>
     Урон: <b>${Math.round(d.minDamage)}–${Math.round(d.maxDamage)}</b> ·
     Броня: <b>${Math.round(d.armor)}</b> ·
@@ -160,7 +160,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
         const wrap = mk('div', 'margin:6px 0');
         const top = mk('div', `display:flex;justify-content:space-between;font-size:11px;color:${COLORS.dim};margin-bottom:2px`);
         const right = mk('span', 'display:flex;gap:6px');
-        right.append(mk('span', 'color:#e8e8f0', rightText ?? (showFrac ? `${Math.round(curV)} / ${Math.round(maxV)}` : `${Math.round(curV)}%`)));
+        right.append(mk('span', 'color:#e6ddc9', rightText ?? (showFrac ? `${Math.round(curV)} / ${Math.round(maxV)}` : `${Math.round(curV)}%`)));
         if (deltaStr) right.append(mk('span', `color:${PREVIEW_GREEN};font-weight:600`, deltaStr));
         top.append(mk('span', '', label), right);
         const bar = mk('div', `height:8px;background:${COLORS.panel2};border-radius:999px;overflow:hidden`);
@@ -231,7 +231,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
         // Тултип раскрывает состав: сколько своя (останется без гира), сколько даёт гир.
         attachTooltip(row, () => {
           const split = gearBonus !== 0
-            ? `Своя (с пассивами): <b>${own}</b> · от гира: <b style="color:#7cc4ff">${gearBonus > 0 ? '+' : ''}${gearBonus}</b> = <b>${effAttrs[attr]}</b>`
+            ? `Своя (с пассивами): <b>${own}</b> · от гира: <b style="color:#6f9bcf">${gearBonus > 0 ? '+' : ''}${gearBonus}</b> = <b>${effAttrs[attr]}</b>`
             : `Своя (с пассивами): <b>${own}</b>`;
           return `${split}<br>${tip}`;
         });

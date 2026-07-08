@@ -38,7 +38,7 @@ export const difficultyPanel: PanelFactory = (app, ui) => {
           `золото ×${diff.goldMult} · лут ${diff.ilvlBonus >= 0 ? '+' : ''}${diff.ilvlBonus} · редкость ×${diff.magicFind}`));
         card.append(top);
 
-        card.append(mk('div', 'font-size:12px;color:#b8b8c8;margin:4px 0',
+        card.append(mk('div', 'font-size:12px;color:#c4bca8;margin:4px 0',
           `Монстры на 1-м этаже ≈ ур. ${startCL}, глубже — сложнее.`));
 
         if (unlocked) {

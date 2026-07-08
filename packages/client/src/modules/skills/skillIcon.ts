@@ -40,7 +40,7 @@ export function skillIcon(node: SkillNode, size = 30, draggable = false): HTMLEl
   const el = document.createElement('div');
   el.style.cssText =
     `width:${size}px;height:${size}px;flex:0 0 ${size}px;border-radius:6px;border:2px solid ${color};` +
-    `color:${color};background:#161620;display:flex;align-items:center;justify-content:center;` +
+    `color:${color};background:#0f131a;display:flex;align-items:center;justify-content:center;` +
     `font-size:12px;font-weight:600;${draggable ? 'cursor:grab' : ''}`;
   el.textContent = abbrev(node.name);
   if (draggable) {

@@ -160,7 +160,7 @@ export function itemCard(item: Item, onClick?: () => void): HTMLElement {
     padding: '6px 8px',
     margin: '4px 0',
     cursor: onClick ? 'pointer' : 'default',
-    background: '#1c1c26',
+    background: '#171b24',
   } satisfies Partial<CSSStyleDeclaration>);
 
   const title = document.createElement('div');
@@ -173,7 +173,7 @@ export function itemCard(item: Item, onClick?: () => void): HTMLElement {
     const p = document.createElement('div');
     p.textContent = line;
     p.style.fontSize = '12px';
-    p.style.color = '#b8b8c8';
+    p.style.color = '#c4bca8';
     el.appendChild(p);
   }
 
@@ -186,16 +186,16 @@ export function itemTooltipHtml(item: Item, compareTo?: Item | null): string {
   const color = rarityHex(item.rarity);
   const head = `<div style="color:${color};font-weight:bold;margin-bottom:4px">${item.name}${slotSuffix(item)}</div>`;
   const lines = itemLines(item)
-    .map((l) => `<div style="color:#b8b8c8">${l}</div>`)
+    .map((l) => `<div style="color:#c4bca8">${l}</div>`)
     .join('');
   let cmp = '';
   if (compareTo && compareTo.uid !== item.uid) {
     const cLines = itemLines(compareTo)
-      .map((l) => `<div style="color:#777">${l}</div>`)
+      .map((l) => `<div style="color:#6a655c">${l}</div>`)
       .join('');
     cmp =
-      `<div style="margin-top:6px;border-top:1px solid #2c2c3a;padding-top:4px">` +
-      `<div style="color:#8a8a9a">Сейчас надето: ${compareTo.name}</div>${cLines}</div>`;
+      `<div style="margin-top:6px;border-top:1px solid #2b323f;padding-top:4px">` +
+      `<div style="color:#8f897c">Сейчас надето: ${compareTo.name}</div>${cLines}</div>`;
   }
   return head + lines + cmp;
 }

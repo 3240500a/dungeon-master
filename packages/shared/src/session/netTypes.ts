@@ -99,6 +99,10 @@ export type TownCommand =
   | { cmd: 'useConsumable'; uid: string }
   | { cmd: 'moveBelt'; uid: string }
   | { cmd: 'moveItem'; uid: string; x: number; y: number }
+  // Общий (на аккаунт) городской сундук: запрос текущего слепка и перекладка предмета
+  // инвентарь↔вкладка/внутри вкладки (dst: 'inv' — в инвентарь, число — индекс вкладки).
+  | { cmd: 'stashOpen' }
+  | { cmd: 'stashMove'; uid: string; dst: 'inv' | number; x: number; y: number }
   | { cmd: 'bind'; slot: number; value: string | null }
   | { cmd: 'pickup'; dropId: number }
   | { cmd: 'drop'; uid: string }
@@ -125,6 +129,8 @@ export type ServerFrame =
   | { t: 'events'; events: SessionEvent[] }
   | { t: 'saveUpdate'; save: SaveState }
   | { t: 'shop'; items: Item[] }
+  // Полный слепок общего сундука (шлётся на stashOpen и после каждого stashMove).
+  | { t: 'stash'; tabs: Item[][]; cols: number; rows: number; tabCount: number }
   | { t: 'questBoard'; quests: QuestDef[] }
   | { t: 'peerJoined'; peer: PeerLite }
   | { t: 'peerLeft'; id: string }

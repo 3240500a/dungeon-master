@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@dm/shared": "*",
+    "@fontsource/cinzel": "^5.2.8",
+    "@fontsource/ruslan-display": "^5.2.7",
     "phaser": "^3.87.0"
   },
   "devDependencies": {

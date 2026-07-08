@@ -107,10 +107,10 @@ export class DomUi {
       maxHeight: '84vh',
       display: 'flex',
       flexDirection: 'column',
-      background: '#161620',
-      border: '1px solid #2c2c3a',
+      background: '#171b24',
+      border: '1px solid #2b323f',
       borderRadius: '10px',
-      color: '#e8e8f0',
+      color: '#e6ddc9',
       boxShadow: '0 12px 40px rgba(0,0,0,0.55)',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -124,7 +124,7 @@ export class DomUi {
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: '10px 14px',
-      borderBottom: '1px solid #2c2c3a',
+      borderBottom: '1px solid #2b323f',
       cursor: 'move',
       userSelect: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -134,7 +134,7 @@ export class DomUi {
     close.textContent = '✕';
     Object.assign(close.style, {
       background: 'transparent',
-      color: '#b8b8c8',
+      color: '#c4bca8',
       border: 'none',
       cursor: 'pointer',
       fontSize: '18px',

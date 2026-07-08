@@ -26,6 +26,8 @@ export class App {
   shopStock: Item[] = [];
   /** Доска случайных квестов — авторитетная, приходит с сервера (кадр `questBoard`). */
   questBoard: QuestDef[] = [];
+  /** Общий (на аккаунт) сундук — авторитетный слепок с сервера (кадр `stash`); null = ещё не пришёл. */
+  stash: { tabs: Item[][]; cols: number; rows: number; tabCount: number } | null = null;
   /** Сессия аккаунта (токен+userId); null = не вошёл. Персистится в localStorage `dm:auth`. */
   auth: AuthSession | null = loadAuth();
   /** charId выбранного персонажа для входа в мир (OnlineScene шлёт его в join). */
@@ -62,6 +64,8 @@ export class App {
     this.net.on('shop', (f) => { this.shopStock = f.items; this.bus.emit('state:changed', {}); });
     // Авторитетная доска квестов с сервера → перерисовать журнал.
     this.net.on('questBoard', (f) => { this.questBoard = f.quests; this.bus.emit('state:changed', {}); });
+    // Авторитетный слепок общего сундука с сервера → перерисовать панель сундука.
+    this.net.on('stash', (f) => { this.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount }; this.bus.emit('state:changed', {}); });
   }
 
   /**

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { FONT_TITLE } from '../ui/kit.js';
 
 /**
  * Экран загрузки. Ассетов пока нет (тестовая графика генерируется в Boot),
@@ -14,8 +15,9 @@ export class PreloadScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.add
       .text(width / 2, height / 2, 'Dungeon Master', {
-        fontSize: '32px',
-        color: '#e8e8f0',
+        fontFamily: FONT_TITLE,
+        fontSize: '34px',
+        color: '#e0b45a',
       })
       .setOrigin(0.5);
     this.time.delayedCall(300, () => this.scene.start('MainMenu'));

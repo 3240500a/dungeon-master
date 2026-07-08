@@ -51,7 +51,7 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
     SLOTS.forEach((slot, i) => {
       if (i === 2) { // визуально отделяем 3 доп.слота от мыши
         const sep = document.createElement('div');
-        sep.style.cssText = 'width:1px;height:44px;background:#2c2c3a;margin:0 4px;align-self:center';
+        sep.style.cssText = 'width:1px;height:44px;background:#2b323f;margin:0 4px;align-self:center';
         el.append(sep);
       }
       const col = document.createElement('div');
@@ -59,8 +59,8 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
       const size = slot.big ? 52 : 40;
       const box = document.createElement('div');
       box.style.cssText =
-        `position:relative;width:${size}px;height:${size}px;border-radius:8px;background:#12121a;` +
-        `border:1.5px solid #3c3c4a;display:flex;align-items:center;justify-content:center;` +
+        `position:relative;width:${size}px;height:${size}px;border-radius:8px;background:#0f131a;` +
+        `border:1.5px solid #3e4756;display:flex;align-items:center;justify-content:center;` +
         `font-size:${slot.big ? 16 : 13}px;font-weight:700;cursor:pointer;overflow:hidden;user-select:none`;
       paintBox(app, box, slot.get(save));
       // Оверлей КД (заполняется снизу).
@@ -89,7 +89,7 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
 
 function mkLabel(text: string): HTMLElement {
   const l = document.createElement('div');
-  l.style.cssText = 'font-size:10px;color:#8a8a9a';
+  l.style.cssText = 'font-size:10px;color:#8f897c';
   l.textContent = text;
   return l;
 }
@@ -99,11 +99,11 @@ function paintBox(app: App, box: HTMLDivElement, binding: Binding): void {
   let text: string;
   let color: string;
   let border: string;
-  if (binding === null) { text = '—'; color = '#5a5a68'; border = '#3c3c4a'; }
-  else if (binding === 'attack') { text = '⚔'; color = '#e8e8f0'; border = '#c9c9d4'; }
+  if (binding === null) { text = '—'; color = '#5a5750'; border = '#3e4756'; }
+  else if (binding === 'attack') { text = '⚔'; color = '#e6ddc9'; border = '#c4bca8'; }
   else {
     const node = nodeById(app, binding);
-    color = node ? elementColor(elementOf(node)) : '#3c3c4a';
+    color = node ? elementColor(elementOf(node)) : '#3e4756';
     border = color;
     text = node ? abbrev(node.name) : '?';
   }
@@ -122,7 +122,7 @@ function openDropdown(app: App, anchor: HTMLElement, slot: SlotDef, onChange: ()
   const r = anchor.getBoundingClientRect();
   menu.style.cssText =
     `position:fixed;left:${Math.round(r.left)}px;bottom:${Math.round(window.innerHeight - r.top + 6)}px;` +
-    'min-width:170px;max-height:320px;overflow-y:auto;background:#161620;border:0.5px solid #3c3c4a;' +
+    'min-width:170px;max-height:320px;overflow-y:auto;background:#171b24;border:0.5px solid #3e4756;' +
     'border-radius:8px;padding:4px;z-index:120;box-shadow:0 6px 20px rgba(0,0,0,0.5);pointer-events:auto';
 
   const set = (v: Binding): void => {
@@ -138,18 +138,18 @@ function openDropdown(app: App, anchor: HTMLElement, slot: SlotDef, onChange: ()
     const o = document.createElement('div');
     o.style.cssText = `padding:6px 8px;border-radius:5px;cursor:pointer;font-size:13px;color:${color}`;
     o.textContent = text;
-    o.addEventListener('mouseenter', () => (o.style.background = '#22222e'));
+    o.addEventListener('mouseenter', () => (o.style.background = '#232a36'));
     o.addEventListener('mouseleave', () => (o.style.background = 'transparent'));
     o.addEventListener('click', (e) => { e.stopPropagation(); set(v); });
     return o;
   };
 
-  menu.append(opt('⚔ Атака', '#e8e8f0', 'attack'));
+  menu.append(opt('⚔ Атака', '#e6ddc9', 'attack'));
   for (const n of learnedSkills(app)) {
     const rank = app.state!.save.activeSkills[n.id] ?? 1;
     menu.append(opt(`${abbrev(n.name)} · ${n.name} (ур.${rank})`, elementColor(elementOf(n)), n.id));
   }
-  menu.append(opt('✕ Пусто', '#8a8a9a', null));
+  menu.append(opt('✕ Пусто', '#8f897c', null));
 
   document.body.append(menu);
   // Закрытие по клику вне.

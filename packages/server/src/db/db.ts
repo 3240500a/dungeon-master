@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { SaveState } from '@dm/shared';
+import type { SaveState, AccountStash } from '@dm/shared';
 
 /**
  * Хранилище на встроенном node:sqlite (без нативных зависимостей). Аккаунты:
@@ -36,6 +36,11 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS config_overrides (
     key TEXT PRIMARY KEY,
     json TEXT NOT NULL,
+    updatedAt INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS account_stash (
+    userId TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
     updatedAt INTEGER NOT NULL
   );
 `);
@@ -144,4 +149,21 @@ export function setConfigOverride(key: string, value: unknown): void {
 /** Удаляет оверрайд ключа (сброс к встроенному дефолту). */
 export function deleteConfigOverride(key: string): void {
   deleteConfigStmt.run(key);
+}
+
+// ── Общий сундук аккаунта (shared stash: одна истина на всех персонажей пользователя) ──
+const upsertStashStmt = db.prepare(
+  `INSERT INTO account_stash (userId, data, updatedAt) VALUES (?, ?, ?)
+   ON CONFLICT(userId) DO UPDATE SET data = excluded.data, updatedAt = excluded.updatedAt`,
+);
+const stashStmt = db.prepare('SELECT data FROM account_stash WHERE userId = ?');
+
+/** Сундук аккаунта из БД (или null, если ещё пуст). */
+export function getAccountStash(userId: string): AccountStash | null {
+  const row = stashStmt.get(userId) as { data: string } | undefined;
+  return row ? (JSON.parse(row.data) as AccountStash) : null;
+}
+/** Пишет/обновляет сундук аккаунта (last-writer-wins). */
+export function putAccountStash(userId: string, data: AccountStash): void {
+  upsertStashStmt.run(userId, JSON.stringify(data), Date.now());
 }

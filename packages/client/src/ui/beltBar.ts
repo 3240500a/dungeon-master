@@ -52,21 +52,21 @@ export class BeltBar {
       const item = state.save.belt[i];
       const box = document.createElement('div');
       box.style.cssText =
-        `position:relative;width:40px;height:40px;border-radius:8px;background:#12121a;` +
-        `border:1.5px solid ${item ? '#7fd67f' : '#3c3c4a'};display:flex;align-items:center;` +
+        `position:relative;width:40px;height:40px;border-radius:8px;background:#0f131a;` +
+        `border:1.5px solid ${item ? '#8aa84a' : '#3e4756'};display:flex;align-items:center;` +
         `justify-content:center;font-size:18px;cursor:pointer;user-select:none`;
       box.textContent = item ? POTION_GLYPH : '';
       box.title = item ? `${item.name} — клавиша ${i + 1}` : `Пустой слот пояса (${i + 1})`;
 
       const key = document.createElement('div');
-      key.style.cssText = 'position:absolute;left:2px;top:0;font-size:9px;color:#8a8a9a';
+      key.style.cssText = 'position:absolute;left:2px;top:0;font-size:9px;color:#8f897c';
       key.textContent = String(i + 1);
       box.append(key);
 
       if (item) {
         const count = state.save.inventory.filter((it) => it.baseId === item.baseId).length + 1;
         const c = document.createElement('div');
-        c.style.cssText = 'position:absolute;right:3px;bottom:1px;font-size:10px;color:#e8e8f0;text-shadow:0 0 3px #000';
+        c.style.cssText = 'position:absolute;right:3px;bottom:1px;font-size:10px;color:#e6ddc9;text-shadow:0 0 3px #000';
         c.textContent = String(count);
         box.append(c);
       }

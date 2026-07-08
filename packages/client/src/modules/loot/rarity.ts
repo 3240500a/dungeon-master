@@ -12,10 +12,10 @@ export interface RarityMeta {
 }
 
 let meta: Record<string, RarityMeta> = {
-  normal: { name: 'Обычный', color: '#ffffff' },
-  magic: { name: 'Магический', color: '#6a8ad0' },
-  rare: { name: 'Редкий', color: '#ffd24b' },
-  unique: { name: 'Уникальный', color: '#d08030' },
+  normal: { name: 'Обычный', color: '#d8d2c2' },
+  magic: { name: 'Магический', color: '#6f9bcf' },
+  rare: { name: 'Редкий', color: '#dca94b' },
+  unique: { name: 'Уникальный', color: '#c9702e' },
 };
 
 export function setRarityMeta(map: Record<string, RarityMeta>): void {

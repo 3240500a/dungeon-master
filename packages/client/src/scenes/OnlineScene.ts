@@ -15,6 +15,7 @@ const TOWN_NPCS: { cx: number; cy: number; label: string; panel: string; tint?: 
   { cx: 7, cy: 4, label: 'Кузница', panel: 'forge', tint: 0xffa060 },
   { cx: 10, cy: 4, label: 'Мастер прокачки', panel: 'master', tint: 0xb090ff },
   { cx: 14, cy: 4, label: 'Доска квестов', panel: 'quests', tint: 0xd0c060 },
+  { cx: 17, cy: 4, label: 'Сундук', panel: 'stash', tint: 0xc99a48 },
 ];
 
 /**
@@ -50,7 +51,7 @@ export class OnlineScene extends Phaser.Scene {
     this.app = App.from(this);
     if (!this.app.auth || !this.app.pendingCharId) { this.scene.start('MainMenu'); return; }
     this.eKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
-    this.prompt = this.add.text(0, 0, '', { fontSize: '14px', color: '#ffe680', backgroundColor: '#000000aa', padding: { x: 6, y: 3 } }).setDepth(100).setVisible(false);
+    this.prompt = this.add.text(0, 0, '', { fontSize: '14px', color: '#f0d9a8', backgroundColor: '#000000aa', padding: { x: 6, y: 3 } }).setDepth(100).setVisible(false);
 
     // Сетевые обработчики области/голосования.
     this.app.net.on('joined', (f) => {
@@ -77,12 +78,12 @@ export class OnlineScene extends Phaser.Scene {
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90';
-    box.innerHTML = `<div style="background:#161620;border:1px solid #2c2c3a;border-radius:10px;padding:24px;min-width:280px;color:#e8e8f0;text-align:center">
+    box.innerHTML = `<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:280px;color:#e6ddc9;text-align:center">
       <div style="font-size:18px;margin-bottom:14px">Кооп</div>
-      <button data-a="solo" style="display:block;width:100%;margin:6px 0;padding:8px;background:#26304a;color:#cfe;border:1px solid #6a8ad0;border-radius:6px;cursor:pointer">Соло (комната на 1)</button>
-      <button data-a="host" style="display:block;width:100%;margin:6px 0;padding:8px;background:#243;color:#cfc;border:1px solid #7fd67f;border-radius:6px;cursor:pointer">Создать комнату</button>
-      <div style="display:flex;gap:6px;margin-top:6px"><input class="code" placeholder="КОД" maxlength="4" style="flex:1;text-transform:uppercase;padding:8px;background:#12121a;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:6px"><button data-a="join" style="padding:8px 12px;background:#42304a;color:#fcf;border:1px solid #b090ff;border-radius:6px;cursor:pointer">Войти</button></div>
-      <div class="status" style="margin-top:10px;font-size:12px;color:#8a8a9a"></div></div>`;
+      <button data-a="solo" style="display:block;width:100%;margin:6px 0;padding:8px;background:#1e2a3a;color:#cfe0f2;border:1px solid #6f9bcf;border-radius:6px;cursor:pointer">Соло (комната на 1)</button>
+      <button data-a="host" style="display:block;width:100%;margin:6px 0;padding:8px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Создать комнату</button>
+      <div style="display:flex;gap:6px;margin-top:6px"><input class="code" placeholder="КОД" maxlength="4" style="flex:1;text-transform:uppercase;padding:8px;background:#0f131a;color:#e6ddc9;border:1px solid #2b323f;border-radius:6px"><button data-a="join" style="padding:8px 12px;background:#3a2c15;color:#f0d9a8;border:1px solid #e39a3c;border-radius:6px;cursor:pointer">Войти</button></div>
+      <div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`;
     root.appendChild(box);
     this.lobby = box;
     const status = box.querySelector('.status') as HTMLElement;
@@ -110,10 +111,10 @@ export class OnlineScene extends Phaser.Scene {
     if (!this.codeLabel) {
       const root = document.getElementById('ui-root') ?? document.body;
       this.codeLabel = document.createElement('div');
-      this.codeLabel.style.cssText = 'position:fixed;top:8px;right:12px;z-index:60;background:#161620;border:1px solid #6a8ad0;border-radius:6px;padding:6px 10px;color:#cfe;font-size:13px;pointer-events:none';
+      this.codeLabel.style.cssText = 'position:fixed;top:8px;right:12px;z-index:60;background:#171b24;border:1px solid #6f9bcf;border-radius:6px;padding:6px 10px;color:#cfe0f2;font-size:13px;pointer-events:none';
       root.appendChild(this.codeLabel);
     }
-    this.codeLabel.innerHTML = `Комната: <b style="color:#ffd24b;letter-spacing:2px">${code}</b>`;
+    this.codeLabel.innerHTML = `Комната: <b style="color:#dca94b;letter-spacing:2px">${code}</b>`;
   }
 
   // ── Постройка области (город/этаж) ──────────────────────────────────────────
@@ -177,7 +178,7 @@ export class OnlineScene extends Phaser.Scene {
         this.doorSprites.set(door.id, parts);
       }
       for (const lv of floor.levers) {
-        const marker = this.add.rectangle(lv.x, lv.y, 12, 22, 0xffcc33).setStrokeStyle(2, 0x1a1a1a).setDepth(2);
+        const marker = this.add.rectangle(lv.x, lv.y, 12, 22, 0xdca94b).setStrokeStyle(2, 0x1a1a1a).setDepth(2);
         this.worldObjs.push(marker);
         this.leverSprites.set(lv.doorId, marker);
         this.interactables.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', run: () => this.app.net.send({ t: 'lever', leverId: lv.id }), doorId: lv.doorId });
@@ -195,7 +196,7 @@ export class OnlineScene extends Phaser.Scene {
       const p = cell(n.cx, n.cy);
       const img = this.add.image(p.x, p.y, 'npc').setDepth(2);
       if (n.tint) img.setTint(n.tint);
-      const txt = this.add.text(p.x - 26, p.y + 16, n.label, { fontSize: '11px', color: '#cde' }).setDepth(2);
+      const txt = this.add.text(p.x - 26, p.y + 16, n.label, { fontSize: '11px', color: '#e6ddc9' }).setDepth(2);
       this.worldObjs.push(img, txt);
       this.interactables.push({ x: p.x, y: p.y, radius: 40, label: n.label, run: () => this.app.bus.emit('ui:open', { panel: n.panel }) });
     }
@@ -217,15 +218,15 @@ export class OnlineScene extends Phaser.Scene {
     this.closeDeathModal();
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #a04040;border-radius:12px;padding:22px 30px;color:#ffd6d6;text-align:center;min-width:280px';
+    box.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px';
     const status = f.toTown ? 'Возвращаетесь в город…' : 'Ожидайте: пати зачистит этаж и спустится — там вы возродитесь.';
     box.innerHTML = `<div style="font-size:24px;margin-bottom:10px">Вы погибли</div>
-      <div style="font-size:14px;color:#e8b0b0">Потеряно: <b>${f.goldLost}</b> золота, <b>${f.itemsLost}</b> предм.</div>
-      <div style="font-size:13px;color:#c89090;margin-top:10px">${status}</div>`;
+      <div style="font-size:14px;color:#d9a898">Потеряно: <b>${f.goldLost}</b> золота, <b>${f.itemsLost}</b> предм.</div>
+      <div style="font-size:13px;color:#b09088;margin-top:10px">${status}</div>`;
     if (!f.toTown) {
       const btn = document.createElement('button');
       btn.textContent = 'Смотреть за пати';
-      btn.style.cssText = 'margin-top:14px;padding:8px 16px;background:#3a2030;color:#fcc;border:1px solid #a04040;border-radius:6px;cursor:pointer';
+      btn.style.cssText = 'margin-top:14px;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer';
       btn.addEventListener('click', () => this.closeDeathModal());
       box.appendChild(btn);
     }
@@ -250,11 +251,11 @@ export class OnlineScene extends Phaser.Scene {
     if (this.voteBox) return;
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:88;background:#161620;border:1px solid #6a8ad0;border-radius:8px;padding:12px 16px;color:#e8e8f0;text-align:center';
+    box.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:88;background:#171b24;border:1px solid #6f9bcf;border-radius:8px;padding:12px 16px;color:#e6ddc9;text-align:center';
     const q = kind === 'town' ? 'Вернуться в город?' : 'Спуск на след. этаж?';
     box.innerHTML = `<div style="margin-bottom:8px">${q} <b class="tally">1/1</b></div>
-      <button data-v="1" style="margin:0 4px;padding:6px 14px;background:#243;color:#cfc;border:1px solid #7fd67f;border-radius:6px;cursor:pointer">Принять</button>
-      <button data-v="0" style="margin:0 4px;padding:6px 14px;background:#421;color:#fcc;border:1px solid #ff8080;border-radius:6px;cursor:pointer">Отмена</button>`;
+      <button data-v="1" style="margin:0 4px;padding:6px 14px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Принять</button>
+      <button data-v="0" style="margin:0 4px;padding:6px 14px;background:#421;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Отмена</button>`;
     root.appendChild(box);
     this.voteBox = box;
     void by;

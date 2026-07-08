@@ -12,20 +12,20 @@ import { button } from '../../ui/kit.js';
 function questBlock(def: QuestDef, prog: QuestProgress | undefined): HTMLElement {
   const el = document.createElement('div');
   el.style.cssText =
-    'border:1px solid #2c2c3a;border-radius:6px;padding:8px;margin:6px 0;background:#161620';
+    'border:1px solid #2b323f;border-radius:6px;padding:8px;margin:6px 0;background:#171b24';
   const status =
     prog?.status === 'completed'
-      ? '<span style="color:#7fd67f">выполнено</span>'
+      ? '<span style="color:#8aa84a">выполнено</span>'
       : prog?.status === 'turned-in'
-        ? '<span style="color:#888">сдано</span>'
+        ? '<span style="color:#8f897c">сдано</span>'
         : '';
   el.innerHTML = `<div style="display:flex;justify-content:space-between">
       <b>${def.name}</b><span style="font-size:12px">${status}</span></div>
-    <div style="font-size:12px;color:#b8b8c8;margin:2px 0 6px">${def.description}</div>`;
+    <div style="font-size:12px;color:#c4bca8;margin:2px 0 6px">${def.description}</div>`;
   for (const obj of def.objectives) {
     const cur = prog?.counters[obj.id] ?? 0;
     const line = document.createElement('div');
-    line.style.cssText = 'font-size:12px;color:#9aa';
+    line.style.cssText = 'font-size:12px;color:#8f897c';
     line.textContent = `• ${obj.type}${obj.target ? ` ${obj.target}` : ''}: ${cur}/${obj.amount}`;
     el.appendChild(line);
   }
@@ -33,7 +33,7 @@ function questBlock(def: QuestDef, prog: QuestProgress | undefined): HTMLElement
   const reward = [r.gold && `${r.gold} зол.`, r.xp && `~${Math.round(r.xp / 10)}% ур. опыта`, r.skillPoints && `${r.skillPoints} очк.`, r.itemBaseId && 'предмет']
     .filter(Boolean)
     .join(', ');
-  el.insertAdjacentHTML('beforeend', `<div style="font-size:11px;color:#ffd24b;margin-top:4px">Награда: ${reward}</div>`);
+  el.insertAdjacentHTML('beforeend', `<div style="font-size:11px;color:#dca94b;margin-top:4px">Награда: ${reward}</div>`);
   return el;
 }
 

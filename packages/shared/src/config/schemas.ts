@@ -97,6 +97,14 @@ export const balanceSchema = z.object({
   inventory: z
     .object({ cols: z.number().int().min(4), rows: z.number().int().min(4) })
     .default({ cols: 10, rows: 6 }),
+  /** Городской сундук (ОБЩИЙ на аккаунт): число вкладок и размер каждой вкладки в клетках. */
+  stash: z
+    .object({
+      tabs: z.number().int().min(1).default(2),
+      cols: z.number().int().min(4).default(20),
+      rows: z.number().int().min(4).default(12),
+    })
+    .default({ tabs: 2, cols: 20, rows: 12 }),
   /** Редкости, которые поднимаются автоматически при проходе рядом. Остальное — по клику. */
   autoPickup: z
     .array(z.enum(['normal', 'magic', 'rare', 'unique']))

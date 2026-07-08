@@ -6,19 +6,32 @@ import { rarityHex } from '../modules/loot/rarity.js';
  * тултипы по наведению, кнопки, вкладки. Держит внешний вид консистентным.
  */
 
+/**
+ * Палитра из арт-фона (тёмное фэнтези, факелы): холодный камень/ночь + тёплый факельный акцент +
+ * мшистая зелень + сталь луны. Central-источник цвета для всех DOM-панелей.
+ */
 export const COLORS = {
-  bg: '#161620',
-  panel: '#1c1c26',
-  panel2: '#12121a',
-  border: '#2c2c3a',
-  borderHi: '#3c3c4a',
-  text: '#e8e8f0',
-  dim: '#8a8a9a',
-  gold: '#ffd24b',
-  good: '#7fd67f',
-  bad: '#ff8080',
-  accent: '#6a8ad0',
+  bg: '#0e1117',       // ночное небо/тени
+  panel: '#171b24',    // тёмный камень (поверхность)
+  panel2: '#0f131a',   // утопленная поверхность
+  border: '#2b323f',   // холодный камень
+  borderHi: '#3e4756', // подсвеченная рамка
+  text: '#e6ddc9',     // тёплый пергамент
+  dim: '#8f897c',      // выветренный камень
+  gold: '#dca94b',     // факельное золото (опыт/лут)
+  good: '#8aa84a',     // мшистая зелень
+  bad: '#c85a48',      // тёплый кровавый (опасность/HP)
+  accent: '#e39a3c',   // факельный амбер (акцент/интерактив)
+  info: '#6f9bcf',     // сталь луны/неба (мана, ссылки)
 };
+
+/**
+ * Заголовочный шрифт (медиевальный). Бандлится локально через @fontsource:
+ * Cinzel рисует латиницу («Dungeon Master»), Ruslan Display — кириллицу (у Cinzel
+ * нет кириллических глифов, браузер подставляет следующий в стеке поглифно).
+ * Используется в титрах сцен и кнопках меню; тело/тултипы остаются на sans.
+ */
+export const FONT_TITLE = "'Cinzel', 'Ruslan Display', Georgia, serif";
 
 /** Создаёт элемент с cssText и (опц.) текстом. */
 export function mk<K extends keyof HTMLElementTagNameMap>(
@@ -40,12 +53,19 @@ export function button(
   variant: ButtonVariant = 'default',
   disabled = false,
 ): HTMLButtonElement {
-  const bg =
-    variant === 'primary' ? '#2a4a2a' : variant === 'danger' ? '#4a2a2a' : COLORS.border;
+  // Камень-фон; primary — тёплый амбер, danger — тёмный кровавый. Hover — амбер-рамка (свет факела).
+  const style =
+    variant === 'primary' ? { bg: '#3a2c15', bd: COLORS.accent, fg: '#f0d9a8' }
+    : variant === 'danger' ? { bg: '#3a1f18', bd: COLORS.bad, fg: '#f0b6a8' }
+    : { bg: '#1a1f29', bd: COLORS.borderHi, fg: COLORS.text };
   const b = mk('button', '', label);
-  b.style.cssText = `padding:6px 12px;cursor:pointer;background:${bg};color:${COLORS.text};border:1px solid ${COLORS.borderHi};border-radius:6px;font-size:13px`;
+  b.style.cssText = `padding:6px 12px;cursor:pointer;background:${style.bg};color:${style.fg};border:1px solid ${style.bd};border-radius:6px;font-size:13px`;
   b.disabled = disabled;
   if (disabled) b.style.opacity = '0.5';
+  else {
+    b.addEventListener('mouseenter', () => { b.style.borderColor = COLORS.accent; });
+    b.addEventListener('mouseleave', () => { b.style.borderColor = style.bd; });
+  }
   b.addEventListener('click', onClick);
   return b;
 }
@@ -60,7 +80,8 @@ export function tabsBar<T extends string>(
   for (const [key, label] of items) {
     const active = key === current;
     const t = mk('button', '', label);
-    t.style.cssText = `padding:6px 12px;cursor:pointer;border-radius:6px;border:1px solid ${COLORS.borderHi};background:${active ? '#3a3a4c' : COLORS.panel};color:${COLORS.text}`;
+    // Активная вкладка — тёплым амбером (факел), неактивная — камень.
+    t.style.cssText = `padding:6px 12px;cursor:pointer;border-radius:6px;border:1px solid ${active ? COLORS.accent : COLORS.borderHi};background:${active ? '#26221a' : COLORS.panel};color:${active ? COLORS.accent : COLORS.text}`;
     t.addEventListener('click', () => onSelect(key));
     bar.appendChild(t);
   }
