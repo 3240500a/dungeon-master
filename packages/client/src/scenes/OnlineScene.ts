@@ -212,6 +212,7 @@ export class OnlineScene extends Phaser.Scene {
       this.player.setPos(floor.spawn.x, floor.spawn.y);
     }
     this.driver!.buildMonsters(floor);
+    this.driver!.resetInterpolation(); // новая область: сбросить буфер интерполяции и сглаживание своего игрока
 
     if (floor.area === 'dungeon') {
       const { cols, rows } = gridSize(floor.grid);

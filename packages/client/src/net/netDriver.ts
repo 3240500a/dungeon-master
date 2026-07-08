@@ -5,9 +5,17 @@ import { Monster } from '../modules/combat/monster.js';
 import { Projectile } from '../modules/combat/projectile.js';
 import { DroppedItem } from '../modules/loot/droppedItem.js';
 import { PlayerVfx } from '../modules/combat/playerVfx.js';
+import { SnapshotBuffer } from './snapshotBuffer.js';
 import { dmgColorNum } from '../core/damageTypes.js';
 import { monsterCombatStats } from '@dm/shared';
 import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot } from '@dm/shared';
+
+/** Задержка интерполяции чужих сущностей (мс): рисуем их немного в прошлом, чтобы сгладить 30 Гц + джиттер. */
+const INTERP_DELAY_MS = 100;
+/** Пост. времени сглаживания СВОЕГО игрока к авторитетной позиции (мс): убирает 30 Гц-«ступеньки». */
+const SELF_SMOOTH_TAU_MS = 45;
+/** Рассинхрон больше — телепорт (респавн/смена этажа/рывок): не сглаживаем, ставим мгновенно. */
+const SELF_SNAP_DIST = 120;
 
 /** Текст лога по типу квестового события с сервера. */
 function questText(kind: 'accepted' | 'progress' | 'completed' | 'turned-in', name: string): string {
@@ -50,6 +58,12 @@ export class NetDriver {
   private wasHeld: Record<string, boolean> = {};
   private seq = 0;
   private latest?: WorldSnapshot;
+  /** Буфер снапшотов для интерполяции чужих сущностей (пиры/монстры/снаряды). */
+  private buffer = new SnapshotBuffer();
+  /** Сглаженная позиция СВОЕГО игрока (лерп к авторитетной); hasSmooth=false → первый кадр ставит точно. */
+  private smoothX = 0;
+  private smoothY = 0;
+  private hasSmooth = false;
   /** VFX вокруг игрока: аура-кольцо, конус-прицел дальности/размаха, слэш при ударе. */
   private vfx: PlayerVfx;
   /** Клиент-предсказанный откат мили-атаки — для темпа слэша (та же формула, что на сервере). */
@@ -71,13 +85,16 @@ export class NetDriver {
     scene.input.on('pointerdown', this.onDown);
     scene.input.on('pointerup', this.onUp);
 
-    app.net.on('snapshot', (f) => { this.latest = f.snap; });
+    app.net.on('snapshot', (f) => { this.latest = f.snap; this.buffer.push(f.snap, performance.now()); });
     app.net.on('events', (f) => this.onEvents(f.events));
     app.net.on('saveUpdate', (f) => this.applySave(f.save));
     app.net.on('peerLeft', (f) => { const r = this.remotes.get(f.id); r?.sprite.destroy(); r?.nose.destroy(); this.remotes.delete(f.id); });
   }
 
   setMyId(id: string): void { this.myId = id; }
+
+  /** Сброс интерполяции/сглаживания при смене области (иначе лерп «протянет» через границу этажа). */
+  resetInterpolation(): void { this.buffer.clear(); this.hasSmooth = false; }
 
   /** Тогл ли забинженный узел (аура/стойка) — для фронт-детекции нажатия (иначе удержание мигает тоглом). */
   private isToggleSkill(nodeId: string): boolean {
@@ -146,22 +163,39 @@ export class NetDriver {
     }
     this.vfx.drawFrame(this.player, st, this.app.config, this.scene.time.now, swinging);
 
-    if (this.latest) this.render(this.latest);
+    if (this.latest) {
+      // Чужие сущности — из интерполированного снапшота (в прошлом на INTERP_DELAY); свой игрок — из
+      // latest (сглаживание к «сейчас»). Мало данных → интерполяция вернёт latest, поведение как раньше.
+      const view = this.buffer.sample(performance.now() - INTERP_DELAY_MS) ?? this.latest;
+      this.renderSelf(dt);
+      this.render(view);
+    }
+  }
+
+  /** Свой игрок: сглаживание к последней АВТОРИТЕТНОЙ позиции (без интерполяции — иначе своё движение с лагом). */
+  private renderSelf(dt: number): void {
+    const state = this.app.state!;
+    const mine = this.latest?.players.find((p) => p.id === this.myId);
+    if (!mine) return;
+    if (!this.hasSmooth || Math.hypot(mine.x - this.smoothX, mine.y - this.smoothY) > SELF_SNAP_DIST) {
+      this.smoothX = mine.x; this.smoothY = mine.y; this.hasSmooth = true; // первый кадр/телепорт → точно
+    } else {
+      const k = 1 - Math.exp(-dt / SELF_SMOOTH_TAU_MS); // экспоненциальное сглаживание, кадронезависимое
+      this.smoothX += (mine.x - this.smoothX) * k;
+      this.smoothY += (mine.y - this.smoothY) * k;
+    }
+    this.player.setPos(this.smoothX, this.smoothY);
+    state.hp = mine.hp; state.mana = mine.mana; state.debuffs = mine.debuffs;
+    // Смена аур/стоек приходит в снапшоте — эмитим state:changed, чтобы открытый лист персонажа
+    // перерисовался с бонусами ауры В МОМЕНТЕ (а не только после переоткрытия окна).
+    if (state.toggles.join(',') !== mine.toggles.join(',')) { state.toggles = mine.toggles; this.app.bus.emit('state:changed', {}); }
+    else state.toggles = mine.toggles;
   }
 
   private render(snap: WorldSnapshot): void {
-    const state = this.app.state!;
-    // Свой игрок (авторитетная позиция/HP/мана/дебаффы) + пиры.
+    // Пиры (свой игрок нарисован в renderSelf — здесь пропускаем).
     for (const pv of snap.players) {
-      if (pv.id === this.myId) {
-        this.player.setPos(pv.x, pv.y);
-        state.hp = pv.hp; state.mana = pv.mana; state.debuffs = pv.debuffs;
-        // Смена аур/стоек приходит в снапшоте — эмитим state:changed, чтобы открытый лист персонажа
-        // перерисовался с бонусами ауры В МОМЕНТЕ (а не только после переоткрытия окна).
-        if (state.toggles.join(',') !== pv.toggles.join(',')) { state.toggles = pv.toggles; this.app.bus.emit('state:changed', {}); }
-        else state.toggles = pv.toggles;
-        continue;
-      }
+      if (pv.id === this.myId) continue;
       let r = this.remotes.get(pv.id);
       if (!r) {
         const tex = this.scene.textures.exists(`player-${pv.classId}`) ? `player-${pv.classId}` : 'player-warrior';
