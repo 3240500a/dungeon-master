@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
-// Заголовочные шрифты (локальный бандл): латиница — Cinzel, кириллица — Ruslan Display.
+// Заголовочные шрифты (локальный бандл): латиница — Cinzel, кириллица — Forum.
 // @font-face регистрируются импортом CSS; фактическая загрузка ждётся в BootScene.
 import '@fontsource/cinzel/400.css';
-import '@fontsource/ruslan-display/400.css';
+import '@fontsource/forum/400.css';
 import { App } from './core/app.js';
 import { BootScene } from './scenes/BootScene.js';
 import { PreloadScene } from './scenes/PreloadScene.js';

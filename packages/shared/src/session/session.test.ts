@@ -93,12 +93,14 @@ describe('GameSession — бой/лут/прокачка', () => {
 // Контента с новыми типами ещё нет (авторится в фазе D), поэтому синтетически
 // впрыскиваем узлы в дерево воина и проверяем диспетчеризацию executeAbility.
 
-/** Полная active-способность с дефолтами схемы + переопределения. */
+/** Active-способность (v2) с дефолтами всех полей + переопределения (`over` задаёт category/shape/…).
+ * injectSkill кладёт объект в конфиг БЕЗ zod-парсинга, поэтому нужны явные дефолты всех читаемых движком полей. */
 function activeFx(over: Record<string, unknown>): Record<string, unknown> {
   return {
-    abilityId: 'test', manaCost: 1, cooldown: 0,
-    damageMult: 1, speed: 1, count: 1, spread: 0, pierce: false,
-    radius: 0, arcMult: 1, rangeMult: 1, knockback: 0, stunSec: 0, windupSec: 0,
+    abilityId: 'test', manaCost: 1, cooldown: 0, hands: 'any',
+    speed: 1, damageMult: 1, arcMult: 1, rangeMult: 1, windupSec: 0,
+    knockback: 0, shoveChance: 1, stunSec: 0,
+    count: 1, spread: 0, pierce: false, radius: 0, durationSec: 10,
     ...over,
   };
 }
@@ -125,7 +127,7 @@ function weakMon(r: ConfigRegistry, x: number, y: number) {
 describe('GameSession — движок active.type', () => {
   it('nova бьёт всех монстров в радиусе вокруг игрока', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_nova', activeFx({ type: 'nova', radius: 130, damageMult: 2 }));
+    injectSkill(r, 'warrior', 't_nova', activeFx({ category: 'cast', shape: 'nova', radius: 130, damageMult: 2 }));
     const s = new GameSession(r, 5, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(20, 12);
@@ -144,7 +146,7 @@ describe('GameSession — движок active.type', () => {
 
   it('projectile выпускает веер снарядов, поражающих цель по курсору', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_proj', activeFx({ type: 'projectile', count: 3, spread: 0.2, damageMult: 3 }));
+    injectSkill(r, 'warrior', 't_proj', activeFx({ category: 'cast', shape: 'projectile', count: 3, spread: 0.2, damageMult: 3 }));
     const s = new GameSession(r, 6, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(24, 12);
@@ -162,7 +164,7 @@ describe('GameSession — движок active.type', () => {
 
   it('boomerang пробивает несколько целей и не гаснет о первую', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_boom', activeFx({ type: 'boomerang', radius: 260, damageMult: 3 }));
+    injectSkill(r, 'warrior', 't_boom', activeFx({ category: 'cast', shape: 'boomerang', radius: 260, damageMult: 3 }));
     const s = new GameSession(r, 7, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(24, 12);
@@ -182,7 +184,7 @@ describe('GameSession — движок active.type', () => {
 
   it('dash сдвигает игрока вперёд и бьёт монстров на пути', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_dash', activeFx({ type: 'dash', rangeMult: 1, damageMult: 3, knockback: 1 }));
+    injectSkill(r, 'warrior', 't_dash', activeFx({ category: 'attack', rangeMult: 1, damageMult: 3, knockback: 1, dash: { speed: 700, weightBonus: 200 } }));
     const s = new GameSession(r, 8, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(24, 12);
@@ -191,12 +193,45 @@ describe('GameSession — движок active.type', () => {
     s.enterFloor(1, { grid, spawn, monsters: [weakMon(r, mp.x, mp.y)] });
     const m = s.world.monsters[0]!;
     const startX = p.pos.x;
-    for (let i = 0; i < 300 && m.alive; i++) {
+    // Рывок теперь ДВИЖЕНИЕ (не телепорт): урон наносится в тик каста, а смещение — за следующие
+    // тики. Тикаем фиксированно (не гейтим на m.alive), чтобы рывок успел сдвинуть игрока.
+    for (let i = 0; i < 30; i++) {
       p.mana = 100;
       s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 't_dash' } });
     }
     expect(p.pos.x).toBeGreaterThan(startX); // персонаж рванул вперёд
     expect(m.alive).toBe(false); // и порубил монстра по пути
+  });
+
+  it('attack-скилл бьёт ВСЕХ монстров в дуге оружия (не одну цель)', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_atk', activeFx({ category: 'attack', weaponTypes: ['melee'], damageMult: 6 }));
+    const s = new GameSession(r, 21, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const grid = openField(20, 12);
+    const spawn = cellToWorld(6, 6);
+    // Два монстра близко перед игроком (в пределах дуги/дальности оружия), лицом +x.
+    s.enterFloor(1, { grid, spawn, monsters: [
+      weakMon(r, spawn.x + 40, spawn.y - 10), weakMon(r, spawn.x + 40, spawn.y + 10),
+    ] });
+    for (let i = 0; i < 60 && s.monstersAlive > 0; i++) {
+      p.mana = 100;
+      s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 't_atk' } });
+    }
+    expect(s.monstersAlive).toBe(0); // обоих задело дугой оружия (как обычный удар)
+  });
+
+  it('weapon-restrict блокирует скилл при неподходящем оружии', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_bowonly', activeFx({ category: 'attack', damageMult: 6, weaponTypes: ['ranged'] }));
+    const s = new GameSession(r, 22, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior')); // стартовое оружие — мили
+    const grid = openField(20, 12);
+    const spawn = cellToWorld(6, 6);
+    s.enterFloor(1, { grid, spawn, monsters: [weakMon(r, spawn.x + 40, spawn.y)] });
+    const mon = s.world.monsters[0]!;
+    for (let i = 0; i < 30; i++) { p.mana = 50; s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 't_bowonly' } }); }
+    expect(mon.alive).toBe(true); // скилл не сработал (нужен лук) — урона нет
   });
 });
 
@@ -204,7 +239,7 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
   it('тогл резервирует ману и добавляет стат-моды, повторный каст — выключает', () => {
     const r = reg();
     injectSkill(r, 'warrior', 't_stance', activeFx({
-      type: 'toggle', manaCost: 0, reservePct: 0.3,
+      category: 'stance', manaCost: 0, reservePct: 0.3,
       buffMods: [{ stat: 'armor', kind: 'flat', value: 100 }],
     }));
     const s = new GameSession(r, 11, 'normal');
@@ -231,7 +266,7 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
 
   it('зарезервированная мана регенерируется только до эффективного максимума (не до полного пула)', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_stance', activeFx({ type: 'toggle', manaCost: 0, reservePct: 0.3 }));
+    injectSkill(r, 'warrior', 't_stance', activeFx({ category: 'stance', manaCost: 0, reservePct: 0.3 }));
     const s = new GameSession(r, 12, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
@@ -247,8 +282,8 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
 
   it('эксклюзив-группа: включение второй стойки гасит первую', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_a', activeFx({ type: 'toggle', manaCost: 0, reservePct: 0.2, toggleGroup: 'stance' }));
-    injectSkill(r, 'warrior', 't_b', activeFx({ type: 'toggle', manaCost: 0, reservePct: 0.2, toggleGroup: 'stance' }));
+    injectSkill(r, 'warrior', 't_a', activeFx({ category: 'stance', manaCost: 0, reservePct: 0.2, toggleGroup: 'stance' }));
+    injectSkill(r, 'warrior', 't_b', activeFx({ category: 'stance', manaCost: 0, reservePct: 0.2, toggleGroup: 'stance' }));
     const s = new GameSession(r, 12, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
@@ -262,7 +297,7 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
   it('бафф действует ограниченное время и истекает', () => {
     const r = reg();
     injectSkill(r, 'warrior', 't_buff', activeFx({
-      type: 'buff', manaCost: 5, durationSec: 1,
+      category: 'buff', manaCost: 5, durationSec: 1,
       buffMods: [{ stat: 'moveSpeed', kind: 'increased', value: 50 }],
     }));
     const s = new GameSession(r, 13, 'normal');
@@ -336,7 +371,7 @@ describe('GameSession — аффинити фракций (фаза C)', () => {
 describe('GameSession — замах/прерывание (фаза C)', () => {
   it('удар с замахом срабатывает не сразу, а по завершении', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_heavy', activeFx({ type: 'strike', windupSec: 0.4, damageMult: 3, speed: 0.6 }));
+    injectSkill(r, 'warrior', 't_heavy', activeFx({ category: 'attack', windupSec: 0.4, damageMult: 3, speed: 0.6 }));
     const s = new GameSession(r, 21, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(16, 12);
@@ -358,7 +393,7 @@ describe('GameSession — замах/прерывание (фаза C)', () => {
 
   it('стан во время замаха прерывает удар (без стойкости к прерыванию)', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_heavy2', activeFx({ type: 'strike', windupSec: 0.6, damageMult: 3 }));
+    injectSkill(r, 'warrior', 't_heavy2', activeFx({ category: 'attack', windupSec: 0.6, damageMult: 3 }));
     const s = new GameSession(r, 22, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(16, 12);

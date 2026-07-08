@@ -8,6 +8,32 @@ import {
   type StatModifier,
 } from '../types/attributes.js';
 import type { Item } from '../types/items.js';
+import type { SaveState } from '../types/save.js';
+
+/** Справочные таблицы веса (из конфига) для расчёта массы игрока. */
+export interface WeightTables {
+  base: number;
+  /** shieldClass → вес. */
+  shield: Record<string, number>;
+  armorClasses: { id: string; weight: number }[];
+  weaponWeights: { id: string; weight: number }[];
+}
+
+/**
+ * Вес (масса) игрока для расталкивания сущностей: база тела + вклад надетого — тип брони
+ * (`armor-classes`), класс щита (`balance.weight.shield`), вес оружия (`weapon-weights`).
+ * Чистая функция (переиспользует сервер в шаге коллизий).
+ */
+export function playerWeight(save: SaveState, t: WeightTables): number {
+  let w = t.base;
+  for (const it of Object.values(save.equipment)) {
+    if (!it) continue;
+    if (it.kind === 'weapon') w += t.weaponWeights.find((x) => x.id === it.weight)?.weight ?? 0;
+    else if (it.kind === 'armor') w += t.armorClasses.find((x) => x.id === it.armorClass)?.weight ?? 0;
+    else if (it.kind === 'shield') w += (it.shieldClass ? t.shield[it.shieldClass] : 0) ?? 0;
+  }
+  return w;
+}
 
 /** Собирает все модификаторы из экипировки. */
 export function modifiersFromItems(items: Item[]): StatModifier[] {

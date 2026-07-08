@@ -14,15 +14,16 @@ export class BootScene extends Phaser.Scene {
 
   /**
    * Phaser рендерит текст в текстуру шрифтом, доступным НА МОМЕНТ создания, и не
-   * перерисовывает его после подгрузки веб-шрифта. Поэтому дожидаемся Cinzel/Ruslan
-   * Display до первого титра (в Preload). Ошибка/таймаут не блокируют игру — сработает фолбэк.
+   * перерисовывает его после подгрузки веб-шрифта. Поэтому дожидаемся Cinzel/Forum до
+   * первого титра (в Preload). Ошибка/таймаут не блокируют игру — сработает фолбэк, а
+   * `reflowOnFontsReady` перепечёт текст, когда шрифты догрузятся (на холодном кэше).
    */
   private async awaitFontsThenPreload(): Promise<void> {
     try {
       const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
       if (fonts) {
         await Promise.race([
-          Promise.all([fonts.load("16px 'Cinzel'"), fonts.load("16px 'Ruslan Display'")]),
+          Promise.all([fonts.load("16px 'Cinzel'"), fonts.load("16px 'Forum'")]),
           new Promise((r) => setTimeout(r, 2500)), // страховка от вечного ожидания
         ]);
       }

@@ -15,6 +15,21 @@ import type { Vec2 } from './movement.js';
  * живёт в чистых функциях `world/*` и будущем `session/*`.
  */
 
+/** Активный рывок игрока (быстрое движение с временной добавкой к весу — расталкивает монстров). */
+export interface DashState {
+  /** Единичное направление рывка. */
+  dx: number;
+  dy: number;
+  /** Скорость, px/сек. */
+  speed: number;
+  /** Остаток длительности, сек. */
+  remaining: number;
+  /** Множитель массы игрока на время рывка (расталкивание). */
+  weightMult: number;
+  /** Уже задетые монстры (без двойного удара за рывок). */
+  hitIds: number[];
+}
+
 /** Игрок в мире (runtime), поверх персистентного `save`. */
 export interface PlayerEntity {
   id: string;
@@ -38,6 +53,8 @@ export interface PlayerEntity {
   skillBuffs: Record<string, number>;
   /** Идёт замах тяжёлого удара-скилла: сработает по завершении, прерывается станом. */
   windup: { nodeId: string; rank: number; remaining: number } | null;
+  /** Активный рывок (движение) — пока не null, ввод игнорируется, масса ×weightMult. */
+  dash: DashState | null;
   /** Остаток стана (сек); >0 — управление/атака заблокированы. */
   stunTimer: number;
   alive: boolean;
@@ -197,6 +214,7 @@ export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: num
     toggles: [],
     skillBuffs: {},
     windup: null,
+    dash: null,
     stunTimer: 0,
     alive: true,
     save,

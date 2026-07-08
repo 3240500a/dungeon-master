@@ -3,6 +3,7 @@ import { App } from '../core/app.js';
 import { makeButton } from './ui/button.js';
 import { listCharacters, deleteCharacter, logout, type CharacterSummary } from '../modules/auth/authApi.js';
 import { FONT_TITLE } from '../ui/kit.js';
+import { reflowOnFontsReady } from './ui/fonts.js';
 
 const MAX_CHARS = 5;
 
@@ -58,7 +59,7 @@ export class CharacterSelectScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const app = App.from(this);
 
-    this.add.text(width / 2, height * 0.1, 'Выбор персонажа', { fontFamily: FONT_TITLE, fontSize: '32px', color: '#e0b45a' }).setOrigin(0.5);
+    reflowOnFontsReady(this.add.text(width / 2, height * 0.1, 'Выбор персонажа', { fontFamily: FONT_TITLE, fontSize: '32px', color: '#e0b45a' }).setOrigin(0.5));
     this.add.text(width * 0.88, height * 0.1, app.auth!.username, { fontSize: '14px', color: '#8f897c' }).setOrigin(0.5);
 
     // ── Список слева ─────────────────────────────────────

@@ -1,4 +1,4 @@
-import { abilityCooldown, abilityRankMult, DEBUFF_LABEL, type DebuffKind, type SkillNode, type StatModifier } from '@dm/shared';
+import { abilityRankMult, DEBUFF_LABEL, type DebuffKind, type SkillNode, type StatModifier } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { activeTreeFor } from '../skills-active/allocate.js';
@@ -9,14 +9,17 @@ import { STAT_LABEL } from '../inventory/itemView.js';
 import { COLORS, mk, tabsBar } from '../../ui/kit.js';
 import { buildBindBar } from '../../ui/bindBar.js';
 
-const AOE_RE = /nova|shout|taunt|caltrops|berserk|wolf|horn|rally|blizzard|meteor|trap|rain|skin|wall/;
 const PERCENT = new Set(['critChance', 'blockChance', 'resFire', 'resCold', 'resLightning', 'resPoison']);
 
-/** Ярлык формы удара по типу. */
+/** Ярлык формы КАСТА по shape (attack — «удар оружием» / «рывок»). */
 const SHAPE_LABEL: Record<string, string> = {
-  strike: 'одиночный удар', cleave: 'дуга по фронту', nova: 'по области (радиус)',
-  projectile: 'снаряды (веер)', boomerang: 'бумеранг (туда и обратно)', dash: 'рывок с ударом',
+  projectile: 'снаряды (веер)', boomerang: 'бумеранг (туда и обратно)', nova: 'по области (радиус)',
+  ground: 'область на земле', meteor: 'метеор (область)', curse: 'провокация',
 };
+
+type ActiveAny = NonNullable<SkillNode['effect']['active']>;
+/** Наступательные категории (attack/cast) — только у них есть damageMult/speed/эффекты удара. */
+type OffActive = Extract<ActiveAny, { category: 'attack' } | { category: 'cast' }>;
 /** Подпись стих. статуса по стихии — из конфигов `damage-types` (element→ailment)
  * и общего `DEBUFF_LABEL` (без задвоения). Физический (ailment=null) → «статус». */
 function ailmentLabel(elem: string): string {
@@ -34,12 +37,12 @@ function fmtMod(m: StatModifier, total?: number): string {
 }
 
 /** Доп. эффекты удара-скилла (замах/стан/отброс/пробитие/стих. статус). */
-function skillEffects(active: NonNullable<SkillNode['effect']['active']>, elem: string): string[] {
+function skillEffects(active: OffActive, elem: string): string[] {
   const fx: string[] = [];
-  if (active.windupSec && active.windupSec > 0) fx.push(`замах ${active.windupSec}с (прерывается станом)`);
-  if (active.stunSec && active.stunSec > 0) fx.push(`оглушение ${active.stunSec}с`);
-  if (active.knockback && active.knockback > 0) fx.push(`отброс (шанс ${Math.round(active.knockback * 100)}%)`);
-  if (active.pierce) fx.push('пробитие целей');
+  if (active.windupSec > 0) fx.push(`замах ${active.windupSec}с (прерывается станом)`);
+  if (active.stunSec > 0) fx.push(`оглушение ${active.stunSec}с`);
+  if (active.knockback > 0) fx.push(`отброс (шанс ${Math.round((active.shoveChance ?? 1) * 100)}%)`);
+  if (active.category === 'cast' && active.pierce) fx.push('пробитие целей');
   if (active.ailment) fx.push(`${ailmentLabel(elem)} — шанс ${Math.round(active.ailment.chance * 100)}%`);
   return fx;
 }
@@ -91,59 +94,50 @@ function describeNode(app: App, node: SkillNode): HTMLElement {
   const elem = elementOf(node);
   const col = elementColor(elem);
 
-  // ── Тогл (стойка/аура): резерв маны + постоянные моды ──
-  if (active.type === 'toggle') {
+  // ── Аура/стойка: резерв маны + постоянные моды ──
+  if (active.category === 'aura' || active.category === 'stance') {
     const buffs = (active.buffMods ?? []).map((m) => fmtMod(m)).join(', ');
     box.innerHTML =
-      `<b>Стойка/аура</b> — вкл/выкл, эксклюзивная группа<br>` +
+      `<b>${active.category === 'aura' ? 'Аура' : 'Стойка'}</b> — вкл/выкл, эксклюзивная группа<br>` +
       (buffs ? `Пока активна: <b>${buffs}</b><br>` : '') +
       `Резерв маны: <b>${Math.round((active.reservePct ?? 0) * 100)}%</b>`;
     return box;
   }
 
   // ── Временный бафф ──
-  if (active.type === 'buff') {
+  if (active.category === 'buff') {
     const buffs = (active.buffMods ?? []).map((m) => fmtMod(m)).join(', ');
     box.innerHTML =
-      `<b>Бафф</b> — ${active.durationSec ?? 10} с<br>` +
+      `<b>Бафф</b> — ${active.durationSec} с<br>` +
       (buffs ? `Эффект: <b>${buffs}</b><br>` : '') +
       `Мана: <b>${active.manaCost}</b>`;
     return box;
   }
 
-  // ── Провокация/проклятие ──
-  if (active.type === 'curse') {
+  // ── Провокация/проклятие (cast/curse) ──
+  if (active.category === 'cast' && active.shape === 'curse') {
     box.innerHTML =
       `<b>Провокация</b> — враги в радиусе агрятся на тебя<br>` +
       `Радиус: <b>${active.radius || '≈200'}</b> · Мана: <b>${active.manaCost}</b>`;
     return box;
   }
 
-  // ── Удар/снаряд/рывок: урон от оружия × множитель × ранг ──
+  // ── Атака/каст: урон от оружия × множитель × ранг (attack сохраняет состав оружия) ──
   const scaling = app.config.get('balance').weaponAttrScaling;
   const base = estimateWeaponDamage(state, state.save.equipment.weapon, scaling, app.config.get('weapon-weights'));
   const rankMult = abilityRankMult(rank);
-  const typed = !!active.type;
-  const shape = active.type
-    ? SHAPE_LABEL[active.type] ?? 'удар'
-    : (AOE_RE.test(active.abilityId) ? 'по области (радиус)' : 'снаряды (веер)');
-  const mult = typed ? (active.damageMult ?? 1) : (AOE_RE.test(active.abilityId) ? 1.5 : 1.4);
+  const shape = active.category === 'attack'
+    ? (active.dash ? 'рывок с ударом' : 'удар оружием (по всем в дуге)')
+    : SHAPE_LABEL[active.shape] ?? active.shape;
+  const mult = active.damageMult;
   const dmg = Math.round(base * mult * rankMult);
 
-  let rateLine: string;
-  let dps: number;
-  if (typed) {
-    // Нет КД: темп удара = скорость атаки × коэффициент скилла.
-    const rate = Math.max(0.2, state.derived().attackSpeed * (active.speed ?? 1));
-    dps = Math.round(dmg * rate);
-    rateLine = `Темп: <b>${(1 / rate).toFixed(2)} с</b>/удар (скор. атаки ×${active.speed ?? 1})`;
-  } else {
-    const cd = abilityCooldown(active.cooldown, rank);
-    dps = cd > 0 ? Math.round(dmg / cd) : dmg;
-    rateLine = `Перезарядка: <b>${cd.toFixed(2)} с</b>`;
-  }
+  // Тайминг удара — скорость атаки × коэффициент скилла (без КД).
+  const rate = Math.max(0.2, state.derived().attackSpeed * active.speed);
+  const dps = Math.round(dmg * rate);
+  const rateLine = `Темп: <b>${(1 / rate).toFixed(2)} с</b>/удар (скор. атаки ×${active.speed})`;
   const fx = skillEffects(active, elem);
-  const count = active.count && active.count > 1 ? ` ×${active.count}` : '';
+  const count = active.category === 'cast' && active.count > 1 ? ` ×${active.count}` : '';
   box.innerHTML =
     `Стихия: <b style="color:${col}">${elementLabel(elem)}</b> · ${shape}${count}<br>` +
     `Урон ≈ <b style="color:${col}">${dmg}</b> (ДПС ~${dps}, растёт от оружия и ранга)<br>` +

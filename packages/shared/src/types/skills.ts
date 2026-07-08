@@ -6,10 +6,13 @@ export interface SkillCost {
   amount: number;
 }
 
-/** Механика активного скилла (совпадает со схемой `skills-active`). */
-export type SkillActiveType =
-  | 'strike' | 'cleave' | 'nova' | 'projectile' | 'boomerang' | 'dash'
-  | 'curse' | 'buff' | 'toggle' | 'ground' | 'meteor';
+/** Категория активного скилла (совпадает со схемой `skills-active`, дискриминатор). */
+export type SkillCategory = 'attack' | 'cast' | 'aura' | 'stance' | 'buff';
+/** Форма каста (стихийное заклинание). */
+export type CastShape = 'projectile' | 'boomerang' | 'nova' | 'ground' | 'meteor' | 'curse';
+export type WeaponTypeSel = 'melee' | 'ranged' | 'magic';
+export type WeaponClassSel = 'sword' | 'axe' | 'mace' | 'dagger' | 'spear' | 'bow' | 'crossbow' | 'wand' | 'staff';
+type DamageTypeSel = 'physical' | 'fire' | 'cold' | 'lightning' | 'poison';
 
 /** Наложение стихийного статуса при попадании скилла. */
 export interface SkillAilment {
@@ -20,40 +23,77 @@ export interface SkillAilment {
   durationMs: number;
 }
 
-/**
- * Исполняемая часть активного скилла. Совпадает с zod-схемой `skills-active`
- * (движок `session.ts` читает эти же поля). Поля с дефолтами в схеме здесь
- * опциональны — легаси-узлы (без `type`) их не задают.
- */
-export interface SkillActive {
-  /** id способности (легаси-роутинг по имени; для типизированных — просто ярлык). */
+/** Общие поля активной способности. */
+interface ActiveCommon {
   abilityId: string;
   manaCost: number;
-  /** Легаси-КД (сек). 0 — новая модель (скорость от attackSpeed). */
+  /** КД, сек (0 = без КД, тайминг от attackSpeed×speed). */
   cooldown: number;
-  /** Механика. Нет → старое поведение по имени abilityId. */
-  type?: SkillActiveType;
-  /** Стихия урона (иначе — по имени abilityId). */
-  element?: 'physical' | 'fire' | 'cold' | 'lightning' | 'poison';
-  damageMult?: number;
-  /** Коэффициент скорости удара (attackSpeed × speed). */
-  speed?: number;
-  count?: number;
-  spread?: number;
-  pierce?: boolean;
-  radius?: number;
-  arcMult?: number;
-  rangeMult?: number;
-  knockback?: number;
-  stunSec?: number;
+}
+/** Ограничения оружия (attack/cast). Пусто → любое оружие. */
+interface WeaponRestrict {
+  weaponTypes?: WeaponTypeSel[];
+  weaponClasses?: WeaponClassSel[];
+  hands: 'any' | 'one' | 'two';
+}
+
+/** Атака: удар оружием (геометрия/состав от оружия) + моды/эффекты скилла. */
+export interface AttackActive extends ActiveCommon, WeaponRestrict {
+  category: 'attack';
+  speed: number;
+  damageMult: number;
+  arcMult: number;
+  rangeMult: number;
+  windupSec: number;
+  knockback: number;
+  shoveChance: number;
+  stunSec: number;
+  element?: DamageTypeSel;
   ailment?: SkillAilment;
-  /** Замах (сек) — окно, в которое удар можно прервать станом/ошеломлением. */
-  windupSec?: number;
+  /** Опц. рывок-гэпклоузер. */
+  dash?: { speed: number; weightBonus: number };
+}
+/** Каст: стихийное заклинание (свод к element), форма — shape. */
+export interface CastActive extends ActiveCommon, WeaponRestrict {
+  category: 'cast';
+  shape: CastShape;
+  element?: DamageTypeSel;
+  speed: number;
+  damageMult: number;
+  count: number;
+  spread: number;
+  pierce: boolean;
+  radius: number;
+  windupSec: number;
+  knockback: number;
+  shoveChance: number;
+  stunSec: number;
+  ailment?: SkillAilment;
+}
+/** Аура: тогл, резерв маны, стат-моды (пати-радиус — задел). */
+export interface AuraActive extends ActiveCommon {
+  category: 'aura';
   toggleGroup?: string;
   reservePct?: number;
   buffMods?: StatModifier[];
-  durationSec?: number;
+  radius?: number;
 }
+/** Стойка: личный тогл-эксклюзив. */
+export interface StanceActive extends ActiveCommon {
+  category: 'stance';
+  toggleGroup?: string;
+  reservePct?: number;
+  buffMods?: StatModifier[];
+}
+/** Временный бафф: стат-моды за ману на durationSec. */
+export interface BuffActive extends ActiveCommon {
+  category: 'buff';
+  durationSec: number;
+  buffMods?: StatModifier[];
+}
+
+/** Исполняемая часть активного скилла (v2: дискриминирована по `category`). Совпадает со схемой. */
+export type SkillActive = AttackActive | CastActive | AuraActive | StanceActive | BuffActive;
 
 /** Условный «сет»-бонус: моды при надетом комплекте брони одного класса. */
 export interface SkillSetBonus {

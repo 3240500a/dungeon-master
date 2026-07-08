@@ -267,7 +267,7 @@ export class OnlineScene extends Phaser.Scene {
   override update(_t: number, delta: number): void {
     if (!this.player || !this.driver) return;
     this.player.update(this.input.activePointer, this.cameras.main);
-    this.driver.update();
+    this.driver.update(delta);
     if (this.area === 'dungeon' && this.fog) this.fog.update(this.player.x, this.player.y, delta);
     this.updateInteractions();
   }

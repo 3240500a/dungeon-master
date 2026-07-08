@@ -18,6 +18,8 @@ import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../worl
 import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, type DebuffApply } from '../world/debuffs.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import { moveWithCollision, type Vec2 } from '../world/movement.js';
+import { resolveEntityCollisions, type CollisionBody } from '../world/separation.js';
+import { playerWeight, type WeightTables } from '../formulas/stats.js';
 import { activeAbilityOf, reservedManaFrac, effectiveMaxMana, toggleBuffMods } from './toggles.js';
 import { isBlockedCell, worldToCell, Cell } from '../world/grid.js';
 import type { Grid } from '../world/grid.js';
@@ -119,12 +121,16 @@ const ABILITY_PROJ_SPEED = 460;
 const PROJ_TTL = 2.5;
 const PROJ_HIT_RADIUS = 16;
 
-/** Спецификация активной способности (из конфига, новая модель). */
+/** Спецификация активной способности (v2: дискриминирована по `category`). */
 type ActiveAbility = NonNullable<ConfigShapes['skills-active'][number]['nodes'][number]['effect']['active']>;
+type AttackAbility = Extract<ActiveAbility, { category: 'attack' }>;
+type CastAbility = Extract<ActiveAbility, { category: 'cast' }>;
+type ToggleAbility = Extract<ActiveAbility, { category: 'aura' | 'stance' }>;
+type OffensiveAbility = AttackAbility | CastAbility;
 /** Опции применения удара (оружие/скилл): к PlayerHitOptions добавлены отброс и гарант. стан. */
-type HitOpts = PlayerHitOptions & { knockback?: number; stunSec?: number };
-/** Типы-удары (тайминг от скорости атаки). Остальные — утилити (по мане). */
-const ATTACK_SKILL = new Set<ActiveAbility['type']>(['strike', 'cleave', 'projectile', 'boomerang', 'dash']);
+type HitOpts = PlayerHitOptions & { knockback?: number; stunSec?: number; shoveChance?: number };
+/** Опорный вес для масштаба отброса: knockback (px) калиброван под монстра ~этого веса. */
+const KNOCKBACK_REF_WEIGHT = 100;
 
 export class GameSession {
   readonly world: WorldState;
@@ -288,6 +294,9 @@ export class GameSession {
       else if (action === 'shoot') this.monsterShoot(m, target);
     }
 
+    // 3.5) Расталкивание сущностей по весу (монстры не слипаются, сквозь них не пройти).
+    this.resolveCollisions();
+
     // 4) Снаряды: движение, стены, попадания.
     this.stepProjectiles(dt);
 
@@ -302,6 +311,11 @@ export class GameSession {
 
   // ── Ввод/действия игрока ──────────────────────────────────
   private stepPlayerInput(p: PlayerEntity, snap: PlayerSnapshot, input: PlayerInput | undefined, dt: number): void {
+    // Рывок: пока активен — быстрое движение вместо ввода (стан прерывает).
+    if (p.dash) {
+      if (p.stunTimer > 0) p.dash = null;
+      else { this.stepDash(p, dt); return; }
+    }
     const pm = debuffMods(p.debuffs);
     const stunned = p.stunTimer > 0;
     // Замах и стан «укореняют» — движение блокируется; стан вдобавок глушит действия.
@@ -354,9 +368,12 @@ export class GameSession {
   }
 
   /** Взмах: дальность/дуга по оружию (копьё длиннее, топор шире). */
-  private meleeSwing(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, weapon?: Item): void {
-    const range = 52 * (weapon?.reachMult ?? 1);
-    const arc = 0.8 * (weapon?.arcMult ?? 1);
+  private meleeSwing(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, weapon?: Item, opts?: HitOpts, rangeMult = 1, arcMult = 1): void {
+    // Дальность/размах — базовые из конфига × оружие (копьё длиннее, топор шире) × множители скилла (attack).
+    const mel = this.cfg.get('balance').melee;
+    const range = mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult;
+    const arc = mel.baseArc * (weapon?.arcMult ?? 1) * arcMult;
+    const hitOpts = opts ?? this.weaponHitOpts(weapon);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
       const dx = m.pos.x - p.pos.x;
@@ -364,7 +381,7 @@ export class GameSession {
       if (Math.hypot(dx, dy) > range) continue;
       const ang = Math.atan2(dy, dx);
       if (Math.abs(this.wrap(ang - p.facing)) > arc) continue;
-      this.hitMonster(p, m, packet, attacker, this.weaponHitOpts(weapon));
+      this.hitMonster(p, m, packet, attacker, hitOpts);
     }
   }
 
@@ -390,43 +407,49 @@ export class GameSession {
     if (!active) return;
     const rank = p.save.activeSkills[nodeId] ?? 1;
 
-    // Легаси (без type): КД-модель + старое поведение по имени.
-    if (!active.type) {
-      if ((p.skillCd[nodeId] ?? 0) > 0) return;
-      if (p.mana < active.manaCost) return;
-      p.mana -= active.manaCost;
-      if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
-      this.executeLegacy(p, snap, active.abilityId, rank);
-      return;
+    switch (active.category) {
+      // Ауры/стойки: вкл/выкл, эксклюзив-группа, резерв маны (без маны за каст).
+      case 'aura':
+      case 'stance':
+        this.toggleStance(p, snap, nodeId, active);
+        return;
+      // Временный бафф: стат-моды за ману на durationSec; не рефрешим, пока активен.
+      case 'buff': {
+        if ((p.skillBuffs[nodeId] ?? 0) > 0) return;
+        if (p.mana < active.manaCost) return;
+        p.mana -= active.manaCost;
+        p.skillBuffs[nodeId] = active.durationSec;
+        return;
+      }
+      // Атаки/касты — тайминг от скорости атаки; опц. персональный КД; гейт по оружию.
+      case 'attack':
+      case 'cast': {
+        if (p.attackCd > 0 || p.windup) return;    // делит тайминг с базовой атакой; занят замахом
+        if ((p.skillCd[nodeId] ?? 0) > 0) return;   // опц. персональный КД
+        if (!this.weaponAllowed(p, active)) return; // не то оружие → скилл не срабатывает
+        if (p.mana < active.manaCost) return;
+        p.mana -= active.manaCost;
+        const pm = debuffMods(p.debuffs);
+        p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
+        if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
+        if (active.windupSec > 0) { p.windup = { nodeId, rank, remaining: active.windupSec }; return; }
+        this.executeAbility(p, snap, active, rank);
+        return;
+      }
     }
+  }
 
-    // Тоглы/стойки/ауры: вкл/выкл, эксклюзив-группа, резерв маны. Без маны за каст.
-    if (active.type === 'toggle') { this.toggleStance(p, snap, nodeId, active); return; }
-
-    // Баффы: временные стат-моды за ману, без КД; не рефрешим, пока активны.
-    if (active.type === 'buff') {
-      if ((p.skillBuffs[nodeId] ?? 0) > 0) return; // уже активен
-      if (p.mana < active.manaCost) return;
-      p.mana -= active.manaCost;
-      p.skillBuffs[nodeId] = active.durationSec ?? 10;
-      return;
+  /** Проверка ограничений оружия скилла (тип/класс/руки; пусто → любое оружие). */
+  private weaponAllowed(p: PlayerEntity, active: OffensiveAbility): boolean {
+    const w = p.save.equipment.weapon;
+    const wt: WeaponType = w?.weaponType ?? 'melee';
+    if (active.weaponTypes?.length && !active.weaponTypes.includes(wt)) return false;
+    if (active.weaponClasses?.length && !(w?.weaponClass && active.weaponClasses.includes(w.weaponClass))) return false;
+    if (active.hands !== 'any') {
+      const need = active.hands === 'two' ? 2 : 1;
+      if ((w?.hands ?? 1) !== need) return false;
     }
-
-    // Удары — тайминг от скорости атаки; прочая утилити — по мане, без КД.
-    if (ATTACK_SKILL.has(active.type)) {
-      if (p.attackCd > 0 || p.windup) return; // делит тайминг с базовой атакой; занят замахом
-      if (p.mana < active.manaCost) return;
-      p.mana -= active.manaCost;
-      const pm = debuffMods(p.debuffs);
-      p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
-      // Тяжёлый удар с замахом: сработает по завершении (может быть прерван станом).
-      if (active.windupSec > 0) { p.windup = { nodeId, rank, remaining: active.windupSec }; return; }
-      this.executeAbility(p, snap, active, rank);
-      return;
-    }
-    if (p.mana < active.manaCost) return;
-    p.mana -= active.manaCost;
-    this.executeAbility(p, snap, active, rank);
+    return true;
   }
 
   /** Тик замаха: стан/ошеломление сбивает удар (если не устоял), иначе — срабатывание. */
@@ -446,12 +469,17 @@ export class GameSession {
     }
   }
 
-  /** Включает/выключает тогл: гасит другие в его эксклюзив-группе, резервирует ману. */
-  private toggleStance(p: PlayerEntity, snap: PlayerSnapshot, nodeId: string, active: ActiveAbility): void {
+  /** Группа эксклюзива тогла (только у аур/стоек). */
+  private toggleGroupOf(a: ActiveAbility | undefined): string | undefined {
+    return a && (a.category === 'aura' || a.category === 'stance') ? a.toggleGroup : undefined;
+  }
+
+  /** Включает/выключает тогл (аура/стойка): гасит другие в его эксклюзив-группе, резервирует ману. */
+  private toggleStance(p: PlayerEntity, snap: PlayerSnapshot, nodeId: string, active: ToggleAbility): void {
     if (p.toggles.includes(nodeId)) { p.toggles = p.toggles.filter((t) => t !== nodeId); return; } // выкл
     // Эксклюзив-группа: одновременно активна только одна стойка группы.
     if (active.toggleGroup) {
-      p.toggles = p.toggles.filter((t) => this.activeById(p.save, t)?.toggleGroup !== active.toggleGroup);
+      p.toggles = p.toggles.filter((t) => this.toggleGroupOf(this.activeById(p.save, t)) !== active.toggleGroup);
     }
     const reserveFrac = this.reservedFrac(p) + (active.reservePct ?? 0);
     if (reserveFrac >= 1) return; // нельзя зарезервировать всю ману
@@ -469,7 +497,10 @@ export class GameSession {
   private runtimeMods(p: PlayerEntity): StatModifier[] {
     if (p.toggles.length === 0 && Object.keys(p.skillBuffs).length === 0) return [];
     const mods = toggleBuffMods(this.cfg, p.save.classId, p.toggles);
-    for (const id of Object.keys(p.skillBuffs)) { const a = this.activeById(p.save, id); if (a?.buffMods) mods.push(...a.buffMods); }
+    for (const id of Object.keys(p.skillBuffs)) {
+      const a = this.activeById(p.save, id);
+      if (a && (a.category === 'buff' || a.category === 'aura' || a.category === 'stance')) mods.push(...(a.buffMods ?? []));
+    }
     return mods;
   }
 
@@ -481,49 +512,75 @@ export class GameSession {
     return this.cfg.get('weapon-weights');
   }
 
-  /** Старое поведение (нова/веер по имени) — для скиллов без active.type. */
-  private executeLegacy(p: PlayerEntity, snap: PlayerSnapshot, abilityId: string, rank: number): void {
-    const attacker = snap.combat;
-    const elem = abilityElementOf(abilityId);
-    const rankMult = abilityRankMult(rank);
-    const base = packetTotal(buildAttackPacket(snap.derived, snap.attrs, p.save.equipment.weapon, this.scaling(), this.weights(), this.rng));
-    const mkPacket = (mult: number): DamagePacket => { const pk = emptyPacket(); pk[elem] = base * mult * rankMult; return pk; };
-    if (isAoeAbility(abilityId)) {
-      for (const m of this.world.monsters) {
-        if (!m.alive) continue;
-        if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= ABILITY_AOE_RADIUS) this.hitMonster(p, m, mkPacket(1.5), attacker);
-      }
-    } else {
-      for (const off of [-0.2, 0, 0.2]) this.spawnProjectile(p, mkPacket(1.4), attacker, ABILITY_PROJ_SPEED, p.facing + off);
-    }
-  }
-
-  /** Новая модель: диспетчеризация по active.type. */
+  /** Диспетчер активной способности по категории (после списания маны/КД/замаха). */
   private executeAbility(p: PlayerEntity, snap: PlayerSnapshot, active: ActiveAbility, rank: number): void {
-    const element = active.element ?? abilityElementOf(active.abilityId);
-    const base = packetTotal(buildAttackPacket(snap.derived, snap.attrs, p.save.equipment.weapon, this.scaling(), this.weights(), this.rng));
-    const dmg = base * active.damageMult * abilityRankMult(rank);
-    const packet = (): DamagePacket => { const pk = emptyPacket(); pk[element] = dmg; return pk; };
-    const attacker = snap.combat;
-    const opts = this.skillHitOpts(active, element, p.save.equipment.weapon);
-    switch (active.type) {
-      case 'strike': this.skillStrike(p, packet(), attacker, active, opts); break;
-      case 'cleave': this.skillCleave(p, packet(), attacker, active, opts); break;
-      case 'nova': this.skillNova(p, packet(), attacker, active, opts); break;
-      case 'projectile': this.skillProjectile(p, packet(), attacker, active, opts); break;
-      case 'boomerang': this.skillBoomerang(p, packet(), attacker, active, opts); break;
-      case 'dash': this.skillDash(p, packet(), attacker, active, opts); break;
-      case 'curse': this.skillCurse(p, active); break;
-      default: break; // toggle/buff/ground/meteor — фазы B/C
+    if (active.category === 'attack') {
+      const opts = this.skillHitOpts(active, active.element ?? abilityElementOf(active.abilityId), p.save.equipment.weapon);
+      this.weaponAttack(p, snap, active, rank, opts);
+      return;
     }
+    if (active.category === 'cast') {
+      const element = active.element ?? abilityElementOf(active.abilityId);
+      const base = packetTotal(buildAttackPacket(snap.derived, snap.attrs, p.save.equipment.weapon, this.scaling(), this.weights(), this.rng));
+      const dmg = base * active.damageMult * abilityRankMult(rank);
+      const packet = (): DamagePacket => { const pk = emptyPacket(); pk[element] = dmg; return pk; };
+      const attacker = snap.combat;
+      const opts = this.skillHitOpts(active, element, p.save.equipment.weapon);
+      switch (active.shape) {
+        case 'projectile': this.skillProjectile(p, packet(), attacker, active, opts); break;
+        case 'boomerang': this.skillBoomerang(p, packet(), attacker, active, opts); break;
+        case 'nova': case 'ground': case 'meteor': this.skillNova(p, packet(), attacker, active, opts); break;
+        case 'curse': this.skillCurse(p, active); break;
+      }
+    }
+    // aura/stance/buff обрабатываются в castSkill, не здесь.
   }
 
-  /** Опции удара скилла: отброс, гарант. стан, наложение стих. статуса по стихии. */
-  private skillHitOpts(active: ActiveAbility, element: DamageType, weapon?: Item): HitOpts {
+  /**
+   * АТАКА-СКИЛЛ = удар ОРУЖИЕМ + моды скилла: геометрия (дальность/размах/цели) и СОСТАВ урона — от
+   * оружия, урон ×damageMult×ранг (состав сохраняется), эффекты (стан/отброс/статус) — из `opts`.
+   * Мили → взмах по ВСЕМ в дуге оружия; дальнобой/маг → снаряд оружия. Опц. `dash` — гэпклоузер.
+   */
+  private weaponAttack(p: PlayerEntity, snap: PlayerSnapshot, active: AttackAbility, rank: number, opts: HitOpts): void {
+    const weapon = p.save.equipment.weapon;
+    const pm = debuffMods(p.debuffs);
+    const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
+    const mult = active.damageMult * abilityRankMult(rank) * pm.outDamageMult;
+    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
+    const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
+    if (active.dash) { this.doDashAttack(p, packet, attacker, active, rank, opts); return; }
+    const wt: WeaponType = weapon?.weaponType ?? 'melee';
+    if (wt === 'melee') this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult);
+    else this.spawnProjectile(p, packet, attacker, wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED, p.facing, { hitOpts: opts });
+  }
+
+  /** Гэпклоузер (Натиск): урон монстрам вдоль траектории + запуск движения-рывка (расталкивание весом). */
+  private doDashAttack(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: AttackAbility, rank: number, opts: HitOpts): void {
+    const dir = p.facing;
+    const dist = 130 * active.rangeMult;
+    const from = { ...p.pos };
+    const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1);
+    for (const m of this.world.monsters) {
+      if (!m.alive) continue;
+      if (this.distToSegment(m.pos, from, to) <= 42) this.hitMonster(p, m, packet, attacker, opts);
+    }
+    const travel = Math.hypot(to.x - from.x, to.y - from.y);
+    const speed = active.dash!.speed * abilityRankMult(rank);
+    p.dash = {
+      dx: Math.cos(dir), dy: Math.sin(dir), speed,
+      remaining: speed > 0 ? travel / speed : 0,
+      weightMult: 1 + active.dash!.weightBonus / 100,
+      hitIds: [],
+    };
+  }
+
+  /** Опции удара скилла (attack/cast): отброс(шанс), гарант. стан, наложение стих. статуса. Поверх оружейных. */
+  private skillHitOpts(active: OffensiveAbility, element: DamageType, weapon?: Item): HitOpts {
     // База — свойства оружия (armorPen/lowHp/stunChance + физ. дебаффы, напр. ошеломление
     // от булавы), поверх — эффекты скилла (гарант. стан, отброс, стих. статус).
     const opts: HitOpts = weapon ? this.weaponHitOpts(weapon) : {};
     if (active.knockback) opts.knockback = active.knockback;
+    opts.shoveChance = active.shoveChance;
     if (active.stunSec) opts.stunSec = active.stunSec;
     if (active.ailment) {
       const kind = this.cfg.get('damage-types').find((d) => d.id === element)?.ailment;
@@ -535,37 +592,8 @@ export class GameSession {
     return opts;
   }
 
-  /** Одиночный удар: ближайший монстр в дуге/дальности перед игроком. */
-  private skillStrike(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: ActiveAbility, opts: HitOpts): void {
-    const range = 60 * active.rangeMult;
-    const arc = 0.6 * active.arcMult;
-    let best: MonsterEntity | undefined; let bd = Infinity;
-    for (const m of this.world.monsters) {
-      if (!m.alive) continue;
-      const dx = m.pos.x - p.pos.x, dy = m.pos.y - p.pos.y;
-      const d = Math.hypot(dx, dy);
-      if (d > range || d >= bd) continue;
-      if (Math.abs(this.wrap(Math.atan2(dy, dx) - p.facing)) > arc) continue;
-      bd = d; best = m;
-    }
-    if (best) this.hitMonster(p, best, packet, attacker, opts);
-  }
-
-  /** Дуга: все монстры в конусе перед игроком. */
-  private skillCleave(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: ActiveAbility, opts: HitOpts): void {
-    const range = 52 * active.rangeMult;
-    const arc = 0.8 * active.arcMult;
-    for (const m of this.world.monsters) {
-      if (!m.alive) continue;
-      const dx = m.pos.x - p.pos.x, dy = m.pos.y - p.pos.y;
-      if (Math.hypot(dx, dy) > range) continue;
-      if (Math.abs(this.wrap(Math.atan2(dy, dx) - p.facing)) > arc) continue;
-      this.hitMonster(p, m, packet, attacker, opts);
-    }
-  }
-
-  /** Нова: AoE вокруг игрока. */
-  private skillNova(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: ActiveAbility, opts: HitOpts): void {
+  /** Нова/AoE (cast shape nova/ground/meteor): по всем в радиусе вокруг игрока. */
+  private skillNova(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: CastAbility, opts: HitOpts): void {
     const radius = active.radius || ABILITY_AOE_RADIUS;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
@@ -573,8 +601,8 @@ export class GameSession {
     }
   }
 
-  /** Снаряды: веер count с разбросом spread; опц. пробитие. */
-  private skillProjectile(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: ActiveAbility, opts: HitOpts): void {
+  /** Снаряды (cast projectile): веер count с разбросом spread; опц. пробитие. */
+  private skillProjectile(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: CastAbility, opts: HitOpts): void {
     const n = active.count, spread = active.spread;
     for (let i = 0; i < n; i++) {
       const off = n > 1 ? -spread / 2 + (spread * i) / (n - 1) : 0;
@@ -582,8 +610,8 @@ export class GameSession {
     }
   }
 
-  /** Бумеранг: летит вперёд, разворачивается к владельцу, бьёт на лету в обе стороны. */
-  private skillBoomerang(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: ActiveAbility, opts: HitOpts): void {
+  /** Бумеранг (cast boomerang): летит вперёд, разворачивается к владельцу, бьёт на лету в обе стороны. */
+  private skillBoomerang(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: CastAbility, opts: HitOpts): void {
     const dir = p.facing;
     this.world.projectiles.push({
       id: this.world.nextId++, pos: { ...p.pos },
@@ -594,21 +622,49 @@ export class GameSession {
     });
   }
 
-  /** Рывок: игрок прыгает вперёд, расталкивая и раня монстров на пути. */
-  private skillDash(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: ActiveAbility, opts: HitOpts): void {
-    const dir = p.facing;
-    const dist = 130 * active.rangeMult;
-    const from = { ...p.pos };
-    const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1);
+  /** Шаг рывка: быстрое движение в направлении рывка; стены останавливают, урон уже нанесён в doDashAttack. */
+  private stepDash(p: PlayerEntity, dt: number): void {
+    const d = p.dash!;
+    p.facing = Math.atan2(d.dy, d.dx);
+    const bx = p.pos.x, by = p.pos.y;
+    p.vel = { x: d.dx * d.speed, y: d.dy * d.speed };
+    p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt);
+    d.remaining -= dt;
+    if (d.remaining <= 0 || Math.hypot(p.pos.x - bx, p.pos.y - by) < 0.5) p.dash = null; // конец или упор в стену
+  }
+
+  /** Вес (масса) монстра для расталкивания: базовый вес × множитель чемпиона. */
+  private monsterMass(m: MonsterEntity): number {
+    const mult = m.def.rarity === 'champion' ? this.cfg.get('balance').collision.championWeightMult : 1;
+    return m.def.weight * mult;
+  }
+
+  /** Расталкивает пересекающиеся сущности по массе (вес). Игрок в рывке тяжелее (weightMult). */
+  private resolveCollisions(): void {
+    const bal = this.cfg.get('balance');
+    if (!bal.collision.enabled) return;
+    const wt: WeightTables = {
+      base: bal.weight.base,
+      shield: bal.weight.shield,
+      armorClasses: this.cfg.get('armor-classes'),
+      weaponWeights: this.cfg.get('weapon-weights'),
+    };
+    const bodies: CollisionBody[] = [];
+    for (const id of Object.keys(this.world.players)) {
+      const p = this.world.players[id]!;
+      if (!p.alive) continue;
+      const mass = playerWeight(p.save, wt) * (p.dash ? p.dash.weightMult : 1);
+      bodies.push({ pos: p.pos, radius: p.radius, mass });
+    }
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (this.distToSegment(m.pos, from, to) <= 42) this.hitMonster(p, m, packet, attacker, opts);
+      bodies.push({ pos: m.pos, radius: m.radius, mass: this.monsterMass(m) });
     }
-    p.pos = to;
+    resolveEntityCollisions(bodies, this.world.grid, bal.collision.iterations);
   }
 
   /** Проклятие/провокация: агро всех в радиусе (доп. эффекты — фаза C). */
-  private skillCurse(p: PlayerEntity, active: ActiveAbility): void {
+  private skillCurse(p: PlayerEntity, active: CastAbility): void {
     const radius = active.radius || 200;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
@@ -691,7 +747,11 @@ export class GameSession {
       // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
       if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }
       else if (res.stunned) { m.stunTimer = Math.max(m.stunTimer, 1.2); this.events.push({ type: 'stun', id: m.id }); }
-      if (opts.knockback) m.pos = moveWithCollision(m.pos, this.awayDir(killer.pos, m.pos, opts.knockback), m.radius, this.world.grid, 1);
+      // Отброс: по шансу (shoveChance) и масштабируем весом цели — тяжёлого толкает слабее.
+      if (opts.knockback && this.rng.float(0, 1) < (opts.shoveChance ?? 1)) {
+        const force = opts.knockback * (KNOCKBACK_REF_WEIGHT / Math.max(1, this.monsterMass(m)));
+        m.pos = moveWithCollision(m.pos, this.awayDir(killer.pos, m.pos, force), m.radius, this.world.grid, 1);
+      }
     } else {
       this.killMonster(m, killer);
     }

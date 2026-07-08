@@ -5,6 +5,7 @@ import { makeButton } from './ui/button.js';
 import { listClasses } from '../modules/classes/index.js';
 import { createCharacter } from '../modules/auth/authApi.js';
 import { FONT_TITLE } from '../ui/kit.js';
+import { reflowOnFontsReady } from './ui/fonts.js';
 
 /**
  * Создание персонажа: имя (DOM-поле) + выбор класса → `POST /api/characters` (сервер строит
@@ -22,7 +23,7 @@ export class ClassSelectScene extends Phaser.Scene {
     if (!app.auth) { this.scene.start('Login'); return; }
     const { width, height } = this.scale;
 
-    this.add.text(width / 2, height * 0.12, 'Создание персонажа', { fontFamily: FONT_TITLE, fontSize: '32px', color: '#e0b45a' }).setOrigin(0.5);
+    reflowOnFontsReady(this.add.text(width / 2, height * 0.12, 'Создание персонажа', { fontFamily: FONT_TITLE, fontSize: '32px', color: '#e0b45a' }).setOrigin(0.5));
     this.buildNameInput(height);
 
     const classes = listClasses(app.config);

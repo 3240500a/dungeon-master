@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { FONT_TITLE } from '../../ui/kit.js';
+import { reflowOnFontsReady } from './fonts.js';
 
 /** Простая текстовая кнопка для сцен-меню (Phaser-объект). */
 export function makeButton(
@@ -28,5 +29,6 @@ export function makeButton(
     text.on('pointerout', () => text.setBackgroundColor('#1a1f29').setColor('#e6ddc9'));
     text.on('pointerdown', onClick);
   }
+  reflowOnFontsReady(text); // перепечь текстуру, когда медиевальный шрифт догрузится (без мигания/hover)
   return text;
 }

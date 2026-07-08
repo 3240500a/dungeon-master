@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { App } from '../core/app.js';
 import { makeButton } from './ui/button.js';
 import { FONT_TITLE } from '../ui/kit.js';
+import { reflowOnFontsReady } from './ui/fonts.js';
 
 /**
  * Главное меню (D2R-стайл). Фон — картинка `public/menu-bg.png` (если добавлена): вписывается ПО
@@ -36,6 +37,7 @@ export class MainMenuScene extends Phaser.Scene {
     }
 
     this.title = this.add.text(0, 0, 'Dungeon Master', { fontFamily: FONT_TITLE, fontSize: '54px', color: '#e0b45a' }).setOrigin(0.5); // факельное золото
+    reflowOnFontsReady(this.title);
     this.buttons.push(
       makeButton(this, 0, 0, 'Играть', () => this.scene.start(App.from(this).auth ? 'CharacterSelect' : 'Login')),
     );

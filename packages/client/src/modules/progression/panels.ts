@@ -315,29 +315,19 @@ export const characterPanel: PanelFactory = (app, ui) => {
         } else if (binding) {
           const node = skillTree?.nodes.find((n) => n.id === binding);
           const active = node?.effect.active;
-          const isAttack = !!active && (!active.type || ATTACK_SKILL_TYPES.has(active.type));
-          if (node && active && isAttack) {
+          if (node && active && (active.category === 'attack' || active.category === 'cast')) {
             const rank = state.save.activeSkills[binding] ?? 1;
             const base = estimateWeaponDamage(state, state.save.equipment.weapon, scaling, weights);
-            const typed = !!active.type;
-            const mult = typed ? (active.damageMult ?? 1) : (SKILL_AOE.test(active.abilityId) ? 1.5 : 1.4);
-            const sdmg = Math.round(base * mult * abilityRankMult(rank));
-            let sdps: number; let rateTip: string;
-            if (typed) {
-              const rate = Math.max(0.2, state.derived().attackSpeed * (active.speed ?? 1));
-              sdps = Math.round(sdmg * rate);
-              rateTip = `темп ${(1 / rate).toFixed(2)} с/удар`;
-            } else {
-              const cd = abilityCooldown(active.cooldown, rank);
-              sdps = cd > 0 ? Math.round(sdmg / cd) : sdmg;
-              rateTip = `КД ${cd.toFixed(2)} с`;
-            }
+            const sdmg = Math.round(base * active.damageMult * abilityRankMult(rank));
+            const rate = Math.max(0.2, state.derived().attackSpeed * active.speed);
+            const sdps = Math.round(sdmg * rate);
+            const rateTip = `темп ${(1 / rate).toFixed(2)} с/удар`;
             const col = dmgColor(elementOf(node) as DamageType);
             right.append(mk('span', `font-weight:600;color:${col}`, `${sdmg} (ДПС ~${sdps})`));
             attachTooltip(row, () => `${node.name}: урон за удар <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.`);
           } else if (node && active) {
-            // Тогл/бафф/провокация — прямого урона нет.
-            const kind = active.type === 'toggle' ? 'стойка/аура' : active.type === 'buff' ? 'бафф' : 'утилити';
+            // Аура/стойка/бафф — прямого урона нет.
+            const kind = active.category === 'aura' ? 'аура' : active.category === 'stance' ? 'стойка' : 'бафф';
             right.append(mk('span', `color:${COLORS.dim}`, '—'));
             attachTooltip(row, () => `${node.name}: ${kind} — без прямого урона.`);
           } else {

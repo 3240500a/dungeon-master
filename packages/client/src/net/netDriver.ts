@@ -4,6 +4,7 @@ import type { Player } from '../modules/movement/player.js';
 import { Monster } from '../modules/combat/monster.js';
 import { Projectile } from '../modules/combat/projectile.js';
 import { DroppedItem } from '../modules/loot/droppedItem.js';
+import { PlayerVfx } from '../modules/combat/playerVfx.js';
 import { dmgColorNum } from '../core/damageTypes.js';
 import { monsterCombatStats } from '@dm/shared';
 import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot } from '@dm/shared';
@@ -45,13 +46,20 @@ export class NetDriver {
   private keys: Record<'w' | 'a' | 's' | 'd' | 'shift' | 'space' | 'alt' | 'e', Phaser.Input.Keyboard.Key>;
   private leftHeld = false;
   private rightHeld = false;
+  /** Предыдущее удержание по источнику ввода — для фронт-детекции нажатия тоглов. */
+  private wasHeld: Record<string, boolean> = {};
   private seq = 0;
   private latest?: WorldSnapshot;
+  /** VFX вокруг игрока: аура-кольцо, конус-прицел дальности/размаха, слэш при ударе. */
+  private vfx: PlayerVfx;
+  /** Клиент-предсказанный откат мили-атаки — для темпа слэша (та же формула, что на сервере). */
+  private localAttackCd = 0;
 
   constructor(scene: Phaser.Scene, app: App, player: Player) {
     this.scene = scene;
     this.app = app;
     this.player = player;
+    this.vfx = new PlayerVfx(scene);
     const kb = scene.input.keyboard!;
     const K = Phaser.Input.Keyboard.KeyCodes;
     this.keys = {
@@ -70,6 +78,15 @@ export class NetDriver {
   }
 
   setMyId(id: string): void { this.myId = id; }
+
+  /** Тогл ли забинженный узел (аура/стойка) — для фронт-детекции нажатия (иначе удержание мигает тоглом). */
+  private isToggleSkill(nodeId: string): boolean {
+    const save = this.app.state?.save;
+    if (!save) return false;
+    const tree = this.app.config.get('skills-active').find((t) => t.classId === save.classId);
+    const cat = tree?.nodes.find((n) => n.id === nodeId)?.effect.active?.category;
+    return cat === 'aura' || cat === 'stance';
+  }
 
   /** Пересоздаёт монстров текущей области по FloorInit (id→def). Вызывать при входе/смене этажа. */
   buildMonsters(floor: FloorInit): void {
@@ -90,20 +107,26 @@ export class NetDriver {
     this.rightHeld = p.rightButtonDown();
   };
 
-  /** Каждый кадр: шлём ввод и применяем последний снапшот. */
-  update(): void {
+  /** Каждый кадр: шлём ввод, рисуем VFX, применяем последний снапшот. `dt` — мс с прошлого кадра. */
+  update(dt = 0): void {
     const save = this.app.state!.save;
     let attack = false;
     let cast: string | null = null;
-    const consider = (b: string | null | undefined, held: boolean): void => {
+    const consider = (b: string | null | undefined, held: boolean, src: string): void => {
+      const prev = this.wasHeld[src] ?? false;
+      this.wasHeld[src] = held;
       if (!held || !b) return;
-      if (b === 'attack') attack = true; else if (cast == null) cast = b;
+      if (b === 'attack') { attack = true; return; }
+      // Тогл (аура/стойка): шлём каст ТОЛЬКО по фронту нажатия — иначе удержание переключает
+      // его каждый тик, и аура «мигает»/сбрасывается. Обычные удары/касты — как раньше (по удержанию).
+      if (this.isToggleSkill(b) && prev) return;
+      if (cast == null) cast = b;
     };
-    consider(save.mouseLeft, this.leftHeld);
-    consider(save.mouseRight, this.rightHeld);
-    consider(save.hotbar[0], this.keys.shift.isDown);
-    consider(save.hotbar[1], this.keys.space.isDown);
-    consider(save.hotbar[2], this.keys.alt.isDown);
+    consider(save.mouseLeft, this.leftHeld, 'L');
+    consider(save.mouseRight, this.rightHeld, 'R');
+    consider(save.hotbar[0], this.keys.shift.isDown, 'S');
+    consider(save.hotbar[1], this.keys.space.isDown, 'Sp');
+    consider(save.hotbar[2], this.keys.alt.isDown, 'A');
 
     const move = {
       x: (this.keys.d.isDown ? 1 : 0) - (this.keys.a.isDown ? 1 : 0),
@@ -111,6 +134,17 @@ export class NetDriver {
     };
     // Клавиша E — подбор ближайшего дропа (удержание надёжно: сервер сэмплит каждый тик). Клик по предмету — точечно (onDown).
     this.app.net.send({ t: 'input', seq: this.seq++, input: { move, facing: this.player.facing, attack, cast, interact: this.keys.e.isDown } });
+
+    // VFX: конус-прицел + аура каждый кадр; слэш-вспышка по темпу мили-атаки (клиент-предсказание).
+    const st = this.app.state!;
+    const geom = this.vfx.currentAttack(st, this.app.config);
+    const swinging = this.leftHeld && geom.melee; // ЛКМ-мили-атака зажата
+    this.localAttackCd = Math.max(0, this.localAttackCd - dt / 1000);
+    if (swinging && this.localAttackCd <= 0) {
+      this.vfx.flashSlash(this.player.x, this.player.y, this.player.facing, geom);
+      this.localAttackCd = 1 / Math.max(0.2, st.derived().attackSpeed * geom.speed);
+    }
+    this.vfx.drawFrame(this.player, st, this.app.config, this.scene.time.now, swinging);
 
     if (this.latest) this.render(this.latest);
   }
@@ -121,7 +155,11 @@ export class NetDriver {
     for (const pv of snap.players) {
       if (pv.id === this.myId) {
         this.player.setPos(pv.x, pv.y);
-        state.hp = pv.hp; state.mana = pv.mana; state.debuffs = pv.debuffs; state.toggles = pv.toggles;
+        state.hp = pv.hp; state.mana = pv.mana; state.debuffs = pv.debuffs;
+        // Смена аур/стоек приходит в снапшоте — эмитим state:changed, чтобы открытый лист персонажа
+        // перерисовался с бонусами ауры В МОМЕНТЕ (а не только после переоткрытия окна).
+        if (state.toggles.join(',') !== pv.toggles.join(',')) { state.toggles = pv.toggles; this.app.bus.emit('state:changed', {}); }
+        else state.toggles = pv.toggles;
         continue;
       }
       let r = this.remotes.get(pv.id);
@@ -233,6 +271,7 @@ export class NetDriver {
   }
 
   destroy(): void {
+    this.vfx.destroy();
     this.scene.input.off('pointerdown', this.onDown);
     this.scene.input.off('pointerup', this.onUp);
     for (const m of this.monsters.values()) m.destroy();

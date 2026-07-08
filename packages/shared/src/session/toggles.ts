@@ -28,10 +28,19 @@ export function activeAbilityOf(cfg: ConfigRegistry, classId: string, nodeId: st
   return tree?.nodes.find((n) => n.id === nodeId)?.effect.active ?? undefined;
 }
 
+/** Доля резерва маны узла (только у аур/стоек). */
+function reserveOf(a: ActiveAbility | undefined): number {
+  return a && (a.category === 'aura' || a.category === 'stance') ? (a.reservePct ?? 0) : 0;
+}
+/** Стат-моды тогла (ауры/стойки). */
+function buffModsOf(a: ActiveAbility | undefined): StatModifier[] {
+  return a && (a.category === 'aura' || a.category === 'stance') ? (a.buffMods ?? []) : [];
+}
+
 /** Доля зарезервированной маны от активных тоглов/аур (кап 0.9 — всю ману занять нельзя). */
 export function reservedManaFrac(cfg: ConfigRegistry, classId: string, toggles: readonly string[]): number {
   let f = 0;
-  for (const id of toggles) f += activeAbilityOf(cfg, classId, id)?.reservePct ?? 0;
+  for (const id of toggles) f += reserveOf(activeAbilityOf(cfg, classId, id));
   return Math.min(0.9, f);
 }
 
@@ -43,10 +52,7 @@ export function effectiveMaxMana(maxMana: number, reserveFrac: number): number {
 /** Стат-моды активных тоглов (ауры/стойки) — единый источник для боя и отображения. */
 export function toggleBuffMods(cfg: ConfigRegistry, classId: string, toggles: readonly string[]): StatModifier[] {
   const mods: StatModifier[] = [];
-  for (const id of toggles) {
-    const a = activeAbilityOf(cfg, classId, id);
-    if (a?.buffMods) mods.push(...a.buffMods);
-  }
+  for (const id of toggles) mods.push(...buffModsOf(activeAbilityOf(cfg, classId, id)));
   return mods;
 }
 
@@ -58,7 +64,7 @@ export function activeToggleInfos(cfg: ConfigRegistry, classId: string, toggles:
     const node = tree?.nodes.find((n) => n.id === id);
     const a = node?.effect.active;
     if (node && a) {
-      out.push({ id, name: node.name, description: node.description, reservePct: a.reservePct ?? 0, buffMods: a.buffMods ?? [] });
+      out.push({ id, name: node.name, description: node.description, reservePct: reserveOf(a), buffMods: buffModsOf(a) });
     }
   }
   return out;

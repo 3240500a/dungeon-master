@@ -33,7 +33,14 @@
           "active": {
             "abilityId": "cleave",
             "manaCost": 5,
-            "cooldown": 0.8
+            "cooldown": 0.8,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.3,
+            "arcMult": 1.3,
+            "speed": 0.9
           }
         },
         "x": 0,
@@ -112,7 +119,14 @@
           "active": {
             "abilityId": "whirlwind",
             "manaCost": 12,
-            "cooldown": 1.4
+            "cooldown": 1.4,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.1,
+            "arcMult": 4,
+            "speed": 0.8
           }
         },
         "x": 0,
@@ -191,7 +205,13 @@
           "active": {
             "abilityId": "rend",
             "manaCost": 8,
-            "cooldown": 4
+            "cooldown": 4,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.5,
+            "speed": 1
           }
         },
         "x": 0,
@@ -295,7 +315,10 @@
           "active": {
             "abilityId": "taunt",
             "manaCost": 8,
-            "cooldown": 6
+            "cooldown": 6,
+            "category": "cast",
+            "shape": "curse",
+            "radius": 220
           }
         },
         "x": 3,
@@ -374,7 +397,21 @@
           "active": {
             "abilityId": "shield-wall",
             "manaCost": 10,
-            "cooldown": 10
+            "cooldown": 10,
+            "category": "buff",
+            "durationSec": 8,
+            "buffMods": [
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.5
+              },
+              {
+                "stat": "blockChance",
+                "kind": "increased",
+                "value": 0.15
+              }
+            ]
           }
         },
         "x": 3,
@@ -453,7 +490,16 @@
           "active": {
             "abilityId": "iron-skin",
             "manaCost": 12,
-            "cooldown": 15
+            "cooldown": 15,
+            "category": "buff",
+            "durationSec": 10,
+            "buffMods": [
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.35
+              }
+            ]
           }
         },
         "x": 3,
@@ -557,7 +603,21 @@
           "active": {
             "abilityId": "battle-shout",
             "manaCost": 10,
-            "cooldown": 10
+            "cooldown": 10,
+            "category": "buff",
+            "durationSec": 12,
+            "buffMods": [
+              {
+                "stat": "minDamage",
+                "kind": "increased",
+                "value": 0.15
+              },
+              {
+                "stat": "maxDamage",
+                "kind": "increased",
+                "value": 0.15
+              }
+            ]
           }
         },
         "x": 6,
@@ -636,7 +696,16 @@
           "active": {
             "abilityId": "war-horn",
             "manaCost": 14,
-            "cooldown": 14
+            "cooldown": 14,
+            "category": "buff",
+            "durationSec": 10,
+            "buffMods": [
+              {
+                "stat": "moveSpeed",
+                "kind": "increased",
+                "value": 0.2
+              }
+            ]
           }
         },
         "x": 6,
@@ -715,7 +784,16 @@
           "active": {
             "abilityId": "rally",
             "manaCost": 12,
-            "cooldown": 12
+            "cooldown": 12,
+            "category": "buff",
+            "durationSec": 8,
+            "buffMods": [
+              {
+                "stat": "hpRegen",
+                "kind": "flat",
+                "value": 6
+              }
+            ]
           }
         },
         "x": 6,
@@ -838,7 +916,11 @@
           "active": {
             "abilityId": "firebolt",
             "manaCost": 6,
-            "cooldown": 0.5
+            "cooldown": 0.5,
+            "category": "cast",
+            "shape": "projectile",
+            "element": "fire",
+            "damageMult": 1.4
           }
         },
         "x": 0,
@@ -917,7 +999,13 @@
           "active": {
             "abilityId": "fireball",
             "manaCost": 12,
-            "cooldown": 1.2
+            "cooldown": 1.2,
+            "category": "cast",
+            "shape": "projectile",
+            "element": "fire",
+            "damageMult": 1.8,
+            "count": 3,
+            "spread": 0.3
           }
         },
         "x": 0,
@@ -996,7 +1084,12 @@
           "active": {
             "abilityId": "meteor",
             "manaCost": 20,
-            "cooldown": 6
+            "cooldown": 6,
+            "category": "cast",
+            "shape": "meteor",
+            "element": "fire",
+            "damageMult": 2.2,
+            "radius": 140
           }
         },
         "x": 0,
@@ -1100,7 +1193,12 @@
           "active": {
             "abilityId": "frost-nova",
             "manaCost": 14,
-            "cooldown": 6
+            "cooldown": 6,
+            "category": "cast",
+            "shape": "nova",
+            "element": "cold",
+            "damageMult": 1.2,
+            "radius": 140
           }
         },
         "x": 3,
@@ -1179,7 +1277,12 @@
           "active": {
             "abilityId": "ice-shard",
             "manaCost": 8,
-            "cooldown": 0.6
+            "cooldown": 0.6,
+            "category": "cast",
+            "shape": "projectile",
+            "element": "cold",
+            "damageMult": 1.5,
+            "pierce": true
           }
         },
         "x": 3,
@@ -1258,7 +1361,12 @@
           "active": {
             "abilityId": "blizzard",
             "manaCost": 22,
-            "cooldown": 8
+            "cooldown": 8,
+            "category": "cast",
+            "shape": "ground",
+            "element": "cold",
+            "damageMult": 1.6,
+            "radius": 160
           }
         },
         "x": 3,
@@ -1362,7 +1470,14 @@
           "active": {
             "abilityId": "blink",
             "manaCost": 12,
-            "cooldown": 5
+            "cooldown": 5,
+            "category": "attack",
+            "damageMult": 0.01,
+            "rangeMult": 1.4,
+            "dash": {
+              "speed": 1400,
+              "weightBonus": 0
+            }
           }
         },
         "x": 6,
@@ -1441,7 +1556,11 @@
           "active": {
             "abilityId": "arcane-orb",
             "manaCost": 10,
-            "cooldown": 1
+            "cooldown": 1,
+            "category": "cast",
+            "shape": "projectile",
+            "element": "lightning",
+            "damageMult": 1.7
           }
         },
         "x": 6,
@@ -1520,7 +1639,14 @@
           "active": {
             "abilityId": "teleport",
             "manaCost": 16,
-            "cooldown": 8
+            "cooldown": 8,
+            "category": "attack",
+            "damageMult": 0.01,
+            "rangeMult": 2.2,
+            "dash": {
+              "speed": 1800,
+              "weightBonus": 0
+            }
           }
         },
         "x": 6,
@@ -1643,7 +1769,12 @@
           "active": {
             "abilityId": "multishot",
             "manaCost": 8,
-            "cooldown": 0.9
+            "cooldown": 0.9,
+            "category": "cast",
+            "shape": "projectile",
+            "damageMult": 1.1,
+            "count": 5,
+            "spread": 0.5
           }
         },
         "x": 0,
@@ -1722,7 +1853,11 @@
           "active": {
             "abilityId": "piercing-shot",
             "manaCost": 10,
-            "cooldown": 1.2
+            "cooldown": 1.2,
+            "category": "cast",
+            "shape": "projectile",
+            "damageMult": 1.6,
+            "pierce": true
           }
         },
         "x": 0,
@@ -1801,7 +1936,11 @@
           "active": {
             "abilityId": "rain-of-arrows",
             "manaCost": 18,
-            "cooldown": 6
+            "cooldown": 6,
+            "category": "cast",
+            "shape": "ground",
+            "damageMult": 1.4,
+            "radius": 160
           }
         },
         "x": 0,
@@ -1905,7 +2044,11 @@
           "active": {
             "abilityId": "caltrops",
             "manaCost": 10,
-            "cooldown": 7
+            "cooldown": 7,
+            "category": "cast",
+            "shape": "ground",
+            "damageMult": 1.2,
+            "radius": 110
           }
         },
         "x": 3,
@@ -1984,7 +2127,12 @@
           "active": {
             "abilityId": "fire-trap",
             "manaCost": 12,
-            "cooldown": 8
+            "cooldown": 8,
+            "category": "cast",
+            "shape": "ground",
+            "element": "fire",
+            "damageMult": 1.5,
+            "radius": 110
           }
         },
         "x": 3,
@@ -2063,7 +2211,11 @@
           "active": {
             "abilityId": "blade-trap",
             "manaCost": 16,
-            "cooldown": 10
+            "cooldown": 10,
+            "category": "cast",
+            "shape": "ground",
+            "damageMult": 1.5,
+            "radius": 110
           }
         },
         "x": 3,
@@ -2167,7 +2319,21 @@
           "active": {
             "abilityId": "summon-wolf",
             "manaCost": 20,
-            "cooldown": 20
+            "cooldown": 20,
+            "category": "buff",
+            "durationSec": 20,
+            "buffMods": [
+              {
+                "stat": "minDamage",
+                "kind": "increased",
+                "value": 0.15
+              },
+              {
+                "stat": "maxDamage",
+                "kind": "increased",
+                "value": 0.15
+              }
+            ]
           }
         },
         "x": 6,
@@ -2246,7 +2412,21 @@
           "active": {
             "abilityId": "spirit-hawk",
             "manaCost": 16,
-            "cooldown": 14
+            "cooldown": 14,
+            "category": "buff",
+            "durationSec": 20,
+            "buffMods": [
+              {
+                "stat": "critChance",
+                "kind": "increased",
+                "value": 0.1
+              },
+              {
+                "stat": "accuracy",
+                "kind": "increased",
+                "value": 0.15
+              }
+            ]
           }
         },
         "x": 6,
@@ -2325,7 +2505,13 @@
           "active": {
             "abilityId": "bear-charge",
             "manaCost": 14,
-            "cooldown": 8
+            "cooldown": 8,
+            "category": "attack",
+            "damageMult": 1.6,
+            "dash": {
+              "speed": 700,
+              "weightBonus": 200
+            }
           }
         },
         "x": 6,
@@ -2417,286 +2603,939 @@
   {
     "classId": "zastupnik",
     "branches": [
-      { "id": "weapon", "name": "Оружие Веры" },
-      { "id": "bulwark", "name": "Оплот" },
-      { "id": "flame", "name": "Священное пламя" }
+      {
+        "id": "weapon",
+        "name": "Оружие Веры"
+      },
+      {
+        "id": "bulwark",
+        "name": "Оплот"
+      },
+      {
+        "id": "flame",
+        "name": "Священное пламя"
+      }
     ],
     "nodes": [
       {
         "id": "a-zastupnik-weapon-righteous",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Праведный удар",
         "description": "Быстрый одиночный удар; сильно копит ошеломление (от булавы).",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 10, "levelReq": 1,
-        "effect": { "active": { "abilityId": "righteous-strike", "manaCost": 3, "type": "strike", "damageMult": 1.5, "speed": 1.3 } },
-        "x": 0, "y": 0
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 10,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "abilityId": "righteous-strike",
+            "manaCost": 3,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.5,
+            "speed": 1.3
+          }
+        },
+        "x": 0,
+        "y": 0
       },
       {
         "id": "a-zastupnik-weapon-crush",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Сокрушающий взмах",
         "description": "Дуга по всем врагам спереди с шансом отброса.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-weapon-righteous"], "maxRank": 8, "levelReq": 2,
-        "effect": { "active": { "abilityId": "crushing-sweep", "manaCost": 5, "type": "cleave", "damageMult": 1.4, "speed": 0.9, "arcMult": 1.1, "knockback": 0.35 } },
-        "x": 0, "y": 1
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-weapon-righteous"
+        ],
+        "maxRank": 8,
+        "levelReq": 2,
+        "effect": {
+          "active": {
+            "abilityId": "crushing-sweep",
+            "manaCost": 5,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.4,
+            "speed": 0.9,
+            "arcMult": 1.1,
+            "knockback": 0.35
+          }
+        },
+        "x": 0,
+        "y": 1
       },
       {
         "id": "a-zastupnik-weapon-charge",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Натиск",
         "description": "Рывок вперёд: расталкивает врагов, наносит урон и копит ошеломление.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-weapon-crush"], "maxRank": 6, "levelReq": 4,
-        "effect": { "active": { "abilityId": "charge", "manaCost": 7, "type": "dash", "damageMult": 1.6, "speed": 0.8, "knockback": 0.5 } },
-        "x": 0, "y": 2
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-weapon-crush"
+        ],
+        "maxRank": 6,
+        "levelReq": 4,
+        "effect": {
+          "active": {
+            "abilityId": "charge",
+            "manaCost": 7,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.6,
+            "speed": 0.8,
+            "knockback": 0.5,
+            "dash": {
+              "speed": 700,
+              "weightBonus": 200
+            }
+          }
+        },
+        "x": 0,
+        "y": 2
       },
       {
         "id": "a-zastupnik-weapon-retribution",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Возмездие",
         "description": "Тяжёлый добивающий удар (усилен по целям с низким HP от оружия).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-weapon-righteous"], "maxRank": 8, "levelReq": 6,
-        "effect": { "active": { "abilityId": "retribution", "manaCost": 5, "type": "strike", "damageMult": 2.0, "speed": 0.7, "windupSec": 0.25 } },
-        "x": 0, "y": 3
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-weapon-righteous"
+        ],
+        "maxRank": 8,
+        "levelReq": 6,
+        "effect": {
+          "active": {
+            "abilityId": "retribution",
+            "manaCost": 5,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 2,
+            "speed": 0.7,
+            "windupSec": 0.25
+          }
+        },
+        "x": 0,
+        "y": 3
       },
       {
         "id": "a-zastupnik-weapon-stunhammer",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Оглушающий молот",
         "description": "Медленный удар с замахом — единственный, что оглушает (стан).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-weapon-charge"], "maxRank": 6, "levelReq": 10,
-        "effect": { "active": { "abilityId": "stunning-hammer", "manaCost": 6, "type": "strike", "damageMult": 2.6, "speed": 0.5, "windupSec": 0.35, "stunSec": 1.5 } },
-        "x": 0, "y": 4
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-weapon-charge"
+        ],
+        "maxRank": 6,
+        "levelReq": 10,
+        "effect": {
+          "active": {
+            "abilityId": "stunning-hammer",
+            "manaCost": 6,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 2.6,
+            "speed": 0.5,
+            "windupSec": 0.35,
+            "stunSec": 1.5
+          }
+        },
+        "x": 0,
+        "y": 4
       },
       {
         "id": "a-zastupnik-weapon-skyhammer",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Небесный молот",
         "description": "Бросок молота вперёд и назад — бьёт врагов на лету в обе стороны.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-weapon-stunhammer"], "maxRank": 6, "levelReq": 14,
-        "effect": { "active": { "abilityId": "sky-hammer", "manaCost": 10, "type": "boomerang", "damageMult": 1.8, "speed": 0.5, "windupSec": 0.3, "radius": 320 } },
-        "x": 0, "y": 5
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-weapon-stunhammer"
+        ],
+        "maxRank": 6,
+        "levelReq": 14,
+        "effect": {
+          "active": {
+            "abilityId": "sky-hammer",
+            "manaCost": 10,
+            "category": "cast",
+            "shape": "boomerang",
+            "damageMult": 1.8,
+            "speed": 0.5,
+            "radius": 320,
+            "windupSec": 0.3
+          }
+        },
+        "x": 0,
+        "y": 5
       },
       {
         "id": "a-zastupnik-weapon-macemastery",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Мастерство булав",
         "description": "+2% урона (тематически — булавами) за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 20, "levelReq": 1,
-        "effect": { "modifiers": [ { "stat": "minDamage", "kind": "increased", "value": 0.02 }, { "stat": "maxDamage", "kind": "increased", "value": 0.02 } ] },
-        "x": 1, "y": 0
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "minDamage",
+              "kind": "increased",
+              "value": 0.02
+            },
+            {
+              "stat": "maxDamage",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 0
       },
       {
         "id": "a-zastupnik-weapon-twohand",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Мастерство двуручного",
         "description": "+2% урона двуручным оружием за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-weapon-macemastery"], "maxRank": 20, "levelReq": 3,
-        "effect": { "modifiers": [ { "stat": "minDamage", "kind": "increased", "value": 0.02 }, { "stat": "maxDamage", "kind": "increased", "value": 0.02 } ] },
-        "x": 1, "y": 1
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-weapon-macemastery"
+        ],
+        "maxRank": 20,
+        "levelReq": 3,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "minDamage",
+              "kind": "increased",
+              "value": 0.02
+            },
+            {
+              "stat": "maxDamage",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
       },
       {
         "id": "a-zastupnik-weapon-bonecrusher",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Сокрушитель костей",
         "description": "+5% урона по ошеломлённым и +5% по нежити за ранг (реактивно).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-weapon-macemastery"], "maxRank": 10, "levelReq": 8,
-        "effect": { "triggers": [
-          { "on": "hit-dealt", "condition": { "targetStunned": true }, "effect": { "bonusDamagePct": 0.05 } },
-          { "on": "hit-dealt", "condition": { "targetFaction": "undead" }, "effect": { "bonusDamagePct": 0.05 } }
-        ] },
-        "x": 1, "y": 2
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-weapon-macemastery"
+        ],
+        "maxRank": 10,
+        "levelReq": 8,
+        "effect": {
+          "triggers": [
+            {
+              "on": "hit-dealt",
+              "condition": {
+                "targetStunned": true
+              },
+              "effect": {
+                "bonusDamagePct": 0.05
+              }
+            },
+            {
+              "on": "hit-dealt",
+              "condition": {
+                "targetFaction": "undead"
+              },
+              "effect": {
+                "bonusDamagePct": 0.05
+              }
+            }
+          ]
+        },
+        "x": 1,
+        "y": 2
       },
       {
         "id": "a-zastupnik-weapon-relentless",
-        "kind": "active", "branchId": "weapon",
+        "kind": "active",
+        "branchId": "weapon",
         "name": "Неумолимость",
         "description": "+12% стойкости к прерыванию замаха за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 5, "levelReq": 14,
-        "effect": { "modifiers": [ { "stat": "interruptResist", "kind": "flat", "value": 0.12 } ] },
-        "x": 1, "y": 3
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 5,
+        "levelReq": 14,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "interruptResist",
+              "kind": "flat",
+              "value": 0.12
+            }
+          ]
+        },
+        "x": 1,
+        "y": 3
       },
-
       {
         "id": "a-zastupnik-bulwark-stance",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Стойкость",
         "description": "Стойка: +броня, но −скорость атаки и бега. Резерв 20% маны.",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 6, "levelReq": 1,
-        "effect": { "active": { "abilityId": "stance", "manaCost": 0, "type": "toggle", "toggleGroup": "stance", "reservePct": 0.2,
-          "buffMods": [ { "stat": "armor", "kind": "increased", "value": 0.30 }, { "stat": "attackSpeed", "kind": "increased", "value": -0.15 }, { "stat": "moveSpeed", "kind": "increased", "value": -0.15 } ] } },
-        "x": 0, "y": 0
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 6,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "abilityId": "stance",
+            "manaCost": 0,
+            "category": "stance",
+            "toggleGroup": "stance",
+            "reservePct": 0.2,
+            "buffMods": [
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.3
+              },
+              {
+                "stat": "attackSpeed",
+                "kind": "increased",
+                "value": -0.15
+              },
+              {
+                "stat": "moveSpeed",
+                "kind": "increased",
+                "value": -0.15
+              }
+            ]
+          }
+        },
+        "x": 0,
+        "y": 0
       },
       {
         "id": "a-zastupnik-bulwark-taunt",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Провокация",
         "description": "AoE-провокация: враги вокруг агрятся на тебя.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-stance"], "maxRank": 6, "levelReq": 4,
-        "effect": { "active": { "abilityId": "taunt", "manaCost": 6, "type": "curse", "radius": 200 } },
-        "x": 0, "y": 1
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-stance"
+        ],
+        "maxRank": 6,
+        "levelReq": 4,
+        "effect": {
+          "active": {
+            "abilityId": "taunt",
+            "manaCost": 6,
+            "category": "cast",
+            "shape": "curse",
+            "radius": 200
+          }
+        },
+        "x": 0,
+        "y": 1
       },
       {
         "id": "a-zastupnik-bulwark-wall",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Броневой вал",
         "description": "Стойка: ещё больше брони, но −скорость. Резерв 20% маны.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-taunt"], "maxRank": 6, "levelReq": 10,
-        "effect": { "active": { "abilityId": "armor-wall", "manaCost": 0, "type": "toggle", "toggleGroup": "stance", "reservePct": 0.2,
-          "buffMods": [ { "stat": "armor", "kind": "increased", "value": 0.15 }, { "stat": "moveSpeed", "kind": "increased", "value": -0.10 } ] } },
-        "x": 0, "y": 2
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-taunt"
+        ],
+        "maxRank": 6,
+        "levelReq": 10,
+        "effect": {
+          "active": {
+            "abilityId": "armor-wall",
+            "manaCost": 0,
+            "category": "stance",
+            "toggleGroup": "stance",
+            "reservePct": 0.2,
+            "buffMods": [
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.15
+              },
+              {
+                "stat": "moveSpeed",
+                "kind": "increased",
+                "value": -0.1
+              }
+            ]
+          }
+        },
+        "x": 0,
+        "y": 2
       },
       {
         "id": "a-zastupnik-bulwark-platetraining",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Латная выучка",
         "description": "+1% брони за ранг (тематически — снижает штрафы любой брони).",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 20, "levelReq": 1,
-        "effect": { "modifiers": [ { "stat": "armor", "kind": "increased", "value": 0.01 } ] },
-        "x": 1, "y": 0
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "armor",
+              "kind": "increased",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 1,
+        "y": 0
       },
       {
         "id": "a-zastupnik-bulwark-unbending",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Несгибаемость",
         "description": "+2% макс. HP за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-platetraining"], "maxRank": 10, "levelReq": 3,
-        "effect": { "modifiers": [ { "stat": "maxHp", "kind": "increased", "value": 0.02 } ] },
-        "x": 1, "y": 1
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-platetraining"
+        ],
+        "maxRank": 10,
+        "levelReq": 3,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxHp",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
       },
       {
         "id": "a-zastupnik-bulwark-fullarmor",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Полный доспех",
         "description": "Если весь доспех латный (4+ части): +4% броня и +3% макс. HP за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-platetraining"], "maxRank": 5, "levelReq": 6,
-        "effect": { "setBonus": { "requireArmorClass": "plate", "minPieces": 4, "mods": [ { "stat": "armor", "kind": "increased", "value": 0.04 }, { "stat": "maxHp", "kind": "increased", "value": 0.03 } ] } },
-        "x": 1, "y": 2
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-platetraining"
+        ],
+        "maxRank": 5,
+        "levelReq": 6,
+        "effect": {
+          "setBonus": {
+            "requireArmorClass": "plate",
+            "minPieces": 4,
+            "mods": [
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.04
+              },
+              {
+                "stat": "maxHp",
+                "kind": "increased",
+                "value": 0.03
+              }
+            ]
+          }
+        },
+        "x": 1,
+        "y": 2
       },
       {
         "id": "a-zastupnik-bulwark-secondwind",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Второе дыхание",
         "description": "+реген HP за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-unbending"], "maxRank": 10, "levelReq": 8,
-        "effect": { "modifiers": [ { "stat": "hpRegen", "kind": "flat", "value": 0.3 } ] },
-        "x": 1, "y": 3
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-unbending"
+        ],
+        "maxRank": 10,
+        "levelReq": 8,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "hpRegen",
+              "kind": "flat",
+              "value": 0.3
+            }
+          ]
+        },
+        "x": 1,
+        "y": 3
       },
       {
         "id": "a-zastupnik-bulwark-steadfast",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Незыблемость",
         "description": "+макс. HP за ранг (тематически — выдержка к ране/кровотечению/увечью).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-fullarmor"], "maxRank": 8, "levelReq": 12,
-        "effect": { "modifiers": [ { "stat": "maxHp", "kind": "increased", "value": 0.01 } ] },
-        "x": 1, "y": 4
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-fullarmor"
+        ],
+        "maxRank": 8,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxHp",
+              "kind": "increased",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
       },
       {
         "id": "a-zastupnik-bulwark-irongrip",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Стальная хватка",
         "description": "+броня за ранг (тематически — сопротивление отбросу/сдвигу).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-unbending"], "maxRank": 3, "levelReq": 14,
-        "effect": { "modifiers": [ { "stat": "armor", "kind": "flat", "value": 5 } ] },
-        "x": 1, "y": 5
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-unbending"
+        ],
+        "maxRank": 3,
+        "levelReq": 14,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "armor",
+              "kind": "flat",
+              "value": 5
+            }
+          ]
+        },
+        "x": 1,
+        "y": 5
       },
       {
         "id": "a-zastupnik-bulwark-fortitude",
-        "kind": "active", "branchId": "bulwark",
+        "kind": "active",
+        "branchId": "bulwark",
         "name": "Крепость духа",
         "description": "Капстоун: +1% ко всем стихийным сопротивлениям и +5% макс. маны за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-bulwark-steadfast"], "maxRank": 5, "levelReq": 20,
-        "effect": { "modifiers": [ { "stat": "resFire", "kind": "flat", "value": 0.01 }, { "stat": "resCold", "kind": "flat", "value": 0.01 }, { "stat": "resLightning", "kind": "flat", "value": 0.01 }, { "stat": "resPoison", "kind": "flat", "value": 0.01 }, { "stat": "maxMana", "kind": "increased", "value": 0.05 } ] },
-        "x": 1, "y": 6
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-bulwark-steadfast"
+        ],
+        "maxRank": 5,
+        "levelReq": 20,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "resFire",
+              "kind": "flat",
+              "value": 0.01
+            },
+            {
+              "stat": "resCold",
+              "kind": "flat",
+              "value": 0.01
+            },
+            {
+              "stat": "resLightning",
+              "kind": "flat",
+              "value": 0.01
+            },
+            {
+              "stat": "resPoison",
+              "kind": "flat",
+              "value": 0.01
+            },
+            {
+              "stat": "maxMana",
+              "kind": "increased",
+              "value": 0.05
+            }
+          ]
+        },
+        "x": 1,
+        "y": 6
       },
-
       {
         "id": "a-zastupnik-flame-strike",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Пламенный удар",
         "description": "Удар физ+огонь, накладывает поджиг (огне-DoT).",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 10, "levelReq": 1,
-        "effect": { "active": { "abilityId": "flame-strike", "manaCost": 4, "type": "strike", "element": "fire", "damageMult": 1.5, "speed": 1.1,
-          "ailment": { "chance": 0.5, "mag": 2, "maxStacks": 5, "durationMs": 3000 } } },
-        "x": 0, "y": 0
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 10,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "abilityId": "flame-strike",
+            "manaCost": 4,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.5,
+            "speed": 1.1,
+            "element": "fire",
+            "ailment": {
+              "chance": 0.5,
+              "mag": 2,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 0,
+        "y": 0
       },
       {
         "id": "a-zastupnik-flame-aura",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Аура пламени",
         "description": "Аура: +урон огнём себе и союзникам. Резерв 20% маны.",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 6, "levelReq": 2,
-        "effect": { "active": { "abilityId": "flame-aura", "manaCost": 0, "type": "toggle", "toggleGroup": "aura", "reservePct": 0.2,
-          "buffMods": [ { "stat": "addFire", "kind": "flat", "value": 3 } ] } },
-        "x": 0, "y": 1
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 6,
+        "levelReq": 2,
+        "effect": {
+          "active": {
+            "abilityId": "flame-aura",
+            "manaCost": 0,
+            "category": "aura",
+            "toggleGroup": "aura",
+            "reservePct": 0.2,
+            "buffMods": [
+              {
+                "stat": "addFire",
+                "kind": "flat",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "x": 0,
+        "y": 1
       },
       {
         "id": "a-zastupnik-flame-judgment",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Кара огнём",
         "description": "Мощный огненный удар с сильным поджигом; аффинити ×урон по нежити/демонам.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-flame-strike"], "maxRank": 10, "levelReq": 4,
-        "effect": { "active": { "abilityId": "fire-judgment", "manaCost": 5, "type": "strike", "element": "fire", "damageMult": 1.8, "speed": 0.8,
-          "ailment": { "chance": 0.7, "mag": 3, "maxStacks": 6, "durationMs": 4000 } } },
-        "x": 0, "y": 2
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-flame-strike"
+        ],
+        "maxRank": 10,
+        "levelReq": 4,
+        "effect": {
+          "active": {
+            "abilityId": "fire-judgment",
+            "manaCost": 5,
+            "category": "attack",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.8,
+            "speed": 0.8,
+            "element": "fire",
+            "ailment": {
+              "chance": 0.7,
+              "mag": 3,
+              "maxStacks": 6,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 0,
+        "y": 2
       },
       {
         "id": "a-zastupnik-flame-mastery",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Мастерство огня",
         "description": "+урон огнём за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": [], "maxRank": 20, "levelReq": 1,
-        "effect": { "modifiers": [ { "stat": "addFire", "kind": "flat", "value": 0.5 } ] },
-        "x": 1, "y": 0
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "addFire",
+              "kind": "flat",
+              "value": 0.5
+            }
+          ]
+        },
+        "x": 1,
+        "y": 0
       },
       {
         "id": "a-zastupnik-flame-firearmor",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Огненный доспех",
         "description": "+урон огнём за ранг (тематически — поджигает атакующих).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-flame-mastery"], "maxRank": 10, "levelReq": 3,
-        "effect": { "modifiers": [ { "stat": "addFire", "kind": "flat", "value": 0.3 } ] },
-        "x": 1, "y": 1
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-flame-mastery"
+        ],
+        "maxRank": 10,
+        "levelReq": 3,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "addFire",
+              "kind": "flat",
+              "value": 0.3
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
       },
       {
         "id": "a-zastupnik-flame-undeadbane",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Погибель нежити",
         "description": "+6% урона по нежити и демонам за ранг (реактивно).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-flame-judgment"], "maxRank": 10, "levelReq": 6,
-        "effect": { "triggers": [
-          { "on": "hit-dealt", "condition": { "targetFaction": "undead" }, "effect": { "bonusDamagePct": 0.06 } },
-          { "on": "hit-dealt", "condition": { "targetFaction": "demon" }, "effect": { "bonusDamagePct": 0.06 } }
-        ] },
-        "x": 1, "y": 2
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-flame-judgment"
+        ],
+        "maxRank": 10,
+        "levelReq": 6,
+        "effect": {
+          "triggers": [
+            {
+              "on": "hit-dealt",
+              "condition": {
+                "targetFaction": "undead"
+              },
+              "effect": {
+                "bonusDamagePct": 0.06
+              }
+            },
+            {
+              "on": "hit-dealt",
+              "condition": {
+                "targetFaction": "demon"
+              },
+              "effect": {
+                "bonusDamagePct": 0.06
+              }
+            }
+          ]
+        },
+        "x": 1,
+        "y": 2
       },
       {
         "id": "a-zastupnik-flame-incinerate",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Испепеление",
         "description": "+8% урона по горящим целям за ранг (реактивно).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-flame-mastery"], "maxRank": 10, "levelReq": 8,
-        "effect": { "triggers": [
-          { "on": "hit-dealt", "condition": { "targetBurning": true }, "effect": { "bonusDamagePct": 0.08 } }
-        ] },
-        "x": 1, "y": 3
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-flame-mastery"
+        ],
+        "maxRank": 10,
+        "levelReq": 8,
+        "effect": {
+          "triggers": [
+            {
+              "on": "hit-dealt",
+              "condition": {
+                "targetBurning": true
+              },
+              "effect": {
+                "bonusDamagePct": 0.08
+              }
+            }
+          ]
+        },
+        "x": 1,
+        "y": 3
       },
       {
         "id": "a-zastupnik-flame-purifying",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Очищающее пламя",
         "description": "Усиливает Ауру пламени: +урон огнём за ранг.",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-flame-aura"], "maxRank": 8, "levelReq": 12,
-        "effect": { "modifiers": [ { "stat": "addFire", "kind": "flat", "value": 0.5 } ] },
-        "x": 1, "y": 4
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-flame-aura"
+        ],
+        "maxRank": 8,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "addFire",
+              "kind": "flat",
+              "value": 0.5
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
       },
       {
         "id": "a-zastupnik-flame-ordersflame",
-        "kind": "active", "branchId": "flame",
+        "kind": "active",
+        "branchId": "flame",
         "name": "Пламя Ордена",
         "description": "Капстоун: +урон огнём за ранг (часть физ. урона → огонь).",
-        "cost": { "type": "points", "amount": 1 }, "requires": ["a-zastupnik-flame-incinerate"], "maxRank": 5, "levelReq": 18,
-        "effect": { "modifiers": [ { "stat": "addFire", "kind": "flat", "value": 1 } ] },
-        "x": 1, "y": 5
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-zastupnik-flame-incinerate"
+        ],
+        "maxRank": 5,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "addFire",
+              "kind": "flat",
+              "value": 1
+            }
+          ]
+        },
+        "x": 1,
+        "y": 5
       }
     ]
   }

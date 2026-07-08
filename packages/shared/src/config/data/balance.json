@@ -130,6 +130,19 @@
     "cols": 20,
     "rows": 12
   },
+  "collision": {
+    "enabled": true,
+    "iterations": 2,
+    "championWeightMult": 2
+  },
+  "weight": {
+    "base": 100,
+    "shield": { "light": 15, "medium": 35, "heavy": 60 }
+  },
+  "melee": {
+    "baseRange": 52,
+    "baseArc": 0.8
+  },
   "autoPickup": [
     "rare",
     "unique"

@@ -57,6 +57,8 @@ export interface MonsterDef {
   visionAngle: number;
   /** Радиус слуха (px). */
   hearing: number;
+  /** Вес (масса) для расталкивания сущностей. */
+  weight: number;
 }
 
 export type MonsterRarity = 'normal' | 'champion';

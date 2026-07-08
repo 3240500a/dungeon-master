@@ -27,11 +27,11 @@ export const COLORS = {
 
 /**
  * Заголовочный шрифт (медиевальный). Бандлится локально через @fontsource:
- * Cinzel рисует латиницу («Dungeon Master»), Ruslan Display — кириллицу (у Cinzel
- * нет кириллических глифов, браузер подставляет следующий в стеке поглифно).
- * Используется в титрах сцен и кнопках меню; тело/тултипы остаются на sans.
+ * Cinzel рисует латиницу («Dungeon Master»), Forum — кириллицу (римские капители с
+ * родной кириллицей; у Cinzel нет кириллических глифов, браузер подставляет следующий
+ * в стеке поглифно). Титры сцен и кнопки меню; тело/тултипы остаются на sans.
  */
-export const FONT_TITLE = "'Cinzel', 'Ruslan Display', Georgia, serif";
+export const FONT_TITLE = "'Cinzel', 'Forum', Georgia, serif";
 
 /** Создаёт элемент с cssText и (опц.) текстом. */
 export function mk<K extends keyof HTMLElementTagNameMap>(

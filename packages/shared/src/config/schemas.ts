@@ -105,6 +105,34 @@ export const balanceSchema = z.object({
       rows: z.number().int().min(4).default(12),
     })
     .default({ tabs: 2, cols: 20, rows: 12 }),
+  /** Расталкивание сущностей (по весу): вкл/выкл, число релаксаций за тик, множитель веса чемпиона. */
+  collision: z
+    .object({
+      enabled: z.boolean().default(true),
+      iterations: z.number().int().min(1).max(4).default(2),
+      championWeightMult: z.number().min(1).default(2),
+    })
+    .default({ enabled: true, iterations: 2, championWeightMult: 2 }),
+  /** Вес игрока для расталкивания: база тела + вклад щита по классу (броня/оружие — в их справочниках). */
+  weight: z
+    .object({
+      base: z.number().min(0).default(100),
+      shield: z
+        .object({
+          light: z.number().min(0).default(15),
+          medium: z.number().min(0).default(35),
+          heavy: z.number().min(0).default(60),
+        })
+        .default({ light: 15, medium: 35, heavy: 60 }),
+    })
+    .default({ base: 100, shield: { light: 15, medium: 35, heavy: 60 } }),
+  /** Базовая геометрия взмаха мили-атаки (одна истина: сервер бьёт, клиент рисует прицел/слэш). */
+  melee: z
+    .object({
+      baseRange: z.number().min(1).default(52),
+      baseArc: z.number().min(0.1).default(0.8),
+    })
+    .default({ baseRange: 52, baseArc: 0.8 }),
   /** Редкости, которые поднимаются автоматически при проходе рядом. Остальное — по клику. */
   autoPickup: z
     .array(z.enum(['normal', 'magic', 'rare', 'unique']))
@@ -349,6 +377,8 @@ export const monstersSchema = z.array(
     vision: z.number().default(240),
     visionAngle: z.number().default(100),
     hearing: z.number().default(96),
+    /** Вес (масса) для расталкивания: тяжёлого двигают меньше. Чемпион ×balance.collision.championWeightMult. */
+    weight: z.number().min(0).default(100),
   }),
 );
 
@@ -392,6 +422,8 @@ export const armorClassesSchema = z.array(
     evade: z.number().default(0),
     /** Вклад в «громкость» (слух монстров). */
     noise: z.number().default(0),
+    /** Вклад в вес игрока (расталкивание): тяжёлая броня — больше. */
+    weight: z.number().min(0).default(20),
     /** Выдержка (доля снижения шанса/длит.) к физ-статусам. */
     poise: z
       .object({
@@ -450,6 +482,8 @@ export const weaponWeightsSchema = z.array(
     /** Доли скейла урона от атрибутов (Сила / Ловкость). */
     strength: z.number().min(0),
     dexterity: z.number().min(0),
+    /** Вклад в вес игрока (расталкивание): тяжёлое оружие — больше. */
+    weight: z.number().min(0).default(10),
   }),
 );
 
@@ -564,6 +598,103 @@ const triggerSchema = z.object({
   }),
 });
 
+// ── Активная способность (v2): категория-дискриминатор + ограничения оружия ──
+const damageTypeEnum = z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']);
+const ailmentApplySchema = z.object({
+  chance: z.number().min(0).max(1),
+  mag: z.number(),
+  mag2: z.number().optional(),
+  maxStacks: z.number().int().min(1),
+  durationMs: z.number().min(0),
+});
+/** Ограничения оружия скилла (пусто → любое). Тип + класс + число рук. */
+const weaponRestrict = {
+  weaponTypes: z.array(z.enum(['melee', 'ranged', 'magic'])).optional(),
+  weaponClasses: z.array(z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'bow', 'crossbow', 'wand', 'staff'])).optional(),
+  hands: z.enum(['any', 'one', 'two']).default('any'),
+};
+const activeCommon = {
+  abilityId: z.string(),
+  manaCost: z.number().min(0).default(0),
+  /** КД, сек. 0 = без КД (тайминг от attackSpeed×speed). */
+  cooldown: z.number().min(0).default(0),
+};
+
+/** Атака: удар ОРУЖИЕМ (геометрия/состав от оружия) + моды скилла. */
+const attackAbilitySchema = z.object({
+  category: z.literal('attack'),
+  ...activeCommon,
+  ...weaponRestrict,
+  speed: z.number().min(0.1).default(1),
+  damageMult: z.number().min(0).default(1),
+  /** Множители дуги/дальности ПОВЕРХ геометрии оружия. */
+  arcMult: z.number().min(0).default(1),
+  rangeMult: z.number().min(0).default(1),
+  windupSec: z.number().min(0).default(0),
+  knockback: z.number().min(0).default(0),
+  shoveChance: z.number().min(0).max(1).default(1),
+  stunSec: z.number().min(0).default(0),
+  /** Стихия для накладываемого статуса (сам урон — состав оружия). */
+  element: damageTypeEnum.optional(),
+  ailment: ailmentApplySchema.optional(),
+  /** Опц. рывок-гэпклоузер (Натиск): быстрое движение + расталкивание весом. */
+  dash: z.object({
+    speed: z.number().min(1).default(700),
+    weightBonus: z.number().min(0).default(200),
+  }).optional(),
+});
+
+/** Каст: стихийное заклинание (свод к element), форма задаёт паттерн. */
+const castAbilitySchema = z.object({
+  category: z.literal('cast'),
+  ...activeCommon,
+  ...weaponRestrict,
+  shape: z.enum(['projectile', 'boomerang', 'nova', 'ground', 'meteor', 'curse']),
+  element: damageTypeEnum.optional(),
+  speed: z.number().min(0.1).default(1),
+  damageMult: z.number().min(0).default(1),
+  count: z.number().int().min(1).default(1),
+  spread: z.number().min(0).default(0),
+  pierce: z.boolean().default(false),
+  radius: z.number().min(0).default(0),
+  windupSec: z.number().min(0).default(0),
+  knockback: z.number().min(0).default(0),
+  shoveChance: z.number().min(0).max(1).default(1),
+  stunSec: z.number().min(0).default(0),
+  ailment: ailmentApplySchema.optional(),
+});
+
+/** Аура: тогл, резервирует ману, даёт стат-моды (пати-радиус — задел). */
+const auraAbilitySchema = z.object({
+  category: z.literal('aura'),
+  ...activeCommon,
+  toggleGroup: z.string().optional(),
+  reservePct: z.number().min(0).max(1).optional(),
+  buffMods: z.array(statModifierSchema).optional(),
+  radius: z.number().min(0).optional(),
+});
+
+/** Стойка: личный тогл-эксклюзив, резерв маны + стат-моды. */
+const stanceAbilitySchema = z.object({
+  category: z.literal('stance'),
+  ...activeCommon,
+  toggleGroup: z.string().optional(),
+  reservePct: z.number().min(0).max(1).optional(),
+  buffMods: z.array(statModifierSchema).optional(),
+});
+
+/** Временный бафф: стат-моды за ману на durationSec. */
+const buffAbilitySchema = z.object({
+  category: z.literal('buff'),
+  ...activeCommon,
+  durationSec: z.number().min(0).default(10),
+  buffMods: z.array(statModifierSchema).optional(),
+});
+
+const activeAbilitySchema = z.discriminatedUnion('category', [
+  attackAbilitySchema, castAbilitySchema, auraAbilitySchema, stanceAbilitySchema, buffAbilitySchema,
+]);
+
 const skillEffectSchema = z.object({
   modifiers: z.array(statModifierSchema).optional(),
   /** Реактивные триггеры мастерства (условные эффекты на удар/получение урона). */
@@ -579,52 +710,8 @@ const skillEffectSchema = z.object({
       mods: z.array(statModifierSchema),
     })
     .optional(),
-  active: z
-    .object({
-      abilityId: z.string(),
-      manaCost: z.number().min(0),
-      /** Легаси-КД (сек). 0 = без КД (новая модель — скорость от attackSpeed). */
-      cooldown: z.number().min(0).default(0),
-      /** Механика (новая модель). Нет → старое поведение по имени abilityId. */
-      type: z.enum([
-        'strike', 'cleave', 'nova', 'projectile', 'boomerang', 'dash',
-        'curse', 'buff', 'toggle', 'ground', 'meteor',
-      ]).optional(),
-      /** Стихия урона (иначе — по имени abilityId). */
-      element: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).optional(),
-      /** Множитель урона к базовому удару оружием. */
-      damageMult: z.number().min(0).default(1),
-      /** Коэффициент скорости для удара-типа (attackSpeed × speed). <1 медленнее. */
-      speed: z.number().min(0.1).default(1),
-      /** Снаряды: число и разброс веера (рад); пробитие. */
-      count: z.number().int().min(1).default(1),
-      spread: z.number().min(0).default(0),
-      pierce: z.boolean().default(false),
-      /** AoE-радиус (nova/ground/meteor). */
-      radius: z.number().min(0).default(0),
-      /** Мили: множитель дуги и досягаемости. */
-      arcMult: z.number().min(0).default(1),
-      rangeMult: z.number().min(0).default(1),
-      knockback: z.number().min(0).default(0),
-      /** Гарантированный стан, сек. */
-      stunSec: z.number().min(0).default(0),
-      /** Наложение стих. статуса (kind — по стихии скилла через damage-types.ailment). */
-      ailment: z.object({
-        chance: z.number().min(0).max(1),
-        mag: z.number(),
-        mag2: z.number().optional(),
-        maxStacks: z.number().int().min(1),
-        durationMs: z.number().min(0),
-      }).optional(),
-      /** Замах (сек) — окно, в которое удар можно прервать станом/ошеломлением. */
-      windupSec: z.number().min(0).default(0),
-      /** Тоглы/баффы (фаза B): группа эксклюзива, резерв маны, стат-моды, длительность. */
-      toggleGroup: z.string().optional(),
-      reservePct: z.number().min(0).max(1).optional(),
-      buffMods: z.array(statModifierSchema).optional(),
-      durationSec: z.number().min(0).optional(),
-    })
-    .optional(),
+  /** Активная способность (v2): дискриминированная по `category` (attack/cast/aura/stance/buff). */
+  active: activeAbilitySchema.optional(),
 });
 
 const skillNodeBase = {
