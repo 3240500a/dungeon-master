@@ -10,7 +10,7 @@ import { rarityHex } from '../loot/rarity.js';
  * позволяет таскать предмет инвентарь↔вкладка сундука.
  */
 
-export const CELL = 32;
+export const CELL = 40; // клетка инвентаря/сундука (была 32). Сундук 20 клеток → см. domUi maxWidth.
 export const GAP = 3;
 export const PITCH = CELL + GAP;
 

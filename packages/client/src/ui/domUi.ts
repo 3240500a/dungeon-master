@@ -103,7 +103,7 @@ export class DomUi {
       left: `${40 + (this.cascade % 6) * 36}px`,
       top: `${48 + (this.cascade % 6) * 36}px`,
       minWidth: '360px',
-      maxWidth: '860px',
+      maxWidth: '900px', // вмещает сундук 20 клеток × CELL(40) ≈ 885px без гориз. скролла
       maxHeight: '84vh',
       display: 'flex',
       flexDirection: 'column',
