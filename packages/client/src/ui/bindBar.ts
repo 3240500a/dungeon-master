@@ -40,7 +40,7 @@ function nodeById(app: App, id: string): SkillNode | undefined {
  */
 export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; rebuild: () => void } {
   const el = document.createElement('div');
-  el.style.cssText = 'display:flex;align-items:flex-end;gap:6px;pointer-events:auto';
+  el.style.cssText = 'display:flex;align-items:flex-end;gap:8px;pointer-events:auto';
 
   const cdOverlays: { box: HTMLDivElement; binding: () => Binding }[] = [];
 
@@ -51,17 +51,17 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
     SLOTS.forEach((slot, i) => {
       if (i === 2) { // визуально отделяем 3 доп.слота от мыши
         const sep = document.createElement('div');
-        sep.style.cssText = 'width:1px;height:44px;background:#2b323f;margin:0 4px;align-self:center';
+        sep.style.cssText = 'width:1px;height:56px;background:#2b323f;margin:0 5px;align-self:center';
         el.append(sep);
       }
       const col = document.createElement('div');
-      col.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px';
-      const size = slot.big ? 52 : 40;
+      col.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px';
+      const size = slot.big ? 64 : 52;
       const box = document.createElement('div');
       box.style.cssText =
-        `position:relative;width:${size}px;height:${size}px;border-radius:8px;background:#0f131a;` +
-        `border:1.5px solid #3e4756;display:flex;align-items:center;justify-content:center;` +
-        `font-size:${slot.big ? 16 : 13}px;font-weight:700;cursor:pointer;overflow:hidden;user-select:none`;
+        `position:relative;width:${size}px;height:${size}px;border-radius:10px;background:#0f131a;` +
+        `border:2px solid #3e4756;display:flex;align-items:center;justify-content:center;` +
+        `font-size:${slot.big ? 20 : 16}px;font-weight:700;cursor:pointer;overflow:hidden;user-select:none`;
       paintBox(app, box, slot.get(save));
       // Оверлей КД (заполняется снизу).
       const cd = document.createElement('div');
@@ -89,7 +89,7 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
 
 function mkLabel(text: string): HTMLElement {
   const l = document.createElement('div');
-  l.style.cssText = 'font-size:10px;color:#8f897c';
+  l.style.cssText = 'font-size:12px;color:#8f897c';
   l.textContent = text;
   return l;
 }

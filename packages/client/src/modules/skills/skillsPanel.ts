@@ -171,7 +171,7 @@ function nodeRow(app: App, node: Node): HTMLElement {
   const row = mk('div',
     `border:1px solid ${COLORS.border};border-radius:6px;padding:8px;margin:6px 0;background:${COLORS.bg}`);
   const head = mk('div', 'display:flex;align-items:center;gap:10px');
-  head.append(skillIcon(node, 30));
+  head.append(skillIcon(node, 38));
   const titleWrap = mk('div', 'flex:1');
   titleWrap.append(mk('b', `display:block;color:${locked ? '#6a655c' : isActive ? '#e6ddc9' : '#c4bca8'}`, node.name));
   head.append(titleWrap, mk('span', `font-size:12px;color:${COLORS.dim}`, `ранг ${rank}/${node.maxRank}`));

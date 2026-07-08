@@ -50,7 +50,7 @@ const DOLL_LAYOUT: (EquipSlot | null)[] = [
 function paperdoll(app: App, msg: HTMLElement): HTMLElement {
   const box = mk('div');
   box.append(mk('p', `font-size:12px;color:${COLORS.dim};margin:0 0 8px`, 'Экипировка'));
-  const grid = mk('div', 'display:grid;grid-template-columns:repeat(3,52px);gap:10px');
+  const grid = mk('div', 'display:grid;grid-template-columns:repeat(3,62px);gap:12px');
   for (const slot of DOLL_LAYOUT) {
     grid.append(slot ? equipSlotCell(app, slot, msg) : mk('div'));
   }
@@ -62,8 +62,8 @@ function equipSlotCell(app: App, slot: EquipSlot, msg: HTMLElement): HTMLElement
   const state = app.state!;
   const item = state.save.equipment[slot] ?? null;
   const cell = mk('div',
-    `width:52px;height:52px;border-radius:8px;display:flex;align-items:center;justify-content:center;` +
-    `font-size:13px;font-weight:500;background:${COLORS.panel2};cursor:pointer`);
+    `width:62px;height:62px;border-radius:8px;display:flex;align-items:center;justify-content:center;` +
+    `font-size:15px;font-weight:500;background:${COLORS.panel2};cursor:pointer`);
   cell.dataset.eqslot = slot;
   if (item) {
     cell.style.border = `2px solid ${rarityHex(item.rarity)}`;

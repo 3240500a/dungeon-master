@@ -163,10 +163,10 @@ export function itemSlot(
   item: Item | null,
   opts: { size?: number; onClick?: () => void; emptyLabel?: string } = {},
 ): HTMLElement {
-  const size = opts.size ?? 46;
+  const size = opts.size ?? 56;
   const slot = mk('div',
     `width:${size}px;height:${size}px;box-sizing:border-box;border-radius:6px;` +
-    `display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;` +
+    `display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:bold;` +
     `background:${COLORS.panel2};`,
   );
   if (item) {

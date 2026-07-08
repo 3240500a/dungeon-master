@@ -24,9 +24,10 @@ export class GameLog {
   constructor(app: App, root: HTMLElement) {
     this.box = document.createElement('div');
     this.box.style.cssText =
-      'position:fixed;left:12px;bottom:30px;width:360px;height:168px;overflow-y:auto;' +
+      // bottom:76 — над поясом колб (пояс: bottom:12 + слот 52 = 64), чтобы чат и колбы не налезали.
+      'position:fixed;left:12px;bottom:76px;width:410px;height:196px;overflow-y:auto;' +
       'background:rgba(14,17,23,0.6);border:0.5px solid #2b323f;border-radius:8px;' +
-      'padding:6px 9px;font-size:12px;line-height:1.45;z-index:40;' +
+      'padding:7px 10px;font-size:14px;line-height:1.5;z-index:40;' +
       'font-family:system-ui,sans-serif;color:#d8d0bf;scrollbar-width:thin;pointer-events:auto';
     root.appendChild(this.box);
     app.bus.on('log:message', ({ text, kind }) => this.push(text, kind));
