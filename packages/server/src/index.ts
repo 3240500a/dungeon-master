@@ -181,6 +181,9 @@ if (existsSync(join(CLIENT_DIST, 'index.html'))) {
 
 const PORT = Number(process.env.PORT ?? 3001);
 const server = createServer(app);
+// Выключаем алгоритм Нейгла на КАЖДОМ TCP-соединении (HTTP + апгрейд WS идут по этим же сокетам):
+// иначе мелкие реалтайм-пакеты (ввод/снапшоты) склеиваются и ждут до ~40мс, что складывается с пингом.
+server.on('connection', (socket) => socket.setNoDelay(true));
 attachWsServer(server, config); // авторитетный кооп на /ws (комнаты = GameSession)
 server.listen(PORT, () => {
   console.log(`[dm-server] слушает http://localhost:${PORT}`);

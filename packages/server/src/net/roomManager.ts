@@ -39,6 +39,9 @@ export class RoomManager {
     let frame: ClientFrame;
     try { frame = JSON.parse(raw) as ClientFrame; } catch { return; }
 
+    // Замер задержки: сразу эхо-pong (без auth/комнаты) — клиент считает RTT. Также keepalive.
+    if (frame.t === 'ping') { ws.send(JSON.stringify({ t: 'pong', id: frame.id })); return; }
+
     // Есть ли незавершённый забег? (грейс-комната из подземелья). Комнату не трогаем.
     if (frame.t === 'runStatus') {
       const userId = this.authOwner(ws, frame.token, frame.charId);

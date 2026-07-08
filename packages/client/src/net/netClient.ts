@@ -7,22 +7,52 @@ type Handler = (frame: ServerFrame) => void;
  * Клиент шлёт `ClientFrame`, получает `ServerFrame`. Один обработчик на тип кадра
  * (`on(t, cb)`), плюс `onOpen`/`onClose`. Реконнект — базовый (по желанию позже).
  */
+const PING_INTERVAL_MS = 1000;
+
 export class NetClient {
   private ws?: WebSocket;
   private handlers = new Map<ServerFrame['t'], Handler[]>();
   private openCbs: (() => void)[] = [];
   private closeCbs: (() => void)[] = [];
+  // Замер задержки: раз в секунду шлём ping с id, ловим pong → RTT. -1 = ещё нет замера.
+  private pingTimer?: ReturnType<typeof setInterval>;
+  private pingId = 0;
+  private pingSentAt = new Map<number, number>();
+  private _rtt = -1;
+
+  /** Последний измеренный RTT (мс), −1 если ещё не измерен / нет соединения. */
+  get rtt(): number { return this._rtt; }
 
   connect(url = wsUrl()): void {
     const ws = new WebSocket(url);
     this.ws = ws;
-    ws.onopen = () => { for (const cb of this.openCbs) cb(); };
-    ws.onclose = () => { for (const cb of this.closeCbs) cb(); };
+    ws.onopen = () => { this.startPing(); for (const cb of this.openCbs) cb(); };
+    ws.onclose = () => { this.stopPing(); this._rtt = -1; for (const cb of this.closeCbs) cb(); };
     ws.onmessage = (ev) => {
       let frame: ServerFrame;
       try { frame = JSON.parse(ev.data as string) as ServerFrame; } catch { return; }
+      if (frame.t === 'pong') { // транспортный кадр — не отдаём в обработчики сцены
+        const sent = this.pingSentAt.get(frame.id);
+        if (sent != null) { this._rtt = Math.round(performance.now() - sent); this.pingSentAt.delete(frame.id); }
+        return;
+      }
       for (const h of this.handlers.get(frame.t) ?? []) h(frame);
     };
+  }
+
+  private startPing(): void {
+    this.stopPing();
+    this.pingTimer = setInterval(() => {
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      const id = ++this.pingId;
+      this.pingSentAt.set(id, performance.now());
+      if (this.pingSentAt.size > 20) this.pingSentAt.delete(this.pingSentAt.keys().next().value!); // не копим неотвеченные
+      this.send({ t: 'ping', id });
+    }, PING_INTERVAL_MS);
+  }
+  private stopPing(): void {
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = undefined; }
+    this.pingSentAt.clear();
   }
 
   on<T extends ServerFrame['t']>(t: T, cb: (frame: Extract<ServerFrame, { t: T }>) => void): void {
@@ -44,7 +74,7 @@ export class NetClient {
 
   get connected(): boolean { return this.ws?.readyState === WebSocket.OPEN; }
 
-  close(): void { this.ws?.close(); this.ws = undefined; }
+  close(): void { this.stopPing(); this.ws?.close(); this.ws = undefined; }
 }
 
 /** Адрес WS: dev — тот же хост (Vite проксирует /ws на :3001); прод — VITE_WS_URL. */

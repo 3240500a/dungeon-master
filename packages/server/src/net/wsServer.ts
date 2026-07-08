@@ -8,7 +8,15 @@ import { RoomManager } from './roomManager.js';
  * что REST). Каждый коннект уходит в `RoomManager` (комнаты = авторитетные сессии).
  */
 export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  // perMessageDeflate: сжимаем крупные кадры (снапшоты 30 Гц) — на узком/VPN-канале это снимает
+  // забитость полосы (bufferbloat-лаг). threshold=1024 — мелочь (ввод/ping/pong) НЕ жмём (лишний CPU
+  // без выигрыша). Умеренный level=6 — баланс сжатие/CPU; контекст-тейковер по умолчанию (похожие
+  // снапшоты жмутся сильнее). Для широкого канала эффект нейтрален, для VPN — заметный плюс.
+  const wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    perMessageDeflate: { threshold: 1024, zlibDeflateOptions: { level: 6 } },
+  });
   const rooms = new RoomManager(cfg);
   wss.on('connection', (ws) => rooms.handleConnection(ws));
   console.log('[dm-server] WebSocket на /ws');

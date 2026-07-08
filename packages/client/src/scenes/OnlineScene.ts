@@ -46,6 +46,8 @@ export class OnlineScene extends Phaser.Scene {
   private voteBox?: HTMLElement;
   private deathBox?: HTMLElement;
   private codeLabel?: HTMLElement;
+  private pingLabel?: HTMLElement;
+  private lastPingShown = -2; // чтобы не трогать DOM каждый кадр (RTT меняется ~1/сек)
   private myId = '';
 
   constructor() { super('Online'); }
@@ -324,11 +326,27 @@ export class OnlineScene extends Phaser.Scene {
   private closeVote(): void { this.voteBox?.remove(); this.voteBox = undefined; }
 
   override update(_t: number, delta: number): void {
+    this.updatePing(); // индикатор RTT — до guard (виден и в лобби, как только есть соединение)
     if (!this.player || !this.driver) return;
     this.player.update(this.input.activePointer, this.cameras.main);
     this.driver.update(delta);
     if (this.area === 'dungeon' && this.fog) this.fog.update(this.player.x, this.player.y, delta);
     this.updateInteractions();
+  }
+
+  /** Индикатор пинга (RTT до сервера) — левый верх. Перерисовываем DOM только при смене значения. */
+  private updatePing(): void {
+    const rtt = this.app.net.rtt;
+    if (rtt === this.lastPingShown) return;
+    this.lastPingShown = rtt;
+    if (!this.pingLabel) {
+      const root = document.getElementById('ui-root') ?? document.body;
+      this.pingLabel = document.createElement('div');
+      this.pingLabel.style.cssText = 'position:fixed;top:8px;left:12px;z-index:60;background:rgba(23,27,36,0.8);border:1px solid #2b323f;border-radius:6px;padding:4px 8px;color:#cfe0f2;font-size:12px;font-family:monospace;pointer-events:none';
+      root.appendChild(this.pingLabel);
+    }
+    const c = rtt < 0 ? '#8f897c' : rtt < 60 ? '#7fdc7f' : rtt < 120 ? '#dcd07f' : rtt < 200 ? '#dcae7f' : '#dc7f7f';
+    this.pingLabel.innerHTML = `ping <b style="color:${c}">${rtt < 0 ? '—' : rtt}</b> мс`;
   }
 
   private updateInteractions(): void {
@@ -353,5 +371,8 @@ export class OnlineScene extends Phaser.Scene {
     this.closeDeathModal();
     this.codeLabel?.remove();
     this.codeLabel = undefined;
+    this.pingLabel?.remove();
+    this.pingLabel = undefined;
+    this.lastPingShown = -2;
   }
 }

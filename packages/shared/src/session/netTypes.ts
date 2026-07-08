@@ -127,7 +127,10 @@ export type ClientFrame =
   | { t: 'return' }
   | { t: 'lever'; leverId: number }
   | { t: 'vote'; accept: boolean }
-  | { t: 'leave' };
+  | { t: 'leave' }
+  // Замер задержки: клиент шлёт ping с id, сервер сразу эхо-pong тем же id → клиент считает RTT.
+  // Бонусом — keepalive (не даёт прокси уронить простаивающее соединение).
+  | { t: 'ping'; id: number };
 
 // ── Кадры сервер → клиент ───────────────────────────────────────────────────
 export type ServerFrame =
@@ -152,4 +155,6 @@ export type ServerFrame =
   | { t: 'voteStart'; kind: 'descend' | 'town'; by: string; needed: number }
   | { t: 'voteUpdate'; yes: number; total: number }
   | { t: 'voteEnd'; passed: boolean }
-  | { t: 'error'; code: string; msg: string };
+  | { t: 'error'; code: string; msg: string }
+  // Эхо на ping (тот же id) — клиент замеряет RTT.
+  | { t: 'pong'; id: number };
