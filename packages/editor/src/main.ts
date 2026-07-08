@@ -196,11 +196,11 @@ function renderItemTree(list: HTMLElement, arr: unknown[]): void {
 function render(): void {
   app.innerHTML = '';
   const layout = document.createElement('div');
-  layout.style.cssText = 'display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start';
+  layout.style.cssText = 'display:flex;gap:16px;flex:1;min-height:0';
 
   // Навигация по механикам.
   const nav = document.createElement('div');
-  nav.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  nav.style.cssText = 'flex:0 0 200px;display:flex;flex-direction:column;gap:4px;min-height:0;overflow-y:auto;padding-right:4px';
 
   // Отдельная вкладка-инструмент: симулятор баланса.
   const simBtn = document.createElement('button');
@@ -233,6 +233,7 @@ function render(): void {
   }
 
   const page = document.createElement('div');
+  page.style.cssText = 'flex:1;min-width:0;min-height:0;overflow-y:auto;padding-right:6px';
   if (view === 'sim') renderSimPage(page, data);
   else renderPage(page);
 
@@ -245,7 +246,7 @@ function renderPage(page: HTMLElement): void {
   const isArray = schema._def.typeName === 'ZodArray';
 
   const toolbar = document.createElement('div');
-  toolbar.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px';
+  toolbar.style.cssText = 'position:sticky;top:0;z-index:5;display:flex;gap:8px;flex-wrap:wrap;padding:2px 0 10px;margin-bottom:6px;background:#14141a;border-bottom:1px solid #22222c';
   toolbar.append(
     btn('✔ Применить в игру', apply, '#2a4a2a'),
     btn('⭳ Экспорт', exportJson),

@@ -87,8 +87,26 @@ export function defaultValue(schema: AnySchema): unknown {
 function label(text: string): HTMLElement {
   const el = document.createElement('label');
   el.textContent = text;
-  el.style.cssText = 'display:block;font-size:12px;color:#9aa;margin:6px 0 2px';
+  el.style.cssText = 'display:block;font-size:11px;color:#9aa;margin:1px 0 1px';
   return el;
+}
+
+/** «Блочные» типы (объект/массив/union/запись) занимают всю ширину строки грида; скаляры — в колонку. */
+function isBlockSchema(schema: AnySchema): boolean {
+  const tn = unwrap(schema).schema._def.typeName;
+  return tn === 'ZodObject' || tn === 'ZodArray' || tn === 'ZodDiscriminatedUnion' || tn === 'ZodRecord';
+}
+
+/** Сетка полей: скаляры пакуются в колонки (авто-заполнение), блочные — на всю ширину. */
+const FIELD_GRID = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 12px;align-items:end';
+
+/** Кладёт поле в ячейку грида (блочное — на всю строку). */
+function gridCell(grid: HTMLElement, key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void): void {
+  const cell = document.createElement('div');
+  if (isBlockSchema(sub)) cell.style.gridColumn = '1 / -1';
+  cell.appendChild(label(key));
+  cell.appendChild(fieldControl(key, sub, value, onChange));
+  grid.appendChild(cell);
 }
 
 const inputStyle =
@@ -197,10 +215,12 @@ function renderDiscriminatedUnion(
   if (!byKind.has(activeKind)) activeKind = kinds[0]!;
 
   const box = document.createElement('div');
-  box.style.cssText = 'border-left:2px solid #2c2c3a;padding-left:10px;margin:4px 0';
+  box.style.cssText = 'border-left:2px solid #2c2c3a;padding:2px 0 2px 10px;margin:4px 0';
 
-  box.appendChild(label(disc));
-  box.appendChild(
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px';
+  head.appendChild(label(disc));
+  head.appendChild(
     renderEnum(kinds, activeKind, (nv) => {
       const variant = byKind.get(String(nv))!;
       const merged = defaultValue(variant) as Record<string, unknown>;
@@ -211,19 +231,20 @@ function renderDiscriminatedUnion(
       onChange(merged);
     }),
   );
+  box.appendChild(head);
 
+  const grid = document.createElement('div');
+  grid.style.cssText = FIELD_GRID;
   const variant = byKind.get(activeKind)!;
   for (const [key, sub] of Object.entries(variant.shape)) {
     if (key === disc) continue;
-    box.appendChild(label(key));
-    box.appendChild(
-      fieldControl(key, sub, value[key], (v) => {
-        value[key] = v;
-        value[disc] = activeKind;
-        onChange(value);
-      }),
-    );
+    gridCell(grid, key, sub, value[key], (v) => {
+      value[key] = v;
+      value[disc] = activeKind;
+      onChange(value);
+    });
   }
+  box.appendChild(grid);
   return box;
 }
 
@@ -233,16 +254,13 @@ function renderObject(
   onChange: (v: unknown) => void,
 ): HTMLElement {
   const box = document.createElement('div');
-  box.style.cssText = 'border-left:2px solid #2c2c3a;padding-left:10px;margin:4px 0';
+  box.style.cssText = FIELD_GRID + ';border-left:2px solid #2c2c3a;padding:2px 0 2px 10px;margin:4px 0';
   const shape = schema.shape;
   for (const [key, sub] of Object.entries(shape)) {
-    box.appendChild(label(key));
-    box.appendChild(
-      fieldControl(key, sub, value[key], (v) => {
-        value[key] = v;
-        onChange(value);
-      }),
-    );
+    gridCell(box, key, sub, value[key], (v) => {
+      value[key] = v;
+      onChange(value);
+    });
   }
   return box;
 }
@@ -262,18 +280,18 @@ function renderArray(
   onChange: (v: unknown) => void,
 ): HTMLElement {
   const box = document.createElement('div');
-  box.style.cssText = 'border:1px solid #2c2c3a;border-radius:6px;padding:8px;margin:4px 0';
+  box.style.cssText = 'border:1px solid #2c2c3a;border-radius:6px;padding:6px 8px;margin:4px 0';
 
   const rebuild = () => {
     box.innerHTML = '';
     value.forEach((item, i) => {
       const row = document.createElement('div');
-      row.style.cssText = 'border-bottom:1px dashed #2c2c3a;padding:6px 0';
+      row.style.cssText = 'border-bottom:1px dashed #2c2c3a;padding:3px 0';
       const head = document.createElement('div');
       head.style.cssText = 'display:flex;justify-content:space-between;align-items:center';
       const title = document.createElement('b');
       title.textContent = `#${i}`;
-      title.style.fontSize = '12px';
+      title.style.cssText = 'font-size:11px;color:#889';
       head.appendChild(title);
       head.appendChild(
         smallBtn('Удалить', () => {
