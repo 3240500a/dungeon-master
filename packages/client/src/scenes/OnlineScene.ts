@@ -334,7 +334,8 @@ export class OnlineScene extends Phaser.Scene {
     this.updateInteractions();
   }
 
-  /** Индикатор пинга (RTT до сервера) — левый верх. Перерисовываем DOM только при смене значения. */
+  /** Индикатор пинга (RTT до сервера) — правый верх, под плашкой «Комната» (слева HUD-бар города).
+   *  Перерисовываем DOM только при смене значения. */
   private updatePing(): void {
     const rtt = this.app.net.rtt;
     if (rtt === this.lastPingShown) return;
@@ -342,7 +343,7 @@ export class OnlineScene extends Phaser.Scene {
     if (!this.pingLabel) {
       const root = document.getElementById('ui-root') ?? document.body;
       this.pingLabel = document.createElement('div');
-      this.pingLabel.style.cssText = 'position:fixed;top:8px;left:12px;z-index:60;background:rgba(23,27,36,0.8);border:1px solid #2b323f;border-radius:6px;padding:4px 8px;color:#cfe0f2;font-size:12px;font-family:monospace;pointer-events:none';
+      this.pingLabel.style.cssText = 'position:fixed;top:40px;right:12px;z-index:60;background:rgba(23,27,36,0.8);border:1px solid #2b323f;border-radius:6px;padding:4px 8px;color:#cfe0f2;font-size:12px;font-family:monospace;pointer-events:none';
       root.appendChild(this.pingLabel);
     }
     const c = rtt < 0 ? '#8f897c' : rtt < 60 ? '#7fdc7f' : rtt < 120 ? '#dcd07f' : rtt < 200 ? '#dcae7f' : '#dc7f7f';
