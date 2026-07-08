@@ -8,9 +8,13 @@ function newCode(): string {
 }
 
 /**
- * Управление комнатами: коннект → join (по коду присоединяется, без кода — создаёт
- * комнату; соло = комната на 1). Роутит кадры клиента в его комнату. Держит связь
- * ws → {playerId, room}; на закрытие/leave удаляет игрока (пустая комната самоуничтожается).
+ * Управление комнатами. Вход по явному намерению:
+ *  • `runStatus` — есть ли незавершённый забег (грейс-комната из подземелья); комнату не создаёт;
+ *  • `join { resume }` — вернуться в грейс-комнату (та же точка); без грейса → error 'no-run';
+ *  • `join { roomCode }` — к другу по коду; `join { fresh }`/без кода — новая комната (соло/хост).
+ * Осознанный вход в НОВУЮ комнату при висящем забеге = бросок забега (штраф смерти) как страховка.
+ * Реконнект-грейс возникает ТОЛЬКО при выходе из подземелья (в городе выход = чистый разрыв).
+ * Роутит кадры клиента в его комнату; ws → {playerId, room}; пустая комната самоуничтожается.
  */
 export class RoomManager {
   private rooms = new Map<string, Room>();
@@ -35,24 +39,45 @@ export class RoomManager {
     let frame: ClientFrame;
     try { frame = JSON.parse(raw) as ClientFrame; } catch { return; }
 
+    // Есть ли незавершённый забег? (грейс-комната из подземелья). Комнату не трогаем.
+    if (frame.t === 'runStatus') {
+      const userId = this.authOwner(ws, frame.token, frame.charId);
+      if (!userId) return;
+      const room = this.graceByChar.get(frame.charId);
+      ws.send(JSON.stringify({ t: 'runStatus', hasRun: !!room, roomCode: room?.code, depth: room?.currentDepth }));
+      return;
+    }
+
+    // Забросить забег: персонаж гибнет со штрафом, грейс-комната чистится.
+    if (frame.t === 'abandon') {
+      const userId = this.authOwner(ws, frame.token, frame.charId);
+      if (!userId) return;
+      this.graceByChar.get(frame.charId)?.abandonAsDead(frame.charId);
+      ws.send(JSON.stringify({ t: 'abandoned' }));
+      return;
+    }
+
     if (frame.t === 'join') {
       if (this.conns.has(ws)) return;
-      // Аутентификация: валидный токен сессии → userId; персонаж должен принадлежать ему.
-      const userId = getSession(frame.token);
-      if (!userId) { ws.send(JSON.stringify({ t: 'error', code: 'auth', msg: 'Требуется вход' })); return; }
-      const character = getCharacter(frame.charId);
-      if (!character || character.userId !== userId) {
-        ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return;
-      }
-      const save = this.sanitize(character.data);
-      // Реконнект: у персонажа есть «замороженная»/активная комната → вернуться в НЕЁ (та же точка),
-      // игнорируя код комнаты. Анти-эксплойт: возврат в подземелье, а не в город.
-      const graceRoom = this.graceByChar.get(frame.charId);
-      if (graceRoom) {
+      const userId = this.authOwner(ws, frame.token, frame.charId);
+      if (!userId) return;
+
+      // Продолжить забег: ТОЛЬКО по явному resume возвращаемся в грейс-комнату (та же точка).
+      if (frame.resume) {
+        const graceRoom = this.graceByChar.get(frame.charId);
+        if (!graceRoom) { ws.send(JSON.stringify({ t: 'error', code: 'no-run', msg: 'Забег не найден' })); return; }
+        const save = this.ownedSave(userId, frame.charId);
+        if (!save) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
         const pid = graceRoom.reconnect(ws, userId, save);
         this.conns.set(ws, { pid, room: graceRoom });
         return;
       }
+
+      // Осознанный вход в НОВУЮ комнату (соло/хост/по коду): висел незавершённый забег — считаем
+      // его брошенным (штраф) ДО чтения сейва, чтобы новый вход взял уже урезанный сейв из БД.
+      this.graceByChar.get(frame.charId)?.abandonAsDead(frame.charId);
+      const save = this.ownedSave(userId, frame.charId);
+      if (!save) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
       let room: Room;
       if (frame.roomCode) {
         const existing = this.rooms.get(frame.roomCode.toUpperCase());
@@ -96,6 +121,24 @@ export class RoomManager {
     });
     this.rooms.set(code, room);
     return room;
+  }
+
+  /** Проверка сессии + владения персонажем. Ошибку шлёт сама; возвращает userId или undefined. */
+  private authOwner(ws: WebSocket, token: string, charId: string): string | undefined {
+    const userId = getSession(token);
+    if (!userId) { ws.send(JSON.stringify({ t: 'error', code: 'auth', msg: 'Требуется вход' })); return undefined; }
+    const character = getCharacter(charId);
+    if (!character || character.userId !== userId) {
+      ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return undefined;
+    }
+    return userId;
+  }
+
+  /** Свежий сейв персонажа из БД (после возможного штрафа за бросок забега) + лёгкий анти-чит. */
+  private ownedSave(userId: string, charId: string): SaveState | undefined {
+    const character = getCharacter(charId);
+    if (!character || character.userId !== userId) return undefined;
+    return this.sanitize(character.data);
   }
 
   /** Лёгкий анти-чит поверх сохранённого сейва: уровень из опыта, золото ≥0 (полный объект, без стрипа). */

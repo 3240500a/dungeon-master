@@ -120,17 +120,50 @@ export class Room {
     const c = this.clients.get(pid);
     if (p && c) {
       putCharacter(p.save.charId, c.userId, p.save); // персист прогресса
-      // Запоминаем для реконнекта; тело убираем из мира, чтобы монстры не били «пустого» и он
-      // не погиб оффлайн. Возврат в подземелье (не в город) — «дисконнект = портал в город» не работает.
-      this.disconnected.set(p.save.charId, { save: p.save, userId: c.userId, lastPos: { ...p.pos }, floor: this.depth });
-      this.hooks.onGrace(p.save.charId);
+      // Грейс-реконнект — ТОЛЬКО из подземелья: тело убираем из мира (монстры не бьют «пустого»),
+      // ждём возврата в ту же точку. В городе выход = чистый разрыв (реконнекта нет, ждать нечего).
+      if (this.area === 'dungeon') {
+        this.disconnected.set(p.save.charId, { save: p.save, userId: c.userId, lastPos: { ...p.pos }, floor: this.depth });
+        this.hooks.onGrace(p.save.charId);
+      }
     }
     this.session.removePlayer(pid);
     this.clients.delete(pid);
     this.broadcast({ t: 'peerLeft', id: pid });
     if (this.vote) { this.vote.yes.delete(pid); this.vote.no.delete(pid); this.checkVote(); }
-    if (this.clients.size === 0) this.enterGrace(); // все вышли → пауза + грейс-час
+    // Комната опустела: если есть кого ждать (данж-отключённые) → пауза+грейс; иначе (город) — уничтожаем.
+    if (this.clients.size === 0) {
+      if (this.disconnected.size > 0) this.enterGrace();
+      else { this.stop(); this.hooks.onEmpty(this.code); }
+    }
   }
+
+  /**
+   * Забросить забег отключённого игрока (charId): персонаж считается погибшим — полный штраф
+   * смерти + персист + снятие из грейс-карты. Пустая после этого комната уничтожается.
+   * Вызывается по кнопке «Забросить» и как страховка при осознанном входе в НОВУЮ комнату.
+   */
+  abandonAsDead(charId: string): void {
+    const info = this.disconnected.get(charId);
+    if (info) {
+      applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty);
+      putCharacter(charId, info.userId, info.save);
+      this.disconnected.delete(charId);
+    }
+    this.hooks.onUngrace(charId);
+    this.destroyIfEmpty();
+  }
+
+  /** Уничтожить комнату, если в ней никого (ни подключённых, ни ждущих реконнекта). */
+  private destroyIfEmpty(): void {
+    if (this.clients.size > 0 || this.disconnected.size > 0) return;
+    if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; }
+    this.stop();
+    this.hooks.onEmpty(this.code);
+  }
+
+  /** Текущий этаж (0 = город) — для модалки «Продолжить/Забросить». */
+  get currentDepth(): number { return this.depth; }
 
   /** Комната опустела: пауза симуляции (мир замирает) + грейс-таймер. Возврат — через reconnect(). */
   private enterGrace(): void {

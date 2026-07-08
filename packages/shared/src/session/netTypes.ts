@@ -113,7 +113,14 @@ export type TownCommand =
 export type ClientFrame =
   // Клиент аутентифицируется токеном сессии + charId. Сервер проверяет ВЛАДЕНИЕ персонажем и
   // грузит его сейв из БД (создание персонажа — по HTTP, см. `/api/characters`). Анти-чит.
-  | { t: 'join'; roomCode?: string; token: string; charId: string }
+  // fresh — осознанно новая комната (соло/хост); resume — вернуться в незавершённый забег
+  // (грейс-комната из подземелья); roomCode — вход к другу. Реконнект — только явным resume.
+  | { t: 'join'; roomCode?: string; token: string; charId: string; fresh?: boolean; resume?: boolean }
+  // Есть ли у персонажа незавершённый забег (грейс-комната)? Ответ решает: модалка «Продолжить/
+  // Забросить» или обычное лобби. Комнату не создаёт.
+  | { t: 'runStatus'; token: string; charId: string }
+  // Забросить незавершённый забег: персонаж считается погибшим (штраф смерти), грейс-комната чистится.
+  | { t: 'abandon'; token: string; charId: string }
   | { t: 'input'; seq: number; input: PlayerInput }
   | { t: 'cmd'; command: TownCommand }
   | { t: 'descend'; difficultyId?: string }
@@ -125,6 +132,10 @@ export type ClientFrame =
 // ── Кадры сервер → клиент ───────────────────────────────────────────────────
 export type ServerFrame =
   | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerLite[]; save: SaveState }
+  // Ответ на runStatus: есть ли незавершённый забег (+ код комнаты и этаж для модалки).
+  | { t: 'runStatus'; hasRun: boolean; roomCode?: string; depth?: number }
+  // Подтверждение abandon: забег заброшен (персонаж погиб со штрафом) — клиент открывает лобби.
+  | { t: 'abandoned' }
   | { t: 'snapshot'; snap: WorldSnapshot }
   | { t: 'events'; events: SessionEvent[] }
   | { t: 'saveUpdate'; save: SaveState }

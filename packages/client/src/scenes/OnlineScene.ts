@@ -40,6 +40,9 @@ export class OnlineScene extends Phaser.Scene {
   private eKey!: Phaser.Input.Keyboard.Key;
   private prompt?: Phaser.GameObjects.Text;
   private lobby?: HTMLElement;
+  private resumeBox?: HTMLElement;
+  private connectingBox?: HTMLElement;
+  private statusEl?: HTMLElement;
   private voteBox?: HTMLElement;
   private deathBox?: HTMLElement;
   private codeLabel?: HTMLElement;
@@ -53,8 +56,13 @@ export class OnlineScene extends Phaser.Scene {
     this.eKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.prompt = this.add.text(0, 0, '', { fontSize: '14px', color: '#f0d9a8', backgroundColor: '#000000aa', padding: { x: 6, y: 3 } }).setDepth(100).setVisible(false);
 
+    // Сцена пере-подписывается при каждом входе — снимаем прошлые обработчики (net живёт в App).
+    for (const t of ['joined', 'areaChanged', 'doorOpened', 'died', 'voteStart', 'voteUpdate', 'voteEnd', 'runStatus', 'abandoned', 'error'] as const) this.app.net.off(t);
+    this.app.net.clearLifecycle();
+
     // Сетевые обработчики области/голосования.
     this.app.net.on('joined', (f) => {
+      this.hideConnecting(); this.hideResumePrompt(); this.hideLobby();
       this.myId = f.playerId; // ВАЖНО до buildArea: иначе свой игрок рисуется как чужой
       const state = new GameState(f.save); // авторитетный сейв с сервера — истина
       state.restoreFull();
@@ -68,13 +76,72 @@ export class OnlineScene extends Phaser.Scene {
     this.app.net.on('voteStart', (f) => this.showVote(f.kind, f.by));
     this.app.net.on('voteUpdate', (f) => { if (this.voteBox) this.voteBox.querySelector('.tally')!.textContent = `${f.yes}/${f.total}`; });
     this.app.net.on('voteEnd', () => this.closeVote());
+    // Вход: сервер сообщил, есть ли незавершённый забег → модалка «Продолжить/Забросить» либо лобби.
+    this.app.net.on('runStatus', (f) => { this.hideConnecting(); if (f.hasRun) this.showResumePrompt(f.roomCode ?? '', f.depth ?? 0); else this.showLobby(); });
+    this.app.net.on('abandoned', () => { this.hideResumePrompt(); this.showLobby(); });
+    this.app.net.on('error', (f) => {
+      if (f.code === 'no-run') { this.hideResumePrompt(); this.showLobby(); return; } // забег истёк за время раздумий
+      if (this.statusEl) this.statusEl.textContent = f.msg;
+    });
 
-    if (!this.app.net.connected) this.showLobby();
+    // Ещё не в игре → подключаемся и спрашиваем статус забега (плашка «Подключение…» до ответа).
+    if (!this.app.net.connected) {
+      this.showConnecting();
+      this.app.net.onOpen(() => this.app.net.send({ t: 'runStatus', token: this.app.auth!.token, charId: this.app.pendingCharId! }));
+      this.app.net.onClose(() => { if (this.connectingBox) { this.hideConnecting(); this.showLobby(); if (this.statusEl) this.statusEl.textContent = 'Сервер недоступен'; } });
+      this.app.net.connect();
+    }
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
   }
 
-  // ── Лобби ───────────────────────────────────────────────────────────────────
+  // ── Лобби / вход ──────────────────────────────────────────────────────────────
+  /** Единый способ отправить join по уже открытому сокету (соединение поднято в create). */
+  private sendJoin(opts: { fresh?: boolean; roomCode?: string; resume?: boolean }): void {
+    this.app.net.send({ t: 'join', token: this.app.auth!.token, charId: this.app.pendingCharId!, ...opts });
+  }
+
+  /** Плашка «Подключение к серверу…» до ответа runStatus (кнопок нет — исключаем misclick). */
+  private showConnecting(): void {
+    if (this.connectingBox) return;
+    const root = document.getElementById('ui-root') ?? document.body;
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90';
+    box.innerHTML = `<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px 30px;color:#e6ddc9;text-align:center">
+      <div style="font-size:16px">Подключение к серверу…</div>
+      <div class="status" style="margin-top:8px;font-size:12px;color:#8f897c"></div></div>`;
+    root.appendChild(box);
+    this.connectingBox = box;
+    this.statusEl = box.querySelector('.status') as HTMLElement;
+  }
+  private hideConnecting(): void { this.connectingBox?.remove(); this.connectingBox = undefined; this.statusEl = undefined; }
+
+  /** Незавершённый забег (вышли из подземелья): продолжить или забросить (персонаж гибнет со штрафом). */
+  private showResumePrompt(roomCode: string, depth: number): void {
+    if (this.resumeBox) return;
+    const root = document.getElementById('ui-root') ?? document.body;
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90';
+    const where = depth > 0 ? `этаж ${depth}` : 'подземелье';
+    box.innerHTML = `<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:300px;color:#e6ddc9;text-align:center">
+      <div style="font-size:18px;margin-bottom:8px">Незавершённое прохождение</div>
+      <div style="font-size:13px;color:#a8a090;margin-bottom:16px">Вы вышли из подземелья (${where}, комната ${roomCode}). Продолжить забег или забросить?</div>
+      <button data-a="resume" style="display:block;width:100%;margin:6px 0;padding:9px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Продолжить</button>
+      <button data-a="abandon" style="display:block;width:100%;margin:6px 0;padding:9px;background:#3a1c1c;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Забросить прохождение</button>
+      <div style="font-size:11px;color:#8f7a72;margin-top:6px">«Забросить» — персонаж считается погибшим (штраф золота и части предметов).</div>
+      <div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`;
+    root.appendChild(box);
+    this.resumeBox = box;
+    this.statusEl = box.querySelector('.status') as HTMLElement;
+    box.querySelector('[data-a="resume"]')!.addEventListener('click', () => { this.statusEl!.textContent = 'Возврат в забег…'; this.sendJoin({ resume: true }); });
+    box.querySelector('[data-a="abandon"]')!.addEventListener('click', () => {
+      this.statusEl!.textContent = 'Забрасываем…';
+      this.app.net.send({ t: 'abandon', token: this.app.auth!.token, charId: this.app.pendingCharId! });
+    });
+  }
+  private hideResumePrompt(): void { this.resumeBox?.remove(); this.resumeBox = undefined; this.statusEl = undefined; }
+
   private showLobby(): void {
+    if (this.lobby) return;
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90';
@@ -86,25 +153,16 @@ export class OnlineScene extends Phaser.Scene {
       <div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`;
     root.appendChild(box);
     this.lobby = box;
-    const status = box.querySelector('.status') as HTMLElement;
-    const connect = (roomCode?: string): void => {
-      status.textContent = 'Подключение…';
-      this.app.net.onOpen(() => {
-        // Аутентификация: токен сессии + выбранный charId; сервер проверит владение и отдаст сейв.
-        this.app.net.send({ t: 'join', roomCode, token: this.app.auth!.token, charId: this.app.pendingCharId! });
-      });
-      this.app.net.on('joined', () => this.hideLobby());
-      this.app.net.on('error', (f) => { status.textContent = f.msg; });
-      this.app.net.connect();
-    };
-    box.querySelector('[data-a="solo"]')!.addEventListener('click', () => connect());
-    box.querySelector('[data-a="host"]')!.addEventListener('click', () => connect());
+    this.statusEl = box.querySelector('.status') as HTMLElement;
+    const go = (opts: { fresh?: boolean; roomCode?: string }): void => { this.statusEl!.textContent = 'Подключение…'; this.sendJoin(opts); };
+    box.querySelector('[data-a="solo"]')!.addEventListener('click', () => go({ fresh: true }));
+    box.querySelector('[data-a="host"]')!.addEventListener('click', () => go({ fresh: true }));
     box.querySelector('[data-a="join"]')!.addEventListener('click', () => {
       const code = (box.querySelector('.code') as HTMLInputElement).value.trim().toUpperCase();
-      if (code) connect(code);
+      if (code) go({ roomCode: code });
     });
   }
-  private hideLobby(): void { this.lobby?.remove(); this.lobby = undefined; }
+  private hideLobby(): void { this.lobby?.remove(); this.lobby = undefined; this.statusEl = undefined; }
 
   /** Показывает код комнаты (для приглашения друзей) — фикс-плашка справа сверху. */
   private showRoomCode(code: string): void {
@@ -288,6 +346,8 @@ export class OnlineScene extends Phaser.Scene {
     this.driver?.destroy();
     this.fog?.destroy();
     this.hideLobby();
+    this.hideResumePrompt();
+    this.hideConnecting();
     this.closeVote();
     this.closeDeathModal();
     this.codeLabel?.remove();

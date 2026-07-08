@@ -33,6 +33,11 @@ export class NetClient {
   onOpen(cb: () => void): void { this.openCbs.push(cb); }
   onClose(cb: () => void): void { this.closeCbs.push(cb); }
 
+  /** Снять все обработчики типа кадра (сцена пере-подписывается при каждом входе — иначе дубли). */
+  off<T extends ServerFrame['t']>(t: T): void { this.handlers.delete(t); }
+  /** Сбросить onOpen/onClose-колбэки (владелец — сцена; при перезапуске вешаются заново). */
+  clearLifecycle(): void { this.openCbs = []; this.closeCbs = []; }
+
   send(frame: ClientFrame): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(frame));
   }
