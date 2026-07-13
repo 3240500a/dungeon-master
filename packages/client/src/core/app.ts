@@ -36,6 +36,9 @@ export class App {
   /** Откаты действий для заливки слотов биндов: id действия ('attack'|nodeId) → окно [start,until] в мс
    *  (performance.now). Пишется по событию `swing` с сервера (значит удар реально прошёл: мана/КД/оружие). */
   actionCooldowns: Record<string, { start: number; until: number }> = {};
+  /** Общий attack-таймер (мс, performance.now): пока now<это — ВСЕ удары/attack-cast-скиллы залочены
+   *  (серые в панели биндов). Ставится по каждому `swing`. */
+  attackLockUntil = 0;
   /** Последний атакованный монстр (для реального шанса попасть/увернуться в листе). */
   lastTarget?: { name: string; accuracy: number; evade: number };
 

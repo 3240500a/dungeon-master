@@ -283,6 +283,7 @@ export class NetDriver {
         if (e.playerId === this.myId) {
           const now = performance.now();
           this.app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
+          this.app.attackLockUntil = now + e.lockMs; // общий лок → остальные атак-слоты серые
           this.vfx.startSwing(this.vfx.currentAttack(this.app.state!, this.app.config, e.ability), e.windupMs);
         }
       }

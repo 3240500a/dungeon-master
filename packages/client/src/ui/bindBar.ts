@@ -33,6 +33,14 @@ function nodeById(app: App, id: string): SkillNode | undefined {
   return tree?.nodes.find((n) => n.id === id);
 }
 
+/** Делит ли бинд общий attack-таймер: базовая атака или скилл категории attack/cast (не buff/aura/stance). */
+function isAttackLike(app: App, b: Binding): boolean {
+  if (b === 'attack') return true;
+  if (!b) return false;
+  const cat = nodeById(app, b)?.effect.active?.category;
+  return cat === 'attack' || cat === 'cast';
+}
+
 /**
  * Панель биндов действий (D2): крупные ЛКМ/ПКМ + 3 доп. слота, клик → выпадающий
  * список (Атака / выученные скиллы / Пусто). Заливка-откат слота — из app.actionCooldowns (по событию swing).
@@ -42,7 +50,7 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
   const el = document.createElement('div');
   el.style.cssText = 'display:flex;align-items:flex-end;gap:8px;pointer-events:auto';
 
-  const cdOverlays: { box: HTMLDivElement; binding: () => Binding }[] = [];
+  const cdOverlays: { fill: HTMLDivElement; slotBox: HTMLDivElement; binding: () => Binding }[] = [];
 
   const rebuild = (): void => {
     el.innerHTML = '';
@@ -67,7 +75,8 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
       const cd = document.createElement('div');
       cd.style.cssText = 'position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);height:0;pointer-events:none';
       box.append(cd);
-      cdOverlays.push({ box: cd, binding: () => slot.get(app.state!.save) });
+      box.style.transition = 'filter 0.08s, opacity 0.08s';
+      cdOverlays.push({ fill: cd, slotBox: box, binding: () => slot.get(app.state!.save) });
       box.addEventListener('click', (e) => { e.stopPropagation(); openDropdown(app, box, slot, rebuild); });
       col.append(box);
       col.append(mkLabel(slot.label));
@@ -77,11 +86,16 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
 
   const refresh = (): void => {
     const now = performance.now();
+    const locked = now < app.attackLockUntil; // общий attack-таймер идёт
     for (const o of cdOverlays) {
       const b = o.binding(); // 'attack' тоже заливается (по факту удара)
       const cd = b ? app.actionCooldowns[b] : undefined;
       const frac = cd && now < cd.until && cd.until > cd.start ? (cd.until - now) / (cd.until - cd.start) : 0;
-      o.box.style.height = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+      o.fill.style.height = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+      // Использованный слот льёт свою заливку; ОСТАЛЬНЫЕ атак-слоты во время общего лока — серые.
+      const grey = locked && frac === 0 && isAttackLike(app, b);
+      o.slotBox.style.filter = grey ? 'grayscale(1) brightness(0.5)' : 'none';
+      o.slotBox.style.opacity = grey ? '0.6' : '1';
     }
   };
 

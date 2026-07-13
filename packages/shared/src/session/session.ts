@@ -90,8 +90,9 @@ export type SessionEvent =
   | { type: 'player-died'; playerId: string }
   | { type: 'stun'; id: number }
   // Реальный свинг игрока (принят: мана/КД/оружие прошли) — для клиентского VFX (форма удара) и
-  // заливки-отката слота бинда. ability = nodeId скилла или 'attack'. windupMs — замах, cooldownMs — откат.
-  | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; x: number; y: number; facing: number }
+  // заливки-отката слота бинда. ability = nodeId скилла или 'attack'. windupMs — замах, cooldownMs — откат
+  // использованного действия, lockMs — общий attack-таймер (блокирует ВСЕ удары/attack-cast-скиллы).
+  | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; lockMs: number; x: number; y: number; facing: number }
   | { type: 'floor-cleared' };
 
 /** AoE-способность (бьёт по площади вокруг игрока), по abilityId — как в боевом контроллере. */
@@ -349,8 +350,8 @@ export class GameSession {
   }
 
   /** Событие реального свинга (принят: мана/КД/оружие прошли) — клиент рисует форму + льёт откат слота. */
-  private emitSwing(p: PlayerEntity, ability: string, windupSec: number, cooldownSec: number): void {
-    this.events.push({ type: 'swing', playerId: p.id, ability, windupMs: windupSec * 1000, cooldownMs: cooldownSec * 1000, x: p.pos.x, y: p.pos.y, facing: p.facing });
+  private emitSwing(p: PlayerEntity, ability: string, windupSec: number, cooldownSec: number, lockSec: number): void {
+    this.events.push({ type: 'swing', playerId: p.id, ability, windupMs: windupSec * 1000, cooldownMs: cooldownSec * 1000, lockMs: lockSec * 1000, x: p.pos.x, y: p.pos.y, facing: p.facing });
   }
 
   /**
@@ -367,7 +368,7 @@ export class GameSession {
     p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * speedBonus * pm.atkSpeedMult);
     this.makeNoise(p, 220);
     const windup = this.windupSec(p.attackCd, 0);
-    this.emitSwing(p, 'attack', windup, p.attackCd);
+    this.emitSwing(p, 'attack', windup, p.attackCd, p.attackCd);
     if (windup > 0) { p.windup = { kind: 'attack', remaining: windup }; return; }
     this.executeBasicAttack(p, snap);
   }
@@ -453,7 +454,7 @@ export class GameSession {
         p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
         const windup = this.windupSec(p.attackCd, active.windupSec);
-        this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0));
+        this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0), p.attackCd);
         if (windup > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: windup }; return; }
         this.executeAbility(p, snap, active, rank);
         return;
