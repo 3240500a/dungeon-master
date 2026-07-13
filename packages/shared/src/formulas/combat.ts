@@ -19,6 +19,15 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/**
+ * Полу-ширина «коридора» удара по размаху: сектор радиуса `range` и полу-угла `arc` даёт на радиусе
+ * поперечную полу-ширину `range·sin(arc)`. Одна формула для сервера (попадание рывка) и клиента
+ * (VFX-полоса) — ширина рывка совпадает с размахом обычного удара тем же оружием×скиллом.
+ */
+export function swingHalfWidth(range: number, arc: number): number {
+  return range * Math.sin(clamp(arc, 0, Math.PI / 2));
+}
+
 /** Снижение физ. урона бронёй с учётом уровня атакующего. */
 export function armorMitigation(armor: number, attackerLevel: number): number {
   return armor / (armor + 30 + 5 * attackerLevel);

@@ -7,7 +7,7 @@ import type { StatModifier } from '../types/attributes.js';
 import { emptyPacket, packetTotal } from '../types/combat.js';
 import type { Difficulty } from '../formulas/power.js';
 import { createRng, type Rng } from '../formulas/rng.js';
-import { resolveAttack, abilityCooldown, abilityRankMult } from '../formulas/combat.js';
+import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
 import { weaponDebuffs } from '../formulas/resolveWeapon.js';
@@ -558,11 +558,18 @@ export class GameSession {
   private doDashAttack(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: AttackAbility, rank: number, opts: HitOpts): void {
     const dir = p.facing;
     const dist = 130 * active.rangeMult;
+    // Ширина коридора рывка = размах удара тем же оружием×скиллом (вариант B): та же формула, что
+    // рисует клиентская полоса-VFX. Узкое оружие → узкий коридор, широкое (топор) → шире.
+    const mel = this.cfg.get('balance').melee;
+    const weapon = p.save.equipment.weapon;
+    const range = mel.baseRange * (weapon?.reachMult ?? 1) * active.rangeMult;
+    const arc = mel.baseArc * (weapon?.arcMult ?? 1) * active.arcMult;
+    const halfW = swingHalfWidth(range, arc);
     const from = { ...p.pos };
     const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (this.distToSegment(m.pos, from, to) <= 42) this.hitMonster(p, m, packet, attacker, opts);
+      if (this.distToSegment(m.pos, from, to) <= halfW) this.hitMonster(p, m, packet, attacker, opts);
     }
     const travel = Math.hypot(to.x - from.x, to.y - from.y);
     const speed = active.dash!.speed * abilityRankMult(rank);

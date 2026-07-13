@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { ConfigRegistry } from '@dm/shared';
+import { swingHalfWidth, type ConfigRegistry } from '@dm/shared';
 import type { GameState } from '../../core/gameState.js';
 import type { Player } from '../movement/player.js';
 import { elementColor, elementOf } from '../skills/skillIcon.js';
@@ -12,62 +12,55 @@ function hexNum(hex: string): number {
 
 const STEEL = 0xcdd3dc; // нейтральный цвет базовой атаки
 
-/** Геометрия текущей ЛКМ-атаки для прицела/слэша. */
-export interface AttackGeom { melee: boolean; range: number; arc: number; color: number; speed: number; }
+/** Геометрия действия для вспышки удара. `dash` → рисуем полосу вместо сектора. */
+export interface AttackGeom { melee: boolean; range: number; arc: number; color: number; speed: number; dash?: { length: number; halfWidth: number }; }
 
 /**
- * VFX вокруг СВОЕГО игрока (мировые координаты): пульсирующее кольцо активных аур, тусклый
- * конус-прицел дальности/размаха текущей мили-атаки (по оружию×скиллу — та же геометрия, что
- * бьёт сервер) и яркая дуга-слэш в момент удара. Клиент — чистый вид; логику боя не трогает.
+ * VFX вокруг СВОЕГО игрока (мировые координаты): пульсирующее кольцо активных аур и вспышка формы
+ * удара В МОМЕНТ удара (по оружию×скиллу — та же геометрия, что бьёт сервер): сектор для обычного
+ * удара/атаки-скилла, полоса — для рывка. Клиент — чистый вид; логику боя не трогает.
  */
 export class PlayerVfx {
   private scene: Phaser.Scene;
   private aura: Phaser.GameObjects.Graphics;
-  private cone: Phaser.GameObjects.Graphics;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.aura = scene.add.graphics().setDepth(3); // под игроком/монстрами
-    this.cone = scene.add.graphics().setDepth(3);
   }
 
-  /** Геометрия ЛКМ-действия: базовая атака (оружие) или attack-скилл (оружие × мульты скилла). */
-  currentAttack(state: GameState, cfg: ConfigRegistry): AttackGeom {
+  /**
+   * Геометрия действия `action` (id скилла или 'attack'/undefined = базовая атака оружием):
+   * дальность/размах по оружию×мультам скилла (та же, что бьёт сервер), цвет по стихии; для
+   * рывка — длина коридора и его полу-ширина (== размаху удара, вариант B на сервере).
+   */
+  currentAttack(state: GameState, cfg: ConfigRegistry, action?: string): AttackGeom {
     const save = state.save;
     const weapon = save.equipment.weapon;
     const weaponMelee = (weapon?.weaponType ?? 'melee') === 'melee';
     const mel = cfg.get('balance').melee;
-    let rangeMult = 1, arcMult = 1, color = STEEL, speed = 1, melee = weaponMelee;
+    let rangeMult = 1, arcMult = 1, color = STEEL, speed = 1, melee = weaponMelee, dashLen = 0;
 
-    const lmb = save.mouseLeft;
-    if (lmb && lmb !== 'attack') {
+    if (action && action !== 'attack') {
       const tree = cfg.get('skills-active').find((t) => t.classId === save.classId);
-      const node = tree?.nodes.find((n) => n.id === lmb);
+      const node = tree?.nodes.find((n) => n.id === action);
       const a = node?.effect.active;
       if (a && a.category === 'attack' && node) {
         rangeMult = a.rangeMult; arcMult = a.arcMult; speed = a.speed;
         color = hexNum(elementColor(elementOf(node)));
+        if (a.dash) dashLen = 130 * a.rangeMult; // == серверный dist в doDashAttack
       } else {
-        melee = false; // на ЛКМ каст/аура/бафф — мили-конуса нет
+        melee = false; // каст/аура/бафф — свои визуалы (снаряды/нова), сектора нет
       }
     }
-    return {
-      melee,
-      range: mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult,
-      arc: mel.baseArc * (weapon?.arcMult ?? 1) * arcMult,
-      color,
-      speed,
-    };
+    const range = mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult;
+    const arc = mel.baseArc * (weapon?.arcMult ?? 1) * arcMult;
+    return { melee, range, arc, color, speed, dash: dashLen > 0 ? { length: dashLen, halfWidth: swingHalfWidth(range, arc) } : undefined };
   }
 
-  /** Каждый кадр: конус-прицел (по ЛКМ-атаке) + пульс-кольца активных аур. */
-  drawFrame(player: Player, state: GameState, cfg: ConfigRegistry, timeMs: number, attacking: boolean): void {
+  /** Каждый кадр: пульс-кольца активных аур (форма удара рисуется только в момент удара — flashStrike). */
+  drawFrame(player: Player, state: GameState, cfg: ConfigRegistry, timeMs: number): void {
     const px = player.x, py = player.y;
-    // ── Конус-прицел (тускло; ярче пока бьёшь) ──
-    this.cone.clear();
-    const g = this.currentAttack(state, cfg);
-    if (g.melee) this.sector(this.cone, px, py, player.facing, g.range, g.arc, g.color, attacking ? 0.22 : 0.10);
-
     // ── Кольца активных аур ──
     this.aura.clear();
     const tree = cfg.get('skills-active').find((t) => t.classId === state.save.classId);
@@ -87,11 +80,28 @@ export class PlayerVfx {
     }
   }
 
-  /** Яркая дуга-слэш в зоне удара — быстро гаснет (создаётся на удар, самоуничтожается). */
-  flashSlash(px: number, py: number, facing: number, geom: AttackGeom): void {
+  /** Вспышка формы удара — быстро гаснет: рывок → полоса по траектории, иначе → сектор оружия. */
+  flashStrike(px: number, py: number, facing: number, geom: AttackGeom): void {
     const s = this.scene.add.graphics().setDepth(7);
-    this.sector(s, px, py, facing, geom.range, geom.arc, geom.color, 0.5);
-    this.scene.tweens.add({ targets: s, alpha: 0, duration: 180, onComplete: () => s.destroy() });
+    if (geom.dash) this.strip(s, px, py, facing, geom.dash.length, geom.dash.halfWidth, geom.color, 0.5);
+    else this.sector(s, px, py, facing, geom.range, geom.arc, geom.color, 0.5);
+    this.scene.tweens.add({ targets: s, alpha: 0, duration: 200, onComplete: () => s.destroy() });
+  }
+
+  /** Заливка полосы-коридора рывка: от (x,y) вперёд по facing на length, полу-ширина halfW. */
+  private strip(g: Phaser.GameObjects.Graphics, x: number, y: number, facing: number, length: number, halfW: number, color: number, alpha: number): void {
+    const cx = Math.cos(facing), cy = Math.sin(facing);
+    const nx = -cy, ny = cx; // перпендикуляр
+    g.fillStyle(color, alpha);
+    g.beginPath();
+    g.moveTo(x + nx * halfW, y + ny * halfW);
+    g.lineTo(x - nx * halfW, y - ny * halfW);
+    g.lineTo(x - nx * halfW + cx * length, y - ny * halfW + cy * length);
+    g.lineTo(x + nx * halfW + cx * length, y + ny * halfW + cy * length);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(2, color, Math.min(1, alpha * 2.4));
+    g.strokePath();
   }
 
   /** Заливка сектора (пирог) с обводкой: центр в (x,y), радиус range, полу-угол arc, по facing. */
@@ -106,5 +116,5 @@ export class PlayerVfx {
     g.strokePath();
   }
 
-  destroy(): void { this.aura.destroy(); this.cone.destroy(); }
+  destroy(): void { this.aura.destroy(); }
 }
