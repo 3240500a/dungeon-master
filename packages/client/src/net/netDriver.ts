@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import type { App } from '../core/app.js';
-import type { GameState } from '../core/gameState.js';
 import type { Player } from '../modules/movement/player.js';
 import { Monster } from '../modules/combat/monster.js';
 import { Projectile } from '../modules/combat/projectile.js';
@@ -67,10 +66,6 @@ export class NetDriver {
   private hasSmooth = false;
   /** VFX вокруг игрока: аура-кольцо, конус-прицел дальности/размаха, слэш при ударе. */
   private vfx: PlayerVfx;
-  /** Клиент-предсказанные откаты вспышек удара: базовый удар + скилл (на любом биндe) — по темпу атаки. */
-  private attackCd = 0;
-  private castCd = 0;
-  private lastCastId = '';
 
   constructor(scene: Phaser.Scene, app: App, player: Player) {
     this.scene = scene;
@@ -155,10 +150,9 @@ export class NetDriver {
     // Клавиша E — подбор ближайшего дропа (удержание надёжно: сервер сэмплит каждый тик). Клик по предмету — точечно (onDown).
     this.app.net.send({ t: 'input', seq: this.seq++, input: { move, facing: this.player.facing, attack, cast, interact: this.keys.e.isDown } });
 
-    // VFX: вспышка формы удара по факту отправленных действий (базовый удар + скилл, с любого бинда)
-    // + кольца аур. Форма/цвет — по оружию×скиллу (та же геометрия, что бьёт сервер); рывок → полоса.
+    // VFX: форма удара рисуется по СОБЫТИЮ `swing` с сервера (реальный удар, мана/КД учтены) — см.
+    // onEvents; здесь только кольца аур + телеграф текущих свингов (позиция/поворот live).
     const st = this.app.state!;
-    this.strikeVfx(st, attack, cast, dt);
     this.vfx.drawFrame(this.player, st, this.app.config, this.scene.time.now);
 
     if (this.latest) {
@@ -167,30 +161,6 @@ export class NetDriver {
       const view = this.buffer.sample(performance.now() - INTERP_DELAY_MS) ?? this.latest;
       this.renderSelf(dt);
       this.render(view);
-    }
-  }
-
-  /**
-   * Вспышки формы удара (клиент-предсказание темпа) по факту отправленных действий: базовый удар
-   * ('attack') и скилл (cast) — с любого бинда (ЛКМ/ПКМ/хотбар, т.к. attack/cast собраны из всех).
-   * Мили → сектор, рывок → полоса; дальнобой/каст-нова — свои визуалы (снаряды/AoE), пропускаем.
-   */
-  private strikeVfx(st: GameState, attack: boolean, cast: string | null, dt: number): void {
-    const dtSec = dt / 1000;
-    const px = this.player.x, py = this.player.y, f = this.player.facing;
-    const cadence = (speed: number): number => 1 / Math.max(0.2, st.derived().attackSpeed * speed);
-
-    this.attackCd = Math.max(0, this.attackCd - dtSec);
-    if (attack && this.attackCd <= 0) {
-      const g = this.vfx.currentAttack(st, this.app.config, 'attack');
-      if (g.melee || g.dash) { this.vfx.flashStrike(px, py, f, g); this.attackCd = cadence(g.speed); }
-    }
-
-    this.castCd = Math.max(0, this.castCd - dtSec);
-    if (cast) {
-      if (cast !== this.lastCastId) { this.castCd = 0; this.lastCastId = cast; } // сменили скилл → сразу вспышка
-      const g = this.vfx.currentAttack(st, this.app.config, cast);
-      if ((g.melee || g.dash) && this.castCd <= 0) { this.vfx.flashStrike(px, py, f, g); this.castCd = cadence(g.speed); }
     }
   }
 
@@ -308,6 +278,13 @@ export class NetDriver {
         if (e.playerId === this.myId) bus.emit('log:message', { text: questText(e.kind, e.name), kind: 'system' });
       } else if (e.type === 'player-died') {
         if (e.playerId === this.myId) bus.emit('player:died', { depth: this.app.state!.depth });
+      } else if (e.type === 'swing') {
+        // Реальный удар своего игрока (мана/КД/оружие уже прошли): форма-телеграф + заливка-откат слота.
+        if (e.playerId === this.myId) {
+          const now = performance.now();
+          this.app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
+          this.vfx.startSwing(this.vfx.currentAttack(this.app.state!, this.app.config, e.ability), e.windupMs);
+        }
       }
     }
   }

@@ -33,8 +33,9 @@ export class App {
   /** charId выбранного персонажа для входа в мир (OnlineScene шлёт его в join). */
   pendingCharId: string | null = null;
   private _state: GameState | null = null;
-  /** Оставшиеся доли КД скиллов по id (0..1) — для панели биндов. Обновляет combat. */
-  skillCooldowns: Record<string, number> = {};
+  /** Откаты действий для заливки слотов биндов: id действия ('attack'|nodeId) → окно [start,until] в мс
+   *  (performance.now). Пишется по событию `swing` с сервера (значит удар реально прошёл: мана/КД/оружие). */
+  actionCooldowns: Record<string, { start: number; until: number }> = {};
   /** Последний атакованный монстр (для реального шанса попасть/увернуться в листе). */
   lastTarget?: { name: string; accuracy: number; evade: number };
 

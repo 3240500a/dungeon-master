@@ -385,8 +385,8 @@ describe('GameSession — замах/прерывание (фаза C)', () => {
     expect(p.windup).not.toBeNull();      // замах начался
     expect(m.hp).toBe(m.maxHp);           // мгновенного урона нет
 
-    // Досим — замах завершается и бьёт.
-    for (let i = 0; i < 20 && p.windup; i++) s.tick(1 / 30, { p1: idle });
+    // Досим — замах завершается и бьёт (замах теперь = базовая доля цикла + windupSec скилла, длиннее).
+    for (let i = 0; i < 90 && p.windup; i++) s.tick(1 / 30, { p1: idle });
     expect(p.windup).toBeNull();
     expect(m.hp).toBeLessThan(m.maxHp);   // удар прошёл по завершении замаха
   });

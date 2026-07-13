@@ -141,7 +141,8 @@
   },
   "melee": {
     "baseRange": 52,
-    "baseArc": 0.8
+    "baseArc": 0.8,
+    "baseWindupFrac": 0.35
   },
   "autoPickup": [
     "rare",

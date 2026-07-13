@@ -35,7 +35,7 @@ function nodeById(app: App, id: string): SkillNode | undefined {
 
 /**
  * Панель биндов действий (D2): крупные ЛКМ/ПКМ + 3 доп. слота, клик → выпадающий
- * список (Атака / выученные скиллы / Пусто). Показывает кулдаун из app.skillCooldowns.
+ * список (Атака / выученные скиллы / Пусто). Заливка-откат слота — из app.actionCooldowns (по событию swing).
  * Переиспользуется в HUD и внизу окна скиллов.
  */
 export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; rebuild: () => void } {
@@ -76,10 +76,12 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
   };
 
   const refresh = (): void => {
+    const now = performance.now();
     for (const o of cdOverlays) {
-      const b = o.binding();
-      const frac = b && b !== 'attack' ? (app.skillCooldowns[b] ?? 0) : 0;
-      o.box.style.height = `${Math.round(frac * 100)}%`;
+      const b = o.binding(); // 'attack' тоже заливается (по факту удара)
+      const cd = b ? app.actionCooldowns[b] : undefined;
+      const frac = cd && now < cd.until && cd.until > cd.start ? (cd.until - now) / (cd.until - cd.start) : 0;
+      o.box.style.height = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
     }
   };
 

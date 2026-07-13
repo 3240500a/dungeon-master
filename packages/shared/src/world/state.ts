@@ -51,8 +51,8 @@ export interface PlayerEntity {
   toggles: string[];
   /** Временные баффы: id узла → остаток длительности, сек. */
   skillBuffs: Record<string, number>;
-  /** Идёт замах тяжёлого удара-скилла: сработает по завершении, прерывается станом. */
-  windup: { nodeId: string; rank: number; remaining: number } | null;
+  /** Идёт замах удара (базовой атаки ИЛИ скилла): сработает по завершении, прерывается станом. */
+  windup: ({ kind: 'attack' } | { kind: 'skill'; nodeId: string; rank: number }) & { remaining: number } | null;
   /** Активный рывок (движение) — пока не null, ввод игнорируется, масса ×weightMult. */
   dash: DashState | null;
   /** Остаток стана (сек); >0 — управление/атака заблокированы. */

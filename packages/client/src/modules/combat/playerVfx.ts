@@ -11,6 +11,7 @@ function hexNum(hex: string): number {
 }
 
 const STEEL = 0xcdd3dc; // нейтральный цвет базовой атаки
+const FLASH_MS = 120; // длительность яркой вспышки после замаха
 
 /** Геометрия действия для вспышки удара. `dash` → рисуем полосу вместо сектора. */
 export interface AttackGeom { melee: boolean; range: number; arc: number; color: number; speed: number; dash?: { length: number; halfWidth: number }; }
@@ -23,10 +24,20 @@ export interface AttackGeom { melee: boolean; range: number; arc: number; color:
 export class PlayerVfx {
   private scene: Phaser.Scene;
   private aura: Phaser.GameObjects.Graphics;
+  private telegraph: Phaser.GameObjects.Graphics;
+  /** Активные свинги: форма «наливается» за windup, затем короткий флеш. Позиция/поворот — live (игрока). */
+  private swings: { geom: AttackGeom; start: number; windupMs: number }[] = [];
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.aura = scene.add.graphics().setDepth(3); // под игроком/монстрами
+    this.telegraph = scene.add.graphics().setDepth(7); // форма удара — поверх
+  }
+
+  /** Запустить свинг по событию сервера: форма заряжается `windupMs`, затем короткая яркая вспышка. */
+  startSwing(geom: AttackGeom, windupMs: number): void {
+    if (!geom.melee && !geom.dash) return; // дальнобой/каст-нова — свои визуалы (снаряды/AoE)
+    this.swings.push({ geom, start: this.scene.time.now, windupMs: Math.max(0, windupMs) });
   }
 
   /**
@@ -58,9 +69,24 @@ export class PlayerVfx {
     return { melee, range, arc, color, speed, dash: dashLen > 0 ? { length: dashLen, halfWidth: swingHalfWidth(range, arc) } : undefined };
   }
 
-  /** Каждый кадр: пульс-кольца активных аур (форма удара рисуется только в момент удара — flashStrike). */
+  /** Каждый кадр: форма удара (зарядка за замах → флеш) + пульс-кольца активных аур. */
   drawFrame(player: Player, state: GameState, cfg: ConfigRegistry, timeMs: number): void {
     const px = player.x, py = player.y;
+    // ── Форма удара: «наливается» за замах, затем короткая яркая вспышка (позиция/поворот — live) ──
+    this.telegraph.clear();
+    for (let k = this.swings.length - 1; k >= 0; k--) {
+      const sw = this.swings[k]!;
+      const t = timeMs - sw.start;
+      if (t >= sw.windupMs + FLASH_MS) { this.swings.splice(k, 1); continue; }
+      const charging = t < sw.windupMs;
+      const p = sw.windupMs > 0 ? t / sw.windupMs : 1;
+      const alpha = charging ? 0.08 + 0.24 * p : 0.5 * (1 - (t - sw.windupMs) / FLASH_MS);
+      const scale = charging ? 0.6 + 0.4 * p : 1; // растёт до полного размера к моменту удара
+      const g = sw.geom;
+      if (g.dash) this.strip(this.telegraph, px, py, player.facing, g.dash.length * scale, g.dash.halfWidth, g.color, alpha);
+      else this.sector(this.telegraph, px, py, player.facing, g.range * scale, g.arc, g.color, alpha);
+    }
+
     // ── Кольца активных аур ──
     this.aura.clear();
     const tree = cfg.get('skills-active').find((t) => t.classId === state.save.classId);
@@ -78,14 +104,6 @@ export class PlayerVfx {
       this.aura.strokeCircle(px, py, baseR * pulse);
       i++;
     }
-  }
-
-  /** Вспышка формы удара — быстро гаснет: рывок → полоса по траектории, иначе → сектор оружия. */
-  flashStrike(px: number, py: number, facing: number, geom: AttackGeom): void {
-    const s = this.scene.add.graphics().setDepth(7);
-    if (geom.dash) this.strip(s, px, py, facing, geom.dash.length, geom.dash.halfWidth, geom.color, 0.5);
-    else this.sector(s, px, py, facing, geom.range, geom.arc, geom.color, 0.5);
-    this.scene.tweens.add({ targets: s, alpha: 0, duration: 200, onComplete: () => s.destroy() });
   }
 
   /** Заливка полосы-коридора рывка: от (x,y) вперёд по facing на length, полу-ширина halfW. */
@@ -116,5 +134,5 @@ export class PlayerVfx {
     g.strokePath();
   }
 
-  destroy(): void { this.aura.destroy(); }
+  destroy(): void { this.aura.destroy(); this.telegraph.destroy(); }
 }

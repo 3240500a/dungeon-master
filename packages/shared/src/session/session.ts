@@ -89,6 +89,9 @@ export type SessionEvent =
   | { type: 'levelup'; playerId: string; level: number }
   | { type: 'player-died'; playerId: string }
   | { type: 'stun'; id: number }
+  // Реальный свинг игрока (принят: мана/КД/оружие прошли) — для клиентского VFX (форма удара) и
+  // заливки-отката слота бинда. ability = nodeId скилла или 'attack'. windupMs — замах, cooldownMs — откат.
+  | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; x: number; y: number; facing: number }
   | { type: 'floor-cleared' };
 
 /** AoE-способность (бьёт по площади вокруг игрока), по abilityId — как в боевом контроллере. */
@@ -340,29 +343,46 @@ export class GameSession {
     if (input?.interact) this.tryPickup(p);
   }
 
-  /** Базовая атака игрока (по типу оружия; дуал-вилд бьёт руками по очереди). */
+  /** Замах удара/скилла как доля цикла атаки (масштабируется скоростью) + явный windup скилла. */
+  private windupSec(attackCd: number, skillWindupSec: number): number {
+    return attackCd * this.cfg.get('balance').melee.baseWindupFrac + skillWindupSec;
+  }
+
+  /** Событие реального свинга (принят: мана/КД/оружие прошли) — клиент рисует форму + льёт откат слота. */
+  private emitSwing(p: PlayerEntity, ability: string, windupSec: number, cooldownSec: number): void {
+    this.events.push({ type: 'swing', playerId: p.id, ability, windupMs: windupSec * 1000, cooldownMs: cooldownSec * 1000, x: p.pos.x, y: p.pos.y, facing: p.facing });
+  }
+
+  /**
+   * Базовая атака игрока: СТАРТ — списание маны (маг. оружие), тайминг, замах + событие `swing`.
+   * Само срабатывание (выбор руки/пакет/удар) — по завершении замаха (`executeBasicAttack`).
+   */
   private tryPlayerAttack(p: PlayerEntity, snap: PlayerSnapshot): void {
-    if (p.attackCd > 0) return;
-    const save = p.save;
-    const hands = attackWeaponsOf(save);
-    const dual = hands.length > 1;
-    const weapon = hands[p.swingHand % hands.length];
-    p.swingHand++;
-    const speedBonus = dual ? 1.2 : 1;
+    if (p.attackCd > 0 || p.windup) return;
+    const hands = attackWeaponsOf(p.save);
+    const weapon = hands[p.swingHand % hands.length]; // рука этого свинга (инкремент — в исполнении)
+    if ((weapon?.weaponType ?? 'melee') === 'magic') { if (p.mana < 4) return; p.mana -= 4; } // мана — при ПРИНЯТИИ
     const pm = debuffMods(p.debuffs);
+    const speedBonus = hands.length > 1 ? 1.2 : 1; // дуал-вилд бьёт чаще
     p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * speedBonus * pm.atkSpeedMult);
     this.makeNoise(p, 220);
+    const windup = this.windupSec(p.attackCd, 0);
+    this.emitSwing(p, 'attack', windup, p.attackCd);
+    if (windup > 0) { p.windup = { kind: 'attack', remaining: windup }; return; }
+    this.executeBasicAttack(p, snap);
+  }
 
-    const wt: WeaponType = weapon?.weaponType ?? 'melee';
-    if (wt === 'magic') {
-      if (p.mana < 4) return;
-      p.mana -= 4;
-    }
+  /** Срабатывание базовой атаки (по завершении замаха): выбор руки, пакет урона (крит здесь), удар/снаряд. */
+  private executeBasicAttack(p: PlayerEntity, snap: PlayerSnapshot): void {
+    const hands = attackWeaponsOf(p.save);
+    const weapon = hands[p.swingHand % hands.length];
+    p.swingHand++;
+    const pm = debuffMods(p.debuffs);
     const scaling = this.cfg.get('balance').weaponAttrScaling;
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, scaling, this.weights(), this.rng);
     if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
-
+    const wt: WeaponType = weapon?.weaponType ?? 'melee';
     if (wt === 'melee') this.meleeSwing(p, packet, attacker, weapon);
     else this.spawnProjectile(p, packet, attacker, wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED, p.facing);
   }
@@ -432,7 +452,9 @@ export class GameSession {
         const pm = debuffMods(p.debuffs);
         p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
-        if (active.windupSec > 0) { p.windup = { nodeId, rank, remaining: active.windupSec }; return; }
+        const windup = this.windupSec(p.attackCd, active.windupSec);
+        this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0));
+        if (windup > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: windup }; return; }
         this.executeAbility(p, snap, active, rank);
         return;
       }
@@ -464,6 +486,7 @@ export class GameSession {
     wu.remaining -= dt;
     if (wu.remaining <= 0) {
       p.windup = null;
+      if (wu.kind === 'attack') { this.executeBasicAttack(p, snap); return; }
       const a = this.activeById(p.save, wu.nodeId);
       if (a) this.executeAbility(p, snap, a, wu.rank);
     }
