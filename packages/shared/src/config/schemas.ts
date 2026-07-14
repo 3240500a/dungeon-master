@@ -143,17 +143,17 @@ export const balanceSchema = z.object({
   lighting: z
     .object({
       /** Базовая тьма — альфа затемняющего слоя (город/1-й этаж). 0 = светло, 1 = чёрно. */
-      ambient: z.number().min(0).max(1).default(0.6),
+      ambient: z.number().min(0).max(1).default(0.8),
       /** Прибавка тьмы за уровень глубины (глубже — темнее). */
       perDepth: z.number().min(0).max(0.05).default(0.015),
       /** Кап тьмы (даже на дне не полностью чёрно). */
-      ambientMax: z.number().min(0).max(1).default(0.85),
+      ambientMax: z.number().min(0).max(1).default(0.92),
       /** Радиус света игрока, px (позже аффиксы/шлем меняют). */
       playerRadius: z.number().min(0).default(160),
       /** Радиус света факела, px. */
       torchRadius: z.number().min(0).default(140),
     })
-    .default({ ambient: 0.6, perDepth: 0.015, ambientMax: 0.85, playerRadius: 160, torchRadius: 140 }),
+    .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140 }),
   /** Редкости, которые поднимаются автоматически при проходе рядом. Остальное — по клику. */
   autoPickup: z
     .array(z.enum(['normal', 'magic', 'rare', 'unique']))

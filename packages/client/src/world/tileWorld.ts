@@ -45,7 +45,7 @@ export function renderGrid(scene: Phaser.Scene, grid: Grid): RenderedWorld {
   const widthPx = cols * TILE;
   const heightPx = rows * TILE;
   scene.physics.world.setBounds(0, 0, widthPx, heightPx);
-  scene.cameras.main.setBounds(0, 0, widthPx, heightPx);
+  // Камере границы НЕ ставим: игрок всегда в центре (у края карты — чёрное за краем), не «упирается».
 
   return { walls, objects, widthPx, heightPx };
 }

@@ -146,9 +146,9 @@
     "basicManaCost": 0
   },
   "lighting": {
-    "ambient": 0.6,
+    "ambient": 0.8,
     "perDepth": 0.015,
-    "ambientMax": 0.85,
+    "ambientMax": 0.92,
     "playerRadius": 160,
     "torchRadius": 140
   },
