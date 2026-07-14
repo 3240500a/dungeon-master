@@ -46,6 +46,8 @@ export interface DerivedStats {
   minDamage: number;
   maxDamage: number;
   attackSpeed: number;
+  /** Скорость каста (множитель): каст-тайм скиллов делится на неё. Растёт от Интеллекта. */
+  castSpeed: number;
   critChance: number;
   critMultiplier: number;
   armor: number;

@@ -129,6 +129,7 @@ const PROJ_HIT_RADIUS = 16;
 type ActiveAbility = NonNullable<ConfigShapes['skills-active'][number]['nodes'][number]['effect']['active']>;
 type AttackAbility = Extract<ActiveAbility, { category: 'attack' }>;
 type CastAbility = Extract<ActiveAbility, { category: 'cast' }>;
+type CurseAbility = Extract<ActiveAbility, { category: 'curse' }>;
 type ToggleAbility = Extract<ActiveAbility, { category: 'aura' | 'stance' }>;
 type OffensiveAbility = AttackAbility | CastAbility;
 /** Опции применения удара (оружие/скилл): к PlayerHitOptions добавлены отброс и гарант. стан. */
@@ -442,9 +443,8 @@ export class GameSession {
         p.skillBuffs[nodeId] = active.durationSec;
         return;
       }
-      // Атаки/касты — тайминг от скорости атаки; опц. персональный КД; гейт по оружию.
-      case 'attack':
-      case 'cast': {
+      // Атака: делит ОБЩИЙ attack-таймер (лок), тайминг от скорости атаки.
+      case 'attack': {
         if (p.attackCd > 0 || p.windup) return;    // делит тайминг с базовой атакой; занят замахом
         if ((p.skillCd[nodeId] ?? 0) > 0) return;   // опц. персональный КД
         if (!this.weaponAllowed(p, active)) return; // не то оружие → скилл не срабатывает
@@ -459,11 +459,26 @@ export class GameSession {
         this.executeAbility(p, snap, active, rank);
         return;
       }
+      // Каст/проклятие: тайминг от скорости КАСТА (Интеллект), личный КД, НЕ делит attack-лок (lockMs=0).
+      case 'cast':
+      case 'curse': {
+        if (p.windup) return;                       // занят замахом/каст-таймом
+        if ((p.skillCd[nodeId] ?? 0) > 0) return;   // личный КД
+        if (!this.weaponAllowed(p, active)) return;
+        if (p.mana < active.manaCost) return;
+        p.mana -= active.manaCost;
+        if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
+        const castTime = active.castTimeSec / Math.max(0.2, snap.derived.castSpeed);
+        this.emitSwing(p, nodeId, castTime, Math.max(castTime, p.skillCd[nodeId] ?? 0), 0);
+        if (castTime > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: castTime }; return; }
+        this.executeAbility(p, snap, active, rank);
+        return;
+      }
     }
   }
 
   /** Проверка ограничений оружия скилла (тип/класс/руки; пусто → любое оружие). */
-  private weaponAllowed(p: PlayerEntity, active: OffensiveAbility): boolean {
+  private weaponAllowed(p: PlayerEntity, active: OffensiveAbility | CurseAbility): boolean {
     const w = p.save.equipment.weapon;
     const wt: WeaponType = w?.weaponType ?? 'melee';
     if (active.weaponTypes?.length && !active.weaponTypes.includes(wt)) return false;
@@ -543,27 +558,40 @@ export class GameSession {
       this.weaponAttack(p, snap, active, rank, opts);
       return;
     }
+    if (active.category === 'curse') { this.applyCurse(p, active); return; }
     if (active.category === 'cast') {
       const element = active.element ?? abilityElementOf(active.abilityId);
-      const base = packetTotal(buildAttackPacket(snap.derived, snap.attrs, p.save.equipment.weapon, this.scaling(), this.weights(), this.rng));
-      const dmg = base * active.damageMult * abilityRankMult(rank);
-      const packet = (): DamagePacket => { const pk = emptyPacket(); pk[element] = dmg; return pk; };
-      const attacker = snap.combat;
       const opts = this.skillHitOpts(active, element, p.save.equipment.weapon);
+      const pk = this.castPacket(snap, p.save.equipment.weapon, active, rank, element);
+      const attacker = snap.combat;
       switch (active.shape) {
-        case 'projectile': this.skillProjectile(p, packet(), attacker, active, opts); break;
-        case 'boomerang': this.skillBoomerang(p, packet(), attacker, active, opts); break;
-        case 'nova': case 'ground': case 'meteor': this.skillNova(p, packet(), attacker, active, opts); break;
-        case 'curse': this.skillCurse(p, active); break;
+        case 'dash': this.doDashAttack(p, pk, attacker, active, rank, opts); break;
+        case 'leap': this.doLeap(p, pk, attacker, active, rank, opts); break;
+        case 'boomerang': this.skillBoomerang(p, pk, attacker, active, opts); break;
+        case 'nova': case 'ground': case 'meteor': this.skillNova(p, pk, attacker, active, opts); break;
       }
     }
     // aura/stance/buff обрабатываются в castSkill, не здесь.
   }
 
   /**
-   * АТАКА-СКИЛЛ = удар ОРУЖИЕМ + моды скилла: геометрия (дальность/размах/цели) и СОСТАВ урона — от
-   * оружия, урон ×damageMult×ранг (состав сохраняется), эффекты (стан/отброс/статус) — из `opts`.
-   * Мили → взмах по ВСЕМ в дуге оружия; дальнобой/маг → снаряд оружия. Опц. `dash` — гэпклоузер.
+   * Пакет урона каста: состав урона ОРУЖИЯ ×damageMult×ранг, затем доля `convertPct` всего урона
+   * переносится в стихию каста, остальное — состав оружия. Совпал посох по стихии → весь урон в неё.
+   */
+  private castPacket(snap: PlayerSnapshot, weapon: Item | undefined, active: CastAbility, rank: number, element: DamageType): DamagePacket {
+    const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
+    const mult = active.damageMult * abilityRankMult(rank);
+    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
+    const converted = packetTotal(packet) * active.convertPct;
+    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= (1 - active.convertPct);
+    packet[element] += converted;
+    return packet;
+  }
+
+  /**
+   * АТАКА-СКИЛЛ = удар/выстрел ОРУЖИЕМ + моды скилла: геометрия и СОСТАВ урона — от оружия, урон
+   * ×damageMult×ранг (состав сохраняется), эффекты (стан/отброс/статус) — из `opts`. Мили → взмах по
+   * ВСЕМ в дуге; дальнобой/маг → 1..N снарядов (веер `count`/`spread`, урон каждой = damageMult).
    */
   private weaponAttack(p: PlayerEntity, snap: PlayerSnapshot, active: AttackAbility, rank: number, opts: HitOpts): void {
     const weapon = p.save.equipment.weapon;
@@ -572,37 +600,52 @@ export class GameSession {
     const mult = active.damageMult * abilityRankMult(rank) * pm.outDamageMult;
     for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
-    if (active.dash) { this.doDashAttack(p, packet, attacker, active, rank, opts); return; }
     const wt: WeaponType = weapon?.weaponType ?? 'melee';
-    if (wt === 'melee') this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult);
-    else this.spawnProjectile(p, packet, attacker, wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED, p.facing, { hitOpts: opts });
+    if (wt === 'melee') { this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult); return; }
+    // Дальнобой/маг: веер из `count` снарядов со `spread`; урон каждой = damageMult (для веера ставь ниже).
+    const n = Math.max(1, active.count), spread = active.spread;
+    const speed = wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED;
+    for (let i = 0; i < n; i++) {
+      const off = n > 1 ? -spread / 2 + (spread * i) / (n - 1) : 0;
+      this.spawnProjectile(p, packet, attacker, speed, p.facing + off, { pierce: active.pierce, hitOpts: opts });
+    }
   }
 
-  /** Гэпклоузер (Натиск): урон монстрам вдоль траектории + запуск движения-рывка (расталкивание весом). */
-  private doDashAttack(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: AttackAbility, rank: number, opts: HitOpts): void {
+  /** Рывок (cast dash): урон монстрам вдоль траектории (коридор = размах оружия) + движение-рывок. */
+  private doDashAttack(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: CastAbility, rank: number, opts: HitOpts): void {
     const dir = p.facing;
-    const dist = 130 * active.rangeMult;
-    // Ширина коридора рывка = размах удара тем же оружием×скиллом (вариант B): та же формула, что
-    // рисует клиентская полоса-VFX. Узкое оружие → узкий коридор, широкое (топор) → шире.
+    const dist = active.dashDist > 0 ? active.dashDist : 130;
     const mel = this.cfg.get('balance').melee;
     const weapon = p.save.equipment.weapon;
-    const range = mel.baseRange * (weapon?.reachMult ?? 1) * active.rangeMult;
-    const arc = mel.baseArc * (weapon?.arcMult ?? 1) * active.arcMult;
-    const halfW = swingHalfWidth(range, arc);
+    const halfW = swingHalfWidth(mel.baseRange * (weapon?.reachMult ?? 1), mel.baseArc * (weapon?.arcMult ?? 1));
     const from = { ...p.pos };
     const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
       if (this.distToSegment(m.pos, from, to) <= halfW) this.hitMonster(p, m, packet, attacker, opts);
     }
+    this.launchDash(p, dir, from, to, active, rank);
+  }
+
+  /** Прыжок (cast leap): перемещение вперёд БЕЗ урона по пути + AoE-удар в точке приземления. Уязвим. */
+  private doLeap(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: CastAbility, rank: number, opts: HitOpts): void {
+    const dir = p.facing;
+    const dist = active.dashDist > 0 ? active.dashDist : 150;
+    const from = { ...p.pos };
+    const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1);
+    const r = active.radius > 0 ? active.radius : 60;
+    for (const m of this.world.monsters) {
+      if (!m.alive) continue;
+      if (Math.hypot(m.pos.x - to.x, m.pos.y - to.y) <= r) this.hitMonster(p, m, packet, attacker, opts);
+    }
+    this.launchDash(p, dir, from, to, active, rank);
+  }
+
+  /** Запуск движения рывка/прыжка к точке `to` (расталкивание весом, `weightMult`). */
+  private launchDash(p: PlayerEntity, dir: number, from: Vec2, to: Vec2, active: CastAbility, rank: number): void {
     const travel = Math.hypot(to.x - from.x, to.y - from.y);
-    const speed = active.dash!.speed * abilityRankMult(rank);
-    p.dash = {
-      dx: Math.cos(dir), dy: Math.sin(dir), speed,
-      remaining: speed > 0 ? travel / speed : 0,
-      weightMult: 1 + active.dash!.weightBonus / 100,
-      hitIds: [],
-    };
+    const speed = active.dashSpeed * abilityRankMult(rank);
+    p.dash = { dx: Math.cos(dir), dy: Math.sin(dir), speed, remaining: speed > 0 ? travel / speed : 0, weightMult: 1 + active.dashWeightBonus / 100, hitIds: [] };
   }
 
   /** Опции удара скилла (attack/cast): отброс(шанс), гарант. стан, наложение стих. статуса. Поверх оружейных. */
@@ -629,15 +672,6 @@ export class GameSession {
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
       if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= radius) this.hitMonster(p, m, packet, attacker, opts);
-    }
-  }
-
-  /** Снаряды (cast projectile): веер count с разбросом spread; опц. пробитие. */
-  private skillProjectile(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, active: CastAbility, opts: HitOpts): void {
-    const n = active.count, spread = active.spread;
-    for (let i = 0; i < n; i++) {
-      const off = n > 1 ? -spread / 2 + (spread * i) / (n - 1) : 0;
-      this.spawnProjectile(p, packet, attacker, PLAYER_PROJ_SPEED, p.facing + off, { pierce: active.pierce, hitOpts: opts });
     }
   }
 
@@ -694,12 +728,16 @@ export class GameSession {
     resolveEntityCollisions(bodies, this.world.grid, bal.collision.iterations);
   }
 
-  /** Проклятие/провокация: агро всех в радиусе (доп. эффекты — фаза C). */
-  private skillCurse(p: PlayerEntity, active: CastAbility): void {
-    const radius = active.radius || 200;
+  /** Проклятие (curse): врагам в радиусе — статус-дебаф (по стихии) и/или притягивание агро (taunt). */
+  private applyCurse(p: PlayerEntity, active: CurseAbility): void {
+    const kind = active.ailment ? this.cfg.get('damage-types').find((d) => d.id === (active.element ?? 'physical'))?.ailment : undefined;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= radius) m.alertTimer = ALERT_TIME;
+      if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) > active.radius) continue;
+      if (active.taunt) m.alertTimer = ALERT_TIME;
+      if (kind && active.ailment) {
+        addDebuffStack(m.debuffs, { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs }, this.world.timeMs);
+      }
     }
   }
 

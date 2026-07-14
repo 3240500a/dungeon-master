@@ -93,6 +93,8 @@ export function deriveStats(
     minDamage: 1,
     maxDamage: 2,
     attackSpeed: 1,
+    // Скорость каста растёт от Интеллекта (0.008/ед → 100 INT ≈ ×1.8). Гир может добавить modifier `castSpeed`.
+    castSpeed: 1 + attr.intelligence * 0.008,
     critChance: 0.05,
     critMultiplier: 1.5,
     armor: 0,

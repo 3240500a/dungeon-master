@@ -623,7 +623,7 @@ const activeCommon = {
   cooldown: z.number().min(0).default(0),
 };
 
-/** Атака: удар ОРУЖИЕМ (геометрия/состав от оружия) + моды скилла. */
+/** Атака: удар/выстрел ОРУЖИЕМ (геометрия/состав от оружия) + моды скилла. Мили ИЛИ снаряд(ы). */
 const attackAbilitySchema = z.object({
   category: z.literal('attack'),
   ...activeCommon,
@@ -640,31 +640,49 @@ const attackAbilitySchema = z.object({
   /** Стихия для накладываемого статуса (сам урон — состав оружия). */
   element: damageTypeEnum.optional(),
   ailment: ailmentApplySchema.optional(),
-  /** Опц. рывок-гэпклоузер (Натиск): быстрое движение + расталкивание весом. */
-  dash: z.object({
-    speed: z.number().min(1).default(700),
-    weightBonus: z.number().min(0).default(200),
-  }).optional(),
+  /** Веер снарядов (дальнобой/маг): count>1 стрел со spread; урон каждой = damageMult (ставь ниже для веера).
+   *  Для мили игнорируется. */
+  count: z.number().int().min(1).default(1),
+  spread: z.number().min(0).default(0),
+  pierce: z.boolean().default(false),
 });
 
-/** Каст: стихийное заклинание (свод к element), форма задаёт паттерн. */
+/** Каст: особая механика (рывок/прыжок/нова/лужа/метеор/бумеранг). Тайминг — от скорости каста (INT). */
 const castAbilitySchema = z.object({
   category: z.literal('cast'),
   ...activeCommon,
   ...weaponRestrict,
-  shape: z.enum(['projectile', 'boomerang', 'nova', 'ground', 'meteor', 'curse']),
+  shape: z.enum(['dash', 'leap', 'nova', 'ground', 'meteor', 'boomerang']),
   element: damageTypeEnum.optional(),
-  speed: z.number().min(0.1).default(1),
+  /** Каст-тайм, сек (делится на castSpeed от Интеллекта) — замах-рут перед срабатыванием. */
+  castTimeSec: z.number().min(0).default(0.4),
+  /** Доля урона оружия, конвертируемая в стихию каста (0..1). Совпал посох по стихии → весь урон в неё. */
+  convertPct: z.number().min(0).max(1).default(0.5),
   damageMult: z.number().min(0).default(1),
-  count: z.number().int().min(1).default(1),
-  spread: z.number().min(0).default(0),
-  pierce: z.boolean().default(false),
   radius: z.number().min(0).default(0),
-  windupSec: z.number().min(0).default(0),
   knockback: z.number().min(0).default(0),
   shoveChance: z.number().min(0).max(1).default(1),
   stunSec: z.number().min(0).default(0),
   ailment: ailmentApplySchema.optional(),
+  /** Рывок/прыжок (shape dash/leap): дальность перемещения, скорость, добавка к весу для расталкивания. */
+  dashDist: z.number().min(0).default(130),
+  dashSpeed: z.number().min(1).default(700),
+  dashWeightBonus: z.number().min(0).default(200),
+});
+
+/** Проклятие: накладывает дебафы/статусы на врагов в радиусе. Тайминг — от скорости каста (INT). */
+const curseAbilitySchema = z.object({
+  category: z.literal('curse'),
+  ...activeCommon,
+  ...weaponRestrict,
+  /** Каст-тайм, сек (делится на castSpeed от Интеллекта). */
+  castTimeSec: z.number().min(0).default(0.3),
+  radius: z.number().min(0).default(200),
+  element: damageTypeEnum.optional(),
+  /** Накладываемый статус-дебаф врагам в радиусе (ожог/озноб/…). */
+  ailment: ailmentApplySchema.optional(),
+  /** Притянуть агро (как прежний taunt). */
+  taunt: z.boolean().default(false),
 });
 
 /** Аура: тогл, резервирует ману, даёт стат-моды (пати-радиус — задел). */
@@ -695,7 +713,7 @@ const buffAbilitySchema = z.object({
 });
 
 const activeAbilitySchema = z.discriminatedUnion('category', [
-  attackAbilitySchema, castAbilitySchema, auraAbilitySchema, stanceAbilitySchema, buffAbilitySchema,
+  attackAbilitySchema, castAbilitySchema, curseAbilitySchema, auraAbilitySchema, stanceAbilitySchema, buffAbilitySchema,
 ]);
 
 const skillEffectSchema = z.object({

@@ -101,6 +101,8 @@ function activeFx(over: Record<string, unknown>): Record<string, unknown> {
     speed: 1, damageMult: 1, arcMult: 1, rangeMult: 1, windupSec: 0,
     knockback: 0, shoveChance: 1, stunSec: 0,
     count: 1, spread: 0, pierce: false, radius: 0, durationSec: 10,
+    // cast/curse-поля (v3): каст-тайм 0 (мгновенно в тестах), без конверсии стихии, дефолты рывка/прыжка.
+    castTimeSec: 0, convertPct: 0, dashDist: 130, dashSpeed: 700, dashWeightBonus: 200, taunt: false,
     ...over,
   };
 }
@@ -124,7 +126,7 @@ function weakMon(r: ConfigRegistry, x: number, y: number) {
   return { def, x, y };
 }
 
-describe('GameSession — движок active.type', () => {
+describe('GameSession — категории скиллов (attack/cast/curse/aura/stance/buff)', () => {
   it('nova бьёт всех монстров в радиусе вокруг игрока', () => {
     const r = reg();
     injectSkill(r, 'warrior', 't_nova', activeFx({ category: 'cast', shape: 'nova', radius: 130, damageMult: 2 }));
@@ -144,11 +146,11 @@ describe('GameSession — движок active.type', () => {
     expect(s.monstersAlive).toBe(0); // все трое добиты новой
   });
 
-  it('projectile выпускает веер снарядов, поражающих цель по курсору', () => {
+  it('attack-веер: дальнобойный attack-скилл пускает несколько снарядов в цель', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_proj', activeFx({ category: 'cast', shape: 'projectile', count: 3, spread: 0.2, damageMult: 3 }));
+    injectSkill(r, 'archer', 't_fan', activeFx({ category: 'attack', count: 3, spread: 0.2, damageMult: 3 }));
     const s = new GameSession(r, 6, 'normal');
-    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const p = s.addPlayer('p1', newBotSave(r, 'archer'));
     const grid = openField(24, 12);
     const spawn = cellToWorld(5, 6);
     const mp = cellToWorld(10, 6); // прямо по +x от игрока
@@ -157,9 +159,9 @@ describe('GameSession — движок active.type', () => {
     for (let i = 0; i < 300 && m.alive; i++) {
       p.mana = 100;
       const facing = Math.atan2(m.pos.y - p.pos.y, m.pos.x - p.pos.x);
-      s.tick(1 / 30, { p1: { ...idle, facing, cast: 't_proj' } });
+      s.tick(1 / 30, { p1: { ...idle, facing, cast: 't_fan' } });
     }
-    expect(m.alive).toBe(false); // снаряды долетели и добили
+    expect(m.alive).toBe(false); // центральный снаряд веера долетел и добил
   });
 
   it('boomerang пробивает несколько целей и не гаснет о первую', () => {
@@ -184,7 +186,7 @@ describe('GameSession — движок active.type', () => {
 
   it('dash сдвигает игрока вперёд и бьёт монстров на пути', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_dash', activeFx({ category: 'attack', rangeMult: 1, damageMult: 3, knockback: 1, dash: { speed: 700, weightBonus: 200 } }));
+    injectSkill(r, 'warrior', 't_dash', activeFx({ category: 'cast', shape: 'dash', damageMult: 3, knockback: 1, dashDist: 130, dashSpeed: 700, dashWeightBonus: 200 }));
     const s = new GameSession(r, 8, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(24, 12);
@@ -201,6 +203,33 @@ describe('GameSession — движок active.type', () => {
     }
     expect(p.pos.x).toBeGreaterThan(startX); // персонаж рванул вперёд
     expect(m.alive).toBe(false); // и порубил монстра по пути
+  });
+
+  it('curse накладывает дебаф на врагов в радиусе', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_curse', activeFx({ category: 'curse', radius: 200, element: 'fire', ailment: { chance: 1, mag: 5, maxStacks: 5, durationMs: 3000 } }));
+    const s = new GameSession(r, 9, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const grid = openField(24, 12);
+    const mp = cellToWorld(7, 6);
+    s.enterFloor(1, { grid, spawn: cellToWorld(5, 6), monsters: [weakMon(r, mp.x, mp.y)] });
+    const m = s.world.monsters[0]!;
+    p.mana = 100;
+    s.tick(1 / 30, { p1: { ...idle, cast: 't_curse' } });
+    expect(Object.keys(m.debuffs).length).toBeGreaterThan(0); // статус-дебаф стихии наложен
+  });
+
+  it('cast НЕ занимает общий attack-таймер, ставит личный КД', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_cast', activeFx({ category: 'cast', shape: 'nova', radius: 200, cooldown: 5 }));
+    const s = new GameSession(r, 10, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const grid = openField(24, 12);
+    s.enterFloor(1, { grid, spawn: cellToWorld(5, 6), monsters: [] });
+    p.mana = 100;
+    s.tick(1 / 30, { p1: { ...idle, cast: 't_cast' } });
+    expect(p.attackCd).toBe(0);                     // каст не тронул attack-таймер (атака доступна)
+    expect(p.skillCd['t_cast']).toBeGreaterThan(0); // но встал личный КД скилла
   });
 
   it('attack-скилл бьёт ВСЕХ монстров в дуге оружия (не одну цель)', () => {

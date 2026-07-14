@@ -21,7 +21,7 @@ export function elementLabel(el: string): string {
 export function elementOf(node: SkillNode): string {
   const active = node.effect.active;
   if (!active) return 'mastery';
-  if ((active.category === 'attack' || active.category === 'cast') && active.element) return active.element;
+  if ((active.category === 'attack' || active.category === 'cast' || active.category === 'curse') && active.element) return active.element;
   const id = active.abilityId;
   if (/fire|flame|meteor/.test(id)) return 'fire';
   if (/frost|ice|cold|blizzard/.test(id)) return 'cold';

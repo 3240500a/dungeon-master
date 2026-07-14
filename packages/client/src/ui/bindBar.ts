@@ -33,12 +33,11 @@ function nodeById(app: App, id: string): SkillNode | undefined {
   return tree?.nodes.find((n) => n.id === id);
 }
 
-/** Делит ли бинд общий attack-таймер: базовая атака или скилл категории attack/cast (не buff/aura/stance). */
+/** Делит ли бинд общий attack-таймер: базовая атака или скилл категории attack (cast/curse — свой КД). */
 function isAttackLike(app: App, b: Binding): boolean {
   if (b === 'attack') return true;
   if (!b) return false;
-  const cat = nodeById(app, b)?.effect.active?.category;
-  return cat === 'attack' || cat === 'cast';
+  return nodeById(app, b)?.effect.active?.category === 'attack';
 }
 
 /**

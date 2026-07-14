@@ -7,9 +7,9 @@ export interface SkillCost {
 }
 
 /** Категория активного скилла (совпадает со схемой `skills-active`, дискриминатор). */
-export type SkillCategory = 'attack' | 'cast' | 'aura' | 'stance' | 'buff';
-/** Форма каста (стихийное заклинание). */
-export type CastShape = 'projectile' | 'boomerang' | 'nova' | 'ground' | 'meteor' | 'curse';
+export type SkillCategory = 'attack' | 'cast' | 'curse' | 'aura' | 'stance' | 'buff';
+/** Форма каста (особая механика). */
+export type CastShape = 'dash' | 'leap' | 'nova' | 'ground' | 'meteor' | 'boomerang';
 export type WeaponTypeSel = 'melee' | 'ranged' | 'magic';
 export type WeaponClassSel = 'sword' | 'axe' | 'mace' | 'dagger' | 'spear' | 'bow' | 'crossbow' | 'wand' | 'staff';
 type DamageTypeSel = 'physical' | 'fire' | 'cold' | 'lightning' | 'poison';
@@ -37,7 +37,7 @@ interface WeaponRestrict {
   hands: 'any' | 'one' | 'two';
 }
 
-/** Атака: удар оружием (геометрия/состав от оружия) + моды/эффекты скилла. */
+/** Атака: удар/выстрел оружием (геометрия/состав от оружия) + моды/эффекты скилла. Мили ИЛИ снаряд(ы). */
 export interface AttackActive extends ActiveCommon, WeaponRestrict {
   category: 'attack';
   speed: number;
@@ -50,25 +50,39 @@ export interface AttackActive extends ActiveCommon, WeaponRestrict {
   stunSec: number;
   element?: DamageTypeSel;
   ailment?: SkillAilment;
-  /** Опц. рывок-гэпклоузер. */
-  dash?: { speed: number; weightBonus: number };
+  /** Веер снарядов (дальнобой/маг): count>1 стрел со spread, урон каждой = damageMult. Мили игнорит. */
+  count: number;
+  spread: number;
+  pierce: boolean;
 }
-/** Каст: стихийное заклинание (свод к element), форма — shape. */
+/** Каст: особая механика (рывок/прыжок/нова/лужа/метеор/бумеранг). Тайминг — от скорости каста (INT). */
 export interface CastActive extends ActiveCommon, WeaponRestrict {
   category: 'cast';
   shape: CastShape;
   element?: DamageTypeSel;
-  speed: number;
+  /** Каст-тайм (делится на castSpeed от INT). */
+  castTimeSec: number;
+  /** Доля урона оружия, конвертируемая в стихию каста (0..1). */
+  convertPct: number;
   damageMult: number;
-  count: number;
-  spread: number;
-  pierce: boolean;
   radius: number;
-  windupSec: number;
   knockback: number;
   shoveChance: number;
   stunSec: number;
   ailment?: SkillAilment;
+  /** Рывок/прыжок (shape dash/leap). */
+  dashDist: number;
+  dashSpeed: number;
+  dashWeightBonus: number;
+}
+/** Проклятие: накладывает дебафы/статусы на врагов в радиусе. Тайминг — от скорости каста (INT). */
+export interface CurseActive extends ActiveCommon, WeaponRestrict {
+  category: 'curse';
+  castTimeSec: number;
+  radius: number;
+  element?: DamageTypeSel;
+  ailment?: SkillAilment;
+  taunt: boolean;
 }
 /** Аура: тогл, резерв маны, стат-моды (пати-радиус — задел). */
 export interface AuraActive extends ActiveCommon {
@@ -93,7 +107,7 @@ export interface BuffActive extends ActiveCommon {
 }
 
 /** Исполняемая часть активного скилла (v2: дискриминирована по `category`). Совпадает со схемой. */
-export type SkillActive = AttackActive | CastActive | AuraActive | StanceActive | BuffActive;
+export type SkillActive = AttackActive | CastActive | CurseActive | AuraActive | StanceActive | BuffActive;
 
 /** Условный «сет»-бонус: моды при надетом комплекте брони одного класса. */
 export interface SkillSetBonus {

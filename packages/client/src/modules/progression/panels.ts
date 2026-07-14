@@ -88,9 +88,6 @@ const RES: [keyof DerivedStats, DamageType][] = [
   ['resPoison', 'poison'],
 ];
 
-const SKILL_AOE = /nova|shout|taunt|caltrops|berserk|wolf|horn|rally|blizzard|meteor|trap|rain|skin|wall/;
-/** Типы активок, наносящих прямой урон (для превью «Наступление»). */
-const ATTACK_SKILL_TYPES = new Set(['strike', 'cleave', 'nova', 'projectile', 'boomerang', 'dash']);
 const DMG_TYPES: DamageType[] = ['physical', 'fire', 'cold', 'lightning', 'poison'];
 
 function resRow(label: string, frac: number, color: string): HTMLElement {
@@ -319,15 +316,16 @@ export const characterPanel: PanelFactory = (app, ui) => {
             const rank = state.save.activeSkills[binding] ?? 1;
             const base = estimateWeaponDamage(state, state.save.equipment.weapon, scaling, weights);
             const sdmg = Math.round(base * active.damageMult * abilityRankMult(rank));
-            const rate = Math.max(0.2, state.derived().attackSpeed * active.speed);
-            const sdps = Math.round(sdmg * rate);
-            const rateTip = `темп ${(1 / rate).toFixed(2)} с/удар`;
+            // Атака — темп от скорости атаки; каст — каст-тайм от Интеллекта.
+            const [sdps, rateTip] = active.category === 'attack'
+              ? (() => { const r = Math.max(0.2, state.derived().attackSpeed * active.speed); return [Math.round(sdmg * r), `темп ${(1 / r).toFixed(2)} с/удар`] as const; })()
+              : (() => { const ct = active.castTimeSec / Math.max(0.2, state.derived().castSpeed); return [ct > 0 ? Math.round(sdmg / ct) : sdmg, `каст ${ct.toFixed(2)} с`] as const; })();
             const col = dmgColor(elementOf(node) as DamageType);
             right.append(mk('span', `font-weight:600;color:${col}`, `${sdmg} (ДПС ~${sdps})`));
-            attachTooltip(row, () => `${node.name}: урон за удар <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.`);
+            attachTooltip(row, () => `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.`);
           } else if (node && active) {
-            // Аура/стойка/бафф — прямого урона нет.
-            const kind = active.category === 'aura' ? 'аура' : active.category === 'stance' ? 'стойка' : 'бафф';
+            // Проклятие/аура/стойка/бафф — прямого урона нет.
+            const kind = active.category === 'curse' ? 'проклятие' : active.category === 'aura' ? 'аура' : active.category === 'stance' ? 'стойка' : 'бафф';
             right.append(mk('span', `color:${COLORS.dim}`, '—'));
             attachTooltip(row, () => `${node.name}: ${kind} — без прямого урона.`);
           } else {

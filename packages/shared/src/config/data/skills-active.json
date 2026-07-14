@@ -31,16 +31,25 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "cleave",
             "manaCost": 5,
             "cooldown": 0.8,
-            "category": "attack",
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
+            "speed": 0.9,
             "damageMult": 1.3,
             "arcMult": 1.3,
-            "speed": 0.9
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -117,16 +126,25 @@
         "levelReq": 12,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "whirlwind",
             "manaCost": 12,
             "cooldown": 1.4,
-            "category": "attack",
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
+            "speed": 0.8,
             "damageMult": 1.1,
             "arcMult": 4,
-            "speed": 0.8
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -203,15 +221,25 @@
         "levelReq": 18,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "rend",
             "manaCost": 8,
             "cooldown": 4,
-            "category": "attack",
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
+            "speed": 1,
             "damageMult": 1.5,
-            "speed": 1
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -313,12 +341,14 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "curse",
             "abilityId": "taunt",
             "manaCost": 8,
             "cooldown": 6,
-            "category": "cast",
-            "shape": "curse",
-            "radius": 220
+            "hands": "any",
+            "castTimeSec": 0.3,
+            "radius": 220,
+            "taunt": true
           }
         },
         "x": 3,
@@ -914,13 +944,23 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "firebolt",
             "manaCost": 6,
             "cooldown": 0.5,
-            "category": "cast",
-            "shape": "projectile",
+            "hands": "any",
+            "speed": 1,
+            "damageMult": 1.4,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
             "element": "fire",
-            "damageMult": 1.4
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -997,15 +1037,23 @@
         "levelReq": 12,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "fireball",
             "manaCost": 12,
             "cooldown": 1.2,
-            "category": "cast",
-            "shape": "projectile",
-            "element": "fire",
+            "hands": "any",
+            "speed": 1,
             "damageMult": 1.8,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "element": "fire",
             "count": 3,
-            "spread": 0.3
+            "spread": 0.3,
+            "pierce": false
           }
         },
         "x": 0,
@@ -1082,14 +1130,23 @@
         "levelReq": 18,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "meteor",
             "manaCost": 20,
             "cooldown": 6,
-            "category": "cast",
+            "hands": "any",
             "shape": "meteor",
             "element": "fire",
+            "castTimeSec": 0.4,
+            "convertPct": 0.5,
             "damageMult": 2.2,
-            "radius": 140
+            "radius": 140,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 0,
@@ -1191,14 +1248,23 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "frost-nova",
             "manaCost": 14,
             "cooldown": 6,
-            "category": "cast",
+            "hands": "any",
             "shape": "nova",
             "element": "cold",
+            "castTimeSec": 0.4,
+            "convertPct": 0.5,
             "damageMult": 1.2,
-            "radius": 140
+            "radius": 140,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 3,
@@ -1275,13 +1341,22 @@
         "levelReq": 12,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "ice-shard",
             "manaCost": 8,
             "cooldown": 0.6,
-            "category": "cast",
-            "shape": "projectile",
-            "element": "cold",
+            "hands": "any",
+            "speed": 1,
             "damageMult": 1.5,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "element": "cold",
+            "count": 1,
+            "spread": 0,
             "pierce": true
           }
         },
@@ -1359,14 +1434,23 @@
         "levelReq": 18,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "blizzard",
             "manaCost": 22,
             "cooldown": 8,
-            "category": "cast",
+            "hands": "any",
             "shape": "ground",
             "element": "cold",
+            "castTimeSec": 0.4,
+            "convertPct": 0.5,
             "damageMult": 1.6,
-            "radius": 160
+            "radius": 160,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 3,
@@ -1468,16 +1552,22 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "blink",
             "manaCost": 12,
             "cooldown": 5,
-            "category": "attack",
+            "hands": "any",
+            "shape": "dash",
+            "castTimeSec": 0.25,
+            "convertPct": 0.5,
             "damageMult": 0.01,
-            "rangeMult": 1.4,
-            "dash": {
-              "speed": 1400,
-              "weightBonus": 0
-            }
+            "radius": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 182,
+            "dashSpeed": 1400,
+            "dashWeightBonus": 0
           }
         },
         "x": 6,
@@ -1554,13 +1644,23 @@
         "levelReq": 12,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "arcane-orb",
             "manaCost": 10,
             "cooldown": 1,
-            "category": "cast",
-            "shape": "projectile",
+            "hands": "any",
+            "speed": 1,
+            "damageMult": 1.7,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
             "element": "lightning",
-            "damageMult": 1.7
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 6,
@@ -1637,16 +1737,22 @@
         "levelReq": 18,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "teleport",
             "manaCost": 16,
             "cooldown": 8,
-            "category": "attack",
+            "hands": "any",
+            "shape": "dash",
+            "castTimeSec": 0.25,
+            "convertPct": 0.5,
             "damageMult": 0.01,
-            "rangeMult": 2.2,
-            "dash": {
-              "speed": 1800,
-              "weightBonus": 0
-            }
+            "radius": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 286,
+            "dashSpeed": 1800,
+            "dashWeightBonus": 0
           }
         },
         "x": 6,
@@ -1767,14 +1873,22 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "multishot",
             "manaCost": 8,
             "cooldown": 0.9,
-            "category": "cast",
-            "shape": "projectile",
+            "hands": "any",
+            "speed": 1,
             "damageMult": 1.1,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
             "count": 5,
-            "spread": 0.5
+            "spread": 0.5,
+            "pierce": false
           }
         },
         "x": 0,
@@ -1851,12 +1965,21 @@
         "levelReq": 12,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "piercing-shot",
             "manaCost": 10,
             "cooldown": 1.2,
-            "category": "cast",
-            "shape": "projectile",
+            "hands": "any",
+            "speed": 1,
             "damageMult": 1.6,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "count": 1,
+            "spread": 0,
             "pierce": true
           }
         },
@@ -1934,13 +2057,22 @@
         "levelReq": 18,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "rain-of-arrows",
             "manaCost": 18,
             "cooldown": 6,
-            "category": "cast",
+            "hands": "any",
             "shape": "ground",
+            "castTimeSec": 0.4,
+            "convertPct": 0.5,
             "damageMult": 1.4,
-            "radius": 160
+            "radius": 160,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 0,
@@ -2042,13 +2174,22 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "caltrops",
             "manaCost": 10,
             "cooldown": 7,
-            "category": "cast",
+            "hands": "any",
             "shape": "ground",
+            "castTimeSec": 0.4,
+            "convertPct": 0.5,
             "damageMult": 1.2,
-            "radius": 110
+            "radius": 110,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 3,
@@ -2125,14 +2266,23 @@
         "levelReq": 12,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "fire-trap",
             "manaCost": 12,
             "cooldown": 8,
-            "category": "cast",
+            "hands": "any",
             "shape": "ground",
             "element": "fire",
+            "castTimeSec": 0.4,
+            "convertPct": 0.5,
             "damageMult": 1.5,
-            "radius": 110
+            "radius": 110,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 3,
@@ -2209,13 +2359,22 @@
         "levelReq": 18,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "blade-trap",
             "manaCost": 16,
             "cooldown": 10,
-            "category": "cast",
+            "hands": "any",
             "shape": "ground",
+            "castTimeSec": 0.4,
+            "convertPct": 0.5,
             "damageMult": 1.5,
-            "radius": 110
+            "radius": 110,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 3,
@@ -2503,15 +2662,22 @@
         "levelReq": 18,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "bear-charge",
             "manaCost": 14,
             "cooldown": 8,
-            "category": "attack",
+            "hands": "any",
+            "shape": "dash",
+            "castTimeSec": 0.25,
+            "convertPct": 0.5,
             "damageMult": 1.6,
-            "dash": {
-              "speed": 700,
-              "weightBonus": 200
-            }
+            "radius": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 6,
@@ -2632,14 +2798,25 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "righteous-strike",
             "manaCost": 3,
-            "category": "attack",
+            "cooldown": 0,
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
+            "speed": 1.3,
             "damageMult": 1.5,
-            "speed": 1.3
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -2662,16 +2839,25 @@
         "levelReq": 2,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "crushing-sweep",
             "manaCost": 5,
-            "category": "attack",
+            "cooldown": 0,
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
-            "damageMult": 1.4,
             "speed": 0.9,
+            "damageMult": 1.4,
             "arcMult": 1.1,
-            "knockback": 0.35
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0.35,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -2694,19 +2880,25 @@
         "levelReq": 4,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "charge",
             "manaCost": 7,
-            "category": "attack",
+            "cooldown": 0,
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
+            "shape": "dash",
+            "castTimeSec": 0.25,
+            "convertPct": 0.5,
             "damageMult": 1.6,
-            "speed": 0.8,
+            "radius": 0,
             "knockback": 0.5,
-            "dash": {
-              "speed": 700,
-              "weightBonus": 200
-            }
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 0,
@@ -2729,15 +2921,25 @@
         "levelReq": 6,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "retribution",
             "manaCost": 5,
-            "category": "attack",
+            "cooldown": 0,
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
-            "damageMult": 2,
             "speed": 0.7,
-            "windupSec": 0.25
+            "damageMult": 2,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0.25,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -2760,16 +2962,25 @@
         "levelReq": 10,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "stunning-hammer",
             "manaCost": 6,
-            "category": "attack",
+            "cooldown": 0,
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
-            "damageMult": 2.6,
             "speed": 0.5,
+            "damageMult": 2.6,
+            "arcMult": 1,
+            "rangeMult": 1,
             "windupSec": 0.35,
-            "stunSec": 1.5
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 1.5,
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -2792,14 +3003,22 @@
         "levelReq": 14,
         "effect": {
           "active": {
+            "category": "cast",
             "abilityId": "sky-hammer",
             "manaCost": 10,
-            "category": "cast",
+            "cooldown": 0,
+            "hands": "any",
             "shape": "boomerang",
+            "castTimeSec": 0.3,
+            "convertPct": 0.5,
             "damageMult": 1.8,
-            "speed": 0.5,
             "radius": 320,
-            "windupSec": 0.3
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
+            "dashDist": 130,
+            "dashSpeed": 700,
+            "dashWeightBonus": 200
           }
         },
         "x": 0,
@@ -2991,11 +3210,14 @@
         "levelReq": 4,
         "effect": {
           "active": {
+            "category": "curse",
             "abilityId": "taunt",
             "manaCost": 6,
-            "category": "cast",
-            "shape": "curse",
-            "radius": 200
+            "cooldown": 0,
+            "hands": "any",
+            "castTimeSec": 0.3,
+            "radius": 200,
+            "taunt": true
           }
         },
         "x": 0,
@@ -3271,21 +3493,32 @@
         "levelReq": 1,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "flame-strike",
             "manaCost": 4,
-            "category": "attack",
+            "cooldown": 0,
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
-            "damageMult": 1.5,
             "speed": 1.1,
+            "damageMult": 1.5,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
             "element": "fire",
             "ailment": {
               "chance": 0.5,
               "mag": 2,
               "maxStacks": 5,
               "durationMs": 3000
-            }
+            },
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,
@@ -3340,21 +3573,32 @@
         "levelReq": 4,
         "effect": {
           "active": {
+            "category": "attack",
             "abilityId": "fire-judgment",
             "manaCost": 5,
-            "category": "attack",
+            "cooldown": 0,
+            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
-            "damageMult": 1.8,
             "speed": 0.8,
+            "damageMult": 1.8,
+            "arcMult": 1,
+            "rangeMult": 1,
+            "windupSec": 0,
+            "knockback": 0,
+            "shoveChance": 1,
+            "stunSec": 0,
             "element": "fire",
             "ailment": {
               "chance": 0.7,
               "mag": 3,
               "maxStacks": 6,
               "durationMs": 4000
-            }
+            },
+            "count": 1,
+            "spread": 0,
+            "pierce": false
           }
         },
         "x": 0,

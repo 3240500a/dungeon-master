@@ -13,8 +13,8 @@ function hexNum(hex: string): number {
 const STEEL = 0xcdd3dc; // нейтральный цвет базовой атаки
 const FLASH_MS = 120; // длительность яркой вспышки после замаха
 
-/** Геометрия действия для вспышки удара. `dash` → рисуем полосу вместо сектора. */
-export interface AttackGeom { melee: boolean; range: number; arc: number; color: number; speed: number; dash?: { length: number; halfWidth: number }; }
+/** Геометрия действия для вспышки удара. `dash` → полоса, `nova` → круг, иначе сектор. */
+export interface AttackGeom { melee: boolean; range: number; arc: number; color: number; speed: number; dash?: { length: number; halfWidth: number }; nova?: { radius: number }; }
 
 /**
  * VFX вокруг СВОЕГО игрока (мировые координаты): пульсирующее кольцо активных аур и вспышка формы
@@ -36,37 +36,48 @@ export class PlayerVfx {
 
   /** Запустить свинг по событию сервера: форма заряжается `windupMs`, затем короткая яркая вспышка. */
   startSwing(geom: AttackGeom, windupMs: number): void {
-    if (!geom.melee && !geom.dash) return; // дальнобой/каст-нова — свои визуалы (снаряды/AoE)
+    if (!geom.melee && !geom.dash && !geom.nova) return; // снаряды/бумеранг/curse — свои визуалы
     this.swings.push({ geom, start: this.scene.time.now, windupMs: Math.max(0, windupMs) });
   }
 
   /**
-   * Геометрия действия `action` (id скилла или 'attack'/undefined = базовая атака оружием):
-   * дальность/размах по оружию×мультам скилла (та же, что бьёт сервер), цвет по стихии; для
-   * рывка — длина коридора и его полу-ширина (== размаху удара, вариант B на сервере).
+   * Геометрия действия `action` (id скилла или 'attack'/undefined = базовая атака): attack → сектор
+   * оружия; cast dash/leap → полоса-коридор; cast nova/ground/meteor → круг-радиус; прочее — без формы.
+   * Цвет по стихии. Та же геометрия, что бьёт сервер.
    */
   currentAttack(state: GameState, cfg: ConfigRegistry, action?: string): AttackGeom {
     const save = state.save;
     const weapon = save.equipment.weapon;
     const weaponMelee = (weapon?.weaponType ?? 'melee') === 'melee';
     const mel = cfg.get('balance').melee;
-    let rangeMult = 1, arcMult = 1, color = STEEL, speed = 1, melee = weaponMelee, dashLen = 0;
+    let rangeMult = 1, arcMult = 1, color = STEEL, speed = 1, melee = weaponMelee;
+    let dash: AttackGeom['dash'];
+    let nova: AttackGeom['nova'];
 
     if (action && action !== 'attack') {
       const tree = cfg.get('skills-active').find((t) => t.classId === save.classId);
       const node = tree?.nodes.find((n) => n.id === action);
       const a = node?.effect.active;
-      if (a && a.category === 'attack' && node) {
-        rangeMult = a.rangeMult; arcMult = a.arcMult; speed = a.speed;
+      if (a && node) {
         color = hexNum(elementColor(elementOf(node)));
-        if (a.dash) dashLen = 130 * a.rangeMult; // == серверный dist в doDashAttack
-      } else {
-        melee = false; // каст/аура/бафф — свои визуалы (снаряды/нова), сектора нет
+        if (a.category === 'attack') {
+          rangeMult = a.rangeMult; arcMult = a.arcMult; speed = a.speed;
+        } else if (a.category === 'cast') {
+          melee = false;
+          if (a.shape === 'dash' || a.shape === 'leap') {
+            const halfW = swingHalfWidth(mel.baseRange * (weapon?.reachMult ?? 1), mel.baseArc * (weapon?.arcMult ?? 1));
+            dash = { length: a.dashDist > 0 ? a.dashDist : 130, halfWidth: halfW };
+          } else if (a.shape === 'nova' || a.shape === 'ground' || a.shape === 'meteor') {
+            nova = { radius: a.radius > 0 ? a.radius : 130 };
+          } // boomerang → снаряд, без телеграфа
+        } else {
+          melee = false; // curse/aura/stance/buff — свои визуалы
+        }
       }
     }
     const range = mel.baseRange * (weapon?.reachMult ?? 1) * rangeMult;
     const arc = mel.baseArc * (weapon?.arcMult ?? 1) * arcMult;
-    return { melee, range, arc, color, speed, dash: dashLen > 0 ? { length: dashLen, halfWidth: swingHalfWidth(range, arc) } : undefined };
+    return { melee, range, arc, color, speed, dash, nova };
   }
 
   /** Каждый кадр: форма удара (зарядка за замах → флеш) + пульс-кольца активных аур. */
@@ -84,6 +95,7 @@ export class PlayerVfx {
       const scale = charging ? 0.6 + 0.4 * p : 1; // растёт до полного размера к моменту удара
       const g = sw.geom;
       if (g.dash) this.strip(this.telegraph, px, py, player.facing, g.dash.length * scale, g.dash.halfWidth, g.color, alpha);
+      else if (g.nova) this.ring(this.telegraph, px, py, g.nova.radius * scale, g.color, alpha);
       else this.sector(this.telegraph, px, py, player.facing, g.range * scale, g.arc, g.color, alpha);
     }
 
@@ -120,6 +132,14 @@ export class PlayerVfx {
     g.fillPath();
     g.lineStyle(2, color, Math.min(1, alpha * 2.4));
     g.strokePath();
+  }
+
+  /** Заливка круга-области (нова/лужа/метеор): центр (x,y), радиус r. */
+  private ring(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, color: number, alpha: number): void {
+    g.fillStyle(color, alpha);
+    g.fillCircle(x, y, r);
+    g.lineStyle(2, color, Math.min(1, alpha * 2.4));
+    g.strokeCircle(x, y, r);
   }
 
   /** Заливка сектора (пирог) с обводкой: центр в (x,y), радиус range, полу-угол arc, по facing. */
