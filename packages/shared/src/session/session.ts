@@ -323,17 +323,15 @@ export class GameSession {
     }
     const pm = debuffMods(p.debuffs);
     const stunned = p.stunTimer > 0;
-    // Замах и стан «укореняют» — движение блокируется; стан вдобавок глушит действия.
-    const rooted = stunned || !!p.windup;
+    // Стан полностью укореняет; во время удара/замаха/восстановления — идём МЕДЛЕННО (attackMoveMult),
+    // а не колом («идти медленно и бить»). Facing обновляется в любом случае (целишься на ходу).
+    const attacking = !!p.windup || p.attackCd > 0;
+    const moveMult = stunned ? 0 : attacking ? this.cfg.get('balance').melee.attackMoveMult : 1;
     if (input && !stunned) p.facing = input.facing;
-    if (input && !rooted) {
-      const len = Math.hypot(input.move.x, input.move.y);
-      if (len > 0) {
-        const speed = snap.derived.moveSpeed * pm.moveMult;
-        p.vel = { x: (input.move.x / len) * speed, y: (input.move.y / len) * speed };
-      } else {
-        p.vel = { x: 0, y: 0 };
-      }
+    const len = input ? Math.hypot(input.move.x, input.move.y) : 0;
+    if (input && moveMult > 0 && len > 0) {
+      const speed = snap.derived.moveSpeed * pm.moveMult * moveMult;
+      p.vel = { x: (input.move.x / len) * speed, y: (input.move.y / len) * speed };
     } else {
       p.vel = { x: 0, y: 0 };
     }

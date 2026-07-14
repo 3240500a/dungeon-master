@@ -143,7 +143,8 @@
     "baseRange": 52,
     "baseArc": 0.8,
     "baseWindupFrac": 0.35,
-    "basicManaCost": 0
+    "basicManaCost": 0,
+    "attackMoveMult": 0.2
   },
   "lighting": {
     "ambient": 0.8,

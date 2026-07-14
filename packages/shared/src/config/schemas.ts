@@ -137,8 +137,11 @@ export const balanceSchema = z.object({
       // Стоимость БАЗОВОЙ атаки МАГИЧЕСКИМ оружием (жезл/посох выпускают болт). 0 = бесплатно (как
       // melee/ranged). Мана у мага тратится на скиллы; базовый болт — бесплатный филлер.
       basicManaCost: z.number().min(0).default(0),
+      // Доля скорости движения во время удара/замаха/восстановления (0 = стоит колом, 1 = без замедления).
+      // Позволяет «идти медленно и бить». Стан всё равно полностью укореняет.
+      attackMoveMult: z.number().min(0).max(1).default(0.2),
     })
-    .default({ baseRange: 52, baseArc: 0.8, baseWindupFrac: 0.35, basicManaCost: 0 }),
+    .default({ baseRange: 52, baseArc: 0.8, baseWindupFrac: 0.35, basicManaCost: 0, attackMoveMult: 0.2 }),
   /** Освещение (клиент-вид): тьма растёт с глубиной, свет от факелов и игрока. */
   lighting: z
     .object({

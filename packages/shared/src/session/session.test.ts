@@ -245,6 +245,21 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     expect(s.world.projectiles.length).toBeGreaterThan(0); // болты всё же вылетают
   });
 
+  it('во время замаха игрок идёт медленно, а не стоит колом', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_slowatk', activeFx({ category: 'attack', windupSec: 0.5, damageMult: 3, speed: 0.6 }));
+    const s = new GameSession(r, 12, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const grid = openField(24, 12);
+    s.enterFloor(1, { grid, spawn: cellToWorld(6, 6), monsters: [] });
+    p.mana = 100;
+    const startX = p.pos.x;
+    // Бьём тяжёлый удар (длинный замах) и одновременно идём вправо.
+    for (let i = 0; i < 5; i++) s.tick(1 / 30, { p1: { ...idle, facing: 0, move: { x: 1, y: 0 }, cast: 't_slowatk' } });
+    expect(p.windup).not.toBeNull();         // ещё в замахе
+    expect(p.pos.x).toBeGreaterThan(startX); // но всё равно сдвинулся (медленно, не колом)
+  });
+
   it('attack-скилл бьёт ВСЕХ монстров в дуге оружия (не одну цель)', () => {
     const r = reg();
     injectSkill(r, 'warrior', 't_atk', activeFx({ category: 'attack', weaponTypes: ['melee'], damageMult: 6 }));
