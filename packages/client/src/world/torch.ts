@@ -13,7 +13,10 @@ export class Torch {
   private glow: Phaser.GameObjects.Image;
   private sparks: Phaser.GameObjects.Particles.ParticleEmitter;
   private glowScale: number;
-  /** Текущий множитель радиуса света (~0.85..1.05). */
+  /** Свои фаза и период фликера — чтобы факелы колебались ВРАЗНОБОЙ, не в такт. */
+  private phase = Math.random() * Math.PI * 2;
+  private period = 110 + Math.random() * 80;
+  /** Текущий множитель радиуса света (~0.92..1.0). */
   flicker = 1;
 
   constructor(scene: Phaser.Scene, x: number, y: number, glowScale = 1) {
@@ -32,12 +35,13 @@ export class Torch {
     }).setDepth(37);
   }
 
-  /** Каждый кадр: фликер огня/свечения (плавная синусоида + лёгкий шум). */
+  /** Каждый кадр: мягкий фликер вразнобой (своя фаза/период) + лёгкий шум. */
   update(timeMs: number): void {
-    const f = 0.9 + 0.1 * Math.sin(timeMs / 130) + (Math.random() - 0.5) * 0.06;
+    const s = Math.sin(timeMs / this.period + this.phase);
+    const f = 0.96 + 0.04 * s + (Math.random() - 0.5) * 0.03;
     this.flicker = f;
-    this.flame.setScale(f).setAlpha(0.78 + Math.random() * 0.2);
-    this.glow.setScale(this.glowScale * f).setAlpha(0.42 + 0.12 * Math.sin(timeMs / 110));
+    this.flame.setScale(f).setAlpha(0.82 + Math.random() * 0.12);
+    this.glow.setScale(this.glowScale * f).setAlpha(0.46 + 0.06 * s);
   }
 
   destroy(): void {
