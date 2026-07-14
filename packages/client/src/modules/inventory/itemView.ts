@@ -13,6 +13,7 @@ export const STAT_LABEL: Record<string, string> = {
   minDamage: 'Мин. урон',
   maxDamage: 'Макс. урон',
   attackSpeed: 'Скор. атаки',
+  castSpeed: 'Скор. каста',
   critChance: 'Шанс крита',
   critMultiplier: 'Множ. крита',
   armor: 'Броня',
@@ -20,6 +21,7 @@ export const STAT_LABEL: Record<string, string> = {
   accuracy: 'Меткость',
   evade: 'Уклонение',
   blockChance: 'Блок',
+  interruptResist: 'Стойк. к прерыв.',
   hpRegen: 'Реген HP',
   manaRegen: 'Реген маны',
   addFire: 'Урон огнём',
@@ -30,6 +32,14 @@ export const STAT_LABEL: Record<string, string> = {
   resCold: 'Сопр. холоду',
   resLightning: 'Сопр. молнии',
   resPoison: 'Сопр. яду',
+  // Множители исходящего урона / наложения статусов (доля → показываем как %).
+  damagePct: 'Ко всему урону',
+  physPct: 'К физ. урону',
+  firePct: 'К урону огнём',
+  coldPct: 'К урону холодом',
+  lightningPct: 'К урону молнией',
+  poisonPct: 'К урону ядом',
+  ailmentPct: 'К наложению статусов',
 };
 
 const SLOT_LABEL: Record<string, string> = {
@@ -71,6 +81,7 @@ export function consumableLines(item: Item): string[] {
 const PERCENT_STATS = new Set([
   'critChance', 'blockChance',
   'resFire', 'resCold', 'resLightning', 'resPoison',
+  'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct', 'ailmentPct',
 ]);
 
 function fmtMod(m: StatModifier): string {

@@ -5,8 +5,8 @@
 
 | Ключ | Файл | Назначение | Основные поля |
 |---|---|---|---|
-| balance | data/balance.json | глобальный баланс | xpTable (кап ~90), pointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices, respecCost, inventory(cols,rows), autoPickup[], passiveRankCostGrowth |
-| classes | data/classes.json | стартовые классы | id, name, startAttributes, startWeaponId, activeTreeId, sprite |
+| balance | data/balance.json | глобальный баланс | xpTable (кап ~90), pointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices, respecCost, passiveRespecCostPct (комиссия сброса пассивов = доля вложенного), inventory(cols,rows), autoPickup[], passiveRankCostMult |
+| classes | data/classes.json | стартовые классы | id, name, startAttributes, startWeaponId, activeTreeId, sprite, affinity[], **passiveEntries[]** (2 входа пассивки), derived (масштаб HP/маны) |
 | items.base | data/items-base.json | базы предметов | id, slot (incl. belt), weaponType?, baseStats, requirements, itemLevel, gridW, gridH |
 | affixes | data/affixes.json | префиксы/суффиксы | id, kind, stat, tiers[min,max,ilvl] |
 | uniques | data/uniques.json | уникальные предметы | id, baseId, fixedAffixes |

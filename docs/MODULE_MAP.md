@@ -11,7 +11,7 @@
 | events | shared/src/events | — | — | — | — | events.test.ts | готово |
 | config | shared/src/config | data/*.json | config:reloaded | config:reloaded | — | registry.test.ts | готово |
 | difficulty | shared/src/formulas/power.ts, client/src/modules/town/difficultyPanel.ts | difficulties, balance.power | — | run:enter | power (effectiveLevel, startChallenge, challengeAtFloor, isDifficultyUnlocked) | power.test.ts | Фаза 4 готово (выбор у портала + Мощь в C + тир/CL на HUD); калибровка — Фаза 3 |
-| combat-math (shared) | shared/src/formulas/playerCombat.ts, skills.ts | balance | — | — | combatStatsOf, buildAttackPacket, attackByType, estimateAttack, passive/activeTreeModifiers | (через playerStats/skills-*) | готово |
+| combat-math (shared) | shared/src/formulas/playerCombat.ts, skills.ts | balance | — | — | combatStatsOf, buildAttackPacket, attackByType, estimateAttack, damageMultOf (%-урон), passive/activeTreeModifiers | playerCombat.test.ts, world.test.ts (ailmentPct) | готово |
 | world-core (shared) | shared/src/world | balance.collision/weight | — | — | debuffs (стаки), combat (resolvePlayerHit), grid/lineOfSight/movement/pathfind (сетка+стены+BFS, headless), separation (расталкивание сущностей по весу), state (WorldState + DashState) | world.test.ts, movement.test.ts, separation.test.ts | Этап 1 GameSession готов. Коллизии сущностей: сепарация по массе (вес монстра/игрока), отброс `knockback`×`shoveChance`, рывок-движение (`dashSpeed`×ранг + `dashWeightBonus`) |
 | gear-derive (shared) | shared/src/formulas/resolveWeapon.ts, resolveArmor.ts | items.base | — | — | weaponDebuffs, weightScaleSplit, armorClassModifiers, armorNoise | resolveGear.test.ts | готово |
 | session-core (shared) | shared/src/session | все (через ConfigRegistry) | — | SessionEvent | GameSession.tick (движение/ИИ/бой/скиллы/лут/XP/смерть), derive (playerSnapshot + рантайм-моды тоглов/баффов), ai (stepMonsterAi), bot (BotController), runner (runSessionSim), stats (RunReport/buildSnapshot) | session.test.ts, runner.test.ts | Этапы 2+4 готовы. **Skills v2:** активка дискриминирована по `category` (attack/cast/aura/stance/buff), единый диспетчер `castSkill`→`executeAbility` (легаси удалён). **attack** = удар оружием (`weaponAttack`+`meleeSwing`): геометрия/состав урона от оружия ×damageMult×ранг + эффекты, опц. `dash`; **cast** — стихийное по `shape`; **aura/stance** — тоглы (резерв/`buffMods`); **buff** — врем. моды. Гейт оружия у attack/cast: `weaponTypes`/`weaponClasses`/`hands`. Замах `windupSec`+прерывание; аффинити; сет-бонус; стих. статусы |
@@ -25,7 +25,7 @@
 | consumables | client/src/modules/consumables | items.base (kind=consumable, пояс beltSlots) | — | state:changed | — | consumables.test.ts | готово (зелья/колбы + D2-пояс, клавиши 1-4) |
 | classes | client/src/modules/classes | classes | — | — | — | — | готово |
 | skills-active | client/src/modules/skills-active | skills-active (v2: `category` attack/cast/aura/stance/buff + weapon-restrict) | — | state:changed | — | skills.test.ts | готово |
-| skills-passive | client/src/modules/skills-passive | skills-passive | — | state:changed | stats | skills.test.ts | готово |
+| skills-passive | client/src/modules/skills-passive | skills-passive, classes (passiveEntries) | — | state:changed | stats | skills.test.ts, townActions.test.ts | готово (v4: ~332 узла, ВЕЕР артерий от 4 входов + ромбы/перемычки/переходы; гейт входов по классу; сброс `respecPassives`; правка в editor/passiveGraph.ts) |
 | skills (panel) | client/src/modules/skills | skills-active, skills-passive | state:changed | state:changed | — | skills.test.ts | готово |
 | progression | client/src/modules/progression | balance, classes | monster:died | player:levelup, state:changed | xp, stats | formulas.test.ts | готово |
 | town | client/src/modules/town | items.base, affixes, uniques, dungeons, balance (+ balance.stash) | ui:open | state:changed, gold:changed, stashOpen/stashMove (cmd) | itemgen, economy/stashActions | formulas.test.ts, stashActions.test.ts | готово (+ ОБЩИЙ сундук на аккаунт: 2 вкладки 20×12, кадр `stash`, БД `account_stash`) |
@@ -34,6 +34,6 @@
 | auth | client/src/modules/auth + server (users/sessions/characters) | classes (для create) | — | — (fetch `/api`) | newCharacterSave, password (scrypt) | password.test.ts, newCharacter.test.ts | готово |
 | sfx | client/src/modules/sfx | — | monster:died, player:damaged, item:picked, gold:changed, player:levelup | — | — | — | готово |
 | server | server/src | balance (xpTable) | WS join/cmd/…, HTTP auth | snapshot/events/saveUpdate/stash/… | saveStateSchema, newCharacterSave, questLogic, stashActions | password.test.ts | готово (+ таблица `account_stash`, `net/accountStash.ts`) |
-| editor | editor/src | все схемы (shared) | — | (BroadcastChannel→config:reloaded) | — | form.test.ts | готово |
+| editor | editor/src | все схемы (shared) | — | (BroadcastChannel→config:reloaded) | — | form.test.ts | готово (skills-passive — визуальный граф-редактор passiveGraph.ts: пан/зум/драг, ПКМ создать/удалить/связать) |
 
 > Обновляй эту таблицу при каждом изменении модуля (Definition of Done).

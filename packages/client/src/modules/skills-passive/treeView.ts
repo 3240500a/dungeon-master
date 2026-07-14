@@ -1,4 +1,5 @@
 import type { App } from '../../core/app.js';
+import { passiveRespecFee, passiveEntriesFor } from '@dm/shared';
 import { isAllocatable, passiveNodeCost } from './allocate.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 
@@ -35,6 +36,23 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
     `Золото: <b style="color:${COLORS.gold}">${state.save.gold}</b> · ` +
     `<span style="color:${COLORS.dim}">колесо — зум, перетаскивание — панорама, клик по доступному узлу — прокачать (очко + золото)</span>`;
   body.appendChild(header);
+
+  // Сброс пассивов: возвращает очки (Σ рангов), НЕ возвращает вложенное золото; комиссия
+  // растёт с прокачкой (доля вложенного, `balance.passiveRespecCostPct`).
+  const ranks = Object.values(state.save.passiveSkills).reduce((a, r) => a + (r > 0 ? r : 0), 0);
+  const fee = passiveRespecFee(app.config, state.save);
+  const reset = mk('button',
+    'margin-bottom:8px;padding:6px 12px;font-size:12px;border-radius:6px;cursor:pointer;' +
+    `border:1px solid ${COLORS.border};background:${COLORS.panel2};color:${COLORS.text}`) as HTMLButtonElement;
+  reset.textContent = `Сбросить пассивы · вернёт ${ranks} очк., комиссия ${fee} зол.`;
+  reset.disabled = ranks === 0 || state.save.gold < fee;
+  if (reset.disabled) { reset.style.opacity = '0.5'; reset.style.cursor = 'default'; }
+  reset.addEventListener('click', () => {
+    if (ranks === 0 || state.save.gold < fee) return;
+    if (!window.confirm(`Сбросить ВСЕ пассивы?\nВернётся ${ranks} очков пассивов.\nЗолото за узлы НЕ возвращается, комиссия: ${fee} зол.`)) return;
+    app.sendCmd({ cmd: 'respecPassives' });
+  });
+  body.appendChild(reset);
 
   const wrap = mk('div',
     `position:relative;width:100%;height:460px;background:${COLORS.panel2};` +
@@ -82,19 +100,24 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
     g.appendChild(line);
   }
 
+  // Доступные входы этого класса (остальные входы — серые/недоступные).
+  const allowedEntries = passiveEntriesFor(app.config, state.save);
+
   // Узлы.
   for (const node of tree.nodes) {
     const rank = state.save.passiveSkills[node.id] ?? 0;
     const allocated = rank > 0;
-    const available = !allocated && isAllocatable(tree, state, node.id);
+    const available = !allocated && isAllocatable(tree, state, node.id, allowedEntries);
     const isEntry = tree.entryNodes.includes(node.id);
+    const lockedEntry = isEntry && !allowedEntries.includes(node.id);
     const r = node.notable ? 15 : isEntry ? 12 : 9;
 
     let fill = '#1a1f29';
     let stroke = '#3e4756';
     if (allocated) { fill = node.notable ? COLORS.gold : '#8aa84a'; stroke = '#0a0a0a'; }
     else if (available) { fill = '#1e2a3a'; stroke = '#6f9bcf'; }
-    if (isEntry && !allocated) stroke = COLORS.gold;
+    if (isEntry && !allocated) stroke = COLORS.gold;         // доступный вход класса — золотой
+    if (lockedEntry) { fill = '#241a1a'; stroke = '#5a3a3a'; } // чужой вход — заблокирован
 
     const circle = svg('circle', {
       cx: node.x, cy: node.y, r,

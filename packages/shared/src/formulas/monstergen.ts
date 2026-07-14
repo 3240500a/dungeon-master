@@ -115,6 +115,7 @@ export function monsterCombatStats(m: ScaledMonster): CombatStats {
     resCold: m.resCold,
     resLightning: m.resLightning,
     resPoison: m.resPoison,
+    ailmentPct: 0,
     level: m.level,
   };
 }

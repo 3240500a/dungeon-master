@@ -12,7 +12,7 @@ const hitRng: Rng = { next: () => 0, int: (a) => a, float: (a) => a, pick: (arr)
 function stats(over: Partial<CombatStats> = {}): CombatStats {
   return {
     accuracy: 1000, evade: 0, armor: 0, blockChance: 0, critChance: 0, critMultiplier: 1.5,
-    resFire: 0, resCold: 0, resLightning: 0, resPoison: 0, level: 1, ...over,
+    resFire: 0, resCold: 0, resLightning: 0, resPoison: 0, ailmentPct: 0, level: 1, ...over,
   };
 }
 function target(over: Partial<HitTarget> = {}): HitTarget {
@@ -91,5 +91,20 @@ describe('resolvePlayerHit', () => {
   it('стан срабатывает по шансу', () => {
     const r = resolvePlayerHit(target(), stats(), phys(100), { stunChance: 0.2 }, hitRng, 0);
     expect(r.stunned).toBe(true);
+  });
+
+  it('ailmentPct усиливает магнитуду наложенного статуса', () => {
+    const t = target();
+    resolvePlayerHit(t, stats({ ailmentPct: 1 }), phys(100), { onHit: [apply({ kind: 'bleed', mag: 5 })] }, hitRng, 0);
+    expect(t.debuffs.bleed?.mag).toBe(10); // 5 × (1 + 1)
+  });
+
+  it('ailmentPct повышает шанс наложения статуса', () => {
+    const thr: Rng = { ...hitRng, chance: (p) => p >= 0.6 };
+    const on = { onHit: [apply({ kind: 'bleed', chance: 0.4 })] };
+    const weak = resolvePlayerHit(target(), stats(), phys(100), on, thr, 0);
+    expect(weak.appliedDebuffs).not.toContain('bleed'); // 0.40 < 0.6 → мимо
+    const strong = resolvePlayerHit(target(), stats({ ailmentPct: 0.6 }), phys(100), on, thr, 0);
+    expect(strong.appliedDebuffs).toContain('bleed'); // 0.40×1.6 = 0.64 ≥ 0.6 → наложен
   });
 });

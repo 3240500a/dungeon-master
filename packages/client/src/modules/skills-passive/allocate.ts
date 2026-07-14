@@ -1,6 +1,6 @@
 import type { App } from '../../core/app.js';
 import type { GameState } from '../../core/gameState.js';
-import type { PassiveSkillTree } from '@dm/shared';
+import { passiveEntriesFor, type PassiveSkillTree } from '@dm/shared';
 import type { AllocResult } from '../skills-active/allocate.js';
 
 function rankOf(state: GameState, nodeId: string): number {
@@ -25,9 +25,11 @@ export function isAllocatable(
   tree: PassiveSkillTree,
   state: GameState,
   nodeId: string,
+  allowedEntries?: string[],
 ): boolean {
   if (rankOf(state, nodeId) > 0) return true; // уже начат — можно докачивать
-  if (tree.entryNodes.includes(nodeId)) return true;
+  // Вход доступен, только если он в наборе класса (`allowedEntries`); без набора — любой вход.
+  if ((allowedEntries ?? tree.entryNodes).includes(nodeId)) return true;
   return neighborsOf(tree, nodeId).some((n) => rankOf(state, n) > 0);
 }
 
@@ -53,8 +55,8 @@ export function allocatePassive(
 
   const rank = rankOf(state, nodeId);
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
-  if (!isAllocatable(tree, state, nodeId))
-    return { ok: false, reason: 'Нужен смежный вложенный узел' };
+  if (!isAllocatable(tree, state, nodeId, passiveEntriesFor(app.config, state.save)))
+    return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'gold') return { ok: false, reason: 'Неверный тип стоимости' };
   if (state.save.unspentPassivePoints < 1) return { ok: false, reason: 'Нет очков пассивов' };
 

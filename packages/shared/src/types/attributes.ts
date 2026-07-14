@@ -63,6 +63,18 @@ export interface DerivedStats {
   addCold: number;
   addLightning: number;
   addPoison: number;
+  /**
+   * Множители исходящего урона (доля, 0.1 = +10%). Применяются к пакету удара/каста:
+   * `damagePct` бустит ВЕСЬ урон (слабее), *Pct — только свою стихию. Складываются.
+   */
+  damagePct: number;
+  physPct: number;
+  firePct: number;
+  coldPct: number;
+  lightningPct: number;
+  poisonPct: number;
+  /** % к наложению статусов/дебафов ударом (шанс и магнитуда × (1+ailmentPct)). */
+  ailmentPct: number;
   /** Реген в секунду. */
   hpRegen: number;
   manaRegen: number;

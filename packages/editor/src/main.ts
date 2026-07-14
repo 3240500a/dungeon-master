@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources } from './form.js';
 import { renderSimPage } from './sim.js';
+import { renderPassiveGraph } from './passiveGraph.js';
 
 /**
  * HTML-редактор конфигов. Страницы по механикам (по одному конфигу на страницу),
@@ -259,6 +260,9 @@ function renderPage(page: HTMLElement): void {
   status.id = 'status';
   status.style.cssText = 'min-height:18px;font-size:13px;margin-bottom:8px';
   page.appendChild(status);
+
+  // Пассивное дерево — визуальный граф-редактор (как в игре), а не плоский список.
+  if (current === 'skills-passive') { renderPassiveGraph(page, data); return; }
 
   if (isArray) renderArrayPage(page, schema._def.type as z.ZodTypeAny);
   else {

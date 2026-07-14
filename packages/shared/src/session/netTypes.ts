@@ -94,6 +94,7 @@ export type TownCommand =
   | { cmd: 'unequip'; slot: string }
   | { cmd: 'allocAttr'; attr: string }
   | { cmd: 'respec' }
+  | { cmd: 'respecPassives' }
   | { cmd: 'allocPassive'; nodeId: string }
   | { cmd: 'allocSkill'; nodeId: string }
   | { cmd: 'useConsumable'; uid: string }

@@ -15,7 +15,7 @@ function makeState(): GameState {
     classId: 'warrior',
     level: 30,
     xp: 0,
-    gold: 300,
+    gold: 2000,
     attributes: { strength: 20, dexterity: 15, intelligence: 10, vitality: 20 },
     unspentAttributePoints: 0,
     unspentSkillPoints: 5,
@@ -79,18 +79,20 @@ describe('активные скиллы', () => {
 
 describe('пассивные скиллы (граф со смежностью)', () => {
   it('качается только по смежности, за золото, и модифицирует статы', () => {
-    const state = makeState(); // gold 300
-    const hpBefore = state.derived().maxHp;
+    const state = makeState(); // gold 2000
+    const tree = reg.get('skills-passive');
+    const nbrs = (id: string): string[] => tree.edges.flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : []));
+    // Вход, его сосед (1 хоп) и узел в 2 хопах (не смежен входу) — id-независимо.
+    const entry = tree.entryNodes[0]!;
+    const nb1 = nbrs(entry)[0]!;
+    const nb2 = nbrs(nb1).find((id) => id !== entry && !nbrs(entry).includes(id))!;
+    expect(passiveModifiers(reg, state.save.passiveSkills).length).toBe(0);
 
-    // Узел вглубь недоступен без пути.
-    expect(allocatePassive(appStub, state, 'p-str-r1-0').ok).toBe(false);
-    // Вход открыт всегда.
-    expect(allocatePassive(appStub, state, 'p-str').ok).toBe(true);
-    // Сосед входа.
-    expect(allocatePassive(appStub, state, 'p-str-r0-0').ok).toBe(true);
-    // Сосед предыдущего — даёт +20 HP (малый узел здоровья, ранг 1).
-    expect(allocatePassive(appStub, state, 'p-str-r1-0').ok).toBe(true);
-    expect(state.derived().maxHp).toBe(hpBefore + 20);
+    expect(allocatePassive(appStub, state, nb2).ok).toBe(false); // 2 хопа — без пути нельзя
+    expect(allocatePassive(appStub, state, entry).ok).toBe(true); // вход открыт всегда
+    expect(allocatePassive(appStub, state, nb1).ok).toBe(true);   // сосед входа
+    expect(allocatePassive(appStub, state, nb2).ok).toBe(true);   // теперь путь есть
+    expect(passiveModifiers(reg, state.save.passiveSkills).length).toBeGreaterThan(0);
   });
 
   it('без золота прокачать нельзя', () => {

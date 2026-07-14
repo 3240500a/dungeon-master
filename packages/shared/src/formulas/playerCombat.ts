@@ -1,4 +1,4 @@
-import { emptyPacket } from '../types/combat.js';
+import { DAMAGE_TYPES, emptyPacket } from '../types/combat.js';
 import { weightScaleSplit } from './resolveWeapon.js';
 import type { Attributes, DerivedStats } from '../types/attributes.js';
 import type { CombatStats, DamagePacket, DamageType } from '../types/combat.js';
@@ -57,6 +57,7 @@ export function combatStatsOf(d: DerivedStats, level: number): CombatStats {
     resCold: d.resCold,
     resLightning: d.resLightning,
     resPoison: d.resPoison,
+    ailmentPct: d.ailmentPct,
     level,
   };
 }
@@ -70,9 +71,28 @@ export function attackWeaponsOf(save: SaveState): (Item | undefined)[] {
   return hands;
 }
 
+/** Множитель исходящего урона по типу: общий `damagePct` + свой `*Pct` (складываются). */
+export function damageMultOf(d: DerivedStats, t: DamageType): number {
+  const per: Record<DamageType, number> = {
+    physical: d.physPct,
+    fire: d.firePct,
+    cold: d.coldPct,
+    lightning: d.lightningPct,
+    poison: d.poisonPct,
+  };
+  return 1 + d.damagePct + per[t];
+}
+
+/** Умножает пакет по типам на `damageMultOf` (мутирует и возвращает его же). */
+function applyDamagePct(p: DamagePacket, d: DerivedStats): DamagePacket {
+  for (const t of DAMAGE_TYPES) p[t] *= damageMultOf(d, t);
+  return p;
+}
+
 /**
  * Пакет урона удара рукой: база оружия (в свой damageType) + вклад профильного
  * атрибута → тот же тип + глобальные стихийные добавки (add*). Без оружия — слабый физ.
+ * В конце — множители исходящего урона (`damagePct`/`*Pct` из пассивок/гира).
  */
 export function buildAttackPacket(
   d: DerivedStats,
@@ -94,7 +114,7 @@ export function buildAttackPacket(
   packet.cold += d.addCold;
   packet.lightning += d.addLightning;
   packet.poison += d.addPoison;
-  return packet;
+  return applyDamagePct(packet, d);
 }
 
 /** Разбивка урона базовой атаки по типам (без rng) — для листа персонажа/оценок. */
@@ -124,6 +144,10 @@ export function attackByType(
   out.cold.min += d.addCold; out.cold.max += d.addCold;
   out.lightning.min += d.addLightning; out.lightning.max += d.addLightning;
   out.poison.min += d.addPoison; out.poison.max += d.addPoison;
+  for (const t of DAMAGE_TYPES) {
+    const m = damageMultOf(d, t);
+    out[t].min *= m; out[t].max *= m;
+  }
   return out;
 }
 
@@ -136,9 +160,16 @@ export function estimateAttack(
   weights: WeaponWeights,
 ): number {
   const wt: WeaponType = weapon?.weaponType ?? 'melee';
+  const dtype: DamageType = weapon?.damageType ?? 'physical';
   const min = weapon ? Math.max(1, flatOf(weapon, 'minDamage')) : 1;
   const max = weapon ? Math.max(min, flatOf(weapon, 'maxDamage')) : 2;
   const attrBonus = attrScaleBonus(attrs, weapon, wt, scaling, weights);
-  const elemAdd = d.addFire + d.addCold + d.addLightning + d.addPoison;
-  return (min + max) / 2 + attrBonus + elemAdd;
+  // Каждый тип — со своим множителем (damagePct + свой *Pct), как в реальном пакете.
+  return (
+    ((min + max) / 2 + attrBonus) * damageMultOf(d, dtype) +
+    d.addFire * damageMultOf(d, 'fire') +
+    d.addCold * damageMultOf(d, 'cold') +
+    d.addLightning * damageMultOf(d, 'lightning') +
+    d.addPoison * damageMultOf(d, 'poison')
+  );
 }

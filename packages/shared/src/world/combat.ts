@@ -67,8 +67,15 @@ export function resolvePlayerHit(
   const applied: DebuffKind[] = [];
   let stunned = false;
   if (!died) {
+    // ailmentPct атакующего усиливает наложение: и шанс, и магнитуду статуса.
+    const ap = 1 + (attacker.ailmentPct ?? 0);
     for (const a of opts.onHit ?? []) {
-      if (rng.chance(a.chance)) { addDebuffStack(target.debuffs, a, now); applied.push(a.kind); }
+      if (!rng.chance(a.chance * ap)) continue;
+      const eff: DebuffApply = ap === 1
+        ? a
+        : { ...a, mag: a.mag * ap, mag2: a.mag2 === undefined ? undefined : a.mag2 * ap };
+      addDebuffStack(target.debuffs, eff, now);
+      applied.push(a.kind);
     }
     // Стан = прямой (булава) + накопленный от ошеломления (после свежих стаков).
     const stunChance = (opts.stunChance ?? 0) + debuffMods(target.debuffs).dazeStunChance;

@@ -37,5 +37,7 @@ export interface CombatStats {
   resCold: number;
   resLightning: number;
   resPoison: number;
+  /** % к наложению статусов/дебафов этим атакующим (шанс/магнитуда × (1+ailmentPct)). */
+  ailmentPct: number;
   level: number;
 }

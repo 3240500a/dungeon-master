@@ -215,15 +215,30 @@ export function moveToBelt(save: SaveState, uid: string): ActionResult {
   return { ok: true };
 }
 
+/**
+ * Доступные ВХОДЫ пассивного древа для класса персонажа. `class.passiveEntries` (2 id) —
+ * с них класс может начинать; ПУСТО (или класс не найден) = доступны ВСЕ входы (без ограничения).
+ * Возвращает только реально существующие в дереве id.
+ */
+export function passiveEntriesFor(reg: ConfigRegistry, save: SaveState): string[] {
+  const tree = reg.get('skills-passive');
+  const cls = reg.get('classes').find((c) => c.id === save.classId);
+  const allowed = cls?.passiveEntries ?? [];
+  if (!allowed.length) return tree.entryNodes;
+  return tree.entryNodes.filter((e) => allowed.includes(e));
+}
+
 export function allocPassive(reg: ConfigRegistry, save: SaveState, nodeId: string): ActionResult {
   const tree = reg.get('skills-passive');
   const node = tree.nodes.find((n) => n.id === nodeId);
   if (!node) return { ok: false, reason: 'Узел не найден' };
   const rank = save.passiveSkills[nodeId] ?? 0;
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
-  const allocatable = rank > 0 || tree.entryNodes.includes(nodeId)
+  // Вход доступен только своему классу; прочее — по смежности (переходы дают край соседней ветви).
+  const entries = passiveEntriesFor(reg, save);
+  const allocatable = rank > 0 || entries.includes(nodeId)
     || passiveNeighbors(tree, nodeId).some((n) => (save.passiveSkills[n] ?? 0) > 0);
-  if (!allocatable) return { ok: false, reason: 'Нужен смежный вложенный узел' };
+  if (!allocatable) return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'gold') return { ok: false, reason: 'Неверный тип стоимости' };
   if (save.unspentPassivePoints < 1) return { ok: false, reason: 'Нет очков пассивов' };
   const mult = reg.get('balance').passiveRankCostMult;
@@ -232,5 +247,41 @@ export function allocPassive(reg: ConfigRegistry, save: SaveState, nodeId: strin
   save.gold -= cost;
   save.unspentPassivePoints -= 1;
   save.passiveSkills[nodeId] = rank + 1;
+  return { ok: true };
+}
+
+/** Суммарное золото, реально вложенное в текущие пассивы (Σ гео-цен всех вложенных рангов). */
+export function passiveInvestedGold(reg: ConfigRegistry, save: SaveState): number {
+  const tree = reg.get('skills-passive');
+  const mult = reg.get('balance').passiveRankCostMult;
+  let gold = 0;
+  for (const [id, rank] of Object.entries(save.passiveSkills)) {
+    const node = tree.nodes.find((n) => n.id === id);
+    if (!node || rank <= 0) continue;
+    for (let r = 0; r < rank; r++) gold += Math.round(node.cost.amount * Math.pow(mult, r));
+  }
+  return gold;
+}
+
+/** Комиссия сброса пассивов: доля `passiveRespecCostPct` от вложенного золота (растёт с прокачкой). */
+export function passiveRespecFee(reg: ConfigRegistry, save: SaveState): number {
+  return Math.round(passiveInvestedGold(reg, save) * reg.get('balance').passiveRespecCostPct);
+}
+
+/**
+ * Сбрасывает ВСЕ пассивы за золото. Комиссия растёт с прокачкой (доля вложенного золота —
+ * чтобы поздняя игра с миллионами не делала сброс копеечным). Возвращает ТОЛЬКО очки пассивов
+ * (Σ рангов, в т.ч. за осиротевшие после регенерации дерева узлы), потраченное на узлы золото
+ * НЕ возвращает. Заодно чистит осиротевшие аллокации (`passiveSkills` обнуляется целиком).
+ */
+export function respecPassives(reg: ConfigRegistry, save: SaveState): ActionResult {
+  let ranks = 0;
+  for (const rank of Object.values(save.passiveSkills)) if (rank > 0) ranks += rank;
+  if (ranks === 0) return { ok: false, reason: 'Пассивы не вложены' };
+  const fee = passiveRespecFee(reg, save);
+  if (save.gold < fee) return { ok: false, reason: `Нужно ${fee} золота на сброс` };
+  save.gold -= fee;
+  save.unspentPassivePoints += ranks;
+  save.passiveSkills = {};
   return { ok: true };
 }

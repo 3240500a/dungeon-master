@@ -93,6 +93,8 @@ export const balanceSchema = z.object({
     rerollAffix: z.number().int().min(0),
   }),
   respecCost: z.number().int().min(0),
+  /** Сброс пассивов: комиссия = доля вложенного в пассивы золота (растёт с прокачкой). */
+  passiveRespecCostPct: z.number().min(0).default(0.5),
   /** Размер сетки инвентаря в клетках. */
   inventory: z
     .object({ cols: z.number().int().min(4), rows: z.number().int().min(4) })
@@ -232,6 +234,12 @@ export const classesSchema = z.array(
     sprite: z.string(),
     /** Фракции, против которых класс силён (аффинити: +affinityDamageBonus урона). */
     affinity: z.array(z.enum(['undead', 'demon', 'beast', 'monster'])).default([]),
+    /**
+     * Доступные ВХОДЫ пассивного древа (id узлов-входов, обычно 2). Класс может начинать
+     * прокачку только с них; остальное — по смежности (в т.ч. переходы в соседние ветви).
+     * Пусто = доступны ВСЕ входы (без ограничения).
+     */
+    passiveEntries: z.array(z.string()).default([]),
     /** Масштаб пулов HP/маны этого класса (от выносливости/интеллекта и уровня). */
     derived: hpManaScalingSchema,
   }),
