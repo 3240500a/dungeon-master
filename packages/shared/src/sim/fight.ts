@@ -10,7 +10,7 @@ import type { FightResult, FightStats } from './types.js';
 
 const DT = 0.1; // шаг тика, сек
 const MAX_SEC = 120; // если за столько не убил — «стена» (стейлмейт)
-const MANA_PER_MAGIC_HIT = 4;
+const MANA_PER_MAGIC_HIT = 0; // базовый удар маг. оружием бесплатен (как balance.melee.basicManaCost=0)
 
 interface MonState {
   m: ScaledMonster;

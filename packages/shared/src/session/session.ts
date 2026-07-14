@@ -363,7 +363,11 @@ export class GameSession {
     if (p.attackCd > 0 || p.windup) return;
     const hands = attackWeaponsOf(p.save);
     const weapon = hands[p.swingHand % hands.length]; // рука этого свинга (инкремент — в исполнении)
-    if ((weapon?.weaponType ?? 'melee') === 'magic') { if (p.mana < 4) return; p.mana -= 4; } // мана — при ПРИНЯТИИ
+    // Базовый удар магическим оружием (болт) — стоимость из конфига (деф. 0 = бесплатно, как melee/ranged).
+    if ((weapon?.weaponType ?? 'melee') === 'magic') {
+      const cost = this.cfg.get('balance').melee.basicManaCost;
+      if (cost > 0) { if (p.mana < cost) return; p.mana -= cost; }
+    }
     const pm = debuffMods(p.debuffs);
     const speedBonus = hands.length > 1 ? 1.2 : 1; // дуал-вилд бьёт чаще
     p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * speedBonus * pm.atkSpeedMult);

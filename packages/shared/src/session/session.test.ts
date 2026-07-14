@@ -232,6 +232,19 @@ describe('GameSession — категории скиллов (attack/cast/curse/a
     expect(p.skillCd['t_cast']).toBeGreaterThan(0); // но встал личный КД скилла
   });
 
+  it('базовый удар магическим оружием бесплатен при basicManaCost=0', () => {
+    const r = reg();
+    const s = new GameSession(r, 11, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'mage'));
+    const grid = openField(24, 12);
+    s.enterFloor(1, { grid, spawn: cellToWorld(5, 6), monsters: [] });
+    expect(p.save.equipment.weapon?.weaponType).toBe('magic'); // предпосылка: оружие мага — магическое
+    const manaBefore = p.mana;
+    for (let i = 0; i < 60; i++) s.tick(1 / 30, { p1: { ...idle, facing: 0, attack: true } });
+    expect(p.mana).toBe(manaBefore);                    // мана не убывает от базового удара
+    expect(s.world.projectiles.length).toBeGreaterThan(0); // болты всё же вылетают
+  });
+
   it('attack-скилл бьёт ВСЕХ монстров в дуге оружия (не одну цель)', () => {
     const r = reg();
     injectSkill(r, 'warrior', 't_atk', activeFx({ category: 'attack', weaponTypes: ['melee'], damageMult: 6 }));

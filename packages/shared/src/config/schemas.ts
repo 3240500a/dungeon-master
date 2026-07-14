@@ -134,8 +134,11 @@ export const balanceSchema = z.object({
       // Замах всех ударов/скиллов как доля цикла атаки (attackCd × frac). Масштабируется скоростью
       // атаки: быстрее бьёшь — короче замах. Явный windupSec скилла добавляется сверху. 0 = мгновенно.
       baseWindupFrac: z.number().min(0).max(0.9).default(0.35),
+      // Стоимость БАЗОВОЙ атаки МАГИЧЕСКИМ оружием (жезл/посох выпускают болт). 0 = бесплатно (как
+      // melee/ranged). Мана у мага тратится на скиллы; базовый болт — бесплатный филлер.
+      basicManaCost: z.number().min(0).default(0),
     })
-    .default({ baseRange: 52, baseArc: 0.8, baseWindupFrac: 0.35 }),
+    .default({ baseRange: 52, baseArc: 0.8, baseWindupFrac: 0.35, basicManaCost: 0 }),
   /** Редкости, которые поднимаются автоматически при проходе рядом. Остальное — по клику. */
   autoPickup: z
     .array(z.enum(['normal', 'magic', 'rare', 'unique']))
