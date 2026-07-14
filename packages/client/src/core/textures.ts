@@ -23,6 +23,21 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
     g.generateTexture(key, r * 2, r * 2);
   };
 
+  /** Мягкий радиальный градиент (для света/свечения) через canvas — плавный, без бандинга. */
+  const radial = (key: string, size: number, inner: string, outer: string) => {
+    if (scene.textures.exists(key)) return;
+    const c = scene.textures.createCanvas(key, size, size);
+    if (!c) return;
+    const ctx = c.getContext();
+    const r = size / 2;
+    const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, inner);
+    grad.addColorStop(1, outer);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    c.refresh();
+  };
+
   // Персонажи (по классам).
   circle('player-warrior', 14, 0xcf4b4b);
   circle('player-mage', 14, 0x4b7bcf);
@@ -43,8 +58,15 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
 
   // Декор и предметы мира.
   rect('decor-pillar', 24, 24, 0x413c38, 0x1c1a18); // тёплая колонна (между полом и стеной)
-  circle('decor-torch', 6, 0xffb24a);               // пламя факела
+  circle('decor-torch', 6, 0xffb24a);               // пламя факела (легаси-фолбэк)
   rect('decor-chest', 22, 16, 0xc99a48, 0x6e5420);
+
+  // ── Освещение и факел (динамический свет) ──
+  radial('light-soft', 256, 'rgba(255,255,255,1)', 'rgba(255,255,255,0)'); // brush для «дыр света» в тьме
+  radial('torch-glow', 256, 'rgba(255,170,70,0.85)', 'rgba(255,120,40,0)'); // тёплое аддитивное свечение
+  radial('torch-flame', 20, 'rgba(255,236,170,1)', 'rgba(255,110,30,0)');    // ядро пламени
+  circle('spark', 2, 0xffce7a);                     // искра (частица)
+  rect('torch-base', 4, 10, 0x2a2622, 0x120f0d);    // держатель факела (тёмный)
   circle('decor-arena', 40, 0x582530);              // кровавый ритуальный круг
   rect('key', 14, 8, 0xe8c24a, 0x8a6a20);
 

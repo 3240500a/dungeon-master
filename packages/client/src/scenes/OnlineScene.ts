@@ -4,6 +4,8 @@ import { Player } from '../modules/movement/player.js';
 import { NetDriver } from '../net/netDriver.js';
 import { renderGrid } from '../world/tileWorld.js';
 import { FogOfWar } from '../world/fogOfWar.js';
+import { Torch } from '../world/torch.js';
+import { Lighting } from '../world/lighting.js';
 import { GameState } from '../core/gameState.js';
 import { TILE, Cell, gridSize, type FloorInit, type Grid } from '@dm/shared';
 
@@ -29,6 +31,8 @@ export class OnlineScene extends Phaser.Scene {
   private player?: Player;
   private fog?: FogOfWar;
   private worldObjs: Phaser.GameObjects.GameObject[] = [];
+  private torches: Torch[] = [];
+  private lighting?: Lighting;
   private walls?: Phaser.Physics.Arcade.StaticGroup;
   private interactables: Interactable[] = [];
   /** Спрайты дверей/рычагов по doorId — чтобы убрать на `doorOpened`. */
@@ -181,6 +185,9 @@ export class OnlineScene extends Phaser.Scene {
   private buildArea(floor: FloorInit): void {
     for (const o of this.worldObjs) o.destroy();
     this.worldObjs = [];
+    for (const t of this.torches) t.destroy();
+    this.torches = [];
+    this.lighting?.destroy(); this.lighting = undefined;
     this.walls?.destroy(false); // старую группу стен (её тайлы уже были в worldObjs)
     this.fog?.destroy(); this.fog = undefined;
     this.interactables = [];
@@ -193,8 +200,9 @@ export class OnlineScene extends Phaser.Scene {
     this.worldObjs.push(...rendered.objects); // тайлы пола/стен — уничтожатся при следующей пересборке
     this.area = floor.area;
 
-    // Декор.
+    // Декор (факелы — анимированные с динамическим светом).
     for (const d of floor.decor) {
+      if (d.kind === 'torch') { this.torches.push(new Torch(this, d.x, d.y)); continue; }
       const img = this.add.image(d.x, d.y, `decor-${d.kind}`).setDepth(d.kind === 'arena' ? -8 : 1);
       if (d.kind === 'arena') img.setAlpha(0.4);
       this.worldObjs.push(img);
@@ -249,6 +257,12 @@ export class OnlineScene extends Phaser.Scene {
       this.addTownDecor(floor);
       this.app.state!.depth = 0;
     }
+
+    // Динамический свет (город и данж): тьма растёт с глубиной (конфиг balance.lighting).
+    const lc = this.app.config.get('balance').lighting;
+    const gs = gridSize(floor.grid);
+    const ambient = Math.min(lc.ambientMax, lc.ambient + floor.depth * lc.perDepth);
+    this.lighting = new Lighting(this, gs.cols * TILE, gs.rows * TILE, ambient);
   }
 
   private addTownDecor(floor: FloorInit): void {
@@ -264,6 +278,13 @@ export class OnlineScene extends Phaser.Scene {
     // Портал в подземелье (спуск = голосование за вход в данж).
     const cols = gridSize(floor.grid).cols;
     const rows = gridSize(floor.grid).rows;
+    // Несколько факелов по общей схеме (свет + анимация), по краям площади города.
+    for (const cy of [2, rows - 3]) {
+      for (const cx of [Math.floor(cols * 0.2), Math.floor(cols * 0.5), Math.floor(cols * 0.8)]) {
+        const p = cell(cx, cy);
+        this.torches.push(new Torch(this, p.x, p.y));
+      }
+    }
     const pp = cell(cols - 4, rows - 4);
     const portal = this.add.image(pp.x, pp.y, 'portal').setDepth(2);
     this.worldObjs.push(portal);
@@ -331,6 +352,14 @@ export class OnlineScene extends Phaser.Scene {
     this.player.update(this.input.activePointer, this.cameras.main);
     this.driver.update(delta);
     if (this.area === 'dungeon' && this.fog) this.fog.update(this.player.x, this.player.y, delta);
+    // Факелы (анимация) + динамический свет (лайтмап от игрока и факелов).
+    const now = this.time.now;
+    for (const t of this.torches) t.update(now);
+    if (this.lighting) {
+      const lc = this.app.config.get('balance').lighting;
+      this.lighting.update(this.player.x, this.player.y, lc.playerRadius,
+        this.torches.map((t) => ({ x: t.x, y: t.y, radius: lc.torchRadius * t.flicker })));
+    }
     this.updateInteractions();
   }
 
@@ -365,6 +394,9 @@ export class OnlineScene extends Phaser.Scene {
   private cleanup(): void {
     this.driver?.destroy();
     this.fog?.destroy();
+    for (const t of this.torches) t.destroy();
+    this.torches = [];
+    this.lighting?.destroy(); this.lighting = undefined;
     this.hideLobby();
     this.hideResumePrompt();
     this.hideConnecting();

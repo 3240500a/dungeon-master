@@ -145,6 +145,13 @@
     "baseWindupFrac": 0.35,
     "basicManaCost": 0
   },
+  "lighting": {
+    "ambient": 0.6,
+    "perDepth": 0.015,
+    "ambientMax": 0.85,
+    "playerRadius": 160,
+    "torchRadius": 140
+  },
   "autoPickup": [
     "rare",
     "unique"
