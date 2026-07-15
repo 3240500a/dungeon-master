@@ -8,7 +8,7 @@
     "damageType": "physical",
     "faction": "undead",
     "physSub": "slashing",
-    "attackSpeed": 0.6,
+    "attackSpeed": 0.7,
     "moveSpeed": 50,
     "armor": 0,
     "accuracy": 25,

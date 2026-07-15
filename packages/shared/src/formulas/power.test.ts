@@ -94,9 +94,10 @@ describe('runChallengeLevel', () => {
 });
 
 describe('isDifficultyUnlocked', () => {
-  it('первые тиры (unlockFloor 0) открыты сразу', () => {
-    expect(isDifficultyUnlocked(diffs, 0, {})).toBe(true);
-    expect(isDifficultyUnlocked(diffs, 1, {})).toBe(true);
+  it('первый тир открыт сразу; следующий — только если его unlockFloor 0', () => {
+    expect(isDifficultyUnlocked(diffs, 0, {})).toBe(true); // первый всегда открыт
+    // Второй тир открыт на старте ТОЛЬКО если его порог 0 (устойчиво к тюнингу гейта сложностей).
+    expect(isDifficultyUnlocked(diffs, 1, {})).toBe(diffs[1]!.unlockFloor === 0);
   });
   it('следующий тир требует глубину на предыдущем', () => {
     expect(isDifficultyUnlocked(diffs, 2, { [normal.id]: 5 })).toBe(false);

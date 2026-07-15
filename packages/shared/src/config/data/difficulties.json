@@ -19,7 +19,7 @@
     "goldMult": 1,
     "ilvlBonus": 0,
     "magicFind": 1,
-    "unlockFloor": 0
+    "unlockFloor": 5
   },
   {
     "id": "hard",
@@ -30,7 +30,7 @@
     "goldMult": 1.25,
     "ilvlBonus": 2,
     "magicFind": 1.25,
-    "unlockFloor": 8
+    "unlockFloor": 10
   },
   {
     "id": "nightmare",
@@ -41,6 +41,6 @@
     "goldMult": 1.6,
     "ilvlBonus": 5,
     "magicFind": 1.6,
-    "unlockFloor": 8
+    "unlockFloor": 20
   }
 ]
