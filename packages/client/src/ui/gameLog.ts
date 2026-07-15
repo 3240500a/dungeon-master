@@ -25,12 +25,18 @@ export class GameLog {
     this.box = document.createElement('div');
     this.box.style.cssText =
       // bottom:76 — над поясом колб (пояс: bottom:12 + слот 52 = 64), чтобы чат и колбы не налезали.
-      'position:fixed;left:12px;bottom:76px;width:410px;height:196px;overflow-y:auto;' +
+      // display:none — по умолчанию скрыт; показывается только В ИГРЕ (OnlineScene → setVisible).
+      'position:fixed;left:12px;bottom:76px;width:410px;height:196px;overflow-y:auto;display:none;' +
       'background:rgba(14,17,23,0.6);border:0.5px solid #2b323f;border-radius:8px;' +
       'padding:7px 10px;font-size:14px;line-height:1.5;z-index:40;' +
       'font-family:system-ui,sans-serif;color:#d8d0bf;scrollbar-width:thin;pointer-events:auto';
     root.appendChild(this.box);
     app.bus.on('log:message', ({ text, kind }) => this.push(text, kind));
+  }
+
+  /** Показать/скрыть панель. На экранах меню чат не нужен — виден только в игре. */
+  setVisible(visible: boolean): void {
+    this.box.style.display = visible ? 'block' : 'none';
   }
 
   private push(text: string, kind: LogKind): void {

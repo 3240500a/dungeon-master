@@ -38,14 +38,8 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
     c.refresh();
   };
 
-  // Персонажи (по классам).
-  circle('player-warrior', 14, 0xcf4b4b);   // Заступник (латы)
-  circle('player-mage', 14, 0x4b7bcf);      // Заклинатель
-  circle('player-archer', 14, 0x4bcf6a);    // Ловчая
-  circle('player-volkodav', 14, 0x8a97a8);  // Волкодав (сталь)
-  circle('player-vyuga', 14, 0xbcd6ef);     // Вьюга (лёд)
-  circle('player-arbalest', 14, 0xb08a4a);  // Вольный стрелок (охра)
-  circle('player-vorozheya', 14, 0x9a6acf); // Ворожея (чары)
+  // Персонажи: спрайты настраиваются в Preload — PNG из public/sprites/<ключ>.png, иначе
+  // кружок-фолбэк (см. PLAYER_SPRITE_COLORS / ensurePlayerCircle ниже).
 
   // Монстры.
   circle('mob-skeleton', 12, 0xe8e8e8);
@@ -86,5 +80,30 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
   g.fillRect(0, 0, 34, 34);
   g.generateTexture('fog-eraser', 34, 34);
 
+  g.destroy();
+}
+
+/**
+ * Ключи спрайтов игрока (по полю `class.sprite`) → цвет кружка-фолбэка. Preload пытается
+ * загрузить PNG `public/sprites/<ключ>.png`; если файла нет — рисуется этот кружок.
+ */
+export const PLAYER_SPRITE_COLORS: Record<string, number> = {
+  'player-warrior': 0xcf4b4b,
+  'player-mage': 0x4b7bcf,
+  'player-archer': 0x4bcf6a,
+  'player-volkodav': 0x8a97a8,
+  'player-vyuga': 0xbcd6ef,
+  'player-arbalest': 0xb08a4a,
+  'player-vorozheya': 0x9a6acf,
+};
+
+/** Фолбэк-кружок для спрайта игрока, если PNG не подгрузился. Идемпотентно (не пересоздаёт). */
+export function ensurePlayerCircle(scene: Phaser.Scene, key: string): void {
+  if (scene.textures.exists(key)) return;
+  const r = 14;
+  const g = scene.make.graphics({ x: 0, y: 0 });
+  g.fillStyle(PLAYER_SPRITE_COLORS[key] ?? 0x888888, 1);
+  g.fillCircle(r, r, r);
+  g.generateTexture(key, r * 2, r * 2);
   g.destroy();
 }

@@ -27,14 +27,19 @@ export class ClassSelectScene extends Phaser.Scene {
     this.buildNameInput(height);
 
     const classes = listClasses(app.config);
-    const cardW = 200;
-    const gap = 40;
-    const totalW = classes.length * cardW + (classes.length - 1) * gap;
+    const n = classes.length;
+    const gap = 20;
+    // Карточки крупнее: ширина адаптивна (все влезают по ширине), высота ~2× ширины (большой портрет).
+    const cardW = Math.min(240, Math.floor((width * 0.96 - gap * (n - 1)) / n));
+    const cardH = Math.min(Math.round(cardW * 1.95), Math.round(height * 0.52));
+    const cardY = height * 0.33 + cardH / 2; // блок карточек под полем имени
+    const totalW = n * cardW + (n - 1) * gap;
     let x = width / 2 - totalW / 2 + cardW / 2;
-    for (const cls of classes) { this.makeCard(cls, x, height * 0.52, cardW); x += cardW + gap; }
+    for (const cls of classes) { this.makeCard(cls, x, cardY, cardW, cardH); x += cardW + gap; }
 
-    this.errText = this.add.text(width / 2, height * 0.8, '', { fontSize: '14px', color: '#c85a48' }).setOrigin(0.5);
-    makeButton(this, width / 2, height * 0.88, 'Назад', () => this.scene.start('CharacterSelect'));
+    const below = cardY + cardH / 2 + 30; // под карточками
+    this.errText = this.add.text(width / 2, below, '', { fontSize: '14px', color: '#c85a48' }).setOrigin(0.5);
+    makeButton(this, width / 2, below + 44, 'Назад', () => this.scene.start('CharacterSelect'));
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.nameInput?.remove());
   }
@@ -54,17 +59,23 @@ export class ClassSelectScene extends Phaser.Scene {
     setTimeout(() => input.focus(), 50);
   }
 
-  private makeCard(cls: ClassDef, x: number, y: number, w: number): void {
-    const h = 240;
+  private makeCard(cls: ClassDef, x: number, y: number, w: number, h: number): void {
     const container = this.add.container(x, y);
     const bg = this.add.rectangle(0, 0, w, h, 0x171b24).setStrokeStyle(2, 0x2b323f);
     bg.setInteractive({ useHandCursor: true });
     container.add(bg);
-    container.add(this.add.image(0, -70, cls.sprite).setScale(2));
-    container.add(this.add.text(0, -20, cls.name, { fontSize: '24px', color: '#e6ddc9' }).setOrigin(0.5));
+    // Крупный портрет вверху карточки (~2/3 высоты), вписан по большей стороне; PNG любого размера.
+    const pad = 14;
+    const portraitH = h * 0.64;
+    const portrait = this.add.image(0, -h / 2 + pad + portraitH / 2, cls.sprite);
+    portrait.setScale(Math.min((w - pad * 2) / (portrait.width || 1), portraitH / (portrait.height || 1)));
+    container.add(portrait);
+    // Имя + статы под портретом (2 стата в строку — компактнее).
+    const nameY = -h / 2 + pad + portraitH + 22;
+    container.add(this.add.text(0, nameY, cls.name, { fontSize: '21px', color: '#e6ddc9' }).setOrigin(0.5));
     const a = cls.startAttributes;
-    const stats = `Сила ${a.strength}\nЛовк. ${a.dexterity}\nИнт. ${a.intelligence}\nЖив. ${a.vitality}`;
-    container.add(this.add.text(0, 40, stats, { fontSize: '15px', color: '#c4bca8', align: 'center', lineSpacing: 4 }).setOrigin(0.5));
+    const stats = `Сила ${a.strength}    Ловк. ${a.dexterity}\nИнт. ${a.intelligence}    Жив. ${a.vitality}`;
+    container.add(this.add.text(0, nameY + 34, stats, { fontSize: '14px', color: '#c4bca8', align: 'center', lineSpacing: 5 }).setOrigin(0.5));
     bg.on('pointerover', () => bg.setStrokeStyle(2, 0xe39a3c));
     bg.on('pointerout', () => bg.setStrokeStyle(2, 0x2b323f));
     bg.on('pointerdown', () => void this.startNewGame(cls));

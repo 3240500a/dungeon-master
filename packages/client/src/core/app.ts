@@ -7,6 +7,7 @@ import { setDamageTypeMeta } from './damageTypes.js';
 import { setRarityMeta } from '../modules/loot/rarity.js';
 import { NetClient } from '../net/netClient.js';
 import type { AuthSession } from '../modules/auth/authApi.js';
+import type { GameLog } from '../ui/gameLog.js';
 
 /** Читает сохранённую сессию аккаунта из localStorage (`dm:auth`). */
 function loadAuth(): AuthSession | null {
@@ -41,6 +42,8 @@ export class App {
   attackLockUntil = 0;
   /** Последний атакованный монстр (для реального шанса попасть/увернуться в листе). */
   lastTarget?: { name: string; accuracy: number; evade: number };
+  /** Игровой лог/чат (DOM снизу-слева). Показывается только в игре (OnlineScene). Ставится в main.ts. */
+  gameLog?: GameLog;
 
   /** Отправляет команду города на авторитетный сервер (магазин/экип/распределение). */
   sendCmd(command: TownCommand): void {

@@ -73,7 +73,7 @@ domUi.register('stash', stashPanel);
 // Глобальные контроллеры уровня приложения (живут между сценами). Онлайн-игра:
 // прогрессия/лут/сейв — авторитетно на сервере (клиентских наград/синка нет).
 new SfxController(app);
-new GameLog(app, uiRoot);
+app.gameLog = new GameLog(app, uiRoot); // скрыт по умолчанию; OnlineScene показывает его в игре
 
 // Dev-only: доступ к игре/сервисам из консоли и e2e-проверок.
 if (import.meta.env.DEV) {

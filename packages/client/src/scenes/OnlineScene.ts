@@ -147,6 +147,7 @@ export class OnlineScene extends Phaser.Scene {
   private hideResumePrompt(): void { this.resumeBox?.remove(); this.resumeBox = undefined; this.statusEl = undefined; }
 
   private showLobby(): void {
+    this.app.gameLog?.setVisible(false); // лобби (соло/мультиплеер/код) — не игра, чат скрыт
     if (this.lobby) return;
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
@@ -183,6 +184,7 @@ export class OnlineScene extends Phaser.Scene {
 
   // ── Постройка области (город/этаж) ──────────────────────────────────────────
   private buildArea(floor: FloorInit): void {
+    this.app.gameLog?.setVisible(true); // в мире → показать чат/лог (на экранах меню он скрыт)
     for (const o of this.worldObjs) o.destroy();
     this.worldObjs = [];
     for (const t of this.torches) t.destroy();
@@ -211,7 +213,8 @@ export class OnlineScene extends Phaser.Scene {
     // Игрок-вид (создаём один раз).
     if (!this.player) {
       const cls = this.app.state!.save.classId;
-      const tex = this.textures.exists(`player-${cls}`) ? `player-${cls}` : 'player-warrior';
+      const spr = this.app.config.get('classes').find((c) => c.id === cls)?.sprite ?? `player-${cls}`;
+      const tex = this.textures.exists(spr) ? spr : 'player-warrior';
       this.player = new Player(this, floor.spawn.x, floor.spawn.y, tex);
       this.driver = new NetDriver(this, this.app, this.player);
       this.driver.setMyId(this.myId); // свой id — чтобы свой игрок не рисовался как «чужой»
@@ -392,6 +395,7 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   private cleanup(): void {
+    this.app.gameLog?.setVisible(false); // выход из игры (в меню) — скрыть чат
     this.driver?.destroy();
     this.fog?.destroy();
     for (const t of this.torches) t.destroy();
