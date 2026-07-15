@@ -50,24 +50,24 @@ describe('активные скиллы', () => {
   });
 
   it('качается за очки и уходит в хотбар', () => {
-    const res = allocateActive(reg, state, 'a-warrior-fury-t0');
+    const res = allocateActive(reg, state, 'a-warrior-druzhina-t0');
     expect(res.ok).toBe(true);
-    expect(state.save.activeSkills['a-warrior-fury-t0']).toBe(1);
+    expect(state.save.activeSkills['a-warrior-druzhina-t0']).toBe(1);
     expect(state.save.unspentSkillPoints).toBe(4);
-    expect(state.save.hotbar[0]).toBe('a-warrior-fury-t0');
+    expect(state.save.hotbar[0]).toBe('a-warrior-druzhina-t0');
   });
 
   it('узел с невыполненным требованием заблокирован', () => {
-    const res = allocateActive(reg, state, 'a-warrior-fury-m1'); // требует t0
+    const res = allocateActive(reg, state, 'a-warrior-druzhina-m1'); // требует t0
     expect(res.ok).toBe(false);
-    allocateActive(reg, state, 'a-warrior-fury-t0');
-    expect(allocateActive(reg, state, 'a-warrior-fury-m1').ok).toBe(true);
+    allocateActive(reg, state, 'a-warrior-druzhina-t0');
+    expect(allocateActive(reg, state, 'a-warrior-druzhina-m1').ok).toBe(true);
   });
 
   it('узел заблокирован по уровню', () => {
     state.save.level = 3; // t0 требует ур.1 (ок), m1 требует ур.6
-    expect(allocateActive(reg, state, 'a-warrior-fury-t0').ok).toBe(true);
-    const r = allocateActive(reg, state, 'a-warrior-fury-m1');
+    expect(allocateActive(reg, state, 'a-warrior-druzhina-t0').ok).toBe(true);
+    const r = allocateActive(reg, state, 'a-warrior-druzhina-m1');
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('уровень');
   });

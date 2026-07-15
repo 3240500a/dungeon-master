@@ -249,7 +249,8 @@ function renderPage(page: HTMLElement): void {
   const toolbar = document.createElement('div');
   toolbar.style.cssText = 'position:sticky;top:0;z-index:5;display:flex;gap:8px;flex-wrap:wrap;padding:2px 0 10px;margin-bottom:6px;background:#14141a;border-bottom:1px solid #22222c';
   toolbar.append(
-    btn('✔ Применить в игру', apply, '#2a4a2a'),
+    btn('✔ Применить (тест, локально)', apply, '#2a4a2a'),
+    btn('💾 Применить везде (в файл)', applyToFile, '#26406a'),
     btn('⭳ Экспорт', exportJson),
     btn('⭱ Импорт', importJson),
     btn('↺ Сбросить конфиг', resetConfig, '#4a2a2a'),
@@ -370,7 +371,26 @@ function apply(): void {
   }
   bc?.postMessage({ key: current, value: result.data }); // клиент: мгновенно (вью/тултипы)
   pushToServer({ [current]: result.data }); // сервер: персист в БД + авторитетная игра
-  setStatus('Сохранение на сервере…', '#9fb0c0');
+  setStatus('Сохранение на сервере (БД, для тестов)…', '#9fb0c0');
+}
+
+/**
+ * «Применить везде»: пишет правку в ФАЙЛ-ИСТОЧНИК `data/*.json` (dev-роут `/api/dev/config-file`)
+ * → попадёт в git и на деплой (в отличие от «Применить (тест)», который кладёт только оверрайд в БД
+ * локального сервера). Сервер заодно держит оверрайд, чтобы живой конфиг не откатился до рестарта.
+ */
+function applyToFile(): void {
+  const result = (configSchemas[current] as z.ZodTypeAny).safeParse(data[current]);
+  if (!result.success) {
+    setStatus('Ошибка валидации: ' + result.error.issues[0]?.message + ' @ ' + result.error.issues[0]?.path.join('.'), '#ff8080');
+    return;
+  }
+  bc?.postMessage({ key: current, value: result.data });
+  sendConfig(
+    () => fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [current]: result.data }) }),
+    'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
+  );
+  setStatus('Запись в файл…', '#9fb0c0');
 }
 
 /**

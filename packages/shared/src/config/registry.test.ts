@@ -6,7 +6,7 @@ describe('ConfigRegistry', () => {
   it('загружает и валидирует все встроенные конфиги', () => {
     const reg = new ConfigRegistry();
     expect(() => reg.loadAll()).not.toThrow();
-    expect(reg.get('classes')).toHaveLength(4);
+    expect(reg.get('classes')).toHaveLength(7);
     expect(reg.get('balance').xpTable[0]).toBe(0);
   });
 

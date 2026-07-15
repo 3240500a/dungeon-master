@@ -39,9 +39,13 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
   };
 
   // Персонажи (по классам).
-  circle('player-warrior', 14, 0xcf4b4b);
-  circle('player-mage', 14, 0x4b7bcf);
-  circle('player-archer', 14, 0x4bcf6a);
+  circle('player-warrior', 14, 0xcf4b4b);   // Заступник (латы)
+  circle('player-mage', 14, 0x4b7bcf);      // Заклинатель
+  circle('player-archer', 14, 0x4bcf6a);    // Ловчая
+  circle('player-volkodav', 14, 0x8a97a8);  // Волкодав (сталь)
+  circle('player-vyuga', 14, 0xbcd6ef);     // Вьюга (лёд)
+  circle('player-arbalest', 14, 0xb08a4a);  // Вольный стрелок (охра)
+  circle('player-vorozheya', 14, 0x9a6acf); // Ворожея (чары)
 
   // Монстры.
   circle('mob-skeleton', 12, 0xe8e8e8);

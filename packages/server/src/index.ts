@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { ConfigRegistry, newCharacterSave } from '@dm/shared';
 import { hashPassword, verifyPassword } from './auth/password.js';
 import {
@@ -77,6 +77,36 @@ app.post('/api/dev/config', (req, res) => {
   rebuildConfig();
   console.log(`[dm-server] конфиг сохранён из редактора: ${Object.keys(overrides).join(', ') || '—'}`);
   res.json({ ok: true, applied: Object.keys(overrides) });
+});
+
+// «Применить везде»: пишет правку прямо в ФАЙЛ-источник (data/*.json) → попадёт в git и на деплой.
+// Дополнительно ставит оверрайд в БД, чтобы живой конфиг остался верным (не откатился на дефолт,
+// импортированный в память при старте — файл перечитается лишь при рестарте процесса). DEV-only.
+const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
+const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
+app.post('/api/dev/config-file', (req, res) => {
+  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка конфига отключена в продакшене' });
+  const overrides = (req.body ?? {}) as Record<string, unknown>;
+  try {
+    const trial = new ConfigRegistry(); // валидация ДО записи в файл
+    trial.loadAll();
+    trial.reload(overrides);
+  } catch (e) {
+    return res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+  const written: string[] = [];
+  try {
+    for (const [key, value] of Object.entries(overrides)) {
+      writeFileSync(configFileFor(key), JSON.stringify(value, null, 2) + '\n');
+      setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
+      written.push(key);
+    }
+  } catch (e) {
+    return res.status(500).json({ error: `Не удалось записать файл: ${e instanceof Error ? e.message : String(e)}` });
+  }
+  rebuildConfig();
+  console.log(`[dm-server] конфиг записан в ФАЙЛ (+БД): ${written.join(', ') || '—'}`);
+  res.json({ ok: true, written });
 });
 
 // Сброс ключа к встроенному дефолту (удаляет персистентный оверрайд).

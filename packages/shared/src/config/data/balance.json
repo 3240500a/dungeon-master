@@ -95,6 +95,19 @@
   "attributePointsPerLevel": 5,
   "skillPointsPerLevel": 1,
   "passivePointsPerLevel": 2,
+  "monsterXpGrowth": 0.2,
+  "championXpMult": 3,
+  "monsterScaling": {
+    "hpPerLevel": 0.8,
+    "damagePerLevel": 0.3,
+    "armorPerLevel": 1,
+    "accuracyPerLevel": 3,
+    "evadePerLevel": 2,
+    "blockPerLevel": 0.004,
+    "critPerLevel": 0.003,
+    "resistPerLevel": 0.005
+  },
+  "affinityDamageBonus": 0.2,
   "deathPenalty": {
     "goldPercent": 0.25,
     "inventoryDropPercent": 0.5
@@ -138,7 +151,11 @@
   },
   "weight": {
     "base": 100,
-    "shield": { "light": 15, "medium": 35, "heavy": 60 }
+    "shield": {
+      "light": 15,
+      "medium": 35,
+      "heavy": 60
+    }
   },
   "melee": {
     "baseRange": 52,
@@ -176,17 +193,5 @@
     "townReturnJitter": 2,
     "stashEvery": 3,
     "stashJitter": 1
-  },
-  "monsterXpGrowth": 0.2,
-  "championXpMult": 3,
-  "monsterScaling": {
-    "hpPerLevel": 0.8,
-    "damagePerLevel": 0.3,
-    "armorPerLevel": 1,
-    "accuracyPerLevel": 3,
-    "evadePerLevel": 2,
-    "blockPerLevel": 0.004,
-    "critPerLevel": 0.003,
-    "resistPerLevel": 0.005
   }
 }

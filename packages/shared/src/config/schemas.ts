@@ -632,7 +632,14 @@ const triggerSchema = z.object({
 
 // ── Активная способность (v2): категория-дискриминатор + ограничения оружия ──
 const damageTypeEnum = z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']);
+const debuffKindEnum = z.enum(['wound', 'bleed', 'sunder', 'daze', 'burn', 'poison', 'shock', 'freeze']);
 const ailmentApplySchema = z.object({
+  /**
+   * Явный вид статуса (переопределяет вывод из `element`). Нужен физ. дебафам скиллов
+   * (рана/увечье/кровотечение/оглушение) и проклятиям (слабость=wound, −броня=sunder, ослепление=bleed):
+   * из `element` физика даёт null. Стихийные (burn/freeze/shock/poison) можно не указывать — выведутся.
+   */
+  kind: debuffKindEnum.optional(),
   chance: z.number().min(0).max(1),
   mag: z.number(),
   mag2: z.number().optional(),

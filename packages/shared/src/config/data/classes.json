@@ -1,32 +1,35 @@
 [
   {
     "id": "warrior",
-    "name": "Воин",
-    "startAttributes": { "strength": 25, "dexterity": 15, "intelligence": 10, "vitality": 20 },
-    "startWeaponId": "short-sword",
+    "name": "Волкодав",
+    "startAttributes": { "strength": 26, "dexterity": 14, "intelligence": 10, "vitality": 22 },
+    "startWeaponId": "hand-axe",
     "activeTreeId": "warrior",
-    "passiveEntries": ["p-str", "p-dex"],
-    "sprite": "player-warrior",
+    "passiveEntries": ["p-str", "p-vit"],
+    "sprite": "player-volkodav",
+    "affinity": ["beast", "monster"],
     "derived": { "hpBase": 0, "hpPerVitality": 7, "hpPerLevel": 9, "manaBase": 0, "manaPerIntelligence": 2, "manaPerLevel": 1 }
   },
   {
     "id": "mage",
-    "name": "Маг",
+    "name": "Заклинатель",
     "startAttributes": { "strength": 10, "dexterity": 12, "intelligence": 28, "vitality": 15 },
     "startWeaponId": "apprentice-wand",
     "activeTreeId": "mage",
     "passiveEntries": ["p-int", "p-vit"],
     "sprite": "player-mage",
+    "affinity": ["undead", "demon"],
     "derived": { "hpBase": 0, "hpPerVitality": 4, "hpPerLevel": 4, "manaBase": 0, "manaPerIntelligence": 5, "manaPerLevel": 5 }
   },
   {
     "id": "archer",
-    "name": "Лучник",
-    "startAttributes": { "strength": 14, "dexterity": 26, "intelligence": 12, "vitality": 16 },
+    "name": "Ловчая",
+    "startAttributes": { "strength": 12, "dexterity": 24, "intelligence": 16, "vitality": 14 },
     "startWeaponId": "short-bow",
     "activeTreeId": "archer",
-    "passiveEntries": ["p-dex", "p-str"],
+    "passiveEntries": ["p-dex", "p-int"],
     "sprite": "player-archer",
+    "affinity": ["beast", "monster"],
     "derived": { "hpBase": 0, "hpPerVitality": 5, "hpPerLevel": 6, "manaBase": 0, "manaPerIntelligence": 3, "manaPerLevel": 3 }
   },
   {
@@ -39,5 +42,38 @@
     "sprite": "player-warrior",
     "affinity": ["undead", "demon"],
     "derived": { "hpBase": 0, "hpPerVitality": 7, "hpPerLevel": 10, "manaBase": 0, "manaPerIntelligence": 3, "manaPerLevel": 2 }
+  },
+  {
+    "id": "vyuga",
+    "name": "Вьюга",
+    "startAttributes": { "strength": 22, "dexterity": 20, "intelligence": 10, "vitality": 16 },
+    "startWeaponId": "short-sword",
+    "activeTreeId": "vyuga",
+    "passiveEntries": ["p-str", "p-dex"],
+    "sprite": "player-vyuga",
+    "affinity": ["beast", "monster"],
+    "derived": { "hpBase": 0, "hpPerVitality": 6, "hpPerLevel": 7, "manaBase": 0, "manaPerIntelligence": 3, "manaPerLevel": 2 }
+  },
+  {
+    "id": "arbalest",
+    "name": "Вольный стрелок",
+    "startAttributes": { "strength": 14, "dexterity": 24, "intelligence": 12, "vitality": 18 },
+    "startWeaponId": "crossbow",
+    "activeTreeId": "arbalest",
+    "passiveEntries": ["p-dex", "p-vit"],
+    "sprite": "player-arbalest",
+    "affinity": ["undead", "demon"],
+    "derived": { "hpBase": 0, "hpPerVitality": 6, "hpPerLevel": 7, "manaBase": 0, "manaPerIntelligence": 2, "manaPerLevel": 2 }
+  },
+  {
+    "id": "vorozheya",
+    "name": "Ворожея",
+    "startAttributes": { "strength": 10, "dexterity": 18, "intelligence": 24, "vitality": 14 },
+    "startWeaponId": "dagger",
+    "activeTreeId": "vorozheya",
+    "passiveEntries": ["p-int", "p-dex"],
+    "sprite": "player-vorozheya",
+    "affinity": ["beast", "monster"],
+    "derived": { "hpBase": 0, "hpPerVitality": 4, "hpPerLevel": 5, "manaBase": 0, "manaPerIntelligence": 4, "manaPerLevel": 4 }
   }
 ]

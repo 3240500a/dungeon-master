@@ -659,7 +659,7 @@ export class GameSession {
     opts.shoveChance = active.shoveChance;
     if (active.stunSec) opts.stunSec = active.stunSec;
     if (active.ailment) {
-      const kind = this.cfg.get('damage-types').find((d) => d.id === element)?.ailment;
+      const kind = active.ailment.kind ?? this.cfg.get('damage-types').find((d) => d.id === element)?.ailment;
       if (kind) {
         const ail: DebuffApply = { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs };
         opts.onHit = [...(opts.onHit ?? []), ail];
@@ -732,7 +732,7 @@ export class GameSession {
 
   /** Проклятие (curse): врагам в радиусе — статус-дебаф (по стихии) и/или притягивание агро (taunt). */
   private applyCurse(p: PlayerEntity, active: CurseAbility): void {
-    const kind = active.ailment ? this.cfg.get('damage-types').find((d) => d.id === (active.element ?? 'physical'))?.ailment : undefined;
+    const kind = active.ailment ? (active.ailment.kind ?? this.cfg.get('damage-types').find((d) => d.id === (active.element ?? 'physical'))?.ailment) : undefined;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
       if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) > active.radius) continue;

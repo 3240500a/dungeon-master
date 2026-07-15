@@ -1698,8 +1698,6 @@
   "nodes": [
     {
       "id": "p-str",
-      "kind": "passive",
-      "notable": false,
       "name": "Сила (вход)",
       "description": "Начало веера ветвей атрибута «Сила».",
       "cost": {
@@ -1719,12 +1717,12 @@
         ]
       },
       "x": 0,
-      "y": -60
+      "y": -60,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex",
-      "kind": "passive",
-      "notable": false,
       "name": "Ловкость (вход)",
       "description": "Начало веера ветвей атрибута «Ловкость».",
       "cost": {
@@ -1744,12 +1742,12 @@
         ]
       },
       "x": -60,
-      "y": 0
+      "y": 0,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit",
-      "kind": "passive",
-      "notable": false,
       "name": "Живучесть (вход)",
       "description": "Начало веера ветвей атрибута «Живучесть».",
       "cost": {
@@ -1769,12 +1767,12 @@
         ]
       },
       "x": 60,
-      "y": 0
+      "y": 0,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int",
-      "kind": "passive",
-      "notable": false,
       "name": "Интеллект (вход)",
       "description": "Начало веера ветвей атрибута «Интеллект».",
       "cost": {
@@ -1794,12 +1792,12 @@
         ]
       },
       "x": 0,
-      "y": 60
+      "y": 60,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -1819,12 +1817,12 @@
         ]
       },
       "x": -21,
-      "y": -87
+      "y": -87,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -1844,12 +1842,12 @@
         ]
       },
       "x": -42,
-      "y": -114
+      "y": -114,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -1868,13 +1866,13 @@
           }
         ]
       },
-      "x": -47,
-      "y": -153
+      "x": -60,
+      "y": -145,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -1894,12 +1892,12 @@
         ]
       },
       "x": -79,
-      "y": -128
+      "y": -128,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -1919,12 +1917,12 @@
         ]
       },
       "x": -74,
-      "y": -175
+      "y": -175,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -1944,12 +1942,12 @@
         ]
       },
       "x": -93,
-      "y": -160
+      "y": -160,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -1968,13 +1966,13 @@
           }
         ]
       },
-      "x": -105,
-      "y": -194
+      "x": -117,
+      "y": -189,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -1994,12 +1992,12 @@
         ]
       },
       "x": -110,
-      "y": -233
+      "y": -233,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -2019,12 +2017,12 @@
         ]
       },
       "x": -141,
-      "y": -208
+      "y": -208,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -2044,12 +2042,12 @@
         ]
       },
       "x": -137,
-      "y": -255
+      "y": -255,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -2069,12 +2067,12 @@
         ]
       },
       "x": -156,
-      "y": -240
+      "y": -240,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -2094,12 +2092,12 @@
         ]
       },
       "x": -167,
-      "y": -274
+      "y": -274,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -2119,12 +2117,12 @@
         ]
       },
       "x": -173,
-      "y": -313
+      "y": -313,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -2144,12 +2142,12 @@
         ]
       },
       "x": -204,
-      "y": -289
+      "y": -289,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -2169,12 +2167,12 @@
         ]
       },
       "x": -200,
-      "y": -335
+      "y": -335,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -2194,12 +2192,12 @@
         ]
       },
       "x": -219,
-      "y": -321
+      "y": -321,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -2219,12 +2217,12 @@
         ]
       },
       "x": -230,
-      "y": -355
+      "y": -355,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-bulwark-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Несокрушимость",
       "description": "+6.6% к «броня», +6.6% к «здоровье».",
       "cost": {
@@ -2249,12 +2247,12 @@
         ]
       },
       "x": -251,
-      "y": -382
+      "y": -382,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-str-crush-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 3%",
       "description": "Малый узел: 3% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -2274,12 +2272,12 @@
         ]
       },
       "x": -8,
-      "y": -93
+      "y": -93,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -2299,12 +2297,12 @@
         ]
       },
       "x": -16,
-      "y": -126
+      "y": -126,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -2324,12 +2322,12 @@
         ]
       },
       "x": -5,
-      "y": -164
+      "y": -164,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 3%",
       "description": "Малый узел: 3% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -2348,13 +2346,13 @@
           }
         ]
       },
-      "x": -44,
-      "y": -154
+      "x": -36,
+      "y": -157,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -2374,12 +2372,12 @@
         ]
       },
       "x": -21,
-      "y": -195
+      "y": -195,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -2399,12 +2397,12 @@
         ]
       },
       "x": -45,
-      "y": -189
+      "y": -189,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 3%",
       "description": "Малый узел: 3% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -2424,12 +2422,12 @@
         ]
       },
       "x": -41,
-      "y": -225
+      "y": -225,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -2449,12 +2447,12 @@
         ]
       },
       "x": -30,
-      "y": -263
+      "y": -263,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -2474,12 +2472,12 @@
         ]
       },
       "x": -69,
-      "y": -253
+      "y": -253,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 3%",
       "description": "Малый узел: 3% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -2499,12 +2497,12 @@
         ]
       },
       "x": -46,
-      "y": -294
+      "y": -294,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -2524,12 +2522,12 @@
         ]
       },
       "x": -69,
-      "y": -288
+      "y": -288,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -2549,12 +2547,12 @@
         ]
       },
       "x": -66,
-      "y": -324
+      "y": -324,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 3%",
       "description": "Малый узел: 3% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -2574,12 +2572,12 @@
         ]
       },
       "x": -55,
-      "y": -362
+      "y": -362,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -2599,12 +2597,12 @@
         ]
       },
       "x": -93,
-      "y": -352
+      "y": -352,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -2624,12 +2622,12 @@
         ]
       },
       "x": -71,
-      "y": -393
+      "y": -393,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 3%",
       "description": "Малый узел: 3% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -2649,12 +2647,12 @@
         ]
       },
       "x": -94,
-      "y": -387
+      "y": -387,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -2674,12 +2672,12 @@
         ]
       },
       "x": -90,
-      "y": -423
+      "y": -423,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-crush-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Тяжёлая длань",
       "description": "+6.6% к «стойкость к прерыв.», +6.6% к «наложение статусов».",
       "cost": {
@@ -2704,12 +2702,12 @@
         ]
       },
       "x": -99,
-      "y": -456
+      "y": -456,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-str-heavy-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -2729,12 +2727,12 @@
         ]
       },
       "x": 8,
-      "y": -93
+      "y": -93,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2.5%",
       "description": "Малый узел: 2.5% к «физ. урон» за ранг.",
       "cost": {
@@ -2754,12 +2752,12 @@
         ]
       },
       "x": 16,
-      "y": -126
+      "y": -126,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -2778,13 +2776,13 @@
           }
         ]
       },
-      "x": 44,
-      "y": -154
+      "x": 40,
+      "y": -156,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -2803,13 +2801,13 @@
           }
         ]
       },
-      "x": 5,
-      "y": -164
+      "x": 14,
+      "y": -162,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2.5%",
       "description": "Малый узел: 2.5% к «физ. урон» за ранг.",
       "cost": {
@@ -2829,12 +2827,12 @@
         ]
       },
       "x": 45,
-      "y": -189
+      "y": -189,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -2854,12 +2852,12 @@
         ]
       },
       "x": 21,
-      "y": -195
+      "y": -195,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -2879,12 +2877,12 @@
         ]
       },
       "x": 41,
-      "y": -225
+      "y": -225,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2.5%",
       "description": "Малый узел: 2.5% к «физ. урон» за ранг.",
       "cost": {
@@ -2904,12 +2902,12 @@
         ]
       },
       "x": 69,
-      "y": -253
+      "y": -253,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -2929,12 +2927,12 @@
         ]
       },
       "x": 30,
-      "y": -263
+      "y": -263,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -2954,12 +2952,12 @@
         ]
       },
       "x": 69,
-      "y": -288
+      "y": -288,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2.5%",
       "description": "Малый узел: 2.5% к «физ. урон» за ранг.",
       "cost": {
@@ -2979,12 +2977,12 @@
         ]
       },
       "x": 46,
-      "y": -294
+      "y": -294,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -3004,12 +3002,12 @@
         ]
       },
       "x": 66,
-      "y": -324
+      "y": -324,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -3029,12 +3027,12 @@
         ]
       },
       "x": 93,
-      "y": -352
+      "y": -352,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2.5%",
       "description": "Малый узел: 2.5% к «физ. урон» за ранг.",
       "cost": {
@@ -3054,12 +3052,12 @@
         ]
       },
       "x": 55,
-      "y": -362
+      "y": -362,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -3079,12 +3077,12 @@
         ]
       },
       "x": 94,
-      "y": -387
+      "y": -387,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -3104,12 +3102,12 @@
         ]
       },
       "x": 71,
-      "y": -393
+      "y": -393,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2.5%",
       "description": "Малый узел: 2.5% к «физ. урон» за ранг.",
       "cost": {
@@ -3129,12 +3127,12 @@
         ]
       },
       "x": 90,
-      "y": -423
+      "y": -423,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-heavy-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Разрушение",
       "description": "+4.4% к «физ. урон», +2.6% к «урон».",
       "cost": {
@@ -3159,12 +3157,12 @@
         ]
       },
       "x": 99,
-      "y": -456
+      "y": -456,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-str-heavy-key",
-      "kind": "passive",
-      "notable": true,
       "name": "★ Берсерк",
       "description": "Кейстон: +15% к «физ. урон», +10% к «скор. атаки», −15% к «броня».",
       "cost": {
@@ -3194,12 +3192,12 @@
         ]
       },
       "x": 107,
-      "y": -489
+      "y": -489,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-str-holyfire-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -3219,12 +3217,12 @@
         ]
       },
       "x": 21,
-      "y": -87
+      "y": -87,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -3244,12 +3242,12 @@
         ]
       },
       "x": 42,
-      "y": -114
+      "y": -114,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -3269,12 +3267,12 @@
         ]
       },
       "x": 79,
-      "y": -128
+      "y": -128,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -3293,13 +3291,13 @@
           }
         ]
       },
-      "x": 47,
-      "y": -153
+      "x": 59,
+      "y": -147,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -3319,12 +3317,12 @@
         ]
       },
       "x": 93,
-      "y": -160
+      "y": -160,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -3344,12 +3342,12 @@
         ]
       },
       "x": 74,
-      "y": -175
+      "y": -175,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -3368,13 +3366,13 @@
           }
         ]
       },
-      "x": 105,
-      "y": -194
+      "x": 115,
+      "y": -190,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -3393,13 +3391,13 @@
           }
         ]
       },
-      "x": 141,
-      "y": -208
+      "x": 148,
+      "y": -212,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -3418,13 +3416,13 @@
           }
         ]
       },
-      "x": 110,
-      "y": -233
+      "x": 123,
+      "y": -225,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -3444,12 +3442,12 @@
         ]
       },
       "x": 156,
-      "y": -240
+      "y": -240,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -3469,12 +3467,12 @@
         ]
       },
       "x": 137,
-      "y": -255
+      "y": -255,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -3494,12 +3492,12 @@
         ]
       },
       "x": 167,
-      "y": -274
+      "y": -274,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -3519,12 +3517,12 @@
         ]
       },
       "x": 204,
-      "y": -289
+      "y": -289,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -3544,12 +3542,12 @@
         ]
       },
       "x": 173,
-      "y": -313
+      "y": -313,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -3569,12 +3567,12 @@
         ]
       },
       "x": 219,
-      "y": -321
+      "y": -321,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -3594,12 +3592,12 @@
         ]
       },
       "x": 200,
-      "y": -335
+      "y": -335,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 1.8%",
       "description": "Малый узел: 1.8% к «физ. урон» за ранг.",
       "cost": {
@@ -3619,12 +3617,12 @@
         ]
       },
       "x": 230,
-      "y": -355
+      "y": -355,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-str-holyfire-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Кара Света",
       "description": "+5.5% к «урон огнём», +4% к «физ. урон».",
       "cost": {
@@ -3649,12 +3647,12 @@
         ]
       },
       "x": 251,
-      "y": -382
+      "y": -382,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-vit-regen-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -3673,13 +3671,13 @@
           }
         ]
       },
-      "x": 88,
-      "y": -20
+      "x": 81,
+      "y": -30,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -3699,12 +3697,12 @@
         ]
       },
       "x": 116,
-      "y": -39
+      "y": -39,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -3723,13 +3721,13 @@
           }
         ]
       },
-      "x": 155,
-      "y": -42
+      "x": 147,
+      "y": -58,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -3749,12 +3747,12 @@
         ]
       },
       "x": 132,
-      "y": -75
+      "y": -75,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -3774,12 +3772,12 @@
         ]
       },
       "x": 178,
-      "y": -68
+      "y": -68,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -3799,12 +3797,12 @@
         ]
       },
       "x": 165,
-      "y": -88
+      "y": -88,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -3824,12 +3822,12 @@
         ]
       },
       "x": 199,
-      "y": -98
+      "y": -98,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -3849,12 +3847,12 @@
         ]
       },
       "x": 239,
-      "y": -101
+      "y": -101,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -3874,12 +3872,12 @@
         ]
       },
       "x": 216,
-      "y": -133
+      "y": -133,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -3899,12 +3897,12 @@
         ]
       },
       "x": 262,
-      "y": -127
+      "y": -127,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -3924,12 +3922,12 @@
         ]
       },
       "x": 248,
-      "y": -146
+      "y": -146,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -3949,12 +3947,12 @@
         ]
       },
       "x": 283,
-      "y": -156
+      "y": -156,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -3974,12 +3972,12 @@
         ]
       },
       "x": 322,
-      "y": -159
+      "y": -159,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -3999,12 +3997,12 @@
         ]
       },
       "x": 299,
-      "y": -192
+      "y": -192,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -4024,12 +4022,12 @@
         ]
       },
       "x": 345,
-      "y": -185
+      "y": -185,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -4049,12 +4047,12 @@
         ]
       },
       "x": 332,
-      "y": -205
+      "y": -205,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -4074,12 +4072,12 @@
         ]
       },
       "x": 366,
-      "y": -215
+      "y": -215,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-regen-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Второе дыхание",
       "description": "+11% к «реген HP», +11% к «реген маны».",
       "cost": {
@@ -4104,12 +4102,12 @@
         ]
       },
       "x": 394,
-      "y": -234
+      "y": -234,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-vit-life-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -4128,13 +4126,13 @@
           }
         ]
       },
-      "x": 93,
-      "y": -6
+      "x": 99,
+      "y": -14,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -4154,12 +4152,12 @@
         ]
       },
       "x": 127,
-      "y": -13
+      "y": -13,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -4179,12 +4177,12 @@
         ]
       },
       "x": 164,
-      "y": 0
+      "y": -3,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -4203,13 +4201,13 @@
           }
         ]
       },
-      "x": 156,
-      "y": -39
+      "x": 162,
+      "y": -29,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -4229,12 +4227,12 @@
         ]
       },
       "x": 196,
-      "y": -14
+      "y": -14,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -4254,12 +4252,12 @@
         ]
       },
       "x": 191,
-      "y": -38
+      "y": -38,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -4279,12 +4277,12 @@
         ]
       },
       "x": 227,
-      "y": -32
+      "y": -32,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -4304,12 +4302,12 @@
         ]
       },
       "x": 264,
-      "y": -19
+      "y": -19,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -4329,12 +4327,12 @@
         ]
       },
       "x": 256,
-      "y": -59
+      "y": -59,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -4354,12 +4352,12 @@
         ]
       },
       "x": 296,
-      "y": -34
+      "y": -34,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -4379,12 +4377,12 @@
         ]
       },
       "x": 291,
-      "y": -57
+      "y": -57,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -4404,12 +4402,12 @@
         ]
       },
       "x": 327,
-      "y": -52
+      "y": -52,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -4429,12 +4427,12 @@
         ]
       },
       "x": 364,
-      "y": -39
+      "y": -39,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -4454,12 +4452,12 @@
         ]
       },
       "x": 357,
-      "y": -78
+      "y": -78,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 2.5%",
       "description": "Малый узел: 2.5% к «здоровье» за ранг.",
       "cost": {
@@ -4479,12 +4477,12 @@
         ]
       },
       "x": 396,
-      "y": -53
+      "y": -53,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Здоровье 3%",
       "description": "Малый узел: 3% к «здоровье» за ранг.",
       "cost": {
@@ -4504,12 +4502,12 @@
         ]
       },
       "x": 391,
-      "y": -77
+      "y": -77,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген HP 5%",
       "description": "Малый узел: 5% к «реген HP» за ранг.",
       "cost": {
@@ -4529,12 +4527,12 @@
         ]
       },
       "x": 427,
-      "y": -71
+      "y": -71,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-life-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Живучесть",
       "description": "+6.6% к «здоровье», +11% к «реген HP».",
       "cost": {
@@ -4559,12 +4557,12 @@
         ]
       },
       "x": 461,
-      "y": -78
+      "y": -78,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-vit-barrier-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -4583,13 +4581,13 @@
           }
         ]
       },
-      "x": 93,
-      "y": 8
+      "x": 99,
+      "y": 14,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -4609,12 +4607,12 @@
         ]
       },
       "x": 126,
-      "y": 16
+      "y": 16,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 2.5%",
       "description": "Малый узел: 2.5% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -4634,12 +4632,12 @@
         ]
       },
       "x": 154,
-      "y": 44
+      "y": 44,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -4658,13 +4656,13 @@
           }
         ]
       },
-      "x": 164,
-      "y": 5
+      "x": 165,
+      "y": 21,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -4684,12 +4682,12 @@
         ]
       },
       "x": 189,
-      "y": 45
+      "y": 45,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 2.5%",
       "description": "Малый узел: 2.5% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -4709,12 +4707,12 @@
         ]
       },
       "x": 195,
-      "y": 21
+      "y": 21,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -4734,12 +4732,12 @@
         ]
       },
       "x": 225,
-      "y": 41
+      "y": 41,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -4759,12 +4757,12 @@
         ]
       },
       "x": 253,
-      "y": 69
+      "y": 69,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 2.5%",
       "description": "Малый узел: 2.5% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -4784,12 +4782,12 @@
         ]
       },
       "x": 263,
-      "y": 30
+      "y": 30,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -4809,12 +4807,12 @@
         ]
       },
       "x": 288,
-      "y": 69
+      "y": 69,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -4834,12 +4832,12 @@
         ]
       },
       "x": 294,
-      "y": 46
+      "y": 46,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 2.5%",
       "description": "Малый узел: 2.5% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -4859,12 +4857,12 @@
         ]
       },
       "x": 324,
-      "y": 66
+      "y": 66,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -4884,12 +4882,12 @@
         ]
       },
       "x": 352,
-      "y": 93
+      "y": 93,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -4909,12 +4907,12 @@
         ]
       },
       "x": 362,
-      "y": 55
+      "y": 55,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Стойкость к прерыв. 2.5%",
       "description": "Малый узел: 2.5% к «стойкость к прерыв.» за ранг.",
       "cost": {
@@ -4934,12 +4932,12 @@
         ]
       },
       "x": 387,
-      "y": 94
+      "y": 94,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Броня 3%",
       "description": "Малый узел: 3% к «броня» за ранг.",
       "cost": {
@@ -4959,12 +4957,12 @@
         ]
       },
       "x": 393,
-      "y": 71
+      "y": 71,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Блок 2%",
       "description": "Малый узел: 2% к «блок» за ранг.",
       "cost": {
@@ -4984,12 +4982,12 @@
         ]
       },
       "x": 423,
-      "y": 90
+      "y": 90,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-barrier-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Латная воля",
       "description": "+6.6% к «броня», +4.4% к «блок».",
       "cost": {
@@ -5014,12 +5012,12 @@
         ]
       },
       "x": 456,
-      "y": 99
+      "y": 99,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-vit-barrier-key",
-      "kind": "passive",
-      "notable": true,
       "name": "★ Несокрушимый",
       "description": "Кейстон: +15% к «здоровье», +15% к «броня», −10% к «скор. движения».",
       "cost": {
@@ -5049,12 +5047,12 @@
         ]
       },
       "x": 489,
-      "y": 107
+      "y": 107,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-vit-resist-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. огню 2%",
       "description": "Малый узел: 2% к «сопр. огню» за ранг.",
       "cost": {
@@ -5073,13 +5071,13 @@
           }
         ]
       },
-      "x": 87,
-      "y": 21
+      "x": 84,
+      "y": 31,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. холоду 2%",
       "description": "Малый узел: 2% к «сопр. холоду» за ранг.",
       "cost": {
@@ -5099,12 +5097,12 @@
         ]
       },
       "x": 114,
-      "y": 42
+      "y": 42,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. молнии 2%",
       "description": "Малый узел: 2% к «сопр. молнии» за ранг.",
       "cost": {
@@ -5124,12 +5122,12 @@
         ]
       },
       "x": 128,
-      "y": 79
+      "y": 79,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. яду 2%",
       "description": "Малый узел: 2% к «сопр. яду» за ранг.",
       "cost": {
@@ -5148,13 +5146,13 @@
           }
         ]
       },
-      "x": 153,
-      "y": 47
+      "x": 144,
+      "y": 64,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. огню 2%",
       "description": "Малый узел: 2% к «сопр. огню» за ранг.",
       "cost": {
@@ -5173,13 +5171,13 @@
           }
         ]
       },
-      "x": 160,
-      "y": 93
+      "x": 152,
+      "y": 100,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. холоду 2%",
       "description": "Малый узел: 2% к «сопр. холоду» за ранг.",
       "cost": {
@@ -5198,13 +5196,13 @@
           }
         ]
       },
-      "x": 175,
-      "y": 74
+      "x": 171,
+      "y": 79,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. молнии 2%",
       "description": "Малый узел: 2% к «сопр. молнии» за ранг.",
       "cost": {
@@ -5224,12 +5222,12 @@
         ]
       },
       "x": 194,
-      "y": 105
+      "y": 105,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. яду 2%",
       "description": "Малый узел: 2% к «сопр. яду» за ранг.",
       "cost": {
@@ -5249,12 +5247,12 @@
         ]
       },
       "x": 208,
-      "y": 141
+      "y": 141,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. огню 2%",
       "description": "Малый узел: 2% к «сопр. огню» за ранг.",
       "cost": {
@@ -5274,12 +5272,12 @@
         ]
       },
       "x": 233,
-      "y": 110
+      "y": 110,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. холоду 2%",
       "description": "Малый узел: 2% к «сопр. холоду» за ранг.",
       "cost": {
@@ -5299,12 +5297,12 @@
         ]
       },
       "x": 240,
-      "y": 156
+      "y": 156,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. молнии 2%",
       "description": "Малый узел: 2% к «сопр. молнии» за ранг.",
       "cost": {
@@ -5324,12 +5322,12 @@
         ]
       },
       "x": 255,
-      "y": 137
+      "y": 137,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. яду 2%",
       "description": "Малый узел: 2% к «сопр. яду» за ранг.",
       "cost": {
@@ -5349,12 +5347,12 @@
         ]
       },
       "x": 274,
-      "y": 167
+      "y": 167,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. огню 2%",
       "description": "Малый узел: 2% к «сопр. огню» за ранг.",
       "cost": {
@@ -5374,12 +5372,12 @@
         ]
       },
       "x": 289,
-      "y": 204
+      "y": 204,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. холоду 2%",
       "description": "Малый узел: 2% к «сопр. холоду» за ранг.",
       "cost": {
@@ -5399,12 +5397,12 @@
         ]
       },
       "x": 313,
-      "y": 173
+      "y": 173,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. молнии 2%",
       "description": "Малый узел: 2% к «сопр. молнии» за ранг.",
       "cost": {
@@ -5424,12 +5422,12 @@
         ]
       },
       "x": 321,
-      "y": 219
+      "y": 219,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. яду 2%",
       "description": "Малый узел: 2% к «сопр. яду» за ранг.",
       "cost": {
@@ -5449,12 +5447,12 @@
         ]
       },
       "x": 335,
-      "y": 200
+      "y": 200,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Сопр. огню 2%",
       "description": "Малый узел: 2% к «сопр. огню» за ранг.",
       "cost": {
@@ -5474,12 +5472,12 @@
         ]
       },
       "x": 355,
-      "y": 230
+      "y": 230,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-vit-resist-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Стихийный оплот",
       "description": "+4.4% к «сопр. огню», +4.4% к «сопр. холоду».",
       "cost": {
@@ -5504,12 +5502,12 @@
         ]
       },
       "x": 382,
-      "y": 251
+      "y": 251,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-int-mana-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Мана 3%",
       "description": "Малый узел: 3% к «мана» за ранг.",
       "cost": {
@@ -5528,13 +5526,13 @@
           }
         ]
       },
-      "x": 21,
-      "y": 87
+      "x": 38,
+      "y": 78,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -5553,13 +5551,13 @@
           }
         ]
       },
-      "x": 42,
-      "y": 114
+      "x": 67,
+      "y": 98,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -5578,13 +5576,13 @@
           }
         ]
       },
-      "x": 47,
-      "y": 153
+      "x": 78,
+      "y": 127,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Мана 3%",
       "description": "Малый узел: 3% к «мана» за ранг.",
       "cost": {
@@ -5603,13 +5601,13 @@
           }
         ]
       },
-      "x": 79,
-      "y": 128
+      "x": 98,
+      "y": 108,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -5628,13 +5626,13 @@
           }
         ]
       },
-      "x": 74,
-      "y": 175
+      "x": 100,
+      "y": 149,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -5653,13 +5651,13 @@
           }
         ]
       },
-      "x": 93,
-      "y": 160
+      "x": 127,
+      "y": 129,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Мана 3%",
       "description": "Малый узел: 3% к «мана» за ранг.",
       "cost": {
@@ -5678,13 +5676,13 @@
           }
         ]
       },
-      "x": 105,
-      "y": 194
+      "x": 133,
+      "y": 167,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -5703,13 +5701,13 @@
           }
         ]
       },
-      "x": 110,
-      "y": 233
+      "x": 135,
+      "y": 219,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -5728,13 +5726,13 @@
           }
         ]
       },
-      "x": 141,
-      "y": 208
+      "x": 175,
+      "y": 195,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Мана 3%",
       "description": "Малый узел: 3% к «мана» за ранг.",
       "cost": {
@@ -5753,13 +5751,13 @@
           }
         ]
       },
-      "x": 137,
-      "y": 255
+      "x": 152,
+      "y": 247,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -5778,13 +5776,13 @@
           }
         ]
       },
-      "x": 156,
-      "y": 240
+      "x": 182,
+      "y": 221,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -5804,12 +5802,12 @@
         ]
       },
       "x": 167,
-      "y": 274
+      "y": 274,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Мана 3%",
       "description": "Малый узел: 3% к «мана» за ранг.",
       "cost": {
@@ -5829,12 +5827,12 @@
         ]
       },
       "x": 173,
-      "y": 313
+      "y": 313,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -5854,12 +5852,12 @@
         ]
       },
       "x": 204,
-      "y": 289
+      "y": 289,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -5879,12 +5877,12 @@
         ]
       },
       "x": 200,
-      "y": 335
+      "y": 335,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Мана 3%",
       "description": "Малый узел: 3% к «мана» за ранг.",
       "cost": {
@@ -5904,12 +5902,12 @@
         ]
       },
       "x": 219,
-      "y": 321
+      "y": 321,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Реген маны 5%",
       "description": "Малый узел: 5% к «реген маны» за ранг.",
       "cost": {
@@ -5929,12 +5927,12 @@
         ]
       },
       "x": 230,
-      "y": 355
+      "y": 355,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-mana-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Поток маны",
       "description": "+6.6% к «мана», +11% к «реген маны».",
       "cost": {
@@ -5959,12 +5957,12 @@
         ]
       },
       "x": 251,
-      "y": 382
+      "y": 382,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-int-poison-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон ядом 2.5%",
       "description": "Малый узел: 2.5% к «урон ядом» за ранг.",
       "cost": {
@@ -5983,13 +5981,13 @@
           }
         ]
       },
-      "x": 12,
-      "y": 92
+      "x": 34,
+      "y": 101,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -6008,13 +6006,13 @@
           }
         ]
       },
-      "x": 24,
-      "y": 123
+      "x": 45,
+      "y": 121,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6033,13 +6031,13 @@
           }
         ]
       },
-      "x": 18,
-      "y": 162
+      "x": 42,
+      "y": 159,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон ядом 2.5%",
       "description": "Малый узел: 2.5% к «урон ядом» за ранг.",
       "cost": {
@@ -6058,13 +6056,13 @@
           }
         ]
       },
-      "x": 55,
-      "y": 148
+      "x": 62,
+      "y": 139,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -6083,13 +6081,13 @@
           }
         ]
       },
-      "x": 38,
-      "y": 191
+      "x": 59,
+      "y": 182,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6108,13 +6106,13 @@
           }
         ]
       },
-      "x": 60,
-      "y": 183
+      "x": 79,
+      "y": 164,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон ядом 2.5%",
       "description": "Малый узел: 2.5% к «урон ядом» за ранг.",
       "cost": {
@@ -6133,13 +6131,13 @@
           }
         ]
       },
-      "x": 61,
-      "y": 219
+      "x": 83,
+      "y": 209,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -6158,13 +6156,13 @@
           }
         ]
       },
-      "x": 54,
-      "y": 258
+      "x": 69,
+      "y": 252,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6184,12 +6182,12 @@
         ]
       },
       "x": 92,
-      "y": 243
+      "y": 243,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон ядом 2.5%",
       "description": "Малый узел: 2.5% к «урон ядом» за ранг.",
       "cost": {
@@ -6209,12 +6207,12 @@
         ]
       },
       "x": 74,
-      "y": 286
+      "y": 286,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -6234,12 +6232,12 @@
         ]
       },
       "x": 96,
-      "y": 278
+      "y": 278,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6259,12 +6257,12 @@
         ]
       },
       "x": 97,
-      "y": 314
+      "y": 314,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон ядом 2.5%",
       "description": "Малый узел: 2.5% к «урон ядом» за ранг.",
       "cost": {
@@ -6284,12 +6282,12 @@
         ]
       },
       "x": 91,
-      "y": 353
+      "y": 353,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -6309,12 +6307,12 @@
         ]
       },
       "x": 128,
-      "y": 339
+      "y": 339,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6334,12 +6332,12 @@
         ]
       },
       "x": 111,
-      "y": 382
+      "y": 382,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон ядом 2.5%",
       "description": "Малый узел: 2.5% к «урон ядом» за ранг.",
       "cost": {
@@ -6359,12 +6357,12 @@
         ]
       },
       "x": 133,
-      "y": 373
+      "y": 373,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -6384,12 +6382,12 @@
         ]
       },
       "x": 134,
-      "y": 409
+      "y": 409,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-poison-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Зараза",
       "description": "+5.5% к «урон ядом», +6.6% к «наложение статусов».",
       "cost": {
@@ -6414,12 +6412,12 @@
         ]
       },
       "x": 146,
-      "y": 441
+      "y": 441,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-int-lightning-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон молнией 2.5%",
       "description": "Малый узел: 2.5% к «урон молнией» за ранг.",
       "cost": {
@@ -6438,13 +6436,13 @@
           }
         ]
       },
-      "x": 2,
-      "y": 94
+      "x": 12,
+      "y": 105,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -6463,13 +6461,13 @@
           }
         ]
       },
-      "x": 5,
-      "y": 128
+      "x": 13,
+      "y": 128,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6488,13 +6486,13 @@
           }
         ]
       },
-      "x": -13,
-      "y": 163
+      "x": 3,
+      "y": 163,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон молнией 2.5%",
       "description": "Малый узел: 2.5% к «урон молнией» за ранг.",
       "cost": {
@@ -6513,13 +6511,13 @@
           }
         ]
       },
-      "x": 27,
-      "y": 160
+      "x": 25,
+      "y": 149,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -6538,13 +6536,13 @@
           }
         ]
       },
-      "x": -2,
-      "y": 197
+      "x": 2,
+      "y": 196,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6563,13 +6561,13 @@
           }
         ]
       },
-      "x": 21,
-      "y": 195
+      "x": 32,
+      "y": 196,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон молнией 2.5%",
       "description": "Малый узел: 2.5% к «урон молнией» за ранг.",
       "cost": {
@@ -6588,13 +6586,13 @@
           }
         ]
       },
-      "x": 12,
-      "y": 230
+      "x": 24,
+      "y": 227,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -6613,13 +6611,13 @@
           }
         ]
       },
-      "x": -6,
-      "y": 265
+      "x": 9,
+      "y": 259,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6639,12 +6637,12 @@
         ]
       },
       "x": 34,
-      "y": 262
+      "y": 262,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон молнией 2.5%",
       "description": "Малый узел: 2.5% к «урон молнией» за ранг.",
       "cost": {
@@ -6664,12 +6662,12 @@
         ]
       },
       "x": 5,
-      "y": 298
+      "y": 298,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -6689,12 +6687,12 @@
         ]
       },
       "x": 29,
-      "y": 297
+      "y": 297,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6714,12 +6712,12 @@
         ]
       },
       "x": 19,
-      "y": 331
+      "y": 331,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон молнией 2.5%",
       "description": "Малый узел: 2.5% к «урон молнией» за ранг.",
       "cost": {
@@ -6739,12 +6737,12 @@
         ]
       },
       "x": 1,
-      "y": 367
+      "y": 367,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -6764,12 +6762,12 @@
         ]
       },
       "x": 41,
-      "y": 364
+      "y": 364,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6789,12 +6787,12 @@
         ]
       },
       "x": 12,
-      "y": 400
+      "y": 400,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон молнией 2.5%",
       "description": "Малый узел: 2.5% к «урон молнией» за ранг.",
       "cost": {
@@ -6814,12 +6812,12 @@
         ]
       },
       "x": 36,
-      "y": 398
+      "y": 398,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -6839,12 +6837,12 @@
         ]
       },
       "x": 26,
-      "y": 433
+      "y": 433,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-lightning-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Гроза",
       "description": "+5.5% к «урон молнией», +4.4% к «скор. каста».",
       "cost": {
@@ -6869,12 +6867,12 @@
         ]
       },
       "x": 28,
-      "y": 467
+      "y": 467,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-int-lightning-key",
-      "kind": "passive",
-      "notable": true,
       "name": "★ Перегрузка",
       "description": "Кейстон: +8% к «урон», +12% к «скор. каста», −15% к «мана».",
       "cost": {
@@ -6904,12 +6902,12 @@
         ]
       },
       "x": 31,
-      "y": 501
+      "y": 501,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-int-cold-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон холодом 2.5%",
       "description": "Малый узел: 2.5% к «урон холодом» за ранг.",
       "cost": {
@@ -6929,12 +6927,12 @@
         ]
       },
       "x": -8,
-      "y": 93
+      "y": 93,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -6954,12 +6952,12 @@
         ]
       },
       "x": -15,
-      "y": 126
+      "y": 126,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -6978,13 +6976,13 @@
           }
         ]
       },
-      "x": -42,
-      "y": 155
+      "x": -39,
+      "y": 153,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон холодом 2.5%",
       "description": "Малый узел: 2.5% к «урон холодом» за ранг.",
       "cost": {
@@ -7003,13 +7001,13 @@
           }
         ]
       },
-      "x": -3,
-      "y": 164
+      "x": -17,
+      "y": 164,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7028,13 +7026,13 @@
           }
         ]
       },
-      "x": -42,
-      "y": 190
+      "x": -56,
+      "y": 183,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7053,13 +7051,13 @@
           }
         ]
       },
-      "x": -19,
-      "y": 195
+      "x": -29,
+      "y": 193,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон холодом 2.5%",
       "description": "Малый узел: 2.5% к «урон холодом» за ранг.",
       "cost": {
@@ -7078,13 +7076,13 @@
           }
         ]
       },
-      "x": -38,
-      "y": 226
+      "x": -56,
+      "y": 219,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7103,13 +7101,13 @@
           }
         ]
       },
-      "x": -65,
-      "y": 254
+      "x": -72,
+      "y": 251,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7128,13 +7126,13 @@
           }
         ]
       },
-      "x": -26,
-      "y": 263
+      "x": -42,
+      "y": 256,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон холодом 2.5%",
       "description": "Малый узел: 2.5% к «урон холодом» за ранг.",
       "cost": {
@@ -7153,13 +7151,13 @@
           }
         ]
       },
-      "x": -65,
-      "y": 289
+      "x": -76,
+      "y": 290,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7179,12 +7177,12 @@
         ]
       },
       "x": -42,
-      "y": 295
+      "y": 295,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7203,13 +7201,13 @@
           }
         ]
       },
-      "x": -61,
-      "y": 325
+      "x": -67,
+      "y": 326,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон холодом 2.5%",
       "description": "Малый узел: 2.5% к «урон холодом» за ранг.",
       "cost": {
@@ -7229,12 +7227,12 @@
         ]
       },
       "x": -88,
-      "y": 354
+      "y": 354,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7254,12 +7252,12 @@
         ]
       },
       "x": -49,
-      "y": 363
+      "y": 363,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7279,12 +7277,12 @@
         ]
       },
       "x": -88,
-      "y": 389
+      "y": 389,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон холодом 2.5%",
       "description": "Малый узел: 2.5% к «урон холодом» за ранг.",
       "cost": {
@@ -7304,12 +7302,12 @@
         ]
       },
       "x": -65,
-      "y": 394
+      "y": 394,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7329,12 +7327,12 @@
         ]
       },
       "x": -84,
-      "y": 424
+      "y": 424,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-cold-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Ледяное касание",
       "description": "+5.5% к «урон холодом», +4.4% к «скор. каста».",
       "cost": {
@@ -7359,12 +7357,12 @@
         ]
       },
       "x": -92,
-      "y": 458
+      "y": 458,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-int-fire-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -7383,13 +7381,13 @@
           }
         ]
       },
-      "x": -17,
-      "y": 89
+      "x": -31,
+      "y": 95,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7408,13 +7406,13 @@
           }
         ]
       },
-      "x": -34,
-      "y": 119
+      "x": -53,
+      "y": 114,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7433,13 +7431,13 @@
           }
         ]
       },
-      "x": -68,
-      "y": 138
+      "x": -82,
+      "y": 137,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -7458,13 +7456,13 @@
           }
         ]
       },
-      "x": -34,
-      "y": 158
+      "x": -65,
+      "y": 151,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7483,13 +7481,13 @@
           }
         ]
       },
-      "x": -78,
-      "y": 172
+      "x": -113,
+      "y": 152,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7508,13 +7506,13 @@
           }
         ]
       },
-      "x": -58,
-      "y": 184
+      "x": -88,
+      "y": 175,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -7533,13 +7531,13 @@
           }
         ]
       },
-      "x": -85,
-      "y": 207
+      "x": -114,
+      "y": 187,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7558,13 +7556,13 @@
           }
         ]
       },
-      "x": -119,
-      "y": 227
+      "x": -133,
+      "y": 216,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7583,13 +7581,13 @@
           }
         ]
       },
-      "x": -85,
-      "y": 247
+      "x": -108,
+      "y": 229,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -7608,13 +7606,13 @@
           }
         ]
       },
-      "x": -129,
-      "y": 260
+      "x": -149,
+      "y": 254,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7633,13 +7631,13 @@
           }
         ]
       },
-      "x": -109,
-      "y": 272
+      "x": -117,
+      "y": 273,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7659,12 +7657,12 @@
         ]
       },
       "x": -136,
-      "y": 296
+      "y": 296,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -7684,12 +7682,12 @@
         ]
       },
       "x": -170,
-      "y": 315
+      "y": 315,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7709,12 +7707,12 @@
         ]
       },
       "x": -136,
-      "y": 335
+      "y": 335,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон 1.2%",
       "description": "Малый узел: 1.2% к «урон» за ранг.",
       "cost": {
@@ -7734,12 +7732,12 @@
         ]
       },
       "x": -180,
-      "y": 348
+      "y": 348,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 2.5%",
       "description": "Малый узел: 2.5% к «урон огнём» за ранг.",
       "cost": {
@@ -7759,12 +7757,12 @@
         ]
       },
       "x": -160,
-      "y": 360
+      "y": 360,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7784,12 +7782,12 @@
         ]
       },
       "x": -187,
-      "y": 384
+      "y": 384,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-fire-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Пиромания",
       "description": "+5.5% к «урон огнём», +4.4% к «скор. каста».",
       "cost": {
@@ -7814,12 +7812,12 @@
         ]
       },
       "x": -204,
-      "y": 413
+      "y": 413,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-int-hex-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -7838,13 +7836,13 @@
           }
         ]
       },
-      "x": -25,
-      "y": 83
+      "x": -31,
+      "y": 78,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7863,13 +7861,13 @@
           }
         ]
       },
-      "x": -51,
-      "y": 106
+      "x": -70,
+      "y": 93,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 1.8%",
       "description": "Малый узел: 1.8% к «урон огнём» за ранг.",
       "cost": {
@@ -7888,13 +7886,13 @@
           }
         ]
       },
-      "x": -89,
-      "y": 113
+      "x": -108,
+      "y": 96,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -7913,13 +7911,13 @@
           }
         ]
       },
-      "x": -62,
-      "y": 143
+      "x": -93,
+      "y": 118,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -7938,13 +7936,13 @@
           }
         ]
       },
-      "x": -109,
-      "y": 142
+      "x": -136,
+      "y": 109,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 1.8%",
       "description": "Малый узел: 1.8% к «урон огнём» за ранг.",
       "cost": {
@@ -7963,13 +7961,13 @@
           }
         ]
       },
-      "x": -93,
-      "y": 160
+      "x": -122,
+      "y": 130,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -7988,13 +7986,13 @@
           }
         ]
       },
-      "x": -126,
-      "y": 174
+      "x": -162,
+      "y": 137,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -8013,13 +8011,13 @@
           }
         ]
       },
-      "x": -165,
-      "y": 182
+      "x": -184,
+      "y": 167,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 1.8%",
       "description": "Малый узел: 1.8% к «урон огнём» за ранг.",
       "cost": {
@@ -8038,13 +8036,13 @@
           }
         ]
       },
-      "x": -138,
-      "y": 211
+      "x": -159,
+      "y": 196,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -8063,13 +8061,13 @@
           }
         ]
       },
-      "x": -185,
-      "y": 210
+      "x": -200,
+      "y": 200,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -8088,13 +8086,13 @@
           }
         ]
       },
-      "x": -169,
-      "y": 228
+      "x": -176,
+      "y": 223,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 1.8%",
       "description": "Малый узел: 1.8% к «урон огнём» за ранг.",
       "cost": {
@@ -8114,12 +8112,12 @@
         ]
       },
       "x": -202,
-      "y": 242
+      "y": 242,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -8139,12 +8137,12 @@
         ]
       },
       "x": -241,
-      "y": 250
+      "y": 250,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -8164,12 +8162,12 @@
         ]
       },
       "x": -214,
-      "y": 280
+      "y": 280,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Урон огнём 1.8%",
       "description": "Малый узел: 1.8% к «урон огнём» за ранг.",
       "cost": {
@@ -8189,12 +8187,12 @@
         ]
       },
       "x": -261,
-      "y": 279
+      "y": 279,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Наложение статусов 3%",
       "description": "Малый узел: 3% к «наложение статусов» за ранг.",
       "cost": {
@@ -8214,12 +8212,12 @@
         ]
       },
       "x": -245,
-      "y": 296
+      "y": 296,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. каста 2%",
       "description": "Малый узел: 2% к «скор. каста» за ранг.",
       "cost": {
@@ -8239,12 +8237,12 @@
         ]
       },
       "x": -278,
-      "y": 310
+      "y": 310,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-int-hex-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Скорая порча",
       "description": "+6.6% к «наложение статусов», +4.4% к «скор. каста».",
       "cost": {
@@ -8269,12 +8267,12 @@
         ]
       },
       "x": -303,
-      "y": 333
+      "y": 333,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-dex-pierce-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -8293,13 +8291,13 @@
           }
         ]
       },
-      "x": -91,
-      "y": 14
+      "x": -81,
+      "y": 25,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -8318,13 +8316,13 @@
           }
         ]
       },
-      "x": -122,
-      "y": 28
+      "x": -111,
+      "y": 46,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -8343,13 +8341,13 @@
           }
         ]
       },
-      "x": -161,
-      "y": 23
+      "x": -157,
+      "y": 44,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -8368,13 +8366,13 @@
           }
         ]
       },
-      "x": -145,
-      "y": 60
+      "x": -134,
+      "y": 67,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -8393,13 +8391,13 @@
           }
         ]
       },
-      "x": -189,
-      "y": 44
+      "x": -179,
+      "y": 55,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -8418,13 +8416,13 @@
           }
         ]
       },
-      "x": -179,
-      "y": 66
+      "x": -165,
+      "y": 83,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -8443,13 +8441,13 @@
           }
         ]
       },
-      "x": -215,
-      "y": 69
+      "x": -202,
+      "y": 93,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -8468,13 +8466,13 @@
           }
         ]
       },
-      "x": -254,
-      "y": 65
+      "x": -244,
+      "y": 77,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -8494,12 +8492,12 @@
         ]
       },
       "x": -238,
-      "y": 101
+      "y": 101,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -8519,12 +8517,12 @@
         ]
       },
       "x": -282,
-      "y": 86
+      "y": 86,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -8544,12 +8542,12 @@
         ]
       },
       "x": -273,
-      "y": 108
+      "y": 108,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -8569,12 +8567,12 @@
         ]
       },
       "x": -308,
-      "y": 111
+      "y": 111,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -8594,12 +8592,12 @@
         ]
       },
       "x": -348,
-      "y": 106
+      "y": 106,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -8619,12 +8617,12 @@
         ]
       },
       "x": -331,
-      "y": 143
+      "y": 143,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -8644,12 +8642,12 @@
         ]
       },
       "x": -375,
-      "y": 127
+      "y": 127,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Физ. урон 2%",
       "description": "Малый узел: 2% к «физ. урон» за ранг.",
       "cost": {
@@ -8669,12 +8667,12 @@
         ]
       },
       "x": -366,
-      "y": 149
+      "y": 149,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -8694,12 +8692,12 @@
         ]
       },
       "x": -402,
-      "y": 152
+      "y": 152,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-pierce-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Пробойник",
       "description": "+4.4% к «физ. урон», +6.6% к «меткость».",
       "cost": {
@@ -8724,12 +8722,12 @@
         ]
       },
       "x": -433,
-      "y": 166
+      "y": 166,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-dex-agile-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Уклонение 3%",
       "description": "Малый узел: 3% к «уклонение» за ранг.",
       "cost": {
@@ -8748,13 +8746,13 @@
           }
         ]
       },
-      "x": -94,
-      "y": 1
+      "x": -93,
+      "y": 8,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -8773,13 +8771,13 @@
           }
         ]
       },
-      "x": -128,
-      "y": 2
+      "x": -129,
+      "y": 10,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 1.8%",
       "description": "Малый узел: 1.8% к «скор. атаки» за ранг.",
       "cost": {
@@ -8799,12 +8797,12 @@
         ]
       },
       "x": -163,
-      "y": -16
+      "y": -1,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Уклонение 3%",
       "description": "Малый узел: 3% к «уклонение» за ранг.",
       "cost": {
@@ -8823,13 +8821,13 @@
           }
         ]
       },
-      "x": -161,
-      "y": 24
+      "x": -158,
+      "y": 23,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -8848,13 +8846,13 @@
           }
         ]
       },
-      "x": -196,
-      "y": -7
+      "x": -199,
+      "y": -3,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 1.8%",
       "description": "Малый узел: 1.8% к «скор. атаки» за ранг.",
       "cost": {
@@ -8873,13 +8871,13 @@
           }
         ]
       },
-      "x": -195,
-      "y": 17
+      "x": -194,
+      "y": 25,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Уклонение 3%",
       "description": "Малый узел: 3% к «уклонение» за ранг.",
       "cost": {
@@ -8899,12 +8897,12 @@
         ]
       },
       "x": -230,
-      "y": 6
+      "y": 6,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -8924,12 +8922,12 @@
         ]
       },
       "x": -265,
-      "y": -13
+      "y": -13,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 1.8%",
       "description": "Малый узел: 1.8% к «скор. атаки» за ранг.",
       "cost": {
@@ -8949,12 +8947,12 @@
         ]
       },
       "x": -263,
-      "y": 27
+      "y": 27,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Уклонение 3%",
       "description": "Малый узел: 3% к «уклонение» за ранг.",
       "cost": {
@@ -8974,12 +8972,12 @@
         ]
       },
       "x": -298,
-      "y": -4
+      "y": -4,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -8999,12 +8997,12 @@
         ]
       },
       "x": -297,
-      "y": 20
+      "y": 20,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 1.8%",
       "description": "Малый узел: 1.8% к «скор. атаки» за ранг.",
       "cost": {
@@ -9024,12 +9022,12 @@
         ]
       },
       "x": -332,
-      "y": 9
+      "y": 9,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Уклонение 3%",
       "description": "Малый узел: 3% к «уклонение» за ранг.",
       "cost": {
@@ -9049,12 +9047,12 @@
         ]
       },
       "x": -367,
-      "y": -9
+      "y": -9,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -9074,12 +9072,12 @@
         ]
       },
       "x": -365,
-      "y": 31
+      "y": 31,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 1.8%",
       "description": "Малый узел: 1.8% к «скор. атаки» за ранг.",
       "cost": {
@@ -9099,12 +9097,12 @@
         ]
       },
       "x": -400,
-      "y": 0
+      "y": 0,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Уклонение 3%",
       "description": "Малый узел: 3% к «уклонение» за ранг.",
       "cost": {
@@ -9124,12 +9122,12 @@
         ]
       },
       "x": -399,
-      "y": 24
+      "y": 24,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -9149,12 +9147,12 @@
         ]
       },
       "x": -434,
-      "y": 13
+      "y": 13,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-agile-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Танцующий клинок",
       "description": "+6.6% к «уклонение», +3.3% к «скор. движения».",
       "cost": {
@@ -9179,12 +9177,12 @@
         ]
       },
       "x": -468,
-      "y": 14
+      "y": 14,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-dex-precision-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -9204,12 +9202,12 @@
         ]
       },
       "x": -92,
-      "y": -13
+      "y": -13,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Множ. крита 3%",
       "description": "Малый узел: 3% к «множ. крита» за ранг.",
       "cost": {
@@ -9229,12 +9227,12 @@
         ]
       },
       "x": -123,
-      "y": -25
+      "y": -25,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -9254,12 +9252,12 @@
         ]
       },
       "x": -147,
-      "y": -57
+      "y": -57,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -9278,13 +9276,13 @@
           }
         ]
       },
-      "x": -162,
-      "y": -20
+      "x": -160,
+      "y": -31,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Множ. крита 3%",
       "description": "Малый узел: 3% к «множ. крита» за ранг.",
       "cost": {
@@ -9304,12 +9302,12 @@
         ]
       },
       "x": -182,
-      "y": -62
+      "y": -62,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -9329,12 +9327,12 @@
         ]
       },
       "x": -191,
-      "y": -40
+      "y": -40,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -9354,12 +9352,12 @@
         ]
       },
       "x": -218,
-      "y": -64
+      "y": -64,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Множ. крита 3%",
       "description": "Малый узел: 3% к «множ. крита» за ранг.",
       "cost": {
@@ -9379,12 +9377,12 @@
         ]
       },
       "x": -242,
-      "y": -95
+      "y": -95,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -9404,12 +9402,12 @@
         ]
       },
       "x": -257,
-      "y": -58
+      "y": -58,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -9429,12 +9427,12 @@
         ]
       },
       "x": -276,
-      "y": -100
+      "y": -100,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Множ. крита 3%",
       "description": "Малый узел: 3% к «множ. крита» за ранг.",
       "cost": {
@@ -9454,12 +9452,12 @@
         ]
       },
       "x": -285,
-      "y": -78
+      "y": -78,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -9479,12 +9477,12 @@
         ]
       },
       "x": -312,
-      "y": -102
+      "y": -102,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -9504,12 +9502,12 @@
         ]
       },
       "x": -336,
-      "y": -133
+      "y": -133,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Множ. крита 3%",
       "description": "Малый узел: 3% к «множ. крита» за ранг.",
       "cost": {
@@ -9529,12 +9527,12 @@
         ]
       },
       "x": -351,
-      "y": -96
+      "y": -96,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Меткость 3%",
       "description": "Малый узел: 3% к «меткость» за ранг.",
       "cost": {
@@ -9554,12 +9552,12 @@
         ]
       },
       "x": -371,
-      "y": -138
+      "y": -138,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Шанс крита 3%",
       "description": "Малый узел: 3% к «шанс крита» за ранг.",
       "cost": {
@@ -9579,12 +9577,12 @@
         ]
       },
       "x": -380,
-      "y": -116
+      "y": -116,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Множ. крита 3%",
       "description": "Малый узел: 3% к «множ. крита» за ранг.",
       "cost": {
@@ -9604,12 +9602,12 @@
         ]
       },
       "x": -407,
-      "y": -140
+      "y": -140,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-precision-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Смертельная точность",
       "description": "+6.6% к «шанс крита», +6.6% к «множ. крита».",
       "cost": {
@@ -9634,12 +9632,12 @@
         ]
       },
       "x": -438,
-      "y": -153
+      "y": -153,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-dex-precision-key",
-      "kind": "passive",
-      "notable": true,
       "name": "★ Идеальный удар",
       "description": "Кейстон: +12% к «шанс крита», +15% к «множ. крита», −10% к «здоровье».",
       "cost": {
@@ -9669,12 +9667,12 @@
         ]
       },
       "x": -470,
-      "y": -166
+      "y": -166,
+      "kind": "passive",
+      "notable": true
     },
     {
       "id": "p-dex-swift-n0",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2%",
       "description": "Малый узел: 2% к «скор. атаки» за ранг.",
       "cost": {
@@ -9693,13 +9691,13 @@
           }
         ]
       },
-      "x": -84,
-      "y": -24
+      "x": -80,
+      "y": -31,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-n1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -9718,13 +9716,13 @@
           }
         ]
       },
-      "x": -109,
-      "y": -47
+      "x": -96,
+      "y": -58,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d0l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2.5%",
       "description": "Малый узел: 2.5% к «скор. атаки» за ранг.",
       "cost": {
@@ -9743,13 +9741,13 @@
           }
         ]
       },
-      "x": -119,
-      "y": -85
+      "x": -117,
+      "y": -96,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d0r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2%",
       "description": "Малый узел: 2% к «скор. атаки» за ранг.",
       "cost": {
@@ -9768,13 +9766,13 @@
           }
         ]
       },
-      "x": -147,
-      "y": -56
+      "x": -129,
+      "y": -77,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d0l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -9793,13 +9791,13 @@
           }
         ]
       },
-      "x": -149,
-      "y": -103
+      "x": -135,
+      "y": -123,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d0r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2.5%",
       "description": "Малый узел: 2.5% к «скор. атаки» за ранг.",
       "cost": {
@@ -9818,13 +9816,13 @@
           }
         ]
       },
-      "x": -166,
-      "y": -86
+      "x": -159,
+      "y": -94,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d0m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2%",
       "description": "Малый узел: 2% к «скор. атаки» за ранг.",
       "cost": {
@@ -9844,12 +9842,12 @@
         ]
       },
       "x": -182,
-      "y": -118
+      "y": -118,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d1l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -9869,12 +9867,12 @@
         ]
       },
       "x": -193,
-      "y": -156
+      "y": -156,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d1r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2.5%",
       "description": "Малый узел: 2.5% к «скор. атаки» за ранг.",
       "cost": {
@@ -9894,12 +9892,12 @@
         ]
       },
       "x": -221,
-      "y": -127
+      "y": -127,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d1l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2%",
       "description": "Малый узел: 2% к «скор. атаки» за ранг.",
       "cost": {
@@ -9919,12 +9917,12 @@
         ]
       },
       "x": -223,
-      "y": -174
+      "y": -174,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d1r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -9944,12 +9942,12 @@
         ]
       },
       "x": -240,
-      "y": -157
+      "y": -157,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d1m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2.5%",
       "description": "Малый узел: 2.5% к «скор. атаки» за ранг.",
       "cost": {
@@ -9969,12 +9967,12 @@
         ]
       },
       "x": -256,
-      "y": -189
+      "y": -189,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d2l1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2%",
       "description": "Малый узел: 2% к «скор. атаки» за ранг.",
       "cost": {
@@ -9994,12 +9992,12 @@
         ]
       },
       "x": -266,
-      "y": -227
+      "y": -227,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d2r1",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -10019,12 +10017,12 @@
         ]
       },
       "x": -294,
-      "y": -198
+      "y": -198,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d2l2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2.5%",
       "description": "Малый узел: 2.5% к «скор. атаки» за ранг.",
       "cost": {
@@ -10044,12 +10042,12 @@
         ]
       },
       "x": -296,
-      "y": -245
+      "y": -245,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d2r2",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. атаки 2%",
       "description": "Малый узел: 2% к «скор. атаки» за ранг.",
       "cost": {
@@ -10069,12 +10067,12 @@
         ]
       },
       "x": -313,
-      "y": -228
+      "y": -228,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-d2m",
-      "kind": "passive",
-      "notable": false,
       "name": "Скор. движения 1.5%",
       "description": "Малый узел: 1.5% к «скор. движения» за ранг.",
       "cost": {
@@ -10094,12 +10092,12 @@
         ]
       },
       "x": -329,
-      "y": -260
+      "y": -260,
+      "kind": "passive",
+      "notable": false
     },
     {
       "id": "p-dex-swift-note",
-      "kind": "passive",
-      "notable": true,
       "name": "Шквал",
       "description": "+4.4% к «скор. атаки», +3.3% к «скор. движения».",
       "cost": {
@@ -10124,7 +10122,9 @@
         ]
       },
       "x": -353,
-      "y": -283
+      "y": -283,
+      "kind": "passive",
+      "notable": true
     }
   ]
 }

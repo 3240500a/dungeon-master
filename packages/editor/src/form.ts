@@ -20,7 +20,13 @@ export const fieldEnumSources: Record<string, () => string[]> = {};
 /** Контрол поля: спец-источник по имени (тиры и т.п.), иначе — по схеме. */
 function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void): HTMLElement {
   const src = fieldEnumSources[key];
-  if (src) return renderEnum(src(), value == null ? '' : String(value), onChange);
+  // Enum-выпадашка по имени поля — ТОЛЬКО для строковых полей. Иначе одноимённые числовые
+  // поля (напр. `weight` брони = числовая масса vs `weight` оружия = id-класс веса) рендерились
+  // бы списком и записывали строку в число → ошибка валидации.
+  const tn = unwrap(sub).schema._def.typeName;
+  if (src && (tn === 'ZodString' || tn === 'ZodEnum')) {
+    return renderEnum(src(), value == null ? '' : String(value), onChange);
+  }
   return renderField(sub, value, onChange);
 }
 

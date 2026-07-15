@@ -3,25 +3,25 @@
     "classId": "warrior",
     "branches": [
       {
-        "id": "fury",
-        "name": "Ярость"
+        "id": "druzhina",
+        "name": "Дружина"
       },
       {
-        "id": "guard",
+        "id": "natisk",
+        "name": "Натиск"
+      },
+      {
+        "id": "oborona",
         "name": "Оборона"
-      },
-      {
-        "id": "warcry",
-        "name": "Боевые кличи"
       }
     ],
     "nodes": [
       {
-        "id": "a-warrior-fury-t0",
+        "id": "a-warrior-druzhina-t0",
         "kind": "active",
-        "branchId": "fury",
-        "name": "Рассечение",
-        "description": "Активный скилл: Рассечение.",
+        "branchId": "druzhina",
+        "name": "Пронзающий выпад",
+        "description": "Активный скилл: Пронзающий выпад.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -32,50 +32,50 @@
         "effect": {
           "active": {
             "category": "attack",
-            "abilityId": "cleave",
+            "abilityId": "lunge",
             "manaCost": 5,
             "cooldown": 0.8,
-            "hands": "any",
             "weaponTypes": [
               "melee"
             ],
-            "speed": 0.9,
             "damageMult": 1.3,
-            "arcMult": 1.3,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "count": 1,
-            "spread": 0,
-            "pierce": false
+            "pierce": true,
+            "arcMult": 0.7,
+            "rangeMult": 1.3,
+            "ailment": {
+              "kind": "wound",
+              "chance": 0.5,
+              "mag": 0.06,
+              "mag2": 0.1,
+              "maxStacks": 4,
+              "durationMs": 3000
+            }
           }
         },
         "x": 0,
         "y": 0
       },
       {
-        "id": "a-warrior-fury-m1",
+        "id": "a-warrior-druzhina-m1",
         "kind": "active",
-        "branchId": "fury",
-        "name": "Мастерство: Урон",
-        "description": "+2 Урон за ранг.",
+        "branchId": "druzhina",
+        "name": "Мастерство: Физ. урон",
+        "description": "+2% Физ. урон за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-fury-t0"
+          "a-warrior-druzhina-t0"
         ],
         "maxRank": 20,
         "levelReq": 6,
         "effect": {
           "modifiers": [
             {
-              "stat": "maxDamage",
+              "stat": "physPct",
               "kind": "flat",
-              "value": 2
+              "value": 0.02
             }
           ]
         },
@@ -83,88 +83,20 @@
         "y": 1
       },
       {
-        "id": "a-warrior-fury-m2",
+        "id": "a-warrior-druzhina-m2",
         "kind": "active",
-        "branchId": "fury",
-        "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-fury-t0"
-        ],
-        "maxRank": 20,
-        "levelReq": 6,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "critChance",
-              "kind": "flat",
-              "value": 0.008
-            }
-          ]
-        },
-        "x": 1,
-        "y": 1
-      },
-      {
-        "id": "a-warrior-fury-a1",
-        "kind": "active",
-        "branchId": "fury",
-        "name": "Вихрь",
-        "description": "Активный скилл: Вихрь.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-fury-m1"
-        ],
-        "maxRank": 20,
-        "levelReq": 12,
-        "effect": {
-          "active": {
-            "category": "attack",
-            "abilityId": "whirlwind",
-            "manaCost": 12,
-            "cooldown": 1.4,
-            "hands": "any",
-            "weaponTypes": [
-              "melee"
-            ],
-            "speed": 0.8,
-            "damageMult": 1.1,
-            "arcMult": 4,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "count": 1,
-            "spread": 0,
-            "pierce": false
-          }
-        },
-        "x": 0,
-        "y": 2
-      },
-      {
-        "id": "a-warrior-fury-m3",
-        "kind": "active",
-        "branchId": "fury",
+        "branchId": "druzhina",
         "name": "Мастерство: Скор. атаки",
-        "description": "+2% Скор. атаки за ранг.",
+        "description": "+1.5% Скор. атаки за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-fury-m2"
+          "a-warrior-druzhina-t0"
         ],
         "maxRank": 20,
-        "levelReq": 12,
+        "levelReq": 6,
         "effect": {
           "modifiers": [
             {
@@ -175,12 +107,77 @@
           ]
         },
         "x": 1,
+        "y": 1
+      },
+      {
+        "id": "a-warrior-druzhina-a1",
+        "kind": "active",
+        "branchId": "druzhina",
+        "name": "Секира",
+        "description": "Активный скилл: Секира.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-druzhina-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "cleave-axe",
+            "manaCost": 8,
+            "cooldown": 1.2,
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.4,
+            "arcMult": 1.5,
+            "ailment": {
+              "kind": "sunder",
+              "chance": 0.6,
+              "mag": 0.05,
+              "maxStacks": 5,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 0,
         "y": 2
       },
       {
-        "id": "a-warrior-fury-m4",
+        "id": "a-warrior-druzhina-m3",
         "kind": "active",
-        "branchId": "fury",
+        "branchId": "druzhina",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-druzhina-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 1,
+        "y": 2
+      },
+      {
+        "id": "a-warrior-druzhina-m4",
+        "kind": "active",
+        "branchId": "druzhina",
         "name": "Мастерство: Сила",
         "description": "+2 Сила за ранг.",
         "cost": {
@@ -188,7 +185,7 @@
           "amount": 1
         },
         "requires": [
-          "a-warrior-fury-a1"
+          "a-warrior-druzhina-a1"
         ],
         "maxRank": 20,
         "levelReq": 18,
@@ -205,67 +202,65 @@
         "y": 3
       },
       {
-        "id": "a-warrior-fury-a2",
+        "id": "a-warrior-druzhina-a2",
         "kind": "active",
-        "branchId": "fury",
-        "name": "Кровотечение",
-        "description": "Активный скилл: Кровотечение.",
+        "branchId": "druzhina",
+        "name": "Вихрь стали",
+        "description": "Активный скилл: Вихрь стали.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-fury-m3"
+          "a-warrior-druzhina-m3"
         ],
         "maxRank": 20,
         "levelReq": 18,
         "effect": {
           "active": {
             "category": "attack",
-            "abilityId": "rend",
-            "manaCost": 8,
-            "cooldown": 4,
-            "hands": "any",
+            "abilityId": "steel-whirl",
+            "manaCost": 12,
+            "cooldown": 2,
             "weaponTypes": [
               "melee"
             ],
-            "speed": 1,
-            "damageMult": 1.5,
-            "arcMult": 1,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "count": 1,
-            "spread": 0,
-            "pierce": false
+            "damageMult": 1.1,
+            "arcMult": 2.6,
+            "rangeMult": 1.1,
+            "ailment": {
+              "kind": "bleed",
+              "chance": 0.5,
+              "mag": 4,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
           }
         },
         "x": 0,
         "y": 3
       },
       {
-        "id": "a-warrior-fury-m5",
+        "id": "a-warrior-druzhina-m5",
         "kind": "active",
-        "branchId": "fury",
-        "name": "Мастерство: Урон",
-        "description": "+2 Урон за ранг.",
+        "branchId": "druzhina",
+        "name": "Мастерство: Физ. урон",
+        "description": "+2% Физ. урон за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-fury-m4"
+          "a-warrior-druzhina-m4"
         ],
         "maxRank": 20,
         "levelReq": 24,
         "effect": {
           "modifiers": [
             {
-              "stat": "maxDamage",
+              "stat": "physPct",
               "kind": "flat",
-              "value": 2
+              "value": 0.02
             }
           ]
         },
@@ -273,44 +268,17 @@
         "y": 4
       },
       {
-        "id": "a-warrior-fury-cap",
+        "id": "a-warrior-druzhina-cap",
         "kind": "active",
-        "branchId": "fury",
-        "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-fury-a2"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "critChance",
-              "kind": "flat",
-              "value": 0.008
-            }
-          ]
-        },
-        "x": 1,
-        "y": 4
-      },
-      {
-        "id": "a-warrior-fury-m6",
-        "kind": "active",
-        "branchId": "fury",
+        "branchId": "druzhina",
         "name": "Мастерство: Скор. атаки",
-        "description": "+2% Скор. атаки за ранг.",
+        "description": "+1.5% Скор. атаки за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-fury-m5"
+          "a-warrior-druzhina-a2"
         ],
         "maxRank": 20,
         "levelReq": 24,
@@ -327,9 +295,333 @@
         "y": 4
       },
       {
-        "id": "a-warrior-guard-t0",
+        "id": "a-warrior-druzhina-m6",
         "kind": "active",
-        "branchId": "guard",
+        "branchId": "druzhina",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-druzhina-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-warrior-natisk-t0",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Рывок",
+        "description": "Активный скилл: Рывок.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "charge",
+            "manaCost": 8,
+            "cooldown": 5,
+            "shape": "dash",
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1,
+            "dashDist": 190
+          }
+        },
+        "x": 3,
+        "y": 0
+      },
+      {
+        "id": "a-warrior-natisk-m1",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Мастерство: Здоровье",
+        "description": "+12 Здоровье за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxHp",
+              "kind": "flat",
+              "value": 12
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-warrior-natisk-m2",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Мастерство: Стойкость",
+        "description": "+3% Стойкость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "interruptResist",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-warrior-natisk-a1",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Боевой клич",
+        "description": "Активный скилл: Боевой клич.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "buff",
+            "abilityId": "warcry",
+            "manaCost": 10,
+            "cooldown": 12,
+            "durationSec": 8,
+            "buffMods": [
+              {
+                "stat": "attackSpeed",
+                "kind": "increased",
+                "value": 0.2
+              },
+              {
+                "stat": "moveSpeed",
+                "kind": "increased",
+                "value": 0.15
+              }
+            ]
+          }
+        },
+        "x": 3,
+        "y": 2
+      },
+      {
+        "id": "a-warrior-natisk-m3",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Мастерство: Скор. движ.",
+        "description": "+1% Скор. движ. за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "moveSpeed",
+              "kind": "increased",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 4,
+        "y": 2
+      },
+      {
+        "id": "a-warrior-natisk-m4",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Мастерство: Сила",
+        "description": "+2 Сила за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "strength",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 3
+      },
+      {
+        "id": "a-warrior-natisk-a2",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Несокрушимость",
+        "description": "Активный скилл: Несокрушимость.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "buff",
+            "abilityId": "unbreakable",
+            "manaCost": 12,
+            "cooldown": 16,
+            "durationSec": 8,
+            "buffMods": [
+              {
+                "stat": "interruptResist",
+                "kind": "flat",
+                "value": 0.5
+              },
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.4
+              }
+            ]
+          }
+        },
+        "x": 3,
+        "y": 3
+      },
+      {
+        "id": "a-warrior-natisk-m5",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Мастерство: Здоровье",
+        "description": "+12 Здоровье за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxHp",
+              "kind": "flat",
+              "value": 12
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-warrior-natisk-cap",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Мастерство: Стойкость",
+        "description": "+3% Стойкость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "interruptResist",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-warrior-natisk-m6",
+        "kind": "active",
+        "branchId": "natisk",
+        "name": "Мастерство: Скор. движ.",
+        "description": "+1% Скор. движ. за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-natisk-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "moveSpeed",
+              "kind": "increased",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-warrior-oborona-t0",
+        "kind": "active",
+        "branchId": "oborona",
         "name": "Провокация",
         "description": "Активный скилл: Провокация.",
         "cost": {
@@ -345,27 +637,25 @@
             "abilityId": "taunt",
             "manaCost": 8,
             "cooldown": 6,
-            "hands": "any",
-            "castTimeSec": 0.3,
             "radius": 220,
             "taunt": true
           }
         },
-        "x": 3,
+        "x": 6,
         "y": 0
       },
       {
-        "id": "a-warrior-guard-m1",
+        "id": "a-warrior-oborona-m1",
         "kind": "active",
-        "branchId": "guard",
+        "branchId": "oborona",
         "name": "Мастерство: Броня",
-        "description": "+5 Броня за ранг.",
+        "description": "+3% Броня за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-guard-t0"
+          "a-warrior-oborona-t0"
         ],
         "maxRank": 20,
         "levelReq": 6,
@@ -373,18 +663,90 @@
           "modifiers": [
             {
               "stat": "armor",
-              "kind": "flat",
-              "value": 5
+              "kind": "increased",
+              "value": 0.03
             }
           ]
         },
-        "x": 4,
+        "x": 7,
         "y": 1
       },
       {
-        "id": "a-warrior-guard-m2",
+        "id": "a-warrior-oborona-m2",
         "kind": "active",
-        "branchId": "guard",
+        "branchId": "oborona",
+        "name": "Мастерство: Блок",
+        "description": "+2% Блок за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-oborona-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "blockChance",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-warrior-oborona-a1",
+        "kind": "active",
+        "branchId": "oborona",
+        "name": "Стена щитов",
+        "description": "Активный скилл: Стена щитов.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-oborona-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "stance",
+            "abilityId": "shield-wall",
+            "manaCost": 0,
+            "cooldown": 0,
+            "toggleGroup": "stance",
+            "reservePct": 0.2,
+            "buffMods": [
+              {
+                "stat": "blockChance",
+                "kind": "increased",
+                "value": 0.4
+              },
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.3
+              },
+              {
+                "stat": "moveSpeed",
+                "kind": "increased",
+                "value": -0.1
+              }
+            ]
+          }
+        },
+        "x": 6,
+        "y": 2
+      },
+      {
+        "id": "a-warrior-oborona-m3",
+        "kind": "active",
+        "branchId": "oborona",
         "name": "Мастерство: Здоровье",
         "description": "+12 Здоровье за ранг.",
         "cost": {
@@ -392,10 +754,10 @@
           "amount": 1
         },
         "requires": [
-          "a-warrior-guard-t0"
+          "a-warrior-oborona-m2"
         ],
         "maxRank": 20,
-        "levelReq": 6,
+        "levelReq": 12,
         "effect": {
           "modifiers": [
             {
@@ -405,79 +767,13 @@
             }
           ]
         },
-        "x": 4,
-        "y": 1
-      },
-      {
-        "id": "a-warrior-guard-a1",
-        "kind": "active",
-        "branchId": "guard",
-        "name": "Стена щитов",
-        "description": "Активный скилл: Стена щитов.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-guard-m1"
-        ],
-        "maxRank": 20,
-        "levelReq": 12,
-        "effect": {
-          "active": {
-            "abilityId": "shield-wall",
-            "manaCost": 10,
-            "cooldown": 10,
-            "category": "buff",
-            "durationSec": 8,
-            "buffMods": [
-              {
-                "stat": "armor",
-                "kind": "increased",
-                "value": 0.5
-              },
-              {
-                "stat": "blockChance",
-                "kind": "increased",
-                "value": 0.15
-              }
-            ]
-          }
-        },
-        "x": 3,
+        "x": 7,
         "y": 2
       },
       {
-        "id": "a-warrior-guard-m3",
+        "id": "a-warrior-oborona-m4",
         "kind": "active",
-        "branchId": "guard",
-        "name": "Мастерство: Уклонение",
-        "description": "+3 Уклонение за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-guard-m2"
-        ],
-        "maxRank": 20,
-        "levelReq": 12,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "evade",
-              "kind": "flat",
-              "value": 3
-            }
-          ]
-        },
-        "x": 4,
-        "y": 2
-      },
-      {
-        "id": "a-warrior-guard-m4",
-        "kind": "active",
-        "branchId": "guard",
+        "branchId": "oborona",
         "name": "Мастерство: Живучесть",
         "description": "+2 Живучесть за ранг.",
         "cost": {
@@ -485,7 +781,7 @@
           "amount": 1
         },
         "requires": [
-          "a-warrior-guard-a1"
+          "a-warrior-oborona-a1"
         ],
         "maxRank": 20,
         "levelReq": 18,
@@ -498,55 +794,60 @@
             }
           ]
         },
-        "x": 4,
+        "x": 7,
         "y": 3
       },
       {
-        "id": "a-warrior-guard-a2",
+        "id": "a-warrior-oborona-a2",
         "kind": "active",
-        "branchId": "guard",
-        "name": "Железная кожа",
-        "description": "Активный скилл: Железная кожа.",
+        "branchId": "oborona",
+        "name": "Ответный удар",
+        "description": "Активный скилл: Ответный удар.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-guard-m3"
+          "a-warrior-oborona-m3"
         ],
         "maxRank": 20,
         "levelReq": 18,
         "effect": {
           "active": {
-            "abilityId": "iron-skin",
-            "manaCost": 12,
-            "cooldown": 15,
             "category": "buff",
-            "durationSec": 10,
+            "abilityId": "riposte",
+            "manaCost": 10,
+            "cooldown": 12,
+            "durationSec": 8,
             "buffMods": [
               {
-                "stat": "armor",
+                "stat": "blockChance",
                 "kind": "increased",
-                "value": 0.35
+                "value": 0.25
+              },
+              {
+                "stat": "physPct",
+                "kind": "flat",
+                "value": 0.2
               }
             ]
           }
         },
-        "x": 3,
+        "x": 6,
         "y": 3
       },
       {
-        "id": "a-warrior-guard-m5",
+        "id": "a-warrior-oborona-m5",
         "kind": "active",
-        "branchId": "guard",
+        "branchId": "oborona",
         "name": "Мастерство: Броня",
-        "description": "+5 Броня за ранг.",
+        "description": "+3% Броня за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-warrior-guard-m4"
+          "a-warrior-oborona-m4"
         ],
         "maxRank": 20,
         "levelReq": 24,
@@ -554,18 +855,45 @@
           "modifiers": [
             {
               "stat": "armor",
-              "kind": "flat",
-              "value": 5
+              "kind": "increased",
+              "value": 0.03
             }
           ]
         },
-        "x": 4,
+        "x": 7,
         "y": 4
       },
       {
-        "id": "a-warrior-guard-cap",
+        "id": "a-warrior-oborona-cap",
         "kind": "active",
-        "branchId": "guard",
+        "branchId": "oborona",
+        "name": "Мастерство: Блок",
+        "description": "+2% Блок за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-warrior-oborona-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "blockChance",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-warrior-oborona-m6",
+        "kind": "active",
+        "branchId": "oborona",
         "name": "Мастерство: Здоровье",
         "description": "+12 Здоровье за ранг.",
         "cost": {
@@ -573,7 +901,7 @@
           "amount": 1
         },
         "requires": [
-          "a-warrior-guard-a2"
+          "a-warrior-oborona-m5"
         ],
         "maxRank": 20,
         "levelReq": 24,
@@ -583,327 +911,6 @@
               "stat": "maxHp",
               "kind": "flat",
               "value": 12
-            }
-          ]
-        },
-        "x": 4,
-        "y": 4
-      },
-      {
-        "id": "a-warrior-guard-m6",
-        "kind": "active",
-        "branchId": "guard",
-        "name": "Мастерство: Уклонение",
-        "description": "+3 Уклонение за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-guard-m5"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "evade",
-              "kind": "flat",
-              "value": 3
-            }
-          ]
-        },
-        "x": 4,
-        "y": 4
-      },
-      {
-        "id": "a-warrior-warcry-t0",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Боевой клич",
-        "description": "Активный скилл: Боевой клич.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [],
-        "maxRank": 20,
-        "levelReq": 1,
-        "effect": {
-          "active": {
-            "abilityId": "battle-shout",
-            "manaCost": 10,
-            "cooldown": 10,
-            "category": "buff",
-            "durationSec": 12,
-            "buffMods": [
-              {
-                "stat": "minDamage",
-                "kind": "increased",
-                "value": 0.15
-              },
-              {
-                "stat": "maxDamage",
-                "kind": "increased",
-                "value": 0.15
-              }
-            ]
-          }
-        },
-        "x": 6,
-        "y": 0
-      },
-      {
-        "id": "a-warrior-warcry-m1",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Мастерство: Сила",
-        "description": "+2 Сила за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-t0"
-        ],
-        "maxRank": 20,
-        "levelReq": 6,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "strength",
-              "kind": "flat",
-              "value": 2
-            }
-          ]
-        },
-        "x": 7,
-        "y": 1
-      },
-      {
-        "id": "a-warrior-warcry-m2",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Мастерство: Скор. движ.",
-        "description": "+1% Скор. движ. за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-t0"
-        ],
-        "maxRank": 20,
-        "levelReq": 6,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "moveSpeed",
-              "kind": "increased",
-              "value": 0.01
-            }
-          ]
-        },
-        "x": 7,
-        "y": 1
-      },
-      {
-        "id": "a-warrior-warcry-a1",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Боевой рог",
-        "description": "Активный скилл: Боевой рог.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-m1"
-        ],
-        "maxRank": 20,
-        "levelReq": 12,
-        "effect": {
-          "active": {
-            "abilityId": "war-horn",
-            "manaCost": 14,
-            "cooldown": 14,
-            "category": "buff",
-            "durationSec": 10,
-            "buffMods": [
-              {
-                "stat": "moveSpeed",
-                "kind": "increased",
-                "value": 0.2
-              }
-            ]
-          }
-        },
-        "x": 6,
-        "y": 2
-      },
-      {
-        "id": "a-warrior-warcry-m3",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Мастерство: Реген HP",
-        "description": "+0.2 Реген HP за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-m2"
-        ],
-        "maxRank": 20,
-        "levelReq": 12,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "hpRegen",
-              "kind": "flat",
-              "value": 0.2
-            }
-          ]
-        },
-        "x": 7,
-        "y": 2
-      },
-      {
-        "id": "a-warrior-warcry-m4",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Мастерство: Сопр. огню",
-        "description": "+2% Сопр. огню за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-a1"
-        ],
-        "maxRank": 20,
-        "levelReq": 18,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "resFire",
-              "kind": "flat",
-              "value": 0.02
-            }
-          ]
-        },
-        "x": 7,
-        "y": 3
-      },
-      {
-        "id": "a-warrior-warcry-a2",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Сплочение",
-        "description": "Активный скилл: Сплочение.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-m3"
-        ],
-        "maxRank": 20,
-        "levelReq": 18,
-        "effect": {
-          "active": {
-            "abilityId": "rally",
-            "manaCost": 12,
-            "cooldown": 12,
-            "category": "buff",
-            "durationSec": 8,
-            "buffMods": [
-              {
-                "stat": "hpRegen",
-                "kind": "flat",
-                "value": 6
-              }
-            ]
-          }
-        },
-        "x": 6,
-        "y": 3
-      },
-      {
-        "id": "a-warrior-warcry-m5",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Мастерство: Сила",
-        "description": "+2 Сила за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-m4"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "strength",
-              "kind": "flat",
-              "value": 2
-            }
-          ]
-        },
-        "x": 7,
-        "y": 4
-      },
-      {
-        "id": "a-warrior-warcry-cap",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Мастерство: Скор. движ.",
-        "description": "+1% Скор. движ. за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-a2"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "moveSpeed",
-              "kind": "increased",
-              "value": 0.01
-            }
-          ]
-        },
-        "x": 7,
-        "y": 4
-      },
-      {
-        "id": "a-warrior-warcry-m6",
-        "kind": "active",
-        "branchId": "warcry",
-        "name": "Мастерство: Реген HP",
-        "description": "+0.2 Реген HP за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-warrior-warcry-m5"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "hpRegen",
-              "kind": "flat",
-              "value": 0.2
             }
           ]
         },
@@ -920,12 +927,12 @@
         "name": "Огонь"
       },
       {
-        "id": "frost",
-        "name": "Лёд"
+        "id": "storm",
+        "name": "Молния"
       },
       {
-        "id": "arcane",
-        "name": "Тайная магия"
+        "id": "frost",
+        "name": "Лёд"
       }
     ],
     "nodes": [
@@ -948,19 +955,18 @@
             "abilityId": "firebolt",
             "manaCost": 6,
             "cooldown": 0.5,
-            "hands": "any",
-            "speed": 1,
-            "damageMult": 1.4,
-            "arcMult": 1,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
+            "weaponTypes": [
+              "magic"
+            ],
+            "damageMult": 1.2,
             "element": "fire",
-            "count": 1,
-            "spread": 0,
-            "pierce": false
+            "ailment": {
+              "kind": "burn",
+              "chance": 0.4,
+              "mag": 5,
+              "maxStacks": 4,
+              "durationMs": 3000
+            }
           }
         },
         "x": 0,
@@ -970,8 +976,8 @@
         "id": "a-mage-fire-m1",
         "kind": "active",
         "branchId": "fire",
-        "name": "Мастерство: Урон",
-        "description": "+2 Урон за ранг.",
+        "name": "Мастерство: Урон огнём",
+        "description": "+2.5% Урон огнём за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -984,9 +990,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "maxDamage",
+              "stat": "firePct",
               "kind": "flat",
-              "value": 2
+              "value": 0.025
             }
           ]
         },
@@ -997,8 +1003,8 @@
         "id": "a-mage-fire-m2",
         "kind": "active",
         "branchId": "fire",
-        "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1011,9 +1017,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "critChance",
-              "kind": "flat",
-              "value": 0.008
+              "stat": "castSpeed",
+              "kind": "increased",
+              "value": 0.02
             }
           ]
         },
@@ -1024,8 +1030,8 @@
         "id": "a-mage-fire-a1",
         "kind": "active",
         "branchId": "fire",
-        "name": "Взрыв огня",
-        "description": "Активный скилл: Взрыв огня.",
+        "name": "Взрыв пламени",
+        "description": "Активный скилл: Взрыв пламени.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1037,23 +1043,22 @@
         "levelReq": 12,
         "effect": {
           "active": {
-            "category": "attack",
-            "abilityId": "fireball",
+            "category": "cast",
+            "abilityId": "fireblast",
             "manaCost": 12,
-            "cooldown": 1.2,
-            "hands": "any",
-            "speed": 1,
-            "damageMult": 1.8,
-            "arcMult": 1,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
+            "cooldown": 1.4,
+            "shape": "nova",
             "element": "fire",
-            "count": 3,
-            "spread": 0.3,
-            "pierce": false
+            "convertPct": 0.85,
+            "damageMult": 1.4,
+            "radius": 150,
+            "ailment": {
+              "kind": "burn",
+              "chance": 0.6,
+              "mag": 6,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
           }
         },
         "x": 0,
@@ -1063,8 +1068,8 @@
         "id": "a-mage-fire-m3",
         "kind": "active",
         "branchId": "fire",
-        "name": "Мастерство: Сопр. огню",
-        "description": "+2% Сопр. огню за ранг.",
+        "name": "Мастерство: Мана",
+        "description": "+10 Мана за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1077,9 +1082,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "resFire",
+              "stat": "maxMana",
               "kind": "flat",
-              "value": 0.02
+              "value": 10
             }
           ]
         },
@@ -1134,19 +1139,18 @@
             "abilityId": "meteor",
             "manaCost": 20,
             "cooldown": 6,
-            "hands": "any",
             "shape": "meteor",
             "element": "fire",
-            "castTimeSec": 0.4,
-            "convertPct": 0.5,
+            "convertPct": 0.85,
             "damageMult": 2.2,
-            "radius": 140,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
+            "radius": 150,
+            "ailment": {
+              "kind": "burn",
+              "chance": 0.8,
+              "mag": 8,
+              "maxStacks": 5,
+              "durationMs": 4000
+            }
           }
         },
         "x": 0,
@@ -1156,8 +1160,8 @@
         "id": "a-mage-fire-m5",
         "kind": "active",
         "branchId": "fire",
-        "name": "Мастерство: Урон",
-        "description": "+2 Урон за ранг.",
+        "name": "Мастерство: Урон огнём",
+        "description": "+2.5% Урон огнём за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1170,9 +1174,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "maxDamage",
+              "stat": "firePct",
               "kind": "flat",
-              "value": 2
+              "value": 0.025
             }
           ]
         },
@@ -1183,8 +1187,8 @@
         "id": "a-mage-fire-cap",
         "kind": "active",
         "branchId": "fire",
-        "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1197,9 +1201,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "critChance",
-              "kind": "flat",
-              "value": 0.008
+              "stat": "castSpeed",
+              "kind": "increased",
+              "value": 0.02
             }
           ]
         },
@@ -1210,8 +1214,8 @@
         "id": "a-mage-fire-m6",
         "kind": "active",
         "branchId": "fire",
-        "name": "Мастерство: Сопр. огню",
-        "description": "+2% Сопр. огню за ранг.",
+        "name": "Мастерство: Мана",
+        "description": "+10 Мана за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1224,9 +1228,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "resFire",
+              "stat": "maxMana",
               "kind": "flat",
-              "value": 0.02
+              "value": 10
             }
           ]
         },
@@ -1234,11 +1238,11 @@
         "y": 4
       },
       {
-        "id": "a-mage-frost-t0",
+        "id": "a-mage-storm-t0",
         "kind": "active",
-        "branchId": "frost",
-        "name": "Ледяная нова",
-        "description": "Активный скилл: Ледяная нова.",
+        "branchId": "storm",
+        "name": "Молния",
+        "description": "Активный скилл: Молния.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1248,30 +1252,357 @@
         "levelReq": 1,
         "effect": {
           "active": {
-            "category": "cast",
-            "abilityId": "frost-nova",
-            "manaCost": 14,
-            "cooldown": 6,
-            "hands": "any",
-            "shape": "nova",
-            "element": "cold",
-            "castTimeSec": 0.4,
-            "convertPct": 0.5,
+            "category": "attack",
+            "abilityId": "lightning-bolt",
+            "manaCost": 6,
+            "cooldown": 0.5,
+            "weaponTypes": [
+              "magic"
+            ],
             "damageMult": 1.2,
-            "radius": 140,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
+            "element": "lightning",
+            "ailment": {
+              "kind": "shock",
+              "chance": 0.4,
+              "mag": 0.08,
+              "maxStacks": 4,
+              "durationMs": 3000
+            }
           }
         },
         "x": 3,
         "y": 0
       },
       {
+        "id": "a-mage-storm-m1",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Мастерство: Урон молнией",
+        "description": "+2.5% Урон молнией за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "lightningPct",
+              "kind": "flat",
+              "value": 0.025
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-mage-storm-m2",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Мастерство: Множ. крита",
+        "description": "+0.03 Множ. крита за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critMultiplier",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-mage-storm-a1",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Цепная молния",
+        "description": "Активный скилл: Цепная молния.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "chain-lightning",
+            "manaCost": 12,
+            "cooldown": 1.6,
+            "shape": "boomerang",
+            "element": "lightning",
+            "convertPct": 0.85,
+            "damageMult": 1.3,
+            "ailment": {
+              "kind": "shock",
+              "chance": 0.5,
+              "mag": 0.1,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 3,
+        "y": 2
+      },
+      {
+        "id": "a-mage-storm-m3",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "castSpeed",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 2
+      },
+      {
+        "id": "a-mage-storm-m4",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Мастерство: Интеллект",
+        "description": "+2 Интеллект за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "intelligence",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 3
+      },
+      {
+        "id": "a-mage-storm-a2",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Гроза",
+        "description": "Активный скилл: Гроза.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "thunderstorm",
+            "manaCost": 18,
+            "cooldown": 5,
+            "shape": "ground",
+            "element": "lightning",
+            "convertPct": 0.85,
+            "damageMult": 1.6,
+            "radius": 150,
+            "ailment": {
+              "kind": "shock",
+              "chance": 0.6,
+              "mag": 0.1,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 3,
+        "y": 3
+      },
+      {
+        "id": "a-mage-storm-m5",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Мастерство: Урон молнией",
+        "description": "+2.5% Урон молнией за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "lightningPct",
+              "kind": "flat",
+              "value": 0.025
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-mage-storm-cap",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Мастерство: Множ. крита",
+        "description": "+0.03 Множ. крита за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critMultiplier",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-mage-storm-m6",
+        "kind": "active",
+        "branchId": "storm",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-storm-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "castSpeed",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-mage-frost-t0",
+        "kind": "active",
+        "branchId": "frost",
+        "name": "Ледяная стрела",
+        "description": "Активный скилл: Ледяная стрела.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "ice-shard",
+            "manaCost": 6,
+            "cooldown": 0.5,
+            "weaponTypes": [
+              "magic"
+            ],
+            "damageMult": 1.2,
+            "element": "cold",
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.4,
+              "mag": 0.15,
+              "mag2": 0.05,
+              "maxStacks": 4,
+              "durationMs": 2500
+            }
+          }
+        },
+        "x": 6,
+        "y": 0
+      },
+      {
         "id": "a-mage-frost-m1",
+        "kind": "active",
+        "branchId": "frost",
+        "name": "Мастерство: Урон холодом",
+        "description": "+2.5% Урон холодом за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-mage-frost-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "coldPct",
+              "kind": "flat",
+              "value": 0.025
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-mage-frost-m2",
         "kind": "active",
         "branchId": "frost",
         "name": "Мастерство: Мана",
@@ -1294,42 +1625,15 @@
             }
           ]
         },
-        "x": 4,
-        "y": 1
-      },
-      {
-        "id": "a-mage-frost-m2",
-        "kind": "active",
-        "branchId": "frost",
-        "name": "Мастерство: Множ. крита",
-        "description": "+0.03 Множ. крита за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-frost-t0"
-        ],
-        "maxRank": 20,
-        "levelReq": 6,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "critMultiplier",
-              "kind": "flat",
-              "value": 0.03
-            }
-          ]
-        },
-        "x": 4,
+        "x": 7,
         "y": 1
       },
       {
         "id": "a-mage-frost-a1",
         "kind": "active",
         "branchId": "frost",
-        "name": "Ледяная стрела",
-        "description": "Активный скилл: Ледяная стрела.",
+        "name": "Ледяная нова",
+        "description": "Активный скилл: Ледяная нова.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1341,34 +1645,34 @@
         "levelReq": 12,
         "effect": {
           "active": {
-            "category": "attack",
-            "abilityId": "ice-shard",
-            "manaCost": 8,
-            "cooldown": 0.6,
-            "hands": "any",
-            "speed": 1,
-            "damageMult": 1.5,
-            "arcMult": 1,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
+            "category": "cast",
+            "abilityId": "frost-nova",
+            "manaCost": 14,
+            "cooldown": 5,
+            "shape": "nova",
             "element": "cold",
-            "count": 1,
-            "spread": 0,
-            "pierce": true
+            "convertPct": 0.85,
+            "damageMult": 1.3,
+            "radius": 150,
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.7,
+              "mag": 0.2,
+              "mag2": 0.15,
+              "maxStacks": 5,
+              "durationMs": 2500
+            }
           }
         },
-        "x": 3,
+        "x": 6,
         "y": 2
       },
       {
         "id": "a-mage-frost-m3",
         "kind": "active",
         "branchId": "frost",
-        "name": "Мастерство: Сопр. холоду",
-        "description": "+2% Сопр. холоду за ранг.",
+        "name": "Мастерство: Реген маны",
+        "description": "+0.2 Реген маны за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1381,21 +1685,21 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "resCold",
+              "stat": "manaRegen",
               "kind": "flat",
-              "value": 0.02
+              "value": 0.2
             }
           ]
         },
-        "x": 4,
+        "x": 7,
         "y": 2
       },
       {
         "id": "a-mage-frost-m4",
         "kind": "active",
         "branchId": "frost",
-        "name": "Мастерство: Реген маны",
-        "description": "+0.2 Реген маны за ранг.",
+        "name": "Мастерство: Интеллект",
+        "description": "+2 Интеллект за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1408,13 +1712,13 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "manaRegen",
+              "stat": "intelligence",
               "kind": "flat",
-              "value": 0.2
+              "value": 2
             }
           ]
         },
-        "x": 4,
+        "x": 7,
         "y": 3
       },
       {
@@ -1436,32 +1740,32 @@
           "active": {
             "category": "cast",
             "abilityId": "blizzard",
-            "manaCost": 22,
-            "cooldown": 8,
-            "hands": "any",
+            "manaCost": 20,
+            "cooldown": 7,
             "shape": "ground",
             "element": "cold",
-            "castTimeSec": 0.4,
-            "convertPct": 0.5,
+            "convertPct": 0.85,
             "damageMult": 1.6,
             "radius": 160,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.6,
+              "mag": 0.18,
+              "mag2": 0.1,
+              "maxStacks": 5,
+              "durationMs": 2500
+            }
           }
         },
-        "x": 3,
+        "x": 6,
         "y": 3
       },
       {
         "id": "a-mage-frost-m5",
         "kind": "active",
         "branchId": "frost",
-        "name": "Мастерство: Мана",
-        "description": "+10 Мана за ранг.",
+        "name": "Мастерство: Урон холодом",
+        "description": "+2.5% Урон холодом за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1474,21 +1778,21 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "maxMana",
+              "stat": "coldPct",
               "kind": "flat",
-              "value": 10
+              "value": 0.025
             }
           ]
         },
-        "x": 4,
+        "x": 7,
         "y": 4
       },
       {
         "id": "a-mage-frost-cap",
         "kind": "active",
         "branchId": "frost",
-        "name": "Мастерство: Множ. крита",
-        "description": "+0.03 Множ. крита за ранг.",
+        "name": "Мастерство: Мана",
+        "description": "+10 Мана за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1501,21 +1805,21 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "critMultiplier",
+              "stat": "maxMana",
               "kind": "flat",
-              "value": 0.03
+              "value": 10
             }
           ]
         },
-        "x": 4,
+        "x": 7,
         "y": 4
       },
       {
         "id": "a-mage-frost-m6",
         "kind": "active",
         "branchId": "frost",
-        "name": "Мастерство: Сопр. холоду",
-        "description": "+2% Сопр. холоду за ранг.",
+        "name": "Мастерство: Реген маны",
+        "description": "+0.2 Реген маны за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1528,311 +1832,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "resCold",
-              "kind": "flat",
-              "value": 0.02
-            }
-          ]
-        },
-        "x": 4,
-        "y": 4
-      },
-      {
-        "id": "a-mage-arcane-t0",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Скачок",
-        "description": "Активный скилл: Скачок.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [],
-        "maxRank": 20,
-        "levelReq": 1,
-        "effect": {
-          "active": {
-            "category": "cast",
-            "abilityId": "blink",
-            "manaCost": 12,
-            "cooldown": 5,
-            "hands": "any",
-            "shape": "dash",
-            "castTimeSec": 0.25,
-            "convertPct": 0.5,
-            "damageMult": 0.01,
-            "radius": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 182,
-            "dashSpeed": 1400,
-            "dashWeightBonus": 0
-          }
-        },
-        "x": 6,
-        "y": 0
-      },
-      {
-        "id": "a-mage-arcane-m1",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Мастерство: Мана",
-        "description": "+10 Мана за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-t0"
-        ],
-        "maxRank": 20,
-        "levelReq": 6,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "maxMana",
-              "kind": "flat",
-              "value": 10
-            }
-          ]
-        },
-        "x": 7,
-        "y": 1
-      },
-      {
-        "id": "a-mage-arcane-m2",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Мастерство: Реген маны",
-        "description": "+0.2 Реген маны за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-t0"
-        ],
-        "maxRank": 20,
-        "levelReq": 6,
-        "effect": {
-          "modifiers": [
-            {
               "stat": "manaRegen",
               "kind": "flat",
               "value": 0.2
-            }
-          ]
-        },
-        "x": 7,
-        "y": 1
-      },
-      {
-        "id": "a-mage-arcane-a1",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Тайная сфера",
-        "description": "Активный скилл: Тайная сфера.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-m1"
-        ],
-        "maxRank": 20,
-        "levelReq": 12,
-        "effect": {
-          "active": {
-            "category": "attack",
-            "abilityId": "arcane-orb",
-            "manaCost": 10,
-            "cooldown": 1,
-            "hands": "any",
-            "speed": 1,
-            "damageMult": 1.7,
-            "arcMult": 1,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "element": "lightning",
-            "count": 1,
-            "spread": 0,
-            "pierce": false
-          }
-        },
-        "x": 6,
-        "y": 2
-      },
-      {
-        "id": "a-mage-arcane-m3",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Мастерство: Интеллект",
-        "description": "+2 Интеллект за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-m2"
-        ],
-        "maxRank": 20,
-        "levelReq": 12,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "intelligence",
-              "kind": "flat",
-              "value": 2
-            }
-          ]
-        },
-        "x": 7,
-        "y": 2
-      },
-      {
-        "id": "a-mage-arcane-m4",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Мастерство: Меткость",
-        "description": "+1% Меткость за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-a1"
-        ],
-        "maxRank": 20,
-        "levelReq": 18,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "accuracy",
-              "kind": "flat",
-              "value": 0.01
-            }
-          ]
-        },
-        "x": 7,
-        "y": 3
-      },
-      {
-        "id": "a-mage-arcane-a2",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Телепорт",
-        "description": "Активный скилл: Телепорт.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-m3"
-        ],
-        "maxRank": 20,
-        "levelReq": 18,
-        "effect": {
-          "active": {
-            "category": "cast",
-            "abilityId": "teleport",
-            "manaCost": 16,
-            "cooldown": 8,
-            "hands": "any",
-            "shape": "dash",
-            "castTimeSec": 0.25,
-            "convertPct": 0.5,
-            "damageMult": 0.01,
-            "radius": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 286,
-            "dashSpeed": 1800,
-            "dashWeightBonus": 0
-          }
-        },
-        "x": 6,
-        "y": 3
-      },
-      {
-        "id": "a-mage-arcane-m5",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Мастерство: Мана",
-        "description": "+10 Мана за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-m4"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "maxMana",
-              "kind": "flat",
-              "value": 10
-            }
-          ]
-        },
-        "x": 7,
-        "y": 4
-      },
-      {
-        "id": "a-mage-arcane-cap",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Мастерство: Реген маны",
-        "description": "+0.2 Реген маны за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-a2"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "manaRegen",
-              "kind": "flat",
-              "value": 0.2
-            }
-          ]
-        },
-        "x": 7,
-        "y": 4
-      },
-      {
-        "id": "a-mage-arcane-m6",
-        "kind": "active",
-        "branchId": "arcane",
-        "name": "Мастерство: Интеллект",
-        "description": "+2 Интеллект за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-mage-arcane-m5"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "intelligence",
-              "kind": "flat",
-              "value": 2
             }
           ]
         },
@@ -1846,15 +1848,15 @@
     "branches": [
       {
         "id": "precision",
-        "name": "Точность"
+        "name": "Меткость"
       },
       {
-        "id": "trap",
-        "name": "Ловушки"
+        "id": "nets",
+        "name": "Сети"
       },
       {
-        "id": "beast",
-        "name": "Зверь"
+        "id": "elements",
+        "name": "Стихии"
       }
     ],
     "nodes": [
@@ -1877,18 +1879,12 @@
             "abilityId": "multishot",
             "manaCost": 8,
             "cooldown": 0.9,
-            "hands": "any",
-            "speed": 1,
-            "damageMult": 1.1,
-            "arcMult": 1,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "count": 5,
-            "spread": 0.5,
-            "pierce": false
+            "weaponTypes": [
+              "ranged"
+            ],
+            "damageMult": 0.7,
+            "count": 3,
+            "spread": 0.35
           }
         },
         "x": 0,
@@ -1898,35 +1894,8 @@
         "id": "a-archer-precision-m1",
         "kind": "active",
         "branchId": "precision",
-        "name": "Мастерство: Ловкость",
-        "description": "+2 Ловкость за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-archer-precision-t0"
-        ],
-        "maxRank": 20,
-        "levelReq": 6,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "dexterity",
-              "kind": "flat",
-              "value": 2
-            }
-          ]
-        },
-        "x": 1,
-        "y": 1
-      },
-      {
-        "id": "a-archer-precision-m2",
-        "kind": "active",
-        "branchId": "precision",
         "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
+        "description": "+0.8% Крит за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1949,11 +1918,38 @@
         "y": 1
       },
       {
+        "id": "a-archer-precision-m2",
+        "kind": "active",
+        "branchId": "precision",
+        "name": "Мастерство: Скор. атаки",
+        "description": "+1.5% Скор. атаки за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-precision-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "attackSpeed",
+              "kind": "increased",
+              "value": 0.015
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
+      },
+      {
         "id": "a-archer-precision-a1",
         "kind": "active",
         "branchId": "precision",
-        "name": "Пронзающий выстрел",
-        "description": "Активный скилл: Пронзающий выстрел.",
+        "name": "Пронзающая стрела",
+        "description": "Активный скилл: Пронзающая стрела.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -1969,17 +1965,10 @@
             "abilityId": "piercing-shot",
             "manaCost": 10,
             "cooldown": 1.2,
-            "hands": "any",
-            "speed": 1,
+            "weaponTypes": [
+              "ranged"
+            ],
             "damageMult": 1.6,
-            "arcMult": 1,
-            "rangeMult": 1,
-            "windupSec": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "count": 1,
-            "spread": 0,
             "pierce": true
           }
         },
@@ -2017,8 +2006,8 @@
         "id": "a-archer-precision-m4",
         "kind": "active",
         "branchId": "precision",
-        "name": "Мастерство: Урон",
-        "description": "+2 Урон за ранг.",
+        "name": "Мастерство: Ловкость",
+        "description": "+2 Ловкость за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -2031,7 +2020,7 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "maxDamage",
+              "stat": "dexterity",
               "kind": "flat",
               "value": 2
             }
@@ -2061,18 +2050,9 @@
             "abilityId": "rain-of-arrows",
             "manaCost": 18,
             "cooldown": 6,
-            "hands": "any",
             "shape": "ground",
-            "castTimeSec": 0.4,
-            "convertPct": 0.5,
             "damageMult": 1.4,
-            "radius": 160,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
+            "radius": 150
           }
         },
         "x": 0,
@@ -2082,8 +2062,8 @@
         "id": "a-archer-precision-m5",
         "kind": "active",
         "branchId": "precision",
-        "name": "Мастерство: Ловкость",
-        "description": "+2 Ловкость за ранг.",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -2096,9 +2076,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "dexterity",
+              "stat": "critChance",
               "kind": "flat",
-              "value": 2
+              "value": 0.008
             }
           ]
         },
@@ -2109,8 +2089,8 @@
         "id": "a-archer-precision-cap",
         "kind": "active",
         "branchId": "precision",
-        "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
+        "name": "Мастерство: Скор. атаки",
+        "description": "+1.5% Скор. атаки за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -2123,9 +2103,9 @@
         "effect": {
           "modifiers": [
             {
-              "stat": "critChance",
-              "kind": "flat",
-              "value": 0.008
+              "stat": "attackSpeed",
+              "kind": "increased",
+              "value": 0.015
             }
           ]
         },
@@ -2160,11 +2140,11 @@
         "y": 4
       },
       {
-        "id": "a-archer-trap-t0",
+        "id": "a-archer-nets-t0",
         "kind": "active",
-        "branchId": "trap",
-        "name": "Шипы",
-        "description": "Активный скилл: Шипы.",
+        "branchId": "nets",
+        "name": "Сеть",
+        "description": "Активный скилл: Сеть.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -2174,48 +2154,45 @@
         "levelReq": 1,
         "effect": {
           "active": {
-            "category": "cast",
-            "abilityId": "caltrops",
+            "category": "curse",
+            "abilityId": "net",
             "manaCost": 10,
             "cooldown": 7,
-            "hands": "any",
-            "shape": "ground",
-            "castTimeSec": 0.4,
-            "convertPct": 0.5,
-            "damageMult": 1.2,
-            "radius": 110,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
+            "radius": 180,
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.9,
+              "mag": 0.1,
+              "mag2": 0.3,
+              "maxStacks": 5,
+              "durationMs": 2500
+            }
           }
         },
         "x": 3,
         "y": 0
       },
       {
-        "id": "a-archer-trap-m1",
+        "id": "a-archer-nets-m1",
         "kind": "active",
-        "branchId": "trap",
-        "name": "Мастерство: Урон",
-        "description": "+2 Урон за ранг.",
+        "branchId": "nets",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-t0"
+          "a-archer-nets-t0"
         ],
         "maxRank": 20,
         "levelReq": 6,
         "effect": {
           "modifiers": [
             {
-              "stat": "maxDamage",
+              "stat": "ailmentPct",
               "kind": "flat",
-              "value": 2
+              "value": 0.03
             }
           ]
         },
@@ -2223,17 +2200,17 @@
         "y": 1
       },
       {
-        "id": "a-archer-trap-m2",
+        "id": "a-archer-nets-m2",
         "kind": "active",
-        "branchId": "trap",
+        "branchId": "nets",
         "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
+        "description": "+0.8% Крит за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-t0"
+          "a-archer-nets-t0"
         ],
         "maxRank": 20,
         "levelReq": 6,
@@ -2250,9 +2227,9 @@
         "y": 1
       },
       {
-        "id": "a-archer-trap-a1",
+        "id": "a-archer-nets-a1",
         "kind": "active",
-        "branchId": "trap",
+        "branchId": "nets",
         "name": "Огненная ловушка",
         "description": "Активный скилл: Огненная ловушка.",
         "cost": {
@@ -2260,7 +2237,7 @@
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-m1"
+          "a-archer-nets-m1"
         ],
         "maxRank": 20,
         "levelReq": 12,
@@ -2270,28 +2247,27 @@
             "abilityId": "fire-trap",
             "manaCost": 12,
             "cooldown": 8,
-            "hands": "any",
             "shape": "ground",
             "element": "fire",
-            "castTimeSec": 0.4,
-            "convertPct": 0.5,
-            "damageMult": 1.5,
-            "radius": 110,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
+            "convertPct": 0.7,
+            "damageMult": 1.3,
+            "radius": 120,
+            "ailment": {
+              "kind": "burn",
+              "chance": 0.8,
+              "mag": 6,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
           }
         },
         "x": 3,
         "y": 2
       },
       {
-        "id": "a-archer-trap-m3",
+        "id": "a-archer-nets-m3",
         "kind": "active",
-        "branchId": "trap",
+        "branchId": "nets",
         "name": "Мастерство: Сопр. яду",
         "description": "+2% Сопр. яду за ранг.",
         "cost": {
@@ -2299,7 +2275,7 @@
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-m2"
+          "a-archer-nets-m2"
         ],
         "maxRank": 20,
         "levelReq": 12,
@@ -2316,9 +2292,9 @@
         "y": 2
       },
       {
-        "id": "a-archer-trap-m4",
+        "id": "a-archer-nets-m4",
         "kind": "active",
-        "branchId": "trap",
+        "branchId": "nets",
         "name": "Мастерство: Ловкость",
         "description": "+2 Ловкость за ранг.",
         "cost": {
@@ -2326,7 +2302,7 @@
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-a1"
+          "a-archer-nets-a1"
         ],
         "maxRank": 20,
         "levelReq": 18,
@@ -2343,64 +2319,62 @@
         "y": 3
       },
       {
-        "id": "a-archer-trap-a2",
+        "id": "a-archer-nets-a2",
         "kind": "active",
-        "branchId": "trap",
-        "name": "Клинковая ловушка",
-        "description": "Активный скилл: Клинковая ловушка.",
+        "branchId": "nets",
+        "name": "Шипы",
+        "description": "Активный скилл: Шипы.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-m3"
+          "a-archer-nets-m3"
         ],
         "maxRank": 20,
         "levelReq": 18,
         "effect": {
           "active": {
             "category": "cast",
-            "abilityId": "blade-trap",
-            "manaCost": 16,
-            "cooldown": 10,
-            "hands": "any",
+            "abilityId": "caltrops",
+            "manaCost": 10,
+            "cooldown": 7,
             "shape": "ground",
-            "castTimeSec": 0.4,
-            "convertPct": 0.5,
-            "damageMult": 1.5,
-            "radius": 110,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
+            "damageMult": 0.8,
+            "radius": 130,
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.7,
+              "mag": 0.2,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
           }
         },
         "x": 3,
         "y": 3
       },
       {
-        "id": "a-archer-trap-m5",
+        "id": "a-archer-nets-m5",
         "kind": "active",
-        "branchId": "trap",
-        "name": "Мастерство: Урон",
-        "description": "+2 Урон за ранг.",
+        "branchId": "nets",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-m4"
+          "a-archer-nets-m4"
         ],
         "maxRank": 20,
         "levelReq": 24,
         "effect": {
           "modifiers": [
             {
-              "stat": "maxDamage",
+              "stat": "ailmentPct",
               "kind": "flat",
-              "value": 2
+              "value": 0.03
             }
           ]
         },
@@ -2408,17 +2382,17 @@
         "y": 4
       },
       {
-        "id": "a-archer-trap-cap",
+        "id": "a-archer-nets-cap",
         "kind": "active",
-        "branchId": "trap",
+        "branchId": "nets",
         "name": "Мастерство: Крит",
-        "description": "+1% Крит за ранг.",
+        "description": "+0.8% Крит за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-a2"
+          "a-archer-nets-a2"
         ],
         "maxRank": 20,
         "levelReq": 24,
@@ -2435,9 +2409,9 @@
         "y": 4
       },
       {
-        "id": "a-archer-trap-m6",
+        "id": "a-archer-nets-m6",
         "kind": "active",
-        "branchId": "trap",
+        "branchId": "nets",
         "name": "Мастерство: Сопр. яду",
         "description": "+2% Сопр. яду за ранг.",
         "cost": {
@@ -2445,7 +2419,7 @@
           "amount": 1
         },
         "requires": [
-          "a-archer-trap-m5"
+          "a-archer-nets-m5"
         ],
         "maxRank": 20,
         "levelReq": 24,
@@ -2462,11 +2436,11 @@
         "y": 4
       },
       {
-        "id": "a-archer-beast-t0",
+        "id": "a-archer-elements-t0",
         "kind": "active",
-        "branchId": "beast",
-        "name": "Призыв волка",
-        "description": "Активный скилл: Призыв волка.",
+        "branchId": "elements",
+        "name": "Стихийный выстрел",
+        "description": "Активный скилл: Стихийный выстрел.",
         "cost": {
           "type": "points",
           "amount": 1
@@ -2476,21 +2450,1842 @@
         "levelReq": 1,
         "effect": {
           "active": {
-            "abilityId": "summon-wolf",
-            "manaCost": 20,
-            "cooldown": 20,
+            "category": "attack",
+            "abilityId": "elemental-shot",
+            "manaCost": 8,
+            "cooldown": 0.8,
+            "weaponTypes": [
+              "ranged"
+            ],
+            "damageMult": 1.1,
+            "element": "cold",
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.4,
+              "mag": 0.15,
+              "mag2": 0.05,
+              "maxStacks": 4,
+              "durationMs": 2500
+            }
+          }
+        },
+        "x": 6,
+        "y": 0
+      },
+      {
+        "id": "a-archer-elements-m1",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Мастерство: Урон огнём",
+        "description": "+2% Урон огнём за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "firePct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-archer-elements-m2",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Мастерство: Урон холодом",
+        "description": "+2% Урон холодом за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "coldPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-archer-elements-a1",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Гнев природы",
+        "description": "Активный скилл: Гнев природы.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "natures-wrath",
+            "manaCost": 16,
+            "cooldown": 5,
+            "shape": "nova",
+            "element": "poison",
+            "convertPct": 0.7,
+            "damageMult": 1.3,
+            "radius": 150,
+            "ailment": {
+              "kind": "poison",
+              "chance": 0.6,
+              "mag": 4,
+              "maxStacks": 5,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 6,
+        "y": 2
+      },
+      {
+        "id": "a-archer-elements-m3",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Мастерство: Меткость",
+        "description": "+1% Меткость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "accuracy",
+              "kind": "flat",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 7,
+        "y": 2
+      },
+      {
+        "id": "a-archer-elements-m4",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Мастерство: Интеллект",
+        "description": "+2 Интеллект за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "intelligence",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 7,
+        "y": 3
+      },
+      {
+        "id": "a-archer-elements-a2",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Благословение леса",
+        "description": "Активный скилл: Благословение леса.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
             "category": "buff",
-            "durationSec": 20,
+            "abilityId": "forest-blessing",
+            "manaCost": 12,
+            "cooldown": 14,
+            "durationSec": 10,
             "buffMods": [
               {
-                "stat": "minDamage",
+                "stat": "resFire",
+                "kind": "flat",
+                "value": 0.15
+              },
+              {
+                "stat": "resCold",
+                "kind": "flat",
+                "value": 0.15
+              },
+              {
+                "stat": "accuracy",
+                "kind": "increased",
+                "value": 0.2
+              }
+            ]
+          }
+        },
+        "x": 6,
+        "y": 3
+      },
+      {
+        "id": "a-archer-elements-m5",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Мастерство: Урон огнём",
+        "description": "+2% Урон огнём за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "firePct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-archer-elements-cap",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Мастерство: Урон холодом",
+        "description": "+2% Урон холодом за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "coldPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-archer-elements-m6",
+        "kind": "active",
+        "branchId": "elements",
+        "name": "Мастерство: Меткость",
+        "description": "+1% Меткость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-archer-elements-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "accuracy",
+              "kind": "flat",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      }
+    ]
+  },
+  {
+    "classId": "vyuga",
+    "branches": [
+      {
+        "id": "valkyrie",
+        "name": "Валькирия"
+      },
+      {
+        "id": "northspirit",
+        "name": "Дух севера"
+      },
+      {
+        "id": "fury",
+        "name": "Ярость"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "a-vyuga-valkyrie-t0",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Удар грома",
+        "description": "Активный скилл: Удар грома.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "thunder-strike",
+            "manaCost": 6,
+            "cooldown": 0.9,
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.3,
+            "element": "lightning",
+            "ailment": {
+              "kind": "shock",
+              "chance": 0.5,
+              "mag": 0.08,
+              "maxStacks": 4,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "a-vyuga-valkyrie-m1",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Мастерство: Физ. урон",
+        "description": "+2% Физ. урон за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "physPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": "a-vyuga-valkyrie-m2",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Мастерство: Блок",
+        "description": "+2% Блок за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "blockChance",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": "a-vyuga-valkyrie-a1",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Щит бури",
+        "description": "Активный скилл: Щит бури.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "buff",
+            "abilityId": "storm-shield",
+            "manaCost": 10,
+            "cooldown": 12,
+            "durationSec": 8,
+            "buffMods": [
+              {
+                "stat": "blockChance",
+                "kind": "increased",
+                "value": 0.3
+              },
+              {
+                "stat": "lightningPct",
+                "kind": "flat",
+                "value": 0.15
+              }
+            ]
+          }
+        },
+        "x": 0,
+        "y": 2
+      },
+      {
+        "id": "a-vyuga-valkyrie-m3",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Мастерство: Урон молнией",
+        "description": "+2% Урон молнией за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "lightningPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 2
+      },
+      {
+        "id": "a-vyuga-valkyrie-m4",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Мастерство: Сила",
+        "description": "+2 Сила за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "strength",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 1,
+        "y": 3
+      },
+      {
+        "id": "a-vyuga-valkyrie-a2",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Копьё Одина",
+        "description": "Активный скилл: Копьё Одина.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "odins-spear",
+            "manaCost": 14,
+            "cooldown": 4,
+            "shape": "boomerang",
+            "element": "lightning",
+            "convertPct": 0.6,
+            "damageMult": 1.5,
+            "ailment": {
+              "kind": "shock",
+              "chance": 0.6,
+              "mag": 0.1,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 0,
+        "y": 3
+      },
+      {
+        "id": "a-vyuga-valkyrie-m5",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Мастерство: Физ. урон",
+        "description": "+2% Физ. урон за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "physPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-valkyrie-cap",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Мастерство: Блок",
+        "description": "+2% Блок за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "blockChance",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-valkyrie-m6",
+        "kind": "active",
+        "branchId": "valkyrie",
+        "name": "Мастерство: Урон молнией",
+        "description": "+2% Урон молнией за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-valkyrie-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "lightningPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-northspirit-t0",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Ледяной клинок",
+        "description": "Активный скилл: Ледяной клинок.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "ice-blade",
+            "manaCost": 6,
+            "cooldown": 0.9,
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.2,
+            "element": "cold",
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.5,
+              "mag": 0.15,
+              "mag2": 0.05,
+              "maxStacks": 4,
+              "durationMs": 2500
+            }
+          }
+        },
+        "x": 3,
+        "y": 0
+      },
+      {
+        "id": "a-vyuga-northspirit-m1",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Мастерство: Урон холодом",
+        "description": "+2% Урон холодом за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "coldPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-vyuga-northspirit-m2",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-vyuga-northspirit-a1",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Кровопускание",
+        "description": "Активный скилл: Кровопускание.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "bloodletting",
+            "manaCost": 8,
+            "cooldown": 1.2,
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.3,
+            "ailment": {
+              "kind": "bleed",
+              "chance": 0.6,
+              "mag": 5,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 3,
+        "y": 2
+      },
+      {
+        "id": "a-vyuga-northspirit-m3",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Мастерство: Уклонение",
+        "description": "+2% Уклонение за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "evade",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 2
+      },
+      {
+        "id": "a-vyuga-northspirit-m4",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Мастерство: Ловкость",
+        "description": "+2 Ловкость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "dexterity",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 3
+      },
+      {
+        "id": "a-vyuga-northspirit-a2",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Морозный вихрь",
+        "description": "Активный скилл: Морозный вихрь.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "frost-whirl",
+            "manaCost": 14,
+            "cooldown": 5,
+            "shape": "nova",
+            "element": "cold",
+            "convertPct": 0.6,
+            "damageMult": 1.3,
+            "radius": 140,
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.7,
+              "mag": 0.2,
+              "mag2": 0.15,
+              "maxStacks": 5,
+              "durationMs": 2500
+            }
+          }
+        },
+        "x": 3,
+        "y": 3
+      },
+      {
+        "id": "a-vyuga-northspirit-m5",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Мастерство: Урон холодом",
+        "description": "+2% Урон холодом за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "coldPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-northspirit-cap",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-northspirit-m6",
+        "kind": "active",
+        "branchId": "northspirit",
+        "name": "Мастерство: Уклонение",
+        "description": "+2% Уклонение за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-northspirit-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "evade",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-fury-t0",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Рассекающий удар",
+        "description": "Активный скилл: Рассекающий удар.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "cleaving-blow",
+            "manaCost": 6,
+            "cooldown": 1,
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.4,
+            "arcMult": 1.6
+          }
+        },
+        "x": 6,
+        "y": 0
+      },
+      {
+        "id": "a-vyuga-fury-m1",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Мастерство: Физ. урон",
+        "description": "+2% Физ. урон за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "physPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-vyuga-fury-m2",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Мастерство: Скор. атаки",
+        "description": "+1.5% Скор. атаки за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "attackSpeed",
+              "kind": "increased",
+              "value": 0.015
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-vyuga-fury-a1",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Танец клинков",
+        "description": "Активный скилл: Танец клинков.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "buff",
+            "abilityId": "blade-dance",
+            "manaCost": 10,
+            "cooldown": 12,
+            "durationSec": 8,
+            "buffMods": [
+              {
+                "stat": "evade",
+                "kind": "increased",
+                "value": 0.3
+              },
+              {
+                "stat": "attackSpeed",
+                "kind": "increased",
+                "value": 0.2
+              }
+            ]
+          }
+        },
+        "x": 6,
+        "y": 2
+      },
+      {
+        "id": "a-vyuga-fury-m3",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 7,
+        "y": 2
+      },
+      {
+        "id": "a-vyuga-fury-m4",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Мастерство: Сила",
+        "description": "+2 Сила за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "strength",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 7,
+        "y": 3
+      },
+      {
+        "id": "a-vyuga-fury-a2",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Берсерк",
+        "description": "Активный скилл: Берсерк.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "stance",
+            "abilityId": "berserk",
+            "manaCost": 0,
+            "cooldown": 0,
+            "toggleGroup": "stance",
+            "reservePct": 0.2,
+            "buffMods": [
+              {
+                "stat": "physPct",
+                "kind": "flat",
+                "value": 0.25
+              },
+              {
+                "stat": "attackSpeed",
                 "kind": "increased",
                 "value": 0.15
               },
               {
-                "stat": "maxDamage",
+                "stat": "armor",
                 "kind": "increased",
-                "value": 0.15
+                "value": -0.3
+              }
+            ]
+          }
+        },
+        "x": 6,
+        "y": 3
+      },
+      {
+        "id": "a-vyuga-fury-m5",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Мастерство: Физ. урон",
+        "description": "+2% Физ. урон за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "physPct",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-fury-cap",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Мастерство: Скор. атаки",
+        "description": "+1.5% Скор. атаки за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "attackSpeed",
+              "kind": "increased",
+              "value": 0.015
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-vyuga-fury-m6",
+        "kind": "active",
+        "branchId": "fury",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vyuga-fury-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      }
+    ]
+  },
+  {
+    "classId": "arbalest",
+    "branches": [
+      {
+        "id": "veteran",
+        "name": "Ветеран"
+      },
+      {
+        "id": "merc",
+        "name": "Наёмник"
+      },
+      {
+        "id": "tricks",
+        "name": "Уловки"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "a-arbalest-veteran-t0",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Тяжёлый болт",
+        "description": "Активный скилл: Тяжёлый болт.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "heavy-bolt",
+            "manaCost": 7,
+            "cooldown": 1.1,
+            "weaponTypes": [
+              "ranged"
+            ],
+            "damageMult": 1.8,
+            "pierce": true
+          }
+        },
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "a-arbalest-veteran-m1",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": "a-arbalest-veteran-m2",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Мастерство: Множ. крита",
+        "description": "+0.03 Множ. крита за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critMultiplier",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": "a-arbalest-veteran-a1",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Прицельный выстрел",
+        "description": "Активный скилл: Прицельный выстрел.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "buff",
+            "abilityId": "take-aim",
+            "manaCost": 8,
+            "cooldown": 10,
+            "durationSec": 6,
+            "buffMods": [
+              {
+                "stat": "critChance",
+                "kind": "increased",
+                "value": 0.5
+              },
+              {
+                "stat": "accuracy",
+                "kind": "increased",
+                "value": 0.3
+              }
+            ]
+          }
+        },
+        "x": 0,
+        "y": 2
+      },
+      {
+        "id": "a-arbalest-veteran-m3",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Мастерство: Меткость",
+        "description": "+1% Меткость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "accuracy",
+              "kind": "flat",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 1,
+        "y": 2
+      },
+      {
+        "id": "a-arbalest-veteran-m4",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Мастерство: Ловкость",
+        "description": "+2 Ловкость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "dexterity",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 1,
+        "y": 3
+      },
+      {
+        "id": "a-arbalest-veteran-a2",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Разрывной болт",
+        "description": "Активный скилл: Разрывной болт.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "explosive-bolt",
+            "manaCost": 14,
+            "cooldown": 5,
+            "shape": "meteor",
+            "element": "fire",
+            "convertPct": 0.5,
+            "damageMult": 1.6,
+            "radius": 130,
+            "ailment": {
+              "kind": "burn",
+              "chance": 0.6,
+              "mag": 6,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 0,
+        "y": 3
+      },
+      {
+        "id": "a-arbalest-veteran-m5",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-veteran-cap",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Мастерство: Множ. крита",
+        "description": "+0.03 Множ. крита за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critMultiplier",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-veteran-m6",
+        "kind": "active",
+        "branchId": "veteran",
+        "name": "Мастерство: Меткость",
+        "description": "+1% Меткость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-veteran-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "accuracy",
+              "kind": "flat",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-merc-t0",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Веерный выстрел",
+        "description": "Активный скилл: Веерный выстрел.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "spread-shot",
+            "manaCost": 9,
+            "cooldown": 0.9,
+            "weaponTypes": [
+              "ranged"
+            ],
+            "damageMult": 0.6,
+            "count": 5,
+            "spread": 0.5
+          }
+        },
+        "x": 3,
+        "y": 0
+      },
+      {
+        "id": "a-arbalest-merc-m1",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Мастерство: Скор. атаки",
+        "description": "+1.5% Скор. атаки за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "attackSpeed",
+              "kind": "increased",
+              "value": 0.015
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-arbalest-merc-m2",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Мастерство: Скор. движ.",
+        "description": "+1% Скор. движ. за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "moveSpeed",
+              "kind": "increased",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-arbalest-merc-a1",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Залп",
+        "description": "Активный скилл: Залп.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "volley",
+            "manaCost": 16,
+            "cooldown": 6,
+            "shape": "ground",
+            "damageMult": 1.3,
+            "radius": 160
+          }
+        },
+        "x": 3,
+        "y": 2
+      },
+      {
+        "id": "a-arbalest-merc-m3",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Мастерство: Урон",
+        "description": "+2 Урон за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxDamage",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 2
+      },
+      {
+        "id": "a-arbalest-merc-m4",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Мастерство: Ловкость",
+        "description": "+2 Ловкость за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "dexterity",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 3
+      },
+      {
+        "id": "a-arbalest-merc-a2",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Отход",
+        "description": "Активный скилл: Отход.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "retreat",
+            "manaCost": 8,
+            "cooldown": 6,
+            "shape": "leap",
+            "weaponTypes": [
+              "ranged"
+            ],
+            "damageMult": 0.5,
+            "dashDist": 200
+          }
+        },
+        "x": 3,
+        "y": 3
+      },
+      {
+        "id": "a-arbalest-merc-m5",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Мастерство: Скор. атаки",
+        "description": "+1.5% Скор. атаки за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "attackSpeed",
+              "kind": "increased",
+              "value": 0.015
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-merc-cap",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Мастерство: Скор. движ.",
+        "description": "+1% Скор. движ. за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "moveSpeed",
+              "kind": "increased",
+              "value": 0.01
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-merc-m6",
+        "kind": "active",
+        "branchId": "merc",
+        "name": "Мастерство: Урон",
+        "description": "+2 Урон за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-merc-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxDamage",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-tricks-t0",
+        "kind": "active",
+        "branchId": "tricks",
+        "name": "Дымовая шашка",
+        "description": "Активный скилл: Дымовая шашка.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "buff",
+            "abilityId": "smoke-bomb",
+            "manaCost": 8,
+            "cooldown": 12,
+            "durationSec": 6,
+            "buffMods": [
+              {
+                "stat": "evade",
+                "kind": "increased",
+                "value": 0.6
               }
             ]
           }
@@ -2499,9 +4294,9 @@
         "y": 0
       },
       {
-        "id": "a-archer-beast-m1",
+        "id": "a-arbalest-tricks-m1",
         "kind": "active",
-        "branchId": "beast",
+        "branchId": "tricks",
         "name": "Мастерство: Здоровье",
         "description": "+12 Здоровье за ранг.",
         "cost": {
@@ -2509,7 +4304,7 @@
           "amount": 1
         },
         "requires": [
-          "a-archer-beast-t0"
+          "a-arbalest-tricks-t0"
         ],
         "maxRank": 20,
         "levelReq": 6,
@@ -2526,26 +4321,26 @@
         "y": 1
       },
       {
-        "id": "a-archer-beast-m2",
+        "id": "a-arbalest-tricks-m2",
         "kind": "active",
-        "branchId": "beast",
-        "name": "Мастерство: Ловкость",
-        "description": "+2 Ловкость за ранг.",
+        "branchId": "tricks",
+        "name": "Мастерство: Уклонение",
+        "description": "+2% Уклонение за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-beast-t0"
+          "a-arbalest-tricks-t0"
         ],
         "maxRank": 20,
         "levelReq": 6,
         "effect": {
           "modifiers": [
             {
-              "stat": "dexterity",
-              "kind": "flat",
-              "value": 2
+              "stat": "evade",
+              "kind": "increased",
+              "value": 0.02
             }
           ]
         },
@@ -2553,65 +4348,978 @@
         "y": 1
       },
       {
-        "id": "a-archer-beast-a1",
+        "id": "a-arbalest-tricks-a1",
         "kind": "active",
-        "branchId": "beast",
-        "name": "Дух ястреба",
-        "description": "Активный скилл: Дух ястреба.",
+        "branchId": "tricks",
+        "name": "Колючки",
+        "description": "Активный скилл: Колючки.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-beast-m1"
+          "a-arbalest-tricks-m1"
         ],
         "maxRank": 20,
         "levelReq": 12,
         "effect": {
           "active": {
-            "abilityId": "spirit-hawk",
-            "manaCost": 16,
-            "cooldown": 14,
+            "category": "cast",
+            "abilityId": "caltrops-arb",
+            "manaCost": 10,
+            "cooldown": 7,
+            "shape": "ground",
+            "damageMult": 0.7,
+            "radius": 130,
+            "ailment": {
+              "kind": "freeze",
+              "chance": 0.7,
+              "mag": 0.2,
+              "maxStacks": 5,
+              "durationMs": 3000
+            }
+          }
+        },
+        "x": 6,
+        "y": 2
+      },
+      {
+        "id": "a-arbalest-tricks-m3",
+        "kind": "active",
+        "branchId": "tricks",
+        "name": "Мастерство: Сопр. огню",
+        "description": "+2% Сопр. огню за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-tricks-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "resFire",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 2
+      },
+      {
+        "id": "a-arbalest-tricks-m4",
+        "kind": "active",
+        "branchId": "tricks",
+        "name": "Мастерство: Живучесть",
+        "description": "+2 Живучесть за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-tricks-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "vitality",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 7,
+        "y": 3
+      },
+      {
+        "id": "a-arbalest-tricks-a2",
+        "kind": "active",
+        "branchId": "tricks",
+        "name": "Ослепляющий порошок",
+        "description": "Активный скилл: Ослепляющий порошок.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-tricks-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "curse",
+            "abilityId": "blinding-powder",
+            "manaCost": 10,
+            "cooldown": 8,
+            "radius": 170,
+            "ailment": {
+              "kind": "bleed",
+              "chance": 0.8,
+              "mag": 2,
+              "maxStacks": 5,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 6,
+        "y": 3
+      },
+      {
+        "id": "a-arbalest-tricks-m5",
+        "kind": "active",
+        "branchId": "tricks",
+        "name": "Мастерство: Здоровье",
+        "description": "+12 Здоровье за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-tricks-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxHp",
+              "kind": "flat",
+              "value": 12
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-tricks-cap",
+        "kind": "active",
+        "branchId": "tricks",
+        "name": "Мастерство: Уклонение",
+        "description": "+2% Уклонение за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-tricks-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "evade",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-arbalest-tricks-m6",
+        "kind": "active",
+        "branchId": "tricks",
+        "name": "Мастерство: Сопр. огню",
+        "description": "+2% Сопр. огню за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-arbalest-tricks-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "resFire",
+              "kind": "flat",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      }
+    ]
+  },
+  {
+    "classId": "vorozheya",
+    "branches": [
+      {
+        "id": "charms",
+        "name": "Чары"
+      },
+      {
+        "id": "hex",
+        "name": "Порча"
+      },
+      {
+        "id": "poison",
+        "name": "Яд"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "a-vorozheya-charms-t0",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Огненные чары",
+        "description": "Активный скилл: Огненные чары.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
             "category": "buff",
-            "durationSec": 20,
+            "abilityId": "fire-charm",
+            "manaCost": 8,
+            "cooldown": 12,
+            "durationSec": 12,
             "buffMods": [
               {
-                "stat": "critChance",
-                "kind": "increased",
-                "value": 0.1
+                "stat": "firePct",
+                "kind": "flat",
+                "value": 0.2
               },
               {
-                "stat": "accuracy",
-                "kind": "increased",
-                "value": 0.15
+                "stat": "addFire",
+                "kind": "flat",
+                "value": 4
               }
             ]
           }
         },
-        "x": 6,
-        "y": 2
+        "x": 0,
+        "y": 0
       },
       {
-        "id": "a-archer-beast-m3",
+        "id": "a-vorozheya-charms-m1",
         "kind": "active",
-        "branchId": "beast",
-        "name": "Мастерство: Скор. движ.",
-        "description": "+1% Скор. движ. за ранг.",
+        "branchId": "charms",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-beast-m2"
+          "a-vorozheya-charms-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "castSpeed",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": "a-vorozheya-charms-m2",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "ailmentPct",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": "a-vorozheya-charms-a1",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Стихийная аура",
+        "description": "Активный скилл: Стихийная аура.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "aura",
+            "abilityId": "elemental-aura",
+            "manaCost": 0,
+            "cooldown": 0,
+            "toggleGroup": "aura",
+            "reservePct": 0.25,
+            "buffMods": [
+              {
+                "stat": "firePct",
+                "kind": "flat",
+                "value": 0.08
+              },
+              {
+                "stat": "coldPct",
+                "kind": "flat",
+                "value": 0.08
+              },
+              {
+                "stat": "lightningPct",
+                "kind": "flat",
+                "value": 0.08
+              }
+            ]
+          }
+        },
+        "x": 0,
+        "y": 2
+      },
+      {
+        "id": "a-vorozheya-charms-m3",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Мастерство: Мана",
+        "description": "+10 Мана за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-m2"
         ],
         "maxRank": 20,
         "levelReq": 12,
         "effect": {
           "modifiers": [
             {
-              "stat": "moveSpeed",
+              "stat": "maxMana",
+              "kind": "flat",
+              "value": 10
+            }
+          ]
+        },
+        "x": 1,
+        "y": 2
+      },
+      {
+        "id": "a-vorozheya-charms-m4",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Мастерство: Интеллект",
+        "description": "+2 Интеллект за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "intelligence",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 1,
+        "y": 3
+      },
+      {
+        "id": "a-vorozheya-charms-a2",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Терновая мантия",
+        "description": "Активный скилл: Терновая мантия.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "buff",
+            "abilityId": "thorn-mantle",
+            "manaCost": 10,
+            "cooldown": 14,
+            "durationSec": 10,
+            "buffMods": [
+              {
+                "stat": "armor",
+                "kind": "increased",
+                "value": 0.2
+              },
+              {
+                "stat": "blockChance",
+                "kind": "increased",
+                "value": 0.1
+              }
+            ]
+          }
+        },
+        "x": 0,
+        "y": 3
+      },
+      {
+        "id": "a-vorozheya-charms-m5",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "castSpeed",
               "kind": "increased",
-              "value": 0.01
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-charms-cap",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "ailmentPct",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-charms-m6",
+        "kind": "active",
+        "branchId": "charms",
+        "name": "Мастерство: Мана",
+        "description": "+10 Мана за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-charms-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxMana",
+              "kind": "flat",
+              "value": 10
+            }
+          ]
+        },
+        "x": 1,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-hex-t0",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Проклятие слабости",
+        "description": "Активный скилл: Проклятие слабости.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "curse",
+            "abilityId": "weakness",
+            "manaCost": 8,
+            "cooldown": 8,
+            "radius": 200,
+            "ailment": {
+              "kind": "wound",
+              "chance": 0.8,
+              "mag": 0.08,
+              "mag2": 0.1,
+              "maxStacks": 5,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 3,
+        "y": 0
+      },
+      {
+        "id": "a-vorozheya-hex-m1",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "ailmentPct",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-vorozheya-hex-m2",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "castSpeed",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 1
+      },
+      {
+        "id": "a-vorozheya-hex-a1",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Порча брони",
+        "description": "Активный скилл: Порча брони.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "curse",
+            "abilityId": "armor-break",
+            "manaCost": 10,
+            "cooldown": 8,
+            "radius": 200,
+            "ailment": {
+              "kind": "sunder",
+              "chance": 0.8,
+              "mag": 0.06,
+              "maxStacks": 5,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 3,
+        "y": 2
+      },
+      {
+        "id": "a-vorozheya-hex-m3",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Мастерство: Интеллект",
+        "description": "+2 Интеллект за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "intelligence",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 2
+      },
+      {
+        "id": "a-vorozheya-hex-m4",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Мастерство: Мана",
+        "description": "+10 Мана за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-a1"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "maxMana",
+              "kind": "flat",
+              "value": 10
+            }
+          ]
+        },
+        "x": 4,
+        "y": 3
+      },
+      {
+        "id": "a-vorozheya-hex-a2",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Массовое проклятие",
+        "description": "Активный скилл: Массовое проклятие.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "curse",
+            "abilityId": "mass-hex",
+            "manaCost": 16,
+            "cooldown": 12,
+            "radius": 240,
+            "ailment": {
+              "kind": "shock",
+              "chance": 0.7,
+              "mag": 0.1,
+              "maxStacks": 5,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 3,
+        "y": 3
+      },
+      {
+        "id": "a-vorozheya-hex-m5",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-m4"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "ailmentPct",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-hex-cap",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Мастерство: Скор. каста",
+        "description": "+2% Скор. каста за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "castSpeed",
+              "kind": "increased",
+              "value": 0.02
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-hex-m6",
+        "kind": "active",
+        "branchId": "hex",
+        "name": "Мастерство: Интеллект",
+        "description": "+2 Интеллект за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-hex-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "intelligence",
+              "kind": "flat",
+              "value": 2
+            }
+          ]
+        },
+        "x": 4,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-poison-t0",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Отравленный клинок",
+        "description": "Активный скилл: Отравленный клинок.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [],
+        "maxRank": 20,
+        "levelReq": 1,
+        "effect": {
+          "active": {
+            "category": "attack",
+            "abilityId": "venom-blade",
+            "manaCost": 5,
+            "cooldown": 0.7,
+            "weaponTypes": [
+              "melee"
+            ],
+            "damageMult": 1.1,
+            "element": "poison",
+            "ailment": {
+              "kind": "poison",
+              "chance": 0.7,
+              "mag": 4,
+              "maxStacks": 6,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 6,
+        "y": 0
+      },
+      {
+        "id": "a-vorozheya-poison-m1",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Мастерство: Урон ядом",
+        "description": "+2.5% Урон ядом за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-poison-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "poisonPct",
+              "kind": "flat",
+              "value": 0.025
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-vorozheya-poison-m2",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-poison-t0"
+        ],
+        "maxRank": 20,
+        "levelReq": 6,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "ailmentPct",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 7,
+        "y": 1
+      },
+      {
+        "id": "a-vorozheya-poison-a1",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Ядовитое облако",
+        "description": "Активный скилл: Ядовитое облако.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-poison-m1"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "active": {
+            "category": "cast",
+            "abilityId": "poison-cloud",
+            "manaCost": 14,
+            "cooldown": 6,
+            "shape": "ground",
+            "element": "poison",
+            "convertPct": 0.7,
+            "damageMult": 1.1,
+            "radius": 150,
+            "ailment": {
+              "kind": "poison",
+              "chance": 0.9,
+              "mag": 5,
+              "maxStacks": 6,
+              "durationMs": 4000
+            }
+          }
+        },
+        "x": 6,
+        "y": 2
+      },
+      {
+        "id": "a-vorozheya-poison-m3",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-poison-m2"
+        ],
+        "maxRank": 20,
+        "levelReq": 12,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
             }
           ]
         },
@@ -2619,101 +5327,9 @@
         "y": 2
       },
       {
-        "id": "a-archer-beast-m4",
+        "id": "a-vorozheya-poison-m4",
         "kind": "active",
-        "branchId": "beast",
-        "name": "Мастерство: Реген HP",
-        "description": "+0.2 Реген HP за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-archer-beast-a1"
-        ],
-        "maxRank": 20,
-        "levelReq": 18,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "hpRegen",
-              "kind": "flat",
-              "value": 0.2
-            }
-          ]
-        },
-        "x": 7,
-        "y": 3
-      },
-      {
-        "id": "a-archer-beast-a2",
-        "kind": "active",
-        "branchId": "beast",
-        "name": "Рывок медведя",
-        "description": "Активный скилл: Рывок медведя.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-archer-beast-m3"
-        ],
-        "maxRank": 20,
-        "levelReq": 18,
-        "effect": {
-          "active": {
-            "category": "cast",
-            "abilityId": "bear-charge",
-            "manaCost": 14,
-            "cooldown": 8,
-            "hands": "any",
-            "shape": "dash",
-            "castTimeSec": 0.25,
-            "convertPct": 0.5,
-            "damageMult": 1.6,
-            "radius": 0,
-            "knockback": 0,
-            "shoveChance": 1,
-            "stunSec": 0,
-            "dashDist": 130,
-            "dashSpeed": 700,
-            "dashWeightBonus": 200
-          }
-        },
-        "x": 6,
-        "y": 3
-      },
-      {
-        "id": "a-archer-beast-m5",
-        "kind": "active",
-        "branchId": "beast",
-        "name": "Мастерство: Здоровье",
-        "description": "+12 Здоровье за ранг.",
-        "cost": {
-          "type": "points",
-          "amount": 1
-        },
-        "requires": [
-          "a-archer-beast-m4"
-        ],
-        "maxRank": 20,
-        "levelReq": 24,
-        "effect": {
-          "modifiers": [
-            {
-              "stat": "maxHp",
-              "kind": "flat",
-              "value": 12
-            }
-          ]
-        },
-        "x": 7,
-        "y": 4
-      },
-      {
-        "id": "a-archer-beast-cap",
-        "kind": "active",
-        "branchId": "beast",
+        "branchId": "poison",
         "name": "Мастерство: Ловкость",
         "description": "+2 Ловкость за ранг.",
         "cost": {
@@ -2721,10 +5337,10 @@
           "amount": 1
         },
         "requires": [
-          "a-archer-beast-a2"
+          "a-vorozheya-poison-a1"
         ],
         "maxRank": 20,
-        "levelReq": 24,
+        "levelReq": 18,
         "effect": {
           "modifiers": [
             {
@@ -2735,29 +5351,117 @@
           ]
         },
         "x": 7,
-        "y": 4
+        "y": 3
       },
       {
-        "id": "a-archer-beast-m6",
+        "id": "a-vorozheya-poison-a2",
         "kind": "active",
-        "branchId": "beast",
-        "name": "Мастерство: Скор. движ.",
-        "description": "+1% Скор. движ. за ранг.",
+        "branchId": "poison",
+        "name": "Разложение",
+        "description": "Активный скилл: Разложение.",
         "cost": {
           "type": "points",
           "amount": 1
         },
         "requires": [
-          "a-archer-beast-m5"
+          "a-vorozheya-poison-m3"
+        ],
+        "maxRank": 20,
+        "levelReq": 18,
+        "effect": {
+          "active": {
+            "category": "curse",
+            "abilityId": "decay",
+            "manaCost": 10,
+            "cooldown": 8,
+            "radius": 180,
+            "ailment": {
+              "kind": "poison",
+              "chance": 0.9,
+              "mag": 6,
+              "maxStacks": 8,
+              "durationMs": 5000
+            }
+          }
+        },
+        "x": 6,
+        "y": 3
+      },
+      {
+        "id": "a-vorozheya-poison-m5",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Мастерство: Урон ядом",
+        "description": "+2.5% Урон ядом за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-poison-m4"
         ],
         "maxRank": 20,
         "levelReq": 24,
         "effect": {
           "modifiers": [
             {
-              "stat": "moveSpeed",
-              "kind": "increased",
-              "value": 0.01
+              "stat": "poisonPct",
+              "kind": "flat",
+              "value": 0.025
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-poison-cap",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Мастерство: Наложение статусов",
+        "description": "+3% Наложение статусов за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-poison-a2"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "ailmentPct",
+              "kind": "flat",
+              "value": 0.03
+            }
+          ]
+        },
+        "x": 7,
+        "y": 4
+      },
+      {
+        "id": "a-vorozheya-poison-m6",
+        "kind": "active",
+        "branchId": "poison",
+        "name": "Мастерство: Крит",
+        "description": "+0.8% Крит за ранг.",
+        "cost": {
+          "type": "points",
+          "amount": 1
+        },
+        "requires": [
+          "a-vorozheya-poison-m5"
+        ],
+        "maxRank": 20,
+        "levelReq": 24,
+        "effect": {
+          "modifiers": [
+            {
+              "stat": "critChance",
+              "kind": "flat",
+              "value": 0.008
             }
           ]
         },
