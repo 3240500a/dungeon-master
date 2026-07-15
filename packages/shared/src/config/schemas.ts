@@ -214,12 +214,20 @@ export const hpManaScalingSchema = z.object({
   hpPerVitality: z.number().default(5),
   /** HP за каждый уровень после 1-го. */
   hpPerLevel: z.number().default(0),
+  /** Базовый реген HP/сек (при 0 вын.). Почти нулевой — опора на зелья/вампиризм/гир. */
+  hpRegenBase: z.number().default(0.1),
+  /** Реген HP/сек за 1 очко выносливости. */
+  hpRegenPerVitality: z.number().default(0.01),
   /** База маны (при 0 инт., 1-й уровень). */
   manaBase: z.number().default(20),
   /** Мана за 1 очко интеллекта. */
   manaPerIntelligence: z.number().default(3),
   /** Мана за каждый уровень после 1-го. */
   manaPerLevel: z.number().default(0),
+  /** Базовый реген маны/сек (при 0 инт.). */
+  manaRegenBase: z.number().default(0.5),
+  /** Реген маны/сек за 1 очко интеллекта. */
+  manaRegenPerIntelligence: z.number().default(0.05),
   /** Меткость (рейтинг атаки) за каждый уровень после 1-го — чтобы не отставать от уклонения монстров. */
   accuracyPerLevel: z.number().default(2),
 }).default({});

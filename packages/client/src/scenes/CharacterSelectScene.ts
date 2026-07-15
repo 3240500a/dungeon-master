@@ -95,13 +95,13 @@ export class CharacterSelectScene extends Phaser.Scene {
     bg.setInteractive({ useHandCursor: true });
     bg.on('pointerdown', () => { this.selected = i; this.buildUI(); });
     container.add(bg);
-    container.add(this.add.image(-w / 2 + 26, 0, this.classSprite(c.classId)));
-    container.add(this.add.text(-w / 2 + 50, -12, c.name, { fontSize: '16px', color: '#e6ddc9' }));
-    container.add(this.add.text(-w / 2 + 50, 8, `${this.className(c.classId)} · Ур. ${c.level}`, { fontSize: '12px', color: '#8f897c' }));
+    // Аватарку в строке не рисуем — крупный портрет есть справа; здесь только имя/класс.
+    container.add(this.add.text(-w / 2 + 18, -12, c.name, { fontSize: '16px', color: '#e6ddc9' }));
+    container.add(this.add.text(-w / 2 + 18, 8, `${this.className(c.classId)} · Ур. ${c.level}`, { fontSize: '12px', color: '#8f897c' }));
   }
 
   private renderAvatar(c: CharacterSummary, x: number, height: number): void {
-    this.add.image(x, height * 0.34, this.classSprite(c.classId)).setScale(6);
+    this.add.image(x, height * 0.36, this.classSprite(c.classId)).setScale(2);
     this.add.text(x, height * 0.5, c.name, { fontSize: '26px', color: '#e6ddc9' }).setOrigin(0.5);
     this.add.text(x, height * 0.56, `${this.className(c.classId)} · Уровень ${c.level}`, { fontSize: '15px', color: '#8f897c' }).setOrigin(0.5);
   }

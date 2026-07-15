@@ -186,7 +186,7 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     facing,
     hp: def.hp,
     maxHp: def.hp,
-    radius: def.rarity === 'champion' ? 19 : 12,
+    radius: def.rarity === 'champion' ? 15 : 12, // чемпион ~+25% (не настолько большой, чтобы не дотягиваться до удара)
     debuffs: newDebuffState(),
     attackCd: 0,
     stunTimer: 0,

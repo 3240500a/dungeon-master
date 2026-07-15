@@ -36,7 +36,7 @@ export class Monster {
     const tex = scene.textures.exists(def.sprite) ? def.sprite : 'mob-skeleton';
     this.sprite = scene.add.sprite(x, y, tex).setDepth(4);
     if (def.rarity === 'champion') {
-      this.sprite.setScale(1.6);
+      this.sprite.setScale(1.3);
       this.sprite.setTint(0xffe27a);
     }
   }

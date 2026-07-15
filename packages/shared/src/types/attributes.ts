@@ -20,21 +20,34 @@ export interface HpManaScaling {
   hpBase: number;
   hpPerVitality: number;
   hpPerLevel: number;
+  /** Базовый реген HP/сек (при 0 вын.). */
+  hpRegenBase: number;
+  /** Реген HP/сек за 1 очко выносливости. */
+  hpRegenPerVitality: number;
   manaBase: number;
   manaPerIntelligence: number;
   manaPerLevel: number;
+  /** Базовый реген маны/сек (при 0 инт.). */
+  manaRegenBase: number;
+  /** Реген маны/сек за 1 очко интеллекта. */
+  manaRegenPerIntelligence: number;
   /** Прибавка к меткости (рейтингу атаки) за каждый уровень после 1-го. */
   accuracyPerLevel: number;
 }
 
-/** Значения по умолчанию: пулы — прежняя формула (50 + вын·5 / 20 + инт·3); меткость +2 за уровень. */
+/** Значения по умолчанию: пулы — прежняя формула (50 + вын·5 / 20 + инт·3); меткость +2 за уровень.
+ *  HP-реген почти нулевой (0.1 + вын·0.01) — при малых пулах опора на зелья/вампиризм/гир; мана — как было. */
 export const DEFAULT_HP_MANA_SCALING: HpManaScaling = {
   hpBase: 50,
   hpPerVitality: 5,
   hpPerLevel: 0,
+  hpRegenBase: 0.1,
+  hpRegenPerVitality: 0.01,
   manaBase: 20,
   manaPerIntelligence: 3,
   manaPerLevel: 0,
+  manaRegenBase: 0.5,
+  manaRegenPerIntelligence: 0.05,
   accuracyPerLevel: 2,
 };
 

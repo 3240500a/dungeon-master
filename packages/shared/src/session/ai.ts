@@ -13,6 +13,11 @@ const SCAN_SPEED = 0.8; // рад/с — вращение взгляда в по
 const LEASH_TIME = 3.5; // сколько секунд преследует после потери контакта
 export const ALERT_TIME = 2.5; // длительность аггро от «шума» (атака игрока рядом)
 const LEASH_RADIUS = 560; // дальше этого преследование обрывается
+// Дальность удара мили = радиус тела монстра + зазор (учитывает тело игрока ~14 + подход).
+// У обычного (r=12) пороги прежние: 12+18=30 (погоня), 12+24=36 (стационар). Крупные (чемпион
+// r=15) так дотягиваются: раньше фикс. 30 не давал подойти из-за расталкивания (14+радиус).
+const MELEE_REACH_GAP = 18; // мили-погоня: остановка/удар
+const STATIONARY_REACH_GAP = 24; // стационарный: реакция/удар
 
 function wrapAngle(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
@@ -81,7 +86,7 @@ export function stepMonsterAi(
     case 'stationary': {
       m.vel.x = 0;
       m.vel.y = 0;
-      if (dist < 36 && m.attackCd <= 0) {
+      if (dist < m.radius + STATIONARY_REACH_GAP && m.attackCd <= 0) {
         m.attackCd = 1 / (m.def.attackSpeed * dm.atkSpeedMult);
         return 'attack';
       }
@@ -101,7 +106,7 @@ export function stepMonsterAi(
     case 'melee-chaser':
     default: {
       const speed = m.def.moveSpeed * dm.moveMult;
-      if (dist > 30) {
+      if (dist > m.radius + MELEE_REACH_GAP) {
         m.vel.x = Math.cos(angle) * speed;
         m.vel.y = Math.sin(angle) * speed;
       } else {

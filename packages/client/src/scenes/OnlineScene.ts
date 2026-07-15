@@ -218,8 +218,8 @@ export class OnlineScene extends Phaser.Scene {
       this.player = new Player(this, floor.spawn.x, floor.spawn.y, tex);
       this.driver = new NetDriver(this, this.app, this.player);
       this.driver.setMyId(this.myId); // свой id — чтобы свой игрок не рисовался как «чужой»
-      this.cameras.main.startFollow(this.player.sprite, true, 1, 1); // жёстко в центр (позиция игрока уже сглажена в netDriver)
-      this.cameras.main.setZoom(1.95); // ближе к игроку (было 1.5, +30%)
+      this.cameras.main.startFollow(this.player.cameraTarget, true, 1, 1); // следим за ЯКОРЕМ (не за спрайтом): спрайт подпрыгивает при ходьбе, мир — нет. Позиция уже сглажена в netDriver
+      this.cameras.main.setZoom(2.925); // ближе к игроку (было 1.95, +50%); спрайт игрока компенсирован в Player (SPRITE_SIZE), чтобы он остался прежнего размера
       if (!this.scene.isActive('UI')) this.scene.launch('UI');
     } else {
       this.player.setPos(floor.spawn.x, floor.spawn.y);
