@@ -191,6 +191,34 @@ export function allocActive(reg: ConfigRegistry, save: SaveState, nodeId: string
   return { ok: true };
 }
 
+/** Комиссия сброса дерева скилов: `skillRespecCostPerPoint` × суммарно вложенных очков. */
+export function skillRespecFee(reg: ConfigRegistry, save: SaveState): number {
+  let ranks = 0;
+  for (const rank of Object.values(save.skills)) if (rank > 0) ranks += rank;
+  return ranks * reg.get('balance').skillRespecCostPerPoint;
+}
+
+/**
+ * Сбрасывает ВСЁ дерево скилов за золото. Возвращает все вложенные очки скиллов
+ * (unspentSkillPoints += Σ рангов), берёт комиссию `skillRespecFee` (за вложенное очко).
+ * Бинды действий, ссылавшиеся на сброшенные скиллы, очищаются (ЛКМ→атака, ПКМ/хотбар→пусто).
+ */
+export function respecSkills(reg: ConfigRegistry, save: SaveState): ActionResult {
+  let ranks = 0;
+  for (const rank of Object.values(save.skills)) if (rank > 0) ranks += rank;
+  if (ranks === 0) return { ok: false, reason: 'Скиллы не вложены' };
+  const fee = skillRespecFee(reg, save);
+  if (save.gold < fee) return { ok: false, reason: `Нужно ${fee} золота на сброс` };
+  save.gold -= fee;
+  save.unspentSkillPoints += ranks;
+  save.skills = {};
+  // Сброшенные скиллы больше нельзя держать в биндах.
+  if (save.mouseLeft && save.mouseLeft !== 'attack') save.mouseLeft = 'attack';
+  if (save.mouseRight && save.mouseRight !== 'attack') save.mouseRight = null;
+  save.hotbar = save.hotbar.map((s) => (s && s !== 'attack' ? null : s));
+  return { ok: true };
+}
+
 // ── Пассивы (золото ×2/ранг + очки пассивов) ──────────────────────────────────
 function passiveNeighbors(tree: ConfigShapes['mastery-tree'], id: string): string[] {
   const out: string[] = [];

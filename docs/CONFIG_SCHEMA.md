@@ -5,8 +5,8 @@
 
 | Ключ | Файл | Назначение | Основные поля |
 |---|---|---|---|
-| balance | data/balance.json | глобальный баланс | xpTable (кап ~90), pointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices, respecCost, passiveRespecCostPct (комиссия сброса пассивов = доля вложенного), inventory(cols,rows), autoPickup[], passiveRankCostMult |
-| classes | data/classes.json | стартовые классы | id, name, startAttributes, startWeaponId, activeTreeId, sprite, affinity[], **passiveEntries[]** (2 входа пассивки), derived (масштаб HP/маны) |
+| balance | data/balance.json | глобальный баланс | xpTable (кап ~90), pointsPerLevel, masteryPointsPerLevel, deathPenalty, weaponAttrScaling, forgePrices, respecCost, passiveRespecCostPct (комиссия сброса мастерства = доля вложенного золота), **skillRespecCostPerPoint** (комиссия сброса скилов = золото за вложенное очко), inventory(cols,rows), autoPickup[], passiveRankCostMult |
+| classes | data/classes.json | стартовые классы (архетипы) | id, name, startAttributes, startWeaponId, sprite, affinity[], derived (per-класс масштаб HP/маны/выносливости от атрибутов) |
 | items.base | data/items-base.json | базы предметов | id, slot (incl. belt), weaponType?, baseStats, requirements, itemLevel, gridW, gridH |
 | affixes | data/affixes.json | префиксы/суффиксы | id, kind, stat, tiers[min,max,ilvl] |
 | uniques | data/uniques.json | уникальные предметы | id, baseId, fixedAffixes |
@@ -14,14 +14,17 @@
 | monster-affixes | data/monster-affixes.json | аффиксы монстров | id, name, mult{}, add{}, damageType? (огненный/быстрый/бронированный/…) |
 | packs | data/packs.json | пачки монстров по типам комнат | roomType, min, max, champion |
 | dungeons | data/dungeons.json | темы подземелий | id, tileset, monsterPool, dropBias, modifiers |
-| skills-active | data/skills-active.json | активные деревья (по классам) | classId, branches[], nodes[] |
-| skills-passive | data/skills-passive.json | пассивное общее дерево | nodes[], edges[], entryNodes[] |
+| skill-tree | data/skill-tree.json | ЕДИНОЕ древо скилов (актив+пассив, для всех) | branches[] (group/resource/classId?/weapon-gate/entryNode), nodes[] (kind active/passive, branchId, x/y), edges[], entryNodes[] |
+| mastery-tree | data/mastery-tree.json | дерево мастерства (общие %-пассивы) | nodes[], edges[], entryNodes[] |
 | quests.main | data/quests-main.json | сюжетные цепочки | id, steps[], objectives[], rewards |
 | quests.random | data/quests-random.json | шаблоны случайных квестов | id, objectiveType, ranges, rewardPool |
 
 ## Стоимость узлов скиллов
-Общий формат `SkillNode.cost = { type: 'points' | 'gold', amount }`. Активные узлы —
-`points`, пассивные — `gold`. Правило можно поменять прямо в конфиге, код универсален.
+Общий формат `SkillNode.cost = { type: 'points' | 'gold', amount }`.
+- **Древо скилов (`skill-tree`)** — узлы (актив И пассив) за **очки скилла** (`points`), по смежности от
+  входа ветки; сброс за золото (`respecSkills`, комиссия `skillRespecCostPerPoint`×очки).
+- **Дерево мастерства (`mastery-tree`)** — узлы за **золото** (`gold`, геом. рост ×`passiveRankCostMult`) +
+  1 очко мастерства; сброс за золото (`respecPassives`). Все входы доступны всем классам.
 
 ## Требования оружия (weaponType → атрибут)
 `melee → Strength`, `ranged → Dexterity`, `magic → Intelligence`. Масштаб урона от

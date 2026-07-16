@@ -3,7 +3,7 @@ import type { WebSocket } from 'ws';
 import {
   GameSession, generateDungeon, spawnPacks, townLayout, serializeWorld, floorInit,
   generateItem, itemFromBaseId, createRng,
-  buyItem, sellItem, equip, unequip, allocAttr, respec, respecPassives, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
+  buyItem, sellItem, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
   stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
   isDifficultyUnlocked, applyDeathPenalty,
@@ -234,6 +234,7 @@ export class Room {
       case 'allocAttr': r = allocAttr(save, command.attr); break;
       case 'respec': r = respec(this.cfg, save); break;
       case 'respecPassives': r = respecPassives(this.cfg, save); break;
+      case 'respecSkills': r = respecSkills(this.cfg, save); break;
       case 'allocPassive': r = allocPassive(this.cfg, save, command.nodeId); break;
       case 'allocSkill': r = allocActive(this.cfg, save, command.nodeId); break;
       case 'moveBelt': r = moveToBelt(save, command.uid); break;

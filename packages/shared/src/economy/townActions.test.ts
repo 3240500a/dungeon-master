@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor } from './townActions.js';
+import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee } from './townActions.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
@@ -65,6 +65,32 @@ describe('respecPassives (сброс пассивов за золото)', () =>
     expect(save.unspentMasteryPoints).toBe(10);          // −2 вложено, +2 возврат
     expect(save.gold).toBe(goldAfterAlloc - fee);        // вложенное не вернулось, снята только комиссия
     expect(respecPassives(reg, save).ok).toBe(false);    // пусто — сбрасывать нечего
+  });
+});
+
+describe('respecSkills (сброс дерева скилов за золото)', () => {
+  const skillSave = () => ({
+    classId: 'warrior', level: 30, gold: 100000,
+    unspentSkillPoints: 10, skills: {},
+    hotbar: [null, null, null], mouseLeft: 'attack', mouseRight: null,
+  } as unknown as SaveState);
+
+  it('возвращает очки скиллов, берёт комиссию за вложенное очко, чистит дерево', () => {
+    const tree = reg.get('skill-tree');
+    const entry = tree.branches.find((b) => !b.classId)!.entryNode;
+    const nb = tree.edges.flatMap(([a, b]) => (a === entry ? [b] : b === entry ? [a] : []))[0]!;
+    const save = skillSave();
+    expect(allocActive(reg, save, entry).ok).toBe(true);
+    expect(allocActive(reg, save, nb).ok).toBe(true);   // 2 очка вложено
+    const goldBefore = save.gold;
+    const fee = skillRespecFee(reg, save);
+    expect(fee).toBe(2 * reg.get('balance').skillRespecCostPerPoint);
+
+    expect(respecSkills(reg, save).ok).toBe(true);
+    expect(save.skills).toEqual({});
+    expect(save.unspentSkillPoints).toBe(10);            // −2 вложено, +2 возврат
+    expect(save.gold).toBe(goldBefore - fee);            // снята только комиссия
+    expect(respecSkills(reg, save).ok).toBe(false);      // пусто — сбрасывать нечего
   });
 });
 

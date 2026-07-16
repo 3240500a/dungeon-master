@@ -96,6 +96,7 @@ export type TownCommand =
   | { cmd: 'allocAttr'; attr: string }
   | { cmd: 'respec' }
   | { cmd: 'respecPassives' }
+  | { cmd: 'respecSkills' }
   | { cmd: 'allocPassive'; nodeId: string }
   | { cmd: 'allocSkill'; nodeId: string }
   | { cmd: 'useConsumable'; uid: string }

@@ -135,6 +135,7 @@
   },
   "respecCost": 500,
   "passiveRespecCostPct": 0.5,
+  "skillRespecCostPerPoint": 100,
   "inventory": {
     "cols": 10,
     "rows": 6

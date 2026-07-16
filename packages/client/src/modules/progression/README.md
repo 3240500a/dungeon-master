@@ -10,7 +10,7 @@
   `allocAttr`/`respec`); клиент отображает серверный `saveUpdate`, локально ничего не мутирует.
   - `characterPanel` (клавиша C): **полный лист персонажа (D2-стайл)** — шапка, Атрибуты (+),
     Наступление (урон/скор. атаки/крит/меткость), Защита (броня/блок/HP/мана/реген),
-    Сопротивления, Прочее. `masterPanel` (NPC мастер) — «Пассивное дерево» и «Атрибуты»(+респек).
+    Сопротивления, Прочее. `masterPanel` (NPC мастер) — «Дерево мастерства» и «Атрибуты»(+респек).
   - Производные статы (`@dm/shared` DerivedStats): accuracy, blockChance, hpRegen, manaRegen,
     resFire/Cold/Lightning/Poison. Реген HP/маны тикает в серверной `GameSession`.
 - **Конфиг:** `balance` (xpTable, attributePointsPerLevel, skillPointsPerLevel,

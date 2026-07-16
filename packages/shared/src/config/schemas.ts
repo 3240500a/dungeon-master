@@ -93,8 +93,10 @@ export const balanceSchema = z.object({
     rerollAffix: z.number().int().min(0),
   }),
   respecCost: z.number().int().min(0),
-  /** Сброс пассивов: комиссия = доля вложенного в пассивы золота (растёт с прокачкой). */
+  /** Сброс мастерства: комиссия = доля вложенного золота (растёт с прокачкой). */
   passiveRespecCostPct: z.number().min(0).default(0.5),
+  /** Сброс дерева скилов: золото за каждое вложенное очко скилла. */
+  skillRespecCostPerPoint: z.number().int().min(0).default(100),
   /** Размер сетки инвентаря в клетках. */
   inventory: z
     .object({ cols: z.number().int().min(4), rows: z.number().int().min(4) })

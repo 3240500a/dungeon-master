@@ -1,5 +1,5 @@
 import type { App } from '../../core/app.js';
-import type { SkillTreeNode } from '@dm/shared';
+import { skillRespecFee, type SkillTreeNode } from '@dm/shared';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { activeTreeFor } from '../skills-active/allocate.js';
 import { elementOf, elementColor, elementLabel } from './skillIcon.js';
@@ -63,6 +63,22 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
     `Очки скиллов: <b style="color:${COLORS.gold}">${state.save.unspentSkillPoints}</b> · ` +
     `<span style="color:${COLORS.dim}">колесо — зум, перетаскивание — панорама, клик по доступному узлу — вложить очко</span>`;
   body.appendChild(header);
+
+  // Сброс дерева скилов за золото: возвращает ВСЕ очки скиллов, берёт комиссию (за вложенное очко).
+  const ranks = Object.values(state.save.skills).reduce((a, r) => a + (r > 0 ? r : 0), 0);
+  const fee = skillRespecFee(app.config, state.save);
+  const reset = mk('button',
+    'margin-bottom:8px;padding:6px 12px;font-size:12px;border-radius:6px;cursor:pointer;' +
+    `border:1px solid ${COLORS.border};background:${COLORS.panel2};color:${COLORS.text}`) as HTMLButtonElement;
+  reset.textContent = `Сбросить скиллы · вернёт ${ranks} очк., комиссия ${fee} зол.`;
+  reset.disabled = ranks === 0 || state.save.gold < fee;
+  if (reset.disabled) { reset.style.opacity = '0.5'; reset.style.cursor = 'default'; }
+  reset.addEventListener('click', () => {
+    if (ranks === 0 || state.save.gold < fee) return;
+    if (!window.confirm(`Сбросить ВСЕ скиллы?\nВернётся ${ranks} очков скиллов, комиссия ${fee} зол.\nБинды скиллов будут очищены.`)) return;
+    app.sendCmd({ cmd: 'respecSkills' });
+  });
+  body.appendChild(reset);
 
   const wrap = mk('div',
     `position:relative;width:100%;height:460px;background:${COLORS.panel2};` +

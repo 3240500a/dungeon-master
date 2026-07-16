@@ -24,9 +24,9 @@
 | inventory | client/src/modules/inventory | items.base | item:picked | state:changed | stats | formulas.test.ts | готово |
 | consumables | client/src/modules/consumables | items.base (kind=consumable, пояс beltSlots) | — | state:changed | — | consumables.test.ts | готово (зелья/колбы + D2-пояс, клавиши 1-4) |
 | classes | client/src/modules/classes | classes | — | — | — | — | готово |
-| skills-active | client/src/modules/skills-active | skills-active (v2: `category` attack/cast/aura/stance/buff + weapon-restrict) | — | state:changed | — | skills.test.ts | готово |
-| skills-passive | client/src/modules/skills-passive | skills-passive, classes (passiveEntries) | — | state:changed | stats | skills.test.ts, townActions.test.ts | готово (v4: ~332 узла, ВЕЕР артерий от 4 входов + ромбы/перемычки/переходы; гейт входов по классу; сброс `respecPassives`; правка в editor/passiveGraph.ts) |
-| skills (panel) | client/src/modules/skills | skills-active, skills-passive | state:changed | state:changed | — | skills.test.ts | готово |
+| skills (аллокация/статы) | client/src/modules/skills-active | skill-tree (единое древо: аллокация по смежности за очки скилла, класс-ветка по classId; статы актив+пассив-узлов) | — | state:changed | — | skills.test.ts | готово (Ф4-6) |
+| mastery (дерево мастерства) | client/src/modules/skills-passive | mastery-tree | — | state:changed | stats | skills.test.ts, townActions.test.ts | готово (v4: ~332 узла, ВЕЕР артерий от 4 входов; **все входы доступны всем** (класс-гейт снят, Ф6); сброс `respecPassives`; editor/passiveGraph.ts) |
+| skills (panel) | client/src/modules/skills | skill-tree | state:changed | state:changed, allocSkill/respecSkills (cmd) | — | skills.test.ts | готово (Ф5-7: РАДИАЛЬНОЕ единое древо `skillTreeView.ts` (пан/зум, квадраты), выносливость в HUD, сброс за золото `respecSkills`) |
 | progression | client/src/modules/progression | balance, classes | monster:died | player:levelup, state:changed | xp, stats | formulas.test.ts | готово |
 | town | client/src/modules/town | items.base, affixes, uniques, dungeons, balance (+ balance.stash) | ui:open | state:changed, gold:changed, stashOpen/stashMove (cmd) | itemgen, economy/stashActions | formulas.test.ts, stashActions.test.ts | готово (+ ОБЩИЙ сундук на аккаунт: 2 вкладки 20×12, кадр `stash`, БД `account_stash`) |
 | quests | client/src/modules/quests (вью) + shared/economy/questLogic (авторитет) | quests.main, quests.random, items.base | — (трекинг на сервере) | log:message | questLogic | questLogic.test.ts | готово |
@@ -34,6 +34,6 @@
 | auth | client/src/modules/auth + server (users/sessions/characters) | classes (для create) | — | — (fetch `/api`) | newCharacterSave, password (scrypt) | password.test.ts, newCharacter.test.ts | готово |
 | sfx | client/src/modules/sfx | — | monster:died, player:damaged, item:picked, gold:changed, player:levelup | — | — | — | готово |
 | server | server/src | balance (xpTable) | WS join/cmd/…, HTTP auth | snapshot/events/saveUpdate/stash/… | saveStateSchema, newCharacterSave, questLogic, stashActions | password.test.ts | готово (+ таблица `account_stash`, `net/accountStash.ts`) |
-| editor | editor/src | все схемы (shared) | — | (BroadcastChannel→config:reloaded) | — | form.test.ts | готово (skills-passive — визуальный граф-редактор passiveGraph.ts: пан/зум/драг, ПКМ создать/удалить/связать) |
+| editor | editor/src | все схемы (shared) | — | (BroadcastChannel→config:reloaded) | — | form.test.ts | готово (граф-редакторы: mastery-tree — `passiveGraph.ts`, skill-tree — `skillGraph.ts` (+«Вид»: Общее/Класс) — пан/зум/драг, ПКМ создать/удалить/связать) |
 
 > Обновляй эту таблицу при каждом изменении модуля (Definition of Done).
