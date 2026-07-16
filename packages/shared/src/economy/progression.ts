@@ -6,7 +6,7 @@ export interface LevelPointsBalance {
   xpTable: number[];
   attributePointsPerLevel: number;
   skillPointsPerLevel: number;
-  passivePointsPerLevel: number;
+  masteryPointsPerLevel: number;
 }
 
 /**
@@ -24,7 +24,7 @@ export function gainXp(save: SaveState, b: LevelPointsBalance, amount: number): 
     save.level += 1;
     save.unspentAttributePoints += b.attributePointsPerLevel;
     save.unspentSkillPoints += b.skillPointsPerLevel;
-    save.unspentPassivePoints += b.passivePointsPerLevel;
+    save.unspentMasteryPoints += b.masteryPointsPerLevel;
     leveled = true;
   }
   return { leveled };

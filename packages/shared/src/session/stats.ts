@@ -40,7 +40,7 @@ export interface BuildSnapshot {
     avgHit: number;
   };
   equipment: EquipSummary[];
-  activeSkills: { id: string; rank: number }[];
+  skills: { id: string; rank: number }[];
   passiveNodes: number;
   passiveRanks: number;
 }
@@ -110,7 +110,7 @@ export function buildSnapshot(reg: ConfigRegistry, save: SaveState): BuildSnapsh
   for (const [slot, item] of Object.entries(save.equipment)) {
     if (item) equipment.push(equipSummary(item, slot));
   }
-  const passiveRanks = Object.values(save.passiveSkills).reduce((a, b) => a + b, 0);
+  const passiveRanks = Object.values(save.masteries).reduce((a, b) => a + b, 0);
   return {
     classId: save.classId,
     level: save.level,
@@ -128,8 +128,8 @@ export function buildSnapshot(reg: ConfigRegistry, save: SaveState): BuildSnapsh
       avgHit: Math.round(avgHit * 10) / 10,
     },
     equipment,
-    activeSkills: Object.entries(save.activeSkills).filter(([, r]) => r > 0).map(([id, rank]) => ({ id, rank })),
-    passiveNodes: Object.values(save.passiveSkills).filter((r) => r > 0).length,
+    skills: Object.entries(save.skills).filter(([, r]) => r > 0).map(([id, rank]) => ({ id, rank })),
+    passiveNodes: Object.values(save.masteries).filter((r) => r > 0).length,
     passiveRanks,
   };
 }

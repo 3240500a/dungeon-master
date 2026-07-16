@@ -511,7 +511,7 @@ describe('GameSession — сет-бонус брони (фаза C)', () => {
     });
     const s = new GameSession(r, 40, 'normal');
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
-    p.save.activeSkills['t_set'] = 1; // узел вложен (ранг 1)
+    p.save.skills['t_set'] = 1; // узел вложен (ранг 1)
     s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
 
     s.tick(1 / 30, { p1: idle });
@@ -537,9 +537,11 @@ describe('GameSession — контент Заступника (фаза D)', () 
     const cls = r.get('classes').find((c) => c.id === 'zastupnik');
     expect(cls).toBeDefined();
     expect(cls!.affinity).toEqual(expect.arrayContaining(['undead', 'demon']));
-    const tree = r.get('skills-active').find((t) => t.classId === 'zastupnik');
-    expect(tree).toBeDefined();
-    expect(tree!.nodes.length).toBeGreaterThanOrEqual(28);
+    const tree = r.get('skill-tree');
+    const branch = tree.branches.find((b) => b.classId === 'zastupnik');
+    expect(branch).toBeDefined();
+    const nodes = tree.nodes.filter((n) => n.branchId === branch!.id);
+    expect(nodes.length).toBeGreaterThanOrEqual(8);
   });
 
   it('«Пламенный удар» Заступника кастуется движком и добивает нежить', () => {
@@ -592,7 +594,7 @@ describe('GameSession — реактивные мастерства (тригг�
     injectMastery(r, 'warrior', 'm_refl', { triggers: [{ on: 'hit-taken', effect: { reflectPct: 0.5, reflectElement: 'fire' } }] });
     const s = new GameSession(r, 42, 'normal');
     const save = newBotSave(r, 'warrior');
-    save.activeSkills['m_refl'] = 1;
+    save.skills['m_refl'] = 1;
     const p = s.addPlayer('p1', save);
     const mp = cellToWorld(7, 6);
     const def = generateMonster(r.get('monsters'), r.get('monster-affixes'),
@@ -616,7 +618,7 @@ describe('GameSession — реактивные мастерства (тригг�
       injectMastery(r, 'warrior', 'm_bane', { triggers: [{ on: 'hit-dealt', condition: { targetFaction: 'undead' }, effect: { bonusDamagePct: 5 } }] });
       const s = new GameSession(r, 99, 'normal');
       const save = newBotSave(r, 'warrior');
-      if (rank > 0) save.activeSkills['m_bane'] = rank;
+      if (rank > 0) save.skills['m_bane'] = rank;
       const p = s.addPlayer('p1', save);
       const mp = cellToWorld(7, 6);
       s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [tankMon(r, mp.x, mp.y, 'undead')] });

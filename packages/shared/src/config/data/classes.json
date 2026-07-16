@@ -9,15 +9,10 @@
       "vitality": 15
     },
     "startWeaponId": "hand-axe",
-    "activeTreeId": "warrior",
     "sprite": "player-volkodav",
     "affinity": [
       "beast",
       "monster"
-    ],
-    "passiveEntries": [
-      "p-str",
-      "p-vit"
     ],
     "derived": {
       "hpBase": 0,
@@ -39,15 +34,10 @@
       "vitality": 10
     },
     "startWeaponId": "apprentice-wand",
-    "activeTreeId": "mage",
     "sprite": "player-mage",
     "affinity": [
       "undead",
       "demon"
-    ],
-    "passiveEntries": [
-      "p-int",
-      "p-vit"
     ],
     "derived": {
       "hpBase": 0,
@@ -69,15 +59,10 @@
       "vitality": 13
     },
     "startWeaponId": "short-bow",
-    "activeTreeId": "archer",
     "sprite": "player-archer",
     "affinity": [
       "beast",
       "monster"
-    ],
-    "passiveEntries": [
-      "p-dex",
-      "p-int"
     ],
     "derived": {
       "hpBase": 0,
@@ -99,15 +84,10 @@
       "vitality": 15
     },
     "startWeaponId": "mace",
-    "activeTreeId": "zastupnik",
     "sprite": "player-warrior",
     "affinity": [
       "undead",
       "demon"
-    ],
-    "passiveEntries": [
-      "p-str",
-      "p-vit"
     ],
     "derived": {
       "hpBase": 0,
@@ -129,15 +109,10 @@
       "vitality": 13
     },
     "startWeaponId": "short-sword",
-    "activeTreeId": "vyuga",
     "sprite": "player-vyuga",
     "affinity": [
       "beast",
       "monster"
-    ],
-    "passiveEntries": [
-      "p-str",
-      "p-dex"
     ],
     "derived": {
       "hpBase": 0,
@@ -159,15 +134,10 @@
       "vitality": 13
     },
     "startWeaponId": "crossbow",
-    "activeTreeId": "arbalest",
     "sprite": "player-arbalest",
     "affinity": [
       "undead",
       "demon"
-    ],
-    "passiveEntries": [
-      "p-dex",
-      "p-vit"
     ],
     "derived": {
       "hpBase": 0,
@@ -189,15 +159,10 @@
       "vitality": 12
     },
     "startWeaponId": "dagger",
-    "activeTreeId": "vorozheya",
     "sprite": "player-vorozheya",
     "affinity": [
       "beast",
       "monster"
-    ],
-    "passiveEntries": [
-      "p-int",
-      "p-dex"
     ],
     "derived": {
       "hpBase": 0,

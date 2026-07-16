@@ -4,7 +4,7 @@ import { passiveEntriesFor, type PassiveSkillTree } from '@dm/shared';
 import type { AllocResult } from '../skills-active/allocate.js';
 
 function rankOf(state: GameState, nodeId: string): number {
-  return state.save.passiveSkills[nodeId] ?? 0;
+  return state.save.masteries[nodeId] ?? 0;
 }
 
 /** Соседи узла по неориентированным рёбрам. */
@@ -41,7 +41,7 @@ export function passiveNodeCost(baseAmount: number, currentRank: number, mult: n
 /**
  * Вкладывает ранг в пассивный узел общего дерева. Стоимость — ЗОЛОТО (растёт
  * геометрически с рангом, balance.passiveRankCostMult) + 1 ОЧКО пассивов
- * (unspentPassivePoints, 2/уровень). Правило — смежность (входной или сосед уже
+ * (unspentMasteryPoints, 2/уровень). Правило — смежность (входной или сосед уже
  * вложен). Модификаторы применяются через GameState.derived() (passiveStats.ts).
  */
 export function allocatePassive(
@@ -49,7 +49,7 @@ export function allocatePassive(
   state: GameState,
   nodeId: string,
 ): AllocResult {
-  const tree = app.config.get('skills-passive');
+  const tree = app.config.get('mastery-tree');
   const node = tree.nodes.find((n) => n.id === nodeId);
   if (!node) return { ok: false, reason: 'Узел не найден' };
 
@@ -58,14 +58,14 @@ export function allocatePassive(
   if (!isAllocatable(tree, state, nodeId, passiveEntriesFor(app.config, state.save)))
     return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'gold') return { ok: false, reason: 'Неверный тип стоимости' };
-  if (state.save.unspentPassivePoints < 1) return { ok: false, reason: 'Нет очков пассивов' };
+  if (state.save.unspentMasteryPoints < 1) return { ok: false, reason: 'Нет очков мастерства' };
 
   const mult = app.config.get('balance').passiveRankCostMult;
   const cost = passiveNodeCost(node.cost.amount, rank, mult);
   if (state.save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
 
   state.save.gold -= cost;
-  state.save.unspentPassivePoints -= 1;
-  state.save.passiveSkills[nodeId] = rank + 1;
+  state.save.unspentMasteryPoints -= 1;
+  state.save.masteries[nodeId] = rank + 1;
   return { ok: true };
 }

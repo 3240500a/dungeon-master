@@ -36,9 +36,9 @@ export function playerModifiers(save: SaveState, cfg: ConfigRegistry): StatModif
   const eq = equippedItems(save);
   const mods = modifiersFromItems(eq);
   mods.push(...armorClassModifiers(eq, cfg.get('armor-classes')));
-  mods.push(...passiveTreeModifiers(cfg.get('skills-passive'), save.passiveSkills));
-  mods.push(...skillTreeModifiers(cfg.get('skill-tree'), save.activeSkills));
-  mods.push(...skillTreeSetBonus(cfg.get('skill-tree'), save.activeSkills, eq));
+  mods.push(...passiveTreeModifiers(cfg.get('mastery-tree'), save.masteries));
+  mods.push(...skillTreeModifiers(cfg.get('skill-tree'), save.skills));
+  mods.push(...skillTreeSetBonus(cfg.get('skill-tree'), save.skills, eq));
   return mods;
 }
 
@@ -54,6 +54,6 @@ export function playerSnapshot(save: SaveState, cfg: ConfigRegistry, extraMods: 
   const derived = deriveStats(save.attributes, modifiers, scaling, save.level);
   const attrs = finalAttributes(save.attributes, modifiers);
   const combat = combatStatsOf(derived, save.level);
-  const triggers = skillTreeTriggers(cfg.get('skill-tree'), save.activeSkills);
+  const triggers = skillTreeTriggers(cfg.get('skill-tree'), save.skills);
   return { modifiers, derived, attrs, combat, triggers };
 }

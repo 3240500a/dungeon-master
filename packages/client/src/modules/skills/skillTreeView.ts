@@ -51,7 +51,7 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
   const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
   const edges = tree.edges.filter(([a, b]) => nodeById.has(a) && nodeById.has(b));
 
-  const rankOf = (id: string): number => state.save.activeSkills[id] ?? 0;
+  const rankOf = (id: string): number => state.save.skills[id] ?? 0;
   const neighbors = (id: string): string[] =>
     edges.flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : []));
   const entrySet = new Set(tree.entryNodes);

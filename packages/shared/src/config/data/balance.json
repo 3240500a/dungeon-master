@@ -94,7 +94,7 @@
   ],
   "attributePointsPerLevel": 5,
   "skillPointsPerLevel": 1,
-  "passivePointsPerLevel": 2,
+  "masteryPointsPerLevel": 2,
   "monsterXpGrowth": 0.2,
   "championXpMult": 3,
   "monsterScaling": {

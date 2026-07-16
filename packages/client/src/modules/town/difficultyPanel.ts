@@ -19,7 +19,7 @@ export const difficultyPanel: PanelFactory = (app, ui) => {
       const head = mk('div', 'margin-bottom:12px;font-size:13px');
       head.innerHTML =
         `Мощь персонажа: <b style="color:${COLORS.gold}">${pw.total}</b> ` +
-        `<span style="color:${COLORS.dim}">(ур. ${pw.level} + гир +${pw.gearBonus} + пассивы +${pw.passiveBonus})</span><br>` +
+        `<span style="color:${COLORS.dim}">(ур. ${pw.level} + гир +${pw.gearBonus} + мастерства +${pw.passiveBonus})</span><br>` +
         `<span style="color:${COLORS.dim}">Чем выше сложность, тем сильнее монстры и жирнее награда.</span>`;
       body.append(head);
 

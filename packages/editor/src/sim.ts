@@ -198,7 +198,7 @@ function renderRunReport(r: RunReport, ms: number, rarities: { id: string; color
     <div style="border-top:1px solid #2c2c3a;margin:12px 0 8px;padding-top:8px;color:#b8b8c8;font-weight:bold">Финальный билд</div>
     <div style="font-size:13px;margin:4px 0">${attrRow}</div>
     ${derived}
-    <div style="font-size:12px;color:#8a8a9a;margin:6px 0">Активок: ${b.activeSkills.length} · пассив-узлов: ${b.passiveNodes} (рангов ${b.passiveRanks})</div>
+    <div style="font-size:12px;color:#8a8a9a;margin:6px 0">Активок: ${b.skills.length} · пассив-узлов: ${b.passiveNodes} (рангов ${b.passiveRanks})</div>
     <div style="border-top:1px solid #2c2c3a;margin:8px 0;padding-top:6px">${equip}</div>
     <div style="border-top:1px solid #2c2c3a;margin:12px 0 8px;padding-top:8px;color:#b8b8c8;font-weight:bold">Кривая прокачки</div>
     ${runCurveSvg(r.levelCurve)}`;

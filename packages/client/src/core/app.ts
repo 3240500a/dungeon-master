@@ -145,9 +145,9 @@ export class App {
     if (value) {
       // Подключаем поставщиков модификаторов от деревьев скиллов.
       value.passiveModsProvider = () =>
-        passiveModifiers(this.config, value.save.passiveSkills);
+        passiveModifiers(this.config, value.save.masteries);
       value.activeModsProvider = () =>
-        activeModifiers(this.config, value.save.activeSkills);
+        activeModifiers(this.config, value.save.skills);
       value.armorClassesProvider = () => this.config.get('armor-classes');
       value.derivedScalingProvider = () =>
         this.config.get('classes').find((c) => c.id === value.save.classId)?.derived

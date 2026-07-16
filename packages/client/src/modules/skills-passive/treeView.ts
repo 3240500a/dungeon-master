@@ -28,28 +28,28 @@ function svg<K extends keyof SVGElementTagNameMap>(
  */
 export function renderPassiveTree(app: App, body: HTMLElement): void {
   const state = app.state!;
-  const tree = app.config.get('skills-passive');
+  const tree = app.config.get('mastery-tree');
 
   const header = mk('div', 'margin-bottom:8px;font-size:13px');
   header.innerHTML =
-    `Очки пассивов: <b style="color:${COLORS.accent}">${state.save.unspentPassivePoints}</b> · ` +
+    `Очки мастерства: <b style="color:${COLORS.accent}">${state.save.unspentMasteryPoints}</b> · ` +
     `Золото: <b style="color:${COLORS.gold}">${state.save.gold}</b> · ` +
     `<span style="color:${COLORS.dim}">колесо — зум, перетаскивание — панорама, клик по доступному узлу — прокачать (очко + золото)</span>`;
   body.appendChild(header);
 
   // Сброс пассивов: возвращает очки (Σ рангов), НЕ возвращает вложенное золото; комиссия
   // растёт с прокачкой (доля вложенного, `balance.passiveRespecCostPct`).
-  const ranks = Object.values(state.save.passiveSkills).reduce((a, r) => a + (r > 0 ? r : 0), 0);
+  const ranks = Object.values(state.save.masteries).reduce((a, r) => a + (r > 0 ? r : 0), 0);
   const fee = passiveRespecFee(app.config, state.save);
   const reset = mk('button',
     'margin-bottom:8px;padding:6px 12px;font-size:12px;border-radius:6px;cursor:pointer;' +
     `border:1px solid ${COLORS.border};background:${COLORS.panel2};color:${COLORS.text}`) as HTMLButtonElement;
-  reset.textContent = `Сбросить пассивы · вернёт ${ranks} очк., комиссия ${fee} зол.`;
+  reset.textContent = `Сбросить мастерства · вернёт ${ranks} очк., комиссия ${fee} зол.`;
   reset.disabled = ranks === 0 || state.save.gold < fee;
   if (reset.disabled) { reset.style.opacity = '0.5'; reset.style.cursor = 'default'; }
   reset.addEventListener('click', () => {
     if (ranks === 0 || state.save.gold < fee) return;
-    if (!window.confirm(`Сбросить ВСЕ пассивы?\nВернётся ${ranks} очков пассивов.\nЗолото за узлы НЕ возвращается, комиссия: ${fee} зол.`)) return;
+    if (!window.confirm(`Сбросить ВСЕ мастерства?\nВернётся ${ranks} очков мастерства.\nЗолото за узлы НЕ возвращается, комиссия: ${fee} зол.`)) return;
     app.sendCmd({ cmd: 'respecPassives' });
   });
   body.appendChild(reset);
@@ -91,7 +91,7 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
     const na = nodeById.get(a);
     const nb = nodeById.get(b);
     if (!na || !nb) continue;
-    const bothOn = (state.save.passiveSkills[a] ?? 0) > 0 && (state.save.passiveSkills[b] ?? 0) > 0;
+    const bothOn = (state.save.masteries[a] ?? 0) > 0 && (state.save.masteries[b] ?? 0) > 0;
     const line = svg('line', {
       x1: na.x, y1: na.y, x2: nb.x, y2: nb.y,
       stroke: bothOn ? '#8aa84a' : '#3e4756',
@@ -105,7 +105,7 @@ export function renderPassiveTree(app: App, body: HTMLElement): void {
 
   // Узлы.
   for (const node of tree.nodes) {
-    const rank = state.save.passiveSkills[node.id] ?? 0;
+    const rank = state.save.masteries[node.id] ?? 0;
     const allocated = rank > 0;
     const available = !allocated && isAllocatable(tree, state, node.id, allowedEntries);
     const isEntry = tree.entryNodes.includes(node.id);

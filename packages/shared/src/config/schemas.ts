@@ -35,7 +35,7 @@ export const balanceSchema = z.object({
   attributePointsPerLevel: z.number().int().min(0),
   skillPointsPerLevel: z.number().int().min(0),
   /** Очки пассивных навыков за уровень (пассивы тратят и золото, и эти очки). */
-  passivePointsPerLevel: z.number().int().min(0).default(2),
+  masteryPointsPerLevel: z.number().int().min(0).default(2),
   /** Прирост опыта монстра за уровень: xp = base.xp × (1 + level × growth). */
   monsterXpGrowth: z.number().min(0).default(0.2),
   /** Множитель опыта за чемпионов/уников. */
@@ -249,17 +249,10 @@ export const classesSchema = z.array(
     name: z.string(),
     startAttributes: attributesSchema,
     startWeaponId: z.string(),
-    activeTreeId: z.string(),
     sprite: z.string(),
     /** Фракции, против которых класс силён (аффинити: +affinityDamageBonus урона). */
     affinity: z.array(z.enum(['undead', 'demon', 'beast', 'monster'])).default([]),
-    /**
-     * Доступные ВХОДЫ пассивного древа (id узлов-входов, обычно 2). Класс может начинать
-     * прокачку только с них; остальное — по смежности (в т.ч. переходы в соседние ветви).
-     * Пусто = доступны ВСЕ входы (без ограничения).
-     */
-    passiveEntries: z.array(z.string()).default([]),
-    /** Масштаб пулов HP/маны этого класса (от выносливости/интеллекта и уровня). */
+    /** Масштаб пулов HP/маны/выносливости этого класса (от атрибутов и уровня). */
     derived: hpManaScalingSchema,
   }),
 );
@@ -948,8 +941,7 @@ export const configSchemas = {
   'weapon-weights': weaponWeightsSchema,
   'damage-types': damageTypesSchema,
   rarities: raritiesSchema,
-  'skills-active': skillsActiveSchema,
-  'skills-passive': skillsPassiveSchema,
+  'mastery-tree': skillsPassiveSchema,
   'skill-tree': skillTreeSchema,
   'quests.main': questsMainSchema,
   'quests.random': questsRandomSchema,

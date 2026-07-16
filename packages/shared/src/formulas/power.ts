@@ -35,7 +35,7 @@ export function effectiveLevel(save: SaveState, cfg: PowerConfig): PowerBreakdow
   const gearBonus = Math.min(cfg.gearMax, Math.round(gearRaw / cfg.gearDivisor));
 
   let ranks = 0;
-  for (const r of Object.values(save.passiveSkills)) ranks += r;
+  for (const r of Object.values(save.masteries)) ranks += r;
   const passiveBonus = Math.min(cfg.passiveMax, Math.round(ranks / cfg.passiveDivisor));
 
   return { level, gearBonus, passiveBonus, total: level + gearBonus + passiveBonus };

@@ -173,17 +173,17 @@ export function allocActive(reg: ConfigRegistry, save: SaveState, nodeId: string
   if (!node) return { ok: false, reason: 'Узел не найден' };
   const branch = tree.branches.find((b) => b.id === node.branchId);
   if (branch?.classId && branch.classId !== save.classId) return { ok: false, reason: 'Ветка другого класса' };
-  const rank = save.activeSkills[nodeId] ?? 0;
+  const rank = save.skills[nodeId] ?? 0;
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
   if (save.level < node.levelReq) return { ok: false, reason: `Требуется уровень ${node.levelReq}` };
   // Доступность по смежности: вход ветки, уже вложен, или сосед вложен.
   const allocatable = rank > 0 || tree.entryNodes.includes(nodeId)
-    || skillNeighbors(tree, nodeId).some((n) => (save.activeSkills[n] ?? 0) > 0);
+    || skillNeighbors(tree, nodeId).some((n) => (save.skills[n] ?? 0) > 0);
   if (!allocatable) return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'points') return { ok: false, reason: 'Неверный тип стоимости' };
   if (save.unspentSkillPoints < node.cost.amount) return { ok: false, reason: 'Недостаточно очков скиллов' };
   save.unspentSkillPoints -= node.cost.amount;
-  save.activeSkills[nodeId] = rank + 1;
+  save.skills[nodeId] = rank + 1;
   if (rank === 0 && node.effect.active) {
     const slot = save.hotbar.findIndex((s) => s === null);
     if (slot >= 0) save.hotbar[slot] = nodeId;
@@ -192,7 +192,7 @@ export function allocActive(reg: ConfigRegistry, save: SaveState, nodeId: string
 }
 
 // ── Пассивы (золото ×2/ранг + очки пассивов) ──────────────────────────────────
-function passiveNeighbors(tree: ConfigShapes['skills-passive'], id: string): string[] {
+function passiveNeighbors(tree: ConfigShapes['mastery-tree'], id: string): string[] {
   const out: string[] = [];
   for (const [a, b] of tree.edges) { if (a === id) out.push(b); else if (b === id) out.push(a); }
   return out;
@@ -226,46 +226,42 @@ export function moveToBelt(save: SaveState, uid: string): ActionResult {
 }
 
 /**
- * Доступные ВХОДЫ пассивного древа для класса персонажа. `class.passiveEntries` (2 id) —
- * с них класс может начинать; ПУСТО (или класс не найден) = доступны ВСЕ входы (без ограничения).
- * Возвращает только реально существующие в дереве id.
+ * Входы дерева мастерства. Класс-гейт снят (Ф6): все входы доступны всем классам —
+ * прокачка стартует с любого входа, дальше по смежности. Параметр `save` оставлен для
+ * совместимости сигнатуры вызовов.
  */
-export function passiveEntriesFor(reg: ConfigRegistry, save: SaveState): string[] {
-  const tree = reg.get('skills-passive');
-  const cls = reg.get('classes').find((c) => c.id === save.classId);
-  const allowed = cls?.passiveEntries ?? [];
-  if (!allowed.length) return tree.entryNodes;
-  return tree.entryNodes.filter((e) => allowed.includes(e));
+export function passiveEntriesFor(reg: ConfigRegistry, _save?: SaveState): string[] {
+  return reg.get('mastery-tree').entryNodes;
 }
 
 export function allocPassive(reg: ConfigRegistry, save: SaveState, nodeId: string): ActionResult {
-  const tree = reg.get('skills-passive');
+  const tree = reg.get('mastery-tree');
   const node = tree.nodes.find((n) => n.id === nodeId);
   if (!node) return { ok: false, reason: 'Узел не найден' };
-  const rank = save.passiveSkills[nodeId] ?? 0;
+  const rank = save.masteries[nodeId] ?? 0;
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
   // Вход доступен только своему классу; прочее — по смежности (переходы дают край соседней ветви).
   const entries = passiveEntriesFor(reg, save);
   const allocatable = rank > 0 || entries.includes(nodeId)
-    || passiveNeighbors(tree, nodeId).some((n) => (save.passiveSkills[n] ?? 0) > 0);
+    || passiveNeighbors(tree, nodeId).some((n) => (save.masteries[n] ?? 0) > 0);
   if (!allocatable) return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'gold') return { ok: false, reason: 'Неверный тип стоимости' };
-  if (save.unspentPassivePoints < 1) return { ok: false, reason: 'Нет очков пассивов' };
+  if (save.unspentMasteryPoints < 1) return { ok: false, reason: 'Нет очков мастерства' };
   const mult = reg.get('balance').passiveRankCostMult;
   const cost = Math.round(node.cost.amount * Math.pow(mult, rank));
   if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
   save.gold -= cost;
-  save.unspentPassivePoints -= 1;
-  save.passiveSkills[nodeId] = rank + 1;
+  save.unspentMasteryPoints -= 1;
+  save.masteries[nodeId] = rank + 1;
   return { ok: true };
 }
 
 /** Суммарное золото, реально вложенное в текущие пассивы (Σ гео-цен всех вложенных рангов). */
 export function passiveInvestedGold(reg: ConfigRegistry, save: SaveState): number {
-  const tree = reg.get('skills-passive');
+  const tree = reg.get('mastery-tree');
   const mult = reg.get('balance').passiveRankCostMult;
   let gold = 0;
-  for (const [id, rank] of Object.entries(save.passiveSkills)) {
+  for (const [id, rank] of Object.entries(save.masteries)) {
     const node = tree.nodes.find((n) => n.id === id);
     if (!node || rank <= 0) continue;
     for (let r = 0; r < rank; r++) gold += Math.round(node.cost.amount * Math.pow(mult, r));
@@ -282,16 +278,16 @@ export function passiveRespecFee(reg: ConfigRegistry, save: SaveState): number {
  * Сбрасывает ВСЕ пассивы за золото. Комиссия растёт с прокачкой (доля вложенного золота —
  * чтобы поздняя игра с миллионами не делала сброс копеечным). Возвращает ТОЛЬКО очки пассивов
  * (Σ рангов, в т.ч. за осиротевшие после регенерации дерева узлы), потраченное на узлы золото
- * НЕ возвращает. Заодно чистит осиротевшие аллокации (`passiveSkills` обнуляется целиком).
+ * НЕ возвращает. Заодно чистит осиротевшие аллокации (`masteries` обнуляется целиком).
  */
 export function respecPassives(reg: ConfigRegistry, save: SaveState): ActionResult {
   let ranks = 0;
-  for (const rank of Object.values(save.passiveSkills)) if (rank > 0) ranks += rank;
-  if (ranks === 0) return { ok: false, reason: 'Пассивы не вложены' };
+  for (const rank of Object.values(save.masteries)) if (rank > 0) ranks += rank;
+  if (ranks === 0) return { ok: false, reason: 'Мастерства не вложены' };
   const fee = passiveRespecFee(reg, save);
   if (save.gold < fee) return { ok: false, reason: `Нужно ${fee} золота на сброс` };
   save.gold -= fee;
-  save.unspentPassivePoints += ranks;
-  save.passiveSkills = {};
+  save.unspentMasteryPoints += ranks;
+  save.masteries = {};
   return { ok: true };
 }

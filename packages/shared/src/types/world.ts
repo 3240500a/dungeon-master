@@ -11,8 +11,6 @@ export interface ClassDef {
   name: string;
   startAttributes: Attributes;
   startWeaponId: string;
-  /** id активного дерева скиллов этого класса. */
-  activeTreeId: string;
   sprite: string;
   /** Фракции, против которых класс силён (+% урона по аффинити). */
   affinity: MonsterFaction[];

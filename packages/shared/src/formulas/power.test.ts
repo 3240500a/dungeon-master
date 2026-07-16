@@ -28,7 +28,7 @@ function mkItem(rarity: Rarity, itemLevel: number): Item {
 
 function mkSave(over: Partial<SaveState>): SaveState {
   return {
-    level: 10, equipment: {}, passiveSkills: {}, attributes: {} as SaveState['attributes'],
+    level: 10, equipment: {}, masteries: {}, attributes: {} as SaveState['attributes'],
     ...over,
   } as unknown as SaveState;
 }
@@ -57,10 +57,10 @@ describe('effectiveLevel', () => {
   });
 
   it('пассивы дают бонус в пределах каппа', () => {
-    const p = effectiveLevel(mkSave({ level: 10, passiveSkills: { a: 8, b: 8 } }), powerCfg);
+    const p = effectiveLevel(mkSave({ level: 10, masteries: { a: 8, b: 8 } }), powerCfg);
     expect(p.passiveBonus).toBeGreaterThan(0);
     const capped: PowerConfig = { ...powerCfg, passiveMax: 1 };
-    expect(effectiveLevel(mkSave({ level: 10, passiveSkills: { a: 999 } }), capped).passiveBonus).toBe(1);
+    expect(effectiveLevel(mkSave({ level: 10, masteries: { a: 999 } }), capped).passiveBonus).toBe(1);
   });
 });
 

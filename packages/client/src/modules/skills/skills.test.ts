@@ -19,9 +19,9 @@ function makeState(): GameState {
     attributes: { strength: 20, dexterity: 15, intelligence: 10, vitality: 20 },
     unspentAttributePoints: 0,
     unspentSkillPoints: 5,
-    unspentPassivePoints: 5,
-    activeSkills: {},
-    passiveSkills: {},
+    unspentMasteryPoints: 5,
+    skills: {},
+    masteries: {},
     belt: [],
     equipment: {},
     inventory: [],
@@ -36,7 +36,7 @@ function makeState(): GameState {
     lastDifficulty: 'normal',
   };
   const state = new GameState(save);
-  state.passiveModsProvider = () => passiveModifiers(reg, state.save.passiveSkills);
+  state.passiveModsProvider = () => passiveModifiers(reg, state.save.masteries);
   return state;
 }
 
@@ -55,7 +55,7 @@ describe('активные скиллы (единое древо, смежнос
   it('вход ветки качается за очки', () => {
     const res = allocateActive(reg, state, entry);
     expect(res.ok).toBe(true);
-    expect(state.save.activeSkills[entry]).toBe(1);
+    expect(state.save.skills[entry]).toBe(1);
     expect(state.save.unspentSkillPoints).toBe(4);
   });
 
@@ -85,19 +85,19 @@ describe('активные скиллы (единое древо, смежнос
 describe('пассивные скиллы (граф со смежностью)', () => {
   it('качается только по смежности, за золото, и модифицирует статы', () => {
     const state = makeState(); // gold 2000
-    const tree = reg.get('skills-passive');
+    const tree = reg.get('mastery-tree');
     const nbrs = (id: string): string[] => tree.edges.flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : []));
     // Вход, его сосед (1 хоп) и узел в 2 хопах (не смежен входу) — id-независимо.
     const entry = tree.entryNodes[0]!;
     const nb1 = nbrs(entry)[0]!;
     const nb2 = nbrs(nb1).find((id) => id !== entry && !nbrs(entry).includes(id))!;
-    expect(passiveModifiers(reg, state.save.passiveSkills).length).toBe(0);
+    expect(passiveModifiers(reg, state.save.masteries).length).toBe(0);
 
     expect(allocatePassive(appStub, state, nb2).ok).toBe(false); // 2 хопа — без пути нельзя
     expect(allocatePassive(appStub, state, entry).ok).toBe(true); // вход открыт всегда
     expect(allocatePassive(appStub, state, nb1).ok).toBe(true);   // сосед входа
     expect(allocatePassive(appStub, state, nb2).ok).toBe(true);   // теперь путь есть
-    expect(passiveModifiers(reg, state.save.passiveSkills).length).toBeGreaterThan(0);
+    expect(passiveModifiers(reg, state.save.masteries).length).toBeGreaterThan(0);
   });
 
   it('без золота прокачать нельзя', () => {

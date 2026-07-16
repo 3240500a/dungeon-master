@@ -150,17 +150,17 @@ function allocateActivePoints(reg: ConfigRegistry, save: SaveState, _policy: Bui
     return !br?.classId || br.classId === save.classId;
   };
   const allocatable = (n: (typeof tree.nodes)[number]): boolean => {
-    const rank = save.activeSkills[n.id] ?? 0;
+    const rank = save.skills[n.id] ?? 0;
     if (rank >= n.maxRank || n.levelReq > save.level || n.cost.amount > save.unspentSkillPoints) return false;
     if (!usableClass(n.branchId)) return false;
-    return rank > 0 || tree.entryNodes.includes(n.id) || neighbors(n.id).some((x) => (save.activeSkills[x] ?? 0) > 0);
+    return rank > 0 || tree.entryNodes.includes(n.id) || neighbors(n.id).some((x) => (save.skills[x] ?? 0) > 0);
   };
   for (let guard = 0; guard < 500 && save.unspentSkillPoints > 0; guard++) {
     const cands = tree.nodes.filter(allocatable);
     if (!cands.length) break;
-    cands.sort((a, b) => a.levelReq - b.levelReq || (save.activeSkills[a.id] ?? 0) - (save.activeSkills[b.id] ?? 0));
+    cands.sort((a, b) => a.levelReq - b.levelReq || (save.skills[a.id] ?? 0) - (save.skills[b.id] ?? 0));
     const node = cands[0]!;
-    save.activeSkills[node.id] = (save.activeSkills[node.id] ?? 0) + 1;
+    save.skills[node.id] = (save.skills[node.id] ?? 0) + 1;
     save.unspentSkillPoints -= node.cost.amount;
   }
 }
@@ -176,24 +176,24 @@ function neighborMap(edges: readonly (readonly [string, string])[]): Map<string,
 
 /** Тратит очки пассивов + золото жадно (польза/цена), уважая смежность и резерв на магазин. */
 function allocatePassives(reg: ConfigRegistry, save: SaveState, policy: BuildPolicy, rng: Rng): void {
-  const tree = reg.get('skills-passive');
+  const tree = reg.get('mastery-tree');
   const mult = reg.get('balance').passiveRankCostMult;
   const nbr = neighborMap(tree.edges);
   const byId = new Map(tree.nodes.map((n) => [n.id, n]));
   const unlocked = new Set<string>(tree.entryNodes);
-  for (const [id, r] of Object.entries(save.passiveSkills)) {
+  for (const [id, r] of Object.entries(save.masteries)) {
     if (r > 0) { unlocked.add(id); for (const n of nbr.get(id) ?? []) unlocked.add(n); }
   }
   const reserve = 60 + save.level * 12; // держим золото на магазин
   void rng;
 
-  for (let guard = 0; guard < 1000 && save.unspentPassivePoints > 0; guard++) {
+  for (let guard = 0; guard < 1000 && save.unspentMasteryPoints > 0; guard++) {
     let best: { id: string; cost: number } | null = null;
     let bestVal = 0;
     for (const id of unlocked) {
       const node = byId.get(id);
       if (!node) continue;
-      const rank = save.passiveSkills[id] ?? 0;
+      const rank = save.masteries[id] ?? 0;
       if (rank >= node.maxRank) continue;
       const cost = Math.round(node.cost.amount * Math.pow(mult, rank));
       if (save.gold - cost < reserve) continue;
@@ -201,9 +201,9 @@ function allocatePassives(reg: ConfigRegistry, save: SaveState, policy: BuildPol
       if (val > bestVal) { bestVal = val; best = { id, cost }; }
     }
     if (!best) break;
-    save.passiveSkills[best.id] = (save.passiveSkills[best.id] ?? 0) + 1;
+    save.masteries[best.id] = (save.masteries[best.id] ?? 0) + 1;
     save.gold -= best.cost;
-    save.unspentPassivePoints -= 1;
+    save.unspentMasteryPoints -= 1;
     for (const n of nbr.get(best.id) ?? []) unlocked.add(n);
   }
 }

@@ -26,8 +26,8 @@ export function newBotSave(reg: ConfigRegistry, classId: string): SaveState {
     name: 'Bot', charId: 'bot', createdAt: 0,
     classId: cls.id, level: 1, xp: 0, gold: 0,
     attributes: { ...cls.startAttributes },
-    unspentAttributePoints: 0, unspentSkillPoints: 0, unspentPassivePoints: 0,
-    activeSkills: {}, passiveSkills: {},
+    unspentAttributePoints: 0, unspentSkillPoints: 0, unspentMasteryPoints: 0,
+    skills: {}, masteries: {},
     equipment, inventory: [], stash: [], belt: [],
     mouseLeft: 'attack', mouseRight: null,
     hotbar: [null, null, null],
@@ -40,8 +40,8 @@ export function newBotSave(reg: ConfigRegistry, classId: string): SaveState {
 export function characterModifiers(reg: ConfigRegistry, save: SaveState): StatModifier[] {
   const equipped = Object.values(save.equipment).filter(Boolean) as Item[];
   const mods = modifiersFromItems(equipped);
-  mods.push(...passiveTreeModifiers(reg.get('skills-passive'), save.passiveSkills));
-  mods.push(...skillTreeModifiers(reg.get('skill-tree'), save.activeSkills));
+  mods.push(...passiveTreeModifiers(reg.get('mastery-tree'), save.masteries));
+  mods.push(...skillTreeModifiers(reg.get('skill-tree'), save.skills));
   return mods;
 }
 
@@ -95,7 +95,7 @@ export function levelUpBotTo(
   if (gained > 0) {
     save.unspentAttributePoints += gained * balance.attributePointsPerLevel;
     save.unspentSkillPoints += gained * balance.skillPointsPerLevel;
-    save.unspentPassivePoints += gained * balance.passivePointsPerLevel;
+    save.unspentMasteryPoints += gained * balance.masteryPointsPerLevel;
     save.level = target;
     save.xp = xpForLevel(target, balance.xpTable);
   }
@@ -135,7 +135,7 @@ function buildSkills(reg: ConfigRegistry, save: SaveState, d: DerivedStats, attr
   const skills: SimSkill[] = [];
   for (const node of tree.nodes) {
     const active = node.effect.active;
-    const rank = save.activeSkills[node.id] ?? 0;
+    const rank = save.skills[node.id] ?? 0;
     if (!active || rank <= 0) continue;
     const aoe = AOE_RE.test(active.abilityId);
     skills.push({

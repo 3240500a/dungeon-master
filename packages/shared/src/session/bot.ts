@@ -36,7 +36,7 @@ export class BotController {
   /** Собирает до 4 выученных активок (с AoE-пометкой) как арсенал бота. */
   syncHotbar(save: SaveState): void {
     const tree = this.cfg.get('skill-tree');
-    const learned = Object.keys(save.activeSkills).filter((id) => (save.activeSkills[id] ?? 0) > 0);
+    const learned = Object.keys(save.skills).filter((id) => (save.skills[id] ?? 0) > 0);
     this.skills = learned.slice(0, 4).map((id) => {
       const aid = tree.nodes.find((n) => n.id === id)?.effect.active?.abilityId;
       return { id, aoe: aid ? isAoeAbility(aid) : false };

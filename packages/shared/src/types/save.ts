@@ -22,9 +22,9 @@ export interface SaveState {
   unspentAttributePoints: number;
   unspentSkillPoints: number;
   /** Нераспределённые очки пассивных навыков (пассивы тратят их + золото). */
-  unspentPassivePoints: number;
-  activeSkills: SkillAllocation;
-  passiveSkills: SkillAllocation;
+  unspentMasteryPoints: number;
+  skills: SkillAllocation;
+  masteries: SkillAllocation;
   /** Экипировка по слотам. */
   equipment: Partial<Record<EquipSlot, Item>>;
   inventory: Item[];
@@ -49,4 +49,4 @@ export interface SaveState {
   lastDifficulty: string;
 }
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;

@@ -25,7 +25,7 @@ function treeModifiers(
 
 /** Модификаторы от вложенных узлов древа мастерства (бывшая пассивка). */
 export function passiveTreeModifiers(
-  tree: ConfigShapes['skills-passive'],
+  tree: ConfigShapes['mastery-tree'],
   allocation: SkillAllocation,
 ): StatModifier[] {
   return treeModifiers(tree.nodes, allocation);

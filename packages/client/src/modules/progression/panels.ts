@@ -206,8 +206,8 @@ export const characterPanel: PanelFactory = (app, ui) => {
       powRow.append(mk('span', `color:${COLORS.dim}`, 'Мощь (эфф. уровень)'));
       powRow.append(mk('span', `font-weight:700;color:${COLORS.gold}`, String(pw.total)));
       attachTooltip(powRow, () =>
-        `Эффективный уровень персонажа = уровень + гир + пассивы.<br>` +
-        `Уровень <b>${pw.level}</b> + гир <b>+${pw.gearBonus}</b> + пассивы <b>+${pw.passiveBonus}</b> = <b>${pw.total}</b>.<br>` +
+        `Эффективный уровень персонажа = уровень + гир + мастерства.<br>` +
+        `Уровень <b>${pw.level}</b> + гир <b>+${pw.gearBonus}</b> + мастерства <b>+${pw.passiveBonus}</b> = <b>${pw.total}</b>.<br>` +
         `Задаёт стартовую сложность подземелья при выборе тира.`);
       body.append(powRow);
 
@@ -228,8 +228,8 @@ export const characterPanel: PanelFactory = (app, ui) => {
         // Тултип раскрывает состав: сколько своя (останется без гира), сколько даёт гир.
         attachTooltip(row, () => {
           const split = gearBonus !== 0
-            ? `Своя (с пассивами): <b>${own}</b> · от гира: <b style="color:#6f9bcf">${gearBonus > 0 ? '+' : ''}${gearBonus}</b> = <b>${effAttrs[attr]}</b>`
-            : `Своя (с пассивами): <b>${own}</b>`;
+            ? `Своя (с мастерствами): <b>${own}</b> · от гира: <b style="color:#6f9bcf">${gearBonus > 0 ? '+' : ''}${gearBonus}</b> = <b>${effAttrs[attr]}</b>`
+            : `Своя (с мастерствами): <b>${own}</b>`;
           return `${split}<br>${tip}`;
         });
         const right = mk('span', 'display:flex;align-items:center;gap:8px');
@@ -313,7 +313,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
           const node = skillTree?.nodes.find((n) => n.id === binding);
           const active = node?.effect.active;
           if (node && active && (active.category === 'attack' || active.category === 'cast')) {
-            const rank = state.save.activeSkills[binding] ?? 1;
+            const rank = state.save.skills[binding] ?? 1;
             const base = estimateWeaponDamage(state, state.save.equipment.weapon, scaling, weights);
             const sdmg = Math.round(base * active.damageMult * abilityRankMult(rank));
             // Атака — темп от скорости атаки; каст — каст-тайм от Интеллекта.
@@ -382,7 +382,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const misc = sheetPanel('Прочее');
       misc.append(statRow('Скор. движения', String(Math.round(d.moveSpeed)),
         `Итоговая скорость перемещения (база 120). Бонусы: ${d.moveSpeed >= 120 ? '+' : ''}${Math.round((d.moveSpeed / 120 - 1) * 100)}%.`));
-      misc.append(statRow('Золото', String(state.save.gold), 'Валюта: магазин, кузница, пассивные скиллы.'));
+      misc.append(statRow('Золото', String(state.save.gold), 'Валюта: магазин, кузница, дерево мастерства.'));
       misc.append(statRow('Макс. глубина', String(state.save.maxDepth), 'Самый глубокий достигнутый этаж.'));
       body.append(misc);
     },
@@ -417,7 +417,7 @@ export const masterPanel: PanelFactory = (app) => {
       body.appendChild(
         tabsBar(
           [
-            ['passive', 'Пассивное дерево'],
+            ['passive', 'Дерево мастерства'],
             ['attributes', 'Атрибуты'],
           ] as const,
           tab,

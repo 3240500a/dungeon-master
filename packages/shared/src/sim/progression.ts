@@ -25,7 +25,7 @@ function grantXpAndLevel(reg: ConfigRegistry, save: SaveState, xp: number, build
   const gained = target - save.level;
   save.unspentAttributePoints += gained * balance.attributePointsPerLevel;
   save.unspentSkillPoints += gained * balance.skillPointsPerLevel;
-  save.unspentPassivePoints += gained * balance.passivePointsPerLevel;
+  save.unspentMasteryPoints += gained * balance.masteryPointsPerLevel;
   save.level = target;
   allocateAttributes(save, classProfileAttr(reg, save.classId), build, rng);
   allocateSkillsAndPassives(reg, save, build, rng);

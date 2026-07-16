@@ -3,7 +3,7 @@
  * плоского списка. Умеет: пан/зум, драг узлов (x/y), ПКМ по пустому → создать узел
  * (малый/крупный), клик по узлу → правка (что даёт / цена / ступени), ПКМ по узлу →
  * удалить / добавить связь, ПКМ по ребру → удалить связь. Мутирует объект конфига
- * НА МЕСТЕ (data['skills-passive']) — тулбар «Применить» валидирует и шлёт как обычно.
+ * НА МЕСТЕ (data['mastery-tree']) — тулбар «Применить» валидирует и шлёт как обычно.
  *
  * Свой рендер (не дёргает глобальный render редактора), чтобы пан/зум/выделение жили
  * между правками. Пере-инициализируется на каждый заход на страницу.
@@ -86,7 +86,7 @@ let selected: string | null = null;
 let linkFrom: string | null = null;   // режим «добавить связь»: узел-источник
 
 export function renderPassiveGraph(page: HTMLElement, data: Record<string, unknown>): void {
-  const tree = data['skills-passive'] as PTree;
+  const tree = data['mastery-tree'] as PTree;
   if (!tree.edges) tree.edges = [];
   if (selected && !tree.nodes.some((n) => n.id === selected)) selected = null;
 

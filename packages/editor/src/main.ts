@@ -28,8 +28,7 @@ const LABELS: Record<ConfigKey, string> = {
   'weapon-weights': 'Веса оружия',
   'damage-types': 'Типы урона',
   rarities: 'Редкости',
-  'skills-active': 'Скиллы: активные',
-  'skills-passive': 'Скиллы: пассивные',
+  'mastery-tree': 'Дерево мастерства',
   'skill-tree': 'Древо скилов',
   'quests.main': 'Квесты: основные',
   'quests.random': 'Квесты: случайные',
@@ -41,13 +40,13 @@ const NAV_GROUPS: { title: string; keys: ConfigKey[] }[] = [
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'armor-classes', 'phys-subtypes', 'weapon-weights', 'damage-types', 'affixes', 'uniques'] },
   { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'packs'] },
   { title: 'Мир', keys: ['dungeons', 'difficulties'] },
-  { title: 'Скиллы', keys: ['skill-tree', 'skills-passive'] },
+  { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
 ];
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
   'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-types': 'Типы урона', 'monster-affixes': 'Аффиксы', packs: 'Пачки',
-  'skill-tree': 'Древо скилов', 'skills-active': 'Активные', 'skills-passive': 'Пассивные',
+  'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
 };
 /** Раскрытые группы навигации (переживают перерисовку). */
@@ -266,7 +265,7 @@ function renderPage(page: HTMLElement): void {
 
   // Древо скилов (общее + класс-ветки по селектору) и древо мастерства — визуальные граф-редакторы.
   if (current === 'skill-tree') { renderSkillGraphPage(page, data); return; }
-  if (current === 'skills-passive') { renderPassiveGraph(page, data); return; }
+  if (current === 'mastery-tree') { renderPassiveGraph(page, data); return; }
 
   if (isArray) renderArrayPage(page, schema._def.type as z.ZodTypeAny);
   else {

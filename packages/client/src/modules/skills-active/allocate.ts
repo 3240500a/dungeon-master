@@ -12,7 +12,7 @@ export function activeTreeFor(config: ConfigRegistry): SkillTree {
 }
 
 function rankOf(state: GameState, nodeId: string): number {
-  return state.save.activeSkills[nodeId] ?? 0;
+  return state.save.skills[nodeId] ?? 0;
 }
 
 function neighbors(tree: SkillTree, id: string): string[] {
@@ -46,7 +46,7 @@ export function allocateActive(
   if (state.save.unspentSkillPoints < node.cost.amount) return { ok: false, reason: 'Недостаточно очков скиллов' };
 
   state.save.unspentSkillPoints -= node.cost.amount;
-  state.save.activeSkills[nodeId] = rank + 1;
+  state.save.skills[nodeId] = rank + 1;
 
   if (rank === 0 && node.effect.active) {
     const slot = state.save.hotbar.findIndex((s) => s === null);

@@ -8,5 +8,5 @@ export function passiveModifiers(
   config: ConfigRegistry,
   allocation: SkillAllocation,
 ): StatModifier[] {
-  return passiveTreeModifiers(config.get('skills-passive'), allocation);
+  return passiveTreeModifiers(config.get('mastery-tree'), allocation);
 }

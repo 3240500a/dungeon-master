@@ -485,7 +485,7 @@ export class GameSession {
     const active = this.activeById(p.save, nodeId);
     if (!active) return;
     if (!this.nodeUsable(p.save, nodeId)) return;      // класс-ветка чужого класса — недоступна
-    const rank = p.save.activeSkills[nodeId] ?? 1;     // выученный ранг (клиент биндит только выученное)
+    const rank = p.save.skills[nodeId] ?? 1;     // выученный ранг (клиент биндит только выученное)
 
     switch (active.category) {
       // Ауры/стойки: вкл/выкл, эксклюзив-группа, резерв пула (мана/выносливость).

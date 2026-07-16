@@ -24,7 +24,7 @@ const SLOTS: SlotDef[] = [
 function learnedSkills(app: App): SkillNode[] {
   const save = app.state!.save;
   const tree = app.config.get('skill-tree');
-  return (tree?.nodes ?? []).filter((n) => (save.activeSkills[n.id] ?? 0) > 0 && n.effect.active);
+  return (tree?.nodes ?? []).filter((n) => (save.skills[n.id] ?? 0) > 0 && n.effect.active);
 }
 
 function nodeById(app: App, id: string): SkillNode | undefined {
@@ -161,7 +161,7 @@ function openDropdown(app: App, anchor: HTMLElement, slot: SlotDef, onChange: ()
 
   menu.append(opt('⚔ Атака', '#e6ddc9', 'attack'));
   for (const n of learnedSkills(app)) {
-    const rank = app.state!.save.activeSkills[n.id] ?? 1;
+    const rank = app.state!.save.skills[n.id] ?? 1;
     menu.append(opt(`${abbrev(n.name)} · ${n.name} (ур.${rank})`, elementColor(elementOf(n)), n.id));
   }
   menu.append(opt('✕ Пусто', '#8f897c', null));

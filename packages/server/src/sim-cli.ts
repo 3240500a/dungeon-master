@@ -52,7 +52,7 @@ function printRunReport(r: RunReport, ms: number): void {
   console.log(`  Атрибуты: ${JSON.stringify(b.attributes)}  (эфф. ${JSON.stringify(b.effectiveAttributes)})`);
   const d = b.derived;
   console.log(`  HP ${d.maxHp} · мана ${d.maxMana} · броня ${d.armor} · уворот ${d.evade} · крит ${d.critChance}% · ск.атк ${d.attackSpeed} · ур/удар ~${d.avgHit}`);
-  console.log(`  Активок: ${b.activeSkills.length} · пассив-узлов: ${b.passiveNodes} (рангов ${b.passiveRanks})`);
+  console.log(`  Активок: ${b.skills.length} · пассив-узлов: ${b.passiveNodes} (рангов ${b.passiveRanks})`);
   console.log(`  Экипировка:`);
   for (const e of b.equipment) {
     const tags = [e.weaponType, e.armorClass, e.weight, e.physSub].filter(Boolean).join('/');
