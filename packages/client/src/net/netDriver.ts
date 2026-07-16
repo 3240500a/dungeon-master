@@ -98,7 +98,7 @@ export class NetDriver {
   private isToggleSkill(nodeId: string): boolean {
     const save = this.app.state?.save;
     if (!save) return false;
-    const tree = this.app.config.get('skills-active').find((t) => t.classId === save.classId);
+    const tree = this.app.config.get('skill-tree');
     const cat = tree?.nodes.find((n) => n.id === nodeId)?.effect.active?.category;
     return cat === 'aura' || cat === 'stance';
   }
@@ -177,7 +177,7 @@ export class NetDriver {
       this.smoothY += (mine.y - this.smoothY) * k;
     }
     this.player.setPos(this.smoothX, this.smoothY);
-    state.hp = mine.hp; state.mana = mine.mana; state.debuffs = mine.debuffs;
+    state.hp = mine.hp; state.mana = mine.mana; state.stamina = mine.stamina; state.debuffs = mine.debuffs;
     // Смена аур/стоек приходит в снапшоте — эмитим state:changed, чтобы открытый лист персонажа
     // перерисовался с бонусами ауры В МОМЕНТЕ (а не только после переоткрытия окна).
     if (state.toggles.join(',') !== mine.toggles.join(',')) { state.toggles = mine.toggles; this.app.bus.emit('state:changed', {}); }
@@ -286,6 +286,8 @@ export class NetDriver {
           this.app.attackLockUntil = now + e.lockMs; // общий лок → остальные атак-слоты серые
           this.vfx.startSwing(this.vfx.currentAttack(this.app.state!, this.app.config, e.ability), e.windupMs);
         }
+      } else if (e.type === 'monster-swing') {
+        this.monsters.get(e.id)?.telegraph(e.windupMs); // вспышка-телеграф замаха монстра
       }
     }
   }

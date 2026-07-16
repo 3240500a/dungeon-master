@@ -1,7 +1,7 @@
 import { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import { deriveStats, finalAttributes, modifiersFromItems } from '../formulas/stats.js';
-import { passiveTreeModifiers, activeTreeModifiers } from '../formulas/skills.js';
+import { passiveTreeModifiers, skillTreeModifiers } from '../formulas/skills.js';
 import { combatStatsOf, attackWeaponsOf, estimateAttack, WEAPON_ATTR } from '../formulas/playerCombat.js';
 import { abilityRankMult, abilityCooldown } from '../formulas/combat.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
@@ -41,7 +41,7 @@ export function characterModifiers(reg: ConfigRegistry, save: SaveState): StatMo
   const equipped = Object.values(save.equipment).filter(Boolean) as Item[];
   const mods = modifiersFromItems(equipped);
   mods.push(...passiveTreeModifiers(reg.get('skills-passive'), save.passiveSkills));
-  mods.push(...activeTreeModifiers(reg.get('skills-active'), save.classId, save.activeSkills));
+  mods.push(...skillTreeModifiers(reg.get('skill-tree'), save.activeSkills));
   return mods;
 }
 
@@ -129,8 +129,7 @@ export interface SimSkill {
 
 /** Собирает выученные активки в касты для тик-боя (магнитуда от базового удара оружия). */
 function buildSkills(reg: ConfigRegistry, save: SaveState, d: DerivedStats, attrs: Attributes): SimSkill[] {
-  const tree = reg.get('skills-active').find((t) => t.classId === save.classId);
-  if (!tree) return [];
+  const tree = reg.get('skill-tree');
   const scaling = reg.get('balance').weaponAttrScaling;
   const base = estimateAttack(d, attrs, save.equipment.weapon, scaling, reg.get('weapon-weights'));
   const skills: SimSkill[] = [];

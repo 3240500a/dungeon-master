@@ -30,6 +30,8 @@ export interface CombatStats {
   accuracy: number;
   evade: number;
   armor: number;
+  /** Пробой брони цели: доля (0..1), на которую снижается броня защитника при расчёте. */
+  armorPen: number;
   blockChance: number;
   critChance: number;
   critMultiplier: number;

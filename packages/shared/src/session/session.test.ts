@@ -87,6 +87,34 @@ describe('GameSession — бой/лут/прокачка', () => {
     const ev = s.tick(1 / 30, { p1: idle });
     expect(ev.some((e) => e.type === 'floor-cleared')).toBe(true);
   });
+
+  it('монстр бьёт с замахом: в первый кадр замаха урона нет, урон проходит по завершении', () => {
+    const r = reg();
+    const s = new GameSession(r, 555, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const grid = openField(20, 12);
+    const spawn = cellToWorld(6, 6);
+    const mrng = createRng(3);
+    const baseId = r.get('dungeons')[0]!.monsterPool[0]!;
+    const def = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
+    // Живучий, точный, медленный ближник — чтобы гарантированно завёл замах и попал.
+    def.hp = 9999; def.rarity = 'normal'; def.ai = 'melee-chaser';
+    def.attackSpeed = 1; def.accuracy = 1000; def.minDamage = 5; def.maxDamage = 5;
+    s.enterFloor(1, { grid, spawn, monsters: [{ def, x: cellToWorld(7, 6).x, y: cellToWorld(7, 6).y }] });
+    const m = s.world.monsters[0]!;
+
+    // Игрок стоит и не бьёт; крутим, пока монстр не начнёт замах.
+    let ticks = 0;
+    while (!m.windup && ticks < 600) { s.tick(1 / 30, { p1: idle }); ticks++; }
+    expect(m.windup).not.toBeNull();
+
+    const hpAtWindup = p.hp;
+    s.tick(1 / 30, { p1: idle });   // первый кадр замаха — урона ещё нет (раньше бил мгновенно)
+    expect(p.hp).toBe(hpAtWindup);
+
+    for (let i = 0; i < 120; i++) s.tick(1 / 30, { p1: idle }); // замах завершается → урон
+    expect(p.hp).toBeLessThan(hpAtWindup);
+  });
 });
 
 // ── Движок active.type (новая боевая модель скиллов) ──────────
@@ -97,23 +125,23 @@ describe('GameSession — бой/лут/прокачка', () => {
  * injectSkill кладёт объект в конфиг БЕЗ zod-парсинга, поэтому нужны явные дефолты всех читаемых движком полей. */
 function activeFx(over: Record<string, unknown>): Record<string, unknown> {
   return {
-    abilityId: 'test', manaCost: 1, cooldown: 0, hands: 'any',
+    abilityId: 'test', manaCost: 1, resource: 'mana', cooldown: 0, hands: 'any', requiresDual: false,
     speed: 1, damageMult: 1, arcMult: 1, rangeMult: 1, windupSec: 0,
     knockback: 0, shoveChance: 1, stunSec: 0,
-    count: 1, spread: 0, pierce: false, radius: 0, durationSec: 10,
+    count: 1, spread: 0, pierce: false, hits: 1, radius: 0, durationSec: 10,
     // cast/curse-поля (v3): каст-тайм 0 (мгновенно в тестах), без конверсии стихии, дефолты рывка/прыжка.
     castTimeSec: 0, convertPct: 0, dashDist: 130, dashSpeed: 700, dashWeightBonus: 200, taunt: false,
     ...over,
   };
 }
 
-/** Впрыскивает активный узел с заданной механикой в дерево класса игрока. */
-function injectSkill(r: ConfigRegistry, classId: string, id: string, active: Record<string, unknown>): void {
-  const tree = r.get('skills-active').find((t) => t.classId === classId)!;
+/** Впрыскивает активный узел с заданной механикой в ЕДИНОЕ древо скилов (универсальная ветка). */
+function injectSkill(r: ConfigRegistry, _classId: string, id: string, active: Record<string, unknown>): void {
+  const tree = r.get('skill-tree');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (tree.nodes as any[]).push({
     id, name: id, description: '', cost: { type: 'points', amount: 1 },
-    requires: [], maxRank: 1, levelReq: 1, kind: 'active', branchId: tree.branches[0]!.id,
+    requires: [], maxRank: 1, levelReq: 1, kind: 'active', branchId: tree.branches[0]!.id, notable: false,
     x: 0, y: 0, effect: { active },
   });
 }
@@ -377,12 +405,12 @@ describe('GameSession — тоглы/стойки/баффы (фаза B)', () =
 });
 
 // ── Замах/прерывание · аффинити · сет-бонус (фаза C) ─────────
-function injectMastery(r: ConfigRegistry, classId: string, id: string, effect: Record<string, unknown>): void {
-  const tree = r.get('skills-active').find((t) => t.classId === classId)!;
+function injectMastery(r: ConfigRegistry, _classId: string, id: string, effect: Record<string, unknown>): void {
+  const tree = r.get('skill-tree');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (tree.nodes as any[]).push({
     id, name: id, description: '', cost: { type: 'points', amount: 1 },
-    requires: [], maxRank: 1, levelReq: 1, kind: 'active', branchId: tree.branches[0]!.id,
+    requires: [], maxRank: 1, levelReq: 1, kind: 'active', branchId: tree.branches[0]!.id, notable: false,
     x: 0, y: 0, effect,
   });
 }
@@ -525,9 +553,11 @@ describe('GameSession — контент Заступника (фаза D)', () 
     expect(mon.def.faction).toBe('undead'); // скелет из пула — нежить (аффинити)
     s.enterFloor(1, { grid, spawn, monsters: [mon] });
     const m = s.world.monsters[0]!;
+    const atk = r.get('skill-tree').nodes.find((n) => n.branchId === 'b-class-zastupnik'
+      && n.effect.active && (n.effect.active.category === 'attack' || n.effect.active.category === 'cast'))!;
     for (let i = 0; i < 300 && m.alive; i++) {
-      p.mana = 100;
-      s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 'a-zastupnik-flame-strike' } });
+      p.mana = 100; p.stamina = 100;
+      s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: atk.id } });
     }
     expect(m.alive).toBe(false);
   });
@@ -544,10 +574,12 @@ describe('GameSession — контент Заступника (фаза D)', () 
     def.hp = 5000; def.armor = 0; def.evade = 0; // танк, чтобы дожить до стана
     s.enterFloor(1, { grid, spawn, monsters: [{ def, x: mp.x, y: mp.y }] });
     const m = s.world.monsters[0]!;
+    const hammer = r.get('skill-tree').nodes.find((n) => n.branchId === 'b-class-zastupnik'
+      && ((n.effect.active as { stunSec?: number } | undefined)?.stunSec ?? 0) > 0)!;
     let stunned = false;
     for (let i = 0; i < 120 && !stunned; i++) {
-      p.mana = 100;
-      s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: 'a-zastupnik-weapon-stunhammer' } });
+      p.mana = 100; p.stamina = 100;
+      s.tick(1 / 30, { p1: { ...idle, facing: 0, cast: hammer.id } });
       if (m.stunTimer > 0) stunned = true;
     }
     expect(stunned).toBe(true); // гарант. стан по завершении замаха

@@ -11,7 +11,7 @@ const hitRng: Rng = { next: () => 0, int: (a) => a, float: (a) => a, pick: (arr)
 
 function stats(over: Partial<CombatStats> = {}): CombatStats {
   return {
-    accuracy: 1000, evade: 0, armor: 0, blockChance: 0, critChance: 0, critMultiplier: 1.5,
+    accuracy: 1000, evade: 0, armor: 0, armorPen: 0, blockChance: 0, critChance: 0, critMultiplier: 1.5,
     resFire: 0, resCold: 0, resLightning: 0, resPoison: 0, ailmentPct: 0, level: 1, ...over,
   };
 }

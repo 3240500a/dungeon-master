@@ -89,7 +89,8 @@ export function deriveStats(
 
   const base: DerivedStats = {
     maxHp: scaling.hpBase + attr.vitality * scaling.hpPerVitality + lvlGain * scaling.hpPerLevel,
-    maxMana: scaling.manaBase + attr.intelligence * scaling.manaPerIntelligence + lvlGain * scaling.manaPerLevel,
+    maxMana: scaling.manaBase + attr.intelligence * scaling.manaPerIntelligence + attr.vitality * scaling.manaPerVitality + lvlGain * scaling.manaPerLevel,
+    maxStamina: scaling.staminaBase + attr.strength * scaling.staminaPerStrength + attr.dexterity * scaling.staminaPerDexterity + lvlGain * scaling.staminaPerLevel,
     minDamage: 1,
     maxDamage: 2,
     attackSpeed: 1,
@@ -98,6 +99,7 @@ export function deriveStats(
     critChance: 0.05,
     critMultiplier: 1.5,
     armor: 0,
+    armorPen: 0,
     moveSpeed: 120,
     accuracy: 20 + attr.dexterity * 2 + lvlGain * scaling.accuracyPerLevel,
     evade: 10 + attr.dexterity * 1.5,
@@ -114,7 +116,8 @@ export function deriveStats(
     poisonPct: 0,
     ailmentPct: 0,
     hpRegen: scaling.hpRegenBase + attr.vitality * scaling.hpRegenPerVitality,
-    manaRegen: scaling.manaRegenBase + attr.intelligence * scaling.manaRegenPerIntelligence,
+    manaRegen: scaling.manaRegenBase + attr.intelligence * scaling.manaRegenPerIntelligence + attr.vitality * scaling.manaRegenPerVitality,
+    staminaRegen: scaling.staminaRegenBase + attr.strength * scaling.staminaRegenPerStrength + attr.dexterity * scaling.staminaRegenPerDexterity,
     resFire: 0,
     resCold: 0,
     resLightning: 0,

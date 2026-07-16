@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConfigRegistry, SAVE_VERSION, type SaveState } from '@dm/shared';
 import { GameState } from '../../core/gameState.js';
-import { activeTreeFor, allocateActive } from '../skills-active/allocate.js';
+import { allocateActive } from '../skills-active/allocate.js';
 import { allocatePassive } from '../skills-passive/allocate.js';
 import { passiveModifiers } from '../skills-passive/passiveStats.js';
 
@@ -43,37 +43,42 @@ function makeState(): GameState {
 // Заглушка App для allocatePassive (нужны только config).
 const appStub = { config: reg } as unknown as import('../../core/app.js').App;
 
-describe('активные скиллы', () => {
+describe('активные скиллы (единое древо, смежность + класс-гейт)', () => {
   let state: GameState;
-  beforeEach(() => {
-    state = makeState();
-  });
+  beforeEach(() => { state = makeState(); });
 
-  it('качается за очки и уходит в хотбар', () => {
-    const res = allocateActive(reg, state, 'a-warrior-druzhina-t0');
+  const tree = reg.get('skill-tree');
+  const nbrs = (id: string): string[] => tree.edges.flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : []));
+  const uni = tree.branches.find((b) => !b.classId)!; // универсальная ветка (для всех)
+  const entry = uni.entryNode;
+
+  it('вход ветки качается за очки', () => {
+    const res = allocateActive(reg, state, entry);
     expect(res.ok).toBe(true);
-    expect(state.save.activeSkills['a-warrior-druzhina-t0']).toBe(1);
+    expect(state.save.activeSkills[entry]).toBe(1);
     expect(state.save.unspentSkillPoints).toBe(4);
-    expect(state.save.hotbar[0]).toBe('a-warrior-druzhina-t0');
   });
 
-  it('узел с невыполненным требованием заблокирован', () => {
-    const res = allocateActive(reg, state, 'a-warrior-druzhina-m1'); // требует t0
-    expect(res.ok).toBe(false);
-    allocateActive(reg, state, 'a-warrior-druzhina-t0');
-    expect(allocateActive(reg, state, 'a-warrior-druzhina-m1').ok).toBe(true);
+  it('доступность по смежности: дальний узел заблокирован без вложенного соседа', () => {
+    const nb1 = nbrs(entry)[0]!;
+    const far = nbrs(nb1).find((id) => id !== entry && !nbrs(entry).includes(id))!;
+    expect(allocateActive(reg, state, far).ok).toBe(false); // не смежен ничему вложенному
+    allocateActive(reg, state, entry);
+    expect(allocateActive(reg, state, nb1).ok).toBe(true);   // сосед входа — открыт
   });
 
-  it('узел заблокирован по уровню', () => {
-    state.save.level = 3; // t0 требует ур.1 (ок), m1 требует ур.6
-    expect(allocateActive(reg, state, 'a-warrior-druzhina-t0').ok).toBe(true);
-    const r = allocateActive(reg, state, 'a-warrior-druzhina-m1');
-    expect(r.ok).toBe(false);
-    expect(r.reason).toContain('уровень');
+  it('активный узел при первом вложении уходит в хотбар', () => {
+    const actNb = nbrs(entry).find((id) => tree.nodes.find((n) => n.id === id)?.effect.active);
+    if (actNb) {
+      allocateActive(reg, state, entry);
+      allocateActive(reg, state, actNb);
+      expect(state.save.hotbar).toContain(actNb);
+    }
   });
 
-  it('дерево класса найдено', () => {
-    expect(activeTreeFor(reg, 'warrior')?.classId).toBe('warrior');
+  it('класс-ветка чужого класса недоступна', () => {
+    const other = tree.branches.find((b) => b.classId && b.classId !== 'warrior');
+    if (other) expect(allocateActive(reg, state, other.entryNode).ok).toBe(false);
   });
 });
 

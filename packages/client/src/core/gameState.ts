@@ -29,6 +29,8 @@ export class GameState {
   difficultyId = 'normal';
   hp = 1;
   mana = 1;
+  /** Выносливость — ресурс боевых активок (авторитетно из снапшота). */
+  stamina = 1;
   /** Активные дебаффы на игроке (runtime; сбрасываются при входе в город). */
   debuffs: DebuffState = newDebuffState();
   /** Активные тоглы (ауры/стойки) — id узлов; авторитетно приходят с сервера в снапшоте. */
@@ -43,8 +45,10 @@ export class GameState {
   activeModsProvider: () => StatModifier[] = () => [];
   /** Стат-моды активных тоглов (ауры/стойки) — из текущих `toggles` и конфига (инъектирует App). */
   toggleModsProvider: () => StatModifier[] = () => [];
-  /** Доля зарезервированной аурами/стойками маны (0..0.9) — из `toggles` и конфига (инъектирует App). */
+  /** Доля зарезервированной аурами маны (0..0.9) — из `toggles` и конфига (инъектирует App). */
   reservedManaFracProvider: () => number = () => 0;
+  /** Доля зарезервированной стойками выносливости (0..0.9) — из `toggles` и конфига (инъектирует App). */
+  reservedStaminaFracProvider: () => number = () => 0;
   /** Справочник классов брони (data-driven) — инъектируется App, чтобы GameState не зависел от config. */
   armorClassesProvider: () => Parameters<typeof armorClassModifiers>[1] = () => [];
   /** Масштаб пулов HP/маны текущего класса (data-driven) — инъектируется App. */
@@ -71,9 +75,13 @@ export class GameState {
     return mods;
   }
 
-  /** Эффективный максимум маны: пул минус зарезервированная аурами/стойками доля. */
+  /** Эффективный максимум маны: пул минус зарезервированная аурами доля. */
   effectiveMaxMana(): number {
     return this.derived().maxMana * (1 - this.reservedManaFracProvider());
+  }
+  /** Эффективный максимум выносливости: пул минус зарезервированная стойками доля. */
+  effectiveMaxStamina(): number {
+    return this.derived().maxStamina * (1 - this.reservedStaminaFracProvider());
   }
 
   /** Тик временных бафф-зелий: убавляет остаток, снимает истёкшие. */
@@ -111,6 +119,7 @@ export class GameState {
   restoreFull(): void {
     this.hp = this.derived().maxHp;
     this.mana = this.effectiveMaxMana();
+    this.stamina = this.effectiveMaxStamina();
     this.debuffs = newDebuffState();
   }
 

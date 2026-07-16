@@ -55,7 +55,7 @@ export class PlayerVfx {
     let nova: AttackGeom['nova'];
 
     if (action && action !== 'attack') {
-      const tree = cfg.get('skills-active').find((t) => t.classId === save.classId);
+      const tree = cfg.get('skill-tree');
       const node = tree?.nodes.find((n) => n.id === action);
       const a = node?.effect.active;
       if (a && node) {
@@ -101,7 +101,7 @@ export class PlayerVfx {
 
     // ── Кольца активных аур ──
     this.aura.clear();
-    const tree = cfg.get('skills-active').find((t) => t.classId === state.save.classId);
+    const tree = cfg.get('skill-tree');
     let i = 0;
     for (const id of state.toggles) {
       const node = tree?.nodes.find((n) => n.id === id);

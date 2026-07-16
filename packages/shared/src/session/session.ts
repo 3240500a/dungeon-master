@@ -20,7 +20,7 @@ import type { ConfigShapes } from '../config/schemas.js';
 import { moveWithCollision, type Vec2 } from '../world/movement.js';
 import { resolveEntityCollisions, type CollisionBody } from '../world/separation.js';
 import { playerWeight, type WeightTables } from '../formulas/stats.js';
-import { activeAbilityOf, reservedManaFrac, effectiveMaxMana, toggleBuffMods } from './toggles.js';
+import { activeAbilityOf, reservedFrac, effectivePool, toggleBuffMods } from './toggles.js';
 import { isBlockedCell, worldToCell, Cell } from '../world/grid.js';
 import type { Grid } from '../world/grid.js';
 import { hasLineOfSight } from '../world/lineOfSight.js';
@@ -93,6 +93,8 @@ export type SessionEvent =
   // заливки-отката слота бинда. ability = nodeId скилла или 'attack'. windupMs — замах, cooldownMs — откат
   // использованного действия, lockMs — общий attack-таймер (блокирует ВСЕ удары/attack-cast-скиллы).
   | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; lockMs: number; x: number; y: number; facing: number }
+  // Старт замаха монстра — клиент рисует телеграф-вспышку на время windupMs в сторону facing.
+  | { type: 'monster-swing'; id: number; windupMs: number; x: number; y: number; facing: number }
   | { type: 'floor-cleared' };
 
 /** AoE-способность (бьёт по площади вокруг игрока), по abilityId — как в боевом контроллере. */
@@ -124,9 +126,12 @@ const MONSTER_PROJ_SPEED = 260;
 const ABILITY_PROJ_SPEED = 460;
 const PROJ_TTL = 2.5;
 const PROJ_HIT_RADIUS = 16;
+/** Запас к сумме радиусов, в пределах которого ближний удар монстра засчитывается по завершении
+ *  замаха. Если игрок за время замаха отошёл дальше — удар вхолостую (замах даёт окно на уклонение). */
+const MONSTER_MELEE_WHIFF_SLACK = 8;
 
 /** Спецификация активной способности (v2: дискриминирована по `category`). */
-type ActiveAbility = NonNullable<ConfigShapes['skills-active'][number]['nodes'][number]['effect']['active']>;
+type ActiveAbility = NonNullable<ConfigShapes['skill-tree']['nodes'][number]['effect']['active']>;
 type AttackAbility = Extract<ActiveAbility, { category: 'attack' }>;
 type CastAbility = Extract<ActiveAbility, { category: 'cast' }>;
 type CurseAbility = Extract<ActiveAbility, { category: 'curse' }>;
@@ -165,7 +170,7 @@ export class GameSession {
     const snap = playerSnapshot(save, this.cfg);
     // Обычно спавним в точке входа мира (центр города/этажа); при реконнекте — в заданной
     // точке (та же позиция). Кооп-присоединение происходит ПОСЛЕ enterFloor.
-    const p = makePlayerEntity(id, save, spawnAt ? { ...spawnAt } : { ...this.world.spawn }, snap.derived.maxHp, snap.derived.maxMana);
+    const p = makePlayerEntity(id, save, spawnAt ? { ...spawnAt } : { ...this.world.spawn }, snap.derived.maxHp, snap.derived.maxMana, snap.derived.maxStamina);
     this.world.players[id] = p;
     if (!this.primaryPlayerId) this.primaryPlayerId = id;
     return p;
@@ -257,9 +262,13 @@ export class GameSession {
         const hpRegenMult = debuffMods(p.debuffs).hpRegenMult;
         if (p.hp < d.maxHp) p.hp = Math.min(d.maxHp, p.hp + d.hpRegen * hpRegenMult * dt);
         // Тоглы/ауры резервируют долю маны — эффективный максимум ниже, регенерируем до него.
-        const effMaxMana = effectiveMaxMana(d.maxMana, this.reservedFrac(p));
-        if (p.mana > effMaxMana) p.mana = effMaxMana; // подрезка при включении тогла
-        else if (p.mana < effMaxMana) p.mana = Math.min(effMaxMana, p.mana + d.manaRegen * dt);
+        const effMana = effectivePool(d.maxMana, this.reservedFrac(p, 'mana'));
+        if (p.mana > effMana) p.mana = effMana; // подрезка при включении ауры
+        else if (p.mana < effMana) p.mana = Math.min(effMana, p.mana + d.manaRegen * dt);
+        // Выносливость — ресурс боевых активок; стойки резервируют её (эфф. максимум ниже).
+        const effStam = effectivePool(d.maxStamina, this.reservedFrac(p, 'stamina'));
+        if (p.stamina > effStam) p.stamina = effStam;
+        else if (p.stamina < effStam) p.stamina = Math.min(effStam, p.stamina + d.staminaRegen * dt);
       }
       p.attackCd = Math.max(0, p.attackCd - dt);
       for (const k of Object.keys(p.skillCd)) {
@@ -292,11 +301,39 @@ export class GameSession {
 
       const target = this.nearestPlayer(m.pos);
       if (!target) { m.vel.x = 0; m.vel.y = 0; continue; }
+
+      // Замах (как у игрока): между решением ударить и уроном — задержка. Монстр укоренён и смотрит
+      // на цель; стан замах сбивает. По завершении — реальный удар/выстрел (у ближнего — если игрок
+      // всё ещё в зоне, иначе вхолостую). Пока замах активен — ИИ/движение не трогаем.
+      if (m.windup) {
+        m.vel.x = 0; m.vel.y = 0;
+        m.facing = Math.atan2(target.pos.y - m.pos.y, target.pos.x - m.pos.x);
+        if (m.stunTimer > 0) { m.stunTimer = Math.max(0, m.stunTimer - dt); m.windup = null; continue; }
+        m.windup.remaining -= dt;
+        if (m.windup.remaining <= 0) {
+          const act = m.windup.action;
+          m.windup = null;
+          if (act === 'shoot') this.monsterShoot(m, target);
+          else {
+            const reach = m.radius + target.radius + MONSTER_MELEE_WHIFF_SLACK;
+            if (Math.hypot(target.pos.x - m.pos.x, target.pos.y - m.pos.y) <= reach) this.monsterMelee(m, target);
+          }
+        }
+        continue;
+      }
+
       const losClear = this.hasLos(m.pos, target.pos);
       const action = stepMonsterAi(m, target.pos, losClear, noiseMult, dt);
       m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt);
-      if (action === 'attack') this.monsterMelee(m, target);
-      else if (action === 'shoot') this.monsterShoot(m, target);
+      if (action === 'attack' || action === 'shoot') {
+        // attackCd только что выставлен ИИ = полный цикл атаки; замах — его доля (тот же baseWindupFrac, что у игрока).
+        const windupSec = m.attackCd * this.cfg.get('balance').melee.baseWindupFrac;
+        if (windupSec > 0) {
+          m.windup = { remaining: windupSec, action };
+          this.events.push({ type: 'monster-swing', id: m.id, windupMs: windupSec * 1000, x: m.pos.x, y: m.pos.y, facing: m.facing });
+        } else if (action === 'attack') this.monsterMelee(m, target);
+        else this.monsterShoot(m, target);
+      }
     }
 
     // 3.5) Расталкивание сущностей по весу (монстры не слипаются, сквозь них не пройти).
@@ -421,27 +458,46 @@ export class GameSession {
   }
 
   // ── Активные скиллы ───────────────────────────────────────
-  /** Активная способность узла в дереве класса игрока (или undefined). */
-  private activeById(save: SaveState, nodeId: string): ActiveAbility | undefined {
-    return activeAbilityOf(this.cfg, save.classId, nodeId);
+  /** Способность узла ЕДИНОГО древа скилов по id (или undefined). */
+  private activeById(_save: SaveState, nodeId: string): ActiveAbility | undefined {
+    return activeAbilityOf(this.cfg, nodeId);
+  }
+
+  /** Узел доступен игроку: класс-ветка — только своему классу (без classId — всем). */
+  private nodeUsable(save: SaveState, nodeId: string): boolean {
+    const tree = this.cfg.get('skill-tree');
+    const node = tree.nodes.find((n) => n.id === nodeId);
+    if (!node) return false;
+    const br = tree.branches.find((b) => b.id === node.branchId);
+    return !br?.classId || br.classId === save.classId;
+  }
+
+  /** Хватает ли ресурса под способность (мана/выносливость по active.resource). */
+  private canSpend(p: PlayerEntity, active: { manaCost: number; resource: 'mana' | 'stamina' }): boolean {
+    return (active.resource === 'stamina' ? p.stamina : p.mana) >= active.manaCost;
+  }
+  private spend(p: PlayerEntity, active: { manaCost: number; resource: 'mana' | 'stamina' }): void {
+    if (active.resource === 'stamina') p.stamina -= active.manaCost;
+    else p.mana -= active.manaCost;
   }
 
   private castSkill(p: PlayerEntity, snap: PlayerSnapshot, nodeId: string): void {
     const active = this.activeById(p.save, nodeId);
     if (!active) return;
-    const rank = p.save.activeSkills[nodeId] ?? 1;
+    if (!this.nodeUsable(p.save, nodeId)) return;      // класс-ветка чужого класса — недоступна
+    const rank = p.save.activeSkills[nodeId] ?? 1;     // выученный ранг (клиент биндит только выученное)
 
     switch (active.category) {
-      // Ауры/стойки: вкл/выкл, эксклюзив-группа, резерв маны (без маны за каст).
+      // Ауры/стойки: вкл/выкл, эксклюзив-группа, резерв пула (мана/выносливость).
       case 'aura':
       case 'stance':
         this.toggleStance(p, snap, nodeId, active);
         return;
-      // Временный бафф: стат-моды за ману на durationSec; не рефрешим, пока активен.
+      // Временный бафф: стат-моды за ресурс на durationSec; не рефрешим, пока активен.
       case 'buff': {
         if ((p.skillBuffs[nodeId] ?? 0) > 0) return;
-        if (p.mana < active.manaCost) return;
-        p.mana -= active.manaCost;
+        if (!this.canSpend(p, active)) return;
+        this.spend(p, active);
         p.skillBuffs[nodeId] = active.durationSec;
         return;
       }
@@ -450,8 +506,8 @@ export class GameSession {
         if (p.attackCd > 0 || p.windup) return;    // делит тайминг с базовой атакой; занят замахом
         if ((p.skillCd[nodeId] ?? 0) > 0) return;   // опц. персональный КД
         if (!this.weaponAllowed(p, active)) return; // не то оружие → скилл не срабатывает
-        if (p.mana < active.manaCost) return;
-        p.mana -= active.manaCost;
+        if (!this.canSpend(p, active)) return;
+        this.spend(p, active);
         const pm = debuffMods(p.debuffs);
         p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
@@ -467,8 +523,8 @@ export class GameSession {
         if (p.windup) return;                       // занят замахом/каст-таймом
         if ((p.skillCd[nodeId] ?? 0) > 0) return;   // личный КД
         if (!this.weaponAllowed(p, active)) return;
-        if (p.mana < active.manaCost) return;
-        p.mana -= active.manaCost;
+        if (!this.canSpend(p, active)) return;
+        this.spend(p, active);
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
         const castTime = active.castTimeSec / Math.max(0.2, snap.derived.castSpeed);
         this.emitSwing(p, nodeId, castTime, Math.max(castTime, p.skillCd[nodeId] ?? 0), 0);
@@ -489,6 +545,8 @@ export class GameSession {
       const need = active.hands === 'two' ? 2 : 1;
       if ((w?.hands ?? 1) !== need) return false;
     }
+    // Ветка «дуал»: в обоих слотах — оружие (у щита нет weaponType).
+    if (active.requiresDual && !(w?.weaponType && p.save.equipment.offhand?.weaponType)) return false;
     return true;
   }
 
@@ -522,22 +580,25 @@ export class GameSession {
     if (active.toggleGroup) {
       p.toggles = p.toggles.filter((t) => this.toggleGroupOf(this.activeById(p.save, t)) !== active.toggleGroup);
     }
-    const reserveFrac = this.reservedFrac(p) + (active.reservePct ?? 0);
-    if (reserveFrac >= 1) return; // нельзя зарезервировать всю ману
+    const pool: 'mana' | 'stamina' = active.resource === 'stamina' ? 'stamina' : 'mana';
+    const reserveFrac = this.reservedFrac(p, pool) + (active.reservePct ?? 0);
+    if (reserveFrac >= 1) return; // нельзя зарезервировать весь пул
     p.toggles.push(nodeId);
-    const effMax = effectiveMaxMana(snap.derived.maxMana, reserveFrac);
-    if (p.mana > effMax) p.mana = effMax; // сразу подрезать под новый резерв
+    const max = pool === 'stamina' ? snap.derived.maxStamina : snap.derived.maxMana;
+    const effMax = effectivePool(max, reserveFrac);
+    if (pool === 'stamina') { if (p.stamina > effMax) p.stamina = effMax; }
+    else if (p.mana > effMax) p.mana = effMax; // сразу подрезать под новый резерв
   }
 
-  /** Суммарная доля зарезервированной маны от активных тоглов (кап 0.9). */
-  private reservedFrac(p: PlayerEntity): number {
-    return reservedManaFrac(this.cfg, p.save.classId, p.toggles);
+  /** Доля зарезервированного пула (мана/выносливость) активными тоглами (кап 0.9). */
+  private reservedFrac(p: PlayerEntity, pool: 'mana' | 'stamina'): number {
+    return reservedFrac(this.cfg, p.toggles, pool);
   }
 
   /** Рантайм-стат-моды поверх сейва: buffMods активных тоглов + временных баффов. */
   private runtimeMods(p: PlayerEntity): StatModifier[] {
     if (p.toggles.length === 0 && Object.keys(p.skillBuffs).length === 0) return [];
-    const mods = toggleBuffMods(this.cfg, p.save.classId, p.toggles);
+    const mods = toggleBuffMods(this.cfg, p.toggles);
     for (const id of Object.keys(p.skillBuffs)) {
       const a = this.activeById(p.save, id);
       if (a && (a.category === 'buff' || a.category === 'aura' || a.category === 'stance')) mods.push(...(a.buffMods ?? []));
@@ -603,7 +664,12 @@ export class GameSession {
     for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
     const wt: WeaponType = weapon?.weaponType ?? 'melee';
-    if (wt === 'melee') { this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult); return; }
+    if (wt === 'melee') {
+      // Мили-мультиудар: `hits` последовательных взмахов за скилл (каждый = damageMult), напр. «серия уколов».
+      const hits = Math.max(1, active.hits);
+      for (let h = 0; h < hits; h++) this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult);
+      return;
+    }
     // Дальнобой/маг: веер из `count` снарядов со `spread`; урон каждой = damageMult (для веера ставь ниже).
     const n = Math.max(1, active.count), spread = active.spread;
     const speed = wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED;
@@ -1025,8 +1091,9 @@ export class GameSession {
     if (leveled) {
       const snap = playerSnapshot(save, this.cfg);
       p.hp = snap.derived.maxHp;
-      // Мана — только до эффективного максимума: активные ауры/стойки резервируют часть пула.
-      p.mana = effectiveMaxMana(snap.derived.maxMana, this.reservedFrac(p));
+      // Мана/выносливость — до эффективного максимума: активные ауры/стойки резервируют часть пула.
+      p.mana = effectivePool(snap.derived.maxMana, this.reservedFrac(p, 'mana'));
+      p.stamina = effectivePool(snap.derived.maxStamina, this.reservedFrac(p, 'stamina'));
       p.debuffs = newDebuffState();
       this.snaps.set(p.id, snap);
       this.events.push({ type: 'levelup', playerId: p.id, level: save.level });
@@ -1072,6 +1139,7 @@ export class GameSession {
     p.vel = { x: 0, y: 0 };
     p.hp = snap.derived.maxHp;
     p.mana = snap.derived.maxMana;
+    p.stamina = snap.derived.maxStamina;
     p.debuffs = newDebuffState();
     p.stunTimer = 0;
     p.windup = null;

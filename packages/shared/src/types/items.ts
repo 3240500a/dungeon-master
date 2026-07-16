@@ -45,7 +45,7 @@ export type ShieldClass = 'light' | 'medium' | 'heavy';
 
 /** Класс оружия — ветвь дерева редактора + подпись в тултипе. */
 export type WeaponClass =
-  | 'sword' | 'axe' | 'mace' | 'dagger' | 'spear'
+  | 'sword' | 'axe' | 'mace' | 'dagger' | 'spear' | 'halberd'
   | 'bow' | 'crossbow' | 'wand' | 'staff';
 
 /** Вес оружия — id из конфига weapon-weights (power/finesse/доли скейла — в конфиге). */

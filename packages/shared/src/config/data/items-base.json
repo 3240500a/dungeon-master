@@ -367,7 +367,7 @@
     "dropWeight": 1,
     "slot": "weapon",
     "weaponType": "melee",
-    "weaponClass": "spear",
+    "weaponClass": "halberd",
     "weight": "heavy",
     "physSub": "chopping",
     "damageType": "physical",

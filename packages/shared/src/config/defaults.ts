@@ -16,6 +16,7 @@ import damageTypes from './data/damage-types.json' with { type: 'json' };
 import rarities from './data/rarities.json' with { type: 'json' };
 import skillsActive from './data/skills-active.json' with { type: 'json' };
 import skillsPassive from './data/skills-passive.json' with { type: 'json' };
+import skillTree from './data/skill-tree.json' with { type: 'json' };
 import questsMain from './data/quests-main.json' with { type: 'json' };
 import questsRandom from './data/quests-random.json' with { type: 'json' };
 
@@ -39,6 +40,7 @@ export const defaultConfigData: Record<string, unknown> = {
   rarities,
   'skills-active': skillsActive,
   'skills-passive': skillsPassive,
+  'skill-tree': skillTree,
   'quests.main': questsMain,
   'quests.random': questsRandom,
 };

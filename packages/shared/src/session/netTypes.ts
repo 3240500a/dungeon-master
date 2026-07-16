@@ -27,6 +27,7 @@ export interface PlayerView {
   facing: number;
   hp: number;
   mana: number;
+  stamina: number;
   alive: boolean;
   debuffs: DebuffState;
   toggles: string[];

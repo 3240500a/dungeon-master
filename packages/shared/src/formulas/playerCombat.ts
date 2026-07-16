@@ -48,6 +48,7 @@ export function flatOf(item: Item, stat: string): number {
 export function combatStatsOf(d: DerivedStats, level: number): CombatStats {
   return {
     accuracy: d.accuracy,
+    armorPen: d.armorPen,
     evade: d.evade,
     armor: d.armor,
     blockChance: d.blockChance,

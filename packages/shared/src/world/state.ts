@@ -39,6 +39,8 @@ export interface PlayerEntity {
   facing: number;
   hp: number;
   mana: number;
+  /** Выносливость — ресурс боевых активок (реген как мана; стойки резервируют). */
+  stamina: number;
   radius: number;
   debuffs: DebuffState;
   /** Секунд до следующей базовой атаки. */
@@ -62,6 +64,14 @@ export interface PlayerEntity {
   save: SaveState;
 }
 
+/** Замах монстра: задержка между решением атаковать и уроном (как у игрока, `p.windup`). */
+export interface MonsterWindup {
+  /** Остаток замаха, сек. */
+  remaining: number;
+  /** Что сработает по завершении: ближний удар или выстрел. */
+  action: 'attack' | 'shoot';
+}
+
 /** Монстр в мире (runtime), поверх определения `def`. */
 export interface MonsterEntity {
   id: number;
@@ -75,6 +85,8 @@ export interface MonsterEntity {
   debuffs: DebuffState;
   /** Секунд до следующей атаки. */
   attackCd: number;
+  /** Активный замах (укоренён, готовит удар) или null. */
+  windup: MonsterWindup | null;
   stunTimer: number;
   /** Восприятие: покой (сканирует) / погоня (поводок). */
   aiState: 'idle' | 'chase';
@@ -189,6 +201,7 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     radius: def.rarity === 'champion' ? 15 : 12, // чемпион ~+25% (не настолько большой, чтобы не дотягиваться до удара)
     debuffs: newDebuffState(),
     attackCd: 0,
+    windup: null,
     stunTimer: 0,
     aiState: 'idle',
     leash: 0,
@@ -198,7 +211,7 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
 }
 
 /** Создаёт runtime-игрока из сейва в заданной позиции. */
-export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: number, mana: number): PlayerEntity {
+export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: number, mana: number, stamina: number): PlayerEntity {
   return {
     id,
     pos: { ...pos },
@@ -206,6 +219,7 @@ export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: num
     facing: 0,
     hp,
     mana,
+    stamina,
     radius: 14,
     debuffs: newDebuffState(),
     attackCd: 0,

@@ -32,10 +32,11 @@ describe('stats', () => {
     intelligence: 10,
     vitality: 20,
   };
-  it('deriveStats считает hp/mana от атрибутов', () => {
+  it('deriveStats считает hp/mana/выносливость от атрибутов', () => {
     const s = deriveStats(attrs);
-    expect(s.maxHp).toBe(50 + 20 * 5);
-    expect(s.maxMana).toBe(20 + 10 * 3);
+    expect(s.maxHp).toBe(50 + 20 * 5); // Живучесть
+    expect(s.maxMana).toBe(20 + 10 * 3 + 20 * 1); // Интеллект + Живучесть
+    expect(s.maxStamina).toBe(40 + 20 * 2 + 15 * 1.5); // Сила + Ловкость
   });
   it('meetsRequirements проверяет требования', () => {
     const sword: Item = {

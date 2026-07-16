@@ -3,6 +3,7 @@ import { ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources } from './form.js';
 import { renderSimPage } from './sim.js';
 import { renderPassiveGraph } from './passiveGraph.js';
+import { renderSkillGraphPage } from './skillGraph.js';
 
 /**
  * HTML-редактор конфигов. Страницы по механикам (по одному конфигу на страницу),
@@ -29,6 +30,7 @@ const LABELS: Record<ConfigKey, string> = {
   rarities: 'Редкости',
   'skills-active': 'Скиллы: активные',
   'skills-passive': 'Скиллы: пассивные',
+  'skill-tree': 'Древо скилов',
   'quests.main': 'Квесты: основные',
   'quests.random': 'Квесты: случайные',
 };
@@ -39,13 +41,13 @@ const NAV_GROUPS: { title: string; keys: ConfigKey[] }[] = [
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'armor-classes', 'phys-subtypes', 'weapon-weights', 'damage-types', 'affixes', 'uniques'] },
   { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'packs'] },
   { title: 'Мир', keys: ['dungeons', 'difficulties'] },
-  { title: 'Скиллы', keys: ['skills-active', 'skills-passive'] },
+  { title: 'Скиллы', keys: ['skill-tree', 'skills-passive'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
 ];
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
   'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-types': 'Типы урона', 'monster-affixes': 'Аффиксы', packs: 'Пачки',
-  'skills-active': 'Активные', 'skills-passive': 'Пассивные',
+  'skill-tree': 'Древо скилов', 'skills-active': 'Активные', 'skills-passive': 'Пассивные',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
 };
 /** Раскрытые группы навигации (переживают перерисовку). */
@@ -262,7 +264,8 @@ function renderPage(page: HTMLElement): void {
   status.style.cssText = 'min-height:18px;font-size:13px;margin-bottom:8px';
   page.appendChild(status);
 
-  // Пассивное дерево — визуальный граф-редактор (как в игре), а не плоский список.
+  // Древо скилов (общее + класс-ветки по селектору) и древо мастерства — визуальные граф-редакторы.
+  if (current === 'skill-tree') { renderSkillGraphPage(page, data); return; }
   if (current === 'skills-passive') { renderPassiveGraph(page, data); return; }
 
   if (isArray) renderArrayPage(page, schema._def.type as z.ZodTypeAny);

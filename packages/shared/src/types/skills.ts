@@ -11,7 +11,7 @@ export type SkillCategory = 'attack' | 'cast' | 'curse' | 'aura' | 'stance' | 'b
 /** Форма каста (особая механика). */
 export type CastShape = 'dash' | 'leap' | 'nova' | 'ground' | 'meteor' | 'boomerang';
 export type WeaponTypeSel = 'melee' | 'ranged' | 'magic';
-export type WeaponClassSel = 'sword' | 'axe' | 'mace' | 'dagger' | 'spear' | 'bow' | 'crossbow' | 'wand' | 'staff';
+export type WeaponClassSel = 'sword' | 'axe' | 'mace' | 'dagger' | 'spear' | 'halberd' | 'bow' | 'crossbow' | 'wand' | 'staff';
 type DamageTypeSel = 'physical' | 'fire' | 'cold' | 'lightning' | 'poison';
 
 /** Наложение стихийного статуса при попадании скилла. */
@@ -27,6 +27,8 @@ export interface SkillAilment {
 interface ActiveCommon {
   abilityId: string;
   manaCost: number;
+  /** Пул стоимости: боевые — выносливость, магические — мана (у аур/стоек — какой резервируется). */
+  resource: 'mana' | 'stamina';
   /** КД, сек (0 = без КД, тайминг от attackSpeed×speed). */
   cooldown: number;
 }
@@ -35,6 +37,8 @@ interface WeaponRestrict {
   weaponTypes?: WeaponTypeSel[];
   weaponClasses?: WeaponClassSel[];
   hands: 'any' | 'one' | 'two';
+  /** Требует два оружия в руках (ветка «дуал»). */
+  requiresDual: boolean;
 }
 
 /** Атака: удар/выстрел оружием (геометрия/состав от оружия) + моды/эффекты скилла. Мили ИЛИ снаряд(ы). */
@@ -54,6 +58,8 @@ export interface AttackActive extends ActiveCommon, WeaponRestrict {
   count: number;
   spread: number;
   pierce: boolean;
+  /** Мили: число последовательных ударов за скилл (каждый = damageMult). 1 = одиночный. */
+  hits: number;
 }
 /** Каст: особая механика (рывок/прыжок/нова/лужа/метеор/бумеранг). Тайминг — от скорости каста (INT). */
 export interface CastActive extends ActiveCommon, WeaponRestrict {

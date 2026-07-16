@@ -137,30 +137,29 @@ export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, r
 
 // ── Скиллы и пассивы ─────────────────────────────────────────────────────────
 
-/** Вкладывает очки скиллов в одну ветку активного дерева (с разбросом выбора ветки). */
-function allocateActivePoints(reg: ConfigRegistry, save: SaveState, policy: BuildPolicy, rng: Rng): void {
-  const tree = reg.get('skills-active').find((t) => t.classId === save.classId);
-  if (!tree || tree.branches.length === 0) return;
-  const branchId = policy.variance > 0 && rng.chance(policy.variance)
-    ? rng.pick(tree.branches).id
-    : tree.branches[0]!.id;
-
-  const pick = (branch: string | null) => {
-    const cands = tree.nodes.filter((n) => {
-      if (branch && n.branchId !== branch) return false;
-      const rank = save.activeSkills[n.id] ?? 0;
-      if (rank >= n.maxRank) return false;
-      if (n.levelReq > save.level) return false;
-      if (!n.requires.every((r) => (save.activeSkills[r] ?? 0) > 0)) return false;
-      return n.cost.amount <= save.unspentSkillPoints;
-    });
-    cands.sort((a, b) => a.levelReq - b.levelReq || (save.activeSkills[a.id] ?? 0) - (save.activeSkills[b.id] ?? 0));
-    return cands[0];
+/** Вкладывает очки скиллов в единое ДРЕВО СКИЛОВ по смежности (класс-ветка — только своя). */
+function allocateActivePoints(reg: ConfigRegistry, save: SaveState, _policy: BuildPolicy, _rng: Rng): void {
+  const tree = reg.get('skill-tree');
+  const neighbors = (id: string): string[] => {
+    const out: string[] = [];
+    for (const [a, b] of tree.edges) { if (a === id) out.push(b); else if (b === id) out.push(a); }
+    return out;
   };
-
+  const usableClass = (branchId: string): boolean => {
+    const br = tree.branches.find((b) => b.id === branchId);
+    return !br?.classId || br.classId === save.classId;
+  };
+  const allocatable = (n: (typeof tree.nodes)[number]): boolean => {
+    const rank = save.activeSkills[n.id] ?? 0;
+    if (rank >= n.maxRank || n.levelReq > save.level || n.cost.amount > save.unspentSkillPoints) return false;
+    if (!usableClass(n.branchId)) return false;
+    return rank > 0 || tree.entryNodes.includes(n.id) || neighbors(n.id).some((x) => (save.activeSkills[x] ?? 0) > 0);
+  };
   for (let guard = 0; guard < 500 && save.unspentSkillPoints > 0; guard++) {
-    const node = pick(branchId) ?? pick(null);
-    if (!node) break;
+    const cands = tree.nodes.filter(allocatable);
+    if (!cands.length) break;
+    cands.sort((a, b) => a.levelReq - b.levelReq || (save.activeSkills[a.id] ?? 0) - (save.activeSkills[b.id] ?? 0));
+    const node = cands[0]!;
     save.activeSkills[node.id] = (save.activeSkills[node.id] ?? 0) + 1;
     save.unspentSkillPoints -= node.cost.amount;
   }

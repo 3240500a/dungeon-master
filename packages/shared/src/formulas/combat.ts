@@ -72,8 +72,9 @@ export function resolveAttack(
   const crit = rng.chance(clamp(attacker.critChance, 0, 1));
   const mult = crit ? attacker.critMultiplier : 1;
 
-  // 4. Снижение по типам.
-  const physMit = 1 - armorMitigation(defender.armor, attacker.level);
+  // 4. Снижение по типам. Пробой брони атакующего снижает эффективную броню защитника.
+  const effArmor = defender.armor * (1 - clamp(attacker.armorPen, 0, 1));
+  const physMit = 1 - armorMitigation(effArmor, attacker.level);
   const resOf = (t: DamageType): number => {
     switch (t) {
       case 'fire': return defender.resFire;

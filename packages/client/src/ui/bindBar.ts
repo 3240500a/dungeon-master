@@ -23,13 +23,13 @@ const SLOTS: SlotDef[] = [
 /** Выученные активные скиллы (rank>0, есть активная способность). */
 function learnedSkills(app: App): SkillNode[] {
   const save = app.state!.save;
-  const tree = app.config.get('skills-active').find((t) => t.classId === save.classId);
+  const tree = app.config.get('skill-tree');
   return (tree?.nodes ?? []).filter((n) => (save.activeSkills[n.id] ?? 0) > 0 && n.effect.active);
 }
 
 function nodeById(app: App, id: string): SkillNode | undefined {
   const save = app.state!.save;
-  const tree = app.config.get('skills-active').find((t) => t.classId === save.classId);
+  const tree = app.config.get('skill-tree');
   return tree?.nodes.find((n) => n.id === id);
 }
 

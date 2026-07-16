@@ -108,6 +108,7 @@ export function monsterCombatStats(m: ScaledMonster): CombatStats {
     accuracy: m.accuracy,
     evade: m.evade,
     armor: m.armor,
+    armorPen: 0,
     blockChance: m.blockChance,
     critChance: m.critChance,
     critMultiplier: m.critMultiplier,

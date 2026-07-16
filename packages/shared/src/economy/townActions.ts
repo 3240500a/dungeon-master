@@ -161,15 +161,25 @@ export function respec(reg: ConfigRegistry, save: SaveState): ActionResult {
   return { ok: true };
 }
 
-// ── Скиллы (активные — очки) ──────────────────────────────────────────────────
+// ── Скиллы: единое ДРЕВО СКИЛОВ (только очки, по смежности; класс-ветка — своему классу) ──
+function skillNeighbors(tree: ConfigShapes['skill-tree'], id: string): string[] {
+  const out: string[] = [];
+  for (const [a, b] of tree.edges) { if (a === id) out.push(b); else if (b === id) out.push(a); }
+  return out;
+}
 export function allocActive(reg: ConfigRegistry, save: SaveState, nodeId: string): ActionResult {
-  const tree = reg.get('skills-active').find((t) => t.classId === save.classId);
-  const node = tree?.nodes.find((n) => n.id === nodeId);
+  const tree = reg.get('skill-tree');
+  const node = tree.nodes.find((n) => n.id === nodeId);
   if (!node) return { ok: false, reason: 'Узел не найден' };
+  const branch = tree.branches.find((b) => b.id === node.branchId);
+  if (branch?.classId && branch.classId !== save.classId) return { ok: false, reason: 'Ветка другого класса' };
   const rank = save.activeSkills[nodeId] ?? 0;
   if (rank >= node.maxRank) return { ok: false, reason: 'Максимальный ранг' };
   if (save.level < node.levelReq) return { ok: false, reason: `Требуется уровень ${node.levelReq}` };
-  if (!node.requires.every((r) => (save.activeSkills[r] ?? 0) > 0)) return { ok: false, reason: 'Не выполнены требования' };
+  // Доступность по смежности: вход ветки, уже вложен, или сосед вложен.
+  const allocatable = rank > 0 || tree.entryNodes.includes(nodeId)
+    || skillNeighbors(tree, nodeId).some((n) => (save.activeSkills[n] ?? 0) > 0);
+  if (!allocatable) return { ok: false, reason: 'Недоступный вход или нет смежного узла' };
   if (node.cost.type !== 'points') return { ok: false, reason: 'Неверный тип стоимости' };
   if (save.unspentSkillPoints < node.cost.amount) return { ok: false, reason: 'Недостаточно очков скиллов' };
   save.unspentSkillPoints -= node.cost.amount;

@@ -222,12 +222,23 @@ export const hpManaScalingSchema = z.object({
   manaBase: z.number().default(20),
   /** Мана за 1 очко интеллекта. */
   manaPerIntelligence: z.number().default(3),
+  /** Мана за 1 очко живучести (мана ← Интеллект + Живучесть). */
+  manaPerVitality: z.number().default(1),
   /** Мана за каждый уровень после 1-го. */
   manaPerLevel: z.number().default(0),
   /** Базовый реген маны/сек (при 0 инт.). */
   manaRegenBase: z.number().default(0.5),
   /** Реген маны/сек за 1 очко интеллекта. */
   manaRegenPerIntelligence: z.number().default(0.05),
+  manaRegenPerVitality: z.number().default(0.02),
+  /** Выносливость (боевой ресурс): база + от Силы и Ловкости. */
+  staminaBase: z.number().default(40),
+  staminaPerStrength: z.number().default(2),
+  staminaPerDexterity: z.number().default(1.5),
+  staminaPerLevel: z.number().default(0),
+  staminaRegenBase: z.number().default(3),
+  staminaRegenPerStrength: z.number().default(0.08),
+  staminaRegenPerDexterity: z.number().default(0.05),
   /** Меткость (рейтинг атаки) за каждый уровень после 1-го — чтобы не отставать от уклонения монстров. */
   accuracyPerLevel: z.number().default(2),
 }).default({});
@@ -284,7 +295,7 @@ const weaponBaseSchema = z.object({
   /** Подтип (паттерн атаки/скейл): ближний/дальний/магический. */
   weaponType: z.enum(['melee', 'ranged', 'magic']),
   /** Класс оружия (ветвь дерева редактора). */
-  weaponClass: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'bow', 'crossbow', 'wand', 'staff']),
+  weaponClass: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff']),
   /** id веса (из конфига weapon-weights). */
   weight: z.string().default('medium'),
   /** id физ-подтипа (из конфига phys-subtypes). */
@@ -654,15 +665,20 @@ const ailmentApplySchema = z.object({
   maxStacks: z.number().int().min(1),
   durationMs: z.number().min(0),
 });
-/** Ограничения оружия скилла (пусто → любое). Тип + класс + число рук. */
+/** Ограничения оружия скилла (пусто → любое). Тип + класс + число рук + требование дуала. */
 const weaponRestrict = {
   weaponTypes: z.array(z.enum(['melee', 'ranged', 'magic'])).optional(),
-  weaponClasses: z.array(z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'bow', 'crossbow', 'wand', 'staff'])).optional(),
+  weaponClasses: z.array(z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff'])).optional(),
   hands: z.enum(['any', 'one', 'two']).default('any'),
+  /** Требует два оружия в руках (оба слота — оружие, не щит). Для ветки «дуал». */
+  requiresDual: z.boolean().default(false),
 };
 const activeCommon = {
   abilityId: z.string(),
   manaCost: z.number().min(0).default(0),
+  /** Из какого пула списывается стоимость (боевые — выносливость, магические — мана).
+   *  Для аур/стоек — какой пул резервируется. */
+  resource: z.enum(['mana', 'stamina']).default('mana'),
   /** КД, сек. 0 = без КД (тайминг от attackSpeed×speed). */
   cooldown: z.number().min(0).default(0),
 };
@@ -689,6 +705,8 @@ const attackAbilitySchema = z.object({
   count: z.number().int().min(1).default(1),
   spread: z.number().min(0).default(0),
   pierce: z.boolean().default(false),
+  /** Мили: число последовательных ударов за один скилл (каждый = damageMult). 1 = обычный одиночный. */
+  hits: z.number().int().min(1).default(1),
 });
 
 /** Каст: особая механика (рывок/прыжок/нова/лужа/метеор/бумеранг). Тайминг — от скорости каста (INT). */
@@ -756,7 +774,7 @@ const buffAbilitySchema = z.object({
   buffMods: z.array(statModifierSchema).optional(),
 });
 
-const activeAbilitySchema = z.discriminatedUnion('category', [
+export const activeAbilitySchema = z.discriminatedUnion('category', [
   attackAbilitySchema, castAbilitySchema, curseAbilitySchema, auraAbilitySchema, stanceAbilitySchema, buffAbilitySchema,
 ]);
 
@@ -819,6 +837,53 @@ export const skillsPassiveSchema = z.object({
     }),
   ),
 });
+
+/** Группа ветки древа скилов (для UI/генератора/иконки). */
+const skillGroupEnum = z.enum([
+  'melee1h', 'melee2h', 'ranged', 'dual', 'weapon-magic',
+  'element', 'curse', 'aura', 'stance', 'armor', 'shield', 'class',
+]);
+
+/**
+ * Единое ДРЕВО СКИЛОВ (актив + пассив), общее для всех классов. Ветки по типу оружия / стихии / проклятьям /
+ * аурам / стойкам / броне / щиту. Прокачка — по смежности от входа ветки (как древо мастерства), за очки скилла.
+ * Использование активок гейтится надетым оружием (`weaponRestrict` берётся из ветки → `weaponAllowed`).
+ */
+export const skillTreeSchema = z.object({
+  branches: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      group: skillGroupEnum,
+      /** Класс-гейт: если задан — ветка (её вход/узлы) доступна только этому classId. Пусто → всем. */
+      classId: z.string().optional(),
+      /** Пул ресурса активок ветки: spend (атаки/каст) или reserve (ауры/стойки — по category узла). */
+      resource: z.enum(['stamina', 'mana', 'none']).default('none'),
+      // Гейт использования (пусто → без ограничения); проставляется узлам ветки в weaponRestrict.
+      weaponClasses: z.array(z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff'])).optional(),
+      weaponType: z.enum(['melee', 'ranged', 'magic']).optional(),
+      hands: z.enum(['any', 'one', 'two']).optional(),
+      element: damageTypeEnum.optional(),
+      armorClasses: z.array(z.string()).optional(),
+      requiresDual: z.boolean().optional(),
+      entryNode: z.string(),
+    }),
+  ),
+  entryNodes: z.array(z.string()).default([]),
+  edges: z.array(z.tuple([z.string(), z.string()])).default([]),
+  nodes: z.array(
+    z.object({
+      ...skillNodeBase,
+      /** Активный (биндится, effect.active) или пассивный (тематический %-стат ветки). */
+      kind: z.enum(['active', 'passive']),
+      branchId: z.string(),
+      notable: z.boolean().default(false),
+    }),
+  ),
+});
+export type SkillTree = z.infer<typeof skillTreeSchema>;
+export type SkillTreeNode = SkillTree['nodes'][number];
+export type SkillTreeBranch = SkillTree['branches'][number];
 
 // ── quests ──────────────────────────────────────────────────────────────────
 const objectiveTypeEnum = z.enum([
@@ -885,6 +950,7 @@ export const configSchemas = {
   rarities: raritiesSchema,
   'skills-active': skillsActiveSchema,
   'skills-passive': skillsPassiveSchema,
+  'skill-tree': skillTreeSchema,
   'quests.main': questsMainSchema,
   'quests.random': questsRandomSchema,
 } as const;

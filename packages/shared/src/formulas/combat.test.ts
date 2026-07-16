@@ -16,7 +16,7 @@ function fakeRng(chances: boolean[], float = 0.5): Rng {
 }
 
 const base: CombatStats = {
-  accuracy: 100, evade: 100, armor: 0, blockChance: 0,
+  accuracy: 100, evade: 100, armor: 0, armorPen: 0, blockChance: 0,
   critChance: 0, critMultiplier: 2,
   resFire: 0, resCold: 0, resLightning: 0, resPoison: 0, ailmentPct: 0, level: 1,
 };

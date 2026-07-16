@@ -1,14 +1,13 @@
-import { activeTreeModifiers, type ConfigRegistry, type StatModifier, type SkillAllocation } from '@dm/shared';
+import { skillTreeModifiers, type ConfigRegistry, type StatModifier, type SkillAllocation } from '@dm/shared';
 
 /**
- * Модификаторы статов от вложенных узлов активного дерева класса (мастерства) —
- * обёртка над чистой `activeTreeModifiers` из shared. Активные способности
- * (effect.active) статы не меняют, только `effect.modifiers`.
+ * Модификаторы статов от вложенных узлов ЕДИНОГО древа скилов (пассив-узлы + мастерства
+ * на активках) — обёртка над чистой `skillTreeModifiers` из shared. Класс больше не нужен:
+ * древо общее (гейт класс-веток — при использовании, не в статах).
  */
 export function activeModifiers(
   config: ConfigRegistry,
-  classId: string,
   allocation: SkillAllocation,
 ): StatModifier[] {
-  return activeTreeModifiers(config.get('skills-active'), classId, allocation);
+  return skillTreeModifiers(config.get('skill-tree'), allocation);
 }

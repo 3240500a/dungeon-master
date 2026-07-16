@@ -1,4 +1,4 @@
-import { EventBus, ConfigRegistry, DEBUFF_LABEL, DEFAULT_HP_MANA_SCALING, toggleBuffMods, reservedManaFrac, type TownCommand, type Item, type QuestDef } from '@dm/shared';
+import { EventBus, ConfigRegistry, DEBUFF_LABEL, DEFAULT_HP_MANA_SCALING, toggleBuffMods, reservedFrac, type TownCommand, type Item, type QuestDef } from '@dm/shared';
 import type { GameState } from './gameState.js';
 import { passiveModifiers } from '../modules/skills-passive/passiveStats.js';
 import { activeModifiers } from '../modules/skills-active/activeStats.js';
@@ -147,14 +147,15 @@ export class App {
       value.passiveModsProvider = () =>
         passiveModifiers(this.config, value.save.passiveSkills);
       value.activeModsProvider = () =>
-        activeModifiers(this.config, value.save.classId, value.save.activeSkills);
+        activeModifiers(this.config, value.save.activeSkills);
       value.armorClassesProvider = () => this.config.get('armor-classes');
       value.derivedScalingProvider = () =>
         this.config.get('classes').find((c) => c.id === value.save.classId)?.derived
         ?? DEFAULT_HP_MANA_SCALING;
-      // Ауры/стойки: активные бонусы в статы + доля резерва маны (единый расчёт с сервером).
-      value.toggleModsProvider = () => toggleBuffMods(this.config, value.save.classId, value.toggles);
-      value.reservedManaFracProvider = () => reservedManaFrac(this.config, value.save.classId, value.toggles);
+      // Ауры/стойки: активные бонусы в статы + доля резерва пула (единый расчёт с сервером).
+      value.toggleModsProvider = () => toggleBuffMods(this.config, value.toggles);
+      value.reservedManaFracProvider = () => reservedFrac(this.config, value.toggles, 'mana');
+      value.reservedStaminaFracProvider = () => reservedFrac(this.config, value.toggles, 'stamina');
     }
   }
 

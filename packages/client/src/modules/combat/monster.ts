@@ -20,6 +20,9 @@ export class Monster {
   private stunTimer = 0;
   private bar?: Phaser.GameObjects.Graphics;
   private nose?: Phaser.GameObjects.Graphics;
+  private telegraphG?: Phaser.GameObjects.Graphics;
+  private telegraphStart = 0;
+  private telegraphDur = 0;
   private alertIcon?: Phaser.GameObjects.Text;
   private nameText?: Phaser.GameObjects.Text;
   private statsText?: Phaser.GameObjects.Text;
@@ -62,6 +65,27 @@ export class Monster {
     this.sprite.setPosition(v.x, v.y);
   }
 
+  /** Старт телеграфа замаха (по событию monster-swing): рисуем нарастающий сектор до удара. */
+  telegraph(durationMs: number): void {
+    if (!this.alive || durationMs <= 0) return;
+    this.telegraphStart = performance.now();
+    this.telegraphDur = durationMs;
+  }
+
+  /** Красный сектор в сторону удара, ярчает к моменту попадания; гаснет по завершении замаха. */
+  private drawTelegraph(): void {
+    if (this.telegraphDur <= 0) return;
+    const g = this.telegraphG ?? (this.telegraphG = this.sprite.scene.add.graphics().setDepth(3));
+    const t = (performance.now() - this.telegraphStart) / this.telegraphDur;
+    g.clear();
+    if (t < 0 || t >= 1) { this.telegraphDur = 0; return; } // отыграл — очищаем и выключаем
+    const reach = this.sprite.displayHeight * 0.7 + 12;
+    const half = 0.5; // полураствор сектора (рад)
+    g.fillStyle(0xff3b2f, 0.12 + 0.36 * t); // прозрачный у старта → заметный к удару
+    g.slice(this.sprite.x, this.sprite.y, reach, this.facing - half, this.facing + half, false);
+    g.fillPath();
+  }
+
   /** Короткая вспышка при попадании (вызывает боевой драйвер по событию hit). */
   flash(): void {
     if (!this.alive) return;
@@ -89,6 +113,7 @@ export class Monster {
   /** Рисует табличку (имя + HP-бар + характеристики особых) и значки. Каждый кадр. */
   drawStatus(): void {
     if (!this.alive) return;
+    this.drawTelegraph();
     const scene = this.sprite.scene;
     // «Нос» — куда смотрит монстр (важно для будущей графики/восприятия).
     if (!this.nose) this.nose = scene.add.graphics().setDepth(5);
@@ -161,6 +186,7 @@ export class Monster {
   }
 
   destroy(): void {
+    this.telegraphG?.destroy();
     this.bar?.destroy();
     this.nose?.destroy();
     this.alertIcon?.destroy();

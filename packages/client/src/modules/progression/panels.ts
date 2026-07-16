@@ -185,7 +185,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
       body.append(bars);
 
       // Активные ауры/стойки: что включено и что даёт (числовые бонусы уже учтены в статах ниже).
-      const auras = activeToggleInfos(app.config, state.save.classId, state.toggles);
+      const auras = activeToggleInfos(app.config, state.toggles);
       if (auras.length) {
         const box = mk('div', `background:${COLORS.panel2};border:0.5px solid ${COLORS.border};border-radius:8px;padding:8px 10px;margin:0 0 12px`);
         box.append(mk('div', `font-size:12px;color:${COLORS.dim};margin-bottom:4px`, 'Активные ауры/стойки'));
@@ -295,7 +295,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
         return `Урон базовой атаки по типам:<br>${parts.join('<br>') || '—'}<br><br>` +
           `Тип базы — по оружию. Растёт от базы оружия и <b>${attrName}</b>; стихийные добавки — с аффиксов гира/скиллов.`;
       };
-      const skillTree = app.config.get('skills-active').find((t) => t.classId === state.save.classId);
+      const skillTree = app.config.get('skill-tree');
 
       // Два урона (как D2): что назначено на ЛКМ и на ПКМ (атака оружием / скилл).
       const dmgRowFor = (label: string, binding: string | null): HTMLElement => {

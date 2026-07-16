@@ -13,11 +13,13 @@ export class UIScene extends Phaser.Scene {
   private app!: App;
   private hpBar!: Phaser.GameObjects.Graphics;
   private manaBar!: Phaser.GameObjects.Graphics;
+  private staminaBar!: Phaser.GameObjects.Graphics;
   private xpBar!: Phaser.GameObjects.Graphics;
   private label!: Phaser.GameObjects.Text;
   private hint!: Phaser.GameObjects.Text;
   private hpText!: Phaser.GameObjects.Text;
   private manaText!: Phaser.GameObjects.Text;
+  private staminaText!: Phaser.GameObjects.Text;
   private debuffText!: Phaser.GameObjects.Text;
   private auraText!: Phaser.GameObjects.Text;
   private actionBar?: ActionBar;
@@ -31,10 +33,12 @@ export class UIScene extends Phaser.Scene {
     this.app = App.from(this);
     this.hpBar = this.add.graphics();
     this.manaBar = this.add.graphics();
+    this.staminaBar = this.add.graphics();
     this.xpBar = this.add.graphics();
     this.label = this.add.text(16, 12, '', { fontSize: '17px', color: '#e6ddc9' });
     this.hpText = this.add.text(0, 0, '', { fontSize: '13px', color: '#f2ede1', fontStyle: 'bold' }).setOrigin(0.5);
     this.manaText = this.add.text(0, 0, '', { fontSize: '12px', color: '#f2ede1' }).setOrigin(0.5);
+    this.staminaText = this.add.text(0, 0, '', { fontSize: '12px', color: '#f2ede1' }).setOrigin(0.5);
     this.debuffText = this.add.text(16, 104, '', { fontSize: '17px', color: '#e8907c' });
     // Индикатор активных аур/стоек (тоглов) под полосами — факельным амбером.
     this.auraText = this.add.text(16, 124, '', { fontSize: '14px', color: '#e39a3c' });
@@ -91,15 +95,31 @@ export class UIScene extends Phaser.Scene {
     g.lineStyle(1, 0x000000, 0.8).strokeRect(x, y, w, h);
   }
 
+  /** Полоса выносливости с зоной резерва (стойки) — жёлто-зелёная. */
+  private drawStaminaBar(x: number, y: number, w: number, h: number, stam: number, maxStam: number, reservedFrac: number): void {
+    const g = this.staminaBar;
+    g.clear();
+    g.fillStyle(0x000000, 0.5).fillRect(x, y, w, h);
+    if (reservedFrac > 0) {
+      const rw = w * Phaser.Math.Clamp(reservedFrac, 0, 1);
+      g.fillStyle(0x39381f, 0.9).fillRect(x + w - rw, y, rw, h);
+    }
+    const frac = maxStam > 0 ? stam / maxStam : 0;
+    g.fillStyle(0x9aa63c, 1).fillRect(x, y, w * Phaser.Math.Clamp(frac, 0, 1), h);
+    g.lineStyle(1, 0x000000, 0.8).strokeRect(x, y, w, h);
+  }
+
   override update(): void {
     const state = this.app.state;
     if (!state) {
       this.label.setText('');
       this.hpBar.clear();
       this.manaBar.clear();
+      this.staminaBar.clear();
       this.xpBar.clear();
       this.hpText.setText('');
       this.manaText.setText('');
+      this.staminaText.setText('');
       this.debuffText.setText('');
       this.auraText.setText('');
       return;
@@ -113,18 +133,21 @@ export class UIScene extends Phaser.Scene {
 
     const reservedFrac = state.reservedManaFracProvider();
     const reserved = Math.round(d.maxMana * reservedFrac);
-    this.drawBar(this.hpBar, 16, 38, 280, 20, state.hp / d.maxHp, 0xc85a48);
-    this.drawManaBar(16, 64, 280, 16, state.mana, d.maxMana, reservedFrac);
-    this.drawBar(this.xpBar, 16, 84, 280, 8, xpFrac, 0xdca94b);
-    this.hpText.setPosition(16 + 140, 38 + 10).setText(`${Math.round(state.hp)} / ${Math.round(d.maxHp)}`);
-    this.manaText.setPosition(16 + 140, 64 + 8).setText(
+    const stamReserved = state.reservedStaminaFracProvider();
+    this.drawBar(this.hpBar, 16, 38, 280, 18, state.hp / d.maxHp, 0xc85a48);
+    this.drawManaBar(16, 59, 280, 13, state.mana, d.maxMana, reservedFrac);
+    this.drawStaminaBar(16, 75, 280, 13, state.stamina, d.maxStamina, stamReserved);
+    this.drawBar(this.xpBar, 16, 91, 280, 6, xpFrac, 0xdca94b);
+    this.hpText.setPosition(16 + 140, 38 + 9).setText(`${Math.round(state.hp)} / ${Math.round(d.maxHp)}`);
+    this.manaText.setPosition(16 + 140, 59 + 6).setText(
       reserved > 0
         ? `${Math.round(state.mana)} / ${Math.round(d.maxMana)}  (−${reserved} рез.)`
         : `${Math.round(state.mana)} / ${Math.round(d.maxMana)}`,
     );
+    this.staminaText.setPosition(16 + 140, 75 + 6).setText(`${Math.round(state.stamina)} / ${Math.round(d.maxStamina)}`);
 
     // Индикатор активных аур/стоек.
-    const auras = activeToggleInfos(this.app.config, state.save.classId, state.toggles);
+    const auras = activeToggleInfos(this.app.config, state.toggles);
     this.auraText.setText(auras.length ? '◈ ' + auras.map((a) => a.name).join('   ◈ ') : '');
 
     // Дебаффы на игроке (иконка + стаки).

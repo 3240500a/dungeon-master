@@ -26,11 +26,21 @@ export interface HpManaScaling {
   hpRegenPerVitality: number;
   manaBase: number;
   manaPerIntelligence: number;
+  /** Мана и от Живучести (мана ← Интеллект + Живучесть). */
+  manaPerVitality: number;
   manaPerLevel: number;
-  /** Базовый реген маны/сек (при 0 инт.). */
+  /** Базовый реген маны/сек. */
   manaRegenBase: number;
-  /** Реген маны/сек за 1 очко интеллекта. */
   manaRegenPerIntelligence: number;
+  manaRegenPerVitality: number;
+  /** Выносливость: база + от Силы и Ловкости (боевой ресурс). */
+  staminaBase: number;
+  staminaPerStrength: number;
+  staminaPerDexterity: number;
+  staminaPerLevel: number;
+  staminaRegenBase: number;
+  staminaRegenPerStrength: number;
+  staminaRegenPerDexterity: number;
   /** Прибавка к меткости (рейтингу атаки) за каждый уровень после 1-го. */
   accuracyPerLevel: number;
 }
@@ -45,9 +55,18 @@ export const DEFAULT_HP_MANA_SCALING: HpManaScaling = {
   hpRegenPerVitality: 0.01,
   manaBase: 20,
   manaPerIntelligence: 3,
+  manaPerVitality: 1,
   manaPerLevel: 0,
   manaRegenBase: 0.5,
   manaRegenPerIntelligence: 0.05,
+  manaRegenPerVitality: 0.02,
+  staminaBase: 40,
+  staminaPerStrength: 2,
+  staminaPerDexterity: 1.5,
+  staminaPerLevel: 0,
+  staminaRegenBase: 3,
+  staminaRegenPerStrength: 0.08,
+  staminaRegenPerDexterity: 0.05,
   accuracyPerLevel: 2,
 };
 
@@ -55,6 +74,8 @@ export const DEFAULT_HP_MANA_SCALING: HpManaScaling = {
 export interface DerivedStats {
   maxHp: number;
   maxMana: number;
+  /** Пул выносливости — ресурс боевых активок (растёт от Силы/Ловкости). */
+  maxStamina: number;
   /** Базовый физический урон до модификаторов оружия/скиллов. */
   minDamage: number;
   maxDamage: number;
@@ -64,6 +85,8 @@ export interface DerivedStats {
   critChance: number;
   critMultiplier: number;
   armor: number;
+  /** Пробой брони цели (доля 0..1) — снижает эффективную броню защитника. */
+  armorPen: number;
   moveSpeed: number;
   /** Меткость — рейтинг атаки (сравнивается с evade цели). */
   accuracy: number;
@@ -91,6 +114,7 @@ export interface DerivedStats {
   /** Реген в секунду. */
   hpRegen: number;
   manaRegen: number;
+  staminaRegen: number;
   /** Сопротивления стихиям как доля (−0.75..0.75), в UI × 100 = %. */
   resFire: number;
   resCold: number;

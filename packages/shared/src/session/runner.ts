@@ -43,6 +43,7 @@ function reviveFull(p: PlayerEntity, save: SaveState, reg: ConfigRegistry): void
   const snap = playerSnapshot(save, reg);
   p.hp = snap.derived.maxHp;
   p.mana = snap.derived.maxMana;
+  p.stamina = snap.derived.maxStamina;
   p.debuffs = newDebuffState();
   p.alive = true;
 }

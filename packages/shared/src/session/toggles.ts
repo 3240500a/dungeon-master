@@ -3,15 +3,15 @@ import type { ConfigShapes } from '../config/schemas.js';
 import type { StatModifier } from '../types/index.js';
 
 /**
- * Чистые хелперы по активным тоглам (аурам/стойкам): резерв маны, эффективный
- * максимум, стат-моды и инфо для UI. ЕДИНЫЙ источник для сервера (session.tick) и
- * клиента (лист персонажа + HUD) — чтобы резерв/бонусы считались одинаково везде.
+ * Чистые хелперы по активным тоглам (аурам/стойкам): резерв пула, эффективный максимум,
+ * стат-моды и инфо для UI. ЕДИНЫЙ источник для сервера (session.tick) и клиента (лист/HUD).
+ * Читают единое ДРЕВО СКИЛОВ по id узла (без класса). Ауры резервируют ману, стойки — выносливость
+ * (по `resource` способности).
  */
 
-/** Активная способность узла активного дерева (тип из распарсенного конфига). */
-type ActiveAbility = NonNullable<
-  ConfigShapes['skills-active'][number]['nodes'][number]['effect']['active']
->;
+/** Активная способность узла древа скилов (тип из распарсенного конфига). */
+type ActiveAbility = NonNullable<ConfigShapes['skill-tree']['nodes'][number]['effect']['active']>;
+type ResourcePool = 'mana' | 'stamina';
 
 /** Инфо об активном тогле (для HUD-индикатора и листа персонажа). */
 export interface ActiveToggleInfo {
@@ -19,52 +19,62 @@ export interface ActiveToggleInfo {
   name: string;
   description: string;
   reservePct: number;
+  pool: ResourcePool;
   buffMods: StatModifier[];
 }
 
-/** Активная способность узла активного дерева класса по id узла. */
-export function activeAbilityOf(cfg: ConfigRegistry, classId: string, nodeId: string): ActiveAbility | undefined {
-  const tree = cfg.get('skills-active').find((t) => t.classId === classId);
-  return tree?.nodes.find((n) => n.id === nodeId)?.effect.active ?? undefined;
+/** Способность узла древа скилов по id узла. */
+export function activeAbilityOf(cfg: ConfigRegistry, nodeId: string): ActiveAbility | undefined {
+  return cfg.get('skill-tree').nodes.find((n) => n.id === nodeId)?.effect.active ?? undefined;
 }
 
-/** Доля резерва маны узла (только у аур/стоек). */
+function isToggle(a: ActiveAbility | undefined): boolean {
+  return !!a && (a.category === 'aura' || a.category === 'stance');
+}
+/** Доля резерва узла (только у аур/стоек). */
 function reserveOf(a: ActiveAbility | undefined): number {
-  return a && (a.category === 'aura' || a.category === 'stance') ? (a.reservePct ?? 0) : 0;
+  return isToggle(a) ? ((a as { reservePct?: number }).reservePct ?? 0) : 0;
+}
+/** Пул, который резервирует тогл (мана у аур, выносливость у стоек — по resource). */
+function poolOf(a: ActiveAbility | undefined): ResourcePool {
+  return a && a.resource === 'stamina' ? 'stamina' : 'mana';
 }
 /** Стат-моды тогла (ауры/стойки). */
 function buffModsOf(a: ActiveAbility | undefined): StatModifier[] {
-  return a && (a.category === 'aura' || a.category === 'stance') ? (a.buffMods ?? []) : [];
+  return isToggle(a) ? ((a as { buffMods?: StatModifier[] }).buffMods ?? []) : [];
 }
 
-/** Доля зарезервированной маны от активных тоглов/аур (кап 0.9 — всю ману занять нельзя). */
-export function reservedManaFrac(cfg: ConfigRegistry, classId: string, toggles: readonly string[]): number {
+/** Доля зарезервированного ПУЛА (mana|stamina) от активных тоглов (кап 0.9 — весь пул занять нельзя). */
+export function reservedFrac(cfg: ConfigRegistry, toggles: readonly string[], pool: ResourcePool): number {
   let f = 0;
-  for (const id of toggles) f += reserveOf(activeAbilityOf(cfg, classId, id));
+  for (const id of toggles) {
+    const a = activeAbilityOf(cfg, id);
+    if (reserveOf(a) > 0 && poolOf(a) === pool) f += reserveOf(a);
+  }
   return Math.min(0.9, f);
 }
 
-/** Эффективный максимум маны с учётом резерва — мана восстанавливается ТОЛЬКО до него. */
-export function effectiveMaxMana(maxMana: number, reserveFrac: number): number {
-  return maxMana * (1 - reserveFrac);
+/** Эффективный максимум пула с учётом резерва — пул восстанавливается ТОЛЬКО до него. */
+export function effectivePool(max: number, reserveFrac: number): number {
+  return max * (1 - reserveFrac);
 }
 
 /** Стат-моды активных тоглов (ауры/стойки) — единый источник для боя и отображения. */
-export function toggleBuffMods(cfg: ConfigRegistry, classId: string, toggles: readonly string[]): StatModifier[] {
+export function toggleBuffMods(cfg: ConfigRegistry, toggles: readonly string[]): StatModifier[] {
   const mods: StatModifier[] = [];
-  for (const id of toggles) mods.push(...buffModsOf(activeAbilityOf(cfg, classId, id)));
+  for (const id of toggles) mods.push(...buffModsOf(activeAbilityOf(cfg, id)));
   return mods;
 }
 
-/** Инфо об активных тоглах (имя/описание/резерв/бонусы) — для HUD и листа персонажа. */
-export function activeToggleInfos(cfg: ConfigRegistry, classId: string, toggles: readonly string[]): ActiveToggleInfo[] {
-  const tree = cfg.get('skills-active').find((t) => t.classId === classId);
+/** Инфо об активных тоглах (имя/описание/резерв/пул/бонусы) — для HUD и листа персонажа. */
+export function activeToggleInfos(cfg: ConfigRegistry, toggles: readonly string[]): ActiveToggleInfo[] {
+  const tree = cfg.get('skill-tree');
   const out: ActiveToggleInfo[] = [];
   for (const id of toggles) {
-    const node = tree?.nodes.find((n) => n.id === id);
+    const node = tree.nodes.find((n) => n.id === id);
     const a = node?.effect.active;
     if (node && a) {
-      out.push({ id, name: node.name, description: node.description, reservePct: reserveOf(a), buffMods: buffModsOf(a) });
+      out.push({ id, name: node.name, description: node.description, reservePct: reserveOf(a), pool: poolOf(a), buffMods: buffModsOf(a) });
     }
   }
   return out;

@@ -6,7 +6,7 @@ import type { Item } from '../types/items.js';
 import { deriveStats, finalAttributes, modifiersFromItems } from '../formulas/stats.js';
 import { DEFAULT_HP_MANA_SCALING } from '../types/attributes.js';
 import { armorClassModifiers } from '../formulas/resolveArmor.js';
-import { passiveTreeModifiers, activeTreeModifiers, setBonusModifiers, playerTriggers, type ResolvedTrigger } from '../formulas/skills.js';
+import { passiveTreeModifiers, skillTreeModifiers, skillTreeSetBonus, skillTreeTriggers, type ResolvedTrigger } from '../formulas/skills.js';
 import { combatStatsOf } from '../formulas/playerCombat.js';
 
 /**
@@ -37,8 +37,8 @@ export function playerModifiers(save: SaveState, cfg: ConfigRegistry): StatModif
   const mods = modifiersFromItems(eq);
   mods.push(...armorClassModifiers(eq, cfg.get('armor-classes')));
   mods.push(...passiveTreeModifiers(cfg.get('skills-passive'), save.passiveSkills));
-  mods.push(...activeTreeModifiers(cfg.get('skills-active'), save.classId, save.activeSkills));
-  mods.push(...setBonusModifiers(cfg.get('skills-active'), save.classId, save.activeSkills, eq));
+  mods.push(...skillTreeModifiers(cfg.get('skill-tree'), save.activeSkills));
+  mods.push(...skillTreeSetBonus(cfg.get('skill-tree'), save.activeSkills, eq));
   return mods;
 }
 
@@ -54,6 +54,6 @@ export function playerSnapshot(save: SaveState, cfg: ConfigRegistry, extraMods: 
   const derived = deriveStats(save.attributes, modifiers, scaling, save.level);
   const attrs = finalAttributes(save.attributes, modifiers);
   const combat = combatStatsOf(derived, save.level);
-  const triggers = playerTriggers(cfg.get('skills-active'), save.classId, save.activeSkills);
+  const triggers = skillTreeTriggers(cfg.get('skill-tree'), save.activeSkills);
   return { modifiers, derived, attrs, combat, triggers };
 }
