@@ -22,6 +22,32 @@ export interface CharOpts {
   body?: number; limb?: number; head?: number;   // цвета
   scale?: number;                                 // общий масштаб (1 = ~1.8 м)
   metal?: number;                                 // «металличность» тела (броня)
+  weapon?: 'sword' | 'axe' | 'mace' | 'staff' | 'none'; // оружие в правой руке
+}
+
+/** Простое оружие в кулаке (свисает вниз от кисти, свингует вместе с рукой). */
+function makeWeapon(kind: string): THREE.Group {
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: 0xb8bec8, roughness: 0.4, metalness: 0.7 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3d24, roughness: 0.85 });
+  if (kind === 'sword') {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(2.4, 34, 5), steel); blade.position.y = -19;
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(11, 2.4, 3), steel); guard.position.y = -2;
+    g.add(blade, guard);
+  } else if (kind === 'axe') {
+    const haft = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 32, 6), wood); haft.position.y = -14;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(3, 13, 11), steel); head.position.set(0, -26, 4);
+    g.add(haft, head);
+  } else if (kind === 'mace') {
+    const haft = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 26, 6), wood); haft.position.y = -12;
+    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(5, 0), steel); head.position.y = -26;
+    g.add(haft, head);
+  } else { // staff
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 46, 6), wood); shaft.position.y = -18;
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(4, 12, 12), new THREE.MeshStandardMaterial({ color: 0x66aaff, emissive: 0x2a4aa0, emissiveIntensity: 0.6, roughness: 0.3 })); orb.position.y = -41;
+    g.add(shaft, orb);
+  }
+  return g;
 }
 
 export interface ActorHandle {
@@ -66,15 +92,17 @@ export function makeCharacter(opts: CharOpts = {}): ActorHandle {
   head.position.y = 22; torso.add(head);
 
   // Руки: плечо → предплечье → кулак. Плечи у верха торса.
-  function arm(side: number): { sh: THREE.Group; el: THREE.Group } {
+  function arm(side: number): { sh: THREE.Group; el: THREE.Group; hand: THREE.Group } {
     const shoulder = new THREE.Group(); shoulder.position.set(side * 7.2, 18, 0); torso.add(shoulder);
     const upper = bone(11, 2.9, 2.6, matLimb); shoulder.add(upper.pivot);
     const fore = bone(10, 2.5, 2.2, matLimb); upper.end.add(fore.pivot);
     const fist = new THREE.Mesh(new THREE.SphereGeometry(3.1, 12, 12), matBody); fist.position.y = -1; fore.end.add(fist);
     shoulder.rotation.z = side * 0.12;
-    return { sh: upper.pivot, el: fore.pivot };
+    return { sh: upper.pivot, el: fore.pivot, hand: fore.end };
   }
   const aL = arm(-1), aR = arm(1);
+  const wk = opts.weapon ?? 'none';
+  if (wk !== 'none') aR.hand.add(makeWeapon(wk));
 
   // Ноги: бедро → голень → стопа. Бёдра у таза.
   function leg(side: number): { hip: THREE.Group; kn: THREE.Group } {

@@ -16,6 +16,18 @@ import { setFog, makeSceneLighting, buildEnvironment, animateTorches, type Torch
 const ELEM: Record<DamageType, number> = { physical: 0xcfcfd6, fire: 0xff5a2a, cold: 0x59a8ff, lightning: 0xffe24a, poison: 0x6ecb3f };
 const FACTION: Record<string, number> = { undead: 0x9fb7a6, demon: 0xc9614a, beast: 0xb08a55, monster: 0x8a6fae };
 const yaw = (facing: number): number => Math.PI / 2 - facing;
+function weaponForClass(id: string): 'sword' | 'axe' | 'staff' { return id === 'mage' || id === 'vorozheya' ? 'staff' : id === 'warrior' ? 'axe' : 'sword'; }
+
+/** Плавающая полоска HP над монстром (спрайт, авто-биллборд; перерисов только при заметном изменении). */
+function makeHpBar(): { spr: THREE.Sprite; set: (f: number) => void } {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 10; const g = c.getContext('2d')!;
+  const t = new THREE.CanvasTexture(c);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false })); spr.scale.set(38, 6, 1);
+  let last = -1;
+  const draw = (f: number): void => { g.clearRect(0, 0, 64, 10); g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, 64, 10); g.fillStyle = f > 0.5 ? '#5ec24a' : f > 0.25 ? '#d8c24a' : '#d8583e'; g.fillRect(1, 1, 62 * f, 8); t.needsUpdate = true; };
+  draw(1);
+  return { spr, set: (f) => { f = Math.max(0, Math.min(1, f)); if (Math.abs(f - last) > 0.02) { last = f; draw(f); } } };
+}
 
 // ── Renderer / scene / camera ────────────────────────────────────────────────────
 const canvas = document.getElementById('app') as HTMLCanvasElement;
@@ -37,7 +49,7 @@ let seed = (Math.random() * 1e9) | 0, depth = 1, difficulty = 'normal';
 let torches: Torch[] = [];
 let playerActor!: ActorHandle;
 let playerLight!: THREE.PointLight;
-const monActors = new Map<number, { a: ActorHandle; dead: number }>();
+const monActors = new Map<number, { a: ActorHandle; dead: number; hp: ReturnType<typeof makeHpBar> }>();
 const projMeshes = new Map<number, THREE.Mesh>();
 const dropMeshes = new Map<number, THREE.Object3D>();
 let floorCooldown = 0, running = false;
@@ -88,20 +100,18 @@ function enterFloor(d: number): void {
   torches = buildEnvironment(floorGroup, layout);
 
   // Игрок.
-  playerActor = makeCharacter({ body: 0x8a93ad, limb: 0x6f7690, metal: 0.35 });
+  playerActor = makeCharacter({ body: 0x8a93ad, limb: 0x6f7690, metal: 0.35, weapon: weaponForClass(save.classId) });
   actorsGroup.add(playerActor.root);
   playerLight = new THREE.PointLight(0xffd7a0, 5200, 520, 2); playerLight.position.y = 96; playerActor.root.add(playerLight);
   floorCooldown = 1.5;
   toast(d === 1 ? 'Подземелье — этаж 1' : `Этаж ${d}`);
 }
 
-function ensureMonster(id: number, faction: string, champion: boolean): ActorHandle {
-  let e = monActors.get(id);
-  if (!e) {
-    const a = makeCharacter({ body: FACTION[faction] ?? 0x9a7f5a, limb: 0x5a5a64, head: FACTION[faction] ?? 0x8a6f4a, scale: champion ? 1.35 : 0.92, metal: 0.05 });
-    actorsGroup.add(a.root); e = { a, dead: 0 }; monActors.set(id, e);
-  }
-  return e.a;
+function ensureMonster(id: number, faction: string, champion: boolean): void {
+  if (monActors.has(id)) return;
+  const a = makeCharacter({ body: FACTION[faction] ?? 0x9a7f5a, limb: 0x5a5a64, head: FACTION[faction] ?? 0x8a6f4a, scale: champion ? 1.35 : 0.92, metal: 0.05, weapon: champion ? 'axe' : 'none' });
+  const hp = makeHpBar(); hp.spr.position.y = 66; a.root.add(hp.spr);
+  actorsGroup.add(a.root); monActors.set(id, { a, dead: 0, hp });
 }
 
 // ── Старт ────────────────────────────────────────────────────────────────────────
@@ -138,7 +148,7 @@ function onEvents(evs: ReturnType<GameSession['tick']>): void {
     if (e.type === 'swing') { playerActor?.attack(1); vfx.slash(e.x, e.y, e.facing, 0xfff0c0, 44); }
     else if (e.type === 'monster-swing') { monActors.get(e.id)?.a.attack(1); }
     else if (e.type === 'hit' && e.hit && !e.blocked) { vfx.damage(e.x, e.y, Math.round(e.amount), ELEM[dominantType(e.byType)] ?? 0xffffff, e.crit); }
-    else if (e.type === 'monster-died') { const m = monActors.get(e.id); if (m) { m.a.setDead(true); m.dead = 0.9; } vfx.burst(e.x, e.y, 0xc0402a, 16, 100, 0.6); vfx.ring(e.x, e.y, 0x802010, 70, 0.5); }
+    else if (e.type === 'monster-died') { const m = monActors.get(e.id); if (m) { m.a.setDead(true); m.dead = 0.9; m.hp.spr.visible = false; } vfx.burst(e.x, e.y, 0xc0402a, 16, 100, 0.6); vfx.ring(e.x, e.y, 0x802010, 70, 0.5); }
     else if (e.type === 'levelup') { const p = session.world.players['p1']; if (p) { vfx.ring(p.pos.x, p.pos.y, 0xffd24a, 120, 0.8); vfx.burst(p.pos.x, p.pos.y, 0xffd24a, 24, 120, 0.9, 12, 30); } toast(`Уровень ${e.level}!`); }
     else if (e.type === 'player-died') { running = false; showDeath(); }
     else if (e.type === 'floor-cleared') toast('Этаж зачищен — ищите лестницу вниз');
@@ -165,9 +175,10 @@ function sync(dt: number): void {
   for (const m of w.monsters) {
     if (!m.alive && !monActors.has(m.id)) continue;
     live.add(m.id);
-    const a = ensureMonster(m.id, m.def.faction, m.def.rarity === 'champion');
-    if (m.alive) { a.setPose(m.pos.x, m.pos.y, yaw(m.facing)); a.setMove(Math.hypot(m.vel.x, m.vel.y) / 90); }
-    a.update(dt);
+    ensureMonster(m.id, m.def.faction, m.def.rarity === 'champion');
+    const rec = monActors.get(m.id)!;
+    if (m.alive) { rec.a.setPose(m.pos.x, m.pos.y, yaw(m.facing)); rec.a.setMove(Math.hypot(m.vel.x, m.vel.y) / 90); rec.hp.set(m.hp / Math.max(1, m.maxHp)); }
+    rec.a.update(dt);
   }
   // Удаление отыгравших смерть.
   for (const [id, rec] of monActors) {
@@ -184,6 +195,7 @@ function sync(dt: number): void {
       const col = projColor(pr.owner, pr.packet);
       m = new THREE.Mesh(new THREE.SphereGeometry(5, 10, 10), new THREE.MeshBasicMaterial({ color: col }));
       const gl = new THREE.PointLight(col, 40, 90, 2); m.add(gl); actorsGroup.add(m); projMeshes.set(pr.id, m);
+      vfx.burst(pr.pos.x, pr.pos.y, col, 8, 45, 0.3, 7, 24); // вспышка-выстрел
     }
     m.position.set(pr.pos.x, 24, pr.pos.y);
   }
