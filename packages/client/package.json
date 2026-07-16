@@ -13,9 +13,11 @@
     "@dm/shared": "*",
     "@fontsource/cinzel": "^5.2.8",
     "@fontsource/forum": "^5.2.8",
-    "phaser": "^3.87.0"
+    "phaser": "^3.87.0",
+    "three": "^0.171.0"
   },
   "devDependencies": {
+    "@types/three": "^0.171.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }

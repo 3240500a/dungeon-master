@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DM — 3D спайк (данж)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      #app { width: 100vw; height: 100vh; display: block; }
+      #hud {
+        position: fixed; left: 12px; top: 12px; z-index: 10; color: #cdd2e0;
+        font: 13px/1.5 system-ui, sans-serif; text-shadow: 0 1px 3px #000;
+        background: rgba(10,12,20,0.55); border: 1px solid #2a2e40; border-radius: 8px; padding: 10px 12px; max-width: 320px;
+      }
+      #hud b { color: #e0b45a; }
+      #hud button { margin-top: 8px; padding: 6px 12px; cursor: pointer; background: #23283a; color: #e8e8f0; border: 1px solid #3a3f55; border-radius: 6px; font-size: 12px; }
+      #hud .dim { color: #8a90a4; }
+    </style>
+  </head>
+  <body>
+    <canvas id="app"></canvas>
+    <div id="hud">
+      <div><b>3D-спайк подземелья</b> (Ф0)</div>
+      <div class="dim">реальный этаж из нашего генератора · окружение мешами · процедурные текстуры</div>
+      <div class="dim" style="margin-top:6px">WASD/стрелки — идти · мышь — взгляд · ПКМ-тащить — камера · колесо — зум</div>
+      <button id="reroll">↻ Новый этаж</button>
+    </div>
+    <script type="module" src="/src/render3d/demo.ts"></script>
+  </body>
+</html>
