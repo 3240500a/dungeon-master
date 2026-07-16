@@ -178,6 +178,9 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const manaReserved = Math.round(d.maxMana * state.reservedManaFracProvider());
       bars.append(barLine('Мана', state.mana, d.maxMana, '#4b7bcf', true, delta(d.maxMana, pd.maxMana),
         manaReserved > 0 ? `${Math.round(state.mana)} / ${Math.round(d.maxMana)} · резерв ${manaReserved}` : undefined));
+      const stamReserved = Math.round(d.maxStamina * state.reservedStaminaFracProvider());
+      bars.append(barLine('Выносливость', state.stamina, d.maxStamina, '#9aa63c', true, delta(d.maxStamina, pd.maxStamina),
+        stamReserved > 0 ? `${Math.round(state.stamina)} / ${Math.round(d.maxStamina)} · резерв ${stamReserved}` : undefined));
       const xpInto = state.save.xp - cur;
       const xpNeed = next - cur;
       const xpText = next > cur ? `${xpInto} / ${xpNeed} · ${Math.round(pct * 100)}%` : 'макс. уровень';
@@ -364,7 +367,9 @@ export const characterPanel: PanelFactory = (app, ui) => {
       def.append(statRow('Здоровье', `${Math.round(state.hp)} / ${Math.round(d.maxHp)}`,
         'Текущее / максимум HP. При 0 — смерть.', delta(d.maxHp, pd.maxHp)));
       def.append(statRow('Мана', `${Math.round(state.mana)} / ${Math.round(d.maxMana)}`,
-        'Текущее / максимум маны для активных скиллов.', delta(d.maxMana, pd.maxMana)));
+        'Текущее / максимум маны для магических скиллов (и резерва аур).', delta(d.maxMana, pd.maxMana)));
+      def.append(statRow('Выносливость', `${Math.round(state.stamina)} / ${Math.round(d.maxStamina)}`,
+        'Текущее / максимум выносливости для боевых скиллов (и резерва стоек).', delta(d.maxStamina, pd.maxStamina)));
       def.append(statRow('Реген HP', `${d.hpRegen.toFixed(1)} /с`,
         `Восстанавливает ${d.hpRegen.toFixed(1)} HP каждую секунду.`,
         delta(d.hpRegen, pd.hpRegen, { digits: 1, suffix: ' /с' })));
