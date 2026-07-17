@@ -158,7 +158,7 @@ const DENSITY = 1000 / (TILE * TILE * TILE);
  * Сила мышц (предел момента, кг·u²/с²). Порядок задан массой: удержать бедро (~18 кг) на плече ~7.5u
  * при g=314 → ~4e4. Ноги сильные, руки и спина слабые — тогда они махаются от инерции сами (рецепт Exanima).
  */
-const T_LEG = 8e5, T_CORE = 3e6, T_ARM = 3e5, T_HEAD = 2e5;
+const T_LEG = 6e6, T_CORE = 3e6, T_ARM = 3e5, T_HEAD = 2e5;
 
 const swing = (planeCone: number, normalCone: number, twistLim: [number, number], twist = DOWN, plane = AX_X): Con =>
   ({ kind: 'swing', twist, plane, normalCone, planeCone, twistLim });
@@ -173,12 +173,12 @@ const BONES: BoneDef[] = [
   { name: 'armR', parent: 1, anchor: [7, 48, 0], off: [0, -5.5, 0], shape: { k: 'capsule', hh: 4, r: 2.8 }, mat: 'limb', con: swing(1.7, 1.2, [-0.8, 0.8]), key: 'shR', sign: 1, torque: T_ARM, freq: 6, damp: 0.8 },
   { name: 'foreL', parent: 3, anchor: [-7, 37, 0], off: [0, -5, 0], shape: { k: 'capsule', hh: 4, r: 2.4 }, mat: 'limb', con: hinge([-2.2, 0.05]), key: 'elL', sign: -1, torque: T_ARM, freq: 6, damp: 0.8 },
   { name: 'foreR', parent: 4, anchor: [7, 37, 0], off: [0, -5, 0], shape: { k: 'capsule', hh: 4, r: 2.4 }, mat: 'limb', con: hinge([-2.2, 0.05]), key: 'elR', sign: -1, torque: T_ARM, freq: 6, damp: 0.8 },
-  { name: 'thighL', parent: 0, anchor: [-3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(1.4, 0.5, [-0.4, 0.4]), key: 'hipL', sign: 1, torque: T_LEG, freq: 12, damp: 1 },
-  { name: 'thighR', parent: 0, anchor: [3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(1.4, 0.5, [-0.4, 0.4]), key: 'hipR', sign: 1, torque: T_LEG, freq: 12, damp: 1 },
-  { name: 'shinL', parent: 7, anchor: [-3.6, 15, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 2.9 }, mat: 'limb', con: hinge([-0.05, 2.2]), key: 'knL', sign: 1, torque: T_LEG, freq: 12, damp: 1 },
-  { name: 'shinR', parent: 8, anchor: [3.6, 15, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 2.9 }, mat: 'limb', con: hinge([-0.05, 2.2]), key: 'knR', sign: 1, torque: T_LEG, freq: 12, damp: 1 },
-  { name: 'footL', parent: 9, anchor: [-3.6, 1.5, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, mat: 'limb', con: hinge([-0.4, 0.4]), key: null, sign: 1, torque: T_LEG, freq: 12, damp: 1 },
-  { name: 'footR', parent: 10, anchor: [3.6, 1.5, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, mat: 'limb', con: hinge([-0.4, 0.4]), key: null, sign: 1, torque: T_LEG, freq: 12, damp: 1 },
+  { name: 'thighL', parent: 0, anchor: [-3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(0.5, 1.4, [-0.4, 0.4]), key: 'hipL', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
+  { name: 'thighR', parent: 0, anchor: [3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(0.5, 1.4, [-0.4, 0.4]), key: 'hipR', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
+  { name: 'shinL', parent: 7, anchor: [-3.6, 15, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 2.9 }, mat: 'limb', con: hinge([-0.05, 2.2]), key: 'knL', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
+  { name: 'shinR', parent: 8, anchor: [3.6, 15, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 2.9 }, mat: 'limb', con: hinge([-0.05, 2.2]), key: 'knR', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
+  { name: 'footL', parent: 9, anchor: [-3.6, 1.5, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, mat: 'limb', con: hinge([-0.4, 0.4]), key: null, sign: 1, torque: T_LEG, freq: 20, damp: 1 },
+  { name: 'footR', parent: 10, anchor: [3.6, 1.5, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, mat: 'limb', con: hinge([-0.4, 0.4]), key: null, sign: 1, torque: T_LEG, freq: 20, damp: 1 },
 ];
 
 /** Риг рождается СРАЗУ на месте спавна (x,z): иначе таз уедет к игроку один, а кости поволочёт через полкарты. */
@@ -260,6 +260,10 @@ function makeConstraint(b: BoneDef, ox: number, oz: number): InstanceType<JoltNS
   s.mPosition1 = p1; s.mPosition2 = p2;
   s.mTwistAxis1 = t1; s.mTwistAxis2 = t2;
   s.mPlaneAxis1 = pl1; s.mPlaneAxis2 = pl2;
+  // ПИРАМИДА, а не конус (по умолчанию Cone): круглый конус берёт ТОЛЬКО normalHalfCone и зажимает сустав
+  // одним углом во все стороны. Для бедра это ±0.5 рад: назад хватает (бег задом выглядел нормально),
+  // а вперёд нога упирается в предел и плетётся сзади. Пирамида уважает оба угла раздельно.
+  s.mSwingType = J.ESwingType_Pyramid;
   s.mNormalHalfConeAngle = c.normalCone;
   s.mPlaneHalfConeAngle = c.planeCone;
   s.mTwistMinAngle = c.twistLim[0]; s.mTwistMaxAngle = c.twistLim[1];
@@ -334,6 +338,7 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
 
   const driver = new PoseDriver();
   let px = ox, pz = oz, yawT = 0, dead = false;
+  let prevX = ox, prevZ = oz, vx = 0, vz = 0;   // скорость тела — из разности позиций (сим её не отдаёт риг-у)
   const q = new THREE.Quaternion(), e = new THREE.Euler(), tmp = new THREE.Vector3();
 
   /** Залить ghost-позу в SkeletonPose (локальные повороты костей вокруг своих суставов). */
@@ -368,7 +373,7 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
 
   return {
     group,
-    _dbg: { ragdoll, pose, ids, skeleton, J },
+    _dbg: { ragdoll, pose, ids, skeleton, J, driver },
     // NaN, попавший в физику, отравляет мир безвозвратно — не пускаем.
     setPose(x, z, yaw) { if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(yaw)) { px = x; pz = z; yawT = yaw; } },
     setMove(s) { driver.setMove(s); },
@@ -385,6 +390,11 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
       driver.setDead(d);
     },
     update(dt) {
+      if (dt > 0) {   // ноги шагают по МИРУ (планировщик шагов + IK), а не по синусу — иначе стопы едут юзом
+        vx = (px - prevX) / dt; vz = (pz - prevZ) / dt;
+        prevX = px; prevZ = pz;
+        driver.setWorld(px, pz, yawT, vx, vz);
+      }
       const t = driver.update(dt);
       if (!dead) {
         writePose(t);
