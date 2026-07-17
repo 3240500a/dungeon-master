@@ -59,7 +59,8 @@ let floorCooldown = 0, running = false;
 // ── Ввод ─────────────────────────────────────────────────────────────────────────
 const keys = new Set<string>();
 let lmb = false, rmb = false;
-const aim = { wx: 1, wy: 0 };
+/** Курсор в координатах ЭКРАНА. Мировую точку под ним считаем каждый кадр — камера едет за героем. */
+const mouse = { x: 0, y: 0, set: false };
 addEventListener('keydown', (e) => keys.add(e.code));
 addEventListener('keyup', (e) => keys.delete(e.code));
 const ray = new THREE.Raycaster(); const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -73,11 +74,17 @@ canvas.addEventListener('pointerdown', (e) => {
 addEventListener('pointerup', (e) => { if (e.button === 0) lmb = false; if (e.button === 2) { rmb = false; rot = null; } });
 canvas.addEventListener('pointermove', (e) => {
   if (rot) { orbit.az -= (e.clientX - rot.x) * 0.005; orbit.el += (e.clientY - rot.y) * 0.005; rot.x = e.clientX; rot.y = e.clientY; }
-  const r = canvas.getBoundingClientRect();
-  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-  ray.setFromCamera(ndc, camera);
-  if (ray.ray.intersectPlane(ground, hitPt)) { aim.wx = hitPt.x; aim.wy = hitPt.z; }
+  mouse.x = e.clientX; mouse.y = e.clientY; mouse.set = true;
 });
+
+/** Точка на полу под курсором (мир). Считается на КАЖДЫЙ запрос: камера движется, значит мировая точка тоже. */
+function aimWorld(): { x: number; y: number } | null {
+  if (!mouse.set) return null;
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((mouse.x - r.left) / r.width) * 2 - 1, -((mouse.y - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  return ray.ray.intersectPlane(ground, hitPt) ? { x: hitPt.x, y: hitPt.z } : null;
+}
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist = Math.max(160, Math.min(1100, orbit.dist * (e.deltaY < 0 ? 0.9 : 1.1))); }, { passive: false });
 
 const orbit = { target: new THREE.Vector3(), dist: 470, az: -0.6, el: 0.95 };
@@ -140,7 +147,12 @@ function buildInput(): PlayerInput {
   if (keys.has('KeyA') || keys.has('ArrowLeft')) mx -= 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) my += 1;
   if (keys.has('KeyW') || keys.has('ArrowUp')) my -= 1;
-  const facing = p ? Math.atan2(aim.wy - p.pos.y, aim.wx - p.pos.x) : 0;
+  // Взгляд — на точку пола под курсором, пересчитанную ПО ТЕКУЩЕЙ камере. Мёртвая зона: курсор на самом
+  // герое даёт нулевой вектор и вертел бы его волчком. Мышь ещё не двигали — смотрим, куда бежим.
+  let facing = p?.facing ?? 0;
+  const a = aimWorld();
+  if (p && a && Math.hypot(a.x - p.pos.x, a.y - p.pos.y) > 10) facing = Math.atan2(a.y - p.pos.y, a.x - p.pos.x);
+  else if (!mouse.set && (mx || my)) facing = Math.atan2(my, mx);
   let cast: string | null = null;
   if (rmb && save.mouseRight && save.mouseRight !== 'attack') cast = save.mouseRight;
   else if (keys.has('Digit1') && save.hotbar[0]) cast = save.hotbar[0];
