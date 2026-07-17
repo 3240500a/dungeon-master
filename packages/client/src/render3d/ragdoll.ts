@@ -196,6 +196,7 @@ export interface RagdollHandle {
 }
 
 const PELVIS_Y = 30;
+const FOOT_L = 11, FOOT_R = 12;   // индексы стоп в BONES
 
 /**
  * Формы костей, СМЕЩЁННЫЕ от начала тела: начало тела = сустав, кость свисает от него.
@@ -339,6 +340,7 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
   const driver = new PoseDriver();
   let px = ox, pz = oz, yawT = 0, dead = false;
   let prevX = ox, prevZ = oz, vx = 0, vz = 0;   // скорость тела — из разности позиций (сим её не отдаёт риг-у)
+  let footLX = ox, footLZ = oz, footRX = ox, footRZ = oz;   // фактические щиколотки → планировщику шагов
   const q = new THREE.Quaternion(), e = new THREE.Euler(), tmp = new THREE.Vector3();
 
   /** Залить ghost-позу в SkeletonPose (локальные повороты костей вокруг своих суставов). */
@@ -412,7 +414,11 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
         m.quaternion.set(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
         tmp.copy(offs[i]!).applyQuaternion(m.quaternion);
         m.position.set(p.GetX() + tmp.x, p.GetY() + tmp.y, p.GetZ() + tmp.z);
+        // Начало тела стопы = щиколотка (форма смещена) — это ровно то, что нужно планировщику.
+        if (i === FOOT_L) { footLX = p.GetX(); footLZ = p.GetZ(); }
+        else if (i === FOOT_R) { footRX = p.GetX(); footRZ = p.GetZ(); }
       }
+      driver.setFeet(footLX, footLZ, footRX, footRZ);
     },
     dispose() {
       ragdoll.RemoveFromPhysicsSystem();

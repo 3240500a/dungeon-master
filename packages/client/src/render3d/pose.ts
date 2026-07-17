@@ -41,7 +41,12 @@ const FOOT_Y = 1.5;          // высота центра стопы, стоящ
  */
 export const STAND_Y = 27;   // высота таза стоя (ноги почти прямые)
 const RIG_PELVIS_Y = 30;     // высота таза в опорной позе рига (таблица BONES в ragdoll.ts)
-const PELVIS_MIN = 19;       // ниже не приседаем, даже если шаг просит
+/**
+ * Ниже таз не опускаем. ВАЖЕН БАЛАНС: слишком высоко — опорная стопа не дотянется до своей точки, и её
+ * поволочёт (это и была «лунная походка» при беге назад); слишком низко — персонаж крадётся на корточках.
+ * Предельный вынос стопы при этой высоте: sqrt(вылет² − (PELVIS_MIN − FOOT_Y)²).
+ */
+const PELVIS_MIN = 19;
 /**
  * Длина шага. При ФИКСИРОВАННОЙ высоте таза шире 28 не сделать: стопа не дотянется, IK упрётся в предел.
  * Поэтому таз ЕДЕТ ПО НОГЕ (см. ниже) — как у человека: разъехались ноги → таз просел, нога под тазом →
@@ -87,8 +92,15 @@ class StepPlanner {
   ];
   private swinging = -1;     // индекс ноги в переносе, -1 — обе на земле
   private placed = false;
+  /** ФАКТИЧЕСКОЕ положение щиколоток из физики (мир). Плантуем туда, где нога реально стоит. */
+  private actual: [[number, number], [number, number]] = [[0, 0], [0, 0]];
   /** Фаза походки (рад): π = один шаг. Ей же машем руками, чтобы они шли в такт ногам. */
   phase = 0;
+
+  setFeet(lx: number, lz: number, rx: number, rz: number): void {
+    this.actual[0][0] = lx; this.actual[0][1] = lz;
+    this.actual[1][0] = rx; this.actual[1][1] = rz;
+  }
 
   private reset(px: number, pz: number, rx: number, rz: number): void {
     for (let i = 0; i < 2; i++) {
@@ -117,26 +129,32 @@ class StepPlanner {
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
     //    очереди и уезжала назад на весь шаг: нога плантовалась на +16, а уходила на −31, центр шага
     //    смещался за спину («семенит сзади тела»). При ритме опорная уходит назад ровно на полшага.
+    // Стоим, но стопа уехала (добежали и встали) — доводим её ШАГОМ: крутим фазу, пока не переступит.
+    // Раньше плант просто телепортировался под таз — это и был рывок «подшагивания» на медленном ходу.
+    let needStep = false;
+    for (let i = 0; i < 2 && !moving; i++) {
+      const l = this.legs[i]!;
+      const s = i === 0 ? -HIP_DX : HIP_DX;
+      if (Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) > 7) needStep = true;
+    }
     if (moving) this.phase += (speed * dt / stepLen) * Math.PI;
+    else if (needStep || this.swinging >= 0) this.phase += dt * 5;   // переступ на месте
+
     const sw = this.swingLeg();
-    if (sw !== this.swinging) {                    // смена ноги: прошлая встаёт там, где летела
-      if (this.swinging >= 0) { const o = this.legs[this.swinging]!; o.px = o.tx; o.pz = o.tz; o.sw = 0; }
+    if (sw !== this.swinging) {
+      // Смена ноги. Прошлая встаёт ТУДА, ГДЕ РЕАЛЬНО СТОИТ (а не в идеальную расчётную точку): физическая
+      // нога отстаёт от цели, и плант «по расчёту» тащил её рывком — при беге назад это читалось как
+      // лунная походка (опорная едет вместо маховой).
+      if (this.swinging >= 0) {
+        const o = this.legs[this.swinging]!;
+        const a = this.actual[this.swinging]!;
+        o.px = a[0]; o.pz = a[1]; o.sw = 0;
+      }
       const l = this.legs[sw]!;
       l.fx = l.px; l.fz = l.pz;                    // откуда переносим
-      this.swinging = moving ? sw : -1;
+      this.swinging = sw;
     }
-    if (!moving && this.swinging >= 0) { const o = this.legs[this.swinging]!; o.px = o.tx; o.pz = o.tz; o.sw = 0; this.swinging = -1; }
     if (this.swinging >= 0) this.legs[this.swinging]!.sw = clamp((this.phase % Math.PI) / Math.PI, 0.001, 1);
-
-    // 2. Стоим — подтягиваем разъехавшиеся стопы под таз.
-    if (!moving) {
-      for (let i = 0; i < 2; i++) {
-        const l = this.legs[i]!;
-        const s = i === 0 ? -HIP_DX : HIP_DX;
-        const hx = px + rx * s, hz = pz + rz * s;
-        if (Math.hypot(l.px - hx, l.pz - hz) > 9) { l.px = hx; l.pz = hz; }
-      }
-    }
     // 3. ТАЗ ЕДЕТ ПО ОПОРНОЙ НОГЕ (как у человека): ноги разъехались → таз просел, нога под тазом → таз
     //    поднялся. Без этого высота таза фиксирована, стопе некуда дотянуться и шаг вырождается в
     //    семенящее «болтание ногами». Именно проседание и даёт широкую амплитуду.
@@ -187,6 +205,8 @@ export class PoseDriver {
     this.planner ??= new StepPlanner();
     this.w.x = x; this.w.z = z; this.w.yaw = yaw; this.w.vx = vx; this.w.vz = vz;
   }
+  /** Обратная связь от физики: где НА САМОМ ДЕЛЕ стоят щиколотки (мир). Плантуем по факту, а не по расчёту. */
+  setFeet(lx: number, lz: number, rx: number, rz: number): void { this.planner?.setFeet(lx, lz, rx, rz); }
   attack(power = 1): void { if (!this.dead) { this.attackT = ATTACK_DUR; this.attackPow = power; } }
   setDead(d: boolean): void { this.dead = d; }
   get isDead(): boolean { return this.dead; }
