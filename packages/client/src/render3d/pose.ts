@@ -58,6 +58,7 @@ export const GAIT = {
   aheadMul: 0, predictSec: 0, fixTarget: 0,
   idleStep: 11,   // стоя: переступ, только если стопа уехала дальше этого (с гистерезисом) — против «топтания»
   footClear: 8,   // мин. зазор между стопами: цель ближе → уводится ВПЕРЁД, чтобы ноги обходили, а не влезали
+  turnStep: 0.45, // поворот на месте: скорость вращения (рад/с) выше этой → подшагиваем за поворотом
 };
 const liftFor = (speed: number): number => GAIT.liftBase + Math.max(0, Math.min(speed, 130) - GAIT.speedWalk) * GAIT.liftK;
 
@@ -104,6 +105,8 @@ class StepPlanner {
   ];
   private placed = false;
   private settled = false;   // стоим смирно (гистерезис против топтания на месте)
+  private prevYaw = 0;       // рыск прошлого кадра
+  private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
   /** ФАКТИЧЕСКОЕ положение щиколоток из физики (мир). Плантуем туда, где нога реально стоит. */
   private actual: [[number, number], [number, number]] = [[0, 0], [0, 0]];
@@ -131,6 +134,13 @@ class StepPlanner {
     const rx = Math.cos(yaw), rz = -Math.sin(yaw);
     if (!this.placed || Math.hypot(this.legs[0].px - px, this.legs[0].pz - pz) > 100) this.reset(px, pz, rx, rz);
 
+    // Сглаженная скорость поворота (рад/с). Сырая мигает [0.1,0,0.1,0] из-за сим 30Гц / физика 60Гц.
+    if (dt > 0) {
+      let dyr = yaw - this.prevYaw;
+      while (dyr > Math.PI) dyr -= Math.PI * 2; while (dyr < -Math.PI) dyr += Math.PI * 2;
+      this.yawRate += (Math.abs(dyr) / dt - this.yawRate) * Math.min(1, dt * 10);
+      this.prevYaw = yaw;
+    }
     const speed = Math.hypot(vx, vz);
     const moving = speed > MOVE_EPS;
     const mx = moving ? vx / speed : 0, mz = moving ? vz / speed : 0;
@@ -156,9 +166,13 @@ class StepPlanner {
         const l = this.legs[i]!;
         if (Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) > lim) drift = true;
       }
-      // Стопы уехали → переступаем к тазу. Стопы под тазом → ЗАМИРАЕМ и ставим их ровно под бёдра (при
-      // duty<0.5 «обе на земле» не наступает никогда — ждать этого нельзя, замираем по факту близости).
-      if (drift) { this.settled = false; this.phase += dt * 5; }
+      // ПОВОРОТ НА МЕСТЕ. При вращении бёдра ходят по кругу радиусом HIP_DX (~3.6) — сдвиг < idleStep, порог
+      // по расстоянию его не ловит, тело крутилось бы на неподвижных ступнях. Ловим по СКОРОСТИ вращения
+      // (yawRate, рад/с): мышь крутит → подшагиваем (стопы следуют за бёдрами), встало → замираем.
+      const turning = this.yawRate > GAIT.turnStep;
+      // Стопы уехали или крутимся → переступаем к тазу. Иначе ЗАМИРАЕМ, ставим стопы ровно под бёдра
+      // (при duty<0.5 «обе на земле» не наступает — ждать этого нельзя, замираем по факту близости).
+      if (drift || turning) { this.settled = false; this.phase += dt * 5; }
       else if (!this.settled) {
         this.settled = true;
         for (let i = 0; i < 2; i++) {
