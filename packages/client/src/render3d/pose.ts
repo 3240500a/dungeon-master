@@ -48,14 +48,16 @@ const MOVE_EPS = 8;          // ниже этой скорости (u/с) счи
  * Дефолты = коммит d523b26. Пока ползунок не двинут, поведение ровно как было.
  */
 export const GAIT = {
-  standY: 27, pelvisMin: 19,                 // посадка таза: стойка / нижний предел приседа
+  standY: 30, pelvisMin: 26,                 // посадка таза: стойка / нижний предел приседа (подобрано глазами)
   stepBase: 30, stepK: 0.12, stepMax: 52,    // длина шага = clamp(base + speed·K, base, max)
-  dutyWalk: 0.5, dutyRun: 0.34, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
+  dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
   liftBase: 7, liftK: 0.11,                  // подъём маховой стопы = base + (speed−speedWalk)·K
   hipFwdLim: 0.95, hipFwdSoft: 0.3,          // мягкий потолок форвардного угла бедра
-  // ВЫНОС СТОПЫ ВПЕРЁД (то, что домучиваем): к базовому шаг·доля добавляем шаг·aheadMul + скорость·predictSec.
+  // ВЫНОС СТОПЫ ВПЕРЁД: к базовому шаг·доля добавляем шаг·aheadMul + скорость·predictSec.
   // fixTarget=1 — цель фиксируется в момент отрыва (предсказание), 0 — едет за бедром каждый кадр.
   aheadMul: 0, predictSec: 0, fixTarget: 0,
+  idleStep: 11,   // стоя: переступ, только если стопа уехала дальше этого (с гистерезисом) — против «топтания»
+  footClear: 8,   // мин. зазор между стопами: цель ближе → уводится ВПЕРЁД, чтобы ноги обходили, а не влезали
 };
 const liftFor = (speed: number): number => GAIT.liftBase + Math.max(0, Math.min(speed, 130) - GAIT.speedWalk) * GAIT.liftK;
 
@@ -101,6 +103,7 @@ class StepPlanner {
     { px: 0, pz: 0, sw: 0, fx: 0, fz: 0, tx: 0, tz: 0 },
   ];
   private placed = false;
+  private settled = false;   // стоим смирно (гистерезис против топтания на месте)
   private hipY = STAND_Y;
   /** ФАКТИЧЕСКОЕ положение щиколоток из физики (мир). Плантуем туда, где нога реально стоит. */
   private actual: [[number, number], [number, number]] = [[0, 0], [0, 0]];
@@ -139,22 +142,54 @@ class StepPlanner {
     //    смещался за спину («семенит сзади тела»). При ритме опорная уходит назад ровно на полшага.
     // Стоим, но стопа уехала (добежали и встали) — доводим её ШАГОМ: крутим фазу, пока не переступит.
     // Раньше плант просто телепортировался под таз — это и был рывок «подшагивания» на медленном ходу.
-    let needStep = false;
-    for (let i = 0; i < 2 && !moving; i++) {
-      const l = this.legs[i]!;
-      const s = i === 0 ? -HIP_DX : HIP_DX;
-      if (Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) > 7) needStep = true;
+    // ЗАМОРОЗКА СТОЙКИ. При duty<0.5 почти всегда одна нога в воздухе, поэтому «стоя» фаза сама не
+    // остановится (окна переноса двух ног сдвинуты на π) — топчется вечно. Нужен явный флаг: стоим и стопы
+    // под тазом → замираем (обе на земле, фаза стоит). Гистерезис ×1.7 против дёрганья у порога. idleStep — в панели.
+    if (moving) {
+      this.settled = false;
+      this.phase += (speed * dt / stepLen) * Math.PI;
+    } else {
+      const lim = GAIT.idleStep * (this.settled ? 1.7 : 1);
+      let drift = false;
+      for (let i = 0; i < 2; i++) {
+        const s = i === 0 ? -HIP_DX : HIP_DX;
+        const l = this.legs[i]!;
+        if (Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) > lim) drift = true;
+      }
+      // Стопы уехали → переступаем к тазу. Стопы под тазом → ЗАМИРАЕМ и ставим их ровно под бёдра (при
+      // duty<0.5 «обе на земле» не наступает никогда — ждать этого нельзя, замираем по факту близости).
+      if (drift) { this.settled = false; this.phase += dt * 5; }
+      else if (!this.settled) {
+        this.settled = true;
+        for (let i = 0; i < 2; i++) {
+          const s = i === 0 ? -HIP_DX : HIP_DX;
+          const l = this.legs[i]!;
+          l.px = px + rx * s; l.pz = pz + rz * s; l.sw = 0;
+        }
+      }
     }
-    if (moving) this.phase += (speed * dt / stepLen) * Math.PI;
-    else if (needStep || this.legs.some((l) => l.sw > 0)) this.phase += dt * 5;   // переступ на месте
 
     // 2. ОКНА ОПОРЫ по доле. У ноги i опора отцентрована на фазе i·π и занимает 2π·duty цикла; остальное —
     //    перенос. duty<0.5 → между опорами обе ноги в воздухе (фаза полёта) — это и есть бег.
     const duty = clamp(GAIT.dutyWalk + (GAIT.dutyRun - GAIT.dutyWalk) * ((speed - GAIT.speedWalk) / (GAIT.speedRun - GAIT.speedWalk)), GAIT.dutyRun, GAIT.dutyWalk);
     // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
     const lead = stepLen * duty + stepLen * GAIT.aheadMul + speed * GAIT.predictSec;
+    // Анти-столкновение стоп: если цель ноги i ближе footClear к ДРУГОЙ стопе — увести цель ВПЕРЁД
+    // (обойти спереди), а не влезать в неё. Так приставной шаг перестаёт «врезаться нога в ногу».
+    const avoid = (l: Leg, oi: number): void => {
+      const o = this.legs[oi]!;
+      const dx = l.tx - o.px, dz = l.tz - o.pz;
+      const lat = Math.abs(dx * rx + dz * rz);          // боковой зазор
+      if (lat >= GAIT.footClear) return;
+      const fwdNeed = Math.sqrt(GAIT.footClear * GAIT.footClear - lat * lat);
+      const fwd = dx * fx + dz * fz;                     // текущий продольный зазор
+      if (Math.abs(fwd) >= fwdNeed) return;
+      const add = (fwdNeed - Math.abs(fwd)) * (fwd >= 0 ? 1 : -1);
+      l.tx += fx * add; l.tz += fz * add;
+    };
     const TAU = Math.PI * 2, half = Math.PI * duty;
-    for (let i = 0; i < 2; i++) {
+    if (this.settled) for (let i = 0; i < 2; i++) this.legs[i]!.sw = 0;   // замерли: обе ноги на земле
+    else for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       let c = (this.phase - i * Math.PI) % TAU; if (c < 0) c += TAU;
       if (c < half || c > TAU - half) {              // ОПОРА
@@ -172,6 +207,7 @@ class StepPlanner {
           // бедро будет там, стопа приземлится на `lead` впереди. Иначе цель едет за бедром (пересчёт ниже).
           const fly = GAIT.fixTarget ? stepLen * (1 - duty) * 2 : 0;
           l.tx = hx + mx * (lead + fly); l.tz = hz + mz * (lead + fly);
+          avoid(l, 1 - i);
         }
         l.sw = clamp((c - half) / (TAU - 2 * half), 0.001, 1);
       }
@@ -206,7 +242,7 @@ class StepPlanner {
       if (l.sw > 0) {
         // Маховая. При fixTarget цель зафиксирована на отрыве (выше). Иначе — едет за бедром: держится
         // на `lead` впереди ТЕКУЩЕГО бедра (пересчёт каждый кадр).
-        if (!GAIT.fixTarget) { l.tx = hx + mx * lead; l.tz = hz + mz * lead; }
+        if (!GAIT.fixTarget) { l.tx = hx + mx * lead; l.tz = hz + mz * lead; avoid(l, 1 - i); }
         const t = l.sw, e = t * t * (3 - 2 * t);
         wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e;
         wy = FOOT_Y + Math.sin(Math.PI * t) * liftFor(speed);

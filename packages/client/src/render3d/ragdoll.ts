@@ -438,7 +438,12 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
     },
     update(dt) {
       if (dt > 0) {   // ноги шагают по МИРУ (планировщик шагов + IK), а не по синусу — иначе стопы едут юзом
-        vx = (px - prevX) / dt; vz = (pz - prevZ) / dt;
+        // СГЛАЖИВАНИЕ скорости: сим тикает 30 Гц, физика — 60, поэтому px меняется ЧЕРЕЗ кадр, и сырое
+        // (px−prevX)/dt мигает [2×, 0, 2×, 0]. На нулевых кадрах moving=false → заморозка стойки дёргала
+        // ноги на бегу. Низкочастотный фильтр держит скорость ровной.
+        const rvx = (px - prevX) / dt, rvz = (pz - prevZ) / dt;
+        const a = Math.min(1, dt * 10);
+        vx += (rvx - vx) * a; vz += (rvz - vz) * a;
         prevX = px; prevZ = pz;
         driver.setWorld(px, pz, yawT, vx, vz);
       }

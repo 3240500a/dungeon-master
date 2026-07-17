@@ -339,6 +339,8 @@ function buildTunePanel(): void {
   row(GAIT, 'dutyWalk', 0.34, 0.7, 0.02); row(GAIT, 'dutyRun', 0.2, 0.6, 0.02);
   row(GAIT, 'liftBase', 2, 16, 0.5); row(GAIT, 'liftK', 0, 0.3, 0.01);
   row(GAIT, 'hipFwdLim', 0.4, 1.6, 0.05); row(GAIT, 'hipFwdSoft', 0.05, 0.6, 0.05);
+  h('ПОХОДКА · стойка/зазор ног');
+  row(GAIT, 'idleStep', 4, 24, 1); row(GAIT, 'footClear', 0, 16, 1);
   h('МЫШЦЫ (сила моторов)');
   row(MOTOR, 'legFreq', 4, 40, 1, true); row(MOTOR, 'legTorque', 5e5, 2e7, 5e5, true);
   row(MOTOR, 'armFreq', 2, 30, 1, true); row(MOTOR, 'armTorque', 5e4, 5e6, 5e4, true);
