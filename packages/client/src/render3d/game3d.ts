@@ -10,6 +10,7 @@ import {
   dominantType, TILE, type PlayerInput, type DungeonLayout, type DamageType,
 } from '@dm/shared';
 import { makeCharacter, type ActorHandle } from './actor.js';
+import { initPhysics, PhysWorld, makeRagdoll, type RagdollHandle } from './ragdoll.js';
 import { Vfx } from './vfx.js';
 import { setFog, makeSceneLighting, buildEnvironment, animateTorches, type Torch } from './env3d.js';
 
@@ -47,7 +48,8 @@ let session!: GameSession;
 let save!: ReturnType<typeof newCharacterSave>;
 let seed = (Math.random() * 1e9) | 0, depth = 1, difficulty = 'normal';
 let torches: Torch[] = [];
-let playerActor!: ActorHandle;
+let pw!: PhysWorld;
+let playerDoll!: RagdollHandle;   // игрок — АКТИВНЫЙ РЭГДОЛЛ (физика); монстры — кинематический риг (LOD)
 let playerLight!: THREE.PointLight;
 const monActors = new Map<number, { a: ActorHandle; dead: number; hp: ReturnType<typeof makeHpBar> }>();
 const projMeshes = new Map<number, THREE.Mesh>();
@@ -98,11 +100,15 @@ function enterFloor(d: number): void {
   clearGroup(floorGroup); clearGroup(actorsGroup);
   monActors.clear(); projMeshes.clear(); dropMeshes.clear();
   torches = buildEnvironment(floorGroup, layout);
+  pw.buildStatic(layout);                       // статические коллайдеры пола/стен для физики
 
-  // Игрок.
-  playerActor = makeCharacter({ body: 0x8a93ad, limb: 0x6f7690, metal: 0.35, weapon: weaponForClass(save.classId) });
-  actorsGroup.add(playerActor.root);
-  playerLight = new THREE.PointLight(0xffd7a0, 5200, 520, 2); playerLight.position.y = 96; playerActor.root.add(playerLight);
+  // Игрок — активный рэгдолл; рождаем сразу в точке спавна (сессия уже поставила игрока выше).
+  playerDoll?.dispose();
+  const sp = session.world.players['p1'];
+  playerDoll = makeRagdoll(pw, { body: 0x8a93ad, limb: 0x6f7690, x: sp?.pos.x ?? 0, z: sp?.pos.y ?? 0 });
+  actorsGroup.add(playerDoll.group);
+  // Свет игрока — отдельный объект (меши рэгдолла живут в мировых координатах).
+  if (!playerLight) { playerLight = new THREE.PointLight(0xffd7a0, 5200, 520, 2); scene.add(playerLight); }
   floorCooldown = 1.5;
   toast(d === 1 ? 'Подземелье — этаж 1' : `Этаж ${d}`);
 }
@@ -124,7 +130,7 @@ function start(classId: string): void {
 }
 
 // ── Тик + синхронизация ──────────────────────────────────────────────────────────
-const TICK = 1 / 30; let acc = 0;
+const TICK = 1 / 30; let acc = 0, physAcc = 0;
 let dbgInput: PlayerInput | null = null; // отладочный ввод (проверка боя без клавиатуры)
 function buildInput(): PlayerInput {
   if (dbgInput) return dbgInput;
@@ -145,7 +151,7 @@ function buildInput(): PlayerInput {
 
 function onEvents(evs: ReturnType<GameSession['tick']>): void {
   for (const e of evs) {
-    if (e.type === 'swing') { playerActor?.attack(1); vfx.slash(e.x, e.y, e.facing, 0xfff0c0, 44); }
+    if (e.type === 'swing') { playerDoll?.attack(1); vfx.slash(e.x, e.y, e.facing, 0xfff0c0, 44); }
     else if (e.type === 'monster-swing') { monActors.get(e.id)?.a.attack(1); }
     else if (e.type === 'hit' && e.hit && !e.blocked) { vfx.damage(e.x, e.y, Math.round(e.amount), ELEM[dominantType(e.byType)] ?? 0xffffff, e.crit); }
     else if (e.type === 'monster-died') { const m = monActors.get(e.id); if (m) { m.a.setDead(true); m.dead = 0.9; m.hp.spr.visible = false; } vfx.burst(e.x, e.y, 0xc0402a, 16, 100, 0.6); vfx.ring(e.x, e.y, 0x802010, 70, 0.5); }
@@ -163,12 +169,13 @@ function sync(dt: number): void {
   const w = session.world;
   const p = w.players['p1'];
   if (p) {
-    playerActor.setPose(p.pos.x, p.pos.y, yaw(p.facing));
-    playerActor.setMove(Math.hypot(p.vel.x, p.vel.y) / 120);
-    playerActor.setDead(!p.alive);
+    playerDoll.setPose(p.pos.x, p.pos.y, yaw(p.facing));
+    playerDoll.setMove(Math.hypot(p.vel.x, p.vel.y) / 120);
+    playerDoll.setDead(!p.alive);
+    playerLight.position.set(p.pos.x, 96, p.pos.y);
     orbit.target.set(p.pos.x, 24, p.pos.y);
   }
-  playerActor?.update(dt);
+  playerDoll?.update(dt);
 
   // Монстры.
   const live = new Set<number>();
@@ -259,6 +266,9 @@ function frameStep(dt: number): void {
     const p = session.world.players['p1'], st = session.world.stairs;
     if (p && st && floorCooldown <= 0 && Math.hypot(p.pos.x - st.x, p.pos.y - st.y) < 26) { depth++; enterFloor(depth); }
     sync(dt); updateHud();
+    // Физика — фикс-шаг 60 Гц (после выставления целей моторам).
+    physAcc += dt; let g2 = 0;
+    while (physAcc >= 1 / 60 && g2++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
   }
   animateTorches(torches, t); vfx.update(dt); applyCam();
 }
@@ -269,5 +279,7 @@ function loop(): void {
 
 function resize(): void { const w = canvas.clientWidth || innerWidth || 960, h = canvas.clientHeight || innerHeight || 600; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); new ResizeObserver(resize).observe(canvas);
-resize(); buildMenu(); loop();
-(window as unknown as { __g: unknown }).__g = { get session() { return session; }, start, frameStep, render: () => renderer.render(scene, camera), renderer, scene, camera, monActors, projMeshes, dropMeshes, setDbg: (i: PlayerInput | null) => { dbgInput = i; } };
+resize();
+// Rapier грузится асинхронно (WASM) — меню включаем после инициализации физики.
+initPhysics().then(() => { pw = new PhysWorld(); buildMenu(); loop(); });
+(window as unknown as { __g: unknown }).__g = { get session() { return session; }, get pw() { return pw; }, get doll() { return playerDoll; }, start, frameStep, render: () => renderer.render(scene, camera), renderer, scene, camera, monActors, projMeshes, dropMeshes, setDbg: (i: PlayerInput | null) => { dbgInput = i; } };

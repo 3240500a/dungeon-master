@@ -13,6 +13,7 @@
     "@dm/shared": "*",
     "@fontsource/cinzel": "^5.2.8",
     "@fontsource/forum": "^5.2.8",
+    "jolt-physics": "^1.1.0",
     "phaser": "^3.87.0",
     "three": "^0.171.0"
   },

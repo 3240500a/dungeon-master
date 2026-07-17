@@ -5,6 +5,7 @@
  * Масштаб: 1 юнит ≈ 3.1 см (TILE=32u=1 м), рост ~1.8 м.
  */
 import * as THREE from 'three';
+import { PoseDriver } from './pose.js';
 
 // ── Устойчивая неявная пружина (Fast & Stable springs) ──────────────────────────
 interface Spring { cur: number; vel: number; target: number; freq: number; zeta: number }
@@ -123,22 +124,15 @@ export function makeCharacter(opts: CharOpts = {}): ActorHandle {
   };
   sp.face.cur = sp.face.target = 0;
 
-  let phase = Math.random() * 6.28;
-  let move = 0, facing = 0, attackT = 0, attackPow = 1, dead = false;
-  const ATTACK_DUR = 0.42;
-
-  function attackCurve(p: number): number {   // взмах правой рукой: замах назад → удар вперёд → возврат
-    if (p < 0.28) return THREE.MathUtils.lerp(0, -1.1, p / 0.28);
-    if (p < 0.62) return THREE.MathUtils.lerp(-1.1, 1.7, (p - 0.28) / 0.34);
-    return THREE.MathUtils.lerp(1.7, 0.15, (p - 0.62) / 0.38);
-  }
+  const driver = new PoseDriver();   // ghost-риг: общий генератор целевой позы (см. pose.ts)
+  let facing = 0;
 
   const handle: ActorHandle = {
     root,
     setPose(x, z, f) { root.position.set(x, 0, z); facing = f; },
-    setMove(s) { move = Math.max(0, Math.min(1.4, s)); },
-    attack(power = 1) { if (!dead) { attackT = ATTACK_DUR; attackPow = power; } },
-    setDead(d) { dead = d; },
+    setMove(s) { driver.setMove(s); },
+    attack(power = 1) { driver.attack(power); },
+    setDead(d) { driver.setDead(d); },
     dispose() {
       root.traverse((o) => { const m = o as THREE.Mesh; m.geometry?.dispose?.(); });
     },
@@ -147,35 +141,11 @@ export function makeCharacter(opts: CharOpts = {}): ActorHandle {
       let df = facing - sp.face.cur; while (df > Math.PI) df -= 6.2832; while (df < -Math.PI) df += 6.2832;
       sp.face.target = sp.face.cur + df;
 
-      if (dead) {
-        sp.splay.target = 1; sp.bobY.target = -26; sp.lean.target = 1.4;
-        for (const k of ['hipL', 'hipR', 'knL', 'knR', 'shL', 'shR', 'elL', 'elR'] as const) sp[k].target = (k.includes('kn') || k.includes('el')) ? 1.2 : (k.endsWith('L') ? 0.7 : -0.7);
-      } else {
-        const walking = move > 0.05;
-        phase += (walking ? 2.2 + move * 3.2 : 1.3) * dt;
-        const s = Math.sin(phase), s2 = Math.sin(phase * 2);
-        const amp = walking ? 0.45 + move * 0.4 : 0;
-        // Ноги: маятник + подгиб колена на заднем взмахе.
-        sp.hipL.target = s * amp; sp.hipR.target = -s * amp;
-        sp.knL.target = Math.max(0, -s) * amp * 1.3 + (walking ? 0.12 : 0);
-        sp.knR.target = Math.max(0, s) * amp * 1.3 + (walking ? 0.12 : 0);
-        // Торс: подпрыг + лёгкий наклон вперёд при беге + дыхание в покое.
-        sp.bobY.target = walking ? Math.abs(s2) * 2.0 : Math.sin(phase) * 0.7;
-        sp.lean.target = walking ? 0.05 + move * 0.06 : 0.02;
-        sp.splay.target = 0;
-        // Руки: контр-мах (если не бьём).
-        if (attackT <= 0) {
-          sp.shL.target = -s * amp * 0.85; sp.shR.target = s * amp * 0.85;
-          sp.elL.target = 0.35 + amp * 0.2; sp.elR.target = 0.35 + amp * 0.2;
-          sp.twist.target = s * amp * 0.15;
-        } else {
-          attackT -= dt;
-          const p = 1 - attackT / ATTACK_DUR, sw = attackCurve(p) * attackPow;
-          sp.shR.target = sw; sp.elR.target = 0.5 + Math.max(0, sw) * 0.7;
-          sp.shL.target = -sw * 0.3; sp.elL.target = 0.35;
-          sp.twist.target = sw * 0.28; sp.lean.target = 0.1 + Math.max(0, sw) * 0.1;
-        }
-      }
+      // Цели позы — из общего ghost-рига; пружины дают мягкое «догоняние» (дешёвая имитация мышц).
+      const t = driver.update(dt);
+      sp.hipL.target = t.hipL; sp.hipR.target = t.hipR; sp.knL.target = t.knL; sp.knR.target = t.knR;
+      sp.shL.target = t.shL; sp.shR.target = t.shR; sp.elL.target = t.elL; sp.elR.target = t.elR;
+      sp.lean.target = t.lean; sp.twist.target = t.twist; sp.bobY.target = t.bobY; sp.splay.target = t.splay;
 
       for (const k in sp) step(sp[k as keyof typeof sp], dt);
 
@@ -183,9 +153,9 @@ export function makeCharacter(opts: CharOpts = {}): ActorHandle {
       torso.position.y = PELVIS + sp.bobY.cur;
       torso.rotation.x = sp.lean.cur; torso.rotation.y = sp.twist.cur;
       aL.sh.rotation.x = sp.shL.cur; aR.sh.rotation.x = sp.shR.cur;
-      aL.el.rotation.x = -sp.elL.cur; aR.el.rotation.x = -sp.elR.cur;
+      aL.el.rotation.x = -sp.elL.cur; aR.el.rotation.x = -sp.elR.cur;   // локоть гнётся ВПЕРЁД (+Z)
       lL.hip.rotation.x = sp.hipL.cur; lR.hip.rotation.x = sp.hipR.cur;
-      lL.kn.rotation.x = -sp.knL.cur; lR.kn.rotation.x = -sp.knR.cur;
+      lL.kn.rotation.x = sp.knL.cur; lR.kn.rotation.x = sp.knR.cur;     // колено гнётся НАЗАД (−Z)
       // Растопырка при смерти — развести плечи/бёдра.
       const spl = sp.splay.cur;
       aL.sh.rotation.z = spl * 0.8; aR.sh.rotation.z = -spl * 0.8;
