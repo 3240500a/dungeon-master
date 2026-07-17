@@ -37,14 +37,15 @@ const FOOT_Y = 1.5;          // высота центра стопы, стоящ
  * стопа дотягивается только до точки прямо под тазом — шаг невозможен в принципе. 26.5 → колени чуть
  * согнуты (как у человека) и появляется вылет стопы ~17u, т.е. шаг ~1 м.
  */
-export const STAND_Y = 25;
+export const STAND_Y = 27;   // высота таза стоя (ноги почти прямые)
 const RIG_PELVIS_Y = 30;     // высота таза в опорной позе рига (таблица BONES в ragdoll.ts)
+const PELVIS_MIN = 19;       // ниже не приседаем, даже если шаг просит
 /**
- * Длина шага ограничена ВЫЛЕТОМ ноги, а не вкусом: при тазе 25 и стопе на 1.5 нога (30) дотягивается
- * вперёд лишь на sqrt(30² − 23.5²) ≈ 18.6u. Просишь полшага больше — IK упирается в предел, нога
- * вытягивается в струну и персонаж «садится» в выпад. Полшага ≤ 14 → шаг ≤ 28.
+ * Длина шага. При ФИКСИРОВАННОЙ высоте таза шире 28 не сделать: стопа не дотянется, IK упрётся в предел.
+ * Поэтому таз ЕДЕТ ПО НОГЕ (см. ниже) — как у человека: разъехались ноги → таз просел, нога под тазом →
+ * таз поднялся. Это и даёт широкий шаг вместо семенящего.
  */
-const STEP_MIN = 18, STEP_MAX = 28;   // длина шага, юниты
+const STEP_MIN = 30, STEP_MAX = 46;   // длина шага, юниты
 const LIFT = 7;              // подъём маховой стопы
 const MOVE_EPS = 8;          // ниже этой скорости (u/с) считаем, что стоим
 
@@ -122,7 +123,9 @@ class StepPlanner {
         const d = moving ? -((l.px - hx) * mx + (l.pz - hz) * mz) : Math.hypot(l.px - hx, l.pz - hz);
         if (d > worstD) { worstD = d; worst = i; }
       }
-      if (worst >= 0 && worstD > (moving ? stepLen * 0.5 : 9)) {
+      // Триггер РАНЬШЕ полушага (0.38): физическая нога догоняет цель с задержкой, и на полушаге стопа
+      // успевала уехать назад вдвое дальше, чем выносилась вперёд — шаг выходил несимметричным.
+      if (worst >= 0 && worstD > (moving ? stepLen * 0.38 : 9)) {
         const l = this.legs[worst]!;
         const s = worst === 0 ? -HIP_DX : HIP_DX;
         l.fx = l.px; l.fz = l.pz;
@@ -131,9 +134,19 @@ class StepPlanner {
         this.phase += Math.PI;                     // руки — в такт шагам
       }
     }
-    // 3. Мировая цель стопы → сагиттальная плоскость → IK.
-    const bob = moving ? Math.abs(Math.sin(this.phase)) * 1.2 : 0;
-    const hipY = STAND_Y + bob;
+    // 3. ТАЗ ЕДЕТ ПО ОПОРНОЙ НОГЕ (как у человека): ноги разъехались → таз просел, нога под тазом → таз
+    //    поднялся. Без этого высота таза фиксирована, стопе некуда дотянуться и шаг вырождается в
+    //    семенящее «болтание ногами». Именно проседание и даёт широкую амплитуду.
+    let maxLz = 0;
+    for (let i = 0; i < 2; i++) {
+      const l = this.legs[i]!;
+      if (l.sw > 0) continue;                        // маховая нога вес не держит
+      const s = i === 0 ? -HIP_DX : HIP_DX;
+      const hx = px + rx * s, hz = pz + rz * s;
+      maxLz = Math.max(maxLz, Math.abs((l.px - hx) * fx + (l.pz - hz) * fz));
+    }
+    const reach = LEG * 0.97;
+    const hipY = clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), PELVIS_MIN, STAND_Y);
     const out: LegAngles[] = [];
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
@@ -151,7 +164,7 @@ class StepPlanner {
       } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
       out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz));
     }
-    return { l: out[0]!, r: out[1]!, bobY: bob + (STAND_Y - RIG_PELVIS_Y) };
+    return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y };
   }
 }
 
