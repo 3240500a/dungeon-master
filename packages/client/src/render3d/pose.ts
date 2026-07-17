@@ -52,9 +52,25 @@ const PELVIS_MIN = 19;
  * Поэтому таз ЕДЕТ ПО НОГЕ (см. ниже) — как у человека: разъехались ноги → таз просел, нога под тазом →
  * таз поднялся. Это и даёт широкий шаг вместо семенящего.
  */
-const STEP_MIN = 30, STEP_MAX = 46;   // длина шага, юниты
-const LIFT = 7;              // подъём маховой стопы
+const STEP_MIN = 30, STEP_MAX = 52;   // длина шага, юниты
+/**
+ * Подъём маховой стопы. Растёт со скоростью: в беге перенос занимает 2/3 цикла, и на фиксированных 7u
+ * нога летит долго и НИЗКО — скребёт по полу почти весь перенос (в замерах это выглядело как скольжение
+ * ~100 u/с). Чем длиннее перенос, тем выше надо задирать стопу.
+ */
+const liftFor = (speed: number): number => 7 + Math.max(0, Math.min(speed, 130) - SPEED_WALK) * 0.11;
 const MOVE_EPS = 8;          // ниже этой скорости (u/с) считаем, что стоим
+/**
+ * ДОЛЯ ОПОРЫ — сколько цикла нога стоит на земле. Это и есть разница между ходьбой и бегом:
+ * - >0.5 — ходьба: есть двойная опора, обе стопы на земле одновременно;
+ * - <0.5 — БЕГ: между опорами обе ноги в воздухе (фаза полёта).
+ * Зачем: опорная стопа проезжает под телом `шаг × 2 × доля`, и это расстояние обязано укладываться в
+ * ВЫЛЕТ ноги (~21.7u при самой низкой посадке таза). При доле 0.5 вылета хватает лишь на шаг ≤43 — это
+ * потолок ходьбы, из-за него на бегу нога не доносилась до цели и плелась сзади. При доле 0.34 тот же
+ * вылет позволяет шаг ~52: длина набирается ПОЛЁТОМ, а не вытягиванием ноги вперёд.
+ */
+const DUTY_WALK = 0.5, DUTY_RUN = 0.34;
+const SPEED_WALK = 40, SPEED_RUN = 115;   // между ними доля опоры плавно едет ходьба→бег
 
 const clamp = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);
 
@@ -90,8 +106,8 @@ class StepPlanner {
     { px: 0, pz: 0, sw: 0, fx: 0, fz: 0, tx: 0, tz: 0 },
     { px: 0, pz: 0, sw: 0, fx: 0, fz: 0, tx: 0, tz: 0 },
   ];
-  private swinging = -1;     // индекс ноги в переносе, -1 — обе на земле
   private placed = false;
+  private hipY = STAND_Y;
   /** ФАКТИЧЕСКОЕ положение щиколоток из физики (мир). Плантуем туда, где нога реально стоит. */
   private actual: [[number, number], [number, number]] = [[0, 0], [0, 0]];
   /** Фаза походки (рад): π = один шаг. Ей же машем руками, чтобы они шли в такт ногам. */
@@ -108,11 +124,9 @@ class StepPlanner {
       const l = this.legs[i]!;
       l.px = px + rx * s; l.pz = pz + rz * s; l.sw = 0;
     }
-    this.swinging = -1; this.placed = true;
+    this.placed = true;
   }
 
-  /** Кто машет по текущей фазе: 0 — левая, 1 — правая. */
-  private swingLeg(): number { return Math.floor(this.phase / Math.PI) % 2 === 0 ? 0 : 1; }
 
   update(dt: number, px: number, pz: number, yaw: number, vx: number, vz: number): { l: LegAngles; r: LegAngles; bobY: number } {
     // Оси тела в мире: вперёд = локальный +Z, вправо = локальный +X.
@@ -138,36 +152,47 @@ class StepPlanner {
       if (Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) > 7) needStep = true;
     }
     if (moving) this.phase += (speed * dt / stepLen) * Math.PI;
-    else if (needStep || this.swinging >= 0) this.phase += dt * 5;   // переступ на месте
+    else if (needStep || this.legs.some((l) => l.sw > 0)) this.phase += dt * 5;   // переступ на месте
 
-    const sw = this.swingLeg();
-    if (sw !== this.swinging) {
-      // Смена ноги. Прошлая встаёт ТУДА, ГДЕ РЕАЛЬНО СТОИТ (а не в идеальную расчётную точку): физическая
-      // нога отстаёт от цели, и плант «по расчёту» тащил её рывком — при беге назад это читалось как
-      // лунная походка (опорная едет вместо маховой).
-      if (this.swinging >= 0) {
-        const o = this.legs[this.swinging]!;
-        const a = this.actual[this.swinging]!;
-        o.px = a[0]; o.pz = a[1]; o.sw = 0;
+    // 2. ОКНА ОПОРЫ по доле. У ноги i опора отцентрована на фазе i·π и занимает 2π·duty цикла; остальное —
+    //    перенос. duty<0.5 → между опорами обе ноги в воздухе (фаза полёта) — это и есть бег.
+    const duty = clamp(DUTY_WALK + (DUTY_RUN - DUTY_WALK) * ((speed - SPEED_WALK) / (SPEED_RUN - SPEED_WALK)), DUTY_RUN, DUTY_WALK);
+    const TAU = Math.PI * 2, half = Math.PI * duty;
+    for (let i = 0; i < 2; i++) {
+      const l = this.legs[i]!;
+      let c = (this.phase - i * Math.PI) % TAU; if (c < 0) c += TAU;
+      if (c < half || c > TAU - half) {              // ОПОРА
+        if (l.sw > 0) {                              // приземление: плантуем ТУДА, ГДЕ НОГА РЕАЛЬНО СТОИТ
+          const a = this.actual[i]!;                 // (плант «по расчёту» тащил отстающую ногу рывком)
+          l.px = a[0]; l.pz = a[1];
+        }
+        l.sw = 0;
+      } else {                                       // ПЕРЕНОС
+        if (l.sw === 0) { l.fx = l.px; l.fz = l.pz; }   // отрыв
+        l.sw = clamp((c - half) / (TAU - 2 * half), 0.001, 1);
       }
-      const l = this.legs[sw]!;
-      l.fx = l.px; l.fz = l.pz;                    // откуда переносим
-      this.swinging = sw;
     }
-    if (this.swinging >= 0) this.legs[this.swinging]!.sw = clamp((this.phase % Math.PI) / Math.PI, 0.001, 1);
+
     // 3. ТАЗ ЕДЕТ ПО ОПОРНОЙ НОГЕ (как у человека): ноги разъехались → таз просел, нога под тазом → таз
-    //    поднялся. Без этого высота таза фиксирована, стопе некуда дотянуться и шаг вырождается в
-    //    семенящее «болтание ногами». Именно проседание и даёт широкую амплитуду.
-    let maxLz = 0;
+    //    поднялся. В фазе полёта опорной нет — тело идёт на полной высоте. Сглаживаем, чтобы не «щёлкало».
+    let maxLz = 0, anyStance = false;
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       if (l.sw > 0) continue;                        // маховая нога вес не держит
+      anyStance = true;
       const s = i === 0 ? -HIP_DX : HIP_DX;
       const hx = px + rx * s, hz = pz + rz * s;
       maxLz = Math.max(maxLz, Math.abs((l.px - hx) * fx + (l.pz - hz) * fz));
     }
     const reach = LEG * 0.97;
-    const hipY = clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), PELVIS_MIN, STAND_Y);
+    const wantY = anyStance
+      ? clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), PELVIS_MIN, STAND_Y)
+      : STAND_Y;
+    // Сглаживание нужно только бегу (вход/выход из полёта). На шаге оно даёт запаздывание таза, геометрия
+    // опорной ноги плывёт и её волочит — поэтому на малой скорости берём высоту как есть.
+    const lag = speed > SPEED_WALK ? Math.min(1, dt * 14) : 1;
+    this.hipY += (wantY - this.hipY) * lag;
+    const hipY = this.hipY;
     const out: LegAngles[] = [];
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
@@ -175,13 +200,14 @@ class StepPlanner {
       const hx = px + rx * s, hz = pz + rz * s;
       let wx: number, wz: number, wy: number;
       if (l.sw > 0) {
-        // Маховая: цель ЕДЕТ ЗА ТАЗОМ (полшага впереди ТЕКУЩЕГО бедра). Прибей её в момент отрыва — таз
-        // за время переноса уедет дальше вылета ноги, IK упрётся в предел и вытянет ногу в струну вперёд
-        // («персонаж сидит на стуле»).
-        l.tx = hx + mx * stepLen * 0.5; l.tz = hz + mz * stepLen * 0.5;
+        // Маховая: цель ЕДЕТ ЗА ТАЗОМ. Вынос = шаг × ДОЛЯ ОПОРЫ — ровно столько стопа проедет под телом,
+        // пока стоит, значит она укладывается в вылет ноги. (Полшага, как при ходьбе, на бегу недостижимо:
+        // IK упирается в предел и вытягивает ногу в струну вперёд — «персонаж сидит на стуле».)
+        // Прибивать цель в момент отрыва тоже нельзя — таз за время переноса уедет дальше вылета.
+        l.tx = hx + mx * stepLen * duty; l.tz = hz + mz * stepLen * duty;
         const t = l.sw, e = t * t * (3 - 2 * t);
         wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e;
-        wy = FOOT_Y + Math.sin(Math.PI * t) * LIFT;
+        wy = FOOT_Y + Math.sin(Math.PI * t) * liftFor(speed);
       } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
       out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz));
     }
