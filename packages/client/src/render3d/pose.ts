@@ -39,40 +39,25 @@ const FOOT_Y = 1.5;          // высота центра стопы, стоящ
  * стопа дотягивается только до точки прямо под тазом — шаг невозможен в принципе. 26.5 → колени чуть
  * согнуты (как у человека) и появляется вылет стопы ~17u, т.е. шаг ~1 м.
  */
-export const STAND_Y = 27;   // высота таза стоя (ноги почти прямые)
+export const STAND_Y = 27;   // высота таза стоя (для init позы; живая — в GAIT.standY)
 const RIG_PELVIS_Y = 30;     // высота таза в опорной позе рига (таблица BONES в ragdoll.ts)
-/**
- * Ниже таз не опускаем. ВАЖЕН БАЛАНС: слишком высоко — опорная стопа не дотянется до своей точки, и её
- * поволочёт (это и была «лунная походка» при беге назад); слишком низко — персонаж крадётся на корточках.
- * Предельный вынос стопы при этой высоте: sqrt(вылет² − (PELVIS_MIN − FOOT_Y)²).
- */
-const PELVIS_MIN = 19;
-/**
- * Длина шага. При ФИКСИРОВАННОЙ высоте таза шире 28 не сделать: стопа не дотянется, IK упрётся в предел.
- * Поэтому таз ЕДЕТ ПО НОГЕ (см. ниже) — как у человека: разъехались ноги → таз просел, нога под тазом →
- * таз поднялся. Это и даёт широкий шаг вместо семенящего.
- */
-const STEP_MIN = 30, STEP_MAX = 52;   // длина шага, юниты
-/**
- * Подъём маховой стопы. Растёт со скоростью: в беге перенос занимает 2/3 цикла, и на фиксированных 7u
- * нога летит долго и НИЗКО — скребёт по полу почти весь перенос (в замерах это выглядело как скольжение
- * ~100 u/с). Чем длиннее перенос, тем выше надо задирать стопу.
- */
-const liftFor = (speed: number): number => 7 + Math.max(0, Math.min(speed, 130) - SPEED_WALK) * 0.11;
 const MOVE_EPS = 8;          // ниже этой скорости (u/с) считаем, что стоим
-// Мягкий потолок форвардного угла бедра (см. ik). Мотор устойчиво тянет до ~1.35 рад; держим цель ниже.
-const HIP_FWD_LIM = 0.95, HIP_FWD_SOFT = 0.3;
+
 /**
- * ДОЛЯ ОПОРЫ — сколько цикла нога стоит на земле. Это и есть разница между ходьбой и бегом:
- * - >0.5 — ходьба: есть двойная опора, обе стопы на земле одновременно;
- * - <0.5 — БЕГ: между опорами обе ноги в воздухе (фаза полёта).
- * Зачем: опорная стопа проезжает под телом `шаг × 2 × доля`, и это расстояние обязано укладываться в
- * ВЫЛЕТ ноги (~21.7u при самой низкой посадке таза). При доле 0.5 вылета хватает лишь на шаг ≤43 — это
- * потолок ходьбы, из-за него на бегу нога не доносилась до цели и плелась сзади. При доле 0.34 тот же
- * вылет позволяет шаг ~52: длина набирается ПОЛЁТОМ, а не вытягиванием ноги вперёд.
+ * ЖИВЫЕ настройки походки — крутятся дебаг-панелью в 3D-клиенте (`window.__gait`, клавиша G).
+ * Дефолты = коммит d523b26. Пока ползунок не двинут, поведение ровно как было.
  */
-const DUTY_WALK = 0.5, DUTY_RUN = 0.34;
-const SPEED_WALK = 40, SPEED_RUN = 115;   // между ними доля опоры плавно едет ходьба→бег
+export const GAIT = {
+  standY: 27, pelvisMin: 19,                 // посадка таза: стойка / нижний предел приседа
+  stepBase: 30, stepK: 0.12, stepMax: 52,    // длина шага = clamp(base + speed·K, base, max)
+  dutyWalk: 0.5, dutyRun: 0.34, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
+  liftBase: 7, liftK: 0.11,                  // подъём маховой стопы = base + (speed−speedWalk)·K
+  hipFwdLim: 0.95, hipFwdSoft: 0.3,          // мягкий потолок форвардного угла бедра
+  // ВЫНОС СТОПЫ ВПЕРЁД (то, что домучиваем): к базовому шаг·доля добавляем шаг·aheadMul + скорость·predictSec.
+  // fixTarget=1 — цель фиксируется в момент отрыва (предсказание), 0 — едет за бедром каждый кадр.
+  aheadMul: 0, predictSec: 0, fixTarget: 0,
+};
+const liftFor = (speed: number): number => GAIT.liftBase + Math.max(0, Math.min(speed, 130) - GAIT.speedWalk) * GAIT.liftK;
 
 const clamp = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);
 
@@ -105,7 +90,8 @@ function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: numb
   // −1.9 рад (109°) — мотор такой скачок не тянет: недобирает и опаздывает на 2-3 кадра, нога плетётся
   // сзади. Живая нога выносится ~50°. tanh-насыщение делает форвардную цель плавной и достижимой, зад
   // (hip>0, отработан идеально) не трогаем.
-  if (hip < -HIP_FWD_LIM) hip = -(HIP_FWD_LIM + HIP_FWD_SOFT * Math.tanh((-hip - HIP_FWD_LIM) / HIP_FWD_SOFT));
+  const lim = GAIT.hipFwdLim, soft = GAIT.hipFwdSoft;
+  if (hip < -lim) hip = -(lim + soft * Math.tanh((-hip - lim) / soft));
   return { hip, knee: Math.PI - beta, lat: Math.atan2(lx, -dy) };
 }
 
@@ -145,7 +131,7 @@ class StepPlanner {
     const speed = Math.hypot(vx, vz);
     const moving = speed > MOVE_EPS;
     const mx = moving ? vx / speed : 0, mz = moving ? vz / speed : 0;
-    const stepLen = clamp(STEP_MIN + speed * 0.12, STEP_MIN, STEP_MAX);
+    const stepLen = clamp(GAIT.stepBase + speed * GAIT.stepK, GAIT.stepBase, GAIT.stepMax);
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
@@ -164,7 +150,9 @@ class StepPlanner {
 
     // 2. ОКНА ОПОРЫ по доле. У ноги i опора отцентрована на фазе i·π и занимает 2π·duty цикла; остальное —
     //    перенос. duty<0.5 → между опорами обе ноги в воздухе (фаза полёта) — это и есть бег.
-    const duty = clamp(DUTY_WALK + (DUTY_RUN - DUTY_WALK) * ((speed - SPEED_WALK) / (SPEED_RUN - SPEED_WALK)), DUTY_RUN, DUTY_WALK);
+    const duty = clamp(GAIT.dutyWalk + (GAIT.dutyRun - GAIT.dutyWalk) * ((speed - GAIT.speedWalk) / (GAIT.speedRun - GAIT.speedWalk)), GAIT.dutyRun, GAIT.dutyWalk);
+    // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
+    const lead = stepLen * duty + stepLen * GAIT.aheadMul + speed * GAIT.predictSec;
     const TAU = Math.PI * 2, half = Math.PI * duty;
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
@@ -176,7 +164,15 @@ class StepPlanner {
         }
         l.sw = 0;
       } else {                                       // ПЕРЕНОС
-        if (l.sw === 0) { l.fx = l.px; l.fz = l.pz; }   // отрыв
+        if (l.sw === 0) {                             // отрыв
+          l.fx = l.px; l.fz = l.pz;
+          const s = i === 0 ? -HIP_DX : HIP_DX;
+          const hx = px + rx * s, hz = pz + rz * s;
+          // fixTarget: цель фиксируется здесь. Прибавляем пролёт тела за перенос (1−доля)·2·шаг — к касанию
+          // бедро будет там, стопа приземлится на `lead` впереди. Иначе цель едет за бедром (пересчёт ниже).
+          const fly = GAIT.fixTarget ? stepLen * (1 - duty) * 2 : 0;
+          l.tx = hx + mx * (lead + fly); l.tz = hz + mz * (lead + fly);
+        }
         l.sw = clamp((c - half) / (TAU - 2 * half), 0.001, 1);
       }
     }
@@ -194,11 +190,11 @@ class StepPlanner {
     }
     const reach = LEG * 0.97;
     const wantY = anyStance
-      ? clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), PELVIS_MIN, STAND_Y)
-      : STAND_Y;
+      ? clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), GAIT.pelvisMin, GAIT.standY)
+      : GAIT.standY;
     // Сглаживание нужно только бегу (вход/выход из полёта). На шаге оно даёт запаздывание таза, геометрия
     // опорной ноги плывёт и её волочит — поэтому на малой скорости берём высоту как есть.
-    const lag = speed > SPEED_WALK ? Math.min(1, dt * 14) : 1;
+    const lag = speed > GAIT.speedWalk ? Math.min(1, dt * 14) : 1;
     this.hipY += (wantY - this.hipY) * lag;
     const hipY = this.hipY;
     const out: LegAngles[] = [];
@@ -208,11 +204,9 @@ class StepPlanner {
       const hx = px + rx * s, hz = pz + rz * s;
       let wx: number, wz: number, wy: number;
       if (l.sw > 0) {
-        // Маховая: цель ЕДЕТ ЗА ТАЗОМ. Вынос = шаг × ДОЛЯ ОПОРЫ — ровно столько стопа проедет под телом,
-        // пока стоит, значит она укладывается в вылет ноги. (Полшага, как при ходьбе, на бегу недостижимо:
-        // IK упирается в предел и вытягивает ногу в струну вперёд — «персонаж сидит на стуле».)
-        // Прибивать цель в момент отрыва тоже нельзя — таз за время переноса уедет дальше вылета.
-        l.tx = hx + mx * stepLen * duty; l.tz = hz + mz * stepLen * duty;
+        // Маховая. При fixTarget цель зафиксирована на отрыве (выше). Иначе — едет за бедром: держится
+        // на `lead` впереди ТЕКУЩЕГО бедра (пересчёт каждый кадр).
+        if (!GAIT.fixTarget) { l.tx = hx + mx * lead; l.tz = hz + mz * lead; }
         const t = l.sw, e = t * t * (3 - 2 * t);
         wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e;
         wy = FOOT_Y + Math.sin(Math.PI * t) * liftFor(speed);

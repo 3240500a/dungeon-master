@@ -160,6 +160,28 @@ const DENSITY = 1000 / (TILE * TILE * TILE);
  */
 const T_LEG = 6e6, T_CORE = 3e6, T_ARM = 3e5, T_HEAD = 2e5;
 
+/**
+ * «Сила мышц» моторов по группам — крутятся дебаг-панелью (клавиша G). Читаются при СБОРКЕ сустава
+ * (`makeConstraint`), поэтому смена значений применяется ПЕРЕСОЗДАНИЕМ куклы (править мотор у живого
+ * сустава роняет wasm). Тут же лечатся руки-«сосиски»: поднять armFreq/armTorque, чтобы махали, а не висли.
+ */
+export const MOTOR = {
+  legFreq: 20, legTorque: T_LEG,
+  armFreq: 6, armTorque: T_ARM,
+  coreFreq: 15, coreTorque: T_CORE,
+  headFreq: 13, headTorque: T_HEAD,
+};
+type MGroup = 'leg' | 'arm' | 'core' | 'head';
+const motorGroup = (name: string): MGroup =>
+  name.startsWith('thigh') || name.startsWith('shin') || name.startsWith('foot') ? 'leg'
+    : name.startsWith('arm') || name.startsWith('fore') ? 'arm'
+      : name === 'head' ? 'head' : 'core';
+const motorVals = (g: MGroup): [number, number] =>
+  g === 'leg' ? [MOTOR.legFreq, MOTOR.legTorque]
+    : g === 'arm' ? [MOTOR.armFreq, MOTOR.armTorque]
+      : g === 'head' ? [MOTOR.headFreq, MOTOR.headTorque]
+        : [MOTOR.coreFreq, MOTOR.coreTorque];
+
 const swing = (planeCone: number, normalCone: number, twistLim: [number, number], twist = DOWN, plane = AX_X): Con =>
   ({ kind: 'swing', twist, plane, normalCone, planeCone, twistLim });
 const hinge = (lim: [number, number]): Con => ({ kind: 'hinge', axis: AX_X, normal: DOWN, lim });
@@ -234,12 +256,15 @@ function makeGeo(b: BoneDef): THREE.BufferGeometry {
 function makeConstraint(b: BoneDef, ox: number, oz: number): InstanceType<JoltNS['TwoBodyConstraintSettings']> {
   const ax = b.anchor[0] + ox, ay = b.anchor[1], az = b.anchor[2] + oz;
   const c = b.con!;
+  // Сила/жёсткость мотора берётся из ЖИВОГО MOTOR по группе кости — чтобы дебаг-панель влияла на них при
+  // пересоздании куклы (править мотор у уже живого сустава эти биндинги роняют wasm — только через сборку).
+  const [mFreq, mTorque] = motorVals(motorGroup(b.name));
   const spring = (m: InstanceType<JoltNS['MotorSettings']>): void => {
     m.mSpringSettings.mMode = J.ESpringMode_FrequencyAndDamping;
-    m.mSpringSettings.mFrequency = b.freq;
+    m.mSpringSettings.mFrequency = mFreq;
     m.mSpringSettings.mDamping = b.damp;
-    m.mMinTorqueLimit = -b.torque;
-    m.mMaxTorqueLimit = b.torque;
+    m.mMinTorqueLimit = -mTorque;
+    m.mMaxTorqueLimit = mTorque;
   };
   if (c.kind === 'hinge') {
     const s = new J.HingeConstraintSettings();
@@ -374,6 +399,7 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
       }
     }
   }
+
 
   return {
     group,

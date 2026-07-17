@@ -10,7 +10,8 @@ import {
   dominantType, TILE, type PlayerInput, type DungeonLayout, type DamageType,
 } from '@dm/shared';
 import { makeCharacter, type ActorHandle } from './actor.js';
-import { initPhysics, PhysWorld, makeRagdoll, type RagdollHandle } from './ragdoll.js';
+import { GAIT } from './pose.js';
+import { initPhysics, PhysWorld, makeRagdoll, MOTOR, type RagdollHandle } from './ragdoll.js';
 import { Vfx } from './vfx.js';
 import { setFog, makeSceneLighting, buildEnvironment, animateTorches, type Torch } from './env3d.js';
 
@@ -110,14 +111,19 @@ function enterFloor(d: number): void {
   pw.buildStatic(layout);                       // статические коллайдеры пола/стен для физики
 
   // Игрок — активный рэгдолл; рождаем сразу в точке спавна (сессия уже поставила игрока выше).
-  playerDoll?.dispose();
   const sp = session.world.players['p1'];
-  playerDoll = makeRagdoll(pw, { body: 0x8a93ad, limb: 0x6f7690, x: sp?.pos.x ?? 0, z: sp?.pos.y ?? 0 });
-  actorsGroup.add(playerDoll.group);
+  spawnPlayerDoll(sp?.pos.x ?? 0, sp?.pos.y ?? 0);
   // Свет игрока — отдельный объект (меши рэгдолла живут в мировых координатах).
   if (!playerLight) { playerLight = new THREE.PointLight(0xffd7a0, 5200, 520, 2); scene.add(playerLight); }
   floorCooldown = 1.5;
   toast(d === 1 ? 'Подземелье — этаж 1' : `Этаж ${d}`);
+}
+
+/** (Пере)создать рэгдолл игрока в точке (x,z). Пересборка — единственный безопасный способ применить MOTOR. */
+function spawnPlayerDoll(x: number, z: number): void {
+  if (playerDoll) { actorsGroup.remove(playerDoll.group); playerDoll.dispose(); }
+  playerDoll = makeRagdoll(pw, { body: 0x8a93ad, limb: 0x6f7690, x, z });
+  actorsGroup.add(playerDoll.group);
 }
 
 function ensureMonster(id: number, faction: string, champion: boolean): void {
@@ -139,8 +145,10 @@ function start(classId: string): void {
 // ── Тик + синхронизация ──────────────────────────────────────────────────────────
 const TICK = 1 / 30; let acc = 0, physAcc = 0;
 let dbgInput: PlayerInput | null = null; // отладочный ввод (проверка боя без клавиатуры)
+let autoMove: { x: number; y: number } | null = null; // авто-бег от панели тюнинга (руки свободны крутить)
 function buildInput(): PlayerInput {
   if (dbgInput) return dbgInput;
+  if (autoMove) return { move: autoMove, facing: 0, attack: lmb, cast: null, interact: false };
   const p = session.world.players['p1'];
   let mx = 0, my = 0;
   if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
@@ -292,6 +300,59 @@ function loop(): void {
 function resize(): void { const w = canvas.clientWidth || innerWidth || 960, h = canvas.clientHeight || innerHeight || 600; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); new ResizeObserver(resize).observe(canvas);
 resize();
+
+// ── ДЕБАГ-ПАНЕЛЬ ТЮНИНГА ПОХОДКИ/МОТОРОВ (клавиша G). Крутится вживую, дефолты = коммит d523b26. ──
+function buildTunePanel(): void {
+  const DEF = JSON.stringify({ g: { ...GAIT }, m: { ...MOTOR } });   // снимок дефолтов для «сброса»
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;top:8px;right:8px;width:250px;max-height:94vh;overflow:auto;z-index:9999;'
+    + 'background:rgba(16,18,26,.93);border:1px solid #39415a;border-radius:8px;padding:8px 10px;'
+    + 'font:11px/1.5 monospace;color:#cfd3e0;display:none';
+  const h = (t: string): void => { const e = document.createElement('div'); e.textContent = t; e.style.cssText = 'color:#8fb7ff;margin:8px 0 2px;font-weight:bold'; box.append(e); };
+  const refresh: (() => void)[] = [];   // синхронизировать слайдеры со значениями (для «сброса»)
+  // Строка-слайдер: пишет в obj[key], показывает значение, для моторов бампает MOTOR.ver.
+  const row = (obj: Record<string, number>, key: string, min: number, max: number, step: number, motor = false): void => {
+    const r = document.createElement('label'); r.style.cssText = 'display:flex;align-items:center;gap:6px';
+    const nm = document.createElement('span'); nm.textContent = key; nm.style.cssText = 'flex:1;white-space:nowrap';
+    const val = document.createElement('span'); val.style.cssText = 'width:52px;text-align:right;color:#9ae6a0';
+    const sl = document.createElement('input'); sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step);
+    const show = (): void => { sl.value = String(obj[key]); val.textContent = String(obj[key]); };
+    show(); sl.style.cssText = 'width:88px';
+    sl.oninput = (): void => { obj[key] = parseFloat(sl.value); val.textContent = sl.value; };
+    // Моторы применяются только ПЕРЕСБОРКОЙ куклы (live-правка сустава роняет wasm) — на отпускание слайдера.
+    if (motor) sl.onchange = (): void => { const p = session.world.players['p1']; spawnPlayerDoll(p?.pos.x ?? 0, p?.pos.y ?? 0); };
+    refresh.push(show);
+    r.append(nm, sl, val); box.append(r);
+  };
+  const btn = (t: string, fn: () => void): HTMLButtonElement => { const b = document.createElement('button'); b.textContent = t; b.style.cssText = 'margin:2px 3px 2px 0;padding:3px 7px;background:#2a3350;color:#cfd3e0;border:1px solid #4a5680;border-radius:4px;cursor:pointer'; b.onclick = fn; box.append(b); return b; };
+
+  h('АВТО-БЕГ (руки свободны)');
+  const moves: [string, { x: number; y: number } | null][] = [['стоп', null], ['вперёд', { x: 1, y: 0 }], ['назад', { x: -1, y: 0 }], ['вбок', { x: 0, y: 1 }], ['медленно', { x: 0.28, y: 0 }]];
+  for (const [t, mv] of moves) btn(t, () => { autoMove = mv; });
+
+  h('ПОХОДКА · вынос стопы вперёд');
+  row(GAIT, 'aheadMul', 0, 1.5, 0.05); row(GAIT, 'predictSec', 0, 0.4, 0.01); row(GAIT, 'fixTarget', 0, 1, 1);
+  h('ПОХОДКА · посадка/шаг');
+  row(GAIT, 'standY', 18, 30, 0.5); row(GAIT, 'pelvisMin', 12, 26, 0.5);
+  row(GAIT, 'stepBase', 10, 52, 1); row(GAIT, 'stepK', 0, 0.4, 0.01); row(GAIT, 'stepMax', 30, 70, 1);
+  h('ПОХОДКА · опора/подъём/бедро');
+  row(GAIT, 'dutyWalk', 0.34, 0.7, 0.02); row(GAIT, 'dutyRun', 0.2, 0.6, 0.02);
+  row(GAIT, 'liftBase', 2, 16, 0.5); row(GAIT, 'liftK', 0, 0.3, 0.01);
+  row(GAIT, 'hipFwdLim', 0.4, 1.6, 0.05); row(GAIT, 'hipFwdSoft', 0.05, 0.6, 0.05);
+  h('МЫШЦЫ (сила моторов)');
+  row(MOTOR, 'legFreq', 4, 40, 1, true); row(MOTOR, 'legTorque', 5e5, 2e7, 5e5, true);
+  row(MOTOR, 'armFreq', 2, 30, 1, true); row(MOTOR, 'armTorque', 5e4, 5e6, 5e4, true);
+  row(MOTOR, 'coreFreq', 4, 40, 1, true); row(MOTOR, 'coreTorque', 5e5, 4e7, 5e5, true);
+
+  h('');
+  btn('в консоль', () => console.log('GAIT', JSON.stringify(GAIT), '\nMOTOR', JSON.stringify(MOTOR)));
+  btn('сброс', () => { const d = JSON.parse(DEF); Object.assign(GAIT, d.g); Object.assign(MOTOR, d.m); for (const f of refresh) f(); const p = session.world.players['p1']; spawnPlayerDoll(p?.pos.x ?? 0, p?.pos.y ?? 0); });
+  const hint = document.createElement('div'); hint.textContent = 'G — скрыть/показать'; hint.style.cssText = 'color:#6b7590;margin-top:6px'; box.append(hint);
+
+  document.body.append(box);
+  addEventListener('keydown', (ev) => { if (ev.code === 'KeyG' && !ev.repeat) box.style.display = box.style.display === 'none' ? 'block' : 'none'; });
+}
+
 // Rapier грузится асинхронно (WASM) — меню включаем после инициализации физики.
-initPhysics().then(() => { pw = new PhysWorld(); buildMenu(); loop(); });
+initPhysics().then(() => { pw = new PhysWorld(); buildMenu(); buildTunePanel(); loop(); });
 (window as unknown as { __g: unknown }).__g = { get session() { return session; }, get pw() { return pw; }, get doll() { return playerDoll; }, start, frameStep, render: () => renderer.render(scene, camera), renderer, scene, camera, monActors, projMeshes, dropMeshes, setDbg: (i: PlayerInput | null) => { dbgInput = i; } };
