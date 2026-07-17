@@ -13,6 +13,8 @@
 
 export interface PoseTargets {
   hipL: number; hipR: number; knL: number; knR: number;
+  /** Боковой вынос бедра (+ = наружу/вправо). Без него приставные шаги вырождаются в топтание. */
+  hipLatL: number; hipLatR: number;
   shL: number; shR: number; elL: number; elR: number;
   lean: number; twist: number; bobY: number; splay: number;
 }
@@ -57,23 +59,25 @@ interface Leg {
   fx: number; fz: number;   // откуда переносим
   tx: number; tz: number;   // куда переносим
 }
-interface LegAngles { hip: number; knee: number }
+interface LegAngles { hip: number; knee: number; lat: number }
 
 /**
  * 2-костная IK в сагиттальной плоскости тела: вектор от бедра к стопе в мире (dx,dz) + по высоте (dy<0).
  * Боковую составляющую игнорируем — бедро в риге машет только вокруг X (вперёд-назад), боковой баланс
  * будет отдельным этапом.
  */
-function ik(dx: number, dz: number, dy: number, fx: number, fz: number): LegAngles {
+function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: number, rz: number): LegAngles {
   const lz = dx * fx + dz * fz;                         // вперёд-назад в теле
-  const d = clamp(Math.hypot(lz, dy), 8, LEG - 0.6);    // не даём ноге «переразогнуться»
+  const lx = dx * rx + dz * rz;                         // вбок в теле (+ = вправо)
+  const d = clamp(Math.hypot(lz, lx, dy), 8, LEG - 0.6);   // не даём ноге «переразогнуться»
   const thFoot = Math.atan2(lz, -dy);                   // куда смотрит стопа от бедра (0 = прямо вниз)
   const alpha = Math.acos(clamp((L_THIGH * L_THIGH + d * d - L_SHIN * L_SHIN) / (2 * L_THIGH * d), -1, 1));
   const beta = Math.acos(clamp((L_THIGH * L_THIGH + L_SHIN * L_SHIN - d * d) / (2 * L_THIGH * L_SHIN), -1, 1));
   // Колено (сустав) при сгибе уходит ВПЕРЁД, а голень — назад (пятка к заду). Значит бедро отклонено от
   // линии «бедро→стопа» вперёд: θ_бедра = θ_стопы + α. Положительный hip уводит кость назад (−Z) →
   // hip = −θ_бедра. Проверка: стопа под бедром (d=25) → hip=−0.586, колено 1.17 → стопа ровно в цели.
-  return { hip: -(thFoot + alpha), knee: Math.PI - beta };
+  // Боковой вынос — отдельным углом вокруг Z (положительный уводит кость вправо, +X).
+  return { hip: -(thFoot + alpha), knee: Math.PI - beta, lat: Math.atan2(lx, -dy) };
 }
 
 class StepPlanner {
@@ -83,7 +87,7 @@ class StepPlanner {
   ];
   private swinging = -1;     // индекс ноги в переносе, -1 — обе на земле
   private placed = false;
-  /** Фаза походки (рад): ей же машем руками, чтобы они шли в такт ногам. */
+  /** Фаза походки (рад): π = один шаг. Ей же машем руками, чтобы они шли в такт ногам. */
   phase = 0;
 
   private reset(px: number, pz: number, rx: number, rz: number): void {
@@ -95,6 +99,9 @@ class StepPlanner {
     this.swinging = -1; this.placed = true;
   }
 
+  /** Кто машет по текущей фазе: 0 — левая, 1 — правая. */
+  private swingLeg(): number { return Math.floor(this.phase / Math.PI) % 2 === 0 ? 0 : 1; }
+
   update(dt: number, px: number, pz: number, yaw: number, vx: number, vz: number): { l: LegAngles; r: LegAngles; bobY: number } {
     // Оси тела в мире: вперёд = локальный +Z, вправо = локальный +X.
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
@@ -105,33 +112,29 @@ class StepPlanner {
     const moving = speed > MOVE_EPS;
     const mx = moving ? vx / speed : 0, mz = moving ? vz / speed : 0;
     const stepLen = clamp(STEP_MIN + speed * 0.12, STEP_MIN, STEP_MAX);
-    const stepDur = clamp(stepLen / Math.max(speed, 1), 0.18, 0.5);
 
-    // 1. Продвинуть перенос.
-    if (this.swinging >= 0) {
-      const l = this.legs[this.swinging]!;
-      l.sw += dt / stepDur;
-      if (l.sw >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; this.swinging = -1; }
+    // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
+    //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
+    //    очереди и уезжала назад на весь шаг: нога плантовалась на +16, а уходила на −31, центр шага
+    //    смещался за спину («семенит сзади тела»). При ритме опорная уходит назад ровно на полшага.
+    if (moving) this.phase += (speed * dt / stepLen) * Math.PI;
+    const sw = this.swingLeg();
+    if (sw !== this.swinging) {                    // смена ноги: прошлая встаёт там, где летела
+      if (this.swinging >= 0) { const o = this.legs[this.swinging]!; o.px = o.tx; o.pz = o.tz; o.sw = 0; }
+      const l = this.legs[sw]!;
+      l.fx = l.px; l.fz = l.pz;                    // откуда переносим
+      this.swinging = moving ? sw : -1;
     }
-    // 2. Пора ли шагать? Берём ногу, которая сильнее всех отстала от своего бедра.
-    if (this.swinging < 0) {
-      let worst = -1, worstD = 0;
+    if (!moving && this.swinging >= 0) { const o = this.legs[this.swinging]!; o.px = o.tx; o.pz = o.tz; o.sw = 0; this.swinging = -1; }
+    if (this.swinging >= 0) this.legs[this.swinging]!.sw = clamp((this.phase % Math.PI) / Math.PI, 0.001, 1);
+
+    // 2. Стоим — подтягиваем разъехавшиеся стопы под таз.
+    if (!moving) {
       for (let i = 0; i < 2; i++) {
         const l = this.legs[i]!;
         const s = i === 0 ? -HIP_DX : HIP_DX;
         const hx = px + rx * s, hz = pz + rz * s;
-        const d = moving ? -((l.px - hx) * mx + (l.pz - hz) * mz) : Math.hypot(l.px - hx, l.pz - hz);
-        if (d > worstD) { worstD = d; worst = i; }
-      }
-      // Триггер РАНЬШЕ полушага (0.38): физическая нога догоняет цель с задержкой, и на полушаге стопа
-      // успевала уехать назад вдвое дальше, чем выносилась вперёд — шаг выходил несимметричным.
-      if (worst >= 0 && worstD > (moving ? stepLen * 0.38 : 9)) {
-        const l = this.legs[worst]!;
-        const s = worst === 0 ? -HIP_DX : HIP_DX;
-        l.fx = l.px; l.fz = l.pz;
-        l.sw = 0.001;   // цель считаем каждый кадр ниже — она едет за тазом
-        this.swinging = worst;
-        this.phase += Math.PI;                     // руки — в такт шагам
+        if (Math.hypot(l.px - hx, l.pz - hz) > 9) { l.px = hx; l.pz = hz; }
       }
     }
     // 3. ТАЗ ЕДЕТ ПО ОПОРНОЙ НОГЕ (как у человека): ноги разъехались → таз просел, нога под тазом → таз
@@ -162,7 +165,7 @@ class StepPlanner {
         wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e;
         wy = FOOT_Y + Math.sin(Math.PI * t) * LIFT;
       } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
-      out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz));
+      out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz));
     }
     return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y };
   }
@@ -176,7 +179,7 @@ export class PoseDriver {
   private dead = false;
   private planner: StepPlanner | null = null;
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
-  readonly out: PoseTargets = { hipL: 0, hipR: 0, knL: 0, knR: 0, shL: 0, shR: 0, elL: 0, elR: 0, lean: 0, twist: 0, bobY: 0, splay: 0 };
+  readonly out: PoseTargets = { hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, shL: 0, shR: 0, elL: 0, elR: 0, lean: 0, twist: 0, bobY: 0, splay: 0 };
 
   setMove(s: number): void { this.move = Math.max(0, Math.min(1.4, s)); }
   /** Включает походку с опорой: позиция/рыск/скорость тела в мире (юниты, u/с). */
@@ -202,8 +205,8 @@ export class PoseDriver {
     if (this.planner) {
       const w = this.w;
       const g = this.planner.update(dt, w.x, w.z, w.yaw, w.vx, w.vz);
-      o.hipL = g.l.hip; o.knL = g.l.knee;
-      o.hipR = g.r.hip; o.knR = g.r.knee;
+      o.hipL = g.l.hip; o.knL = g.l.knee; o.hipLatL = g.l.lat;
+      o.hipR = g.r.hip; o.knR = g.r.knee; o.hipLatR = g.r.lat;
       o.bobY = g.bobY;
       this.phase = this.planner.phase;
     } else {

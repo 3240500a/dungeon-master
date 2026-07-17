@@ -173,8 +173,8 @@ const BONES: BoneDef[] = [
   { name: 'armR', parent: 1, anchor: [7, 48, 0], off: [0, -5.5, 0], shape: { k: 'capsule', hh: 4, r: 2.8 }, mat: 'limb', con: swing(1.7, 1.2, [-0.8, 0.8]), key: 'shR', sign: 1, torque: T_ARM, freq: 6, damp: 0.8 },
   { name: 'foreL', parent: 3, anchor: [-7, 37, 0], off: [0, -5, 0], shape: { k: 'capsule', hh: 4, r: 2.4 }, mat: 'limb', con: hinge([-2.2, 0.05]), key: 'elL', sign: -1, torque: T_ARM, freq: 6, damp: 0.8 },
   { name: 'foreR', parent: 4, anchor: [7, 37, 0], off: [0, -5, 0], shape: { k: 'capsule', hh: 4, r: 2.4 }, mat: 'limb', con: hinge([-2.2, 0.05]), key: 'elR', sign: -1, torque: T_ARM, freq: 6, damp: 0.8 },
-  { name: 'thighL', parent: 0, anchor: [-3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(0.5, 1.4, [-0.4, 0.4]), key: 'hipL', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
-  { name: 'thighR', parent: 0, anchor: [3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(0.5, 1.4, [-0.4, 0.4]), key: 'hipR', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
+  { name: 'thighL', parent: 0, anchor: [-3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(0.9, 1.4, [-0.4, 0.4]), key: 'hipL', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
+  { name: 'thighR', parent: 0, anchor: [3.6, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 3.4 }, mat: 'limb', con: swing(0.9, 1.4, [-0.4, 0.4]), key: 'hipR', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
   { name: 'shinL', parent: 7, anchor: [-3.6, 15, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 2.9 }, mat: 'limb', con: hinge([-0.05, 2.2]), key: 'knL', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
   { name: 'shinR', parent: 8, anchor: [3.6, 15, 0], off: [0, -7.5, 0], shape: { k: 'capsule', hh: 6, r: 2.9 }, mat: 'limb', con: hinge([-0.05, 2.2]), key: 'knR', sign: 1, torque: T_LEG, freq: 20, damp: 1 },
   { name: 'footL', parent: 9, anchor: [-3.6, 1.5, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, mat: 'limb', con: hinge([-0.4, 0.4]), key: null, sign: 1, torque: T_LEG, freq: 20, damp: 1 },
@@ -350,7 +350,9 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
     for (let i = 1; i < BONES.length; i++) {
       const b = BONES[i]!;
       const ang = b.key ? (t[b.key] as number) * b.sign : 0;
-      e.set(ang, b.name === 'torso' ? t.twist : 0, 0);
+      // Бёдрам — ещё и боковой вынос (вокруг Z): без него приставные шаги вырождаются в топтание.
+      const lat = b.name === 'thighL' ? t.hipLatL : b.name === 'thighR' ? t.hipLatR : 0;
+      e.set(ang, b.name === 'torso' ? t.twist : 0, lat);
       q.setFromEuler(e);
       pose.GetJoint(i).mRotation.Set(q.x, q.y, q.z, q.w);
     }
