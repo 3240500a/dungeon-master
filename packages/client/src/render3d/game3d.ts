@@ -355,4 +355,4 @@ function buildTunePanel(): void {
 
 // Rapier грузится асинхронно (WASM) — меню включаем после инициализации физики.
 initPhysics().then(() => { pw = new PhysWorld(); buildMenu(); buildTunePanel(); loop(); });
-(window as unknown as { __g: unknown }).__g = { get session() { return session; }, get pw() { return pw; }, get doll() { return playerDoll; }, start, frameStep, render: () => renderer.render(scene, camera), renderer, scene, camera, monActors, projMeshes, dropMeshes, setDbg: (i: PlayerInput | null) => { dbgInput = i; } };
+(window as unknown as { __g: unknown }).__g = { get session() { return session; }, get pw() { return pw; }, get doll() { return playerDoll; }, start, frameStep, render: () => renderer.render(scene, camera), renderer, scene, camera, monActors, projMeshes, dropMeshes, setDbg: (i: PlayerInput | null) => { dbgInput = i; }, respawnDoll: () => { const p = session.world.players['p1']; spawnPlayerDoll(p?.pos.x ?? 0, p?.pos.y ?? 0); } };

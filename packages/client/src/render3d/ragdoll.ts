@@ -401,6 +401,23 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
   }
 
 
+  /** Меши ← позы физических тел. Вызывается в update И один раз при создании (иначе до первого update
+   * меши висят в (0,0,0) — при пересборке из панели кукла «мигает» в начало координат). */
+  function syncMeshes(): void {
+    for (let i = 0; i < meshes.length; i++) {
+      const p = pw.bi.GetPosition(ids[i]!), r = pw.bi.GetRotation(ids[i]!);
+      const m = meshes[i]!;
+      m.quaternion.set(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
+      tmp.copy(offs[i]!).applyQuaternion(m.quaternion);
+      m.position.set(p.GetX() + tmp.x, p.GetY() + tmp.y, p.GetZ() + tmp.z);
+      // Начало тела стопы = щиколотка (форма смещена) — это ровно то, что нужно планировщику.
+      if (i === FOOT_L) { footLX = p.GetX(); footLZ = p.GetZ(); }
+      else if (i === FOOT_R) { footRX = p.GetX(); footRZ = p.GetZ(); }
+    }
+    driver.setFeet(footLX, footLZ, footRX, footRZ);
+  }
+  syncMeshes();   // первичная раскладка по физике — иначе до первого update меши в (0,0,0) (мигание в ноль)
+
   return {
     group,
     _dbg: { ragdoll, pose, ids, skeleton, J, driver },
@@ -434,21 +451,14 @@ export function makeRagdoll(pw: PhysWorld, opts: RagdollOpts = {}): RagdollHandl
         kRot.Set(q.x, q.y, q.z, q.w);
         pw.bi.MoveKinematic(ids[0]!, kPos, kRot, dt);
       }
-      for (let i = 0; i < meshes.length; i++) {
-        const p = pw.bi.GetPosition(ids[i]!), r = pw.bi.GetRotation(ids[i]!);
-        const m = meshes[i]!;
-        m.quaternion.set(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
-        tmp.copy(offs[i]!).applyQuaternion(m.quaternion);
-        m.position.set(p.GetX() + tmp.x, p.GetY() + tmp.y, p.GetZ() + tmp.z);
-        // Начало тела стопы = щиколотка (форма смещена) — это ровно то, что нужно планировщику.
-        if (i === FOOT_L) { footLX = p.GetX(); footLZ = p.GetZ(); }
-        else if (i === FOOT_R) { footRX = p.GetX(); footRZ = p.GetZ(); }
-      }
-      driver.setFeet(footLX, footLZ, footRX, footRZ);
+      syncMeshes();
     },
     dispose() {
       ragdoll.RemoveFromPhysicsSystem();
-      J.destroy(ragdoll); J.destroy(pose); J.destroy(settings);
+      // НЕ уничтожаем ragdoll/settings: settings держит ОБЩИЕ кэш-формы (shapes()), а J.destroy их
+      // освобождает → следующая кукла обращается к освобождённой памяти (wasm «memory access out of
+      // bounds»). Утечка одного набора обёрток на пересборку — копейки против крэша.
+      J.destroy(pose);
       for (const m of meshes) m.geometry.dispose();
       group.clear();
     },
