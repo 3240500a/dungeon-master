@@ -147,8 +147,18 @@ interface BoneDef {
 const DOWN: [number, number, number] = [0, -1, 0];
 const AX_X: [number, number, number] = [1, 0, 0];
 const AX_Z: [number, number, number] = [0, 0, 1];
-// Сила мышц: ноги держат вес, руки и спина слабые — тогда они махаются от инерции сами (рецепт Exanima).
-const T_LEG = 6e6, T_CORE = 2e7, T_ARM = 3e6, T_HEAD = 3e6;
+
+/**
+ * Плотность. Jolt по умолчанию 1000 (кг/м³), но метр у нас = 32 юнита → объёмы больше в 32³ = 32768 раз,
+ * и тела весили бы сотни тысяч «кг» (бедро ~600 000), а моторам понадобился бы момент ~1e9. Делим на 32³ —
+ * получаем НАСТОЯЩИЕ килограммы (бедро ~18 кг) при гравитации −9.81·32 u/с², т.е. физику метрового мира.
+ */
+const DENSITY = 1000 / (TILE * TILE * TILE);
+/**
+ * Сила мышц (предел момента, кг·u²/с²). Порядок задан массой: удержать бедро (~18 кг) на плече ~7.5u
+ * при g=314 → ~4e4. Ноги сильные, руки и спина слабые — тогда они махаются от инерции сами (рецепт Exanima).
+ */
+const T_LEG = 8e5, T_CORE = 3e6, T_ARM = 3e5, T_HEAD = 2e5;
 
 const swing = (planeCone: number, normalCone: number, twistLim: [number, number], twist = DOWN, plane = AX_X): Con =>
   ({ kind: 'swing', twist, plane, normalCone, planeCone, twistLim });
@@ -202,6 +212,7 @@ function shapes(): InstanceType<JoltNS['Shape']>[] {
     if (s.k === 'capsule') inner = new J.CapsuleShapeSettings(s.hh, s.r);
     else if (s.k === 'sphere') inner = new J.SphereShapeSettings(s.r);
     else { const h = new J.Vec3(s.h[0], s.h[1], s.h[2]); inner = new J.BoxShapeSettings(h, 0.5); J.destroy(h); }
+    inner.mDensity = DENSITY;   // иначе тела весят сотни тысяч «кг» и моторы бессильны
     const off = new J.Vec3(b.off[0], b.off[1], b.off[2]);
     const rot = new J.Quat(0, 0, 0, 1);   // НЕ sIdentity(): его нельзя destroy (см. шапку файла)
     const shape = new J.RotatedTranslatedShapeSettings(off, rot, inner).Create().Get();
