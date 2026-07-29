@@ -570,7 +570,7 @@ function renderLoco(): void {
   cv.addEventListener('pointerdown', (ev) => { drag = true; cv.setPointerCapture(ev.pointerId); setFrom(ev); });
   cv.addEventListener('pointermove', (ev) => { if (drag) setFrom(ev); });
   cv.addEventListener('pointerup', () => { drag = false; });
-  body.append(pbtn(locoOn ? '⏸ стоп' : '▶ превью бега', () => { locoOn = !locoOn; if (locoOn) { gaitPx = 0; gaitPz = 0; void ensurePhysics(); } renderLoco(); }, locoOn));
+  body.append(pbtn(locoOn ? '⏸ стоп' : '▶ превью бега', () => { locoOn = !locoOn; if (locoOn) { gaitPx = 0; gaitPz = 0; void ensurePhysics(); } else goFrame(frameIdx); renderLoco(); }, locoOn));   // стоп → вернуть манекен к авторскому кадру (не застывать на шаге)
   const tr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:6px'); tr.innerHTML = '<span style="flex:1">скорость (темп)</span>';
   const ts = el('input', 'flex:2') as HTMLInputElement; ts.type = 'range'; ts.min = '0'; ts.max = '2'; ts.step = '0.05'; ts.value = String(locoTempo);
   const tv = el('span', 'width:34px;text-align:right;color:#9ae6a0'); tv.textContent = locoTempo.toFixed(2);
@@ -737,10 +737,13 @@ function syncAttackEnds(c: Clip): void {
 }
 function syncAllAttackEnds(): void { for (const c of library) if (c.character === curCharId && isAttackClip(c)) syncAttackEnds(c); }
 function captureUpper(): void {   // снять ВСЮ позу манекена (ноги+торс+верх+оружие) → клип «стойка_<оружие>» = начальная позиция всего тела
-  const pose = readPoseFull();
+  if (locoOn || playing) { alert('Идёт превью/воспроизведение — сначала останови (⏸), иначе схватишь кадр бега, а не стойку.'); return; }
   const nm = stanceName(weapon);
-  const clip: Clip = { name: nm, character: curCharId, weapon, loop: false, keys: [{ pose, t: 0 }] };
   const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon);
+  if (i >= 0 && !confirm(`Перезаписать «${nm}» текущей позой манекена?`)) return;   // защита от случайной перезаписи idle
+  pushUndo();                       // на случай ошибки — Ctrl+Z вернёт прежнюю стойку
+  const pose = readPoseFull();
+  const clip: Clip = { name: nm, character: curCharId, weapon, loop: false, keys: [{ pose, t: 0 }] };
   if (i >= 0) library[i] = clip; else library.push(clip);
   syncAllAttackEnds();   // стойка изменилась → концы всех её ударов подхватывают
   saveLib();
