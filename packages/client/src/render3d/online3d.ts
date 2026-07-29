@@ -327,13 +327,18 @@ export async function startOnline3d(): Promise<void> {
       else if (e.type === 'quest') { if (e.playerId === myId) bus.emit('log:message', { text: e.name, kind: 'system' }); }
       else if (e.type === 'player-died') { if (e.playerId === myId) bus.emit('player:died', { depth: app.state!.depth }); }
       else if (e.type === 'swing') {
-        if (e.playerId === myId && self) {
+        // Проиграть авторский удар КУКЛОЙ (у Волкодава — `удар_axe`): свой игрок или пир.
+        const pv = latest?.players.find((p) => p.id === e.playerId);
+        const actor = e.playerId === myId ? self : peers.get(e.playerId);
+        actor?.d.attack();
+        if (pv) vfx.slash(pv.x, pv.y, pv.facing, 0xffe6a0, 48);
+        if (e.playerId === myId) {   // свой удар — заливка-откат слота биндов
           const now = performance.now();
           app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
           app.attackLockUntil = now + e.lockMs;
-          const m = latest?.players.find((p) => p.id === myId);
-          if (m) vfx.slash(smoothX, smoothZ, m.facing, 0xffe6a0, 48);
         }
+      } else if (e.type === 'monster-swing') {
+        monsters.get(e.id)?.d.attack();   // монстр машет своим оружием (авторский удар фракции / фолбэк)
       }
     }
   }
@@ -474,7 +479,7 @@ export async function startOnline3d(): Promise<void> {
     renderer.render(scene, camera);
   }
 
-  if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers };
+  if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents };
 
   let last = performance.now();
   function loop(): void { const now = performance.now(); const dt = Math.min(0.05, (now - last) / 1000); last = now; frame(dt); requestAnimationFrame(loop); }
