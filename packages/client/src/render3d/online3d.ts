@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput } from '@dm/shared';
+import { TILE, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -55,9 +55,30 @@ function makeHpBar(): { spr: THREE.Sprite; set: (f: number) => void } {
   return { spr, set: (f) => { f = Math.max(0, Math.min(1, f)); if (Math.abs(f - last) > 0.02) { last = f; draw(f); } } };
 }
 
+/** Ключ 3D-оружия из ЭКИПИРОВКИ: слот weapon → база (по weaponClass/hands), офф-рука со щитом → «база+shield». */
+function weaponKeyFromSave(save: SaveState): string {
+  const w = save.equipment.weapon, off = save.equipment.offhand;
+  const two = (w?.hands ?? 1) >= 2;
+  let base: string;
+  switch (w?.weaponClass) {
+    case 'sword': base = two ? 'greatsword' : 'sword'; break;
+    case 'axe': base = two ? 'greataxe' : 'axe'; break;
+    case 'mace': base = two ? 'greatmaul' : 'mace'; break;
+    case 'dagger': base = 'dagger'; break;
+    case 'spear': base = 'spear'; break;
+    case 'halberd': base = 'halberd'; break;
+    case 'bow': base = 'bow'; break;
+    case 'crossbow': base = 'crossbow'; break;
+    case 'wand': case 'staff': base = 'staff'; break;
+    default: base = charFor(save.classId).weapon; break;   // нет оружия — дефолт класса
+  }
+  if (!two && off?.kind === 'shield' && !base.includes('shield')) base += '+shield';   // щит в офф-руке (одноручное)
+  return base;
+}
+
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeHpBar> }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeHpBar>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number } }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -125,6 +146,7 @@ export async function startOnline3d(): Promise<void> {
   let myId = '';
   let area: 'town' | 'dungeon' = 'town';
   let self: Actor | undefined;
+  let selfWeaponKey = '';   // текущий 3D-ключ оружия/щита игрока (для пересборки при смене снаряжения)
   const peers = new Map<string, Actor>();
   const monsters = new Map<number, Actor>();
   const projMeshes = new Map<number, THREE.Mesh>();
@@ -141,6 +163,7 @@ export async function startOnline3d(): Promise<void> {
   let hudBars: { action: ActionBar; belt: BeltBar } | undefined;   // пояс + панель биндов (D2), создаём в мире
 
   const disposeActor = (a: Actor): void => { actorsGroup.remove(a.d.group); a.d.dispose(); if (a.hp) actorsGroup.remove(a.hp.spr); };
+  const markDead = (a: Actor): void => { if (a.dead != null) return; a.d.setDead(true); a.dead = 1.1; if (a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти
   const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
 
   // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
@@ -159,14 +182,16 @@ export async function startOnline3d(): Promise<void> {
     torches = buildEnvironment(floorGroup, layout);
     pw.buildStatic(layout);
 
-    // Игрок-кукла (создаём один раз, дальше перемещаем в spawn).
+    // Игрок-кукла (создаём один раз, дальше перемещаем в spawn). Оружие/щит — из ЭКИПИРОВКИ.
     const classId = app.state!.save.classId;
+    selfWeaponKey = weaponKeyFromSave(app.state!.save);
     if (!self) {
-      const d = makeGamePlayerDoll(pw, { classId, weapon: charFor(classId).weapon, x: floor.spawn.x, z: floor.spawn.y });
+      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, x: floor.spawn.x, z: floor.spawn.y });
       actorsGroup.add(d.group);
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
       playerLight = new THREE.PointLight(0xffd7a0, 5200, 520, 2); scene.add(playerLight);
     } else {
+      self.d.setWeapon?.(selfWeaponKey);   // на новом этаже снаряжение могло смениться
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
       self.lx = floor.spawn.x; self.lz = floor.spawn.y;
     }
@@ -276,9 +301,17 @@ export async function startOnline3d(): Promise<void> {
     // монстры
     for (const mv of latest.monsters) {
       const a = monsters.get(mv.id); if (!a) continue;
-      if (!mv.alive) { disposeActor(a); monsters.delete(mv.id); continue; }
+      if (!mv.alive) { markDead(a); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
+      if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
+      a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
       driveActor(a, mv.x, mv.y, mv.facing, true, dt);
       if (a.hp) { a.hp.spr.position.set(mv.x, 70, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); }
+    }
+    // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и просто ЛЕЖИТ на полу (не убираем).
+    // Трупы чистятся при смене этажа (buildArea сносит всех). Осевшие тела Jolt усыпляет — CPU не жрут.
+    for (const a of monsters.values()) {
+      if (a.dead == null || a.dead <= 0) continue;   // <=0 → заморожен: меш остаётся в позе «лежит»
+      a.d.update(dt); a.dead -= dt;
     }
     // снаряды
     const seenPr = new Set<number>();
@@ -304,6 +337,18 @@ export async function startOnline3d(): Promise<void> {
     for (const [id, g] of dropMeshes) if (!seenD.has(id)) { actorsGroup.remove(g); dropMeshes.delete(id); }
   }
 
+  // Позиция сущности из последнего снапшота (игрок-строка / монстр-число) — направление дёрга.
+  function posOf(id: string | number): { x: number; y: number } | undefined {
+    if (!latest) return undefined;
+    if (typeof id === 'string') { const p = latest.players.find((q) => q.id === id); return p ? { x: p.x, y: p.y } : undefined; }
+    const m = latest.monsters.find((q) => q.id === id); return m ? { x: m.x, y: m.y } : undefined;
+  }
+  // Кукла цели события (монстр/свой/пир).
+  function dollOf(target: 'player' | 'monster', id: string | number): RagdollHandle | undefined {
+    if (target === 'monster') return monsters.get(id as number)?.d;
+    return id === myId ? self?.d : peers.get(id as string)?.d;
+  }
+
   // ── События сервера (VFX + лог + звук через шину) ────────────────────────────
   function onEvents(events: import('@dm/shared').SessionEvent[]): void {
     const bus = app.bus;
@@ -311,13 +356,22 @@ export async function startOnline3d(): Promise<void> {
       if (e.type === 'hit') {
         const dom = (['physical', 'fire', 'cold', 'lightning', 'poison'] as const).reduce((b, t) => (e.byType[t] > e.byType[b] ? t : b), 'physical' as DamageType);
         if (e.hit && e.amount > 0) vfx.damage(e.x, e.y, e.amount, e.target === 'player' ? 0xff5b5b : ELEM[dom], e.crit);
-        if (e.target === 'monster' && e.by === myId) {
-          const nm = monsters.get(e.id as number);
-          if (e.hit && e.amount > 0) bus.emit('log:message', { text: `Нанёс ${e.amount}${e.crit ? ' крит!' : ''}`, kind: 'dmg-out' });
-          void nm;
-        } else if (e.id === myId && e.hit && e.amount > 0) bus.emit('log:message', { text: `Получил ${e.amount}${e.crit ? ' крит!' : ''}`, kind: 'dmg-in' });
+        if (e.hit && !e.blocked && e.amount > 0) {   // ФИЗ-ДЁРГ цели от атакующего (импульс в торс/голову)
+          const td = dollOf(e.target, e.id);
+          const tp = posOf(e.id) ?? { x: e.x, y: e.y }, ap = e.by != null ? posOf(e.by) : undefined;
+          let dx = 0, dz = 1; if (ap) { dx = tp.x - ap.x; dz = tp.y - ap.y; const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L; }
+          td?.hitReact(dx, dz, e.crit ? 1.7 : 1);
+          if (e.target === 'monster') {   // запомнить ПОСЛЕДНИЙ удар (он же убивающий перед monster-died) → отброс по %-урона
+            const a = monsters.get(e.id as number);
+            if (a) { const mx = a.maxHp ?? latest?.monsters.find((m) => m.id === e.id)?.maxHp ?? e.amount; a.knock = { f: Math.max(0, Math.min(1, e.amount / Math.max(1, mx))), dx, dz }; }
+          }
+        }
+        if (e.target === 'monster' && e.by === myId && e.hit && e.amount > 0) bus.emit('log:message', { text: `Нанёс ${e.amount}${e.crit ? ' крит!' : ''}`, kind: 'dmg-out' });
+        else if (e.target === 'player' && e.id === myId && e.hit && e.amount > 0) bus.emit('log:message', { text: `Получил ${e.amount}${e.crit ? ' крит!' : ''}`, kind: 'dmg-in' });
       } else if (e.type === 'monster-died') {
-        const a = monsters.get(e.id); if (a) { disposeActor(a); monsters.delete(e.id); }
+        const a = monsters.get(e.id);
+        if (a) { markDead(a); if (a.knock) a.d.knockback?.(a.knock.dx, a.knock.dz, a.knock.f); }   // регдолл падает + отброс по %-урона убивающего удара
+        vfx.burst(e.x, e.y, 0xc0402a, 16, 100, 0.6);
         if (e.by === myId) bus.emit('log:message', { text: `Убит ${e.def.name}`, kind: 'kill' });
       } else if (e.type === 'item-picked') {
         if (e.playerId === myId) { bus.emit('log:message', { text: `Поднято: ${e.item.name}`, kind: 'loot' }); bus.emit('item:picked', { item: e.item }); }
@@ -346,7 +400,11 @@ export async function startOnline3d(): Promise<void> {
   // ── Сетевые обработчики (данные + жизненный цикл) ────────────────────────────
   app.net.on('snapshot', (f) => { latest = f.snap; });
   app.net.on('events', (f) => onEvents(f.events));
-  app.net.on('saveUpdate', (f) => { app.state!.save = f.save; app.bus.emit('state:changed', {}); });
+  app.net.on('saveUpdate', (f) => {
+    app.state!.save = f.save;
+    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k); } }   // сменил оружие/щит → пересобрать меши
+    app.bus.emit('state:changed', {});
+  });
   app.net.on('shop', (f) => { app.shopStock = f.items; app.bus.emit('state:changed', {}); });
   app.net.on('questBoard', (f) => { app.questBoard = f.quests; app.bus.emit('state:changed', {}); });
   app.net.on('stash', (f) => { app.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount }; app.bus.emit('state:changed', {}); });

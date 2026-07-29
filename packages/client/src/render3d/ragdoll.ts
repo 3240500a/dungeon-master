@@ -128,6 +128,10 @@ export interface RagdollHandle {
   setDead(d: boolean): void;
   /** Дёрг при попадании: импульс в верх тела (dx,dz — направление отбрасывания, ед. вектор; power — сила ×). */
   hitReact(dx: number, dz: number, power?: number): void;
+  /** Отброс трупа на смерти: сильный горизонтальный импульс в таз/торс (frac 0..1 — доля урона от HP → дальность). */
+  knockback?(dx: number, dz: number, frac: number): void;
+  /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…). */
+  setWeapon?(key: string): void;
   update(dt: number): void;
   dispose(): void;
 }

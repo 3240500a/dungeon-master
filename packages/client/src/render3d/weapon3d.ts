@@ -60,7 +60,7 @@ export function attachWeapons(human: Humanoid, weapon: string): THREE.Group[] {
     bone.add(g); groups.push(g);
   };
   if (weapon === 'none') return groups;
-  if (weapon === 'sword+shield') { attach('sword', 'RightHand'); attach('shield', 'LeftHand'); }
+  if (weapon.endsWith('+shield')) { attach(weapon.slice(0, -'+shield'.length), 'RightHand'); attach('shield', 'LeftHand'); }   // ЛЮБАЯ база + щит (sword/axe/mace/…+shield)
   else if (weapon === 'dual') { attach('sword', 'RightHand'); attach('dagger', 'LeftHand'); }
   else if (weapon === 'shield') { attach('shield', 'LeftHand'); }
   else if (weapon === 'bow') { attach('bow', 'LeftHand'); }

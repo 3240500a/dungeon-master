@@ -19,6 +19,7 @@ import { charFor } from './chars3d.js';
 
 const GX_DEFAULT = (): GXKnobs => ({ legWidth: 0.22, armDown: 1.35, elbowBend: 0.25, bob: 1 });
 const PELVIS_Y = 32;
+const KNOCK = 3.5;   // сила отброса трупа при frac=1 — ~1.5 м макс (32 ед = 1 м) при 100% урона от HP; меньше урон — ближе
 
 export interface HumanoidDollOpts {
   x: number; z: number;
@@ -43,7 +44,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       : localStorageContent('__none__');
   // Вес совпадения рендера с манекеном (RB2) — настроенный в редакторе per-персонаж (pe_phys). Монстр → фолбэк.
   const matchWeight = opts.classId ? loadMatch(opts.classId) : opts.gaitId ? loadMatch(opts.gaitId, opts.gaitFallback) : 0;
-  const weapon = opts.weapon;
+  let weapon = opts.weapon;
   const ch = opts.classId ? charFor(opts.classId) : null;
   const gender = opts.gender ?? ch?.gender ?? 'male';
   const build = opts.build ?? ch?.build ?? {};
@@ -54,7 +55,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const solid = buildHumanoid({ gender, build, body: col.body ?? 0x8a93ad, limb: col.limb ?? 0x6f7690, head: col.head });
   if (opts.scale && opts.scale !== 1) solid.root.scale.setScalar(opts.scale);   // визуальный масштаб (физика базовая)
   group.add(solid.root);
-  const weaponGroups = attachWeapons(solid, weapon);
+  let weaponGroups = attachWeapons(solid, weapon);
   // target — НЕВИДИМЫЙ манекен-источник позы: PosePlayer его позирует, с него кормим физику (цель + пины).
   const target = buildHumanoid({ gender, build });
   target.root.visible = false; group.add(target.root);
@@ -111,6 +112,15 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     attack(_power) { player.triggerAttack(content.attackClip(weapon)); },   // авторский удар класса → физика отыграет (у монстра пусто)
     setDead(d) { if (d === dead) return; dead = d; ragdoll.setDead(d); },
     hitReact(dx, dz, power = 1) { ragdoll.hit('Torso', dx, 0.35, dz, power); },   // дёрг → из физики (солид = физрезультат)
+    knockback(dx, dz, frac) {   // отброс трупа: сильный горизонтальный импульс в таз+торс, дальность ∝ доле урона
+      const p = Math.max(0, Math.min(1, frac)) * KNOCK;
+      ragdoll.hit('Hips', dx, 0.1, dz, p); ragdoll.hit('Torso', dx, 0.18, dz, p * 0.5);
+    },
+    setWeapon(key) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
+      if (key === weapon) return;
+      for (const g of weaponGroups) { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
+      weapon = key; weaponGroups = attachWeapons(solid, weapon); player.setWeapon(weapon);
+    },
     update(dt) {
       if (dead) {                                            // мёртв — свободный коллапс, рендерим без прижима
         ragdoll.update(dt);
