@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, monsterCombatStats, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster } from '@dm/shared';
+import { TILE, monsterCombatStats, DEBUFF_ICON, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -49,15 +49,15 @@ const TOWN_NPCS: { cx: number; cy: number; label: string; panel: string; tint: n
 
 /** Плавающая полоска HP над монстром (спрайт-биллборд; перерисов только при заметном изменении). */
 /** Табличка над монстром (как 2D drawStatus): имя (цвет по редкости) + HP-бар (чемпион шире/золотой) + стан ✷. */
-function makeNameplate(name: string, champion: boolean, special: boolean): { spr: THREE.Sprite; set: (f: number) => void; setStun: (s: boolean) => void } {
-  const W = 140, H = 34;
+function makeNameplate(name: string, champion: boolean, special: boolean): { spr: THREE.Sprite; set: (f: number) => void; setStun: (s: boolean) => void; setDebuffs: (icons: string) => void } {
+  const W = 140, H = 46;
   const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d')!;
   const t = new THREE.CanvasTexture(c);
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
   const scale = champion ? 60 : 48; spr.scale.set(scale, scale * H / W, 1);
   const nameColor = champion ? '#dca94b' : special ? '#6f9bcf' : '#c4bca8';   // золото / синий / серый
   const bw = champion ? 104 : 84, bx = (W - bw) / 2, by = 21, bh = 8;
-  let curF = 1, curStun = false;
+  let curF = 1, curStun = false, curDeb = '';
   const draw = (): void => {
     g.clearRect(0, 0, W, H);
     g.font = `bold ${champion ? 14 : 12}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -67,6 +67,7 @@ function makeNameplate(name: string, champion: boolean, special: boolean): { spr
     g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(bx, by, bw, bh);
     g.fillStyle = curF > 0.5 ? '#5ec24a' : curF > 0.25 ? '#d8c24a' : '#d8583e'; g.fillRect(bx + 1, by + 1, (bw - 2) * curF, bh - 2);
     if (champion) { g.strokeStyle = '#dca94b'; g.lineWidth = 1; g.strokeRect(bx, by, bw, bh); }
+    if (curDeb) { g.font = '13px system-ui, sans-serif'; g.fillStyle = '#fff'; g.fillText(curDeb, W / 2, 38); }   // иконки статус-эффектов
     t.needsUpdate = true;
   };
   draw();
@@ -74,6 +75,7 @@ function makeNameplate(name: string, champion: boolean, special: boolean): { spr
     spr,
     set: (f) => { f = Math.max(0, Math.min(1, f)); if (Math.abs(f - curF) > 0.02) { curF = f; draw(); } },
     setStun: (s) => { if (s !== curStun) { curStun = s; draw(); } },
+    setDebuffs: (icons) => { if (icons !== curDeb) { curDeb = icons; draw(); } },
   };
 }
 
@@ -337,7 +339,7 @@ export async function startOnline3d(): Promise<void> {
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
       driveActor(a, mv.x, mv.y, mv.facing, true, dt);
-      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); }
+      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => DEBUFF_ICON[k]).join(' ')); }
     }
     // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и просто ЛЕЖИТ на полу (не убираем).
     // Трупы чистятся при смене этажа (buildArea сносит всех). Осевшие тела Jolt усыпляет — CPU не жрут.
