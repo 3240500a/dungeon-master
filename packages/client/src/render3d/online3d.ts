@@ -19,6 +19,7 @@ import { setFog, makeSceneLighting, buildEnvironment, animateTorches, WALL_H, ty
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
+import { mountDebug } from './debug3d.js';
 import { DomUi } from '../ui/domUi.js';
 import { GameLog } from '../ui/gameLog.js';
 import { ActionBar } from '../ui/actionBar.js';
@@ -128,6 +129,7 @@ export async function startOnline3d(): Promise<void> {
   app.gameLog = new GameLog(app, root);
   const hud = mountHud3d(app);
   const minimap = mountMinimap(root);
+  const debug = mountDebug(scene, root);
 
   await initPhysics();
   const pw = new PhysWorld();
@@ -276,6 +278,7 @@ export async function startOnline3d(): Promise<void> {
     }
     app.gameLog?.setVisible(true);   // лента лога/«чат» видна только В ИГРЕ (как 2D OnlineScene.buildArea)
     minimap.setFloor(floor.grid); minimap.setVisible(true);
+    debug.setFloor(floor.grid);
   }
 
   function labelSprite(text: string): THREE.Sprite {
@@ -564,9 +567,10 @@ export async function startOnline3d(): Promise<void> {
   app.net.connect();
 
   // ── Кадр (вынесен, чтобы гнать вручную в фоновой вкладке — rAF там заморожен) ──
-  let physAcc = 0, tsec = 0;
+  let physAcc = 0, tsec = 0, fps = 60;
   function frame(dt: number): void {
     tsec += dt;
+    fps += (1 / Math.max(dt, 1e-3) - fps) * 0.1;
     updatePing();
     if (app.net.connected && myId && latest && app.state) {
       sendInput(); renderWorld(dt); hud.update(); updateInteractions();
@@ -575,6 +579,7 @@ export async function startOnline3d(): Promise<void> {
         latest.monsters.filter((m) => m.alive).map((m) => ({ x: m.x, z: m.y })),
         latest.players.filter((p) => p.id !== myId).map((p) => ({ x: p.x, z: p.y })),
         interactables.map((it): MiniMark => ({ x: it.x, y: it.y, kind: /подземель|глубже|город/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc' })));
+      if (debug.on) debug.update({ fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq });
     }
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
     animateTorches(torches, tsec); vfx.update(dt); applyCam();
