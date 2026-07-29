@@ -45,6 +45,7 @@ export function runAuthFlow(app: App, root: HTMLElement): Promise<void> {
         } catch (e) { err.textContent = (e as Error).message; busy = false; }
       };
       card.append(btn('Войти', () => void go(login), '#8aa84a'), btn('Регистрация', () => void go(register)));
+      card.append(btn('← В меню', () => { close(); showMainMenu(); }, '#6a3a3a'));
       p.addEventListener('keydown', (e) => { if (e.key === 'Enter') void go(login); });
       setTimeout(() => u.focus(), 50);
     };
@@ -75,6 +76,7 @@ export function runAuthFlow(app: App, root: HTMLElement): Promise<void> {
       };
       const classNameOf = (id: string): string => listClasses(app.config).find((c) => c.id === id)?.name ?? id;
       card.append(btn('+ Новый персонаж', () => { close(); showCreate(); }, '#8aa84a'));
+      card.append(btn('← В меню', () => { close(); showMainMenu(); }, '#6f9bcf'));
       card.append(btn('Выйти из аккаунта', () => { app.clearAuth(); close(); showLogin(); }, '#6a3a3a'));
       void refresh();
     };
@@ -106,7 +108,15 @@ export function runAuthFlow(app: App, root: HTMLElement): Promise<void> {
       setTimeout(() => name.focus(), 50);
     };
 
-    // Есть сохранённая сессия → сразу к выбору персонажа; иначе — вход.
-    if (app.auth) showCharacters(); else showLogin();
+    // Титульный экран (как 2D MainMenuScene): «Играть» → вход/персонажи, «Редактор» → HTML-редактор конфигов.
+    const showMainMenu = (): void => {
+      const { card, close } = screen(root);
+      card.append(el('h1', `font:36px ${TITLE};color:#e0b45a;margin:0 0 4px;text-align:center;letter-spacing:3px`, 'DUNGEON MASTER'));
+      card.append(el('div', 'color:#8a90a4;text-align:center;margin-bottom:24px;font-size:14px;letter-spacing:3px', '3D · ОНЛАЙН'));
+      card.append(btn('Играть', () => { close(); if (app.auth) showCharacters(); else showLogin(); }, '#8aa84a'));
+      card.append(btn('Редактор', () => { window.open('/editor/', '_blank'); }, '#e39a3c'));
+    };
+
+    showMainMenu();
   });
 }
