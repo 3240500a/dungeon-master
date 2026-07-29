@@ -6,7 +6,7 @@
  * Оба вызова ТИХО переживают офлайн (нет сервера → работаем на локальном кэше). API: `/api/pose` GET,
  * `/api/dev/pose` POST (DEV-only) — Vite проксирует на :3001, прод — тот же origin.
  */
-export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance'] as const;
+export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield'] as const;
 
 /** Синк с сервером (звать ДО чтения редактором/игрой): сервер → localStorage; а ключи, которых на сервере ещё
  *  нет, но есть локально — РАЗОВО засеять на сервер (миграция уже накрученного контента). Офлайн — тихо на кэше. */

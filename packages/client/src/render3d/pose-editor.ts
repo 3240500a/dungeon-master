@@ -11,7 +11,7 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, WEAPON_MASS, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -306,11 +306,16 @@ addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLow
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
 function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; PHYS.match = c[id]?.match ?? 0; } catch { PHYS.match = 0; } }
 function savePhysMatch(): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; (c[curCharId] ??= {}).match = PHYS.match; localStorage.setItem('pe_phys', JSON.stringify(c)); savePoseKey('pe_phys'); } catch { /* */ } }
+// ── Вес подмешивания ЩИТА per-персонаж (pe_shield): поза щита (стойка_shield) наслаивается на позу оружия с этим весом. ──
+let shieldMix = 0.85;
+function loadShieldMix(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_shield') || '{}') as Record<string, { mix?: number }>; shieldMix = c[id]?.mix ?? 0.85; } catch { shieldMix = 0.85; } }
+function saveShieldMix(): void { try { const c = JSON.parse(localStorage.getItem('pe_shield') || '{}') as Record<string, { mix?: number }>; (c[curCharId] ??= {}).mix = shieldMix; localStorage.setItem('pe_shield', JSON.stringify(c)); savePoseKey('pe_shield'); } catch { /* */ } }
 
 // ── Персонаж: пересборка ──
 function applyChar(id: string): void {
   curCharId = id; const c = curChar(); weapon = c.weapon;
   loadPhys(id);                                               // физ-настройки (match) этого персонажа
+  loadShieldMix(id);                                          // вес подмешивания щита этого персонажа
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
@@ -528,6 +533,15 @@ function renderChar(): void {
   for (const w of WEAPONS) { const o = document.createElement('option'); o.value = w; o.textContent = w; if (w === c.weapon) o.selected = true; wsel.append(o); }
   wsel.onchange = () => { c.weapon = wsel.value; saveCharEdit(c); setWeapon(c.weapon); tab = 'char'; refreshAll(); };   // дефолт-оружие класса/фракции (игра берёт его)
   body.append(wsel);
+  // Подмешивание ЩИТА: поза «стойка_shield» (левая рука+корпус) наслаивается на позу оружия с этим весом.
+  const sh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); sh.textContent = 'ПОДМЕШИВАНИЕ ЩИТА'; body.append(sh);
+  const shRow = el('label', 'display:flex;align-items:center;gap:6px'); shRow.innerHTML = '<span style="flex:1">вес (стойка_shield → рука+корпус)</span>';
+  const shs = el('input', 'width:110px') as HTMLInputElement; shs.type = 'range'; shs.min = '0'; shs.max = '1'; shs.step = '0.05'; shs.value = String(shieldMix);
+  const shv = el('span', 'width:36px;text-align:right;color:#9ae6a0'); shv.textContent = shieldMix.toFixed(2);
+  shs.oninput = () => { shieldMix = parseFloat(shs.value); shv.textContent = shieldMix.toFixed(2); };   // превью бега с '+shield'-оружием читает живьём
+  shs.onchange = () => saveShieldMix();
+  shRow.append(shs, shv); body.append(shRow);
+  const shHint = el('div', 'color:#8f897c;font-size:10px;margin-top:2px'); shHint.textContent = 'позу щита авторь: оружие «shield» → выставь левую руку → «захватить стойку». В превью бега с «*+shield» виден микс.'; body.append(shHint);
   const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'СВОИ ПЕРСОНАЖИ'; body.append(ah);
   body.append(pbtn('+ создать из текущего', () => { const nm = prompt('имя персонажа', 'char' + (customChars.length + 1)); if (!nm) return; const id = 'c' + Date.now(); customChars.push({ id, name: nm, gender: c.gender, build: { ...c.build }, weapon }); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(id); }));
   if (!c.builtin) body.append(pbtn('удалить персонажа', () => { customChars = customChars.filter((x) => x.id !== c.id); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(CLASS_CHARS[0]!.id); }));
@@ -690,7 +704,12 @@ function updatePlantMarks(): void {
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
 const GX = { legWidth: 0.22, armDown: 1.35, elbowBend: 0.25, bob: 1 };
-const editorContent: PoseContent = { resolveUpper: (w) => resolveUpper(w) };   // живой контент редактора (библиотека + swayCfg)
+// Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита (стойка_shield) + вес shieldMix (ползунок),
+// подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
+const editorContent: PoseContent = {
+  resolveUpper: (w) => resolveUpper(w),
+  shieldOverlay: () => { const c = stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMix } : null; },
+};
 function gaitToHumanoid(t: PoseTargets): void {   // тонкая обёртка над ОБЩИМ пайплайном (Ф5) — редактор и игра одним кодом
   rtGaitToHumanoid(human, weaponGroups, GX, gaitMoveMag, t, editorContent, weapon, { clip: attackClip, t: attackT });
 }
@@ -702,11 +721,12 @@ function loadSway(): Record<string, Record<string, number>> { try { return JSON.
 let swayCfg: Record<string, Record<string, number>> = loadSway();
 function saveSway(): void { try { localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); } catch { /* */ } }
 const swayOf = (w: string): number => swayCfg[curCharId]?.[w] ?? 0.2;   // остаточный мах поверх idle (физпокачивание)
-function resolveUpper(wpn: string): UpperPose | null {   // idle-поза из клипа-стойки оружия → иначе базовое оружие класса
-  let c = stanceClip(wpn);
-  if (!c) { const base = curChar().weapon; if (base !== wpn) c = stanceClip(base); }
+function resolveUpper(wpn: string): UpperPose | null {   // idle-поза по БАЗОВОМУ оружию (sword+shield → sword); щит — отдельным оверлеем
+  const b = rtBaseWeapon(wpn);
+  let c = stanceClip(b);
+  if (!c) { const base = rtBaseWeapon(curChar().weapon); if (base !== b) c = stanceClip(base); }
   if (!c || !c.keys[0]) return null;
-  return { pose: c.keys[0]!.pose, swing: swayOf(wpn) };
+  return { pose: c.keys[0]!.pose, swing: swayOf(b) };
 }
 // Удары — клипы «удар_<w>» из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синкаются ОДНОСТОРОННЕ стойка→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('удар_');

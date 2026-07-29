@@ -10,8 +10,12 @@ export interface Keyframe { pose: Pose; t: number }
 export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[] }
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
 export interface GXKnobs { legWidth: number; armDown: number; elbowBend: number; bob: number }
-/** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage. */
-export interface PoseContent { resolveUpper(weapon: string): UpperPose | null }
+/** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
+ *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
+export interface PoseContent {
+  resolveUpper(weapon: string): UpperPose | null;
+  shieldOverlay?(): { pose: Pose; mix: number } | null;
+}
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
 export interface AttackState { clip: Clip | null; t: number }
 
@@ -20,6 +24,10 @@ export const WPN_POS = ['__wpnMainP', '__wpnOffP'];            // спец-кл�
 export const UPPER_BONES = ['Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand'];
 export const UPPER_BODY_KEYS = ['Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', 'RightUpperArm', 'RightLowerArm', 'RightHand', ...WPN_KEYS, ...WPN_POS];
 const ATK_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand', 'Spine'];
+// Кости, которые перекрывает ЩИТ-оверлей: левая рука (держит щит) + корпус (лёгкий разворот к щиту). Аддитивно, с весом.
+export const SHIELD_BONES = ['LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', 'Spine', 'Chest', 'UpperChest'];
+/** Убрать суффикс '+shield' — позы/удары берём по БАЗОВОМУ оружию, щит идёт отдельным оверлеем. */
+export const baseWeapon = (w: string): string => (w.endsWith('+shield') ? w.slice(0, -'+shield'.length) : w);
 const AB_IN = 0.1, AB_OUT = 0.14;                              // огибающая входа/выхода удара (сек)
 
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
@@ -39,7 +47,7 @@ export function clipPoseAt(c: Clip, t01: number): Pose {        // поза кл
 
 // ── temp-объекты (общие, без аллокаций в кадре) ──
 const _wX = new THREE.Vector3(1, 0, 0), _qd = new THREE.Quaternion(), _qs = new THREE.Quaternion(), _ed = new THREE.Euler();
-const _qA = new THREE.Quaternion(), _qB = new THREE.Quaternion(), _euH = new THREE.Euler();
+const _qA = new THREE.Quaternion(), _qB = new THREE.Quaternion(), _qSh = new THREE.Quaternion(), _euH = new THREE.Euler();
 function qEuler(e: [number, number, number] | undefined, out: THREE.Quaternion): void { if (e) { _euH.set(e[0], e[1], e[2]); out.setFromEuler(_euH); } else out.identity(); }
 function gaitArm(bone: THREE.Object3D | undefined, side: number, sh: number, sp: number, tw: number, gx: GXKnobs): void {
   if (!bone) return;
@@ -123,6 +131,20 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, m);
   blendBone(human, 'Head', [0, 0, 0], idle, m);
   applyUpper(human, weaponGroups, gx, t, content, weapon, atk);
+  // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (стойка держит щит, даже когда правая рука машет оружием).
+  if (weapon.endsWith('+shield')) { const ov = content.shieldOverlay?.(); if (ov && ov.mix > 0.001) applyShieldOverlay(human, weaponGroups, ov.pose, ov.mix); }
+}
+/** Щит-оверлей: слерп костей SHIELD_BONES + перенос ХВАТА щита (поворот/позиция) к позе щита с весом mix (0..1).
+ *  Хват в `стойка_shield` авторится как index-0 (__wpnMain/__wpnMainP), а в игре щит — index-1 → переносим на группу[1]. */
+export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[], pose: Pose, mix: number): void {
+  const H = human.bones, m = clamp(mix, 0, 1);
+  for (const nm of SHIELD_BONES) { const e = pose[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qSh); b.quaternion.slerp(_qSh, m); }
+  const g = weaponGroups[1];   // щит для '+shield'-оружия — вторая группа (первая — оружие в правой руке)
+  if (g) {   // ХВАТ щита — ПОЛНОСТЬЮ (щит всегда сидит в кулаке как выставлено; mix влияет только на позу руки/корпуса)
+    const r = pose['__wpnMain'], p = pose['__wpnMainP'];
+    if (r) g.rotation.set(r[0], r[1], r[2]);
+    if (p) g.position.set(p[0], p[1], p[2]);
+  }
 }
 
 // ── Плант-сетка стоп: 8 направлений × 2 скорости (шаг/бег) авторского сдвига цели ноги (body-local fwd,lat) ──
@@ -147,13 +169,17 @@ const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.g
 export function localStorageContent(charId: string, fallbackId?: string): GamePoseContent {
   const clips = readJSON<Clip[]>('pe_clips', []);
   const sway = readJSON<Record<string, Record<string, number>>>('pe_sway', {});
+  const shieldCfg = readJSON<Record<string, { mix?: number }>>('pe_shield', {});   // вес подмешивания щита per персонаж
   const find = (kind: string, id: string, w: string): Clip | null => clips.find((c) => c.name === kind + '_' + w && c.character === id && c.weapon === w) ?? null;
   const stance = (w: string): Clip | null => find('стойка', charId, w) ?? (fallbackId ? find('стойка', fallbackId, w) : null);
   const atk = (w: string): Clip | null => find('удар', charId, w) ?? (fallbackId ? find('удар', fallbackId, w) : null);
   const swayOf = (w: string): number => sway[charId]?.[w] ?? (fallbackId ? sway[fallbackId]?.[w] : undefined) ?? 0.2;
   return {
-    resolveUpper(weapon: string): UpperPose | null { const c = stance(weapon); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(weapon) } : null; },
-    attackClip(weapon: string): Clip | null { return atk(weapon); },
+    // Позы/удары — по БАЗОВОМУ оружию (axe+shield → axe): щит не подменяет анимацию оружия.
+    resolveUpper(weapon: string): UpperPose | null { const b = baseWeapon(weapon); const c = stance(b); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(b) } : null; },
+    attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
+    // Отдельная поза щита (стойка_shield) + вес подмешивания (редактор). Нет клипа — оверлея нет.
+    shieldOverlay(): { pose: Pose; mix: number } | null { const c = stance('shield'); if (!c || !c.keys.length) return null; const mix = shieldCfg[charId]?.mix ?? (fallbackId ? shieldCfg[fallbackId]?.mix : undefined) ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
   };
 }
 type GaitCfg = { gait?: Record<string, number>; pose?: Record<string, number>; gx?: Record<string, number>; plant?: Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] } };
