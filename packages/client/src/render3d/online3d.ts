@@ -20,6 +20,8 @@ import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { DomUi } from '../ui/domUi.js';
 import { GameLog } from '../ui/gameLog.js';
+import { ActionBar } from '../ui/actionBar.js';
+import { BeltBar } from '../ui/beltBar.js';
 import { SfxController } from '../modules/sfx/sfx.js';
 import { inventoryPanel } from '../modules/inventory/inventoryPanel.js';
 import { characterPanel, masterPanel } from '../modules/progression/panels.js';
@@ -92,7 +94,12 @@ export async function startOnline3d(): Promise<void> {
   let lmb = false, rmb = false, rot: null | { x: number; y: number } = null;
   const mouse = { x: 0, y: 0, set: false };
   const orbit = { target: new THREE.Vector3(), dist: 470, az: -0.6, el: 0.95 };
-  addEventListener('keydown', (e) => { if (!(document.activeElement instanceof HTMLInputElement)) keys.add(e.code); });
+  addEventListener('keydown', (e) => {
+    const t = document.activeElement;
+    if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;   // ввод в форму — не игровой ключ
+    keys.add(e.code);
+    if (e.code === 'Space' || e.code === 'Tab' || e.code === 'AltLeft' || e.code === 'AltRight') e.preventDefault();
+  });
   addEventListener('keyup', (e) => keys.delete(e.code));
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) lmb = true; if (e.button === 2) { rmb = true; rot = { x: e.clientX, y: e.clientY }; } });
@@ -131,6 +138,7 @@ export async function startOnline3d(): Promise<void> {
   const doorMeshes = new Map<number, THREE.Object3D[]>();
   const leverMeshes = new Map<number, THREE.Object3D>();
   const npcLabels: { spr: THREE.Sprite }[] = [];
+  let hudBars: { action: ActionBar; belt: BeltBar } | undefined;   // пояс + панель биндов (D2), создаём в мире
 
   const disposeActor = (a: Actor): void => { actorsGroup.remove(a.d.group); a.d.dispose(); if (a.hp) actorsGroup.remove(a.hp.spr); };
   const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
@@ -162,6 +170,8 @@ export async function startOnline3d(): Promise<void> {
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
       self.lx = floor.spawn.x; self.lz = floor.spawn.y;
     }
+    // Пояс (слева-внизу) + панель биндов ЛКМ/ПКМ/Shift/Space/Alt (по центру) — те же DOM-компоненты, что в 2D UIScene.
+    if (!hudBars) hudBars = { action: new ActionBar(app, root), belt: new BeltBar(app, root) };
     smoothX = floor.spawn.x; smoothZ = floor.spawn.y; hasSmooth = false;
 
     // Монстры области (по FloorInit; вид/удары/стойки — по фракции из конфига).
@@ -397,9 +407,14 @@ export async function startOnline3d(): Promise<void> {
     pingLabel.innerHTML = `ping <b style="color:${c}">${rtt < 0 ? '—' : rtt}</b> мс`;
   }
 
-  // ── Ввод → сервер ────────────────────────────────────────────────────────────
-  const save = () => app.state!.save;
+  // ── Ввод → сервер (схема как в 2D NetDriver) ─────────────────────────────────
+  const wasHeld: Record<string, boolean> = {};   // предыдущее удержание по источнику — фронт-детекция тоглов
+  function isToggleSkill(nodeId: string): boolean {
+    const cat = app.config.get('skill-tree')?.nodes.find((n) => n.id === nodeId)?.effect.active?.category;
+    return cat === 'aura' || cat === 'stance';
+  }
   function sendInput(): void {
+    const s = app.state!.save;
     const mine = latest?.players.find((p) => p.id === myId);
     let mx = 0, my = 0;
     if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
@@ -410,12 +425,21 @@ export async function startOnline3d(): Promise<void> {
     const a = aimWorld();
     if (mine && a && Math.hypot(a.x - smoothX, a.y - smoothZ) > 10) facing = Math.atan2(a.y - smoothZ, a.x - smoothX);
     else if (!mouse.set && (mx || my)) facing = Math.atan2(my, mx);
-    const s = save(); let cast: string | null = null;
-    if (rmb && s.mouseRight && s.mouseRight !== 'attack') cast = s.mouseRight;
-    else if (keys.has('Digit1') && s.hotbar[0]) cast = s.hotbar[0];
-    else if (keys.has('Digit2') && s.hotbar[1]) cast = s.hotbar[1];
-    else if (keys.has('Digit3') && s.hotbar[2]) cast = s.hotbar[2];
-    const input: PlayerInput = { move: { x: mx, y: my }, facing, attack: lmb, cast, interact: keys.has('KeyE') };
+    // ЛКМ/ПКМ + Shift/Space/Alt = mouseLeft/mouseRight/hotbar[0..2]. Тогл (аура/стойка) — только по фронту нажатия.
+    let attack = false, cast: string | null = null;
+    const consider = (b: string | null | undefined, held: boolean, src: string): void => {
+      const prev = wasHeld[src] ?? false; wasHeld[src] = held;
+      if (!held || !b) return;
+      if (b === 'attack') { attack = true; return; }
+      if (isToggleSkill(b) && prev) return;
+      if (cast == null) cast = b;
+    };
+    consider(s.mouseLeft, lmb, 'L');
+    consider(s.mouseRight, rmb, 'R');
+    consider(s.hotbar[0], keys.has('ShiftLeft') || keys.has('ShiftRight'), 'S');
+    consider(s.hotbar[1], keys.has('Space'), 'Sp');
+    consider(s.hotbar[2], keys.has('AltLeft') || keys.has('AltRight'), 'A');
+    const input: PlayerInput = { move: { x: mx, y: my }, facing, attack, cast, interact: keys.has('KeyE') };
     app.net.send({ t: 'input', seq: seq++, input });
   }
 
@@ -428,7 +452,7 @@ export async function startOnline3d(): Promise<void> {
     for (const it of interactables) { const d = Math.hypot(it.x - smoothX, it.y - smoothZ); if (d <= it.radius && d < best) { near = it; best = d; } }
     const eDown = keys.has('KeyE');
     if (near) { if (hint) hint.textContent = `[E] ${near.label}`; if (eDown && !eWasDown) near.run(); }
-    else if (hint) hint.textContent = 'WASD — идти · мышь — взгляд · ЛКМ — атака · ПКМ — камера/скилл · I/C/K — окна · E — действие';
+    else if (hint) hint.textContent = 'WASD — идти · ЛКМ/ПКМ/Shift/Space/Alt — действия · 1-4 — зелья · I/K/C — окна · ПКМ-зажать — камера';
     eWasDown = eDown;
   }
 
