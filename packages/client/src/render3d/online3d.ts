@@ -18,6 +18,7 @@ import { Vfx } from './vfx.js';
 import { setFog, makeSceneLighting, buildEnvironment, animateTorches, WALL_H, type Torch } from './env3d.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
+import { mountMinimap, type MiniMark } from './minimap3d.js';
 import { DomUi } from '../ui/domUi.js';
 import { GameLog } from '../ui/gameLog.js';
 import { ActionBar } from '../ui/actionBar.js';
@@ -126,6 +127,7 @@ export async function startOnline3d(): Promise<void> {
   new SfxController(app);
   app.gameLog = new GameLog(app, root);
   const hud = mountHud3d(app);
+  const minimap = mountMinimap(root);
 
   await initPhysics();
   const pw = new PhysWorld();
@@ -273,6 +275,7 @@ export async function startOnline3d(): Promise<void> {
       app.state!.depth = 0;
     }
     app.gameLog?.setVisible(true);   // лента лога/«чат» видна только В ИГРЕ (как 2D OnlineScene.buildArea)
+    minimap.setFloor(floor.grid); minimap.setVisible(true);
   }
 
   function labelSprite(text: string): THREE.Sprite {
@@ -463,9 +466,9 @@ export async function startOnline3d(): Promise<void> {
   const CENTER = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:90;pointer-events:auto';
   const sendJoin = (o: { fresh?: boolean; roomCode?: string; resume?: boolean }): void => app.net.send({ t: 'join', token: app.auth!.token, charId: app.pendingCharId!, ...o });
 
-  function showConnecting(): void { app.gameLog?.setVisible(false); if (connecting) return; connecting = mk(`<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px 30px;color:#e6ddc9;text-align:center"><div>Подключение к серверу…</div><div class="status" style="margin-top:8px;font-size:12px;color:#8f897c"></div></div>`, CENTER); statusEl = connecting.querySelector('.status') as HTMLElement; }
+  function showConnecting(): void { app.gameLog?.setVisible(false); minimap.setVisible(false); if (connecting) return; connecting = mk(`<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px 30px;color:#e6ddc9;text-align:center"><div>Подключение к серверу…</div><div class="status" style="margin-top:8px;font-size:12px;color:#8f897c"></div></div>`, CENTER); statusEl = connecting.querySelector('.status') as HTMLElement; }
   function hideConnecting(): void { connecting?.remove(); connecting = undefined; }
-  function showLobby(): void { app.gameLog?.setVisible(false); if (lobby) return;
+  function showLobby(): void { app.gameLog?.setVisible(false); minimap.setVisible(false); if (lobby) return;
     lobby = mk(`<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:280px;color:#e6ddc9;text-align:center"><div style="font-size:18px;margin-bottom:14px">Кооп</div><button data-a="solo" style="display:block;width:100%;margin:6px 0;padding:8px;background:#1e2a3a;color:#cfe0f2;border:1px solid #6f9bcf;border-radius:6px;cursor:pointer">Соло (комната на 1)</button><button data-a="host" style="display:block;width:100%;margin:6px 0;padding:8px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Создать комнату</button><div style="display:flex;gap:6px;margin-top:6px"><input class="code" placeholder="КОД" maxlength="4" style="flex:1;text-transform:uppercase;padding:8px;background:#0f131a;color:#e6ddc9;border:1px solid #2b323f;border-radius:6px"><button data-a="join" style="padding:8px 12px;background:#3a2c15;color:#f0d9a8;border:1px solid #e39a3c;border-radius:6px;cursor:pointer">Войти</button></div><div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`, CENTER);
     statusEl = lobby.querySelector('.status') as HTMLElement;
     const go = (o: { fresh?: boolean; roomCode?: string }): void => { statusEl!.textContent = 'Подключение…'; sendJoin(o); };
@@ -474,7 +477,7 @@ export async function startOnline3d(): Promise<void> {
     lobby.querySelector('[data-a="join"]')!.addEventListener('click', () => { const code = (lobby!.querySelector('.code') as HTMLInputElement).value.trim().toUpperCase(); if (code) go({ roomCode: code }); });
   }
   function hideLobby(): void { lobby?.remove(); lobby = undefined; }
-  function showResume(roomCode: string, depth: number): void { app.gameLog?.setVisible(false); if (resumeB) return; const where = depth > 0 ? `этаж ${depth}` : 'подземелье';
+  function showResume(roomCode: string, depth: number): void { app.gameLog?.setVisible(false); minimap.setVisible(false); if (resumeB) return; const where = depth > 0 ? `этаж ${depth}` : 'подземелье';
     resumeB = mk(`<div style="background:#171b24;border:1px solid #2b323f;border-radius:10px;padding:24px;min-width:300px;color:#e6ddc9;text-align:center"><div style="font-size:18px;margin-bottom:8px">Незавершённое прохождение</div><div style="font-size:13px;color:#a8a090;margin-bottom:16px">Вы вышли из подземелья (${where}, комната ${roomCode}). Продолжить или забросить?</div><button data-a="resume" style="display:block;width:100%;margin:6px 0;padding:9px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Продолжить</button><button data-a="abandon" style="display:block;width:100%;margin:6px 0;padding:9px;background:#3a1c1c;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Забросить</button><div class="status" style="margin-top:10px;font-size:12px;color:#8f897c"></div></div>`, CENTER);
     statusEl = resumeB.querySelector('.status') as HTMLElement;
     resumeB.querySelector('[data-a="resume"]')!.addEventListener('click', () => { statusEl!.textContent = 'Возврат…'; sendJoin({ resume: true }); });
@@ -565,7 +568,14 @@ export async function startOnline3d(): Promise<void> {
   function frame(dt: number): void {
     tsec += dt;
     updatePing();
-    if (app.net.connected && myId && latest && app.state) { sendInput(); renderWorld(dt); hud.update(); updateInteractions(); }
+    if (app.net.connected && myId && latest && app.state) {
+      sendInput(); renderWorld(dt); hud.update(); updateInteractions();
+      const me = latest.players.find((p) => p.id === myId);
+      minimap.render(smoothX, smoothZ, me?.facing ?? 0,
+        latest.monsters.filter((m) => m.alive).map((m) => ({ x: m.x, z: m.y })),
+        latest.players.filter((p) => p.id !== myId).map((p) => ({ x: p.x, z: p.y })),
+        interactables.map((it): MiniMark => ({ x: it.x, y: it.y, kind: /подземель|глубже|город/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc' })));
+    }
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
     animateTorches(torches, tsec); vfx.update(dt); applyCam();
     renderer.render(scene, camera);
