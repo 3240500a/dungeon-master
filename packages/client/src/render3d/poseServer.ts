@@ -43,11 +43,6 @@ export async function syncConfigFromServer(): Promise<void> {
   } catch { /* сервер недоступен — работаем на прежнем кэше/встроенных дефолтах */ }
 }
 
-/** Прочитать закэшированный серверный конфиг (snapshot по ключам) или null. */
-export function cachedServerConfig(): Record<string, unknown> | null {
-  try { const s = localStorage.getItem('pe_config'); return s ? JSON.parse(s) as Record<string, unknown> : null; } catch { return null; }
-}
-
 /** Отправить один ключ (уже записанный в localStorage) на сервер (write-through). */
 export function savePoseKey(key: string): void {
   let value: unknown;

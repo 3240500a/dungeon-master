@@ -1,6 +1,6 @@
 // ── Общий runtime-пайплайн позинга (Ф5): редактор И игра гонят бег/idle-стойки/удары ОДНИМ кодом ──
 // Чистые функции: берут human (humanoid.ts), меши оружия, крутилки GX и провайдер контента ЯВНЫМИ параметрами
-// (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (game3d.ts, per игрок).
+// (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
@@ -22,7 +22,6 @@ export interface AttackState { clip: Clip | null; t: number }
 export const WPN_KEYS = ['__wpnMain', '__wpnOff'];              // спец-ключи позы: поворот оружия
 export const WPN_POS = ['__wpnMainP', '__wpnOffP'];            // спец-ключи позы: позиция оружия
 export const UPPER_BONES = ['Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand'];
-export const UPPER_BODY_KEYS = ['Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', 'RightUpperArm', 'RightLowerArm', 'RightHand', ...WPN_KEYS, ...WPN_POS];
 const ATK_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand', 'Spine'];
 // Кости, которые перекрывает ЩИТ-оверлей: левая рука (держит щит) + корпус (лёгкий разворот к щиту). Аддитивно, с весом.
 export const SHIELD_BONES = ['LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', 'Spine', 'Chest', 'UpperChest'];

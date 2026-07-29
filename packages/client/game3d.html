@@ -7,7 +7,6 @@
     <style>
       html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; font-family: system-ui, sans-serif; color: #e6e6ee; }
       #app { width: 100vw; height: 100vh; display: block; }
-      .overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; }
       /* HUD */
       #hudbar { position: fixed; left: 16px; top: 14px; z-index: 10; width: 300px; }
       #hudbar .track { height: 16px; background: rgba(0,0,0,0.55); border: 1px solid #000; border-radius: 3px; margin-bottom: 4px; overflow: hidden; }
@@ -17,8 +16,6 @@
       #hp { background: #c85a48; } #mana { background: #4b7bcf; } #stam { background: #9aa63c; } #xp { background: #dca94b; }
       #info { position: fixed; left: 16px; top: 96px; z-index: 10; font-size: 13px; color: #cdd2e0; text-shadow: 0 1px 2px #000; }
       #hint { position: fixed; right: 12px; bottom: 10px; z-index: 10; font-size: 12px; color: #8a90a4; text-shadow: 0 1px 2px #000; }
-      #toast { position: fixed; left: 50%; top: 20%; transform: translateX(-50%); z-index: 15; font-size: 20px; font-weight: 700;
-               color: #f0d69a; text-shadow: 0 2px 6px #000; opacity: 0; transition: opacity 0.4s; pointer-events: none; }
       /* DOM-оверлей UI (экраны/панели/модалки) поверх канваса; сам контейнер прозрачен для мыши, дети — кликабельны.
          Экраны меню/авторизации/смерти строятся динамически (screens3d.ts / online3d.ts), отдельного CSS не требуют. */
       #ui-root { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
@@ -35,8 +32,7 @@
       <div class="track xp"><div id="xp" class="fill"></div></div>
     </div>
     <div id="info"></div>
-    <div id="hint">WASD — идти · мышь — взгляд · ЛКМ — атака · ПКМ — камера/скилл · I/C/K — окна · E — действие</div>
-    <div id="toast"></div>
+    <div id="hint">WASD — идти · мышь — взгляд · ЛКМ/ПКМ — атака/скилл · колесо — зум · I/C/K — окна · E — действие</div>
 
     <!-- DOM-оверлей UI: экраны авторизации, панели (инвентарь/скилы/город), модалки, HUD-плашки. -->
     <div id="ui-root"></div>

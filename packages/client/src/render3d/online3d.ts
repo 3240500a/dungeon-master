@@ -27,6 +27,7 @@ import { BeltBar } from '../ui/beltBar.js';
 import { SfxController } from '../modules/sfx/sfx.js';
 import { inventoryPanel } from '../modules/inventory/inventoryPanel.js';
 import { getHeld } from '../modules/inventory/heldItem.js';
+import { dmgColorNum } from '../core/damageTypes.js';
 import { characterPanel, masterPanel } from '../modules/progression/panels.js';
 import { skillsPanel } from '../modules/skills/skillsPanel.js';
 import { shopPanel } from '../modules/town/shopPanel.js';
@@ -36,7 +37,6 @@ import { stashPanel } from '../modules/town/stashPanel.js';
 import { questLogPanel } from '../modules/quests/questLogPanel.js';
 
 const yaw = (facing: number): number => Math.PI / 2 - facing;
-const ELEM: Record<DamageType, number> = { physical: 0xffe680, fire: 0xff5a2a, cold: 0x59a8ff, lightning: 0xffe24a, poison: 0x6ecb3f };
 const FACTION: Record<string, number> = { undead: 0x9fb7a6, demon: 0xc9614a, beast: 0xb08a55, monster: 0x8a6fae };
 /** NPC/портал города — клиентский декор (позиции-константы в клетках); авторитет — сервер. */
 const TOWN_NPCS: { cx: number; cy: number; label: string; panel: string; tint: number }[] = [
@@ -352,7 +352,7 @@ export async function startOnline3d(): Promise<void> {
     for (const pr of latest.projectiles) {
       seenPr.add(pr.id);
       let m = projMeshes.get(pr.id);
-      if (!m) { const tint = pr.owner === 'monster' ? 0xff8080 : ELEM[pr.dom] ?? 0xffe680; m = new THREE.Mesh(new THREE.SphereGeometry(5, 8, 8), new THREE.MeshStandardMaterial({ color: tint, emissive: tint, emissiveIntensity: 0.7 })); actorsGroup.add(m); projMeshes.set(pr.id, m); }
+      if (!m) { const tint = pr.owner === 'monster' ? 0xff8080 : dmgColorNum(pr.dom); m = new THREE.Mesh(new THREE.SphereGeometry(5, 8, 8), new THREE.MeshStandardMaterial({ color: tint, emissive: tint, emissiveIntensity: 0.7 })); actorsGroup.add(m); projMeshes.set(pr.id, m); }
       m.position.set(pr.x, 22, pr.y);
     }
     for (const [id, m] of projMeshes) if (!seenPr.has(id)) { actorsGroup.remove(m); projMeshes.delete(id); }
@@ -392,7 +392,7 @@ export async function startOnline3d(): Promise<void> {
         // Боевой фидбэк плавающим текстом (как 2D feedback): промах/блок/число. Видят все.
         if (!e.hit) vfx.floatText(e.x, e.y, 'промах', 0x9a9a9a);
         else if (e.blocked) vfx.floatText(e.x, e.y, 'блок', 0x8fd0ff);
-        else if (e.amount > 0) vfx.damage(e.x, e.y, e.amount, e.target === 'player' ? 0xff5b5b : ELEM[dom], e.crit);
+        else if (e.amount > 0) vfx.damage(e.x, e.y, e.amount, e.target === 'player' ? 0xff5b5b : dmgColorNum(dom), e.crit);
         // Последний атакованный монстр → реальный шанс попасть/увернуться в листе персонажа (как 2D netDriver).
         if (e.target === 'monster') { const mon = monsters.get(e.id as number); if (mon?.def) { const cs = monsterCombatStats(mon.def); app.lastTarget = { name: mon.def.name, accuracy: cs.accuracy, evade: cs.evade }; } }
         if (e.hit && !e.blocked && e.amount > 0) {   // ФИЗ-ДЁРГ цели от атакующего (импульс в торс/голову)
@@ -557,7 +557,7 @@ export async function startOnline3d(): Promise<void> {
     for (const it of interactables) { const d = Math.hypot(it.x - smoothX, it.y - smoothZ); if (d <= it.radius && d < best) { near = it; best = d; } }
     const eDown = keys.has('KeyE');
     if (near) { if (hint) hint.textContent = `[E] ${near.label}`; if (eDown && !eWasDown) near.run(); }
-    else if (hint) hint.textContent = 'WASD — идти · ЛКМ/ПКМ/Shift/Space/Alt — действия · 1-4 — зелья · I/K/C — окна · ПКМ-зажать — камера';
+    else if (hint) hint.textContent = 'WASD — идти · ЛКМ/ПКМ/Shift/Space/Alt — действия · 1-4 — зелья · I/K/C — окна · колесо — зум · F3 — дебаг';
     eWasDown = eDown;
   }
 
