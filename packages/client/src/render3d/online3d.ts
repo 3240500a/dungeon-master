@@ -132,9 +132,12 @@ export async function startOnline3d(): Promise<void> {
 
   // ── Ввод ────────────────────────────────────────────────────────────────────
   const keys = new Set<string>();
-  let lmb = false, rmb = false, rot: null | { x: number; y: number } = null;
+  let lmb = false, rmb = false;
   const mouse = { x: 0, y: 0, set: false };
-  const orbit = { target: new THREE.Vector3(), dist: 470, az: -0.6, el: 0.95 };
+  // Камера: азимут ФИКСИРОВАН (вращения по ПКМ нет), наклон меняется с зумом — близко угол ниже
+  // (камера опускается), далеко топ-даун как на скрине. Зум-аут ограничен ракурсом скрина.
+  const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: -0.6 };
+  const orbit = { target: new THREE.Vector3(), dist: 460 };
   addEventListener('keydown', (e) => {
     const t = document.activeElement;
     if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;   // ввод в форму — не игровой ключ
@@ -143,10 +146,10 @@ export async function startOnline3d(): Promise<void> {
   });
   addEventListener('keyup', (e) => keys.delete(e.code));
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-  canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) lmb = true; if (e.button === 2) { rmb = true; rot = { x: e.clientX, y: e.clientY }; } });
-  addEventListener('pointerup', (e) => { if (e.button === 0) lmb = false; if (e.button === 2) { rmb = false; rot = null; } });
-  canvas.addEventListener('pointermove', (e) => { if (rot) { orbit.az -= (e.clientX - rot.x) * 0.005; orbit.el += (e.clientY - rot.y) * 0.005; rot.x = e.clientX; rot.y = e.clientY; } mouse.x = e.clientX; mouse.y = e.clientY; mouse.set = true; });
-  canvas.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist = Math.max(160, Math.min(1100, orbit.dist * (e.deltaY < 0 ? 0.9 : 1.1))); }, { passive: false });
+  canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) lmb = true; if (e.button === 2) rmb = true; });
+  addEventListener('pointerup', (e) => { if (e.button === 0) lmb = false; if (e.button === 2) rmb = false; });
+  canvas.addEventListener('pointermove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.set = true; });
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist = Math.max(CAM.minDist, Math.min(CAM.maxDist, orbit.dist * (e.deltaY < 0 ? 0.9 : 1.1))); }, { passive: false });
   const ray = new THREE.Raycaster(); const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const ndc = new THREE.Vector2(); const hitPt = new THREE.Vector3();
   const aimWorld = (): { x: number; y: number } | null => {
@@ -157,8 +160,9 @@ export async function startOnline3d(): Promise<void> {
     return ray.ray.intersectPlane(ground, hitPt) ? { x: hitPt.x, y: hitPt.z } : null;
   };
   const applyCam = (): void => {
-    const el = Math.max(0.25, Math.min(1.4, orbit.el));
-    camera.position.set(orbit.target.x + orbit.dist * Math.cos(el) * Math.sin(orbit.az), orbit.target.y + orbit.dist * Math.sin(el), orbit.target.z + orbit.dist * Math.cos(el) * Math.cos(orbit.az));
+    const zt = Math.max(0, Math.min(1, (orbit.dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));   // 0 близко … 1 далеко
+    const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;                                           // близко — ниже угол, далеко — топ-даун
+    camera.position.set(orbit.target.x + orbit.dist * Math.cos(el) * Math.sin(CAM.az), orbit.target.y + orbit.dist * Math.sin(el), orbit.target.z + orbit.dist * Math.cos(el) * Math.cos(CAM.az));
     camera.lookAt(orbit.target);
   };
 
