@@ -76,15 +76,23 @@ export class Vfx {
   /** Восходящие магические партиклы (каст). */
   cast(x: number, z: number, color: number): void { this.burst(x, z, color, 18, 60, 0.6, 9, 8); this.ring(x, z, color, 70, 0.45); }
 
-  /** Всплывающее число урона (спрайт), поднимается и гаснет. Crit — крупнее/жёлтое. */
-  damage(x: number, z: number, amount: number, color: number, crit = false): void {
-    const S = 128, c = document.createElement('canvas'); c.width = S; c.height = 64; const g = c.getContext('2d')!;
-    g.font = `bold ${crit ? 46 : 34}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(String(amount), S / 2, 32);
-    g.fillStyle = crit ? '#ffd24a' : `#${color.toString(16).padStart(6, '0')}`; g.fillText(String(amount), S / 2, 32);
+  /** Всплывающий боевой текст (спрайт), поднимается и гаснет. big — крупнее (крит). Ширина канваса под текст (для «промах»/«блок»). */
+  floatText(x: number, z: number, text: string, color: number, big = false): void {
+    const c = document.createElement('canvas'); const g = c.getContext('2d')!;
+    const fs = big ? 46 : 34, font = `bold ${fs}px system-ui, sans-serif`;
+    g.font = font; const w = Math.max(64, Math.ceil(g.measureText(text).width) + 20);
+    c.width = w; c.height = 64;
+    g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(text, w / 2, 32);
+    g.fillStyle = `#${color.toString(16).padStart(6, '0')}`; g.fillText(text, w / 2, 32);
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, depthTest: false }));
-    spr.scale.set(crit ? 46 : 34, crit ? 23 : 17, 1); spr.position.set(x + (Math.random() - 0.5) * 10, 46, z);
+    const f = fs / 128; spr.scale.set(w * f, 64 * f, 1); spr.position.set(x + (Math.random() - 0.5) * 10, 46, z);
     let t = 0; const life = 0.9;
     this.add(spr, (dt) => { t += dt; const k = t / life; if (k >= 1) return false; spr.position.y = 46 + k * 40; (spr.material as THREE.SpriteMaterial).opacity = 1 - k * k; return true; });
+  }
+
+  /** Всплывающее число урона. Crit — крупнее/жёлтое. */
+  damage(x: number, z: number, amount: number, color: number, crit = false): void {
+    this.floatText(x, z, String(amount), crit ? 0xffd24a : color, crit);
   }
 }

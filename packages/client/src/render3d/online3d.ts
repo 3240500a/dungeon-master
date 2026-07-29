@@ -357,7 +357,10 @@ export async function startOnline3d(): Promise<void> {
     for (const e of events) {
       if (e.type === 'hit') {
         const dom = (['physical', 'fire', 'cold', 'lightning', 'poison'] as const).reduce((b, t) => (e.byType[t] > e.byType[b] ? t : b), 'physical' as DamageType);
-        if (e.hit && e.amount > 0) vfx.damage(e.x, e.y, e.amount, e.target === 'player' ? 0xff5b5b : ELEM[dom], e.crit);
+        // Боевой фидбэк плавающим текстом (как 2D feedback): промах/блок/число. Видят все.
+        if (!e.hit) vfx.floatText(e.x, e.y, 'промах', 0x9a9a9a);
+        else if (e.blocked) vfx.floatText(e.x, e.y, 'блок', 0x8fd0ff);
+        else if (e.amount > 0) vfx.damage(e.x, e.y, e.amount, e.target === 'player' ? 0xff5b5b : ELEM[dom], e.crit);
         if (e.hit && !e.blocked && e.amount > 0) {   // ФИЗ-ДЁРГ цели от атакующего (импульс в торс/голову)
           const td = dollOf(e.target, e.id);
           const tp = posOf(e.id) ?? { x: e.x, y: e.y }, ap = e.by != null ? posOf(e.by) : undefined;
