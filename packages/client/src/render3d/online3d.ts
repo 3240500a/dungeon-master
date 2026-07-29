@@ -24,6 +24,7 @@ import { ActionBar } from '../ui/actionBar.js';
 import { BeltBar } from '../ui/beltBar.js';
 import { SfxController } from '../modules/sfx/sfx.js';
 import { inventoryPanel } from '../modules/inventory/inventoryPanel.js';
+import { getHeld } from '../modules/inventory/heldItem.js';
 import { characterPanel, masterPanel } from '../modules/progression/panels.js';
 import { skillsPanel } from '../modules/skills/skillsPanel.js';
 import { shopPanel } from '../modules/town/shopPanel.js';
@@ -497,8 +498,11 @@ export async function startOnline3d(): Promise<void> {
       if (isToggleSkill(b) && prev) return;
       if (cast == null) cast = b;
     };
-    consider(s.mouseLeft, lmb, 'L');
-    consider(s.mouseRight, rmb, 'R');
+    // Предмет «на курсоре» (D2): клик по миру = бросок/отмена (см. heldItem.onWorldClick), НЕ атака/каст —
+    // иначе тот же клик уходит как mouseLeft и персонаж бьёт при выбросе предмета из инвентаря.
+    const holding = getHeld() != null;
+    consider(s.mouseLeft, holding ? false : lmb, 'L');
+    consider(s.mouseRight, holding ? false : rmb, 'R');
     consider(s.hotbar[0], keys.has('ShiftLeft') || keys.has('ShiftRight'), 'S');
     consider(s.hotbar[1], keys.has('Space'), 'Sp');
     consider(s.hotbar[2], keys.has('AltLeft') || keys.has('AltRight'), 'A');
