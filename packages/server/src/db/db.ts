@@ -43,6 +43,11 @@ db.exec(`
     data TEXT NOT NULL,
     updatedAt INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS pose_store (
+    key TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    updatedAt INTEGER NOT NULL
+  );
 `);
 
 // ── Пользователи ───────────────────────────────────────────────────────────────
@@ -166,4 +171,30 @@ export function getAccountStash(userId: string): AccountStash | null {
 /** Пишет/обновляет сундук аккаунта (last-writer-wins). */
 export function putAccountStash(userId: string, data: AccountStash): void {
   upsertStashStmt.run(userId, JSON.stringify(data), Date.now());
+}
+
+// ── Контент 3D поз-редактора (единая истина: редактор пишет, редактор+игра читают) ──
+// Опаковые JSON-блобы по ключам (pe_gait/pe_clips/pe_sway/pe_phys/pe_ragdoll/pe_chars) — авторский контент
+// (клипы/кадры/гейты), НЕ через ConfigRegistry (слишком сложен для zod-схем). Аналог config_overrides.
+const upsertPoseStmt = db.prepare(
+  `INSERT INTO pose_store (key, json, updatedAt) VALUES (?, ?, ?)
+   ON CONFLICT(key) DO UPDATE SET json = excluded.json, updatedAt = excluded.updatedAt`,
+);
+const allPoseStmt = db.prepare('SELECT key, json FROM pose_store');
+const deletePoseStmt = db.prepare('DELETE FROM pose_store WHERE key = ?');
+
+/** Весь контент поз-редактора (ключ→значение) — отдаётся редактору и игре. */
+export function getPoseStore(): Record<string, unknown> {
+  const rows = allPoseStmt.all() as { key: string; json: string }[];
+  const out: Record<string, unknown> = {};
+  for (const r of rows) out[r.key] = JSON.parse(r.json);
+  return out;
+}
+/** Пишет/обновляет один ключ контента поз-редактора (персистентно). */
+export function setPoseStore(key: string, value: unknown): void {
+  upsertPoseStmt.run(key, JSON.stringify(value), Date.now());
+}
+/** Удаляет ключ контента поз-редактора (чистка устаревших/тест-ключей). */
+export function deletePoseStore(key: string): void {
+  deletePoseStmt.run(key);
 }

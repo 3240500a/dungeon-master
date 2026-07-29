@@ -61,8 +61,9 @@ TypeScript + Vite** (клиент), **Node + Express + SQLite** (сервер), 
 
 ## Клиенты (2 параллельных)
 - **2D (основной)** — `index.html` → `src/main.ts` (Phaser), сервер-авторитетный. Не трогать при работе над 3D.
-- **3D (прототип)** — `game3d.html` → `src/render3d/` (Three.js), пока на ЛОКАЛЬНОМ `GameSession`; открыть
-  `http://localhost:5173/game3d.html` при `npm run dev`. См. `src/render3d/README.md`.
+- **3D (онлайн)** — `game3d.html` → `src/render3d/` (Three.js). ПОЛНОСТЬЮ ОНЛАЙН как 2D: реальный `App`+`NetClient`,
+  авторизация/персонаж/город/подземелье/бой из серверных снапшотов; отличие от 2D — только рендер (Three.js вместо
+  Phaser), DOM-панели/HUD/модалки те же. Открыть `http://localhost:5173/game3d.html` при `npm run dev`. См. `src/render3d/README.md`.
 
 ## Ключевые файлы-ориентиры
 - Типы данных: `packages/shared/src/types/index.ts`

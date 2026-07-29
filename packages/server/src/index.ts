@@ -11,6 +11,7 @@ import {
   createUser, getUserByName, createSession, deleteSession, getSession,
   listCharacters, getCharacter, putCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
+  getPoseStore, setPoseStore, deletePoseStore,
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
 
@@ -116,6 +117,25 @@ app.delete('/api/dev/config/:key', (req, res) => {
   rebuildConfig();
   console.log(`[dm-server] конфиг сброшен к дефолту: ${req.params.key}`);
   res.json({ ok: true, reset: req.params.key });
+});
+
+// ── Контент 3D поз-редактора (единая истина: сервер) ─────────────────────────────
+// GET — весь авторский контент (pe_gait/clips/sway/phys/ragdoll/chars); грузят и редактор, и игра
+// (кэшируют в localStorage). POST — правки редактора, DEV-only (в проде клиент не переписывает контент).
+app.get('/api/pose', (_req, res) => {
+  res.json(getPoseStore());
+});
+app.post('/api/dev/pose', (req, res) => {
+  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const keys = Object.keys(body);
+  for (const k of keys) setPoseStore(k, body[k]);
+  res.json({ ok: true, saved: keys });
+});
+app.delete('/api/dev/pose/:key', (req, res) => {
+  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });
+  deletePoseStore(req.params.key);
+  res.json({ ok: true, deleted: req.params.key });
 });
 
 // ── Хелперы ────────────────────────────────────────────────────────────────────
