@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState } from '@dm/shared';
+import { TILE, monsterCombatStats, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -98,7 +98,7 @@ function weaponKeyFromSave(save: SaveState): string {
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number } }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -228,7 +228,7 @@ export async function startOnline3d(): Promise<void> {
       actorsGroup.add(d.group);
       const champion = m.def.rarity === 'champion', special = champion || m.def.affixes.length > 0;
       const hp = makeNameplate(m.def.name, champion, special); actorsGroup.add(hp.spr);
-      monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp });
+      monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp, def: m.def });
     }
 
     if (floor.area === 'dungeon') {
@@ -381,6 +381,8 @@ export async function startOnline3d(): Promise<void> {
         if (!e.hit) vfx.floatText(e.x, e.y, 'промах', 0x9a9a9a);
         else if (e.blocked) vfx.floatText(e.x, e.y, 'блок', 0x8fd0ff);
         else if (e.amount > 0) vfx.damage(e.x, e.y, e.amount, e.target === 'player' ? 0xff5b5b : ELEM[dom], e.crit);
+        // Последний атакованный монстр → реальный шанс попасть/увернуться в листе персонажа (как 2D netDriver).
+        if (e.target === 'monster') { const mon = monsters.get(e.id as number); if (mon?.def) { const cs = monsterCombatStats(mon.def); app.lastTarget = { name: mon.def.name, accuracy: cs.accuracy, evade: cs.evade }; } }
         if (e.hit && !e.blocked && e.amount > 0) {   // ФИЗ-ДЁРГ цели от атакующего (импульс в торс/голову)
           const td = dollOf(e.target, e.id);
           const tp = posOf(e.id) ?? { x: e.x, y: e.y }, ap = e.by != null ? posOf(e.by) : undefined;
