@@ -46,14 +46,33 @@ const TOWN_NPCS: { cx: number; cy: number; label: string; panel: string; tint: n
 ];
 
 /** Плавающая полоска HP над монстром (спрайт-биллборд; перерисов только при заметном изменении). */
-function makeHpBar(): { spr: THREE.Sprite; set: (f: number) => void } {
-  const c = document.createElement('canvas'); c.width = 64; c.height = 10; const g = c.getContext('2d')!;
+/** Табличка над монстром (как 2D drawStatus): имя (цвет по редкости) + HP-бар (чемпион шире/золотой) + стан ✷. */
+function makeNameplate(name: string, champion: boolean, special: boolean): { spr: THREE.Sprite; set: (f: number) => void; setStun: (s: boolean) => void } {
+  const W = 140, H = 34;
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d')!;
   const t = new THREE.CanvasTexture(c);
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false })); spr.scale.set(38, 6, 1);
-  let last = -1;
-  const draw = (f: number): void => { g.clearRect(0, 0, 64, 10); g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, 64, 10); g.fillStyle = f > 0.5 ? '#5ec24a' : f > 0.25 ? '#d8c24a' : '#d8583e'; g.fillRect(1, 1, 62 * f, 8); t.needsUpdate = true; };
-  draw(1);
-  return { spr, set: (f) => { f = Math.max(0, Math.min(1, f)); if (Math.abs(f - last) > 0.02) { last = f; draw(f); } } };
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
+  const scale = champion ? 60 : 48; spr.scale.set(scale, scale * H / W, 1);
+  const nameColor = champion ? '#dca94b' : special ? '#6f9bcf' : '#c4bca8';   // золото / синий / серый
+  const bw = champion ? 104 : 84, bx = (W - bw) / 2, by = 21, bh = 8;
+  let curF = 1, curStun = false;
+  const draw = (): void => {
+    g.clearRect(0, 0, W, H);
+    g.font = `bold ${champion ? 14 : 12}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(name, W / 2, 10);
+    g.fillStyle = nameColor; g.fillText(name, W / 2, 10);
+    if (curStun) { g.fillStyle = '#ffe27a'; g.fillText('✷', W / 2 + g.measureText(name).width / 2 + 10, 10); }
+    g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(bx, by, bw, bh);
+    g.fillStyle = curF > 0.5 ? '#5ec24a' : curF > 0.25 ? '#d8c24a' : '#d8583e'; g.fillRect(bx + 1, by + 1, (bw - 2) * curF, bh - 2);
+    if (champion) { g.strokeStyle = '#dca94b'; g.lineWidth = 1; g.strokeRect(bx, by, bw, bh); }
+    t.needsUpdate = true;
+  };
+  draw();
+  return {
+    spr,
+    set: (f) => { f = Math.max(0, Math.min(1, f)); if (Math.abs(f - curF) > 0.02) { curF = f; draw(); } },
+    setStun: (s) => { if (s !== curStun) { curStun = s; draw(); } },
+  };
 }
 
 /** Ключ 3D-оружия из ЭКИПИРОВКИ: слот weapon → база (по weaponClass/hands), офф-рука со щитом → «база+shield». */
@@ -79,7 +98,7 @@ function weaponKeyFromSave(save: SaveState): string {
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeHpBar>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number } }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number } }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -207,7 +226,8 @@ export async function startOnline3d(): Promise<void> {
       const col = FACTION[faction] ?? 0x8a6f4a;
       const d = makeHumanoidDoll(pw, { x: m.x, z: m.y, weapon: mc.weapon, gaitId: monsterCharId(faction), gaitFallback: 'warrior', gender: mc.gender, build: mc.build, colors: { body: col, limb: 0x5a5a64, head: col } });
       actorsGroup.add(d.group);
-      const hp = makeHpBar(); actorsGroup.add(hp.spr);
+      const champion = m.def.rarity === 'champion', special = champion || m.def.affixes.length > 0;
+      const hp = makeNameplate(m.def.name, champion, special); actorsGroup.add(hp.spr);
       monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp });
     }
 
@@ -307,7 +327,7 @@ export async function startOnline3d(): Promise<void> {
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
       driveActor(a, mv.x, mv.y, mv.facing, true, dt);
-      if (a.hp) { a.hp.spr.position.set(mv.x, 70, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); }
+      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); }
     }
     // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и просто ЛЕЖИТ на полу (не убираем).
     // Трупы чистятся при смене этажа (buildArea сносит всех). Осевшие тела Jolt усыпляет — CPU не жрут.
