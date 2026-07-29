@@ -26,6 +26,9 @@ export const UPPER_BODY_KEYS = ['Chest', 'UpperChest', 'LeftShoulder', 'RightSho
 const ATK_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand', 'Spine'];
 // Кости, которые перекрывает ЩИТ-оверлей: левая рука (держит щит) + корпус (лёгкий разворот к щиту). Аддитивно, с весом.
 export const SHIELD_BONES = ['LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', 'Spine', 'Chest', 'UpperChest'];
+// Спад влияния стойки щита ПО ДИСТАНЦИИ ОТ ЩИТА (кисть 1.0 → корпус ~0). Применяется ТОЛЬКО во время удара (× огибающая):
+// в покое щит держит всё (guard), а на ударе кисть держит щит, а локоть/плечо/корпус свободны для маха.
+const SHIELD_FALLOFF: Record<string, number> = { LeftHand: 1, LeftLowerArm: 0.38, LeftUpperArm: 0.22, LeftShoulder: 0.15, UpperChest: 0.1, Chest: 0.07, Spine: 0.04 };
 /** Убрать суффикс '+shield' — позы/удары берём по БАЗОВОМУ оружию, щит идёт отдельным оверлеем. */
 export const baseWeapon = (w: string): string => (w.endsWith('+shield') ? w.slice(0, -'+shield'.length) : w);
 const AB_IN = 0.1, AB_OUT = 0.14;                              // огибающая входа/выхода удара (сек)
@@ -131,14 +134,27 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, m);
   blendBone(human, 'Head', [0, 0, 0], idle, m);
   applyUpper(human, weaponGroups, gx, t, content, weapon, atk);
-  // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (стойка держит щит, даже когда правая рука машет оружием).
-  if (weapon.endsWith('+shield')) { const ov = content.shieldOverlay?.(); if (ov && ov.mix > 0.001) applyShieldOverlay(human, weaponGroups, ov.pose, ov.mix); }
+  // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
+  // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
+  if (weapon.endsWith('+shield')) {
+    const ov = content.shieldOverlay?.();
+    if (ov && ov.mix > 0.001) {
+      const aenv = (atk.clip && atk.t >= 0) ? attackEnv(atk.t, clipDur(atk.clip) || 0.001) : 0;
+      applyShieldOverlay(human, weaponGroups, ov.pose, ov.mix, aenv);
+    }
+  }
 }
-/** Щит-оверлей: слерп костей SHIELD_BONES + перенос ХВАТА щита (поворот/позиция) к позе щита с весом mix (0..1).
- *  Хват в `стойка_shield` авторится как index-0 (__wpnMain/__wpnMainP), а в игре щит — index-1 → переносим на группу[1]. */
-export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[], pose: Pose, mix: number): void {
-  const H = human.bones, m = clamp(mix, 0, 1);
-  for (const nm of SHIELD_BONES) { const e = pose[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qSh); b.quaternion.slerp(_qSh, m); }
+/** Щит-оверлей: слерп костей SHIELD_BONES к позе щита + перенос ХВАТА щита (поворот/позиция). Вес кости = mix, а НА ВРЕМЯ
+ *  удара (aenv 0..1) падает по спаду от щита: кисть держит, корпус свободен. Хват в `стойка_shield` — index-0 (__wpnMain),
+ *  в игре щит — index-1, переносим на группу[1] (полностью — щит всегда в кулаке). */
+export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[], pose: Pose, mix: number, aenv = 0): void {
+  const H = human.bones;
+  for (const nm of SHIELD_BONES) {
+    const e = pose[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue;
+    const w = clamp(mix * (1 - aenv * (1 - (SHIELD_FALLOFF[nm] ?? 0.1))), 0, 1);   // на ударе дальние кости освобождаются
+    if (w < 0.002) continue;
+    qEuler(e, _qSh); b.quaternion.slerp(_qSh, w);
+  }
   const g = weaponGroups[1];   // щит для '+shield'-оружия — вторая группа (первая — оружие в правой руке)
   if (g) {   // ХВАТ щита — ПОЛНОСТЬЮ (щит всегда сидит в кулаке как выставлено; mix влияет только на позу руки/корпуса)
     const r = pose['__wpnMain'], p = pose['__wpnMainP'];
