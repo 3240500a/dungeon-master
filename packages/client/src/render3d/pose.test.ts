@@ -56,3 +56,44 @@ describe('StepPlanner — плант-цель (Феча 1) нейтральна 
     expect(fwdAfter).not.toEqual(fwd);               // stanceWidth развёл ноги и на forward — ожидаемо
   });
 });
+
+// Поворот на месте: РАССТАВЛЕННАЯ стойка (setStance) должна держаться, а не сводиться под таз — и переступать вбок.
+describe('StepPlanner — поворот на месте держит стойку и переступает вбок', () => {
+  // Боковой угол бедра стоя (после устаканивания): 0 = ноги под тазом, >0 = реально разведены.
+  const standLat = (half: number): number => {
+    const d = new PoseDriver();
+    d.setStance(half, 0, 0);
+    let t = d.update(1 / 60);
+    for (let i = 0; i < 120; i++) { d.setWorld(0, 0, 0, 0, 0); t = d.update(1 / 60); }
+    return Math.abs(t.hipLatL);
+  };
+
+  it('узкая стойка (=таз) сводит ноги под таз; широкая — держит развод', () => {
+    expect(standLat(3.6)).toBeLessThan(0.05);    // под таз — бокового угла почти нет
+    expect(standLat(11)).toBeGreaterThan(0.15);  // расставленная стойка — ноги реально разведены
+  });
+
+  it('вращение с расставленной стойкой → приставные шаги (stepping), ноги ни разу не сходятся', () => {
+    const d = new PoseDriver();
+    d.setStance(11, 0, 0);
+    for (let i = 0; i < 30; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться стоя
+    let stepped = false, minLatSum = Infinity, yaw = 0;
+    for (let i = 0; i < 180; i++) {
+      yaw += 0.06;                                                                  // ~3.6 рад/с — крутимся на месте
+      d.setWorld(0, 0, yaw, 0, 0);
+      const t = d.update(1 / 60);
+      if (d.stepping) stepped = true;
+      minLatSum = Math.min(minLatSum, Math.abs(t.hipLatL) + Math.abs(t.hipLatR));
+    }
+    expect(stepped).toBe(true);              // делал приставные шаги, а не крутился на неподвижных ступнях
+    expect(minLatSum).toBeGreaterThan(0.15); // за весь поворот ноги ни разу не схлопнулись под таз
+  });
+
+  it('дефолтная стойка (без setStance) — как раньше: узко, без развода', () => {
+    expect(standLat(3.6)).toBeLessThan(0.05);
+    const d = new PoseDriver();   // setStance не звали → stanceHalf = полуширина таза
+    let t = d.update(1 / 60);
+    for (let i = 0; i < 60; i++) { d.setWorld(0, 0, 0, 0, 0); t = d.update(1 / 60); }
+    expect(Math.abs(t.hipLatL)).toBeLessThan(0.05);
+  });
+});

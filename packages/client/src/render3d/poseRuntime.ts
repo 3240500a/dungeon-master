@@ -3,7 +3,7 @@
 // (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
+import { PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
 
 export type Pose = Record<string, [number, number, number]>;
 export interface Keyframe { pose: Pose; t: number }
@@ -221,6 +221,27 @@ export function loadMatch(charId: string, fallbackId?: string): number {
   return cfg[charId]?.match ?? (fallbackId ? cfg[fallbackId]?.match : undefined) ?? 0;
 }
 
+// ── Замер ширины РАССТАВЛЕННОЙ стойки из авторской idle-позы (для приставного шага при повороте на месте) ──
+const STANCE_LEG_BONES = ['LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot'];
+const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.Vector3();
+/** Позируем ноги авторской стойкой (yaw 0, таз в опорной точке) и читаем мировые стопы отн. таза → полуширина стойки +
+ *  продольный вынос стоп на ногу. Отдаётся планировщику (setStance): при повороте на месте он держит эту ширину и
+ *  переступает вбок, а не сводит ноги под таз. Нет клипа стойки → узкая база (полуширина таза), как было. Мутирует human
+ *  (reset + поза ног) — зови вне кадра рендера (спавн/смена оружия); следующий полный step всё равно перепозирует. */
+export function measureStanceWidth(human: Humanoid, idle: Pose | null): { half: number; fwdL: number; fwdR: number } {
+  if (!idle) return { half: HIP_DX, fwdL: 0, fwdR: 0 };
+  human.reset();
+  const hips = human.bones.get('Hips')!;
+  hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
+  for (const nm of STANCE_LEG_BONES) { const e = idle[nm]; if (e) { const b = human.bones.get(nm); if (b) b.rotation.set(e[0], e[1], e[2]); } }
+  human.root.updateMatrixWorld(true);
+  const h = hips.getWorldPosition(_ms0);
+  const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
+  const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);
+  const half = (Math.abs(fl.x - h.x) + Math.abs(fr.x - h.x)) / 2;   // боковой вынос стоп (мир X при yaw 0 = body-lateral)
+  return { half, fwdL: fl.z - h.z, fwdR: fr.z - h.z };
+}
+
 // ── PosePlayer: драйвер гейта для ИГРЫ (владеет своим состоянием) — тредмил-ноги + idle-стойка + физ-удар ──
 const _vfl = new THREE.Vector3(), _vfr = new THREE.Vector3();
 export class PosePlayer {
@@ -238,8 +259,13 @@ export class PosePlayer {
     public weapon: string,
     public gx: GXKnobs,
     public plant: PlantGrid,
-  ) {}
-  setWeapon(w: string): void { this.weapon = w; }
+  ) { this.measureStance(); }
+  /** Замерить ширину стойки текущего оружия и отдать планировщику (приставной шаг при повороте на месте держит её). */
+  measureStance(): void {
+    const st = measureStanceWidth(this.human, this.content.resolveUpper(this.weapon)?.pose ?? null);
+    this.driver.setStance(st.half, st.fwdL, st.fwdR);
+  }
+  setWeapon(w: string): void { this.weapon = w; this.measureStance(); }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
   setYaw(yaw: number): void { this.yaw = yaw; }
   triggerAttack(clip: Clip | null): void { if (clip) { this.atk.clip = clip; this.atk.t = 0; } }

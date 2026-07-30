@@ -34,7 +34,7 @@ const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 // Длины костей — строго по риг-таблице BONES: бедро 30→15, голень 15→1.5 (НЕ 15! иначе IK считает ногу
 // длиннее, чем она есть, и стопа не достаёт до пола).
 const L_THIGH = 15, L_SHIN = 13.5, LEG = L_THIGH + L_SHIN;
-const HIP_DX = 3.6;          // полуширина таза
+export const HIP_DX = 3.6;   // полуширина таза
 const FOOT_Y = 1.5;          // высота центра стопы, стоящей на полу
 /**
  * Высота таза в стойке. КРИТИЧНО: заметно МЕНЬШЕ длины ноги (30). При таз=30 нога выпрямлена в струну,
@@ -60,7 +60,8 @@ export const GAIT = {
   aheadMul: 0, predictSec: 0, fixTarget: 0,
   idleStep: 11,   // стоя: переступ, только если стопа уехала дальше этого (с гистерезисом) — против «топтания»
   footClear: 8,   // мин. зазор между стопами: цель ближе → уводится ВПЕРЁД, чтобы ноги обходили, а не влезали
-  turnStep: 0.45, // поворот на месте: скорость вращения (рад/с) выше этой → подшагиваем за поворотом
+  turnStep: 0.45, // поворот на месте: скорость вращения (рад/с) выше этой → считаем, что крутимся
+  turnStepThresh: 7, // поворот на месте: стопа отъехала от слота стойки дальше этого (u) → приставной шаг в сторону поворота
   // ФОРМА СТОЙКИ (аддитивно, нейтральные дефолты). stanceWidth: базовый боковой развод стоп (u, + = шире).
   // strafeReach: множитель ТОЛЬКО боковой компоненты выноса (1 = как есть; <1 = нога меньше улетает вбок при страйфе).
   // crossClamp: предел захода стопы за среднюю линию тела (u; 99 = без ограничения).
@@ -127,6 +128,8 @@ function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: numb
   return { hip, knee: Math.PI - beta, lat: Math.atan2(lx, -dy) };
 }
 
+const SIDESTEP_DUR = 0.18;   // сек: длительность приставного шага (перенос стопы дугой к слоту стойки при повороте на месте)
+
 class StepPlanner {
   private legs: [Leg, Leg] = [
     { px: 0, pz: 0, sw: 0, fx: 0, fz: 0, tx: 0, tz: 0 },
@@ -156,12 +159,18 @@ class StepPlanner {
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void {
     this.plantOff[0][0] = lF; this.plantOff[0][1] = lL; this.plantOff[1][0] = rF; this.plantOff[1][1] = rL;
   }
+  /** Полуширина РАССТАВЛЕННОЙ стойки (body-local, u) + продольный вынос стоп на ногу. Дефолт = полуширина таза (узко, как было). */
+  private stanceHalf = HIP_DX; private stanceFwdL = 0; private stanceFwdR = 0;
+  setStance(half: number, fwdL: number, fwdR: number): void { this.stanceHalf = half; this.stanceFwdL = fwdL; this.stanceFwdR = fwdR; }
+  /** Фаза приставного шага КАЖДОЙ ноги независимо (0 = стоит, 0..1 = переносится к слоту). Независимость важна: если одна
+   *  ждёт другую, опорная перекручивается под таз при быстром вращении. Так отклонение опорной ограничено порогом шага. */
+  private sideT: [number, number] = [0, 0];
   /** Текущая плант-цель ноги i в мире (свинг-цель tx/tz или опорная px/pz) — для наземных маркеров редактора. */
   getTarget(i: number): [number, number] { const l = this.legs[i]!; return l.sw > 0 ? [l.tx, l.tz] : [l.px, l.pz]; }
 
   private reset(px: number, pz: number, rx: number, rz: number): void {
     for (let i = 0; i < 2; i++) {
-      const s = i === 0 ? -HIP_DX : HIP_DX;
+      const s = (i === 0 ? -1 : 1) * this.stanceHalf;   // стартуем сразу в ширине стойки (не под таз)
       const l = this.legs[i]!;
       l.px = px + rx * s; l.pz = pz + rz * s; l.sw = 0;
     }
@@ -200,29 +209,33 @@ class StepPlanner {
     // под тазом → замираем (обе на земле, фаза стоит). Гистерезис ×1.7 против дёрганья у порога. idleStep — в панели.
     if (moving) {
       this.settled = false;
+      this.sideT[0] = 0; this.sideT[1] = 0;                     // ход перебивает приставные шаги
       this.phase += (speed * dt / stepLen) * Math.PI;
     } else {
-      const lim = GAIT.idleStep * (this.settled ? 1.7 : 1);
-      let drift = false;
-      for (let i = 0; i < 2; i++) {
-        const s = i === 0 ? -HIP_DX : HIP_DX;
-        const l = this.legs[i]!;
-        if (Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) > lim) drift = true;
-      }
-      // ПОВОРОТ НА МЕСТЕ. При вращении бёдра ходят по кругу радиусом HIP_DX (~3.6) — сдвиг < idleStep, порог
-      // по расстоянию его не ловит, тело крутилось бы на неподвижных ступнях. Ловим по СКОРОСТИ вращения
-      // (yawRate, рад/с): мышь крутит → подшагиваем (стопы следуют за бёдрами), встало → замираем.
+      // СТОИМ. Ноги держат РАССТАВЛЕННУЮ стойку (stanceHalf), приколотую к миру; таз крутится ОТНОСИТЕЛЬНО них.
+      // Слот стойки каждой ноги вращается вместе с yaw. Когда стопа «докрутилась» дальше порога от своего слота —
+      // приставной шаг ЭТОЙ ногой к слоту (перенос дугой) в сторону поворота, а не семенящий подшаг под таз.
+      // Ноги переступают НЕЗАВИСИМО (не «одна ждёт другую»): так опорная не перекручивается за порог под таз.
+      const stanceX = (i: number): number => px + rx * (i === 0 ? -1 : 1) * this.stanceHalf + fx * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
+      const stanceZ = (i: number): number => pz + rz * (i === 0 ? -1 : 1) * this.stanceHalf + fz * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
       const turning = this.yawRate > GAIT.turnStep;
-      // Стопы уехали или крутимся → переступаем к тазу. Иначе ЗАМИРАЕМ, ставим стопы ровно под бёдра
-      // (при duty<0.5 «обе на земле» не наступает — ждать этого нельзя, замираем по факту близости).
-      if (drift || turning) { this.settled = false; this.phase += dt * 5; }
-      else if (!this.settled) {
-        this.settled = true;
-        for (let i = 0; i < 2; i++) {
-          const s = i === 0 ? -HIP_DX : HIP_DX;
-          const l = this.legs[i]!;
-          l.px = px + rx * s; l.pz = pz + rz * s; l.sw = 0;
+      const trig = turning ? GAIT.turnStepThresh : GAIT.idleStep * (this.settled ? 1.7 : 1);
+      for (let i = 0; i < 2; i++) {
+        const l = this.legs[i]!;
+        if (l.sw > 0) {                                         // идёт приставной шаг этой ноги — доводим дугу к слоту
+          let st = this.sideT[i]! + dt / SIDESTEP_DUR;
+          if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; }
+          else l.sw = clamp(st, 0.001, 1);
+          this.sideT[i] = st;
+        } else if (Math.hypot(l.px - stanceX(i), l.pz - stanceZ(i)) > trig) {   // стопа ушла далеко → шаг вбок к слоту
+          l.fx = l.px; l.fz = l.pz; l.tx = stanceX(i); l.tz = stanceZ(i); this.sideT[i] = 0; l.sw = 0.001;
         }
+      }
+      const anySwing = this.legs[0]!.sw > 0 || this.legs[1]!.sw > 0;
+      if (turning || anySwing) this.settled = false;
+      else if (!this.settled) {                                // покой → замираем в РАССТАВЛЕННОЙ стойке (не под таз)
+        this.settled = true;
+        for (let i = 0; i < 2; i++) { const l = this.legs[i]!; l.px = stanceX(i); l.pz = stanceZ(i); l.sw = 0; }
       }
     }
 
@@ -257,7 +270,7 @@ class StepPlanner {
       avoid(l, 1 - i);
     };
     const TAU = Math.PI * 2, half = Math.PI * duty;
-    if (this.settled) for (let i = 0; i < 2; i++) this.legs[i]!.sw = 0;   // замерли: обе ноги на земле
+    if (!moving) { /* стоим: ноги ведёт стационарная логика выше (стойка / приставной шаг) — sw уже выставлен */ }
     else for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       let c = (this.phase - i * Math.PI) % TAU; if (c < 0) c += TAU;
@@ -310,7 +323,7 @@ class StepPlanner {
       if (l.sw > 0) {
         // Маховая. При fixTarget цель зафиксирована на отрыве (выше). Иначе — едет за бедром: держится
         // на `lead` впереди ТЕКУЩЕГО бедра (пересчёт каждый кадр).
-        if (!GAIT.fixTarget) plant(l, i, hx, hz, lead);
+        if (!GAIT.fixTarget && moving) plant(l, i, hx, hz, lead);   // стоя приставной шаг держит зафиксированную цель (слот стойки)
         const t = l.sw, e = t * t * (3 - 2 * t);
         wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e;
         wy = FOOT_Y + Math.sin(Math.PI * t) * liftFor(speed);
@@ -328,6 +341,7 @@ export class PoseDriver {
   private attackPow = 1;
   private dead = false;
   private planner: StepPlanner | null = null;
+  private stanceHalf = HIP_DX; private stanceFwdL = 0; private stanceFwdR = 0;
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   readonly out: PoseTargets = {
@@ -340,13 +354,19 @@ export class PoseDriver {
   setMove(s: number): void { this.move = Math.max(0, Math.min(1.4, s)); }
   /** Включает походку с опорой: позиция/рыск/скорость тела в мире (юниты, u/с). */
   setWorld(x: number, z: number, yaw: number, vx: number, vz: number): void {
-    this.planner ??= new StepPlanner();
+    if (!this.planner) { this.planner = new StepPlanner(); this.planner.setStance(this.stanceHalf, this.stanceFwdL, this.stanceFwdR); }
     this.w.x = x; this.w.z = z; this.w.yaw = yaw; this.w.vx = vx; this.w.vz = vz;
   }
   /** Обратная связь от физики: где НА САМОМ ДЕЛЕ стоят щиколотки (мир). Плантуем по факту, а не по расчёту. */
   setFeet(lx: number, lz: number, rx: number, rz: number): void { this.planner?.setFeet(lx, lz, rx, rz); }
   /** Авторский сдвиг плант-цели (body-local fwd/lat) на ногу — для редактора. Дефолт 0 → без эффекта. */
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void { this.planner?.setPlantOffset(lF, lL, rF, rL); }
+  /** Полуширина расставленной стойки + продольный вынос стоп (замер из авторской idle-позы). Планировщик держит её при
+   *  повороте на месте и переступает вбок, а не сводит ноги под таз. Дефолт = полуширина таза → прежнее узкое поведение. */
+  setStance(half: number, fwdL: number, fwdR: number): void {
+    this.stanceHalf = half; this.stanceFwdL = fwdL; this.stanceFwdR = fwdR;
+    this.planner?.setStance(half, fwdL, fwdR);
+  }
   /** Текущая плант-цель ноги i в мире (для наземных маркеров редактора). */
   plantTarget(i: number): [number, number] { return this.planner ? this.planner.getTarget(i) : [0, 0]; }
   /** Планировщик активно переступает (ход / подшаг при развороте на месте). */
