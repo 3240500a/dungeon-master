@@ -316,26 +316,35 @@ export const characterPanel: PanelFactory = (app, ui) => {
           default: return '';
         }
       };
+      // Статусы удара по ИТОГОВОМУ составу (как в движке): базовый byType → конверсия скилла (доля урона → стихия) →
+      // physSub только при наличии физ. урона → явный статус скилла (переопределяет авто) → авто стих-проки (дедуп).
       const attackAilments = (binding: string | null): DebuffApply[] => {
         const weapon = state.save.equipment.weapon;
-        const out: DebuffApply[] = weapon ? [...weaponDebuffs(weapon, physSubs)] : [];   // статус подтипа оружия
-        if (binding === 'attack') {                                                       // базовая атака: стих-статусы по типам урона в ударе
-          const pkt = emptyPacket();
-          for (const t of Object.keys(pkt) as DamageType[]) pkt[t] = byType[t]?.max ?? 0;
-          out.push(...elementDebuffs(pkt, dmgCfg));
+        const node = (binding && binding !== 'attack') ? skillTree?.nodes.find((n) => n.id === binding) : undefined;
+        const act = node?.effect.active;
+        const el: DamageType = (node ? (elementOf(node) ?? 'physical') : 'physical') as DamageType;
+        // Итоговый пакет: byType, затем конверсия скилла (convertPct доли всего урона → el).
+        const pkt = emptyPacket();
+        for (const t of Object.keys(pkt) as DamageType[]) pkt[t] = byType[t]?.max ?? 0;
+        const convertPct = act && 'convertPct' in act ? (act.convertPct as number) : 0;
+        if (convertPct > 0) {
+          const total = (Object.keys(pkt) as DamageType[]).reduce((s, t) => s + pkt[t], 0);
+          for (const t of Object.keys(pkt) as DamageType[]) pkt[t] *= (1 - convertPct);
+          pkt[el] += total * convertPct;
         }
-        if (binding && binding !== 'attack') {                                            // стихийный статус скилла
-          const node = skillTree?.nodes.find((n) => n.id === binding);
-          const act = node?.effect.active;
-          if (node && act && 'ailment' in act && act.ailment) {
-            const el = elementOf(node) ?? 'physical';
-            const kind = (act.ailment.kind ?? dmgCfg.find((x) => x.id === el)?.ailment) as DebuffKind | undefined;
-            if (kind) {
-              const dot = isDotKind(kind);
-              out.push({ kind, chance: act.ailment.chance, maxStacks: act.ailment.maxStacks, durationMs: act.ailment.durationMs, mag2: act.ailment.mag2, ...(dot ? { mag: 0, magPerDamage: act.ailment.mag } : { mag: act.ailment.mag }) });
-            }
+        // physSub — только если в ударе остался физ. урон (при полной конверсии гаснет).
+        const out: DebuffApply[] = (weapon && pkt.physical > 0) ? [...weaponDebuffs(weapon, physSubs)] : [];
+        // Явный статус скилла (переопределяет авто того же вида).
+        if (act && 'ailment' in act && act.ailment) {
+          const kind = (act.ailment.kind ?? dmgCfg.find((x) => x.id === el)?.ailment) as DebuffKind | undefined;
+          if (kind) {
+            const dot = isDotKind(kind);
+            out.push({ kind, chance: act.ailment.chance, maxStacks: act.ailment.maxStacks, durationMs: act.ailment.durationMs, mag2: act.ailment.mag2, ...(dot ? { mag: 0, magPerDamage: act.ailment.mag } : { mag: act.ailment.mag }) });
           }
         }
+        // Авто стих-проки по стихиям в ударе (дедуп: physSub/явный статус того же вида приоритетнее).
+        const have = new Set<DebuffKind>(out.map((x) => x.kind));
+        out.push(...elementDebuffs(pkt, dmgCfg).filter((x) => !have.has(x.kind)));
         return out;
       };
       const ailmentTip = (binding: string | null): string => {

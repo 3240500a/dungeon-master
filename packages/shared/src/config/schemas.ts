@@ -701,8 +701,11 @@ const attackAbilitySchema = z.object({
   knockback: z.number().min(0).default(0),
   shoveChance: z.number().min(0).max(1).default(1),
   stunSec: z.number().min(0).default(0),
-  /** Стихия для накладываемого статуса (сам урон — состав оружия). */
+  /** Стихия конверсии/статуса (сам урон — состав оружия, если convertPct=0). */
   element: damageTypeEnum.optional(),
+  /** Доля урона (0..1), сливаемая в `element` (как у каста): 0 = сохранить состав гира (обычный усиленный удар),
+   *  1 = весь урон в одну стихию (спец «ледяной удар» — статус только от неё), между — частичная конверсия. */
+  convertPct: z.number().min(0).max(1).default(0),
   ailment: ailmentApplySchema.optional(),
   /** Веер снарядов (дальнобой/маг): count>1 стрел со spread; урон каждой = damageMult (ставь ниже для веера).
    *  Для мили игнорируется. */

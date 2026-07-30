@@ -1,7 +1,10 @@
-import type { DebuffApply } from '../world/debuffs.js';
+import type { DebuffApply, DebuffKind } from '../world/debuffs.js';
 import type { Item, WeaponWeight } from '../types/items.js';
 import type { DamagePacket, DamageType } from '../types/combat.js';
 import type { ConfigShapes } from '../config/schemas.js';
+
+/** Физ-статусы (подтип оружия): держатся только если в ударе есть физ. урон (гаснут при полной конверсии в стихию). */
+const PHYS_DEBUFF_KINDS = new Set<DebuffKind>(['wound', 'bleed', 'sunder', 'daze']);
 
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type WeaponWeights = ConfigShapes['weapon-weights'];
@@ -60,4 +63,15 @@ export function elementDebuffs(packet: DamagePacket, damageTypes: DamageTypes): 
     out.push(a);
   }
   return out;
+}
+
+/**
+ * Итоговый onHit по СОСТАВУ пакета: физ-статусы подтипа (`baseOnHit`) держатся лишь при наличии физ. урона
+ * (при полной конверсии в стихию — гаснут), плюс авто стих-проки по стихиям в ударе (дедуп по виду —
+ * присутствующий в базе вид не задваивается). Чистая: общий шаг для базовой атаки и скиллов.
+ */
+export function mergeElementOnHit(baseOnHit: DebuffApply[], packet: DamagePacket, damageTypes: DamageTypes): DebuffApply[] {
+  const kept = (packet.physical ?? 0) > 0 ? baseOnHit : baseOnHit.filter((d) => !PHYS_DEBUFF_KINDS.has(d.kind));
+  const have = new Set<DebuffKind>(kept.map((d) => d.kind));
+  return [...kept, ...elementDebuffs(packet, damageTypes).filter((d) => !have.has(d.kind))];
 }

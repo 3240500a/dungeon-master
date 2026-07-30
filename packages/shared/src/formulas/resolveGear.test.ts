@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Item } from '../types/items.js';
-import { weaponDebuffs, elementDebuffs, weightScaleSplit } from './resolveWeapon.js';
+import { weaponDebuffs, elementDebuffs, mergeElementOnHit, weightScaleSplit } from './resolveWeapon.js';
+import type { DebuffApply } from '../world/debuffs.js';
 import { armorClassModifiers, armorNoise, armorPoise } from './resolveArmor.js';
 import { emptyPacket } from '../types/combat.js';
 import { ConfigRegistry } from '../config/registry.js';
@@ -61,6 +62,30 @@ describe('resolveWeapon', () => {
     const phys = emptyPacket(); phys.physical = 20;
     expect(elementDebuffs(phys, DT)).toHaveLength(0);
     expect(elementDebuffs(emptyPacket(), DT)).toHaveLength(0);
+  });
+
+  it('mergeElementOnHit: физ. урон есть → physSub держится + стих-проки', () => {
+    const physSub: DebuffApply = { kind: 'sunder', chance: 0.5, maxStacks: 5, durationMs: 4000, mag: 0.04 };
+    const pkt = emptyPacket(); pkt.physical = 20; pkt.fire = 8;
+    const kinds = mergeElementOnHit([physSub], pkt, DT).map((d) => d.kind);
+    expect(kinds).toContain('sunder');   // физ-подтип держится (есть физ. урон)
+    expect(kinds).toContain('burn');     // + стих-прок огня
+  });
+
+  it('mergeElementOnHit: полная конверсия (физ=0) → physSub гаснет, только стихия', () => {
+    const physSub: DebuffApply = { kind: 'sunder', chance: 0.5, maxStacks: 5, durationMs: 4000, mag: 0.04 };
+    const pkt = emptyPacket(); pkt.cold = 15;   // всё сконвертили в холод, физ. урона нет
+    const kinds = mergeElementOnHit([physSub], pkt, DT).map((d) => d.kind);
+    expect(kinds).not.toContain('sunder');  // физ-статус погас
+    expect(kinds).toEqual(['freeze']);       // остался только статус стихии
+  });
+
+  it('mergeElementOnHit: явный статус того же вида не задваивается', () => {
+    const explicitBurn: DebuffApply = { kind: 'burn', chance: 0.9, maxStacks: 1, durationMs: 5000, mag: 0, magPerDamage: 0.3 };
+    const pkt = emptyPacket(); pkt.physical = 10; pkt.fire = 8;
+    const burns = mergeElementOnHit([explicitBurn], pkt, DT).filter((d) => d.kind === 'burn');
+    expect(burns).toHaveLength(1);               // один поджиг
+    expect(burns[0]!.chance).toBe(0.9);          // и именно явный (авто-прок не добавился)
   });
 });
 

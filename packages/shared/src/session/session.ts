@@ -10,7 +10,7 @@ import { createRng, type Rng } from '../formulas/rng.js';
 import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
-import { weaponDebuffs, elementDebuffs } from '../formulas/resolveWeapon.js';
+import { weaponDebuffs, mergeElementOnHit } from '../formulas/resolveWeapon.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { gainXp } from '../economy/progression.js';
@@ -424,10 +424,8 @@ export class GameSession {
     if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
     const wt: WeaponType = weapon?.weaponType ?? 'melee';
-    // onHit базовой атаки: физ-статус подтипа оружия + стих-статусы по типам урона в пакете (огонь→поджиг и т.д.).
-    const opts = this.weaponHitOpts(weapon);
-    const el = elementDebuffs(packet, this.cfg.get('damage-types'));
-    if (el.length) opts.onHit = [...(opts.onHit ?? []), ...el];
+    // onHit базовой атаки по составу пакета: физ-статус подтипа + стих-статусы по стихиям в ударе.
+    const opts = this.packetOnHit(this.weaponHitOpts(weapon), packet);
     if (wt === 'melee') this.meleeSwing(p, packet, attacker, weapon, opts);
     else this.spawnProjectile(p, packet, attacker, wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED, p.facing, { hitOpts: opts });
   }
@@ -459,6 +457,23 @@ export class GameSession {
       onHit: weapon ? weaponDebuffs(weapon, this.cfg.get('phys-subtypes')) : [],
       knockback: weapon?.knockback,
     };
+  }
+
+  /** Конверсия: слить долю `pct` всего урона пакета в стихию `element` (общий шаг для attack/cast). */
+  private convertPacket(packet: DamagePacket, pct: number, element: DamageType): void {
+    if (pct <= 0) return;
+    const converted = packetTotal(packet) * pct;
+    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= (1 - pct);
+    packet[element] += converted;
+  }
+
+  /**
+   * onHit по СОСТАВУ финального пакета (после конверсии): физ-статус подтипа держится только при наличии
+   * физ. урона (при полной конверсии в стихию — гаснет, остаётся лишь стих-статус); + авто стих-проки по
+   * стихиям в ударе, дедуп по виду (уже присутствующий вид не задваивается — им управляет явный статус скилла).
+   */
+  private packetOnHit(opts: HitOpts, packet: DamagePacket): HitOpts {
+    return { ...opts, onHit: mergeElementOnHit(opts.onHit ?? [], packet, this.cfg.get('damage-types')) };
   }
 
   // ── Активные скиллы ───────────────────────────────────────
@@ -620,16 +635,12 @@ export class GameSession {
 
   /** Диспетчер активной способности по категории (после списания маны/КД/замаха). */
   private executeAbility(p: PlayerEntity, snap: PlayerSnapshot, active: ActiveAbility, rank: number): void {
-    if (active.category === 'attack') {
-      const opts = this.skillHitOpts(active, active.element ?? abilityElementOf(active.abilityId), p.save.equipment.weapon);
-      this.weaponAttack(p, snap, active, rank, opts);
-      return;
-    }
+    if (active.category === 'attack') { this.weaponAttack(p, snap, active, rank); return; }
     if (active.category === 'curse') { this.applyCurse(p, active); return; }
     if (active.category === 'cast') {
       const element = active.element ?? abilityElementOf(active.abilityId);
-      const opts = this.skillHitOpts(active, element, p.save.equipment.weapon);
       const pk = this.castPacket(snap, p.save.equipment.weapon, active, rank, element);
+      const opts = this.skillOpts(active, element, p.save.equipment.weapon, pk);   // статусы по итоговому (конвертированному) составу
       const attacker = snap.combat;
       switch (active.shape) {
         case 'dash': this.doDashAttack(p, pk, attacker, active, rank, opts); break;
@@ -649,9 +660,7 @@ export class GameSession {
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
     const mult = active.damageMult * abilityRankMult(rank);
     for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
-    const converted = packetTotal(packet) * active.convertPct;
-    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= (1 - active.convertPct);
-    packet[element] += converted;
+    this.convertPacket(packet, active.convertPct, element);
     return packet;
   }
 
@@ -660,13 +669,16 @@ export class GameSession {
    * ×damageMult×ранг (состав сохраняется), эффекты (стан/отброс/статус) — из `opts`. Мили → взмах по
    * ВСЕМ в дуге; дальнобой/маг → 1..N снарядов (веер `count`/`spread`, урон каждой = damageMult).
    */
-  private weaponAttack(p: PlayerEntity, snap: PlayerSnapshot, active: AttackAbility, rank: number, opts: HitOpts): void {
+  private weaponAttack(p: PlayerEntity, snap: PlayerSnapshot, active: AttackAbility, rank: number): void {
     const weapon = p.save.equipment.weapon;
+    const element = active.element ?? abilityElementOf(active.abilityId);
     const pm = debuffMods(p.debuffs);
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
     const mult = active.damageMult * abilityRankMult(rank) * pm.outDamageMult;
     for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
+    this.convertPacket(packet, active.convertPct, element);   // спец «в одну стихию» — доля урона → element
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
+    const opts = this.skillOpts(active, element, weapon, packet);   // статусы по итоговому составу + скилл-эффекты
     const wt: WeaponType = weapon?.weaponType ?? 'melee';
     if (wt === 'melee') {
       // Мили-мультиудар: `hits` последовательных взмахов за скилл (каждый = damageMult), напр. «серия уколов».
@@ -720,11 +732,17 @@ export class GameSession {
     p.dash = { dx: Math.cos(dir), dy: Math.sin(dir), speed, remaining: speed > 0 ? travel / speed : 0, weightMult: 1 + active.dashWeightBonus / 100, hitIds: [] };
   }
 
-  /** Опции удара скилла (attack/cast): отброс(шанс), гарант. стан, наложение стих. статуса. Поверх оружейных. */
-  private skillHitOpts(active: OffensiveAbility, element: DamageType, weapon?: Item): HitOpts {
-    // База — свойства оружия (armorPen/lowHp/stunChance + физ. дебаффы, напр. ошеломление
-    // от булавы), поверх — эффекты скилла (гарант. стан, отброс, стих. статус).
-    const opts: HitOpts = weapon ? this.weaponHitOpts(weapon) : {};
+  /**
+   * Полные опции удара скилла (attack/cast): оружейные сигнатуры → onHit по составу пакета (physSub-гейт +
+   * стих-проки) → скилл-эффекты (гарант. стан/отброс + ЯВНЫЙ статус, переопределяющий авто того же вида).
+   */
+  private skillOpts(active: OffensiveAbility, element: DamageType, weapon: Item | undefined, packet: DamagePacket): HitOpts {
+    const base: HitOpts = weapon ? this.weaponHitOpts(weapon) : {};
+    return this.skillExtraOpts(this.packetOnHit(base, packet), active, element);
+  }
+
+  /** Скилл-эффекты поверх опций: отброс(шанс)/гарант. стан + ЯВНЫЙ статус (kind из ailment/стихии), переопределяющий авто того же вида. */
+  private skillExtraOpts(opts: HitOpts, active: OffensiveAbility, element: DamageType): HitOpts {
     if (active.knockback) opts.knockback = active.knockback;
     opts.shoveChance = active.shoveChance;
     if (active.stunSec) opts.stunSec = active.stunSec;
@@ -734,7 +752,7 @@ export class GameSession {
         const al = active.ailment;
         // DoT-статусы (поджиг/яд/кровотечение) — сила = доля от урона удара (magPerDamage); прочие — флэт.
         const ail: DebuffApply = { kind, chance: al.chance, mag2: al.mag2, maxStacks: al.maxStacks, durationMs: al.durationMs, ...(isDotKind(kind) ? { mag: 0, magPerDamage: al.mag } : { mag: al.mag }) };
-        opts.onHit = [...(opts.onHit ?? []), ail];
+        opts.onHit = [...(opts.onHit ?? []).filter((d) => d.kind !== kind), ail];  // явный переопределяет авто того же вида
       }
     }
     return opts;

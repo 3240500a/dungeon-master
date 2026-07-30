@@ -20,6 +20,12 @@
   Также шлёт `player:damaged`, `player:died`.
 - **Расчёт урона/статов/ИИ/снарядов/дебаффов:** `@dm/shared` (`resolvePlayerHit`,
   `resolveAttack`, `stepMonsterAi`, `playerSnapshot`, `weaponDebuffs`, `monsterDebuffs`…).
+- **Статусы удара по СОСТАВУ пакета** (базовая атака + атака/каст-скиллы): `mergeElementOnHit`
+  (`resolveWeapon.ts`) — физ-статус подтипа (`weaponDebuffs`) держится лишь при наличии физ. урона,
+  плюс авто стих-проки по каждой стихии в ударе (`elementDebuffs`, таблица `damage-types.weapon`).
+  Скилл может конвертить долю урона в стихию (`convertPct`+`element`, у attack и cast) — при полной
+  конверсии физ-статус гаснет, остаётся статус стихии; явный `ailment` скилла переопределяет авто того
+  же вида. Тюнится в редакторе (schemas: `damageTypesSchema.weapon`, `attackAbilitySchema.convertPct`).
 - **Стат-пакеты для панелей:** `playerStats.ts` (тонкие обёртки над `@dm/shared/playerCombat`).
 - **Конфиг:** `items.base`, `balance.weaponAttrScaling`, `monsters`, `packs`, `difficulties`.
 - **Тесты:** ядро боя — `shared/src/session/session.test.ts`; поведение в игре — руками.
