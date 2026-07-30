@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, type Attribute, type Attributes, type DamageType, type DerivedStats } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, DEBUFF_LABEL, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType, estimateWeaponDamage } from '../combat/playerStats.js';
@@ -382,6 +382,23 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const res = sheetPanel('Сопротивления');
       for (const [key, elem] of RES) res.append(resRow(dmgName(elem), d[key], dmgColor(elem)));
       body.append(res);
+
+      // Статусы (наложение): глобальные + per-kind бонусы от пассивок/гира (ветки скиллов).
+      const ail = sheetPanel('Статусы');
+      ail.append(statRow('Все статусы', `шанс/сила +${Math.round(d.ailmentPct * 100)}%  ·  длит. +${Math.round(d.ailmentDurPct * 100)}%`,
+        'Глобальные бонусы к наложению ВСЕХ статусов (шанс, сила, длительность). Складываются с бонусами по видам.'));
+      for (const k of ['wound', 'bleed', 'sunder', 'daze', 'burn', 'poison', 'shock', 'freeze'] as DebuffKind[]) {
+        const c = d[`${k}ChancePct` as keyof DerivedStats] as number;
+        const p = d[`${k}PowerPct` as keyof DerivedStats] as number;
+        const du = d[`${k}DurPct` as keyof DerivedStats] as number;
+        if (!c && !p && !du) continue;
+        const parts: string[] = [];
+        if (c) parts.push(`шанс +${Math.round(c * 100)}%`);
+        if (p) parts.push(`сила +${Math.round(p * 100)}%`);
+        if (du) parts.push(`длит. +${Math.round(du * 100)}%`);
+        ail.append(statRow(DEBUFF_LABEL[k], parts.join('  ·  '), `Бонусы к наложению статуса «${DEBUFF_LABEL[k]}» (ветки скиллов/гир).`));
+      }
+      body.append(ail);
 
       // Прочее.
       const misc = sheetPanel('Прочее');

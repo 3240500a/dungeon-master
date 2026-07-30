@@ -1917,7 +1917,7 @@
       "notable": false,
       "kind": "passive",
       "name": "Заточка",
-      "description": "+5% к физ. урону за ранг.",
+      "description": "+5% к физ. урону и +4% к шансу кровотечения за ранг.",
       "maxRank": 4,
       "effect": {
         "modifiers": [
@@ -1925,6 +1925,11 @@
             "stat": "physPct",
             "kind": "flat",
             "value": 0.05
+          },
+          {
+            "stat": "bleedChancePct",
+            "kind": "flat",
+            "value": 0.04
           }
         ]
       }
