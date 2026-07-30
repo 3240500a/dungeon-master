@@ -1,15 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import type { Item } from '../types/items.js';
-import { weaponDebuffs, weightScaleSplit } from './resolveWeapon.js';
+import { weaponDebuffs, elementDebuffs, weightScaleSplit } from './resolveWeapon.js';
 import { armorClassModifiers, armorNoise, armorPoise } from './resolveArmor.js';
+import { emptyPacket } from '../types/combat.js';
 import { ConfigRegistry } from '../config/registry.js';
 
 const wpn = (over: Partial<Item>): Item => over as unknown as Item;
-// Справочники (классы брони, физ-подтипы, веса) — из конфига (таблицы data-driven).
+// Справочники (классы брони, физ-подтипы, веса, типы урона) — из конфига (таблицы data-driven).
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
 const AC = reg.get('armor-classes');
 const PS = reg.get('phys-subtypes');
 const WW = reg.get('weapon-weights');
+const DT = reg.get('damage-types');
 
 describe('resolveWeapon', () => {
   it('доли скейла по весу: сверхлёгкое — Ловк, тяжёлое — Сила, магическое — Интеллект', () => {
@@ -38,6 +40,27 @@ describe('resolveWeapon', () => {
 
   it('без подтипа — дебаффов нет', () => {
     expect(weaponDebuffs(wpn({}), PS)).toHaveLength(0);
+  });
+
+  it('стих. урон в пакете → статус: огонь→поджиг (DoT), холод→заморозка (флэт)', () => {
+    const pkt = emptyPacket();
+    pkt.fire = 8; pkt.cold = 5;
+    const els = elementDebuffs(pkt, DT);
+    const kinds = els.map((e) => e.kind);
+    expect(kinds).toContain('burn');
+    expect(kinds).toContain('freeze');
+    expect(kinds).not.toContain('shock');   // молнии в ударе нет
+    const burn = els.find((e) => e.kind === 'burn')!;
+    expect(burn.magPerDamage).toBeGreaterThan(0);  // поджиг — DoT (доля урона/сек)
+    expect(burn.mag).toBe(0);
+    const freeze = els.find((e) => e.kind === 'freeze')!;
+    expect(freeze.mag).toBeGreaterThan(0);          // заморозка — флэт замедление
+  });
+
+  it('физический урон статуса не даёт; пустой пакет — пусто', () => {
+    const phys = emptyPacket(); phys.physical = 20;
+    expect(elementDebuffs(phys, DT)).toHaveLength(0);
+    expect(elementDebuffs(emptyPacket(), DT)).toHaveLength(0);
   });
 });
 

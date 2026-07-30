@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, DEBUFF_LABEL, DEBUFF_ICON, weaponDebuffs, isDotKind, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, DEBUFF_LABEL, DEBUFF_ICON, weaponDebuffs, elementDebuffs, isDotKind, emptyPacket, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType, estimateWeaponDamage } from '../combat/playerStats.js';
@@ -319,6 +319,11 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const attackAilments = (binding: string | null): DebuffApply[] => {
         const weapon = state.save.equipment.weapon;
         const out: DebuffApply[] = weapon ? [...weaponDebuffs(weapon, physSubs)] : [];   // статус подтипа оружия
+        if (binding === 'attack') {                                                       // базовая атака: стих-статусы по типам урона в ударе
+          const pkt = emptyPacket();
+          for (const t of Object.keys(pkt) as DamageType[]) pkt[t] = byType[t]?.max ?? 0;
+          out.push(...elementDebuffs(pkt, dmgCfg));
+        }
         if (binding && binding !== 'attack') {                                            // стихийный статус скилла
           const node = skillTree?.nodes.find((n) => n.id === binding);
           const act = node?.effect.active;

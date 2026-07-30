@@ -1,7 +1,11 @@
 [
   { "id": "physical", "name": "Физический", "short": "физ.", "color": "#c9c9d4", "ailment": null },
-  { "id": "fire", "name": "Огонь", "short": "огонь", "color": "#d85a30", "ailment": "burn" },
-  { "id": "cold", "name": "Холод", "short": "холод", "color": "#378add", "ailment": "freeze" },
-  { "id": "lightning", "name": "Молния", "short": "молния", "color": "#ef9f27", "ailment": "shock" },
-  { "id": "poison", "name": "Яд", "short": "яд", "color": "#639922", "ailment": "poison" }
+  { "id": "fire", "name": "Огонь", "short": "огонь", "color": "#d85a30", "ailment": "burn",
+    "weapon": { "chance": 0.10, "maxStacks": 3, "durationMs": 3000, "mag": 0, "magPerDamage": 0.10 } },
+  { "id": "cold", "name": "Холод", "short": "холод", "color": "#378add", "ailment": "freeze",
+    "weapon": { "chance": 0.15, "maxStacks": 1, "durationMs": 2000, "mag": 0.25, "mag2": 0.10 } },
+  { "id": "lightning", "name": "Молния", "short": "молния", "color": "#ef9f27", "ailment": "shock",
+    "weapon": { "chance": 0.12, "maxStacks": 2, "durationMs": 3000, "mag": 0.10 } },
+  { "id": "poison", "name": "Яд", "short": "яд", "color": "#639922", "ailment": "poison",
+    "weapon": { "chance": 0.10, "maxStacks": 5, "durationMs": 4000, "mag": 0, "magPerDamage": 0.06 } }
 ]

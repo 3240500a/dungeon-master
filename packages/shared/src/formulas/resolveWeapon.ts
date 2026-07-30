@@ -1,9 +1,11 @@
 import type { DebuffApply } from '../world/debuffs.js';
 import type { Item, WeaponWeight } from '../types/items.js';
+import type { DamagePacket, DamageType } from '../types/combat.js';
 import type { ConfigShapes } from '../config/schemas.js';
 
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type WeaponWeights = ConfigShapes['weapon-weights'];
+type DamageTypes = ConfigShapes['damage-types'];
 
 /**
  * Вывод боевых свойств оружия из осей (вес/подтип урона). Таблицы весов
@@ -35,4 +37,27 @@ export function weaponDebuffs(item: Item, physSubs: PhysSubtypes): DebuffApply[]
   if (w.mag2 != null) out.mag2 = w.mag2;
   if (w.magPerDamage != null) out.magPerDamage = w.magPerDamage;
   return [out];
+}
+
+const ELEMENTS: DamageType[] = ['fire', 'cold', 'lightning', 'poison'];
+
+/**
+ * Стих. статусы удара: для КАЖДОГО типа урона в пакете (кроме физ.) с ненулевой долей —
+ * с шансом наложить статус этого типа (огонь→поджиг, холод→заморозка, молния→шок, яд→отравление).
+ * Шанс/длит./сила ВШИТЫ в тип урона (`damage-types`, блок `weapon`); DoT (поджиг/яд) — `magPerDamage`
+ * (доля от урона удара/сек), freeze/shock — `mag`/`mag2` флэт. Скейлинг статусов — от ailment-статов игрока.
+ * Данные-driven: правится в редакторе; тот же источник читает игра/сим/сервер.
+ */
+export function elementDebuffs(packet: DamagePacket, damageTypes: DamageTypes): DebuffApply[] {
+  const out: DebuffApply[] = [];
+  for (const dt of damageTypes) {
+    if (!dt.ailment || !dt.weapon) continue;                 // физический / без прока
+    if (!ELEMENTS.includes(dt.id) || (packet[dt.id] ?? 0) <= 0) continue; // этого типа нет в ударе
+    const w = dt.weapon;
+    const a: DebuffApply = { kind: dt.ailment, chance: Math.min(1, w.chance), maxStacks: w.maxStacks, durationMs: w.durationMs, mag: w.mag };
+    if (w.mag2 != null) a.mag2 = w.mag2;
+    if (w.magPerDamage != null) a.magPerDamage = w.magPerDamage;
+    out.push(a);
+  }
+  return out;
 }

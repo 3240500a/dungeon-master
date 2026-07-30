@@ -10,7 +10,7 @@ import { createRng, type Rng } from '../formulas/rng.js';
 import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
-import { weaponDebuffs } from '../formulas/resolveWeapon.js';
+import { weaponDebuffs, elementDebuffs } from '../formulas/resolveWeapon.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { gainXp } from '../economy/progression.js';
@@ -424,8 +424,12 @@ export class GameSession {
     if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
     const wt: WeaponType = weapon?.weaponType ?? 'melee';
-    if (wt === 'melee') this.meleeSwing(p, packet, attacker, weapon);
-    else this.spawnProjectile(p, packet, attacker, wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED, p.facing);
+    // onHit базовой атаки: физ-статус подтипа оружия + стих-статусы по типам урона в пакете (огонь→поджиг и т.д.).
+    const opts = this.weaponHitOpts(weapon);
+    const el = elementDebuffs(packet, this.cfg.get('damage-types'));
+    if (el.length) opts.onHit = [...(opts.onHit ?? []), ...el];
+    if (wt === 'melee') this.meleeSwing(p, packet, attacker, weapon, opts);
+    else this.spawnProjectile(p, packet, attacker, wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED, p.facing, { hitOpts: opts });
   }
 
   /** Взмах: дальность/дуга по оружию (копьё длиннее, топор шире). */

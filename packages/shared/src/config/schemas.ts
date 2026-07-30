@@ -511,6 +511,22 @@ export const damageTypesSchema = z.array(
     color: z.string(),
     /** Стих. статус, накладываемый этим типом (null у физического). */
     ailment: z.enum(['burn', 'freeze', 'shock', 'poison']).nullable().default(null),
+    /**
+     * Прок статуса от ЭТОГО типа урона в ударе (базовая атака). Аналог блока `weapon`
+     * у phys-subtypes: если в пакете есть урон этого типа — с шансом наложить `ailment`.
+     * DoT (поджиг/яд) — `magPerDamage` (доля от урона удара/сек); freeze/shock — `mag`/`mag2` флэт.
+     * Опционально (у физического прока нет).
+     */
+    weapon: z
+      .object({
+        chance: z.number().min(0),
+        maxStacks: z.number().int().min(1),
+        durationMs: z.number().min(0),
+        mag: z.number().default(0),
+        mag2: z.number().optional(),
+        magPerDamage: z.number().optional(),
+      })
+      .optional(),
   }),
 );
 
