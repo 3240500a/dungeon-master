@@ -67,8 +67,6 @@ export interface WeaponSignature {
   weight?: WeaponWeight;
   /** Подтип физ. урона (стаковый дебафф). */
   physSub?: PhysSubtype;
-  /** Переопределяет атрибут скейла урона (по умолчанию — по weaponType). */
-  scaleAttr?: Attribute;
   /** Шанс оглушить цель (0..1). */
   stunChance?: number;
   /** Игнор доли брони цели (0..1). */

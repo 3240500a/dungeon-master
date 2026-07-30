@@ -78,7 +78,6 @@ function gearFields(base: ItemsBase[number]): Partial<Item> {
       weaponClass: base.weaponClass,
       weight: base.weight,
       physSub: base.physSub,
-      scaleAttr: base.scaleAttr,
       stunChance: base.stunChance,
       armorPenPct: base.armorPenPct,
       arcMult: base.arcMult,

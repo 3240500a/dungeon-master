@@ -46,7 +46,6 @@
     "physSub": "piercing",
     "damageType": "physical",
     "hands": 1,
-    "scaleAttr": "dexterity",
     "lowHpBonusPct": 0.25
   },
   {
@@ -408,7 +407,7 @@
     "slot": "weapon",
     "weaponType": "ranged",
     "weaponClass": "bow",
-    "weight": "medium",
+    "weight": "light",
     "damageType": "physical",
     "hands": 2
   },
@@ -478,7 +477,7 @@
     "slot": "weapon",
     "weaponType": "ranged",
     "weaponClass": "crossbow",
-    "weight": "medium",
+    "weight": "heavy",
     "damageType": "physical",
     "hands": 2
   },

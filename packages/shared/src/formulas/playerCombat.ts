@@ -21,7 +21,11 @@ export interface TypedRange {
   max: number;
 }
 
-/** Вклад атрибутов в урон: мели — по весу (Сила/Ловк доли из weapon-weights), иначе профильный атрибут. */
+/**
+ * Вклад атрибутов в урон. **Мели И дальний скейлятся по ВЕСУ оружия** (доли Сила/Ловк из `weapon-weights`:
+ * тяжёлое→Сила, лёгкое→Ловк, промежуточные — между). **Магия — Интеллект.** Без оружия/веса — профильный
+ * атрибут типа (`WEAPON_ATTR`). Отдельного `scaleAttr` у оружия НЕТ — скейл задаёт тип веса.
+ */
 function attrScaleBonus(
   attrs: Attributes,
   weapon: Item | undefined,
@@ -29,11 +33,11 @@ function attrScaleBonus(
   scaling: Record<WeaponType, number>,
   weights: WeaponWeights,
 ): number {
-  if (weapon?.weight && wt === 'melee') {
+  if (weapon?.weight && wt !== 'magic') {
     const sp = weightScaleSplit(weapon.weight, weights);
     return (attrs.strength * sp.strength + attrs.dexterity * sp.dexterity) * scaling[wt];
   }
-  return attrs[weapon?.scaleAttr ?? WEAPON_ATTR[wt]] * scaling[wt];
+  return attrs[WEAPON_ATTR[wt]] * scaling[wt];
 }
 
 /** Сумма плоского стата из baseStats + аффиксов конкретного предмета. */

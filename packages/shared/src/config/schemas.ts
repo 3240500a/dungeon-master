@@ -297,8 +297,7 @@ const weaponBaseSchema = z.object({
   physSub: z.string().optional(),
   damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).default('physical'),
   hands: z.number().int().min(1).max(2).default(1),
-  // Сигнатурные свойства (см. WeaponSignature).
-  scaleAttr: attributeEnum.optional(),
+  // Сигнатурные свойства (см. WeaponSignature). Скейл урона задаёт ТИП ВЕСА (weapon-weights), отдельного scaleAttr нет.
   stunChance: z.number().min(0).max(1).optional(),
   armorPenPct: z.number().min(0).max(1).optional(),
   arcMult: z.number().min(0).optional(),
