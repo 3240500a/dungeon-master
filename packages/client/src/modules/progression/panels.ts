@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, DEBUFF_LABEL, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, DEBUFF_LABEL, DEBUFF_ICON, weaponDebuffs, isDotKind, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType, estimateWeaponDamage } from '../combat/playerStats.js';
@@ -300,6 +300,51 @@ export const characterPanel: PanelFactory = (app, ui) => {
       };
       const skillTree = app.config.get('skill-tree');
 
+      // ── Статусы, которые НАКЛАДЫВАЕТ атака (подтип оружия + стихия скилла), с ЭФФЕКТИВНЫМИ числами ──
+      const physSubs = app.config.get('phys-subtypes');
+      const dmgCfg = app.config.get('damage-types');
+      const kNum = (k: DebuffKind, suf: string): number => (d[`${k}${suf}` as keyof DerivedStats] as number) || 0;
+      const strengthStr = (b: DebuffApply, pMul: number): string => {
+        const pd = (b.magPerDamage ?? 0) * pMul * 100, m = b.mag * pMul * 100, m2 = (b.mag2 ?? 0) * pMul * 100;
+        switch (b.kind) {
+          case 'bleed': case 'burn': case 'poison': return `${pd.toFixed(1)}% урона/сек`;
+          case 'wound': return `−${m.toFixed(0)}% урона · −${m2.toFixed(0)}% скор.`;
+          case 'sunder': return `+${m.toFixed(0)}% получ. урона`;
+          case 'daze': return `−${m.toFixed(0)}% брони · ${m2.toFixed(0)}% стан`;
+          case 'shock': return `+${m.toFixed(0)}% получ. урона`;
+          case 'freeze': return `−${m.toFixed(0)}% скор. · ${m2.toFixed(0)}% сковать`;
+          default: return '';
+        }
+      };
+      const attackAilments = (binding: string | null): DebuffApply[] => {
+        const weapon = state.save.equipment.weapon;
+        const out: DebuffApply[] = weapon ? [...weaponDebuffs(weapon, physSubs)] : [];   // статус подтипа оружия
+        if (binding && binding !== 'attack') {                                            // стихийный статус скилла
+          const node = skillTree?.nodes.find((n) => n.id === binding);
+          const act = node?.effect.active;
+          if (node && act && 'ailment' in act && act.ailment) {
+            const el = elementOf(node) ?? 'physical';
+            const kind = (act.ailment.kind ?? dmgCfg.find((x) => x.id === el)?.ailment) as DebuffKind | undefined;
+            if (kind) {
+              const dot = isDotKind(kind);
+              out.push({ kind, chance: act.ailment.chance, maxStacks: act.ailment.maxStacks, durationMs: act.ailment.durationMs, mag2: act.ailment.mag2, ...(dot ? { mag: 0, magPerDamage: act.ailment.mag } : { mag: act.ailment.mag }) });
+            }
+          }
+        }
+        return out;
+      };
+      const ailmentTip = (binding: string | null): string => {
+        const lines = attackAilments(binding).map((b) => {
+          const chance = Math.min(1, b.chance * (1 + d.ailmentPct + kNum(b.kind, 'ChancePct')));
+          const durS = (b.durationMs * (1 + d.ailmentDurPct + kNum(b.kind, 'DurPct'))) / 1000;
+          const pMul = 1 + d.ailmentPct + kNum(b.kind, 'PowerPct');
+          return `${DEBUFF_ICON[b.kind]} <b>${DEBUFF_LABEL[b.kind]}</b> — шанс ${Math.round(chance * 100)}% · ${durS.toFixed(1)}с · ${strengthStr(b, pMul)}${b.maxStacks > 1 ? ` (до ${b.maxStacks} стак.)` : ''}`;
+        });
+        const wsc = state.save.equipment.weapon?.stunChance;
+        if (wsc) lines.push(`💥 <b>Стан</b> — ${Math.round(wsc * 100)}%`);
+        return lines.length ? `<br><br><b>Накладывает:</b><br>${lines.join('<br>')}<br><span style="color:#8f897c;font-size:11px">(до сопротивления цели)</span>` : '';
+      };
+
       // Два урона (как D2): что назначено на ЛКМ и на ПКМ (атака оружием / скилл).
       const dmgRowFor = (label: string, binding: string | null): HTMLElement => {
         const row = mk('div', 'display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:3px 0;cursor:help');
@@ -311,7 +356,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
             const dd = dMinInc === dMaxInc ? `+${dMaxInc}` : `+${dMinInc}–${dMaxInc}`;
             right.append(mk('span', `color:${PREVIEW_GREEN};font-weight:600;font-size:12px`, dd));
           }
-          attachTooltip(row, weaponTip);
+          attachTooltip(row, () => weaponTip() + ailmentTip('attack'));
         } else if (binding) {
           const node = skillTree?.nodes.find((n) => n.id === binding);
           const active = node?.effect.active;
@@ -325,7 +370,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
               : (() => { const ct = active.castTimeSec / Math.max(0.2, state.derived().castSpeed); return [ct > 0 ? Math.round(sdmg / ct) : sdmg, `каст ${ct.toFixed(2)} с`] as const; })();
             const col = dmgColor(elementOf(node) as DamageType);
             right.append(mk('span', `font-weight:600;color:${col}`, `${sdmg} (ДПС ~${sdps})`));
-            attachTooltip(row, () => `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.`);
+            attachTooltip(row, () => `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.` + ailmentTip(binding));
           } else if (node && active) {
             // Проклятие/аура/стойка/бафф — прямого урона нет.
             const kind = active.category === 'curse' ? 'проклятие' : active.category === 'aura' ? 'аура' : active.category === 'stance' ? 'стойка' : 'бафф';
@@ -342,6 +387,9 @@ export const characterPanel: PanelFactory = (app, ui) => {
       };
       off.append(dmgRowFor('Урон (ЛКМ)', state.save.mouseLeft));
       off.append(dmgRowFor('Урон (ПКМ)', state.save.mouseRight));
+      // Хотбар (Shift/Space/Alt) — показываем назначенные.
+      const HOTKEYS = ['Shift', 'Space', 'Alt'];
+      state.save.hotbar.forEach((b, i) => { if (b) off.append(dmgRowFor(`Урон (${HOTKEYS[i]})`, b)); });
 
       off.append(statRow('Скор. атаки', `${d.attackSpeed.toFixed(2)} /с`, 'Число базовых атак в секунду.'));
       off.append(statRow('Шанс крита', `${Math.round(d.critChance * 100)}%`,
