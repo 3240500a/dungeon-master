@@ -66,8 +66,9 @@ export function mountHud3d(app: App): Hud3d {
       bar(hp, st.hp, d.maxHp); bar(mana, st.mana, d.maxMana); bar(stam, st.stamina, d.maxStamina);
       if (manaReserve) manaReserve.style.width = `${clamp01(rMana) * 100}%`;
       if (stamReserve) stamReserve.style.width = `${clamp01(rStam) * 100}%`;
+      // xpTable кумулятивна: порог ТЕКУЩЕГО уровня = xt[lvl], следующего = xt[lvl+1] (на максимуме — полный бар).
       const xt = app.config.get('balance').xpTable; const lvl = st.save.level;
-      const curXp = xt[lvl - 1] ?? 0, nxXp = xt[lvl] ?? curXp + 1;
+      const curXp = xt[lvl] ?? 0, nxXp = xt[lvl + 1] ?? curXp + 1;
       bar(xp, st.save.xp - curXp, Math.max(1, nxXp - curXp));
 
       // Числа на полосах.
@@ -99,10 +100,10 @@ export function mountHud3d(app: App): Hud3d {
           const d = st.debuffs[k]!;
           const b = document.createElement('div');
           b.title = `${debuffLabel(debuffsCfg, k)}${d.stacks > 1 ? ` ×${d.stacks}` : ''}`;
-          b.style.cssText = `position:relative;width:26px;height:26px;border:1.5px solid ${DEBUFF_COLOR[k]};border-radius:6px;` +
-            'background:rgba(12,14,20,0.72);display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;text-shadow:0 1px 2px #000';
+          b.style.cssText = `position:relative;width:34px;height:34px;border:2px solid ${DEBUFF_COLOR[k]};border-radius:7px;` +
+            'background:rgba(12,14,20,0.72);display:flex;align-items:center;justify-content:center;font-size:21px;line-height:1;text-shadow:0 1px 2px #000';
           b.textContent = debuffIcon(debuffsCfg, k);
-          if (d.stacks > 1) { const s = document.createElement('span'); s.textContent = String(d.stacks); s.style.cssText = 'position:absolute;right:-2px;bottom:-3px;font:700 10px system-ui;color:#fff;text-shadow:0 1px 2px #000,0 0 3px #000'; b.appendChild(s); }
+          if (d.stacks > 1) { const s = document.createElement('span'); s.textContent = String(d.stacks); s.style.cssText = 'position:absolute;right:-3px;bottom:-4px;font:800 14px system-ui;color:#fff;text-shadow:0 1px 2px #000,0 0 3px #000,0 0 5px #000'; b.appendChild(s); }
           statusStrip.appendChild(b);
         }
       }

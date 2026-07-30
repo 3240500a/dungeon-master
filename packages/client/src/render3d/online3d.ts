@@ -15,6 +15,7 @@ import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
+import { StatusFx } from './statusFx.js';
 import { setFog, makeSceneLighting, buildEnvironment, animateTorches, WALL_H, type Torch } from './env3d.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
@@ -50,7 +51,7 @@ const TOWN_NPCS: { cx: number; cy: number; label: string; panel: string; tint: n
 /** Плавающая полоска HP над монстром (спрайт-биллборд; перерисов только при заметном изменении). */
 /** Табличка над монстром (как 2D drawStatus): имя (цвет по редкости) + HP-бар (чемпион шире/золотой) + стан ✷. */
 function makeNameplate(name: string, champion: boolean, special: boolean): { spr: THREE.Sprite; set: (f: number) => void; setStun: (s: boolean) => void; setDebuffs: (icons: string) => void } {
-  const W = 140, H = 46;
+  const W = 140, H = 54;
   const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d')!;
   const t = new THREE.CanvasTexture(c);
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
@@ -67,7 +68,7 @@ function makeNameplate(name: string, champion: boolean, special: boolean): { spr
     g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(bx, by, bw, bh);
     g.fillStyle = curF > 0.5 ? '#5ec24a' : curF > 0.25 ? '#d8c24a' : '#d8583e'; g.fillRect(bx + 1, by + 1, (bw - 2) * curF, bh - 2);
     if (champion) { g.strokeStyle = '#dca94b'; g.lineWidth = 1; g.strokeRect(bx, by, bw, bh); }
-    if (curDeb) { g.font = '13px system-ui, sans-serif'; g.fillStyle = '#fff'; g.fillText(curDeb, W / 2, 38); }   // иконки статус-эффектов
+    if (curDeb) { g.font = '18px system-ui, sans-serif'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(curDeb, W / 2, 44); g.fillStyle = '#fff'; g.fillText(curDeb, W / 2, 44); }   // иконки+стаки статус-эффектов
     t.needsUpdate = true;
   };
   draw();
@@ -115,6 +116,7 @@ export async function startOnline3d(): Promise<void> {
   const actorsGroup = new THREE.Group(); scene.add(actorsGroup);
   const fxGroup = new THREE.Group(); scene.add(fxGroup);
   const vfx = new Vfx(fxGroup);
+  const statusFx = new StatusFx(fxGroup);   // зацикленные партикл-эффекты активных статусов на сущностях
   const resize = (): void => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); };
   addEventListener('resize', resize); resize();
 
@@ -204,6 +206,7 @@ export async function startOnline3d(): Promise<void> {
     for (const m of projMeshes.values()) actorsGroup.remove(m); projMeshes.clear();
     for (const m of dropMeshes.values()) actorsGroup.remove(m); dropMeshes.clear();
     for (const n of npcLabels) actorsGroup.remove(n.spr); npcLabels.length = 0;
+    statusFx.clear();   // сбросить партикл-эффекты статусов прошлой области
     doorMeshes.clear(); leverMeshes.clear(); interactables = [];
     clearGroup(floorGroup);
     area = floor.area;
@@ -319,6 +322,7 @@ export async function startOnline3d(): Promise<void> {
       else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (mine.x - smoothX) * k; smoothZ += (mine.y - smoothZ) * k; }
       driveActor(self, smoothX, smoothZ, mine.facing, mine.alive, dt);
       const st = app.state!; st.hp = mine.hp; st.mana = mine.mana; st.stamina = mine.stamina; st.debuffs = mine.debuffs;
+      statusFx.sync('self', smoothX, smoothZ, mine.debuffs);   // эффекты статусов на игроке
       if (st.toggles.join(',') !== mine.toggles.join(',')) { st.toggles = mine.toggles; app.bus.emit('state:changed', {}); } else st.toggles = mine.toggles;
       orbit.target.set(smoothX, 20, smoothZ);
       if (playerLight) playerLight.position.set(smoothX, 90, smoothZ);
@@ -336,11 +340,12 @@ export async function startOnline3d(): Promise<void> {
     const dcfg = app.config.get('debuffs');
     for (const mv of latest.monsters) {
       const a = monsters.get(mv.id); if (!a) continue;
-      if (!mv.alive) { markDead(a); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
+      if (!mv.alive) { markDead(a); statusFx.remove(`m${mv.id}`); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
       driveActor(a, mv.x, mv.y, mv.facing, true, dt);
-      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => debuffIcon(dcfg, k)).join(' ')); }
+      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => `${debuffIcon(dcfg, k)}${mv.debuffs[k]!.stacks > 1 ? mv.debuffs[k]!.stacks : ''}`).join(' ')); }
+      statusFx.sync(`m${mv.id}`, mv.x, mv.y, mv.debuffs);   // партикл-эффекты статусов (горит/яд/лёд/…)
     }
     // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и просто ЛЕЖИТ на полу (не убираем).
     // Трупы чистятся при смене этажа (buildArea сносит всех). Осевшие тела Jolt усыпляет — CPU не жрут.
@@ -597,7 +602,7 @@ export async function startOnline3d(): Promise<void> {
       }
     }
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
-    animateTorches(torches, tsec); vfx.update(dt); applyCam();
+    animateTorches(torches, tsec); vfx.update(dt); statusFx.update(dt); applyCam();
     renderer.render(scene, camera);
   }
 
