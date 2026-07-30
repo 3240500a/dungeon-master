@@ -48,8 +48,18 @@ export function flatOf(item: Item, stat: string): number {
   return v;
 }
 
+/** Виды статусов для per-kind ailment-статов. */
+const AILMENT_KINDS = ['wound', 'bleed', 'sunder', 'daze', 'burn', 'poison', 'shock', 'freeze'] as const;
+
 /** Боевой стат-блок игрока для resolveAttack из уже посчитанных производных + уровня. */
 export function combatStatsOf(d: DerivedStats, level: number): CombatStats {
+  const num = (k: string): number => (d[k as keyof DerivedStats] as number) || 0;
+  const chance: Record<string, number> = {}, power: Record<string, number> = {}, dur: Record<string, number> = {};
+  for (const k of AILMENT_KINDS) {
+    chance[k] = num(`${k}ChancePct`);                 // per-kind шанс (глобальный ailmentPct добавляет resolvePlayerHit)
+    power[k] = num(`${k}PowerPct`);                    // per-kind сила
+    dur[k] = d.ailmentDurPct + num(`${k}DurPct`);      // длительность = глобальная + per-kind
+  }
   return {
     accuracy: d.accuracy,
     armorPen: d.armorPen,
@@ -63,6 +73,7 @@ export function combatStatsOf(d: DerivedStats, level: number): CombatStats {
     resLightning: d.resLightning,
     resPoison: d.resPoison,
     ailmentPct: d.ailmentPct,
+    ailment: { chance, power, dur },
     level,
   };
 }

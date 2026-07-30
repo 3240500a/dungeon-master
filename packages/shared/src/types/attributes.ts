@@ -109,8 +109,19 @@ export interface DerivedStats {
   coldPct: number;
   lightningPct: number;
   poisonPct: number;
-  /** % к наложению статусов/дебафов ударом (шанс и магнитуда × (1+ailmentPct)). */
+  /** % к наложению статусов/дебафов ударом (ГЛОБАЛЬНО шанс и сила × (1+ailmentPct)). */
   ailmentPct: number;
+  /** Глобальная +% к ДЛИТЕЛЬНОСТИ статусов (× (1+ailmentDurPct)). */
+  ailmentDurPct: number;
+  // Per-kind %-наложения статусов: шанс/сила/длительность (ветки скиллов/пассивок). Складываются с глобальными.
+  woundChancePct: number; woundPowerPct: number; woundDurPct: number;
+  bleedChancePct: number; bleedPowerPct: number; bleedDurPct: number;
+  sunderChancePct: number; sunderPowerPct: number; sunderDurPct: number;
+  dazeChancePct: number; dazePowerPct: number; dazeDurPct: number;
+  burnChancePct: number; burnPowerPct: number; burnDurPct: number;
+  poisonChancePct: number; poisonPowerPct: number; poisonDurPct: number;
+  shockChancePct: number; shockPowerPct: number; shockDurPct: number;
+  freezeChancePct: number; freezePowerPct: number; freezeDurPct: number;
   /** Реген в секунду. */
   hpRegen: number;
   manaRegen: number;

@@ -68,12 +68,16 @@ export function resolvePlayerHit(
   let stunned = false;
   if (!died) {
     // ailmentPct атакующего усиливает наложение: и шанс, и магнитуду статуса.
-    const ap = 1 + (attacker.ailmentPct ?? 0);
+    const ap = 1 + (attacker.ailmentPct ?? 0);   // глобальный %-статусов (шанс+сила)
+    const am = attacker.ailment;                  // per-kind бонусы (шанс/сила/длительность)
     for (const a of opts.onHit ?? []) {
-      if (!rng.chance(a.chance * ap)) continue;
-      // DoT: сила = доля от нанесённого урона; ailmentPct усиливает шанс и силу.
+      const cMul = ap + (am?.chance[a.kind] ?? 0);
+      if (!rng.chance(a.chance * cMul)) continue;
+      const pMul = ap + (am?.power[a.kind] ?? 0);
+      const dMul = 1 + (am?.dur[a.kind] ?? 0);
+      // DoT: сила = доля от нанесённого урона; шанс/сила/длит. усилены глобальным+per-kind.
       const baseMag = a.mag + (a.magPerDamage ?? 0) * dmg;
-      const eff: DebuffApply = { ...a, mag: baseMag * ap, mag2: a.mag2 === undefined ? undefined : a.mag2 * ap };
+      const eff: DebuffApply = { ...a, mag: baseMag * pMul, mag2: a.mag2 === undefined ? undefined : a.mag2 * pMul, durationMs: a.durationMs * dMul };
       addDebuffStack(target.debuffs, eff, now);
       applied.push(a.kind);
     }

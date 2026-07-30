@@ -39,7 +39,9 @@ export interface CombatStats {
   resCold: number;
   resLightning: number;
   resPoison: number;
-  /** % к наложению статусов/дебафов этим атакующим (шанс/магнитуда × (1+ailmentPct)). */
+  /** % к наложению статусов/дебафов этим атакующим (ГЛОБАЛЬНО шанс/сила × (1+ailmentPct)). */
   ailmentPct: number;
+  /** Per-kind %-бонусы наложения статусов (шанс/сила/длительность), ключ = DebuffKind. Опц. (у монстров нет). */
+  ailment?: { chance: Record<string, number>; power: Record<string, number>; dur: Record<string, number> };
   level: number;
 }
