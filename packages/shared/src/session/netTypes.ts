@@ -31,6 +31,8 @@ export interface PlayerView {
   alive: boolean;
   debuffs: DebuffState;
   toggles: string[];
+  /** Радиус коллизии (для debug-draw коллайдеров). */
+  r: number;
 }
 export interface MonsterView {
   id: number;
@@ -42,6 +44,10 @@ export interface MonsterView {
   alive: boolean;
   stun: boolean;
   debuffs: DebuffState;
+  /** Радиус коллизии (debug-draw). */
+  r: number;
+  /** Состояние ИИ (debug-draw: покой/погоня). */
+  aiState: 'idle' | 'chase';
 }
 export interface ProjView {
   id: number;
@@ -50,6 +56,8 @@ export interface ProjView {
   owner: 'player' | 'monster';
   /** Доминирующая стихия пакета — для цвета вида. */
   dom: DamageType;
+  /** Радиус коллизии (debug-draw). */
+  r: number;
 }
 export interface DropView {
   id: number;

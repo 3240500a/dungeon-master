@@ -3,13 +3,13 @@ import type { WorldSnapshot, PlayerView, MonsterView, ProjView } from '@dm/share
 import { SnapshotBuffer } from './snapshotBuffer.js';
 
 function player(id: string, x: number, y: number, facing: number): PlayerView {
-  return { id, classId: 'warrior', x, y, facing, hp: 10, mana: 5, stamina: 5, alive: true, debuffs: {}, toggles: [] };
+  return { id, classId: 'warrior', x, y, facing, hp: 10, mana: 5, stamina: 5, alive: true, debuffs: {}, toggles: [], r: 14 };
 }
 function monster(id: number, x: number, y: number, facing: number): MonsterView {
-  return { id, x, y, facing, hp: 10, maxHp: 10, alive: true, stun: false, debuffs: {} };
+  return { id, x, y, facing, hp: 10, maxHp: 10, alive: true, stun: false, debuffs: {}, r: 12, aiState: 'idle' };
 }
 function proj(id: number, x: number, y: number): ProjView {
-  return { id, x, y, owner: 'player', dom: 'physical' };
+  return { id, x, y, owner: 'player', dom: 'physical', r: 3 };
 }
 function snap(tick: number, x: number, facing = 0): WorldSnapshot {
   return { tick, players: [player('me', x, x, facing)], monsters: [monster(1, x, x, facing)], projectiles: [proj(1, x, x)], drops: [] };

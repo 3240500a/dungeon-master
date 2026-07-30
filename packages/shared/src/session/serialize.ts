@@ -26,15 +26,15 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
       id: p.id, classId: p.save.classId,
       x: p.pos.x, y: p.pos.y, facing: p.facing,
       hp: p.hp, mana: p.mana, stamina: p.stamina, alive: p.alive,
-      debuffs: p.debuffs, toggles: p.toggles,
+      debuffs: p.debuffs, toggles: p.toggles, r: p.radius,
     })),
     monsters: w.monsters.map((m) => ({
       id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,
       hp: m.hp, maxHp: m.maxHp, alive: m.alive,
-      stun: m.stunTimer > 0, debuffs: m.debuffs,
+      stun: m.stunTimer > 0, debuffs: m.debuffs, r: m.radius, aiState: m.aiState,
     })),
     projectiles: w.projectiles.map((pr) => ({
-      id: pr.id, x: pr.pos.x, y: pr.pos.y, owner: pr.owner, dom: dominantType(pr.packet),
+      id: pr.id, x: pr.pos.x, y: pr.pos.y, owner: pr.owner, dom: dominantType(pr.packet), r: pr.radius,
     })),
     drops: w.drops.map((d) => ({ id: d.id, x: d.pos.x, y: d.pos.y, item: d.item })),
   };

@@ -131,7 +131,7 @@ export async function startOnline3d(): Promise<void> {
   app.gameLog = new GameLog(app, root);
   const hud = mountHud3d(app);
   const minimap = mountMinimap(root);
-  const debug = mountDebug(scene, root);
+  const debug = mountDebug(scene, camera, canvas, root);
 
   await initPhysics();
   const pw = new PhysWorld();
@@ -581,7 +581,19 @@ export async function startOnline3d(): Promise<void> {
         latest.monsters.filter((m) => m.alive).map((m) => ({ x: m.x, z: m.y })),
         latest.players.filter((p) => p.id !== myId).map((p) => ({ x: p.x, z: p.y })),
         interactables.map((it): MiniMark => ({ x: it.x, y: it.y, kind: /подземель|глубже|город/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc' })));
-      if (debug.on) debug.update({ fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq });
+      if (debug.on) {
+        const mel = app.config.get('balance').melee;
+        const w = app.state.save.equipment.weapon;
+        debug.update({
+          info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq },
+          playerR: me?.r ?? 12,
+          players: latest.players.map((p) => ({ x: p.id === myId ? smoothX : p.x, z: p.id === myId ? smoothZ : p.y, facing: p.facing, r: p.r, me: p.id === myId })),
+          monsters: latest.monsters.map((mv) => { const def = monsters.get(mv.id)?.def; return { id: mv.id, x: mv.x, z: mv.y, facing: mv.facing, r: mv.r, alive: mv.alive, aiState: mv.aiState, vision: def?.vision ?? 0, visionAngle: def?.visionAngle ?? 0, hearing: def?.hearing ?? 0, hp: mv.hp, maxHp: mv.maxHp }; }),
+          projectiles: latest.projectiles.map((pr) => ({ x: pr.x, z: pr.y, r: pr.r })),
+          interactables: interactables.map((it) => ({ x: it.x, z: it.y, r: it.radius })),
+          playerAttack: me ? { x: smoothX, z: smoothZ, facing: me.facing, reach: mel.baseRange * (w?.reachMult ?? 1), halfArc: (mel.baseArc * (w?.arcMult ?? 1)) / 2 } : null,
+        });
+      }
     }
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
     animateTorches(torches, tsec); vfx.update(dt); applyCam();
