@@ -26,6 +26,11 @@
   Скилл может конвертить долю урона в стихию (`convertPct`+`element`, у attack и cast) — при полной
   конверсии физ-статус гаснет, остаётся статус стихии; явный `ailment` скилла переопределяет авто того
   же вида. Тюнится в редакторе (schemas: `damageTypesSchema.weapon`, `attackAbilitySchema.convertPct`).
+- **Форма урона скилла** (`shapeSkillPacket` в `resolveWeapon.ts`) — 3 режима, поля в редакторе:
+  `multScope` (`base` — множитель только на баз. тип оружия, стихии гира не раздуваются / `all` — весь пакет),
+  `addElementPct` (добавить % базового урона как `element` сверх состава), `convertPct` (слить долю в `element`).
+  Статусы всегда следуют итоговому составу пакета (physSub при физ. уроне + по стихии на каждый присутствующий
+  тип). Панель (`panels.ts` `skillByType`) считает разбивку урона и статусы скилла по тому же конвейеру.
 - **Стат-пакеты для панелей:** `playerStats.ts` (тонкие обёртки над `@dm/shared/playerCombat`).
 - **Конфиг:** `items.base`, `balance.weaponAttrScaling`, `monsters`, `packs`, `difficulties`.
 - **Тесты:** ядро боя — `shared/src/session/session.test.ts`; поведение в игре — руками.

@@ -686,12 +686,22 @@ const activeCommon = {
   /** КД, сек. 0 = без КД (тайминг от attackSpeed×speed). */
   cooldown: z.number().min(0).default(0),
 };
+/** Форма урона скилла (attack/cast): к чему применять множитель + добавка стихии. Вместе с `convertPct`/`element`
+ *  задаёт 3 режима: обычный удар (multScope=base — бонус только на баз. тип, стихии гира не раздуваются),
+ *  «всё в стихию» (convertPct=1), «добавить стихию сверху» (addElementPct>0). */
+const damageShape = {
+  /** Множитель урона применяется к: `base` — только базовый тип оружия (стихии гира — плоско), `all` — весь пакет. */
+  multScope: z.enum(['base', 'all']).default('base'),
+  /** Добавить эту долю базового (пост-множитель) урона как стихию `element` сверх состава (прочие типы не трогает). */
+  addElementPct: z.number().min(0).default(0),
+};
 
 /** Атака: удар/выстрел ОРУЖИЕМ (геометрия/состав от оружия) + моды скилла. Мили ИЛИ снаряд(ы). */
 const attackAbilitySchema = z.object({
   category: z.literal('attack'),
   ...activeCommon,
   ...weaponRestrict,
+  ...damageShape,
   speed: z.number().min(0.1).default(1),
   damageMult: z.number().min(0).default(1),
   /** Множители дуги/дальности ПОВЕРХ геометрии оружия. */
@@ -721,6 +731,7 @@ const castAbilitySchema = z.object({
   category: z.literal('cast'),
   ...activeCommon,
   ...weaponRestrict,
+  ...damageShape,
   shape: z.enum(['dash', 'leap', 'nova', 'ground', 'meteor', 'boomerang']),
   element: damageTypeEnum.optional(),
   /** Каст-тайм, сек (делится на castSpeed от Интеллекта) — замах-рут перед срабатыванием. */

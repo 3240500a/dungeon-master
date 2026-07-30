@@ -1,6 +1,6 @@
 import type { DebuffApply, DebuffKind } from '../world/debuffs.js';
 import type { Item, WeaponWeight } from '../types/items.js';
-import type { DamagePacket, DamageType } from '../types/combat.js';
+import { packetTotal, type DamagePacket, type DamageType } from '../types/combat.js';
 import type { ConfigShapes } from '../config/schemas.js';
 
 /** Физ-статусы (подтип оружия): держатся только если в ударе есть физ. урон (гаснут при полной конверсии в стихию). */
@@ -63,6 +63,37 @@ export function elementDebuffs(packet: DamagePacket, damageTypes: DamageTypes): 
     out.push(a);
   }
   return out;
+}
+
+export interface SkillDamageShape {
+  /** Множитель урона (damageMult × ранг). */
+  mult: number;
+  /** К чему применять множитель: `base` — только базовый тип оружия (стихии гира не раздуваются), `all` — весь пакет. */
+  multScope: 'base' | 'all';
+  /** Добавить эту долю базового (пост-множитель) урона как стихию `element`. */
+  addElementPct: number;
+  /** Слить эту долю всего урона в стихию `element` (0..1). */
+  convertPct: number;
+  /** Базовый тип урона оружия (обычно физический; у жезла — стихия). */
+  baseType: DamageType;
+  /** Стихия скилла — цель добавки/конверсии. */
+  element: DamageType;
+}
+
+/**
+ * Форма урона скилла (мутирует пакет): множитель по scope → добавка стихии (addElementPct доли базового урона →
+ * element) → конверсия (convertPct доли всего урона → element). Задаёт 3 режима: обычный удар (multScope=base),
+ * «всё в стихию» (convertPct=1), «добавить стихию сверху» (addElementPct>0). Чистая — общий шаг attack/cast.
+ */
+export function shapeSkillPacket(packet: DamagePacket, s: SkillDamageShape): void {
+  if (s.multScope === 'all') { for (const t of Object.keys(packet) as DamageType[]) packet[t] *= s.mult; }
+  else packet[s.baseType] *= s.mult;
+  if (s.addElementPct > 0) packet[s.element] += packet[s.baseType] * s.addElementPct;
+  if (s.convertPct > 0) {
+    const converted = packetTotal(packet) * s.convertPct;
+    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= (1 - s.convertPct);
+    packet[s.element] += converted;
+  }
 }
 
 /**

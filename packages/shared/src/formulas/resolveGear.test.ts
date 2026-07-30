@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Item } from '../types/items.js';
-import { weaponDebuffs, elementDebuffs, mergeElementOnHit, weightScaleSplit } from './resolveWeapon.js';
+import { weaponDebuffs, elementDebuffs, mergeElementOnHit, shapeSkillPacket, weightScaleSplit } from './resolveWeapon.js';
 import type { DebuffApply } from '../world/debuffs.js';
 import { armorClassModifiers, armorNoise, armorPoise } from './resolveArmor.js';
 import { emptyPacket } from '../types/combat.js';
@@ -78,6 +78,33 @@ describe('resolveWeapon', () => {
     const kinds = mergeElementOnHit([physSub], pkt, DT).map((d) => d.kind);
     expect(kinds).not.toContain('sunder');  // физ-статус погас
     expect(kinds).toEqual(['freeze']);       // остался только статус стихии
+  });
+
+  it('shapeSkillPacket: multScope=base множит только баз. тип (стихии гира не раздуваются)', () => {
+    const p = emptyPacket(); p.physical = 10; p.fire = 5;
+    shapeSkillPacket(p, { mult: 2, multScope: 'base', addElementPct: 0, convertPct: 0, baseType: 'physical', element: 'physical' });
+    expect(p.physical).toBe(20);  // база ×2
+    expect(p.fire).toBe(5);       // стихия гира не тронута
+  });
+
+  it('shapeSkillPacket: multScope=all множит весь пакет', () => {
+    const p = emptyPacket(); p.physical = 10; p.fire = 5;
+    shapeSkillPacket(p, { mult: 2, multScope: 'all', addElementPct: 0, convertPct: 0, baseType: 'physical', element: 'physical' });
+    expect(p.physical).toBe(20); expect(p.fire).toBe(10);
+  });
+
+  it('shapeSkillPacket: convertPct=1 сливает весь урон в стихию', () => {
+    const p = emptyPacket(); p.physical = 10; p.fire = 5;
+    shapeSkillPacket(p, { mult: 1, multScope: 'base', addElementPct: 0, convertPct: 1, baseType: 'physical', element: 'cold' });
+    expect(p.physical).toBe(0); expect(p.fire).toBe(0); expect(p.cold).toBe(15);
+  });
+
+  it('shapeSkillPacket: addElementPct добавляет % базы как стихию, прочее не трогает', () => {
+    const p = emptyPacket(); p.physical = 10; p.fire = 4;
+    shapeSkillPacket(p, { mult: 1, multScope: 'base', addElementPct: 0.3, convertPct: 0, baseType: 'physical', element: 'cold' });
+    expect(p.physical).toBe(10);          // база на месте
+    expect(p.fire).toBe(4);               // стихия гира на месте
+    expect(p.cold).toBeCloseTo(3, 5);     // +30% базы холодом
   });
 
   it('mergeElementOnHit: явный статус того же вида не задваивается', () => {

@@ -1,7 +1,7 @@
 import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, DEBUFF_LABEL, DEBUFF_ICON, weaponDebuffs, elementDebuffs, isDotKind, emptyPacket, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
-import { attackDamageByType, estimateWeaponDamage } from '../combat/playerStats.js';
+import { attackDamageByType } from '../combat/playerStats.js';
 import { elementOf } from '../skills/skillIcon.js';
 import { STAT_LABEL } from '../inventory/itemView.js';
 import { dmgColor, dmgName } from '../../core/damageTypes.js';
@@ -325,14 +325,15 @@ export const characterPanel: PanelFactory = (app, ui) => {
         const node = (binding && binding !== 'attack') ? skillTree?.nodes.find((n) => n.id === binding) : undefined;
         const act = node?.effect.active;
         const el: DamageType = (node ? (elementOf(node) ?? 'physical') : 'physical') as DamageType;
-        // Итоговый пакет: byType, затем конверсия скилла (convertPct доли всего урона → el).
+        // Итоговый состав удара — тот же, что в разбивке урона: скилл через skillByType (scope-множитель +
+        // добавка стихии + конверсия), базовая атака — byType. Статусы идут по стихиям этого пакета.
         const pkt = emptyPacket();
-        for (const t of Object.keys(pkt) as DamageType[]) pkt[t] = byType[t]?.max ?? 0;
-        const convertPct = act && 'convertPct' in act ? (act.convertPct as number) : 0;
-        if (convertPct > 0) {
-          const total = (Object.keys(pkt) as DamageType[]).reduce((s, t) => s + pkt[t], 0);
-          for (const t of Object.keys(pkt) as DamageType[]) pkt[t] *= (1 - convertPct);
-          pkt[el] += total * convertPct;
+        if (act && (act.category === 'attack' || act.category === 'cast')) {
+          const rank = state.save.skills[binding!] ?? 1;
+          const sbt = skillByType(act, rank, el);
+          for (const t of Object.keys(pkt) as DamageType[]) pkt[t] = sbt[t].max;
+        } else {
+          for (const t of Object.keys(pkt) as DamageType[]) pkt[t] = byType[t]?.max ?? 0;
         }
         // physSub — только если в ударе остался физ. урон (при полной конверсии гаснет).
         const out: DebuffApply[] = (weapon && pkt.physical > 0) ? [...weaponDebuffs(weapon, physSubs)] : [];
@@ -361,11 +362,17 @@ export const characterPanel: PanelFactory = (app, ui) => {
         return lines.length ? `<br><br><b>Накладывает:</b><br>${lines.join('<br>')}<br><span style="color:#8f897c;font-size:11px">(до сопротивления цели)</span>` : '';
       };
 
-      // Разбивка урона скилла по типам: byType × (damageMult×ранг), затем конверсия доли всего урона в стихию el.
-      const skillByType = (active: { damageMult: number; convertPct?: number }, rank: number, el: DamageType): Record<DamageType, { min: number; max: number }> => {
+      // Разбивка урона скилла по типам (как в движке applySkillDamage): множитель по scope
+      // (base — только баз. тип оружия / all — весь пакет) → добавка стихии (addElementPct) → конверсия (convertPct).
+      const skillByType = (active: { damageMult: number; convertPct?: number; multScope?: 'base' | 'all'; addElementPct?: number }, rank: number, el: DamageType): Record<DamageType, { min: number; max: number }> => {
         const mult = active.damageMult * abilityRankMult(rank);
+        const baseType = (state.save.equipment.weapon?.damageType ?? 'physical') as DamageType;
         const bt = {} as Record<DamageType, { min: number; max: number }>;
-        for (const t of DMG_TYPES) bt[t] = { min: byType[t].min * mult, max: byType[t].max * mult };
+        for (const t of DMG_TYPES) bt[t] = { min: byType[t].min, max: byType[t].max };
+        if ((active.multScope ?? 'base') === 'all') { for (const t of DMG_TYPES) { bt[t].min *= mult; bt[t].max *= mult; } }
+        else { bt[baseType].min *= mult; bt[baseType].max *= mult; }
+        const add = active.addElementPct ?? 0;
+        if (add > 0) { bt[el].min += bt[baseType].min * add; bt[el].max += bt[baseType].max * add; }
         const conv = active.convertPct ?? 0;
         if (conv > 0) {
           let cMin = 0, cMax = 0;
@@ -392,17 +399,19 @@ export const characterPanel: PanelFactory = (app, ui) => {
           const active = node?.effect.active;
           if (node && active && (active.category === 'attack' || active.category === 'cast')) {
             const rank = state.save.skills[binding] ?? 1;
-            const base = estimateWeaponDamage(state, state.save.equipment.weapon, scaling, weights);
-            const sdmg = Math.round(base * active.damageMult * abilityRankMult(rank));
+            const el = (elementOf(node) ?? 'physical') as DamageType;
+            const sbt = skillByType(active, rank, el);   // итоговый урон по типам (scope-множитель + добавка + конверсия)
+            let sMin = 0, sMax = 0;
+            for (const t of DMG_TYPES) { sMin += sbt[t].min; sMax += sbt[t].max; }
+            const sdmg = Math.round((sMin + sMax) / 2);
             // Атака — темп от скорости атаки; каст — каст-тайм от Интеллекта.
             const [sdps, rateTip] = active.category === 'attack'
               ? (() => { const r = Math.max(0.2, state.derived().attackSpeed * active.speed); return [Math.round(sdmg * r), `темп ${(1 / r).toFixed(2)} с/удар`] as const; })()
               : (() => { const ct = active.castTimeSec / Math.max(0.2, state.derived().castSpeed); return [ct > 0 ? Math.round(sdmg / ct) : sdmg, `каст ${ct.toFixed(2)} с`] as const; })();
-            const col = dmgColor(elementOf(node) as DamageType);
-            right.append(mk('span', `font-weight:600;color:${col}`, `${sdmg} (ДПС ~${sdps})`));
+            right.append(mk('span', `font-weight:600;color:${dmgColor(el)}`, `${sdmg} (ДПС ~${sdps})`));
             attachTooltip(row, () =>
               `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.<br><br>` +
-              `Урон по типам:<br>${typeLines(skillByType(active, rank, (elementOf(node) ?? 'physical') as DamageType))}` +
+              `Урон по типам:<br>${typeLines(sbt)}` +
               ailmentTip(binding));
           } else if (node && active) {
             // Проклятие/аура/стойка/бафф — прямого урона нет.

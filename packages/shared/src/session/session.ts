@@ -10,7 +10,7 @@ import { createRng, type Rng } from '../formulas/rng.js';
 import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
-import { weaponDebuffs, mergeElementOnHit } from '../formulas/resolveWeapon.js';
+import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/resolveWeapon.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { gainXp } from '../economy/progression.js';
@@ -459,12 +459,16 @@ export class GameSession {
     };
   }
 
-  /** Конверсия: слить долю `pct` всего урона пакета в стихию `element` (общий шаг для attack/cast). */
-  private convertPacket(packet: DamagePacket, pct: number, element: DamageType): void {
-    if (pct <= 0) return;
-    const converted = packetTotal(packet) * pct;
-    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= (1 - pct);
-    packet[element] += converted;
+  /** Форма урона скилла (общий шаг attack/cast) — см. `shapeSkillPacket`: множитель по scope + добавка стихии + конверсия. */
+  private applySkillDamage(packet: DamagePacket, active: OffensiveAbility, rank: number, weapon: Item | undefined, element: DamageType): void {
+    shapeSkillPacket(packet, {
+      mult: active.damageMult * abilityRankMult(rank),
+      multScope: active.multScope,
+      addElementPct: active.addElementPct,
+      convertPct: active.convertPct,
+      baseType: weapon?.damageType ?? 'physical',
+      element,
+    });
   }
 
   /**
@@ -658,9 +662,7 @@ export class GameSession {
    */
   private castPacket(snap: PlayerSnapshot, weapon: Item | undefined, active: CastAbility, rank: number, element: DamageType): DamagePacket {
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
-    const mult = active.damageMult * abilityRankMult(rank);
-    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
-    this.convertPacket(packet, active.convertPct, element);
+    this.applySkillDamage(packet, active, rank, weapon, element);
     return packet;
   }
 
@@ -674,9 +676,8 @@ export class GameSession {
     const element = active.element ?? abilityElementOf(active.abilityId);
     const pm = debuffMods(p.debuffs);
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
-    const mult = active.damageMult * abilityRankMult(rank) * pm.outDamageMult;
-    for (const t of Object.keys(packet) as DamageType[]) packet[t] *= mult;
-    this.convertPacket(packet, active.convertPct, element);   // спец «в одну стихию» — доля урона → element
+    this.applySkillDamage(packet, active, rank, weapon, element);   // множитель по scope + доб.стихия + конверсия
+    if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;   // дебафф раны — на весь урон
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
     const opts = this.skillOpts(active, element, weapon, packet);   // статусы по итоговому составу + скилл-эффекты
     const wt: WeaponType = weapon?.weaponType ?? 'melee';
