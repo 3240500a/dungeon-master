@@ -512,16 +512,8 @@ export const damageKindsSchema = z.array(
 
 // ── magic-subtypes ──────────────────────────────────────────────────────────
 /** Справочник МАГ. подтипов (стихии: огонь/холод/молния/яд) — симметрично phys-subtypes.
- * Имя/цвет/накладываемый статус + прок от УДАРА ОРУЖИЯ (`weapon`) и от УДАРА МОНСТРА (`monster`).
- * DoT (поджиг/яд) — `magPerDamage` (доля от урона удара/сек); freeze/shock — `mag`/`mag2` флэт. */
-const magicProcSchema = z.object({
-  chance: z.number().min(0),
-  maxStacks: z.number().int().min(1),
-  durationMs: z.number().min(0),
-  mag: z.number().default(0),
-  mag2: z.number().optional(),
-  magPerDamage: z.number().optional(),
-});
+ * Имя/цвет/накладываемый статус. Параметры наложения статуса (прок оружия/монстра) —
+ * в самом состоянии (`debuffs`, блоки `weapon`/`monster`), а не в подтипе урона. */
 export const magicSubtypesSchema = z.array(
   z.object({
     id: z.enum(['fire', 'cold', 'lightning', 'poison']),
@@ -532,16 +524,25 @@ export const magicSubtypesSchema = z.array(
     color: z.string(),
     /** Стих. статус, накладываемый этим подтипом. */
     ailment: z.enum(['burn', 'freeze', 'shock', 'poison']),
-    /** Прок статуса от УДАРА ОРУЖИЯ (если в пакете есть урон этого подтипа). */
-    weapon: magicProcSchema,
-    /** Прок статуса от УДАРА МОНСТРА (`magPerDamage` — доля от maxDamage монстра). */
-    monster: magicProcSchema,
   }),
 );
 
 // ── debuffs ─────────────────────────────────────────────────────────────────
+/** Параметры НАЛОЖЕНИЯ статуса от удара (шанс/стаки/длит./сила). Общая форма для прока
+ * оружия (`weapon`) и прока монстра (`monster`). DoT (кровотечение/поджиг/яд) — `magPerDamage`
+ * (доля от урона удара/сек); freeze/shock/wound/daze — `mag`/`mag2` флэт. */
+const procSchema = z.object({
+  chance: z.number().min(0),
+  maxStacks: z.number().int().min(1),
+  durationMs: z.number().min(0),
+  mag: z.number().default(0),
+  mag2: z.number().optional(),
+  magPerDamage: z.number().optional(),
+});
+
 /** Справочник состояний (дебаффов): имя/иконка/описание/категория + тюн-коэффициенты
- * механики (пороги/множители, ранее захардкоженные в `debuffMods()`). Набор id —
+ * механики (пороги/множители, ранее захардкоженные в `debuffMods()`) + параметры наложения
+ * (`weapon`/`monster` — прок от удара оружия/монстра, перенесённые из подтипов урона). Набор id —
  * структурный (DebuffKind); пустой `tuning` — у видов без интринсик-коэффициентов. */
 export const debuffsSchema = z.array(
   z.object({
@@ -564,6 +565,10 @@ export const debuffsSchema = z.array(
         atkSpeedFloor: z.number().optional(),
       })
       .default({}),
+    /** Прок статуса от УДАРА ОРУЖИЯ (если в пакете есть урон соответствующего подтипа). */
+    weapon: procSchema,
+    /** Прок статуса от УДАРА МОНСТРА (`magPerDamage` — доля от maxDamage монстра). */
+    monster: procSchema,
   }),
 );
 
@@ -583,31 +588,14 @@ export const weaponWeightsSchema = z.array(
 );
 
 // ── phys-subtypes ─────────────────────────────────────────────────────────────
-/** Справочник подтипов физ. урона: какой статус вешают + параметры дебаффа. */
+/** Справочник подтипов физ. урона: какой статус вешают. Параметры наложения статуса
+ * (прок оружия/монстра) — в самом состоянии (`debuffs`, блоки `weapon`/`monster`). */
 export const physSubtypesSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
     /** Физ-статус, который накладывает этот подтип. */
     kind: z.enum(['wound', 'bleed', 'sunder', 'daze']),
-    /** Дебафф от УДАРА ОРУЖИЯ. `magPerDamage` — доля от урона (DoT-кровотечение); скейлинг — от скиллов, не веса. */
-    weapon: z.object({
-      chance: z.number().min(0),
-      maxStacks: z.number().int().min(1),
-      durationMs: z.number().min(0),
-      mag: z.number().default(0),
-      mag2: z.number().optional(),
-      magPerDamage: z.number().optional(),
-    }),
-    /** Дебафф от УДАРА МОНСТРА (mag фикс; `magPerDamage` — доля от maxDamage монстра). */
-    monster: z.object({
-      chance: z.number().min(0),
-      maxStacks: z.number().int().min(1),
-      durationMs: z.number().min(0),
-      mag: z.number().default(0),
-      mag2: z.number().optional(),
-      magPerDamage: z.number().optional(),
-    }),
   }),
 );
 

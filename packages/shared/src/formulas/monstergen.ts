@@ -8,8 +8,9 @@ type Monsters = ConfigShapes['monsters'];
 type Affixes = ConfigShapes['monster-affixes'];
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type MagicSubtypes = ConfigShapes['magic-subtypes'];
-/** Форма блока `monster` подтипа (phys/magic симметричны). */
-type MonsterProc = PhysSubtypes[number]['monster'];
+type Debuffs = ConfigShapes['debuffs'];
+/** Форма блока `monster` состояния (прок от удара монстра). */
+type MonsterProc = Debuffs[number]['monster'];
 
 function applyAffix(m: ScaledMonster, aff: MonsterAffix): void {
   const rec = m as unknown as Record<string, number>;
@@ -145,20 +146,21 @@ function monsterProc(kind: DebuffKind, maxDamage: number, md: MonsterProc): Debu
 }
 
 /**
- * Дебаффы, которые монстр вешает на игрока: физ-статус по его `physSub` (`phys-subtypes`, блок
- * `monster`) + стих-статус по его `damageType`, если это стихия (`magic-subtypes`, блок `monster`).
- * Тот же источник, что у оружия (симметрично, никакого задвоения). `magPerDamage` — сила = доля
- * от maxDamage монстра.
+ * Дебаффы, которые монстр вешает на игрока: физ-статус по его `physSub` (подтип → вид) + стих-статус по его
+ * `damageType`, если это стихия (подтип → ailment). Параметры наложения — из самого состояния (`debuffs[kind].monster`),
+ * тот же источник, что у оружия (симметрично, никакого задвоения). `magPerDamage` — сила = доля от maxDamage монстра.
  */
-export function monsterDebuffs(m: ScaledMonster, physSubs: PhysSubtypes, magicSubtypes: MagicSubtypes): DebuffApply[] {
+export function monsterDebuffs(m: ScaledMonster, physSubs: PhysSubtypes, magicSubtypes: MagicSubtypes, debuffs: Debuffs): DebuffApply[] {
   const out: DebuffApply[] = [];
   if (m.physSub) {
     const sub = physSubs.find((s) => s.id === m.physSub);
-    if (sub) out.push(monsterProc(sub.kind, m.maxDamage, sub.monster));
+    const md = sub && debuffs.find((d) => d.id === sub.kind)?.monster;
+    if (sub && md) out.push(monsterProc(sub.kind, m.maxDamage, md));
   }
   if (m.damageType !== 'physical') {
     const sub = magicSubtypes.find((s) => s.id === m.damageType);
-    if (sub) out.push(monsterProc(sub.ailment, m.maxDamage, sub.monster));
+    const md = sub && debuffs.find((d) => d.id === sub.ailment)?.monster;
+    if (sub && md) out.push(monsterProc(sub.ailment, m.maxDamage, md));
   }
   return out;
 }

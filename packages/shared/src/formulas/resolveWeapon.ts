@@ -9,6 +9,7 @@ const PHYS_DEBUFF_KINDS = new Set<DebuffKind>(['wound', 'bleed', 'sunder', 'daze
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type WeaponWeights = ConfigShapes['weapon-weights'];
 type MagicSubtypes = ConfigShapes['magic-subtypes'];
+type Debuffs = ConfigShapes['debuffs'];
 
 /**
  * Вывод боевых свойств оружия из осей (вес/подтип урона). Таблицы весов
@@ -27,15 +28,16 @@ export function weightScaleSplit(weight: WeaponWeight, weights: WeaponWeights): 
 }
 
 /**
- * Стаковые дебаффы удара оружием (по подтипу физ. урона). База шанса/силы/длительности ВШИТА в подтип
- * (`phys-subtypes`, блок `weapon`), БЕЗ веса-множителей — скейлинг статусов идёт от скиллов (ailment-статы).
- * `magPerDamage` (DoT: кровотечение) — доля от урона удара, добавляется к силе при наложении.
+ * Стаковые дебаффы удара оружием (по подтипу физ. урона). Подтип задаёт ВИД статуса (`kind`), а база
+ * шанса/силы/длительности ВШИТА в само состояние (`debuffs[kind].weapon`), БЕЗ веса-множителей — скейлинг
+ * статусов идёт от скиллов (ailment-статы). `magPerDamage` (DoT: кровотечение) — доля от урона удара.
  */
-export function weaponDebuffs(item: Item, physSubs: PhysSubtypes): DebuffApply[] {
+export function weaponDebuffs(item: Item, physSubs: PhysSubtypes, debuffs: Debuffs): DebuffApply[] {
   if (!item.physSub) return [];
   const sub = physSubs.find((s) => s.id === item.physSub);
   if (!sub) return [];
-  const w = sub.weapon;
+  const w = debuffs.find((d) => d.id === sub.kind)?.weapon;
+  if (!w) return [];
   const out: DebuffApply = { kind: sub.kind, chance: Math.min(1, w.chance), maxStacks: w.maxStacks, durationMs: w.durationMs, mag: w.mag };
   if (w.mag2 != null) out.mag2 = w.mag2;
   if (w.magPerDamage != null) out.magPerDamage = w.magPerDamage;
@@ -45,15 +47,16 @@ export function weaponDebuffs(item: Item, physSubs: PhysSubtypes): DebuffApply[]
 /**
  * Стих. статусы удара: для КАЖДОГО маг. подтипа (стихии) в пакете с ненулевой долей —
  * с шансом наложить его статус (огонь→поджиг, холод→заморозка, молния→шок, яд→отравление).
- * Шанс/длит./сила ВШИТЫ в подтип (`magic-subtypes`, блок `weapon`); DoT (поджиг/яд) — `magPerDamage`
- * (доля от урона удара/сек), freeze/shock — `mag`/`mag2` флэт. Скейлинг статусов — от ailment-статов игрока.
- * Данные-driven: правится в редакторе; тот же источник читает игра/сим/сервер.
+ * Подтип задаёт ВИД статуса (`ailment`), а шанс/длит./сила ВШИТЫ в само состояние (`debuffs[ailment].weapon`);
+ * DoT (поджиг/яд) — `magPerDamage` (доля от урона удара/сек), freeze/shock — `mag`/`mag2` флэт. Скейлинг
+ * статусов — от ailment-статов игрока. Данные-driven: правится в редакторе; тот же источник читает игра/сим/сервер.
  */
-export function elementDebuffs(packet: DamagePacket, magicSubtypes: MagicSubtypes): DebuffApply[] {
+export function elementDebuffs(packet: DamagePacket, magicSubtypes: MagicSubtypes, debuffs: Debuffs): DebuffApply[] {
   const out: DebuffApply[] = [];
   for (const sub of magicSubtypes) {
     if ((packet[sub.id] ?? 0) <= 0) continue;                // этого подтипа нет в ударе
-    const w = sub.weapon;
+    const w = debuffs.find((d) => d.id === sub.ailment)?.weapon;
+    if (!w) continue;
     const a: DebuffApply = { kind: sub.ailment, chance: Math.min(1, w.chance), maxStacks: w.maxStacks, durationMs: w.durationMs, mag: w.mag };
     if (w.mag2 != null) a.mag2 = w.mag2;
     if (w.magPerDamage != null) a.magPerDamage = w.magPerDamage;
@@ -98,8 +101,8 @@ export function shapeSkillPacket(packet: DamagePacket, s: SkillDamageShape): voi
  * (при полной конверсии в стихию — гаснут), плюс авто стих-проки по стихиям в ударе (дедуп по виду —
  * присутствующий в базе вид не задваивается). Чистая: общий шаг для базовой атаки и скиллов.
  */
-export function mergeElementOnHit(baseOnHit: DebuffApply[], packet: DamagePacket, magicSubtypes: MagicSubtypes): DebuffApply[] {
+export function mergeElementOnHit(baseOnHit: DebuffApply[], packet: DamagePacket, magicSubtypes: MagicSubtypes, debuffs: Debuffs): DebuffApply[] {
   const kept = (packet.physical ?? 0) > 0 ? baseOnHit : baseOnHit.filter((d) => !PHYS_DEBUFF_KINDS.has(d.kind));
   const have = new Set<DebuffKind>(kept.map((d) => d.kind));
-  return [...kept, ...elementDebuffs(packet, magicSubtypes).filter((d) => !have.has(d.kind))];
+  return [...kept, ...elementDebuffs(packet, magicSubtypes, debuffs).filter((d) => !have.has(d.kind))];
 }

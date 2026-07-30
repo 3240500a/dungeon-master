@@ -460,7 +460,7 @@ export class GameSession {
       armorPen: weapon?.armorPenPct,
       lowHpBonusPct: weapon?.lowHpBonusPct,
       stunChance: weapon?.stunChance,
-      onHit: weapon ? weaponDebuffs(weapon, this.cfg.get('phys-subtypes')) : [],
+      onHit: weapon ? weaponDebuffs(weapon, this.cfg.get('phys-subtypes'), this.cfg.get('debuffs')) : [],
       knockback: weapon?.knockback,
     };
   }
@@ -483,7 +483,7 @@ export class GameSession {
    * стихиям в ударе, дедуп по виду (уже присутствующий вид не задваивается — им управляет явный статус скилла).
    */
   private packetOnHit(opts: HitOpts, packet: DamagePacket): HitOpts {
-    return { ...opts, onHit: mergeElementOnHit(opts.onHit ?? [], packet, this.cfg.get('magic-subtypes')) };
+    return { ...opts, onHit: mergeElementOnHit(opts.onHit ?? [], packet, this.cfg.get('magic-subtypes'), this.cfg.get('debuffs')) };
   }
 
   // ── Активные скиллы ───────────────────────────────────────
@@ -961,7 +961,7 @@ export class GameSession {
     if (dm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= dm.outDamageMult;
     const base = monsterCombatStats(m.def);
     const attacker = dm.accuracyMult !== 1 ? { ...base, accuracy: base.accuracy * dm.accuracyMult } : base;
-    return { packet, attacker, debuffs: monsterDebuffs(m.def, this.cfg.get('phys-subtypes'), this.cfg.get('magic-subtypes')) };
+    return { packet, attacker, debuffs: monsterDebuffs(m.def, this.cfg.get('phys-subtypes'), this.cfg.get('magic-subtypes'), this.cfg.get('debuffs')) };
   }
 
   private monsterMelee(m: MonsterEntity, target: PlayerEntity): void {

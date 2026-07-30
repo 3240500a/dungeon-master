@@ -338,7 +338,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
           for (const t of Object.keys(pkt) as DamageType[]) pkt[t] = byType[t]?.max ?? 0;
         }
         // physSub — только если в ударе остался физ. урон (при полной конверсии гаснет).
-        const out: DebuffApply[] = (weapon && pkt.physical > 0) ? [...weaponDebuffs(weapon, physSubs)] : [];
+        const out: DebuffApply[] = (weapon && pkt.physical > 0) ? [...weaponDebuffs(weapon, physSubs, debuffsCfg)] : [];
         // Явный статус скилла (переопределяет авто того же вида).
         if (act && 'ailment' in act && act.ailment) {
           const kind = (act.ailment.kind ?? dmgCfg.find((x) => x.id === el)?.ailment) as DebuffKind | undefined;
@@ -349,7 +349,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
         }
         // Авто стих-проки по стихиям в ударе (дедуп: physSub/явный статус того же вида приоритетнее).
         const have = new Set<DebuffKind>(out.map((x) => x.kind));
-        out.push(...elementDebuffs(pkt, dmgCfg).filter((x) => !have.has(x.kind)));
+        out.push(...elementDebuffs(pkt, dmgCfg, debuffsCfg).filter((x) => !have.has(x.kind)));
         return out;
       };
       const ailmentTip = (binding: string | null): string => {
