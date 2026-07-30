@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, isDotKind, emptyPacket, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, emptyPacket, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType } from '../combat/playerStats.js';
@@ -90,17 +90,16 @@ const RES: [keyof DerivedStats, DamageType][] = [
 
 const DMG_TYPES: DamageType[] = ['physical', 'fire', 'cold', 'lightning', 'poison'];
 
-function resRow(label: string, frac: number, color: string): HTMLElement {
+function resRow(label: string, frac: number, color: string, tip?: string, labelW = 60): HTMLElement {
   const row = mk('div', 'display:flex;align-items:center;gap:8px;padding:3px 0;cursor:help');
-  row.append(mk('span', `width:60px;font-size:13px;color:${COLORS.dim}`, label));
+  row.append(mk('span', `width:${labelW}px;font-size:13px;color:${COLORS.dim}`, label));
   const bar = mk('div', `flex:1;height:6px;background:${COLORS.panel};border-radius:999px;overflow:hidden`);
   const fill = mk('div', `height:100%;background:${color}`);
   fill.style.width = `${Math.max(0, Math.min(100, frac * 100))}%`;
   bar.append(fill);
   row.append(bar);
   row.append(mk('span', 'width:40px;text-align:right;font-size:13px;font-weight:500', `${Math.round(frac * 100)}%`));
-  attachTooltip(row, () =>
-    `Снижает урон стихии «${label}» на ${Math.round(frac * 100)}%. Максимум — 75%.`);
+  attachTooltip(row, () => tip ?? `Снижает урон стихии «${label}» на ${Math.round(frac * 100)}%. Максимум — 75%.`);
   return row;
 }
 
@@ -298,8 +297,21 @@ export const characterPanel: PanelFactory = (app, ui) => {
         const w = state.save.equipment.weapon;
         // Скейл задаёт вес оружия; тултип упрощён: магическое → Интеллект, иначе по типу атаки.
         const attrName = w?.damageKind === 'magical' ? 'Интеллекта' : (w?.attackType ?? 'melee') === 'ranged' ? 'Ловкости' : 'Силы';
+        // Бонусы урона с гира/скиллов: %-множители по типам + плоские стихийные добавки.
+        const pctRows: string[] = [];
+        if (d.damagePct) pctRows.push(`весь урон +${Math.round(d.damagePct * 100)}%`);
+        for (const [pk, t] of [['physPct', 'physical'], ['firePct', 'fire'], ['coldPct', 'cold'], ['lightningPct', 'lightning'], ['poisonPct', 'poison']] as [keyof DerivedStats, DamageType][]) {
+          const v = d[pk] as number; if (v) pctRows.push(`<span style="color:${dmgColor(t)}">${dmgName(t)}</span> +${Math.round(v * 100)}%`);
+        }
+        const addRows: string[] = [];
+        for (const [ak, t] of [['addFire', 'fire'], ['addCold', 'cold'], ['addLightning', 'lightning'], ['addPoison', 'poison']] as [keyof DerivedStats, DamageType][]) {
+          const v = d[ak] as number; if (v) addRows.push(`<span style="color:${dmgColor(t)}">■</span> +${Math.round(v)} ${dmgName(t)}`);
+        }
+        const bonus = (pctRows.length || addRows.length)
+          ? `<br><br><b>Бонусы урона:</b><br>${[...addRows, ...pctRows].join('<br>')}`
+          : '';
         return `Урон базовой атаки по типам:<br>${typeLines(byType)}<br><br>` +
-          `Тип базы — по оружию. Растёт от базы оружия и <b>${attrName}</b>; стихийные добавки — с аффиксов гира/скиллов.`;
+          `Тип базы — по оружию. Растёт от базы оружия и <b>${attrName}</b>; стихийные добавки — с аффиксов гира/скиллов.${bonus}`;
       };
       const skillTree = app.config.get('skill-tree');
 
@@ -444,6 +456,10 @@ export const characterPanel: PanelFactory = (app, ui) => {
         'Рейтинг атаки. Шанс попасть = меткость / (меткость + уклонение цели), 5–95%.' +
         (lt ? `<br>По «${lt.name}» (последний): <b>${hitPct}%</b> попасть.` : '<br>Атакуй монстра — покажу реальный шанс по нему.'),
         delta(d.accuracy, pd.accuracy)));
+      off.append(statRow('Скор. каста', `×${d.castSpeed.toFixed(2)}`,
+        'Множитель скорости каста: каст-тайм скиллов делится на неё. Растёт от Интеллекта.'));
+      if (d.armorPen > 0) off.append(statRow('Пробой брони', `${Math.round(d.armorPen * 100)}%`,
+        'Игнорирует эту долю брони цели при ударе.'));
       body.append(off);
 
       // Защита.
@@ -468,11 +484,25 @@ export const characterPanel: PanelFactory = (app, ui) => {
       def.append(statRow('Реген маны', `${d.manaRegen.toFixed(1)} /с`,
         `Восстанавливает ${d.manaRegen.toFixed(1)} маны каждую секунду.`,
         delta(d.manaRegen, pd.manaRegen, { digits: 1, suffix: ' /с' })));
+      def.append(statRow('Реген вынос.', `${d.staminaRegen.toFixed(1)} /с`,
+        `Восстанавливает ${d.staminaRegen.toFixed(1)} выносливости каждую секунду.`,
+        delta(d.staminaRegen, pd.staminaRegen, { digits: 1, suffix: ' /с' })));
+      if (d.interruptResist > 0) def.append(statRow('Стойк. к прерыв.', `${Math.round(d.interruptResist * 100)}%`,
+        'Шанс НЕ сбить замах тяжёлого удара при стане/ошеломлении цели.'));
       body.append(def);
 
-      // Сопротивления.
+      // Сопротивления: стихийные (снижают урон стихии) + выдержка к физ. статусам (из брони).
       const res = sheetPanel('Сопротивления');
       for (const [key, elem] of RES) res.append(resRow(dmgName(elem), d[key], dmgColor(elem)));
+      // Выдержка (poise): снижает шанс И длительность физ-дебаффов, считается из надетой брони.
+      const armorClasses = app.config.get('armor-classes');
+      const gearItems = Object.values(state.save.equipment).filter((it): it is Item => !!it);
+      res.append(mk('div', `font-size:11px;color:${COLORS.dim};margin:9px 0 3px;text-transform:uppercase;letter-spacing:.04em`, 'Стойкость к физ. статусам'));
+      for (const k of ['wound', 'bleed', 'sunder', 'daze'] as DebuffKind[]) {
+        const poise = armorPoise(gearItems, k, armorClasses);
+        res.append(resRow(`${debuffIcon(debuffsCfg, k)} ${debuffLabel(debuffsCfg, k)}`, poise, '#b0a58c',
+          `Выдержка от брони: снижает шанс И длительность статуса «${debuffLabel(debuffsCfg, k)}» на ${Math.round(poise * 100)}%. Максимум — 60%.`, 110));
+      }
       body.append(res);
 
       // Статусы (наложение): глобальные + per-kind бонусы от пассивок/гира (ветки скиллов).
