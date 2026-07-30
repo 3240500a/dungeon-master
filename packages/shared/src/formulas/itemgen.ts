@@ -72,7 +72,8 @@ function gearFields(base: ItemsBase[number]): Partial<Item> {
   if (base.kind === 'weapon') {
     return {
       slot: base.slot,
-      weaponType: base.weaponType,
+      attackType: base.attackType,
+      damageKind: base.damageKind,
       damageType: base.damageType,
       hands: base.hands,
       weaponClass: base.weaponClass,

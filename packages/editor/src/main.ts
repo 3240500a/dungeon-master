@@ -103,23 +103,24 @@ function entryLabel(entry: unknown, i: number): string {
 }
 
 // ── Дерево-навигация для дискриминированных массивов (items.base) ──────────────
-/** Поля пути дерева по виду (Тип → Подтип → Класс). */
+/** Поля пути дерева по виду (Оружие: Вес → Тип урона → Тип атаки → Класс). */
 const TREE_PATH: Record<string, string[]> = {
-  weapon: ['weaponType', 'weaponClass'],
+  weapon: ['weight', 'damageKind', 'attackType', 'weaponClass'],
   armor: ['slot', 'armorClass'],
   shield: ['shieldClass'],
   jewelry: ['slot'],
   consumable: [],
 };
-/** Русские подписи узлов дерева. */
+/** Русские подписи узлов дерева (по ЗНАЧЕНИЯМ сегментов пути). */
 const TREE_LABEL: Record<string, string> = {
   weapon: 'Оружие', armor: 'Броня', shield: 'Щиты', jewelry: 'Украшение', consumable: 'Расходники',
-  melee: 'Ближнее', ranged: 'Дальнее', magic: 'Магическое',
+  melee: 'Ближнее', ranged: 'Дальнее',
+  physical: 'Физический', magical: 'Магический',
+  superlight: 'Сверхлёгкое', light: 'Лёгкие', medium: 'Средние', heavy: 'Тяжёлые',
   sword: 'Мечи', axe: 'Топоры', mace: 'Булавы', dagger: 'Кинжалы', spear: 'Копья',
   bow: 'Луки', crossbow: 'Арбалеты', wand: 'Жезлы', staff: 'Посохи',
   helm: 'Шлемы', chest: 'Нагрудники', gloves: 'Перчатки', boots: 'Сапоги', belt: 'Пояса',
   ring: 'Кольца', amulet: 'Амулеты',
-  light: 'Лёгкие', medium: 'Средние', heavy: 'Тяжёлые',
 };
 /** Подпись узла: статичная карта → имя из конфига классов брони → сырой id. */
 const treeLabel = (seg: string): string =>

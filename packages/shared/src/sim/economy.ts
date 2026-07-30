@@ -4,7 +4,7 @@ import { meetsRequirements } from '../formulas/stats.js';
 import { estimateAttack } from '../formulas/playerCombat.js';
 import type { Rng } from '../formulas/rng.js';
 import type { StatModifier } from '../types/attributes.js';
-import type { Item, Rarity, WeaponType } from '../types/items.js';
+import type { Item, Rarity, AttackType } from '../types/items.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { SaveState } from '../types/save.js';
 import { botAttrs, botDerived } from './playerBot.js';
@@ -64,15 +64,15 @@ function scoreMods(mods: StatModifier[], offenseBias: number): number {
   return s;
 }
 
-/** Профильный тип оружия класса (по стартовому оружию). */
-export function classWeaponType(reg: ConfigRegistry, classId: string): WeaponType {
+/** Профильный тип атаки класса (по стартовому оружию). */
+export function classAttackType(reg: ConfigRegistry, classId: string): AttackType {
   const cls = reg.get('classes').find((c) => c.id === classId);
   const w = cls ? reg.get('items.base').find((b) => b.id === cls.startWeaponId) : undefined;
-  return (w?.kind === 'weapon' ? w.weaponType : 'melee') as WeaponType;
+  return (w?.kind === 'weapon' ? w.attackType : 'melee') as AttackType;
 }
 
 function isWeaponLike(item: Item): boolean {
-  return item.slot === 'weapon' || (item.slot === 'offhand' && !!item.weaponType);
+  return item.slot === 'weapon' || (item.slot === 'offhand' && !!item.attackType);
 }
 
 /** Скор предмета для решения экипа. Оружие — по фактическому DPS (мягко к своему типу). */
@@ -85,7 +85,7 @@ export function scoreItem(reg: ConfigRegistry, save: SaveState, item: Item, poli
     let incAps = 0;
     for (const m of itemMods(item)) if (m.stat === 'attackSpeed' && m.kind === 'increased') incAps += m.value;
     const dps = avg * (1 + incAps);
-    const onType = item.weaponType === classWeaponType(reg, save.classId) ? 1.1 : 1.0;
+    const onType = item.attackType === classAttackType(reg, save.classId) ? 1.1 : 1.0;
     return dps * onType + scoreMods(itemMods(item), policy.offenseBias) * 0.1;
   }
   return scoreMods(itemMods(item), policy.offenseBias);

@@ -186,7 +186,7 @@ function renderRunReport(r: RunReport, ms: number, rarities: { id: string; color
 
   const equip = b.equipment.map((e) => {
     const col = rarityColor(e.rarity);
-    const tags = [e.weaponType, e.armorClass, e.weight, e.physSub].filter(Boolean).join('/');
+    const tags = [e.attackType, e.damageKind, e.armorClass, e.weight, e.physSub].filter(Boolean).join('/');
     const aff = e.affixes.length ? `<div style="color:#8a8a9a;font-size:11px;margin-left:78px">${e.affixes.join(' · ')}</div>` : '';
     return `<div style="margin:3px 0"><span style="display:inline-block;width:70px;color:#8a8a9a;font-size:12px">${e.slot}</span>
       <span style="color:${col}">${e.name}</span> <span style="color:#666;font-size:11px">${tags}</span>${aff}</div>`;

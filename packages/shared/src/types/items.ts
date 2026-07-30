@@ -17,8 +17,10 @@ export type EquipSlot =
   | 'ring'
   | 'amulet';
 
-/** Тип оружия определяет паттерн базовой атаки (ЛКМ) и скейл от атрибута. */
-export type WeaponType = 'melee' | 'ranged' | 'magic';
+/** Тип атаки: ближний взмах vs снаряд. Задаёт паттерн базовой атаки (ЛКМ) и фолбэк-атрибут. */
+export type AttackType = 'melee' | 'ranged';
+/** Вид урона: физический (physSub-статусы, вес по Сила/Ловк) vs магический (стихия, вес=Инт, болт тратит ману). */
+export type DamageKind = 'physical' | 'magical';
 
 /** Вид предмета — дискриминатор базы (совпадает со схемой items.base). */
 export type ItemKind = 'weapon' | 'armor' | 'shield' | 'jewelry' | 'consumable';
@@ -95,8 +97,10 @@ export interface ItemBase extends WeaponSignature {
   beltSlots?: number;
   /** Эффект применения (для kind='consumable'). */
   use?: ConsumableUse;
-  /** Только для оружия. */
-  weaponType?: WeaponType;
+  /** Тип атаки (ближний/дальний). Только для оружия. */
+  attackType?: AttackType;
+  /** Вид урона (физический/магический). Только для оружия. */
+  damageKind?: DamageKind;
   /** Тип базового урона оружия (physical для мили/луков, стихия для посохов). */
   damageType?: DamageType;
   /** Сколько рук занимает оружие (1 или 2). Двуручное блокирует offhand. */
@@ -135,7 +139,8 @@ export interface Item extends WeaponSignature {
   beltSlots?: number;
   /** Эффект применения (для kind='consumable'). */
   use?: ConsumableUse;
-  weaponType?: WeaponType;
+  attackType?: AttackType;
+  damageKind?: DamageKind;
   damageType?: DamageType;
   hands?: number;
   rarity: Rarity;

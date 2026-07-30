@@ -9,7 +9,7 @@ import { xpForLevel } from '../formulas/xp.js';
 import type { Rng } from '../formulas/rng.js';
 import { DEFAULT_HP_MANA_SCALING, type Attributes, type DerivedStats, type StatModifier } from '../types/attributes.js';
 import type { CombatStats, DamageType } from '../types/combat.js';
-import type { Item, WeaponType } from '../types/items.js';
+import type { Item, AttackType } from '../types/items.js';
 import { SAVE_VERSION, type SaveState } from '../types/save.js';
 import type { BuildPolicy } from './types.js';
 
@@ -62,7 +62,7 @@ export function botAttrs(reg: ConfigRegistry, save: SaveState): Attributes {
 export function classProfileAttr(reg: ConfigRegistry, classId: string): keyof Attributes {
   const cls = reg.get('classes').find((c) => c.id === classId);
   const w = cls ? reg.get('items.base').find((b) => b.id === cls.startWeaponId) : undefined;
-  return WEAPON_ATTR[(w?.kind === 'weapon' ? w.weaponType : 'melee') as WeaponType];
+  return WEAPON_ATTR[(w?.kind === 'weapon' ? w.attackType : 'melee') as AttackType];
 }
 
 /** Тратит нераспределённые очки атрибутов: профиль + пол живучести, с разбросом билда. */
@@ -104,8 +104,8 @@ export function levelUpBotTo(
 
 /** Способности AoE (бьют по всей пачке) — по abilityId, как в боевом контроллере. */
 const AOE_RE = /nova|shout|taunt|caltrops|berserk|wolf|horn|rally|blizzard|meteor|trap|rain|skin|wall/;
-/** Уклон монстров ближнего боя за счёт кайта игрока (по типу оружия). Стрелки кайт игнорируют. */
-const KITE_DODGE: Record<WeaponType, number> = { melee: 0, ranged: 0.35, magic: 0.25 };
+/** Уклон монстров ближнего боя за счёт кайта игрока (по типу атаки). Стрелки кайт игнорируют. */
+const KITE_DODGE: Record<AttackType, number> = { melee: 0, ranged: 0.35 };
 
 function abilityElement(id: string): DamageType {
   if (/fire|flame|meteor/.test(id)) return 'fire';
@@ -157,7 +157,7 @@ export interface PlayerModel {
   attrs: Attributes;
   derived: DerivedStats;
   weapons: (Item | undefined)[];
-  scaling: Record<WeaponType, number>;
+  scaling: number;
   /** Справочник весов оружия (data-driven доли скейла/сигнатуры). */
   weights: ConfigShapes['weapon-weights'];
   /** Секунд между ударами (с учётом дуал-вилда). */
@@ -183,7 +183,7 @@ export function makePlayerModel(
   const weapons = attackWeaponsOf(save);
   const dual = weapons.length > 1;
   const attackInterval = 1 / Math.max(0.2, d.attackSpeed * (dual ? 1.2 : 1));
-  const mainWt: WeaponType = save.equipment.weapon?.weaponType ?? 'melee';
+  const mainAt: AttackType = save.equipment.weapon?.attackType ?? 'melee';
   return {
     combat: combatStatsOf(d, save.level),
     attrs, derived: d, weapons,
@@ -193,6 +193,6 @@ export function makePlayerModel(
     maxHp: d.maxHp, hpRegen: d.hpRegen,
     maxMana: d.maxMana, manaRegen: d.manaRegen,
     skills: opts.useSkills ? buildSkills(reg, save, d, attrs) : [],
-    kiteDodge: KITE_DODGE[mainWt],
+    kiteDodge: KITE_DODGE[mainAt],
   };
 }

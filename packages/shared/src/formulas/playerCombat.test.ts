@@ -4,7 +4,7 @@ import { damageMultOf, attackByType, estimateAttack } from './playerCombat.js';
 import type { Attributes } from '../types/attributes.js';
 
 const attrs: Attributes = { strength: 10, dexterity: 10, intelligence: 10, vitality: 10 };
-const scaling = { melee: 0.5, ranged: 0.5, magic: 0.5 };
+const scaling = 0.5;
 // weightScaleSplit не вызывается без оружия-melee-с-весом → таблица весов не нужна.
 const weights = {} as never;
 

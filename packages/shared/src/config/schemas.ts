@@ -80,12 +80,8 @@ export const balanceSchema = z.object({
         .default({}),
     })
     .default({}),
-  /** Множитель урона на единицу профильного атрибута по типу оружия. */
-  weaponAttrScaling: z.object({
-    melee: z.number(),
-    ranged: z.number(),
-    magic: z.number(),
-  }),
+  /** Множитель урона на единицу вклада атрибутов (единый; сам скейл-профиль задаёт вес оружия). */
+  weaponAttrScaling: z.number(),
   /** Доп. множитель силовых сигнатур двуручного оружия. */
   twoHandedPowerMult: z.number().min(1).default(1.3),
   forgePrices: z.object({
@@ -287,8 +283,10 @@ const weaponBaseSchema = z.object({
   kind: z.literal('weapon'),
   ...itemBaseCommon,
   slot: z.enum(['weapon', 'offhand']).default('weapon'),
-  /** Подтип (паттерн атаки/скейл): ближний/дальний/магический. */
-  weaponType: z.enum(['melee', 'ranged', 'magic']),
+  /** Тип атаки: ближний взмах / дальний снаряд. */
+  attackType: z.enum(['melee', 'ranged']),
+  /** Вид урона: физический (physSub, вес по Сила/Ловк) / магический (стихия, вес=Инт, болт тратит ману). */
+  damageKind: z.enum(['physical', 'magical']),
   /** Класс оружия (ветвь дерева редактора). */
   weaponClass: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff']),
   /** id веса (из конфига weapon-weights). */
@@ -669,9 +667,10 @@ const ailmentApplySchema = z.object({
   maxStacks: z.number().int().min(1),
   durationMs: z.number().min(0),
 });
-/** Ограничения оружия скилла (пусто → любое). Тип + класс + число рук + требование дуала. */
+/** Ограничения оружия скилла (пусто → любое). Тип атаки + вид урона + класс + число рук + требование дуала. */
 const weaponRestrict = {
-  weaponTypes: z.array(z.enum(['melee', 'ranged', 'magic'])).optional(),
+  attackTypes: z.array(z.enum(['melee', 'ranged'])).optional(),
+  damageKinds: z.array(z.enum(['physical', 'magical'])).optional(),
   weaponClasses: z.array(z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff'])).optional(),
   hands: z.enum(['any', 'one', 'two']).default('any'),
   /** Требует два оружия в руках (оба слота — оружие, не щит). Для ветки «дуал». */
@@ -879,7 +878,8 @@ export const skillTreeSchema = z.object({
       resource: z.enum(['stamina', 'mana', 'none']).default('none'),
       // Гейт использования (пусто → без ограничения); проставляется узлам ветки в weaponRestrict.
       weaponClasses: z.array(z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff'])).optional(),
-      weaponType: z.enum(['melee', 'ranged', 'magic']).optional(),
+      attackType: z.enum(['melee', 'ranged']).optional(),
+      damageKind: z.enum(['physical', 'magical']).optional(),
       hands: z.enum(['any', 'one', 'two']).optional(),
       element: damageTypeEnum.optional(),
       armorClasses: z.array(z.string()).optional(),

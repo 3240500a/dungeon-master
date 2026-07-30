@@ -48,7 +48,7 @@ export class PlayerVfx {
   currentAttack(state: GameState, cfg: ConfigRegistry, action?: string): AttackGeom {
     const save = state.save;
     const weapon = save.equipment.weapon;
-    const weaponMelee = (weapon?.weaponType ?? 'melee') === 'melee';
+    const weaponMelee = (weapon?.attackType ?? 'melee') === 'melee';
     const mel = cfg.get('balance').melee;
     let rangeMult = 1, arcMult = 1, color = STEEL, speed = 1, melee = weaponMelee;
     let dash: AttackGeom['dash'];

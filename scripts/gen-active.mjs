@@ -28,12 +28,12 @@ const CLASSES = {
   // ── Волкодав — копьё/топор/щит, Сила+Живуч ──
   warrior: {
     druzhina: { name: 'Дружина', ab: [
-      atk('lunge', 'Пронзающий выпад', 5, 0.8, { weaponTypes: ['melee'], damageMult: 1.3, pierce: true, arcMult: 0.7, rangeMult: 1.3, ailment: ail('wound', 0.5, 0.06, 3000, 4, 0.1) }),
-      atk('cleave-axe', 'Секира', 8, 1.2, { weaponTypes: ['melee'], damageMult: 1.4, arcMult: 1.5, ailment: ail('sunder', 0.6, 0.05, 4000, 5) }),
-      atk('steel-whirl', 'Вихрь стали', 12, 2.0, { weaponTypes: ['melee'], damageMult: 1.1, arcMult: 2.6, rangeMult: 1.1, ailment: ail('bleed', 0.5, 4, 3000, 5) }),
+      atk('lunge', 'Пронзающий выпад', 5, 0.8, { attackTypes: ['melee'], damageMult: 1.3, pierce: true, arcMult: 0.7, rangeMult: 1.3, ailment: ail('wound', 0.5, 0.06, 3000, 4, 0.1) }),
+      atk('cleave-axe', 'Секира', 8, 1.2, { attackTypes: ['melee'], damageMult: 1.4, arcMult: 1.5, ailment: ail('sunder', 0.6, 0.05, 4000, 5) }),
+      atk('steel-whirl', 'Вихрь стали', 12, 2.0, { attackTypes: ['melee'], damageMult: 1.1, arcMult: 2.6, rangeMult: 1.1, ailment: ail('bleed', 0.5, 4, 3000, 5) }),
     ], m: [m('physPct', 'flat', 0.02, 'Физ. урон'), m('attackSpeed', 'increased', 0.015, 'Скор. атаки'), m('critChance', 'flat', 0.008, 'Крит'), m('strength', 'flat', 2, 'Сила')] },
     natisk: { name: 'Натиск', ab: [
-      cst('charge', 'Рывок', 8, 5, 'dash', { weaponTypes: ['melee'], damageMult: 1.0, dashDist: 190 }),
+      cst('charge', 'Рывок', 8, 5, 'dash', { attackTypes: ['melee'], damageMult: 1.0, dashDist: 190 }),
       buf('warcry', 'Боевой клич', 10, 12, 8, [{ stat: 'attackSpeed', kind: 'increased', value: 0.2 }, { stat: 'moveSpeed', kind: 'increased', value: 0.15 }]),
       buf('unbreakable', 'Несокрушимость', 12, 16, 8, [{ stat: 'interruptResist', kind: 'flat', value: 0.5 }, { stat: 'armor', kind: 'increased', value: 0.4 }]),
     ], m: [m('maxHp', 'flat', 12, 'Здоровье'), m('interruptResist', 'flat', 0.03, 'Стойкость'), m('moveSpeed', 'increased', 0.01, 'Скор. движ.'), m('strength', 'flat', 2, 'Сила')] },
@@ -46,17 +46,17 @@ const CLASSES = {
   // ── Заклинатель — посох/жезл, Инт+Живуч ──
   mage: {
     fire: { name: 'Огонь', ab: [
-      atk('firebolt', 'Огненный шар', 6, 0.5, { weaponTypes: ['magic'], damageMult: 1.2, element: 'fire', ailment: ail('burn', 0.4, 5, 3000, 4) }),
+      atk('firebolt', 'Огненный шар', 6, 0.5, { damageKinds: ['magical'], damageMult: 1.2, element: 'fire', ailment: ail('burn', 0.4, 5, 3000, 4) }),
       cst('fireblast', 'Взрыв пламени', 12, 1.4, 'nova', { element: 'fire', convertPct: 0.85, damageMult: 1.4, radius: 150, ailment: ail('burn', 0.6, 6, 3000, 5) }),
       cst('meteor', 'Метеор', 20, 6, 'meteor', { element: 'fire', convertPct: 0.85, damageMult: 2.2, radius: 150, ailment: ail('burn', 0.8, 8, 4000, 5) }),
     ], m: [m('firePct', 'flat', 0.025, 'Урон огнём'), m('castSpeed', 'increased', 0.02, 'Скор. каста'), m('maxMana', 'flat', 10, 'Мана'), m('intelligence', 'flat', 2, 'Интеллект')] },
     storm: { name: 'Молния', ab: [
-      atk('lightning-bolt', 'Молния', 6, 0.5, { weaponTypes: ['magic'], damageMult: 1.2, element: 'lightning', ailment: ail('shock', 0.4, 0.08, 3000, 4) }),
+      atk('lightning-bolt', 'Молния', 6, 0.5, { damageKinds: ['magical'], damageMult: 1.2, element: 'lightning', ailment: ail('shock', 0.4, 0.08, 3000, 4) }),
       cst('chain-lightning', 'Цепная молния', 12, 1.6, 'boomerang', { element: 'lightning', convertPct: 0.85, damageMult: 1.3, ailment: ail('shock', 0.5, 0.1, 3000, 5) }),
       cst('thunderstorm', 'Гроза', 18, 5, 'ground', { element: 'lightning', convertPct: 0.85, damageMult: 1.6, radius: 150, ailment: ail('shock', 0.6, 0.1, 3000, 5) }),
     ], m: [m('lightningPct', 'flat', 0.025, 'Урон молнией'), m('critMultiplier', 'flat', 0.03, 'Множ. крита'), m('castSpeed', 'increased', 0.02, 'Скор. каста'), m('intelligence', 'flat', 2, 'Интеллект')] },
     frost: { name: 'Лёд', ab: [
-      atk('ice-shard', 'Ледяная стрела', 6, 0.5, { weaponTypes: ['magic'], damageMult: 1.2, element: 'cold', ailment: ail('freeze', 0.4, 0.15, 2500, 4, 0.05) }),
+      atk('ice-shard', 'Ледяная стрела', 6, 0.5, { damageKinds: ['magical'], damageMult: 1.2, element: 'cold', ailment: ail('freeze', 0.4, 0.15, 2500, 4, 0.05) }),
       cst('frost-nova', 'Ледяная нова', 14, 5, 'nova', { element: 'cold', convertPct: 0.85, damageMult: 1.3, radius: 150, ailment: ail('freeze', 0.7, 0.2, 2500, 5, 0.15) }),
       cst('blizzard', 'Метель', 20, 7, 'ground', { element: 'cold', convertPct: 0.85, damageMult: 1.6, radius: 160, ailment: ail('freeze', 0.6, 0.18, 2500, 5, 0.1) }),
     ], m: [m('coldPct', 'flat', 0.025, 'Урон холодом'), m('maxMana', 'flat', 10, 'Мана'), m('manaRegen', 'flat', 0.2, 'Реген маны'), m('intelligence', 'flat', 2, 'Интеллект')] },
@@ -64,8 +64,8 @@ const CLASSES = {
   // ── Ловчая — лук, Ловк+Инт ──
   archer: {
     precision: { name: 'Меткость', ab: [
-      atk('multishot', 'Мультивыстрел', 8, 0.9, { weaponTypes: ['ranged'], damageMult: 0.7, count: 3, spread: 0.35 }),
-      atk('piercing-shot', 'Пронзающая стрела', 10, 1.2, { weaponTypes: ['ranged'], damageMult: 1.6, pierce: true }),
+      atk('multishot', 'Мультивыстрел', 8, 0.9, { attackTypes: ['ranged'], damageMult: 0.7, count: 3, spread: 0.35 }),
+      atk('piercing-shot', 'Пронзающая стрела', 10, 1.2, { attackTypes: ['ranged'], damageMult: 1.6, pierce: true }),
       cst('rain-of-arrows', 'Ливень стрел', 18, 6, 'ground', { damageMult: 1.4, radius: 150 }),
     ], m: [m('critChance', 'flat', 0.008, 'Крит'), m('attackSpeed', 'increased', 0.015, 'Скор. атаки'), m('accuracy', 'flat', 0.01, 'Меткость'), m('dexterity', 'flat', 2, 'Ловкость')] },
     nets: { name: 'Сети', ab: [
@@ -74,7 +74,7 @@ const CLASSES = {
       cst('caltrops', 'Шипы', 10, 7, 'ground', { damageMult: 0.8, radius: 130, ailment: ail('freeze', 0.7, 0.2, 3000, 5) }),
     ], m: [m('ailmentPct', 'flat', 0.03, 'Наложение статусов'), m('critChance', 'flat', 0.008, 'Крит'), m('resPoison', 'flat', 0.02, 'Сопр. яду'), m('dexterity', 'flat', 2, 'Ловкость')] },
     elements: { name: 'Стихии', ab: [
-      atk('elemental-shot', 'Стихийный выстрел', 8, 0.8, { weaponTypes: ['ranged'], damageMult: 1.1, element: 'cold', ailment: ail('freeze', 0.4, 0.15, 2500, 4, 0.05) }),
+      atk('elemental-shot', 'Стихийный выстрел', 8, 0.8, { attackTypes: ['ranged'], damageMult: 1.1, element: 'cold', ailment: ail('freeze', 0.4, 0.15, 2500, 4, 0.05) }),
       cst('natures-wrath', 'Гнев природы', 16, 5, 'nova', { element: 'poison', convertPct: 0.7, damageMult: 1.3, radius: 150, ailment: ail('poison', 0.6, 4, 4000, 5) }),
       buf('forest-blessing', 'Благословение леса', 12, 14, 10, [{ stat: 'resFire', kind: 'flat', value: 0.15 }, { stat: 'resCold', kind: 'flat', value: 0.15 }, { stat: 'accuracy', kind: 'increased', value: 0.2 }]),
     ], m: [m('firePct', 'flat', 0.02, 'Урон огнём'), m('coldPct', 'flat', 0.02, 'Урон холодом'), m('accuracy', 'flat', 0.01, 'Меткость'), m('intelligence', 'flat', 2, 'Интеллект')] },
@@ -82,17 +82,17 @@ const CLASSES = {
   // ── Вьюга — меч+щит / 2H топор, Сила+Ловк ──
   vyuga: {
     valkyrie: { name: 'Валькирия', ab: [
-      atk('thunder-strike', 'Удар грома', 6, 0.9, { weaponTypes: ['melee'], damageMult: 1.3, element: 'lightning', ailment: ail('shock', 0.5, 0.08, 3000, 4) }),
+      atk('thunder-strike', 'Удар грома', 6, 0.9, { attackTypes: ['melee'], damageMult: 1.3, element: 'lightning', ailment: ail('shock', 0.5, 0.08, 3000, 4) }),
       buf('storm-shield', 'Щит бури', 10, 12, 8, [{ stat: 'blockChance', kind: 'increased', value: 0.3 }, { stat: 'lightningPct', kind: 'flat', value: 0.15 }]),
       cst('odins-spear', 'Копьё Одина', 14, 4, 'boomerang', { element: 'lightning', convertPct: 0.6, damageMult: 1.5, ailment: ail('shock', 0.6, 0.1, 3000, 5) }),
     ], m: [m('physPct', 'flat', 0.02, 'Физ. урон'), m('blockChance', 'increased', 0.02, 'Блок'), m('lightningPct', 'flat', 0.02, 'Урон молнией'), m('strength', 'flat', 2, 'Сила')] },
     northspirit: { name: 'Дух севера', ab: [
-      atk('ice-blade', 'Ледяной клинок', 6, 0.9, { weaponTypes: ['melee'], damageMult: 1.2, element: 'cold', ailment: ail('freeze', 0.5, 0.15, 2500, 4, 0.05) }),
-      atk('bloodletting', 'Кровопускание', 8, 1.2, { weaponTypes: ['melee'], damageMult: 1.3, ailment: ail('bleed', 0.6, 5, 3000, 5) }),
+      atk('ice-blade', 'Ледяной клинок', 6, 0.9, { attackTypes: ['melee'], damageMult: 1.2, element: 'cold', ailment: ail('freeze', 0.5, 0.15, 2500, 4, 0.05) }),
+      atk('bloodletting', 'Кровопускание', 8, 1.2, { attackTypes: ['melee'], damageMult: 1.3, ailment: ail('bleed', 0.6, 5, 3000, 5) }),
       cst('frost-whirl', 'Морозный вихрь', 14, 5, 'nova', { element: 'cold', convertPct: 0.6, damageMult: 1.3, radius: 140, ailment: ail('freeze', 0.7, 0.2, 2500, 5, 0.15) }),
     ], m: [m('coldPct', 'flat', 0.02, 'Урон холодом'), m('critChance', 'flat', 0.008, 'Крит'), m('evade', 'increased', 0.02, 'Уклонение'), m('dexterity', 'flat', 2, 'Ловкость')] },
     fury: { name: 'Ярость', ab: [
-      atk('cleaving-blow', 'Рассекающий удар', 6, 1.0, { weaponTypes: ['melee'], damageMult: 1.4, arcMult: 1.6 }),
+      atk('cleaving-blow', 'Рассекающий удар', 6, 1.0, { attackTypes: ['melee'], damageMult: 1.4, arcMult: 1.6 }),
       buf('blade-dance', 'Танец клинков', 10, 12, 8, [{ stat: 'evade', kind: 'increased', value: 0.3 }, { stat: 'attackSpeed', kind: 'increased', value: 0.2 }]),
       stn('berserk', 'Берсерк', 0.2, [{ stat: 'physPct', kind: 'flat', value: 0.25 }, { stat: 'attackSpeed', kind: 'increased', value: 0.15 }, { stat: 'armor', kind: 'increased', value: -0.3 }]),
     ], m: [m('physPct', 'flat', 0.02, 'Физ. урон'), m('attackSpeed', 'increased', 0.015, 'Скор. атаки'), m('critChance', 'flat', 0.008, 'Крит'), m('strength', 'flat', 2, 'Сила')] },
@@ -100,14 +100,14 @@ const CLASSES = {
   // ── Вольный стрелок — арбалет, Ловк+Живуч ──
   arbalest: {
     veteran: { name: 'Ветеран', ab: [
-      atk('heavy-bolt', 'Тяжёлый болт', 7, 1.1, { weaponTypes: ['ranged'], damageMult: 1.8, pierce: true }),
+      atk('heavy-bolt', 'Тяжёлый болт', 7, 1.1, { attackTypes: ['ranged'], damageMult: 1.8, pierce: true }),
       buf('take-aim', 'Прицельный выстрел', 8, 10, 6, [{ stat: 'critChance', kind: 'increased', value: 0.5 }, { stat: 'accuracy', kind: 'increased', value: 0.3 }]),
       cst('explosive-bolt', 'Разрывной болт', 14, 5, 'meteor', { element: 'fire', convertPct: 0.5, damageMult: 1.6, radius: 130, ailment: ail('burn', 0.6, 6, 3000, 5) }),
     ], m: [m('critChance', 'flat', 0.008, 'Крит'), m('critMultiplier', 'flat', 0.03, 'Множ. крита'), m('accuracy', 'flat', 0.01, 'Меткость'), m('dexterity', 'flat', 2, 'Ловкость')] },
     merc: { name: 'Наёмник', ab: [
-      atk('spread-shot', 'Веерный выстрел', 9, 0.9, { weaponTypes: ['ranged'], damageMult: 0.6, count: 5, spread: 0.5 }),
+      atk('spread-shot', 'Веерный выстрел', 9, 0.9, { attackTypes: ['ranged'], damageMult: 0.6, count: 5, spread: 0.5 }),
       cst('volley', 'Залп', 16, 6, 'ground', { damageMult: 1.3, radius: 160 }),
-      cst('retreat', 'Отход', 8, 6, 'leap', { weaponTypes: ['ranged'], damageMult: 0.5, dashDist: 200 }),
+      cst('retreat', 'Отход', 8, 6, 'leap', { attackTypes: ['ranged'], damageMult: 0.5, dashDist: 200 }),
     ], m: [m('attackSpeed', 'increased', 0.015, 'Скор. атаки'), m('moveSpeed', 'increased', 0.01, 'Скор. движ.'), m('maxDamage', 'flat', 2, 'Урон'), m('dexterity', 'flat', 2, 'Ловкость')] },
     tricks: { name: 'Уловки', ab: [
       buf('smoke-bomb', 'Дымовая шашка', 8, 12, 6, [{ stat: 'evade', kind: 'increased', value: 0.6 }]),
@@ -128,7 +128,7 @@ const CLASSES = {
       crs('mass-hex', 'Массовое проклятие', 16, 12, { radius: 240, ailment: ail('shock', 0.7, 0.1, 4000, 5) }),
     ], m: [m('ailmentPct', 'flat', 0.03, 'Наложение статусов'), m('castSpeed', 'increased', 0.02, 'Скор. каста'), m('intelligence', 'flat', 2, 'Интеллект'), m('maxMana', 'flat', 10, 'Мана')] },
     poison: { name: 'Яд', ab: [
-      atk('venom-blade', 'Отравленный клинок', 5, 0.7, { weaponTypes: ['melee'], damageMult: 1.1, element: 'poison', ailment: ail('poison', 0.7, 4, 4000, 6) }),
+      atk('venom-blade', 'Отравленный клинок', 5, 0.7, { attackTypes: ['melee'], damageMult: 1.1, element: 'poison', ailment: ail('poison', 0.7, 4, 4000, 6) }),
       cst('poison-cloud', 'Ядовитое облако', 14, 6, 'ground', { element: 'poison', convertPct: 0.7, damageMult: 1.1, radius: 150, ailment: ail('poison', 0.9, 5, 4000, 6) }),
       crs('decay', 'Разложение', 10, 8, { radius: 180, ailment: ail('poison', 0.9, 6, 5000, 8) }),
     ], m: [m('poisonPct', 'flat', 0.025, 'Урон ядом'), m('ailmentPct', 'flat', 0.03, 'Наложение статусов'), m('critChance', 'flat', 0.008, 'Крит'), m('dexterity', 'flat', 2, 'Ловкость')] },

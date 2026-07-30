@@ -1,6 +1,6 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
-import type { WeaponType } from '../types/items.js';
+import type { AttackType } from '../types/items.js';
 import type { MonsterEntity, PlayerEntity, DropEntity, WorldState } from '../world/state.js';
 import type { Vec2 } from '../world/movement.js';
 import { findPath } from '../world/pathfind.js';
@@ -29,8 +29,8 @@ export class BotController {
 
   constructor(private cfg: ConfigRegistry) {}
 
-  private weaponType(save: SaveState): WeaponType {
-    return save.equipment.weapon?.weaponType ?? 'melee';
+  private attackType(save: SaveState): AttackType {
+    return save.equipment.weapon?.attackType ?? 'melee';
   }
 
   /** Собирает до 4 выученных активок (с AoE-пометкой) как арсенал бота. */
@@ -64,7 +64,7 @@ export class BotController {
   }
 
   input(world: WorldState, p: PlayerEntity): PlayerInput {
-    const wt = this.weaponType(p.save);
+    const at = this.attackType(p.save);
     const maxHp = playerSnapshot(p.save, this.cfg).derived.maxHp;
     const hpFrac = p.hp / Math.max(1, maxHp);
     // Гистерезис: уходим в защиту ниже 40% HP, возвращаемся в бой только выше 70%.
@@ -112,8 +112,8 @@ export class BotController {
       const dx = target.pos.x - p.pos.x;
       const dy = target.pos.y - p.pos.y;
       facing = Math.atan2(dy, dx);
-      const engage = wt === 'melee' ? 46 : wt === 'ranged' ? 300 : 260;
-      const kite = wt !== 'melee' && nd < 70;
+      const engage = at === 'melee' ? 46 : 300;
+      const kite = at !== 'melee' && nd < 70;
       const los = hasLineOfSight(world.grid, p.pos.x, p.pos.y, target.pos.x, target.pos.y);
 
       if (lowHp || kite) {
@@ -126,10 +126,10 @@ export class BotController {
       }
 
       const tdist = Math.hypot(dx, dy);
-      const atkRange = wt === 'melee' ? 60 : 340;
+      const atkRange = at === 'melee' ? 60 : 340;
       if (los && tdist <= atkRange) attack = true;
       // Одиночный скилл — только не в защите, по видимой цели в дальности.
-      if (cast == null && !lowHp && los && tdist <= (wt === 'melee' ? 150 : 340)) {
+      if (cast == null && !lowHp && los && tdist <= (at === 'melee' ? 150 : 340)) {
         cast = this.readySkill(p, false);
       }
     } else if (drop && !lowHp) {

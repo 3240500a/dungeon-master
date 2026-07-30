@@ -16,7 +16,8 @@ export interface EquipSummary {
   name: string;
   rarity: string;
   itemLevel: number;
-  weaponType?: string;
+  attackType?: string;
+  damageKind?: string;
   armorClass?: string;
   weight?: string;
   physSub?: string;
@@ -93,7 +94,8 @@ function equipSummary(item: Item, slot: string): EquipSummary {
     name: item.name,
     rarity: item.rarity,
     itemLevel: item.itemLevel,
-    weaponType: item.weaponType,
+    attackType: item.attackType,
+    damageKind: item.damageKind,
     armorClass: item.armorClass,
     weight: item.weight,
     physSub: item.physSub,

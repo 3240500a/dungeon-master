@@ -12,7 +12,7 @@ import {
   type Item,
   type Rng,
   type TypedRange,
-  type WeaponType,
+  type AttackType,
 } from '@dm/shared';
 import type { GameState } from '../../core/gameState.js';
 
@@ -37,15 +37,15 @@ export function attackWeapons(state: GameState): (Item | undefined)[] {
 }
 
 /** Тип атаки (паттерн ЛКМ) — по основному оружию. */
-export function playerWeaponType(state: GameState): WeaponType {
-  return state.save.equipment.weapon?.weaponType ?? 'melee';
+export function playerAttackType(state: GameState): AttackType {
+  return state.save.equipment.weapon?.attackType ?? 'melee';
 }
 
 /** Пакет урона для удара конкретной рукой (см. buildAttackPacket в shared). */
 export function buildWeaponPacket(
   state: GameState,
   weapon: Item | undefined,
-  scaling: Record<WeaponType, number>,
+  scaling: number,
   weights: WeaponWeights,
   rng: Rng,
 ): DamagePacket {
@@ -55,7 +55,7 @@ export function buildWeaponPacket(
 /** Разбивка урона базовой атаки по типам; attrsOverride — для превью (лист персонажа). */
 export function attackDamageByType(
   state: GameState,
-  scaling: Record<WeaponType, number>,
+  scaling: number,
   weights: WeaponWeights,
   attrsOverride?: Attributes,
 ): Record<DamageType, TypedRange> {
@@ -72,7 +72,7 @@ export function attackDamageByType(
 export function estimateWeaponDamage(
   state: GameState,
   weapon: Item | undefined,
-  scaling: Record<WeaponType, number>,
+  scaling: number,
   weights: WeaponWeights,
 ): number {
   return estimateAttack(state.derived(), state.effectiveAttributes(), weapon, scaling, weights);

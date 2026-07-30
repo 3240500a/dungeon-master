@@ -55,7 +55,7 @@ function printRunReport(r: RunReport, ms: number): void {
   console.log(`  Активок: ${b.skills.length} · пассив-узлов: ${b.passiveNodes} (рангов ${b.passiveRanks})`);
   console.log(`  Экипировка:`);
   for (const e of b.equipment) {
-    const tags = [e.weaponType, e.armorClass, e.weight, e.physSub].filter(Boolean).join('/');
+    const tags = [e.attackType, e.damageKind, e.armorClass, e.weight, e.physSub].filter(Boolean).join('/');
     console.log(`    ${e.slot.padEnd(8)} ${e.name} [${e.rarity}${tags ? ' ' + tags : ''}]${e.affixes.length ? '  ' + e.affixes.join(', ') : ''}`);
   }
   console.log(`\n— Кривая (часы→уровень→этаж→мощь) —`);

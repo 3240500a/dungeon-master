@@ -295,8 +295,9 @@ export const characterPanel: PanelFactory = (app, ui) => {
         DMG_TYPES.filter((t) => bt[t].max > 0).map((t) =>
           `<span style="color:${dmgColor(t)}">■</span> ${dmgName(t)}: <b>${Math.round(bt[t].min)}–${Math.round(bt[t].max)}</b>`).join('<br>') || '—';
       const weaponTip = (): string => {
-        const wt = state.save.equipment.weapon?.weaponType ?? 'melee';
-        const attrName = wt === 'melee' ? 'Силы' : wt === 'ranged' ? 'Ловкости' : 'Интеллекта';
+        const w = state.save.equipment.weapon;
+        // Скейл задаёт вес оружия; тултип упрощён: магическое → Интеллект, иначе по типу атаки.
+        const attrName = w?.damageKind === 'magical' ? 'Интеллекта' : (w?.attackType ?? 'melee') === 'ranged' ? 'Ловкости' : 'Силы';
         return `Урон базовой атаки по типам:<br>${typeLines(byType)}<br><br>` +
           `Тип базы — по оружию. Растёт от базы оружия и <b>${attrName}</b>; стихийные добавки — с аффиксов гира/скиллов.`;
       };

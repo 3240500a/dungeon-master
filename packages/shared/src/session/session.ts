@@ -1,6 +1,6 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
-import type { Item, WeaponType } from '../types/items.js';
+import type { Item, AttackType } from '../types/items.js';
 import type { ScaledMonster, MonsterFaction } from '../types/world.js';
 import type { CombatStats, DamagePacket, DamageType } from '../types/combat.js';
 import type { StatModifier } from '../types/attributes.js';
@@ -398,8 +398,8 @@ export class GameSession {
     if (p.attackCd > 0 || p.windup) return;
     const hands = attackWeaponsOf(p.save);
     const weapon = hands[p.swingHand % hands.length]; // рука этого свинга (инкремент — в исполнении)
-    // Базовый удар магическим оружием (болт) — стоимость из конфига (деф. 0 = бесплатно, как melee/ranged).
-    if ((weapon?.weaponType ?? 'melee') === 'magic') {
+    // Базовый удар магическим оружием (болт) — стоимость из конфига (деф. 0 = бесплатно, как физ.).
+    if (weapon?.damageKind === 'magical') {
       const cost = this.cfg.get('balance').melee.basicManaCost;
       if (cost > 0) { if (p.mana < cost) return; p.mana -= cost; }
     }
@@ -423,11 +423,12 @@ export class GameSession {
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, scaling, this.weights(), this.rng);
     if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
-    const wt: WeaponType = weapon?.weaponType ?? 'melee';
+    const at: AttackType = weapon?.attackType ?? 'melee';
     // onHit базовой атаки по составу пакета: физ-статус подтипа + стих-статусы по стихиям в ударе.
     const opts = this.packetOnHit(this.weaponHitOpts(weapon), packet);
-    if (wt === 'melee') this.meleeSwing(p, packet, attacker, weapon, opts);
-    else this.spawnProjectile(p, packet, attacker, wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED, p.facing, { hitOpts: opts });
+    if (at === 'melee') this.meleeSwing(p, packet, attacker, weapon, opts);
+    // Скорость снаряда: магический болт медленнее (ABILITY), физ. дальнобой — быстрый (PLAYER).
+    else this.spawnProjectile(p, packet, attacker, weapon?.damageKind === 'magical' ? ABILITY_PROJ_SPEED : PLAYER_PROJ_SPEED, p.facing, { hitOpts: opts });
   }
 
   /** Взмах: дальность/дуга по оружию (копьё длиннее, топор шире). */
@@ -561,15 +562,16 @@ export class GameSession {
   /** Проверка ограничений оружия скилла (тип/класс/руки; пусто → любое оружие). */
   private weaponAllowed(p: PlayerEntity, active: OffensiveAbility | CurseAbility): boolean {
     const w = p.save.equipment.weapon;
-    const wt: WeaponType = w?.weaponType ?? 'melee';
-    if (active.weaponTypes?.length && !active.weaponTypes.includes(wt)) return false;
+    const at: AttackType = w?.attackType ?? 'melee';
+    if (active.attackTypes?.length && !active.attackTypes.includes(at)) return false;
+    if (active.damageKinds?.length && !(w?.damageKind && active.damageKinds.includes(w.damageKind))) return false;
     if (active.weaponClasses?.length && !(w?.weaponClass && active.weaponClasses.includes(w.weaponClass))) return false;
     if (active.hands !== 'any') {
       const need = active.hands === 'two' ? 2 : 1;
       if ((w?.hands ?? 1) !== need) return false;
     }
-    // Ветка «дуал»: в обоих слотах — оружие (у щита нет weaponType).
-    if (active.requiresDual && !(w?.weaponType && p.save.equipment.offhand?.weaponType)) return false;
+    // Ветка «дуал»: в обоих слотах — оружие (у щита нет attackType).
+    if (active.requiresDual && !(w?.attackType && p.save.equipment.offhand?.attackType)) return false;
     return true;
   }
 
@@ -629,7 +631,7 @@ export class GameSession {
     return mods;
   }
 
-  private scaling(): Record<WeaponType, number> {
+  private scaling(): number {
     return this.cfg.get('balance').weaponAttrScaling;
   }
 
@@ -680,8 +682,8 @@ export class GameSession {
     if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;   // дебафф раны — на весь урон
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
     const opts = this.skillOpts(active, element, weapon, packet);   // статусы по итоговому составу + скилл-эффекты
-    const wt: WeaponType = weapon?.weaponType ?? 'melee';
-    if (wt === 'melee') {
+    const at: AttackType = weapon?.attackType ?? 'melee';
+    if (at === 'melee') {
       // Мили-мультиудар: `hits` последовательных взмахов за скилл (каждый = damageMult), напр. «серия уколов».
       const hits = Math.max(1, active.hits);
       for (let h = 0; h < hits; h++) this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult);
@@ -689,7 +691,7 @@ export class GameSession {
     }
     // Дальнобой/маг: веер из `count` снарядов со `spread`; урон каждой = damageMult (для веера ставь ниже).
     const n = Math.max(1, active.count), spread = active.spread;
-    const speed = wt === 'ranged' ? PLAYER_PROJ_SPEED : ABILITY_PROJ_SPEED;
+    const speed = weapon?.damageKind === 'magical' ? ABILITY_PROJ_SPEED : PLAYER_PROJ_SPEED;
     for (let i = 0; i < n; i++) {
       const off = n > 1 ? -spread / 2 + (spread * i) / (n - 1) : 0;
       this.spawnProjectile(p, packet, attacker, speed, p.facing + off, { pierce: active.pierce, hitOpts: opts });

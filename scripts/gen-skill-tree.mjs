@@ -16,6 +16,15 @@ const crs = (id, name, cost, cd, o = {}) => ({ name, a: { category: 'curse', abi
 const aur = (id, name, res, mods) => ({ name, a: { category: 'aura', abilityId: id, toggleGroup: 'aura', reservePct: res, buffMods: mods } });
 const stn = (id, name, res, mods) => ({ name, a: { category: 'stance', abilityId: id, toggleGroup: 'stance', reservePct: res, buffMods: mods } });
 
+// Гейт ветки хранит singular attackType/damageKind (как в branchSchema). Способности же
+// используют weaponRestrict с ПЛЮРАЛЬНЫМИ массивами attackTypes/damageKinds — конвертируем.
+const abilityGate = (gate) => {
+  const g = { ...gate };
+  if (g.attackType) { g.attackTypes = [g.attackType]; delete g.attackType; }
+  if (g.damageKind) { g.damageKinds = [g.damageKind]; delete g.damageKind; }
+  return g;
+};
+
 // Подпись стата для описания пассива (fallback, если не задана явно).
 const SL = {
   critChance: 'к шансу крита', critMultiplier: 'к множителю крита', ailmentPct: 'к наложению статусов',
@@ -216,11 +225,11 @@ const B = [
   { id: 'b-dual', name: 'Парное оружие', group: 'dual', res: 'stamina', gate: { requiresDual: true }, c: 'dual' },
   { id: 'b-wand', name: 'Жезлы', group: 'weapon-magic', res: 'mana', gate: { weaponClasses: ['wand'] }, c: 'wand' },
   { id: 'b-staff', name: 'Посохи', group: 'weapon-magic', res: 'mana', gate: { weaponClasses: ['staff'] }, c: 'staff' },
-  { id: 'b-fire', name: 'Огонь', group: 'element', res: 'mana', gate: { weaponType: 'magic' }, c: 'fire' },
-  { id: 'b-cold', name: 'Холод', group: 'element', res: 'mana', gate: { weaponType: 'magic' }, c: 'cold' },
-  { id: 'b-lightning', name: 'Молния', group: 'element', res: 'mana', gate: { weaponType: 'magic' }, c: 'lightning' },
-  { id: 'b-poison', name: 'Яд', group: 'element', res: 'mana', gate: { weaponType: 'magic' }, c: 'poison' },
-  { id: 'b-curse', name: 'Проклятья', group: 'curse', res: 'mana', gate: { weaponType: 'magic' }, c: 'curse' },
+  { id: 'b-fire', name: 'Огонь', group: 'element', res: 'mana', gate: { damageKind: 'magical' }, c: 'fire' },
+  { id: 'b-cold', name: 'Холод', group: 'element', res: 'mana', gate: { damageKind: 'magical' }, c: 'cold' },
+  { id: 'b-lightning', name: 'Молния', group: 'element', res: 'mana', gate: { damageKind: 'magical' }, c: 'lightning' },
+  { id: 'b-poison', name: 'Яд', group: 'element', res: 'mana', gate: { damageKind: 'magical' }, c: 'poison' },
+  { id: 'b-curse', name: 'Проклятья', group: 'curse', res: 'mana', gate: { damageKind: 'magical' }, c: 'curse' },
   { id: 'b-aura', name: 'Ауры', group: 'aura', res: 'mana', gate: {}, c: 'aura' },
   { id: 'b-stance', name: 'Стойки', group: 'stance', res: 'stamina', gate: {}, c: 'stance' },
   { id: 'b-armor-light', name: 'Лёгкая броня', group: 'armor', res: 'none', gate: {}, c: 'armor-light' },
@@ -280,7 +289,7 @@ B.forEach((br) => {
     const common = { id: idOf(key), branchId: br.id, cost: { type: 'points', amount: 1 }, requires: [], levelReq: TIER_LVL[tier], x, y, notable: key === 'a5' || key === 'p9' };
     if (kind === 'a' && acts.length) {
       const ab = acts.shift();
-      ab.a = { ...ab.a, resource, ...br.gate };
+      ab.a = { ...ab.a, resource, ...abilityGate(br.gate) };
       node = { ...common, kind: 'active', name: ab.name, description: `Активный скилл: ${ab.name}.`, maxRank: 20, effect: { active: ab.a } };
     } else if (pas.length) {
       const [stat, mkind, value, label, statLabel] = pas.shift();
@@ -333,7 +342,7 @@ Object.entries(CLASS_META).forEach(([classId, meta]) => {
     if (kind === 'a' && aq.length) {
       const src = aq.shift();
       const a = { ...src.effect.active, resource: meta.res };
-      delete a.weaponTypes; delete a.weaponClasses; delete a.hands; // класс-скиллы — любым оружием
+      delete a.attackTypes; delete a.damageKinds; delete a.weaponClasses; delete a.hands; // класс-скиллы — любым оружием
       node = { ...common, kind: 'active', name: src.name, description: src.description || `Активный скилл: ${src.name}.`, maxRank: src.maxRank ?? 20, effect: { active: a } };
     } else if (pq.length) {
       const src = pq.shift();

@@ -71,7 +71,7 @@ export function simulateFight(
       pcd += model.attackInterval;
       const weapon = model.weapons[swing % model.weapons.length];
       swing += 1;
-      const isMagic = weapon?.weaponType === 'magic';
+      const isMagic = weapon?.damageKind === 'magical';
       if (!isMagic || mana >= MANA_PER_MAGIC_HIT) {
         if (isMagic) mana -= MANA_PER_MAGIC_HIT;
         const target = alive.reduce((a, b) => (b.hp < a.hp ? b : a));

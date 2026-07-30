@@ -152,7 +152,7 @@
       "name": "Огонь",
       "group": "element",
       "resource": "mana",
-      "weaponType": "magic",
+      "damageKind": "magical",
       "entryNode": "b-fire-e"
     },
     {
@@ -160,7 +160,7 @@
       "name": "Холод",
       "group": "element",
       "resource": "mana",
-      "weaponType": "magic",
+      "damageKind": "magical",
       "entryNode": "b-cold-e"
     },
     {
@@ -168,7 +168,7 @@
       "name": "Молния",
       "group": "element",
       "resource": "mana",
-      "weaponType": "magic",
+      "damageKind": "magical",
       "entryNode": "b-lightning-e"
     },
     {
@@ -176,7 +176,7 @@
       "name": "Яд",
       "group": "element",
       "resource": "mana",
-      "weaponType": "magic",
+      "damageKind": "magical",
       "entryNode": "b-poison-e"
     },
     {
@@ -184,7 +184,7 @@
       "name": "Проклятья",
       "group": "curse",
       "resource": "mana",
-      "weaponType": "magic",
+      "damageKind": "magical",
       "entryNode": "b-curse-e"
     },
     {
@@ -8048,7 +8048,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8113,7 +8115,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8230,7 +8234,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8295,7 +8301,9 @@
             "durationMs": 3500
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8379,7 +8387,9 @@
           "damageMult": 0.8,
           "dashDist": 200,
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8495,7 +8505,9 @@
             "durationMs": 2500
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8560,7 +8572,9 @@
             "durationMs": 2500
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8677,7 +8691,9 @@
             "durationMs": 2500
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8742,7 +8758,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8826,7 +8844,9 @@
           "damageMult": 0.8,
           "dashDist": 200,
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -8942,7 +8962,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9007,7 +9029,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9124,7 +9148,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9189,7 +9215,9 @@
             "durationMs": 3500
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9273,7 +9301,9 @@
           "damageMult": 0.8,
           "dashDist": 200,
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9389,7 +9419,9 @@
             "durationMs": 4000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9454,7 +9486,9 @@
             "durationMs": 4000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9571,7 +9605,9 @@
             "durationMs": 4000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9636,7 +9672,9 @@
             "durationMs": 4500
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9720,7 +9758,9 @@
           "damageMult": 0.8,
           "dashDist": 200,
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9834,7 +9874,9 @@
             "durationMs": 4000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -9895,7 +9937,9 @@
             "durationMs": 4000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -10009,7 +10053,9 @@
             "durationMs": 3000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -10071,7 +10117,9 @@
             "durationMs": 5000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },
@@ -10158,7 +10206,9 @@
             "durationMs": 4000
           },
           "resource": "mana",
-          "weaponType": "magic"
+          "damageKinds": [
+            "magical"
+          ]
         }
       }
     },

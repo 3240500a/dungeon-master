@@ -10,7 +10,8 @@ export interface SkillCost {
 export type SkillCategory = 'attack' | 'cast' | 'curse' | 'aura' | 'stance' | 'buff';
 /** Форма каста (особая механика). */
 export type CastShape = 'dash' | 'leap' | 'nova' | 'ground' | 'meteor' | 'boomerang';
-export type WeaponTypeSel = 'melee' | 'ranged' | 'magic';
+export type AttackTypeSel = 'melee' | 'ranged';
+export type DamageKindSel = 'physical' | 'magical';
 export type WeaponClassSel = 'sword' | 'axe' | 'mace' | 'dagger' | 'spear' | 'halberd' | 'bow' | 'crossbow' | 'wand' | 'staff';
 type DamageTypeSel = 'physical' | 'fire' | 'cold' | 'lightning' | 'poison';
 
@@ -34,7 +35,8 @@ interface ActiveCommon {
 }
 /** Ограничения оружия (attack/cast). Пусто → любое оружие. */
 interface WeaponRestrict {
-  weaponTypes?: WeaponTypeSel[];
+  attackTypes?: AttackTypeSel[];
+  damageKinds?: DamageKindSel[];
   weaponClasses?: WeaponClassSel[];
   hands: 'any' | 'one' | 'two';
   /** Требует два оружия в руках (ветка «дуал»). */

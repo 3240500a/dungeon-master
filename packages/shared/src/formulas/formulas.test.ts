@@ -41,7 +41,7 @@ describe('stats', () => {
   it('meetsRequirements проверяет требования', () => {
     const sword: Item = {
       uid: 'x', baseId: 'short-sword', name: 'меч', slot: 'weapon',
-      weaponType: 'melee', rarity: 'normal', itemLevel: 1,
+      attackType: 'melee', damageKind: 'physical', rarity: 'normal', itemLevel: 1,
       requirements: { strength: 15 }, affixes: [], baseStats: [],
       gridW: 1, gridH: 3, pos: null,
     };

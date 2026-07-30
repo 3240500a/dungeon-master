@@ -54,10 +54,13 @@ const SLOT_LABEL: Record<string, string> = {
   amulet: 'Амулет',
 };
 
-const WEAPON_LABEL: Record<string, string> = {
-  melee: 'ближний бой',
-  ranged: 'дальний бой',
-  magic: 'магия',
+const ATTACK_LABEL: Record<string, string> = {
+  melee: 'ближний',
+  ranged: 'дальний',
+};
+const DMGKIND_LABEL: Record<string, string> = {
+  physical: 'физический',
+  magical: 'магический',
 };
 
 /** Подпись слота после имени (расходники — без слота). */
@@ -128,18 +131,20 @@ function signatureLine(item: Item): string | null {
 export function itemLines(item: Item): string[] {
   if (item.kind === 'consumable') return consumableLines(item); // расходники — только эффект
   const lines: string[] = [];
-  if (item.weaponType) {
+  if (item.attackType) {
+    const at = ATTACK_LABEL[item.attackType] ?? item.attackType;
+    const dk = item.damageKind ? ` · ${DMGKIND_LABEL[item.damageKind] ?? item.damageKind}` : '';
     const cls = item.weaponClass ? ` · ${WCLASS_LABEL[item.weaponClass] ?? item.weaponClass}` : '';
     const wt = item.weight ? ` · ${labels.weight(item.weight)}` : '';
     const hnd = ` · ${item.hands === 2 ? 'двуручное' : 'одноручное'}`;
-    lines.push(`Тип: ${WEAPON_LABEL[item.weaponType]}${cls}${wt}${hnd}`);
+    lines.push(`Тип: ${at}${dk}${cls}${wt}${hnd}`);
   }
   if (item.armorClass) lines.push(`Броня: ${labels.armorClass(item.armorClass)}`);
   if (item.shieldClass) lines.push(`Щит: ${SHIELD_CLASS_LABEL[item.shieldClass] ?? item.shieldClass}`);
   // Базовый урон оружия — одной строкой с типом стихии (у жезла огня — огонь).
   const minD = item.baseStats.find((m) => m.stat === 'minDamage' && m.kind === 'flat');
   const maxD = item.baseStats.find((m) => m.stat === 'maxDamage' && m.kind === 'flat');
-  const hasDmg = item.weaponType && minD && maxD;
+  const hasDmg = item.attackType && minD && maxD;
   if (hasDmg) {
     const dt = item.damageType ?? 'physical';
     lines.push(`Урон: ${minD!.value}–${maxD!.value} (${dmgShort(dt)})`);
