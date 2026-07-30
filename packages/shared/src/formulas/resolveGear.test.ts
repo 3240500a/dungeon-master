@@ -10,7 +10,6 @@ const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })()
 const AC = reg.get('armor-classes');
 const PS = reg.get('phys-subtypes');
 const WW = reg.get('weapon-weights');
-const TH = reg.get('balance').twoHandedPowerMult;
 
 describe('resolveWeapon', () => {
   it('доли скейла по весу: сверхлёгкое — Ловк, тяжёлое — Сила, магическое — Интеллект', () => {
@@ -19,23 +18,26 @@ describe('resolveWeapon', () => {
     expect(weightScaleSplit('magical', WW)).toEqual({ strength: 0, dexterity: 0, intelligence: 1 });
   });
 
-  it('подтип урона → свой дебафф; лёгкие чаще ранят, тяжёлые чаще увечат', () => {
-    const dagger = weaponDebuffs(wpn({ physSub: 'piercing', weight: 'superlight', hands: 1 }), PS, WW, TH);
-    const heavyAxe = weaponDebuffs(wpn({ physSub: 'chopping', weight: 'heavy', hands: 2 }), PS, WW, TH);
+  it('подтип урона → свой дебафф; шанс НЕ зависит от веса (задаёт подтип)', () => {
+    const dagger = weaponDebuffs(wpn({ physSub: 'piercing', weight: 'superlight' }), PS);
+    const heavyAxe = weaponDebuffs(wpn({ physSub: 'chopping', weight: 'heavy' }), PS);
     expect(dagger[0]!.kind).toBe('wound');
     expect(heavyAxe[0]!.kind).toBe('sunder');
 
-    const lightWound = weaponDebuffs(wpn({ physSub: 'piercing', weight: 'superlight', hands: 1 }), PS, WW, TH)[0]!.chance;
-    const heavyWound = weaponDebuffs(wpn({ physSub: 'piercing', weight: 'heavy', hands: 1 }), PS, WW, TH)[0]!.chance;
-    expect(lightWound).toBeGreaterThan(heavyWound); // рана — finesse (легче чаще)
+    // Вес больше не масштабирует шанс — база из подтипа одинакова для всех весов.
+    const lightWound = weaponDebuffs(wpn({ physSub: 'piercing', weight: 'superlight' }), PS)[0]!.chance;
+    const heavyWound = weaponDebuffs(wpn({ physSub: 'piercing', weight: 'heavy' }), PS)[0]!.chance;
+    expect(lightWound).toBe(heavyWound);
 
-    const lightSunder = weaponDebuffs(wpn({ physSub: 'chopping', weight: 'light', hands: 1 }), PS, WW, TH)[0]!.chance;
-    const heavySunder = weaponDebuffs(wpn({ physSub: 'chopping', weight: 'heavy', hands: 1 }), PS, WW, TH)[0]!.chance;
-    expect(heavySunder).toBeGreaterThan(lightSunder); // увечье — power (тяжелее чаще)
+    // Кровотечение — DoT: сила = доля от урона (magPerDamage), флэт-mag = 0.
+    const bleed = weaponDebuffs(wpn({ physSub: 'slashing', weight: 'light' }), PS)[0]!;
+    expect(bleed.kind).toBe('bleed');
+    expect(bleed.magPerDamage).toBeGreaterThan(0);
+    expect(bleed.mag).toBe(0);
   });
 
-  it('без осей — дебаффов нет', () => {
-    expect(weaponDebuffs(wpn({}), PS, WW, TH)).toHaveLength(0);
+  it('без подтипа — дебаффов нет', () => {
+    expect(weaponDebuffs(wpn({}), PS)).toHaveLength(0);
   });
 });
 

@@ -15,7 +15,7 @@ import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { gainXp } from '../economy/progression.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
-import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, type DebuffApply } from '../world/debuffs.js';
+import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, type DebuffApply } from '../world/debuffs.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import { moveWithCollision, type Vec2 } from '../world/movement.js';
 import { resolveEntityCollisions, type CollisionBody } from '../world/separation.js';
@@ -452,7 +452,7 @@ export class GameSession {
       armorPen: weapon?.armorPenPct,
       lowHpBonusPct: weapon?.lowHpBonusPct,
       stunChance: weapon?.stunChance,
-      onHit: weapon ? weaponDebuffs(weapon, this.cfg.get('phys-subtypes'), this.weights(), this.cfg.get('balance').twoHandedPowerMult) : [],
+      onHit: weapon ? weaponDebuffs(weapon, this.cfg.get('phys-subtypes')) : [],
       knockback: weapon?.knockback,
     };
   }
@@ -727,7 +727,9 @@ export class GameSession {
     if (active.ailment) {
       const kind = active.ailment.kind ?? this.cfg.get('damage-types').find((d) => d.id === element)?.ailment;
       if (kind) {
-        const ail: DebuffApply = { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs };
+        const al = active.ailment;
+        // DoT-статусы (поджиг/яд/кровотечение) — сила = доля от урона удара (magPerDamage); прочие — флэт.
+        const ail: DebuffApply = { kind, chance: al.chance, mag2: al.mag2, maxStacks: al.maxStacks, durationMs: al.durationMs, ...(isDotKind(kind) ? { mag: 0, magPerDamage: al.mag } : { mag: al.mag }) };
         opts.onHit = [...(opts.onHit ?? []), ail];
       }
     }
@@ -916,7 +918,7 @@ export class GameSession {
       for (const a of onHit) {
         const poise = armorPoise(equipped, a.kind, this.cfg.get('armor-classes'));
         if (this.rng.chance(a.chance * (1 - poise))) {
-          addDebuffStack(p.debuffs, { ...a, durationMs: a.durationMs * (1 - poise) }, this.world.timeMs);
+          addDebuffStack(p.debuffs, { ...a, mag: a.mag + (a.magPerDamage ?? 0) * dmg, durationMs: a.durationMs * (1 - poise) }, this.world.timeMs);
         }
       }
     }

@@ -21,38 +21,18 @@ export function weightScaleSplit(weight: WeaponWeight, weights: WeaponWeights): 
   return w ? { strength: w.strength, dexterity: w.dexterity, intelligence: w.intelligence } : { strength: 1, dexterity: 0, intelligence: 0 };
 }
 
-/** Множитель силовых сигнатур (2H — ещё ×balance.twoHandedPowerMult). */
-export function weaponPowerFactor(item: Pick<Item, 'weight' | 'hands'>, weights: WeaponWeights, twoHandMult: number): number {
-  const w = weightOf(weights, item.weight);
-  if (!w) return 1;
-  return w.power * (item.hands === 2 ? twoHandMult : 1);
-}
-
-/** Множитель finesse-сигнатур по весу (обратный power). */
-export function weaponFinesseFactor(item: Pick<Item, 'weight'>, weights: WeaponWeights): number {
-  return weightOf(weights, item.weight)?.finesse ?? 1;
-}
-
 /**
- * Стаковые дебаффы удара оружием (по подтипу физ. урона + весу). Таблица подтипов
- * (какой статус + числа + как масштабируются весом) — data-driven (`phys-subtypes`).
- * Шанс/сила множатся на Power (тяжелее→сильнее) или Finesse (легче→чаще) по конфигу.
+ * Стаковые дебаффы удара оружием (по подтипу физ. урона). База шанса/силы/длительности ВШИТА в подтип
+ * (`phys-subtypes`, блок `weapon`), БЕЗ веса-множителей — скейлинг статусов идёт от скиллов (ailment-статы).
+ * `magPerDamage` (DoT: кровотечение) — доля от урона удара, добавляется к силе при наложении.
  */
-export function weaponDebuffs(item: Item, physSubs: PhysSubtypes, weights: WeaponWeights, twoHandMult: number): DebuffApply[] {
-  if (!item.physSub || !item.weight) return [];
+export function weaponDebuffs(item: Item, physSubs: PhysSubtypes): DebuffApply[] {
+  if (!item.physSub) return [];
   const sub = physSubs.find((s) => s.id === item.physSub);
   if (!sub) return [];
-  const p = weaponPowerFactor(item, weights, twoHandMult);
-  const f = weaponFinesseFactor(item, weights);
-  const sc = (mode: string): number => (mode === 'power' ? p : mode === 'finesse' ? f : 1);
   const w = sub.weapon;
-  const out: DebuffApply = {
-    kind: sub.kind,
-    chance: Math.min(1, w.chance * sc(w.chanceScale)),
-    maxStacks: w.maxStacks,
-    durationMs: w.durationMs,
-    mag: w.mag * sc(w.magScale),
-  };
-  if (w.mag2 != null) out.mag2 = w.mag2 * sc(w.mag2Scale);
+  const out: DebuffApply = { kind: sub.kind, chance: Math.min(1, w.chance), maxStacks: w.maxStacks, durationMs: w.durationMs, mag: w.mag };
+  if (w.mag2 != null) out.mag2 = w.mag2;
+  if (w.magPerDamage != null) out.magPerDamage = w.magPerDamage;
   return [out];
 }

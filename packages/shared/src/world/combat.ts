@@ -71,9 +71,9 @@ export function resolvePlayerHit(
     const ap = 1 + (attacker.ailmentPct ?? 0);
     for (const a of opts.onHit ?? []) {
       if (!rng.chance(a.chance * ap)) continue;
-      const eff: DebuffApply = ap === 1
-        ? a
-        : { ...a, mag: a.mag * ap, mag2: a.mag2 === undefined ? undefined : a.mag2 * ap };
+      // DoT: сила = доля от нанесённого урона; ailmentPct усиливает шанс и силу.
+      const baseMag = a.mag + (a.magPerDamage ?? 0) * dmg;
+      const eff: DebuffApply = { ...a, mag: baseMag * ap, mag2: a.mag2 === undefined ? undefined : a.mag2 * ap };
       addDebuffStack(target.debuffs, eff, now);
       applied.push(a.kind);
     }

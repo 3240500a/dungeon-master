@@ -42,7 +42,10 @@ export interface ActiveDebuff {
 /** Активные дебаффы цели (простой объект — сериализуется в снапшот). */
 export type DebuffState = { [K in DebuffKind]?: ActiveDebuff };
 
-/** Описание накладываемого дебаффа (магнитуды уже посчитаны из оружия/веса). */
+/** DoT-статусы: сила = доля от урона удара (bleed/burn/poison), не флэт. */
+export function isDotKind(k: DebuffKind): boolean { return k === 'bleed' || k === 'burn' || k === 'poison'; }
+
+/** Описание накладываемого дебаффа. `mag` — флэт-сила; `magPerDamage` — доля от урона удара (DoT). */
 export interface DebuffApply {
   kind: DebuffKind;
   chance: number;      // 0..1 — шанс наложить стак за удар
@@ -50,6 +53,8 @@ export interface DebuffApply {
   durationMs: number;
   mag: number;
   mag2?: number;
+  /** DoT: доля от нанесённого урона → добавляется к силе при наложении (`mag + magPerDamage×dmg`). */
+  magPerDamage?: number;
 }
 
 export function newDebuffState(): DebuffState {

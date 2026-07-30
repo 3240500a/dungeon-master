@@ -520,10 +520,6 @@ export const weaponWeightsSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
-    /** Множитель силовых сигнатур (стан/увечье/ошеломление): тяжелее — больше. */
-    power: z.number().min(0),
-    /** Множитель finesse-сигнатур (рана/кровотечение): легче — больше. */
-    finesse: z.number().min(0),
     /** Доли скейла урона от атрибутов (Сила / Ловкость / Интеллект). Сумма ≈ 1. */
     strength: z.number().min(0),
     dexterity: z.number().min(0),
@@ -535,23 +531,20 @@ export const weaponWeightsSchema = z.array(
 
 // ── phys-subtypes ─────────────────────────────────────────────────────────────
 /** Справочник подтипов физ. урона: какой статус вешают + параметры дебаффа. */
-const debuffScaleEnum = z.enum(['power', 'finesse', 'none']).default('none');
 export const physSubtypesSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
     /** Физ-статус, который накладывает этот подтип. */
     kind: z.enum(['wound', 'bleed', 'sunder', 'daze']),
-    /** Дебафф от УДАРА ОРУЖИЯ (шанс/сила масштабируются весом: power/finesse/none). */
+    /** Дебафф от УДАРА ОРУЖИЯ. `magPerDamage` — доля от урона (DoT-кровотечение); скейлинг — от скиллов, не веса. */
     weapon: z.object({
       chance: z.number().min(0),
       maxStacks: z.number().int().min(1),
       durationMs: z.number().min(0),
-      mag: z.number(),
+      mag: z.number().default(0),
       mag2: z.number().optional(),
-      chanceScale: debuffScaleEnum,
-      magScale: debuffScaleEnum,
-      mag2Scale: debuffScaleEnum,
+      magPerDamage: z.number().optional(),
     }),
     /** Дебафф от УДАРА МОНСТРА (mag фикс; `magPerDamage` — доля от maxDamage монстра). */
     monster: z.object({

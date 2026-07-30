@@ -1,22 +1,22 @@
 [
   {
     "id": "piercing", "name": "Колющий", "kind": "wound",
-    "weapon": { "chance": 0.20, "maxStacks": 4, "durationMs": 3000, "mag": 0.06, "mag2": 0.10, "chanceScale": "finesse", "magScale": "finesse", "mag2Scale": "finesse" },
+    "weapon": { "chance": 0.20, "maxStacks": 4, "durationMs": 3000, "mag": 0.06, "mag2": 0.10 },
     "monster": { "chance": 0.12, "maxStacks": 3, "durationMs": 3000, "mag": 0.05, "mag2": 0.08 }
   },
   {
     "id": "slashing", "name": "Режущий", "kind": "bleed",
-    "weapon": { "chance": 0.25, "maxStacks": 5, "durationMs": 4000, "mag": 0.05, "chanceScale": "finesse", "magScale": "power" },
+    "weapon": { "chance": 0.25, "maxStacks": 5, "durationMs": 4000, "mag": 0, "magPerDamage": 0.04 },
     "monster": { "chance": 0.15, "maxStacks": 3, "durationMs": 4000, "magPerDamage": 0.07 }
   },
   {
     "id": "chopping", "name": "Рубящий", "kind": "sunder",
-    "weapon": { "chance": 0.50, "maxStacks": 5, "durationMs": 4000, "mag": 0.04, "chanceScale": "power", "magScale": "none" },
+    "weapon": { "chance": 0.50, "maxStacks": 5, "durationMs": 4000, "mag": 0.04 },
     "monster": { "chance": 0.20, "maxStacks": 4, "durationMs": 4000, "mag": 0.04 }
   },
   {
     "id": "crushing", "name": "Дробящий", "kind": "daze",
-    "weapon": { "chance": 0.60, "maxStacks": 8, "durationMs": 4000, "mag": 0.05, "mag2": 0.04, "chanceScale": "power", "magScale": "power", "mag2Scale": "power" },
+    "weapon": { "chance": 0.60, "maxStacks": 8, "durationMs": 4000, "mag": 0.05, "mag2": 0.04 },
     "monster": { "chance": 0.15, "maxStacks": 5, "durationMs": 4000, "mag": 0.04, "mag2": 0.03 }
   }
 ]
