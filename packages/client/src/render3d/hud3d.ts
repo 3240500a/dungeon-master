@@ -5,7 +5,7 @@
  * индикаторы досоздаёт в DOM. Читает `app.state` (авторитетный с сервера через online3d).
  */
 import type { App } from '../core/app.js';
-import { effectiveLevel, startChallenge, challengeAtFloor, activeToggleInfos, DEBUFF_ICON, DEBUFF_LABEL, type DebuffKind } from '@dm/shared';
+import { effectiveLevel, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, debuffLabel, type DebuffKind } from '@dm/shared';
 
 export interface Hud3d { update(): void; }
 
@@ -94,13 +94,14 @@ export function mountHud3d(app: App): Hud3d {
       const sig = active.map((k) => `${k}${st.debuffs[k]!.stacks}`).join(',');
       if (sig !== statusSig) {
         statusSig = sig; statusStrip.innerHTML = '';
+        const debuffsCfg = app.config.get('debuffs');
         for (const k of active) {
           const d = st.debuffs[k]!;
           const b = document.createElement('div');
-          b.title = `${DEBUFF_LABEL[k]}${d.stacks > 1 ? ` ×${d.stacks}` : ''}`;
+          b.title = `${debuffLabel(debuffsCfg, k)}${d.stacks > 1 ? ` ×${d.stacks}` : ''}`;
           b.style.cssText = `position:relative;width:26px;height:26px;border:1.5px solid ${DEBUFF_COLOR[k]};border-radius:6px;` +
             'background:rgba(12,14,20,0.72);display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;text-shadow:0 1px 2px #000';
-          b.textContent = DEBUFF_ICON[k];
+          b.textContent = debuffIcon(debuffsCfg, k);
           if (d.stacks > 1) { const s = document.createElement('span'); s.textContent = String(d.stacks); s.style.cssText = 'position:absolute;right:-2px;bottom:-3px;font:700 10px system-ui;color:#fff;text-shadow:0 1px 2px #000,0 0 3px #000'; b.appendChild(s); }
           statusStrip.appendChild(b);
         }

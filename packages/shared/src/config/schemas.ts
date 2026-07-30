@@ -528,6 +528,34 @@ export const damageTypesSchema = z.array(
   }),
 );
 
+// ── debuffs ─────────────────────────────────────────────────────────────────
+/** Справочник состояний (дебаффов): имя/иконка/описание/категория + тюн-коэффициенты
+ * механики (пороги/множители, ранее захардкоженные в `debuffMods()`). Набор id —
+ * структурный (DebuffKind); пустой `tuning` — у видов без интринсик-коэффициентов. */
+export const debuffsSchema = z.array(
+  z.object({
+    id: z.enum(['wound', 'bleed', 'sunder', 'daze', 'burn', 'poison', 'shock', 'freeze']),
+    name: z.string(),
+    icon: z.string(),
+    category: z.enum(['physical', 'elemental']),
+    desc: z.string().default(''),
+    /** Интринсик-коэффициенты механики дебаффа (смысл поля зависит от вида). */
+    tuning: z
+      .object({
+        outDamageFloor: z.number().optional(),
+        moveFloor: z.number().optional(),
+        accuracyPerStack: z.number().optional(),
+        accuracyFloor: z.number().optional(),
+        hpRegenMult: z.number().optional(),
+        atkSpeedBase: z.number().optional(),
+        armorFloor: z.number().optional(),
+        atkSpeedFactor: z.number().optional(),
+        atkSpeedFloor: z.number().optional(),
+      })
+      .default({}),
+  }),
+);
+
 // ── weapon-weights ────────────────────────────────────────────────────────────
 /** Справочник весов оружия: множители сигнатур (power/finesse) + доли скейла урона. */
 export const weaponWeightsSchema = z.array(
@@ -965,6 +993,7 @@ export const configSchemas = {
   'phys-subtypes': physSubtypesSchema,
   'weapon-weights': weaponWeightsSchema,
   'damage-types': damageTypesSchema,
+  debuffs: debuffsSchema,
   rarities: raritiesSchema,
   'mastery-tree': skillsPassiveSchema,
   'skill-tree': skillTreeSchema,

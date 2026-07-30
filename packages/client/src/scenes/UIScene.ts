@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { levelForXp, xpForLevel, effectiveLevel, startChallenge, challengeAtFloor, activeToggleInfos, DEBUFF_ICON, type DebuffKind } from '@dm/shared';
+import { levelForXp, xpForLevel, effectiveLevel, startChallenge, challengeAtFloor, activeToggleInfos, debuffIcon, type DebuffKind } from '@dm/shared';
 import { App } from '../core/app.js';
 import { ActionBar } from '../ui/actionBar.js';
 import { BeltBar } from '../ui/beltBar.js';
@@ -151,8 +151,9 @@ export class UIScene extends Phaser.Scene {
     this.auraText.setText(auras.length ? '◈ ' + auras.map((a) => a.name).join('   ◈ ') : '');
 
     // Дебаффы на игроке (иконка + стаки).
+    const dcfg = this.app.config.get('debuffs');
     const dstr = (Object.keys(state.debuffs) as DebuffKind[])
-      .map((k) => (state.debuffs[k] ? `${DEBUFF_ICON[k]}${state.debuffs[k]!.stacks}` : ''))
+      .map((k) => (state.debuffs[k] ? `${debuffIcon(dcfg, k)}${state.debuffs[k]!.stacks}` : ''))
       .filter(Boolean).join('  ');
     this.debuffText.setText(dstr);
 

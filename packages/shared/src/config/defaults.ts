@@ -13,6 +13,7 @@ import armorClasses from './data/armor-classes.json' with { type: 'json' };
 import physSubtypes from './data/phys-subtypes.json' with { type: 'json' };
 import weaponWeights from './data/weapon-weights.json' with { type: 'json' };
 import damageTypes from './data/damage-types.json' with { type: 'json' };
+import debuffs from './data/debuffs.json' with { type: 'json' };
 import rarities from './data/rarities.json' with { type: 'json' };
 import masteryTree from './data/mastery-tree.json' with { type: 'json' };
 import skillTree from './data/skill-tree.json' with { type: 'json' };
@@ -36,6 +37,7 @@ export const defaultConfigData: Record<string, unknown> = {
   'phys-subtypes': physSubtypes,
   'weapon-weights': weaponWeights,
   'damage-types': damageTypes,
+  debuffs,
   rarities,
   'mastery-tree': masteryTree,
   'skill-tree': skillTree,

@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, DEBUFF_LABEL, DEBUFF_ICON, weaponDebuffs, elementDebuffs, isDotKind, emptyPacket, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, isDotKind, emptyPacket, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType } from '../combat/playerStats.js';
@@ -306,6 +306,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
       // ── Статусы, которые НАКЛАДЫВАЕТ атака (подтип оружия + стихия скилла), с ЭФФЕКТИВНЫМИ числами ──
       const physSubs = app.config.get('phys-subtypes');
       const dmgCfg = app.config.get('damage-types');
+      const debuffsCfg = app.config.get('debuffs');
       const kNum = (k: DebuffKind, suf: string): number => (d[`${k}${suf}` as keyof DerivedStats] as number) || 0;
       const strengthStr = (b: DebuffApply, pMul: number): string => {
         const pd = (b.magPerDamage ?? 0) * pMul * 100, m = b.mag * pMul * 100, m2 = (b.mag2 ?? 0) * pMul * 100;
@@ -356,7 +357,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
           const chance = Math.min(1, b.chance * (1 + d.ailmentPct + kNum(b.kind, 'ChancePct')));
           const durS = (b.durationMs * (1 + d.ailmentDurPct + kNum(b.kind, 'DurPct'))) / 1000;
           const pMul = 1 + d.ailmentPct + kNum(b.kind, 'PowerPct');
-          return `${DEBUFF_ICON[b.kind]} <b>${DEBUFF_LABEL[b.kind]}</b> — шанс ${Math.round(chance * 100)}% · ${durS.toFixed(1)}с · ${strengthStr(b, pMul)}${b.maxStacks > 1 ? ` (до ${b.maxStacks} стак.)` : ''}`;
+          return `${debuffIcon(debuffsCfg, b.kind)} <b>${debuffLabel(debuffsCfg, b.kind)}</b> — шанс ${Math.round(chance * 100)}% · ${durS.toFixed(1)}с · ${strengthStr(b, pMul)}${b.maxStacks > 1 ? ` (до ${b.maxStacks} стак.)` : ''}`;
         });
         const wsc = state.save.equipment.weapon?.stunChance;
         if (wsc) lines.push(`💥 <b>Стан</b> — ${Math.round(wsc * 100)}%`);
@@ -487,7 +488,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
         if (c) parts.push(`шанс +${Math.round(c * 100)}%`);
         if (p) parts.push(`сила +${Math.round(p * 100)}%`);
         if (du) parts.push(`длит. +${Math.round(du * 100)}%`);
-        ail.append(statRow(DEBUFF_LABEL[k], parts.join('  ·  '), `Бонусы к наложению статуса «${DEBUFF_LABEL[k]}» (ветки скиллов/гир).`));
+        ail.append(statRow(debuffLabel(debuffsCfg, k), parts.join('  ·  '), `Бонусы к наложению статуса «${debuffLabel(debuffsCfg, k)}» (ветки скиллов/гир).`));
       }
       body.append(ail);
 

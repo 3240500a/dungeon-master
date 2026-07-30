@@ -27,6 +27,7 @@ const LABELS: Record<ConfigKey, string> = {
   'phys-subtypes': 'Физ. подтипы',
   'weapon-weights': 'Веса оружия',
   'damage-types': 'Типы урона',
+  debuffs: 'Состояния',
   rarities: 'Редкости',
   'mastery-tree': 'Дерево мастерства',
   'skill-tree': 'Древо скилов',
@@ -34,18 +35,34 @@ const LABELS: Record<ConfigKey, string> = {
   'quests.random': 'Квесты: случайные',
 };
 
-/** Группы левой навигации — родственные конфиги вместе (свёртываемые секции). */
-const NAV_GROUPS: { title: string; keys: ConfigKey[] }[] = [
+/**
+ * Группы левой навигации — родственные конфиги вместе (свёртываемые секции). Группа задаётся
+ * либо плоским `keys`, либо `subs` (2-й уровень: под-заголовок + свои ключи) — например «Боевая
+ * система» делится на Урон/Состояния/Защиту.
+ */
+interface NavGroup {
+  title: string;
+  keys?: ConfigKey[];
+  subs?: { title: string; keys: ConfigKey[] }[];
+}
+const NAV_GROUPS: NavGroup[] = [
   { title: 'Общее', keys: ['balance', 'classes'] },
-  { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'armor-classes', 'phys-subtypes', 'weapon-weights', 'damage-types', 'affixes', 'uniques'] },
+  { title: '⚔ Боевая система', subs: [
+    { title: 'Урон', keys: ['damage-types', 'phys-subtypes', 'weapon-weights'] },
+    { title: 'Состояния', keys: ['debuffs'] },
+    { title: 'Защита', keys: ['armor-classes'] },
+  ] },
+  { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques'] },
   { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'packs'] },
   { title: 'Мир', keys: ['dungeons', 'difficulties'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
 ];
+/** Все ключи группы (из плоского `keys` или из подсекций `subs`). */
+const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-types': 'Типы урона', 'monster-affixes': 'Аффиксы', packs: 'Пачки',
+  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-types': 'Типы урона', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
 };
@@ -213,10 +230,19 @@ function render(): void {
   nav.appendChild(simBtn);
 
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
-  const covered = new Set(NAV_GROUPS.flatMap((g) => g.keys));
+  const covered = new Set(NAV_GROUPS.flatMap(groupKeys));
   const extra = (Object.keys(configSchemas) as ConfigKey[]).filter((k) => !covered.has(k));
-  const groups = extra.length ? [...NAV_GROUPS, { title: 'Прочее', keys: extra }] : NAV_GROUPS;
-  for (const g of groups) if (g.keys.includes(current)) expandedNav.add(g.title);
+  const groups: NavGroup[] = extra.length ? [...NAV_GROUPS, { title: 'Прочее', keys: extra }] : NAV_GROUPS;
+  for (const g of groups) if (groupKeys(g).includes(current)) expandedNav.add(g.title);
+  // Кнопка-ключ страницы (общая для плоских групп и подсекций).
+  const keyButton = (key: ConfigKey): void => {
+    const b = document.createElement('button');
+    b.textContent = NAV_SHORT[key] ?? LABELS[key];
+    const active = view === 'config' && key === current;
+    b.style.cssText = `text-align:left;padding:6px 10px 6px 22px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${active ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;font-size:13px`;
+    b.addEventListener('click', () => { view = 'config'; current = key; selectedIndex = 0; render(); });
+    nav.appendChild(b);
+  };
   for (const g of groups) {
     const open = expandedNav.has(g.title);
     const header = document.createElement('button');
@@ -225,13 +251,17 @@ function render(): void {
     header.addEventListener('click', () => { if (open) expandedNav.delete(g.title); else expandedNav.add(g.title); render(); });
     nav.appendChild(header);
     if (!open) continue;
-    for (const key of g.keys) {
-      const b = document.createElement('button');
-      b.textContent = NAV_SHORT[key] ?? LABELS[key];
-      const active = view === 'config' && key === current;
-      b.style.cssText = `text-align:left;padding:6px 10px 6px 22px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${active ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;font-size:13px`;
-      b.addEventListener('click', () => { view = 'config'; current = key; selectedIndex = 0; render(); });
-      nav.appendChild(b);
+    if (g.subs) {
+      // 2-й уровень: под-заголовок подсекции (не кнопка) + её ключи.
+      for (const sub of g.subs) {
+        const subHead = document.createElement('div');
+        subHead.textContent = sub.title;
+        subHead.style.cssText = 'padding:6px 10px 2px 16px;font-size:11px;color:#71718a;text-transform:uppercase;letter-spacing:0.04em';
+        nav.appendChild(subHead);
+        for (const key of sub.keys) keyButton(key);
+      }
+    } else {
+      for (const key of g.keys ?? []) keyButton(key);
     }
   }
 

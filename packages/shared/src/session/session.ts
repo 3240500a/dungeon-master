@@ -15,7 +15,7 @@ import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { gainXp } from '../economy/progression.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
-import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, type DebuffApply } from '../world/debuffs.js';
+import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, type DebuffApply, type DebuffState } from '../world/debuffs.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import { moveWithCollision, type Vec2 } from '../world/movement.js';
 import { resolveEntityCollisions, type CollisionBody } from '../world/separation.js';
@@ -165,6 +165,11 @@ export class GameSession {
     this.rewards = opts.rewards ?? true;
   }
 
+  /** Эффекты дебаффов с тюн-коэффициентами из живого конфига `debuffs`. */
+  private dmods(state: DebuffState) {
+    return debuffMods(state, this.cfg.get('debuffs'));
+  }
+
   /** Добавляет игрока (один раз за забег); HP/мана — полные. */
   addPlayer(id: string, save: SaveState, spawnAt?: Vec2): PlayerEntity {
     const snap = playerSnapshot(save, this.cfg);
@@ -259,7 +264,7 @@ export class GameSession {
       // HP/маны между пачками. «Увечье» режет реген HP.
       if (p.alive) {
         const d = this.snaps.get(id)!.derived;
-        const hpRegenMult = debuffMods(p.debuffs).hpRegenMult;
+        const hpRegenMult = this.dmods(p.debuffs).hpRegenMult;
         if (p.hp < d.maxHp) p.hp = Math.min(d.maxHp, p.hp + d.hpRegen * hpRegenMult * dt);
         // Тоглы/ауры резервируют долю маны — эффективный максимум ниже, регенерируем до него.
         const effMana = effectivePool(d.maxMana, this.reservedFrac(p, 'mana'));
@@ -289,7 +294,7 @@ export class GameSession {
     for (const m of w.monsters) {
       if (!m.alive) continue;
       // DoT кровотечения + реген (у чемпионов; «увечье» режет реген).
-      const dm = debuffMods(m.debuffs);
+      const dm = this.dmods(m.debuffs);
       const dot = tickDebuffs(m.debuffs, dt, now);
       if (dot > 0) {
         m.hp -= dot;
@@ -358,7 +363,7 @@ export class GameSession {
       if (p.stunTimer > 0) p.dash = null;
       else { this.stepDash(p, dt); return; }
     }
-    const pm = debuffMods(p.debuffs);
+    const pm = this.dmods(p.debuffs);
     const stunned = p.stunTimer > 0;
     // Стан полностью укореняет; во время удара/замаха/восстановления — идём МЕДЛЕННО (attackMoveMult),
     // а не колом («идти медленно и бить»). Facing обновляется в любом случае (целишься на ходу).
@@ -403,7 +408,7 @@ export class GameSession {
       const cost = this.cfg.get('balance').melee.basicManaCost;
       if (cost > 0) { if (p.mana < cost) return; p.mana -= cost; }
     }
-    const pm = debuffMods(p.debuffs);
+    const pm = this.dmods(p.debuffs);
     const speedBonus = hands.length > 1 ? 1.2 : 1; // дуал-вилд бьёт чаще
     p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * speedBonus * pm.atkSpeedMult);
     this.makeNoise(p, 220);
@@ -418,7 +423,7 @@ export class GameSession {
     const hands = attackWeaponsOf(p.save);
     const weapon = hands[p.swingHand % hands.length];
     p.swingHand++;
-    const pm = debuffMods(p.debuffs);
+    const pm = this.dmods(p.debuffs);
     const scaling = this.cfg.get('balance').weaponAttrScaling;
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, scaling, this.weights(), this.rng);
     if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;
@@ -532,7 +537,7 @@ export class GameSession {
         if (!this.weaponAllowed(p, active)) return; // не то оружие → скилл не срабатывает
         if (!this.canSpend(p, active)) return;
         this.spend(p, active);
-        const pm = debuffMods(p.debuffs);
+        const pm = this.dmods(p.debuffs);
         p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
         const windup = this.windupSec(p.attackCd, active.windupSec);
@@ -676,7 +681,7 @@ export class GameSession {
   private weaponAttack(p: PlayerEntity, snap: PlayerSnapshot, active: AttackAbility, rank: number): void {
     const weapon = p.save.equipment.weapon;
     const element = active.element ?? abilityElementOf(active.abilityId);
-    const pm = debuffMods(p.debuffs);
+    const pm = this.dmods(p.debuffs);
     const packet = buildAttackPacket(snap.derived, snap.attrs, weapon, this.scaling(), this.weights(), this.rng);
     this.applySkillDamage(packet, active, rank, weapon, element);   // множитель по scope + доб.стихия + конверсия
     if (pm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= pm.outDamageMult;   // дебафф раны — на весь урон
@@ -900,7 +905,7 @@ export class GameSession {
     const affMult = this.affinityMult(killer.save, m.def.faction);
     const mult = affMult * (1 + this.hitDealtBonus(killer, m));
     const pk = mult !== 1 ? scalePacket(packet, mult) : packet;
-    const res = resolvePlayerHit(target, attacker, pk, opts, this.rng, this.world.timeMs);
+    const res = resolvePlayerHit(target, attacker, pk, { ...opts, debuffTuning: this.cfg.get('debuffs') }, this.rng, this.world.timeMs);
 
     this.events.push({ type: 'hit', target: 'monster', id: m.id, by: killer.id, x: m.pos.x, y: m.pos.y, hit: res.hit, blocked: res.blocked, crit: res.crit, amount: res.damage, byType: res.byType });
     m.alertTimer = ALERT_TIME; // получил внимание/удар — в погоню
@@ -924,7 +929,7 @@ export class GameSession {
   private hitPlayer(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, onHit: DebuffApply[], by: string, source?: MonsterEntity): void {
     const snap = this.snaps.get(p.id);
     if (!snap) return;
-    const pm = debuffMods(p.debuffs);
+    const pm = this.dmods(p.debuffs);
     const res = resolveAttack(attacker, snap.combat, packet, this.rng);
     if (!res.hit || res.blocked) {
       this.events.push({ type: 'hit', target: 'player', id: p.id, by, x: p.pos.x, y: p.pos.y, hit: res.hit, blocked: res.blocked, crit: false, amount: 0, byType: res.byType });
@@ -951,7 +956,7 @@ export class GameSession {
 
   // ── Монстр атакует ────────────────────────────────────────
   private monsterPacket(m: MonsterEntity): { packet: DamagePacket; attacker: CombatStats; debuffs: DebuffApply[] } {
-    const dm = debuffMods(m.debuffs);
+    const dm = this.dmods(m.debuffs);
     const packet = buildMonsterPacket(m.def, this.rng);
     if (dm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= dm.outDamageMult;
     const base = monsterCombatStats(m.def);

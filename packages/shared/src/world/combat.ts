@@ -2,7 +2,7 @@ import { resolveAttack } from '../formulas/combat.js';
 import { emptyPacket } from '../types/combat.js';
 import type { CombatStats, DamagePacket } from '../types/combat.js';
 import type { Rng } from '../formulas/rng.js';
-import { addDebuffStack, debuffMods, type DebuffApply, type DebuffKind, type DebuffState } from './debuffs.js';
+import { addDebuffStack, debuffMods, type DebuffApply, type DebuffKind, type DebuffState, type DebuffTuning } from './debuffs.js';
 
 /**
  * Чистое разрешение удара игрока по цели (headless боевое ядро). Учитывает
@@ -27,6 +27,8 @@ export interface PlayerHitOptions {
   stunChance?: number;
   /** Дебаффы подтипа урона (с уже посчитанными шансами/магнитудой). */
   onHit?: DebuffApply[];
+  /** Конфиг `debuffs` (интринсик-коэффициенты для debuffMods). Без него — дефолты. */
+  debuffTuning?: DebuffTuning;
 }
 
 export interface PlayerHitResult {
@@ -50,7 +52,7 @@ export function resolvePlayerHit(
   rng: Rng,
   now: number,
 ): PlayerHitResult {
-  const mods = debuffMods(target.debuffs);
+  const mods = debuffMods(target.debuffs, opts.debuffTuning);
   // Броня цели = дебафф-снижение (ошеломление) × (1 − броне-пробитие оружия).
   const armor = target.stats.armor * mods.armorMult * (1 - (opts.armorPen ?? 0));
   const res = resolveAttack(attacker, { ...target.stats, armor }, packet, rng);
@@ -82,7 +84,7 @@ export function resolvePlayerHit(
       applied.push(a.kind);
     }
     // Стан = прямой (булава) + накопленный от ошеломления (после свежих стаков).
-    const stunChance = (opts.stunChance ?? 0) + debuffMods(target.debuffs).dazeStunChance;
+    const stunChance = (opts.stunChance ?? 0) + debuffMods(target.debuffs, opts.debuffTuning).dazeStunChance;
     if (stunChance > 0 && rng.chance(stunChance)) stunned = true;
   }
   return { hit: true, blocked: false, crit: res.crit, damage: dmg, byType: res.byType, died, stunned, appliedDebuffs: applied };

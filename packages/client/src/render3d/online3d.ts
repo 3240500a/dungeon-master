@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, monsterCombatStats, DEBUFF_ICON, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
+import { TILE, monsterCombatStats, debuffIcon, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -333,13 +333,14 @@ export async function startOnline3d(): Promise<void> {
     }
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }
     // монстры
+    const dcfg = app.config.get('debuffs');
     for (const mv of latest.monsters) {
       const a = monsters.get(mv.id); if (!a) continue;
       if (!mv.alive) { markDead(a); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
       driveActor(a, mv.x, mv.y, mv.facing, true, dt);
-      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => DEBUFF_ICON[k]).join(' ')); }
+      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => debuffIcon(dcfg, k)).join(' ')); }
     }
     // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и просто ЛЕЖИТ на полу (не убираем).
     // Трупы чистятся при смене этажа (buildArea сносит всех). Осевшие тела Jolt усыпляет — CPU не жрут.

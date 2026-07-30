@@ -1,4 +1,4 @@
-import { EventBus, ConfigRegistry, DEBUFF_LABEL, DEFAULT_HP_MANA_SCALING, toggleBuffMods, reservedFrac, type TownCommand, type Item, type QuestDef } from '@dm/shared';
+import { EventBus, ConfigRegistry, debuffLabel, DEFAULT_HP_MANA_SCALING, toggleBuffMods, reservedFrac, type TownCommand, type Item, type QuestDef } from '@dm/shared';
 import type { GameState } from './gameState.js';
 import { passiveModifiers } from '../modules/skills-passive/passiveStats.js';
 import { activeModifiers } from '../modules/skills-active/activeStats.js';
@@ -88,7 +88,7 @@ export class App {
       weight: (id) => (this.config.get('weapon-weights').find((w) => w.id === id)?.name ?? id).toLowerCase(),
       physSub: (id) => {
         const sub = this.config.get('phys-subtypes').find((s) => s.id === id);
-        return sub ? `${sub.name.toLowerCase()} → ${DEBUFF_LABEL[sub.kind].toLowerCase()}` : id;
+        return sub ? `${sub.name.toLowerCase()} → ${debuffLabel(this.config.get('debuffs'), sub.kind).toLowerCase()}` : id;
       },
     });
     setDamageTypeMeta(Object.fromEntries(
