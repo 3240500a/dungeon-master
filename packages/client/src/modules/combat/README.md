@@ -22,10 +22,10 @@
   `resolveAttack`, `stepMonsterAi`, `playerSnapshot`, `weaponDebuffs`, `monsterDebuffs`…).
 - **Статусы удара по СОСТАВУ пакета** (базовая атака + атака/каст-скиллы): `mergeElementOnHit`
   (`resolveWeapon.ts`) — физ-статус подтипа (`weaponDebuffs`) держится лишь при наличии физ. урона,
-  плюс авто стих-проки по каждой стихии в ударе (`elementDebuffs`, таблица `damage-types.weapon`).
+  плюс авто стих-проки по каждой стихии в ударе (`elementDebuffs`, таблица `magic-subtypes.weapon`).
   Скилл может конвертить долю урона в стихию (`convertPct`+`element`, у attack и cast) — при полной
   конверсии физ-статус гаснет, остаётся статус стихии; явный `ailment` скилла переопределяет авто того
-  же вида. Тюнится в редакторе (schemas: `damageTypesSchema.weapon`, `attackAbilitySchema.convertPct`).
+  же вида. Тюнится в редакторе (schemas: `magicSubtypesSchema.weapon`, `attackAbilitySchema.convertPct`).
 - **Форма урона скилла** (`shapeSkillPacket` в `resolveWeapon.ts`) — 3 режима, поля в редакторе:
   `multScope` (`base` — множитель только на баз. тип оружия, стихии гира не раздуваются / `all` — весь пакет),
   `addElementPct` (добавить % базового урона как `element` сверх состава), `convertPct` (слить долю в `element`).

@@ -483,7 +483,7 @@ export class GameSession {
    * стихиям в ударе, дедуп по виду (уже присутствующий вид не задваивается — им управляет явный статус скилла).
    */
   private packetOnHit(opts: HitOpts, packet: DamagePacket): HitOpts {
-    return { ...opts, onHit: mergeElementOnHit(opts.onHit ?? [], packet, this.cfg.get('damage-types')) };
+    return { ...opts, onHit: mergeElementOnHit(opts.onHit ?? [], packet, this.cfg.get('magic-subtypes')) };
   }
 
   // ── Активные скиллы ───────────────────────────────────────
@@ -755,7 +755,7 @@ export class GameSession {
     opts.shoveChance = active.shoveChance;
     if (active.stunSec) opts.stunSec = active.stunSec;
     if (active.ailment) {
-      const kind = active.ailment.kind ?? this.cfg.get('damage-types').find((d) => d.id === element)?.ailment;
+      const kind = active.ailment.kind ?? this.cfg.get('magic-subtypes').find((d) => d.id === element)?.ailment;
       if (kind) {
         const al = active.ailment;
         // DoT-статусы (поджиг/яд/кровотечение) — сила = доля от урона удара (magPerDamage); прочие — флэт.
@@ -830,7 +830,7 @@ export class GameSession {
 
   /** Проклятие (curse): врагам в радиусе — статус-дебаф (по стихии) и/или притягивание агро (taunt). */
   private applyCurse(p: PlayerEntity, active: CurseAbility): void {
-    const kind = active.ailment ? (active.ailment.kind ?? this.cfg.get('damage-types').find((d) => d.id === (active.element ?? 'physical'))?.ailment) : undefined;
+    const kind = active.ailment ? (active.ailment.kind ?? this.cfg.get('magic-subtypes').find((d) => d.id === (active.element ?? 'physical'))?.ailment) : undefined;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
       if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) > active.radius) continue;
@@ -961,7 +961,7 @@ export class GameSession {
     if (dm.outDamageMult !== 1) for (const t of Object.keys(packet) as DamageType[]) packet[t] *= dm.outDamageMult;
     const base = monsterCombatStats(m.def);
     const attacker = dm.accuracyMult !== 1 ? { ...base, accuracy: base.accuracy * dm.accuracyMult } : base;
-    return { packet, attacker, debuffs: monsterDebuffs(m.def, this.cfg.get('phys-subtypes')) };
+    return { packet, attacker, debuffs: monsterDebuffs(m.def, this.cfg.get('phys-subtypes'), this.cfg.get('magic-subtypes')) };
   }
 
   private monsterMelee(m: MonsterEntity, target: PlayerEntity): void {

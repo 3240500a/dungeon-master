@@ -1,0 +1,4 @@
+[
+  { "id": "physical", "name": "Физический", "short": "физ.", "color": "#c9c9d4" },
+  { "id": "magical",  "name": "Магический", "short": "маг.", "color": "#a678d8" }
+]

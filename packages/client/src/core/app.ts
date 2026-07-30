@@ -91,9 +91,15 @@ export class App {
         return sub ? `${sub.name.toLowerCase()} → ${debuffLabel(this.config.get('debuffs'), sub.kind).toLowerCase()}` : id;
       },
     });
-    setDamageTypeMeta(Object.fromEntries(
-      this.config.get('damage-types').map((d) => [d.id, { name: d.name, short: d.short, color: d.color, ailment: d.ailment }]),
-    ));
+    // Метаданные каналов урона из ДВУХ конфигов: 'physical' — из damage-kinds (тип урона),
+    // стихии (fire/cold/lightning/poison) — из magic-subtypes (маг. подтипы, у них есть ailment).
+    const phys = this.config.get('damage-kinds').find((k) => k.id === 'physical');
+    setDamageTypeMeta({
+      ...(phys ? { physical: { name: phys.name, short: phys.short, color: phys.color, ailment: null } } : {}),
+      ...Object.fromEntries(
+        this.config.get('magic-subtypes').map((s) => [s.id, { name: s.name, short: s.short, color: s.color, ailment: s.ailment }]),
+      ),
+    });
     // Цвета/имена редкости — из конфига `rarities` (единый источник с rarities.json).
     setRarityMeta(Object.fromEntries(
       this.config.get('rarities').map((r) => [r.id, { name: r.name, color: r.color }]),

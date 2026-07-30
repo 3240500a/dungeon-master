@@ -67,7 +67,7 @@ export function debuffIcon(cfg: DebuffsConfig | undefined, k: DebuffKind): strin
   return cfg?.find((d) => d.id === k)?.icon ?? DEBUFF_ICON[k];
 }
 
-// Стихия урона → её статус теперь в конфиге damage-types (поле `ailment`), не тут.
+// Стихия урона → её статус теперь в конфиге magic-subtypes (поле `ailment`), не тут.
 
 export interface ActiveDebuff {
   stacks: number;

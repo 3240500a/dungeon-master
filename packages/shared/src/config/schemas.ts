@@ -496,35 +496,46 @@ export const raritiesSchema = z.array(
   }),
 );
 
-// ── damage-types ──────────────────────────────────────────────────────────────
-/** Метаданные типов урона (сам набор — структурный, ключи DamagePacket): имя, цвет,
- * какой стих. статус накладывает. */
-export const damageTypesSchema = z.array(
+// ── damage-kinds ────────────────────────────────────────────────────────────
+/** Метаданные ТИПА урона (верхний уровень таксономии): физический / магический.
+ * Имя/короткая подпись/цвет — для всплывающих чисел, иконок, тултипов. */
+export const damageKindsSchema = z.array(
   z.object({
-    id: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']),
+    id: z.enum(['physical', 'magical']),
     name: z.string(),
     /** Короткая подпись (в строке урона). */
     short: z.string(),
     /** Цвет (hex) — всплывающие числа/иконки. */
     color: z.string(),
-    /** Стих. статус, накладываемый этим типом (null у физического). */
-    ailment: z.enum(['burn', 'freeze', 'shock', 'poison']).nullable().default(null),
-    /**
-     * Прок статуса от ЭТОГО типа урона в ударе (базовая атака). Аналог блока `weapon`
-     * у phys-subtypes: если в пакете есть урон этого типа — с шансом наложить `ailment`.
-     * DoT (поджиг/яд) — `magPerDamage` (доля от урона удара/сек); freeze/shock — `mag`/`mag2` флэт.
-     * Опционально (у физического прока нет).
-     */
-    weapon: z
-      .object({
-        chance: z.number().min(0),
-        maxStacks: z.number().int().min(1),
-        durationMs: z.number().min(0),
-        mag: z.number().default(0),
-        mag2: z.number().optional(),
-        magPerDamage: z.number().optional(),
-      })
-      .optional(),
+  }),
+);
+
+// ── magic-subtypes ──────────────────────────────────────────────────────────
+/** Справочник МАГ. подтипов (стихии: огонь/холод/молния/яд) — симметрично phys-subtypes.
+ * Имя/цвет/накладываемый статус + прок от УДАРА ОРУЖИЯ (`weapon`) и от УДАРА МОНСТРА (`monster`).
+ * DoT (поджиг/яд) — `magPerDamage` (доля от урона удара/сек); freeze/shock — `mag`/`mag2` флэт. */
+const magicProcSchema = z.object({
+  chance: z.number().min(0),
+  maxStacks: z.number().int().min(1),
+  durationMs: z.number().min(0),
+  mag: z.number().default(0),
+  mag2: z.number().optional(),
+  magPerDamage: z.number().optional(),
+});
+export const magicSubtypesSchema = z.array(
+  z.object({
+    id: z.enum(['fire', 'cold', 'lightning', 'poison']),
+    name: z.string(),
+    /** Короткая подпись (в строке урона). */
+    short: z.string(),
+    /** Цвет (hex) — всплывающие числа/иконки. */
+    color: z.string(),
+    /** Стих. статус, накладываемый этим подтипом. */
+    ailment: z.enum(['burn', 'freeze', 'shock', 'poison']),
+    /** Прок статуса от УДАРА ОРУЖИЯ (если в пакете есть урон этого подтипа). */
+    weapon: magicProcSchema,
+    /** Прок статуса от УДАРА МОНСТРА (`magPerDamage` — доля от maxDamage монстра). */
+    monster: magicProcSchema,
   }),
 );
 
@@ -992,7 +1003,8 @@ export const configSchemas = {
   'armor-classes': armorClassesSchema,
   'phys-subtypes': physSubtypesSchema,
   'weapon-weights': weaponWeightsSchema,
-  'damage-types': damageTypesSchema,
+  'damage-kinds': damageKindsSchema,
+  'magic-subtypes': magicSubtypesSchema,
   debuffs: debuffsSchema,
   rarities: raritiesSchema,
   'mastery-tree': skillsPassiveSchema,

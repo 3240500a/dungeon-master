@@ -26,7 +26,8 @@ const LABELS: Record<ConfigKey, string> = {
   'armor-classes': 'Классы брони',
   'phys-subtypes': 'Физ. подтипы',
   'weapon-weights': 'Веса оружия',
-  'damage-types': 'Типы урона',
+  'damage-kinds': 'Тип урона',
+  'magic-subtypes': 'Маг. подтипы',
   debuffs: 'Состояния',
   rarities: 'Редкости',
   'mastery-tree': 'Дерево мастерства',
@@ -48,7 +49,7 @@ interface NavGroup {
 const NAV_GROUPS: NavGroup[] = [
   { title: 'Общее', keys: ['balance', 'classes'] },
   { title: '⚔ Боевая система', subs: [
-    { title: 'Урон', keys: ['damage-types', 'phys-subtypes', 'weapon-weights'] },
+    { title: 'Урон', keys: ['damage-kinds', 'phys-subtypes', 'magic-subtypes', 'weapon-weights'] },
     { title: 'Состояния', keys: ['debuffs'] },
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
@@ -62,7 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-types': 'Типы урона', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', packs: 'Пачки',
+  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
 };

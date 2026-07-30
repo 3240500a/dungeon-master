@@ -1,12 +1,15 @@
 import type { ConfigShapes } from '../config/schemas.js';
 import { emptyPacket, type CombatStats, type DamagePacket } from '../types/combat.js';
 import type { MonsterAffix, ScaledMonster } from '../types/world.js';
-import type { DebuffApply } from '../world/debuffs.js';
+import type { DebuffApply, DebuffKind } from '../world/debuffs.js';
 import type { Rng } from './rng.js';
 
 type Monsters = ConfigShapes['monsters'];
 type Affixes = ConfigShapes['monster-affixes'];
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
+type MagicSubtypes = ConfigShapes['magic-subtypes'];
+/** Форма блока `monster` подтипа (phys/magic симметричны). */
+type MonsterProc = PhysSubtypes[number]['monster'];
 
 function applyAffix(m: ScaledMonster, aff: MonsterAffix): void {
   const rec = m as unknown as Record<string, number>;
@@ -128,23 +131,34 @@ export function buildMonsterPacket(m: ScaledMonster, rng: Rng): DamagePacket {
   return p;
 }
 
-/**
- * Дебаффы, которые монстр вешает на игрока (по его physSub). Таблица подтипов —
- * data-driven (`phys-subtypes`, блок `monster`), тот же источник, что у оружия
- * (никакого задвоения). `magPerDamage` — сила = доля от maxDamage монстра.
- */
-export function monsterDebuffs(m: ScaledMonster, physSubs: PhysSubtypes): DebuffApply[] {
-  if (!m.physSub) return [];
-  const sub = physSubs.find((s) => s.id === m.physSub);
-  if (!sub) return [];
-  const md = sub.monster;
+/** Один дебафф из блока `monster` подтипа: DoT (`magPerDamage`) → сила = доля от maxDamage монстра; иначе флэт mag/mag2. */
+function monsterProc(kind: DebuffKind, maxDamage: number, md: MonsterProc): DebuffApply {
   const out: DebuffApply = {
-    kind: sub.kind,
+    kind,
     chance: md.chance,
     maxStacks: md.maxStacks,
     durationMs: md.durationMs,
-    mag: md.magPerDamage != null ? m.maxDamage * md.magPerDamage : md.mag,
+    mag: md.magPerDamage != null ? maxDamage * md.magPerDamage : md.mag,
   };
   if (md.mag2 != null) out.mag2 = md.mag2;
-  return [out];
+  return out;
+}
+
+/**
+ * Дебаффы, которые монстр вешает на игрока: физ-статус по его `physSub` (`phys-subtypes`, блок
+ * `monster`) + стих-статус по его `damageType`, если это стихия (`magic-subtypes`, блок `monster`).
+ * Тот же источник, что у оружия (симметрично, никакого задвоения). `magPerDamage` — сила = доля
+ * от maxDamage монстра.
+ */
+export function monsterDebuffs(m: ScaledMonster, physSubs: PhysSubtypes, magicSubtypes: MagicSubtypes): DebuffApply[] {
+  const out: DebuffApply[] = [];
+  if (m.physSub) {
+    const sub = physSubs.find((s) => s.id === m.physSub);
+    if (sub) out.push(monsterProc(sub.kind, m.maxDamage, sub.monster));
+  }
+  if (m.damageType !== 'physical') {
+    const sub = magicSubtypes.find((s) => s.id === m.damageType);
+    if (sub) out.push(monsterProc(sub.ailment, m.maxDamage, sub.monster));
+  }
+  return out;
 }

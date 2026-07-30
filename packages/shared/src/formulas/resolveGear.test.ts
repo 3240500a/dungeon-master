@@ -7,12 +7,12 @@ import { emptyPacket } from '../types/combat.js';
 import { ConfigRegistry } from '../config/registry.js';
 
 const wpn = (over: Partial<Item>): Item => over as unknown as Item;
-// Справочники (классы брони, физ-подтипы, веса, типы урона) — из конфига (таблицы data-driven).
+// Справочники (классы брони, физ-подтипы, веса, маг. подтипы) — из конфига (таблицы data-driven).
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
 const AC = reg.get('armor-classes');
 const PS = reg.get('phys-subtypes');
 const WW = reg.get('weapon-weights');
-const DT = reg.get('damage-types');
+const MS = reg.get('magic-subtypes');
 
 describe('resolveWeapon', () => {
   it('доли скейла по весу: сверхлёгкое — Ловк, тяжёлое — Сила, магическое — Интеллект', () => {
@@ -46,7 +46,7 @@ describe('resolveWeapon', () => {
   it('стих. урон в пакете → статус: огонь→поджиг (DoT), холод→заморозка (флэт)', () => {
     const pkt = emptyPacket();
     pkt.fire = 8; pkt.cold = 5;
-    const els = elementDebuffs(pkt, DT);
+    const els = elementDebuffs(pkt, MS);
     const kinds = els.map((e) => e.kind);
     expect(kinds).toContain('burn');
     expect(kinds).toContain('freeze');
@@ -60,14 +60,14 @@ describe('resolveWeapon', () => {
 
   it('физический урон статуса не даёт; пустой пакет — пусто', () => {
     const phys = emptyPacket(); phys.physical = 20;
-    expect(elementDebuffs(phys, DT)).toHaveLength(0);
-    expect(elementDebuffs(emptyPacket(), DT)).toHaveLength(0);
+    expect(elementDebuffs(phys, MS)).toHaveLength(0);
+    expect(elementDebuffs(emptyPacket(), MS)).toHaveLength(0);
   });
 
   it('mergeElementOnHit: физ. урон есть → physSub держится + стих-проки', () => {
     const physSub: DebuffApply = { kind: 'sunder', chance: 0.5, maxStacks: 5, durationMs: 4000, mag: 0.04 };
     const pkt = emptyPacket(); pkt.physical = 20; pkt.fire = 8;
-    const kinds = mergeElementOnHit([physSub], pkt, DT).map((d) => d.kind);
+    const kinds = mergeElementOnHit([physSub], pkt, MS).map((d) => d.kind);
     expect(kinds).toContain('sunder');   // физ-подтип держится (есть физ. урон)
     expect(kinds).toContain('burn');     // + стих-прок огня
   });
@@ -75,7 +75,7 @@ describe('resolveWeapon', () => {
   it('mergeElementOnHit: полная конверсия (физ=0) → physSub гаснет, только стихия', () => {
     const physSub: DebuffApply = { kind: 'sunder', chance: 0.5, maxStacks: 5, durationMs: 4000, mag: 0.04 };
     const pkt = emptyPacket(); pkt.cold = 15;   // всё сконвертили в холод, физ. урона нет
-    const kinds = mergeElementOnHit([physSub], pkt, DT).map((d) => d.kind);
+    const kinds = mergeElementOnHit([physSub], pkt, MS).map((d) => d.kind);
     expect(kinds).not.toContain('sunder');  // физ-статус погас
     expect(kinds).toEqual(['freeze']);       // остался только статус стихии
   });
@@ -110,7 +110,7 @@ describe('resolveWeapon', () => {
   it('mergeElementOnHit: явный статус того же вида не задваивается', () => {
     const explicitBurn: DebuffApply = { kind: 'burn', chance: 0.9, maxStacks: 1, durationMs: 5000, mag: 0, magPerDamage: 0.3 };
     const pkt = emptyPacket(); pkt.physical = 10; pkt.fire = 8;
-    const burns = mergeElementOnHit([explicitBurn], pkt, DT).filter((d) => d.kind === 'burn');
+    const burns = mergeElementOnHit([explicitBurn], pkt, MS).filter((d) => d.kind === 'burn');
     expect(burns).toHaveLength(1);               // один поджиг
     expect(burns[0]!.chance).toBe(0.9);          // и именно явный (авто-прок не добавился)
   });

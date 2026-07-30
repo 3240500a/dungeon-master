@@ -79,7 +79,7 @@ function statRow(label: string, value: string, tip?: string, delta?: string): HT
   return row;
 }
 
-// Res-стат → стихия (тип урона). Имя/цвет берём из конфига `damage-types`
+// Res-стат → стихия (маг. подтип). Имя/цвет берём из конфига `magic-subtypes`
 // (единый источник, без задвоения хардкод-палитры).
 const RES: [keyof DerivedStats, DamageType][] = [
   ['resFire', 'fire'],
@@ -305,7 +305,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
 
       // ── Статусы, которые НАКЛАДЫВАЕТ атака (подтип оружия + стихия скилла), с ЭФФЕКТИВНЫМИ числами ──
       const physSubs = app.config.get('phys-subtypes');
-      const dmgCfg = app.config.get('damage-types');
+      const dmgCfg = app.config.get('magic-subtypes');
       const debuffsCfg = app.config.get('debuffs');
       const kNum = (k: DebuffKind, suf: string): number => (d[`${k}${suf}` as keyof DerivedStats] as number) || 0;
       const strengthStr = (b: DebuffApply, pMul: number): string => {

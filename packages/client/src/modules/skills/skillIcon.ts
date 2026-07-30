@@ -7,12 +7,12 @@ export const HOTBAR_KEYS = ['ПКМ', 'Shift', 'Space', 'Alt'];
 /** Псевдо-стихия «мастерство» — не тип урона, отдельный нейтральный цвет. */
 const MASTERY_COLOR = '#6a6a7a';
 
-/** Цвет стихии способности — из конфига `damage-types` (единый источник),
- * кроме служебной «mastery». Без задвоения с damage-types.json. */
+/** Цвет стихии способности — из живых конфигов каналов урона (damage-kinds/magic-subtypes)
+ * через dmgColor, кроме служебной «mastery». Без задвоения палитры. */
 export function elementColor(el: string): string {
   return el === 'mastery' ? MASTERY_COLOR : dmgColor(el);
 }
-/** Имя стихии — из конфига `damage-types`; «mastery» — служебная подпись. */
+/** Имя стихии — из живого конфига каналов урона (через dmgName); «mastery» — служебная подпись. */
 export function elementLabel(el: string): string {
   return el === 'mastery' ? 'Мастерство' : dmgName(el);
 }
