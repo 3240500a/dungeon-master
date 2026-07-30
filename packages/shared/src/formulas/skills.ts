@@ -1,6 +1,7 @@
 import type { ConfigShapes } from '../config/schemas.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { SkillAllocation } from '../types/save.js';
+import type { Item, AttackType, DamageKind, WeaponClass } from '../types/items.js';
 
 /**
  * Чистые функции «дерево + раскладка → модификаторы статов» (модификатор × ранг).
@@ -96,4 +97,27 @@ export function skillTreeSetBonus(
     for (const m of set.mods) mods.push({ stat: m.stat, kind: m.kind, value: m.value * rank });
   }
   return mods;
+}
+
+/** Ограничения оружия скилла (тип атаки/вид урона/класс/руки/дуал). Пусто → любое оружие. */
+export interface WeaponGate {
+  attackTypes?: AttackType[];
+  damageKinds?: DamageKind[];
+  weaponClasses?: WeaponClass[];
+  hands?: 'any' | 'one' | 'two';
+  requiresDual?: boolean;
+}
+
+/**
+ * Подходит ли оружие (+ offhand для дуала) под ограничения скилла. ЕДИНАЯ проверка для серверного
+ * гейта каста и клиентского UI (нельзя назначить / серый слот при несоответствии оружия).
+ */
+export function skillWeaponAllowed(g: WeaponGate, weapon: Item | undefined, offhand?: Item | undefined): boolean {
+  const at: AttackType = weapon?.attackType ?? 'melee';
+  if (g.attackTypes?.length && !g.attackTypes.includes(at)) return false;
+  if (g.damageKinds?.length && !(weapon?.damageKind && g.damageKinds.includes(weapon.damageKind))) return false;
+  if (g.weaponClasses?.length && !(weapon?.weaponClass && g.weaponClasses.includes(weapon.weaponClass))) return false;
+  if (g.hands && g.hands !== 'any') { const need = g.hands === 'two' ? 2 : 1; if ((weapon?.hands ?? 1) !== need) return false; }
+  if (g.requiresDual && !(weapon?.attackType && offhand?.attackType)) return false;
+  return true;
 }

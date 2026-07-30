@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Item } from '../types/items.js';
 import { weaponDebuffs, elementDebuffs, mergeElementOnHit, shapeSkillPacket, weightScaleSplit } from './resolveWeapon.js';
+import { skillWeaponAllowed } from './skills.js';
 import type { DebuffApply } from '../world/debuffs.js';
 import { armorClassModifiers, armorNoise, armorPoise } from './resolveArmor.js';
 import { emptyPacket } from '../types/combat.js';
@@ -42,6 +43,22 @@ describe('resolveWeapon', () => {
 
   it('без подтипа — дебаффов нет', () => {
     expect(weaponDebuffs(wpn({}), PS, DB)).toHaveLength(0);
+  });
+
+  it('гейт оружия скилла: класс/руки/damageKind/дуал', () => {
+    const sword = wpn({ weaponClass: 'sword', attackType: 'melee', damageKind: 'physical', hands: 1 });
+    const axe = wpn({ weaponClass: 'axe', attackType: 'melee', damageKind: 'physical', hands: 1 });
+    const wand = wpn({ weaponClass: 'wand', attackType: 'ranged', damageKind: 'magical', hands: 1 });
+    expect(skillWeaponAllowed({ weaponClasses: ['axe'] }, sword)).toBe(false);   // скилл топоров мечом нельзя
+    expect(skillWeaponAllowed({ weaponClasses: ['axe'] }, axe)).toBe(true);
+    expect(skillWeaponAllowed({}, sword)).toBe(true);                            // пустой гейт — любое
+    expect(skillWeaponAllowed({}, undefined)).toBe(true);
+    expect(skillWeaponAllowed({ damageKinds: ['magical'] }, sword)).toBe(false); // маг-скилл только магией
+    expect(skillWeaponAllowed({ damageKinds: ['magical'] }, wand)).toBe(true);
+    expect(skillWeaponAllowed({ hands: 'two' }, sword)).toBe(false);             // 2 руки — одноручным нельзя
+    expect(skillWeaponAllowed({ hands: 'two' }, wpn({ hands: 2 }))).toBe(true);
+    expect(skillWeaponAllowed({ requiresDual: true }, sword)).toBe(false);       // дуал — нужен оффхенд-оружие
+    expect(skillWeaponAllowed({ requiresDual: true }, sword, axe)).toBe(true);
   });
 
   it('стих. урон в пакете → статус: огонь→поджиг (DoT), холод→заморозка (флэт)', () => {

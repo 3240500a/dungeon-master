@@ -11,6 +11,7 @@ import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from 
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
 import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/resolveWeapon.js';
+import { skillWeaponAllowed } from '../formulas/skills.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { gainXp } from '../economy/progression.js';
@@ -564,20 +565,9 @@ export class GameSession {
     }
   }
 
-  /** Проверка ограничений оружия скилла (тип/класс/руки; пусто → любое оружие). */
+  /** Проверка ограничений оружия скилла (общая с клиентским UI — `skillWeaponAllowed`). */
   private weaponAllowed(p: PlayerEntity, active: OffensiveAbility | CurseAbility): boolean {
-    const w = p.save.equipment.weapon;
-    const at: AttackType = w?.attackType ?? 'melee';
-    if (active.attackTypes?.length && !active.attackTypes.includes(at)) return false;
-    if (active.damageKinds?.length && !(w?.damageKind && active.damageKinds.includes(w.damageKind))) return false;
-    if (active.weaponClasses?.length && !(w?.weaponClass && active.weaponClasses.includes(w.weaponClass))) return false;
-    if (active.hands !== 'any') {
-      const need = active.hands === 'two' ? 2 : 1;
-      if ((w?.hands ?? 1) !== need) return false;
-    }
-    // Ветка «дуал»: в обоих слотах — оружие (у щита нет attackType).
-    if (active.requiresDual && !(w?.attackType && p.save.equipment.offhand?.attackType)) return false;
-    return true;
+    return skillWeaponAllowed(active, p.save.equipment.weapon, p.save.equipment.offhand);
   }
 
   /** Тик замаха: стан/ошеломление сбивает удар (если не устоял), иначе — срабатывание. */
@@ -1097,7 +1087,7 @@ export class GameSession {
 
     const loot = this.cfg.get('balance').loot;
     if (this.rng.chance(loot.dropChance)) {
-      const theme = this.cfg.get('dungeons')[0]!;
+      const theme = this.cfg.get('biomes')[0]!;
       const item = generateItem(
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),

@@ -1,4 +1,4 @@
-import type { SaveState, SkillNode } from '@dm/shared';
+import { skillWeaponAllowed, type SaveState, type SkillNode } from '@dm/shared';
 import type { App } from '../core/app.js';
 import { elementColor, elementOf, abbrev } from '../modules/skills/skillIcon.js';
 
@@ -31,6 +31,16 @@ function nodeById(app: App, id: string): SkillNode | undefined {
   const save = app.state!.save;
   const tree = app.config.get('skill-tree');
   return tree?.nodes.find((n) => n.id === id);
+}
+
+/** Подходит ли назначенный бинд под НАДЕТОЕ оружие (базовая атака/пусто — всегда; иначе гейт скилла). */
+function skillFits(app: App, b: Binding): boolean {
+  if (!b || b === 'attack') return true;
+  const active = nodeById(app, b)?.effect.active;
+  // Гейт оружия — только у боевых скиллов (attack/cast/curse); ауры/стойки/баффы — любое оружие.
+  if (!active || (active.category !== 'attack' && active.category !== 'cast' && active.category !== 'curse')) return true;
+  const eq = app.state!.save.equipment;
+  return skillWeaponAllowed(active, eq.weapon, eq.offhand);
 }
 
 /** Делит ли бинд общий attack-таймер: базовая атака или скилл категории attack (cast/curse — свой КД). */
@@ -91,10 +101,12 @@ export function buildBindBar(app: App): { el: HTMLElement; refresh: () => void; 
       const cd = b ? app.actionCooldowns[b] : undefined;
       const frac = cd && now < cd.until && cd.until > cd.start ? (cd.until - now) / (cd.until - cd.start) : 0;
       o.fill.style.height = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
-      // Использованный слот льёт свою заливку; ОСТАЛЬНЫЕ атак-слоты во время общего лока — серые.
-      const grey = locked && frac === 0 && isAttackLike(app, b);
+      // Серый, если: скилл не под текущее оружие (нельзя кастовать), ИЛИ общий attack-лок (кроме своего слота).
+      const unfit = !skillFits(app, b);
+      const grey = unfit || (locked && frac === 0 && isAttackLike(app, b));
       o.slotBox.style.filter = grey ? 'grayscale(1) brightness(0.5)' : 'none';
-      o.slotBox.style.opacity = grey ? '0.6' : '1';
+      o.slotBox.style.opacity = grey ? '0.55' : '1';
+      o.slotBox.title = unfit ? 'Скилл недоступен с текущим оружием' : '';
     }
   };
 
@@ -125,6 +137,11 @@ function paintBox(app: App, box: HTMLDivElement, binding: Binding): void {
   box.style.borderColor = border;
   box.style.color = color;
   box.append(document.createTextNode(text));
+  // Серый сразу при перерисовке, если скилл не под текущее оружие (refresh держит это же покадрово).
+  const unfit = !skillFits(app, binding);
+  box.style.filter = unfit ? 'grayscale(1) brightness(0.5)' : 'none';
+  box.style.opacity = unfit ? '0.55' : '1';
+  box.title = unfit ? 'Скилл недоступен с текущим оружием' : '';
 }
 
 let openMenu: HTMLElement | undefined;
@@ -162,7 +179,16 @@ function openDropdown(app: App, anchor: HTMLElement, slot: SlotDef, onChange: ()
   menu.append(opt('⚔ Атака', '#e6ddc9', 'attack'));
   for (const n of learnedSkills(app)) {
     const rank = app.state!.save.skills[n.id] ?? 1;
-    menu.append(opt(`${abbrev(n.name)} · ${n.name} (ур.${rank})`, elementColor(elementOf(n)), n.id));
+    if (skillFits(app, n.id)) {
+      menu.append(opt(`${abbrev(n.name)} · ${n.name} (ур.${rank})`, elementColor(elementOf(n)), n.id));
+    } else {
+      // Не то оружие — показываем, но НЕЛЬЗЯ назначить (серым, некликабельно).
+      const o = document.createElement('div');
+      o.style.cssText = 'padding:6px 8px;border-radius:5px;font-size:13px;color:#6a655c;opacity:0.75;cursor:not-allowed';
+      o.textContent = `${abbrev(n.name)} · ${n.name} — не то оружие`;
+      o.title = 'Скилл требует другое оружие';
+      menu.append(o);
+    }
   }
   menu.append(opt('✕ Пусто', '#8f897c', null));
 
