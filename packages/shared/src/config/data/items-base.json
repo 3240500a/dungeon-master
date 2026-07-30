@@ -509,7 +509,7 @@
     "slot": "weapon",
     "weaponType": "magic",
     "weaponClass": "wand",
-    "weight": "medium",
+    "weight": "magical",
     "damageType": "fire",
     "hands": 1
   },
@@ -541,7 +541,7 @@
     "slot": "weapon",
     "weaponType": "magic",
     "weaponClass": "wand",
-    "weight": "medium",
+    "weight": "magical",
     "damageType": "lightning",
     "hands": 1
   },
@@ -573,7 +573,7 @@
     "slot": "weapon",
     "weaponType": "magic",
     "weaponClass": "staff",
-    "weight": "medium",
+    "weight": "magical",
     "damageType": "cold",
     "hands": 2
   },

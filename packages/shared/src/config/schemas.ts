@@ -524,9 +524,10 @@ export const weaponWeightsSchema = z.array(
     power: z.number().min(0),
     /** Множитель finesse-сигнатур (рана/кровотечение): легче — больше. */
     finesse: z.number().min(0),
-    /** Доли скейла урона от атрибутов (Сила / Ловкость). */
+    /** Доли скейла урона от атрибутов (Сила / Ловкость / Интеллект). Сумма ≈ 1. */
     strength: z.number().min(0),
     dexterity: z.number().min(0),
+    intelligence: z.number().min(0).default(0),
     /** Вклад в вес игрока (расталкивание): тяжёлое оружие — больше. */
     weight: z.number().min(0).default(10),
   }),

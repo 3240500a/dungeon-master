@@ -15,10 +15,10 @@ function weightOf(weights: WeaponWeights, id: WeaponWeight | undefined): WeaponW
   return id ? weights.find((w) => w.id === id) : undefined;
 }
 
-/** Доли скейла урона по весу: сколько от Силы / Ловкости. */
-export function weightScaleSplit(weight: WeaponWeight, weights: WeaponWeights): { strength: number; dexterity: number } {
+/** Доли скейла урона по весу: сколько от Силы / Ловкости / Интеллекта (magical-вес = Инт). */
+export function weightScaleSplit(weight: WeaponWeight, weights: WeaponWeights): { strength: number; dexterity: number; intelligence: number } {
   const w = weightOf(weights, weight);
-  return w ? { strength: w.strength, dexterity: w.dexterity } : { strength: 1, dexterity: 0 };
+  return w ? { strength: w.strength, dexterity: w.dexterity, intelligence: w.intelligence } : { strength: 1, dexterity: 0, intelligence: 0 };
 }
 
 /** Множитель силовых сигнатур (2H — ещё ×balance.twoHandedPowerMult). */

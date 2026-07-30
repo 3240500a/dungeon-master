@@ -1,6 +1,7 @@
 [
-  { "id": "superlight", "name": "Сверхлёгкое", "power": 0.5, "finesse": 1.4, "strength": 0, "dexterity": 1, "weight": 3 },
-  { "id": "light", "name": "Лёгкое", "power": 0.75, "finesse": 1.15, "strength": 0.35, "dexterity": 0.65, "weight": 6 },
-  { "id": "medium", "name": "Среднее", "power": 1.0, "finesse": 1.0, "strength": 0.65, "dexterity": 0.35, "weight": 12 },
-  { "id": "heavy", "name": "Тяжёлое", "power": 1.4, "finesse": 0.6, "strength": 1, "dexterity": 0, "weight": 25 }
+  { "id": "superlight", "name": "Сверхлёгкое", "power": 0.5, "finesse": 1.4, "strength": 0, "dexterity": 1, "intelligence": 0, "weight": 3 },
+  { "id": "light", "name": "Лёгкое", "power": 0.75, "finesse": 1.15, "strength": 0.35, "dexterity": 0.65, "intelligence": 0, "weight": 6 },
+  { "id": "medium", "name": "Среднее", "power": 1.0, "finesse": 1.0, "strength": 0.65, "dexterity": 0.35, "intelligence": 0, "weight": 12 },
+  { "id": "heavy", "name": "Тяжёлое", "power": 1.4, "finesse": 0.6, "strength": 1, "dexterity": 0, "intelligence": 0, "weight": 25 },
+  { "id": "magical", "name": "Магическое", "power": 1.0, "finesse": 1.0, "strength": 0, "dexterity": 0, "intelligence": 1, "weight": 8 }
 ]

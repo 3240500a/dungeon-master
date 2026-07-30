@@ -33,11 +33,11 @@ function attrScaleBonus(
   scaling: Record<WeaponType, number>,
   weights: WeaponWeights,
 ): number {
-  if (weapon?.weight && wt !== 'magic') {
+  if (weapon?.weight) {
     const sp = weightScaleSplit(weapon.weight, weights);
-    return (attrs.strength * sp.strength + attrs.dexterity * sp.dexterity) * scaling[wt];
+    return (attrs.strength * sp.strength + attrs.dexterity * sp.dexterity + attrs.intelligence * sp.intelligence) * scaling[wt];
   }
-  return attrs[WEAPON_ATTR[wt]] * scaling[wt];
+  return attrs[WEAPON_ATTR[wt]] * scaling[wt];   // безоружка — профильный атрибут типа
 }
 
 /** Сумма плоского стата из baseStats + аффиксов конкретного предмета. */

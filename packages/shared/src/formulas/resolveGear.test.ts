@@ -13,9 +13,10 @@ const WW = reg.get('weapon-weights');
 const TH = reg.get('balance').twoHandedPowerMult;
 
 describe('resolveWeapon', () => {
-  it('доли скейла: сверхлёгкое — Ловкость, тяжёлое — Сила', () => {
-    expect(weightScaleSplit('superlight', WW)).toEqual({ strength: 0, dexterity: 1 });
-    expect(weightScaleSplit('heavy', WW)).toEqual({ strength: 1, dexterity: 0 });
+  it('доли скейла по весу: сверхлёгкое — Ловк, тяжёлое — Сила, магическое — Интеллект', () => {
+    expect(weightScaleSplit('superlight', WW)).toEqual({ strength: 0, dexterity: 1, intelligence: 0 });
+    expect(weightScaleSplit('heavy', WW)).toEqual({ strength: 1, dexterity: 0, intelligence: 0 });
+    expect(weightScaleSplit('magical', WW)).toEqual({ strength: 0, dexterity: 0, intelligence: 1 });
   });
 
   it('подтип урона → свой дебафф; лёгкие чаще ранят, тяжёлые чаще увечат', () => {
