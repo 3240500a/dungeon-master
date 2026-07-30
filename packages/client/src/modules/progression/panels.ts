@@ -290,12 +290,14 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const atkDps = Math.round(((dmgMin + dmgMax) / 2) * d.attackSpeed);
       const dMinInc = Math.round(pDmgMin) - Math.round(dmgMin);
       const dMaxInc = Math.round(pDmgMax) - Math.round(dmgMax);
+      // Строки «урон по типам» из диапазонов {t:{min,max}} — общий вид для базовой атаки и скиллов.
+      const typeLines = (bt: Record<DamageType, { min: number; max: number }>): string =>
+        DMG_TYPES.filter((t) => bt[t].max > 0).map((t) =>
+          `<span style="color:${dmgColor(t)}">■</span> ${dmgName(t)}: <b>${Math.round(bt[t].min)}–${Math.round(bt[t].max)}</b>`).join('<br>') || '—';
       const weaponTip = (): string => {
-        const parts = DMG_TYPES.filter((t) => byType[t].max > 0).map((t) =>
-          `<span style="color:${dmgColor(t)}">■</span> ${dmgName(t)}: <b>${Math.round(byType[t].min)}–${Math.round(byType[t].max)}</b>`);
         const wt = state.save.equipment.weapon?.weaponType ?? 'melee';
         const attrName = wt === 'melee' ? 'Силы' : wt === 'ranged' ? 'Ловкости' : 'Интеллекта';
-        return `Урон базовой атаки по типам:<br>${parts.join('<br>') || '—'}<br><br>` +
+        return `Урон базовой атаки по типам:<br>${typeLines(byType)}<br><br>` +
           `Тип базы — по оружию. Растёт от базы оружия и <b>${attrName}</b>; стихийные добавки — с аффиксов гира/скиллов.`;
       };
       const skillTree = app.config.get('skill-tree');
@@ -359,6 +361,20 @@ export const characterPanel: PanelFactory = (app, ui) => {
         return lines.length ? `<br><br><b>Накладывает:</b><br>${lines.join('<br>')}<br><span style="color:#8f897c;font-size:11px">(до сопротивления цели)</span>` : '';
       };
 
+      // Разбивка урона скилла по типам: byType × (damageMult×ранг), затем конверсия доли всего урона в стихию el.
+      const skillByType = (active: { damageMult: number; convertPct?: number }, rank: number, el: DamageType): Record<DamageType, { min: number; max: number }> => {
+        const mult = active.damageMult * abilityRankMult(rank);
+        const bt = {} as Record<DamageType, { min: number; max: number }>;
+        for (const t of DMG_TYPES) bt[t] = { min: byType[t].min * mult, max: byType[t].max * mult };
+        const conv = active.convertPct ?? 0;
+        if (conv > 0) {
+          let cMin = 0, cMax = 0;
+          for (const t of DMG_TYPES) { cMin += bt[t].min * conv; cMax += bt[t].max * conv; bt[t].min *= (1 - conv); bt[t].max *= (1 - conv); }
+          bt[el].min += cMin; bt[el].max += cMax;
+        }
+        return bt;
+      };
+
       // Два урона (как D2): что назначено на ЛКМ и на ПКМ (атака оружием / скилл).
       const dmgRowFor = (label: string, binding: string | null): HTMLElement => {
         const row = mk('div', 'display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:3px 0;cursor:help');
@@ -384,7 +400,10 @@ export const characterPanel: PanelFactory = (app, ui) => {
               : (() => { const ct = active.castTimeSec / Math.max(0.2, state.derived().castSpeed); return [ct > 0 ? Math.round(sdmg / ct) : sdmg, `каст ${ct.toFixed(2)} с`] as const; })();
             const col = dmgColor(elementOf(node) as DamageType);
             right.append(mk('span', `font-weight:600;color:${col}`, `${sdmg} (ДПС ~${sdps})`));
-            attachTooltip(row, () => `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.` + ailmentTip(binding));
+            attachTooltip(row, () =>
+              `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.<br><br>` +
+              `Урон по типам:<br>${typeLines(skillByType(active, rank, (elementOf(node) ?? 'physical') as DamageType))}` +
+              ailmentTip(binding));
           } else if (node && active) {
             // Проклятие/аура/стойка/бафф — прямого урона нет.
             const kind = active.category === 'curse' ? 'проклятие' : active.category === 'aura' ? 'аура' : active.category === 'stance' ? 'стойка' : 'бафф';
