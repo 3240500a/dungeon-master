@@ -73,20 +73,35 @@ describe('StepPlanner — поворот на месте держит стойк
     expect(standLat(11)).toBeGreaterThan(0.15);  // расставленная стойка — ноги реально разведены
   });
 
-  it('вращение с расставленной стойкой → приставные шаги (stepping), ноги ни разу не сходятся', () => {
-    const d = new PoseDriver();
-    d.setStance(11, 0, 0);
-    for (let i = 0; i < 30; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться стоя
-    let stepped = false, minLatSum = Infinity, yaw = 0;
-    for (let i = 0; i < 180; i++) {
-      yaw += 0.06;                                                                  // ~3.6 рад/с — крутимся на месте
+  // Прогон поворота на месте: вернуть первую переступившую ногу (0=лев,1=прав) и было ли скрещивание (стопа за средней линией).
+  const turnRun = (dir: number): { first: number; crossed: boolean; stepped: boolean } => {
+    const d = new PoseDriver(); d.setStance(11, 0, 0);
+    for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться стоя
+    let yaw = 0, first = -1, crossed = false, stepped = false;
+    for (let i = 0; i < 240; i++) {
+      yaw += dir * 0.03;                                                            // ~1.8 рад/с — крутимся на месте
       d.setWorld(0, 0, yaw, 0, 0);
       const t = d.update(1 / 60);
+      const [sl, sr] = d.swingLegs;
+      if (first < 0 && (sl || sr)) first = sl ? 0 : 1;
       if (d.stepping) stepped = true;
-      minLatSum = Math.min(minLatSum, Math.abs(t.hipLatL) + Math.abs(t.hipLatR));
+      if (t.hipLatL > 0.2 || t.hipLatR < -0.2) crossed = true;   // левая ушла вправо / правая влево = скрещивание
     }
-    expect(stepped).toBe(true);              // делал приставные шаги, а не крутился на неподвижных ступнях
-    expect(minLatSum).toBeGreaterThan(0.15); // за весь поворот ноги ни разу не схлопнулись под таз
+    return { first, crossed, stepped };
+  };
+
+  it('поворот ВЛЕВО → первой переступает ЛЕВАЯ (внутренняя) нога, без скрещивания', () => {
+    const r = turnRun(-1);           // yaw убывает = влево
+    expect(r.stepped).toBe(true);
+    expect(r.first).toBe(0);         // левая первой
+    expect(r.crossed).toBe(false);   // ноги не скрестились за среднюю линию
+  });
+
+  it('поворот ВПРАВО → первой переступает ПРАВАЯ (внутренняя) нога, без скрещивания', () => {
+    const r = turnRun(1);            // yaw растёт = вправо
+    expect(r.stepped).toBe(true);
+    expect(r.first).toBe(1);         // правая первой
+    expect(r.crossed).toBe(false);
   });
 
   it('дефолтная стойка (без setStance) — как раньше: узко, без развода', () => {

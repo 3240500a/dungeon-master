@@ -642,7 +642,7 @@ function renderGaitTune(): void {
   gsl('вынос вбок (страйф)', GAITo, 'strafeReach', 0, 1.5, 0.05);
   gsl('предел кроссовера', GAITo, 'crossClamp', 0, 99, 1);
   gsl('поворот: порог (рад/с)', GAITo, 'turnStep', 0.1, 1.5, 0.05);
-  gsl('поворот: шаг вбок (u)', GAITo, 'turnStepThresh', 2, 20, 0.5);
+  gsl('поворот: размер шага', GAITo, 'turnStepFrac', 0.3, 1.0, 0.02);
   box.append(pbtn('сброс настроек бега', () => { delete gaitCfgs[curCharId]; try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ } applyGaitCfg(curCharId); renderLoco(); }));
   // Экспорт/импорт настроек бега ВСЕХ персонажей (pe_gait) — портируемый артефакт (бэкап + вход для Ф5).
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px;font-size:11px'); eh.textContent = 'НАСТРОЙКИ БЕГА → JSON (все персонажи)'; box.append(eh);
@@ -881,7 +881,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['standY', 'pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepThresh'] as const;
+const GAIT_KEYS = ['standY', 'pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepFrac'] as const;
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
 const GX_KEYS = ['legWidth', 'armDown', 'elbowBend', 'bob'] as const;
 type NumRec = Record<string, number>;
