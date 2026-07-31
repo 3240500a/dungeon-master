@@ -49,29 +49,34 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
 /**
  * Заземлить стопы меша (после физики+бленда+корня): пол под каждой стопой → цель = пол + SOLE. Таз поднимаем под самую
  * «провалившуюся» ОПОРНУЮ стопу (мгновенно вниз-провал, плавно оседая), затем per-foot IK плантит каждую опорную стопу
- * ровно на её пол (маховую, задранную выше PLANT_MAX, не трогаем). baseY = физ-Y таза; gs.off — сглаж. сдвиг корня.
+ * ровно на её пол + кладёт её плоско. МАХОВУЮ (в переносе) НЕ трогаем — её носок ведёт поза (иначе «лыжник»: стопа
+ * плющится в воздухе на спуске). Опора = `support[i]` из позы (driver.swingLegs → !swing); нет позы → эвристика по высоте.
+ * baseY = физ-Y таза; gs.off — сглаж. сдвиг корня.
  */
-export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery): void {
+export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery, support?: [boolean, boolean]): void {
   const hips = mesh.bones.get('Hips'); if (!hips) return;
   hips.getWorldQuaternion(_ipq); _iPole.set(0, 0, 1).applyQuaternion(_ipq); _iPole.y = 0;   // фронт тела = pole колена
   if (_iPole.lengthSq() < 1e-6) _iPole.set(0, 0, 1); else _iPole.normalize();
   _iFace.setFromAxisAngle(_UP, Math.atan2(_iPole.x, _iPole.z));   // рыск тела (плоско): стопа лежит и носок по фейсингу
-  const tgt: number[] = []; let worst = -Infinity;
-  for (const leg of IK_LEGS) {
-    const fb = mesh.bones.get(leg.f); if (!fb) { tgt.push(NaN); continue; }
+  const tgt: number[] = [], sup: boolean[] = []; let worst = -Infinity;
+  for (let i = 0; i < IK_LEGS.length; i++) {
+    const fb = mesh.bones.get(IK_LEGS[i]!.f); if (!fb) { tgt.push(NaN); sup.push(false); continue; }
     fb.getWorldPosition(_iFoot);
     const ty = gnd(_iFoot.x, _iFoot.z) + SOLE; tgt.push(ty);
-    if (_iFoot.y - ty < PLANT_MAX) worst = Math.max(worst, ty - _iFoot.y);   // опорная (не задранная маховая)
+    const isSup = support ? support[i]! : (_iFoot.y - ty < PLANT_MAX);   // опора из позы (маховую не заземляем); фолбэк — по высоте
+    sup.push(isSup);
+    if (isSup) worst = Math.max(worst, ty - _iFoot.y);
   }
   if (Number.isFinite(worst)) {
     gs.off += worst > 0 ? worst : worst * Math.min(1, dt * 10);     // провал → мгновенно вверх; выше пола → плавно вниз
     mesh.root.position.y = baseY + gs.off; mesh.root.updateMatrixWorld(true);
   }
-  for (let i = 0; i < IK_LEGS.length; i++) {                        // планти опорные стопы на их пол
+  for (let i = 0; i < IK_LEGS.length; i++) {                        // планти+кладём ТОЛЬКО опорные стопы; маховую ведёт поза
+    if (!sup[i]) continue;
     const leg = IK_LEGS[i]!, ty = tgt[i]!; if (!Number.isFinite(ty)) continue;
     const ub = mesh.bones.get(leg.u), lb = mesh.bones.get(leg.l), fb = mesh.bones.get(leg.f);
     if (!ub || !lb || !fb) continue;
     fb.getWorldPosition(_iFoot);
-    if (_iFoot.y - ty < PLANT_MAX) legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace);
+    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace);
   }
 }

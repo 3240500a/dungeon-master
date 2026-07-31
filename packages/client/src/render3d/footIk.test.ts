@@ -41,4 +41,17 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
     expect(minAfter).toBeGreaterThan(-0.1);   // НЕ ниже пола (не тонут)
     expect(minAfter).toBeLessThan(2.5);        // сели на пол (~SOLE=1.5), не улетели
   });
+
+  it('groundFeet: МАХОВУЮ (support=false) не выравнивает — её ориентацию ведёт поза (нет «лыжника»)', () => {
+    const h = buildHumanoid({ gender: 'male', build: {} });
+    h.root.position.set(0, 20, 0);
+    const rf = h.bones.get('RightFoot')!;
+    rf.rotation.set(-0.8, 0, 0);                                  // задрать носок (как в переносе маховой)
+    h.root.updateMatrixWorld(true);
+    const before = rf.quaternion.clone();
+    groundFeet(h, 20, { off: 0 }, 1 / 60, () => 0, [true, false]); // левая ОПОРА, правая МАХ
+    expect(rf.quaternion.angleTo(before)).toBeLessThan(0.02);     // маховая стопа НЕ тронута (носок остался задран)
+    const lf = h.bones.get('LeftFoot')!.getWorldPosition(V(0, 0, 0));
+    expect(Math.abs(lf.y - 1.5)).toBeLessThan(1.0);              // опорная — заземлена на пол
+  });
 });

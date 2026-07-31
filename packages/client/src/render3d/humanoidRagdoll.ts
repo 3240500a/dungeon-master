@@ -395,10 +395,13 @@ export const newGhostGround = (): GhostGround => ({ off: 0 });
  * @param targetPose 21-костная поза-цель (манекен) для бленда; null → чистая физика.
  * @param match 0..1 — вес совпадения с манекеном (RB2): 0 = физрезультат, 1 = ровно поза-цель (физика лишь для реакций/ударов).
  * @param groundAt высота пола (мир) в точке XZ — рейкаст. Не задан → плоский floorY. FOOT-IK ставит стопу на этот пол.
+ * @param support [лев, прав] — какая нога ОПОРНАЯ (из позы: !swing). Заземляем/кладём плоско ТОЛЬКО опорные, маховую
+ *   ведёт поза (носок задран). Не задан → эвристика по высоте стопы.
  */
 export function renderRagdollGhost(
   mesh: Humanoid, rag: HumanoidRagdoll, gs: GhostGround, dt: number, floorY = 0, ground = true,
   targetPose: Record<string, [number, number, number]> | null = null, match = 0, groundAt?: GroundQuery,
+  support?: [boolean, boolean],
 ): void {
   const gnd = groundAt ?? ((): number => floorY);
   const bp = rag.readBakedPose(); mesh.reset();
@@ -417,5 +420,5 @@ export function renderRagdollGhost(
   if (!ground) gs.off += (0 - gs.off) * Math.min(1, dt * 8);         // смерть/полёт: прижим затухает
   mesh.root.position.set(hp[0], hp[1] + gs.off, hp[2]);
   mesh.root.updateMatrixWorld(true);
-  if (ground) groundFeet(mesh, hp[1], gs, dt, gnd);   // FOOT-IK: пол под каждой стопой → 2-костный IK ноги, стопа не тонет
+  if (ground) groundFeet(mesh, hp[1], gs, dt, gnd, support);   // FOOT-IK: заземляем ОПОРНЫЕ стопы (маховую ведёт поза)
 }

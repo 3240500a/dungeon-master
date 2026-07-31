@@ -143,8 +143,9 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       player.step(dt);                                       // позирует target (гейт+idle-стойка+удар) + грип оружия на solid
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
       ragdoll.update(dt);                                    // шаг физики (моторы к позе + пины + вес оружия + kinematic-таз)
-      // солид = физрезультат + заземление + БЛЕНД к позе-цели по matchWeight (pe_phys, настроен в редакторе)
-      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, matchWeight > 0.001 ? target.readPose() : null, matchWeight);
+      // солид = физрезультат + заземление ОПОРНЫХ стоп (маховую ведёт поза) + БЛЕНД к позе-цели по matchWeight
+      const sw = player.driver.swingLegs;   // опора = !swing → заземляем только стоящую ногу (иначе «лыжник» на спуске)
+      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, matchWeight > 0.001 ? target.readPose() : null, matchWeight, undefined, [!sw[0], !sw[1]]);
     },
     dispose() {
       ragdoll.dispose();

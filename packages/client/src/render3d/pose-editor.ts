@@ -1046,8 +1046,11 @@ function stepPhysics(dt: number): void {
   pw.step(Math.min(dt, 1 / 60));
   // призрак-гуманоид = физ-результат + заземление стопы (ОБЩИЙ код с игрой). На «упал» прижим off — пусть коллапсит.
   // + БЛЕНД к манекену по PHYS.match (0 физика … 1 ровно поза): цель — human.readPose() (только пока жив и match>0).
-  if (ghostHuman) renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
-    !physDead && PHYS.match > 0.001 ? human.readPose() : null, physDead ? 0 : PHYS.match);
+  if (ghostHuman) {
+    const sw = gaitDriver.swingLegs;   // при loco: опора = !swing → заземляем только опорную стопу (маховую ведёт поза)
+    renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
+      !physDead && PHYS.match > 0.001 ? human.readPose() : null, physDead ? 0 : PHYS.match, undefined, locoOn ? [!sw[0], !sw[1]] : undefined);
+  }
 }
 const ghostGround = newGhostGround();
 /** Ф4 — ЗАПЕКАНИЕ: прогнать клип через физику, покадрово снять физ-результат → обычная покадровая анимация. */
