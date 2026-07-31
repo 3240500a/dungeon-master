@@ -126,6 +126,19 @@ describe('StepPlanner — поворот на месте держит стойк
     expect(maxSlide).toBeLessThan(0.02); // опорная стопа прибита к миру — между кадрами не скользит (было бы ~0.05)
   });
 
+  it('высота таза из idle-стойки (standY): бег/подшаг НЕ поднимают таз выше базы, стоя — на базе', () => {
+    const d = new PoseDriver(); d.setStance(9, 0, -9, 0, 26);   // база таза = 26 (как в стойке)
+    let maxHipY = -Infinity, pz = 0;
+    for (let i = 0; i < 120; i++) { pz += 90 / 60; d.setWorld(0, pz, 0, 0, 90); const t = d.update(1 / 60); maxHipY = Math.max(maxHipY, 30 + t.bobY); }  // бег вперёд (hipY = 30 + bobY)
+    expect(maxHipY).toBeLessThan(26.6);   // таз не подскочил выше базы стойки (был бы ~29 при standY=30)
+    let yaw = 0, maxHipYturn = -Infinity;
+    for (let i = 0; i < 120; i++) { yaw -= 0.03; d.setWorld(0, pz, yaw, 0, 0); const t = d.update(1 / 60); maxHipYturn = Math.max(maxHipYturn, 30 + t.bobY); }  // подшаги на повороте
+    expect(maxHipYturn).toBeLessThan(26.6);
+    for (let i = 0; i < 60; i++) { d.setWorld(0, pz, yaw, 0, 0); d.update(1 / 60); }   // стоя
+    const t = d.update(1 / 60);
+    expect(30 + t.bobY).toBeGreaterThan(24); expect(30 + t.bobY).toBeLessThan(26.6);   // таз на базе стойки (~26)
+  });
+
   it('дефолтная стойка (без setStance) — как раньше: узко, без развода', () => {
     expect(standLat(3.6)).toBeLessThan(0.05);
     const d = new PoseDriver();   // setStance не звали → планты = ±полуширина таза

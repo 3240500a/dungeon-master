@@ -35,7 +35,7 @@ const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 // длиннее, чем она есть, и стопа не достаёт до пола).
 const L_THIGH = 15, L_SHIN = 13.5, LEG = L_THIGH + L_SHIN;
 export const HIP_DX = 3.6;   // полуширина таза
-const FOOT_Y = 1.5;          // высота центра стопы, стоящей на полу
+export const FOOT_Y = 1.5;   // высота центра стопы, стоящей на полу
 /**
  * Высота таза в стойке. КРИТИЧНО: заметно МЕНЬШЕ длины ноги (30). При таз=30 нога выпрямлена в струну,
  * стопа дотягивается только до точки прямо под тазом — шаг невозможен в принципе. 26.5 → колени чуть
@@ -166,7 +166,12 @@ class StepPlanner {
   /** ПЛАНТ каждой ноги = ТОЧКА стопы в idle-стойке отн. таза (body-local): lat (X, знак = своя сторона) + fwd (Z).
    *  Дефолт = ±полуширина таза (нога 0/левая на +X — под её кость). Стоя стопы В ЭТИХ точках, поворот переступает в них. */
   private stanceLatL = HIP_DX; private stanceFwdL = 0; private stanceLatR = -HIP_DX; private stanceFwdR = 0;
-  setStance(latL: number, fwdL: number, latR: number, fwdR: number): void { this.stanceLatL = latL; this.stanceFwdL = fwdL; this.stanceLatR = latR; this.stanceFwdR = fwdR; }
+  /** Базовая высота таза = высота таза в idle-стойке (замер). Гейт/подшаг НЕ поднимают таз выше неё → нет подскока. */
+  private standY = GAIT.standY;
+  setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number): void {
+    this.stanceLatL = latL; this.stanceFwdL = fwdL; this.stanceLatR = latR; this.stanceFwdR = fwdR;
+    if (standY !== undefined) { this.standY = standY; this.hipY = standY; }
+  }
   /** Фаза приставного шага КАЖДОЙ ноги (0 = стоит, 0..1 = переносится к планту). */
   private sideT: [number, number] = [0, 0];
   private yawSigned = 0;                          // сглаженная скорость поворота СО ЗНАКОМ (>0 вправо/по часовой, <0 влево)
@@ -328,9 +333,11 @@ class StepPlanner {
       maxLz = Math.max(maxLz, Math.abs((l.px - hx) * fx + (l.pz - hz) * fz));
     }
     const reach = LEG * 0.97;
+    // База таза = this.standY (высота таза в idle-стойке). Кинематика может дать выше (нога прямее) — КЛАМПИМ к базе,
+    // чтобы бег/подшаг НЕ поднимали таз выше стойки (тот самый подскок). Ниже базы просесть можно (разъезд ног).
     const wantY = anyStance
-      ? clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), GAIT.pelvisMin, GAIT.standY)
-      : GAIT.standY;
+      ? clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), GAIT.pelvisMin, this.standY)
+      : this.standY;
     // Сглаживание нужно только бегу (вход/выход из полёта). На шаге оно даёт запаздывание таза, геометрия
     // опорной ноги плывёт и её волочит — поэтому на малой скорости берём высоту как есть.
     const lag = speed > GAIT.speedWalk ? Math.min(1, dt * 14) : 1;
@@ -363,7 +370,7 @@ export class PoseDriver {
   private attackPow = 1;
   private dead = false;
   private planner: StepPlanner | null = null;
-  private stanceLatL = HIP_DX; private stanceFwdL = 0; private stanceLatR = -HIP_DX; private stanceFwdR = 0;
+  private stanceLatL = HIP_DX; private stanceFwdL = 0; private stanceLatR = -HIP_DX; private stanceFwdR = 0; private standY = GAIT.standY;
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   readonly out: PoseTargets = {
@@ -376,18 +383,19 @@ export class PoseDriver {
   setMove(s: number): void { this.move = Math.max(0, Math.min(1.4, s)); }
   /** Включает походку с опорой: позиция/рыск/скорость тела в мире (юниты, u/с). */
   setWorld(x: number, z: number, yaw: number, vx: number, vz: number): void {
-    if (!this.planner) { this.planner = new StepPlanner(); this.planner.setStance(this.stanceLatL, this.stanceFwdL, this.stanceLatR, this.stanceFwdR); }
+    if (!this.planner) { this.planner = new StepPlanner(); this.planner.setStance(this.stanceLatL, this.stanceFwdL, this.stanceLatR, this.stanceFwdR, this.standY); }
     this.w.x = x; this.w.z = z; this.w.yaw = yaw; this.w.vx = vx; this.w.vz = vz;
   }
   /** Обратная связь от физики: где НА САМОМ ДЕЛЕ стоят щиколотки (мир). Плантуем по факту, а не по расчёту. */
   setFeet(lx: number, lz: number, rx: number, rz: number): void { this.planner?.setFeet(lx, lz, rx, rz); }
   /** Авторский сдвиг плант-цели (body-local fwd/lat) на ногу — для редактора. Дефолт 0 → без эффекта. */
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void { this.planner?.setPlantOffset(lF, lL, rF, rL); }
-  /** Планты стоп из idle-стойки: по каждой ноге body-local (lat, fwd) СО ЗНАКОМ (замер measureStancePlants). Планировщик
-   *  стоя держит стопы в этих точках, при повороте переступает ровно в них. Дефолт = ±полуширина таза (нога 0/левая на +X). */
-  setStance(latL: number, fwdL: number, latR: number, fwdR: number): void {
+  /** Планты стоп из idle-стойки: по каждой ноге body-local (lat, fwd) СО ЗНАКОМ + базовая высота таза standY (всё замер
+   *  measureStancePlants). Стоя держит стопы в этих точках, при повороте переступает в них; таз не поднимается выше standY. */
+  setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number): void {
     this.stanceLatL = latL; this.stanceFwdL = fwdL; this.stanceLatR = latR; this.stanceFwdR = fwdR;
-    this.planner?.setStance(latL, fwdL, latR, fwdR);
+    if (standY !== undefined) this.standY = standY;
+    this.planner?.setStance(latL, fwdL, latR, fwdR, standY);
   }
   /** Текущая плант-цель ноги i в мире (для наземных маркеров редактора). */
   plantTarget(i: number): [number, number] { return this.planner ? this.planner.getTarget(i) : [0, 0]; }

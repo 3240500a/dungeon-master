@@ -629,7 +629,7 @@ function renderGaitTune(): void {
   gsl('локоть база', POSEo, 'armEl', 0, 1.4, 0.02);
   gsl('амплитуда маха', POSEo, 'armSwing', 0, 1.2, 0.02);
   grp('ноги / посадка');
-  gsl('высота таза', GAITo, 'standY', 20, 38, 0.5);
+  // «высота таза» убрана — база берётся из idle-стойки (measureStancePlants.standY), чтобы бег/подшаг не подскакивали.
   gsl('присед (мин.таз)', GAITo, 'pelvisMin', 16, 34, 0.5);
   gsl('длина шага база', GAITo, 'stepBase', 10, 60, 1);
   gsl('длина шага ×скор', GAITo, 'stepK', 0, 0.3, 0.01);
@@ -882,7 +882,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['standY', 'pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias'] as const;
+const GAIT_KEYS = ['pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias'] as const;   // standY убран — база таза из idle-стойки
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
 const GX_KEYS = ['legWidth', 'armDown', 'elbowBend', 'bob'] as const;
 type NumRec = Record<string, number>;
@@ -929,7 +929,7 @@ function stepGait(dt: number): void {
   if (attackClip) { attackT += dt * attackSpeed; if (attackT > clipDur(attackClip)) { attackClip = null; attackT = -1; } }   // проигрывание удара
   if (stanceMeasuredFor !== weapon) {   // приставной шаг при повороте на месте держит РАССТАВЛЕННУЮ стойку — её ширину замеряем
     const p = measureStancePlants(human, editorContent.resolveUpper(weapon)?.pose ?? null);
-    gaitDriver.setStance(p.latL, p.fwdL, p.latR, p.fwdR); stanceMeasuredFor = weapon;
+    gaitDriver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY); stanceMeasuredFor = weapon;
   }
   const vx = locoVx * GAIT_MAXSPD * locoTempo, vz = locoVz * GAIT_MAXSPD * locoTempo;
   const spd = Math.hypot(vx, vz);

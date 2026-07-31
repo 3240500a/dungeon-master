@@ -3,7 +3,7 @@
 // (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
+import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, type PoseTargets } from './pose.js';
 
 export type Pose = Record<string, [number, number, number]>;
 export interface Keyframe { pose: Pose; t: number }
@@ -229,8 +229,8 @@ const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.V
  *  Планировщик (setStance) при повороте держит стопы В ЭТИХ точках и переступает ровно в них (idl-стойка в новом фейсинге).
  *  Нет клипа стойки → фолбэк ±полуширина таза (нога 0/левая на +X — под её кость LeftUpperLeg, см. [[humanoid-rig-mirror]]).
  *  Мутирует human (reset + поза ног) — зови вне кадра рендера (спавн/смена оружия); следующий полный step перепозирует. */
-export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number } {
-  if (!idle) return { latL: HIP_DX, fwdL: 0, latR: -HIP_DX, fwdR: 0 };
+export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number; standY: number } {
+  if (!idle) return { latL: HIP_DX, fwdL: 0, latR: -HIP_DX, fwdR: 0, standY: GAIT.standY };
   human.reset();
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
@@ -239,7 +239,10 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   const h = hips.getWorldPosition(_ms0);
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
   const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);   // yaw 0 → world X = body-lateral, world Z = forward
-  return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z };
+  // Базовая высота таза = такая, чтобы стопы idle-стойки стояли на полу (FOOT_Y). Таз позировали на 30 → падение стоп
+  // = 30 − footY; высота таза = FOOT_Y + падение. Это база гейта → бег/подшаг не поднимают таз выше стойки (нет подскока).
+  const standY = FOOT_Y + (h.y - (fl.y + fr.y) / 2);
+  return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
 }
 
 // ── PosePlayer: драйвер гейта для ИГРЫ (владеет своим состоянием) — тредмил-ноги + idle-стойка + физ-удар ──
@@ -263,7 +266,7 @@ export class PosePlayer {
   /** Замерить планты стоп из idle-стойки текущего оружия и отдать планировщику (подшаг при повороте идёт в эти точки). */
   measureStance(): void {
     const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon)?.pose ?? null);
-    this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR);
+    this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY);
   }
   setWeapon(w: string): void { this.weapon = w; this.measureStance(); }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
