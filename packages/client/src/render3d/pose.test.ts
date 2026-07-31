@@ -92,18 +92,38 @@ describe('StepPlanner — поворот на месте держит стойк
     return { first, crossed, stepped };
   };
 
-  it('поворот ВЛЕВО → первой переступает ЛЕВАЯ (внутренняя) нога, без скрещивания', () => {
-    const r = turnRun(-1);           // yaw убывает = влево
+  // Ведущая нога по стороне поворота (в игре: против часовой сверху → первой ЛЕВАЯ, по часовой → правая).
+  it('yaw↓ (по часовой в игре) → первой переступает ПРАВАЯ нога, без скрещивания', () => {
+    const r = turnRun(-1);
     expect(r.stepped).toBe(true);
-    expect(r.first).toBe(0);         // левая первой
+    expect(r.first).toBe(1);         // правая первой
     expect(r.crossed).toBe(false);   // ноги не скрестились за среднюю линию
   });
 
-  it('поворот ВПРАВО → первой переступает ПРАВАЯ (внутренняя) нога, без скрещивания', () => {
-    const r = turnRun(1);            // yaw растёт = вправо
+  it('yaw↑ (против часовой в игре) → первой переступает ЛЕВАЯ нога, без скрещивания', () => {
+    const r = turnRun(1);
     expect(r.stepped).toBe(true);
-    expect(r.first).toBe(1);         // правая первой
+    expect(r.first).toBe(0);         // левая первой
     expect(r.crossed).toBe(false);
+  });
+
+  it('МЕДЛЕННЫЙ поворот (ниже turnStep) → опорная стопа ПРИБИТА (не скользит), но подшаг всё равно происходит', () => {
+    const d = new PoseDriver(); d.setStance(9, 0, -9, 0);
+    for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться
+    let yaw = 0, firstStep = -1, maxSlide = 0;
+    let prev0 = d.plantTarget(0), prevSw0 = d.swingLegs[0];
+    for (let i = 0; i < 400; i++) {
+      yaw -= 0.006;                                                                 // ~0.36 рад/с — НИЖЕ turnStep(0.45)
+      d.setWorld(0, 0, yaw, 0, 0); d.update(1 / 60);
+      const sw0 = d.swingLegs[0];
+      if (firstStep < 0 && (sw0 || d.swingLegs[1])) firstStep = i;                  // первый реальный перенос ноги
+      const p0 = d.plantTarget(0);
+      if (!sw0 && !prevSw0) maxSlide = Math.max(maxSlide, Math.hypot(p0[0] - prev0[0], p0[1] - prev0[1]));  // опорная не едет
+      prev0 = p0; prevSw0 = sw0;
+    }
+    // Шаг ПО ДИСТАНЦИИ (turnStepDist), а не по страховке-скрещиванию (та сработала бы ~90° ≈ кадр 260). Ждём ≈ кадр 70.
+    expect(firstStep).toBeGreaterThan(0); expect(firstStep).toBeLessThan(150);
+    expect(maxSlide).toBeLessThan(0.02); // опорная стопа прибита к миру — между кадрами не скользит (было бы ~0.05)
   });
 
   it('дефолтная стойка (без setStance) — как раньше: узко, без развода', () => {

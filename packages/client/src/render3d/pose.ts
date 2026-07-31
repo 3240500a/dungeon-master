@@ -130,6 +130,7 @@ function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: numb
 }
 
 const SIDESTEP_DUR = 0.18;   // сек: длительность приставного шага (перенос стопы дугой к слоту стойки при повороте на месте)
+const SETTLE_EPS = 2;        // u: стопы ближе этого к своим плантам → замираем (idle-поза); иначе footlock (стопа прибита к миру)
 
 class StepPlanner {
   private legs: [Leg, Leg] = [
@@ -224,8 +225,8 @@ class StepPlanner {
       const stanceZ = (i: number): number => pz + rz * (i === 0 ? this.stanceLatL : this.stanceLatR) + fz * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
       const turning = this.yawRate > GAIT.turnStep;
       // ПРИОРИТЕТ ведущей ноги: внутренняя (в сторону поворота) шагает РАНЬШЕ — её порог × turnLeadBias, но БЕЗ ожидания второй.
-      // yawSigned<0 = влево/против часовой → ведёт левая (нога 0); >0 = вправо/по часовой → правая (нога 1).
-      const inside = this.yawSigned < 0 ? 0 : 1;
+      // По факту в игре: поворот ПРОТИВ часовой (сверху) → первой ЛЕВАЯ (нога 0); ПО часовой → правая (нога 1).
+      const inside = this.yawSigned > 0 ? 0 : 1;
       for (let i = 0; i < 2; i++) {                            // 1) двигаем текущие переносы к планту
         const l = this.legs[i]!;
         if (l.sw <= 0) continue;
@@ -235,20 +236,25 @@ class StepPlanner {
         this.sideT[i] = st;
       }
       const startStep = (i: number): void => { const l = this.legs[i]!; l.fx = l.px; l.fz = l.pz; l.tx = stanceX(i); l.tz = stanceZ(i); this.sideT[i] = 0; l.sw = 0.001; };
-      for (let i = 0; i < 2; i++) {                            // 2) стартуем шаг по РАССТОЯНИЮ стопа↔плант (turnStepDist)
+      // 2) FOOTLOCK: опорная стопа ЖЁСТКО стоит в мире (l.px не двигаем) при ЛЮБОЙ скорости поворота — не скользит.
+      //    Шаг по РАССТОЯНИЮ стопа↔(повёрнутый) плант, а не по скорости: медленно крутишь → дистанция копится → подшаг.
+      let maxDist = 0;
+      for (let i = 0; i < 2; i++) {
         const l = this.legs[i]!; if (l.sw > 0) continue;
         const dist = Math.hypot(l.px - stanceX(i), l.pz - stanceZ(i));
-        if (turning) {
-          const thr = i === inside ? GAIT.turnStepDist * GAIT.turnLeadBias : GAIT.turnStepDist;
-          // Страховка от X: опорная стопа перешла среднюю линию (знак её body-local lat ≠ знаку планта) → форс-шаг.
-          const plantLat = i === 0 ? this.stanceLatL : this.stanceLatR;
-          const footLat = (l.px - px) * rx + (l.pz - pz) * rz;
-          const crossed = Math.abs(plantLat) > 0.1 && Math.sign(footLat) !== Math.sign(plantLat) && Math.abs(footLat) > 1;
-          if (dist > thr || crossed) startStep(i);
-        } else if (dist > GAIT.idleStep) startStep(i);         // стоп после ходьбы/толчок — дошагнуть в плант
+        maxDist = Math.max(maxDist, dist);
+        let thr = GAIT.turnStepDist;
+        if (turning && i === inside) thr *= GAIT.turnLeadBias;   // ведущая (внутренняя) нога шагает раньше — только при повороте
+        // Страховка от X: опорная стопа перешла среднюю линию (знак её body-local lat ≠ знаку планта) → форс-шаг.
+        const plantLat = i === 0 ? this.stanceLatL : this.stanceLatR;
+        const footLat = (l.px - px) * rx + (l.pz - pz) * rz;
+        const crossed = Math.abs(plantLat) > 0.1 && Math.sign(footLat) !== Math.sign(plantLat) && Math.abs(footLat) > 1;
+        if (dist > thr || crossed) startStep(i);
       }
       const anySwing = this.legs[0]!.sw > 0 || this.legs[1]!.sw > 0;
-      if (turning || anySwing) this.settled = false;
+      // ЗАМИРАНИЕ (отпустить ноги в чистую idle-позу, legMag→0) — ТОЛЬКО когда обе стопы уже в своих плантах (без свинга).
+      // Иначе не settled → рендер держит МИРОВУЮ (прибитую) стопу, а не idle-позу-за-тазом → при повороте стопа стоит, не едет.
+      if (anySwing || maxDist > SETTLE_EPS) this.settled = false;
       else if (!this.settled) {                                // покой → замираем РОВНО В ПЛАНТАХ стойки (idl-точки)
         this.settled = true;
         for (let i = 0; i < 2; i++) { const l = this.legs[i]!; l.px = stanceX(i); l.pz = stanceZ(i); l.sw = 0; }
