@@ -12,6 +12,7 @@ const SOLE = 1.5;                    // высота кости стопы на�
 const IK_THIGH = 15, IK_SHIN = 14;   // фактические длины костей ноги из BONES (UpperLeg→LowerLeg, LowerLeg→Foot)
 const IK_MAX = IK_THIGH + IK_SHIN - 0.5, IK_MIN = Math.abs(IK_THIGH - IK_SHIN) + 0.5;
 const PLANT_MAX = 6;                 // стопа выше своего пола меньше этого → ОПОРНАЯ (планти на пол); выше → маховая (не трогаем)
+const GROUND_LAG = 8;                // скорость сглаживания сдвига таза к полу (меньше → мягче/плавнее боб)
 const IK_LEGS = [{ u: 'LeftUpperLeg', l: 'LeftLowerLeg', f: 'LeftFoot' }, { u: 'RightUpperLeg', l: 'RightLowerLeg', f: 'RightFoot' }];
 const _DOWN = new THREE.Vector3(0, -1, 0), _UP = new THREE.Vector3(0, 1, 0);
 const _iH = new THREE.Vector3(), _iT = new THREE.Vector3(), _iK = new THREE.Vector3(), _iDir = new THREE.Vector3();
@@ -68,7 +69,9 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     if (isSup) worst = Math.max(worst, ty - _iFoot.y);
   }
   if (Number.isFinite(worst)) {
-    gs.off += worst > 0 ? worst : worst * Math.min(1, dt * 10);     // провал → мгновенно вверх; выше пола → плавно вниз
+    // Сдвиг корня СГЛАЖЕН в обе стороны (мягкий боб): даже если таз догоняет медленно, per-foot IK ниже плантит опорную
+    // стопу коленом → она НЕ проваливается, пока таз плавно едет. Раньше был мгновенный рывок вверх на провале — дёрганый боб.
+    gs.off += (worst - 0) * Math.min(1, dt * GROUND_LAG);
     mesh.root.position.y = baseY + gs.off; mesh.root.updateMatrixWorld(true);
   }
   for (let i = 0; i < IK_LEGS.length; i++) {                        // планти+кладём ТОЛЬКО опорные стопы; маховую ведёт поза
