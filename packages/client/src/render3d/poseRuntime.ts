@@ -123,8 +123,8 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   const idle = content.resolveUpper(weapon)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх)
   const m = moveMag;
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY * gx.bob, 0);   // боб таза
-  blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL - gx.legWidth], idle, m);
-  blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR + gx.legWidth], idle, m);
+  blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL + gx.legWidth], idle, m);
+  blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR - gx.legWidth], idle, m);
   blendBone(human, 'LeftLowerLeg', [t.knL, 0, 0], idle, m);
   blendBone(human, 'RightLowerLeg', [t.knR, 0, 0], idle, m);
   blendBone(human, 'LeftFoot', [0, 0, 0], idle, m); blendBone(human, 'RightFoot', [0, 0, 0], idle, m);

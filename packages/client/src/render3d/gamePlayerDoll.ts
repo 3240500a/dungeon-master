@@ -17,7 +17,7 @@ import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPl
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
 
-const GX_DEFAULT = (): GXKnobs => ({ legWidth: 0.22, armDown: 1.35, elbowBend: 0.25, bob: 1 });
+const GX_DEFAULT = (): GXKnobs => ({ legWidth: 0, armDown: 1.35, elbowBend: 0.25, bob: 1 });   // 0 = стопы под бёдрами (±4), + шире
 const PELVIS_Y = 32;
 const KNOCK = 3.5;   // сила отброса трупа при frac=1 — ~1.5 м макс (32 ед = 1 м) при 100% урона от HP; меньше урон — ближе
 

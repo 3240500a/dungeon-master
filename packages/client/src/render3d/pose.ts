@@ -62,6 +62,7 @@ export const GAIT = {
   footClear: 8,   // мин. зазор между стопами: цель ближе → уводится ВПЕРЁД, чтобы ноги обходили, а не влезали
   turnStep: 0.45, // поворот на месте: скорость вращения (рад/с) выше этой → считаем, что крутимся
   turnStepFrac: 0.78, // размер шага поворота: доля от угла «нога до средней линии». Больше → КРУПНЕЕ шаг (меньше семенит)
+  turnLeadBias: 0.6, // внутренняя нога шагает раньше внешней: её порог = turnStepFrac·turnLeadBias (меньше → заметнее ведёт)
   // ФОРМА СТОЙКИ (аддитивно, нейтральные дефолты). stanceWidth: базовый боковой развод стоп (u, + = шире).
   // strafeReach: множитель ТОЛЬКО боковой компоненты выноса (1 = как есть; <1 = нога меньше улетает вбок при страйфе).
   // crossClamp: предел захода стопы за среднюю линию тела (u; 99 = без ограничения).
@@ -167,14 +168,13 @@ class StepPlanner {
   /** Фаза приставного шага КАЖДОЙ ноги (0 = стоит, 0..1 = переносится к слоту). */
   private sideT: [number, number] = [0, 0];
   private plantYaw: [number, number] = [0, 0];   // yaw, при котором нога встала (для УГЛОВОГО порога шага)
-  private stepPref = 0;                           // чья очередь шагать при повороте (внутренняя нога первой)
   private yawSigned = 0;                          // сглаженная скорость поворота СО ЗНАКОМ (>0 вправо, <0 влево)
   /** Текущая плант-цель ноги i в мире (свинг-цель tx/tz или опорная px/pz) — для наземных маркеров редактора. */
   getTarget(i: number): [number, number] { const l = this.legs[i]!; return l.sw > 0 ? [l.tx, l.tz] : [l.px, l.pz]; }
 
   private reset(px: number, pz: number, rx: number, rz: number): void {
     for (let i = 0; i < 2; i++) {
-      const s = (i === 0 ? -1 : 1) * this.stanceHalf;   // стартуем сразу в ширине стойки (не под таз)
+      const s = (i === 0 ? 1 : -1) * this.stanceHalf;   // стартуем сразу в ширине стойки (не под таз)
       const l = this.legs[i]!;
       l.px = px + rx * s; l.pz = pz + rz * s; l.sw = 0;
     }
@@ -219,42 +219,37 @@ class StepPlanner {
     } else {
       // СТОИМ. Ноги держат РАССТАВЛЕННУЮ стойку (stanceHalf), приколотую к миру; таз крутится ОТНОСИТЕЛЬНО них.
       // Слот стойки каждой ноги вращается вместе с yaw. Докрутились дальше углового порога — ПРИСТАВНОЙ ШАГ к слоту.
-      const stanceX = (i: number): number => px + rx * (i === 0 ? -1 : 1) * this.stanceHalf + fx * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
-      const stanceZ = (i: number): number => pz + rz * (i === 0 ? -1 : 1) * this.stanceHalf + fz * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
+      const stanceX = (i: number): number => px + rx * (i === 0 ? 1 : -1) * this.stanceHalf + fx * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
+      const stanceZ = (i: number): number => pz + rz * (i === 0 ? 1 : -1) * this.stanceHalf + fz * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
       const wrap = (a: number): number => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; };
       const turning = this.yawRate > GAIT.turnStep;
-      // УГЛОВОЙ порог шага, масштаб от ширины стойки: crossA — угол, на котором нога дошла бы до средней линии тела
-      // (нога «за таз» = скрещивание). Шагаем на turnStepFrac от него: широкая стойка → КРУПНЫЙ шаг (не семенит),
-      // и всегда ДО пересечения. Узкая стойка (≈таз) — маленький угол, но там и разводить нечего.
+      // УГЛОВОЙ порог шага, масштаб от ширины стойки: crossA — угол, на котором нога ДОШЛА БЫ до средней линии тела
+      // (нога «за таз» = скрещивание). Порог = turnStepFrac·crossA (frac<1) → нога переступает СТРОГО ДО пересечения,
+      // т.е. за таз не заходит НИКОГДА (математически: cos(frac·crossA) > cos(crossA) = HIP_DX/stanceHalf). Широкая
+      // стойка → крупный шаг (не семенит). КЛЮЧ: ноги переступают НЕЗАВИСИМО — ни одна не ЖДЁТ другую, иначе опорная,
+      // пока ждёт очереди, перекручивается за таз и ноги скрещиваются буквой X (прежний баг).
       const crossA = Math.acos(clamp(HIP_DX / Math.max(HIP_DX, this.stanceHalf), 0, 0.985));
-      const stepA = clamp(GAIT.turnStepFrac * crossA, 0.28, 1.2);
-      // ПОРЯДОК: при повороте ВЛЕВО (yaw убывает) первой переступает ЛЕВАЯ (внутренняя) нога, затем правая — иначе
-      // внешняя нога шагает поперёк и ноги скрещиваются. Внутренняя = сторона, В КОТОРУЮ крутимся.
+      const stepA = clamp(GAIT.turnStepFrac * crossA, 0.22, 1.1);
+      // ПОРЯДОК мягкий: внутренняя нога (сторона поворота) шагает РАНЬШЕ — меньший порог, но БЕЗ ожидания второй.
+      // Влево (yaw убывает) → внутренняя левая; вправо → правая.
       const inside = this.yawSigned < 0 ? 0 : 1;
-      if (turning && this.settled) { this.settled = false; this.stepPref = inside; }
-      // 1) двигаем текущие переносы; на приземлении — фиксируем yaw ноги и передаём очередь другой.
+      // 1) двигаем текущие переносы; на приземлении — фиксируем yaw ноги.
       for (let i = 0; i < 2; i++) {
         const l = this.legs[i]!;
         if (l.sw <= 0) continue;
         let st = this.sideT[i]! + dt / SIDESTEP_DUR;
-        if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; this.plantYaw[i] = yaw; this.stepPref = 1 - i; }
+        if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; this.plantYaw[i] = yaw; }
         else l.sw = clamp(st, 0.001, 1);
         this.sideT[i] = st;
       }
-      const busy = this.legs[0]!.sw > 0 || this.legs[1]!.sw > 0;
       const startStep = (i: number): void => { const l = this.legs[i]!; l.fx = l.px; l.fz = l.pz; l.tx = stanceX(i); l.tz = stanceZ(i); this.sideT[i] = 0; l.sw = 0.001; };
-      if (turning) {
-        for (let i = 0; i < 2; i++) {
-          const l = this.legs[i]!; if (l.sw > 0) continue;
+      for (let i = 0; i < 2; i++) {
+        const l = this.legs[i]!; if (l.sw > 0) continue;
+        if (turning) {
           const dev = Math.abs(wrap(yaw - this.plantYaw[i]!));
-          // По очереди (внутренняя первой) — чистый одиночный шаг. Экстренно (нога вот-вот за таз) — шаг вне очереди.
-          if (dev > crossA * 0.9 || (i === this.stepPref && !busy && dev > stepA)) startStep(i);
-        }
-      } else {                                                 // не крутимся: стопа далеко (стоп после ходьбы/толчок) → дошагнуть
-        for (let i = 0; i < 2; i++) {
-          const l = this.legs[i]!; if (l.sw > 0) continue;
-          if (Math.hypot(l.px - stanceX(i), l.pz - stanceZ(i)) > GAIT.idleStep) startStep(i);
-        }
+          const thr = i === inside ? stepA * GAIT.turnLeadBias : stepA;   // внутренняя первой (меньший порог), без ожидания
+          if (dev > thr) startStep(i);
+        } else if (Math.hypot(l.px - stanceX(i), l.pz - stanceZ(i)) > GAIT.idleStep) startStep(i);   // стоп после ходьбы/толчок
       }
       const anySwing = this.legs[0]!.sw > 0 || this.legs[1]!.sw > 0;
       if (turning || anySwing) this.settled = false;
@@ -287,7 +282,7 @@ class StepPlanner {
     // fx·(reach·mFwd) + rx·(reach·mLat) = reach·mx (и аналогично z) = прежняя цель hx + mx·reach.
     const mFwd = mx * fx + mz * fz, mLat = mx * rx + mz * rz;
     const plant = (l: Leg, i: number, hx: number, hz: number, reach: number): void => {
-      const off = this.plantOff[i]!, side = i === 0 ? -1 : 1;
+      const off = this.plantOff[i]!, side = i === 0 ? 1 : -1;   // нога 0 = ЛЕВАЯ на +X (см. якорь бедра)
       const fwdAmt = reach * mFwd + off[0];
       let latAmt = reach * mLat * GAIT.strafeReach + GAIT.stanceWidth * side + off[1];
       if (side * latAmt < -GAIT.crossClamp) latAmt = -side * GAIT.crossClamp;   // не заходить за среднюю линию дальше crossClamp
@@ -308,7 +303,7 @@ class StepPlanner {
       } else {                                       // ПЕРЕНОС
         if (l.sw === 0) {                             // отрыв
           l.fx = l.px; l.fz = l.pz;
-          const s = i === 0 ? -HIP_DX : HIP_DX;
+          const s = i === 0 ? HIP_DX : -HIP_DX;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
           const hx = px + rx * s, hz = pz + rz * s;
           // fixTarget: цель фиксируется здесь. Прибавляем пролёт тела за перенос (1−доля)·2·шаг — к касанию
           // бедро будет там, стопа приземлится на `lead` впереди. Иначе цель едет за бедром (пересчёт ниже).
@@ -326,7 +321,7 @@ class StepPlanner {
       const l = this.legs[i]!;
       if (l.sw > 0) continue;                        // маховая нога вес не держит
       anyStance = true;
-      const s = i === 0 ? -HIP_DX : HIP_DX;
+      const s = i === 0 ? HIP_DX : -HIP_DX;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
       const hx = px + rx * s, hz = pz + rz * s;
       maxLz = Math.max(maxLz, Math.abs((l.px - hx) * fx + (l.pz - hz) * fz));
     }
@@ -342,7 +337,7 @@ class StepPlanner {
     const out: LegAngles[] = [];
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
-      const s = i === 0 ? -HIP_DX : HIP_DX;
+      const s = i === 0 ? HIP_DX : -HIP_DX;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
       const hx = px + rx * s, hz = pz + rz * s;
       let wx: number, wz: number, wy: number;
       if (l.sw > 0) {

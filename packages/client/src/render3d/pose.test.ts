@@ -78,14 +78,16 @@ describe('StepPlanner — поворот на месте держит стойк
     const d = new PoseDriver(); d.setStance(11, 0, 0);
     for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться стоя
     let yaw = 0, first = -1, crossed = false, stepped = false;
-    for (let i = 0; i < 240; i++) {
-      yaw += dir * 0.03;                                                            // ~1.8 рад/с — крутимся на месте
+    for (let i = 0; i < 260; i++) {
+      yaw += dir * 0.05;                                                            // ~3 рад/с — быстро крутимся (стресс)
       d.setWorld(0, 0, yaw, 0, 0);
       const t = d.update(1 / 60);
       const [sl, sr] = d.swingLegs;
       if (first < 0 && (sl || sr)) first = sl ? 0 : 1;
       if (d.stepping) stepped = true;
-      if (t.hipLatL > 0.2 || t.hipLatR < -0.2) crossed = true;   // левая ушла вправо / правая влево = скрещивание
+      // Нога 0 (левая) в норме на +X (её кость LeftUpperLeg на +X): hipLatL>0. Скрещивание = левая ушла на −X (hipLatL<0)
+      // или правая на +X (hipLatR>0).
+      if (t.hipLatL < -0.2 || t.hipLatR > 0.2) crossed = true;
     }
     return { first, crossed, stepped };
   };

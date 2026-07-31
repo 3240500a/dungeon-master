@@ -620,7 +620,7 @@ function renderGaitTune(): void {
   const grp = (t: string): void => { const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:6px 0 1px;font-size:11px'); h.textContent = t; box.append(h); };
   const GXo = GX as unknown as NumRec, POSEo = POSE as unknown as NumRec, GAITo = GAIT as unknown as NumRec;
   grp('поза (ретаргет)');
-  gsl('ширина ног (+ уже)', GXo, 'legWidth', -0.2, 0.7, 0.01);
+  gsl('ширина ног (+ шире)', GXo, 'legWidth', -0.4, 0.7, 0.01);
   gsl('руки вниз', GXo, 'armDown', 0.6, 1.8, 0.01);
   gsl('сгиб локтя', GXo, 'elbowBend', 0, 1.2, 0.02);
   gsl('боб таза ×', GXo, 'bob', 0, 2, 0.05);
@@ -643,6 +643,7 @@ function renderGaitTune(): void {
   gsl('предел кроссовера', GAITo, 'crossClamp', 0, 99, 1);
   gsl('поворот: порог (рад/с)', GAITo, 'turnStep', 0.1, 1.5, 0.05);
   gsl('поворот: размер шага', GAITo, 'turnStepFrac', 0.3, 1.0, 0.02);
+  gsl('поворот: ведёт внутр. нога', GAITo, 'turnLeadBias', 0.3, 1.0, 0.05);
   box.append(pbtn('сброс настроек бега', () => { delete gaitCfgs[curCharId]; try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ } applyGaitCfg(curCharId); renderLoco(); }));
   // Экспорт/импорт настроек бега ВСЕХ персонажей (pe_gait) — портируемый артефакт (бэкап + вход для Ф5).
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px;font-size:11px'); eh.textContent = 'НАСТРОЙКИ БЕГА → JSON (все персонажи)'; box.append(eh);
@@ -705,7 +706,7 @@ function updatePlantMarks(): void {
   }
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
-const GX = { legWidth: 0.22, armDown: 1.35, elbowBend: 0.25, bob: 1 };
+const GX = { legWidth: 0, armDown: 1.35, elbowBend: 0.25, bob: 1 };   // 0 = стопы под бёдрами (±4), + шире
 // Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита (стойка_shield) + вес shieldMix (ползунок),
 // подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
 const editorContent: PoseContent = {
@@ -881,7 +882,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['standY', 'pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepFrac'] as const;
+const GAIT_KEYS = ['standY', 'pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepFrac', 'turnLeadBias'] as const;
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
 const GX_KEYS = ['legWidth', 'armDown', 'elbowBend', 'bob'] as const;
 type NumRec = Record<string, number>;
