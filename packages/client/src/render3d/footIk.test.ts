@@ -13,7 +13,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
     const upper = h.bones.get('LeftUpperLeg')!, lower = h.bones.get('LeftLowerLeg')!, foot = h.bones.get('LeftFoot')!;
     const hip = upper.getWorldPosition(V(0, 0, 0));
     const target = V(hip.x, hip.y - 25, hip.z + 2);                 // 25 вниз + 2 вперёд (в пределах разгиба 29)
-    legGroundIK(upper, lower, target, V(0, 0, 1));
+    legGroundIK(upper, lower, foot, target, V(0, 0, 1), new THREE.Quaternion());
     h.root.updateMatrixWorld(true);
     expect(foot.getWorldPosition(V(0, 0, 0)).distanceTo(target)).toBeLessThan(1.5);
   });
@@ -24,7 +24,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
     const upper = h.bones.get('LeftUpperLeg')!, lower = h.bones.get('LeftLowerLeg')!, foot = h.bones.get('LeftFoot')!;
     const fw0 = foot.getWorldPosition(V(0, 0, 0));
     expect(fw0.y).toBeLessThan(1.5);                                 // до IK — стопа под полом
-    legGroundIK(upper, lower, V(fw0.x, 1.5, fw0.z), V(0, 0, 1));     // цель — на пол (y=1.5) в той же XZ
+    legGroundIK(upper, lower, foot, V(fw0.x, 1.5, fw0.z), V(0, 0, 1), new THREE.Quaternion());   // цель — на пол в той же XZ
     h.root.updateMatrixWorld(true);
     const fw1 = foot.getWorldPosition(V(0, 0, 0));
     expect(Math.abs(fw1.y - 1.5)).toBeLessThan(1.0);                // стопа поднялась к полу

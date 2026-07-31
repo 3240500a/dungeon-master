@@ -13,10 +13,10 @@ const IK_THIGH = 15, IK_SHIN = 14;   // фактические длины кос
 const IK_MAX = IK_THIGH + IK_SHIN - 0.5, IK_MIN = Math.abs(IK_THIGH - IK_SHIN) + 0.5;
 const PLANT_MAX = 6;                 // стопа выше своего пола меньше этого → ОПОРНАЯ (планти на пол); выше → маховая (не трогаем)
 const IK_LEGS = [{ u: 'LeftUpperLeg', l: 'LeftLowerLeg', f: 'LeftFoot' }, { u: 'RightUpperLeg', l: 'RightLowerLeg', f: 'RightFoot' }];
-const _DOWN = new THREE.Vector3(0, -1, 0);
+const _DOWN = new THREE.Vector3(0, -1, 0), _UP = new THREE.Vector3(0, 1, 0);
 const _iH = new THREE.Vector3(), _iT = new THREE.Vector3(), _iK = new THREE.Vector3(), _iDir = new THREE.Vector3();
 const _iThigh = new THREE.Vector3(), _iShin = new THREE.Vector3(), _iBend = new THREE.Vector3(), _iPole = new THREE.Vector3(), _iFoot = new THREE.Vector3();
-const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion();
+const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion(), _iFace = new THREE.Quaternion();
 
 /** Прицелить кость так, чтобы её локальная ось −Y (ось конечности в риге) смотрела в мировое направление dir. */
 function aimBoneDown(bone: THREE.Object3D, dir: THREE.Vector3): void {
@@ -26,8 +26,9 @@ function aimBoneDown(bone: THREE.Object3D, dir: THREE.Vector3): void {
 }
 
 /** Аналитический 2-костный IK ноги: гнём бедро+колено так, чтобы кость стопы встала в targetWorld.
- *  pole — направление сгиба колена (вперёд). Длины костей фиксированы, кламп разгиба против дрожи. */
-export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, targetWorld: THREE.Vector3, pole: THREE.Vector3): void {
+ *  pole — направление сгиба колена (вперёд). Стопу ВЫРАВНИВАЕМ по faceQuat (плоско + носок по фейсингу тела): иначе
+ *  твист от aimBoneDown не задан и стопа висит в фикс. мировой стороне. Длины костей фиксированы, кламп разгиба. */
+export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: THREE.Object3D, targetWorld: THREE.Vector3, pole: THREE.Vector3, faceQuat: THREE.Quaternion): void {
   upper.getWorldPosition(_iH);
   _iDir.subVectors(targetWorld, _iH);
   let dist = _iDir.length(); if (dist < 1e-3) return;
@@ -40,6 +41,9 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, target
   _iK.copy(_iH).addScaledVector(_iThigh, IK_THIGH);    // колено в мире
   _iShin.subVectors(targetWorld, _iK).normalize();
   aimBoneDown(lower, _iShin); lower.updateMatrixWorld(true);
+  lower.getWorldQuaternion(_ipq);                      // выровнять СТОПУ: мир-ориентация = faceQuat (плоско, носок по телу)
+  foot.quaternion.copy(_ipq).invert().multiply(faceQuat);
+  foot.updateMatrixWorld(true);
 }
 
 /**
@@ -51,6 +55,7 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
   const hips = mesh.bones.get('Hips'); if (!hips) return;
   hips.getWorldQuaternion(_ipq); _iPole.set(0, 0, 1).applyQuaternion(_ipq); _iPole.y = 0;   // фронт тела = pole колена
   if (_iPole.lengthSq() < 1e-6) _iPole.set(0, 0, 1); else _iPole.normalize();
+  _iFace.setFromAxisAngle(_UP, Math.atan2(_iPole.x, _iPole.z));   // рыск тела (плоско): стопа лежит и носок по фейсингу
   const tgt: number[] = []; let worst = -Infinity;
   for (const leg of IK_LEGS) {
     const fb = mesh.bones.get(leg.f); if (!fb) { tgt.push(NaN); continue; }
@@ -67,6 +72,6 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     const ub = mesh.bones.get(leg.u), lb = mesh.bones.get(leg.l), fb = mesh.bones.get(leg.f);
     if (!ub || !lb || !fb) continue;
     fb.getWorldPosition(_iFoot);
-    if (_iFoot.y - ty < PLANT_MAX) legGroundIK(ub, lb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole);
+    if (_iFoot.y - ty < PLANT_MAX) legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace);
   }
 }
