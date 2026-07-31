@@ -52,6 +52,7 @@ const MOVE_EPS = 8;          // ниже этой скорости (u/с) счи
 export const GAIT = {
   standY: 30, pelvisMin: 26,                 // посадка таза: стойка / нижний предел приседа (подобрано глазами)
   stepBase: 30, stepK: 0.12, stepMax: 52,    // длина шага = clamp(base + speed·K, base, max)
+  cadence: 1,                                // множитель частоты цикла: длину шага делим на cadence (>1 → короче шаг, чаще семенит). Антискольз-тюн бега В ИГРЕ; движение НЕ меняет.
   dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
   liftBase: 7, liftK: 0.11,                  // подъём маховой стопы = base + (speed−speedWalk)·K
   hipFwdLim: 0.95, hipFwdSoft: 0.3,          // мягкий потолок форвардного угла бедра
@@ -207,7 +208,7 @@ class StepPlanner {
     if (dt > 0) this.moveAmt += (clamp(speed / GAIT.speedWalk, 0, 1.4) - this.moveAmt) * Math.min(1, dt * 8);
     const moving = speed > MOVE_EPS;
     const mx = moving ? vx / speed : 0, mz = moving ? vz / speed : 0;
-    const stepLen = clamp(GAIT.stepBase + speed * GAIT.stepK, GAIT.stepBase, GAIT.stepMax);
+    const stepLen = clamp(GAIT.stepBase + speed * GAIT.stepK, GAIT.stepBase, GAIT.stepMax) / Math.max(0.1, GAIT.cadence);   // cadence>1 → короче шаг → чаще семенит (частота цикла), путь px не трогаем
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала

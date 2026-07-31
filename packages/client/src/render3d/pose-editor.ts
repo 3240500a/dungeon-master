@@ -29,7 +29,16 @@ const orbit = new OrbitControls(camera, canvas); orbit.target.set(0, 34, 0); orb
 scene.add(new THREE.HemisphereLight(0xbfd0ff, 0x3a3a44, 0.9));
 const kl = new THREE.DirectionalLight(0xffffff, 1.6); kl.position.set(60, 120, 90); scene.add(kl);
 const flt = new THREE.DirectionalLight(0x9fb0d0, 0.5); flt.position.set(-80, 40, -40); scene.add(flt);
-scene.add(new THREE.GridHelper(400, 20, 0x39415a, 0x272c3a));
+// Непрозрачный ШАХМАТНЫЙ пол — прокручивается при беге (тредмилл), чтобы видеть, скользят ли стопы по земле (как в игре).
+const FLOOR_SIZE = 400, FLOOR_TILE = 20;   // мир: одна плитка текстуры = FLOOR_TILE (в ней 2×2 клетки → клетка = 10u)
+const checkerTex = ((): THREE.Texture => {
+  const cvf = document.createElement('canvas'); cvf.width = cvf.height = 64; const cx = cvf.getContext('2d')!;
+  cx.fillStyle = '#2b3142'; cx.fillRect(0, 0, 64, 64); cx.fillStyle = '#232838'; cx.fillRect(0, 0, 32, 32); cx.fillRect(32, 32, 32, 32);
+  const t = new THREE.CanvasTexture(cvf); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(FLOOR_SIZE / FLOOR_TILE, FLOOR_SIZE / FLOOR_TILE); t.magFilter = THREE.NearestFilter; return t;
+})();
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), new THREE.MeshStandardMaterial({ map: checkerTex, roughness: 0.96, metalness: 0 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+function scrollFloor(): void { checkerTex.offset.set(gaitPx / FLOOR_TILE, gaitPz / FLOOR_TILE); }   // тредмилл: пол едет под бегущим
 
 const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); scene.add(gizmo.getHelper());
 gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (!dragging) { if (plantDrag >= 0) { plantDrag = -1; gizmo.detach(); saveGaitCfg(); } else pushUndo(); } });
@@ -558,6 +567,14 @@ function drawPad(cv: HTMLCanvasElement): void {
   for (let i = 0; i <= 4; i++) { const p = PADM + i * (PAD - 2 * PADM) / 4; ctx.beginPath(); ctx.moveTo(p, PADM); ctx.lineTo(p, PAD - PADM); ctx.moveTo(PADM, p); ctx.lineTo(PAD - PADM, p); ctx.stroke(); }
   ctx.strokeStyle = '#3a4258'; ctx.beginPath(); ctx.moveTo(PAD / 2, PADM); ctx.lineTo(PAD / 2, PAD - PADM); ctx.moveTo(PADM, PAD / 2); ctx.lineTo(PAD - PADM, PAD / 2); ctx.stroke();
   ctx.fillStyle = '#5a6478'; ctx.font = '9px monospace'; ctx.fillText('вперёд', PAD / 2 + 3, PADM + 9); ctx.fillText('назад', PAD / 2 + 3, PAD - PADM - 3); ctx.fillText('П', PAD - PADM - 8, PAD / 2 - 3); ctx.fillText('Л', PADM + 2, PAD / 2 - 3);
+  if (editPlant) {   // 16 точек-ячеек плантов: внешнее кольцо (mag .95) = БЕГ, внутреннее (.34) = ХОДЬБА; активная подсвечена
+    for (const run of [false, true]) for (let i = 0; i < 8; i++) {
+      const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; const [px, py] = velToPad(Math.sin(th) * mag, Math.cos(th) * mag);
+      const on = i === plantDirSel && run === plantSpeedRun;
+      ctx.beginPath(); ctx.arc(px, py, on ? 6 : 4, 0, 7); ctx.fillStyle = on ? '#ffd24a' : run ? '#46d07a' : '#357a52'; ctx.fill();
+      if (on) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke(); }
+    }
+  }
   const [sx, sy] = velToPad(locoVx, locoVz); ctx.fillStyle = '#ff5a4a'; ctx.beginPath(); ctx.arc(sx, sy, 6, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();   // красная точка = вектор скорости/направление
 }
 function renderLoco(): void {
@@ -565,31 +582,33 @@ function renderLoco(): void {
   const info = el('div', 'color:#9ae6a0;margin-bottom:4px'); info.textContent = `${curChar().name} · ${weapon} · бег = idle-стойка + физпокачивание + физ-ноги`; body.append(info);
   const cv = document.createElement('canvas'); cv.width = PAD; cv.height = PAD; cv.style.cssText = 'width:100%;max-width:250px;display:block;border:1px solid #39415a;border-radius:6px;touch-action:none;cursor:crosshair'; body.append(cv);
   const redraw = (): void => drawPad(cv); redraw();
+  // Выбор ЯЧЕЙКИ планта = клик по одной из 16 точек на квадрате (8 внешних = бег, 8 внутренних = ходьба).
+  const goDir = (i: number, run: boolean): void => { gaitFaceMove = false; gaitYawManual = 0; const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; locoVz = Math.cos(th) * mag; locoVx = Math.sin(th) * mag; plantDirSel = i; plantSpeedRun = run; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; void ensurePhysics(); } renderLoco(); };
+  const hitPlantPoint = (ev: PointerEvent): boolean => {
+    const r = cv.getBoundingClientRect(); const mx = (ev.clientX - r.left) / r.width * PAD, my = (ev.clientY - r.top) / r.height * PAD;
+    let best = -1, bestRun = true, bestD = 15;   // порог попадания в точку, px
+    for (const run of [false, true]) for (let i = 0; i < 8; i++) { const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; const [px, py] = velToPad(Math.sin(th) * mag, Math.cos(th) * mag); const d = Math.hypot(mx - px, my - py); if (d < bestD) { bestD = d; best = i; bestRun = run; } }
+    if (best >= 0) { goDir(best, bestRun); return true; }
+    return false;
+  };
   let drag = false;
   const setFrom = (ev: PointerEvent): void => { const r = cv.getBoundingClientRect(); [locoVx, locoVz] = padToVel((ev.clientX - r.left) / r.width * PAD, (ev.clientY - r.top) / r.height * PAD); redraw(); };
-  cv.addEventListener('pointerdown', (ev) => { drag = true; cv.setPointerCapture(ev.pointerId); setFrom(ev); });
+  cv.addEventListener('pointerdown', (ev) => { if (editPlant && hitPlantPoint(ev)) return; drag = true; cv.setPointerCapture(ev.pointerId); setFrom(ev); });   // в режиме плантов клик по точке = выбор ячейки
   cv.addEventListener('pointermove', (ev) => { if (drag) setFrom(ev); });
   cv.addEventListener('pointerup', () => { drag = false; });
   body.append(pbtn(locoOn ? '⏸ стоп' : '▶ превью бега', () => { locoOn = !locoOn; if (locoOn) { gaitPx = 0; gaitPz = 0; void ensurePhysics(); } else goFrame(frameIdx); renderLoco(); }, locoOn));   // стоп → вернуть манекен к авторскому кадру (не застывать на шаге)
-  const tr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:6px'); tr.innerHTML = '<span style="flex:1">скорость (темп)</span>';
-  const ts = el('input', 'flex:2') as HTMLInputElement; ts.type = 'range'; ts.min = '0'; ts.max = '2'; ts.step = '0.05'; ts.value = String(locoTempo);
+  const tr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:6px'); tr.innerHTML = '<span style="flex:1">скорость просмотра (замедл./×)</span>';
+  const ts = el('input', 'flex:2') as HTMLInputElement; ts.type = 'range'; ts.min = '0.1'; ts.max = '2'; ts.step = '0.05'; ts.value = String(locoTempo);
   const tv = el('span', 'width:34px;text-align:right;color:#9ae6a0'); tv.textContent = locoTempo.toFixed(2);
   ts.oninput = () => { locoTempo = parseFloat(ts.value); tv.textContent = locoTempo.toFixed(2); }; tr.append(ts, tv); body.append(tr);
   // Facing: тумблер «по движению»(поворот) / «фикс»(страйф) + угол при фиксе.
   const fr = el('div', 'display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center'); body.append(fr);
   fr.append(pbtn(gaitFaceMove ? 'лицом: по движению' : 'лицом: фикс (страйф)', () => { gaitFaceMove = !gaitFaceMove; renderLoco(); }, gaitFaceMove));
   fr.append(pbtn('редакт. планты', () => { editPlant = !editPlant; if (!editPlant && plantDrag >= 0) { plantDrag = -1; gizmo.detach(); } renderLoco(); }, editPlant));
-  if (editPlant) {   // компас: 8 направлений × шаг/бег — выбираешь ячейку, гонишь превью туда, тянешь маркеры
+  if (editPlant) {   // выбор ячейки = КЛИК ПО ТОЧКЕ на квадрате (внешние 8 = бег, внутренние 8 = ходьба); правка — зелёными маркерами
     const cb = el('div', 'flex:1 1 100%;margin-top:3px;border:1px solid #39415a;border-radius:6px;padding:4px'); fr.append(cb);
-    const hint = el('div', 'font-size:11px;color:#8fb7ff'); hint.textContent = `правишь ячейку: ${DIR8[plantDirSel]} · ${plantSpeedRun ? 'бег' : 'шаг'} — тяни зелёные маркеры`; cb.append(hint);
-    const goDir = (i: number): void => { gaitFaceMove = false; gaitYawManual = 0; const th = i * DIR_STEP, mag = plantSpeedRun ? 0.95 : 0.34; locoVz = Math.cos(th) * mag; locoVx = Math.sin(th) * mag; plantDirSel = i; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; void ensurePhysics(); } renderLoco(); };
-    const grid = el('div', 'display:grid;grid-template-columns:repeat(3,26px);gap:2px;margin-top:3px'); cb.append(grid);
-    const layout: (readonly [number, string] | null)[] = [[7, '↖'], [0, '↑'], [1, '↗'], [6, '←'], null, [2, '→'], [5, '↙'], [4, '↓'], [3, '↘']];
-    for (const cc of layout) {
-      if (!cc) { grid.append(pbtn(plantSpeedRun ? 'бег' : 'шаг', () => { plantSpeedRun = !plantSpeedRun; renderLoco(); }, true)); continue; }
-      grid.append(pbtn(cc[1], () => goDir(cc[0]), plantDirSel === cc[0]));
-    }
-    const rr = el('div', 'margin-top:3px'); cb.append(rr);
+    const hint = el('div', 'font-size:11px;color:#8fb7ff'); hint.textContent = `правишь ячейку: ${DIR8[plantDirSel]} · ${plantSpeedRun ? 'бег' : 'шаг'} — клик по точке на квадрате, тяни зелёные маркеры`; cb.append(hint);
+    const rr = el('div', 'display:flex;gap:2px;margin-top:3px'); cb.append(rr);
     rr.append(
       pbtn('сброс ячейки', () => { (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel] = zeroLeg(); saveGaitCfg(); }),
       pbtn('сброс всех', () => { Object.assign(gaitPlant, emptyGrid()); saveGaitCfg(); renderLoco(); }),
@@ -634,6 +653,7 @@ function renderGaitTune(): void {
   gsl('длина шага база', GAITo, 'stepBase', 10, 60, 1);
   gsl('длина шага ×скор', GAITo, 'stepK', 0, 0.3, 0.01);
   gsl('длина шага макс', GAITo, 'stepMax', 20, 70, 1);
+  gsl('скорость анимации бега (в игре, антискольз.)', GAITo, 'cadence', 0.5, 2, 0.05);
   gsl('доля опоры (ходьба)', GAITo, 'dutyWalk', 0.15, 0.5, 0.01);
   gsl('доля опоры (бег)', GAITo, 'dutyRun', 0.1, 0.35, 0.01);
   gsl('подъём стопы', GAITo, 'liftBase', 2, 16, 0.5);
@@ -882,7 +902,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias'] as const;   // standY убран — база таза из idle-стойки
+const GAIT_KEYS = ['pelvisMin', 'stepBase', 'stepK', 'stepMax', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias'] as const;   // standY убран — база таза из idle-стойки; cadence — антискольз-тюн
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
 const GX_KEYS = ['legWidth', 'armDown', 'elbowBend', 'bob'] as const;
 type NumRec = Record<string, number>;
@@ -931,7 +951,7 @@ function stepGait(dt: number): void {
     const p = measureStancePlants(human, editorContent.resolveUpper(weapon)?.pose ?? null);
     gaitDriver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY); stanceMeasuredFor = weapon;
   }
-  const vx = locoVx * GAIT_MAXSPD * locoTempo, vz = locoVz * GAIT_MAXSPD * locoTempo;
+  const vx = locoVx * GAIT_MAXSPD, vz = locoVz * GAIT_MAXSPD;   // квадрат = скорость движения (центр→ходьба, край→бег); темп ушёл в скорость ПРОСМОТРА
   const spd = Math.hypot(vx, vz);
   gaitMoveMag = clamp(spd / GAIT.speedWalk, 0, 1);   // 0 стоишь → idle-ноги; ≥speedWalk бежишь → физ-шаг
   // Facing (yaw): «лицом по движению» → тело поворачивается к скорости (всегда бег вперёд, виден поворот);
@@ -1099,7 +1119,7 @@ let last = performance.now();
 function loop(): void {
   const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
   const c = curClip();
-  if (locoOn) stepGait(dt);   // бег = процедурный гейт (ноги) + idle-стойка на верх + физпокачивание; кормит физику
+  if (locoOn) stepGait(dt * locoTempo);   // бег = процедурный гейт (ноги) + idle-стойка + физ; locoTempo = скорость ПРОСМОТРА (slow-mo/×)
   else if (playing && c) {
     const dur = clipDur(c);
     if (dur < 1e-3 || c.keys.length < 2) { playing = false; playBtn.textContent = '▶'; }
@@ -1115,6 +1135,7 @@ function loop(): void {
     for (const e of effList()) { if (e.handle !== active) e.handle.position.copy(e.target); if (e.poleHandle !== active) e.poleHandle.position.copy(human.bones.get(e.mid)!.getWorldPosition(V())); }
   }
   updatePlantMarks();
+  scrollFloor();   // тредмилл-пол под бегущим (тянется по gaitPx/gaitPz)
   stepPhysics(dt);
   jiggle(dt);   // вторичное движение груди (female)
   orbit.update(); renderer.render(scene, camera); requestAnimationFrame(loop);

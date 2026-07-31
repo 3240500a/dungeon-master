@@ -147,3 +147,28 @@ describe('StepPlanner — поворот на месте держит стойк
     expect(Math.abs(t.hipLatL)).toBeLessThan(0.05);
   });
 });
+
+// Ч2: GAIT.cadence — множитель частоты цикла ног (короче шаг → чаще семенит). Путь (px) задаётся снаружи и не меняется.
+describe('StepPlanner — GAIT.cadence меняет частоту шага (антискольз-тюн), не путь', () => {
+  const saved = GAIT.cadence;
+  afterEach(() => { GAIT.cadence = saved; });
+  // «Переступы» = число разворотов знака приращения hipL (пики/впадины маха бедра) за прогон.
+  const reversals = (rows: Leg[]): number => {
+    let n = 0;
+    for (let i = 2; i < rows.length; i++) {
+      const a = rows[i - 1]!.hipL - rows[i - 2]!.hipL, b = rows[i]!.hipL - rows[i - 1]!.hipL;
+      if (a !== 0 && b !== 0 && Math.sign(a) !== Math.sign(b)) n++;
+    }
+    return n;
+  };
+  it('cadence=2 → цикл ног заметно чаще, чем cadence=1 (та же скорость/путь)', () => {
+    GAIT.cadence = 1; const slow = reversals(runGait({ vx: 0, vz: 100, frames: 200 }));
+    GAIT.cadence = 2; const fast = reversals(runGait({ vx: 0, vz: 100, frames: 200 }));
+    expect(slow).toBeGreaterThan(2);
+    expect(fast).toBeGreaterThan(slow * 1.5);   // ~×2 в идеале — семенит чаще на той же дистанции
+  });
+  it('cadence=1 — дефолт нейтрален (детерминированный тот же вывод)', () => {
+    GAIT.cadence = 1;
+    expect(runGait({ vx: 0, vz: 100, frames: 40 })).toEqual(runGait({ vx: 0, vz: 100, frames: 40 }));
+  });
+});
