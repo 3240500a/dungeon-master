@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { TILE } from '@dm/shared';
 import { jolt, type PhysWorld, type JoltNS } from './ragdoll.js';
 import type { Humanoid } from './humanoid.js';   // только тип (без цикла: humanoid не импортирует рэгдолл)
+import { groundFeet, type GroundQuery } from './footIk.js';
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 type Vec3 = [number, number, number];
@@ -377,13 +378,12 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
 }
 
 // ── ЕДИНЫЙ РЕНДЕР ФИЗ-ПРИЗРАКА (редактор + игра) ─────────────────────────────────────
-const _gp = new THREE.Vector3();
 const _gq = new THREE.Quaternion(), _gqT = new THREE.Quaternion(), _geu = new THREE.Euler();
-const GHOST_FEET = ['LeftFoot', 'RightFoot', 'LeftToes', 'RightToes'];
 
 /** Состояние заземления призрака — сглаженный вертикальный сдвиг корня. По одному на куклу/призрак. */
 export interface GhostGround { off: number }
 export const newGhostGround = (): GhostGround => ({ off: 0 });
+
 
 /**
  * Ведём humanoid-МЕШ результатом рэгдолла: `readBakedPose()` → локальные повороты костей,
@@ -394,11 +394,13 @@ export const newGhostGround = (): GhostGround => ({ off: 0 });
  * @param ground true на стоянке/беге (клампить стопу к полу); false на смерти/полёте (прижим затухает, физика летит).
  * @param targetPose 21-костная поза-цель (манекен) для бленда; null → чистая физика.
  * @param match 0..1 — вес совпадения с манекеном (RB2): 0 = физрезультат, 1 = ровно поза-цель (физика лишь для реакций/ударов).
+ * @param groundAt высота пола (мир) в точке XZ — рейкаст. Не задан → плоский floorY. FOOT-IK ставит стопу на этот пол.
  */
 export function renderRagdollGhost(
   mesh: Humanoid, rag: HumanoidRagdoll, gs: GhostGround, dt: number, floorY = 0, ground = true,
-  targetPose: Record<string, [number, number, number]> | null = null, match = 0,
+  targetPose: Record<string, [number, number, number]> | null = null, match = 0, groundAt?: GroundQuery,
 ): void {
+  const gnd = groundAt ?? ((): number => floorY);
   const bp = rag.readBakedPose(); mesh.reset();
   if (match > 0.001 && targetPose) {   // БЛЕНД физрезультат → цель по match: точное совпадение с манекеном
     for (const nm in targetPose) {
@@ -415,9 +417,5 @@ export function renderRagdollGhost(
   if (!ground) gs.off += (0 - gs.off) * Math.min(1, dt * 8);         // смерть/полёт: прижим затухает
   mesh.root.position.set(hp[0], hp[1] + gs.off, hp[2]);
   mesh.root.updateMatrixWorld(true);
-  if (ground) {                                                       // подтянуть низшую стопу к полу (сглажено)
-    let minY = Infinity;
-    for (const nm of GHOST_FEET) { const b = mesh.bones.get(nm); if (b) minY = Math.min(minY, b.getWorldPosition(_gp).y); }
-    if (Number.isFinite(minY)) { gs.off += (floorY - minY) * Math.min(1, dt * 12); mesh.root.position.y = hp[1] + gs.off; }
-  }
+  if (ground) groundFeet(mesh, hp[1], gs, dt, gnd);   // FOOT-IK: пол под каждой стопой → 2-костный IK ноги, стопа не тонет
 }
