@@ -62,7 +62,7 @@ describe('StepPlanner — поворот на месте держит стойк
   // Боковой угол бедра стоя (после устаканивания): 0 = ноги под тазом, >0 = реально разведены.
   const standLat = (half: number): number => {
     const d = new PoseDriver();
-    d.setStance(half, 0, 0);
+    d.setStance(half, 0, -half, 0);   // нога 0/левая на +half (+X), нога 1/правая на −half
     let t = d.update(1 / 60);
     for (let i = 0; i < 120; i++) { d.setWorld(0, 0, 0, 0, 0); t = d.update(1 / 60); }
     return Math.abs(t.hipLatL);
@@ -75,7 +75,7 @@ describe('StepPlanner — поворот на месте держит стойк
 
   // Прогон поворота на месте: вернуть первую переступившую ногу (0=лев,1=прав) и было ли скрещивание (стопа за средней линией).
   const turnRun = (dir: number): { first: number; crossed: boolean; stepped: boolean } => {
-    const d = new PoseDriver(); d.setStance(11, 0, 0);
+    const d = new PoseDriver(); d.setStance(11, 0, -11, 0);   // планты: левая +11, правая −11
     for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться стоя
     let yaw = 0, first = -1, crossed = false, stepped = false;
     for (let i = 0; i < 260; i++) {
@@ -108,7 +108,7 @@ describe('StepPlanner — поворот на месте держит стойк
 
   it('дефолтная стойка (без setStance) — как раньше: узко, без развода', () => {
     expect(standLat(3.6)).toBeLessThan(0.05);
-    const d = new PoseDriver();   // setStance не звали → stanceHalf = полуширина таза
+    const d = new PoseDriver();   // setStance не звали → планты = ±полуширина таза
     let t = d.update(1 / 60);
     for (let i = 0; i < 60; i++) { d.setWorld(0, 0, 0, 0, 0); t = d.update(1 / 60); }
     expect(Math.abs(t.hipLatL)).toBeLessThan(0.05);

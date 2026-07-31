@@ -221,15 +221,16 @@ export function loadMatch(charId: string, fallbackId?: string): number {
   return cfg[charId]?.match ?? (fallbackId ? cfg[fallbackId]?.match : undefined) ?? 0;
 }
 
-// ── Замер ширины РАССТАВЛЕННОЙ стойки из авторской idle-позы (для приставного шага при повороте на месте) ──
+// ── Замер ТОЧНЫХ плантов стоп из авторской idle-позы (для приставного шага при повороте на месте) ──
 const STANCE_LEG_BONES = ['LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot'];
 const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.Vector3();
-/** Позируем ноги авторской стойкой (yaw 0, таз в опорной точке) и читаем мировые стопы отн. таза → полуширина стойки +
- *  продольный вынос стоп на ногу. Отдаётся планировщику (setStance): при повороте на месте он держит эту ширину и
- *  переступает вбок, а не сводит ноги под таз. Нет клипа стойки → узкая база (полуширина таза), как было. Мутирует human
- *  (reset + поза ног) — зови вне кадра рендера (спавн/смена оружия); следующий полный step всё равно перепозирует. */
-export function measureStanceWidth(human: Humanoid, idle: Pose | null): { half: number; fwdL: number; fwdR: number } {
-  if (!idle) return { half: HIP_DX, fwdL: 0, fwdR: 0 };
+/** Плант ноги = ТОЧНАЯ позиция стопы в idle-стойке отн. таза (body-local, yaw 0): lat (X, + = сторона своей кости) + fwd (Z).
+ *  Позируем ноги авторской стойкой, читаем мировые стопы отн. таза → по каждой ноге СВОЙ (lat, fwd) СО ЗНАКОМ (не усредняем).
+ *  Планировщик (setStance) при повороте держит стопы В ЭТИХ точках и переступает ровно в них (idl-стойка в новом фейсинге).
+ *  Нет клипа стойки → фолбэк ±полуширина таза (нога 0/левая на +X — под её кость LeftUpperLeg, см. [[humanoid-rig-mirror]]).
+ *  Мутирует human (reset + поза ног) — зови вне кадра рендера (спавн/смена оружия); следующий полный step перепозирует. */
+export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number } {
+  if (!idle) return { latL: HIP_DX, fwdL: 0, latR: -HIP_DX, fwdR: 0 };
   human.reset();
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
@@ -237,9 +238,8 @@ export function measureStanceWidth(human: Humanoid, idle: Pose | null): { half: 
   human.root.updateMatrixWorld(true);
   const h = hips.getWorldPosition(_ms0);
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
-  const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);
-  const half = (Math.abs(fl.x - h.x) + Math.abs(fr.x - h.x)) / 2;   // боковой вынос стоп (мир X при yaw 0 = body-lateral)
-  return { half, fwdL: fl.z - h.z, fwdR: fr.z - h.z };
+  const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);   // yaw 0 → world X = body-lateral, world Z = forward
+  return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z };
 }
 
 // ── PosePlayer: драйвер гейта для ИГРЫ (владеет своим состоянием) — тредмил-ноги + idle-стойка + физ-удар ──
@@ -260,10 +260,10 @@ export class PosePlayer {
     public gx: GXKnobs,
     public plant: PlantGrid,
   ) { this.measureStance(); }
-  /** Замерить ширину стойки текущего оружия и отдать планировщику (приставной шаг при повороте на месте держит её). */
+  /** Замерить планты стоп из idle-стойки текущего оружия и отдать планировщику (подшаг при повороте идёт в эти точки). */
   measureStance(): void {
-    const st = measureStanceWidth(this.human, this.content.resolveUpper(this.weapon)?.pose ?? null);
-    this.driver.setStance(st.half, st.fwdL, st.fwdR);
+    const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon)?.pose ?? null);
+    this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR);
   }
   setWeapon(w: string): void { this.weapon = w; this.measureStance(); }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }

@@ -11,7 +11,7 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, WEAPON_MASS, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStanceWidth, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -642,7 +642,7 @@ function renderGaitTune(): void {
   gsl('вынос вбок (страйф)', GAITo, 'strafeReach', 0, 1.5, 0.05);
   gsl('предел кроссовера', GAITo, 'crossClamp', 0, 99, 1);
   gsl('поворот: порог (рад/с)', GAITo, 'turnStep', 0.1, 1.5, 0.05);
-  gsl('поворот: размер шага', GAITo, 'turnStepFrac', 0.3, 1.0, 0.02);
+  gsl('поворот: шаг через (u)', GAITo, 'turnStepDist', 2, 16, 0.5);
   gsl('поворот: ведёт внутр. нога', GAITo, 'turnLeadBias', 0.3, 1.0, 0.05);
   box.append(pbtn('сброс настроек бега', () => { delete gaitCfgs[curCharId]; try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ } applyGaitCfg(curCharId); renderLoco(); }));
   // Экспорт/импорт настроек бега ВСЕХ персонажей (pe_gait) — портируемый артефакт (бэкап + вход для Ф5).
@@ -882,7 +882,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['standY', 'pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepFrac', 'turnLeadBias'] as const;
+const GAIT_KEYS = ['standY', 'pelvisMin', 'stepBase', 'stepK', 'stepMax', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias'] as const;
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
 const GX_KEYS = ['legWidth', 'armDown', 'elbowBend', 'bob'] as const;
 type NumRec = Record<string, number>;
@@ -928,8 +928,8 @@ let stanceMeasuredFor = '';   // замеряем ширину стойки од
 function stepGait(dt: number): void {
   if (attackClip) { attackT += dt * attackSpeed; if (attackT > clipDur(attackClip)) { attackClip = null; attackT = -1; } }   // проигрывание удара
   if (stanceMeasuredFor !== weapon) {   // приставной шаг при повороте на месте держит РАССТАВЛЕННУЮ стойку — её ширину замеряем
-    const st = measureStanceWidth(human, editorContent.resolveUpper(weapon)?.pose ?? null);
-    gaitDriver.setStance(st.half, st.fwdL, st.fwdR); stanceMeasuredFor = weapon;
+    const p = measureStancePlants(human, editorContent.resolveUpper(weapon)?.pose ?? null);
+    gaitDriver.setStance(p.latL, p.fwdL, p.latR, p.fwdR); stanceMeasuredFor = weapon;
   }
   const vx = locoVx * GAIT_MAXSPD * locoTempo, vz = locoVz * GAIT_MAXSPD * locoTempo;
   const spd = Math.hypot(vx, vz);
