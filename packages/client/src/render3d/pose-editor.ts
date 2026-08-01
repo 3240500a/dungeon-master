@@ -650,10 +650,8 @@ function renderGaitTune(): void {
   const grp = (t: string): void => { const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:6px 0 1px;font-size:11px'); h.textContent = t; box.append(h); };
   const GXo = GX as unknown as NumRec, POSEo = POSE as unknown as NumRec, GAITo = GAIT as unknown as NumRec;
   grp('поза (ретаргет)');
-  gsl('ширина ног (+ шире)', GXo, 'legWidth', -0.4, 0.7, 0.01);
   gsl('руки вниз', GXo, 'armDown', 0.6, 1.8, 0.01);
   gsl('сгиб локтя', GXo, 'elbowBend', 0, 1.2, 0.02);
-  gsl('боб таза ×', GXo, 'bob', 0, 2, 0.05);
   grp('руки (мах)');
   gsl('плечо база', POSEo, 'armSh', -0.8, 0.4, 0.02);
   gsl('локоть база', POSEo, 'armEl', 0, 1.4, 0.02);
@@ -661,13 +659,15 @@ function renderGaitTune(): void {
   grp('ноги / посадка');
   // «высота таза» убрана — база берётся из idle-стойки (measureStancePlants.standY), чтобы бег/подшаг не подскакивали.
   gsl('присед (мин.таз)', GAITo, 'pelvisMin', 16, 34, 0.5);
-  gsl('длина шага база', GAITo, 'stepBase', 10, 60, 1);
-  gsl('длина шага ×скор', GAITo, 'stepK', 0, 0.3, 0.01);
-  gsl('длина шага макс', GAITo, 'stepMax', 20, 70, 1);
+  gsl('длина шага (ходьба)', GAITo, 'stepWalk', 10, 70, 1);
+  gsl('длина шага (бег)', GAITo, 'stepRun', 10, 70, 1);
+  gsl('боб таза × (ходьба)', GAITo, 'bobWalk', 0, 2, 0.05);
+  gsl('боб таза × (бег)', GAITo, 'bobRun', 0, 2, 0.05);
+  gsl('подъём стопы (ходьба)', GAITo, 'liftWalk', 2, 20, 0.5);
+  gsl('подъём стопы (бег)', GAITo, 'liftRun', 2, 20, 0.5);
   gsl('скорость анимации бега (в игре, антискольз.)', GAITo, 'cadence', 0.5, 2, 0.05);
   gsl('доля опоры (ходьба)', GAITo, 'dutyWalk', 0.15, 0.5, 0.01);
   gsl('доля опоры (бег)', GAITo, 'dutyRun', 0.1, 0.35, 0.01);
-  gsl('подъём стопы', GAITo, 'liftBase', 2, 16, 0.5);
   gsl('потолок бедра', GAITo, 'hipFwdLim', 0.4, 1.4, 0.02);
   gsl('ширина стойки', GAITo, 'stanceWidth', -6, 14, 0.5);
   gsl('вынос вбок (страйф)', GAITo, 'strafeReach', 0, 1.5, 0.05);
@@ -749,8 +749,8 @@ function refPos(foot: 0 | 1, fwd: number, lat: number): [number, number] {
 function plantRef(foot: 0 | 1, off: [number, number]): [number, number] {
   const th = plantDirSel * (Math.PI / 4), mFwd = Math.cos(th), mLat = Math.sin(th);
   const speed = gaitSpd > 1 ? gaitSpd : (plantSpeedRun ? GAIT.speedRun : GAIT.speedWalk);
-  const stepLen = clamp(GAIT.stepBase + speed * GAIT.stepK, GAIT.stepBase, GAIT.stepMax) / Math.max(0.1, GAIT.cadence);
   const dr = clamp((speed - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
+  const stepLen = (GAIT.stepWalk + (GAIT.stepRun - GAIT.stepWalk) * dr) / Math.max(0.1, GAIT.cadence);
   const duty = GAIT.dutyWalk + (GAIT.dutyRun - GAIT.dutyWalk) * dr;
   const lead = stepLen * duty + stepLen * GAIT.aheadMul + speed * GAIT.predictSec;
   const side = foot === 0 ? 1 : -1;
@@ -777,7 +777,7 @@ function updatePlantMarks(): void {
   }
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
-const GX = { legWidth: 0, armDown: 1.35, elbowBend: 0.25, bob: 1 };   // 0 = стопы под бёдрами (±4), + шире
+const GX = { armDown: 1.35, elbowBend: 0.25 };   // legWidth убран (дубль «ширина стойки»); боб таза — в GAIT.bobWalk/bobRun
 // Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита (стойка_shield) + вес shieldMix (ползунок),
 // подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
 const editorContent: PoseContent = {
@@ -953,9 +953,9 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepBase', 'stepK', 'stepMax', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'liftBase', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias'] as const;   // standY убран — база таза из idle-стойки; cadence — антискольз-тюн
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
-const GX_KEYS = ['legWidth', 'armDown', 'elbowBend', 'bob'] as const;
+const GX_KEYS = ['armDown', 'elbowBend'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
 for (const k of GAIT_KEYS) GAIT_DEF[k] = (GAIT as NumRec)[k]!;

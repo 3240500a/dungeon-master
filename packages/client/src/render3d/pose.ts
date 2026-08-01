@@ -51,10 +51,11 @@ const MOVE_EPS = 8;          // ниже этой скорости (u/с) счи
  */
 export const GAIT = {
   standY: 30, pelvisMin: 26,                 // посадка таза: стойка / нижний предел приседа (подобрано глазами)
-  stepBase: 30, stepK: 0.12, stepMax: 52,    // длина шага = clamp(base + speed·K, base, max)
+  stepWalk: 35, stepRun: 44,                 // ДЛИНА ШАГА на ходьбе / беге (интерп по скорости sb) — раздельно
+  bobWalk: 1, bobRun: 1,                     // множитель БОБА таза на ходьбе / беге (интерп по sb)
+  liftWalk: 7, liftRun: 15,                  // ПОДЪЁМ маховой стопы на ходьбе / беге (интерп по sb)
   cadence: 1,                                // множитель частоты цикла: длину шага делим на cadence (>1 → короче шаг, чаще семенит). Антискольз-тюн бега В ИГРЕ; движение НЕ меняет.
   dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
-  liftBase: 7, liftK: 0.11,                  // подъём маховой стопы = base + (speed−speedWalk)·K
   hipFwdLim: 0.95, hipFwdSoft: 0.3,          // мягкий потолок форвардного угла бедра
   // ВЫНОС СТОПЫ ВПЕРЁД: к базовому шаг·доля добавляем шаг·aheadMul + скорость·predictSec.
   // fixTarget=1 — цель фиксируется в момент отрыва (предсказание), 0 — едет за бедром каждый кадр.
@@ -69,7 +70,6 @@ export const GAIT = {
   // crossClamp: предел захода стопы за среднюю линию тела (u; 99 = без ограничения).
   stanceWidth: 0, strafeReach: 1, crossClamp: 99,
 };
-const liftFor = (speed: number): number => GAIT.liftBase + Math.max(0, Math.min(speed, 130) - GAIT.speedWalk) * GAIT.liftK;
 
 /**
  * ЖИВАЯ поза верха тела (руки/корпус) — те же ползунки панели, читается КАЖДЫЙ кадр (без пересборки куклы),
@@ -220,11 +220,13 @@ class StepPlanner {
       this.prevYaw = yaw;
     }
     const speed = Math.hypot(vx, vz);
+    const sb = clamp((speed - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);   // 0 ходьба … 1 бег → раздельные длина шага/боб/подъём
     // Доля хода для рук/наклона (0 стоя … ~1 быстрый шаг). Сглаживаем — сырая скорость мигает (сим 30/физ 60).
     if (dt > 0) this.moveAmt += (clamp(speed / GAIT.speedWalk, 0, 1.4) - this.moveAmt) * Math.min(1, dt * 8);
     const moving = speed > MOVE_EPS;
     const mx = moving ? vx / speed : 0, mz = moving ? vz / speed : 0;
-    const stepLen = clamp(GAIT.stepBase + speed * GAIT.stepK, GAIT.stepBase, GAIT.stepMax) / Math.max(0.1, GAIT.cadence);   // cadence>1 → короче шаг → чаще семенит (частота цикла), путь px не трогаем
+    const stepLen = lerp(GAIT.stepWalk, GAIT.stepRun, sb) / Math.max(0.1, GAIT.cadence);   // длина шага ходьба↔бег; cadence>1 → короче/чаще (путь px не трогаем)
+    const lift = lerp(GAIT.liftWalk, GAIT.liftRun, sb);   // подъём маховой стопы ходьба↔бег
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
@@ -285,7 +287,7 @@ class StepPlanner {
 
     // 2. ОКНА ОПОРЫ по доле. У ноги i опора отцентрована на фазе i·π и занимает 2π·duty цикла; остальное —
     //    перенос. duty<0.5 → между опорами обе ноги в воздухе (фаза полёта) — это и есть бег.
-    const duty = clamp(GAIT.dutyWalk + (GAIT.dutyRun - GAIT.dutyWalk) * ((speed - GAIT.speedWalk) / (GAIT.speedRun - GAIT.speedWalk)), GAIT.dutyRun, GAIT.dutyWalk);
+    const duty = lerp(GAIT.dutyWalk, GAIT.dutyRun, sb);   // доля опоры ходьба↔бег (sb уже в [0,1])
     // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
     const lead = stepLen * duty + stepLen * GAIT.aheadMul + speed * GAIT.predictSec;
     // Анти-столкновение стоп: если цель ноги i ближе footClear к ДРУГОЙ стопе — увести цель ВПЕРЁД
@@ -381,11 +383,11 @@ class StepPlanner {
           ctrl.push([l.tx, l.tz]);
           const p = crAt(ctrl, e); wx = p[0]; wz = p[1];
         }
-        wy = FOOT_Y + Math.sin(Math.PI * t) * liftFor(speed);
+        wy = FOOT_Y + Math.sin(Math.PI * t) * lift;
       } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
       out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz));
     }
-    return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y };
+    return { l: out[0]!, r: out[1]!, bobY: (hipY - RIG_PELVIS_Y) * lerp(GAIT.bobWalk, GAIT.bobRun, sb) };   // боб таза × множитель ходьба↔бег
   }
 }
 

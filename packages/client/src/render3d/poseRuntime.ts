@@ -9,7 +9,7 @@ export type Pose = Record<string, [number, number, number]>;
 export interface Keyframe { pose: Pose; t: number }
 export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[] }
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
-export interface GXKnobs { legWidth: number; armDown: number; elbowBend: number; bob: number }
+export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth убран (дубль stanceWidth); боб таза — в GAIT.bobWalk/bobRun (× в bobY)
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
 export interface PoseContent {
@@ -122,9 +122,9 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   human.reset();
   const idle = content.resolveUpper(weapon)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх)
   const m = moveMag;
-  human.bones.get('Hips')!.position.set(0, 30 + t.bobY * gx.bob, 0);   // боб таза
-  blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL + gx.legWidth], idle, m);
-  blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR - gx.legWidth], idle, m);
+  human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
+  blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL], idle, m);
+  blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR], idle, m);
   blendBone(human, 'LeftLowerLeg', [t.knL, 0, 0], idle, m);
   blendBone(human, 'RightLowerLeg', [t.knR, 0, 0], idle, m);
   blendBone(human, 'LeftFoot', [0, 0, 0], idle, m); blendBone(human, 'RightFoot', [0, 0, 0], idle, m);
