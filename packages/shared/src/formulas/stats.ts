@@ -83,6 +83,7 @@ export function deriveStats(
   mods: StatModifier[] = [],
   scaling: HpManaScaling = DEFAULT_HP_MANA_SCALING,
   level = 1,
+  moveSpeedBase = 120,
 ): DerivedStats {
   const attr = finalAttributes(baseAttributes, mods);
   const lvlGain = Math.max(0, level - 1); // 1-й уровень без прибавки за уровень
@@ -100,7 +101,8 @@ export function deriveStats(
     critMultiplier: 1.5,
     armor: 0,
     armorPen: 0,
-    moveSpeed: 120,
+    moveSpeed: moveSpeedBase * scaling.moveSpeedMult,
+    attackMoveMult: scaling.attackMoveMult,
     accuracy: 20 + attr.dexterity * 2 + lvlGain * scaling.accuracyPerLevel,
     evade: 10 + attr.dexterity * 1.5,
     blockChance: 0,

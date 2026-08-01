@@ -43,6 +43,10 @@ export interface HpManaScaling {
   staminaRegenPerDexterity: number;
   /** Прибавка к меткости (рейтингу атаки) за каждый уровень после 1-го. */
   accuracyPerLevel: number;
+  /** Множитель базовой скорости перемещения класса (итог = balance.moveSpeedBase × это). */
+  moveSpeedMult: number;
+  /** Доля скорости движения во время удара/замаха/восстановления (per-класс; 0.2 = 20%). */
+  attackMoveMult: number;
 }
 
 /** Значения по умолчанию: пулы — прежняя формула (50 + вын·5 / 20 + инт·3); меткость +2 за уровень.
@@ -68,6 +72,8 @@ export const DEFAULT_HP_MANA_SCALING: HpManaScaling = {
   staminaRegenPerStrength: 0.08,
   staminaRegenPerDexterity: 0.05,
   accuracyPerLevel: 2,
+  moveSpeedMult: 1,
+  attackMoveMult: 0.2,
 };
 
 /** Производные (расчётные) характеристики. */
@@ -88,6 +94,8 @@ export interface DerivedStats {
   /** Пробой брони цели (доля 0..1) — снижает эффективную броню защитника. */
   armorPen: number;
   moveSpeed: number;
+  /** Доля скорости движения во время удара (per-класс, из класс-scaling). Сессия множит на неё при атаке. */
+  attackMoveMult: number;
   /** Меткость — рейтинг атаки (сравнивается с evade цели). */
   accuracy: number;
   /** Уклонение — рейтинг защиты (сравнивается с accuracy атакующего). */

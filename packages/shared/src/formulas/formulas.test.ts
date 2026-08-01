@@ -5,6 +5,7 @@ import { deriveStats, meetsRequirements } from './stats.js';
 import { generateItem, rollRarity } from './itemgen.js';
 import { ConfigRegistry } from '../config/registry.js';
 import type { Attributes } from '../types/attributes.js';
+import { DEFAULT_HP_MANA_SCALING } from '../types/attributes.js';
 import type { Item } from '../types/items.js';
 
 const reg = new ConfigRegistry();
@@ -37,6 +38,14 @@ describe('stats', () => {
     expect(s.maxHp).toBe(50 + 20 * 5); // Живучесть
     expect(s.maxMana).toBe(20 + 10 * 3 + 20 * 1); // Интеллект + Живучесть
     expect(s.maxStamina).toBe(40 + 20 * 2 + 15 * 1.5); // Сила + Ловкость
+  });
+  it('moveSpeed = база × классовый множитель; attackMoveMult проходит из scaling', () => {
+    const def = deriveStats(attrs);
+    expect(def.moveSpeed).toBe(120);       // дефолт: база 120 × множитель 1
+    expect(def.attackMoveMult).toBe(0.2);  // дефолт замедления при атаке
+    const tuned = deriveStats(attrs, [], { ...DEFAULT_HP_MANA_SCALING, moveSpeedMult: 1.5, attackMoveMult: 0.5 }, 1, 200);
+    expect(tuned.moveSpeed).toBe(200 * 1.5);   // база 200 × множитель 1.5
+    expect(tuned.attackMoveMult).toBe(0.5);
   });
   it('meetsRequirements проверяет требования', () => {
     const sword: Item = {

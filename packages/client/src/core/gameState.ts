@@ -53,6 +53,8 @@ export class GameState {
   armorClassesProvider: () => Parameters<typeof armorClassModifiers>[1] = () => [];
   /** Масштаб пулов HP/маны текущего класса (data-driven) — инъектируется App. */
   derivedScalingProvider: () => HpManaScaling = () => DEFAULT_HP_MANA_SCALING;
+  /** Базовая скорость перемещения (balance.moveSpeedBase) — инъектируется App; дефолт совпадает с конфигом. */
+  moveSpeedBaseProvider: () => number = () => 120;
 
   constructor(save: SaveState) {
     this.save = save;
@@ -93,7 +95,7 @@ export class GameState {
 
   /** Пересчитывает производные характеристики от атрибутов + экипировки + скиллов. */
   derived(): DerivedStats {
-    return deriveStats(this.save.attributes, this.allModifiers(), this.derivedScalingProvider(), this.save.level);
+    return deriveStats(this.save.attributes, this.allModifiers(), this.derivedScalingProvider(), this.save.level, this.moveSpeedBaseProvider());
   }
 
   /** Итоговые атрибуты с учётом всех бонусов (для расчёта урона оружия). */

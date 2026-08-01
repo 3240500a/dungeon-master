@@ -51,7 +51,7 @@ export function playerSnapshot(save: SaveState, cfg: ConfigRegistry, extraMods: 
   const modifiers = playerModifiers(save, cfg);
   if (extraMods.length) modifiers.push(...extraMods);
   const scaling = cfg.get('classes').find((c) => c.id === save.classId)?.derived ?? DEFAULT_HP_MANA_SCALING;
-  const derived = deriveStats(save.attributes, modifiers, scaling, save.level);
+  const derived = deriveStats(save.attributes, modifiers, scaling, save.level, cfg.get('balance').moveSpeedBase);
   const attrs = finalAttributes(save.attributes, modifiers);
   const combat = combatStatsOf(derived, save.level);
   const triggers = skillTreeTriggers(cfg.get('skill-tree'), save.skills);

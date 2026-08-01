@@ -162,6 +162,7 @@ export class App {
       value.derivedScalingProvider = () =>
         this.config.get('classes').find((c) => c.id === value.save.classId)?.derived
         ?? DEFAULT_HP_MANA_SCALING;
+      value.moveSpeedBaseProvider = () => this.config.get('balance').moveSpeedBase;
       // Ауры/стойки: активные бонусы в статы + доля резерва пула (единый расчёт с сервером).
       value.toggleModsProvider = () => toggleBuffMods(this.config, value.toggles);
       value.reservedManaFracProvider = () => reservedFrac(this.config, value.toggles, 'mana');

@@ -379,7 +379,7 @@ export class GameSession {
     // Стан полностью укореняет; во время удара/замаха/восстановления — идём МЕДЛЕННО (attackMoveMult),
     // а не колом («идти медленно и бить»). Facing обновляется в любом случае (целишься на ходу).
     const attacking = !!p.windup || p.attackCd > 0;
-    const moveMult = stunned ? 0 : attacking ? this.cfg.get('balance').melee.attackMoveMult : 1;
+    const moveMult = stunned ? 0 : attacking ? snap.derived.attackMoveMult : 1;   // per-класс замедление при атаке (из класс-scaling)
     if (input && !stunned) p.facing = input.facing;
     const len = input ? Math.hypot(input.move.x, input.move.y) : 0;
     if (input && moveMult > 0 && len > 0) {

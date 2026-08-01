@@ -51,7 +51,7 @@ function classScaling(reg: ConfigRegistry, classId: string) {
 }
 
 export function botDerived(reg: ConfigRegistry, save: SaveState): DerivedStats {
-  return deriveStats(save.attributes, characterModifiers(reg, save), classScaling(reg, save.classId), save.level);
+  return deriveStats(save.attributes, characterModifiers(reg, save), classScaling(reg, save.classId), save.level, reg.get('balance').moveSpeedBase);
 }
 
 export function botAttrs(reg: ConfigRegistry, save: SaveState): Attributes {
@@ -178,7 +178,7 @@ export function makePlayerModel(
   opts: { useSkills?: boolean } = {},
 ): PlayerModel {
   const mods = characterModifiers(reg, save);
-  const d = deriveStats(save.attributes, mods, classScaling(reg, save.classId), save.level);
+  const d = deriveStats(save.attributes, mods, classScaling(reg, save.classId), save.level, reg.get('balance').moveSpeedBase);
   const attrs = finalAttributes(save.attributes, mods);
   const weapons = attackWeaponsOf(save);
   const dual = weapons.length > 1;

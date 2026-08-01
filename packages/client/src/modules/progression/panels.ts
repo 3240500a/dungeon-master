@@ -131,7 +131,7 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const previewBase = { ...state.save.attributes } as Attributes;
       for (const a of ATTRIBUTES as Attribute[]) previewBase[a] += pending[a];
       const pd = staged > 0
-        ? deriveStats(previewBase, mods, state.derivedScalingProvider(), state.save.level)
+        ? deriveStats(previewBase, mods, state.derivedScalingProvider(), state.save.level, state.moveSpeedBaseProvider())
         : d;
 
       // Зелёный «+Δ» если стат вырос (иначе undefined → ничего не показываем).

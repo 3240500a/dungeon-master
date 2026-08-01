@@ -36,6 +36,8 @@ export const balanceSchema = z.object({
   skillPointsPerLevel: z.number().int().min(0),
   /** Очки пассивных навыков за уровень (пассивы тратят и золото, и эти очки). */
   masteryPointsPerLevel: z.number().int().min(0).default(2),
+  /** Базовая скорость перемещения игрока (u/с). Итог = moveSpeedBase × класс.moveSpeedMult (+ модификаторы гира). */
+  moveSpeedBase: z.number().min(0).default(120),
   /** Прирост опыта монстра за уровень: xp = base.xp × (1 + level × growth). */
   monsterXpGrowth: z.number().min(0).default(0.2),
   /** Множитель опыта за чемпионов/уников. */
@@ -239,6 +241,10 @@ export const hpManaScalingSchema = z.object({
   staminaRegenPerDexterity: z.number().default(0.05),
   /** Меткость (рейтинг атаки) за каждый уровень после 1-го — чтобы не отставать от уклонения монстров. */
   accuracyPerLevel: z.number().default(2),
+  /** Множитель базовой скорости перемещения этого класса (итог = balance.moveSpeedBase × это). */
+  moveSpeedMult: z.number().min(0).default(1),
+  /** Доля скорости движения во время удара/замаха/восстановления (0 = колом, 1 = без замедления). Per-класс. */
+  attackMoveMult: z.number().min(0).max(1).default(0.2),
 }).default({});
 
 export const classesSchema = z.array(
