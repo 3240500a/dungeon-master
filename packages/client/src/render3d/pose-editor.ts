@@ -38,7 +38,7 @@ const checkerTex = ((): THREE.Texture => {
 })();
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), new THREE.MeshStandardMaterial({ map: checkerTex, roughness: 0.96, metalness: 0 }));
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
-function scrollFloor(): void { checkerTex.offset.set(gaitPx / FLOOR_TILE, gaitPz / FLOOR_TILE); }   // тредмилл: пол едет под бегущим
+function scrollFloor(): void { checkerTex.offset.set(gaitPx / FLOOR_TILE, -gaitPz / FLOOR_TILE); }   // тредмилл: пол едет под бегущим (V текстуры смотрит в −Z из-за поворота пола → Z со знаком минус)
 
 const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); scene.add(gizmo.getHelper());
 gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (!dragging) { if (plantDrag >= 0) { plantDrag = -1; gizmo.detach(); saveGaitCfg(); } else pushUndo(); } });
