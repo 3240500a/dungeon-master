@@ -34,6 +34,8 @@ export interface PlayerView {
   toggles: string[];
   /** Радиус коллизии (для debug-draw коллайдеров). */
   r: number;
+  /** 3D-ключ экипированного оружия (для рендера кукол пиров: меш + адаптация поз). Нет оружия — поле отсутствует (клиент → класс-дефолт). */
+  weaponKey?: string;
 }
 export interface MonsterView {
   id: number;

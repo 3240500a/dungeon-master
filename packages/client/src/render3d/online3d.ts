@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, monsterCombatStats, debuffIcon, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
+import { TILE, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -82,41 +82,18 @@ function makeNameplate(name: string, champion: boolean, special: boolean): { spr
   };
 }
 
-/** Ключ одноручного оружия по weaponClass (для офф-руки: дуал). null — не одноручное/неизвестно. */
-function oneHandKey(item: { weaponClass?: string } | undefined): string | null {
-  switch (item?.weaponClass) {
-    case 'sword': return 'sword'; case 'axe': return 'axe'; case 'mace': return 'mace';
-    case 'dagger': return 'dagger'; case 'spear': return 'spear'; case 'wand': case 'staff': return 'staff';
-    default: return null;
-  }
-}
-/** Ключ 3D-оружия из ЭКИПИРОВКИ: слот weapon → база (по weaponClass/hands); офф-рука → «база+shield» ИЛИ «база+второе» (дуал). */
+/** Ключ 3D-оружия из ЭКИПИРОВКИ: shared-маппинг (weaponClass/hands + офф-рука); нет/неизвестно — класс-дефолт 3D-оружия. */
 function weaponKeyFromSave(save: SaveState): string {
-  const w = save.equipment.weapon, off = save.equipment.offhand;
-  const two = (w?.hands ?? 1) >= 2;
-  let base: string;
-  switch (w?.weaponClass) {
-    case 'sword': base = two ? 'greatsword' : 'sword'; break;
-    case 'axe': base = two ? 'greataxe' : 'axe'; break;
-    case 'mace': base = two ? 'greatmaul' : 'mace'; break;
-    case 'dagger': base = 'dagger'; break;
-    case 'spear': base = 'spear'; break;
-    case 'halberd': base = 'halberd'; break;
-    case 'bow': base = 'bow'; break;
-    case 'crossbow': base = 'crossbow'; break;
-    case 'wand': case 'staff': base = 'staff'; break;
-    default: base = charFor(save.classId).weapon; break;   // нет оружия — дефолт класса
-  }
-  if (!two && !base.includes('+')) {   // одноручное → показать офф-руку
-    if (off?.kind === 'shield') base += '+shield';                                    // щит
-    else if (off?.kind === 'weapon' && (off.hands ?? 1) < 2) { const ob = oneHandKey(off); if (ob) base += '+' + ob; }   // дуал (второе одноручное)
-  }
-  return base;
+  return weapon3dKeyFromEquipment(save.equipment.weapon, save.equipment.offhand) ?? charFor(save.classId).weapon;
+}
+/** Эффективный 3D-ключ игрока из снапшота (weaponKey с сервера, иначе класс-дефолт) — для кукол пиров. */
+function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string {
+  return pv.weaponKey ?? charFor(pv.classId).weapon;
 }
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -380,7 +357,9 @@ export async function startOnline3d(): Promise<void> {
     for (const pv of latest.players) {
       if (pv.id === myId) continue; seenP.add(pv.id);
       let a = peers.get(pv.id);
-      if (!a) { const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: charFor(pv.classId).weapon, x: pv.x, z: pv.y }); actorsGroup.add(d.group); a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y }; peers.set(pv.id, a); }
+      const wk = weaponKeyFromView(pv);   // реальное оружие пира из снапшота (иначе класс-дефолт)
+      if (!a) { const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y }); actorsGroup.add(d.group); a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk }; peers.set(pv.id, a); }
+      else if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }   // пир сменил экипировку → пересобрать меш + адаптировать позы удара
       driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt);
     }
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }

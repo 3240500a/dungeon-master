@@ -6,4 +6,5 @@ export * from './stats.js';
 export * from './runner.js';
 export * from './netTypes.js';
 export * from './serialize.js';
+export * from './weapon3d.js';
 export * from './toggles.js';

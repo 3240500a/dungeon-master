@@ -2,6 +2,7 @@ import type { DamagePacket, DamageType } from '../types/combat.js';
 import type { WorldState } from '../world/state.js';
 import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { FloorInit, WorldSnapshot } from './netTypes.js';
+import { weapon3dKeyFromEquipment } from './weapon3d.js';
 
 /**
  * Чистая сериализация мира в сетевые кадры (без Phaser/DOM). Снапшот — только
@@ -27,6 +28,7 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
       x: p.pos.x, y: p.pos.y, facing: p.facing,
       hp: p.hp, mana: p.mana, stamina: p.stamina, alive: p.alive,
       debuffs: p.debuffs, toggles: p.toggles, r: p.radius,
+      weaponKey: weapon3dKeyFromEquipment(p.save.equipment.weapon, p.save.equipment.offhand) ?? undefined,
     })),
     monsters: w.monsters.map((m) => ({
       id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,
