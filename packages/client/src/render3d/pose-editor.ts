@@ -726,7 +726,7 @@ let gaitReadout: HTMLElement | null = null;                // живой инд�
 // Левая нога — СИНИЙ, правая — КРАСНЫЙ. via — те же цвета, поменьше. Живой индикатор (жёлтый мелкий) ездит по факту (динамика).
 let editPlant = false;
 let viaLeg: 0 | 1 = 0;                                          // какую ногу авторим кнопками + / − обвод
-const PLANT_BLUE = 0x4aa0ff, PLANT_RED = 0xff5a4a, MAX_VIA = 3, HIP_DXE = 3.6, PLANT_BASE = 14, MARK_Y = 1.5;
+const PLANT_BLUE = 0x4aa0ff, PLANT_RED = 0xff5a4a, MAX_VIA = 3, HIP_DXE = 3.6, MARK_Y = 1.5;
 const plantMarks = [mkHandle(PLANT_BLUE, 3, true), mkHandle(PLANT_RED, 3, true)];   // [0]=L плант, [1]=R плант (авторские)
 const viaMarks: THREE.Mesh[][] = [[], []];
 for (let i = 0; i < 2; i++) for (let k = 0; k < MAX_VIA; k++) viaMarks[i]!.push(mkHandle(i === 0 ? PLANT_BLUE : PLANT_RED, 2, false));
@@ -735,12 +735,26 @@ const liveMarks = [mkHandle(0xffe04a, 1.4, false), mkHandle(0xffe04a, 1.4, false
 type AuthMark = { mesh: THREE.Mesh; foot: 0 | 1; kind: 'plant' | 'via'; k: number };   // реестр перетаскиваемых авторских точек
 let authMarks: AuthMark[] = [];
 let plantDrag = -1; let dragMark: AuthMark | null = null; const plantGrab = V(); let plantOff0: [number, number] = [0, 0];
+let gaitSpd = 0;   // фактическая скорость гейта (для точного референса планта — маркер совпадает с ногой)
 const selCell = (): Leg2 => (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel]!;   // ВЫБРАННАЯ ячейка (панель)
 const setXZ = (m: THREE.Mesh, x: number, z: number): void => { m.position.set(x, MARK_Y, z); };
-/** Стационарный body-референс: forward=(sin yaw,cos yaw), right=(cos yaw,−sin yaw); хип ноги на ±HIP_DXE вбок. */
+/** Стационарный body-референс: forward=(sin yaw,cos yaw), right=(cos yaw,−sin yaw); хип ноги на ±HIP_DXE вбок.
+ *  Точно совпадает с плант-целью планировщика: tx−gaitPx == refPos(foot, fwdAmt, latAmt). */
 function refPos(foot: 0 | 1, fwd: number, lat: number): [number, number] {
   const s = Math.sin(gaitYaw), c = Math.cos(gaitYaw), side = foot === 0 ? HIP_DXE : -HIP_DXE;
   return [c * side + s * fwd + c * lat, -s * side + c * fwd - s * lat];
+}
+/** Референс-позиция ПЛАНТА выбранной ячейки = РЕАЛЬНАЯ плант-цель (как в pose.ts plant()): hip + fwd·(lead·mFwd+off) +
+ *  right·(lead·mLat·strafeReach + stanceWidth·side + off). Считаем по фактической скорости гейта → маркер совпадает с ногой. */
+function plantRef(foot: 0 | 1, off: [number, number]): [number, number] {
+  const th = plantDirSel * (Math.PI / 4), mFwd = Math.cos(th), mLat = Math.sin(th);
+  const speed = gaitSpd > 1 ? gaitSpd : (plantSpeedRun ? GAIT.speedRun : GAIT.speedWalk);
+  const stepLen = clamp(GAIT.stepBase + speed * GAIT.stepK, GAIT.stepBase, GAIT.stepMax) / Math.max(0.1, GAIT.cadence);
+  const dr = clamp((speed - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
+  const duty = GAIT.dutyWalk + (GAIT.dutyRun - GAIT.dutyWalk) * dr;
+  const lead = stepLen * duty + stepLen * GAIT.aheadMul + speed * GAIT.predictSec;
+  const side = foot === 0 ? 1 : -1;
+  return refPos(foot, lead * mFwd + off[0], lead * mLat * GAIT.strafeReach + GAIT.stanceWidth * side + off[1]);
 }
 function updatePlantMarks(): void {
   const show = editPlant && locoOn && locoGait;
@@ -751,7 +765,7 @@ function updatePlantMarks(): void {
     const off = foot === 0 ? cell.l : cell.r;
     const pm = plantMarks[i]!; pm.visible = show;
     if (show) { authMarks.push({ mesh: pm, foot, kind: 'plant', k: 0 });
-      if (dragMark?.mesh !== pm) { const p = refPos(foot, PLANT_BASE + off[0], off[1]); setXZ(pm, p[0], p[1]); } }
+      if (dragMark?.mesh !== pm) { const p = plantRef(foot, off); setXZ(pm, p[0], p[1]); } }
     const via = (foot === 0 ? cell.lVia : cell.rVia) ?? [];
     for (let k = 0; k < MAX_VIA; k++) {
       const vm = viaMarks[i]![k]!; const on = show && k < via.length; vm.visible = on;
@@ -992,7 +1006,7 @@ function stepGait(dt: number): void {
     gaitDriver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY); stanceMeasuredFor = weapon;
   }
   const vx = locoVx * GAIT_MAXSPD, vz = locoVz * GAIT_MAXSPD;   // квадрат = скорость движения (центр→ходьба, край→бег); темп ушёл в скорость ПРОСМОТРА
-  const spd = Math.hypot(vx, vz);
+  const spd = Math.hypot(vx, vz); gaitSpd = spd;   // gaitSpd → точный референс плант-маркера
   gaitMoveMag = clamp(spd / GAIT.speedWalk, 0, 1);   // 0 стоишь → idle-ноги; ≥speedWalk бежишь → физ-шаг
   // Facing (yaw): «лицом по движению» → тело поворачивается к скорости (всегда бег вперёд, виден поворот);
   // иначе — фикс. угол `gaitYawManual` (страйф: тело смотрит в одну сторону, шаги идут в другую).
