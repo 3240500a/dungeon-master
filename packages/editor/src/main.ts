@@ -104,16 +104,21 @@ fieldEnumSources.weight = () => ((data['weapon-weights'] as { id: string }[]) ??
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
 fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []).map((r) => r.id);
+// poseClips (у активного скила) — упорядоченный мультивыбор имён сохранённых поз из редактора поз
+// (/api/pose → pe_clips). Несколько имён → в 3D удары чередуются. s_hit_ (спец-удар скила) — вперёд, затем hit_, idle_.
 let poseClipNames: string[] = [];
 fieldArrayEnumSources.poseClips = () => poseClipNames;
+// Нормализация старой конвенции имён (стойка_→idle_, удар_→hit_) — чтобы список совпадал с игрой во время миграции.
+const migratePoseName = (n: string): string =>
+  n.startsWith('стойка_') ? 'idle_' + n.slice('стойка_'.length) : n.startsWith('удар_') ? 'hit_' + n.slice('удар_'.length) : n;
 fetch('/api/pose')
   .then((r) => (r.ok ? (r.json() as Promise<Record<string, unknown>>) : null))
   .then((d) => {
     if (!d) return;
     const clips = (d['pe_clips'] as { name?: string }[] | undefined) ?? [];
     const names = new Set<string>();
-    for (const c of clips) if (c.name) names.add(c.name);
-    const rank = (n: string): number => (n.startsWith('удар_') ? 0 : n.startsWith('стойка_') ? 1 : 2);
+    for (const c of clips) if (c.name) names.add(migratePoseName(c.name));
+    const rank = (n: string): number => (n.startsWith('s_hit_') ? 0 : n.startsWith('hit_') ? 1 : n.startsWith('idle_') ? 2 : 3);
     poseClipNames = [...names].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
     render();   // перерисовать — если открыт скил, выпадашки поз наполнятся
   })

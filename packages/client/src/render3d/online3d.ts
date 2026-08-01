@@ -479,7 +479,7 @@ export async function startOnline3d(): Promise<void> {
       else if (e.type === 'quest') { if (e.playerId === myId) bus.emit('log:message', { text: e.name, kind: 'system' }); }
       else if (e.type === 'player-died') { if (e.playerId === myId) bus.emit('player:died', { depth: app.state!.depth }); }
       else if (e.type === 'swing') {
-        // Проиграть авторский удар КУКЛОЙ (у Волкодава — `удар_axe`): свой игрок или пир.
+        // Проиграть авторский удар КУКЛОЙ (у Волкодава — `hit_axe`): свой игрок или пир.
         const pv = latest?.players.find((p) => p.id === e.playerId);
         const actor = e.playerId === myId ? self : peers.get(e.playerId);
         actor?.d.attack(abilityPoseClips(e.ability));   // скил с poseClips → чередуемые удары; базовая атака → удар по оружию

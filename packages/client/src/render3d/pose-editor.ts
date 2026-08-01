@@ -11,7 +11,7 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -566,8 +566,8 @@ function renderChar(): void {
   shs.onchange = () => saveShield();
   shRow.append(shs, shv); body.append(shRow);
   const shHint = el('div', 'color:#8f897c;font-size:10px;margin-top:2px'); shHint.textContent = isShieldKey
-    ? 'позу щита дотюнь для ЭТОГО оружия: авторь клип «стойка_' + weapon + '» (иначе берётся базовая «стойка_shield»).'
-    : 'база: авторь «стойка_shield» (оружие «shield» → левая рука → «захватить стойку»). Для тюна под оружие выбери офф-руку «щит».'; body.append(shHint);
+    ? 'позу щита дотюнь для ЭТОГО оружия: авторь клип «idle_' + weapon + '» (иначе берётся базовая «idle_shield»).'
+    : 'база: авторь «idle_shield» (оружие «shield» → левая рука → «захватить стойку»). Для тюна под оружие выбери офф-руку «щит».'; body.append(shHint);
   const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'СВОИ ПЕРСОНАЖИ'; body.append(ah);
   body.append(pbtn('+ создать из текущего', () => { const nm = prompt('имя персонажа', 'char' + (customChars.length + 1)); if (!nm) return; const id = 'c' + Date.now(); customChars.push({ id, name: nm, gender: c.gender, build: { ...c.build }, weapon }); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(id); }));
   if (!c.builtin) body.append(pbtn('удалить персонажа', () => { customChars = customChars.filter((x) => x.id !== c.id); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(CLASS_CHARS[0]!.id); }));
@@ -791,7 +791,7 @@ function updatePlantMarks(): void {
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
 const GX = { armDown: 1.35, elbowBend: 0.25 };   // legWidth убран (дубль «ширина стойки»); боб таза — в GAIT.bobWalk/bobRun
-// Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита per-оружие (стойка_<wk> → фолбэк стойка_shield)
+// Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита per-оружие (idle_<wk> → фолбэк idle_shield)
 // + вес shieldMixFor(wk) (ползунок), подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
 const editorContent: PoseContent = {
   resolveUpper: (w) => resolveUpper(w),
@@ -800,9 +800,9 @@ const editorContent: PoseContent = {
 function gaitToHumanoid(t: PoseTargets): void {   // тонкая обёртка над ОБЩИМ пайплайном (Ф5) — редактор и игра одним кодом
   rtGaitToHumanoid(human, weaponGroups, GX, gaitMoveMag, t, editorContent, weapon, { clip: attackClip, t: attackT });
 }
-// ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «стойка_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
+// ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
 interface UpperPose { pose: Pose; swing: number }
-const stanceName = (w: string): string => 'стойка_' + w;
+const stanceName = (w: string): string => 'idle_' + w;
 function stanceClip(w: string): Clip | null { return library.find((c) => c.name === stanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
 function loadSway(): Record<string, Record<string, number>> { try { return JSON.parse(localStorage.getItem('pe_sway') || '{}') as Record<string, Record<string, number>>; } catch { return {}; } }
 let swayCfg: Record<string, Record<string, number>> = loadSway();
@@ -815,8 +815,8 @@ function resolveUpper(wpn: string): UpperPose | null {   // idle-поза по �
   if (!c || !c.keys[0]) return null;
   return { pose: c.keys[0]!.pose, swing: swayOf(b) };
 }
-// Удары — клипы «удар_<w>» из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синкаются ОДНОСТОРОННЕ стойка→удар).
-const isAttackClip = (c: Clip): boolean => c.name.startsWith('удар_');
+// Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
+const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');
 function syncAttackEnds(c: Clip): void {
   const st = stanceClip(c.weapon); if (!st || !st.keys[0] || c.keys.length < 2) return;
   const pose = JSON.parse(JSON.stringify(st.keys[0].pose)) as Pose;
@@ -854,12 +854,21 @@ function saveAtk(): void { try { localStorage.setItem('pe_attacks', JSON.stringi
   }
   if (changed) { try { localStorage.setItem('pe_clips', JSON.stringify(library)); savePoseKey('pe_clips'); localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); localStorage.setItem('pe_attacks', JSON.stringify(atkCfgs)); savePoseKey('pe_attacks'); } catch { /* */ } }
 })();
+(function migratePoseNames(): void {   // старая конвенция имён стойка_/удар_ → idle_/hit_ (идемпотентно): клипы + метки-удары + loco-узлы. Игра тоже нормализует на чтении.
+  let clipsCh = false, atkCh = false, locoCh = false;
+  for (const c of library) { const nn = migratePoseName(c.name); if (nn !== c.name) { c.name = nn; clipsCh = true; } }
+  for (const ch of Object.keys(atkCfgs)) { const byW = atkCfgs[ch]!; for (const w of Object.keys(byW)) { const arr = byW[w]!; for (let i = 0; i < arr.length; i++) { const nn = migratePoseName(arr[i]!); if (nn !== arr[i]) { arr[i] = nn; atkCh = true; } } } }
+  for (const n of locoNodes) { const nn = migratePoseName(n.clip); if (nn !== n.clip) { n.clip = nn; locoCh = true; } }
+  if (clipsCh) saveLib();
+  if (atkCh) saveAtk();
+  if (locoCh) saveLoco();
+})();
 function atkList(): string[] { return atkCfgs[curCharId]?.[weapon] ?? []; }
 function toggleAtk(name: string): void { const byC = (atkCfgs[curCharId] ??= {}); const arr = (byC[weapon] ??= []); const i = arr.indexOf(name); if (i >= 0) arr.splice(i, 1); else arr.push(name); saveAtk(); }
 const clonePose = (p: Pose): Pose => JSON.parse(JSON.stringify(p)) as Pose;
 const cloneClipTo = (c: Clip, char: string): Clip => ({ name: c.name, character: char, weapon: c.weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) });
 
-// ── СИД «Волкодав»: idle-стойка (клип «стойка_<w>») + удар (клип «удар_<w>», начинается ИЗ idle) на КАЖДОЕ из 16 оружий (+ без оружия) ──
+// ── СИД «Волкодав»: idle-стойка (клип «idle_<w>») + удар (клип «hit_<w>», начинается ИЗ idle) на КАЖДОЕ из 16 оружий (+ без оружия) ──
 type V3 = [number, number, number];
 function buildWarriorSeed(): { stances: Clip[]; attacks: Clip[]; sway: Record<string, number> } {
   const P = (rua: V3, rla: V3, lua: V3, lla: V3, ex?: Record<string, V3>): Pose => ({ RightUpperArm: rua, RightLowerArm: rla, LeftUpperArm: lua, LeftLowerArm: lla, ...(ex ?? {}) });
@@ -895,7 +904,7 @@ function buildWarriorSeed(): { stances: Clip[]; attacks: Clip[]; sway: Record<st
     stances.push({ name: stanceName(w), character: 'warrior', weapon: w, loop: false, keys: [{ pose: clonePose(idle.pose), t: 0 }] });
     // удар = 6 кадров: idle → замах½ → замах-макс → удар½ → удар-финиш → idle. Полукадры — интерполяция (blendTwo).
     const wUp = a[0], strike = a[1];
-    attacks.push({ name: 'удар_' + w, character: 'warrior', weapon: w, loop: false, keys: [
+    attacks.push({ name: 'hit_' + w, character: 'warrior', weapon: w, loop: false, keys: [
       { pose: clonePose(idle.pose), t: 0 },
       { pose: blendTwo(idle.pose, wUp, 0.5), t: 0.10 },
       { pose: clonePose(wUp), t: 0.22 },
@@ -943,11 +952,11 @@ function renderUpperPanel(): void {   // панель idle-стойки по о�
     WEAPONS.forEach((w) => { const o = document.createElement('option'); o.value = w; o.textContent = w; sel.append(o); });
     r1.append(sel, pbtn('основа: оружие', () => { if (sel.value === weapon) return; const src = stanceClip(sel.value); if (src) { const nm = stanceName(weapon); const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon); const nc: Clip = { name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: clonePose(src.keys[0]!.pose), t: 0 }] }; if (i >= 0) library[i] = nc; else library.push(nc); (swayCfg[curCharId] ??= {})[weapon] = swayCfg[curCharId]?.[sel.value] ?? 0.2; saveLib(); saveSway(); renderLoco(); } })); box.append(r1);
   }
-  const srcC = allChars().filter((c) => c.id !== curCharId && library.some((cl) => cl.character === c.id && cl.name.startsWith('стойка_')));
+  const srcC = allChars().filter((c) => c.id !== curCharId && library.some((cl) => cl.character === c.id && cl.name.startsWith('idle_')));
   if (srcC.length) {   // взять ВЕСЬ набор (стойки+удары) с другого КЛАССА
     const r2 = el('div', 'display:flex;gap:2px;margin-top:4px'); const sel = el('select', 'flex:1;background:#20242f;color:#cfe;border:1px solid #39415a;border-radius:4px;font-size:11px') as HTMLSelectElement;
     srcC.forEach((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; sel.append(o); });
-    r2.append(sel, pbtn('основа: класс (весь верх)', () => { const src = sel.value; for (const cl of library.filter((c) => c.character === src && (c.name.startsWith('стойка_') || c.name.startsWith('удар_')))) { const i = library.findIndex((c) => c.character === curCharId && c.name === cl.name && c.weapon === cl.weapon); const nc = cloneClipTo(cl, curCharId); if (i >= 0) library[i] = nc; else library.push(nc); } swayCfg[curCharId] = { ...(swayCfg[src] ?? {}) }; atkCfgs[curCharId] = JSON.parse(JSON.stringify(atkCfgs[src] ?? {})); saveLib(); saveSway(); saveAtk(); renderLoco(); })); box.append(r2);
+    r2.append(sel, pbtn('основа: класс (весь верх)', () => { const src = sel.value; for (const cl of library.filter((c) => c.character === src && (c.name.startsWith('idle_') || c.name.startsWith('hit_') || c.name.startsWith('s_hit_')))) { const i = library.findIndex((c) => c.character === curCharId && c.name === cl.name && c.weapon === cl.weapon); const nc = cloneClipTo(cl, curCharId); if (i >= 0) library[i] = nc; else library.push(nc); } swayCfg[curCharId] = { ...(swayCfg[src] ?? {}) }; atkCfgs[curCharId] = JSON.parse(JSON.stringify(atkCfgs[src] ?? {})); saveLib(); saveSway(); saveAtk(); renderLoco(); })); box.append(r2);
   }
   body.append(box);
 }
@@ -1218,6 +1227,6 @@ loop();
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
-  captureUpper, get sway() { return swayCfg; }, resolveUpper: (w: string): unknown => resolveUpper(w), get stances() { return library.filter((c) => c.name.startsWith('стойка_')); },
+  captureUpper, get sway() { return swayCfg; }, resolveUpper: (w: string): unknown => resolveUpper(w), get stances() { return library.filter((c) => c.name.startsWith('idle_')); },
   gaitAttack: (name: string): void => { const c = clipsHere().find((x) => x.name === name) ?? library.find((x) => x.name === name); if (c) triggerAttack(c); }, get attackT() { return attackT; }, markAttack: (name: string): void => toggleAtk(name),
   physStep: (dt: number, n: number): unknown => { if (!pw || !ragdoll) return null; physOn = true; for (let i = 0; i < n; i++) { stepPhysics(dt); } return { Hips: ragdoll.bodyPos('Hips'), Head: ragdoll.bodyPos('Head'), HandL: ragdoll.bodyPos('HandL'), HandR: ragdoll.bodyPos('HandR'), FootL: ragdoll.bodyPos('FootL'), Torso: ragdoll.bodyPos('Torso') }; } };

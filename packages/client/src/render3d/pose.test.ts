@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
+import { migratePoseName } from './poseRuntime.js';
 
 // Ноги гейта считает StepPlanner (детерминирован: своя фаза с 0, без Math.random). Читаем ТОЛЬКО ножные поля —
 // они не зависят от случайной инициализации фазы рук. Феча 1 (плант-цель) обязана быть НЕЙТРАЛЬНА к игре при
@@ -211,5 +212,18 @@ describe('StepPlanner — ходьба: подъём таза сглажен (н
       prev = hy;
     }
     expect(maxUp).toBeLessThan(0.6);   // подъём сглажен; без фикса скачок был бы ~1–2 ед/кадр
+  });
+});
+
+describe('migratePoseName (старая конвенция → idle_/hit_)', () => {
+  it('стойка_<w> → idle_<w>, удар_<w> → hit_<w>', () => {
+    expect(migratePoseName('стойка_sword')).toBe('idle_sword');
+    expect(migratePoseName('стойка_sword+shield')).toBe('idle_sword+shield');
+    expect(migratePoseName('удар_axe')).toBe('hit_axe');
+  });
+  it('новые префиксы и произвольные имена не трогает (идемпотентно)', () => {
+    for (const n of ['idle_sword', 'hit_axe', 's_hit_mace', 'замах_лево', 'idle_shield']) {
+      expect(migratePoseName(n)).toBe(n);
+    }
   });
 });
