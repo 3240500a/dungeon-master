@@ -41,7 +41,7 @@ floor.rotation.x = -Math.PI / 2; scene.add(floor);
 function scrollFloor(): void { checkerTex.offset.set(gaitPx / FLOOR_TILE, -gaitPz / FLOOR_TILE); }   // тредмилл: пол едет под бегущим (V текстуры смотрит в −Z из-за поворота пола → Z со знаком минус)
 
 const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); scene.add(gizmo.getHelper());
-gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (!dragging) { if (plantDrag >= 0) { plantDrag = -1; gizmo.detach(); saveGaitCfg(); } else pushUndo(); } });
+gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (!dragging) { if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else pushUndo(); } });
 
 let human!: Humanoid;
 let mode: 'fk' | 'ik' = 'ik';
@@ -141,14 +141,17 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (gizmo.dragging) return;
   const r = canvas.getBoundingClientRect();
   ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
-  if (editPlant && locoOn && locoGait) {                     // режим правки планта: тянем наземные маркеры, кости не трогаем
-    const hit = ray.intersectObjects(plantMarks, false)[0];
-    if (hit) {
-      plantDrag = plantMarks.indexOf(hit.object as THREE.Mesh);
+  if (editPlant && locoOn && locoGait) {                     // режим правки: тянем АВТОРСКИЕ маркеры (плант/обвод), кости не трогаем
+    const hit = ray.intersectObjects(authMarks.map((a) => a.mesh), false)[0];
+    const am = hit && authMarks.find((a) => a.mesh === hit.object);
+    if (am) {
+      dragMark = am; plantDrag = 0;
       plantEditDir = plantDirSel; plantEditRun = plantSpeedRun;   // заморозить активную ячейку на время драга
-      plantGrab.copy((hit.object as THREE.Mesh).position);
-      const cell = activeCell(); plantOff0 = [...(plantDrag === 0 ? cell.l : cell.r)] as [number, number];
-      gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(hit.object);
+      plantGrab.copy(am.mesh.position);
+      const cell = activeCell();
+      const base = am.kind === 'plant' ? (am.foot === 0 ? cell.l : cell.r) : (am.foot === 0 ? cell.lVia! : cell.rVia!)[am.k]!;
+      plantOff0 = [base[0], base[1]];
+      gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(am.mesh);
     }
     return;
   }
@@ -181,12 +184,13 @@ canvas.addEventListener('pointerdown', (ev) => {
   else { gizmo.detach(); highlight(null); selected = null; refreshPose(); }
 });
 gizmo.addEventListener('objectChange', () => {
-  if (plantDrag >= 0) {                                       // тянем маркер планта: мировая дельта → body-local offset
-    const d = plantMarks[plantDrag]!.position.clone().sub(plantGrab);
+  if (dragMark) {                                            // тянем авторский маркер (плант/обвод): мировая дельта → body-local (fwd,lat)
+    const d = dragMark.mesh.position.clone().sub(plantGrab);
     const s = Math.sin(gaitYaw), c = Math.cos(gaitYaw);
-    const cell = activeCell(); const off = plantDrag === 0 ? cell.l : cell.r;   // в замороженную ячейку сетки
-    off[0] = plantOff0[0] + (d.x * s + d.z * c);              // fwd вдоль facing
-    off[1] = plantOff0[1] + (d.x * c - d.z * s);              // lat вправо
+    const cell = activeCell();
+    const dst = dragMark.kind === 'plant' ? (dragMark.foot === 0 ? cell.l : cell.r) : (dragMark.foot === 0 ? cell.lVia! : cell.rVia!)[dragMark.k]!;
+    dst[0] = plantOff0[0] + (d.x * s + d.z * c);              // fwd вдоль facing
+    dst[1] = plantOff0[1] + (d.x * c - d.z * s);              // lat вправо
     return;
   }
   if (mode === 'fk') {
@@ -604,10 +608,17 @@ function renderLoco(): void {
   // Facing: тумблер «по движению»(поворот) / «фикс»(страйф) + угол при фиксе.
   const fr = el('div', 'display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center'); body.append(fr);
   fr.append(pbtn(gaitFaceMove ? 'лицом: по движению' : 'лицом: фикс (страйф)', () => { gaitFaceMove = !gaitFaceMove; renderLoco(); }, gaitFaceMove));
-  fr.append(pbtn('редакт. планты', () => { editPlant = !editPlant; if (!editPlant && plantDrag >= 0) { plantDrag = -1; gizmo.detach(); } renderLoco(); }, editPlant));
-  if (editPlant) {   // выбор ячейки = КЛИК ПО ТОЧКЕ на квадрате (внешние 8 = бег, внутренние 8 = ходьба); правка — зелёными маркерами
+  fr.append(pbtn('редакт. планты', () => { editPlant = !editPlant; if (!editPlant && plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); } renderLoco(); }, editPlant));
+  if (editPlant) {   // ячейку выбираешь КЛИКОМ по точке на квадрате; правка — тянешь маркеры в сцене (плант + точки обвода via)
     const cb = el('div', 'flex:1 1 100%;margin-top:3px;border:1px solid #39415a;border-radius:6px;padding:4px'); fr.append(cb);
-    const hint = el('div', 'font-size:11px;color:#8fb7ff'); hint.textContent = `правишь ячейку: ${DIR8[plantDirSel]} · ${plantSpeedRun ? 'бег' : 'шаг'} — клик по точке на квадрате, тяни зелёные маркеры`; cb.append(hint);
+    const hint = el('div', 'font-size:11px;color:#8fb7ff'); hint.textContent = `${DIR8[plantDirSel]} · ${plantSpeedRun ? 'бег' : 'шаг'} — плант: СИНИЙ=Л / КРАСНЫЙ=П (тяни). Точки обвода — тех же цветов, мельче. Жёлтый = живая цель (динамика).`; cb.append(hint);
+    const vr = el('div', 'display:flex;gap:2px;margin-top:3px;align-items:center'); cb.append(vr);
+    const vl = el('span', 'font-size:11px;color:#9ae6a0'); vl.textContent = 'обвод (via):'; vr.append(vl);
+    vr.append(pbtn('нога: ' + (viaLeg === 0 ? 'Л' : 'П'), () => { viaLeg = viaLeg === 0 ? 1 : 0; renderLoco(); }, true));
+    vr.append(
+      pbtn('+ точка', () => { const c = selCell(); const arr = viaLeg === 0 ? (c.lVia ??= []) : (c.rVia ??= []); if (arr.length < MAX_VIA) { arr.push([2, viaLeg === 0 ? 12 : -12]); saveGaitCfg(); renderLoco(); } }),
+      pbtn('− точка', () => { const c = selCell(); const arr = viaLeg === 0 ? c.lVia : c.rVia; if (arr && arr.length) { arr.pop(); saveGaitCfg(); renderLoco(); } }),
+    );
     const rr = el('div', 'display:flex;gap:2px;margin-top:3px'); cb.append(rr);
     rr.append(
       pbtn('сброс ячейки', () => { (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel] = zeroLeg(); saveGaitCfg(); }),
@@ -711,18 +722,44 @@ let gaitPx = 0, gaitPz = 0; const GAIT_MAXSPD = 120;
 let gaitMoveMag = 0;   // 0 стоишь … 1 бежишь: по нему ноги/торс блендятся idle-стойка ↔ физ-гейт
 let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing: по движению (поворот) / ручной угол (страйф)
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
-// Наземные маркеры плант-цели стоп (Феча 1): тянешь маркер → сдвигаешь offset планта (body-local, копится в pe_gait).
+// ── Маркеры планта + точки ОБВОДА (via) свинга. Авторские = СТАТИЧЕСКИЕ (не тредмиллят), тянутся гизмо → body-local offset.
+// Левая нога — СИНИЙ, правая — КРАСНЫЙ. via — те же цвета, поменьше. Живой индикатор (жёлтый мелкий) ездит по факту (динамика).
 let editPlant = false;
-const plantMarks = [mkHandle(0x46d07a, 3, true), mkHandle(0x2ec77a, 3, true)];   // L / R
-plantMarks.forEach((m) => { m.visible = false; });
-let plantDrag = -1; const plantGrab = V(); let plantOff0: [number, number] = [0, 0];
+let viaLeg: 0 | 1 = 0;                                          // какую ногу авторим кнопками + / − обвод
+const PLANT_BLUE = 0x4aa0ff, PLANT_RED = 0xff5a4a, MAX_VIA = 3, HIP_DXE = 3.6, PLANT_BASE = 14, MARK_Y = 1.5;
+const plantMarks = [mkHandle(PLANT_BLUE, 3, true), mkHandle(PLANT_RED, 3, true)];   // [0]=L плант, [1]=R плант (авторские)
+const viaMarks: THREE.Mesh[][] = [[], []];
+for (let i = 0; i < 2; i++) for (let k = 0; k < MAX_VIA; k++) viaMarks[i]!.push(mkHandle(i === 0 ? PLANT_BLUE : PLANT_RED, 2, false));
+const liveMarks = [mkHandle(0xffe04a, 1.4, false), mkHandle(0xffe04a, 1.4, false)];   // живые точки (динамика): куда реально идёт стопа
+[plantMarks[0]!, plantMarks[1]!, ...viaMarks.flat(), liveMarks[0]!, liveMarks[1]!].forEach((m) => { m.visible = false; });
+type AuthMark = { mesh: THREE.Mesh; foot: 0 | 1; kind: 'plant' | 'via'; k: number };   // реестр перетаскиваемых авторских точек
+let authMarks: AuthMark[] = [];
+let plantDrag = -1; let dragMark: AuthMark | null = null; const plantGrab = V(); let plantOff0: [number, number] = [0, 0];
+const selCell = (): Leg2 => (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel]!;   // ВЫБРАННАЯ ячейка (панель)
+const setXZ = (m: THREE.Mesh, x: number, z: number): void => { m.position.set(x, MARK_Y, z); };
+/** Стационарный body-референс: forward=(sin yaw,cos yaw), right=(cos yaw,−sin yaw); хип ноги на ±HIP_DXE вбок. */
+function refPos(foot: 0 | 1, fwd: number, lat: number): [number, number] {
+  const s = Math.sin(gaitYaw), c = Math.cos(gaitYaw), side = foot === 0 ? HIP_DXE : -HIP_DXE;
+  return [c * side + s * fwd + c * lat, -s * side + c * fwd - s * lat];
+}
 function updatePlantMarks(): void {
   const show = editPlant && locoOn && locoGait;
+  authMarks = [];
+  const cell = (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel]!;   // авторим выбранную ячейку (при драге авто-слежение выкл → совпадает с замороженной)
   for (let i = 0; i < 2; i++) {
-    plantMarks[i]!.visible = show;
-    if (!show || plantDrag === i) continue;                 // перетаскиваемый маркер не переставляем (заморожен)
-    const [tx, tz] = gaitDriver.plantTarget(i);
-    plantMarks[i]!.position.set(tx - gaitPx, 1.5, tz - gaitPz);   // тредмилл-ремап: мир гейта → на месте
+    const foot = i as 0 | 1;
+    const off = foot === 0 ? cell.l : cell.r;
+    const pm = plantMarks[i]!; pm.visible = show;
+    if (show) { authMarks.push({ mesh: pm, foot, kind: 'plant', k: 0 });
+      if (dragMark?.mesh !== pm) { const p = refPos(foot, PLANT_BASE + off[0], off[1]); setXZ(pm, p[0], p[1]); } }
+    const via = (foot === 0 ? cell.lVia : cell.rVia) ?? [];
+    for (let k = 0; k < MAX_VIA; k++) {
+      const vm = viaMarks[i]![k]!; const on = show && k < via.length; vm.visible = on;
+      if (on) { authMarks.push({ mesh: vm, foot, kind: 'via', k });
+        if (dragMark?.mesh !== vm) { const p = refPos(foot, via[k]![0], via[k]![1]); setXZ(vm, p[0], p[1]); } }
+    }
+    const lm = liveMarks[i]!; lm.visible = show;                 // живой: реальная цель, тредмилл-ремап
+    if (show) { const [tx, tz] = gaitDriver.plantTarget(foot); setXZ(lm, tx - gaitPx, tz - gaitPz); }
   }
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
