@@ -319,10 +319,14 @@ addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLow
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
 function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; PHYS.match = c[id]?.match ?? 0; } catch { PHYS.match = 0; } }
 function savePhysMatch(): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; (c[curCharId] ??= {}).match = PHYS.match; localStorage.setItem('pe_phys', JSON.stringify(c)); savePoseKey('pe_phys'); } catch { /* */ } }
-// ── Вес подмешивания ЩИТА per-персонаж (pe_shield): поза щита (стойка_shield) наслаивается на позу оружия с этим весом. ──
-let shieldMix = 0.85;
-function loadShieldMix(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_shield') || '{}') as Record<string, { mix?: number }>; shieldMix = c[id]?.mix ?? 0.85; } catch { shieldMix = 0.85; } }
-function saveShieldMix(): void { try { const c = JSON.parse(localStorage.getItem('pe_shield') || '{}') as Record<string, { mix?: number }>; (c[curCharId] ??= {}).mix = shieldMix; localStorage.setItem('pe_shield', JSON.stringify(c)); savePoseKey('pe_shield'); } catch { /* */ } }
+// ── Вес подмешивания ЩИТА per-(персонаж, оружие) (pe_shield): поза щита наслаивается на позу оружия с этим весом. ──
+// Хранилище: { [char]: { mix?: базовый; perWeapon?: {[weaponKey]: number} } }. Старый {char:{mix}} читается как база-фолбэк.
+type ShieldCfg = { mix?: number; perWeapon?: Record<string, number> };
+let shieldCfgAll: Record<string, ShieldCfg> = {};
+function loadShieldMix(_id: string): void { try { shieldCfgAll = JSON.parse(localStorage.getItem('pe_shield') || '{}') as Record<string, ShieldCfg>; } catch { shieldCfgAll = {}; } }
+const shieldMixFor = (wk: string): number => { const c = shieldCfgAll[curCharId]; return c?.perWeapon?.[wk] ?? c?.mix ?? 0.85; };   // per-оружие → база → дефолт
+function setShieldMix(wk: string, v: number): void { const c = (shieldCfgAll[curCharId] ??= {}); if (wk.endsWith('+shield')) (c.perWeapon ??= {})[wk] = v; else c.mix = v; }   // '+shield'-ключ → per-оружие, иначе база
+function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.stringify(shieldCfgAll)); savePoseKey('pe_shield'); } catch { /* */ } }
 
 // ── Персонаж: пересборка ──
 function applyChar(id: string): void {
@@ -552,15 +556,18 @@ function renderChar(): void {
   for (const w of wopts) { const o = document.createElement('option'); o.value = w; o.textContent = w; if (w === c.weapon) o.selected = true; wsel.append(o); }
   wsel.onchange = () => { c.weapon = wsel.value; saveCharEdit(c); setWeapon(c.weapon); tab = 'char'; refreshAll(); };   // дефолт-оружие класса/фракции (игра берёт его)
   body.append(wsel);
-  // Подмешивание ЩИТА: поза «стойка_shield» (левая рука+корпус) наслаивается на позу оружия с этим весом.
-  const sh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); sh.textContent = 'ПОДМЕШИВАНИЕ ЩИТА'; body.append(sh);
-  const shRow = el('label', 'display:flex;align-items:center;gap:6px'); shRow.innerHTML = '<span style="flex:1">вес (стойка_shield → рука+корпус)</span>';
-  const shs = el('input', 'width:110px') as HTMLInputElement; shs.type = 'range'; shs.min = '0'; shs.max = '1'; shs.step = '0.05'; shs.value = String(shieldMix);
-  const shv = el('span', 'width:36px;text-align:right;color:#9ae6a0'); shv.textContent = shieldMix.toFixed(2);
-  shs.oninput = () => { shieldMix = parseFloat(shs.value); shv.textContent = shieldMix.toFixed(2); };   // превью бега с '+shield'-оружием читает живьём
-  shs.onchange = () => saveShieldMix();
+  // Подмешивание ЩИТА per-оружие: при выбранной офф-руке «щит» вес хранится под ключом main+shield; иначе редактируется база.
+  const isShieldKey = weapon.endsWith('+shield');
+  const sh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); sh.textContent = 'ПОДМЕШИВАНИЕ ЩИТА' + (isShieldKey ? ' — ' + weapon : ' (база)'); body.append(sh);
+  const shRow = el('label', 'display:flex;align-items:center;gap:6px'); shRow.innerHTML = '<span style="flex:1">вес (поза щита → рука+корпус)</span>';
+  const shs = el('input', 'width:110px') as HTMLInputElement; shs.type = 'range'; shs.min = '0'; shs.max = '1'; shs.step = '0.05'; shs.value = String(shieldMixFor(weapon));
+  const shv = el('span', 'width:36px;text-align:right;color:#9ae6a0'); shv.textContent = shieldMixFor(weapon).toFixed(2);
+  shs.oninput = () => { setShieldMix(weapon, parseFloat(shs.value)); shv.textContent = parseFloat(shs.value).toFixed(2); };   // превью бега с '+shield'-оружием читает живьём
+  shs.onchange = () => saveShield();
   shRow.append(shs, shv); body.append(shRow);
-  const shHint = el('div', 'color:#8f897c;font-size:10px;margin-top:2px'); shHint.textContent = 'позу щита авторь: оружие «shield» → выставь левую руку → «захватить стойку». В превью бега с «*+shield» виден микс.'; body.append(shHint);
+  const shHint = el('div', 'color:#8f897c;font-size:10px;margin-top:2px'); shHint.textContent = isShieldKey
+    ? 'позу щита дотюнь для ЭТОГО оружия: авторь клип «стойка_' + weapon + '» (иначе берётся базовая «стойка_shield»).'
+    : 'база: авторь «стойка_shield» (оружие «shield» → левая рука → «захватить стойку»). Для тюна под оружие выбери офф-руку «щит».'; body.append(shHint);
   const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'СВОИ ПЕРСОНАЖИ'; body.append(ah);
   body.append(pbtn('+ создать из текущего', () => { const nm = prompt('имя персонажа', 'char' + (customChars.length + 1)); if (!nm) return; const id = 'c' + Date.now(); customChars.push({ id, name: nm, gender: c.gender, build: { ...c.build }, weapon }); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(id); }));
   if (!c.builtin) body.append(pbtn('удалить персонажа', () => { customChars = customChars.filter((x) => x.id !== c.id); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(CLASS_CHARS[0]!.id); }));
@@ -784,11 +791,11 @@ function updatePlantMarks(): void {
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
 const GX = { armDown: 1.35, elbowBend: 0.25 };   // legWidth убран (дубль «ширина стойки»); боб таза — в GAIT.bobWalk/bobRun
-// Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита (стойка_shield) + вес shieldMix (ползунок),
-// подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
+// Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита per-оружие (стойка_<wk> → фолбэк стойка_shield)
+// + вес shieldMixFor(wk) (ползунок), подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
 const editorContent: PoseContent = {
   resolveUpper: (w) => resolveUpper(w),
-  shieldOverlay: () => { const c = stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMix } : null; },
+  shieldOverlay: (wk) => { const c = stanceClip(wk) ?? stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMixFor(wk) } : null; },
 };
 function gaitToHumanoid(t: PoseTargets): void {   // тонкая обёртка над ОБЩИМ пайплайном (Ф5) — редактор и игра одним кодом
   rtGaitToHumanoid(human, weaponGroups, GX, gaitMoveMag, t, editorContent, weapon, { clip: attackClip, t: attackT });

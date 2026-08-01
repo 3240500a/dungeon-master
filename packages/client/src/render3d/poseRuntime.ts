@@ -14,7 +14,7 @@ export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth у
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
 export interface PoseContent {
   resolveUpper(weapon: string): UpperPose | null;
-  shieldOverlay?(): { pose: Pose; mix: number } | null;
+  shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
 }
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
 export interface AttackState { clip: Clip | null; t: number }
@@ -136,7 +136,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
-    const ov = content.shieldOverlay?.();
+    const ov = content.shieldOverlay?.(weapon);
     if (ov && ov.mix > 0.001) {
       const aenv = (atk.clip && atk.t >= 0) ? attackEnv(atk.t, clipDur(atk.clip) || 0.001) : 0;
       applyShieldOverlay(human, weaponGroups, ov.pose, ov.mix, aenv);
@@ -204,7 +204,7 @@ const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.g
 export function localStorageContent(charId: string, fallbackId?: string): GamePoseContent {
   const clips = readJSON<Clip[]>('pe_clips', []);
   const sway = readJSON<Record<string, Record<string, number>>>('pe_sway', {});
-  const shieldCfg = readJSON<Record<string, { mix?: number }>>('pe_shield', {});   // вес подмешивания щита per персонаж
+  const shieldCfg = readJSON<Record<string, { mix?: number; perWeapon?: Record<string, number> }>>('pe_shield', {});   // щит: базовый mix + per-оружие
   const find = (kind: string, id: string, w: string): Clip | null => clips.find((c) => c.name === kind + '_' + w && c.character === id && c.weapon === w) ?? null;
   const stance = (w: string): Clip | null => find('стойка', charId, w) ?? (fallbackId ? find('стойка', fallbackId, w) : null);
   const atk = (w: string): Clip | null => find('удар', charId, w) ?? (fallbackId ? find('удар', fallbackId, w) : null);
@@ -213,8 +213,8 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     // Позы/удары — по БАЗОВОМУ оружию (axe+shield → axe): щит не подменяет анимацию оружия.
     resolveUpper(weapon: string): UpperPose | null { const b = baseWeapon(weapon); const c = stance(b); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(b) } : null; },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
-    // Отдельная поза щита (стойка_shield) + вес подмешивания (редактор). Нет клипа — оверлея нет.
-    shieldOverlay(): { pose: Pose; mix: number } | null { const c = stance('shield'); if (!c || !c.keys.length) return null; const mix = shieldCfg[charId]?.mix ?? (fallbackId ? shieldCfg[fallbackId]?.mix : undefined) ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
+    // Поза щита per-оружие: стойка_<weaponKey> (фолбэк стойка_shield) + вес (perWeapon[wk] ?? базовый mix). Нет клипа — нет оверлея.
+    shieldOverlay(weaponKey: string): { pose: Pose; mix: number } | null { const c = stance(weaponKey) ?? stance('shield'); if (!c || !c.keys.length) return null; const cfg = shieldCfg[charId] ?? (fallbackId ? shieldCfg[fallbackId] : undefined); const mix = cfg?.perWeapon?.[weaponKey] ?? cfg?.mix ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
   };
 }
 type GaitCfg = { gait?: Record<string, number>; pose?: Record<string, number>; gx?: Record<string, number>; plant?: Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] } };
