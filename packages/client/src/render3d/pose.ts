@@ -339,9 +339,11 @@ class StepPlanner {
     const wantY = anyStance
       ? clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), GAIT.pelvisMin, this.standY)
       : this.standY;
-    // Сглаживание нужно только бегу (вход/выход из полёта). На шаге оно даёт запаздывание таза, геометрия
-    // опорной ноги плывёт и её волочит — поэтому на малой скорости берём высоту как есть.
-    const lag = speed > GAIT.speedWalk ? Math.min(1, dt * 14) : 1;
+    // Сглаживание: на бегу — всегда (вход/выход из полёта). На ШАГЕ асимметрично: ВНИЗ (ноги разъезжаются,
+    // wantY плавно падает по геометрии) берём как есть — иначе таз запаздывает и волочит опорную ногу; а ВВЕРХ
+    // (смена опорной — wantY скачком растёт) сглаживаем, иначе резкий дёрг таза вверх при ходьбе.
+    const rising = wantY > this.hipY;
+    const lag = speed > GAIT.speedWalk ? Math.min(1, dt * 14) : rising ? Math.min(1, dt * 10) : 1;
     this.hipY += (wantY - this.hipY) * lag;
     const hipY = this.hipY;
     const out: LegAngles[] = [];

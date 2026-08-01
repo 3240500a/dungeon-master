@@ -172,3 +172,19 @@ describe('StepPlanner — GAIT.cadence меняет частоту шага (а�
     expect(runGait({ vx: 0, vz: 100, frames: 40 })).toEqual(runGait({ vx: 0, vz: 100, frames: 40 }));
   });
 });
+
+// Ходьба: таз опускается по геометрии (плавно), а ВВЕРХ при смене опорной ноги — сглажено (нет резкого дёрга).
+describe('StepPlanner — ходьба: подъём таза сглажен (нет резкого дёрга вверх)', () => {
+  it('на шаге max прирост высоты таза за кадр мал (вверх плавно); вниз может быть быстрее', () => {
+    const d = new PoseDriver(); d.setStance(9, 0, -9, 0, 26);   // база таза 26
+    const spd = 35;   // < speedWalk(40) → ветка ХОДЬБЫ (там раньше lag=1 давал мгновенный скачок вверх)
+    let pz = 0, prev = -1, maxUp = 0;
+    for (let i = 0; i < 240; i++) {
+      pz += spd / 60; d.setWorld(0, pz, 0, 0, spd);
+      const hy = 30 + d.update(1 / 60).bobY;   // высота таза (RIG_PELVIS_Y=30 + bobY)
+      if (prev >= 0 && hy > prev) maxUp = Math.max(maxUp, hy - prev);
+      prev = hy;
+    }
+    expect(maxUp).toBeLessThan(0.6);   // подъём сглажен; без фикса скачок был бы ~1–2 ед/кадр
+  });
+});
