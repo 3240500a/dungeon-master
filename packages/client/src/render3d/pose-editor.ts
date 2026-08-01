@@ -11,7 +11,7 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, WEAPON_MASS, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -909,13 +909,16 @@ type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
 for (const k of GAIT_KEYS) GAIT_DEF[k] = (GAIT as NumRec)[k]!;
 for (const k of POSE_KEYS) POSE_DEF[k] = (POSE as NumRec)[k]!;
-// Авторский сдвиг плант-цели (body-local fwd,lat) на ногу — теперь СЕТКА: 8 направлений × 2 скорости (шаг/бег).
-type Leg2 = { l: [number, number]; r: [number, number] };
+// Авторский сдвиг плант-цели (body-local fwd,lat) на ногу — СЕТКА 8 направлений × 2 скорости (шаг/бег).
+// lVia/rVia — точки ОБВОДА свинга (body-local fwd,lat): маховая летит через них, огибая опорную. Пусто = прямой свинг.
+type XY = [number, number];
+type Leg2 = { l: XY; r: XY; lVia?: XY[]; rVia?: XY[] };
 type PlantGrid = { walk: Leg2[]; run: Leg2[] };   // walk/run — по 8 ячеек (направление 0=вперёд, шаг 45°)
-type PlantStored = Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] };   // старый одиночный {l,r} ИЛИ новый {walk,run}
+type PlantStored = Partial<PlantGrid> & { l?: XY; r?: XY };   // старый одиночный {l,r} ИЛИ новый {walk,run}
 const DIR8 = ['вперёд', 'вп-вправо', 'вправо', 'назад-вправо', 'назад', 'назад-влево', 'влево', 'вп-влево'];
 const DIR_STEP = Math.PI / 4;
-const zeroLeg = (): Leg2 => ({ l: [0, 0], r: [0, 0] });
+const cloneVia = (v: XY[] | undefined): XY[] => (v ?? []).map((p) => [p[0], p[1]] as XY);
+const zeroLeg = (): Leg2 => ({ l: [0, 0], r: [0, 0], lVia: [], rVia: [] });
 const emptyGrid = (): PlantGrid => ({ walk: Array.from({ length: 8 }, zeroLeg), run: Array.from({ length: 8 }, zeroLeg) });
 const gaitPlant: PlantGrid = emptyGrid();                       // живая сетка (интерполируется в stepGait)
 let plantDirSel = 0, plantSpeedRun = true;                     // активная ячейка для правки (направление 0-7, бег/шаг)
@@ -924,8 +927,8 @@ const activeCell = (): Leg2 => (plantEditRun ? gaitPlant.run : gaitPlant.walk)[p
 let gaitCfgs: Record<string, { gait: NumRec; pose: NumRec; gx: NumRec; plant?: PlantStored }> = (() => { try { return JSON.parse(localStorage.getItem('pe_gait') || '{}'); } catch { return {}; } })();
 function loadPlant(p: PlantStored | undefined): void {          // читаем новый {walk,run} ИЛИ старый {l,r} (→ размазать во все ячейки)
   const g = emptyGrid();
-  if (p?.walk && p?.run) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) { const e = p[sp]![i]; if (e) g[sp][i] = { l: [...(e.l ?? [0, 0])] as [number, number], r: [...(e.r ?? [0, 0])] as [number, number] }; } }
-  else if (p?.l && p?.r) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) g[sp][i] = { l: [...p.l] as [number, number], r: [...p.r] as [number, number] }; }
+  if (p?.walk && p?.run) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) { const e = p[sp]![i]; if (e) g[sp][i] = { l: [...(e.l ?? [0, 0])] as XY, r: [...(e.r ?? [0, 0])] as XY, lVia: cloneVia(e.lVia), rVia: cloneVia(e.rVia) }; } }
+  else if (p?.l && p?.r) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) g[sp][i] = { l: [...p.l] as XY, r: [...p.r] as XY, lVia: [], rVia: [] }; }
   gaitPlant.walk = g.walk; gaitPlant.run = g.run;
 }
 function applyGaitCfg(id: string): void {   // выставить GAIT/POSE/GX/plant под персонажа (или дефолты)
@@ -940,7 +943,7 @@ function saveGaitCfg(): void {
   for (const k of GAIT_KEYS) gait[k] = (GAIT as NumRec)[k]!;
   for (const k of POSE_KEYS) pose[k] = (POSE as NumRec)[k]!;
   for (const k of GX_KEYS) gx[k] = (GX as NumRec)[k]!;
-  const cp = (arr: Leg2[]): Leg2[] => arr.map((e) => ({ l: [...e.l] as [number, number], r: [...e.r] as [number, number] }));
+  const cp = (arr: Leg2[]): Leg2[] => arr.map((e) => ({ l: [...e.l] as XY, r: [...e.r] as XY, lVia: cloneVia(e.lVia), rVia: cloneVia(e.rVia) }));
   gaitCfgs[curCharId] = { gait, pose, gx, plant: { walk: cp(gaitPlant.walk), run: cp(gaitPlant.run) } };
   try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ }
 }
@@ -970,6 +973,7 @@ function stepGait(dt: number): void {
     return w + (r - w) * spB;
   };
   gaitDriver.setPlantOffset(bl('l', 0), bl('l', 1), bl('r', 0), bl('r', 1));
+  gaitDriver.setPlantVia(blendVia(gaitPlant, 'lVia', i0, i1, ft, spB), blendVia(gaitPlant, 'rVia', i0, i1, ft, spB));
   if (plantDrag < 0 && spd > 1) { plantDirSel = (Math.round(a) % 8 + 8) % 8; plantSpeedRun = spB >= 0.5; }   // активная ячейка следит за падом
   human.root.updateMatrixWorld(true);                        // фидбэк фактических стоп в мир гейта (иначе шпагат)
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(V()), fr = human.bones.get('RightFoot')!.getWorldPosition(V());

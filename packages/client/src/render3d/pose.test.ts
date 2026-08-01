@@ -173,6 +173,31 @@ describe('StepPlanner — GAIT.cadence меняет частоту шага (а�
   });
 });
 
+// Обвод свинга (via): маховая нога летит через авторские точки, огибая опорную (анти-кросс на уровне бедра).
+describe('StepPlanner — обвод свинга через via', () => {
+  // Среднее hipLatR ТОЛЬКО в фазе переноса правой ноги (via влияет только на свинг, не на опору).
+  const swingMeanLatR = (via: [[number, number][], [number, number][]] | null): number => {
+    const d = new PoseDriver(); d.setStance(9, 0, -9, 0);
+    let px = 0, pz = 0, sum = 0, n = 0;
+    for (let i = 0; i < 300; i++) {
+      px += 80 / 60; pz += 80 / 60;                 // страйф: yaw=0, движемся по диагонали (vx=vz=80) → большой боковой mLat
+      d.setWorld(px, pz, 0, 80, 80);
+      if (via) d.setPlantVia(via[0], via[1]);
+      const t = d.update(1 / 60);
+      if (d.swingLegs[1]) { sum += t.hipLatR; n++; }
+    }
+    return n ? sum / n : 0;
+  };
+  it('via=[] нейтрально — тот же вывод, что без setPlantVia (прямой свинг)', () => {
+    expect(swingMeanLatR([[], []])).toBeCloseTo(swingMeanLatR(null), 6);
+  });
+  it('наружный via уводит маховое правое бедро НАРУЖУ (−lat) — анти-кросс на уровне бедра', () => {
+    const off = swingMeanLatR(null);
+    const on = swingMeanLatR([[[0, 6]], [[0, -16]]]);   // правую ногу (пересекает при +X-страйфе) уводим наружу (−lat)
+    expect(on).toBeLessThan(off - 0.05);   // в переносе правое бедро заметно наружу (более отрицательный lat)
+  });
+});
+
 // Ходьба: таз опускается по геометрии (плавно), а ВВЕРХ при смене опорной ноги — сглажено (нет резкого дёрга).
 describe('StepPlanner — ходьба: подъём таза сглажен (нет резкого дёрга вверх)', () => {
   it('на шаге max прирост высоты таза за кадр мал (вверх плавно); вниз может быть быстрее', () => {

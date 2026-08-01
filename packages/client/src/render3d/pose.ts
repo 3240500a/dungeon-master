@@ -130,6 +130,18 @@ function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: numb
   return { hip, knee: Math.PI - beta, lat: Math.atan2(lx, -dy) };
 }
 
+/** Catmull-Rom по опорным точкам [x,z] (равномерная, концы продублированы), параметр u∈[0,1]. 2 точки → прямой лерп. */
+function crAt(pts: [number, number][], u: number): [number, number] {
+  const n = pts.length;
+  if (n <= 1) return pts[0] ?? [0, 0];
+  if (n === 2) { const a = pts[0]!, b = pts[1]!; return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; }
+  const seg = (n - 1) * clamp(u, 0, 1); let i = Math.floor(seg); if (i > n - 2) i = n - 2; const t = seg - i;
+  const p0 = pts[Math.max(0, i - 1)]!, p1 = pts[i]!, p2 = pts[i + 1]!, p3 = pts[Math.min(n - 1, i + 2)]!;
+  const t2 = t * t, t3 = t2 * t;
+  const cr = (a: number, b: number, c: number, d: number): number => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+  return [cr(p0[0], p1[0], p2[0], p3[0]), cr(p0[1], p1[1], p2[1], p3[1])];
+}
+
 const SIDESTEP_DUR = 0.18;   // сек: длительность приставного шага (перенос стопы дугой к слоту стойки при повороте на месте)
 const SETTLE_EPS = 2;        // u: стопы ближе этого к своим плантам → замираем (idle-поза); иначе footlock (стопа прибита к миру)
 
@@ -164,6 +176,10 @@ class StepPlanner {
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void {
     this.plantOff[0][0] = lF; this.plantOff[0][1] = lL; this.plantOff[1][0] = rF; this.plantOff[1][1] = rL;
   }
+  /** Точки ОБВОДА свинга на ногу (body-local fwd,lat от бедра): маховая летит liftoff → via… → плант, огибая опорную.
+   *  Пусто → прямой свинг (нейтрально). Индексы: 0 = левая, 1 = правая. */
+  private plantVia: [[number, number][], [number, number][]] = [[], []];
+  setPlantVia(lVia: [number, number][], rVia: [number, number][]): void { this.plantVia[0] = lVia; this.plantVia[1] = rVia; }
   /** ПЛАНТ каждой ноги = ТОЧКА стопы в idle-стойке отн. таза (body-local): lat (X, знак = своя сторона) + fwd (Z).
    *  Дефолт = ±полуширина таза (нога 0/левая на +X — под её кость). Стоя стопы В ЭТИХ точках, поворот переступает в них. */
   private stanceLatL = HIP_DX; private stanceFwdL = 0; private stanceLatR = -HIP_DX; private stanceFwdR = 0;
@@ -357,7 +373,14 @@ class StepPlanner {
         // на `lead` впереди ТЕКУЩЕГО бедра (пересчёт каждый кадр).
         if (!GAIT.fixTarget && moving) plant(l, i, hx, hz, lead);   // стоя приставной шаг держит зафиксированную цель (слот стойки)
         const t = l.sw, e = t * t * (3 - 2 * t);
-        wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e;
+        const via = this.plantVia[i]!;
+        if (via.length === 0) { wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e; }   // прямой свинг (нейтрально)
+        else {   // ОБВОД: маховая летит liftoff → via (body-local fwd,lat от бедра) → плант, огибая опорную ногу
+          const ctrl: [number, number][] = [[l.fx, l.fz]];
+          for (const v of via) ctrl.push([hx + fx * v[0] + rx * v[1], hz + fz * v[0] + rz * v[1]]);
+          ctrl.push([l.tx, l.tz]);
+          const p = crAt(ctrl, e); wx = p[0]; wz = p[1];
+        }
         wy = FOOT_Y + Math.sin(Math.PI * t) * liftFor(speed);
       } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
       out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz));
@@ -393,6 +416,8 @@ export class PoseDriver {
   setFeet(lx: number, lz: number, rx: number, rz: number): void { this.planner?.setFeet(lx, lz, rx, rz); }
   /** Авторский сдвиг плант-цели (body-local fwd/lat) на ногу — для редактора. Дефолт 0 → без эффекта. */
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void { this.planner?.setPlantOffset(lF, lL, rF, rL); }
+  /** Точки обвода свинга на ногу (body-local fwd,lat). Пусто → прямой свинг. */
+  setPlantVia(lVia: [number, number][], rVia: [number, number][]): void { this.planner?.setPlantVia(lVia, rVia); }
   /** Планты стоп из idle-стойки: по каждой ноге body-local (lat, fwd) СО ЗНАКОМ + базовая высота таза standY (всё замер
    *  measureStancePlants). Стоя держит стопы в этих точках, при повороте переступает в них; таз не поднимается выше standY. */
   setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number): void {

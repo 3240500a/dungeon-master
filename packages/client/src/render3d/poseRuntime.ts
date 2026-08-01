@@ -163,18 +163,38 @@ export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[],
 }
 
 // ── Плант-сетка стоп: 8 направлений × 2 скорости (шаг/бег) авторского сдвига цели ноги (body-local fwd,lat) ──
-export type Leg2 = { l: [number, number]; r: [number, number] };
+// lVia/rVia — упорядоченные body-local (fwd,lat) точки ОБВОДА свинга (нога облетает опорную, не сквозь). Пусто = прямой свинг.
+type XY = [number, number];
+export type Leg2 = { l: XY; r: XY; lVia?: XY[]; rVia?: XY[] };
 export type PlantGrid = { walk: Leg2[]; run: Leg2[] };         // walk/run — по 8 ячеек (0=вперёд, шаг 45°)
 const DIR_STEP = Math.PI / 4;
 const STEP_HOLD = 0.35;   // сек: держим ноги на гейте после подшага (settled мерцает → иначе мигание idle↔гейт)
-const zeroLeg = (): Leg2 => ({ l: [0, 0], r: [0, 0] });
+const zeroLeg = (): Leg2 => ({ l: [0, 0], r: [0, 0], lVia: [], rVia: [] });
 export const emptyGrid = (): PlantGrid => ({ walk: Array.from({ length: 8 }, zeroLeg), run: Array.from({ length: 8 }, zeroLeg) });
-/** Прочитать сохранённую сетку (новый {walk,run} ИЛИ старый {l,r} → размазать во все ячейки). */
+const cloneVia = (v: XY[] | undefined): XY[] => (v ?? []).map((p) => [p[0], p[1]] as XY);
+/** Прочитать сохранённую сетку (новый {walk,run} ИЛИ старый {l,r} → размазать во все ячейки). via опциональны (нет → []). */
 export function loadPlantGrid(p: (Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] }) | undefined): PlantGrid {
   const g = emptyGrid();
-  if (p?.walk && p?.run) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) { const e = p[sp]![i]; if (e) g[sp][i] = { l: [...(e.l ?? [0, 0])] as [number, number], r: [...(e.r ?? [0, 0])] as [number, number] }; } }
-  else if (p?.l && p?.r) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) g[sp][i] = { l: [...p.l] as [number, number], r: [...p.r] as [number, number] }; }
+  if (p?.walk && p?.run) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) { const e = p[sp]![i]; if (e) g[sp][i] = { l: [...(e.l ?? [0, 0])] as XY, r: [...(e.r ?? [0, 0])] as XY, lVia: cloneVia(e.lVia), rVia: cloneVia(e.rVia) }; } }
+  else if (p?.l && p?.r) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) g[sp][i] = { l: [...p.l] as XY, r: [...p.r] as XY, lVia: [], rVia: [] }; }
   return g;
+}
+/** Билинейная интерполяция списка via-точек ноги по 4 ячейкам (walk/run × i0/i1 по ft, затем шаг↔бег по spB).
+ *  Разная длина списков → паддинг [0,0] до max длины. Пусто везде → []. */
+export function blendVia(grid: PlantGrid, key: 'lVia' | 'rVia', i0: number, i1: number, ft: number, spB: number): XY[] {
+  const cells = [grid.walk[i0], grid.walk[i1], grid.run[i0], grid.run[i1]];
+  const n = Math.max(0, ...cells.map((c) => c?.[key]?.length ?? 0));
+  const get = (c: Leg2 | undefined, k: number, comp: 0 | 1): number => c?.[key]?.[k]?.[comp] ?? 0;
+  const out: XY[] = [];
+  for (let k = 0; k < n; k++) {
+    const comp = (c: 0 | 1): number => {
+      const w = get(grid.walk[i0], k, c) + (get(grid.walk[i1], k, c) - get(grid.walk[i0], k, c)) * ft;
+      const r = get(grid.run[i0], k, c) + (get(grid.run[i1], k, c) - get(grid.run[i0], k, c)) * ft;
+      return w + (r - w) * spB;
+    };
+    out.push([comp(0), comp(1)]);
+  }
+  return out;
 }
 
 // ── Провайдер контента из localStorage (same-origin с редактором): idle-стойки + удары + sway по классу ──
@@ -294,6 +314,7 @@ export class PosePlayer {
       return w + (r - w) * spB;
     };
     this.driver.setPlantOffset(bl('l', 0), bl('l', 1), bl('r', 0), bl('r', 1));
+    this.driver.setPlantVia(blendVia(this.plant, 'lVia', i0, i1, ft, spB), blendVia(this.plant, 'rVia', i0, i1, ft, spB));
     // Вес гейта в ногах: идём/подшагиваем (разворот на месте) → ноги ведёт планировщик, иначе — поза idle-стойки.
     // Без этого при стоянии ноги целиком из idle: подшаг НЕ виден, а фидбэк setFeet отдаёт планировщику чужие стопы.
     // ⚠ `stepping` МЕРЦАЕТ (settled щёлкает по гистерезису) → держим ещё STEP_HOLD после конца подшага, иначе ноги
