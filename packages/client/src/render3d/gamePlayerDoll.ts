@@ -106,9 +106,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     setPose(x, z, yaw) { if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(yaw)) { tx = x; tz = z; tyaw = yaw; } },
     setMove(_s) { /* магнитуда не нужна: скорость из setWorldVel или дельты позиции */ },
     setWorldVel(vx, vz) { if (Number.isFinite(vx) && Number.isFinite(vz)) { wvx = vx; wvz = vz; hasWvel = true; } },
-    attack(clips) {   // скил с poseClips → чередуем клипы по кругу (замах справа, затем слева, …); иначе — удар по оружию
-      if (clips && clips.length) { const nm = clips[atkClipIdx % clips.length]!; atkClipIdx++; player.triggerAttack(content.clipByName(nm) ?? content.attackClip(weapon)); }
-      else player.triggerAttack(content.attackClip(weapon));
+    attack(clips) {   // скил с poseClips → его позы (адаптированные под оружие); иначе базовая атака = все hit_-клипы оружия. Цикл по кругу.
+      const pool = (clips && clips.length)
+        ? clips.map((n) => content.resolveAbilityClip(n, weapon)).filter((c): c is NonNullable<typeof c> => !!c)
+        : content.attackClips(weapon);
+      if (pool.length) { player.triggerAttack(pool[atkClipIdx % pool.length]!); atkClipIdx++; }
+      else player.triggerAttack(content.attackClip(weapon));   // ничего не авторено → прежний фолбэк
     },
     setDead(d) { if (d === dead) return; dead = d; ragdoll.setDead(d); },
     hitReact(dx, dz, power = 1) { ragdoll.hit('Torso', dx, 0.35, dz, power); },   // дёрг → из физики (солид = физрезультат)

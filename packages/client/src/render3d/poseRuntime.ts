@@ -211,7 +211,16 @@ export function blendVia(grid: PlantGrid, key: 'lVia' | 'rVia', i0: number, i1: 
 }
 
 // ── Провайдер контента из localStorage (same-origin с редактором): idle-стойки + удары + sway по классу ──
-export interface GamePoseContent extends PoseContent { attackClip(weapon: string): Clip | null; clipByName(name: string): Clip | null }
+export interface GamePoseContent extends PoseContent {
+  attackClip(weapon: string): Clip | null;
+  clipByName(name: string): Clip | null;
+  /** Поза скила под ЭКИПИРОВАННОЕ оружие: авторскую позу ретаргетит на текущее оружие (семейство), фолбэк — авторская. */
+  resolveAbilityClip(name: string, weapon: string): Clip | null;
+  /** Все hit_*-клипы данного оружия (для чередования базовой атаки), с фолбэком по оружию/персонажу. */
+  attackClips(weapon: string): Clip[];
+}
+/** Главная рука ключа оружия (`sword+shield`→`sword`). */
+const mainWeapon = (w: string): string => w.split('+')[0] ?? w;
 const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as T : fb; } catch { return fb; } };
 /** Контент (стойка/удар/sway) по charId; если у него нет клипа — берём у fallbackId (монстры → Волкодав). */
 export function localStorageContent(charId: string, fallbackId?: string): GamePoseContent {
@@ -223,12 +232,25 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   const stance = (w: string): Clip | null => find('idle', charId, w) ?? (fallbackId ? find('idle', fallbackId, w) : null);
   const atk = (w: string): Clip | null => find('hit', charId, w) ?? (fallbackId ? find('hit', fallbackId, w) : null);
   const swayOf = (w: string): number => sway[charId]?.[w] ?? (fallbackId ? sway[fallbackId]?.[w] : undefined) ?? 0.2;
+  // Клип по имени (нормализуем старое удар_→hit_) — свой персонаж, иначе фолбэк.
+  const byName = (name: string): Clip | null => { const nm = migratePoseName(name); return clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) ?? null : null); };
   return {
     // Позы/удары — по БАЗОВОМУ оружию (axe+shield → axe): щит не подменяет анимацию оружия.
     resolveUpper(weapon: string): UpperPose | null { const b = baseWeapon(weapon); const c = stance(b); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(b) } : null; },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
-    // Клип по имени (для poseClips скила: чередуемые удары) — свой персонаж, иначе фолбэк. Имя нормализуем (старое удар_→hit_).
-    clipByName(name: string): Clip | null { const nm = migratePoseName(name); return clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) ?? null : null); },
+    clipByName(name: string): Clip | null { return byName(name); },
+    // Поза скила под экип. оружие: если авторская на другом оружии — ретаргетим семейство (по clip.weapon) на текущее/базовое/главное; иначе авторская как есть.
+    resolveAbilityClip(name: string, weapon: string): Clip | null {
+      const orig = byName(name);
+      if (!orig || orig.weapon === weapon) return orig;
+      for (const cand of [weapon, baseWeapon(weapon), mainWeapon(weapon)]) { const c = byName(retargetClipName(name, orig.weapon, cand)); if (c) return c; }
+      return orig;
+    },
+    // Базовая атака: ВСЕ hit_*-клипы оружия (стабильный цикл по имени), фолбэк по оружию (экип→база→главная) и персонажу.
+    attackClips(weapon: string): Clip[] {
+      const pick = (id: string): Clip[] => { for (const cand of [weapon, baseWeapon(weapon), mainWeapon(weapon)]) { const set = clips.filter((c) => c.character === id && c.weapon === cand && c.name.startsWith('hit_')); if (set.length) return set.slice().sort((a, b) => a.name.localeCompare(b.name)); } return []; };
+      const own = pick(charId); return own.length ? own : (fallbackId ? pick(fallbackId) : []);
+    },
     // Поза щита per-оружие: idle_<weaponKey> (фолбэк idle_shield) + вес (perWeapon[wk] ?? базовый mix). Нет клипа — нет оверлея.
     shieldOverlay(weaponKey: string): { pose: Pose; mix: number } | null { const c = stance(weaponKey) ?? stance('shield'); if (!c || !c.keys.length) return null; const cfg = shieldCfg[charId] ?? (fallbackId ? shieldCfg[fallbackId] : undefined); const mix = cfg?.perWeapon?.[weaponKey] ?? cfg?.mix ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
   };

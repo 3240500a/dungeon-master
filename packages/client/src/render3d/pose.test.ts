@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName, retargetClipName } from './poseRuntime.js';
+import { migratePoseName, retargetClipName, localStorageContent } from './poseRuntime.js';
 
 // Ноги гейта считает StepPlanner (детерминирован: своя фаза с 0, без Math.random). Читаем ТОЛЬКО ножные поля —
 // они не зависят от случайной инициализации фазы рук. Феча 1 (плант-цель) обязана быть НЕЙТРАЛЬНА к игре при
@@ -239,5 +239,31 @@ describe('retargetClipName (копир позы в другое оружие)', 
   });
   it('имя без оружия остаётся без изменений', () => {
     expect(retargetClipName('замах1', 'sword', 'axe')).toBe('замах1');
+  });
+});
+
+describe('localStorageContent: адаптация позы под оружие + цикл hit', () => {
+  const mk = (name: string, weapon: string) => ({ name, character: 'warrior', weapon, loop: false, keys: [{ pose: {}, t: 0 }] });
+  const CLIPS = [mk('idle_sword', 'sword'), mk('hit_sword', 'sword'), mk('hit_sword_2', 'sword'), mk('s_hit_sword', 'sword'), mk('s_hit_axe', 'axe'), mk('s_hit_sword+dagger', 'sword+dagger')];
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => (k === 'pe_clips' ? JSON.stringify(CLIPS) : null), setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, length: 0,
+    } as Storage;
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
+
+  it('resolveAbilityClip ретаргетит семейство на экип. оружие; фолбэк — авторская', () => {
+    const c = localStorageContent('warrior');
+    expect(c.resolveAbilityClip('s_hit_sword', 'sword')?.name).toBe('s_hit_sword');   // точное оружие
+    expect(c.resolveAbilityClip('s_hit_sword', 'axe')?.name).toBe('s_hit_axe');        // топор → своя s_hit_axe
+    expect(c.resolveAbilityClip('s_hit_sword', 'mace')?.name).toBe('s_hit_sword');     // нет s_hit_mace → авторская
+    expect(c.resolveAbilityClip('s_hit_sword', 'sword+dagger')?.name).toBe('s_hit_sword+dagger'); // дуал → своя
+    expect(c.resolveAbilityClip('s_hit_sword', 'sword+shield')?.name).toBe('s_hit_sword');        // щит → база sword (оверлей поверх)
+  });
+  it('attackClips = все hit_* оружия, стабильный цикл; щит→база; нет → пусто', () => {
+    const c = localStorageContent('warrior');
+    expect(c.attackClips('sword').map((x) => x.name)).toEqual(['hit_sword', 'hit_sword_2']);
+    expect(c.attackClips('sword+shield').map((x) => x.name)).toEqual(['hit_sword', 'hit_sword_2']);   // база sword
+    expect(c.attackClips('axe')).toEqual([]);   // нет hit_axe и нет фолбэк-персонажа
   });
 });
