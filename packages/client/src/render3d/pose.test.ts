@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName } from './poseRuntime.js';
+import { migratePoseName, retargetClipName } from './poseRuntime.js';
 
 // Ноги гейта считает StepPlanner (детерминирован: своя фаза с 0, без Math.random). Читаем ТОЛЬКО ножные поля —
 // они не зависят от случайной инициализации фазы рук. Феча 1 (плант-цель) обязана быть НЕЙТРАЛЬНА к игре при
@@ -225,5 +225,19 @@ describe('migratePoseName (старая конвенция → idle_/hit_)', () 
     for (const n of ['idle_sword', 'hit_axe', 's_hit_mace', 'замах_лево', 'idle_shield']) {
       expect(migratePoseName(n)).toBe(n);
     }
+  });
+});
+
+describe('retargetClipName (копир позы в другое оружие)', () => {
+  it('конвенционные префиксы idle_/hit_/s_hit_ переносят суффикс оружия', () => {
+    expect(retargetClipName('idle_sword', 'sword', 'axe')).toBe('idle_axe');
+    expect(retargetClipName('hit_sword', 'sword', 'mace')).toBe('hit_mace');
+    expect(retargetClipName('s_hit_sword', 'sword', 'axe')).toBe('s_hit_axe');
+  });
+  it('неконвенционное имя с подстрокой оружия — замена первого вхождения', () => {
+    expect(retargetClipName('замах_sword_L', 'sword', 'axe')).toBe('замах_axe_L');
+  });
+  it('имя без оружия остаётся без изменений', () => {
+    expect(retargetClipName('замах1', 'sword', 'axe')).toBe('замах1');
   });
 });

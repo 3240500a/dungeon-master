@@ -37,6 +37,12 @@ export const migratePoseName = (name: string): string =>
   name.startsWith('стойка_') ? 'idle_' + name.slice('стойка_'.length)
     : name.startsWith('удар_') ? 'hit_' + name.slice('удар_'.length)
       : name;
+/** Ретаргет имени клипа при копировании в другое оружие: конвенционное `<idle_|hit_|s_hit_><fromW>` → `<prefix><toW>`;
+ *  иначе если имя содержит подстроку fromW — заменить первое вхождение; иначе имя без изменений. */
+export function retargetClipName(name: string, fromW: string, toW: string): string {
+  for (const p of ['idle_', 'hit_', 's_hit_']) if (name === p + fromW) return p + toW;
+  return fromW && name.includes(fromW) ? name.replace(fromW, toW) : name;
+}
 const AB_IN = 0.1, AB_OUT = 0.14;                              // огибающая входа/выхода удара (сек)
 
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));

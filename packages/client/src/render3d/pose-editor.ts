@@ -11,7 +11,7 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -217,6 +217,8 @@ function migrateClip(c0: unknown): Clip {                     // старый ф
 function loadLib(): Clip[] { try { const s = localStorage.getItem('pe_clips'); if (!s) return []; return (JSON.parse(s) as unknown[]).map(migrateClip); } catch { return []; } }
 function saveLib(): void { try { localStorage.setItem('pe_clips', JSON.stringify(library)); savePoseKey('pe_clips'); } catch { /* */ } }
 let library: Clip[] = loadLib();
+let clipBuf: Clip | null = null;      // буфер «копировать позу» — переживает переключение оружия/персонажа (вставка в другое оружие)
+let clipBufWasAtk = false;            // был ли исходник в буфере помечен ударом (перенести метку при вставке)
 let clipIdx = 0, frameIdx = 0;
 const clipsHere = (): Clip[] => library.filter((c) => c.character === curCharId && c.weapon === weapon);
 const curClip = (): Clip | null => clipsHere()[clipIdx] ?? null;
@@ -463,12 +465,35 @@ function clipSection(): void {
   const list = clipsHere();
   const info = el('div', 'color:#9ae6a0;margin-bottom:4px'); info.textContent = `${curChar().name} · ${weapon} · клипов: ${list.length}`; body.append(info);
   const row1 = el('div', ''); body.append(row1);
-  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; library.push({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }));
+  const nameFree = (nm: string): string => { let n = nm, i = 2; while (library.some((x) => x.name === n && x.character === curCharId && x.weapon === weapon)) n = nm + '_' + i++; return n; };
+  // Вставить позу из буфера в ТЕКУЩЕЕ оружие: глубокий клон кадров + ретаргет имени (idle_меч→idle_топор). Игра подхватит.
+  const pasteHere = (): void => {
+    if (!clipBuf) return;
+    let name = retargetClipName(clipBuf.name, clipBuf.weapon, weapon);
+    const taken = (nm: string): boolean => library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon);
+    if (clipBuf.weapon === weapon) name = nameFree(name);                                   // то же оружие = дубликат → не затирать
+    else if (taken(name) && !confirm('Клип «' + name + '» на «' + weapon + '» уже есть — перезаписать?')) return;
+    const nc: Clip = { name, character: curCharId, weapon, loop: clipBuf.loop, keys: clipBuf.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) };
+    const i = library.findIndex((x) => x.name === name && x.character === curCharId && x.weapon === weapon);
+    if (i >= 0) library[i] = nc; else library.push(nc);
+    if (clipBufWasAtk) { const arr = ((atkCfgs[curCharId] ??= {})[weapon] ??= []); if (!arr.includes(name)) { arr.push(name); saveAtk(); } }
+    saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === name)); frameIdx = 0; refreshAll();
+  };
+  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; library.push({ name: nameFree(nm), character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }));
+  if (clipBuf) row1.append(pbtn('⎘ вставить: ' + retargetClipName(clipBuf.name, clipBuf.weapon, weapon), pasteHere));   // буфер переживает смену оружия/персонажа
   const c = curClip();
   if (c) {
     row1.append(
-      pbtn('дубл', () => { library.push({ name: c.name + '_copy', character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: { ...k.pose }, t: k.t })) }); saveLib(); refreshAll(); }),
-      pbtn('переим', () => { const nm = prompt('имя', c.name); if (nm) { c.name = nm; saveLib(); refreshAll(); } }),
+      pbtn('⎘ копир', () => { clipBuf = { name: c.name, character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }; clipBufWasAtk = atkList().includes(c.name); refreshAll(); }),
+      pbtn('дубл', () => { library.push({ name: nameFree(c.name + '_copy'), character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }); saveLib(); refreshAll(); }),
+      pbtn('переим', () => {
+        const nm = prompt('имя клипа', c.name); if (!nm || nm === c.name) return;
+        if (library.some((x) => x !== c && x.name === nm && x.character === curCharId && x.weapon === weapon)) { alert('Клип «' + nm + '» на этом оружии уже есть — выберите другое имя.'); return; }
+        const wasConv = ['idle_', 'hit_', 's_hit_'].some((p) => c.name === p + weapon), stillConv = ['idle_', 'hit_', 's_hit_'].some((p) => nm === p + weapon);
+        if (wasConv && !stillConv && !confirm('«' + c.name + '» — конвенционное имя, игра ищет позу по нему. Переименование отвяжет её от оружия. Продолжить?')) return;
+        const old = c.name; c.name = nm; const arr = atkCfgs[curCharId]?.[weapon]; if (arr) { const j = arr.indexOf(old); if (j >= 0) { arr[j] = nm; saveAtk(); } }
+        saveLib(); refreshAll();
+      }),
       pbtn('удалить', () => { if (confirm('Удалить клип «' + c.name + '»?')) delClip(c); }),
       pbtn(c.loop ? '↻ луп' : '→ 1 раз', () => { c.loop = !c.loop; saveLib(); refreshAll(); }, c.loop),
       pbtn('⚙ запечь физику', () => { void bakeCurrentClip(); }),
