@@ -99,7 +99,7 @@ export class RoomManager {
     switch (frame.t) {
       case 'input': conn.room.setInput(conn.pid, frame.input); break;
       case 'cmd': conn.room.handleCmd(conn.pid, frame.command); break;
-      case 'descend': conn.room.descend(conn.pid, frame.difficultyId); break;
+      case 'descend': conn.room.descend(conn.pid, frame.difficultyId, frame.targetNodeId, frame.runConfig); break;
       case 'return': conn.room.returnTown(conn.pid); break;
       case 'lever': conn.room.pullLever(conn.pid, frame.leverId); break;
       case 'vote': conn.room.castVote(conn.pid, frame.accept); break;

@@ -37,6 +37,14 @@ describe('generateMonster', () => {
     expect(a).toEqual(b);
   });
 
+  it('monster-affixes: выключенные аффиксы не навешиваются даже на чемпиона', () => {
+    const off = affixes.map((a) => ({ ...a, enabled: false }));
+    for (let s = 0; s < 40; s++) {
+      const m = generateMonster(monsters, off, { baseId: 'skeleton', depth: 5, forceChampion: true }, createRng(s));
+      expect(m.affixes).toEqual([]);
+    }
+  });
+
   it('monsterCombatStats и пакет корректны', () => {
     const m = generateMonster(monsters, affixes, { baseId: 'skeleton', depth: 2 }, createRng(7));
     const cs = monsterCombatStats(m);

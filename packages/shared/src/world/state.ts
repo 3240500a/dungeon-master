@@ -154,6 +154,12 @@ export interface WorldState {
   spawn: Vec2;
   /** Лестница вниз (переход на следующий этаж). */
   stairs?: Vec2;
+  /** Все выходы на следующие этажи (v2 развилка). exits[0] совместим со `stairs`. */
+  exits?: Vec2[];
+  /** id/тип текущего узла забега (v2) и активные модификаторы этажа. */
+  runNodeId?: string;
+  runNodeType?: string;
+  floorModifiers?: string[];
   /** Запертые ворота этажа (группы клеток `Cell.Door`); открываются своим рычагом. */
   doors: WorldDoor[];
   /** Рычаги этажа — каждый открывает свою дверь (по `doorId`), `used` после нажатия. */

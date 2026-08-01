@@ -58,6 +58,10 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
   rect('decor-pillar', 24, 24, 0x413c38, 0x1c1a18); // тёплая колонна (между полом и стеной)
   circle('decor-torch', 6, 0xffb24a);               // пламя факела (легаси-фолбэк)
   rect('decor-chest', 22, 16, 0xc99a48, 0x6e5420);
+  // Декор узлов забега v2 (rest/финал): портал в город, общий сундук, лавка.
+  rect('decor-portal', 30, 38, 0x8a5cff, 0x3a2a70); // арканный портал (аметист) — возврат/финал
+  rect('decor-stash', 26, 20, 0x9a7b3a, 0x5a4418);  // общий сундук (тёмное золото)
+  rect('decor-shop', 24, 24, 0x4a8f6a, 0x224a34);   // лавка (зелёный навес)
 
   // ── Освещение и факел (динамический свет) ──
   radial('light-soft', 256, 'rgba(255,255,255,1)', 'rgba(255,255,255,0)'); // brush для «дыр света» в тьме

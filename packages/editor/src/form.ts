@@ -24,7 +24,9 @@ function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v:
   // поля (напр. `weight` брони = числовая масса vs `weight` оружия = id-класс веса) рендерились
   // бы списком и записывали строку в число → ошибка валидации.
   const tn = unwrap(sub).schema._def.typeName;
-  if (src && (tn === 'ZodString' || tn === 'ZodEnum')) {
+  // Спец-источник — ТОЛЬКО для строковых полей (id-ссылки). Enum-поля (напр. floors.role) рендерят
+  // СВОИ значения, чтобы одноимённое строковое поле-ссылка (monsters.role) не перехватывало их.
+  if (src && tn === 'ZodString') {
     return renderEnum(src(), value == null ? '' : String(value), onChange);
   }
   return renderField(sub, value, onChange);
@@ -33,11 +35,16 @@ function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v:
 interface Unwrapped {
   schema: AnySchema;
   optional: boolean;
+  /** Задан ли `.default(...)` где-то в обёртке (для скаляров используем его значение). */
+  hasDefault: boolean;
+  defaultVal: unknown;
 }
 
 function unwrap(schema: AnySchema): Unwrapped {
   let s = schema;
   let optional = false;
+  let hasDefault = false;
+  let defaultVal: unknown;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const tn = s._def.typeName;
@@ -45,18 +52,24 @@ function unwrap(schema: AnySchema): Unwrapped {
       optional = true;
       s = s._def.innerType;
     } else if (tn === 'ZodDefault') {
+      if (!hasDefault) { defaultVal = s._def.defaultValue(); hasDefault = true; }
       s = s._def.innerType;
     } else if (tn === 'ZodEffects') {
       s = s._def.schema;
     } else break;
   }
-  return { schema: s, optional };
+  return { schema: s, optional, hasDefault, defaultVal };
 }
 
-/** Значение по умолчанию для схемы (для «Добавить» и новых элементов массива). */
+/** Значение по умолчанию для схемы (для «Добавить», новых элементов массива, смены варианта union). */
 export function defaultValue(schema: AnySchema): unknown {
-  const { schema: s } = unwrap(schema);
+  const u = unwrap(schema);
+  const s = u.schema;
   const tn = s._def.typeName;
+  // Скаляры с .default(...) — берём заданное значение (иначе number.default(4) даёт 0 и падает min(1)).
+  if (u.hasDefault && (tn === 'ZodNumber' || tn === 'ZodString' || tn === 'ZodBoolean' || tn === 'ZodEnum' || tn === 'ZodLiteral')) {
+    return u.defaultVal;
+  }
   switch (tn) {
     case 'ZodObject': {
       const shape = (s as z.ZodObject<z.ZodRawShape>).shape;
@@ -217,40 +230,51 @@ function renderDiscriminatedUnion(
     byKind.set(String((opt.shape[disc] as AnySchema)._def.value), opt);
   }
   const kinds = [...byKind.keys()];
-  let activeKind = String(value[disc] ?? '');
-  if (!byKind.has(activeKind)) activeKind = kinds[0]!;
 
   const box = document.createElement('div');
   box.style.cssText = 'border-left:2px solid #2c2c3a;padding:2px 0 2px 10px;margin:4px 0';
 
-  const head = document.createElement('div');
-  head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px';
-  head.appendChild(label(disc));
-  head.appendChild(
-    renderEnum(kinds, activeKind, (nv) => {
-      const variant = byKind.get(String(nv))!;
-      const merged = defaultValue(variant) as Record<string, unknown>;
-      for (const k of Object.keys(variant.shape)) {
-        if (k !== disc && value[k] !== undefined) merged[k] = value[k];
-      }
-      merged[disc] = nv;
-      onChange(merged);
-    }),
-  );
-  box.appendChild(head);
+  // Смена вида: переносим совпадающие поля, остальные — дефолты варианта; мутируем value
+  // НА МЕСТЕ (сохраняя ссылку у родителя) и ПЕРЕРИСОВЫВАЕМ поля под новый вид.
+  const applyKind = (nv: string): void => {
+    const variant = byKind.get(nv)!;
+    const merged = defaultValue(variant) as Record<string, unknown>;
+    for (const k of Object.keys(variant.shape)) {
+      if (k !== disc && value[k] !== undefined) merged[k] = value[k];
+    }
+    merged[disc] = nv;
+    for (const k of Object.keys(value)) delete value[k];
+    Object.assign(value, merged);
+    onChange(value);
+    rebuild();
+  };
 
-  const grid = document.createElement('div');
-  grid.style.cssText = FIELD_GRID;
-  const variant = byKind.get(activeKind)!;
-  for (const [key, sub] of Object.entries(variant.shape)) {
-    if (key === disc) continue;
-    gridCell(grid, key, sub, value[key], (v) => {
-      value[key] = v;
-      value[disc] = activeKind;
-      onChange(value);
-    });
-  }
-  box.appendChild(grid);
+  const rebuild = (): void => {
+    box.innerHTML = '';
+    let activeKind = String(value[disc] ?? '');
+    if (!byKind.has(activeKind)) activeKind = kinds[0]!;
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:4px';
+    head.appendChild(label(disc));
+    head.appendChild(renderEnum(kinds, activeKind, (nv) => applyKind(String(nv))));
+    box.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = FIELD_GRID;
+    const variant = byKind.get(activeKind)!;
+    for (const [key, sub] of Object.entries(variant.shape)) {
+      if (key === disc) continue;
+      gridCell(grid, key, sub, value[key], (v) => {
+        value[key] = v;
+        value[disc] = activeKind;
+        onChange(value);
+      });
+    }
+    box.appendChild(grid);
+  };
+
+  rebuild();
   return box;
 }
 

@@ -43,9 +43,9 @@ export function questFromTemplate(tpl: RandomQuestTemplate, rng: Rng, uid: strin
   };
 }
 
-/** Генерирует доску случайных квестов (по одному на шаблон). */
+/** Генерирует доску случайных квестов (по одному на ВКЛЮЧЁННЫЙ шаблон). */
 export function generateBoard(reg: ConfigRegistry, rng: Rng): QuestDef[] {
-  const templates = reg.get('quests.random') as RandomQuestTemplate[];
+  const templates = (reg.get('quests.random') as RandomQuestTemplate[]).filter((t) => (t as { enabled?: boolean }).enabled !== false);
   return templates.map((t, i) => questFromTemplate(t, rng, `${Date.now().toString(36)}${i}`));
 }
 
@@ -61,10 +61,10 @@ export function acceptQuest(save: SaveState, def: QuestDef): ActionResult {
   return { ok: true };
 }
 
-/** Выдаёт первый main-квест, если цепочка ещё не начата. Возвращает выданный def или null. */
+/** Выдаёт первый ВКЛЮЧЁННЫЙ main-квест, если цепочка ещё не начата. Возвращает выданный def или null. */
 export function ensureMainQuest(reg: ConfigRegistry, save: SaveState): QuestDef | null {
   if (save.quests.some((q) => q.questId.startsWith('main-'))) return null;
-  const main = reg.get('quests.main')[0] as QuestDef | undefined;
+  const main = reg.get('quests.main').find((q) => q.enabled !== false) as QuestDef | undefined;
   if (main && acceptQuest(save, main).ok) return main;
   return null;
 }
@@ -149,8 +149,19 @@ export function turnInQuest(reg: ConfigRegistry, save: SaveState, questId: strin
 
   let nextAccepted: QuestDef | null = null;
   if (def.next) {
-    const next = reg.get('quests.main').find((q) => q.id === def.next) as QuestDef | undefined;
-    if (next && acceptQuest(save, next).ok) nextAccepted = next;
+    // Идём по цепочке, ПЕРЕПРЫГИВАЯ выключенные квесты (на их `next`), пока не встретим включённый.
+    const chain = reg.get('quests.main');
+    const seen = new Set<string>();
+    let nextId: string | undefined = def.next;
+    let next: (typeof chain)[number] | undefined;
+    while (nextId && !seen.has(nextId)) {
+      seen.add(nextId);
+      const q = chain.find((x) => x.id === nextId);
+      if (!q) break;
+      if (q.enabled !== false) { next = q; break; }
+      nextId = q.next;
+    }
+    if (next && acceptQuest(save, next as QuestDef).ok) nextAccepted = next as QuestDef;
   }
   return { ok: true, leveled, nextAccepted };
 }

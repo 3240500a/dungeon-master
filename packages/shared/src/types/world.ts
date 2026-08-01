@@ -79,15 +79,3 @@ export interface ScaledMonster extends MonsterDef {
   /** Средний урон (для совместимости со старым кодом атаки). */
   damage: number;
 }
-
-/** Тема подземелья. */
-export interface DungeonTheme {
-  id: string;
-  name: string;
-  tileset: string;
-  /** id монстров, доступных к спавну. */
-  monsterPool: string[];
-  /** Сдвиг таблицы дропа в этой теме (множитель редкости). */
-  dropBias: number;
-  modifiers: string[];
-}

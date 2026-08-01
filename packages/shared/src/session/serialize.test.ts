@@ -27,7 +27,7 @@ describe('serializeWorld / removePlayer', () => {
     s.addPlayer('p1', newBotSave(r, 'warrior'));
     s.addPlayer('p2', newBotSave(r, 'mage'));
     const def = generateMonster(r.get('monsters'), r.get('monster-affixes'),
-      { baseId: r.get('dungeons')[0]!.monsterPool[0]!, depth: 1 }, createRng(1));
+      { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(1));
     const mp = cellToWorld(7, 6);
     s.enterFloor(1, { grid: field(20, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mp.x, y: mp.y }] });
     s.tick(1 / 30, { p1: idle, p2: idle });

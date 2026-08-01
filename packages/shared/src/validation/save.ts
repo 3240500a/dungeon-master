@@ -75,6 +75,28 @@ export const saveStateSchema = z.object({
   maxDepth: z.number().int().min(0),
   difficultyProgress: z.record(z.string(), z.number()).default({}),
   lastDifficulty: z.string().default('normal'),
+  // Активный забег v2 (сервер-авторитетно; граф регенерится из config.seed). Отсутствует — забега нет.
+  run: z
+    .object({
+      templateId: z.string(),
+      config: z.object({
+        templateId: z.string(),
+        biomeId: z.string(),
+        tier: z.string(),
+        seed: z.number(),
+        length: z.number().optional(),
+        widthMax: z.number().optional(),
+        branching: z.number().optional(),
+        returnEvery: z.number().optional(),
+        bossEvery: z.number().optional(),
+        nodeTypeWeights: z.record(z.string(), z.number()).optional(),
+        power: z.number().optional(),
+        modifiers: z.array(z.string()).default([]),
+      }),
+      currentNodeId: z.string(),
+      visited: z.array(z.string()).default([]),
+    })
+    .optional(),
 });
 
 export type ValidatedSave = z.infer<typeof saveStateSchema>;

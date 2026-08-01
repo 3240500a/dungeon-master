@@ -188,6 +188,7 @@ export class DomUi {
       KeyK: 'skills',
       KeyC: 'character',
       KeyJ: 'quests',
+      KeyM: 'runmap',
     };
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape') {

@@ -54,7 +54,7 @@ describe('GameSession — бой/лут/прокачка', () => {
     const spawn = cellToWorld(6, 6);
     // Слабый монстр рядом (переопределяем HP, чтобы гарантированно добить).
     const mrng = createRng(9);
-    const baseId = r.get('dungeons')[0]!.monsterPool[0]!;
+    const baseId = r.get('biomes')[0]!.monsterPool[0]!;
     const def = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
     def.hp = 1;
     def.armor = 0;
@@ -95,7 +95,7 @@ describe('GameSession — бой/лут/прокачка', () => {
     const grid = openField(20, 12);
     const spawn = cellToWorld(6, 6);
     const mrng = createRng(3);
-    const baseId = r.get('dungeons')[0]!.monsterPool[0]!;
+    const baseId = r.get('biomes')[0]!.monsterPool[0]!;
     const def = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
     // Живучий, точный, медленный ближник — чтобы гарантированно завёл замах и попал.
     def.hp = 9999; def.rarity = 'normal'; def.ai = 'melee-chaser';
@@ -149,7 +149,7 @@ function injectSkill(r: ConfigRegistry, _classId: string, id: string, active: Re
 /** Слабый монстр (hp/armor 0) в точке. */
 function weakMon(r: ConfigRegistry, x: number, y: number) {
   const def = generateMonster(r.get('monsters'), r.get('monster-affixes'),
-    { baseId: r.get('dungeons')[0]!.monsterPool[0]!, depth: 1 }, createRng(x + y));
+    { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(x + y));
   def.hp = 6; def.armor = 0; def.evade = 0;
   return { def, x, y };
 }
@@ -418,7 +418,7 @@ function injectMastery(r: ConfigRegistry, _classId: string, id: string, effect: 
 /** Неубиваемый монстр заданной фракции (для сравнения урона). */
 function tankMon(r: ConfigRegistry, x: number, y: number, faction: MonsterFaction) {
   const def = generateMonster(r.get('monsters'), r.get('monster-affixes'),
-    { baseId: r.get('dungeons')[0]!.monsterPool[0]!, depth: 1 }, createRng(1));
+    { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(1));
   def.hp = 1e7; def.armor = 0; def.evade = 0; def.faction = faction;
   return { def, x, y };
 }
@@ -462,7 +462,7 @@ describe('GameSession — замах/прерывание (фаза C)', () => {
     const grid = openField(16, 12);
     const spawn = cellToWorld(6, 6);
     const mp = cellToWorld(7, 6); // прямо перед игроком (в дуге strike)
-    s.enterFloor(1, { grid, spawn, monsters: [{ def: (() => { const d = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: r.get('dungeons')[0]!.monsterPool[0]!, depth: 1 }, createRng(3)); d.hp = 500; d.armor = 0; d.evade = 0; return d; })(), x: mp.x, y: mp.y }] });
+    s.enterFloor(1, { grid, spawn, monsters: [{ def: (() => { const d = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(3)); d.hp = 500; d.armor = 0; d.evade = 0; return d; })(), x: mp.x, y: mp.y }] });
     const m = s.world.monsters[0]!;
 
     p.mana = 100;
@@ -483,7 +483,7 @@ describe('GameSession — замах/прерывание (фаза C)', () => {
     const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = openField(16, 12);
     const mp = cellToWorld(7, 6);
-    s.enterFloor(1, { grid, spawn: cellToWorld(6, 6), monsters: [{ def: (() => { const d = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: r.get('dungeons')[0]!.monsterPool[0]!, depth: 1 }, createRng(4)); d.hp = 500; d.armor = 0; return d; })(), x: mp.x, y: mp.y }] });
+    s.enterFloor(1, { grid, spawn: cellToWorld(6, 6), monsters: [{ def: (() => { const d = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(4)); d.hp = 500; d.armor = 0; return d; })(), x: mp.x, y: mp.y }] });
     const m = s.world.monsters[0]!;
 
     p.mana = 100;
@@ -572,7 +572,7 @@ describe('GameSession — контент Заступника (фаза D)', () 
     const spawn = cellToWorld(6, 6);
     const mp = cellToWorld(7, 6);
     const def = generateMonster(r.get('monsters'), r.get('monster-affixes'),
-      { baseId: r.get('dungeons')[0]!.monsterPool[0]!, depth: 1 }, createRng(9));
+      { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(9));
     def.hp = 5000; def.armor = 0; def.evade = 0; // танк, чтобы дожить до стана
     s.enterFloor(1, { grid, spawn, monsters: [{ def, x: mp.x, y: mp.y }] });
     const m = s.world.monsters[0]!;
@@ -598,7 +598,7 @@ describe('GameSession — реактивные мастерства (тригг�
     const p = s.addPlayer('p1', save);
     const mp = cellToWorld(7, 6);
     const def = generateMonster(r.get('monsters'), r.get('monster-affixes'),
-      { baseId: r.get('dungeons')[0]!.monsterPool[0]!, depth: 1 }, createRng(3));
+      { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(3));
     def.hp = 800; def.minDamage = 2; def.maxDamage = 3; def.armor = 0;
     s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mp.x, y: mp.y }] });
     const m = s.world.monsters[0]!;

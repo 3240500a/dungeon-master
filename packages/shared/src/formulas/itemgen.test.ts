@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { pickDropBase, generateItem } from './itemgen.js';
+import { pickDropBase, generateItem, rollRarity, rollAffixes } from './itemgen.js';
 import { createRng } from './rng.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
@@ -41,6 +41,43 @@ describe('pickDropBase (взвешенный дроп по категориям)
   it('нулевые веса → фолбэк на равномерный (не падает)', () => {
     const d = distribution({}, 500);
     expect(Object.values(d).reduce((s, n) => s + n, 0)).toBe(500);
+  });
+});
+
+describe('enabled-фильтры генерации (тумблер активно/неактивно)', () => {
+  it('rollRarity: выключенная редкость не выпадает (порог пропускается)', () => {
+    const rng = createRng(42);
+    const noRare = rarities.map((r) => (r.id === 'rare' ? { ...r, enabled: false } : r));
+    for (let i = 0; i < 4000; i++) expect(rollRarity(1.5, rng, noRare)).not.toBe('rare');
+  });
+
+  it('rollAffixes: все аффиксы выключены → пустой ролл', () => {
+    const rng = createRng(7);
+    const off = affixes.map((a) => ({ ...a, enabled: false }));
+    expect(rollAffixes(off, 3, 99, rng)).toEqual([]);
+  });
+
+  it('generateItem: все уники выключены → редкость никогда не unique (даунгрейд до rare)', () => {
+    const rng = createRng(3);
+    const off = uniques.map((u) => ({ ...u, enabled: false }));
+    for (let i = 0; i < 2000; i++) {
+      const it = generateItem(bases, affixes, off,
+        { dropBias: 50, itemLevel: 80, tiers, rarities, categoryWeights: { weapon: 100, armor: 0, shield: 0, jewelry: 0, consumable: 0 } }, rng);
+      expect(it.rarity).not.toBe('unique');
+    }
+  });
+
+  it('item-tiers: выключенный высший тир не выбирается (нет «Мифического» при отключённом t6)', () => {
+    const cw = { weapon: 50, armor: 50, shield: 0, jewelry: 0, consumable: 0 };
+    const namesFor = (ts: typeof tiers, seed: number): string => {
+      const rng = createRng(seed);
+      const s = new Set<string>();
+      for (let i = 0; i < 500; i++) s.add(generateItem(bases, affixes, uniques, { dropBias: 1, itemLevel: 95, tiers: ts, rarities, categoryWeights: cw }, rng).name);
+      return [...s].join('|');
+    };
+    expect(namesFor(tiers, 99)).toContain('Мифическ'); // t6 достижим при ilvl 95
+    const noT6 = tiers.map((t) => (t.id === 't6' ? { ...t, enabled: false } : t));
+    expect(namesFor(noT6, 99)).not.toContain('Мифическ'); // выключён → не выбирается
   });
 });
 

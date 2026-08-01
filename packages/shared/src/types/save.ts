@@ -1,6 +1,7 @@
 import type { Attributes } from './attributes.js';
 import type { Item, EquipSlot } from './items.js';
 import type { QuestProgress, QuestDef } from './quest.js';
+import type { RunState } from '../dungeon/run/types.js';
 
 /** Прогресс скиллов: id узла → вложенный ранг. */
 export type SkillAllocation = Record<string, number>;
@@ -47,6 +48,8 @@ export interface SaveState {
   difficultyProgress: Record<string, number>;
   /** Последняя выбранная сложность (id тира). */
   lastDifficulty: string;
+  /** Активный забег v2 (структура/позиция). Отсутствует — забега нет (город/легаси-сейв). */
+  run?: RunState;
 }
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;

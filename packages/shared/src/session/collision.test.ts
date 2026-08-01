@@ -23,7 +23,7 @@ describe('коллизии сущностей в сессии', () => {
     const grid = open(30, 20);
     const spawn = cellToWorld(3, 10);
     const mrng = createRng(5);
-    const baseId = r.get('dungeons')[0]!.monsterPool[0]!;
+    const baseId = r.get('biomes')[0]!.monsterPool[0]!;
     const mk = () => generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
     const at = cellToWorld(20, 10); // далеко от игрока (в покое)
     const monsters = [
@@ -52,7 +52,7 @@ describe('коллизии сущностей в сессии', () => {
     const grid = open(30, 20);
     const spawn = cellToWorld(3, 10);
     const mrng = createRng(1);
-    const baseId = r.get('dungeons')[0]!.monsterPool[0]!;
+    const baseId = r.get('biomes')[0]!.monsterPool[0]!;
     const mk = () => generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
     const at = cellToWorld(20, 10);
     s.enterFloor(1, { grid, spawn, monsters: [{ def: mk(), x: at.x, y: at.y }, { def: mk(), x: at.x + 2, y: at.y }] } as FloorLayout);

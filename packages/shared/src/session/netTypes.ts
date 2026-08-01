@@ -5,7 +5,8 @@ import type { ScaledMonster } from '../types/world.js';
 import type { SaveState } from '../types/save.js';
 import type { DebuffState } from '../world/debuffs.js';
 import type { Grid } from '../world/grid.js';
-import type { DecorObject } from '../dungeon/generate.js';
+import type { DecorObject } from '../dungeon/floorCommon.js';
+import type { RunPlan } from '../dungeon/run/types.js';
 import type { PlayerInput, SessionEvent } from './session.js';
 
 /**
@@ -78,6 +79,13 @@ export interface FloorInit {
   grid: Grid;
   spawn: { x: number; y: number };
   stairs?: { x: number; y: number };
+  /** Все выходы на следующие этажи (v2 развилка). exits[0] совместим со `stairs`. */
+  exits?: { x: number; y: number }[];
+  /** id текущего узла забега (v2) и его роль/тип — для карты и рендера. */
+  runNodeId?: string;
+  runNodeType?: string;
+  /** id активных модификаторов этажа (v2). */
+  floorModifiers?: string[];
   decor: DecorObject[];
   monsters: { id: number; def: ScaledMonster; x: number; y: number }[];
   /** Запертые ворота (клетки грида) — для рендера/открытия по `doorOpened`. */
@@ -134,7 +142,9 @@ export type ClientFrame =
   | { t: 'abandon'; token: string; charId: string }
   | { t: 'input'; seq: number; input: PlayerInput }
   | { t: 'cmd'; command: TownCommand }
-  | { t: 'descend'; difficultyId?: string }
+  // Спуск: из города — старт забега (difficultyId=тир; runConfig=выбор алтаря: биом/шаблон/модификаторы);
+  // в подземелье — спуск по ребру графа (targetNodeId).
+  | { t: 'descend'; difficultyId?: string; targetNodeId?: string; runConfig?: { biomeId?: string; templateId?: string; modifiers?: string[] } }
   | { t: 'return' }
   | { t: 'lever'; leverId: number }
   | { t: 'vote'; accept: boolean }
@@ -160,10 +170,12 @@ export type ServerFrame =
   | { t: 'peerJoined'; peer: PeerLite }
   | { t: 'peerLeft'; id: string }
   | { t: 'areaChanged'; floor: FloorInit }
+  // Структура текущего забега (v2) — данные для панели-карты (граф узлов, «видно вперёд»).
+  | { t: 'runPlan'; plan: RunPlan; currentNodeId: string }
   | { t: 'doorOpened'; doorId: number }
   // Смерть игрока: потери + режим возрождения (город=соло/вайп, иначе ждать пати на след. этаже).
   | { t: 'died'; goldLost: number; itemsLost: number; toTown: boolean }
-  | { t: 'voteStart'; kind: 'descend' | 'town'; by: string; needed: number }
+  | { t: 'voteStart'; kind: 'descend' | 'town'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string }
   | { t: 'voteUpdate'; yes: number; total: number }
   | { t: 'voteEnd'; passed: boolean }
   | { t: 'error'; code: string; msg: string }

@@ -1,0 +1,110 @@
+[
+  {
+    "id": "pack-swarm",
+    "name": "Рой",
+    "kind": "suffix",
+    "tier": 1,
+    "tags": ["danger", "pack"],
+    "scope": "run",
+    "weight": 1,
+    "desc": "Пачки монстров больше на 30%.",
+    "effects": [{ "stat": "packSize", "op": "mul", "value": 1.3 }]
+  },
+  {
+    "id": "hardened-foes",
+    "name": "Закалённые враги",
+    "kind": "suffix",
+    "tier": 2,
+    "tags": ["danger"],
+    "scope": "run",
+    "weight": 1,
+    "desc": "Монстры получают +20% здоровья.",
+    "effects": [{ "stat": "monsterHp", "op": "mul", "value": 1.2 }]
+  },
+  {
+    "id": "savage-blows",
+    "name": "Жестокие удары",
+    "kind": "suffix",
+    "tier": 2,
+    "tags": ["danger"],
+    "scope": "run",
+    "weight": 1,
+    "desc": "Монстры наносят +15% урона.",
+    "effects": [{ "stat": "monsterDamage", "op": "mul", "value": 1.15 }]
+  },
+  {
+    "id": "greedy-vault",
+    "name": "Жадное хранилище",
+    "kind": "prefix",
+    "tier": 1,
+    "tags": ["reward", "gold"],
+    "scope": "run",
+    "weight": 1,
+    "desc": "Золото с забега увеличено на 25%.",
+    "effects": [{ "stat": "gold", "op": "mul", "value": 1.25 }]
+  },
+  {
+    "id": "gilded-fortune",
+    "name": "Позолоченная удача",
+    "kind": "prefix",
+    "tier": 2,
+    "tags": ["reward", "rarity"],
+    "scope": "run",
+    "weight": 1,
+    "desc": "Магическая находка +30%.",
+    "effects": [{ "stat": "magicFind", "op": "mul", "value": 1.3 }]
+  },
+  {
+    "id": "relic-vitality",
+    "name": "Реликвия жизни",
+    "kind": "relic",
+    "tags": ["boon", "player"],
+    "scope": "run",
+    "weight": 1,
+    "desc": "Игрок получает +10% максимального здоровья на весь забег.",
+    "effects": [{ "stat": "playerMaxHp", "op": "mul", "value": 1.1 }]
+  },
+  {
+    "id": "relic-greed",
+    "name": "Реликвия алчности",
+    "kind": "relic",
+    "tags": ["boon", "reward"],
+    "scope": "run",
+    "weight": 1,
+    "desc": "+15% дроп-биас на весь забег.",
+    "effects": [{ "stat": "dropBias", "op": "mul", "value": 1.15 }]
+  },
+  {
+    "id": "affliction-frenzy",
+    "name": "Ярость (комната)",
+    "kind": "affliction",
+    "tier": 1,
+    "tags": ["danger", "node"],
+    "scope": "node",
+    "weight": 2,
+    "desc": "Монстры этой комнаты атакуют на 20% быстрее.",
+    "effects": [{ "stat": "monsterAttackSpeed", "op": "mul", "value": 1.2 }]
+  },
+  {
+    "id": "affliction-toughness",
+    "name": "Стойкость (комната)",
+    "kind": "affliction",
+    "tier": 1,
+    "tags": ["danger", "node"],
+    "scope": "node",
+    "weight": 2,
+    "desc": "Монстры этой комнаты получают +25% здоровья.",
+    "effects": [{ "stat": "monsterHp", "op": "mul", "value": 1.25 }]
+  },
+  {
+    "id": "boon-cache",
+    "name": "Тайник (комната)",
+    "kind": "boon",
+    "tier": 1,
+    "tags": ["reward", "node"],
+    "scope": "node",
+    "weight": 1,
+    "desc": "Комната содержит дополнительный дроп (×1.5 биас).",
+    "effects": [{ "stat": "dropBias", "op": "mul", "value": 1.5 }]
+  }
+]

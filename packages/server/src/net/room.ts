@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
-  GameSession, generateDungeon, spawnPacks, townLayout, serializeWorld, floorInit,
+  GameSession, spawnPacksEl, townLayout, serializeWorld, floorInit,
+  generateRunPlan, generateFloor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
   buyItem, sellItem, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
   stashMove, stashDims, stashTabCount,
@@ -10,7 +11,7 @@ import {
   PROTOCOL_VERSION,
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
   type FloorInit, type PeerLite, type ServerFrame, type TownCommand, type QuestDef,
-  type DecorObject,
+  type DecorObject, type RunConfig, type RunPlan,
 } from '@dm/shared';
 import { putCharacter } from '../db/db.js';
 import { loadAccountStash, saveAccountStash } from './accountStash.js';
@@ -21,6 +22,9 @@ const AUTOSAVE_MS = 10_000; // периодический сброс прогр�
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 
 interface Client { pid: string; ws: WebSocket; input: PlayerInput; userId: string; }
+
+/** Выбор «алтаря» при старте забега (биом/шаблон/модификаторы) — из кадра `descend` города. */
+type AltarConfig = { biomeId?: string; templateId?: string; modifiers?: string[] };
 
 /** Инфо об отключённом игроке — чтобы вернуть его на ту же точку при реконнекте. */
 interface Disconnected { save: SaveState; userId: string; lastPos: { x: number; y: number }; floor: number; }
@@ -56,7 +60,11 @@ export class Room {
   private questBoard: QuestDef[] = [];
   private wipeAt = 0; // serverTime авто-возврата в город после вайпа пати (0 = не запланирован)
   private lastSaveAt = 0; // serverTime последнего автосейва в БД (0 = ещё не было)
-  private vote: { kind: 'descend' | 'town'; diffId?: string; yes: Set<string>; no: Set<string> } | null = null;
+  private vote: { kind: 'descend' | 'town'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
+  // Активный забег v2: конфиг (сид/биом/шаблон/тир), регенерируемый граф и текущий узел.
+  private runConfig: RunConfig | null = null;
+  private runPlan: RunPlan | null = null;
+  private runNodeId: string | null = null;
   private loop: ReturnType<typeof setInterval> | null = null;
   private hooks: RoomHooks;
   /** Отключённые игроки (charId → инфо) — ждут реконнекта в эту комнату. */
@@ -110,6 +118,7 @@ export class Room {
       floor: this.currentFloorInit(), peers: this.peerList(pid), save,
     });
     if (this.area === 'town') this.send(ws, { t: 'shop', items: this.shop });
+    if (this.runPlan && this.runNodeId) this.send(ws, { t: 'runPlan', plan: this.runPlan, currentNodeId: this.runNodeId });
     this.send(ws, { t: 'questBoard', quests: this.questBoard });
     this.broadcastExcept(pid, { t: 'peerJoined', peer: this.peerLite(pid) });
     return pid;
@@ -292,14 +301,34 @@ export class Room {
   }
 
   // ── Голосование за спуск ────────────────────────────────────────────────────
-  descend(pid: string, difficultyId?: string): void {
+  // Из города: старт/резюм забега (можно выбрать сложность-тир). В подземелье: спуск по РЕБРУ
+  // графа (targetNodeId — выбор ветки на развилке); на финале (нет рёбер) — завершение забега.
+  descend(pid: string, difficultyId?: string, targetNodeId?: string, runConfig?: AltarConfig): void {
     if (this.vote) return;
-    // Сложность выбирают только из города (портал), и лишь разблокированную для инициатора.
-    const diffId = this.area === 'town' ? this.validDifficulty(pid, difficultyId) : undefined;
-    this.vote = { kind: 'descend', diffId, yes: new Set([pid]), no: new Set() };
-    this.broadcast({ t: 'voteStart', kind: 'descend', by: pid, needed: this.clients.size });
+    if (this.area === 'town') {
+      const diffId = this.validDifficulty(pid, difficultyId);
+      this.vote = { kind: 'descend', diffId, runCfg: runConfig, yes: new Set([pid]), no: new Set() };
+      this.broadcast({ t: 'voteStart', kind: 'descend', by: pid, needed: this.clients.size });
+    } else {
+      const node = this.currentNode();
+      if (!node) return;
+      if (node.edges.length === 0) {
+        // Финал — «завершить забег» (портал в город).
+        this.vote = { kind: 'descend', finish: true, yes: new Set([pid]), no: new Set() };
+        this.broadcast({ t: 'voteStart', kind: 'descend', by: pid, needed: this.clients.size });
+      } else {
+        const target = targetNodeId && node.edges.some((e) => e.to === targetNodeId) ? targetNodeId : node.edges[0]!.to;
+        const tnode = this.runPlan!.nodes.find((n) => n.id === target);
+        this.vote = { kind: 'descend', targetNodeId: target, yes: new Set([pid]), no: new Set() };
+        this.broadcast({ t: 'voteStart', kind: 'descend', by: pid, needed: this.clients.size, targetNodeId: target, targetNodeType: tnode?.type });
+      }
+    }
     this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
     this.checkVote();
+  }
+  /** Текущий узел забега (по runNodeId в runPlan). */
+  private currentNode() {
+    return this.runPlan && this.runNodeId ? this.runPlan.nodes.find((n) => n.id === this.runNodeId) : undefined;
   }
   /** Игрок дёрнул рычаг: сессия открывает его дверь (если рядом) → броадкаст всем. */
   pullLever(pid: string, leverId: number): void {
@@ -320,7 +349,7 @@ export class Room {
     const diffs = this.cfg.get('difficulties');
     const idx = diffs.findIndex((d) => d.id === id);
     const save = this.session.world.players[pid]?.save;
-    if (idx >= 0 && save && isDifficultyUnlocked(diffs, idx, save.difficultyProgress)) return id;
+    if (idx >= 0 && diffs[idx]!.enabled !== false && save && isDifficultyUnlocked(diffs, idx, save.difficultyProgress)) return id;
     return this.difficultyId;
   }
   castVote(pid: string, accept: boolean): void {
@@ -337,9 +366,97 @@ export class Room {
       this.vote = null;
       this.broadcast({ t: 'voteEnd', passed: true });
       if (v.kind === 'town') { this.enterTown(); return; }
-      if (v.diffId) this.difficultyId = v.diffId; // применяем выбранную сложность к забегу
-      this.enterDungeon(this.area === 'town' ? 1 : this.depth + 1);
+      // descend
+      if (this.area === 'town') {
+        if (v.diffId) this.difficultyId = v.diffId; // тир забега
+        const host = this.firstSave();
+        if (host?.run && this.resumeRun(host)) return; // продолжить незавершённый забег
+        this.startRun(v.runCfg);
+        return;
+      }
+      if (v.finish) { this.finishRun(); return; } // финал → город + завершение
+      if (v.targetNodeId) { this.enterNode(v.targetNodeId); return; } // спуск по ветке
     }
+  }
+
+  // ── Жизненный цикл забега (v2) ───────────────────────────────────────────────
+  /**
+   * Стартовый RunConfig. По умолчанию — первый включённый биом/шаблон + текущий тир. Выбор алтаря
+   * (`cfg`) переопределяет биом/шаблон/модификаторы, но ТОЛЬКО валидными включёнными значениями
+   * (анти-чит: клиент не может подсунуть выключенный/несуществующий контент).
+   */
+  private buildRunConfig(cfg?: AltarConfig): RunConfig {
+    const biomes = this.cfg.get('biomes').filter((b) => b.enabled !== false);
+    const tpls = this.cfg.get('run-templates').filter((t) => t.enabled !== false);
+    const biome = biomes.find((b) => b.id === cfg?.biomeId) ?? biomes[0] ?? this.cfg.get('biomes')[0]!;
+    const tpl = tpls.find((t) => t.id === cfg?.templateId) ?? tpls[0] ?? this.cfg.get('run-templates')[0];
+    // Модификаторы: только включённые, scope:'run', и (если шаблон ограничивает) из allowedModifiers.
+    const runMods = this.cfg.get('run-modifiers');
+    const allowed = tpl?.allowedModifiers ?? [];
+    const modifiers = (cfg?.modifiers ?? []).filter((id) => {
+      const m = runMods.find((r) => r.id === id);
+      return !!m && m.enabled !== false && m.scope === 'run' && (allowed.length === 0 || allowed.includes(id));
+    });
+    return { templateId: tpl?.id ?? 'default', biomeId: biome.id, tier: this.difficultyId, seed: this.seed, modifiers };
+  }
+  /** Начать новый забег: RunConfig (с выбором алтаря) → RunPlan → первый узел. */
+  private startRun(cfg?: AltarConfig): void {
+    this.runConfig = this.buildRunConfig(cfg);
+    this.runPlan = generateRunPlan(this.cfg, this.runConfig);
+    this.enterNode(this.runPlan.startId);
+  }
+  /** Продолжить забег из сейва (граф регенерится из config.seed). */
+  private resumeRun(save: SaveState): boolean {
+    if (!save.run) return false;
+    this.runConfig = save.run.config;
+    this.difficultyId = save.run.config.tier;
+    this.runPlan = generateRunPlan(this.cfg, save.run.config);
+    const nid = this.runPlan.nodes.some((n) => n.id === save.run!.currentNodeId) ? save.run.currentNodeId : this.runPlan.startId;
+    this.enterNode(nid);
+    return true;
+  }
+  /** Завершить забег: очистить run у всех, вернуться в город. */
+  private finishRun(): void {
+    for (const pid of this.clients.keys()) { const p = this.session.world.players[pid]; if (p) p.save.run = undefined; }
+    this.runConfig = null; this.runPlan = null; this.runNodeId = null;
+    this.enterTown();
+  }
+  /** Войти в узел забега: сгенерировать этаж по floorSpec, заселить по ролям/фичам, разослать кадры. */
+  private enterNode(nodeId: string): void {
+    if (!this.runPlan || !this.runConfig) { this.startRun(); return; }
+    const node = this.runPlan.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    this.wipeAt = 0;
+    this.area = 'dungeon'; this.runNodeId = nodeId; this.depth = node.depth;
+    this.session.world.difficultyId = this.difficultyId;
+    const layout = generateFloor(node.floorSpec);
+    this.decor = layout.decor;
+    const biomes = this.cfg.get('biomes');
+    const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
+    const pool = resolveMonsterPool(biome, node.depth);
+    const hostSave = this.firstSave();
+    const el = hostSave ? effectiveLevel(hostSave, this.cfg.get('balance').power).total : 1;
+    const rng = createRng((node.floorSpec.seed >>> 0) || 1);
+    const monsters = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity);
+    this.session.enterFloor(node.depth, {
+      grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters,
+      doors: layout.doors, levers: layout.levers,
+      runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers,
+    });
+    this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+    this.broadcast({ t: 'runPlan', plan: this.runPlan, currentNodeId: nodeId });
+    // Персист указателя забега + прогресс сложности/квестов.
+    const qev: SessionEvent[] = [];
+    for (const pid of this.clients.keys()) {
+      const s = this.session.world.players[pid]!.save;
+      const visited = [...(s.run?.visited ?? []), nodeId];
+      s.run = { templateId: this.runConfig.templateId, config: this.runConfig, currentNodeId: nodeId, visited };
+      s.difficultyProgress[this.difficultyId] = Math.max(s.difficultyProgress[this.difficultyId] ?? 0, node.depth);
+      for (const qid of trackFloor(s, node.depth).completed) qev.push(this.questCompleted(pid, s, qid));
+      this.sendSave(pid);
+    }
+    if (qev.length) this.broadcast({ t: 'events', events: qev });
+    this.persistAll();
   }
 
   // ── Области ─────────────────────────────────────────────────────────────────
@@ -356,28 +473,6 @@ export class Room {
     this.broadcastQuestBoard();
     for (const pid of this.clients.keys()) this.sendSave(pid); // город мог выдать main-квест
     this.persistAll(); // чекпойнт: возврат в город
-  }
-  private enterDungeon(depth: number): void {
-    this.wipeAt = 0;
-    this.area = 'dungeon'; this.depth = depth;
-    this.session.world.difficultyId = this.difficultyId; // множители наград — по выбранной сложности
-    const layout = generateDungeon(this.seed, depth);
-    this.decor = layout.decor;
-    const hostSave = this.firstSave();
-    const rng = createRng(((this.seed ^ (depth * 0x9e3779b1)) >>> 0) || 1);
-    const monsters = hostSave ? spawnPacks(this.cfg, hostSave, layout, depth, this.difficultyId, rng) : [];
-    this.session.enterFloor(depth, { grid: layout.grid, spawn: layout.spawn, stairs: layout.stairsDown, monsters, doors: layout.doors, levers: layout.levers });
-    this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
-    // Прогресс сложности (разблокировка тиров) + квесты «достичь этажа N» (общий прогресс пати).
-    const qev: SessionEvent[] = [];
-    for (const pid of this.clients.keys()) {
-      const s = this.session.world.players[pid]!.save;
-      s.difficultyProgress[this.difficultyId] = Math.max(s.difficultyProgress[this.difficultyId] ?? 0, depth);
-      for (const qid of trackFloor(s, depth).completed) qev.push(this.questCompleted(pid, s, qid));
-      this.sendSave(pid);
-    }
-    if (qev.length) this.broadcast({ t: 'events', events: qev });
-    this.persistAll(); // чекпойнт: смена этажа
   }
   private regenShop(): void {
     const itemsBase = this.cfg.get('items.base');

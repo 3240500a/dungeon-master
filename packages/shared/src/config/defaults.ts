@@ -5,9 +5,13 @@ import affixes from './data/affixes.json' with { type: 'json' };
 import uniques from './data/uniques.json' with { type: 'json' };
 import monsters from './data/monsters.json' with { type: 'json' };
 import monsterAffixes from './data/monster-affixes.json' with { type: 'json' };
+import monsterRoles from './data/monster-roles.json' with { type: 'json' };
 import packs from './data/packs.json' with { type: 'json' };
-import dungeons from './data/dungeons.json' with { type: 'json' };
 import difficulties from './data/difficulties.json' with { type: 'json' };
+import biomes from './data/biomes.json' with { type: 'json' };
+import floors from './data/floors.json' with { type: 'json' };
+import runModifiers from './data/run-modifiers.json' with { type: 'json' };
+import runTemplates from './data/run-templates.json' with { type: 'json' };
 import itemTiers from './data/item-tiers.json' with { type: 'json' };
 import armorClasses from './data/armor-classes.json' with { type: 'json' };
 import physSubtypes from './data/phys-subtypes.json' with { type: 'json' };
@@ -30,9 +34,13 @@ export const defaultConfigData: Record<string, unknown> = {
   uniques,
   monsters,
   'monster-affixes': monsterAffixes,
+  'monster-roles': monsterRoles,
   packs,
-  dungeons,
   difficulties,
+  biomes,
+  floors,
+  'run-modifiers': runModifiers,
+  'run-templates': runTemplates,
   'item-tiers': itemTiers,
   'armor-classes': armorClasses,
   'phys-subtypes': physSubtypes,

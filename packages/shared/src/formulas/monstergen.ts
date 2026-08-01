@@ -50,7 +50,7 @@ const DEFAULT_SCALING: MonsterScaling = {
 export function generateMonster(
   monsters: Monsters,
   affixesPool: Affixes,
-  opts: { baseId?: string; depth: number; xpGrowth?: number; championXpMult?: number; scaling?: MonsterScaling },
+  opts: { baseId?: string; depth: number; xpGrowth?: number; championXpMult?: number; scaling?: MonsterScaling; forceChampion?: boolean },
   rng: Rng,
 ): ScaledMonster {
   const base = (opts.baseId ? monsters.find((b) => b.id === opts.baseId) : undefined) ?? rng.pick(monsters);
@@ -79,7 +79,8 @@ export function generateMonster(
     damage: 0,
   };
 
-  const champion = rng.chance(0.08);
+  // rng-бросок делаем всегда (стабильный поток), форс — сверху.
+  const champion = rng.chance(0.08) || opts.forceChampion === true;
   if (champion) {
     m.rarity = 'champion';
     m.hp = Math.round(m.hp * 2.5);
@@ -91,7 +92,7 @@ export function generateMonster(
   }
 
   const affCount = champion ? 2 : rng.chance(0.35) ? 1 : 0;
-  const pool = [...affixesPool];
+  const pool = affixesPool.filter((a) => (a as { enabled?: boolean }).enabled !== false); // выключенные аффиксы монстров не навешиваются
   for (let i = 0; i < affCount && pool.length > 0; i++) {
     const [aff] = pool.splice(rng.int(0, pool.length - 1), 1);
     if (!aff) break;

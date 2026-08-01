@@ -120,6 +120,26 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
       g.add(new THREE.Points(geo, new THREE.PointsMaterial({ map: FLAME_TEX, color: 0xffa848, size: 16, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })));
       g.position.set(o.x, 0, o.y); parent.add(g);
       torches.push({ light, base: 1500, attr, pos, life, seed });
+    } else if (o.kind === 'portal') {
+      // Портал узла забега (rest → возврат в город; финал → завершение). Аметистовое кольцо + свечение.
+      const g = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(18, 4, 10, 24), new THREE.MeshStandardMaterial({ color: 0x8a5cff, emissive: 0x4a2aa0, emissiveIntensity: 0.9 }));
+      ring.rotation.x = Math.PI / 2; ring.position.y = 20; g.add(ring);
+      const glow = new THREE.PointLight(0x8a5cff, 900, 260, 2); glow.position.y = 22; g.add(glow);
+      g.position.set(o.x, 0, o.y); parent.add(g);
+    } else if (o.kind === 'stash') {
+      // Общий сундук (крупнее обычного, тёмное золото).
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(28, 16, 18), matWood); body.position.y = 8;
+      const lid = new THREE.Mesh(new THREE.BoxGeometry(29, 7, 19), matMetal); lid.position.y = 19;
+      g.add(body, lid); g.position.set(o.x, 0, o.y); parent.add(g);
+    } else if (o.kind === 'shop') {
+      // Лавка: стойка + навес.
+      const g = new THREE.Group();
+      const counter = new THREE.Mesh(new THREE.BoxGeometry(30, 18, 16), matWood); counter.position.y = 9;
+      const awning = new THREE.Mesh(new THREE.BoxGeometry(34, 3, 20), new THREE.MeshStandardMaterial({ color: 0x4a8f6a, roughness: 0.8 })); awning.position.y = 34;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 34, 6), matWood); post.position.set(14, 17, 0);
+      g.add(counter, awning, post); g.position.set(o.x, 0, o.y); parent.add(g);
     }
   }
   if (layout.stairsDown) {

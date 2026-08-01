@@ -36,6 +36,8 @@ import { forgePanel } from '../modules/town/forgePanel.js';
 import { difficultyPanel } from '../modules/town/difficultyPanel.js';
 import { stashPanel } from '../modules/town/stashPanel.js';
 import { questLogPanel } from '../modules/quests/questLogPanel.js';
+import { runNodeLabel } from '../modules/run/runLabels.js';
+import { runMapPanel } from '../modules/run/runMapPanel.js';
 
 const yaw = (facing: number): number => Math.PI / 2 - facing;
 const FACTION: Record<string, number> = { undead: 0x9fb7a6, demon: 0xc9614a, beast: 0xb08a55, monster: 0x8a6fae };
@@ -129,6 +131,7 @@ export async function startOnline3d(): Promise<void> {
   ui.register('inventory', inventoryPanel); ui.register('character', characterPanel); ui.register('master', masterPanel);
   ui.register('skills', skillsPanel); ui.register('shop', shopPanel); ui.register('forge', forgePanel);
   ui.register('quests', questLogPanel); ui.register('difficulty', difficultyPanel); ui.register('stash', stashPanel);
+  ui.register('runmap', runMapPanel);
   new SfxController(app);
   app.gameLog = new GameLog(app, root);
   const hud = mountHud3d(app);
@@ -245,7 +248,23 @@ export async function startOnline3d(): Promise<void> {
     }
 
     if (floor.area === 'dungeon') {
-      if (floor.stairs) interactables.push({ x: floor.stairs.x, y: floor.stairs.y, radius: 34, label: 'Спуститься глубже (голосование)', run: () => app.net.send({ t: 'descend' }) });
+      const isFinale = (floor.exits?.length ?? 0) === 0;
+      // Выходы на следующий узел (v2 развилка): лестница-меш + интерактив «Спуститься» по своему ребру графа.
+      const exits = floor.exits ?? (floor.stairs ? [floor.stairs] : []);
+      exits.forEach((ex, i) => {
+        const st = new THREE.Group();
+        for (let s = 0; s < 4; s++) { const step = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.9, 5, TILE - s * 5), new THREE.MeshStandardMaterial({ color: 0x2a2a33 })); step.position.set(0, -s * 5 - 2.5, s * 3); st.add(step); }
+        st.position.set(ex.x, 0, ex.y); floorGroup.add(st);
+        interactables.push({ x: ex.x, y: ex.y, radius: 34, label: exitLabel(floor, i), run: () => descendExit(i) });
+      });
+      // Декор узла: общий сундук / лавка / портал (rest → в город, финал → завершить забег). Меши строит env3d.
+      for (const d of floor.decor) {
+        if (d.kind === 'stash') interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Общий сундук', run: () => app.bus.emit('ui:open', { panel: 'stash' }) });
+        else if (d.kind === 'shop') interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => app.bus.emit('ui:open', { panel: 'shop' }) });
+        else if (d.kind === 'portal') interactables.push(isFinale
+          ? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', run: () => app.net.send({ t: 'descend' }) }
+          : { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => app.net.send({ t: 'return' }) });
+      }
       // портал возврата в город у точки входа
       const back = new THREE.Mesh(new THREE.TorusGeometry(16, 4, 8, 20), new THREE.MeshStandardMaterial({ color: 0x8a5cff, emissive: 0x4a2aa0, emissiveIntensity: 0.7 }));
       back.rotation.x = Math.PI / 2; back.position.set(floor.spawn.x, 12, floor.spawn.y); floorGroup.add(back);
@@ -266,6 +285,7 @@ export async function startOnline3d(): Promise<void> {
       }
       app.state!.depth = floor.depth;
     } else {
+      app.run = null; // город — забега нет (мог остаться от завершённого/бросенного)
       // город: NPC-столбики с подписью-биллбордом + портал в подземелье
       for (const n of TOWN_NPCS) {
         const wx = n.cx * TILE + TILE / 2, wz = n.cy * TILE + TILE / 2;
@@ -284,6 +304,23 @@ export async function startOnline3d(): Promise<void> {
     app.gameLog?.setVisible(true);   // лента лога/«чат» видна только В ИГРЕ (как 2D OnlineScene.buildArea)
     minimap.setFloor(floor.grid); minimap.setVisible(true);
     debug.setFloor(floor.grid);
+  }
+
+  /** Спуск через i-й выход: маппит выход на i-е ребро текущего узла (targetNodeId, лениво — граф уже актуален на момент клика). */
+  function descendExit(i: number): void {
+    const run = app.run;
+    const cur = run?.plan.nodes.find((n) => n.id === run.currentNodeId);
+    app.net.send({ t: 'descend', targetNodeId: cur?.edges[i]?.to });
+  }
+  /** Подпись выхода: на развилке (>1 ребро) — тип целевого узла (see-ahead), иначе обычный спуск. */
+  function exitLabel(floor: FloorInit, i: number): string {
+    const cur = app.run?.plan.nodes.find((n) => n.id === floor.runNodeId);
+    if (cur && cur.edges.length > 1) {
+      const to = cur.edges[i]?.to;
+      const tn = to ? app.run!.plan.nodes.find((n) => n.id === to) : undefined;
+      if (tn) return `Спуститься: ${runNodeLabel(tn.type)} (голосование)`;
+    }
+    return 'Спуститься глубже (голосование)';
   }
 
   function labelSprite(text: string): THREE.Sprite {
@@ -586,7 +623,7 @@ export async function startOnline3d(): Promise<void> {
       minimap.render(smoothX, smoothZ, me?.facing ?? 0,
         latest.monsters.filter((m) => m.alive).map((m) => ({ x: m.x, z: m.y })),
         latest.players.filter((p) => p.id !== myId).map((p) => ({ x: p.x, z: p.y })),
-        interactables.map((it): MiniMark => ({ x: it.x, y: it.y, kind: /подземель|глубже|город/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc' })));
+        interactables.map((it): MiniMark => ({ x: it.x, y: it.y, kind: /спуст|подземель|глубже|город|заверш/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc' })));
       if (debug.on) {
         const mel = app.config.get('balance').melee;
         const w = app.state.save.equipment.weapon;

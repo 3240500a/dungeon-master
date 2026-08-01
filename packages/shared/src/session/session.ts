@@ -72,6 +72,12 @@ export interface FloorLayout {
   grid: Grid;
   spawn: Vec2;
   stairs?: Vec2;
+  /** Все выходы на следующие этажи (v2 развилка). */
+  exits?: Vec2[];
+  /** Мета узла забега (v2) — для рендера/карты. */
+  runNodeId?: string;
+  runNodeType?: string;
+  floorModifiers?: string[];
   monsters: MonsterSpawn[];
   /** Запертые ворота + рычаги (по модели «дверь ↔ рычаг»). */
   doors?: { id: number; cells: { cx: number; cy: number }[] }[];
@@ -196,6 +202,10 @@ export class GameSession {
     w.grid = layout.grid;
     w.spawn = { ...layout.spawn };
     w.stairs = layout.stairs ? { ...layout.stairs } : undefined;
+    w.exits = layout.exits ? layout.exits.map((e) => ({ ...e })) : undefined;
+    w.runNodeId = layout.runNodeId;
+    w.runNodeType = layout.runNodeType;
+    w.floorModifiers = layout.floorModifiers;
     w.doors = (layout.doors ?? []).map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) }));
     w.levers = (layout.levers ?? []).map((l) => ({ id: l.id, pos: { x: l.x, y: l.y }, doorId: l.doorId, used: false }));
     w.monsters = [];

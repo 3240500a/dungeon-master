@@ -3,9 +3,9 @@ import {
   type ClassDef,
 } from '@dm/shared';
 
-/** Список определений классов из конфига. Стартовый набор персонажа — shared `newCharacterSave`. */
+/** Список ВКЛЮЧЁННЫХ классов для выбора при создании (выключенные не предлагаются). Лукап по id — `findClass`. */
 export function listClasses(config: ConfigRegistry): ClassDef[] {
-  return config.get('classes');
+  return config.get('classes').filter((c) => c.enabled !== false);
 }
 
 export function findClass(

@@ -1,6 +1,6 @@
 import type { DamagePacket, DamageType } from '../types/combat.js';
 import type { WorldState } from '../world/state.js';
-import type { DecorObject } from '../dungeon/generate.js';
+import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { FloorInit, WorldSnapshot } from './netTypes.js';
 
 /**
@@ -48,6 +48,10 @@ export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorO
     grid: w.grid,
     spawn: { ...w.spawn },
     stairs: w.stairs ? { ...w.stairs } : undefined,
+    exits: w.exits ? w.exits.map((e) => ({ ...e })) : w.stairs ? [{ ...w.stairs }] : [],
+    runNodeId: w.runNodeId,
+    runNodeType: w.runNodeType,
+    floorModifiers: w.floorModifiers,
     decor,
     monsters: w.monsters.map((m) => ({ id: m.id, def: m.def, x: m.pos.x, y: m.pos.y })),
     doors: w.doors.map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) })),

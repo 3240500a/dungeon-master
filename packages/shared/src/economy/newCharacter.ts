@@ -14,7 +14,9 @@ const STARTER_ARMOR = ['leather-cap', 'leather-armor', 'leather-boots', 'leather
  * предметы — они игнорируются). Тот же билдер зовёт клиент для локального ростера.
  */
 export function newCharacterSave(reg: ConfigRegistry, classId: string, name: string, charId: string): SaveState {
-  const cls = reg.get('classes').find((c) => c.id === classId) ?? reg.get('classes')[0]!;
+  const classes = reg.get('classes');
+  // Точный класс по id; фолбэк на первый ВКЛЮЧЁННЫЙ (а не на выключенный [0]), иначе на первый вообще.
+  const cls = classes.find((c) => c.id === classId) ?? classes.find((c) => c.enabled !== false) ?? classes[0]!;
   const equipment: SaveState['equipment'] = {};
   const inventory: Item[] = [];
   for (const id of [cls.startWeaponId, ...STARTER_ARMOR]) {

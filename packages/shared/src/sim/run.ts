@@ -58,7 +58,7 @@ export function runSim(reg: ConfigRegistry, settings: SimSettings): SimOutput {
     const model = makePlayerModel(reg, save, { useSkills: settings.build.useSkills });
     const el = effectiveLevel(save, power).total;
     const cl = challengeAtFloor(startChallenge(el, diff), diff, settings.floor);
-    const pool = reg.get('dungeons')[0]!.monsterPool;
+    const pool = reg.get('biomes')[0]!.monsterPool;
     const monsters = reg.get('monsters');
     const affx = reg.get('monster-affixes');
     const make = (r: typeof rng) =>

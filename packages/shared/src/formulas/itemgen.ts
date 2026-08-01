@@ -23,7 +23,9 @@ function pickTierClamped(
   maxTierId: string,
 ): ItemTiers[number] | undefined {
   if (!tiers || tiers.length === 0) return undefined;
-  const sorted = [...tiers].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  // Выключенные тиры не выбираются (фолбэк на все, если вдруг всё выключено — чтобы предметы генерились).
+  const usable = tiers.filter((t) => t.enabled !== false);
+  const sorted = [...(usable.length ? usable : tiers)].sort((a, b) => a.minItemLevel - b.minItemLevel);
   const idOf = (id: string): number => {
     const i = sorted.findIndex((t) => t.id === id);
     return i < 0 ? -1 : i;
@@ -159,7 +161,8 @@ export function itemFromBaseId(itemsBase: ItemsBase, baseId: string, tiers?: Ite
  * data-driven (rarities.threshold), каскад rarest-first (unique→rare→magic→normal). */
 export function rollRarity(dropBias: number, rng: Rng, rarities: Rarities): Rarity {
   const r = rng.next() / Math.max(0.0001, dropBias);
-  const ordered = [...rarities].sort((a, b) => a.threshold - b.threshold);
+  // Выключенные редкости не роллятся (их порог пропускается — дроп «падает» к следующей доступной).
+  const ordered = rarities.filter((x) => x.enabled !== false).sort((a, b) => a.threshold - b.threshold);
   for (const rar of ordered) if (r < rar.threshold) return rar.id;
   return 'normal';
 }
@@ -171,7 +174,7 @@ export function rollAffixes(
   itemLevel: number,
   rng: Rng,
 ): RolledAffix[] {
-  const pool = [...affixes];
+  const pool = affixes.filter((a) => a.enabled !== false); // выключенные аффиксы не роллятся
   const rolled: RolledAffix[] = [];
   for (let i = 0; i < count && pool.length > 0; i++) {
     const idx = rng.int(0, pool.length - 1);
@@ -219,8 +222,9 @@ export function generateItem(
   // itemLevel самой базы. Влияет на тир (зажатый диапазоном базы), аффиксы, цену.
   const dropIlvl = Math.max(1, Math.round(opts.itemLevel));
 
-  if (rarity === 'unique' && uniques.length > 0) {
-    const unique = rng.pick(uniques);
+  const uniquePool = uniques.filter((u) => u.enabled !== false); // выключенные уники не выпадают
+  if (rarity === 'unique' && uniquePool.length > 0) {
+    const unique = rng.pick(uniquePool);
     const base = itemsBase.find((b) => b.id === unique.baseId);
     if (base) {
       const ilvl = Math.max(baseItemLevel(base, opts.tiers), dropIlvl);
@@ -238,11 +242,13 @@ export function generateItem(
 
   // Выбор базы: по baseId (магазин/квест), иначе — взвешенно по категориям (`categoryWeights` из
   // balance.loot) × per-item `dropWeight`. Без weights — прежнее поведение (равномерно по экипу).
-  const equipPool = itemsBase.filter((b) => b.kind !== 'consumable');
+  // Выключенные базы (enabled:false) не выпадают из случайного дропа (явный baseId — можно).
+  const enabledBase = itemsBase.filter((b) => b.enabled !== false);
+  const equipPool = enabledBase.filter((b) => b.kind !== 'consumable');
   const base = opts.baseId
     ? itemsBase.find((b) => b.id === opts.baseId) ?? rng.pick(equipPool)
     : opts.categoryWeights
-      ? pickDropBase(itemsBase, opts.categoryWeights, rng)
+      ? pickDropBase(enabledBase, opts.categoryWeights, rng)
       : rng.pick(equipPool);
 
   // Расходники (колбы) не роллят редкость/аффиксы/тир — всегда normal.

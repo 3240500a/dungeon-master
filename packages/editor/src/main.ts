@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources } from './form.js';
 import { renderSimPage } from './sim.js';
+import { renderRunGenPage } from './runGen.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 
@@ -19,9 +20,13 @@ const LABELS: Record<ConfigKey, string> = {
   uniques: 'Уники',
   monsters: 'Монстры',
   'monster-affixes': 'Монстры: аффиксы',
+  'monster-roles': 'Роли монстров',
   packs: 'Пачки монстров',
-  dungeons: 'Подземелья',
   difficulties: 'Сложности',
+  biomes: 'Биомы',
+  floors: 'Этажи',
+  'run-modifiers': 'Модификаторы забега',
+  'run-templates': 'Шаблоны забега',
   'item-tiers': 'Предметы: тиры',
   'armor-classes': 'Классы брони',
   'phys-subtypes': 'Физ. подтипы',
@@ -54,8 +59,8 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques'] },
-  { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'packs'] },
-  { title: 'Мир', keys: ['dungeons', 'difficulties'] },
+  { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'monster-roles', 'packs'] },
+  { title: 'Мир', keys: ['biomes', 'floors', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
 ];
@@ -63,9 +68,10 @@ const NAV_GROUPS: NavGroup[] = [
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', packs: 'Пачки',
+  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', 'monster-roles': 'Роли', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
+  'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега',
 };
 /** Раскрытые группы навигации (переживают перерисовку). */
 const expandedNav = new Set<string>(['Предметы']);
@@ -81,7 +87,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' = 'config';
+let view: 'config' | 'sim' | 'rungen' = 'config';
 
 // minTier/maxTier — выпадашки из актуального списка тиров (id из item-tiers).
 const tierIds = (): string[] => ((data['item-tiers'] as { id: string }[]) ?? []).map((t) => t.id);
@@ -94,6 +100,10 @@ fieldEnumSources.requireArmorClass = armorClassIds;
 // physSub / weight — выпадашки из конфигов физ-подтипов и весов.
 fieldEnumSources.physSub = () => ((data['phys-subtypes'] as { id: string }[]) ?? []).map((s) => s.id);
 fieldEnumSources.weight = () => ((data['weapon-weights'] as { id: string }[]) ?? []).map((w) => w.id);
+// biomeId (в этажах) — выпадашка из конфига биомов.
+fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
+// role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
+fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []).map((r) => r.id);
 
 const app = document.getElementById('app')!;
 render();
@@ -118,6 +128,29 @@ function loadFromServer(): void {
 function entryLabel(entry: unknown, i: number): string {
   const e = entry as Record<string, unknown>;
   return (e?.name as string) || (e?.id as string) || (e?.classId as string) || `#${i}`;
+}
+
+/** Есть ли у элемента массива поле `field` (объект/дискр. union) — для тумблера enabled. */
+function schemaHasField(elemSchema: z.ZodTypeAny, field: string): boolean {
+  const def = elemSchema._def;
+  if (def.typeName === 'ZodObject') return field in (elemSchema as z.ZodObject<z.ZodRawShape>).shape;
+  if (def.typeName === 'ZodDiscriminatedUnion') {
+    const raw = def.options;
+    const opts = (Array.isArray(raw) ? raw : [...raw.values()]) as z.ZodObject<z.ZodRawShape>[];
+    return opts.length > 0 && field in opts[0]!.shape;
+  }
+  return false;
+}
+
+/** Тумблер «активно/неактивно» (●/○) для записи со схемным полем `enabled`. */
+function enabledToggle(e: Record<string, unknown>): HTMLElement {
+  const off = e.enabled === false;
+  const tog = document.createElement('span');
+  tog.textContent = off ? '○' : '●';
+  tog.title = off ? 'Выключен — включить' : 'Включён — выключить';
+  tog.style.cssText = `cursor:pointer;color:${off ? '#8a8a9a' : '#5bd06f'};font-size:15px;line-height:1;flex:0 0 auto`;
+  tog.addEventListener('click', (ev) => { ev.stopPropagation(); e.enabled = off; render(); });
+  return tog;
 }
 
 // ── Дерево-навигация для дискриминированных массивов (items.base) ──────────────
@@ -204,9 +237,15 @@ function renderItemTree(list: HTMLElement, arr: unknown[]): void {
     }
     for (const i of node.leaves) {
       const active = i === selectedIndex;
+      const e = arr[i] as Record<string, unknown>;
+      const off = e?.enabled === false;
       const item = document.createElement('div');
-      item.textContent = entryLabel(arr[i], i);
-      item.style.cssText = `padding:4px 6px;padding-left:${6 + depth * 14}px;cursor:pointer;font-size:13px;border-radius:4px;margin:1px 0;background:${active ? '#2f2f40' : 'transparent'};color:${active ? '#fff' : '#aab4c4'}`;
+      item.style.cssText = `display:flex;align-items:center;gap:6px;padding:4px 6px;padding-left:${6 + depth * 14}px;cursor:pointer;font-size:13px;border-radius:4px;margin:1px 0;background:${active ? '#2f2f40' : 'transparent'};color:${active ? '#fff' : '#aab4c4'};${off ? 'opacity:0.5' : ''}`;
+      item.appendChild(enabledToggle(e));
+      const lbl = document.createElement('span');
+      lbl.textContent = entryLabel(arr[i], i);
+      lbl.style.cssText = `flex:1;${off ? 'text-decoration:line-through' : ''}`;
+      item.appendChild(lbl);
       item.addEventListener('click', () => { selectedIndex = i; render(); });
       list.appendChild(item);
     }
@@ -229,6 +268,13 @@ function render(): void {
   simBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'sim' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
   simBtn.addEventListener('click', () => { view = 'sim'; render(); });
   nav.appendChild(simBtn);
+
+  // Отдельная вкладка-инструмент: генератор забегов v2 (структура + поклеточный просмотр).
+  const runBtn = document.createElement('button');
+  runBtn.textContent = '🗺 Забеги v2';
+  runBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'rungen' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  runBtn.addEventListener('click', () => { view = 'rungen'; render(); });
+  nav.appendChild(runBtn);
 
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
   const covered = new Set(NAV_GROUPS.flatMap(groupKeys));
@@ -269,6 +315,7 @@ function render(): void {
   const page = document.createElement('div');
   page.style.cssText = 'flex:1;min-width:0;min-height:0;overflow-y:auto;padding-right:6px';
   if (view === 'sim') renderSimPage(page, data);
+  else if (view === 'rungen') renderRunGenPage(page, data);
   else renderPage(page);
 
   layout.append(nav, page);
@@ -357,19 +404,23 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   );
   list.appendChild(crud);
 
+  const supportsEnabled = schemaHasField(elemSchema, 'enabled');
   // Дискриминированные массивы (items.base) — дерево категорий; прочие — плоский список.
   if (isUnion) {
     renderItemTree(list, arr);
   } else {
     arr.forEach((entry, i) => {
-      const item = document.createElement('div');
-      item.textContent = entryLabel(entry, i);
+      const e = entry as Record<string, unknown>;
+      const off = supportsEnabled && e.enabled === false;
       const active = i === selectedIndex;
-      item.style.cssText = `padding:6px 8px;cursor:pointer;border-radius:4px;margin:2px 0;background:${active ? '#2f2f40' : '#161620'};border:1px solid #2c2c3a;font-size:13px`;
-      item.addEventListener('click', () => {
-        selectedIndex = i;
-        render();
-      });
+      const item = document.createElement('div');
+      item.style.cssText = `display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;border-radius:4px;margin:2px 0;background:${active ? '#2f2f40' : '#161620'};border:1px solid #2c2c3a;font-size:13px;${off ? 'opacity:0.5' : ''}`;
+      if (supportsEnabled) item.appendChild(enabledToggle(e));
+      const label = document.createElement('span');
+      label.textContent = entryLabel(entry, i);
+      label.style.cssText = `flex:1;${off ? 'text-decoration:line-through' : ''}`;
+      item.appendChild(label);
+      item.addEventListener('click', () => { selectedIndex = i; render(); });
       list.appendChild(item);
     });
   }

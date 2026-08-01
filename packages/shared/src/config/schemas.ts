@@ -245,6 +245,8 @@ export const classesSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
+    /** Активен ли класс (выключенный не предлагается при создании персонажа). */
+    enabled: z.boolean().default(true),
     startAttributes: attributesSchema,
     startWeaponId: z.string(),
     sprite: z.string(),
@@ -263,6 +265,8 @@ export const classesSchema = z.array(
 const itemBaseCommon = {
   id: z.string(),
   name: z.string(),
+  /** Активен ли предмет в игре (выключенный не выпадает/не в магазине, но остаётся в редакторе). */
+  enabled: z.boolean().default(true),
   /** Род названия (для согласования тир-префикса): м/ж/с/мн. */
   gender: z.enum(['m', 'f', 'n', 'p']).default('m'),
   /** Диапазон тиров, в котором предмет может появиться (id из item-tiers). Уровень
@@ -360,6 +364,8 @@ export const itemsBaseSchema = z.array(
 export const affixesSchema = z.array(
   z.object({
     id: z.string(),
+    /** Активен ли аффикс (выключенный не роллится на предметах). */
+    enabled: z.boolean().default(true),
     kind: z.enum(['prefix', 'suffix']),
     stat: z.string(),
     modKind: z.enum(['flat', 'increased']),
@@ -378,6 +384,8 @@ export const uniquesSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
+    /** Активен ли уник (выключенный не выпадает). */
+    enabled: z.boolean().default(true),
     baseId: z.string(),
     fixedAffixes: z.array(
       z.object({
@@ -393,6 +401,10 @@ export const monstersSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
+    /** Активен ли монстр в игре (выключенный не спавнится, но остаётся в редакторе). */
+    enabled: z.boolean().default(true),
+    /** id роли монстра (из monster-roles) — для состава пачек. */
+    role: z.string().default('warrior'),
     hp: z.number(),
     minDamage: z.number(),
     maxDamage: z.number(),
@@ -429,6 +441,8 @@ export const monsterAffixesSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
+    /** Активен ли аффикс монстра (выключенный не навешивается на чемпионов/рарников). */
+    enabled: z.boolean().default(true),
     mult: z.record(z.string(), z.number()).default({}),
     add: z.record(z.string(), z.number()).default({}),
     damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).optional(),
@@ -440,6 +454,8 @@ export const monsterAffixesSchema = z.array(
 export const itemTiersSchema = z.array(
   z.object({
     id: z.string(),
+    /** Активен ли тир (выключенный не выбирается при генерации предмета). */
+    enabled: z.boolean().default(true),
     /** Префикс имени тира ('' — базовый). */
     name: z.string().default(''),
     /** Минимальный itemLevel дропа, с которого доступен тир. */
@@ -486,6 +502,8 @@ export const raritiesSchema = z.array(
   z.object({
     id: z.enum(['normal', 'magic', 'rare', 'unique']),
     name: z.string(),
+    /** Активна ли редкость (выключенная не роллится в дропе; существующие предметы не трогаются). */
+    enabled: z.boolean().default(true),
     color: z.string(),
     /** Кумулятивный порог r< (rarest-first): unique 0.02, rare 0.12, magic 0.40, normal 1.0. */
     threshold: z.number().min(0).max(1),
@@ -599,25 +617,34 @@ export const physSubtypesSchema = z.array(
   }),
 );
 
-// ── dungeons ────────────────────────────────────────────────────────────────
-export const packsSchema = z.array(
-  z.object({
-    roomType: z.enum(['entrance', 'small', 'large', 'treasure', 'boss']),
-    min: z.number().int().min(0),
-    max: z.number().int().min(0),
-    /** Форсировать чемпиона (для босс-комнат). */
-    champion: z.boolean().default(false),
-  }),
-);
-
-export const dungeonsSchema = z.array(
+// ── monster-roles ─────────────────────────────────────────────────────────────
+/** Настраиваемые РОЛИ монстров (разведчик/лучник/воин/шаман/…) — таксономия для состава пачек. */
+export const monsterRolesSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
-    tileset: z.string(),
-    monsterPool: z.array(z.string()),
-    dropBias: z.number(),
-    modifiers: z.array(z.string()),
+    desc: z.string().default(''),
+    /** Подсказка поведения (для генерации/будущего ИИ). */
+    ai: z.enum(['melee-chaser', 'ranged-kiter', 'stationary']).default('melee-chaser'),
+    tags: z.array(z.string()).default([]),
+  }),
+);
+
+// ── dungeons ────────────────────────────────────────────────────────────────
+/** Запись состава пачки: сколько монстров указанной РОЛИ. */
+const packEntrySchema = z.object({
+  /** id роли монстра (из monster-roles). */
+  role: z.string(),
+  min: z.number().int().min(0),
+  max: z.number().int().min(0),
+});
+export const packsSchema = z.array(
+  z.object({
+    roomType: z.enum(['entrance', 'small', 'large', 'treasure', 'boss']),
+    /** Состав пачки по ролям («2–4 воина + 1–2 лучника»). */
+    entries: z.array(packEntrySchema).default([]),
+    /** Форсировать чемпиона (для босс-комнат). */
+    champion: z.boolean().default(false),
   }),
 );
 
@@ -626,6 +653,8 @@ export const difficultiesSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
+    /** Активен ли тир сложности (выключенный не предлагается в алтаре и отвергается сервером). */
+    enabled: z.boolean().default(true),
     /** Как считать старт: percent — EL×(1+offset); flat — EL+offset. */
     offsetMode: z.enum(['percent', 'flat']).default('flat'),
     /** Смещение старта от эфф. уровня игрока (доля для percent, уровни для flat). */
@@ -642,6 +671,228 @@ export const difficultiesSchema = z.array(
     unlockFloor: z.number().int().min(0).default(0),
   }),
 );
+
+// ── run generator v2 (биомы / модификаторы / шаблоны забега) ──────────────────
+/**
+ * Параметры поклеточного алгоритма этажа (дискр. по `algorithm`). Биом выбирает алгоритм.
+ * Сейчас реализованы `rooms` (рефактор текущего генератора), `bsp`, `cellular`; `maze`/`prefab` —
+ * задел (в реестре есть, геометрия — позже). Все алгоритмы держат один инвариант проходимости.
+ */
+const floorSizeCommon = {
+  cols: z.number().int().min(20).max(200).default(56),
+  rows: z.number().int().min(20).max(200).default(42),
+};
+const roomsParamsSchema = z.object({
+  algorithm: z.literal('rooms'),
+  ...floorSizeCommon,
+  /** Целевое число комнат (rejection-sampling). */
+  roomCount: z.number().int().min(3).max(30).default(9),
+  /** Шанс «большой» комнаты. */
+  bigChance: z.number().min(0).max(1).default(0.3),
+});
+const bspParamsSchema = z.object({
+  algorithm: z.literal('bsp'),
+  ...floorSizeCommon,
+  /** Глубина рекурсивного разбиения (2^depth ≈ листьев/комнат). */
+  splitDepth: z.number().int().min(1).max(7).default(4),
+  /** Минимальный размер листа (клеток), ниже которого не делим. */
+  minLeaf: z.number().int().min(6).max(40).default(9),
+  /** Отступ комнаты от границ листа (клеток). */
+  roomPad: z.number().int().min(1).max(6).default(1),
+});
+const cellularParamsSchema = z.object({
+  algorithm: z.literal('cellular'),
+  ...floorSizeCommon,
+  /** Доля стен в начальном шуме (0..1). */
+  fillProb: z.number().min(0.2).max(0.7).default(0.45),
+  /** Шагов сглаживания. */
+  steps: z.number().int().min(1).max(10).default(5),
+  /** born: клетка-пол становится стеной, если соседей-стен ≥ born. */
+  born: z.number().int().min(1).max(8).default(5),
+  /** survive: стена остаётся стеной, если соседей-стен ≥ survive. */
+  survive: z.number().int().min(0).max(8).default(4),
+});
+const mazeParamsSchema = z.object({
+  algorithm: z.literal('maze'),
+  ...floorSizeCommon,
+  /** Доля тупиков, которые «расплетаются» (braid): 0 — идеальный лабиринт, 1 — без тупиков. */
+  braid: z.number().min(0).max(1).default(0.3),
+});
+const prefabParamsSchema = z.object({
+  algorithm: z.literal('prefab'),
+  ...floorSizeCommon,
+});
+const floorAlgoParamsSchema = z.discriminatedUnion('algorithm', [
+  roomsParamsSchema, bspParamsSchema, cellularParamsSchema, mazeParamsSchema, prefabParamsSchema,
+]);
+
+/**
+ * Этаж = конфиг геометрии: биом-тема + тип генерации (алгоритм+параметры+размер) + окно глубины,
+ * на котором этаж может появиться (minDepth..maxDepth) + вес выбора. Генератор для узла на глубине D
+ * и биома B подбирает подходящий этаж (biomeId===B && minDepth≤D≤maxDepth, по весу). Это позволяет
+ * одному биому иметь разные этажи на разных глубинах («мрачнее с глубиной»).
+ */
+/** Роль этажа = какой слот забега он заполняет. start/finale — структурные позиции. */
+const floorRoleEnum = z.enum(['combat', 'elite', 'boss', 'treasure', 'event', 'shop', 'rest', 'finale']);
+/** Фичи этажа: что на нём размещается (декор/спец-комнаты). */
+const floorFeaturesSchema = z
+  .object({
+    /** Портал возврата в город. */
+    portal: z.boolean().default(false),
+    /** Общий сундук аккаунта. */
+    stash: z.boolean().default(false),
+    /** Лавка (торговец). */
+    shop: z.boolean().default(false),
+    /** Запертая арена с боссом (замок дверь↔рычаг на дальней комнате). */
+    bossRoom: z.boolean().default(false),
+    /** Сколько комнат населить чемпионами. */
+    championRooms: z.number().int().min(0).default(0),
+    /** Сколько комнат-сокровищниц (сундук). */
+    treasureRooms: z.number().int().min(0).default(0),
+  })
+  .default({});
+
+export const floorsSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    /** Активен ли этаж в игре (выключенный не попадает в генерацию, но остаётся в редакторе). */
+    enabled: z.boolean().default(true),
+    desc: z.string().default(''),
+    /** Роль — какой слот забега заполняет (combat/elite/boss/treasure/event/shop/rest/finale). */
+    role: floorRoleEnum.default('combat'),
+    /** id биома-темы (тайлсет/монстры/лор). */
+    biomeId: z.string(),
+    /** id шаблонов забега, где этаж доступен (пусто = во всех). */
+    templates: z.array(z.string()).default([]),
+    /** Тип генерации + параметры (включая размер cols/rows). */
+    algoParams: floorAlgoParamsSchema,
+    /** Фичи: портал/сундук/лавка/босс-комната/комнаты чемпионов/сокровищницы. */
+    features: floorFeaturesSchema,
+    /** Множитель плотности пачек монстров (D2-like). */
+    packDensity: z.number().min(0).default(1),
+    /** Минимальная глубина, с которой этаж может появиться. */
+    minDepth: z.number().int().min(1).default(1),
+    /** Максимальная глубина, до которой этаж может появиться. */
+    maxDepth: z.number().int().min(1).default(99),
+    /** Вес выбора среди подходящих этажей. */
+    weight: z.number().min(0).default(1),
+  }),
+);
+
+/** Биом = ТЕМА локации (тайлсет/монстры/фракция/лор), выбирается на ВЕСЬ забег. Геометрия — в `floors`. */
+export const biomesSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    /** Активен ли биом (выключенный не предлагается в алтаре забега). */
+    enabled: z.boolean().default(true),
+    tileset: z.string(),
+    /** Тематическое описание/лор биома (многострочный). */
+    desc: z.string().default(''),
+    /** Лорная фраза-девиз биома. */
+    tagline: z.string().default(''),
+    /** Доминирующая фракция монстров (аффинити классов; server-ready hook). */
+    faction: z.enum(['undead', 'demon', 'beast', 'monster']).default('monster'),
+    /** Флейвор-список врагов из лора (для описания; НЕ id монстров). */
+    enemies: z.array(z.string()).default([]),
+    monsterPool: z.array(z.string()),
+    dropBias: z.number().min(0).default(1),
+    /** id модификаторов, всегда активных в этом биоме (задел). */
+    modifiers: z.array(z.string()).default([]),
+    /**
+     * Задел: под-варианты биома, включающиеся с достигнутой глубины (мрачнее — другие текстуры/монстры).
+     * Пусто — биом однороден. Выбор варианта — по максимальному `fromDepth ≤ depth`.
+     */
+    variants: z
+      .array(
+        z.object({
+          fromDepth: z.number().int().min(1),
+          tileset: z.string(),
+          monsterPool: z.array(z.string()).optional(),
+        }),
+      )
+      .default([]),
+  }),
+);
+
+/** Эффект модификатора: op к стат-ключу баланса/лута/монстров. Применение в бою — Ф4 (сейчас — генерация/статистика). */
+const modEffectSchema = z.object({
+  stat: z.string(),
+  op: z.enum(['add', 'mul']),
+  value: z.number(),
+});
+/**
+ * Реестр модификаторов забега (Relics/Afflictions/Boons + waystone-mods PoE2). Основа расширения:
+ * новый модификатор = запись в JSON. `scope:'run'` — на весь забег (выбирается в алтаре),
+ * `scope:'node'` — навешивается генератором на отдельный узел (реклама вперёд).
+ */
+export const runModifiersSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    /** Активен ли модификатор (выключенный не навешивается/не в алтаре). */
+    enabled: z.boolean().default(true),
+    kind: z.enum(['prefix', 'suffix', 'relic', 'affliction', 'boon']),
+    /** Тир силы (как у waystone-mod); необязателен. */
+    tier: z.number().int().min(1).optional(),
+    tags: z.array(z.string()).default([]),
+    scope: z.enum(['run', 'node']),
+    /** Вес выбора генератором (для scope:'node'). */
+    weight: z.number().min(0).default(1),
+    desc: z.string().default(''),
+    effects: z.array(modEffectSchema).default([]),
+  }),
+);
+
+const runNodeTypeEnum = z.enum(['combat', 'elite', 'boss', 'treasure', 'event', 'shop', 'rest']);
+/**
+ * Шаблон забега (пресет «алтаря»): дефолты параметров, которые игрок тюнит перед генерацией.
+ * Тир — id из `difficulties`. Точная поэтажная раскладка НЕ задаётся — только параметры + сид.
+ */
+export const runTemplatesSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    /** Активен ли шаблон (выключенный не предлагается в алтаре). */
+    enabled: z.boolean().default(true),
+    /** Тир сложности (id из difficulties). */
+    tier: z.string().default('normal'),
+    /** Длина забега (число слоёв графа) — диапазон, из которого сид выбирает. */
+    length: z
+      .object({ min: z.number().int().min(1).default(6), max: z.number().int().min(1).default(10) })
+      .default({ min: 6, max: 10 }),
+    /** Ширина слоя (число параллельных узлов) — управляет развилками. */
+    width: z
+      .object({ min: z.number().int().min(1).default(1), max: z.number().int().min(1).default(3) })
+      .default({ min: 1, max: 3 }),
+    /** Степень ветвления 0..1 (шанс развилок/схождений). */
+    branching: z.number().min(0).max(1).default(0.5),
+    /** Точка возврата (rest) каждые N слоёв (+jitter). 0 — нет rest-узлов. */
+    returnEvery: z.number().int().min(0).default(4),
+    returnJitter: z.number().int().min(0).default(1),
+    /** Босс каждые N слоёв (0 — только финальный). */
+    bossEvery: z.number().int().min(0).default(5),
+    /** Есть ли финальный узел (finale). */
+    finale: z.boolean().default(true),
+    /** Веса типов узлов (start/finale/boss/rest назначаются структурно, не по весам). */
+    nodeTypeWeights: z
+      .record(runNodeTypeEnum, z.number())
+      .default({ combat: 6, elite: 2, treasure: 1, event: 1, shop: 1 }),
+    /** id модификаторов, доступных в алтаре этого шаблона (пусто — все scope:'run'). */
+    allowedModifiers: z.array(z.string()).default([]),
+  }),
+);
+
+export type FloorAlgoParams = z.infer<typeof floorAlgoParamsSchema>;
+export type Floor = z.infer<typeof floorsSchema>[number];
+export type FloorRole = z.infer<typeof floorRoleEnum>;
+export type FloorFeatures = z.infer<typeof floorFeaturesSchema>;
+export type Biome = z.infer<typeof biomesSchema>[number];
+export type RunModifier = z.infer<typeof runModifiersSchema>[number];
+export type MonsterRole = z.infer<typeof monsterRolesSchema>[number];
+export type RunTemplate = z.infer<typeof runTemplatesSchema>[number];
+export type RunNodeType = z.infer<typeof runNodeTypeEnum> | 'start' | 'finale';
 
 // ── skills ──────────────────────────────────────────────────────────────────
 const skillCostSchema = z.object({
@@ -949,6 +1200,8 @@ export const questsMainSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
+    /** Активен ли квест (выключенный пропускается в цепочке основных квестов). */
+    enabled: z.boolean().default(true),
     description: z.string(),
     objectives: z.array(
       z.object({
@@ -966,6 +1219,8 @@ export const questsMainSchema = z.array(
 export const questsRandomSchema = z.array(
   z.object({
     id: z.string(),
+    /** Активен ли шаблон случайного квеста (выключенный не попадает на доску). */
+    enabled: z.boolean().default(true),
     objectiveType: objectiveTypeEnum,
     amountRange: z.tuple([z.number(), z.number()]),
     targetPool: z.array(z.string()),
@@ -984,9 +1239,13 @@ export const configSchemas = {
   uniques: uniquesSchema,
   monsters: monstersSchema,
   'monster-affixes': monsterAffixesSchema,
+  'monster-roles': monsterRolesSchema,
   packs: packsSchema,
-  dungeons: dungeonsSchema,
   difficulties: difficultiesSchema,
+  biomes: biomesSchema,
+  floors: floorsSchema,
+  'run-modifiers': runModifiersSchema,
+  'run-templates': runTemplatesSchema,
   'item-tiers': itemTiersSchema,
   'armor-classes': armorClassesSchema,
   'phys-subtypes': physSubtypesSchema,

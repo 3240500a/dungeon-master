@@ -20,6 +20,7 @@ import { shopPanel } from './modules/town/shopPanel.js';
 import { forgePanel } from './modules/town/forgePanel.js';
 import { difficultyPanel } from './modules/town/difficultyPanel.js';
 import { stashPanel } from './modules/town/stashPanel.js';
+import { runMapPanel } from './modules/run/runMapPanel.js';
 import { questLogPanel } from './modules/quests/questLogPanel.js';
 import { SfxController } from './modules/sfx/sfx.js';
 import { GameLog } from './ui/gameLog.js';
@@ -69,6 +70,7 @@ domUi.register('forge', forgePanel);
 domUi.register('quests', questLogPanel);
 domUi.register('difficulty', difficultyPanel);
 domUi.register('stash', stashPanel);
+domUi.register('runmap', runMapPanel);
 
 // Глобальные контроллеры уровня приложения (живут между сценами). Онлайн-игра:
 // прогрессия/лут/сейв — авторитетно на сервере (клиентских наград/синка нет).

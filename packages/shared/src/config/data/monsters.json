@@ -2,6 +2,7 @@
   {
     "id": "skeleton",
     "name": "Скелет",
+    "role": "warrior",
     "hp": 15,
     "minDamage": 2,
     "maxDamage": 4,
@@ -32,6 +33,7 @@
   {
     "id": "zombie",
     "name": "Зомби",
+    "role": "shield-guard",
     "hp": 30,
     "minDamage": 3,
     "maxDamage": 6,
@@ -62,6 +64,7 @@
   {
     "id": "skeleton-archer",
     "name": "Скелет лучник",
+    "role": "archer",
     "hp": 12,
     "minDamage": 4,
     "maxDamage": 6,

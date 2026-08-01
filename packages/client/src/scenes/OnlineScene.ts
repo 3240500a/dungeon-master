@@ -7,6 +7,7 @@ import { FogOfWar } from '../world/fogOfWar.js';
 import { Torch } from '../world/torch.js';
 import { Lighting } from '../world/lighting.js';
 import { GameState } from '../core/gameState.js';
+import { runNodeLabel } from '../modules/run/runLabels.js';
 import { TILE, Cell, gridSize, type FloorInit, type Grid } from '@dm/shared';
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
@@ -202,12 +203,19 @@ export class OnlineScene extends Phaser.Scene {
     this.worldObjs.push(...rendered.objects); // тайлы пола/стен — уничтожатся при следующей пересборке
     this.area = floor.area;
 
-    // Декор (факелы — анимированные с динамическим светом).
+    // Декор (факелы — анимированные со светом; портал/сундук/лавка узла забега — интерактивные).
+    // Финальный узел (нет выходов) → портал завершает забег; иначе (rest) → возврат в город.
+    const isFinale = floor.area === 'dungeon' && (floor.exits?.length ?? 0) === 0;
     for (const d of floor.decor) {
       if (d.kind === 'torch') { this.torches.push(new Torch(this, d.x, d.y)); continue; }
       const img = this.add.image(d.x, d.y, `decor-${d.kind}`).setDepth(d.kind === 'arena' ? -8 : 1);
       if (d.kind === 'arena') img.setAlpha(0.4);
       this.worldObjs.push(img);
+      if (d.kind === 'stash') this.interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Общий сундук', run: () => this.app.bus.emit('ui:open', { panel: 'stash' }) });
+      else if (d.kind === 'shop') this.interactables.push({ x: d.x, y: d.y, radius: 40, label: 'Лавка', run: () => this.app.bus.emit('ui:open', { panel: 'shop' }) });
+      else if (d.kind === 'portal') this.interactables.push(isFinale
+        ? { x: d.x, y: d.y, radius: 44, label: 'Завершить забег (голосование)', run: () => this.app.net.send({ t: 'descend' }) }
+        : { x: d.x, y: d.y, radius: 44, label: 'Вернуться в город (голосование)', run: () => this.app.net.send({ t: 'return' }) });
     }
 
     // Игрок-вид (создаём один раз).
@@ -231,11 +239,13 @@ export class OnlineScene extends Phaser.Scene {
       const { cols, rows } = gridSize(floor.grid);
       this.fog = new FogOfWar(this, floor.grid, cols * TILE, rows * TILE);
       this.fog.revealSpawn(floor.spawn.x, floor.spawn.y);
-      if (floor.stairs) {
-        const st = this.add.image(floor.stairs.x, floor.stairs.y, 'tile-stairs').setDepth(1);
+      // Выходы на следующий узел (v2 развилка): каждый ведёт к своему ребру графа. На финале — нет выходов.
+      const exits = floor.exits ?? (floor.stairs ? [floor.stairs] : []);
+      exits.forEach((ex, i) => {
+        const st = this.add.image(ex.x, ex.y, 'tile-stairs').setDepth(1);
         this.worldObjs.push(st);
-        this.interactables.push({ x: floor.stairs.x, y: floor.stairs.y, radius: 34, label: 'Спуститься глубже (голосование)', run: () => this.app.net.send({ t: 'descend' }) });
-      }
+        this.interactables.push({ x: ex.x, y: ex.y, radius: 34, label: this.exitLabel(floor, i), run: () => this.descendExit(i) });
+      });
       // Портал возврата в город у точки входа (голосование пати).
       const back = this.add.image(floor.spawn.x, floor.spawn.y, 'portal').setDepth(1).setAlpha(0.85);
       this.worldObjs.push(back);
@@ -257,6 +267,7 @@ export class OnlineScene extends Phaser.Scene {
       }
       this.app.state!.depth = floor.depth;
     } else {
+      this.app.run = null; // город — забега нет (мог остаться от завершённого/бросенного)
       this.addTownDecor(floor);
       this.app.state!.depth = 0;
     }
@@ -293,6 +304,23 @@ export class OnlineScene extends Phaser.Scene {
     this.worldObjs.push(portal);
     // Портал открывает выбор сложности; уже он шлёт `descend` с выбранным тиром.
     this.interactables.push({ x: pp.x, y: pp.y, radius: 44, label: 'В подземелье (выбор сложности)', run: () => this.app.bus.emit('ui:open', { panel: 'difficulty' }) });
+  }
+
+  /** Подпись выхода: на развилке (>1 ребро) — тип целевого узла (see-ahead), иначе обычный спуск. */
+  private exitLabel(floor: FloorInit, i: number): string {
+    const cur = this.app.run?.plan.nodes.find((n) => n.id === floor.runNodeId);
+    if (cur && cur.edges.length > 1) {
+      const to = cur.edges[i]?.to;
+      const tn = to ? this.app.run!.plan.nodes.find((n) => n.id === to) : undefined;
+      if (tn) return `Спуститься: ${runNodeLabel(tn.type)} (голосование)`;
+    }
+    return 'Спуститься глубже (голосование)';
+  }
+  /** Спуск через i-й выход: маппит выход на i-е ребро текущего узла (targetNodeId). Читается лениво — на момент клика граф уже актуален. */
+  private descendExit(i: number): void {
+    const run = this.app.run;
+    const cur = run?.plan.nodes.find((n) => n.id === run.currentNodeId);
+    this.app.net.send({ t: 'descend', targetNodeId: cur?.edges[i]?.to });
   }
 
   /**

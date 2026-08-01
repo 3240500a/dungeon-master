@@ -40,10 +40,11 @@ export function simulateFloor(
   floorOverheadSec: number,
   rng: Rng,
 ): FloorResult {
-  const theme = reg.get('dungeons')[0]!;
-  const pool = theme.monsterPool;
-  const packsCfg = reg.get('packs');
+  const theme = reg.get('biomes')[0]!;
   const monsters = reg.get('monsters');
+  const enabledIds = new Set(monsters.filter((m) => m.enabled !== false).map((m) => m.id));
+  const pool = theme.monsterPool.filter((id) => enabledIds.has(id));
+  const packsCfg = reg.get('packs');
   const monAffixes = reg.get('monster-affixes');
   const itemsBase = reg.get('items.base');
   const affixes = reg.get('affixes');
@@ -52,6 +53,13 @@ export function simulateFloor(
   const el = effectiveLevel(save, reg.get('balance').power).total;
   const cl = challengeAtFloor(startChallenge(el, diff), diff, floor);
   const model = makePlayerModel(reg, save, { useSkills: policy.useSkills });
+
+  // Монстр по РОЛИ из пула (для состава пачки); фолбэк — любой из пула.
+  const roleOf = new Map(monsters.map((m) => [m.id, m.role]));
+  const pickId = (role: string): string => {
+    const c = pool.filter((id) => (roleOf.get(id) ?? '') === role);
+    return role && c.length ? rng.pick(c) : rng.pick(pool);
+  };
 
   let xp = 0, drops = 0, packsCleared = 0, minHpFrac = 1;
   let timeSec = floorOverheadSec;
@@ -62,10 +70,12 @@ export function simulateFloor(
   for (const roomType of floorRoomTypes(floor, rng)) {
     const spec = packsCfg.find((p) => p.roomType === roomType) ?? packsCfg.find((p) => p.roomType === 'small');
     if (!spec) continue;
-    const count = rng.int(spec.min, spec.max) + Math.floor(floor / 3);
     const mDepth = roomType === 'boss' ? cl + 3 : cl;
-    const pack = Array.from({ length: Math.max(1, count) }, () =>
-      generateMonster(monsters, monAffixes, { baseId: rng.pick(pool), depth: mDepth }, rng));
+    const entries = spec.entries.length ? spec.entries : [{ role: '', min: 2, max: 4 }];
+    const pack = entries.flatMap((e) =>
+      Array.from({ length: rng.int(e.min, e.max) }, () =>
+        generateMonster(monsters, monAffixes, { baseId: pickId(e.role), depth: mDepth }, rng)));
+    if (!pack.length) pack.push(generateMonster(monsters, monAffixes, { baseId: rng.pick(pool), depth: mDepth }, rng));
 
     const r = simulateFight(model, pack, rng, { startHp: hp });
     timeSec += r.timeSec;

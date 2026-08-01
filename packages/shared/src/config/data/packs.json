@@ -1,6 +1,36 @@
 [
-  { "roomType": "small", "min": 2, "max": 4, "champion": false },
-  { "roomType": "large", "min": 4, "max": 7, "champion": false },
-  { "roomType": "treasure", "min": 1, "max": 3, "champion": false },
-  { "roomType": "boss", "min": 5, "max": 8, "champion": true }
+  {
+    "roomType": "small",
+    "entries": [
+      { "role": "warrior", "min": 1, "max": 3 },
+      { "role": "archer", "min": 0, "max": 1 }
+    ],
+    "champion": false
+  },
+  {
+    "roomType": "large",
+    "entries": [
+      { "role": "warrior", "min": 2, "max": 4 },
+      { "role": "shield-guard", "min": 1, "max": 2 },
+      { "role": "archer", "min": 1, "max": 2 }
+    ],
+    "champion": false
+  },
+  {
+    "roomType": "treasure",
+    "entries": [
+      { "role": "shield-guard", "min": 1, "max": 2 },
+      { "role": "warrior", "min": 1, "max": 2 }
+    ],
+    "champion": false
+  },
+  {
+    "roomType": "boss",
+    "entries": [
+      { "role": "warrior", "min": 3, "max": 5 },
+      { "role": "shield-guard", "min": 1, "max": 2 },
+      { "role": "archer", "min": 1, "max": 2 }
+    ],
+    "champion": true
+  }
 ]

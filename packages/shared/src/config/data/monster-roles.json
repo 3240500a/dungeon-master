@@ -1,0 +1,9 @@
+[
+  { "id": "scout", "name": "Разведчик", "desc": "Быстрый слабый застрельщик, бежит к игроку.", "ai": "melee-chaser", "tags": ["fast", "weak"] },
+  { "id": "warrior", "name": "Воин", "desc": "Базовый ближний боец.", "ai": "melee-chaser", "tags": ["melee"] },
+  { "id": "shield-guard", "name": "Стражник со щитом", "desc": "Крепкий танк с блоком, держит строй.", "ai": "melee-chaser", "tags": ["melee", "tanky"] },
+  { "id": "archer", "name": "Лучник", "desc": "Дальний стрелок, кайтит.", "ai": "ranged-kiter", "tags": ["ranged"] },
+  { "id": "thrower", "name": "Метатель", "desc": "Бросает снаряды по дуге на средней дистанции.", "ai": "ranged-kiter", "tags": ["ranged"] },
+  { "id": "shaman", "name": "Шаман", "desc": "Поддержка: баффы/хилл союзников.", "ai": "stationary", "tags": ["support", "caster"] },
+  { "id": "mage", "name": "Маг", "desc": "Дальний заклинатель урона.", "ai": "ranged-kiter", "tags": ["caster", "ranged"] }
+]

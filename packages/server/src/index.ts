@@ -197,7 +197,7 @@ app.post('/api/characters', (req, res) => {
   const classId = typeof b?.classId === 'string' ? b.classId : '';
   const name = (typeof b?.name === 'string' ? b.name : '').trim();
   if (!name || name.length > 16) return res.status(422).json({ error: 'Имя 1–16 символов' });
-  if (!config.get('classes').some((c) => c.id === classId)) return res.status(422).json({ error: 'Неизвестный класс' });
+  if (!config.get('classes').some((c) => c.id === classId && c.enabled !== false)) return res.status(422).json({ error: 'Неизвестный или отключённый класс' });
   if (countCharacters(userId) >= MAX_CHARS) return res.status(409).json({ error: `Лимит ${MAX_CHARS} персонажей` });
   const charId = randomUUID();
   const save = newCharacterSave(config, classId, name, charId); // авторитетный стартовый сейв
