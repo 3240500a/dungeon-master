@@ -124,7 +124,8 @@ export interface RagdollHandle {
   setMove(s: number): void;
   /** Чистая мир-скорость (u/с) — опц.; GamePlayerDoll кормит ею гейт (p.vel без [2×,0]-миганий дельты позиции). */
   setWorldVel?(vx: number, vz: number): void;
-  attack(power?: number): void;
+  /** Проиграть удар. clips (имена поз-клипов скила) — если заданы, чередуются по кругу; иначе удар по оружию. */
+  attack(clips?: string[]): void;
   setDead(d: boolean): void;
   /** Дёрг при попадании: импульс в верх тела (dx,dz — направление отбрасывания, ед. вектор; power — сила ×). */
   hitReact(dx: number, dz: number, power?: number): void;

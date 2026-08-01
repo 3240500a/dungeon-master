@@ -17,13 +17,23 @@ type AnySchema = z.ZodTypeAny;
  */
 export const fieldEnumSources: Record<string, () => string[]> = {};
 
+/**
+ * Спец-источники для полей-МАССИВОВ строк (напр. `poseClips` → имена сохранённых поз): вместо
+ * общего рендера массива рисуем упорядоченный список выпадашек из источника (порядок = порядок
+ * чередования). Заполняется снаружи (main.ts). Работает только для `z.array(z.string())`.
+ */
+export const fieldArrayEnumSources: Record<string, () => string[]> = {};
+
 /** Контрол поля: спец-источник по имени (тиры и т.п.), иначе — по схеме. */
 function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void): HTMLElement {
-  const src = fieldEnumSources[key];
-  // Enum-выпадашка по имени поля — ТОЛЬКО для строковых полей. Иначе одноимённые числовые
-  // поля (напр. `weight` брони = числовая масса vs `weight` оружия = id-класс веса) рендерились
-  // бы списком и записывали строку в число → ошибка валидации.
   const tn = unwrap(sub).schema._def.typeName;
+  // Массив строк из источника (poseClips) — упорядоченный список выпадашек.
+  const arrSrc = fieldArrayEnumSources[key];
+  if (arrSrc && tn === 'ZodArray') {
+    const elemTn = unwrap(unwrap(sub).schema._def.type).schema._def.typeName;
+    if (elemTn === 'ZodString') return renderArrayEnum(arrSrc, Array.isArray(value) ? (value as unknown[]) : [], onChange);
+  }
+  const src = fieldEnumSources[key];
   // Спец-источник — ТОЛЬКО для строковых полей (id-ссылки). Enum-поля (напр. floors.role) рендерят
   // СВОИ значения, чтобы одноимённое строковое поле-ссылка (monsters.role) не перехватывало их.
   if (src && tn === 'ZodString') {
@@ -346,6 +356,30 @@ function renderArray(
         rebuild();
       }),
     );
+  };
+  rebuild();
+  return box;
+}
+
+/** Упорядоченный список выпадашек из источника (poseClips): порядок строк = порядок чередования.
+ *  Значение вне источника (поза из другого класса/оружия) остаётся в списке опций, чтобы не терялось. */
+function renderArrayEnum(source: () => string[], value: unknown[], onChange: (v: unknown) => void): HTMLElement {
+  const box = document.createElement('div');
+  box.style.cssText = 'border:1px solid #2c2c3a;border-radius:6px;padding:6px 8px;margin:4px 0';
+  const rebuild = (): void => {
+    box.innerHTML = '';
+    const opts = source();
+    value.forEach((item, i) => {
+      const cur = item == null ? '' : String(item);
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;padding:2px 0';
+      const idx = document.createElement('b'); idx.textContent = `${i + 1}.`; idx.style.cssText = 'font-size:11px;color:#889;min-width:18px';
+      const sel = renderEnum(opts.includes(cur) || cur === '' ? opts : [cur, ...opts], cur, (v) => { value[i] = v; onChange(value); });
+      sel.style.flex = '1';
+      row.append(idx, sel, smallBtn('↑', () => { if (i > 0) { const t = value[i - 1]; value[i - 1] = value[i]; value[i] = t; onChange(value); rebuild(); } }), smallBtn('✕', () => { value.splice(i, 1); onChange(value); rebuild(); }));
+      box.appendChild(row);
+    });
+    box.appendChild(smallBtn('+ Добавить позу', () => { value.push(source()[0] ?? ''); onChange(value); rebuild(); }));
   };
   rebuild();
   return box;

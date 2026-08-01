@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
-import { renderField, defaultValue, fieldEnumSources } from './form.js';
+import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources } from './form.js';
 import { renderSimPage } from './sim.js';
 import { renderRunGenPage } from './runGen.js';
 import { renderPassiveGraph } from './passiveGraph.js';
@@ -104,6 +104,20 @@ fieldEnumSources.weight = () => ((data['weapon-weights'] as { id: string }[]) ??
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
 fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []).map((r) => r.id);
+let poseClipNames: string[] = [];
+fieldArrayEnumSources.poseClips = () => poseClipNames;
+fetch('/api/pose')
+  .then((r) => (r.ok ? (r.json() as Promise<Record<string, unknown>>) : null))
+  .then((d) => {
+    if (!d) return;
+    const clips = (d['pe_clips'] as { name?: string }[] | undefined) ?? [];
+    const names = new Set<string>();
+    for (const c of clips) if (c.name) names.add(c.name);
+    const rank = (n: string): number => (n.startsWith('удар_') ? 0 : n.startsWith('стойка_') ? 1 : 2);
+    poseClipNames = [...names].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    render();   // перерисовать — если открыт скил, выпадашки поз наполнятся
+  })
+  .catch(() => { /* сервер недоступен — без источника поз */ });
 
 const app = document.getElementById('app')!;
 render();

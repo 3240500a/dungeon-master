@@ -436,6 +436,11 @@ export async function startOnline3d(): Promise<void> {
     if (target === 'monster') return monsters.get(id as number)?.d;
     return id === myId ? self?.d : peers.get(id as string)?.d;
   }
+  // Позы-клипы для анимации скила: e.ability = nodeId скила (или 'attack' для базовой). Нашли узел с poseClips → чередуем.
+  function abilityPoseClips(ability: string): string[] | undefined {
+    const clips = app.config.get('skill-tree')?.nodes.find((n) => n.id === ability)?.effect.active?.poseClips;
+    return clips && clips.length ? clips : undefined;
+  }
 
   // ── События сервера (VFX + лог + звук через шину) ────────────────────────────
   function onEvents(events: import('@dm/shared').SessionEvent[]): void {
@@ -477,7 +482,7 @@ export async function startOnline3d(): Promise<void> {
         // Проиграть авторский удар КУКЛОЙ (у Волкодава — `удар_axe`): свой игрок или пир.
         const pv = latest?.players.find((p) => p.id === e.playerId);
         const actor = e.playerId === myId ? self : peers.get(e.playerId);
-        actor?.d.attack();
+        actor?.d.attack(abilityPoseClips(e.ability));   // скил с poseClips → чередуемые удары; базовая атака → удар по оружию
         if (pv) vfx.slash(pv.x, pv.y, pv.facing, 0xffe6a0, 48);
         if (e.playerId === myId) {   // свой удар — заливка-откат слота биндов
           const now = performance.now();

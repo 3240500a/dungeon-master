@@ -69,6 +69,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 
   // ── состояние синхронизации ──
   let tx = opts.x, tz = opts.z, tyaw = 0, lastX = opts.x, lastZ = opts.z, first = true, dead = false;
+  let atkClipIdx = 0;   // индекс чередования poseClips скила (замах справа→слева→…)
   let wvx = 0, wvz = 0, hasWvel = false, vxS = 0, vzS = 0;
   let rx = opts.x, rz = opts.z;            // сглаженная мир-позиция (сим 30Гц телепортит tx/tz)
   const off = new THREE.Vector3(), pelWorld = new THREE.Vector3(), hipsQ = new THREE.Quaternion();
@@ -105,7 +106,10 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     setPose(x, z, yaw) { if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(yaw)) { tx = x; tz = z; tyaw = yaw; } },
     setMove(_s) { /* магнитуда не нужна: скорость из setWorldVel или дельты позиции */ },
     setWorldVel(vx, vz) { if (Number.isFinite(vx) && Number.isFinite(vz)) { wvx = vx; wvz = vz; hasWvel = true; } },
-    attack(_power) { player.triggerAttack(content.attackClip(weapon)); },   // авторский удар класса → физика отыграет (у монстра пусто)
+    attack(clips) {   // скил с poseClips → чередуем клипы по кругу (замах справа, затем слева, …); иначе — удар по оружию
+      if (clips && clips.length) { const nm = clips[atkClipIdx % clips.length]!; atkClipIdx++; player.triggerAttack(content.clipByName(nm) ?? content.attackClip(weapon)); }
+      else player.triggerAttack(content.attackClip(weapon));
+    },
     setDead(d) { if (d === dead) return; dead = d; ragdoll.setDead(d); },
     hitReact(dx, dz, power = 1) { ragdoll.hit('Torso', dx, 0.35, dz, power); },   // дёрг → из физики (солид = физрезультат)
     knockback(dx, dz, frac) {   // отброс трупа: сильный горизонтальный импульс в таз+торс, дальность ∝ доле урона

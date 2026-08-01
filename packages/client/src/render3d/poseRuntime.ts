@@ -198,7 +198,7 @@ export function blendVia(grid: PlantGrid, key: 'lVia' | 'rVia', i0: number, i1: 
 }
 
 // ── Провайдер контента из localStorage (same-origin с редактором): idle-стойки + удары + sway по классу ──
-export interface GamePoseContent extends PoseContent { attackClip(weapon: string): Clip | null }
+export interface GamePoseContent extends PoseContent { attackClip(weapon: string): Clip | null; clipByName(name: string): Clip | null }
 const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as T : fb; } catch { return fb; } };
 /** Контент (стойка/удар/sway) по charId; если у него нет клипа — берём у fallbackId (монстры → Волкодав). */
 export function localStorageContent(charId: string, fallbackId?: string): GamePoseContent {
@@ -213,6 +213,8 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     // Позы/удары — по БАЗОВОМУ оружию (axe+shield → axe): щит не подменяет анимацию оружия.
     resolveUpper(weapon: string): UpperPose | null { const b = baseWeapon(weapon); const c = stance(b); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(b) } : null; },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
+    // Клип по имени (для poseClips скила: чередуемые удары) — свой персонаж, иначе фолбэк.
+    clipByName(name: string): Clip | null { return clips.find((c) => c.name === name && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === name && c.character === fallbackId) ?? null : null); },
     // Поза щита per-оружие: стойка_<weaponKey> (фолбэк стойка_shield) + вес (perWeapon[wk] ?? базовый mix). Нет клипа — нет оверлея.
     shieldOverlay(weaponKey: string): { pose: Pose; mix: number } | null { const c = stance(weaponKey) ?? stance('shield'); if (!c || !c.keys.length) return null; const cfg = shieldCfg[charId] ?? (fallbackId ? shieldCfg[fallbackId] : undefined); const mix = cfg?.perWeapon?.[weaponKey] ?? cfg?.mix ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
   };
