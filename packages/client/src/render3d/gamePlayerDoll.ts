@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
-import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, WEAPON_MASS, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
@@ -76,12 +76,8 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const pinArr: (THREE.Vector3 | null)[] = RAG_NAMES.map(() => null);
 
   function applyWeaponLoad(): void {   // вес оружия оттягивает держащую кисть (для физ-реакций/маха)
-    ragdoll.setLoad('HandR', 0); ragdoll.setLoad('HandL', 0);
-    if (weapon === 'bow' || weapon === 'crossbow') ragdoll.setLoad('HandL', WEAPON_MASS[weapon] ?? 4);
-    else if (weapon === 'sword+shield') { ragdoll.setLoad('HandR', WEAPON_MASS.sword!); ragdoll.setLoad('HandL', WEAPON_MASS.shield!); }
-    else if (weapon === 'dual') { ragdoll.setLoad('HandR', WEAPON_MASS.sword!); ragdoll.setLoad('HandL', WEAPON_MASS.dagger!); }
-    else if (weapon === 'shield') ragdoll.setLoad('HandL', WEAPON_MASS.shield!);
-    else if (weapon !== 'none') ragdoll.setLoad('HandR', WEAPON_MASS[weapon] ?? 6);
+    const [mHR, mHL] = weaponHandMasses(weapon);   // main+off: главное → правая, щит/второе оружие → левая
+    ragdoll.setLoad('HandR', mHR); ragdoll.setLoad('HandL', mHL);
   }
 
   // Прогнать физику к позе-цели на мир-позиции (таз + пины). Не зовём на смерти (там свободный коллапс).

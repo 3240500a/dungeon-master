@@ -9,10 +9,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, WEAPON_MASS, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
 import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, type PoseContent } from './poseRuntime.js';
-import { WEAPONS, attachWeapons } from './weapon3d.js';
+import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
 
@@ -341,6 +341,7 @@ function applyChar(id: string): void {
   refreshAll();
 }
 function setWeapon(w: string): void { weapon = w; updateWeapon(); clipIdx = 0; frameIdx = 0; refreshAll(); }
+const splitWeapon = (w: string): [string, string] => { if (w === 'dual') w = 'sword+dagger'; const i = w.lastIndexOf('+'); return i > 0 ? [w.slice(0, i), w.slice(i + 1)] : [w, 'none']; };   // 'main+off' → [main, off]
 
 // ══ UI ══
 const mkBtn = (label: string, fn: () => void, cls = 'tbtn'): HTMLButtonElement => { const b = document.createElement('button'); b.textContent = label; b.className = cls; b.onclick = fn; return b; };
@@ -348,8 +349,12 @@ const sep = (): HTMLElement => { const s = document.createElement('div'); s.clas
 
 // ── Тулбар ──
 const charSel = document.createElement('select'); charSel.onchange = () => applyChar(charSel.value);
-const wpnSel = document.createElement('select'); wpnSel.onchange = () => setWeapon(wpnSel.value);
+const wpnSel = document.createElement('select');
 for (const w of WEAPONS) { const o = document.createElement('option'); o.value = w; o.textContent = w; wpnSel.append(o); }
+const offSel = document.createElement('select');   // офф-рука: нет / щит / второе оружие → ключ main+off
+for (const o of OFFHANDS) { const op = document.createElement('option'); op.value = o; op.textContent = o === 'none' ? '—' : o; offSel.append(op); }
+const composeWeapon = (): void => { const m = wpnSel.value, o = offSel.value; setWeapon(o === 'none' ? m : m + '+' + o); };
+wpnSel.onchange = composeWeapon; offSel.onchange = composeWeapon;
 let fkB!: HTMLButtonElement, ikB!: HTMLButtonElement, hipsB!: HTMLButtonElement;
 function setMode(m: 'fk' | 'ik'): void { mode = m; gizmo.detach(); highlight(null); selected = null; activeKey = null; activePole = null; for (const e of effList()) { e.handle.visible = m === 'ik'; e.poleHandle.visible = m === 'ik'; } rig.hipsHandle.visible = m === 'ik'; if (m === 'ik') captureRig(); fkB.classList.toggle('on', m === 'fk'); ikB.classList.toggle('on', m === 'ik'); refreshPose(); }
 ikB = mkBtn('IK', () => setMode('ik')); fkB = mkBtn('FK', () => setMode('fk'));
@@ -365,7 +370,7 @@ personaB = mkBtn('◧ персонажи', () => {
   const first = rosterChars()[0];
   if (first) applyChar(first.id); else refreshAll();
 });
-bar.append(personaB, document.createTextNode('Персонаж'), charSel, document.createTextNode('Оружие'), wpnSel, sep(), ikB, fkB, hipsB, sep(),
+bar.append(personaB, document.createTextNode('Персонаж'), charSel, document.createTextNode('Оружие'), wpnSel, document.createTextNode('офф'), offSel, sep(), ikB, fkB, hipsB, sep(),
   mkBtn('зеркало L→R', () => { pushUndo(); mirrorLR(); }), mkBtn('T-поза', () => { pushUndo(); human.reset(); if (mode === 'ik') captureRig(); }), sep(),
   mkBtn('↶ undo', () => undo()), mkBtn('↷ redo', () => redo()), sep(), physB, manB);
 
@@ -378,7 +383,7 @@ const el = (t: string, css: string): HTMLElement => { const e = document.createE
 const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = `margin:2px 3px 2px 0;padding:3px 7px;background:${on ? '#3a5030' : '#2a3350'};color:#cfd3e0;border:1px solid #4a5680;border-radius:4px;cursor:pointer;font:11px monospace`; b.onclick = fn; return b; };
 for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['char', 'Персонаж']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => { tab = k; refreshAll(); }; b.dataset.tab = k; tabBar.append(b); }
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } wpnSel.value = weapon; if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else renderChar(); refreshTimeline(); updateOnion(); }
+function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else renderChar(); refreshTimeline(); updateOnion(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 function refreshLimbs(): void { if (tab === 'anim') renderAnim(); }
 
@@ -543,7 +548,8 @@ function renderChar(): void {
   body.append(pbtn('male', () => { c.gender = 'male'; saveCharEdit(c); applyChar(c.id); tab = 'char'; refreshAll(); }, c.gender === 'male'), pbtn('female', () => { c.gender = 'female'; saveCharEdit(c); applyChar(c.id); tab = 'char'; refreshAll(); }, c.gender === 'female'));
   const wh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); wh.textContent = 'ОРУЖИЕ ПО УМОЛЧАНИЮ'; body.append(wh);
   const wsel = el('select', 'margin:2px 0') as HTMLSelectElement;
-  for (const w of WEAPONS) { const o = document.createElement('option'); o.value = w; o.textContent = w; if (w === c.weapon) o.selected = true; wsel.append(o); }
+  const wopts = WEAPONS.includes(c.weapon) ? WEAPONS : [c.weapon, ...WEAPONS];   // combo-дефолт (напр. sword+shield) сохраняем опцией
+  for (const w of wopts) { const o = document.createElement('option'); o.value = w; o.textContent = w; if (w === c.weapon) o.selected = true; wsel.append(o); }
   wsel.onchange = () => { c.weapon = wsel.value; saveCharEdit(c); setWeapon(c.weapon); tab = 'char'; refreshAll(); };   // дефолт-оружие класса/фракции (игра берёт его)
   body.append(wsel);
   // Подмешивание ЩИТА: поза «стойка_shield» (левая рука+корпус) наслаивается на позу оружия с этим весом.
@@ -833,6 +839,14 @@ function triggerAttack(c: Clip): void {   // запустить удар; вкл
 function loadAtk(): Record<string, Record<string, string[]>> { try { return JSON.parse(localStorage.getItem('pe_attacks') || '{}') as Record<string, Record<string, string[]>>; } catch { return {}; } }
 let atkCfgs: Record<string, Record<string, string[]>> = loadAtk();
 function saveAtk(): void { try { localStorage.setItem('pe_attacks', JSON.stringify(atkCfgs)); savePoseKey('pe_attacks'); } catch { /* */ } }
+(function migrateDual(): void {   // единая офф-рука: старый ключ оружия 'dual' → 'sword+dagger' (клипы/атаки/sway). Идемпотентно.
+  let changed = false;
+  for (const c of library) if (c.weapon === 'dual') { c.weapon = 'sword+dagger'; changed = true; }
+  for (const map of [swayCfg as Record<string, Record<string, unknown>>, atkCfgs as Record<string, Record<string, unknown>>]) {
+    for (const ch of Object.keys(map)) { const byW = map[ch]!; if (byW['dual'] !== undefined && byW['sword+dagger'] === undefined) { byW['sword+dagger'] = byW['dual']; delete byW['dual']; changed = true; } }
+  }
+  if (changed) { try { localStorage.setItem('pe_clips', JSON.stringify(library)); savePoseKey('pe_clips'); localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); localStorage.setItem('pe_attacks', JSON.stringify(atkCfgs)); savePoseKey('pe_attacks'); } catch { /* */ } }
+})();
 function atkList(): string[] { return atkCfgs[curCharId]?.[weapon] ?? []; }
 function toggleAtk(name: string): void { const byC = (atkCfgs[curCharId] ??= {}); const arr = (byC[weapon] ??= []); const i = arr.indexOf(name); if (i >= 0) arr.splice(i, 1); else arr.push(name); saveAtk(); }
 const clonePose = (p: Pose): Pose => JSON.parse(JSON.stringify(p)) as Pose;
@@ -1111,12 +1125,8 @@ function stepPhysics(dt: number): void {
     if (b) { b.getWorldPosition(pinVecs[i]!); pinArr[i] = pinVecs[i]!; } else pinArr[i] = null;
   }
   ragdoll.setPinTargets(pinArr);
-  ragdoll.setLoad('HandR', 0); ragdoll.setLoad('HandL', 0);   // вес оружия на держащую кисть (оттягивает руку)
-  if (weapon === 'bow' || weapon === 'crossbow') ragdoll.setLoad('HandL', WEAPON_MASS[weapon] ?? 4);
-  else if (weapon === 'sword+shield') { ragdoll.setLoad('HandR', WEAPON_MASS.sword!); ragdoll.setLoad('HandL', WEAPON_MASS.shield!); }
-  else if (weapon === 'dual') { ragdoll.setLoad('HandR', WEAPON_MASS.sword!); ragdoll.setLoad('HandL', WEAPON_MASS.dagger!); }
-  else if (weapon === 'shield') ragdoll.setLoad('HandL', WEAPON_MASS.shield!);
-  else if (weapon !== 'none') ragdoll.setLoad('HandR', WEAPON_MASS[weapon] ?? 6);
+  const [mHR, mHL] = weaponHandMasses(weapon);   // масса рук по main+off (щит/второе оружие → левая)
+  ragdoll.setLoad('HandR', mHR); ragdoll.setLoad('HandL', mHL);
   ragdoll.update(dt);   // моторы ведут к позе + пины + вес оружия + kinematic-таз
   pw.step(Math.min(dt, 1 / 60));
   // призрак-гуманоид = физ-результат + заземление стопы (ОБЩИЙ код с игрой). На «упал» прижим off — пусть коллапсит.

@@ -82,7 +82,15 @@ function makeNameplate(name: string, champion: boolean, special: boolean): { spr
   };
 }
 
-/** Ключ 3D-оружия из ЭКИПИРОВКИ: слот weapon → база (по weaponClass/hands), офф-рука со щитом → «база+shield». */
+/** Ключ одноручного оружия по weaponClass (для офф-руки: дуал). null — не одноручное/неизвестно. */
+function oneHandKey(item: { weaponClass?: string } | undefined): string | null {
+  switch (item?.weaponClass) {
+    case 'sword': return 'sword'; case 'axe': return 'axe'; case 'mace': return 'mace';
+    case 'dagger': return 'dagger'; case 'spear': return 'spear'; case 'wand': case 'staff': return 'staff';
+    default: return null;
+  }
+}
+/** Ключ 3D-оружия из ЭКИПИРОВКИ: слот weapon → база (по weaponClass/hands); офф-рука → «база+shield» ИЛИ «база+второе» (дуал). */
 function weaponKeyFromSave(save: SaveState): string {
   const w = save.equipment.weapon, off = save.equipment.offhand;
   const two = (w?.hands ?? 1) >= 2;
@@ -99,7 +107,10 @@ function weaponKeyFromSave(save: SaveState): string {
     case 'wand': case 'staff': base = 'staff'; break;
     default: base = charFor(save.classId).weapon; break;   // нет оружия — дефолт класса
   }
-  if (!two && off?.kind === 'shield' && !base.includes('shield')) base += '+shield';   // щит в офф-руке (одноручное)
+  if (!two && !base.includes('+')) {   // одноручное → показать офф-руку
+    if (off?.kind === 'shield') base += '+shield';                                    // щит
+    else if (off?.kind === 'weapon' && (off.hands ?? 1) < 2) { const ob = oneHandKey(off); if (ob) base += '+' + ob; }   // дуал (второе одноручное)
+  }
   return base;
 }
 

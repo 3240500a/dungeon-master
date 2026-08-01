@@ -106,6 +106,17 @@ export const WEAPON_MASS: Record<string, number> = {
   sword: 6, dagger: 3, axe: 12, mace: 13, staff: 5, spear: 8, greatsword: 15, greataxe: 20, greatmaul: 24,
   halberd: 16, bow: 4, crossbow: 9, shield: 11,
 };
+/** Масса рук [правая, левая] по ключу оружия main(+off). Обобщённо: главное → правая, офф (щит/оружие) → левая. */
+export function weaponHandMasses(weapon: string): [number, number] {
+  if (weapon === 'dual') weapon = 'sword+dagger';
+  if (!weapon || weapon === 'none') return [0, 0];
+  if (weapon === 'bow') return [0, WEAPON_MASS.bow!];            // лук в левой руке
+  if (weapon === 'crossbow') return [WEAPON_MASS.crossbow!, 0];  // арбалет в правой (меш там же)
+  if (weapon === 'shield') return [0, WEAPON_MASS.shield!];      // одинокий щит — левая
+  const i = weapon.lastIndexOf('+');
+  if (i > 0) return [WEAPON_MASS[weapon.slice(0, i)] ?? 6, WEAPON_MASS[weapon.slice(i + 1)] ?? 6];
+  return [WEAPON_MASS[weapon] ?? 6, 0];
+}
 
 const LAYER_DOLL = 1;                                     // как в PhysWorld (STATIC=0, DOLL=1)
 const DENSITY = 1000 / (TILE * TILE * TILE);              // настоящие кг при метре=32u (см. ragdoll.ts)

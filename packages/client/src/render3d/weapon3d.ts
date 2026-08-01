@@ -4,11 +4,13 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 
+// Одиночные наборы оружия. Офф-рука (щит/второе оружие) добавляется отдельным селектором → ключ 'main+off'.
 export const WEAPONS = ['none',
   'sword', 'dagger', 'axe', 'mace',                              // одноручное
-  'sword+shield', 'dual',                                        // комбо
   'greatsword', 'greataxe', 'greatmaul', 'halberd', 'spear',     // двуручное
-  'staff', 'bow', 'crossbow', 'shield'];                         // маг / дальний / офф-хенд
+  'staff', 'bow', 'crossbow', 'shield'];                         // маг / дальний / офф-хенд (щит один)
+// Варианты офф-руки (левая): нет / щит / одноручное оружие (дуал). Ключ = main + '+' + off.
+export const OFFHANDS = ['none', 'shield', 'dagger', 'sword', 'axe', 'mace'];
 
 const steelMat = new THREE.MeshStandardMaterial({ color: 0xc2c8d2, metalness: 0.85, roughness: 0.35 });
 const woodMat = new THREE.MeshStandardMaterial({ color: 0x6e4a2c, roughness: 0.85 });
@@ -59,9 +61,10 @@ export function attachWeapons(human: Humanoid, weapon: string): THREE.Group[] {
     g.userData.baseRot = g.rotation.clone(); g.userData.basePos = g.position.clone();           // база хвата — для бленда idle-верха/удара
     bone.add(g); groups.push(g);
   };
+  if (weapon === 'dual') weapon = 'sword+dagger';   // легаси-алиас старого комбо
   if (weapon === 'none') return groups;
-  if (weapon.endsWith('+shield')) { attach(weapon.slice(0, -'+shield'.length), 'RightHand'); attach('shield', 'LeftHand'); }   // ЛЮБАЯ база + щит (sword/axe/mace/…+shield)
-  else if (weapon === 'dual') { attach('sword', 'RightHand'); attach('dagger', 'LeftHand'); }
+  const plus = weapon.lastIndexOf('+');
+  if (plus > 0) { attach(weapon.slice(0, plus), 'RightHand'); attach(weapon.slice(plus + 1), 'LeftHand'); }   // main+off: щит ИЛИ второе оружие в левую руку
   else if (weapon === 'shield') { attach('shield', 'LeftHand'); }
   else if (weapon === 'bow') { attach('bow', 'LeftHand'); }
   else attach(weapon, 'RightHand');
