@@ -111,7 +111,7 @@ function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: Attack
     if (pk && ap[pk]) { const h = ap[pk]!; g.position.set(g.position.x + (h[0] - g.position.x) * ab, g.position.y + (h[1] - g.position.y) * ab, g.position.z + (h[2] - g.position.z) * ab); }
   });
 }
-function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState): void {
+function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState): void {
   const H = human.bones;
   const up = content.resolveUpper(weapon);
   if (!up) {   // нет idle-позы → полный мах гейта
@@ -120,7 +120,9 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, t
     H.get('LeftLowerArm')!.rotation.set(-Math.abs(t.elL) - gx.elbowBend, 0, 0);
     H.get('RightLowerArm')!.rotation.set(-Math.abs(t.elR) - gx.elbowBend, 0, 0);
   } else {
-    const hw = clamp(1 - up.swing, 0, 1);   // вес idle-позы (1 держим, 0 полный мах)
+    // sway (остаточный мах) влияет ПО МЕРЕ ДВИЖЕНИЯ: в покое hw=1 → руки ТОЧНО как в авторской idle (стойка = как в редакторе),
+    // на бегу hw=1-sway → мах гейта подмешивается. Раньше hw был константой → idle искажался даже стоя.
+    const hw = clamp(1 - up.swing * moveMag, 0, 1);
     blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hw, gx);
     blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hw, gx);
     blendEuler(H.get('LeftLowerArm'), [-Math.abs(t.elL) - gx.elbowBend, 0, 0], up.pose['LeftLowerArm'], hw);
@@ -145,7 +147,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, m);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, m);
   blendBone(human, 'Head', [0, 0, 0], idle, m);
-  applyUpper(human, weaponGroups, gx, t, content, weapon, atk);
+  applyUpper(human, weaponGroups, gx, m, t, content, weapon, atk);
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
