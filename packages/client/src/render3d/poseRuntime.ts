@@ -157,8 +157,9 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   }
 }
 /** Щит-оверлей: слерп костей SHIELD_BONES к позе щита + перенос ХВАТА щита (поворот/позиция). Вес кости = mix, а НА ВРЕМЯ
- *  удара (aenv 0..1) падает по спаду от щита: кисть держит, корпус свободен. Хват в `стойка_shield` — index-0 (__wpnMain),
- *  в игре щит — index-1, переносим на группу[1] (полностью — щит всегда в кулаке). */
+ *  удара (aenv 0..1) падает по спаду от щита: кисть держит, корпус свободен. Хват щита в клипе: у `idle_<оружие>+shield`
+ *  щит — офф-рука (index-1 → __wpnOff), у базового `idle_shield` щит — единственное (index-0 → __wpnMain); в игре щит —
+ *  группа[1], переносим полностью. Читаем __wpnOff, иначе __wpnMain (иначе брали бы грип ОРУЖИЯ и щит улетал). */
 export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[], pose: Pose, mix: number, aenv = 0): void {
   const H = human.bones;
   for (const nm of SHIELD_BONES) {
@@ -169,7 +170,7 @@ export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[],
   }
   const g = weaponGroups[1];   // щит для '+shield'-оружия — вторая группа (первая — оружие в правой руке)
   if (g) {   // ХВАТ щита — ПОЛНОСТЬЮ (щит всегда сидит в кулаке как выставлено; mix влияет только на позу руки/корпуса)
-    const r = pose['__wpnMain'], p = pose['__wpnMainP'];
+    const r = pose['__wpnOff'] ?? pose['__wpnMain'], p = pose['__wpnOffP'] ?? pose['__wpnMainP'];
     if (r) g.rotation.set(r[0], r[1], r[2]);
     if (p) g.position.set(p[0], p[1], p[2]);
   }
@@ -235,8 +236,9 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   // Клип по имени (нормализуем старое удар_→hit_) — свой персонаж, иначе фолбэк.
   const byName = (name: string): Clip | null => { const nm = migratePoseName(name); return clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) ?? null : null); };
   return {
-    // Позы/удары — по БАЗОВОМУ оружию (axe+shield → axe): щит не подменяет анимацию оружия.
-    resolveUpper(weapon: string): UpperPose | null { const b = baseWeapon(weapon); const c = stance(b); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(b) } : null; },
+    // Idle-стойка: ПОЛНАЯ авторская поза per-оружие (idle_<weapon>) в приоритете — так стойка с щитом/дуалом целиком как в
+    // редакторе (оба оружия + грипы). Нет полной → по БАЗОВОМУ оружию (axe+shield → axe) + щит идёт оверлеем.
+    resolveUpper(weapon: string): UpperPose | null { const full = stance(weapon); const wk = (full && full.keys.length) ? weapon : baseWeapon(weapon); const c = (full && full.keys.length) ? full : stance(baseWeapon(weapon)); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(wk) } : null; },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
     clipByName(name: string): Clip | null { return byName(name); },
     // Поза скила под экип. оружие: если авторская на другом оружии — ретаргетим семейство (по clip.weapon) на текущее/базовое/главное; иначе авторская как есть.

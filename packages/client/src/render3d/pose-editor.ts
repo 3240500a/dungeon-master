@@ -833,12 +833,12 @@ function loadSway(): Record<string, Record<string, number>> { try { return JSON.
 let swayCfg: Record<string, Record<string, number>> = loadSway();
 function saveSway(): void { try { localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); } catch { /* */ } }
 const swayOf = (w: string): number => swayCfg[curCharId]?.[w] ?? 0.2;   // остаточный мах поверх idle (физпокачивание)
-function resolveUpper(wpn: string): UpperPose | null {   // idle-поза по БАЗОВОМУ оружию (sword+shield → sword); щит — отдельным оверлеем
-  const b = rtBaseWeapon(wpn);
-  let c = stanceClip(b);
-  if (!c) { const base = rtBaseWeapon(curChar().weapon); if (base !== b) c = stanceClip(base); }
+function resolveUpper(wpn: string): UpperPose | null {   // idle-поза: ПОЛНАЯ per-оружие (idle_<wpn>) в приоритете (щит/дуал целиком), иначе по БАЗОВОМУ + оверлей
+  let c = stanceClip(wpn); let wk = wpn;
+  if (!c) { wk = rtBaseWeapon(wpn); c = stanceClip(wk); }
+  if (!c) { const base = rtBaseWeapon(curChar().weapon); if (base !== wk) { c = stanceClip(base); wk = base; } }
   if (!c || !c.keys[0]) return null;
-  return { pose: c.keys[0]!.pose, swing: swayOf(b) };
+  return { pose: c.keys[0]!.pose, swing: swayOf(wk) };
 }
 // Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');
