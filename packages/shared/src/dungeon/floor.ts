@@ -95,17 +95,7 @@ export function spawnPacksEl(
       }
     }
   }
-  // Перф-кап монстров на этаж: каждый монстр = физ-регдолл на клиенте (Jolt) + AI на сервере. Крупные
-  // переделанные этажи давали 50-70 монстров → клиент захлёбывался (FPS/пинг). Чемпионов/боссов держим
-  // ВСЕГДА, обычных сэмплируем (Фишер-Йейтс на rng) до лимита. 0 = без лимита.
-  const CAP = 30;
-  if (CAP > 0 && spawns.length > CAP) {
-    const champs = spawns.filter((s) => s.def.rarity === 'champion');   // чемпионы/боссы — в приоритете
-    const rest = spawns.filter((s) => s.def.rarity !== 'champion');
-    for (let i = rest.length - 1; i > 0; i--) { const j = rng.int(0, i); const t = rest[i]!; rest[i] = rest[j]!; rest[j] = t; }
-    return [...champs, ...rest].slice(0, CAP);   // жёсткий лимит: чемпионы сперва, обычные добивают до CAP
-  }
-  return spawns;
+  return spawns;   // без капа: этаж = сколько нагенерилось. Перф на клиенте решает окно-culling монстров (online3d).
 }
 
 /** Полный `FloorLayout` для сима: генерация этажа + открытые двери + пачки. */

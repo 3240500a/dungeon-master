@@ -93,7 +93,7 @@ function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string 
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -186,7 +186,7 @@ export async function startOnline3d(): Promise<void> {
   let hudBars: { action: ActionBar; belt: BeltBar } | undefined;   // пояс + панель биндов (D2), создаём в мире
 
   const disposeActor = (a: Actor): void => { actorsGroup.remove(a.d.group); a.d.dispose(); if (a.hp) actorsGroup.remove(a.hp.spr); };
-  const markDead = (a: Actor): void => { if (a.dead != null) return; a.d.setDead(true); a.dead = 1.1; if (a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти
+  const markDead = (a: Actor): void => { if (a.dead != null) return; a.dormant = false; a.d.setDead(true); a.dead = 1.1; if (a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти (setDead будит уснувшего)
   const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
 
   // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
@@ -328,12 +328,37 @@ export async function startOnline3d(): Promise<void> {
   }
 
   // ── Рендер мира из снапшота ──────────────────────────────────────────────────
-  let animFrame = 0;                    // счётчик кадров рендера — для стаггера LOD дальних монстров
-  const LOD_FAR_R2 = 950 * 950;         // радиус² «близко»: ближе — полный апдейт каждый кадр
-  const LOD_EVERY = 3;                  // дальние: тяжёлый апдейт каждый 3-й кадр (стаггер по id)
-  // LOD: дальние монстры обновляют ТЯЖЁЛЫЙ шаг (поза-пайплайн + физ-регдолл, `a.d.update`) реже — цели/фейсинг
-  // ставятся каждый кадр (дёшево), моторы держат позу между апдейтами (не коллапсит), позиция чуть отстаёт (не видно вдали).
-  // Так число дорогих обновлений в кадре ограничено близкими монстрами → клиент не проседает по FPS на плотных этажах (ping = RTT главного потока).
+  // Окно-culling монстров: активны (полный физ-апдейт + поза-пайплайн + pw.step) только те, что попадают в
+  // видимый на экране прямоугольник земли + запас по пол-экрана с каждой стороны; остальные УСЫПЛЕНЫ — тела
+  // вынуты из физ-мира (pw.step их не считает), поза-пайплайн пропущен, меш заморожен. Так стоимость кадра
+  // не зависит от плотности этажа (ping = RTT главного потока) — платим лишь за то, что реально видно + буфер.
+  const WIN_MARGIN = 0.5;               // запас: +50% ширины окна с КАЖДОЙ стороны (= «пол-экрана»)
+  const WIN_MAX_R = 2000;               // кламп дальности угловых лучей от цели (near-горизонт. верх экрана не улетает в ∞)
+  const WIN_HYST = 140;                 // гистерезис-полоса (u): бодрствующего усыпляем лишь за окном + полосой — нет флаттера на кромке
+  const _wc: Array<[number, number]> = [[-1, -1], [1, -1], [-1, 1], [1, 1]];   // углы экрана в NDC
+  const _wv = new THREE.Vector3();
+  let winMinX = -Infinity, winMaxX = Infinity, winMinZ = -Infinity, winMaxZ = Infinity;   // AABB активного окна (world XZ)
+  /** Пересчитать AABB активного окна: анпроджектим 4 угла экрана на плоскость y=0, берём габарит, расширяем на запас. */
+  function computeActiveWindow(): void {
+    camera.updateMatrixWorld();
+    const cx = orbit.target.x, cz = orbit.target.z, px = camera.position.x, py = camera.position.y, pz = camera.position.z;
+    let mnx = Infinity, mxx = -Infinity, mnz = Infinity, mxz = -Infinity;
+    for (const [nx, ny] of _wc) {
+      _wv.set(nx, ny, 0.5).unproject(camera);                                  // точка на луче через угол экрана
+      const dx = _wv.x - px, dy = _wv.y - py, dz = _wv.z - pz;
+      let gx: number, gz: number;
+      if (dy < -1e-3) {                                                        // луч вниз → пересечение с полом y=0
+        const t = -py / dy; gx = px + dx * t; gz = pz + dz * t;
+        const rx = gx - cx, rz = gz - cz, r = Math.hypot(rx, rz);
+        if (r > WIN_MAX_R) { gx = cx + (rx / r) * WIN_MAX_R; gz = cz + (rz / r) * WIN_MAX_R; }   // near-горизонт → кламп
+      } else {                                                                // вверх/параллельно (не должно при наклоне) → кламп по направлению
+        const r = Math.hypot(dx, dz) || 1; gx = cx + (dx / r) * WIN_MAX_R; gz = cz + (dz / r) * WIN_MAX_R;
+      }
+      if (gx < mnx) mnx = gx; if (gx > mxx) mxx = gx; if (gz < mnz) mnz = gz; if (gz > mxz) mxz = gz;
+    }
+    const ex = (mxx - mnx) * WIN_MARGIN, ez = (mxz - mnz) * WIN_MARGIN;
+    winMinX = mnx - ex; winMaxX = mxx + ex; winMinZ = mnz - ez; winMaxZ = mxz + ez;
+  }
   function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true): void {
     const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
     a.vx += (nvx - a.vx) * 0.25; a.vz += (nvz - a.vz) * 0.25;   // low-pass: гасит 30/60Гц-джиттер (иначе ложный страйф)
@@ -347,7 +372,7 @@ export async function startOnline3d(): Promise<void> {
 
   function renderWorld(dt: number): void {
     if (!latest || !self) return;
-    animFrame++;   // для LOD-стаггера дальних монстров
+    computeActiveWindow();   // AABB видимого окна (+запас) — гейт активности физики монстров ниже
     const mine = latest.players.find((p) => p.id === myId);
     if (mine) {
       if (!hasSmooth || Math.hypot(mine.x - smoothX, mine.y - smoothZ) > 120) { smoothX = mine.x; smoothZ = mine.y; hasSmooth = true; }
@@ -377,16 +402,24 @@ export async function startOnline3d(): Promise<void> {
       if (!mv.alive) { markDead(a); statusFx.remove(`m${mv.id}`); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
-      // Близкие — полный физ-апдейт каждый кадр; дальние — каждый LOD_EVERY-й (стаггер по id) → бюджет FPS.
-      const near = (mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ) < LOD_FAR_R2;
-      driveActor(a, mv.x, mv.y, mv.facing, true, dt, near || (animFrame + mv.id) % LOD_EVERY === 0);
+      // Окно-culling: в окне → активен (полный физ-апдейт); вне → усыплён (тела вон из pw.step, поза-пайплайн пропущен).
+      // Гистерезис: спящего будим строго по входу в окно, бодрствующего усыпляем лишь за окном + полосой → нет флаттера на кромке.
+      const inWin = mv.x >= winMinX && mv.x <= winMaxX && mv.y >= winMinZ && mv.y <= winMaxZ;
+      const active = a.dormant
+        ? inWin
+        : (mv.x >= winMinX - WIN_HYST && mv.x <= winMaxX + WIN_HYST && mv.y >= winMinZ - WIN_HYST && mv.y <= winMaxZ + WIN_HYST);
+      if (active && a.dormant) { a.dormant = false; a.d.setSimEnabled?.(true); }       // вход в окно → вернуть в физику (+снап к цели)
+      else if (!active && !a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } // выход за окно → вон из физики, меш заморожен
+      driveActor(a, mv.x, mv.y, mv.facing, true, dt, active);   // dormant → doUpdate=false: setPose держит цель живой, тяжёлый шаг пропущен
       if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => `${debuffIcon(dcfg, k)}${mv.debuffs[k]!.stacks > 1 ? mv.debuffs[k]!.stacks : ''}`).join(' ')); }
       statusFx.sync(`m${mv.id}`, mv.x, mv.y, mv.debuffs);   // партикл-эффекты статусов (горит/яд/лёд/…)
     }
-    // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и просто ЛЕЖИТ на полу (не убираем).
-    // Трупы чистятся при смене этажа (buildArea сносит всех). Осевшие тела Jolt усыпляет — CPU не жрут.
+    // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и лежит на полу (не убираем).
+    // Осев (a.dead≤0), тело ВЫНИМАЕТСЯ из физ-мира (setSimEnabled(false)) — труп замерзает в позе и не грузит pw.step.
+    // Трупы чистятся при смене этажа (buildArea сносит всех).
     for (const a of monsters.values()) {
-      if (a.dead == null || a.dead <= 0) continue;   // <=0 → заморожен: меш остаётся в позе «лежит»
+      if (a.dead == null) continue;
+      if (a.dead <= 0) { if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } continue; }   // осел → вон из физики, лежит замороженным
       a.d.update(dt); a.dead -= dt;
     }
     // снаряды

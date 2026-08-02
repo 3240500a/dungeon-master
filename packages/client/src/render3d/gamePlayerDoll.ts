@@ -71,6 +71,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 
   // ── состояние синхронизации ──
   let tx = opts.x, tz = opts.z, tyaw = 0, lastX = opts.x, lastZ = opts.z, first = true, dead = false;
+  let simEnabled = true, snapNext = false;   // окно-culling: вне экрана усыпляем физику (тела вон из pw.step), меш замерзает
   let atkClipIdx = 0;   // индекс чередования poseClips скила (замах справа→слева→…)
   let wvx = 0, wvz = 0, hasWvel = false, vxS = 0, vzS = 0;
   let rx = opts.x, rz = opts.z;            // сглаженная мир-позиция (сим 30Гц телепортит tx/tz)
@@ -115,7 +116,15 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       if (pool.length) { player.triggerAttack(pool[atkClipIdx % pool.length]!, windowSec); atkClipIdx++; }
       else player.triggerAttack(content.attackClip(weapon), windowSec);   // ничего не авторено → прежний фолбэк
     },
-    setDead(d) { if (d === dead) return; dead = d; ragdoll.setDead(d); },
+    setDead(d) {
+      if (d && !simEnabled) { simEnabled = true; snapNext = true; ragdoll.setSimEnabled?.(true); }   // умер спящим (вне окна) → будим, чтоб коллапс отыгрался
+      if (d === dead) return; dead = d; ragdoll.setDead(d);
+    },
+    setSimEnabled(on) {   // окно-culling: on=false → тела вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап к цели
+      if (on === simEnabled) return; simEnabled = on;
+      if (on) snapNext = true;
+      ragdoll.setSimEnabled?.(on);
+    },
     hitReact(dx, dz, power = 1) { ragdoll.hit('Torso', dx, 0.35, dz, power); },   // дёрг → из физики (солид = физрезультат)
     knockback(dx, dz, frac) {   // отброс трупа: сильный горизонтальный импульс в таз+торс, дальность ∝ доле урона
       const p = Math.max(0, Math.min(1, frac)) * KNOCK;
@@ -127,11 +136,13 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       weapon = key; weaponGroups = attachWeapons(solid, weapon); player.setWeapon(weapon);
     },
     update(dt) {
+      if (!simEnabled) return;                               // спит (вне окна): физика вынута, меш заморожен в позе — не считаем
       if (dead) {                                            // мёртв — свободный коллапс, рендерим без прижима
         ragdoll.update(dt);
         renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
         return;
       }
+      if (snapNext) { rx = tx; rz = tz; snapNext = false; }  // пробуждение — снап к текущей цели (без слайда со старой позиции)
       // сглаживание мир-позиции (сим 30Гц телепортит tx/tz): предсказание по чистой скорости + мягкая коррекция
       if (!first) { rx += wvx * dt; rz += wvz * dt; }
       rx += (tx - rx) * 0.12; rz += (tz - rz) * 0.12;

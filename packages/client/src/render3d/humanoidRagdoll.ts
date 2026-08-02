@@ -161,6 +161,8 @@ export interface HumanoidRagdoll {
   setDead(d: boolean): void;
   /** Жёстко поставить тела на текущую позу-цель + обнулить скорости (спавн без перехлёста T-поза→стойка). */
   snapToPose(): void;
+  /** Окно-culling: on=false → RemoveFromPhysicsSystem (тела вон из pw.step); on=true → AddToPhysicsSystem+Activate. */
+  setSimEnabled(on: boolean): void;
   update(dt: number): void;                               // ведём к цели + двигаем kinematic-таз + синк мешей
   bodyPos(name: string): [number, number, number];        // мировая позиция тела (дебаг/тест)
   /** Снять ФИЗ-результат как humanoid-позу (локальные эйлеры костей) — для запекания. */
@@ -297,6 +299,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     }
   }
   sync();
+  let simOn = true;   // окно-culling: тела в физ-мире (pw.step считает). false → RemoveFromPhysicsSystem, меш замерзает.
 
   return {
     group,
@@ -329,6 +332,11 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       ragdoll.SetPose(pose, true);
       force.Set(0, 0, 0);
       for (let i = 0; i < B.length; i++) { pw.bi.SetLinearVelocity(ids[i]!, force); pw.bi.SetAngularVelocity(ids[i]!, force); }
+    },
+    setSimEnabled(on) {   // окно-culling: вон из/в физ-мир (pw.step). Пробуждённого тут же активируем — снап к позе делает вызывающий (snapNext).
+      if (on === simOn) return; simOn = on;
+      if (on) ragdoll.AddToPhysicsSystem(J.EActivation_Activate);
+      else ragdoll.RemoveFromPhysicsSystem();
     },
     update(dt) {
       for (let i = 0; i < B.length; i++) if (limp[i]! > 0) limp[i] = Math.max(0, limp[i]! - dt / 0.4);   // дёрг затухает ~0.4с
@@ -380,7 +388,8 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       return out;
     },
     dispose() {
-      ragdoll.RemoveFromPhysicsSystem();     // формы/settings/ragdoll не destroy'им (кэш/крэш wasm) — утечка копеечная
+      if (simOn) ragdoll.RemoveFromPhysicsSystem();   // спящий (окно-culling) уже вынут — второй Remove крашит wasm
+      // формы/settings/ragdoll не destroy'им (кэш/крэш wasm) — утечка копеечная
       J.destroy(pose);
       for (const m of meshes) m.geometry.dispose();
       group.clear();

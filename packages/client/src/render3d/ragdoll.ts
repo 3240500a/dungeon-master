@@ -134,6 +134,8 @@ export interface RagdollHandle {
   knockback?(dx: number, dz: number, frac: number): void;
   /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…). */
   setWeapon?(key: string): void;
+  /** Окно-culling: on=false → тела куклы вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап. */
+  setSimEnabled?(on: boolean): void;
   update(dt: number): void;
   dispose(): void;
 }
