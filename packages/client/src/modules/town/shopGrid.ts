@@ -1,12 +1,11 @@
 import type { Item } from '@dm/shared';
-import { CELL, GAP, PITCH, glyphOf } from '../inventory/heldItem.js';
-import { rarityHex } from '../loot/rarity.js';
-import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
+import type { Dims } from '../inventory/grid.js';
+import { renderGrid } from '../inventory/gridView.js';
 
 /**
- * Сетка магазина «как инвентарь»: предметы занимают gridW×gridH клеток (не по одной), с бейджем цены.
- * Раскладка — жадная упаковка row-major по размеру (сток без pos). Клик по предмету = купить.
- * Стиль клеток/рамок-редкости общий с инвентарём (gridView), но клик пер-предметный (покупка), а не по клетке.
+ * Сетка магазина — ОДИН В ОДИН инвентарь: рендерит той же `renderGrid` (клетки/рамки-редкости/глифы/тултипы —
+ * общий код gridView). Отличия только: сток без pos → раскладываем упаковкой; клик по клетке = купить предмет
+ * из неё; в углу предмета — бейдж цены (через `badge` в GridHandlers). Никакого своего рендера предметов.
  */
 export interface ShopGridOpts {
   price: (it: Item) => number;
@@ -43,37 +42,21 @@ export function packShopItems(items: Item[], cols: number): { placed: Placed[]; 
   return { placed, rows: maxRow };
 }
 
-const px = (cells: number): number => cells * CELL + (cells - 1) * GAP;
-
 export function renderShopGrid(items: Item[], o: ShopGridOpts): HTMLElement {
   const cols = o.cols ?? 11;
-  const { placed, rows: usedRows } = packShopItems(items, cols);
-  const rows = Math.max(usedRows, o.minRows ?? 4);
-
-  const wrap = mk('div', 'position:relative');
-  wrap.style.width = `${px(cols)}px`;
-  wrap.style.height = `${px(rows)}px`;
-
-  const bg = mk('div', `display:grid;grid-template-columns:repeat(${cols},${CELL}px);grid-auto-rows:${CELL}px;gap:${GAP}px`);
-  for (let i = 0; i < cols * rows; i++) bg.append(mk('div', `background:${COLORS.panel2};border:0.5px solid ${COLORS.border};border-radius:4px`));
-  wrap.append(bg);
-
+  const { placed, rows } = packShopItems(items, cols);
+  const dims: Dims = { cols, rows: Math.max(rows, o.minRows ?? 4) };
+  // Отображаемые копии с назначенной pos (сток с сервера pos не имеет; оригиналы не мутируем).
+  const display = placed.map(({ it, x, y }) => ({ ...it, pos: { x, y } }));
+  // Клетка → предмет (для покупки по клику по клетке — renderGrid отдаёт col/row).
+  const at = new Map<string, Item>();
   for (const { it, x, y } of placed) {
-    const affordable = o.affordable(it);
-    const cell = mk('div',
-      `position:absolute;left:${x * PITCH}px;top:${y * PITCH}px;width:${px(Math.min(it.gridW, cols))}px;height:${px(it.gridH)}px;` +
-      `border:2px solid ${rarityHex(it.rarity)};color:${rarityHex(it.rarity)};border-radius:6px;background:${COLORS.panel};` +
-      `display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;font-weight:500;` +
-      `line-height:1.1;overflow:hidden;padding:2px;cursor:pointer`);
-    cell.textContent = glyphOf(it);
-    const badge = mk('div',
-      `position:absolute;right:1px;bottom:0;font-size:9.5px;color:${affordable ? COLORS.gold : COLORS.bad};` +
-      `background:rgba(7,9,13,0.72);padding:0 3px;border-radius:3px;pointer-events:none`, `${o.price(it)}`);
-    cell.append(badge);
-    if (!affordable) cell.style.opacity = '0.65';
-    attachTooltip(cell, () => o.tooltip(it));
-    cell.addEventListener('click', () => o.onBuy(it));
-    wrap.append(cell);
+    for (let dy = 0; dy < it.gridH; dy++) for (let dx = 0; dx < Math.min(it.gridW, cols); dx++) at.set(`${x + dx},${y + dy}`, it);
   }
-  return wrap;
+  return renderGrid(display, dims, {
+    onPick: (col, row) => { const it = at.get(`${col},${row}`); if (it) o.onBuy(it); },
+    onPlace: () => { /* магазин: класть некуда */ },
+    tooltip: (it) => o.tooltip(it),
+    badge: (it) => ({ text: `${o.price(it)}`, affordable: o.affordable(it) }),
+  });
 }

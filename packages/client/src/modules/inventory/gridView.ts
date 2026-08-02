@@ -19,6 +19,8 @@ export interface GridHandlers {
   tooltip: (item: Item) => string;
   /** ПКМ по предмету (когда пусто в руке) — опц. контекст-меню. */
   contextMenu?: (item: Item, x: number, y: number) => void;
+  /** Опц. бейдж в углу предмета (магазин — цена; affordable=false → тускло/красный). Инвентарь не передаёт. */
+  badge?: (item: Item) => { text: string; affordable: boolean } | null;
 }
 
 export function renderGrid(items: Item[], dims: Dims, h: GridHandlers): HTMLElement {
@@ -58,8 +60,15 @@ function itemEl(item: Item, h: GridHandlers): HTMLElement {
     `grid-column:${item.pos!.x + 1} / span ${item.gridW};grid-row:${item.pos!.y + 1} / span ${item.gridH};` +
     `border:2px solid ${rarityHex(item.rarity)};color:${rarityHex(item.rarity)};border-radius:6px;` +
     `background:${COLORS.panel};display:flex;align-items:center;justify-content:center;text-align:center;` +
-    `font-size:12px;font-weight:500;cursor:pointer;line-height:1.1;overflow:hidden;padding:2px`);
+    `font-size:12px;font-weight:500;cursor:pointer;line-height:1.1;overflow:hidden;padding:2px;position:relative`);
   el.textContent = glyphOf(item);
+  const b = h.badge?.(item);
+  if (b) {
+    el.append(mk('div',
+      `position:absolute;right:1px;bottom:0;font-size:9.5px;color:${b.affordable ? COLORS.gold : COLORS.bad};` +
+      `background:rgba(7,9,13,0.72);padding:0 3px;border-radius:3px;pointer-events:none`, b.text));
+    if (!b.affordable) el.style.opacity = '0.6';
+  }
   attachTooltip(el, () => h.tooltip(item));
   if (h.contextMenu) {
     el.addEventListener('contextmenu', (e) => {
