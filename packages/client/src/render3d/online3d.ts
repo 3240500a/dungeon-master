@@ -328,7 +328,13 @@ export async function startOnline3d(): Promise<void> {
   }
 
   // ── Рендер мира из снапшота ──────────────────────────────────────────────────
-  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number): void {
+  let animFrame = 0;                    // счётчик кадров рендера — для стаггера LOD дальних монстров
+  const LOD_FAR_R2 = 950 * 950;         // радиус² «близко»: ближе — полный апдейт каждый кадр
+  const LOD_EVERY = 3;                  // дальние: тяжёлый апдейт каждый 3-й кадр (стаггер по id)
+  // LOD: дальние монстры обновляют ТЯЖЁЛЫЙ шаг (поза-пайплайн + физ-регдолл, `a.d.update`) реже — цели/фейсинг
+  // ставятся каждый кадр (дёшево), моторы держат позу между апдейтами (не коллапсит), позиция чуть отстаёт (не видно вдали).
+  // Так число дорогих обновлений в кадре ограничено близкими монстрами → клиент не проседает по FPS на плотных этажах (ping = RTT главного потока).
+  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true): void {
     const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
     a.vx += (nvx - a.vx) * 0.25; a.vz += (nvz - a.vz) * 0.25;   // low-pass: гасит 30/60Гц-джиттер (иначе ложный страйф)
     a.lx = x; a.lz = z;
@@ -336,11 +342,12 @@ export async function startOnline3d(): Promise<void> {
     a.d.setWorldVel?.(a.vx, a.vz);
     a.d.setMove(Math.min(1, Math.hypot(a.vx, a.vz) / 120));
     a.d.setDead(!alive);
-    a.d.update(dt);
+    if (doUpdate) a.d.update(dt);
   }
 
   function renderWorld(dt: number): void {
     if (!latest || !self) return;
+    animFrame++;   // для LOD-стаггера дальних монстров
     const mine = latest.players.find((p) => p.id === myId);
     if (mine) {
       if (!hasSmooth || Math.hypot(mine.x - smoothX, mine.y - smoothZ) > 120) { smoothX = mine.x; smoothZ = mine.y; hasSmooth = true; }
@@ -370,7 +377,9 @@ export async function startOnline3d(): Promise<void> {
       if (!mv.alive) { markDead(a); statusFx.remove(`m${mv.id}`); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
-      driveActor(a, mv.x, mv.y, mv.facing, true, dt);
+      // Близкие — полный физ-апдейт каждый кадр; дальние — каждый LOD_EVERY-й (стаггер по id) → бюджет FPS.
+      const near = (mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ) < LOD_FAR_R2;
+      driveActor(a, mv.x, mv.y, mv.facing, true, dt, near || (animFrame + mv.id) % LOD_EVERY === 0);
       if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => `${debuffIcon(dcfg, k)}${mv.debuffs[k]!.stacks > 1 ? mv.debuffs[k]!.stacks : ''}`).join(' ')); }
       statusFx.sync(`m${mv.id}`, mv.x, mv.y, mv.debuffs);   // партикл-эффекты статусов (горит/яд/лёд/…)
     }
