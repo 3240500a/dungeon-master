@@ -129,9 +129,11 @@ describe('generateRunPlan — структура забега', () => {
     expect(inBoss.every((m) => m.def.rarity === 'champion')).toBe(true);
     // Монстры берутся из пула биома (по ролям pack.entries).
     expect(mons.every((m) => biome.monsterPool.includes(m.def.id))).toBe(true);
-    // packDensity ×2 → примерно вдвое больше монстров.
-    const dense = spawnPacksEl(r, bossFloor, 6, 'normal', createRng(5), 20, biome.monsterPool, 2);
-    expect(dense.length).toBeGreaterThan(mons.length);
+    // packDensity увеличивает число монстров (ниже перф-капа): разреженная плотность даёт меньше базовой.
+    const sparse = spawnPacksEl(r, bossFloor, 6, 'normal', createRng(5), 20, biome.monsterPool, 0.3);
+    expect(mons.length).toBeGreaterThan(sparse.length);
+    // Перф-кап монстров на этаж (клиент = регдолл на монстра): высокая плотность не превышает лимит.
+    expect(spawnPacksEl(r, bossFloor, 6, 'normal', createRng(5), 20, biome.monsterPool, 3).length).toBeLessThanOrEqual(30);
   });
 
   it('выбранные run-модификаторы прокидываются в план и в floorSpec узлов', () => {
