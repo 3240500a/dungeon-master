@@ -20,6 +20,7 @@ import { charFor } from './chars3d.js';
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
 const PELVIS_Y = 32;
 const KNOCK = 3.5;   // сила отброса трупа при frac=1 — ~1.5 м макс (32 ед = 1 м) при 100% урона от HP; меньше урон — ближе
+const ATK_MATCH = 0.92;   // пиковый вес совпадения с авторской позой во время удара — физика одна не доводит замах до конца
 
 export interface HumanoidDollOpts {
   x: number; z: number;
@@ -146,9 +147,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       player.step(dt);                                       // позирует target (гейт+idle-стойка+удар) + грип оружия на solid
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
       ragdoll.update(dt);                                    // шаг физики (моторы к позе + пины + вес оружия + kinematic-таз)
-      // солид = физрезультат + заземление ОПОРНЫХ стоп (маховую ведёт поза) + БЛЕНД к позе-цели по matchWeight
+      // солид = физрезультат + заземление ОПОРНЫХ стоп (маховую ведёт поза) + БЛЕНД к позе-цели по matchWeight.
+      // Во время удара поднимаем вес к ATK_MATCH по огибающей замаха (physics один не доводит быстрый замах до конечных
+      // кадров → удар «не доходит»); в покое/беге — прежний matchWeight (физ-ведомая походка). Огибающая сглаживает старт/конец.
       const sw = player.driver.swingLegs;   // опора = !swing → заземляем только стоящую ногу (иначе «лыжник» на спуске)
-      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, matchWeight > 0.001 ? target.readPose() : null, matchWeight, undefined, [!sw[0], !sw[1]]);
+      const effMatch = Math.max(matchWeight, ATK_MATCH * player.attackWeight);
+      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]]);
     },
     dispose() {
       ragdoll.dispose();

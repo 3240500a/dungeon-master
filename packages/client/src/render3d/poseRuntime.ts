@@ -394,6 +394,9 @@ export class PosePlayer {
     this.atkSpeed = windowSec > 0 && dur > 0 ? Math.max(1, dur / windowSec) : 1;
   }
   get attacking(): boolean { return !!this.atk.clip; }
+  /** Вес авторской позы удара в кадре (огибающая attackEnv): 0 в покое, 1 на пике замаха. Для буста match-веса рендера —
+   *  физика одна не доводит быстрый замах до конечных кадров, поэтому во время удара видимый меш сильнее тянем к позе-цели. */
+  get attackWeight(): number { return this.atk.clip && this.atk.t >= 0 ? attackEnv(this.atk.t, clipDur(this.atk.clip) || 0.001) : 0; }
   /** Видимый facing (радианы) = yaw гейта (в Hips). */
   get facing(): number { return this.yaw; }
   /** Позировать this.human: тредмил-ноги (idle↔гейт по скорости) + верх (idle-стойка + мах + удар).

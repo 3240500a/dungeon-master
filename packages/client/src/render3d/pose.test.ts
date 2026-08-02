@@ -321,4 +321,14 @@ describe('PosePlayer.triggerAttack: клип ужимается в окно ат
     const p = mkPlayer();
     p.triggerAttack(clip, 1.2); expect(p.atkSpeed).toBe(1);
   });
+  it('attackWeight (огибающая для буста match): 0 в покое, ~1 на пике, →0 к концу', () => {
+    const p = mkPlayer();
+    expect(p.attackWeight).toBe(0);          // нет удара
+    p.triggerAttack(clip);
+    expect(p.attackWeight).toBeCloseTo(0, 2); // старт клипа (t=0) — огибающая входа
+    p.atk.t = 0.3;                            // середина (dur 0.6, плато [0.1..0.46]) → пик
+    expect(p.attackWeight).toBeCloseTo(1, 5);
+    p.atk.t = 0.6;                            // конец → возврат в стойку
+    expect(p.attackWeight).toBeCloseTo(0, 2);
+  });
 });
