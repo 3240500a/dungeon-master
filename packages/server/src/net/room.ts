@@ -399,7 +399,9 @@ export class Room {
       const m = runMods.find((r) => r.id === id);
       return !!m && m.enabled !== false && m.scope === 'run' && (allowed.length === 0 || allowed.includes(id));
     });
-    return { templateId: tpl?.id ?? 'default', biomeId: biome.id, tier: this.difficultyId, seed: this.seed, modifiers };
+    // Свежий сид на КАЖДЫЙ новый забег (this.seed — сид РУМА/сима, один на сессию → все забеги были одинаковыми).
+    const runSeed = ((Date.now() & 0xffffff) >>> 0) || 1;
+    return { templateId: tpl?.id ?? 'default', biomeId: biome.id, tier: this.difficultyId, seed: runSeed, modifiers };
   }
   /** Начать новый забег: RunConfig (с выбором алтаря) → RunPlan → первый узел. */
   private startRun(cfg?: AltarConfig): void {
