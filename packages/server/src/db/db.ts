@@ -132,6 +132,23 @@ export function countCharacters(userId: string): number {
   return (countCharsStmt.get(userId) as { n: number }).n;
 }
 
+/**
+ * Сбрасывает НЕЗАВЕРШЁННЫЕ забеги у ВСЕХ персонажей (удаляет `save.run`). Зовётся на старте сервера:
+ * рестарт = чистый лист, без «хвостов» (иначе спуск из города РЕЗЮМИТ старый забег и игнорит выбор алтаря).
+ * Возвращает число затронутых персонажей.
+ */
+export function clearAllRuns(): number {
+  const rows = db.prepare('SELECT charId, data FROM characters').all() as { charId: string; data: string }[];
+  const upd = db.prepare('UPDATE characters SET data = ?, updatedAt = ? WHERE charId = ?');
+  let n = 0;
+  for (const r of rows) {
+    let s: SaveState & { run?: unknown };
+    try { s = JSON.parse(r.data) as SaveState & { run?: unknown }; } catch { continue; }
+    if (s.run !== undefined) { delete s.run; upd.run(JSON.stringify(s), Date.now(), r.charId); n++; }
+  }
+  return n;
+}
+
 // ── Оверрайды конфигов (единая серверная истина: редактор пишет, игра+редактор читают) ──
 const upsertConfigStmt = db.prepare(
   `INSERT INTO config_overrides (key, json, updatedAt) VALUES (?, ?, ?)

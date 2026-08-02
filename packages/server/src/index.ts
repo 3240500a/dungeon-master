@@ -11,7 +11,7 @@ import {
   createUser, getUserByName, createSession, deleteSession, getSession,
   listCharacters, getCharacter, putCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
-  getPoseStore, setPoseStore, deletePoseStore,
+  getPoseStore, setPoseStore, deletePoseStore, clearAllRuns,
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
 
@@ -42,6 +42,10 @@ function rebuildConfig(): void {
   applyConfigOverrides();
 }
 rebuildConfig(); // старт: дефолты + сохранённые правки редактора
+
+// Рестарт сервера = чистый лист забегов: сбрасываем все НЕЗАВЕРШЁННЫЕ забеги (save.run) у всех персонажей.
+// Иначе спуск из города РЕЗЮМИТ старый забег (со старым биомом/сидом) и игнорит выбор алтаря — «хвосты».
+{ const wiped = clearAllRuns(); if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`); }
 
 const MAX_CHARS = 5;
 
