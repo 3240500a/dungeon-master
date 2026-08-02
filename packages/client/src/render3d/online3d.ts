@@ -461,7 +461,7 @@ export async function startOnline3d(): Promise<void> {
         // Проиграть авторский удар КУКЛОЙ (у Волкодава — `hit_axe`): свой игрок или пир.
         const pv = latest?.players.find((p) => p.id === e.playerId);
         const actor = e.playerId === myId ? self : peers.get(e.playerId);
-        actor?.d.attack(abilityPoseClips(e.ability));   // скил с poseClips → чередуемые удары; базовая атака → удар по оружию
+        actor?.d.attack(abilityPoseClips(e.ability), e.lockMs / 1000);   // скил с poseClips → чередуемые удары; базовая атака → удар по оружию. lockMs = окно атаки → клип целиком за него
         if (pv) vfx.slash(pv.x, pv.y, pv.facing, 0xffe6a0, 48);
         if (e.playerId === myId) {   // свой удар — заливка-откат слота биндов
           const now = performance.now();

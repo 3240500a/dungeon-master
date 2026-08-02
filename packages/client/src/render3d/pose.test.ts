@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK } from './poseRuntime.js';
+import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
 import * as THREE from 'three';
 
@@ -291,5 +291,34 @@ describe('localStorageContent: адаптация позы под оружие +
     expect(c.attackClips('sword').map((x) => x.name)).toEqual(['hit_sword', 'hit_sword_2']);
     expect(c.attackClips('sword+shield').map((x) => x.name)).toEqual(['hit_sword', 'hit_sword_2']);   // база sword
     expect(c.attackClips('axe')).toEqual([]);   // нет hit_axe и нет фолбэк-персонажа
+  });
+});
+
+describe('PosePlayer.triggerAttack: клип ужимается в окно атаки (скорость атаки → быстрее, но целиком)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, length: 0,
+    } as Storage;
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
+
+  const mkPlayer = () => new PosePlayer(buildHumanoid({}), () => [], localStorageContent('warrior'), 'sword', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+  const clip = { name: 'hit_sword', character: 'warrior', weapon: 'sword', loop: false, keys: [{ pose: {}, t: 0 }, { pose: {}, t: 0.6 }] };   // длит. = 0.6с
+
+  it('без окна → 1× (авторский темп); окно = длит. → 1×', () => {
+    const p = mkPlayer();
+    p.triggerAttack(clip);
+    expect(p.atk.clip).toBe(clip); expect(p.atk.t).toBe(0); expect(p.atkSpeed).toBe(1);
+    p.triggerAttack(clip, 0.6);
+    expect(p.atkSpeed).toBeCloseTo(1, 5);
+  });
+  it('окно короче длит. → ускорение (клип целиком, но быстрее)', () => {
+    const p = mkPlayer();
+    p.triggerAttack(clip, 0.3); expect(p.atkSpeed).toBeCloseTo(2, 5);    // вдвое короче → 2×
+    p.triggerAttack(clip, 0.15); expect(p.atkSpeed).toBeCloseTo(4, 5);   // вчетверо → 4×
+  });
+  it('окно длиннее длит. → НЕ растягиваем (min 1×)', () => {
+    const p = mkPlayer();
+    p.triggerAttack(clip, 1.2); expect(p.atkSpeed).toBe(1);
   });
 });

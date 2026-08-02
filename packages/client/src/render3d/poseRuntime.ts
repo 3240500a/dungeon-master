@@ -385,7 +385,14 @@ export class PosePlayer {
   setWeapon(w: string): void { this.weapon = w; this.measureStance(); }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
   setYaw(yaw: number): void { this.yaw = yaw; }
-  triggerAttack(clip: Clip | null): void { if (clip) { this.atk.clip = clip; this.atk.t = 0; } }
+  /** Запустить удар. windowSec — окно атаки (attack-лок из сервера): клип ужимается, чтобы отыграть ЦЕЛИКОМ за это
+   *  окно (быстрее бьёшь — быстрее клип, но всегда до конечных кадров). Медленнее авторского темпа не растягиваем (min 1×). */
+  triggerAttack(clip: Clip | null, windowSec = 0): void {
+    if (!clip) return;
+    this.atk.clip = clip; this.atk.t = 0;
+    const dur = clipDur(clip);
+    this.atkSpeed = windowSec > 0 && dur > 0 ? Math.max(1, dur / windowSec) : 1;
+  }
   get attacking(): boolean { return !!this.atk.clip; }
   /** Видимый facing (радианы) = yaw гейта (в Hips). */
   get facing(): number { return this.yaw; }
