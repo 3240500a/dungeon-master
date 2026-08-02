@@ -397,6 +397,16 @@ export class PosePlayer {
   /** Вес авторской позы удара в кадре (огибающая attackEnv): 0 в покое, 1 на пике замаха. Для буста match-веса рендера —
    *  физика одна не доводит быстрый замах до конечных кадров, поэтому во время удара видимый меш сильнее тянем к позе-цели. */
   get attackWeight(): number { return this.atk.clip && this.atk.t >= 0 ? attackEnv(this.atk.t, clipDur(this.atk.clip) || 0.001) : 0; }
+  /** Per-кадр физ-ключ удара (интерполированный по времени клипа), напр. '__match'/'__pinKp'. null = не авторено (фолбэк рантайма). */
+  private atkPhys(key: string): number | null {
+    if (!this.atk.clip || this.atk.t < 0) return null;
+    const v = clipPoseAt(this.atk.clip, this.atk.t / (clipDur(this.atk.clip) || 1))[key];
+    return v ? v[0] : null;
+  }
+  /** Авторский per-кадр вес совпадения удара (__match). null → рантайм берёт свою огибающую. */
+  get attackMatch(): number | null { return this.atkPhys('__match'); }
+  /** Авторская per-кадр жёсткость пинов удара (__pinKp). null → дефолт. */
+  get attackPinKp(): number | null { return this.atkPhys('__pinKp'); }
   /** Видимый facing (радианы) = yaw гейта (в Hips). */
   get facing(): number { return this.yaw; }
   /** Позировать this.human: тредмил-ноги (idle↔гейт по скорости) + верх (idle-стойка + мах + удар).

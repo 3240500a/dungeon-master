@@ -275,7 +275,7 @@ function applyWeaponPose(p: Pose): void {
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
-function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } applyWeaponPose(p); }
+function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } applyWeaponPose(p); applyFramePhys(p); }
 function lerpPose(a: Pose, b: Pose, t: number): void {
   human.reset();
   for (const nm of human.boneNames) { const pa = a[nm] ?? [0, 0, 0], pb = b[nm] ?? [0, 0, 0]; human.bones.get(nm)!.rotation.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); }
@@ -284,6 +284,8 @@ function lerpPose(a: Pose, b: Pose, t: number): void {
     if (rk) { const pa = a[rk], pb = b[rk]; if (pa && pb) g.rotation.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); else if (pa) g.rotation.set(pa[0], pa[1], pa[2]); }
     if (pk) { const pa = a[pk], pb = b[pk]; if (pa && pb) g.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); else if (pa) g.position.set(pa[0], pa[1], pa[2]); }
   });
+  const ip = (k: string, d: number): number => { const va = a[k]?.[0] ?? d, vb = b[k]?.[0] ?? va; return va + (vb - va) * t; };
+  PHYS.match = ip('__match', physMatchBase); PHYS.pinKp = ip('__pinKp', DEF_PINKP);   // per-кадр физ скользит в проигрывании
   if (a['__lgripP'] || b['__lgripP']) { const m = ensureLgripMark(); if (m) {   // точка хвата скользит по кадрам (перехват)
     const pa = a['__lgripP'] ?? b['__lgripP']!, pb = b['__lgripP'] ?? pa, ra = a['__lgripR'] ?? [0, 0, 0], rb = b['__lgripR'] ?? ra;
     m.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t);
@@ -354,8 +356,20 @@ function redo(): void { if (!redoStack.length) return; undoStack.push(snapshot()
 addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); } if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); } });
 
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
-function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; PHYS.match = c[id]?.match ?? 0; } catch { PHYS.match = 0; } }
-function savePhysMatch(): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; (c[curCharId] ??= {}).match = PHYS.match; localStorage.setItem('pe_phys', JSON.stringify(c)); savePoseKey('pe_phys'); } catch { /* */ } }
+const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов (фолбэк для кадров без __pinKp)
+let physMatchBase = 0;          // база match персонажа (pe_phys) — фолбэк для кадров БЕЗ __match (и для покоя/бега в игре)
+function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; physMatchBase = c[id]?.match ?? 0; } catch { physMatchBase = 0; } PHYS.match = physMatchBase; PHYS.pinKp = DEF_PINKP; }
+// per-кадр физ-настройки match/pinKp хранятся в позе кадра (__match/__pinKp = [v,0,0]); интерполируются как обычные ключи позы.
+// applyFramePhys: поза кадра → PHYS (для превью-физики и ползунков). Нет ключа → база персонажа / дефолт.
+function applyFramePhys(p: Pose): void { PHYS.match = p['__match'] ? p['__match']![0] : physMatchBase; PHYS.pinKp = p['__pinKp'] ? p['__pinKp']![0] : DEF_PINKP; }
+// writeFramePhys: «зафиксировать» текущие ползунки match/pinKp в ТЕКУЩИЙ кадр. Раз тронул — заполняем ВСЕ кадры (база/дефолт),
+// иначе union-лерп (blendTwo) между кадром с ключом и без тянет значение к 0 (лимп-пины / нулевой match) на соседнем сегменте.
+function writeFramePhys(): void {
+  const c = curClip(); const kk = c?.keys[frameIdx]; if (!c || !kk) return;
+  for (const k of c.keys) { if (!k.pose['__match']) k.pose['__match'] = [+physMatchBase.toFixed(3), 0, 0]; if (!k.pose['__pinKp']) k.pose['__pinKp'] = [DEF_PINKP, 0, 0]; }
+  kk.pose['__match'] = [+PHYS.match.toFixed(3), 0, 0]; kk.pose['__pinKp'] = [Math.round(PHYS.pinKp), 0, 0];
+  saveLib();
+}
 // ── Вес подмешивания ЩИТА per-(персонаж, оружие) (pe_shield): поза щита наслаивается на позу оружия с этим весом. ──
 // Хранилище: { [char]: { mix?: базовый; perWeapon?: {[weaponKey]: number} } }. Старый {char:{mix}} читается как база-фолбэк.
 type ShieldCfg = { mix?: number; perWeapon?: Record<string, number> };
@@ -466,11 +480,11 @@ function poseTools(): void {
     const row = el('label', 'display:flex;align-items:center;gap:6px'); row.innerHTML = `<span style="flex:1">${label}</span>`;
     const s = el('input', 'width:100px') as HTMLInputElement; s.type = 'range'; s.min = String(min); s.max = String(max); s.step = String(step); s.value = String(PHYS[key]);
     const v = el('span', 'width:44px;text-align:right;color:#9ae6a0'); v.textContent = String(PHYS[key]);
-    s.oninput = () => { PHYS[key] = parseFloat(s.value); v.textContent = s.value; if (key === 'match') savePhysMatch(); };
+    s.oninput = () => { PHYS[key] = parseFloat(s.value); v.textContent = s.value; if (key === 'match' || key === 'pinKp') writeFramePhys(); };   // match/pinKp — фиксируются в ТЕКУЩИЙ кадр (per-frame)
     row.append(s, v); body.append(row);
   };
-  phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('пин · жёсткость', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
-  phRow('★ совпадение с манекеном', 'match', 0, 1, 0.05);   // RB2: 0 = физика, 1 = ровно твоя поза (бленд рендера)
+  phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('★ пин · жёсткость (кадр)', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
+  phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
   // ── ЛИМИТЫ/МОТОРЫ суставов (RB3): множитель конусов/диапазонов + сила моторов. Применяется ПЕРЕСБОРКОЙ куклы на отпускание. ──
   const rgh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rgh.textContent = 'ЛИМИТЫ/МОТОРЫ (пересборка)'; body.append(rgh);
   const ragRow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
@@ -1302,5 +1316,6 @@ loop();
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
   captureUpper, get sway() { return swayCfg; }, resolveUpper: (w: string): unknown => resolveUpper(w), get stances() { return library.filter((c) => c.name.startsWith('idle_')); },
   get lgrip() { return lgripMark; }, lgripEnsure: (): unknown => ensureLgripMark(), lgripPreview: (): void => applyLgripPreview(),   // двуручный хват: маркер + off-hand IK превью (дебаг)
+  goFrame, writeFramePhys, get frameIdx() { return frameIdx; },   // per-кадр физ (match/pinKp) — дебаг: goFrame читает, writeFramePhys фиксирует
   gaitAttack: (name: string): void => { const c = clipsHere().find((x) => x.name === name) ?? library.find((x) => x.name === name); if (c) triggerAttack(c); }, get attackT() { return attackT; }, markAttack: (name: string): void => toggleAtk(name),
   physStep: (dt: number, n: number): unknown => { if (!pw || !ragdoll) return null; physOn = true; for (let i = 0; i < n; i++) { stepPhysics(dt); } return { Hips: ragdoll.bodyPos('Hips'), Head: ragdoll.bodyPos('Head'), HandL: ragdoll.bodyPos('HandL'), HandR: ragdoll.bodyPos('HandR'), FootL: ragdoll.bodyPos('FootL'), Torso: ragdoll.bodyPos('Torso') }; } };

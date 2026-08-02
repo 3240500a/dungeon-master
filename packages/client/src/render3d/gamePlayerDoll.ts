@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
-import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, PHYS } from './humanoidRagdoll.js';
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
@@ -20,7 +20,8 @@ import { charFor } from './chars3d.js';
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
 const PELVIS_Y = 32;
 const KNOCK = 3.5;   // сила отброса трупа при frac=1 — ~1.5 м макс (32 ед = 1 м) при 100% урона от HP; меньше урон — ближе
-const ATK_MATCH = 0.92;   // пиковый вес совпадения с авторской позой во время удара — физика одна не доводит замах до конца
+const ATK_MATCH = 0.92;   // пиковый вес совпадения с авторской позой во время удара (фолбэк, если у кадра нет авторского __match)
+const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов — восстанавливаем вне удара (PHYS глобальна, шарится дллами: каждая dll ставит своё перед update)
 
 export interface HumanoidDollOpts {
   x: number; z: number;
@@ -146,12 +147,14 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       player.setYaw(tyaw);
       player.step(dt);                                       // позирует target (гейт+idle-стойка+удар) + грип оружия на solid
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
+      PHYS.pinKp = player.attackPinKp ?? DEF_PINKP;          // per-кадр жёсткость пинов удара (авторская) / дефолт. PHYS глобальна — ставим перед СВОИМ update
       ragdoll.update(dt);                                    // шаг физики (моторы к позе + пины + вес оружия + kinematic-таз)
       // солид = физрезультат + заземление ОПОРНЫХ стоп (маховую ведёт поза) + БЛЕНД к позе-цели по matchWeight.
-      // Во время удара поднимаем вес к ATK_MATCH по огибающей замаха (physics один не доводит быстрый замах до конечных
-      // кадров → удар «не доходит»); в покое/беге — прежний matchWeight (физ-ведомая походка). Огибающая сглаживает старт/конец.
+      // Во время удара вес совпадения = АВТОРСКИЙ per-кадр __match (задан в редакторе покадрово), иначе фолбэк — огибающая
+      // ATK_MATCH·attackWeight (physics один не доводит замах до конца). В покое/беге — базовый matchWeight (физ-ведомая походка).
       const sw = player.driver.swingLegs;   // опора = !swing → заземляем только стоящую ногу (иначе «лыжник» на спуске)
-      const effMatch = Math.max(matchWeight, ATK_MATCH * player.attackWeight);
+      const am = player.attackMatch;
+      const effMatch = am != null ? am : Math.max(matchWeight, ATK_MATCH * player.attackWeight);
       renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]]);
     },
     dispose() {

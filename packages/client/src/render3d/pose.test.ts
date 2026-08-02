@@ -321,6 +321,20 @@ describe('PosePlayer.triggerAttack: клип ужимается в окно ат
     const p = mkPlayer();
     p.triggerAttack(clip, 1.2); expect(p.atkSpeed).toBe(1);
   });
+  it('attackMatch/attackPinKp: авторский per-кадр физ из клипа (интерп по времени); null если не задан', () => {
+    const p = mkPlayer();
+    expect(p.attackMatch).toBeNull();           // нет удара
+    p.triggerAttack(clip); p.atk.t = 0.3;
+    expect(p.attackMatch).toBeNull();            // клип без __match → фолбэк рантайма
+    const t3 = (a: number): [number, number, number] => [a, 0, 0];
+    const clipP = { name: 'hit_x', character: 'warrior', weapon: 'sword', loop: false, keys: [
+      { pose: { __match: t3(0.4), __pinKp: t3(3000) }, t: 0 },
+      { pose: { __match: t3(1.0), __pinKp: t3(9000) }, t: 0.6 },
+    ] };
+    p.triggerAttack(clipP); p.atk.t = 0.3;       // середина клипа → среднее
+    expect(p.attackMatch).toBeCloseTo(0.7, 5);
+    expect(p.attackPinKp).toBeCloseTo(6000, 0);
+  });
   it('attackWeight (огибающая для буста match): 0 в покое, ~1 на пике, →0 к концу', () => {
     const p = mkPlayer();
     expect(p.attackWeight).toBe(0);          // нет удара
