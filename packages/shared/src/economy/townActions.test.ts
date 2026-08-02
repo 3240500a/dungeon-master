@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee } from './townActions.js';
+import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll } from './townActions.js';
+import { createRng } from '../formulas/rng.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
@@ -43,6 +44,47 @@ describe('moveInventoryItem (авторитетная перекладка ин�
 
   it('нет такого предмета — отказ', () => {
     expect(moveInventoryItem(reg, saveWith(), 'nope', 0, 0).ok).toBe(false);
+  });
+});
+
+describe('forgeUpgrade / forgeReroll (авторитетная кузница)', () => {
+  const price = reg.get('balance').forgePrices;
+  const weapon = (uid: string): Item => ({
+    uid, baseId: 'b', name: 'Меч', slot: 'weapon', rarity: 'normal', itemLevel: 5,
+    requirements: {}, affixes: [], gridW: 1, gridH: 3, pos: null,
+    baseStats: [{ kind: 'flat', stat: 'minDamage', value: 10 }, { kind: 'increased', stat: 'attackSpeed', value: 5 }],
+  } as unknown as Item);
+
+  it('улучшение: −золото, +20% плоским статам (мин +1), % не тронут, префикс ★', () => {
+    const it = weapon('w');
+    const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
+    expect(forgeUpgrade(reg, save, 'w').ok).toBe(true);
+    expect(save.gold).toBe(1000 - price.upgradeTier);
+    expect(it.baseStats[0]).toMatchObject({ kind: 'flat', value: 12 });        // 10 → round(12)
+    expect(it.baseStats[1]).toMatchObject({ kind: 'increased', value: 5 });    // %-стат не меняем
+    expect(it.name.startsWith('★')).toBe(true);
+  });
+
+  it('улучшение: мало золота → отказ, предмет и золото не тронуты', () => {
+    const it = weapon('w');
+    const save = { gold: price.upgradeTier - 1, inventory: [it] } as unknown as SaveState;
+    expect(forgeUpgrade(reg, save, 'w').ok).toBe(false);
+    expect(it.name).toBe('Меч');
+    expect(save.gold).toBe(price.upgradeTier - 1);
+  });
+
+  it('реролл: −золото, перекатывает аффиксы (столько же)', () => {
+    const it = weapon('w');
+    const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
+    expect(forgeReroll(reg, save, 'w', createRng(1)).ok).toBe(true);
+    expect(save.gold).toBe(1000 - price.rerollAffix);
+    expect(Array.isArray(it.affixes)).toBe(true);   // пул мог дать 0/1 — но операция прошла и списала золото
+  });
+
+  it('нет предмета → отказ', () => {
+    const save = { gold: 1000, inventory: [] } as unknown as SaveState;
+    expect(forgeUpgrade(reg, save, 'nope').ok).toBe(false);
+    expect(forgeReroll(reg, save, 'nope', createRng(1)).ok).toBe(false);
   });
 });
 

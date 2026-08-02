@@ -109,6 +109,8 @@ export interface WorldSnapshot {
 export type TownCommand =
   | { cmd: 'buy'; uid: string }
   | { cmd: 'sell'; uid: string }
+  | { cmd: 'forgeUpgrade'; uid: string }
+  | { cmd: 'forgeReroll'; uid: string }
   | { cmd: 'equip'; uid: string }
   | { cmd: 'unequip'; slot: string }
   | { cmd: 'allocAttr'; attr: string }

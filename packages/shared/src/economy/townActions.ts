@@ -4,6 +4,8 @@ import type { SaveState } from '../types/save.js';
 import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { finalAttributes, meetsRequirements, modifiersFromItems } from '../formulas/stats.js';
+import { rollAffixes } from '../formulas/itemgen.js';
+import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
 
@@ -91,6 +93,29 @@ export function sellItem(reg: ConfigRegistry, save: SaveState, uid: string): Act
   if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
   const [it] = save.inventory.splice(idx, 1);
   save.gold += shopSellPrice(it!, reg.get('rarities'));
+  return { ok: true };
+}
+
+// ── Кузница (авторитетно; раньше мутировал клиент → откатывалось сейвом) ──────
+/** Улучшение: +20% (мин +1) к плоским базовым статам, префикс ★. Цена `forgePrices.upgradeTier`. */
+export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string): ActionResult {
+  const item = save.inventory.find((i) => i.uid === uid);
+  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  const cost = reg.get('balance').forgePrices.upgradeTier;
+  if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
+  save.gold -= cost;
+  item.baseStats = item.baseStats.map((m) => (m.kind === 'flat' ? { ...m, value: Math.max(m.value + 1, Math.round(m.value * 1.2)) } : m));
+  if (!item.name.startsWith('★')) item.name = `★ ${item.name}`;
+  return { ok: true };
+}
+/** Реролл аффиксов: заново катит столько же аффиксов из пула (rng — от вызывающего). Цена `forgePrices.rerollAffix`. */
+export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng): ActionResult {
+  const item = save.inventory.find((i) => i.uid === uid);
+  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  const cost = reg.get('balance').forgePrices.rerollAffix;
+  if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
+  save.gold -= cost;
+  item.affixes = rollAffixes(reg.get('affixes'), item.affixes.length || 1, item.itemLevel, rng);
   return { ok: true };
 }
 

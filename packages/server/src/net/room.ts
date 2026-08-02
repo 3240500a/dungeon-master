@@ -4,7 +4,7 @@ import {
   GameSession, spawnPacksEl, townLayout, serializeWorld, floorInit,
   generateRunPlan, generateFloor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
-  buyItem, sellItem, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
+  buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
   stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
   isDifficultyUnlocked, applyDeathPenalty,
@@ -238,6 +238,8 @@ export class Room {
         break;
       }
       case 'sell': r = sellItem(this.cfg, save, command.uid); break;
+      case 'forgeUpgrade': r = forgeUpgrade(this.cfg, save, command.uid); break;
+      case 'forgeReroll': r = forgeReroll(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
       case 'equip': r = equip(this.cfg, save, command.uid); break;
       case 'unequip': r = unequip(this.cfg, save, command.slot); break;
       case 'allocAttr': r = allocAttr(save, command.attr); break;
@@ -478,17 +480,25 @@ export class Room {
     const itemsBase = this.cfg.get('items.base');
     const rarities = this.cfg.get('rarities');
     const tiers = this.cfg.get('item-tiers');
+    const affixes = this.cfg.get('affixes');
+    const uniques = this.cfg.get('uniques');
     const rng = createRng(((Date.now() & 0xffffff) >>> 0) || 1);
     const level = Math.max(1, this.firstSave()?.level ?? 1);
-    // Случайные товары — экип по весам категорий (щиты появляются); колбы НЕ в случайных 8
-    // (consumable:0), они идут гарантированным стоком SHOP_CONSUMABLES ниже.
-    const shopWeights = { ...this.cfg.get('balance').loot.categoryWeights, consumable: 0 };
     this.shop = [];
+    // Зелья/расходники — лавка (гарантированный сток, по 5 каждого).
     for (const id of SHOP_CONSUMABLES) for (let n = 0; n < 5; n++) { const p = itemFromBaseId(itemsBase, id); if (p) this.shop.push(p); }
-    for (let i = 0; i < 8; i++) {
-      this.shop.push(generateItem(itemsBase, this.cfg.get('affixes'), this.cfg.get('uniques'),
-        { dropBias: 1.3, itemLevel: level + 1, tiers, rarities, categoryWeights: shopWeights }, rng));
-    }
+    // Оружие/броня — кузница. Гарантируем товар в КАЖДОЙ вкладке магазина (ближний/дальний/броня):
+    // N роллов на категорию по её базам (generateItem с baseId → полноценный ролл: тир/редкость/аффиксы).
+    const meleeBases = itemsBase.filter((b) => b.kind === 'weapon' && b.attackType === 'melee');
+    const rangedBases = itemsBase.filter((b) => b.kind === 'weapon' && b.attackType === 'ranged');
+    const armorBases = itemsBase.filter((b) => b.kind === 'armor' || b.kind === 'shield' || b.kind === 'jewelry');
+    const rollFrom = (pool: typeof itemsBase, count: number): void => {
+      for (let i = 0; i < count && pool.length; i++) {
+        this.shop.push(generateItem(itemsBase, affixes, uniques,
+          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities }, rng));
+      }
+    };
+    rollFrom(meleeBases, 9); rollFrom(rangedBases, 6); rollFrom(armorBases, 9);
   }
 
   // ── Луп ─────────────────────────────────────────────────────────────────────
