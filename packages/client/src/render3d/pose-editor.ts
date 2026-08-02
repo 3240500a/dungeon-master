@@ -11,7 +11,7 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -64,6 +64,7 @@ function updateWeapon(): void {
   if (weaponGroups.some((g) => gizmo.object === g)) gizmo.detach();   // не держать гизмо на удаляемом оружии
   for (const g of weaponGroups) { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   weaponGroups = attachWeapons(human, weapon);                        // сборка+хват+базы поворота — в weapon3d
+  lgripMark = null;                                                   // маркер хвата был ребёнком старого груп — пересоздастся из позы
 }
 
 // ── FK-подсветка ──
@@ -227,6 +228,28 @@ function sortKeys(c: Clip): void { const cur = c.keys[frameIdx]; c.keys.sort((a,
 // Поза оружия относительно хвата пишется спец-ключами (не кости): поворот __wpn{Main|Off}, позиция __wpn{Main|Off}P.
 const WPN_KEYS = ['__wpnMain', '__wpnOff'];
 const WPN_POS = ['__wpnMainP', '__wpnOffP'];
+// ── Двуручный хват: маркер точки, где ЛЕВАЯ кисть держит оружие (ребёнок груп[0]); ключи позы __lgripP/__lgripR (локаль оружия) ──
+let lgripMark: THREE.Mesh | null = null;
+function ensureLgripMark(): THREE.Mesh | null {
+  const wg = weaponGroups[0]; if (!wg) return null;
+  if (!lgripMark || lgripMark.parent !== wg) {
+    if (lgripMark && gizmo.object === lgripMark) gizmo.detach();
+    lgripMark = new THREE.Mesh(new THREE.SphereGeometry(1.7, 12, 8), new THREE.MeshBasicMaterial({ color: 0x33ddff, transparent: true, opacity: 0.55, depthTest: false }));
+    lgripMark.renderOrder = 998; lgripMark.name = '__lgrip'; wg.add(lgripMark);
+  }
+  return lgripMark;
+}
+const hasLgrip = (): boolean => { const k = curClip()?.keys[frameIdx]?.pose; return !!k?.['__lgripP']; };
+/** Живой превью: левая кисть IK-ом держит маркер (Анимация; в Бег tab это делает gaitToHumanoid). */
+function applyLgripPreview(): void {
+  if (!lgripMark || !lgripMark.visible || !weaponGroups[0]) return;
+  human.root.updateMatrixWorld(true);
+  const target = lgripMark.getWorldPosition(V()), q = lgripMark.getWorldQuaternion(Q());
+  const sh = human.bones.get('LeftUpperArm')!.getWorldPosition(V()), toEl = human.bones.get('LeftLowerArm')!.getWorldPosition(V()).sub(sh);
+  const line = target.clone().sub(sh); toEl.addScaledVector(line, -(toEl.dot(line) / Math.max(1e-6, line.lengthSq())));
+  const pole = toEl.lengthSq() > 0.5 ? toEl.normalize() : V().set(0, -1, -0.4);
+  solveTwoBoneIK(human, 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', target, q, pole);
+}
 function readPoseFull(): Pose {
   const p = human.readPose();
   delete p['LeftBreast']; delete p['RightBreast'];           // jiggle груди — рантайм, не пишем в позу
@@ -236,6 +259,11 @@ function readPoseFull(): Pose {
     if (rk) { const e = g.rotation; p[rk] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }
     if (pk) { const q = g.position; p[pk] = [+q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2)]; }
   });
+  if (lgripMark && lgripMark.parent === weaponGroups[0]) {   // точка хвата левой (локаль оружия) — если включена
+    const lp = lgripMark.position, lr = lgripMark.rotation;
+    p['__lgripP'] = [+lp.x.toFixed(2), +lp.y.toFixed(2), +lp.z.toFixed(2)];
+    p['__lgripR'] = [+lr.x.toFixed(3), +lr.y.toFixed(3), +lr.z.toFixed(3)];
+  }
   return p;
 }
 function applyWeaponPose(p: Pose): void {
@@ -244,6 +272,8 @@ function applyWeaponPose(p: Pose): void {
     if (rk && p[rk]) g.rotation.set(p[rk]![0], p[rk]![1], p[rk]![2]);
     if (pk && p[pk]) g.position.set(p[pk]![0], p[pk]![1], p[pk]![2]);
   });
+  if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
+  else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
 function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } applyWeaponPose(p); }
 function lerpPose(a: Pose, b: Pose, t: number): void {
@@ -254,6 +284,11 @@ function lerpPose(a: Pose, b: Pose, t: number): void {
     if (rk) { const pa = a[rk], pb = b[rk]; if (pa && pb) g.rotation.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); else if (pa) g.rotation.set(pa[0], pa[1], pa[2]); }
     if (pk) { const pa = a[pk], pb = b[pk]; if (pa && pb) g.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); else if (pa) g.position.set(pa[0], pa[1], pa[2]); }
   });
+  if (a['__lgripP'] || b['__lgripP']) { const m = ensureLgripMark(); if (m) {   // точка хвата скользит по кадрам (перехват)
+    const pa = a['__lgripP'] ?? b['__lgripP']!, pb = b['__lgripP'] ?? pa, ra = a['__lgripR'] ?? [0, 0, 0], rb = b['__lgripR'] ?? ra;
+    m.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t);
+    m.rotation.set(ra[0] + (rb[0] - ra[0]) * t, ra[1] + (rb[1] - ra[1]) * t, ra[2] + (rb[2] - ra[2]) * t); m.visible = true;
+  } } else if (lgripMark) lgripMark.visible = false;
 }
 function mirrorLR(): void { const p = human.readPose(); for (const nm of human.boneNames) { if (!nm.startsWith('Left')) continue; const rb = human.bones.get('Right' + nm.slice(4)); const s = p[nm]!; if (rb) rb.rotation.set(s[0], -s[1], -s[2]); } if (mode === 'ik') captureRig(); }
 
@@ -412,6 +447,18 @@ function poseTools(): void {
     const pickWeapon = (g: THREE.Object3D, m: 'rotate' | 'translate'): void => { setMode('fk'); selected = null; highlight(null); gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(g); };
     weaponGroups.forEach((g, i) => { const nm = wlbl[i] ?? ('о' + (i + 1)); wr.append(pbtn(nm + ' ⟳', () => pickWeapon(g, 'rotate')), pbtn(nm + ' ✥', () => pickWeapon(g, 'translate'))); });
     wr.append(pbtn('сброс', () => { updateWeapon(); renderAnim(); }));   // пересборка = базовые позиция/поворот
+    if (weaponGroups.length === 1 && !weapon.includes('+')) {            // двуручка: левая кисть держит оружие в точке хвата (покадрово, IK)
+      const gh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); gh.textContent = 'ДВУРУЧНЫЙ ХВАТ · левая кисть на оружии (IK)'; body.append(gh);
+      const gr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(gr);
+      const on = hasLgrip();
+      gr.append(pbtn(on ? '− левый хват' : '+ левый хват', () => {
+        const c = curClip(); if (!c) return;
+        if (on) { for (const k of c.keys) { delete k.pose['__lgripP']; delete k.pose['__lgripR']; } if (lgripMark) lgripMark.visible = false; if (gizmo.object === lgripMark) gizmo.detach(); }
+        else { const def: [number, number, number] = [0, -14, 0]; for (const k of c.keys) { if (!k.pose['__lgripP']) { k.pose['__lgripP'] = [...def]; k.pose['__lgripR'] = [0, 0, 0]; } } const m = ensureLgripMark(); if (m) { m.position.set(def[0], def[1], def[2]); m.rotation.set(0, 0, 0); m.visible = true; } }
+        saveLib(); renderAnim();
+      }, on));
+      if (on) { const pickGrip = (m: 'rotate' | 'translate'): void => { const mk = ensureLgripMark(); if (!mk) return; setMode('fk'); selected = null; highlight(null); mk.visible = true; gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(mk); }; gr.append(pbtn('хват ✥', () => pickGrip('translate')), pbtn('хват ⟳', () => pickGrip('rotate'))); }
+    }
   }
   // ── ФИЗИКА (PuppetMaster-стиль: пины/мышцы + дёрг/падение) ──
   const phh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); phh.textContent = 'ФИЗИКА (мышцы/пины)'; body.append(phh);
@@ -1240,6 +1287,7 @@ function loop(): void {
     if (rig.hipsHandle !== active) rig.hipsHandle.position.copy(rig.hipsPos);
     for (const e of effList()) { if (e.handle !== active) e.handle.position.copy(e.target); if (e.poleHandle !== active) e.poleHandle.position.copy(human.bones.get(e.mid)!.getWorldPosition(V())); }
   }
+  if (!locoOn) applyLgripPreview();   // Анимация: левая кисть IK-ом на маркер хвата (в Бег это делает gaitToHumanoid)
   updatePlantMarks();
   scrollFloor();   // тредмилл-пол под бегущим (тянется по gaitPx/gaitPz)
   stepPhysics(dt);
@@ -1253,5 +1301,6 @@ loop();
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
   captureUpper, get sway() { return swayCfg; }, resolveUpper: (w: string): unknown => resolveUpper(w), get stances() { return library.filter((c) => c.name.startsWith('idle_')); },
+  get lgrip() { return lgripMark; }, lgripEnsure: (): unknown => ensureLgripMark(), lgripPreview: (): void => applyLgripPreview(),   // двуручный хват: маркер + off-hand IK превью (дебаг)
   gaitAttack: (name: string): void => { const c = clipsHere().find((x) => x.name === name) ?? library.find((x) => x.name === name); if (c) triggerAttack(c); }, get attackT() { return attackT; }, markAttack: (name: string): void => toggleAtk(name),
   physStep: (dt: number, n: number): unknown => { if (!pw || !ragdoll) return null; physOn = true; for (let i = 0; i < n; i++) { stepPhysics(dt); } return { Hips: ragdoll.bodyPos('Hips'), Head: ragdoll.bodyPos('Head'), HandL: ragdoll.bodyPos('HandL'), HandR: ragdoll.bodyPos('HandR'), FootL: ragdoll.bodyPos('FootL'), Torso: ragdoll.bodyPos('Torso') }; } };
