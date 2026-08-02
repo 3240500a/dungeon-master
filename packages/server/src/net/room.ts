@@ -91,6 +91,14 @@ export class Room {
     return this.attach(ws, userId, save);
   }
 
+  /** Вход + немедленное ПРОДОЛЖЕНИЕ сохранённого забега (реконнект БЕЗ грейс-комнаты: комната истекла или
+   *  разрыв был в городе, но `save.run` цел). Граф регенерится из `save.run.config`, входим в текущий узел. */
+  addPlayerResumeRun(ws: WebSocket, userId: string, save: SaveState): string {
+    const pid = this.attach(ws, userId, save);
+    if (save.run) this.resumeRun(save);   // регенерит runPlan из config и enterNode(currentNodeId) → тот же этаж
+    return pid;
+  }
+
   /**
    * Реконнект отключённого игрока (по charId) — возврат в ЭТУ комнату. Позиция: та же точка,
    * если пати ещё на том же этаже; если без него спустились дальше — начало текущего этажа.
