@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName, retargetClipName, localStorageContent } from './poseRuntime.js';
+import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK } from './poseRuntime.js';
+import { buildHumanoid } from './humanoid.js';
+import * as THREE from 'three';
 
 // Ноги гейта считает StepPlanner (детерминирован: своя фаза с 0, без Math.random). Читаем ТОЛЬКО ножные поля —
 // они не зависят от случайной инициализации фазы рук. Феча 1 (плант-цель) обязана быть НЕЙТРАЛЬНА к игре при
@@ -239,6 +241,30 @@ describe('retargetClipName (копир позы в другое оружие)', 
   });
   it('имя без оружия остаётся без изменений', () => {
     expect(retargetClipName('замах1', 'sword', 'axe')).toBe('замах1');
+  });
+});
+
+describe('solveTwoBoneIK (off-hand two-bone IK)', () => {
+  const V = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y, z);
+  it('кисть достаёт цель в пределах длины руки (13+11)', () => {
+    const h = buildHumanoid({}); h.root.updateMatrixWorld(true);
+    const sh = h.bones.get('LeftUpperArm')!.getWorldPosition(V(0, 0, 0));
+    const target = sh.clone().add(V(10, -5, 3));   // |Δ|≈11.6 — в досягаемости
+    solveTwoBoneIK(h, 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', target, null, V(0, -1, -0.4));
+    h.root.updateMatrixWorld(true);
+    const hand = h.bones.get('LeftHand')!.getWorldPosition(V(0, 0, 0));
+    expect(hand.distanceTo(target)).toBeLessThan(1);   // дотянулась (ед. ≈ 1/32 м)
+  });
+  it('цель вне досягаемости → рука вытянута к ней, клампится по длине', () => {
+    const h = buildHumanoid({}); h.root.updateMatrixWorld(true);
+    const sh = h.bones.get('LeftUpperArm')!.getWorldPosition(V(0, 0, 0));
+    const dir = V(1, -0.2, 0.1).normalize();
+    solveTwoBoneIK(h, 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', sh.clone().addScaledVector(dir, 100), null, V(0, -1, -0.4));
+    h.root.updateMatrixWorld(true);
+    const hand = h.bones.get('LeftHand')!.getWorldPosition(V(0, 0, 0));
+    const reach = hand.distanceTo(sh);
+    expect(reach).toBeGreaterThan(20); expect(reach).toBeLessThan(24.5);   // ~13+11
+    expect(hand.clone().sub(sh).normalize().dot(dir)).toBeGreaterThan(0.9);   // в сторону цели
   });
 });
 

@@ -60,6 +60,34 @@ export function clipPoseAt(c: Clip, t01: number): Pose {        // поза кл
   return blendTwo(a.pose, b.pose, span > 1e-6 ? clamp((time - a.t) / span, 0, 1) : 0);
 }
 
+// ── Общий two-bone IK (закон косинусов) — для off-hand хвата (двуручное) и переиспользования редактором ──
+const _ik0 = new THREE.Vector3(), _ik1 = new THREE.Vector3(), _ik2 = new THREE.Vector3(), _ik3 = new THREE.Vector3(), _ik4 = new THREE.Vector3(), _ik5 = new THREE.Vector3(), _ik6 = new THREE.Vector3();
+const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikq = new THREE.Quaternion(), _ikq2 = new THREE.Quaternion();
+/** Аналитический two-bone IK: root/mid/end к targetWorld; pole — сторона изгиба сустава; endQuatWorld (опц.) — мировая
+ *  ориентация конца (кисть). Длины и оси костей берутся из локальных оффсетов рига, поэтому работает и для руки, и для ноги. */
+export function solveTwoBoneIK(human: Humanoid, rootN: string, midN: string, endN: string, targetWorld: THREE.Vector3, endQuatWorld: THREE.Quaternion | null, pole: THREE.Vector3): void {
+  const root = human.bones.get(rootN), mid = human.bones.get(midN), end = human.bones.get(endN);
+  if (!root || !mid || !end) return;
+  const aimRoot = _ik0.copy(mid.position).normalize(), aimMid = _ik1.copy(end.position).normalize();
+  const L1 = mid.position.length(), L2 = end.position.length();
+  root.updateMatrixWorld();
+  const rp = root.getWorldPosition(_ik2);
+  const dir = _ik3.copy(targetWorld).sub(rp);
+  let d = dir.length(); d = clamp(d, Math.abs(L1 - L2) + 0.5, L1 + L2 - 0.5); dir.normalize();
+  const a = Math.acos(clamp((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d), -1, 1));
+  const bend = _ik4.crossVectors(dir, pole); if (bend.lengthSq() < 1e-6) bend.set(0, 0, 1); else bend.normalize();
+  const midPos = _ik5.copy(rp).addScaledVector(_ik6.copy(dir).applyAxisAngle(bend, a), L1);
+  aimBone(root, aimRoot, midPos); aimBone(mid, aimMid, targetWorld);
+  if (endQuatWorld) { end.updateMatrixWorld(); end.quaternion.copy(end.parent!.getWorldQuaternion(_ikq).invert().multiply(endQuatWorld)); end.updateMatrixWorld(); }
+}
+function aimBone(bone: THREE.Object3D, aim: THREE.Vector3, t: THREE.Vector3): void {   // повернуть кость так, чтобы её локальная ось aim смотрела в мир-точку t
+  bone.updateMatrixWorld();
+  const bp = bone.getWorldPosition(_ikA);
+  const pq = bone.parent!.getWorldQuaternion(_ikq2).invert();
+  const desired = _ikB.copy(t).sub(bp).normalize().applyQuaternion(pq);
+  bone.quaternion.setFromUnitVectors(aim, desired); bone.updateMatrixWorld();
+}
+
 // ── temp-объекты (общие, без аллокаций в кадре) ──
 const _wX = new THREE.Vector3(1, 0, 0), _qd = new THREE.Quaternion(), _qs = new THREE.Quaternion(), _ed = new THREE.Euler();
 const _qA = new THREE.Quaternion(), _qB = new THREE.Quaternion(), _qSh = new THREE.Quaternion(), _euH = new THREE.Euler();
@@ -158,6 +186,29 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
       applyShieldOverlay(human, weaponGroups, ov.pose, ov.mix, aenv);
     }
   }
+  // ДВУРУЧНЫЙ ХВАТ: левая кисть IK-ом держит точку __lgripP на оружии (едет с оружием). Точка покадрово: idle → перехват в
+  // ударе (берём кадр удара, иначе idle). Только когда левая рука СВОБОДНА (нет офф-руки: щита/дуала).
+  if (idle && weaponGroups.length && !weapon.includes('+')) {
+    const src = (atk.clip && atk.t >= 0) ? clipPoseAt(atk.clip, atk.t / (clipDur(atk.clip) || 1)) : idle;
+    const lgP = src['__lgripP'] ?? idle['__lgripP'];
+    if (lgP) applyOffhandGrip(human, weaponGroups, lgP, src['__lgripR'] ?? idle['__lgripR'] ?? [0, 0, 0]);
+  }
+}
+// Двуручный off-hand хват: цель = RightHand.world ∘ грип-оружия(локал груп[0]) ∘ __lgrip; pole локтя — из авторской позы левой руки.
+const _ogP = new THREE.Vector3(), _ogQ = new THREE.Quaternion(), _ogQ2 = new THREE.Quaternion(), _ogEu = new THREE.Euler();
+const _ogSh = new THREE.Vector3(), _ogEl = new THREE.Vector3(), _ogLine = new THREE.Vector3(), _ogPole = new THREE.Vector3();
+function applyOffhandGrip(human: Humanoid, weaponGroups: THREE.Group[], lgP: [number, number, number], lgR: [number, number, number]): void {
+  const wg = weaponGroups[0]; const rh = human.bones.get('RightHand'); const lua = human.bones.get('LeftUpperArm'); const lla = human.bones.get('LeftLowerArm');
+  if (!wg || !rh || !lua || !lla) return;
+  human.root.updateMatrixWorld(true);
+  const p = _ogP.set(lgP[0], lgP[1], lgP[2]).applyQuaternion(wg.quaternion).add(wg.position);   // __lgrip → space RightHand → мир
+  rh.localToWorld(p);
+  _ogEu.set(lgR[0], lgR[1], lgR[2]); _ogQ2.setFromEuler(_ogEu);
+  const q = rh.getWorldQuaternion(_ogQ).multiply(wg.quaternion).multiply(_ogQ2);               // ориентация кисти в мире
+  const sh = lua.getWorldPosition(_ogSh); const line = _ogLine.copy(p).sub(sh); const toEl = _ogPole.copy(lla.getWorldPosition(_ogEl)).sub(sh);
+  toEl.addScaledVector(line, -(toEl.dot(line) / Math.max(1e-6, line.lengthSq())));               // pole = перпендикуляр локтя к линии плечо→цель
+  const pole = toEl.lengthSq() > 0.5 ? toEl.normalize() : _ogPole.set(0, -1, -0.4);
+  solveTwoBoneIK(human, 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', p, q, pole);
 }
 /** Щит-оверлей: слерп костей SHIELD_BONES к позе щита + перенос ХВАТА щита (поворот/позиция). Вес кости = mix, а НА ВРЕМЯ
  *  удара (aenv 0..1) падает по спаду от щита: кисть держит, корпус свободен. Хват щита в клипе: у `idle_<оружие>+shield`
