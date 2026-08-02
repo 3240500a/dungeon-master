@@ -132,11 +132,12 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   }
   if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk);   // удар поверх idle/маха
 }
-/** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по moveMag, верх — idle+мах+удар. */
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState): void {
+/** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
+ *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag): void {
   human.reset();
   const idle = content.resolveUpper(weapon)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх)
-  const m = moveMag;
+  const m = legMag;
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
   blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL], idle, m);
   blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR], idle, m);
@@ -147,7 +148,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, m);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, m);
   blendBone(human, 'Head', [0, 0, 0], idle, m);
-  applyUpper(human, weaponGroups, gx, m, t, content, weapon, atk);
+  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
@@ -369,7 +370,7 @@ export class PosePlayer {
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk);
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag);
     this.human.bones.get('Hips')!.rotation.y = yaw;            // facing в Hips (углы ног body-local → корень крутим на yaw)
   }
 }
