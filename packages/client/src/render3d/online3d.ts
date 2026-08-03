@@ -94,7 +94,7 @@ function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string 
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean; hadFx?: boolean }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -131,7 +131,7 @@ export async function startOnline3d(): Promise<void> {
   let playerKinematic = false, playerNoIk = false;   // Настройки: те же тумблеры для игрока (self); применяются при создании куклы
   const debug = mountDebug(scene, camera, canvas, root);   // DBG-панель: только debug-слои + инфо (перф-тумблеры → «Настройки»)
   mountSettings(root, {
-    onMonKinematic: (on) => { monKinematic = on; for (const a of monsters.values()) a.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
+    onMonKinematic: (on) => { monKinematic = on; },   // применяет цикл монстров (форс кинематик всем поверх авто-физ-LOD)
     onMonNoIk: (on) => { monNoIk = on; },   // применяется в цикле монстров (форс poseLod у всех)
     onPlayerKinematic: (on) => { playerKinematic = on; self?.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
     onPlayerNoIk: (on) => { playerNoIk = on; self?.d.setPoseLod?.(on); },
@@ -358,6 +358,9 @@ export async function startOnline3d(): Promise<void> {
   const WIN_HYST = 140;                 // гистерезис-полоса (u): бодрствующего усыпляем лишь за окном + полосой — нет флаттера на кромке
   const POSE_LOD_R2 = 600 * 600;        // радиус² поза-LOD: дальше игрока → без FOOT-IK (монстр всё так же шагает, стопы вдали не видно)
   const WAKE_BUDGET = 3;                // макс. пробуждений (AddToPhysicsSystem) за кадр — амортизация спайка при подходе к пачке спящих
+  // Физ-LOD: физику (pw.step) считаем только БЛИЖНИМ монстрам (кого бьёшь) — дальние кинематические (вон из физики), но
+  // всё так же анимируются позой. В бою ms_phys — главный расход (30+ регдоллов). Гистерезис PHYS_NEAR→FAR + бюджет флипов/кадр.
+  const PHYS_NEAR2 = 420 * 420, PHYS_FAR2 = 560 * 560, KIN_BUDGET = 3;
   const _wc: Array<[number, number]> = [[-1, -1], [1, -1], [-1, 1], [1, 1]];   // углы экрана в NDC
   const _wv = new THREE.Vector3();
   let winMinX = -Infinity, winMaxX = Infinity, winMinZ = -Infinity, winMaxZ = Infinity;   // AABB активного окна (world XZ)
@@ -420,7 +423,7 @@ export async function startOnline3d(): Promise<void> {
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }
     // монстры
     const dcfg = app.config.get('debuffs');
-    let woke = 0;   // счётчик пробуждений за кадр (амортизация: подход к пачке спящих не будит всех разом)
+    let woke = 0, kinFlips = 0;   // бюджеты за кадр: пробуждения (Add) и переключения физ-LOD (Add/Remove) — амортизация спайков
     for (const mv of latest.monsters) {
       const a = monsters.get(mv.id); if (!a) continue;
       if (!mv.alive) { markDead(a); statusFx.remove(`m${mv.id}`); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
@@ -429,6 +432,11 @@ export async function startOnline3d(): Promise<void> {
       // Окно-culling: в окне → активен (полный физ-апдейт); вне → усыплён (тела вон из pw.step, поза-пайплайн пропущен).
       // Гистерезис: спящего будим строго по входу в окно, бодрствующего усыпляем лишь за окном + полосой → нет флаттера на кромке.
       const inWin = mv.x >= winMinX && mv.x <= winMaxX && mv.y >= winMinZ && mv.y <= winMaxZ;
+      const d2 = (mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ);
+      // Физ-LOD ДО пробуждения: ближним монстрам физика, дальним — кинематик (вон из pw.step). На спящей кукле setPhysicsMode
+      // = только флаг (тел не трогает, они и так вне) → нет churn Add/Remove при пробуждении дальнего. Гистерезис NEAR↔FAR + бюджет.
+      const wantKin = monKinematic || (a.physKin ? d2 > PHYS_NEAR2 : d2 > PHYS_FAR2);
+      if (inWin && wantKin !== !!a.physKin && kinFlips < KIN_BUDGET) { kinFlips++; a.physKin = wantKin; a.d.setPhysicsMode?.(wantKin ? 'kinematic' : 'physics'); }
       let active = a.dormant
         ? inWin
         : (mv.x >= winMinX - WIN_HYST && mv.x <= winMaxX + WIN_HYST && mv.y >= winMinZ - WIN_HYST && mv.y <= winMaxZ + WIN_HYST);
@@ -436,7 +444,7 @@ export async function startOnline3d(): Promise<void> {
         if (woke < WAKE_BUDGET) { woke++; a.dormant = false; a.d.setSimEnabled?.(true); }
         else active = false;   // бюджет исчерпан → остаётся спящим ещё кадр (в запасе окна, за кадром — не видно)
       } else if (!active && !a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); }   // выход за окно → вон из физики, меш заморожен
-      if (active) a.d.setPoseLod?.(monNoIk || (mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ) > POSE_LOD_R2);   // дальний в кадре (или debug J: все) → без вспом. IK
+      if (active) a.d.setPoseLod?.(monNoIk || d2 > POSE_LOD_R2);   // дальний в кадре (или debug J: все) → без вспом. IK
       driveActor(a, mv.x, mv.y, mv.facing, true, dt, active);   // dormant → doUpdate=false: setPose держит цель живой, тяжёлый шаг пропущен
       // Есть ли у монстра дебаффы — дёшево, БЕЗ аллокаций (у большинства их нет). Строку иконок и statusFx.sync
       // считаем ТОЛЬКО когда дебаффы есть (или были) — иначе per-frame Object.keys/filter/map × N монстров = мусор → GC-паузы.
