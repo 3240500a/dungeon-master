@@ -685,12 +685,15 @@ export async function startOnline3d(): Promise<void> {
 
   // ── Кадр (вынесен, чтобы гнать вручную в фоновой вкладке — rAF там заморожен) ──
   let physAcc = 0, tsec = 0, fps = 60, miniAcc = 0;
+  let msWorld = 0, msPhys = 0, msRender = 0;   // профайлер фаз кадра (мс, сглажено) — в DBG-инфо: во что упираемся
   function frame(dt: number): void {
     tsec += dt;
     fps += (1 / Math.max(dt, 1e-3) - fps) * 0.1;
     updatePing();
     if (app.net.connected && myId && latest && app.state) {
-      sendInput(); renderWorld(dt); hud.update(); updateInteractions();
+      const _tw = performance.now();
+      sendInput(); renderWorld(dt); hud.update(); updateInteractions();   // «мир»: драйв актёров + поза-пайплайн + HUD
+      msWorld += (performance.now() - _tw - msWorld) * 0.1;
       const me = latest.players.find((p) => p.id === myId);
       miniAcc += dt;
       if (miniAcc >= 0.1) {   // миникарта — ~10 Гц, а не каждый кадр: снимает per-frame аллокации (filter/map всех монстров + регексы) → меньше GC-пауз
@@ -706,6 +709,8 @@ export async function startOnline3d(): Promise<void> {
         debug.update({
           info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq,
             calls: renderer.info.render.calls, tris_k: Math.round(renderer.info.render.triangles / 1000), prog: renderer.info.programs?.length ?? 0, torches: torches.length,
+            // Профайлер фаз кадра (мс): куда уходит время главного потока — мир(поза/драйв) / физика / рендер(submit).
+            ms_world: +msWorld.toFixed(1), ms_phys: +msPhys.toFixed(1), ms_rend: +msRender.toFixed(1),
             // Диагностика «монстры вне пола»: сколько ЖИВЫХ монстров стоят на клетке-НЕ-полу (стена/пустота/вне сетки).
             void: areaGrid ? latest.monsters.filter((m) => m.alive && areaGrid![Math.floor(m.y / TILE)]?.[Math.floor(m.x / TILE)] !== Cell.Floor).length : 0 },
           playerR: me?.r ?? 12,
@@ -717,9 +722,13 @@ export async function startOnline3d(): Promise<void> {
         });
       }
     }
+    const _tp = performance.now();
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
+    msPhys += (performance.now() - _tp - msPhys) * 0.1;   // «физ»: pw.step (Jolt) над активными телами
     updateTorches(torches, torchPool, smoothX, smoothZ, tsec); vfx.update(dt); statusFx.update(dt); applyCam();
+    const _tr = performance.now();
     renderer.render(scene, camera);
+    msRender += (performance.now() - _tr - msRender) * 0.1;   // «рендер»: submit дроуколов + куллинг (CPU-часть; GPU асинхронно)
   }
 
   if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents };
