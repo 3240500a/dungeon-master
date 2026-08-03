@@ -30,7 +30,7 @@ export interface Debug3d { setFloor(grid: Grid): void; update(f: DebugFrame): vo
 const MELEE_SLACK = 8;   // приближение MONSTER_MELEE_WHIFF_SLACK для радиуса ближней атаки монстра
 const COL = { self: 0x35e08a, peer: 0x5aa0ff, mon: 0x35e08a, proj: 0xffffff, inter: 0x6fd0ff, vision: 0xffe24a, hear: 0x59a8ff, atkMon: 0xff5a3a, atkPl: 0xffa030, chase: 0xff4040, idle: 0x8a90a4, target: 0xff6060, face: 0xffffff };
 
-export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement, root: HTMLElement): Debug3d {
+export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement, root: HTMLElement, opts: { onMonKinematic?: (on: boolean) => void } = {}): Debug3d {
   let on = false;
   const layers: Record<DebugLayer, boolean> = { colliders: true, vision: true, attack: true, ai: true, facing: false, labels: false };
   const group = new THREE.Group(); group.visible = false; scene.add(group);
@@ -86,8 +86,13 @@ export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTM
     cb.addEventListener('change', () => { layers[k] = cb.checked; });
     row.append(cb, document.createTextNode(lbl)); layerRow.appendChild(row); boxes[k] = cb;
   }
+  // Перф-тумблер (K): кинематика монстров — рисуем из позы, физику считаем только на удар/смерть (тест источника фризов).
+  const physRow = document.createElement('label'); physRow.style.cssText = 'display:block;cursor:pointer;color:#ffd479;border-top:1px solid #2b3a48;margin-top:6px;padding-top:6px';
+  const physCb = document.createElement('input'); physCb.type = 'checkbox'; physCb.style.cssText = 'margin-right:5px;vertical-align:middle';
+  physCb.addEventListener('change', () => opts.onMonKinematic?.(physCb.checked));
+  physRow.append(physCb, document.createTextNode('K кинематика монстров (физ: удар/смерть)'));
   const infoEl = document.createElement('div'); infoEl.style.cssText = 'white-space:pre;color:#9fe0c0;border-top:1px solid #2b3a48;padding-top:5px';
-  panel.append(layerRow, infoEl);
+  panel.append(layerRow, physRow, infoEl);
 
   const btn = document.createElement('button'); btn.textContent = 'DBG';
   btn.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:70;padding:4px 9px;background:#1c2130;color:#8f9bb0;border:1px solid #39415a;border-radius:5px;cursor:pointer;font:11px monospace;pointer-events:auto';
@@ -106,6 +111,7 @@ export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTM
   addEventListener('keydown', (e) => {
     const t = document.activeElement; if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
     if (e.code === 'F3') { e.preventDefault(); setOn(!on); return; }
+    if (on && e.code === 'KeyK') { physCb.checked = !physCb.checked; opts.onMonKinematic?.(physCb.checked); return; }   // кинематика монстров
     if (on && /^Digit[1-6]$/.test(e.code)) { const k = LAYER_LABELS[+e.code.slice(5) - 1]![0]; layers[k] = !layers[k]; boxes[k]!.checked = layers[k]; }
   });
 

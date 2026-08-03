@@ -124,7 +124,10 @@ export async function startOnline3d(): Promise<void> {
   app.gameLog = new GameLog(app, root);
   const hud = mountHud3d(app);
   const minimap = mountMinimap(root);
-  const debug = mountDebug(scene, camera, canvas, root);
+  let monKinematic = false;   // debug (DBG-панель / K): монстры кинематические, физика лишь на удар/смерть — тест источника фризов
+  const debug = mountDebug(scene, camera, canvas, root, {
+    onMonKinematic: (on) => { monKinematic = on; for (const a of monsters.values()) a.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
+  });
 
   await initPhysics();
   const pw = new PhysWorld();
@@ -229,6 +232,7 @@ export async function startOnline3d(): Promise<void> {
       const mc = charFor(monsterCharId(faction));
       const col = FACTION[faction] ?? 0x8a6f4a;
       const d = makeHumanoidDoll(pw, { x: m.x, z: m.y, weapon: mc.weapon, gaitId: monsterCharId(faction), gaitFallback: 'warrior', gender: mc.gender, build: mc.build, colors: { body: col, limb: 0x5a5a64, head: col } });
+      if (monKinematic) d.setPhysicsMode?.('kinematic');   // спавн при активном debug-режиме → сразу кинематический
       actorsGroup.add(d.group);
       const champion = m.def.rarity === 'champion', special = champion || m.def.affixes.length > 0;
       const hp = makeNameplate(m.def.name, champion, special); actorsGroup.add(hp.spr);

@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
-import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, PHYS } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
@@ -21,6 +21,8 @@ const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // leg
 const PELVIS_Y = 32;
 const KNOCK = 3.5;   // сила отброса трупа при frac=1 — ~1.5 м макс (32 ед = 1 м) при 100% урона от HP; меньше урон — ближе
 const ATK_MATCH = 0.92;   // пиковый вес совпадения с авторской позой во время удара (фолбэк, если у кадра нет авторского __match)
+const HIT_PHYS_DUR = 0.5;   // сек транзиентной физики в kinematic-режиме на хит-реакцию (перекрывает limp ~0.4с), потом назад в кинематику
+const GROUND0 = (): number => 0;   // плоский пол y=0 (как в физ-рендере при groundAt=undefined) для kinematic FOOT-IK
 const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов — восстанавливаем вне удара (PHYS глобальна, шарится дллами: каждая dll ставит своё перед update)
 
 export interface HumanoidDollOpts {
@@ -72,6 +74,9 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // ── состояние синхронизации ──
   let tx = opts.x, tz = opts.z, tyaw = 0, lastX = opts.x, lastZ = opts.z, first = true, dead = false;
   let simEnabled = true, snapNext = false;   // окно-culling: вне экрана усыпляем физику (тела вон из pw.step), меш замерзает
+  let kinematic = false, physHold = 0;       // debug-режим «кинематика»: рисуем из позы, физика лишь транзиентно (physHold сек) на удар/смерть
+  // Членство тел в pw.step: активны только если кукла не усыплена окном И (мертва | физрежим | идёт транзиентная физика удара).
+  const syncRagdollSim = (): void => ragdoll.setSimEnabled(simEnabled && (dead || !kinematic || physHold > 0));
   let atkClipIdx = 0;   // индекс чередования poseClips скила (замах справа→слева→…)
   let wvx = 0, wvz = 0, hasWvel = false, vxS = 0, vzS = 0;
   let rx = opts.x, rz = opts.z;            // сглаженная мир-позиция (сим 30Гц телепортит tx/tz)
@@ -100,6 +105,15 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     applyWeaponLoad();
   }
 
+  // Kinematic-режим: включить транзиентную физику на хит-реакцию — вернуть тела в pw.step, поставить их на ТЕКУЩУЮ
+  // позу (иначе импульс дёрнет стухшие тела), завести окно physHold. Дальше физ-путь ведёт моторами, потом снап назад.
+  function startHitPhysics(): void {
+    physHold = HIT_PHYS_DUR;
+    syncRagdollSim();          // тела → в pw.step
+    driveRagdollToPose();      // загрузить текущую позу-цель + пины + таз
+    ragdoll.snapToPose();      // тела на позу, скорости 0 (импульс ниже даст чистый дёрг)
+  }
+
   // СПАВН: сразу поставить рэгдолл в idle-стойку (иначе перехлёст T-поза→стойка болтает верх тела ~1с).
   player.setVel(0, 0); player.setYaw(0); player.step(1 / 60);
   driveRagdollToPose(); ragdoll.snapToPose();
@@ -117,16 +131,29 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       else player.triggerAttack(content.attackClip(weapon), windowSec);   // ничего не авторено → прежний фолбэк
     },
     setDead(d) {
-      if (d && !simEnabled) { simEnabled = true; snapNext = true; ragdoll.setSimEnabled?.(true); }   // умер спящим (вне окна) → будим, чтоб коллапс отыгрался
-      if (d === dead) return; dead = d; ragdoll.setDead(d);
+      if (d && !simEnabled) { simEnabled = true; snapNext = true; }   // умер спящим (вне окна) → будим, чтоб коллапс отыгрался
+      if (d === dead) return; dead = d;
+      syncRagdollSim();          // dead → тела в pw.step (коллапс) в ЛЮБОМ режиме (в т.ч. kinematic)
+      ragdoll.setDead(d);
     },
     setSimEnabled(on) {   // окно-culling: on=false → тела вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап к цели
       if (on === simEnabled) return; simEnabled = on;
       if (on) snapNext = true;
-      ragdoll.setSimEnabled?.(on);
+      syncRagdollSim();
     },
-    hitReact(dx, dz, power = 1) { ragdoll.hit('Torso', dx, 0.35, dz, power); },   // дёрг → из физики (солид = физрезультат)
+    setPhysicsMode(mode) {   // debug: 'kinematic' = рисуем из позы (тела вон из pw.step), физика лишь транзиентно на удар/смерть; 'physics' = обычно
+      const kin = mode === 'kinematic';
+      if (kin === kinematic) return;
+      kinematic = kin; physHold = 0; snapNext = true;
+      syncRagdollSim();
+      if (!kinematic && simEnabled && !dead) { driveRagdollToPose(); ragdoll.snapToPose(); }   // назад в физику: тела на текущую позу (без флейла)
+    },
+    hitReact(dx, dz, power = 1) {   // дёрг → из физики (солид = физрезультат); в kinematic — поднимаем физику на HIT_PHYS_DUR
+      if (kinematic && !dead && physHold <= 0) startHitPhysics();
+      ragdoll.hit('Torso', dx, 0.35, dz, power);
+    },
     knockback(dx, dz, frac) {   // отброс трупа: сильный горизонтальный импульс в таз+торс, дальность ∝ доле урона
+      if (kinematic && !dead && physHold <= 0) startHitPhysics();   // (обычно knockback на смерти → dead=true, физика уже поднята)
       const p = Math.max(0, Math.min(1, frac)) * KNOCK;
       ragdoll.hit('Hips', dx, 0.1, dz, p); ragdoll.hit('Torso', dx, 0.18, dz, p * 0.5);
     },
@@ -156,17 +183,25 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       }
       first = false; lastX = tx; lastZ = tz;
       player.setYaw(tyaw);
-      player.step(dt);                                       // позирует target (гейт+idle-стойка+удар) + грип оружия на solid
+      player.step(dt);                                       // позирует target (гейт+idle-стойка+удар) + грип оружия на solid — дёшево, в обоих режимах
+      const sw = player.driver.swingLegs;   // опора = !swing → заземляем только стоящую ногу (иначе «лыжник» на спуске)
+      if (kinematic && physHold <= 0) {                      // KINEMATIC: рисуем ПРЯМО из позы манекена, физику монстра не считаем
+        target.root.updateMatrixWorld(true);
+        const hips = target.bones.get('Hips')!;
+        hips.getWorldPosition(pelWorld); pelWorld.x += rx; pelWorld.z += rz;   // мир-таз позы + оффсет сглаженной позиции
+        renderKinematicPose(solid, target.readPose(), pelWorld, ground, dt, GROUND0, [!sw[0], !sw[1]]);
+        return;
+      }
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
       PHYS.pinKp = player.attackPinKp ?? DEF_PINKP;          // per-кадр жёсткость пинов удара (авторская) / дефолт. PHYS глобальна — ставим перед СВОИМ update
       ragdoll.update(dt);                                    // шаг физики (моторы к позе + пины + вес оружия + kinematic-таз)
       // солид = физрезультат + заземление ОПОРНЫХ стоп (маховую ведёт поза) + БЛЕНД к позе-цели по matchWeight.
       // Во время удара вес совпадения = АВТОРСКИЙ per-кадр __match (задан в редакторе покадрово), иначе фолбэк — огибающая
       // ATK_MATCH·attackWeight (physics один не доводит замах до конца). В покое/беге — базовый matchWeight (физ-ведомая походка).
-      const sw = player.driver.swingLegs;   // опора = !swing → заземляем только стоящую ногу (иначе «лыжник» на спуске)
       const am = player.attackMatch;
       const effMatch = am != null ? am : Math.max(matchWeight, ATK_MATCH * player.attackWeight);
       renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]]);
+      if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику
     },
     dispose() {
       ragdoll.dispose();

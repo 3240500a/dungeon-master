@@ -442,3 +442,20 @@ export function renderRagdollGhost(
   mesh.root.updateMatrixWorld(true);
   if (ground) groundFeet(mesh, hp[1], gs, dt, gnd, support);   // FOOT-IK: заземляем ОПОРНЫЕ стопы (маховую ведёт поза)
 }
+
+/**
+ * КИНЕМАТИЧЕСКИЙ рендер меша ПРЯМО из позы манекена (без физики) — debug-режим «кинематика монстров»:
+ * повороты костей = `targetPose`, позиция корня = `hipWorld` (мир-таз позируемого манекена), + FOOT-IK опорных
+ * стоп. Тела рэгдолла при этом ВОН из `pw.step`; физика включается лишь транзиентно на удар/смерть. Тот же
+ * силуэт, что физ-путь при match=1 (kinematic-таз = авторитет), но без per-тело моторов/пинов и интеграции.
+ */
+export function renderKinematicPose(
+  mesh: Humanoid, targetPose: Record<string, [number, number, number]>, hipWorld: THREE.Vector3,
+  gs: GhostGround, dt: number, gnd: GroundQuery, support?: [boolean, boolean],
+): void {
+  mesh.reset();
+  for (const nm in targetPose) { const b = mesh.bones.get(nm); if (b) b.rotation.set(targetPose[nm]![0], targetPose[nm]![1], targetPose[nm]![2]); }
+  mesh.root.position.set(hipWorld.x, hipWorld.y + gs.off, hipWorld.z);
+  mesh.root.updateMatrixWorld(true);
+  groundFeet(mesh, hipWorld.y, gs, dt, gnd, support);   // живой монстр — всегда заземляем (смерть идёт физ-путём)
+}

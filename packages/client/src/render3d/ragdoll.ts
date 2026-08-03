@@ -136,6 +136,8 @@ export interface RagdollHandle {
   setWeapon?(key: string): void;
   /** Окно-culling: on=false → тела куклы вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап. */
   setSimEnabled?(on: boolean): void;
+  /** Debug-режим физики монстра: 'kinematic' = рисовать из позы (тела вон из pw.step), физика лишь транзиентно на удар/смерть; 'physics' = как обычно. */
+  setPhysicsMode?(mode: 'physics' | 'kinematic'): void;
   update(dt: number): void;
   dispose(): void;
 }
