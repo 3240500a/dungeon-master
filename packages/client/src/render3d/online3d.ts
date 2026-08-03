@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
+import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -184,6 +184,7 @@ export async function startOnline3d(): Promise<void> {
   let seq = 0;
   let playerLight: THREE.PointLight | undefined;
   let torches: Torch[] = [];
+  let areaGrid: Grid | undefined;   // грид текущей области (для DBG-счётчика монстров вне пола)
   let interactables: Interactable[] = [];
   const doorMeshes = new Map<number, THREE.Object3D[]>();
   const leverMeshes = new Map<number, THREE.Object3D>();
@@ -206,6 +207,7 @@ export async function startOnline3d(): Promise<void> {
     doorMeshes.clear(); leverMeshes.clear(); interactables = [];
     clearGroup(floorGroup);
     area = floor.area;
+    areaGrid = floor.grid;   // для DBG-диагностики «монстры вне пола»
     if (app.state) app.state.area = floor.area;   // HUD/отчёт различают город/этаж по area (depth=0 у старта забега = как город)
 
     const layout = { grid: floor.grid, doors: [], decor: floor.decor, stairsDown: floor.stairs } as unknown as Parameters<typeof buildEnvironment>[1];
@@ -675,7 +677,9 @@ export async function startOnline3d(): Promise<void> {
         const w = app.state.save.equipment.weapon;
         debug.update({
           info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq,
-            calls: renderer.info.render.calls, tris_k: Math.round(renderer.info.render.triangles / 1000), prog: renderer.info.programs?.length ?? 0, torches: torches.length },
+            calls: renderer.info.render.calls, tris_k: Math.round(renderer.info.render.triangles / 1000), prog: renderer.info.programs?.length ?? 0, torches: torches.length,
+            // Диагностика «монстры вне пола»: сколько ЖИВЫХ монстров стоят на клетке-НЕ-полу (стена/пустота/вне сетки).
+            void: areaGrid ? latest.monsters.filter((m) => m.alive && areaGrid![Math.floor(m.y / TILE)]?.[Math.floor(m.x / TILE)] !== Cell.Floor).length : 0 },
           playerR: me?.r ?? 12,
           players: latest.players.map((p) => ({ x: p.id === myId ? smoothX : p.x, z: p.id === myId ? smoothZ : p.y, facing: p.facing, r: p.r, me: p.id === myId })),
           monsters: latest.monsters.map((mv) => { const def = monsters.get(mv.id)?.def; return { id: mv.id, x: mv.x, z: mv.y, facing: mv.facing, r: mv.r, alive: mv.alive, aiState: mv.aiState, vision: def?.vision ?? 0, visionAngle: def?.visionAngle ?? 0, hearing: def?.hearing ?? 0, hp: mv.hp, maxHp: mv.maxHp }; }),

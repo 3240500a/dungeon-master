@@ -104,6 +104,16 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
   wallCells.forEach(([x, y], i) => { dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); wm.setMatrixAt(i, dummy.matrix); });
   parent.add(wm);
 
+  // Колонны — из ГРИДА (Cell.Pillar непроходим на сервере: blocked()). Рисуем ВСЕ такие клетки (и декоративные из
+  // decorate, и «зал» из carveRoomShaped) — иначе они были невидимыми стенами (рендерились как пол → «непроходимые тайлы»).
+  const pillarCells: [number, number][] = [];
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (grid[y]![x] === Cell.Pillar) pillarCells.push([x, y]);
+  if (pillarCells.length) {
+    const pm = new THREE.InstancedMesh(new THREE.CylinderGeometry(9, 10, WALL_H, 12), matWall, pillarCells.length);
+    pillarCells.forEach(([x, y], i) => { dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); pm.setMatrixAt(i, dummy.matrix); });
+    parent.add(pm);
+  }
+
   for (const d of layout.doors) for (const c of d.cells) {
     const vertical = walk(c.cx - 1, c.cy) || walk(c.cx + 1, c.cy);
     const geo = vertical ? new THREE.BoxGeometry(8, WALL_H * 0.85, TILE) : new THREE.BoxGeometry(TILE, WALL_H * 0.85, 8);
@@ -113,9 +123,7 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
   const torches: Torch[] = [];
   for (const o of layout.decor) {
     if (o.kind === 'pillar') {
-      const g = new THREE.Group();
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(9, 10, WALL_H, 12), matWall); shaft.position.y = WALL_H / 2;
-      g.add(shaft); g.position.set(o.x, 0, o.y); parent.add(g);
+      // Колонны уже отрисованы из грида (Cell.Pillar) выше — пропускаем, иначе двойной меш.
     } else if (o.kind === 'chest') {
       const g = new THREE.Group();
       const body = new THREE.Mesh(new THREE.BoxGeometry(20, 12, 14), matWood); body.position.y = 6;
