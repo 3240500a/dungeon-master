@@ -75,13 +75,6 @@ export function createTorchPool(scene: THREE.Scene): THREE.PointLight[] {
   return pool;
 }
 
-/** Debug: тени от факелов — тяжело (point-light shadow = 6 граней куба), поэтому кастят ТОЛЬКО TORCH_SHADOW_N ближайших. */
-const TORCH_SHADOW_N = 2;
-export function setTorchShadows(renderer: THREE.WebGLRenderer, pool: THREE.PointLight[], on: boolean): void {
-  renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  for (let i = 0; i < pool.length; i++) pool[i]!.castShadow = on && i < TORCH_SHADOW_N;   // пул отсортирован по близости (updateTorches) — кастят 2 ближних
-  renderer.shadowMap.needsUpdate = true;
-}
 
 export function setFog(scene: THREE.Scene): void {
   scene.background = new THREE.Color('#06070c'); scene.fog = new THREE.FogExp2(0x06070c, 0.0012);

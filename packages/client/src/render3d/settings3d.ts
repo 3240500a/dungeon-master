@@ -1,7 +1,7 @@
 /**
  * Панель настроек 3D-клиента (кнопка-шестерёнка ⚙): графика/производительность.
- * Чекбоксы применяет `online3d` через колбэки (те же тумблеры, что раньше жили в DBG-панели, — вынесены сюда,
- * чтобы игрок мог крутить перф-опции без debug-режима). Состояние — только в чекбоксах (не персистится).
+ * Чекбоксы применяет `online3d` через колбэки. Состояние ПЕРСИСТИТСЯ в localStorage (по стабильному ключу строки)
+ * и применяется при монтировании (вызываем колбэки для включённых). Параметры теней — в конфиг-редакторе (balance.lighting.shadow3d).
  */
 export interface SettingsOpts {
   onMonKinematic?: (on: boolean) => void;
@@ -11,20 +11,29 @@ export interface SettingsOpts {
   onDmgNumbers?: (on: boolean) => void;
   onStatusFx?: (on: boolean) => void;
   onTorchShadows?: (on: boolean) => void;
+  onPlayerShadow?: (on: boolean) => void;
   onLowRes?: (on: boolean) => void;
 }
 
+const LS_KEY = 'dm3d_settings';   // сохранённые галки настроек 3D
+
 export function mountSettings(root: HTMLElement, opts: SettingsOpts): void {
-  const ROWS: { label: string; cb?: (on: boolean) => void }[] = [
-    { label: 'Кинематика монстров (физика: удар/смерть)', cb: opts.onMonKinematic },
-    { label: 'Монстры без вспом. IK (стопы/вторая рука)', cb: opts.onMonNoIk },
-    { label: 'Игрок кинематик (физика: удар/смерть)', cb: opts.onPlayerKinematic },
-    { label: 'Игрок без вспом. IK', cb: opts.onPlayerNoIk },
-    { label: 'Без всплывающих чисел урона', cb: opts.onDmgNumbers },
-    { label: 'Без партикл-эффектов статусов', cb: opts.onStatusFx },
-    { label: 'Тени от факелов (тяжело)', cb: opts.onTorchShadows },
-    { label: 'Низкое разрешение 1× (perf)', cb: opts.onLowRes },
+  const ROWS: { key: string; label: string; cb?: (on: boolean) => void }[] = [
+    { key: 'monKin', label: 'Кинематика монстров (физика: удар/смерть)', cb: opts.onMonKinematic },
+    { key: 'monNoIk', label: 'Монстры без вспом. IK (стопы/вторая рука)', cb: opts.onMonNoIk },
+    { key: 'plKin', label: 'Игрок кинематик (физика: удар/смерть)', cb: opts.onPlayerKinematic },
+    { key: 'plNoIk', label: 'Игрок без вспом. IK', cb: opts.onPlayerNoIk },
+    { key: 'dmgOff', label: 'Без всплывающих чисел урона', cb: opts.onDmgNumbers },
+    { key: 'fxOff', label: 'Без партикл-эффектов статусов', cb: opts.onStatusFx },
+    { key: 'torchSh', label: 'Тени от факелов (тяжело)', cb: opts.onTorchShadows },
+    { key: 'heroSh', label: 'Тень от света героя', cb: opts.onPlayerShadow },
+    { key: 'lowRes', label: 'Низкое разрешение 1× (perf)', cb: opts.onLowRes },
   ];
+
+  let saved: Record<string, boolean> = {};
+  try { saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}') as Record<string, boolean>; } catch { saved = {}; }
+  const state: Record<string, boolean> = {};
+  const save = (): void => { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch { /* приватный режим */ } };
 
   const panel = document.createElement('div');
   panel.style.cssText = 'position:fixed;right:12px;bottom:52px;z-index:70;display:none;background:rgba(8,10,16,0.92);' +
@@ -33,9 +42,10 @@ export function mountSettings(root: HTMLElement, opts: SettingsOpts): void {
   title.style.cssText = 'color:#9fe0c0;margin-bottom:8px;font-weight:600;font-size:12px';
   panel.appendChild(title);
   for (const r of ROWS) {
+    const on = !!saved[r.key]; state[r.key] = on;
     const row = document.createElement('label'); row.style.cssText = 'display:block;cursor:pointer;padding:2px 0';
-    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.style.cssText = 'margin-right:8px;vertical-align:middle';
-    cb.addEventListener('change', () => r.cb?.(cb.checked));
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = on; cb.style.cssText = 'margin-right:8px;vertical-align:middle';
+    cb.addEventListener('change', () => { state[r.key] = cb.checked; save(); r.cb?.(cb.checked); });
     row.append(cb, document.createTextNode(r.label)); panel.appendChild(row);
   }
   root.appendChild(panel);
@@ -48,4 +58,7 @@ export function mountSettings(root: HTMLElement, opts: SettingsOpts): void {
   let open = false;
   const setOpen = (v: boolean): void => { open = v; panel.style.display = open ? 'block' : 'none'; btn.style.background = open ? '#274032' : '#1c2130'; };
   btn.addEventListener('click', () => setOpen(!open));
+
+  // Применить сохранённые настройки при старте (для включённых зовём колбэк — флаги/эффекты применятся).
+  for (const r of ROWS) if (state[r.key]) r.cb?.(true);
 }

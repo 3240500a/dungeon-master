@@ -157,8 +157,23 @@ export const balanceSchema = z.object({
       playerRadius: z.number().min(0).default(160),
       /** Радиус света факела, px. */
       torchRadius: z.number().min(0).default(140),
+      /** 3D-клиент: тени и свет героя (регулируется тут; вкл/выкл — в настройках игры). */
+      shadow3d: z
+        .object({
+          /** Разрешение теневой карты (px, степень 2). Больше — чётче/дороже. */
+          mapSize: z.number().int().min(128).max(2048).default(1024),
+          /** Сдвиг тени (борьба с «акне»). Обычно небольшой минус. */
+          bias: z.number().min(-0.02).max(0).default(-0.004),
+          /** Сколько БЛИЖАЙШИХ факелов отбрасывают тень (point-light shadow дорогой — 6 граней). */
+          torchCasters: z.number().int().min(0).max(8).default(2),
+          /** Яркость точечного света героя (3D). */
+          playerLightIntensity: z.number().min(0).default(6000),
+          /** Радиус/дальность света героя (3D, ед. мира). */
+          playerLightDist: z.number().min(0).default(620),
+        })
+        .default({ mapSize: 1024, bias: -0.004, torchCasters: 2, playerLightIntensity: 6000, playerLightDist: 620 }),
     })
-    .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140 }),
+    .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140, shadow3d: { mapSize: 1024, bias: -0.004, torchCasters: 2, playerLightIntensity: 6000, playerLightDist: 620 } }),
   /** Редкости, которые поднимаются автоматически при проходе рядом. Остальное — по клику. */
   autoPickup: z
     .array(z.enum(['normal', 'magic', 'rare', 'unique']))

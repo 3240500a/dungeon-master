@@ -16,7 +16,7 @@ import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
-import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, setTorchShadows, WALL_H, type Torch } from './env3d.js';
+import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, type Torch } from './env3d.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
@@ -129,6 +129,17 @@ export async function startOnline3d(): Promise<void> {
   let monKinematic = false;   // Настройки: монстры кинематические, физика лишь на удар/смерть
   let monNoIk = false;        // Настройки: монстры БЕЗ вспом. IK (foot/off-hand) у ВСЕХ — форсит поза-LOD в цикле ниже
   let playerKinematic = false, playerNoIk = false;   // Настройки: те же тумблеры для игрока (self); применяются при создании куклы
+  // Тени 3D: факелы и/или свет героя. renderer.shadowMap.enabled = включён хоть один. Параметры (mapSize/bias/кол-во
+  // факелов-кастеров/яркость+радиус света героя) — из конфига balance.lighting.shadow3d (редактор). Point-light shadow дорогой.
+  let torchShadows = false, playerShadows = false;
+  const applyShadows = (): void => {
+    const sh = app.config.get('balance').lighting.shadow3d;
+    renderer.shadowMap.enabled = torchShadows || playerShadows;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    for (let i = 0; i < torchPool.length; i++) { const l = torchPool[i]!; l.shadow.mapSize.set(sh.mapSize, sh.mapSize); l.shadow.bias = sh.bias; l.castShadow = torchShadows && i < sh.torchCasters; }
+    if (playerLight) { playerLight.shadow.mapSize.set(sh.mapSize, sh.mapSize); playerLight.shadow.bias = sh.bias; playerLight.castShadow = playerShadows; }
+    renderer.shadowMap.needsUpdate = true;
+  };
   const debug = mountDebug(scene, camera, canvas, root);   // DBG-панель: только debug-слои + инфо (перф-тумблеры → «Настройки»)
   mountSettings(root, {
     onMonKinematic: (on) => { monKinematic = on; },   // применяет цикл монстров (форс кинематик всем поверх авто-физ-LOD)
@@ -137,7 +148,8 @@ export async function startOnline3d(): Promise<void> {
     onPlayerNoIk: (on) => { playerNoIk = on; self?.d.setPoseLod?.(on); },
     onDmgNumbers: (on) => vfx.setFloatersOff(on),        // без чисел урона
     onStatusFx: (on) => statusFx.setDisabled(on),        // без партикл-статусов
-    onTorchShadows: (on) => setTorchShadows(renderer, torchPool, on),   // тени от факелов (тяжело: 2 ближних кастят)
+    onTorchShadows: (on) => { torchShadows = on; applyShadows(); },   // тени от факелов (тяжело: N ближних кастят)
+    onPlayerShadow: (on) => { playerShadows = on; applyShadows(); },   // тень от света героя
     onLowRes: (on) => { renderer.setPixelRatio(on ? 1 : Math.min(devicePixelRatio, 2)); resize(); },   // 1× пиксели → режем фрагментную цену
   });
 
@@ -231,7 +243,10 @@ export async function startOnline3d(): Promise<void> {
       const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, x: floor.spawn.x, z: floor.spawn.y });
       actorsGroup.add(d.group);
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
-      playerLight = new THREE.PointLight(0xffd7a0, 5200, 520, 2); scene.add(playerLight);
+      const sh = app.config.get('balance').lighting.shadow3d;
+      playerLight = new THREE.PointLight(0xffd7a0, sh.playerLightIntensity, sh.playerLightDist, 2);
+      playerLight.shadow.camera.near = 8; playerLight.shadow.camera.far = sh.playerLightDist;   // конфиг теней применит applyShadows()
+      scene.add(playerLight); applyShadows();   // применить текущее состояние теней к новому свету героя
     } else {
       self.d.setWeapon?.(selfWeaponKey);   // на новом этаже снаряжение могло смениться
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
