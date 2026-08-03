@@ -16,7 +16,7 @@ import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
-import { setFog, makeSceneLighting, buildEnvironment, animateTorches, WALL_H, type Torch } from './env3d.js';
+import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, type Torch } from './env3d.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
@@ -101,6 +101,7 @@ export async function startOnline3d(): Promise<void> {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene(); setFog(scene); makeSceneLighting(scene);
+  const torchPool = createTorchPool(scene);   // фикс. пул света факелов (перф) — назначается ближайшим к игроку, создаётся раз
   const camera = new THREE.PerspectiveCamera(52, 1, 1, 6000);
   const floorGroup = new THREE.Group(); scene.add(floorGroup);
   const actorsGroup = new THREE.Group(); scene.add(actorsGroup);
@@ -127,6 +128,7 @@ export async function startOnline3d(): Promise<void> {
   let monKinematic = false;   // debug (DBG-панель / K): монстры кинематические, физика лишь на удар/смерть — тест источника фризов
   const debug = mountDebug(scene, camera, canvas, root, {
     onMonKinematic: (on) => { monKinematic = on; for (const a of monsters.values()) a.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
+    onLowRes: (on) => { renderer.setPixelRatio(on ? 1 : Math.min(devicePixelRatio, 2)); resize(); },   // 1× пиксели → режем фрагментную цену
   });
 
   await initPhysics();
@@ -442,8 +444,10 @@ export async function startOnline3d(): Promise<void> {
       if (!dropMeshes.has(d.id)) {
         const col = 0xdcc060;
         const g = new THREE.Group();
-        const gem = new THREE.Mesh(new THREE.OctahedronGeometry(6), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5 }));
-        gem.position.y = 12; g.add(gem); g.add(new THREE.PointLight(col, 25, 70, 2).translateY(12));
+        // Гем самосветится (emissive) — БЕЗ PointLight: каждый дроп-свет менял число света в сцене → Three.js
+        // перекомпилировал ВСЕ материалы (синхронный хитч в главном потоке на каждый спавн/деспаун лута).
+        const gem = new THREE.Mesh(new THREE.OctahedronGeometry(6), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.9 }));
+        gem.position.y = 12; g.add(gem);
         g.position.set(d.x, 0, d.y); actorsGroup.add(g); dropMeshes.set(d.id, g);
       }
     }
@@ -669,7 +673,8 @@ export async function startOnline3d(): Promise<void> {
         const mel = app.config.get('balance').melee;
         const w = app.state.save.equipment.weapon;
         debug.update({
-          info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq },
+          info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq,
+            calls: renderer.info.render.calls, tris_k: Math.round(renderer.info.render.triangles / 1000), prog: renderer.info.programs?.length ?? 0, torches: torches.length },
           playerR: me?.r ?? 12,
           players: latest.players.map((p) => ({ x: p.id === myId ? smoothX : p.x, z: p.id === myId ? smoothZ : p.y, facing: p.facing, r: p.r, me: p.id === myId })),
           monsters: latest.monsters.map((mv) => { const def = monsters.get(mv.id)?.def; return { id: mv.id, x: mv.x, z: mv.y, facing: mv.facing, r: mv.r, alive: mv.alive, aiState: mv.aiState, vision: def?.vision ?? 0, visionAngle: def?.visionAngle ?? 0, hearing: def?.hearing ?? 0, hp: mv.hp, maxHp: mv.maxHp }; }),
@@ -680,7 +685,7 @@ export async function startOnline3d(): Promise<void> {
       }
     }
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
-    animateTorches(torches, tsec); vfx.update(dt); statusFx.update(dt); applyCam();
+    updateTorches(torches, torchPool, smoothX, smoothZ, tsec); vfx.update(dt); statusFx.update(dt); applyCam();
     renderer.render(scene, camera);
   }
 
