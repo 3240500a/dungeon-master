@@ -440,8 +440,10 @@ export async function startOnline3d(): Promise<void> {
     // монстры
     const dcfg = app.config.get('debuffs');
     let woke = 0, kinFlips = 0;   // бюджеты за кадр: пробуждения (Add) и переключения физ-LOD (Add/Remove) — амортизация спайков
+    const seenM = new Set<number>();   // id монстров из снапшота — для чистки осиротевших кукол (пропали из снапшота, но не труп)
     for (const mv of latest.monsters) {
       const a = monsters.get(mv.id); if (!a) continue;
+      seenM.add(mv.id);
       if (!mv.alive) { markDead(a); statusFx.remove(`m${mv.id}`); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
@@ -479,6 +481,9 @@ export async function startOnline3d(): Promise<void> {
       if (a.dead <= 0) { if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } continue; }   // осел → вон из физики, лежит замороженным
       a.d.update(dt); a.dead -= dt;
     }
+    // Осиротевшие куклы: ЖИВОЙ монстр пропал из снапшота без события смерти (сервер снял) → у пиров/дропов/снарядов
+    // чистка есть, у монстров не было → кукла висла призраком (не на миникарте, void=0). Трупы (a.dead≠null) НЕ трогаем — лежат.
+    for (const [id, a] of monsters) if (a.dead == null && !seenM.has(id)) { disposeActor(a); statusFx.remove(`m${id}`); monsters.delete(id); }
     // снаряды
     const seenPr = new Set<number>();
     for (const pr of latest.projectiles) {
@@ -731,7 +736,7 @@ export async function startOnline3d(): Promise<void> {
         const mel = app.config.get('balance').melee;
         const w = app.state.save.equipment.weapon;
         debug.update({
-          info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq,
+          info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, snap_mon: latest.monsters.length, peers: peers.size, drops: dropMeshes.size, seq,
             calls: renderer.info.render.calls, tris_k: Math.round(renderer.info.render.triangles / 1000), prog: renderer.info.programs?.length ?? 0, torches: torches.length,
             // Профайлер фаз кадра (мс): куда уходит время главного потока — мир(поза/драйв) / физика / рендер(submit) / приём снапшота.
             ms_world: +msWorld.toFixed(1), ms_phys: +msPhys.toFixed(1), ms_rend: +msRender.toFixed(1), ms_net: +app.net.netMs.toFixed(1),
