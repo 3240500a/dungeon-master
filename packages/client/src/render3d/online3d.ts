@@ -21,6 +21,7 @@ import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
 import { mountDebug } from './debug3d.js';
+import { mountSettings } from './settings3d.js';
 import { DomUi } from '../ui/domUi.js';
 import { GameLog } from '../ui/gameLog.js';
 import { ActionBar } from '../ui/actionBar.js';
@@ -125,18 +126,19 @@ export async function startOnline3d(): Promise<void> {
   app.gameLog = new GameLog(app, root);
   const hud = mountHud3d(app);
   const minimap = mountMinimap(root);
-  let monKinematic = false;   // debug (DBG-панель / K): монстры кинематические, физика лишь на удар/смерть — тест источника фризов
-  let monNoIk = false;        // debug (J): монстры БЕЗ вспом. IK (foot/off-hand) у ВСЕХ — форсит поза-LOD в цикле ниже
-  let playerKinematic = false, playerNoIk = false;   // debug (P/O): те же тумблеры для игрока (self); применяются при создании куклы
-  const debug = mountDebug(scene, camera, canvas, root, {
+  let monKinematic = false;   // Настройки: монстры кинематические, физика лишь на удар/смерть
+  let monNoIk = false;        // Настройки: монстры БЕЗ вспом. IK (foot/off-hand) у ВСЕХ — форсит поза-LOD в цикле ниже
+  let playerKinematic = false, playerNoIk = false;   // Настройки: те же тумблеры для игрока (self); применяются при создании куклы
+  const debug = mountDebug(scene, camera, canvas, root);   // DBG-панель: только debug-слои + инфо (перф-тумблеры → «Настройки»)
+  mountSettings(root, {
     onMonKinematic: (on) => { monKinematic = on; for (const a of monsters.values()) a.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
-    onLowRes: (on) => { renderer.setPixelRatio(on ? 1 : Math.min(devicePixelRatio, 2)); resize(); },   // 1× пиксели → режем фрагментную цену
     onMonNoIk: (on) => { monNoIk = on; },   // применяется в цикле монстров (форс poseLod у всех)
     onPlayerKinematic: (on) => { playerKinematic = on; self?.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
     onPlayerNoIk: (on) => { playerNoIk = on; self?.d.setPoseLod?.(on); },
-    onDmgNumbers: (on) => vfx.setFloatersOff(on),        // тумблер «без чисел урона»
-    onStatusFx: (on) => statusFx.setDisabled(on),        // тумблер «без партикл-статусов»
+    onDmgNumbers: (on) => vfx.setFloatersOff(on),        // без чисел урона
+    onStatusFx: (on) => statusFx.setDisabled(on),        // без партикл-статусов
     onTorchShadows: (on) => setTorchShadows(renderer, torchPool, on),   // тени от факелов (тяжело: 2 ближних кастят)
+    onLowRes: (on) => { renderer.setPixelRatio(on ? 1 : Math.min(devicePixelRatio, 2)); resize(); },   // 1× пиксели → режем фрагментную цену
   });
 
   await initPhysics();
@@ -355,6 +357,7 @@ export async function startOnline3d(): Promise<void> {
   const WIN_MAX_R = 2000;               // кламп дальности угловых лучей от цели (near-горизонт. верх экрана не улетает в ∞)
   const WIN_HYST = 140;                 // гистерезис-полоса (u): бодрствующего усыпляем лишь за окном + полосой — нет флаттера на кромке
   const POSE_LOD_R2 = 600 * 600;        // радиус² поза-LOD: дальше игрока → без FOOT-IK (монстр всё так же шагает, стопы вдали не видно)
+  const WAKE_BUDGET = 3;                // макс. пробуждений (AddToPhysicsSystem) за кадр — амортизация спайка при подходе к пачке спящих
   const _wc: Array<[number, number]> = [[-1, -1], [1, -1], [-1, 1], [1, 1]];   // углы экрана в NDC
   const _wv = new THREE.Vector3();
   let winMinX = -Infinity, winMaxX = Infinity, winMinZ = -Infinity, winMaxZ = Infinity;   // AABB активного окна (world XZ)
@@ -417,6 +420,7 @@ export async function startOnline3d(): Promise<void> {
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }
     // монстры
     const dcfg = app.config.get('debuffs');
+    let woke = 0;   // счётчик пробуждений за кадр (амортизация: подход к пачке спящих не будит всех разом)
     for (const mv of latest.monsters) {
       const a = monsters.get(mv.id); if (!a) continue;
       if (!mv.alive) { markDead(a); statusFx.remove(`m${mv.id}`); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
@@ -425,11 +429,13 @@ export async function startOnline3d(): Promise<void> {
       // Окно-culling: в окне → активен (полный физ-апдейт); вне → усыплён (тела вон из pw.step, поза-пайплайн пропущен).
       // Гистерезис: спящего будим строго по входу в окно, бодрствующего усыпляем лишь за окном + полосой → нет флаттера на кромке.
       const inWin = mv.x >= winMinX && mv.x <= winMaxX && mv.y >= winMinZ && mv.y <= winMaxZ;
-      const active = a.dormant
+      let active = a.dormant
         ? inWin
         : (mv.x >= winMinX - WIN_HYST && mv.x <= winMaxX + WIN_HYST && mv.y >= winMinZ - WIN_HYST && mv.y <= winMaxZ + WIN_HYST);
-      if (active && a.dormant) { a.dormant = false; a.d.setSimEnabled?.(true); }       // вход в окно → вернуть в физику (+снап к цели)
-      else if (!active && !a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } // выход за окно → вон из физики, меш заморожен
+      if (active && a.dormant) {   // вход в окно → пробудить, НО не больше WAKE_BUDGET за кадр (спайк AddToPhysicsSystem у пачки)
+        if (woke < WAKE_BUDGET) { woke++; a.dormant = false; a.d.setSimEnabled?.(true); }
+        else active = false;   // бюджет исчерпан → остаётся спящим ещё кадр (в запасе окна, за кадром — не видно)
+      } else if (!active && !a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); }   // выход за окно → вон из физики, меш заморожен
       if (active) a.d.setPoseLod?.(monNoIk || (mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ) > POSE_LOD_R2);   // дальний в кадре (или debug J: все) → без вспом. IK
       driveActor(a, mv.x, mv.y, mv.facing, true, dt, active);   // dormant → doUpdate=false: setPose держит цель живой, тяжёлый шаг пропущен
       if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => `${debuffIcon(dcfg, k)}${mv.debuffs[k]!.stacks > 1 ? mv.debuffs[k]!.stacks : ''}`).join(' ')); }
