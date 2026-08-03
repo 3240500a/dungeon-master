@@ -7,6 +7,7 @@
  * физ-риг (gamePlayerDoll/humanoidRagdoll), внешность/оружие из серверного конфига (chars3d).
  */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
@@ -106,6 +107,8 @@ export async function startOnline3d(): Promise<void> {
   const camera = new THREE.PerspectiveCamera(52, 1, 1, 6000);
   const floorGroup = new THREE.Group(); scene.add(floorGroup);
   const actorsGroup = new THREE.Group(); scene.add(actorsGroup);
+  const corpsesGroup = new THREE.Group(); scene.add(corpsesGroup);   // запечённые трупы: 1 статич. меш на труп (вместо 22 + кукла), чистятся при смене этажа
+  const corpseMat = new THREE.MeshLambertMaterial({ vertexColors: true });   // общий материал запечённых трупов (цвет — в вершинах)
   const fxGroup = new THREE.Group(); scene.add(fxGroup);
   const vfx = new Vfx(fxGroup);
   const statusFx = new StatusFx(fxGroup);   // зацикленные партикл-эффекты активных статусов на сущностях
@@ -192,6 +195,37 @@ export async function startOnline3d(): Promise<void> {
     camera.lookAt(orbit.target);
   };
 
+  // Запечь ОСЕВШИЙ труп в ОДИН статический меш: ~22 меша куклы → 1 (цвет материалов → в вершины), в мир-координатах.
+  // Трупы копятся до смены этажа; так каждый = 1 дроукол вместо 22, а тяжёлую куклу (физ-риг+PosePlayer) сносим.
+  const _bkC = new THREE.Color();
+  function bakeCorpse(d: RagdollHandle): boolean {
+    const solid = (d._dbg as { solid?: { root: THREE.Object3D } } | undefined)?.solid;
+    if (!solid) return false;
+    solid.root.updateMatrixWorld(true);
+    const geoms: THREE.BufferGeometry[] = [];
+    solid.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as { isMesh?: boolean }).isMesh || !m.geometry) return;
+      const g = m.geometry.clone();
+      if (!g.getAttribute('normal')) g.computeVertexNormals();
+      g.deleteAttribute('uv'); g.deleteAttribute('uv1'); g.deleteAttribute('uv2');   // единый набор атрибутов для merge
+      const mat = m.material as THREE.MeshStandardMaterial;
+      _bkC.copy(mat.color ?? _bkC.setHex(0x888888));
+      const n = g.getAttribute('position').count, col = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { col[i * 3] = _bkC.r; col[i * 3 + 1] = _bkC.g; col[i * 3 + 2] = _bkC.b; }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      g.applyMatrix4(m.matrixWorld);   // в мир-координаты (труп статичен)
+      geoms.push(g);
+    });
+    if (!geoms.length) return false;
+    const merged = mergeGeometries(geoms, false);
+    for (const g of geoms) g.dispose();
+    if (!merged) return false;
+    merged.computeBoundingSphere();
+    corpsesGroup.add(new THREE.Mesh(merged, corpseMat));   // 1 дроукол, frustum-culled
+    return true;
+  }
+
   // ── Состояние мира ───────────────────────────────────────────────────────────
   let myId = '';
   let area: 'town' | 'dungeon' = 'town';
@@ -228,7 +262,7 @@ export async function startOnline3d(): Promise<void> {
     for (const n of npcLabels) actorsGroup.remove(n.spr); npcLabels.length = 0;
     statusFx.clear();   // сбросить партикл-эффекты статусов прошлой области
     doorMeshes.clear(); leverMeshes.clear(); interactables = [];
-    clearGroup(floorGroup);
+    clearGroup(floorGroup); clearGroup(corpsesGroup);   // запечённые трупы прошлого этажа — снести (геометрии dispose; общий corpseMat не трогаем)
     area = floor.area;
     areaGrid = floor.grid;   // для DBG-диагностики «монстры вне пола»
     if (app.state) app.state.area = floor.area;   // HUD/отчёт различают город/этаж по area (depth=0 у старта забега = как город)
@@ -476,9 +510,13 @@ export async function startOnline3d(): Promise<void> {
     // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и лежит на полу (не убираем).
     // Осев (a.dead≤0), тело ВЫНИМАЕТСЯ из физ-мира (setSimEnabled(false)) — труп замерзает в позе и не грузит pw.step.
     // Трупы чистятся при смене этажа (buildArea сносит всех).
-    for (const a of monsters.values()) {
+    for (const [id, a] of monsters) {
       if (a.dead == null) continue;
-      if (a.dead <= 0) { if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } continue; }   // осел → вон из физики, лежит замороженным
+      if (a.dead <= 0) {   // осел → запечь в 1 статич. меш и снести тяжёлую куклу (22 меша + физ-риг иначе копятся до смены этажа)
+        if (bakeCorpse(a.d)) { disposeActor(a); statusFx.remove(`m${id}`); monsters.delete(id); }
+        else if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); }   // фолбэк (не запеклось) → просто заморозить
+        continue;
+      }
       a.d.update(dt); a.dead -= dt;
     }
     // Осиротевшие куклы: ЖИВОЙ монстр пропал из снапшота без события смерти (сервер снял) → у пиров/дропов/снарядов
@@ -736,7 +774,7 @@ export async function startOnline3d(): Promise<void> {
         const mel = app.config.get('balance').melee;
         const w = app.state.save.equipment.weapon;
         debug.update({
-          info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, snap_mon: latest.monsters.length, peers: peers.size, drops: dropMeshes.size, seq,
+          info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, snap_mon: latest.monsters.length, corpses: corpsesGroup.children.length, peers: peers.size, drops: dropMeshes.size, seq,
             calls: renderer.info.render.calls, tris_k: Math.round(renderer.info.render.triangles / 1000), prog: renderer.info.programs?.length ?? 0, torches: torches.length,
             // Профайлер фаз кадра (мс): куда уходит время главного потока — мир(поза/драйв) / физика / рендер(submit) / приём снапшота.
             ms_world: +msWorld.toFixed(1), ms_phys: +msPhys.toFixed(1), ms_rend: +msRender.toFixed(1), ms_net: +app.net.netMs.toFixed(1),
