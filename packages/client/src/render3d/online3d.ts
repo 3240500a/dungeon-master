@@ -709,8 +709,8 @@ export async function startOnline3d(): Promise<void> {
         debug.update({
           info: { fps: Math.round(fps), tick: latest.tick, ping: app.net.rtt, x: Math.round(smoothX), z: Math.round(smoothZ), area, depth: app.state.depth, mon: monsters.size, peers: peers.size, drops: dropMeshes.size, seq,
             calls: renderer.info.render.calls, tris_k: Math.round(renderer.info.render.triangles / 1000), prog: renderer.info.programs?.length ?? 0, torches: torches.length,
-            // Профайлер фаз кадра (мс): куда уходит время главного потока — мир(поза/драйв) / физика / рендер(submit).
-            ms_world: +msWorld.toFixed(1), ms_phys: +msPhys.toFixed(1), ms_rend: +msRender.toFixed(1),
+            // Профайлер фаз кадра (мс): куда уходит время главного потока — мир(поза/драйв) / физика / рендер(submit) / приём снапшота.
+            ms_world: +msWorld.toFixed(1), ms_phys: +msPhys.toFixed(1), ms_rend: +msRender.toFixed(1), ms_net: +app.net.netMs.toFixed(1),
             // Диагностика «монстры вне пола»: сколько ЖИВЫХ монстров стоят на клетке-НЕ-полу (стена/пустота/вне сетки).
             void: areaGrid ? latest.monsters.filter((m) => m.alive && areaGrid![Math.floor(m.y / TILE)]?.[Math.floor(m.x / TILE)] !== Cell.Floor).length : 0 },
           playerR: me?.r ?? 12,

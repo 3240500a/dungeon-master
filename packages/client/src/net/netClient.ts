@@ -19,9 +19,12 @@ export class NetClient {
   private pingId = 0;
   private pingSentAt = new Map<number, number>();
   private _rtt = -1;
+  private _netMs = 0;   // сглаженная стоимость обработки кадра сервера (JSON.parse + диспатч) на главном потоке — профиль спайков снапшота
 
   /** Последний измеренный RTT (мс), −1 если ещё не измерен / нет соединения. */
   get rtt(): number { return this._rtt; }
+  /** Сглаженное время обработки серверного кадра (мс): парс снапшота + применение. Для DBG-профиля. */
+  get netMs(): number { return this._netMs; }
 
   connect(url = wsUrl()): void {
     const ws = new WebSocket(url);
@@ -29,14 +32,16 @@ export class NetClient {
     ws.onopen = () => { this.startPing(); for (const cb of this.openCbs) cb(); };
     ws.onclose = () => { this.stopPing(); this._rtt = -1; for (const cb of this.closeCbs) cb(); };
     ws.onmessage = (ev) => {
+      const _t = performance.now();
       let frame: ServerFrame;
       try { frame = JSON.parse(ev.data as string) as ServerFrame; } catch { return; }
-      if (frame.t === 'pong') { // транспортный кадр — не отдаём в обработчики сцены
+      if (frame.t === 'pong') { // транспортный кадр — не отдаём в обработчики сцены (и не мерим netMs)
         const sent = this.pingSentAt.get(frame.id);
         if (sent != null) { this._rtt = Math.round(performance.now() - sent); this.pingSentAt.delete(frame.id); }
         return;
       }
       for (const h of this.handlers.get(frame.t) ?? []) h(frame);
+      this._netMs += (performance.now() - _t - this._netMs) * 0.08;   // парс+применение серверного кадра (в основном снапшоты)
     };
   }
 
