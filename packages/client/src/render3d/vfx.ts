@@ -22,7 +22,11 @@ const MAX_FLOATERS = 28;
 export class Vfx {
   private list: Fx[] = [];
   private floaters: Floater[] = [];
+  private floatersOff = false;   // debug-тумблер: не показывать плавающий боевой текст (числа/промах/блок)
   constructor(private root: THREE.Object3D) {}
+
+  /** Debug: отключить плавающие числа урона (текстур-аплоады в бою). */
+  setFloatersOff(off: boolean): void { this.floatersOff = off; }
 
   update(dt: number): void {
     for (let i = this.list.length - 1; i >= 0; i--) {
@@ -106,6 +110,7 @@ export class Vfx {
 
   /** Всплывающий боевой текст (спрайт из ПУЛА), поднимается и гаснет. big — крупнее (крит). Канвас фикс. 224×64, текст по центру. */
   floatText(x: number, z: number, text: string, color: number, big = false): void {
+    if (this.floatersOff) return;
     const f = this.acquireFloater();
     const fs = big ? 46 : 34, font = `bold ${fs}px system-ui, sans-serif`;
     const g = f.ctx, W = f.canvas.width, H = f.canvas.height;

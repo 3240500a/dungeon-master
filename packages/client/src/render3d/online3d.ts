@@ -16,7 +16,7 @@ import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
-import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, type Torch } from './env3d.js';
+import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, setTorchShadows, WALL_H, type Torch } from './env3d.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
@@ -127,10 +127,16 @@ export async function startOnline3d(): Promise<void> {
   const minimap = mountMinimap(root);
   let monKinematic = false;   // debug (DBG-панель / K): монстры кинематические, физика лишь на удар/смерть — тест источника фризов
   let monNoIk = false;        // debug (J): монстры БЕЗ вспом. IK (foot/off-hand) у ВСЕХ — форсит поза-LOD в цикле ниже
+  let playerKinematic = false, playerNoIk = false;   // debug (P/O): те же тумблеры для игрока (self); применяются при создании куклы
   const debug = mountDebug(scene, camera, canvas, root, {
     onMonKinematic: (on) => { monKinematic = on; for (const a of monsters.values()) a.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
     onLowRes: (on) => { renderer.setPixelRatio(on ? 1 : Math.min(devicePixelRatio, 2)); resize(); },   // 1× пиксели → режем фрагментную цену
     onMonNoIk: (on) => { monNoIk = on; },   // применяется в цикле монстров (форс poseLod у всех)
+    onPlayerKinematic: (on) => { playerKinematic = on; self?.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
+    onPlayerNoIk: (on) => { playerNoIk = on; self?.d.setPoseLod?.(on); },
+    onDmgNumbers: (on) => vfx.setFloatersOff(on),        // тумблер «без чисел урона»
+    onStatusFx: (on) => statusFx.setDisabled(on),        // тумблер «без партикл-статусов»
+    onTorchShadows: (on) => setTorchShadows(renderer, torchPool, on),   // тени от факелов (тяжело: 2 ближних кастят)
   });
 
   await initPhysics();
@@ -229,6 +235,8 @@ export async function startOnline3d(): Promise<void> {
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
       self.lx = floor.spawn.x; self.lz = floor.spawn.y;
     }
+    self.d.setPhysicsMode?.(playerKinematic ? 'kinematic' : 'physics');   // debug-тумблеры игрока (сохранены между этажами)
+    self.d.setPoseLod?.(playerNoIk);
     // Пояс (слева-внизу) + панель биндов ЛКМ/ПКМ/Shift/Space/Alt (по центру) — те же DOM-компоненты, что в 2D UIScene.
     if (!hudBars) hudBars = { action: new ActionBar(app, root), belt: new BeltBar(app, root) };
     smoothX = floor.spawn.x; smoothZ = floor.spawn.y; hasSmooth = false;

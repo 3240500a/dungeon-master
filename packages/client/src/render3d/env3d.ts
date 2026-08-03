@@ -67,8 +67,20 @@ export const TORCH_POOL_N = 10;   // сколько факелов светят 
 /** Пул света факелов — создаётся ОДИН раз на сессию (постоянное число PointLight → ноль перекомпиляций). */
 export function createTorchPool(scene: THREE.Scene): THREE.PointLight[] {
   const pool: THREE.PointLight[] = [];
-  for (let i = 0; i < TORCH_POOL_N; i++) { const l = new THREE.PointLight(0xff7a2a, 0, 380, 2); scene.add(l); pool.push(l); }
+  for (let i = 0; i < TORCH_POOL_N; i++) {
+    const l = new THREE.PointLight(0xff7a2a, 0, 380, 2);
+    l.shadow.mapSize.set(512, 512); l.shadow.camera.near = 8; l.shadow.camera.far = 380; l.shadow.bias = -0.004;   // конфиг теней (вкл. по тумблеру)
+    scene.add(l); pool.push(l);
+  }
   return pool;
+}
+
+/** Debug: тени от факелов — тяжело (point-light shadow = 6 граней куба), поэтому кастят ТОЛЬКО TORCH_SHADOW_N ближайших. */
+const TORCH_SHADOW_N = 2;
+export function setTorchShadows(renderer: THREE.WebGLRenderer, pool: THREE.PointLight[], on: boolean): void {
+  renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  for (let i = 0; i < pool.length; i++) pool[i]!.castShadow = on && i < TORCH_SHADOW_N;   // пул отсортирован по близости (updateTorches) — кастят 2 ближних
+  renderer.shadowMap.needsUpdate = true;
 }
 
 export function setFog(scene: THREE.Scene): void {
@@ -91,6 +103,7 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
   const floorCells: [number, number][] = [];
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (walk(x, y)) floorCells.push([x, y]);
   const fm = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 4, TILE), matStone, floorCells.length);
+  fm.receiveShadow = true;   // тени от факелов (вкл. по тумблеру) — пол принимает
   floorCells.forEach(([x, y], i) => { dummy.position.set(cw(x), -2, cw(y)); dummy.updateMatrix(); fm.setMatrixAt(i, dummy.matrix); });
   parent.add(fm);
 
@@ -101,6 +114,7 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
     if (near) wallCells.push([x, y]);
   }
   const wm = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, WALL_H, TILE), matWall, wallCells.length);
+  wm.castShadow = true; wm.receiveShadow = true;
   wallCells.forEach(([x, y], i) => { dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); wm.setMatrixAt(i, dummy.matrix); });
   parent.add(wm);
 
@@ -110,6 +124,7 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (grid[y]![x] === Cell.Pillar) pillarCells.push([x, y]);
   if (pillarCells.length) {
     const pm = new THREE.InstancedMesh(new THREE.CylinderGeometry(9, 10, WALL_H, 12), matWall, pillarCells.length);
+    pm.castShadow = true; pm.receiveShadow = true;
     pillarCells.forEach(([x, y], i) => { dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); pm.setMatrixAt(i, dummy.matrix); });
     parent.add(pm);
   }

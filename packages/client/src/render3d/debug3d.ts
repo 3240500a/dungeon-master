@@ -30,7 +30,11 @@ export interface Debug3d { setFloor(grid: Grid): void; update(f: DebugFrame): vo
 const MELEE_SLACK = 8;   // приближение MONSTER_MELEE_WHIFF_SLACK для радиуса ближней атаки монстра
 const COL = { self: 0x35e08a, peer: 0x5aa0ff, mon: 0x35e08a, proj: 0xffffff, inter: 0x6fd0ff, vision: 0xffe24a, hear: 0x59a8ff, atkMon: 0xff5a3a, atkPl: 0xffa030, chase: 0xff4040, idle: 0x8a90a4, target: 0xff6060, face: 0xffffff };
 
-export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement, root: HTMLElement, opts: { onMonKinematic?: (on: boolean) => void; onLowRes?: (on: boolean) => void; onMonNoIk?: (on: boolean) => void } = {}): Debug3d {
+export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTMLCanvasElement, root: HTMLElement, opts: {
+  onMonKinematic?: (on: boolean) => void; onLowRes?: (on: boolean) => void; onMonNoIk?: (on: boolean) => void;
+  onPlayerKinematic?: (on: boolean) => void; onPlayerNoIk?: (on: boolean) => void; onDmgNumbers?: (on: boolean) => void;
+  onStatusFx?: (on: boolean) => void; onTorchShadows?: (on: boolean) => void;
+} = {}): Debug3d {
   let on = false;
   const layers: Record<DebugLayer, boolean> = { colliders: true, vision: true, attack: true, ai: true, facing: false, labels: false };
   const group = new THREE.Group(); group.visible = false; scene.add(group);
@@ -86,23 +90,27 @@ export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTM
     cb.addEventListener('change', () => { layers[k] = cb.checked; });
     row.append(cb, document.createTextNode(lbl)); layerRow.appendChild(row); boxes[k] = cb;
   }
-  // Перф-тумблер (K): кинематика монстров — рисуем из позы, физику считаем только на удар/смерть (тест источника фризов).
-  const physRow = document.createElement('label'); physRow.style.cssText = 'display:block;cursor:pointer;color:#ffd479;border-top:1px solid #2b3a48;margin-top:6px;padding-top:6px';
-  const physCb = document.createElement('input'); physCb.type = 'checkbox'; physCb.style.cssText = 'margin-right:5px;vertical-align:middle';
-  physCb.addEventListener('change', () => opts.onMonKinematic?.(physCb.checked));
-  physRow.append(physCb, document.createTextNode('K кинематика монстров (физ: удар/смерть)'));
-  // Перф-тумблер (L): половинный pixelRatio — мгновенно режет фрагментную цену (тест «упираемся ли в GPU»).
-  const lowRow = document.createElement('label'); lowRow.style.cssText = 'display:block;cursor:pointer;color:#ffd479;margin-top:4px';
-  const lowCb = document.createElement('input'); lowCb.type = 'checkbox'; lowCb.style.cssText = 'margin-right:5px;vertical-align:middle';
-  lowCb.addEventListener('change', () => opts.onLowRes?.(lowCb.checked));
-  lowRow.append(lowCb, document.createTextNode('L 1× пиксели (perf)'));
-  // Перф-тумблер (J): монстры БЕЗ вспомогательного IK (FOOT-IK + off-hand) — у ВСЕХ, не только дальних.
-  const noikRow = document.createElement('label'); noikRow.style.cssText = 'display:block;cursor:pointer;color:#ffd479;margin-top:4px';
-  const noikCb = document.createElement('input'); noikCb.type = 'checkbox'; noikCb.style.cssText = 'margin-right:5px;vertical-align:middle';
-  noikCb.addEventListener('change', () => opts.onMonNoIk?.(noikCb.checked));
-  noikRow.append(noikCb, document.createTextNode('J монстры без вспом. IK (foot/off-hand)'));
+  // Перф-тумблеры (чекбокс + горячая клавиша) — изолируют источник фризов по подсистемам.
+  const PERF: { code: string; label: string; cb?: (on: boolean) => void }[] = [
+    { code: 'KeyK', label: 'K кинематика монстров (физ: удар/смерть)', cb: opts.onMonKinematic },
+    { code: 'KeyJ', label: 'J монстры без вспом. IK (foot/off-hand)', cb: opts.onMonNoIk },
+    { code: 'KeyP', label: 'P игрок кинематик (физ: удар/смерть)', cb: opts.onPlayerKinematic },
+    { code: 'KeyO', label: 'O игрок без вспом. IK', cb: opts.onPlayerNoIk },
+    { code: 'KeyN', label: 'N без чисел урона', cb: opts.onDmgNumbers },
+    { code: 'KeyY', label: 'Y без партикл-статусов', cb: opts.onStatusFx },
+    { code: 'KeyH', label: 'H тени от факелов', cb: opts.onTorchShadows },
+    { code: 'KeyL', label: 'L 1× пиксели (perf)', cb: opts.onLowRes },
+  ];
+  const perfWrap = document.createElement('div'); perfWrap.style.cssText = 'border-top:1px solid #2b3a48;margin-top:6px;padding-top:6px';
+  const perfCb: Record<string, HTMLInputElement> = {};
+  for (const t of PERF) {
+    const row = document.createElement('label'); row.style.cssText = 'display:block;cursor:pointer;color:#ffd479';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.style.cssText = 'margin-right:5px;vertical-align:middle';
+    cb.addEventListener('change', () => t.cb?.(cb.checked));
+    row.append(cb, document.createTextNode(t.label)); perfWrap.appendChild(row); perfCb[t.code] = cb;
+  }
   const infoEl = document.createElement('div'); infoEl.style.cssText = 'white-space:pre;color:#9fe0c0;border-top:1px solid #2b3a48;padding-top:5px';
-  panel.append(layerRow, physRow, lowRow, noikRow, infoEl);
+  panel.append(layerRow, perfWrap, infoEl);
 
   const btn = document.createElement('button'); btn.textContent = 'DBG';
   btn.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:70;padding:4px 9px;background:#1c2130;color:#8f9bb0;border:1px solid #39415a;border-radius:5px;cursor:pointer;font:11px monospace;pointer-events:auto';
@@ -121,9 +129,8 @@ export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTM
   addEventListener('keydown', (e) => {
     const t = document.activeElement; if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
     if (e.code === 'F3') { e.preventDefault(); setOn(!on); return; }
-    if (on && e.code === 'KeyK') { physCb.checked = !physCb.checked; opts.onMonKinematic?.(physCb.checked); return; }   // кинематика монстров
-    if (on && e.code === 'KeyL') { lowCb.checked = !lowCb.checked; opts.onLowRes?.(lowCb.checked); return; }   // половинный pixelRatio
-    if (on && e.code === 'KeyJ') { noikCb.checked = !noikCb.checked; opts.onMonNoIk?.(noikCb.checked); return; }   // монстры без вспом. IK
+    const pt = PERF.find((p) => p.code === e.code);
+    if (on && pt) { const cb = perfCb[pt.code]!; cb.checked = !cb.checked; pt.cb?.(cb.checked); return; }   // перф-тумблер по клавише
     if (on && /^Digit[1-6]$/.test(e.code)) { const k = LAYER_LABELS[+e.code.slice(5) - 1]![0]; layers[k] = !layers[k]; boxes[k]!.checked = layers[k]; }
   });
 

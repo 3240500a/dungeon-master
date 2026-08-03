@@ -67,10 +67,15 @@ function makeEmitter(k: DebuffKind): Emitter {
 /** Менеджер эффектов статусов: по id сущности держит эмиттеры активных дебаффов, позиционирует и анимирует. */
 export class StatusFx {
   private ents = new Map<string, Map<DebuffKind, Emitter>>();
+  private disabled = false;   // debug-тумблер: не спавнить партикл-статусы (по эмиттеру на дебафф на сущность)
   constructor(private root: THREE.Object3D) {}
+
+  /** Debug: отключить партикл-статусы (много эмиттеров при массовых дебаффах). */
+  setDisabled(on: boolean): void { this.disabled = on; if (on) this.clear(); }
 
   /** Синхронизировать эффекты сущности `id` в мировой (x,z) с её набором дебаффов (снапшот-состояние). */
   sync(id: string, x: number, z: number, debuffs: Partial<Record<DebuffKind, { stacks: number }>>): void {
+    if (this.disabled) return;
     const active = (Object.keys(debuffs) as DebuffKind[]).filter((k) => debuffs[k]);
     let m = this.ents.get(id);
     if (!active.length) { if (m) this.remove(id); return; }
