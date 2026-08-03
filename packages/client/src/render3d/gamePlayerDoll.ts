@@ -149,7 +149,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       syncRagdollSim();
       if (!kinematic && simEnabled && !dead) { driveRagdollToPose(); ragdoll.snapToPose(); }   // назад в физику: тела на текущую позу (без флейла)
     },
-    setPoseLod(on) { poseLod = on; },   // дальний монстр в кадре → без FOOT-IK
+    setPoseLod(on) { poseLod = on; player.setNoIk(on); },   // дальний монстр в кадре → без FOOT-IK (рендер) + off-hand IK (поза)
     hitReact(dx, dz, power = 1) {   // дёрг → из физики (солид = физрезультат); в kinematic — поднимаем физику на HIT_PHYS_DUR
       if (kinematic && !dead && physHold <= 0) startHitPhysics();
       ragdoll.hit('Torso', dx, 0.35, dz, power);

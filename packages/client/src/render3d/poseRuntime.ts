@@ -162,7 +162,7 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
 }
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
  *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag): void {
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false): void {
   human.reset();
   const idle = content.resolveUpper(weapon)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх)
   const m = legMag;
@@ -188,7 +188,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   }
   // ДВУРУЧНЫЙ ХВАТ: левая кисть IK-ом держит точку __lgripP на оружии (едет с оружием). Точка покадрово: idle → перехват в
   // ударе (берём кадр удара, иначе idle). Только когда левая рука СВОБОДНА (нет офф-руки: щита/дуала).
-  if (idle && weaponGroups.length && !weapon.includes('+')) {
+  if (!noIk && idle && weaponGroups.length && !weapon.includes('+')) {   // noIk (поза-LOD дальних) → пропуск off-hand IK
     const src = (atk.clip && atk.t >= 0) ? clipPoseAt(atk.clip, atk.t / (clipDur(atk.clip) || 1)) : idle;
     const lgP = src['__lgripP'] ?? idle['__lgripP'];
     if (lgP) applyOffhandGrip(human, weaponGroups, lgP, src['__lgripR'] ?? idle['__lgripR'] ?? [0, 0, 0]);
@@ -365,6 +365,8 @@ export class PosePlayer {
   readonly driver = new PoseDriver();
   private px = 0; private pz = 0; private vx = 0; private vz = 0; private yaw = 0;
   moveMag = 0; atkSpeed = 1;
+  private noIk = false;   // поза-LOD: пропуск off-hand IK (FOOT-IK пропускает рендер отдельно)
+  setNoIk(on: boolean): void { this.noIk = on; }
   /** Вес ГЕЙТА в ногах (0 = поза idle-стойки, 1 = шаг планировщика). Сглажен: резкий скачок = дребезг ног. */
   legMag = 0;
   private stepHold = 0;   // остаточное удержание «ноги ведёт гейт» после подшага (антидребезг мерцающего settled)
@@ -441,7 +443,7 @@ export class PosePlayer {
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag);
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk);
     this.human.bones.get('Hips')!.rotation.y = yaw;            // facing в Hips (углы ног body-local → корень крутим на yaw)
   }
 }

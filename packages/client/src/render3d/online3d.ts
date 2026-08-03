@@ -126,9 +126,11 @@ export async function startOnline3d(): Promise<void> {
   const hud = mountHud3d(app);
   const minimap = mountMinimap(root);
   let monKinematic = false;   // debug (DBG-панель / K): монстры кинематические, физика лишь на удар/смерть — тест источника фризов
+  let monNoIk = false;        // debug (J): монстры БЕЗ вспом. IK (foot/off-hand) у ВСЕХ — форсит поза-LOD в цикле ниже
   const debug = mountDebug(scene, camera, canvas, root, {
     onMonKinematic: (on) => { monKinematic = on; for (const a of monsters.values()) a.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
     onLowRes: (on) => { renderer.setPixelRatio(on ? 1 : Math.min(devicePixelRatio, 2)); resize(); },   // 1× пиксели → режем фрагментную цену
+    onMonNoIk: (on) => { monNoIk = on; },   // применяется в цикле монстров (форс poseLod у всех)
   });
 
   await initPhysics();
@@ -420,7 +422,7 @@ export async function startOnline3d(): Promise<void> {
         : (mv.x >= winMinX - WIN_HYST && mv.x <= winMaxX + WIN_HYST && mv.y >= winMinZ - WIN_HYST && mv.y <= winMaxZ + WIN_HYST);
       if (active && a.dormant) { a.dormant = false; a.d.setSimEnabled?.(true); }       // вход в окно → вернуть в физику (+снап к цели)
       else if (!active && !a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } // выход за окно → вон из физики, меш заморожен
-      if (active) a.d.setPoseLod?.((mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ) > POSE_LOD_R2);   // дальний в кадре → без FOOT-IK
+      if (active) a.d.setPoseLod?.(monNoIk || (mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ) > POSE_LOD_R2);   // дальний в кадре (или debug J: все) → без вспом. IK
       driveActor(a, mv.x, mv.y, mv.facing, true, dt, active);   // dormant → doUpdate=false: setPose держит цель живой, тяжёлый шаг пропущен
       if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => `${debuffIcon(dcfg, k)}${mv.debuffs[k]!.stacks > 1 ? mv.debuffs[k]!.stacks : ''}`).join(' ')); }
       statusFx.sync(`m${mv.id}`, mv.x, mv.y, mv.debuffs);   // партикл-эффекты статусов (горит/яд/лёд/…)
