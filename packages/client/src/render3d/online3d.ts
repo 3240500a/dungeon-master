@@ -141,7 +141,7 @@ export async function startOnline3d(): Promise<void> {
     renderer.shadowMap.needsUpdate = true;
   };
   const debug = mountDebug(scene, camera, canvas, root);   // DBG-панель: только debug-слои + инфо (перф-тумблеры → «Настройки»)
-  mountSettings(root, {
+  const applySavedSettings = mountSettings(root, {
     onMonKinematic: (on) => { monKinematic = on; },   // применяет цикл монстров (форс кинематик всем поверх авто-физ-LOD)
     onMonNoIk: (on) => { monNoIk = on; },   // применяется в цикле монстров (форс poseLod у всех)
     onPlayerKinematic: (on) => { playerKinematic = on; self?.d.setPhysicsMode?.(on ? 'kinematic' : 'physics'); },
@@ -206,6 +206,7 @@ export async function startOnline3d(): Promise<void> {
   let seq = 0;
   let playerLight: THREE.PointLight | undefined;
   let torches: Torch[] = [];
+  applySavedSettings();   // применить сохранённые галки ⚙ ПОСЛЕ инициализации self/playerLight (иначе TDZ)
   let areaGrid: Grid | undefined;   // грид текущей области (для DBG-счётчика монстров вне пола)
   let interactables: Interactable[] = [];
   const doorMeshes = new Map<number, THREE.Object3D[]>();

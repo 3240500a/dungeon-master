@@ -17,7 +17,9 @@ export interface SettingsOpts {
 
 const LS_KEY = 'dm3d_settings';   // сохранённые галки настроек 3D
 
-export function mountSettings(root: HTMLElement, opts: SettingsOpts): void {
+/** Возвращает `applySaved` — online3d зовёт ПОСЛЕ инициализации своих let'ов (self/playerLight), иначе синхронный
+ *  вызов колбэков из mountSettings ловит TDZ (Cannot access 'playerLight' before initialization). */
+export function mountSettings(root: HTMLElement, opts: SettingsOpts): () => void {
   const ROWS: { key: string; label: string; cb?: (on: boolean) => void }[] = [
     { key: 'monKin', label: 'Кинематика монстров (физика: удар/смерть)', cb: opts.onMonKinematic },
     { key: 'monNoIk', label: 'Монстры без вспом. IK (стопы/вторая рука)', cb: opts.onMonNoIk },
@@ -59,6 +61,6 @@ export function mountSettings(root: HTMLElement, opts: SettingsOpts): void {
   const setOpen = (v: boolean): void => { open = v; panel.style.display = open ? 'block' : 'none'; btn.style.background = open ? '#274032' : '#1c2130'; };
   btn.addEventListener('click', () => setOpen(!open));
 
-  // Применить сохранённые настройки при старте (для включённых зовём колбэк — флаги/эффекты применятся).
-  for (const r of ROWS) if (state[r.key]) r.cb?.(true);
+  // НЕ применяем синхронно (TDZ на self/playerLight) — возвращаем функцию, online3d зовёт после своих let'ов.
+  return () => { for (const r of ROWS) if (state[r.key]) r.cb?.(true); };
 }
