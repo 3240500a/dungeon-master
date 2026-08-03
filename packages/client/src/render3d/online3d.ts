@@ -94,7 +94,7 @@ function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string 
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean; hadFx?: boolean }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -438,8 +438,14 @@ export async function startOnline3d(): Promise<void> {
       } else if (!active && !a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); }   // выход за окно → вон из физики, меш заморожен
       if (active) a.d.setPoseLod?.(monNoIk || (mv.x - smoothX) * (mv.x - smoothX) + (mv.y - smoothZ) * (mv.y - smoothZ) > POSE_LOD_R2);   // дальний в кадре (или debug J: все) → без вспом. IK
       driveActor(a, mv.x, mv.y, mv.facing, true, dt, active);   // dormant → doUpdate=false: setPose держит цель живой, тяжёлый шаг пропущен
-      if (a.hp) { a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun); a.hp.setDebuffs((Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => `${debuffIcon(dcfg, k)}${mv.debuffs[k]!.stacks > 1 ? mv.debuffs[k]!.stacks : ''}`).join(' ')); }
-      statusFx.sync(`m${mv.id}`, mv.x, mv.y, mv.debuffs);   // партикл-эффекты статусов (горит/яд/лёд/…)
+      // Есть ли у монстра дебаффы — дёшево, БЕЗ аллокаций (у большинства их нет). Строку иконок и statusFx.sync
+      // считаем ТОЛЬКО когда дебаффы есть (или были) — иначе per-frame Object.keys/filter/map × N монстров = мусор → GC-паузы.
+      let hasDeb = false; for (const k in mv.debuffs) if (mv.debuffs[k as DebuffKind]) { hasDeb = true; break; }
+      if (a.hp) {
+        a.hp.spr.position.set(mv.x, 74, mv.y); a.hp.set(mv.hp / Math.max(1, mv.maxHp)); a.hp.setStun(mv.stun);
+        a.hp.setDebuffs(hasDeb ? (Object.keys(mv.debuffs) as DebuffKind[]).filter((k) => mv.debuffs[k]).map((k) => `${debuffIcon(dcfg, k)}${mv.debuffs[k]!.stacks > 1 ? mv.debuffs[k]!.stacks : ''}`).join(' ') : '');   // setDebuffs кэширует (перерисует лишь при смене)
+      }
+      if (hasDeb || a.hadFx) { statusFx.sync(`m${mv.id}`, mv.x, mv.y, mv.debuffs); a.hadFx = hasDeb; }   // партикл-статусы — только при дебаффах/очистке
     }
     // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и лежит на полу (не убираем).
     // Осев (a.dead≤0), тело ВЫНИМАЕТСЯ из физ-мира (setSimEnabled(false)) — труп замерзает в позе и не грузит pw.step.
@@ -678,7 +684,7 @@ export async function startOnline3d(): Promise<void> {
   app.net.connect();
 
   // ── Кадр (вынесен, чтобы гнать вручную в фоновой вкладке — rAF там заморожен) ──
-  let physAcc = 0, tsec = 0, fps = 60;
+  let physAcc = 0, tsec = 0, fps = 60, miniAcc = 0;
   function frame(dt: number): void {
     tsec += dt;
     fps += (1 / Math.max(dt, 1e-3) - fps) * 0.1;
@@ -686,10 +692,14 @@ export async function startOnline3d(): Promise<void> {
     if (app.net.connected && myId && latest && app.state) {
       sendInput(); renderWorld(dt); hud.update(); updateInteractions();
       const me = latest.players.find((p) => p.id === myId);
-      minimap.render(smoothX, smoothZ, me?.facing ?? 0,
-        latest.monsters.filter((m) => m.alive).map((m) => ({ x: m.x, z: m.y })),
-        latest.players.filter((p) => p.id !== myId).map((p) => ({ x: p.x, z: p.y })),
-        interactables.map((it): MiniMark => ({ x: it.x, y: it.y, kind: /спуст|подземель|глубже|город|заверш/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc' })));
+      miniAcc += dt;
+      if (miniAcc >= 0.1) {   // миникарта — ~10 Гц, а не каждый кадр: снимает per-frame аллокации (filter/map всех монстров + регексы) → меньше GC-пауз
+        miniAcc = 0;
+        minimap.render(smoothX, smoothZ, me?.facing ?? 0,
+          latest.monsters.filter((m) => m.alive).map((m) => ({ x: m.x, z: m.y })),
+          latest.players.filter((p) => p.id !== myId).map((p) => ({ x: p.x, z: p.y })),
+          interactables.map((it): MiniMark => ({ x: it.x, y: it.y, kind: /спуст|подземель|глубже|город|заверш/i.test(it.label) ? 'portal' : /рычаг/i.test(it.label) ? 'lever' : 'npc' })));
+      }
       if (debug.on) {
         const mel = app.config.get('balance').melee;
         const w = app.state.save.equipment.weapon;
