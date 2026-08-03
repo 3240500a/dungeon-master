@@ -14,9 +14,14 @@ function softSprite(inner: string, outer: string): THREE.Texture {
 const SPARK = softSprite('rgba(255,255,255,1)', 'rgba(255,210,150,0.6)');
 
 interface Fx { obj: THREE.Object3D; upd: (dt: number) => boolean }
+// Плавающий боевой текст из ПУЛА (число урона/промах/блок): спрайт+канвас+текстура переиспользуются (перерисовка
+// + needsUpdate вместо new CanvasTexture на каждое число) → ноль аллокаций/GC и создания GL-текстур в бою.
+interface Floater { spr: THREE.Sprite; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; mat: THREE.SpriteMaterial; t: number; life: number; y0: number; active: boolean }
+const MAX_FLOATERS = 28;
 
 export class Vfx {
   private list: Fx[] = [];
+  private floaters: Floater[] = [];
   constructor(private root: THREE.Object3D) {}
 
   update(dt: number): void {
@@ -27,6 +32,29 @@ export class Vfx {
         this.list.splice(i, 1);
       }
     }
+    for (const f of this.floaters) {   // плавающие числа — из пула (двигаем/гасим, не пересоздаём)
+      if (!f.active) continue;
+      f.t += dt; const k = f.t / f.life;
+      if (k >= 1) { f.active = false; f.spr.visible = false; continue; }
+      f.spr.position.y = f.y0 + k * 40; f.mat.opacity = 1 - k * k;
+    }
+  }
+
+  /** Взять свободный флоатер из пула (или создать до лимита, иначе переиспользовать самый старый). */
+  private acquireFloater(): Floater {
+    let f = this.floaters.find((q) => !q.active);
+    if (f) return f;
+    if (this.floaters.length < MAX_FLOATERS) {
+      const canvas = document.createElement('canvas'); canvas.width = 224; canvas.height = 64;
+      const ctx = canvas.getContext('2d')!;
+      const tex = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
+      const spr = new THREE.Sprite(mat); spr.visible = false; this.root.add(spr);
+      f = { spr, canvas, ctx, tex, mat, t: 0, life: 0, y0: 46, active: false };
+      this.floaters.push(f);
+      return f;
+    }
+    return this.floaters.reduce((a, b) => (b.t / b.life > a.t / a.life ? b : a));   // все заняты — самый старый
   }
   private add(obj: THREE.Object3D, upd: (dt: number) => boolean): void { this.root.add(obj); this.list.push({ obj, upd }); }
 
@@ -76,19 +104,19 @@ export class Vfx {
   /** Восходящие магические партиклы (каст). */
   cast(x: number, z: number, color: number): void { this.burst(x, z, color, 18, 60, 0.6, 9, 8); this.ring(x, z, color, 70, 0.45); }
 
-  /** Всплывающий боевой текст (спрайт), поднимается и гаснет. big — крупнее (крит). Ширина канваса под текст (для «промах»/«блок»). */
+  /** Всплывающий боевой текст (спрайт из ПУЛА), поднимается и гаснет. big — крупнее (крит). Канвас фикс. 224×64, текст по центру. */
   floatText(x: number, z: number, text: string, color: number, big = false): void {
-    const c = document.createElement('canvas'); const g = c.getContext('2d')!;
+    const f = this.acquireFloater();
     const fs = big ? 46 : 34, font = `bold ${fs}px system-ui, sans-serif`;
-    g.font = font; const w = Math.max(64, Math.ceil(g.measureText(text).width) + 20);
-    c.width = w; c.height = 64;
+    const g = f.ctx, W = f.canvas.width, H = f.canvas.height;
+    g.clearRect(0, 0, W, H);
     g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(text, w / 2, 32);
-    g.fillStyle = `#${color.toString(16).padStart(6, '0')}`; g.fillText(text, w / 2, 32);
-    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, depthTest: false }));
-    const f = fs / 128; spr.scale.set(w * f, 64 * f, 1); spr.position.set(x + (Math.random() - 0.5) * 10, 46, z);
-    let t = 0; const life = 0.9;
-    this.add(spr, (dt) => { t += dt; const k = t / life; if (k >= 1) return false; spr.position.y = 46 + k * 40; (spr.material as THREE.SpriteMaterial).opacity = 1 - k * k; return true; });
+    g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(text, W / 2, H / 2);
+    g.fillStyle = `#${color.toString(16).padStart(6, '0')}`; g.fillText(text, W / 2, H / 2);
+    f.tex.needsUpdate = true;   // перезалить в ту же GL-текстуру (без создания новой)
+    const s = fs / 128; f.spr.scale.set(W * s, H * s, 1);
+    f.y0 = 46; f.spr.position.set(x + (Math.random() - 0.5) * 10, f.y0, z);
+    f.mat.opacity = 1; f.t = 0; f.life = 0.9; f.active = true; f.spr.visible = true;
   }
 
   /** Всплывающее число урона. Crit — крупнее/жёлтое. */

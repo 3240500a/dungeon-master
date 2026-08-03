@@ -206,6 +206,7 @@ export async function startOnline3d(): Promise<void> {
     doorMeshes.clear(); leverMeshes.clear(); interactables = [];
     clearGroup(floorGroup);
     area = floor.area;
+    if (app.state) app.state.area = floor.area;   // HUD/отчёт различают город/этаж по area (depth=0 у старта забега = как город)
 
     const layout = { grid: floor.grid, doors: [], decor: floor.decor, stairsDown: floor.stairs } as unknown as Parameters<typeof buildEnvironment>[1];
     torches = buildEnvironment(floorGroup, layout);

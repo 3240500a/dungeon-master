@@ -80,13 +80,14 @@ export function mountHud3d(app: App): Hud3d {
       if (stamText) stamText.textContent = `${Math.round(st.stamina)} / ${Math.round(d.maxStamina)}`;
 
       // Инфо-строка: уровень · область (город / этаж·сложность·вызов) · золото · очки.
+      // Город/подземелье — по area, НЕ по depth (у старта забега depth=0, как у города). Этаж = depth+1 (старт = «этаж 1»).
       let loc = 'город';
-      if (st.depth > 0) {
+      if (st.area === 'dungeon') {
         const diffs = app.config.get('difficulties');
         const diff = diffs.find((x) => x.id === st.difficultyId) ?? diffs.find((x) => x.id === 'normal') ?? diffs[0]!;
         const elv = effectiveLevel(st.save, app.config.get('balance').power).total;
         const cl = challengeAtFloor(startChallenge(elv, diff), diff, st.depth);
-        loc = `этаж ${st.depth} · ${diff.name} · вызов ур.${cl}`;
+        loc = `этаж ${st.depth + 1} · ${diff.name} · вызов ур.${cl}`;
       }
       if (info) info.textContent = `Ур. ${lvl}  ·  ${loc}  ·  Золото ${st.save.gold}  ·  Очки: атр ${st.save.unspentAttributePoints} / скилл ${st.save.unspentSkillPoints}`;
 
