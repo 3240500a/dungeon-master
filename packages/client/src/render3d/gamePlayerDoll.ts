@@ -75,6 +75,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   let tx = opts.x, tz = opts.z, tyaw = 0, lastX = opts.x, lastZ = opts.z, first = true, dead = false;
   let simEnabled = true, snapNext = false;   // окно-culling: вне экрана усыпляем физику (тела вон из pw.step), меш замерзает
   let kinematic = false, physHold = 0;       // debug-режим «кинематика»: рисуем из позы, физика лишь транзиентно (physHold сек) на удар/смерть
+  let poseLod = false;                        // поза-LOD дальних монстров: пропуск FOOT-IK (заземления стоп) — дёшево, детали стоп вдали не видно
   // Членство тел в pw.step: активны только если кукла не усыплена окном И (мертва | физрежим | идёт транзиентная физика удара).
   const syncRagdollSim = (): void => ragdoll.setSimEnabled(simEnabled && (dead || !kinematic || physHold > 0));
   let atkClipIdx = 0;   // индекс чередования poseClips скила (замах справа→слева→…)
@@ -148,6 +149,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       syncRagdollSim();
       if (!kinematic && simEnabled && !dead) { driveRagdollToPose(); ragdoll.snapToPose(); }   // назад в физику: тела на текущую позу (без флейла)
     },
+    setPoseLod(on) { poseLod = on; },   // дальний монстр в кадре → без FOOT-IK
     hitReact(dx, dz, power = 1) {   // дёрг → из физики (солид = физрезультат); в kinematic — поднимаем физику на HIT_PHYS_DUR
       if (kinematic && !dead && physHold <= 0) startHitPhysics();
       ragdoll.hit('Torso', dx, 0.35, dz, power);
@@ -189,7 +191,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
         target.root.updateMatrixWorld(true);
         const hips = target.bones.get('Hips')!;
         hips.getWorldPosition(pelWorld); pelWorld.x += rx; pelWorld.z += rz;   // мир-таз позы + оффсет сглаженной позиции
-        renderKinematicPose(solid, target.readPose(), pelWorld, ground, dt, GROUND0, [!sw[0], !sw[1]]);
+        renderKinematicPose(solid, target.readPose(), pelWorld, ground, dt, GROUND0, [!sw[0], !sw[1]], !poseLod);
         return;
       }
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
@@ -200,7 +202,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       // ATK_MATCH·attackWeight (physics один не доводит замах до конца). В покое/беге — базовый matchWeight (физ-ведомая походка).
       const am = player.attackMatch;
       const effMatch = am != null ? am : Math.max(matchWeight, ATK_MATCH * player.attackWeight);
-      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]]);
+      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]], !poseLod);
       if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику
     },
     dispose() {

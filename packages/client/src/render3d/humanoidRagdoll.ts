@@ -421,7 +421,7 @@ export const newGhostGround = (): GhostGround => ({ off: 0 });
 export function renderRagdollGhost(
   mesh: Humanoid, rag: HumanoidRagdoll, gs: GhostGround, dt: number, floorY = 0, ground = true,
   targetPose: Record<string, [number, number, number]> | null = null, match = 0, groundAt?: GroundQuery,
-  support?: [boolean, boolean],
+  support?: [boolean, boolean], footIk = true,
 ): void {
   const gnd = groundAt ?? ((): number => floorY);
   const bp = rag.readBakedPose(); mesh.reset();
@@ -440,7 +440,7 @@ export function renderRagdollGhost(
   if (!ground) gs.off += (0 - gs.off) * Math.min(1, dt * 8);         // смерть/полёт: прижим затухает
   mesh.root.position.set(hp[0], hp[1] + gs.off, hp[2]);
   mesh.root.updateMatrixWorld(true);
-  if (ground) groundFeet(mesh, hp[1], gs, dt, gnd, support);   // FOOT-IK: заземляем ОПОРНЫЕ стопы (маховую ведёт поза)
+  if (ground && footIk) groundFeet(mesh, hp[1], gs, dt, gnd, support);   // FOOT-IK: заземляем ОПОРНЫЕ стопы (poseLod дальних → пропуск)
 }
 
 /**
@@ -451,11 +451,11 @@ export function renderRagdollGhost(
  */
 export function renderKinematicPose(
   mesh: Humanoid, targetPose: Record<string, [number, number, number]>, hipWorld: THREE.Vector3,
-  gs: GhostGround, dt: number, gnd: GroundQuery, support?: [boolean, boolean],
+  gs: GhostGround, dt: number, gnd: GroundQuery, support?: [boolean, boolean], footIk = true,
 ): void {
   mesh.reset();
   for (const nm in targetPose) { const b = mesh.bones.get(nm); if (b) b.rotation.set(targetPose[nm]![0], targetPose[nm]![1], targetPose[nm]![2]); }
   mesh.root.position.set(hipWorld.x, hipWorld.y + gs.off, hipWorld.z);
   mesh.root.updateMatrixWorld(true);
-  groundFeet(mesh, hipWorld.y, gs, dt, gnd, support);   // живой монстр — всегда заземляем (смерть идёт физ-путём)
+  if (footIk) groundFeet(mesh, hipWorld.y, gs, dt, gnd, support);   // FOOT-IK (poseLod дальних → пропуск: детали стоп не видно)
 }

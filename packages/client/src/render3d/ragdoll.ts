@@ -138,6 +138,8 @@ export interface RagdollHandle {
   setSimEnabled?(on: boolean): void;
   /** Debug-режим физики монстра: 'kinematic' = рисовать из позы (тела вон из pw.step), физика лишь транзиентно на удар/смерть; 'physics' = как обычно. */
   setPhysicsMode?(mode: 'physics' | 'kinematic'): void;
+  /** Поза-LOD: on=true → пропускать FOOT-IK (заземление стоп) — для ДАЛЬНИХ монстров в кадре (детали стоп не видно, дешевле). */
+  setPoseLod?(on: boolean): void;
   update(dt: number): void;
   dispose(): void;
 }
