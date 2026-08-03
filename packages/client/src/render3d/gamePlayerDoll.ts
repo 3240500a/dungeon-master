@@ -119,6 +119,9 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // СПАВН: сразу поставить рэгдолл в idle-стойку (иначе перехлёст T-поза→стойка болтает верх тела ~1с).
   player.setVel(0, 0); player.setYaw(0); player.step(1 / 60);
   driveRagdollToPose(); ragdoll.snapToPose();
+  // И СРАЗУ отрисовать СОЛИД в позу — иначе монстр, заспавненный ВНЕ окна (сразу усыплён, update() не зовётся),
+  // висит в сырой T-позе из buildHumanoid до первого пробуждения. Виден за стеной (нет тумана) как «Т-поза».
+  renderRagdollGhost(solid, ragdoll, ground, 1 / 60, 0, true, null, 0);
 
   return {
     group,
