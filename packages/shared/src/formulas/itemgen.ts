@@ -83,42 +83,39 @@ function magicName(baseName: string, gender: string | undefined, rolled: RolledA
 function titledName(baseName: string, gender: string | undefined, title: string): string {
   return title ? `${baseName} ${declineTier(title, gender)}` : baseName;
 }
-type RareTheme = 'neutral' | 'fire' | 'cold' | 'lightning' | 'poison';
-interface RareWord { t: string; theme?: RareTheme }
-/** Стат аффикса → стихия (урон и резист одной стихии дают одну тему). Прочие статы — вне стихий. */
-const STAT_ELEMENT: Record<string, RareTheme> = {
+type RareTheme = 'fire' | 'cold' | 'lightning' | 'poison' | 'physical';
+interface RareWord { t: string; themes?: RareTheme[] }
+/** Стат аффикса → тема: стихии (урон/резист) и физика (урон/крит). Прочие статы — вне тем. */
+const STAT_THEME: Record<string, RareTheme> = {
   addFire: 'fire', resFire: 'fire',
   addCold: 'cold', resCold: 'cold',
   addLightning: 'lightning', resLightning: 'lightning',
   addPoison: 'poison', resPoison: 'poison',
+  minDamage: 'physical', maxDamage: 'physical', physPct: 'physical', damagePct: 'physical', critChance: 'physical',
 };
-/** Доминантная стихия предмета из роллнутых аффиксов: урон (add*) важнее резиста, больше value —
- *  важнее. Нет стихийных аффиксов → undefined (тема не задана → имя не ограничено). */
-function dominantElement(rolled: RolledAffix[]): RareTheme | undefined {
-  let best: RareTheme | undefined; let bestScore = -Infinity;
-  for (const r of rolled) {
-    const el = r.modifier ? STAT_ELEMENT[r.modifier.stat] : undefined;
-    if (!el) continue;
-    const score = (r.modifier!.stat.startsWith('add') ? 1e6 : 0) + (r.modifier!.value ?? 0);
-    if (score > bestScore) { bestScore = score; best = el; }
-  }
-  return best;
+/** Темы предмета из роллнутых аффиксов (стихии + физика). Пусто → тема не задана (имя не ограничено). */
+function itemThemes(rolled: RolledAffix[]): Set<RareTheme> {
+  const s = new Set<RareTheme>();
+  for (const r of rolled) { const t = r.modifier ? STAT_THEME[r.modifier.stat] : undefined; if (t) s.add(t); }
+  return s;
 }
-/** Слово подходит теме предмета: нейтральное / у предмета нет стихии / его стихия = теме (нет
- *  «явного противоречия» вроде огненного слова на предмете с уроном холодом). */
-function wordFitsTheme(w: RareWord, theme: RareTheme | undefined): boolean {
-  return !w.theme || w.theme === 'neutral' || !theme || w.theme === theme;
+/** Слово подходит: универсальное (нет тем) / у предмета нет тем (свобода) / делит ≥1 тему с предметом
+ *  (нет «явного противоречия» вроде огненного слова на предмете с уроном холодом). */
+function wordFitsThemes(w: RareWord, themes: Set<RareTheme>): boolean {
+  if (!w.themes || w.themes.length === 0) return true;
+  if (themes.size === 0) return true;
+  return w.themes.some((t) => themes.has(t));
 }
 /** Раре-титул (D2): «основа эпитет» — существительное из nouns + род.-падежный эпитет из epithets
- *  («Пепел» + «древних» → «Пепел древних»). Стихийные слова фильтруются по теме предмета
- *  (dominantElement), нейтральные подходят всегда. Имя = база + титул.
+ *  («Пепел» + «древних» → «Пепел древних»). Слова фильтруются по темам предмета (стихия/физика),
+ *  универсальные (пустой список тем) подходят всегда. Имя = база + титул.
  *  Нет подходящих основ → fallback (тир-имя); есть основы, но нет эпитетов → только основа. */
 function rareItemName(baseName: string, gender: string | undefined, pool: { nouns: RareWord[]; epithets: RareWord[] } | undefined, rolled: RolledAffix[], rng: Rng, fallback: string): string {
-  const theme = dominantElement(rolled);
-  const nouns = (pool?.nouns ?? []).filter((w) => wordFitsTheme(w, theme));
+  const themes = itemThemes(rolled);
+  const nouns = (pool?.nouns ?? []).filter((w) => wordFitsThemes(w, themes));
   if (nouns.length === 0) return fallback;
   const noun = nouns[rng.int(0, nouns.length - 1)]!.t;
-  const eps = (pool?.epithets ?? []).filter((w) => wordFitsTheme(w, theme));
+  const eps = (pool?.epithets ?? []).filter((w) => wordFitsThemes(w, themes));
   const title = eps.length ? `${noun} ${eps[rng.int(0, eps.length - 1)]!.t}` : noun;
   return titledName(baseName, gender, title);
 }

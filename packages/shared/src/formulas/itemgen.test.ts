@@ -113,10 +113,13 @@ describe('enabled-фильтры генерации (тумблер активн
       expect(sawRare).toBe(true);
     });
 
+    const wordsWithTheme = (rn: { nouns: { t: string; themes: string[] }[]; epithets: { t: string; themes: string[] }[] }, theme: string): string[] =>
+      [...rn.nouns, ...rn.epithets].filter((w) => w.themes.includes(theme)).map((w) => w.t);
+
     it('гашение противоречий: холодный предмет не получает огненное слово', () => {
       const rng = createRng(123);
       const rareNames = reg.get('rare-names');
-      const fireWords = [...rareNames.nouns, ...rareNames.epithets].filter((w) => w.theme === 'fire').map((w) => w.t);
+      const fireWords = wordsWithTheme(rareNames, 'fire');
       expect(fireWords.length).toBeGreaterThan(0);
       // пул только с холодным уроном (frozen) + нейтральным суффиксом → тема предмета = cold, огня нет
       const coldOnly = affixes.filter((a) => a.id === 'frozen' || a.id === 'of-strength');
@@ -124,9 +127,27 @@ describe('enabled-фильтры генерации (тумблер активн
       for (let i = 0; i < 300; i++) {
         const item = generateItem(bases, coldOnly, uniques,
           { dropBias: 4, itemLevel: 40, baseId: 'short-sword', tiers, rarities, rareNames, forceRarity: 'rare' }, rng);
-        if (!item.affixes.some((a) => a.modifier?.stat === 'addCold')) continue; // доминанта = cold
+        if (!item.affixes.some((a) => a.modifier?.stat === 'addCold')) continue; // тема предмета = cold
         checked++;
         for (const fw of fireWords) expect(item.name.includes(fw)).toBe(false);
+      }
+      expect(checked).toBeGreaterThan(0);
+    });
+
+    it('гашение противоречий: физ-предмет не получает стихийное слово', () => {
+      const rng = createRng(321);
+      const rareNames = reg.get('rare-names');
+      const elemWords = ['fire', 'cold', 'lightning', 'poison'].flatMap((t) => wordsWithTheme(rareNames, t));
+      expect(elemWords.length).toBeGreaterThan(0);
+      // только физ-урон (sharp: maxDamage) + нейтральный суффикс → тема предмета = physical, стихий нет
+      const physOnly = affixes.filter((a) => a.id === 'sharp' || a.id === 'of-strength');
+      let checked = 0;
+      for (let i = 0; i < 300; i++) {
+        const item = generateItem(bases, physOnly, uniques,
+          { dropBias: 4, itemLevel: 40, baseId: 'short-sword', tiers, rarities, rareNames, forceRarity: 'rare' }, rng);
+        if (!item.affixes.some((a) => a.modifier?.stat === 'maxDamage')) continue; // тема предмета = physical
+        checked++;
+        for (const ew of elemWords) expect(item.name.includes(ew)).toBe(false);
       }
       expect(checked).toBeGreaterThan(0);
     });
