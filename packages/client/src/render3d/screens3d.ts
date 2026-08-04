@@ -108,13 +108,13 @@ export function runAuthFlow(app: App, root: HTMLElement): Promise<void> {
       setTimeout(() => name.focus(), 50);
     };
 
-    // Титульный экран (как 2D MainMenuScene): «Играть» → вход/персонажи, «Редактор» → HTML-редактор конфигов.
+    // Титульный экран (как 2D MainMenuScene): «Играть» → вход/персонажи. (Кнопка «Редактор» убрана — на хостинге
+    // редактор открывается отдельным URL /editor/, в игровом меню не нужен.)
     const showMainMenu = (): void => {
       const { card, close } = screen(root);
       card.append(el('h1', `font:36px ${TITLE};color:#e0b45a;margin:0 0 4px;text-align:center;letter-spacing:3px`, 'DUNGEON MASTER'));
       card.append(el('div', 'color:#8a90a4;text-align:center;margin-bottom:24px;font-size:14px;letter-spacing:3px', '3D · ОНЛАЙН'));
       card.append(btn('Играть', () => { close(); if (app.auth) showCharacters(); else showLogin(); }, '#8aa84a'));
-      card.append(btn('Редактор', () => { window.open('/editor/', '_blank'); }, '#e39a3c'));
     };
 
     showMainMenu();

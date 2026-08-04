@@ -41,7 +41,7 @@ export class MainMenuScene extends Phaser.Scene {
     this.buttons.push(
       makeButton(this, 0, 0, 'Играть', () => this.scene.start(App.from(this).auth ? 'CharacterSelect' : 'Login')),
     );
-    this.buttons.push(makeButton(this, 0, 0, 'Редактор', () => window.open('/editor/', '_blank')));
+    // Кнопка «Редактор» убрана — на хостинге редактор открывается отдельным URL /editor/, в игровом меню не нужен.
 
     this.layout();
     this.scale.on('resize', this.layout, this);
