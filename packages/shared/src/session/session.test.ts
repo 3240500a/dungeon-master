@@ -88,6 +88,37 @@ describe('GameSession — бой/лут/прокачка', () => {
     expect(ev.some((e) => e.type === 'floor-cleared')).toBe(true);
   });
 
+  // Гоняет игрока в атаку по монстру `monHp` HP; опц. вешает аффикс-стат на оружие; возвращает итог HP игрока.
+  function attackLoop(affix: { stat: string; value: number } | null, monHp: number, ticks: number): number {
+    const r = reg();
+    const s = new GameSession(r, 55, 'normal');
+    const save = newBotSave(r, 'warrior');
+    const p = s.addPlayer('p1', save);
+    if (affix && save.equipment.weapon) save.equipment.weapon.affixes.push({ affixId: 'test', kind: 'suffix', modifier: { stat: affix.stat, kind: 'flat', value: affix.value } });
+    const def = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(3));
+    def.hp = monHp; def.armor = 0; def.evade = 0; def.accuracy = 0; def.minDamage = 0; def.maxDamage = 0; // не бьёт в ответ
+    const mp = cellToWorld(7, 6);
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mp.x, y: mp.y }] });
+    p.hp = 1; // низко — есть запас до максимума, кламп не скрывает эффект
+    for (let i = 0; i < ticks && s.monstersAlive > 0; i++) {
+      const m = s.world.monsters[0]; if (!m) break;
+      s.tick(1 / 30, { p1: { ...idle, facing: Math.atan2(m.pos.y - p.pos.y, m.pos.x - p.pos.x), attack: true } });
+    }
+    return p.hp;
+  }
+
+  it('вампиризм жизни: HP растёт от ударов сильнее, чем без аффикса', () => {
+    const withLeech = attackLoop({ stat: 'lifeLeechPct', value: 0.9 }, 99999, 150);
+    const without = attackLoop(null, 99999, 150);
+    expect(withLeech).toBeGreaterThan(without + 5);
+  });
+
+  it('восстановление за убийство: HP подскакивает при килле', () => {
+    const withKill = attackLoop({ stat: 'lifeOnKill', value: 15 }, 1, 200);
+    const without = attackLoop(null, 1, 200);
+    expect(withKill).toBeGreaterThan(without + 8);
+  });
+
   it('монстр бьёт с замахом: в первый кадр замаха урона нет, урон проходит по завершении', () => {
     const r = reg();
     const s = new GameSession(r, 555, 'normal');

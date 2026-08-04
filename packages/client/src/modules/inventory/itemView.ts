@@ -40,6 +40,10 @@ export const STAT_LABEL: Record<string, string> = {
   lightningPct: 'К урону молнией',
   poisonPct: 'К урону ядом',
   ailmentPct: 'К наложению статусов',
+  lifeLeechPct: 'Вампиризм жизни',
+  manaLeechPct: 'Вампиризм маны',
+  lifeOnKill: 'Жизнь за убийство',
+  manaOnKill: 'Мана за убийство',
 };
 
 const SLOT_LABEL: Record<string, string> = {
@@ -85,6 +89,7 @@ const PERCENT_STATS = new Set([
   'critChance', 'blockChance',
   'resFire', 'resCold', 'resLightning', 'resPoison',
   'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct', 'ailmentPct',
+  'lifeLeechPct', 'manaLeechPct',
 ]);
 
 function fmtMod(m: StatModifier): string {

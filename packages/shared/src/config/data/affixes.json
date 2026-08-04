@@ -1114,5 +1114,113 @@
         ]
       }
     ]
+  },
+  {
+    "id": "of-leech",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Пиявки",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "leech",
+    "weight": 0.35,
+    "onMagic": false,
+    "onRare": true,
+    "stat": "lifeLeechPct",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.02,
+        "max": 0.04,
+        "ilvl": 10
+      },
+      {
+        "min": 0.04,
+        "max": 0.08,
+        "ilvl": 24
+      }
+    ]
+  },
+  {
+    "id": "of-siphon",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Высасывания",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "mana-leech",
+    "weight": 0.4,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "manaLeechPct",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.01,
+        "max": 0.03,
+        "ilvl": 10
+      },
+      {
+        "min": 0.03,
+        "max": 0.06,
+        "ilvl": 24
+      }
+    ]
+  },
+  {
+    "id": "of-the-reaper",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Жнеца",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "life-kill",
+    "weight": 0.5,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "lifeOnKill",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 2,
+        "max": 5,
+        "ilvl": 8
+      },
+      {
+        "min": 5,
+        "max": 12,
+        "ilvl": 24
+      }
+    ]
+  },
+  {
+    "id": "of-souls",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Душ",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "mana-kill",
+    "weight": 0.5,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "manaOnKill",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 3,
+        "ilvl": 8
+      },
+      {
+        "min": 3,
+        "max": 8,
+        "ilvl": 24
+      }
+    ]
   }
 ]

@@ -912,6 +912,14 @@ export class GameSession {
     if (!res.hit || res.blocked) return;
 
     m.hp = target.hp;
+    // Вампиризм: доля нанесённого урона → HP/мана атакующего (серверно, кламп по максимуму).
+    if (this.rewards && res.damage > 0) {
+      const d = this.snaps.get(killer.id)?.derived;
+      if (d) {
+        if (d.lifeLeechPct > 0) killer.hp = Math.min(d.maxHp, killer.hp + res.damage * d.lifeLeechPct);
+        if (d.manaLeechPct > 0) killer.mana = Math.min(d.maxMana, killer.mana + res.damage * d.manaLeechPct);
+      }
+    }
     if (!res.died) {
       // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
       if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }
@@ -1088,6 +1096,12 @@ export class GameSession {
     if (!this.rewards) return; // клиент: золото/XP/дроп делают обработчики шины
     const reward = killer ?? this.primaryPlayer();
     if (!reward) return;
+    // Восстановление за убийство: плоско HP/мана убийце (кламп по максимуму).
+    const kd = this.snaps.get(reward.id)?.derived;
+    if (kd) {
+      if (kd.lifeOnKill > 0) reward.hp = Math.min(kd.maxHp, reward.hp + kd.lifeOnKill);
+      if (kd.manaOnKill > 0) reward.mana = Math.min(kd.maxMana, reward.mana + kd.manaOnKill);
+    }
 
     const diff = this.currentDifficulty();
     const level = m.def.level;

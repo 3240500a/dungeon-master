@@ -134,6 +134,10 @@ export function deriveStats(
     resLightning: 0,
     resPoison: 0,
     interruptResist: 0,
+    lifeLeechPct: 0,
+    manaLeechPct: 0,
+    lifeOnKill: 0,
+    manaOnKill: 0,
   };
 
   const out = {} as DerivedStats;
@@ -153,6 +157,13 @@ export function deriveStats(
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+/** Полный список стат-ключей (атрибуты + все производные) — единый источник для выпадашки `stat`
+ * в редакторе (аффиксы/базовые статы/бафф-зелья). Выводится из DerivedStats, поэтому не дрейфует. */
+export function allStatKeys(): string[] {
+  const zero: Attributes = { strength: 0, dexterity: 0, intelligence: 0, vitality: 0 };
+  return [...ATTRIBUTES, ...Object.keys(deriveStats(zero))];
 }
 
 /** Проверяет, хватает ли атрибутов для надевания предмета. */

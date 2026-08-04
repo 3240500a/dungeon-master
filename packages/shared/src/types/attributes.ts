@@ -141,6 +141,12 @@ export interface DerivedStats {
   resPoison: number;
   /** Стойкость к прерыванию замаха (0..1) — шанс не сбить тяжёлый удар станом/ошеломлением. */
   interruptResist: number;
+  /** Вампиризм: доля нанесённого урона возвращается в HP / ману (0..1). */
+  lifeLeechPct: number;
+  manaLeechPct: number;
+  /** Восстановление HP / маны за убийство (плоско). */
+  lifeOnKill: number;
+  manaOnKill: number;
 }
 
 /**

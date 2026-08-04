@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ConfigRegistry, configSchemas, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
+import { ConfigRegistry, configSchemas, allStatKeys, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources } from './form.js';
 import { mountFloorPreview } from './floorPreview.js';
 import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
@@ -134,6 +134,9 @@ fieldEnumSources.weight = () => ((data['weapon-weights'] as { id: string }[]) ??
 const AFFIX_TARGETS = ['weapon', 'weapon.melee', 'weapon.ranged', 'weapon.physical', 'weapon.magical', 'armor', 'shield', 'jewelry', 'helm', 'chest', 'gloves', 'boots', 'belt', 'offhand', 'ring', 'amulet'];
 fieldEnumSources.appliesTo = () => AFFIX_TARGETS;
 fieldEnumSources.exclude = () => AFFIX_TARGETS;
+// stat (у аффиксов/мультимодов/базовых статов/бафф-зелий) — выпадашка из ВСЕХ статов движка
+// (атрибуты + производные, включая вампиризм/on-kill). Один источник — не дрейфует.
+fieldEnumSources.stat = () => allStatKeys();
 // biomeId (в этажах) — выпадашка из конфига биомов.
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
