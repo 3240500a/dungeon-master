@@ -106,11 +106,29 @@ describe('enabled-фильтры генерации (тумблер активн
         if (item.rarity === 'rare') {
           sawRare = true;
           // заканчивается «<основа> <эпитет>» из пулов nouns×epithets (перед ним — имя базы)
-          const titled = rareNames.nouns.some((n) => rareNames.epithets.some((e) => item.name.endsWith(`${n} ${e}`)));
+          const titled = rareNames.nouns.some((n) => rareNames.epithets.some((e) => item.name.endsWith(`${n.t} ${e.t}`)));
           expect(titled).toBe(true);
         }
       }
       expect(sawRare).toBe(true);
+    });
+
+    it('гашение противоречий: холодный предмет не получает огненное слово', () => {
+      const rng = createRng(123);
+      const rareNames = reg.get('rare-names');
+      const fireWords = [...rareNames.nouns, ...rareNames.epithets].filter((w) => w.theme === 'fire').map((w) => w.t);
+      expect(fireWords.length).toBeGreaterThan(0);
+      // пул только с холодным уроном (frozen) + нейтральным суффиксом → тема предмета = cold, огня нет
+      const coldOnly = affixes.filter((a) => a.id === 'frozen' || a.id === 'of-strength');
+      let checked = 0;
+      for (let i = 0; i < 300; i++) {
+        const item = generateItem(bases, coldOnly, uniques,
+          { dropBias: 4, itemLevel: 40, baseId: 'short-sword', tiers, rarities, rareNames, forceRarity: 'rare' }, rng);
+        if (!item.affixes.some((a) => a.modifier?.stat === 'addCold')) continue; // доминанта = cold
+        checked++;
+        for (const fw of fireWords) expect(item.name.includes(fw)).toBe(false);
+      }
+      expect(checked).toBeGreaterThan(0);
     });
   });
 

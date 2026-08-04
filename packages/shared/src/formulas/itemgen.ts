@@ -83,15 +83,43 @@ function magicName(baseName: string, gender: string | undefined, rolled: RolledA
 function titledName(baseName: string, gender: string | undefined, title: string): string {
   return title ? `${baseName} ${declineTier(title, gender)}` : baseName;
 }
+type RareTheme = 'neutral' | 'fire' | 'cold' | 'lightning' | 'poison';
+interface RareWord { t: string; theme?: RareTheme }
+/** Стат аффикса → стихия (урон и резист одной стихии дают одну тему). Прочие статы — вне стихий. */
+const STAT_ELEMENT: Record<string, RareTheme> = {
+  addFire: 'fire', resFire: 'fire',
+  addCold: 'cold', resCold: 'cold',
+  addLightning: 'lightning', resLightning: 'lightning',
+  addPoison: 'poison', resPoison: 'poison',
+};
+/** Доминантная стихия предмета из роллнутых аффиксов: урон (add*) важнее резиста, больше value —
+ *  важнее. Нет стихийных аффиксов → undefined (тема не задана → имя не ограничено). */
+function dominantElement(rolled: RolledAffix[]): RareTheme | undefined {
+  let best: RareTheme | undefined; let bestScore = -Infinity;
+  for (const r of rolled) {
+    const el = r.modifier ? STAT_ELEMENT[r.modifier.stat] : undefined;
+    if (!el) continue;
+    const score = (r.modifier!.stat.startsWith('add') ? 1e6 : 0) + (r.modifier!.value ?? 0);
+    if (score > bestScore) { bestScore = score; best = el; }
+  }
+  return best;
+}
+/** Слово подходит теме предмета: нейтральное / у предмета нет стихии / его стихия = теме (нет
+ *  «явного противоречия» вроде огненного слова на предмете с уроном холодом). */
+function wordFitsTheme(w: RareWord, theme: RareTheme | undefined): boolean {
+  return !w.theme || w.theme === 'neutral' || !theme || w.theme === theme;
+}
 /** Раре-титул (D2): «основа эпитет» — существительное из nouns + род.-падежный эпитет из epithets
- *  («Пепел» + «древних» → «Пепел древних»). Имя = база + титул («Ручной топор Пепел древних»).
- *  Нет основ → fallback (тир-имя); есть основы, но нет эпитетов → только основа (одно слово). */
-function rareItemName(baseName: string, gender: string | undefined, pool: { nouns: string[]; epithets: string[] } | undefined, rng: Rng, fallback: string): string {
-  const nouns = pool?.nouns ?? [];
+ *  («Пепел» + «древних» → «Пепел древних»). Стихийные слова фильтруются по теме предмета
+ *  (dominantElement), нейтральные подходят всегда. Имя = база + титул.
+ *  Нет подходящих основ → fallback (тир-имя); есть основы, но нет эпитетов → только основа. */
+function rareItemName(baseName: string, gender: string | undefined, pool: { nouns: RareWord[]; epithets: RareWord[] } | undefined, rolled: RolledAffix[], rng: Rng, fallback: string): string {
+  const theme = dominantElement(rolled);
+  const nouns = (pool?.nouns ?? []).filter((w) => wordFitsTheme(w, theme));
   if (nouns.length === 0) return fallback;
-  const noun = nouns[rng.int(0, nouns.length - 1)]!;
-  const eps = pool?.epithets ?? [];
-  const title = eps.length ? `${noun} ${eps[rng.int(0, eps.length - 1)]!}` : noun;
+  const noun = nouns[rng.int(0, nouns.length - 1)]!.t;
+  const eps = (pool?.epithets ?? []).filter((w) => wordFitsTheme(w, theme));
+  const title = eps.length ? `${noun} ${eps[rng.int(0, eps.length - 1)]!.t}` : noun;
   return titledName(baseName, gender, title);
 }
 
@@ -309,7 +337,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: string[]; epithets: string[] }; forceRarity?: Rarity },
+  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareWord[]; epithets: RareWord[] }; forceRarity?: Rarity },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -361,7 +389,7 @@ export function generateItem(
   const tierName = tieredName(tier?.name ?? '', base.name, base.gender);
   let displayName = tierName;
   if (effRarity === 'magic') { const mn = magicName(base.name, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word]))); displayName = mn === base.name ? tierName : mn; }
-  else if (effRarity === 'rare') displayName = rareItemName(base.name, base.gender, opts.rareNames, rng, tierName);
+  else if (effRarity === 'rare') displayName = rareItemName(base.name, base.gender, opts.rareNames, rolled, rng, tierName);
 
   return buildItem(base, {
     rarity: effRarity,

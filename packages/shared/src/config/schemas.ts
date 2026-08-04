@@ -571,12 +571,21 @@ export const raritiesSchema = z.array(
 );
 
 // ── rare-names ───────────────────────────────────────────────────────────────
+/** Тема слова для гашения противоречий с аффиксами. Стихийный тег (fire/cold/…) запрещает слово
+ * на предмете ДРУГОЙ стихии (тема предмета = доминантный аффикс); `neutral` подходит всегда. */
+export const rareThemeSchema = z.enum(['neutral', 'fire', 'cold', 'lightning', 'poison']);
+/** Слово rare-имени: текст `t` + тема `theme` (фильтр противоречий; правится в редакторе). */
+export const rareWordSchema = z.object({
+  t: z.string(),
+  theme: rareThemeSchema.default('neutral'),
+});
 /** Пулы слов для имён rare-предметов (D2). Титул = «основа эпитет»: существительное из `nouns`
  * (им. падеж — «Пепел», «Коготь») + род.-падежный эпитет из `epithets` («древних», «бури»).
- * Имя предмета = имя базы + титул («Ручной топор Пепел древних»). */
+ * Имя предмета = имя базы + титул («Ручной топор Пепел древних»). У каждого слова — тема (стихия),
+ * чтобы огненное слово не выпадало на предмете с уроном холодом (см. rareThemeSchema). */
 export const rareNamesSchema = z.object({
-  nouns: z.array(z.string()),
-  epithets: z.array(z.string()),
+  nouns: z.array(rareWordSchema),
+  epithets: z.array(rareWordSchema),
 });
 
 // ── damage-kinds ────────────────────────────────────────────────────────────
