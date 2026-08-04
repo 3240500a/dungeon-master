@@ -1,5 +1,5 @@
 /**
- * Debug-draw 3D-клиента (кнопка «DBG» + F3): слои-чекбоксы, включаемые по отдельности (цифры 1-6):
+ * Debug-draw 3D-клиента (кнопка «DBG» + F3): слои-чекбоксы, включаемые мышкой (галки) по отдельности:
  *  1 КОЛЛАЙДЕРЫ  — стены (InstancedMesh как физ-статика) + круги коллизии игрока/монстров/пиров/снарядов/интерактов;
  *  2 ВОСПРИЯТИЕ  — конус зрения (def.vision/visionAngle по facing) + круг слуха (def.hearing) монстров;
  *  3 АТАКА       — круг ближней атаки монстра (r+r+slack) + дуга атаки игрока (reach/arc из конфига);
@@ -77,14 +77,13 @@ export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTM
   panel.style.cssText = 'position:fixed;left:12px;top:170px;z-index:70;display:none;background:rgba(8,10,16,0.85);' +
     'border:1px solid #35506a;border-radius:6px;padding:8px 10px;font:11px/1.4 monospace;color:#9fe0c0;pointer-events:auto;min-width:150px';
   root.appendChild(panel);
-  const LAYER_LABELS: [DebugLayer, string][] = [['colliders', '1 коллайдеры'], ['vision', '2 восприятие'], ['attack', '3 атака'], ['ai', '4 AI'], ['facing', '5 facing'], ['labels', '6 метки']];
-  const boxes: Record<string, HTMLInputElement> = {};
+  const LAYER_LABELS: [DebugLayer, string][] = [['colliders', 'коллайдеры'], ['vision', 'восприятие'], ['attack', 'атака'], ['ai', 'AI'], ['facing', 'facing'], ['labels', 'метки']];
   const layerRow = document.createElement('div'); layerRow.style.cssText = 'margin-bottom:6px';
   for (const [k, lbl] of LAYER_LABELS) {
     const row = document.createElement('label'); row.style.cssText = 'display:block;cursor:pointer;color:#cfe0d6';
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = layers[k]; cb.style.cssText = 'margin-right:5px;vertical-align:middle';
     cb.addEventListener('change', () => { layers[k] = cb.checked; });
-    row.append(cb, document.createTextNode(lbl)); layerRow.appendChild(row); boxes[k] = cb;
+    row.append(cb, document.createTextNode(lbl)); layerRow.appendChild(row);
   }
   const infoEl = document.createElement('div'); infoEl.style.cssText = 'white-space:pre;color:#9fe0c0;border-top:1px solid #2b3a48;padding-top:5px';
   panel.append(layerRow, infoEl);   // перф-тумблеры вынесены в кнопку «Настройки» (settings3d)
@@ -104,9 +103,9 @@ export function mountDebug(scene: THREE.Scene, camera: THREE.Camera, canvas: HTM
   };
   btn.addEventListener('click', () => setOn(!on));
   addEventListener('keydown', (e) => {
+    if (e.code !== 'F3') return; // панель — кнопкой DBG или F3; слои переключаются ТОЛЬКО галками (мышь)
     const t = document.activeElement; if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
-    if (e.code === 'F3') { e.preventDefault(); setOn(!on); return; }
-    if (on && /^Digit[1-6]$/.test(e.code)) { const k = LAYER_LABELS[+e.code.slice(5) - 1]![0]; layers[k] = !layers[k]; boxes[k]!.checked = layers[k]; }
+    e.preventDefault(); setOn(!on);
   });
 
   function updateLabels(f: DebugFrame): void {
