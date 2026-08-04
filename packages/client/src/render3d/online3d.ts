@@ -95,7 +95,7 @@ function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string 
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -254,6 +254,10 @@ export async function startOnline3d(): Promise<void> {
 
   // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
   function buildArea(floor: FloorInit): void {
+    // Снапшот ПРОШЛОЙ области больше не применим к новой (другие id монстров/позиции). Иначе ближайший кадр
+    // renderWorld отработает по старому снапшоту: новые куклы не в seenM → чистка сирот их снесёт (→ невидимые
+    // монстры, миникарта из снапшота их всё равно рисует). Ждём первый снапшот новой области.
+    latest = undefined;
     // снести прошлую область
     for (const a of peers.values()) disposeActor(a); peers.clear();
     for (const a of monsters.values()) disposeActor(a); monsters.clear();
@@ -477,7 +481,7 @@ export async function startOnline3d(): Promise<void> {
     const seenM = new Set<number>();   // id монстров из снапшота — для чистки осиротевших кукол (пропали из снапшота, но не труп)
     for (const mv of latest.monsters) {
       const a = monsters.get(mv.id); if (!a) continue;
-      seenM.add(mv.id);
+      seenM.add(mv.id); a.seen = true;   // кукла подтверждена снапшотом — теперь её можно чистить как сироту, если пропадёт
       if (!mv.alive) { markDead(a); statusFx.remove(`m${mv.id}`); continue; }   // не удаляем сразу — регдолл падает (см. коллапс-луп ниже)
       if (a.dead != null) continue;               // уже коллапсирует/лежит — снапшот не воскрешает
       a.maxHp = mv.maxHp;                          // для отброса трупа по %-урона убивающего удара
@@ -521,7 +525,7 @@ export async function startOnline3d(): Promise<void> {
     }
     // Осиротевшие куклы: ЖИВОЙ монстр пропал из снапшота без события смерти (сервер снял) → у пиров/дропов/снарядов
     // чистка есть, у монстров не было → кукла висла призраком (не на миникарте, void=0). Трупы (a.dead≠null) НЕ трогаем — лежат.
-    for (const [id, a] of monsters) if (a.dead == null && !seenM.has(id)) { disposeActor(a); statusFx.remove(`m${id}`); monsters.delete(id); }
+    for (const [id, a] of monsters) if (a.dead == null && a.seen && !seenM.has(id)) { disposeActor(a); statusFx.remove(`m${id}`); monsters.delete(id); }   // a.seen: НЕ сносим свежесозданную куклу, ни разу не подтверждённую снапшотом (гонка смены области)
     // снаряды
     const seenPr = new Set<number>();
     for (const pr of latest.projectiles) {
