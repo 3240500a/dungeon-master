@@ -84,40 +84,69 @@ function titledName(baseName: string, gender: string | undefined, title: string)
   return title ? `${baseName} ${declineTier(title, gender)}` : baseName;
 }
 type RareTheme = 'fire' | 'cold' | 'lightning' | 'poison' | 'physical';
-interface RareWord { t: string; themes?: RareTheme[] }
-/** Стат аффикса → тема: стихии (урон/резист) и физика (урон/крит). Прочие статы — вне тем. */
+type RareGroup = 'leech' | 'crit' | 'onkill' | 'defense' | 'life' | 'mana' | 'might' | 'finesse' | 'haste' | 'ward';
+interface RareNoun { t: string; themes?: RareTheme[] }
+interface RareEpithet { t: string; groups?: RareGroup[] }
+/** Стат УРОНА → тема основы (стихия из урона/резиста, физика из урона). Крит и резист-как-свойство — ниже. */
 const STAT_THEME: Record<string, RareTheme> = {
   addFire: 'fire', resFire: 'fire',
   addCold: 'cold', resCold: 'cold',
   addLightning: 'lightning', resLightning: 'lightning',
   addPoison: 'poison', resPoison: 'poison',
-  minDamage: 'physical', maxDamage: 'physical', physPct: 'physical', damagePct: 'physical', critChance: 'physical',
+  minDamage: 'physical', maxDamage: 'physical', physPct: 'physical', damagePct: 'physical',
 };
-/** Темы предмета из роллнутых аффиксов (стихии + физика). Пусто → тема не задана (имя не ограничено). */
-function itemThemes(rolled: RolledAffix[]): Set<RareTheme> {
-  const s = new Set<RareTheme>();
-  for (const r of rolled) { const t = r.modifier ? STAT_THEME[r.modifier.stat] : undefined; if (t) s.add(t); }
-  return s;
+/** Вторичный стат → группа эпитета (вампиризм/крит/защита/…). Урон здесь не участвует — он в основе. */
+const STAT_GROUP: Record<string, RareGroup> = {
+  lifeLeechPct: 'leech', manaLeechPct: 'leech', critChance: 'crit',
+  lifeOnKill: 'onkill', manaOnKill: 'onkill',
+  armor: 'defense', blockChance: 'defense', evade: 'defense',
+  maxHp: 'life', hpRegen: 'life', vitality: 'life',
+  maxMana: 'mana', manaRegen: 'mana', intelligence: 'mana',
+  strength: 'might', dexterity: 'finesse', accuracy: 'finesse',
+  attackSpeed: 'haste', moveSpeed: 'haste',
+  resFire: 'ward', resCold: 'ward', resLightning: 'ward', resPoison: 'ward',
+};
+/** Порядок «интересности» вторичного свойства для эпитета (первое найденное на предмете — берём). */
+const GROUP_PRIORITY: RareGroup[] = ['leech', 'crit', 'onkill', 'defense', 'mana', 'life', 'might', 'finesse', 'haste', 'ward'];
+
+/** Тема ОСНОВЫ = тип урона предмета: доминантный стихийный УРОН → его стихия; иначе физ-урон →
+ *  physical; иначе доминантный стихийный РЕЗИСТ → его стихия (fromResist); иначе нет темы (утилита). */
+function primaryTheme(rolled: RolledAffix[]): { theme?: RareTheme; fromResist: boolean } {
+  const dom = (pred: (s: string) => boolean): RareTheme | undefined => {
+    let best: RareTheme | undefined, bv = -Infinity;
+    for (const r of rolled) { const s = r.modifier?.stat; if (!s || !pred(s) || !STAT_THEME[s]) continue; const v = r.modifier!.value ?? 0; if (v > bv) { bv = v; best = STAT_THEME[s]; } }
+    return best;
+  };
+  const dmgEl = dom((s) => s.startsWith('add'));
+  if (dmgEl) return { theme: dmgEl, fromResist: false };
+  if (rolled.some((r) => r.modifier && ['minDamage', 'maxDamage', 'physPct', 'damagePct'].includes(r.modifier.stat))) return { theme: 'physical', fromResist: false };
+  const resEl = dom((s) => s.startsWith('res'));
+  if (resEl) return { theme: resEl, fromResist: true };
+  return { theme: undefined, fromResist: false };
 }
-/** Слово подходит: универсальное (нет тем) / у предмета нет тем (свобода) / делит ≥1 тему с предметом
- *  (нет «явного противоречия» вроде огненного слова на предмете с уроном холодом). */
-function wordFitsThemes(w: RareWord, themes: Set<RareTheme>): boolean {
-  if (!w.themes || w.themes.length === 0) return true;
-  if (themes.size === 0) return true;
-  return w.themes.some((t) => themes.has(t));
+/** Группа эпитета = главное вторичное свойство (по GROUP_PRIORITY). skipWard — не брать резист как
+ *  свойство, если он уже стал основой (иначе «Мороз оберега» дублирует). Нет свойств → undefined. */
+function secondaryGroup(rolled: RolledAffix[], skipWard: boolean): RareGroup | undefined {
+  const present = new Set<RareGroup>();
+  for (const r of rolled) { const g = r.modifier ? STAT_GROUP[r.modifier.stat] : undefined; if (g) present.add(g); }
+  for (const g of GROUP_PRIORITY) { if (g === 'ward' && skipWard) continue; if (present.has(g)) return g; }
+  return undefined;
 }
-/** Раре-титул (D2): «основа эпитет» — существительное из nouns + род.-падежный эпитет из epithets
- *  («Пепел» + «древних» → «Пепел древних»). Слова фильтруются по темам предмета (стихия/физика),
- *  универсальные (пустой список тем) подходят всегда. Имя = база + титул.
- *  Нет подходящих основ → fallback (тир-имя); есть основы, но нет эпитетов → только основа. */
-function rareItemName(baseName: string, gender: string | undefined, pool: { nouns: RareWord[]; epithets: RareWord[] } | undefined, rolled: RolledAffix[], rng: Rng, fallback: string): string {
-  const themes = itemThemes(rolled);
-  const nouns = (pool?.nouns ?? []).filter((w) => wordFitsThemes(w, themes));
+const pickWord = <T extends { t: string }>(pool: T[], fallback: T[], all: T[], rng: Rng): T | undefined =>
+  (pool.length ? pool : fallback.length ? fallback : all)[rng.int(0, (pool.length ? pool : fallback.length ? fallback : all).length - 1)];
+/** Имя рарного предмета «говорящее»: ОСНОВА по типу урона (стихия/физика), ЭПИТЕТ по главному
+ *  вторичному свойству — «Искра жажды» (молния + вампиризм). Всё выводится из роллнутых аффиксов.
+ *  Нет основ в пуле → fallback (тир-имя). Резист тоже задаёт стихию основы. */
+function rareItemName(baseName: string, gender: string | undefined, pool: { nouns: RareNoun[]; epithets: RareEpithet[] } | undefined, rolled: RolledAffix[], rng: Rng, fallback: string): string {
+  const nouns = pool?.nouns ?? [], eps = pool?.epithets ?? [];
   if (nouns.length === 0) return fallback;
-  const noun = nouns[rng.int(0, nouns.length - 1)]!.t;
-  const eps = (pool?.epithets ?? []).filter((w) => wordFitsThemes(w, themes));
-  const title = eps.length ? `${noun} ${eps[rng.int(0, eps.length - 1)]!.t}` : noun;
-  return titledName(baseName, gender, title);
+  const { theme, fromResist } = primaryTheme(rolled);
+  const neutralN = nouns.filter((w) => !w.themes || w.themes.length === 0);
+  const noun = pickWord(theme ? nouns.filter((w) => w.themes?.includes(theme)) : [], neutralN, nouns, rng)!.t;
+  const grp = secondaryGroup(rolled, fromResist);
+  const neutralE = eps.filter((w) => !w.groups || w.groups.length === 0);
+  const ep = eps.length ? pickWord(grp ? eps.filter((w) => w.groups?.includes(grp)) : [], neutralE, eps, rng) : undefined;
+  return titledName(baseName, gender, ep ? `${noun} ${ep.t}` : noun);
 }
 
 /** Поля экземпляра, зависящие от вида базы (сужение по kind), включая слот. */
@@ -334,7 +363,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareWord[]; epithets: RareWord[] }; forceRarity?: Rarity },
+  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость

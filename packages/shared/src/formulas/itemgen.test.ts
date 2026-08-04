@@ -113,43 +113,53 @@ describe('enabled-фильтры генерации (тумблер активн
       expect(sawRare).toBe(true);
     });
 
-    const wordsWithTheme = (rn: { nouns: { t: string; themes: string[] }[]; epithets: { t: string; themes: string[] }[] }, theme: string): string[] =>
-      [...rn.nouns, ...rn.epithets].filter((w) => w.themes.includes(theme)).map((w) => w.t);
-
-    it('гашение противоречий: холодный предмет не получает огненное слово', () => {
-      const rng = createRng(123);
-      const rareNames = reg.get('rare-names');
-      const fireWords = wordsWithTheme(rareNames, 'fire');
-      expect(fireWords.length).toBeGreaterThan(0);
-      // пул только с холодным уроном (frozen) + нейтральным суффиксом → тема предмета = cold, огня нет
-      const coldOnly = affixes.filter((a) => a.id === 'frozen' || a.id === 'of-strength');
+    type RN = { nouns: { t: string; themes: string[] }[]; epithets: { t: string; groups: string[] }[] };
+    const nounsWithTheme = (rn: RN, theme: string): string[] => rn.nouns.filter((w) => w.themes.includes(theme)).map((w) => w.t);
+    const epithetsWithGroup = (rn: RN, group: string): string[] => rn.epithets.filter((w) => w.groups.includes(group)).map((w) => w.t);
+    // прогон N роллов на заданном пуле аффиксов; колбэк проверяет предметы с нужным статом
+    const rollForStat = (pool: typeof affixes, mustStat: string, seed: number, check: (name: string) => void): void => {
+      const rng = createRng(seed);
       let checked = 0;
       for (let i = 0; i < 300; i++) {
-        const item = generateItem(bases, coldOnly, uniques,
-          { dropBias: 4, itemLevel: 40, baseId: 'short-sword', tiers, rarities, rareNames, forceRarity: 'rare' }, rng);
-        if (!item.affixes.some((a) => a.modifier?.stat === 'addCold')) continue; // тема предмета = cold
-        checked++;
-        for (const fw of fireWords) expect(item.name.includes(fw)).toBe(false);
+        const item = generateItem(bases, pool, uniques,
+          { dropBias: 4, itemLevel: 40, baseId: 'short-sword', tiers, rarities, rareNames: reg.get('rare-names'), forceRarity: 'rare' }, rng);
+        if (!item.affixes.some((a) => a.modifier?.stat === mustStat)) continue;
+        checked++; check(item.name);
       }
       expect(checked).toBeGreaterThan(0);
+    };
+    const only = (...ids: string[]) => affixes.filter((a) => ids.includes(a.id));
+
+    it('основа по стихии: холодный предмет не получает огненную основу', () => {
+      const fireNouns = nounsWithTheme(reg.get('rare-names'), 'fire');
+      expect(fireNouns.length).toBeGreaterThan(0);
+      rollForStat(only('frozen', 'of-strength'), 'addCold', 123, (name) => {
+        for (const fn of fireNouns) expect(name.includes(fn)).toBe(false);
+      });
     });
 
-    it('гашение противоречий: физ-предмет не получает стихийное слово', () => {
-      const rng = createRng(321);
-      const rareNames = reg.get('rare-names');
-      const elemWords = ['fire', 'cold', 'lightning', 'poison'].flatMap((t) => wordsWithTheme(rareNames, t));
-      expect(elemWords.length).toBeGreaterThan(0);
-      // только физ-урон (sharp: maxDamage) + нейтральный суффикс → тема предмета = physical, стихий нет
-      const physOnly = affixes.filter((a) => a.id === 'sharp' || a.id === 'of-strength');
-      let checked = 0;
-      for (let i = 0; i < 300; i++) {
-        const item = generateItem(bases, physOnly, uniques,
-          { dropBias: 4, itemLevel: 40, baseId: 'short-sword', tiers, rarities, rareNames, forceRarity: 'rare' }, rng);
-        if (!item.affixes.some((a) => a.modifier?.stat === 'maxDamage')) continue; // тема предмета = physical
-        checked++;
-        for (const ew of elemWords) expect(item.name.includes(ew)).toBe(false);
-      }
-      expect(checked).toBeGreaterThan(0);
+    it('основа по стихии: физ-предмет не получает стихийную основу', () => {
+      const elemNouns = ['fire', 'cold', 'lightning', 'poison'].flatMap((t) => nounsWithTheme(reg.get('rare-names'), t));
+      expect(elemNouns.length).toBeGreaterThan(0);
+      rollForStat(only('sharp', 'of-strength'), 'maxDamage', 321, (name) => {
+        for (const en of elemNouns) expect(name.includes(en)).toBe(false);
+      });
+    });
+
+    it('основа отражает урон: молниевый предмет → молниевая основа', () => {
+      const lightNouns = nounsWithTheme(reg.get('rare-names'), 'lightning');
+      expect(lightNouns.length).toBeGreaterThan(0);
+      rollForStat(only('shocking', 'of-strength'), 'addLightning', 77, (name) => {
+        expect(lightNouns.some((n) => name.includes(n))).toBe(true);
+      });
+    });
+
+    it('эпитет отражает свойство: вампиризм → эпитет группы leech', () => {
+      const leechEps = epithetsWithGroup(reg.get('rare-names'), 'leech');
+      expect(leechEps.length).toBeGreaterThan(0);
+      rollForStat(only('shocking', 'of-leech'), 'lifeLeechPct', 88, (name) => {
+        expect(leechEps.some((e) => name.includes(e))).toBe(true);
+      });
     });
   });
 
