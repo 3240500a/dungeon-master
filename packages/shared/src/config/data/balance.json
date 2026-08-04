@@ -95,6 +95,7 @@
   "attributePointsPerLevel": 5,
   "skillPointsPerLevel": 1,
   "masteryPointsPerLevel": 2,
+  "moveSpeedBase": 80,
   "monsterXpGrowth": 0.2,
   "championXpMult": 3,
   "monsterScaling": {
@@ -166,7 +167,14 @@
     "perDepth": 0.015,
     "ambientMax": 0.92,
     "playerRadius": 160,
-    "torchRadius": 140
+    "torchRadius": 140,
+    "shadow3d": {
+      "mapSize": 256,
+      "bias": -0.004,
+      "torchCasters": 2,
+      "playerLightIntensity": 4000,
+      "playerLightDist": 400
+    }
   },
   "autoPickup": [
     "rare",
