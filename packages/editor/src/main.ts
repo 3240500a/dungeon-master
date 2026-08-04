@@ -201,9 +201,9 @@ function enabledToggle(e: Record<string, unknown>): HTMLElement {
 }
 
 // ── Дерево-навигация для дискриминированных массивов (items.base) ──────────────
-/** Поля пути дерева по виду (Оружие: Вес → Тип урона → Тип атаки → Класс). */
+/** Поля пути дерева по виду (Оружие: Класс → Хват [1-руч/2-руч]). */
 const TREE_PATH: Record<string, string[]> = {
-  weapon: ['weight', 'damageKind', 'attackType', 'weaponClass'],
+  weapon: ['weaponClass', 'hands'],
   armor: ['slot', 'armorClass'],
   shield: ['shieldClass'],
   jewelry: ['slot'],
@@ -215,7 +215,8 @@ const TREE_LABEL: Record<string, string> = {
   melee: 'Ближнее', ranged: 'Дальнее',
   physical: 'Физический', magical: 'Магический',
   superlight: 'Сверхлёгкое', light: 'Лёгкие', medium: 'Средние', heavy: 'Тяжёлые',
-  sword: 'Мечи', axe: 'Топоры', mace: 'Булавы', dagger: 'Кинжалы', spear: 'Копья',
+  '1': 'Одноручные', '2': 'Двуручные',
+  sword: 'Мечи', axe: 'Топоры', mace: 'Булавы', dagger: 'Кинжалы', spear: 'Копья', halberd: 'Алебарды',
   bow: 'Луки', crossbow: 'Арбалеты', wand: 'Жезлы', staff: 'Посохи',
   helm: 'Шлемы', chest: 'Нагрудники', gloves: 'Перчатки', boots: 'Сапоги', belt: 'Пояса',
   ring: 'Кольца', amulet: 'Амулеты',
