@@ -96,6 +96,22 @@ describe('enabled-фильтры генерации (тумблер активн
         expect(suf.size).toBeLessThanOrEqual(1);
       }
     });
+
+    it('имена D2: rare = два слова из пула rare-names', () => {
+      const rng = createRng(42);
+      const rareNames = reg.get('rare-names');
+      let sawRare = false;
+      for (let i = 0; i < 2000 && !sawRare; i++) {
+        const item = generateItem(bases, affixes, uniques, { dropBias: 4, itemLevel: 40, tiers, rarities, rareNames }, rng);
+        if (item.rarity === 'rare') {
+          sawRare = true;
+          const parts = item.name.split(' ');
+          expect(parts).toHaveLength(2);
+          expect(rareNames).toContain(parts[0]); expect(rareNames).toContain(parts[1]);
+        }
+      }
+      expect(sawRare).toBe(true);
+    });
   });
 
   it('generateItem: все уники выключены → редкость никогда не unique (даунгрейд до rare)', () => {

@@ -69,6 +69,24 @@ function tieredName(prefix: string, baseName: string, gender?: string): string {
   return prefix ? `${declineTier(prefix, gender)} ${baseName}` : baseName;
 }
 
+/** Имя magic-предмета (D2): слово-префикс + база + слово-суффикс. Префикс склоняется по роду базы. */
+function magicName(baseName: string, gender: string | undefined, rolled: RolledAffix[], wordById: Map<string, string>): string {
+  const preW = wordById.get(rolled.find((a) => a.kind === 'prefix')?.affixId ?? '') ?? '';
+  const sufW = wordById.get(rolled.find((a) => a.kind === 'suffix')?.affixId ?? '') ?? '';
+  let name = baseName;
+  if (preW) name = `${declineTier(preW, gender)} ${name}`;   // слово-прилагательное префикса
+  if (sufW) name = `${name} ${sufW}`;                        // слово-суффикс (родительный, без склонения)
+  return name;
+}
+/** Имя rare-предмета (D2): два случайных слова из пула («Коготь Гибели»); база — в тултипе отдельно. */
+function rareItemName(pool: string[] | undefined, rng: Rng, fallback: string): string {
+  if (!pool || pool.length < 2) return fallback;
+  const i = rng.int(0, pool.length - 1);
+  let j = rng.int(0, pool.length - 1);
+  if (j === i) j = (j + 1) % pool.length;
+  return `${pool[i]} ${pool[j]}`;
+}
+
 /** Поля экземпляра, зависящие от вида базы (сужение по kind), включая слот. */
 function gearFields(base: ItemsBase[number]): Partial<Item> {
   if (base.kind === 'weapon') {
@@ -282,7 +300,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number> },
+  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: string[] },
   rng: Rng,
 ): Item {
   const rarity = rollRarity(opts.dropBias, rng, opts.rarities);
@@ -330,9 +348,15 @@ export function generateItem(
     { minAffixes: rDef?.minAffixes ?? 0, maxAffixes: rDef?.maxAffixes ?? 0, maxPrefix: rDef?.maxPrefix ?? 0, maxSuffix: rDef?.maxSuffix ?? 0 },
     ilvl, rng);
 
+  // Имя (D2): normal — тир-прилагательное; magic — слова аффиксов вокруг базы; rare — 2 слова из пула.
+  const tierName = tieredName(tier?.name ?? '', base.name, base.gender);
+  let displayName = tierName;
+  if (effRarity === 'magic') { const mn = magicName(base.name, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word]))); displayName = mn === base.name ? tierName : mn; }
+  else if (effRarity === 'rare') displayName = rareItemName(opts.rareNames, rng, tierName);
+
   return buildItem(base, {
     rarity: effRarity,
-    name: tieredName(tier?.name ?? '', base.name, base.gender),
+    name: displayName,
     itemLevel: ilvl,
     statMult: tier?.statMult ?? 1,
     reqMult: tier?.reqMult ?? 1,

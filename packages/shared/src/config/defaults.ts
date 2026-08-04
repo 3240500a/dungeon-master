@@ -20,6 +20,7 @@ import damageKinds from './data/damage-kinds.json' with { type: 'json' };
 import magicSubtypes from './data/magic-subtypes.json' with { type: 'json' };
 import debuffs from './data/debuffs.json' with { type: 'json' };
 import rarities from './data/rarities.json' with { type: 'json' };
+import rareNames from './data/rare-names.json' with { type: 'json' };
 import masteryTree from './data/mastery-tree.json' with { type: 'json' };
 import skillTree from './data/skill-tree.json' with { type: 'json' };
 import questsMain from './data/quests-main.json' with { type: 'json' };
@@ -50,6 +51,7 @@ export const defaultConfigData: Record<string, unknown> = {
   'magic-subtypes': magicSubtypes,
   debuffs,
   rarities,
+  'rare-names': rareNames,
   'mastery-tree': masteryTree,
   'skill-tree': skillTree,
   'quests.main': questsMain,

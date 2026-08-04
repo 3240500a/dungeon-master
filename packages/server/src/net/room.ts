@@ -505,7 +505,7 @@ export class Room {
     const rollFrom = (pool: typeof itemsBase, count: number): void => {
       for (let i = 0; i < count && pool.length; i++) {
         this.shop.push(generateItem(itemsBase, affixes, uniques,
-          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities }, rng));
+          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities, rareNames: this.cfg.get('rare-names') }, rng));
       }
     };
     rollFrom(meleeBases, 9); rollFrom(rangedBases, 6); rollFrom(armorBases, 9);

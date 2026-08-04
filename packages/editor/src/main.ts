@@ -37,6 +37,7 @@ const LABELS: Record<ConfigKey, string> = {
   'magic-subtypes': 'Маг. подтипы',
   debuffs: 'Состояния',
   rarities: 'Редкости',
+  'rare-names': 'Имена rare',
   'mastery-tree': 'Дерево мастерства',
   'skill-tree': 'Древо скилов',
   'quests.main': 'Квесты: основные',
@@ -61,7 +62,7 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Состояния', keys: ['debuffs'] },
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
-  { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques'] },
+  { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques', 'rare-names'] },
   { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'monster-roles', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
@@ -75,6 +76,7 @@ const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
   'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
   'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',
+  'rare-names': 'Имена rare',
 };
 /**
  * Подветки конфига `balance` (он один большой плоский объект — режем на тематические срезы ТОЛЬКО

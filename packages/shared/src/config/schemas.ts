@@ -561,6 +561,11 @@ export const raritiesSchema = z.array(
   }),
 );
 
+// ── rare-names ───────────────────────────────────────────────────────────────
+/** Пул слов для имён rare-предметов (D2): имя = два случайных слова («Коготь Гибели»).
+ * База показывается в тултипе отдельно. */
+export const rareNamesSchema = z.array(z.string());
+
 // ── damage-kinds ────────────────────────────────────────────────────────────
 /** Метаданные ТИПА урона (верхний уровень таксономии): физический / магический.
  * Имя/короткая подпись/цвет — для всплывающих чисел, иконок, тултипов. */
@@ -1380,6 +1385,7 @@ export const configSchemas = {
   'magic-subtypes': magicSubtypesSchema,
   debuffs: debuffsSchema,
   rarities: raritiesSchema,
+  'rare-names': rareNamesSchema,
   'mastery-tree': skillsPassiveSchema,
   'skill-tree': skillTreeSchema,
   'quests.main': questsMainSchema,
