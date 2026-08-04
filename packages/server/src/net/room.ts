@@ -441,7 +441,7 @@ export class Room {
     this.wipeAt = 0;
     this.area = 'dungeon'; this.runNodeId = nodeId; this.depth = node.depth;
     this.session.world.difficultyId = this.difficultyId;
-    const layout = generateFloor(node.floorSpec);
+    const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'));
     this.decor = layout.decor;
     const biomes = this.cfg.get('biomes');
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;

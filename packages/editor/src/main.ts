@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { ConfigRegistry, configSchemas, type ConfigKey } from '@dm/shared';
+import { ConfigRegistry, configSchemas, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources } from './form.js';
+import { mountFloorPreview } from './floorPreview.js';
+import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
 import { renderSimPage } from './sim.js';
 import { renderRunGenPage } from './runGen.js';
 import { renderPassiveGraph } from './passiveGraph.js';
@@ -39,6 +41,7 @@ const LABELS: Record<ConfigKey, string> = {
   'skill-tree': 'Древо скилов',
   'quests.main': 'Квесты: основные',
   'quests.random': 'Квесты: случайные',
+  'room-prefabs': 'Комнаты (префабы)',
 };
 
 /**
@@ -60,7 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques'] },
   { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'monster-roles', 'packs'] },
-  { title: 'Мир', keys: ['biomes', 'floors', 'difficulties', 'run-templates', 'run-modifiers'] },
+  { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
 ];
@@ -71,8 +74,31 @@ const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
   'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', 'monster-roles': 'Роли', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
-  'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега',
+  'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',
 };
+/**
+ * Подветки конфига `balance` (он один большой плоский объект — режем на тематические срезы ТОЛЬКО
+ * для редактора: данные/код игры не трогаем, `balance` остаётся одним объектом). Каждая подветка —
+ * своя страница-форма с частью полей (через zod `.pick`). Непокрытые ключи (если появятся новые) —
+ * авто-попадают в «Прочее», чтобы ничего не потерялось.
+ */
+const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
+  { title: 'Прогрессия и мощь', keys: ['xpTable', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel', 'passiveRankCostMult', 'power'] },
+  { title: 'Бой и физика', keys: ['melee', 'weaponAttrScaling', 'twoHandedPowerMult', 'affinityDamageBonus', 'moveSpeedBase', 'collision', 'weight'] },
+  { title: 'Монстры', keys: ['monsterXpGrowth', 'championXpMult', 'monsterScaling'] },
+  { title: 'Лут', keys: ['loot', 'autoPickup'] },
+  { title: 'Экономика', keys: ['forgePrices', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint'] },
+  { title: 'Инвентарь и сундук', keys: ['inventory', 'stash'] },
+  { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'reconnectGraceSec', 'deathPenalty', 'lighting'] },
+];
+/** Полный список подветок с авто-«Прочее» из ключей схемы, не попавших ни в одну группу. */
+const balanceGroupsFull = (() => {
+  const covered = new Set(BALANCE_GROUPS.flatMap((g) => g.keys));
+  const all = Object.keys((configSchemas.balance as z.ZodObject<z.ZodRawShape>).shape);
+  const extra = all.filter((k) => !covered.has(k));
+  return extra.length ? [...BALANCE_GROUPS, { title: 'Прочее', keys: extra }] : BALANCE_GROUPS;
+})();
+
 /** Раскрытые группы навигации (переживают перерисовку). */
 const expandedNav = new Set<string>(['Предметы']);
 
@@ -88,6 +114,8 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
 let view: 'config' | 'sim' | 'rungen' = 'config';
+/** Активная подветка balance (её страница-срез). */
+let balanceGroup: string = balanceGroupsFull[0]!.title;
 
 // minTier/maxTier — выпадашки из актуального списка тиров (id из item-tiers).
 const tierIds = (): string[] => ((data['item-tiers'] as { id: string }[]) ?? []).map((t) => t.id);
@@ -300,6 +328,7 @@ function render(): void {
   const extra = (Object.keys(configSchemas) as ConfigKey[]).filter((k) => !covered.has(k));
   const groups: NavGroup[] = extra.length ? [...NAV_GROUPS, { title: 'Прочее', keys: extra }] : NAV_GROUPS;
   for (const g of groups) if (groupKeys(g).includes(current)) expandedNav.add(g.title);
+  if (view === 'config' && current === 'balance') expandedNav.add('__balance'); // раскрыть подветки баланса
   // Кнопка-ключ страницы (общая для плоских групп и подсекций).
   const keyButton = (key: ConfigKey): void => {
     const b = document.createElement('button');
@@ -308,6 +337,25 @@ function render(): void {
     b.style.cssText = `text-align:left;padding:6px 10px 6px 22px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${active ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;font-size:13px`;
     b.addEventListener('click', () => { view = 'config'; current = key; selectedIndex = 0; render(); });
     nav.appendChild(b);
+  };
+  // Ключ `balance` разворачивается в собственные подветки (тематические срезы одного объекта).
+  const balanceNav = (): void => {
+    const openB = expandedNav.has('__balance');
+    const onBalance = view === 'config' && current === 'balance';
+    const header = document.createElement('button');
+    header.textContent = `${openB ? '▾' : '▸'} ${LABELS.balance}`;
+    header.style.cssText = `text-align:left;padding:6px 10px 6px 22px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${onBalance ? '#23232f' : '#1c1c26'};color:#e8e8f0;font-size:13px`;
+    header.addEventListener('click', () => { if (openB) expandedNav.delete('__balance'); else expandedNav.add('__balance'); render(); });
+    nav.appendChild(header);
+    if (!openB) return;
+    for (const grp of balanceGroupsFull) {
+      const sb = document.createElement('button');
+      sb.textContent = grp.title;
+      const active = onBalance && balanceGroup === grp.title;
+      sb.style.cssText = `text-align:left;padding:5px 10px 5px 36px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${active ? '#3a3a4c' : '#161620'};color:#cfd0da;font-size:12px`;
+      sb.addEventListener('click', () => { view = 'config'; current = 'balance'; balanceGroup = grp.title; render(); });
+      nav.appendChild(sb);
+    }
   };
   for (const g of groups) {
     const open = expandedNav.has(g.title);
@@ -327,7 +375,7 @@ function render(): void {
         for (const key of sub.keys) keyButton(key);
       }
     } else {
-      for (const key of g.keys ?? []) keyButton(key);
+      for (const key of g.keys ?? []) { if (key === 'balance') balanceNav(); else keyButton(key); }
     }
   }
 
@@ -366,6 +414,7 @@ function renderPage(page: HTMLElement): void {
   if (current === 'mastery-tree') { renderPassiveGraph(page, data); return; }
 
   if (isArray) renderArrayPage(page, schema._def.type as z.ZodTypeAny);
+  else if (current === 'balance') renderBalanceGroup(page);
   else {
     page.appendChild(
       renderField(schema, data[current], (v) => {
@@ -373,6 +422,24 @@ function renderPage(page: HTMLElement): void {
       }),
     );
   }
+}
+
+/** Страница-срез balance: только поля активной подветки (через zod `.pick`), с общим тулбаром. */
+function renderBalanceGroup(page: HTMLElement): void {
+  const grp = balanceGroupsFull.find((g) => g.title === balanceGroup) ?? balanceGroupsFull[0]!;
+  const balanceObj = configSchemas.balance as z.ZodObject<z.ZodRawShape>;
+  const mask: Record<string, true> = {};
+  for (const k of grp.keys) mask[k] = true;
+  const picked = balanceObj.pick(mask as Parameters<typeof balanceObj.pick>[0]);
+  const bal = (data.balance ?? {}) as Record<string, unknown>;
+  data.balance = bal;
+
+  const title = document.createElement('div');
+  title.textContent = `Баланс · ${grp.title}`;
+  title.style.cssText = 'font-size:15px;font-weight:600;color:#e8e8f0;margin:2px 0 12px';
+  page.appendChild(title);
+  // renderObject мутирует переданный объект (bal === data.balance) на месте — правки сохраняются.
+  page.appendChild(renderField(picked, bal, () => { /* мутация in-place */ }));
 }
 
 function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
@@ -445,17 +512,37 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   }
 
   const form = document.createElement('div');
-  if (arr[selectedIndex] !== undefined) {
+  form.style.cssText = 'min-width:0';
+  // Живой превью этажа (только страница «Этажи»): справа рисуется generateFloorParams(algoParams),
+  // перерисовывается на изменение любого поля формы.
+  let preview: { el: HTMLElement; redraw: () => void } | undefined;
+  if (current === 'floors' && arr[selectedIndex] !== undefined) {
+    preview = mountFloorPreview(() => {
+      const f = (arr[selectedIndex] ?? {}) as { algoParams?: FloorAlgoParams; features?: FloorFeatures };
+      return { algo: f.algoParams as FloorAlgoParams, features: f.features, lock: !!f.features?.bossRoom, prefabs: (data['room-prefabs'] as RoomPrefab[]) ?? [] };
+    });
+  }
+  if (arr[selectedIndex] === undefined) {
+    form.innerHTML = '<div style="color:#666">Нет записей. Нажмите «+ Новая».</div>';
+  } else if (current === 'room-prefabs') {
+    // Префабы комнат — рисуем ПО КЛЕТКАМ (свой редактор вместо авто-формы).
+    const biomeOpts = ((data['biomes'] as { id: string; name: string }[]) ?? []).map((b) => ({ id: b.id, name: b.name }));
+    form.appendChild(renderRoomEditor(arr[selectedIndex] as RoomPrefab, biomeOpts, render));
+  } else {
     form.appendChild(
       renderField(elemSchema, arr[selectedIndex], (v) => {
         arr[selectedIndex] = v;
+        preview?.redraw();
       }),
     );
-  } else {
-    form.innerHTML = '<div style="color:#666">Нет записей. Нажмите «+ Новая».</div>';
   }
 
-  grid.append(list, form);
+  if (preview) {
+    grid.style.gridTemplateColumns = '200px minmax(0,1fr) minmax(0,480px)';
+    grid.append(list, form, preview.el);
+  } else {
+    grid.append(list, form);
+  }
   page.appendChild(grid);
 }
 

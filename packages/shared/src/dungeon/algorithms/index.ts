@@ -3,16 +3,18 @@ import { roomsAlgorithm } from './rooms.js';
 import { bspAlgorithm } from './bsp.js';
 import { cellularAlgorithm } from './cellular.js';
 import { mazeAlgorithm } from './maze.js';
+import { prefabAlgorithm } from './prefab.js';
 
 /**
  * Реестр поклеточных алгоритмов по id (совпадает с `FloorAlgoParams.algorithm`). Новый биом
- * ссылается на алгоритм этой картой. `prefab` — задел (пока фолбэк на `rooms` в generateFloor).
+ * ссылается на алгоритм этой картой. `prefab` — целый этаж из рукотворного префаба (opts.prefabs).
  */
 export const ALGORITHMS: Record<string, FloorAlgorithm> = {
   rooms: roomsAlgorithm,
   bsp: bspAlgorithm,
   cellular: cellularAlgorithm,
   maze: mazeAlgorithm,
+  prefab: prefabAlgorithm,
 };
 
 export type { FloorAlgorithm } from './types.js';
@@ -20,3 +22,4 @@ export { roomsAlgorithm } from './rooms.js';
 export { bspAlgorithm } from './bsp.js';
 export { cellularAlgorithm } from './cellular.js';
 export { mazeAlgorithm } from './maze.js';
+export { prefabAlgorithm } from './prefab.js';

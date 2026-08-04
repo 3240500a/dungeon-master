@@ -1,10 +1,12 @@
 import type { Rng } from '../../formulas/rng.js';
-import type { FloorAlgoParams } from '../../config/schemas.js';
+import type { FloorAlgoParams, RoomPrefab } from '../../config/schemas.js';
 import type { DungeonLayout } from '../floorCommon.js';
 
-/** Опции прохода алгоритма. `lock` — ставить ли замок дверь↔рычаг на выход (только boss). */
+/** Опции прохода алгоритма. `lock` — замок дверь↔рычаг на выход (boss); `prefabs` — библиотека
+ *  рукотворных префабов (room-scope для вставки комнат; floor-scope для алгоритма prefab). */
 export interface FloorAlgoOpts {
   lock?: boolean;
+  prefabs?: RoomPrefab[];
 }
 
 /**

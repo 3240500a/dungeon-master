@@ -24,6 +24,7 @@ import masteryTree from './data/mastery-tree.json' with { type: 'json' };
 import skillTree from './data/skill-tree.json' with { type: 'json' };
 import questsMain from './data/quests-main.json' with { type: 'json' };
 import questsRandom from './data/quests-random.json' with { type: 'json' };
+import roomPrefabs from './data/room-prefabs.json' with { type: 'json' };
 
 /** Сырые данные конфигов по умолчанию (до валидации). */
 export const defaultConfigData: Record<string, unknown> = {
@@ -53,4 +54,5 @@ export const defaultConfigData: Record<string, unknown> = {
   'skill-tree': skillTree,
   'quests.main': questsMain,
   'quests.random': questsRandom,
+  'room-prefabs': roomPrefabs,
 };

@@ -3,8 +3,10 @@ import type { FloorAlgoParams } from '../../config/schemas.js';
 import { Cell, makeGrid, cellToWorld } from '../../world/grid.js';
 import {
   type DungeonLayout, type Room,
-  roomCenter, dist2, carveRoom, carveCorridorSmart, lockRoom, decorate,
+  roomCenter, carveRoom, carveRoomShaped, pickShape, connectByNeighborGraph, pickSpawnExit, lockRoom, decorate,
 } from '../floorCommon.js';
+import { stampRoomPrefab } from '../prefab.js';
+import type { FloorAlgoOpts } from './types.js';
 
 interface Rect { x: number; y: number; w: number; h: number }
 interface BspNode { rect: Rect; left?: BspNode; right?: BspNode; room?: Room }
@@ -43,36 +45,11 @@ function leaves(node: BspNode, out: BspNode[]): void {
   } else out.push(node);
 }
 
-/** Все комнаты поддерева. */
-function collectRooms(node: BspNode, out: Room[]): void {
-  if (node.room) out.push(node.room);
-  if (node.left) collectRooms(node.left, out);
-  if (node.right) collectRooms(node.right, out);
-}
-/** Ближайшая пара комнат из двух поддеревьев (короткий чистый коридор). */
-function nearestPair(left: BspNode, right: BspNode): [Room, Room] | null {
-  const ls: Room[] = [], rs: Room[] = [];
-  collectRooms(left, ls); collectRooms(right, rs);
-  if (!ls.length || !rs.length) return null;
-  let best: [Room, Room] | null = null, bd = Infinity;
-  for (const a of ls) for (const b of rs) { const d = dist2(a, b); if (d < bd) { bd = d; best = [a, b]; } }
-  return best;
-}
-/** Соединяет БЛИЖАЙШИЕ комнаты левого/правого поддерева умным коридором (меньше режет чужие комнаты). */
-function connect(node: BspNode, grid: DungeonLayout['grid'], allRooms: Room[], rng: Rng): void {
-  if (node.left) connect(node.left, grid, allRooms, rng);
-  if (node.right) connect(node.right, grid, allRooms, rng);
-  if (node.left && node.right) {
-    const pair = nearestPair(node.left, node.right);
-    if (pair) carveCorridorSmart(grid, pair[0], pair[1], allRooms, rng);
-  }
-}
-
 /**
  * Алгоритм BSP: бинарное разбиение (рез к центру, деление длинной оси) → комнаты в листьях с зазорами
- * → соединение ближайших комнат умными коридорами → 1–2 петли. Связность гарантирована деревом.
+ * → связность через граф соседства (проёмы между смежными листьями + браид-петли).
  */
-export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: { lock?: boolean }): DungeonLayout {
+export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgoOpts): DungeonLayout {
   if (params.algorithm !== 'bsp') throw new Error('bspAlgorithm: неверные параметры');
   const lock = opts?.lock ?? true;
   const { cols, rows, splitDepth, minLeaf, roomPad } = params;
@@ -106,42 +83,40 @@ export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: { lock?: 
     return { grid, rooms: [room], spawn: cellToWorld(c.cx, c.cy), stairsDown: st, exits: [st], decor: [], doors: [], levers: [] };
   }
 
-  // Роли: entrance = 0, boss = самая дальняя, treasure = ещё одна, large по площади.
-  let farIdx = 0, farD = -1;
-  for (let i = 1; i < n; i++) { const d = dist2(rooms[0]!, rooms[i]!); if (d > farD) { farD = d; farIdx = i; } }
-  const treasureIdx = n > 3 ? (farIdx === 1 ? 2 : 1) : -1;
+  // Спавн/выход — по режиму (по умолчанию самая дальняя пара: старт не в углу, выход разнесён).
+  const [spawnIdx, exitIdx] = pickSpawnExit(rooms, params.spawnMode, rng);
+  const treasureIdx = n > 3 ? ([0, 1, 2].find((i) => i !== spawnIdx && i !== exitIdx) ?? -1) : -1;
   rooms.forEach((r, i) => {
-    r.type = i === 0 ? 'entrance' : i === farIdx ? 'boss' : i === treasureIdx ? 'treasure' : (r.w * r.h >= 80 ? 'large' : 'small');
+    r.type = i === spawnIdx ? 'entrance' : i === exitIdx ? 'boss' : i === treasureIdx ? 'treasure' : (r.w * r.h >= 80 ? 'large' : 'small');
+    r.shape = (i === spawnIdx || i === exitIdx) ? 'rect' : pickShape(params.shapes, rng);
   });
-  for (const r of rooms) carveRoom(grid, r);
-  connect(root, grid, rooms, rng);
-
-  // Петли: 1–2 доп. коридора между близкими не-босс комнатами (не-древовидная связность).
-  if (n > 3) {
-    const cand: [number, number, number][] = [];
-    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-      if (i === farIdx || j === farIdx) continue; // босс — не в петлях (запирается)
-      cand.push([i, j, dist2(rooms[i]!, rooms[j]!)]);
-    }
-    cand.sort((a, b) => a[2] - b[2]);
-    const loops = Math.min(2, Math.max(1, Math.floor(n * 0.12)));
-    // Берём пары чуть дальше самых близких (те обычно уже соединены деревом).
-    for (let k = 0; k < loops && k + 2 < cand.length; k++) {
-      const [i, j] = cand[k + 2]!;
-      carveCorridorSmart(grid, rooms[i]!, rooms[j]!, rooms, rng);
-    }
-  }
+  // Карвинг: с шансом prefabChance ставим рукотворный room-префаб (если подходит), иначе процедурная форма.
+  const decor: DungeonLayout['decor'] = [];
+  const prefabs = opts?.prefabs ?? [];
+  const prefabRooms = new Set<Room>();
+  rooms.forEach((r, i) => {
+    const anchor = i === spawnIdx || i === exitIdx;
+    if (!anchor && params.prefabChance > 0 && prefabs.length && rng.chance(params.prefabChance) && stampRoomPrefab(grid, r, prefabs, decor, rng)) prefabRooms.add(r);
+    else carveRoomShaped(grid, r, r.shape ?? 'rect', rng);
+  });
+  // Связность через граф соседства: проёмы между смежными листьями + короткие коридоры, MST-база +
+  // браид-петли (несколько путей, без параллельных дублей). Запертый босс — вне петель; иначе выход браидим.
+  connectByNeighborGraph(grid, rooms, {
+    loops: params.loops,
+    excludeIdx: lock ? exitIdx : -1,
+    branch: lock ? [spawnIdx] : [spawnIdx, exitIdx],
+  }, rng);
 
   const doors: DungeonLayout['doors'] = [];
   const levers: DungeonLayout['levers'] = [];
-  const boss = farIdx !== 0 ? rooms[farIdx] : undefined;
+  const boss = exitIdx !== spawnIdx ? rooms[exitIdx] : undefined;
   if (boss && lock) lockRoom(grid, boss, doors, levers, rng);
 
-  const decor: DungeonLayout['decor'] = [];
-  for (const r of rooms) decorate(r, decor, rng, grid);
+  // Декор: prefab-комнаты дали свой (из зон); прочие — процедурный.
+  for (const r of rooms) if (!prefabRooms.has(r)) decorate(r, decor, rng, grid);
 
-  const first = roomCenter(rooms[0]!);
-  const last = roomCenter(boss ?? rooms[0]!);
+  const first = roomCenter(rooms[spawnIdx]!);
+  const last = roomCenter(boss ?? rooms[spawnIdx]!);
   const stairsDown = cellToWorld(last.cx, last.cy);
   return {
     grid, rooms,

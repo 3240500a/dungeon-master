@@ -2,12 +2,37 @@
   {
     "id": "crypt-halls",
     "name": "Залы некрополя",
+    "enabled": true,
     "desc": "Обычный боевой этаж — прямоугольные погребальные залы.",
     "role": "combat",
     "biomeId": "crypt",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 56, "rows": 42, "splitDepth": 4, "minLeaf": 9, "roomPad": 1 },
-    "features": {},
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 80,
+      "rows": 60,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 1
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 7,
@@ -16,12 +41,37 @@
   {
     "id": "crypt-catacombs",
     "name": "Глубокие катакомбы",
+    "enabled": true,
     "desc": "Боевой этаж поглубже — тесный лабиринт склепов.",
     "role": "combat",
     "biomeId": "crypt",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 60, "rows": 44, "splitDepth": 5, "minLeaf": 8, "roomPad": 1 },
-    "features": {},
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 60,
+      "rows": 44,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 8,
     "maxDepth": 99,
@@ -30,12 +80,37 @@
   {
     "id": "crypt-champions",
     "name": "Чертог стражей",
-    "desc": "Этаж с усиленными пачками — комнаты с чемпионами.",
+    "enabled": true,
+    "desc": "Этаж с усиленными пачками — несколько комнат заняты чемпионами.",
     "role": "elite",
     "biomeId": "crypt",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 56, "rows": 42, "splitDepth": 4, "minLeaf": 9, "roomPad": 1 },
-    "features": { "championRooms": 2 },
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 56,
+      "rows": 42,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 2,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -44,12 +119,40 @@
   {
     "id": "crypt-boss",
     "name": "Гробница владыки",
+    "enabled": true,
     "desc": "Босс-этаж — запертая арена с боссом.",
     "role": "boss",
     "biomeId": "crypt",
-    "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 58, "rows": 44, "splitDepth": 4, "minLeaf": 10, "roomPad": 1 },
-    "features": { "bossRoom": true },
+    "templates": [
+      "dungeon-standard",
+      "deep-expedition"
+    ],
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 58,
+      "rows": 44,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": true,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -58,12 +161,40 @@
   {
     "id": "crypt-vault",
     "name": "Сокровищница",
-    "desc": "Ответвление: сундук под охраной сильного пака.",
+    "enabled": true,
+    "desc": "Ответвление (не обязательно): сундук под охраной сильного пака.",
     "role": "treasure",
     "biomeId": "crypt",
-    "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 48, "rows": 38, "splitDepth": 3, "minLeaf": 10, "roomPad": 1 },
-    "features": { "treasureRooms": 1, "championRooms": 1 },
+    "templates": [
+      "dungeon-standard",
+      "deep-expedition"
+    ],
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 48,
+      "rows": 38,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 1,
+      "treasureRooms": 1
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -72,41 +203,105 @@
   {
     "id": "crypt-rest",
     "name": "Святилище перехода",
+    "enabled": true,
     "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "crypt",
     "templates": [],
-    "algoParams": { "algorithm": "rooms", "cols": 40, "rows": 32, "roomCount": 5, "bigChance": 0.2 },
-    "features": { "portal": true, "stash": true },
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 40,
+      "rows": 32,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.5,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": true,
+      "stash": true,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
     "weight": 1
   },
-
   {
     "id": "caves-caverns",
     "name": "Каверны",
-    "desc": "Обычный этаж — органические пещеры.",
+    "enabled": true,
+    "desc": "Органические пещеры, прогрызенные зверьём.",
     "role": "combat",
     "biomeId": "caves",
     "templates": [],
-    "algoParams": { "algorithm": "cellular", "cols": 64, "rows": 48, "fillProb": 0.45, "steps": 5, "born": 5, "survive": 4 },
-    "features": {},
+    "algoParams": {
+      "algorithm": "cellular",
+      "cols": 64,
+      "rows": 48,
+      "fillProb": 0.45,
+      "steps": 5,
+      "born": 5,
+      "survive": 4,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
-    "weight": 3
+    "weight": 1
   },
   {
     "id": "caves-champions",
     "name": "Логово стаи",
-    "desc": "Пещеры с усиленными зверьми-чемпионами.",
+    "enabled": true,
+    "desc": "Пещеры с усиленными зверьём — несколько логовищ заняты чемпионами.",
     "role": "elite",
     "biomeId": "caves",
     "templates": [],
-    "algoParams": { "algorithm": "cellular", "cols": 64, "rows": 48, "fillProb": 0.46, "steps": 5, "born": 5, "survive": 4 },
-    "features": { "championRooms": 2 },
+    "algoParams": {
+      "algorithm": "cellular",
+      "cols": 64,
+      "rows": 48,
+      "fillProb": 0.46,
+      "steps": 5,
+      "born": 5,
+      "survive": 4,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 2,
+      "treasureRooms": 0
+    },
     "packDensity": 1.1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -115,12 +310,32 @@
   {
     "id": "caves-boss",
     "name": "Берлога альфы",
-    "desc": "Босс-этаж пещер — арена альфа-чудовища.",
+    "enabled": true,
+    "desc": "Босс-этаж пещер — обширная каверна-арена альфа-чудовища.",
     "role": "boss",
     "biomeId": "caves",
     "templates": [],
-    "algoParams": { "algorithm": "cellular", "cols": 60, "rows": 46, "fillProb": 0.44, "steps": 5, "born": 5, "survive": 4 },
-    "features": { "bossRoom": true },
+    "algoParams": {
+      "algorithm": "cellular",
+      "cols": 60,
+      "rows": 46,
+      "fillProb": 0.44,
+      "steps": 5,
+      "born": 5,
+      "survive": 4,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": true,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -129,12 +344,32 @@
   {
     "id": "caves-vault",
     "name": "Костяная яма",
-    "desc": "Ответвление — сундук в логове под охраной.",
+    "enabled": true,
+    "desc": "Ответвление (не обязательно): сундук в логове под охраной сильного пака.",
     "role": "treasure",
     "biomeId": "caves",
     "templates": [],
-    "algoParams": { "algorithm": "cellular", "cols": 52, "rows": 40, "fillProb": 0.45, "steps": 5, "born": 5, "survive": 4 },
-    "features": { "treasureRooms": 1, "championRooms": 1 },
+    "algoParams": {
+      "algorithm": "cellular",
+      "cols": 52,
+      "rows": 40,
+      "fillProb": 0.45,
+      "steps": 5,
+      "born": 5,
+      "survive": 4,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 1,
+      "treasureRooms": 1
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -143,41 +378,100 @@
   {
     "id": "caves-rest",
     "name": "Тихая пещера",
-    "desc": "Точка возврата — портал и сундук.",
+    "enabled": true,
+    "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "caves",
     "templates": [],
-    "algoParams": { "algorithm": "rooms", "cols": 40, "rows": 32, "roomCount": 5, "bigChance": 0.2 },
-    "features": { "portal": true, "stash": true },
+    "algoParams": {
+      "algorithm": "rooms",
+      "cols": 40,
+      "rows": 32,
+      "roomCount": 5,
+      "bigChance": 0.2,
+      "loops": 0.5,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": true,
+      "stash": true,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
     "weight": 1
   },
-
   {
     "id": "archive-maze",
     "name": "Эфирные коридоры",
-    "desc": "Обычный этаж — коридоры магических архивов.",
+    "enabled": true,
+    "desc": "Бесконечные коридоры магических архивов.",
     "role": "combat",
     "biomeId": "dungeon",
     "templates": [],
-    "algoParams": { "algorithm": "maze", "cols": 57, "rows": 43, "braid": 0.28 },
-    "features": {},
+    "algoParams": {
+      "algorithm": "maze",
+      "cols": 57,
+      "rows": 43,
+      "braid": 0.28,
+      "width": 1,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
-    "weight": 3
+    "weight": 1
   },
   {
     "id": "archive-champions",
     "name": "Зал конструктов",
-    "desc": "Коридоры под охраной усиленных конструктов.",
+    "enabled": true,
+    "desc": "Коридоры под охраной усиленных конструктов — несколько залов заняты чемпионами.",
     "role": "elite",
     "biomeId": "dungeon",
     "templates": [],
-    "algoParams": { "algorithm": "maze", "cols": 57, "rows": 43, "braid": 0.3 },
-    "features": { "championRooms": 2 },
+    "algoParams": {
+      "algorithm": "maze",
+      "cols": 57,
+      "rows": 43,
+      "braid": 0.3,
+      "width": 1,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 2,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -186,12 +480,30 @@
   {
     "id": "archive-boss",
     "name": "Ядро архива",
-    "desc": "Босс-этаж — реактор с искажённым магом.",
+    "enabled": true,
+    "desc": "Босс-этаж — узел коридоров с искажённым магом в дальней камере.",
     "role": "boss",
     "biomeId": "dungeon",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 58, "rows": 44, "splitDepth": 4, "minLeaf": 10, "roomPad": 1 },
-    "features": { "bossRoom": true },
+    "algoParams": {
+      "algorithm": "maze",
+      "cols": 58,
+      "rows": 44,
+      "braid": 0.26,
+      "width": 1,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": true,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -200,12 +512,30 @@
   {
     "id": "archive-vault",
     "name": "Кристальное хранилище",
-    "desc": "Ответвление — сундук с реликвией под охраной.",
+    "enabled": true,
+    "desc": "Ответвление (не обязательно): сундук с реликвией под охраной.",
     "role": "treasure",
     "biomeId": "dungeon",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 48, "rows": 38, "splitDepth": 3, "minLeaf": 10, "roomPad": 1 },
-    "features": { "treasureRooms": 1, "championRooms": 1 },
+    "algoParams": {
+      "algorithm": "maze",
+      "cols": 52,
+      "rows": 40,
+      "braid": 0.3,
+      "width": 1,
+      "prefabRooms": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 1,
+      "treasureRooms": 1
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -214,41 +544,114 @@
   {
     "id": "archive-rest",
     "name": "Читальный зал",
-    "desc": "Точка возврата — портал и сундук.",
+    "enabled": true,
+    "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "dungeon",
     "templates": [],
-    "algoParams": { "algorithm": "rooms", "cols": 40, "rows": 32, "roomCount": 5, "bigChance": 0.2 },
-    "features": { "portal": true, "stash": true },
+    "algoParams": {
+      "algorithm": "rooms",
+      "cols": 40,
+      "rows": 32,
+      "roomCount": 5,
+      "bigChance": 0.2,
+      "loops": 0.5,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": true,
+      "stash": true,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
     "weight": 1
   },
-
   {
     "id": "rift-halls",
     "name": "Залы Разлома",
-    "desc": "Обычный этаж — искажённая архитектура.",
+    "enabled": true,
+    "desc": "Искажённая рукотворная архитектура нижних планов.",
     "role": "combat",
     "biomeId": "labyrinth",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 60, "rows": 44, "splitDepth": 4, "minLeaf": 9, "roomPad": 1 },
-    "features": {},
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 60,
+      "rows": 44,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
-    "weight": 3
+    "weight": 1
   },
   {
     "id": "rift-champions",
     "name": "Гарнизон одержимых",
-    "desc": "Залы с усиленными одержимыми.",
+    "enabled": true,
+    "desc": "Залы Разлома с усиленными одержимыми — несколько комнат заняты чемпионами.",
     "role": "elite",
     "biomeId": "labyrinth",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 60, "rows": 44, "splitDepth": 4, "minLeaf": 9, "roomPad": 1 },
-    "features": { "championRooms": 2 },
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 60,
+      "rows": 44,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 2,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -257,12 +660,37 @@
   {
     "id": "rift-boss",
     "name": "Врата Разлома",
-    "desc": "Босс-этаж — арена демонического владыки у портала.",
+    "enabled": true,
+    "desc": "Босс-этаж — запертая арена демонического владыки у портала.",
     "role": "boss",
     "biomeId": "labyrinth",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 58, "rows": 44, "splitDepth": 4, "minLeaf": 10, "roomPad": 1 },
-    "features": { "bossRoom": true },
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 58,
+      "rows": 44,
+      "splitDepth": 4,
+      "minLeaf": 10,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": true,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -271,12 +699,37 @@
   {
     "id": "rift-vault",
     "name": "Демонический тайник",
-    "desc": "Ответвление — сундук под охраной адских тварей.",
+    "enabled": true,
+    "desc": "Ответвление (не обязательно): сундук под охраной адских тварей.",
     "role": "treasure",
     "biomeId": "labyrinth",
     "templates": [],
-    "algoParams": { "algorithm": "bsp", "cols": 48, "rows": 38, "splitDepth": 3, "minLeaf": 10, "roomPad": 1 },
-    "features": { "treasureRooms": 1, "championRooms": 1 },
+    "algoParams": {
+      "algorithm": "bsp",
+      "cols": 48,
+      "rows": 38,
+      "splitDepth": 4,
+      "minLeaf": 9,
+      "roomPad": 1,
+      "loops": 0.45,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": false,
+      "stash": false,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 1,
+      "treasureRooms": 1
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,
@@ -285,12 +738,36 @@
   {
     "id": "rift-rest",
     "name": "Затишье меж миров",
-    "desc": "Точка возврата — портал и сундук.",
+    "enabled": true,
+    "desc": "Точка возврата — портал в город и общий сундук.",
     "role": "rest",
     "biomeId": "labyrinth",
     "templates": [],
-    "algoParams": { "algorithm": "rooms", "cols": 40, "rows": 32, "roomCount": 5, "bigChance": 0.2 },
-    "features": { "portal": true, "stash": true },
+    "algoParams": {
+      "algorithm": "rooms",
+      "cols": 40,
+      "rows": 32,
+      "roomCount": 5,
+      "bigChance": 0.2,
+      "loops": 0.5,
+      "spawnMode": "farthest",
+      "shapes": {
+        "rect": 4,
+        "ell": 2,
+        "blob": 2,
+        "round": 2,
+        "hall": 2
+      },
+      "prefabChance": 0
+    },
+    "features": {
+      "portal": true,
+      "stash": true,
+      "shop": false,
+      "bossRoom": false,
+      "championRooms": 0,
+      "treasureRooms": 0
+    },
     "packDensity": 1,
     "minDepth": 1,
     "maxDepth": 99,

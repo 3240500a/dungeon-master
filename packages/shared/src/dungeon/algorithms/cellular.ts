@@ -1,7 +1,9 @@
 import type { Rng } from '../../formulas/rng.js';
 import type { FloorAlgoParams } from '../../config/schemas.js';
 import { Cell, makeGrid, cellToWorld, gridSize, type Grid } from '../../world/grid.js';
-import { type DungeonLayout, type Room, decorate } from '../floorCommon.js';
+import { type DungeonLayout, type Room, decorate, reconnectFloor } from '../floorCommon.js';
+import { carvePrefabChambers } from '../prefab.js';
+import type { FloorAlgoOpts } from './types.js';
 
 /** Число соседей-стен (8-окрестность; за границей — стена). */
 function wallNeighbors(grid: Grid, x: number, y: number): number {
@@ -38,7 +40,7 @@ function floorRegion(grid: Grid, sx: number, sy: number): { cx: number; cy: numb
  * КРУПНЕЙШЕЙ полости (прочие заливаются стеной) → spawn и лестница на противоположных концах
  * этой полости (связность гарантирована конструкцией; дверей/рычагов нет — пещеры открыты).
  */
-export function cellularAlgorithm(params: FloorAlgoParams, rng: Rng): DungeonLayout {
+export function cellularAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgoOpts): DungeonLayout {
   if (params.algorithm !== 'cellular') throw new Error('cellularAlgorithm: неверные параметры');
   const { cols, rows, fillProb, steps, born, survive } = params;
   const grid = makeGrid(cols, rows, Cell.Wall);
@@ -111,7 +113,20 @@ export function cellularAlgorithm(params: FloorAlgoParams, rng: Rng): DungeonLay
   }
 
   const decor: DungeonLayout['decor'] = [];
-  for (const r of rooms) decorate(r, decor, rng, grid);
+  // Врезаем рукотворные room-префаб-камеры (число — ролл prefabRooms от..до), затем чиним связность
+  // (стена-кольцо камеры могла разрезать полость). Пропущены, если нет подходящих префабов.
+  const chamberSet = new Set<Room>();
+  const prefabs = opts?.prefabs ?? [];
+  const { min: pfMin, max: pfMax } = params.prefabRooms;
+  if (prefabs.length && pfMax > 0) {
+    const n = rng.int(Math.min(pfMin, pfMax), Math.max(pfMin, pfMax));
+    const chambers = carvePrefabChambers(grid, prefabs, n, spawnCell, far, rooms, decor, rng);
+    if (chambers.length) {
+      reconnectFloor(grid, spawnCell, rng);
+      for (const c of chambers) { rooms.push(c); chamberSet.add(c); }
+    }
+  }
+  for (const r of rooms) if (!chamberSet.has(r)) decorate(r, decor, rng, grid);
 
   const stairsDown = cellToWorld(far.cx, far.cy);
   return {

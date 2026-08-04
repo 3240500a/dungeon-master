@@ -710,6 +710,21 @@ const roomsParamsSchema = z.object({
   roomCount: z.number().int().min(3).max(30).default(9),
   /** Шанс «большой» комнаты. */
   bigChance: z.number().min(0).max(1).default(0.3),
+  /** Braid: доля доп. коридоров-петель сверх дерева (0 — только дерево/один путь; выше — больше
+   *  альтернативных путей старт↔финиш). Число петель ≈ loops × число комнат. */
+  loops: z.number().min(0).max(1.5).default(0.5),
+  /** Размещение спавна/выхода: farthest — самая дальняя пара (не в углу); random — спавн случайный; corner — старое. */
+  spawnMode: z.enum(['farthest', 'random', 'corner']).default('farthest'),
+  /** Веса форм комнат (rect по умолчанию доминирует). ell=L/T, blob=«укусы», round=октагон, hall=колонны. */
+  shapes: z.object({
+    rect: z.number().min(0).default(4),
+    ell: z.number().min(0).default(2),
+    blob: z.number().min(0).default(2),
+    round: z.number().min(0).default(2),
+    hall: z.number().min(0).default(2),
+  }).default({}),
+  /** Шанс поставить рукотворный префаб-комнату (room-scope, подходящий по размеру) вместо процедурной. 0 — выкл. */
+  prefabChance: z.number().min(0).max(1).default(0),
 });
 const bspParamsSchema = z.object({
   algorithm: z.literal('bsp'),
@@ -720,7 +735,30 @@ const bspParamsSchema = z.object({
   minLeaf: z.number().int().min(6).max(40).default(9),
   /** Отступ комнаты от границ листа (клеток). */
   roomPad: z.number().int().min(1).max(6).default(1),
+  /** Braid: доля доп. коридоров-петель сверх дерева (несколько путей старт↔финиш). ≈ loops × комнат. */
+  loops: z.number().min(0).max(1.5).default(0.45),
+  /** Размещение спавна/выхода: farthest — самая дальняя пара (не в углу); random — спавн случайный; corner — старое. */
+  spawnMode: z.enum(['farthest', 'random', 'corner']).default('farthest'),
+  /** Веса форм комнат (rect по умолчанию доминирует). ell=L/T, blob=«укусы», round=октагон, hall=колонны. */
+  shapes: z.object({
+    rect: z.number().min(0).default(4),
+    ell: z.number().min(0).default(2),
+    blob: z.number().min(0).default(2),
+    round: z.number().min(0).default(2),
+    hall: z.number().min(0).default(2),
+  }).default({}),
+  /** Шанс поставить рукотворный префаб-комнату (room-scope, подходящий по размеру) вместо процедурной. 0 — выкл. */
+  prefabChance: z.number().min(0).max(1).default(0),
 });
+/** Диапазон числа рукотворных room-префаб-камер, врезаемых в органику (пещеры/лабиринт).
+ *  Ролл `int(min..max)` за этаж; ставится столько, сколько влезло подходящих префабов (нужны
+ *  префабы, нацеленные на этот биом+алгоритм). Пусто/0..0 = без камер. */
+const prefabRoomsRange = z
+  .object({
+    min: z.number().int().min(0).max(20).default(0),
+    max: z.number().int().min(0).max(20).default(0),
+  })
+  .default({});
 const cellularParamsSchema = z.object({
   algorithm: z.literal('cellular'),
   ...floorSizeCommon,
@@ -732,12 +770,18 @@ const cellularParamsSchema = z.object({
   born: z.number().int().min(1).max(8).default(5),
   /** survive: стена остаётся стеной, если соседей-стен ≥ survive. */
   survive: z.number().int().min(0).max(8).default(4),
+  /** Сколько room-префаб-камер врезать (от..до). */
+  prefabRooms: prefabRoomsRange,
 });
 const mazeParamsSchema = z.object({
   algorithm: z.literal('maze'),
   ...floorSizeCommon,
   /** Доля тупиков, которые «расплетаются» (braid): 0 — идеальный лабиринт, 1 — без тупиков. */
   braid: z.number().min(0).max(1).default(0.3),
+  /** Ширина коридоров в клетках (стена между коридорами всегда 1). 1 = классический тонкий лабиринт. */
+  width: z.number().int().min(1).max(4).default(1),
+  /** Сколько room-префаб-камер врезать (от..до). */
+  prefabRooms: prefabRoomsRange,
 });
 const prefabParamsSchema = z.object({
   algorithm: z.literal('prefab'),
@@ -1254,6 +1298,38 @@ export const questsRandomSchema = z.array(
   }),
 );
 
+// ── room-prefabs (рукотворные комнаты/этажи, рисуются по клеткам в редакторе) ──
+/**
+ * Префаб комнаты/этажа: рисуется по клеткам. `terrain` — h строк по w символов
+ * (`.`пол `#`стена `o`колонна `+`дверь-проём); `zones` — параллельная сетка меток контента
+ * (` `нет `d`декор `m`монстр `c`сундук `e`вход `x`выход) — генератор при генерации ставит туда
+ * ПОДХОДЯЩИЙ контент (по типу/размеру; задел под 3D-библиотеку). `scope`: room = часть этажа
+ * (генератор вставляет вместо процедурной комнаты), floor = целый этаж (алгоритм prefab).
+ */
+export const roomPrefabsSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    enabled: z.boolean().default(true),
+    scope: z.enum(['room', 'floor']).default('room'),
+    /** В каких биомах может появляться (id из `biomes`). Пусто = во всех биомах. */
+    biomes: z.array(z.string()).default([]),
+    /** В каких типах генерации участвует (rooms/bsp/cellular/maze/prefab). Пусто = во всех. */
+    algorithms: z.array(z.string()).default([]),
+    w: z.number().int().min(3).max(80).default(12),
+    h: z.number().int().min(3).max(80).default(9),
+    /** Террейн: h строк по w символов ('.'пол '#'стена 'o'колонна '+'дверь-проём). */
+    terrain: z.array(z.string()).default([]),
+    /** Зоны контента: h строк по w символов (' 'нет 'd'декор 'm'монстр 'c'сундук 'e'вход 'x'выход). */
+    zones: z.array(z.string()).default([]),
+    /** Теги (биом/тема/роль) — для будущего подбора генератором. */
+    tags: z.array(z.string()).default([]),
+    /** Вес выбора генератором. */
+    weight: z.number().min(0).default(1),
+  }),
+);
+export type RoomPrefab = z.infer<typeof roomPrefabsSchema>[number];
+
 /** Реестр всех схем: ключ конфига → схема. */
 export const configSchemas = {
   balance: balanceSchema,
@@ -1282,6 +1358,7 @@ export const configSchemas = {
   'skill-tree': skillTreeSchema,
   'quests.main': questsMainSchema,
   'quests.random': questsRandomSchema,
+  'room-prefabs': roomPrefabsSchema,
 } as const;
 
 export type ConfigKey = keyof typeof configSchemas;

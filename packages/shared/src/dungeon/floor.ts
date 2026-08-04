@@ -8,6 +8,12 @@ import type { FloorLayout, MonsterSpawn } from '../session/session.js';
 import { generateDungeon } from './generate.js';
 import { type DungeonLayout } from './floorCommon.js';
 
+/** Первая клетка-ПОЛ в прямоугольнике комнаты (фолбэк, если случайные промахи по стене/пустоте нерегулярной комнаты). */
+function firstFloorCell(grid: DungeonLayout['grid'], r: DungeonLayout['rooms'][number]): { cx: number; cy: number } | null {
+  for (let cy = r.y; cy < r.y + r.h; cy++) for (let cx = r.x; cx < r.x + r.w; cx++) if (grid[cy]?.[cx] === Cell.Floor) return { cx, cy };
+  return null;
+}
+
 /**
  * Строит полный `FloorLayout` для сессии: генерирует этаж и расставляет пачки
  * монстров из packs-конфига по комнатам — headless-порт `DungeonScene.spawnPacks`.
@@ -86,8 +92,13 @@ export function spawnPacksEl(
     for (const entry of entries) {
       const count = Math.round(rng.int(entry.min, entry.max) * packDensity);
       for (let i = 0; i < count; i++) {
-        const cx = rng.int(room.x + 1, room.x + room.w - 2);
-        const cy = rng.int(room.y + 1, room.y + room.h - 2);
+        // Клетка спавна ДОЛЖНА быть полом: в нерегулярных комнатах (cellular/BSP) смещение в прямоугольнике комнаты
+        // может попасть в стену/пустоту → монстр «за полом». Первый бросок — как раньше (детерминизм для прямоуг. комнат);
+        // если не пол — перевыбираем, затем фолбэк на скан комнаты; нет пола вовсе → пропуск.
+        let cx = rng.int(room.x + 1, room.x + room.w - 2);
+        let cy = rng.int(room.y + 1, room.y + room.h - 2);
+        for (let t = 0; t < 6 && layout.grid[cy]?.[cx] !== Cell.Floor; t++) { cx = rng.int(room.x + 1, room.x + room.w - 2); cy = rng.int(room.y + 1, room.y + room.h - 2); }
+        if (layout.grid[cy]?.[cx] !== Cell.Floor) { const fc = firstFloorCell(layout.grid, room); if (!fc) continue; cx = fc.cx; cy = fc.cy; }
         const w = cellToWorld(cx, cy);
         const id = entry.role ? pickByRole(entry.role) : rng.pick(pool);
         const def = generateMonster(monsters, monAffixes, { baseId: id, depth: mDepth, xpGrowth, championXpMult, scaling, forceChampion }, rng);

@@ -1,8 +1,9 @@
 import { createRng, type Rng } from '../formulas/rng.js';
 import { Cell, cellToWorld, worldToCell } from '../world/grid.js';
-import type { FloorAlgoParams, FloorFeatures } from '../config/schemas.js';
+import type { FloorAlgoParams, FloorFeatures, RoomPrefab } from '../config/schemas.js';
 import { type DungeonLayout, type Room, validate, roomCenter } from './floorCommon.js';
 import { ALGORITHMS, roomsAlgorithm } from './algorithms/index.js';
+import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
 import type { FloorSpec } from './run/types.js';
 
@@ -16,26 +17,36 @@ export interface GenFloorOpts {
   town?: boolean;
   /** Фичи этажа (портал/сундук/лавка/босс-комната/чемпионы/сокровищницы). */
   features?: FloorFeatures;
+  /** Библиотека рукотворных префабов (room-scope — вставка комнат; floor-scope — алгоритм prefab). */
+  prefabs?: RoomPrefab[];
+  /** Биом этажа — для отбора префабов по их полю `biomes` (пусто у префаба = любой биом). */
+  biomeId?: string;
 }
 
-/** Добавляет выходы (кроме первого) в самых дальних от спавна комнатах; выставляет exits. */
+/**
+ * Выставляет выходы: первый = stairsDown, остальные — farthest-point sampling (каждый следующий
+ * максимизирует МИН. дистанцию до уже размещённых {спавн + выходы}) ⇒ выходы разнесены по карте.
+ */
 function applyExits(L: DungeonLayout, exitCount: number, _rng: Rng): void {
   if (exitCount <= 0) { L.exits = []; return; }
   L.exits = [L.stairsDown];
   if (exitCount === 1) return;
-  const sc = worldToCell(L.spawn.x, L.spawn.y);
-  const used = new Set(L.exits.map((e) => { const c = worldToCell(e.x, e.y); return `${c.cx},${c.cy}`; }));
-  const cands = L.rooms
-    .filter((r) => r.type !== 'entrance')
-    .map((r) => { const c = roomCenter(r); return { c, d: (c.cx - sc.cx) ** 2 + (c.cy - sc.cy) ** 2 }; })
-    .filter((x) => !used.has(`${x.c.cx},${x.c.cy}`))
-    .sort((a, b) => b.d - a.d);
-  for (const cand of cands) {
-    if (L.exits.length >= exitCount) break;
-    const k = `${cand.c.cx},${cand.c.cy}`;
-    if (used.has(k)) continue;
-    used.add(k);
-    L.exits.push(cellToWorld(cand.c.cx, cand.c.cy));
+  const key = (c: { cx: number; cy: number }): string => `${c.cx},${c.cy}`;
+  const anchors = [worldToCell(L.spawn.x, L.spawn.y), worldToCell(L.stairsDown.x, L.stairsDown.y)]; // спавн + размещённые выходы
+  const usedCells = new Set(anchors.map(key));
+  const cands = L.rooms.filter((r) => r.type !== 'entrance').map(roomCenter).filter((c) => !usedCells.has(key(c)));
+  while (L.exits.length < exitCount && cands.length) {
+    let best = -1, bestD = -1;
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i]!;
+      let md = Infinity;
+      for (const a of anchors) md = Math.min(md, (c.cx - a.cx) ** 2 + (c.cy - a.cy) ** 2);
+      if (md > bestD) { bestD = md; best = i; }
+    }
+    if (best < 0) break;
+    const c = cands.splice(best, 1)[0]!;
+    anchors.push(c);
+    L.exits.push(cellToWorld(c.cx, c.cy));
   }
 }
 
@@ -98,13 +109,17 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   let effective: FloorAlgoParams = params;
   let algo = ALGORITHMS[params.algorithm];
   if (!algo) {
-    effective = { algorithm: 'rooms', cols: params.cols, rows: params.rows, roomCount: 9, bigChance: 0.3 };
+    effective = { algorithm: 'rooms', cols: params.cols, rows: params.rows, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0 };
     algo = roomsAlgorithm;
   }
+  // Отбор префабов под этот этаж: по биому + типу генерации (пустой список у префаба = «любой»).
+  const prefabs = selectPrefabs(opts.prefabs ?? [], { biomeId: opts.biomeId, algorithm: effective.algorithm });
   const build = (s: number): DungeonLayout => {
     const rng = createRng(s || 1);
-    const L = algo(effective, rng, { lock });
-    applyExits(L, exitCount, rng);
+    const L = algo(effective, rng, { lock, prefabs });
+    // prefab-этаж сам определяет выходы (зоны 'x'); прочие — farthest-point среди комнат.
+    if (effective.algorithm === 'prefab') L.exits = exitCount <= 0 ? [] : L.exits.slice(0, Math.max(1, exitCount));
+    else applyExits(L, exitCount, rng);
     // Терминальный этаж (финал, нет выходов дальше) — портал возврата в город на месте лестницы.
     if (exitCount === 0) L.decor.push({ ...L.stairsDown, kind: 'portal' });
     return L;
@@ -126,12 +141,14 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   return result;
 }
 
-/** Гарантированно проходимый этаж по FloorSpec (биом/алгоритм/сид/выходы/замок/фичи). */
-export function generateFloor(spec: FloorSpec): DungeonLayout {
+/** Гарантированно проходимый этаж по FloorSpec (биом/алгоритм/сид/выходы/замок/фичи + библиотека префабов). */
+export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[]): DungeonLayout {
   return generateFloorParams(spec.algoParams, spec.seed, {
     lock: spec.locked,
     exitCount: spec.exitCount,
     town: spec.kind === 'town',
     features: spec.features,
+    prefabs,
+    biomeId: spec.biomeId,
   });
 }

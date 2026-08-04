@@ -224,9 +224,9 @@ function renderGraph(host: HTMLElement, p: RunPlan, mods: RunModifier[], onSelec
 }
 
 // ── Поклеточный просмотр этажа (canvas) ──────────────────────────────────────
-function cellSize(cols: number): number { return Math.max(4, Math.min(10, Math.floor(640 / cols))); }
+export function cellSize(cols: number): number { return Math.max(4, Math.min(10, Math.floor(640 / cols))); }
 
-function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters: MonsterSpawn[], factionColor: string): void {
+export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters: MonsterSpawn[], factionColor: string): void {
   const rows = L.grid.length, cols = L.grid[0]?.length ?? 0;
   const cell = cellSize(cols);
   canvas.width = cols * cell; canvas.height = rows * cell;
@@ -392,7 +392,9 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     if (!node) return;
     const biome = biomes.find((b) => b.id === node.biomeId)!;
     let L: DungeonLayout;
-    try { L = generateFloor(node.floorSpec); }
+    // Как на сервере: передаём библиотеку префабов — чтобы в превью забега были и prefab-комнаты,
+    // и врезанные камеры (rooms/bsp по prefabChance; пещеры/лабиринт по prefabRooms).
+    try { L = generateFloor(node.floorSpec, reg.get('room-prefabs')); }
     catch (e) { preview.innerHTML = `<div style="color:#ff8080">Ошибка генерации: ${(e as Error).message}</div>`; return; }
 
     // Монстры этажа по эфф. уровню (мощь) — детерминированно от сида этажа. Town (город) — без монстров.
