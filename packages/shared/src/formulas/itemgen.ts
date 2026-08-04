@@ -167,42 +167,110 @@ export function rollRarity(dropBias: number, rng: Rng, rarities: Rarities): Rari
   return 'normal';
 }
 
-/** Катит `count` случайных аффиксов из пула для заданного iLvl (без повторов). */
-export function rollAffixes(
-  affixes: Affixes,
-  count: number,
-  itemLevel: number,
-  rng: Rng,
-): RolledAffix[] {
-  const pool = affixes.filter((a) => a.enabled !== false); // выключенные аффиксы не роллятся
-  const rolled: RolledAffix[] = [];
-  for (let i = 0; i < count && pool.length > 0; i++) {
-    const idx = rng.int(0, pool.length - 1);
-    const [affix] = pool.splice(idx, 1);
-    const r = affix ? rollAffix(affix, itemLevel, rng) : null;
-    if (r) rolled.push(r);
-  }
-  return rolled;
-}
-
 /** Атрибуты — их бонусы всегда целые (округляем вверх). */
 const ATTR_STATS = new Set(['strength', 'dexterity', 'intelligence', 'vitality']);
 
-function rollAffix(
-  affix: Affixes[number],
-  itemLevel: number,
-  rng: Rng,
-): RolledAffix | null {
-  const eligible = affix.tiers.filter((t) => t.ilvl <= itemLevel);
+type Affix = Affixes[number];
+
+/** Цель фильтра аффиксов по типу предмета (и база, и Item подходят). */
+export interface AffixTarget { kind: string; slot?: string; attackType?: string; damageKind?: string }
+
+/** Цель из базы (сужение дискриминированного union). */
+function affixTargetOf(base: ItemsBase[number]): AffixTarget {
+  const t: AffixTarget = { kind: base.kind };
+  if ('slot' in base) t.slot = base.slot;
+  if (base.kind === 'weapon') { t.attackType = base.attackType; t.damageKind = base.damageKind; }
+  return t;
+}
+
+/** Токен appliesTo/exclude совпал с предметом? Вид / слот / грань оружия (weapon.melee|physical|…). */
+function tokenMatches(tok: string, t: AffixTarget): boolean {
+  if (tok === t.kind) return true;
+  if (t.slot && tok === t.slot) return true;
+  if (t.kind === 'weapon') {
+    if (t.attackType && tok === `weapon.${t.attackType}`) return true;
+    if (t.damageKind && tok === `weapon.${t.damageKind}`) return true;
+  }
+  return false;
+}
+/** Аффикс подходит предмету: exclude перебивает, пустой appliesTo = любой. */
+function affixFits(affix: Affix, t: AffixTarget): boolean {
+  if (affix.exclude.length && affix.exclude.some((x) => tokenMatches(x, t))) return false;
+  if (affix.appliesTo.length === 0) return true;
+  return affix.appliesTo.some((x) => tokenMatches(x, t));
+}
+type AffixSpec = { stat: string; modKind: 'flat' | 'increased'; tiers: { min: number; max: number; ilvl: number }[] };
+/** Стат-моды аффикса: мультистат mods[] либо одностатовый stat+tiers. */
+function affixSpecs(affix: Affix): AffixSpec[] {
+  if (affix.mods && affix.mods.length) return affix.mods;
+  if (affix.stat && affix.tiers.length) return [{ stat: affix.stat, modKind: affix.modKind, tiers: affix.tiers }];
+  return [];
+}
+/** Есть ли у аффикса хоть один тир, доступный на этом ilvl (иначе не берём в пул). */
+function affixEligible(affix: Affix, itemLevel: number): boolean {
+  return affixSpecs(affix).some((s) => s.tiers.some((t) => t.ilvl <= itemLevel));
+}
+function rollSpec(spec: AffixSpec, itemLevel: number, rng: Rng): RolledAffix['modifier'] | null {
+  const eligible = spec.tiers.filter((t) => t.ilvl <= itemLevel);
   if (eligible.length === 0) return null;
   const tier = eligible[eligible.length - 1]!; // лучший доступный тир
   const raw = rng.float(tier.min, tier.max);
-  const value = ATTR_STATS.has(affix.stat) ? Math.ceil(raw) : Math.round(raw * 100) / 100;
-  return {
-    affixId: affix.id,
-    kind: affix.kind,
-    modifier: { stat: affix.stat, kind: affix.modKind, value },
-  };
+  const value = ATTR_STATS.has(spec.stat) ? Math.ceil(raw) : Math.round(raw * 100) / 100;
+  return { stat: spec.stat, kind: spec.modKind, value };
+}
+/** Один аффикс → 1+ RolledAffix (мультистат = несколько записей с общим affixId). */
+function rollAffixMods(affix: Affix, itemLevel: number, rng: Rng): RolledAffix[] {
+  const out: RolledAffix[] = [];
+  for (const spec of affixSpecs(affix)) {
+    const m = rollSpec(spec, itemLevel, rng);
+    if (m) out.push({ affixId: affix.id, kind: affix.kind, modifier: m });
+  }
+  return out;
+}
+/** Взвешенный выбор аффикса по `weight` (нулевая сумма → равномерно). */
+function weightedPickAffix(pool: Affix[], rng: Rng): Affix | undefined {
+  if (pool.length === 0) return undefined;
+  const total = pool.reduce((s, a) => s + Math.max(0, a.weight), 0);
+  if (total <= 0) return pool[rng.int(0, pool.length - 1)];
+  let roll = rng.next() * total;
+  for (const a of pool) { roll -= Math.max(0, a.weight); if (roll < 0) return a; }
+  return pool[pool.length - 1];
+}
+
+/**
+ * Катит аффиксы по правилам D2: пул фильтруется по ТИПУ предмета (appliesTo/exclude), ilvl и гейту
+ * magic/rare; общее число = rng(minAffixes,maxAffixes) распределяется по префиксам/суффиксам в
+ * пределах maxPrefix/maxSuffix; выбор взвешенный по weight; из одной группы — не больше одного.
+ */
+export function rollAffixes(
+  affixes: Affixes,
+  target: AffixTarget,
+  rarity: Rarity,
+  slots: { minAffixes: number; maxAffixes: number; maxPrefix: number; maxSuffix: number },
+  itemLevel: number,
+  rng: Rng,
+): RolledAffix[] {
+  const rareGate = (a: Affix): boolean => (rarity === 'magic' ? a.onMagic : rarity === 'rare' ? a.onRare : true);
+  const usable = affixes.filter((a) => a.enabled !== false && rareGate(a) && affixFits(a, target) && affixEligible(a, itemLevel));
+  let prefixes = usable.filter((a) => a.kind === 'prefix');
+  let suffixes = usable.filter((a) => a.kind === 'suffix');
+  const total = Math.max(0, rng.int(slots.minAffixes, slots.maxAffixes));
+  const out: RolledAffix[] = [];
+  let nP = 0, nS = 0;
+  for (let i = 0; i < total; i++) {
+    const canP = nP < slots.maxPrefix && prefixes.length > 0;
+    const canS = nS < slots.maxSuffix && suffixes.length > 0;
+    if (!canP && !canS) break;
+    const asPrefix = canP && canS ? rng.next() < 0.5 : canP;
+    const pick = weightedPickAffix(asPrefix ? prefixes : suffixes, rng);
+    if (!pick) break;
+    const keep = (a: Affix): boolean => a.id !== pick.id && !(pick.group && a.group === pick.group);
+    prefixes = prefixes.filter(keep);
+    suffixes = suffixes.filter(keep);
+    if (asPrefix) nP++; else nS++;
+    out.push(...rollAffixMods(pick, itemLevel, rng));
+  }
+  return out;
 }
 
 /**
@@ -257,8 +325,10 @@ export function generateItem(
   const tier = isConsumable ? undefined : pickTierClamped(opts.tiers, ilvl, base.minTier, base.maxTier);
   const effRarity: Rarity = isConsumable ? 'normal' : rarity === 'unique' ? 'rare' : rarity;
   const rDef = opts.rarities.find((x) => x.id === effRarity);
-  const count = isConsumable ? 0 : rng.int(rDef?.minAffixes ?? 0, rDef?.maxAffixes ?? 0);
-  const rolled = rollAffixes(affixes, count, ilvl, rng);
+  const rolled = isConsumable ? [] : rollAffixes(
+    affixes, affixTargetOf(base), effRarity,
+    { minAffixes: rDef?.minAffixes ?? 0, maxAffixes: rDef?.maxAffixes ?? 0, maxPrefix: rDef?.maxPrefix ?? 0, maxSuffix: rDef?.maxSuffix ?? 0 },
+    ilvl, rng);
 
   return buildItem(base, {
     rarity: effRarity,

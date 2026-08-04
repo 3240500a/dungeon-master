@@ -54,7 +54,48 @@ describe('enabled-фильтры генерации (тумблер активн
   it('rollAffixes: все аффиксы выключены → пустой ролл', () => {
     const rng = createRng(7);
     const off = affixes.map((a) => ({ ...a, enabled: false }));
-    expect(rollAffixes(off, 3, 99, rng)).toEqual([]);
+    const slots = { minAffixes: 3, maxAffixes: 3, maxPrefix: 3, maxSuffix: 3 };
+    expect(rollAffixes(off, { kind: 'weapon', slot: 'weapon', attackType: 'melee', damageKind: 'physical' }, 'rare', slots, 99, rng)).toEqual([]);
+  });
+
+  describe('rollAffixes: правила D2', () => {
+    const wpn = { kind: 'weapon', slot: 'weapon', attackType: 'melee', damageKind: 'physical' };
+    const magic = { minAffixes: 2, maxAffixes: 2, maxPrefix: 1, maxSuffix: 1 };
+    const rare = { minAffixes: 6, maxAffixes: 6, maxPrefix: 3, maxSuffix: 3 };
+    const kindOf = (id: string): string => affixes.find((a) => a.id === id)?.kind ?? '';
+    const counts = (r: ReturnType<typeof rollAffixes>): { p: number; s: number } => {
+      const ids = new Set(r.map((a) => a.affixId));
+      return { p: [...ids].filter((id) => kindOf(id) === 'prefix').length, s: [...ids].filter((id) => kindOf(id) === 'suffix').length };
+    };
+
+    it('лимиты префикс/суффикс: magic ≤1+≤1, rare ≤3+3', () => {
+      const rng = createRng(11);
+      for (let i = 0; i < 300; i++) {
+        const m = counts(rollAffixes(affixes, wpn, 'magic', magic, 99, rng));
+        expect(m.p).toBeLessThanOrEqual(1); expect(m.s).toBeLessThanOrEqual(1);
+        const r = counts(rollAffixes(affixes, wpn, 'rare', rare, 99, rng));
+        expect(r.p).toBeLessThanOrEqual(3); expect(r.s).toBeLessThanOrEqual(3);
+      }
+    });
+
+    it('appliesTo: аффикс только для брони не падает на оружие', () => {
+      const armorOnly = affixes.map((a) => (a.kind === 'prefix' ? { ...a, appliesTo: ['armor'] } : a));
+      const rng = createRng(5);
+      for (let i = 0; i < 100; i++) {
+        const r = rollAffixes(armorOnly, wpn, 'rare', rare, 99, rng);
+        expect(r.every((x) => armorOnly.find((a) => a.id === x.affixId)?.kind !== 'prefix')).toBe(true);
+      }
+    });
+
+    it('группа: не больше одного аффикса из одной группы', () => {
+      const grouped = affixes.map((a) => (a.kind === 'suffix' ? { ...a, group: 'g1' } : a));
+      const rng = createRng(9);
+      for (let i = 0; i < 100; i++) {
+        const r = rollAffixes(grouped, wpn, 'rare', rare, 99, rng);
+        const suf = new Set(r.filter((x) => grouped.find((a) => a.id === x.affixId)?.kind === 'suffix').map((x) => x.affixId));
+        expect(suf.size).toBeLessThanOrEqual(1);
+      }
+    });
   });
 
   it('generateItem: все уники выключены → редкость никогда не unique (даунгрейд до rare)', () => {

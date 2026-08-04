@@ -382,21 +382,43 @@ export const itemsBaseSchema = z.array(
 );
 
 // ── affixes ─────────────────────────────────────────────────────────────────
+const affixTierSchema = z.object({
+  min: z.number(),
+  max: z.number(),
+  ilvl: z.number().int().min(1),
+});
+/** Один стат-мод аффикса (для мультистатовых аффиксов; одностатовые задают stat+tiers на верхнем уровне). */
+const affixModSchema = z.object({
+  stat: z.string(),
+  modKind: z.enum(['flat', 'increased']).default('flat'),
+  tiers: z.array(affixTierSchema),
+});
 export const affixesSchema = z.array(
   z.object({
     id: z.string(),
     /** Активен ли аффикс (выключенный не роллится на предметах). */
     enabled: z.boolean().default(true),
     kind: z.enum(['prefix', 'suffix']),
-    stat: z.string(),
-    modKind: z.enum(['flat', 'increased']),
-    tiers: z.array(
-      z.object({
-        min: z.number(),
-        max: z.number(),
-        ilvl: z.number().int().min(1),
-      }),
-    ),
+    /** Слово-имя (D2: magic = слово-префикс + база + слово-суффикс; rare берёт из пула имён). */
+    word: z.string().default(''),
+    /** Типы предметов, на которых аффикс МОЖЕТ появиться (пусто = любой): вид `weapon|armor|shield|
+     *  jewelry`, грань оружия `weapon.melee|weapon.ranged|weapon.physical|weapon.magical`, или слот
+     *  `helm|chest|gloves|boots|belt|offhand|ring|amulet`. */
+    appliesTo: z.array(z.string()).default([]),
+    /** Типы-исключения (перебивают appliesTo). */
+    exclude: z.array(z.string()).default([]),
+    /** Группа взаимоисключения — на предмете не больше одного аффикса из группы (пусто = без группы). */
+    group: z.string().default(''),
+    /** Частота появления (вес взвешенного выбора). */
+    weight: z.number().min(0).default(1),
+    /** Может ли аффикс появляться на magic / rare. */
+    onMagic: z.boolean().default(true),
+    onRare: z.boolean().default(true),
+    // Одностатовый аффикс: stat + modKind + tiers. Мультистатовый: mods[] (тогда stat/tiers не нужны).
+    stat: z.string().optional(),
+    modKind: z.enum(['flat', 'increased']).default('flat'),
+    tiers: z.array(affixTierSchema).default([]),
+    mods: z.array(affixModSchema).optional(),
   }),
 );
 
@@ -530,6 +552,10 @@ export const raritiesSchema = z.array(
     threshold: z.number().min(0).max(1),
     minAffixes: z.number().int().min(0),
     maxAffixes: z.number().int().min(0),
+    /** Лимиты префиксов/суффиксов (D2): magic 1/1, rare 3/3. Общее число аффиксов = rng(min,max),
+     *  распределяется по префиксам/суффиксам в пределах этих капов. */
+    maxPrefix: z.number().int().min(0).default(0),
+    maxSuffix: z.number().int().min(0).default(0),
     /** Множитель цены покупки/продажи. */
     priceMult: z.number().min(0).default(1),
   }),

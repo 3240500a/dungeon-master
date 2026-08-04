@@ -115,7 +115,13 @@ export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, r
   const cost = reg.get('balance').forgePrices.rerollAffix;
   if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
   save.gold -= cost;
-  item.affixes = rollAffixes(reg.get('affixes'), item.affixes.length || 1, item.itemLevel, rng);
+  const rDef = reg.get('rarities').find((r) => r.id === item.rarity);
+  item.affixes = rollAffixes(
+    reg.get('affixes'),
+    { kind: item.kind ?? '', slot: item.slot, attackType: item.attackType, damageKind: item.damageKind },
+    item.rarity,
+    { minAffixes: rDef?.minAffixes ?? 1, maxAffixes: rDef?.maxAffixes ?? 1, maxPrefix: rDef?.maxPrefix ?? 3, maxSuffix: rDef?.maxSuffix ?? 3 },
+    item.itemLevel, rng);
   return { ok: true };
 }
 

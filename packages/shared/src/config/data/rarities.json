@@ -1,6 +1,6 @@
 [
-  { "id": "normal", "name": "Обычный", "color": "#d8d2c2", "threshold": 1.0, "minAffixes": 0, "maxAffixes": 0, "priceMult": 1 },
-  { "id": "magic", "name": "Магический", "color": "#6f9bcf", "threshold": 0.40, "minAffixes": 1, "maxAffixes": 2, "priceMult": 1.6 },
-  { "id": "rare", "name": "Редкий", "color": "#dca94b", "threshold": 0.12, "minAffixes": 3, "maxAffixes": 5, "priceMult": 2.4 },
-  { "id": "unique", "name": "Уникальный", "color": "#c9702e", "threshold": 0.02, "minAffixes": 0, "maxAffixes": 0, "priceMult": 4 }
+  { "id": "normal", "name": "Обычный", "color": "#d8d2c2", "threshold": 1.0, "minAffixes": 0, "maxAffixes": 0, "maxPrefix": 0, "maxSuffix": 0, "priceMult": 1 },
+  { "id": "magic", "name": "Магический", "color": "#6f9bcf", "threshold": 0.40, "minAffixes": 1, "maxAffixes": 2, "maxPrefix": 1, "maxSuffix": 1, "priceMult": 1.6 },
+  { "id": "rare", "name": "Редкий", "color": "#dca94b", "threshold": 0.12, "minAffixes": 3, "maxAffixes": 5, "maxPrefix": 3, "maxSuffix": 3, "priceMult": 2.4 },
+  { "id": "unique", "name": "Уникальный", "color": "#c9702e", "threshold": 0.02, "minAffixes": 0, "maxAffixes": 0, "maxPrefix": 0, "maxSuffix": 0, "priceMult": 4 }
 ]

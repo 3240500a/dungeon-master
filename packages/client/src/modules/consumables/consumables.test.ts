@@ -29,9 +29,9 @@ describe('расходники', () => {
   it('лечение клампится по макс. HP и не тратится при полном HP', () => {
     const { app, state } = makeApp();
     const max = state.derived().maxHp;
-    state.hp = 10;
+    state.hp = max - 5; // почти полное — любое зелье перекроет остаток → кламп по максимуму (балансо-независимо)
     expect(applyUse(app, pot('healing-potion'))).toBe(true);
-    expect(state.hp).toBe(max); // heal 140 + 40% → с запасом, кламп по максимуму
+    expect(state.hp).toBe(max); // лечение клампится по максимуму, не перелечивает
 
     state.hp = max;
     expect(applyUse(app, pot('healing-potion'))).toBe(false); // полное HP — эффекта нет
@@ -59,7 +59,7 @@ describe('расходники', () => {
     state.save.equipment.belt = pot('leather-belt'); // beltSlots = 4
     expect(beltCapacity(app)).toBe(4);
     const max = state.derived().maxHp;
-    state.hp = 10;
+    state.hp = max - 5; // почти полное — питьё гарантированно доводит до максимума (балансо-независимо)
     state.save.belt = [pot('healing-potion'), null, null, null];
     state.save.inventory = [pot('healing-potion')]; // запас для автопополнения
 
