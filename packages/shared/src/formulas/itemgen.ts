@@ -16,7 +16,7 @@ const TIER_SCALED = new Set(['minDamage', 'maxDamage', 'armor']);
  * сортируется по minItemLevel; берётся высший тир ≤ ilvl, но не ниже minTier и не
  * выше maxTier базы. Так «Ржавый нож» не станет Мифическим, а «мифрил» — Сломанным.
  */
-function pickTierClamped(
+export function pickTierClamped(
   tiers: ItemTiers | undefined,
   itemLevel: number,
   minTierId: string,
@@ -301,10 +301,10 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: string[] },
+  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: string[]; forceRarity?: Rarity },
   rng: Rng,
 ): Item {
-  const rarity = rollRarity(opts.dropBias, rng, opts.rarities);
+  const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
   // Эффективный itemLevel дропа = уровень вызова (глубина/сложность), но не ниже
   // itemLevel самой базы. Влияет на тир (зажатый диапазоном базы), аффиксы, цену.
   const dropIlvl = Math.max(1, Math.round(opts.itemLevel));

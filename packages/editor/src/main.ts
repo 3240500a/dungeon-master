@@ -5,6 +5,7 @@ import { mountFloorPreview } from './floorPreview.js';
 import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
 import { renderSimPage } from './sim.js';
 import { renderRunGenPage } from './runGen.js';
+import { renderItemGenPage } from './itemGen.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 
@@ -115,7 +116,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' = 'config';
 /** Активная подветка balance (её страница-срез). */
 let balanceGroup: string = balanceGroupsFull[0]!.title;
 
@@ -335,6 +336,13 @@ function render(): void {
   runBtn.addEventListener('click', () => { view = 'rungen'; render(); });
   nav.appendChild(runBtn);
 
+  // Отдельная вкладка-инструмент: генератор предметов (песочница дропа).
+  const itemGenBtn = document.createElement('button');
+  itemGenBtn.textContent = '🎲 Генератор предметов';
+  itemGenBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'itemgen' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  itemGenBtn.addEventListener('click', () => { view = 'itemgen'; render(); });
+  nav.appendChild(itemGenBtn);
+
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
   const covered = new Set(NAV_GROUPS.flatMap(groupKeys));
   const extra = (Object.keys(configSchemas) as ConfigKey[]).filter((k) => !covered.has(k));
@@ -395,6 +403,7 @@ function render(): void {
   page.style.cssText = 'flex:1;min-width:0;min-height:0;overflow-y:auto;padding-right:6px';
   if (view === 'sim') renderSimPage(page, data);
   else if (view === 'rungen') renderRunGenPage(page, data);
+  else if (view === 'itemgen') renderItemGenPage(page, data);
   else renderPage(page);
 
   layout.append(nav, page);
