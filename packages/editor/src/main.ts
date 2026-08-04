@@ -130,6 +130,10 @@ fieldEnumSources.requireArmorClass = armorClassIds;
 // physSub / weight — выпадашки из конфигов физ-подтипов и весов.
 fieldEnumSources.physSub = () => ((data['phys-subtypes'] as { id: string }[]) ?? []).map((s) => s.id);
 fieldEnumSources.weight = () => ((data['weapon-weights'] as { id: string }[]) ?? []).map((w) => w.id);
+// appliesTo / exclude (у аффикса) — мультивыбор токенов типа предмета (вид / грань оружия / слот).
+const AFFIX_TARGETS = ['weapon', 'weapon.melee', 'weapon.ranged', 'weapon.physical', 'weapon.magical', 'armor', 'shield', 'jewelry', 'helm', 'chest', 'gloves', 'boots', 'belt', 'offhand', 'ring', 'amulet'];
+fieldEnumSources.appliesTo = () => AFFIX_TARGETS;
+fieldEnumSources.exclude = () => AFFIX_TARGETS;
 // biomeId (в этажах) — выпадашка из конфига биомов.
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
