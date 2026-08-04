@@ -1,66 +1,1118 @@
 [
   {
-    "id": "of-strength", "kind": "suffix", "stat": "strength", "modKind": "flat",
-    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 8, "ilvl": 5 }]
+    "id": "jagged",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Зазубренный",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "dmg-min",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "minDamage",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 2,
+        "ilvl": 1
+      },
+      {
+        "min": 3,
+        "max": 5,
+        "ilvl": 8
+      },
+      {
+        "min": 6,
+        "max": 10,
+        "ilvl": 20
+      }
+    ]
   },
   {
-    "id": "of-dexterity", "kind": "suffix", "stat": "dexterity", "modKind": "flat",
-    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 8, "ilvl": 5 }]
+    "id": "sharp",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Острый",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "dmg-max",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "maxDamage",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 3,
+        "ilvl": 1
+      },
+      {
+        "min": 4,
+        "max": 7,
+        "ilvl": 5
+      },
+      {
+        "min": 8,
+        "max": 14,
+        "ilvl": 16
+      }
+    ]
   },
   {
-    "id": "of-intelligence", "kind": "suffix", "stat": "intelligence", "modKind": "flat",
-    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 8, "ilvl": 5 }]
+    "id": "cruel",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Жестокий",
+    "appliesTo": [
+      "weapon.physical"
+    ],
+    "exclude": [],
+    "group": "ed",
+    "weight": 0.7,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "physPct",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.1,
+        "max": 0.2,
+        "ilvl": 1
+      },
+      {
+        "min": 0.2,
+        "max": 0.35,
+        "ilvl": 10
+      },
+      {
+        "min": 0.35,
+        "max": 0.6,
+        "ilvl": 24
+      }
+    ]
   },
   {
-    "id": "hearty", "kind": "prefix", "stat": "maxHp", "modKind": "flat",
-    "tiers": [{ "min": 5, "max": 12, "ilvl": 1 }, { "min": 13, "max": 25, "ilvl": 5 }]
+    "id": "merciless",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Беспощадный",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "ed",
+    "weight": 0.4,
+    "onMagic": false,
+    "onRare": true,
+    "stat": "damagePct",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.08,
+        "max": 0.15,
+        "ilvl": 5
+      },
+      {
+        "min": 0.15,
+        "max": 0.3,
+        "ilvl": 20
+      }
+    ]
   },
   {
-    "id": "sharp", "kind": "prefix", "stat": "maxDamage", "modKind": "flat",
-    "tiers": [{ "min": 1, "max": 3, "ilvl": 1 }, { "min": 4, "max": 7, "ilvl": 5 }]
+    "id": "flaming",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Пламенный",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "add-fire",
+    "weight": 0.8,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "addFire",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 2,
+        "max": 5,
+        "ilvl": 1
+      },
+      {
+        "min": 5,
+        "max": 12,
+        "ilvl": 5
+      },
+      {
+        "min": 10,
+        "max": 22,
+        "ilvl": 18
+      }
+    ]
   },
   {
-    "id": "deadly", "kind": "prefix", "stat": "critChance", "modKind": "flat",
-    "tiers": [{ "min": 0.02, "max": 0.05, "ilvl": 1 }]
+    "id": "frozen",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Морозный",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "add-cold",
+    "weight": 0.8,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "addCold",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 2,
+        "max": 5,
+        "ilvl": 1
+      },
+      {
+        "min": 5,
+        "max": 12,
+        "ilvl": 5
+      },
+      {
+        "min": 10,
+        "max": 22,
+        "ilvl": 18
+      }
+    ]
   },
   {
-    "id": "precise", "kind": "suffix", "stat": "accuracy", "modKind": "flat",
-    "tiers": [{ "min": 5, "max": 15, "ilvl": 1 }, { "min": 15, "max": 35, "ilvl": 5 }]
+    "id": "shocking",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Грозовой",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "add-light",
+    "weight": 0.8,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "addLightning",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 7,
+        "ilvl": 1
+      },
+      {
+        "min": 4,
+        "max": 16,
+        "ilvl": 5
+      },
+      {
+        "min": 8,
+        "max": 28,
+        "ilvl": 18
+      }
+    ]
   },
   {
-    "id": "evasive", "kind": "suffix", "stat": "evade", "modKind": "flat",
-    "tiers": [{ "min": 5, "max": 12, "ilvl": 1 }, { "min": 12, "max": 28, "ilvl": 5 }]
+    "id": "venomous",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Ядовитый",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "add-poison",
+    "weight": 0.8,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "addPoison",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 2,
+        "max": 4,
+        "ilvl": 1
+      },
+      {
+        "min": 4,
+        "max": 10,
+        "ilvl": 5
+      },
+      {
+        "min": 9,
+        "max": 18,
+        "ilvl": 18
+      }
+    ]
   },
   {
-    "id": "flaming", "kind": "prefix", "stat": "addFire", "modKind": "flat",
-    "tiers": [{ "min": 2, "max": 5, "ilvl": 1 }, { "min": 5, "max": 12, "ilvl": 5 }]
+    "id": "deadly",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Смертоносный",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "crit",
+    "weight": 0.5,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "critChance",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.02,
+        "max": 0.05,
+        "ilvl": 1
+      },
+      {
+        "min": 0.05,
+        "max": 0.09,
+        "ilvl": 16
+      }
+    ]
   },
   {
-    "id": "frozen", "kind": "prefix", "stat": "addCold", "modKind": "flat",
-    "tiers": [{ "min": 2, "max": 5, "ilvl": 1 }, { "min": 5, "max": 12, "ilvl": 5 }]
+    "id": "swift",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Быстрый",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "ias",
+    "weight": 0.4,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "attackSpeed",
+    "modKind": "increased",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.1,
+        "ilvl": 1
+      },
+      {
+        "min": 0.1,
+        "max": 0.18,
+        "ilvl": 16
+      }
+    ]
   },
   {
-    "id": "shocking", "kind": "prefix", "stat": "addLightning", "modKind": "flat",
-    "tiers": [{ "min": 1, "max": 7, "ilvl": 1 }, { "min": 4, "max": 16, "ilvl": 5 }]
+    "id": "plated",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Обшитый",
+    "appliesTo": [
+      "armor",
+      "shield"
+    ],
+    "exclude": [],
+    "group": "def-flat",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "armor",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 3,
+        "max": 8,
+        "ilvl": 1
+      },
+      {
+        "min": 8,
+        "max": 18,
+        "ilvl": 8
+      },
+      {
+        "min": 18,
+        "max": 35,
+        "ilvl": 20
+      }
+    ]
   },
   {
-    "id": "venomous", "kind": "prefix", "stat": "addPoison", "modKind": "flat",
-    "tiers": [{ "min": 2, "max": 4, "ilvl": 1 }, { "min": 4, "max": 10, "ilvl": 5 }]
+    "id": "fortified",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Укреплённый",
+    "appliesTo": [
+      "armor",
+      "shield"
+    ],
+    "exclude": [],
+    "group": "ed-def",
+    "weight": 0.6,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "armor",
+    "modKind": "increased",
+    "tiers": [
+      {
+        "min": 0.1,
+        "max": 0.2,
+        "ilvl": 5
+      },
+      {
+        "min": 0.2,
+        "max": 0.4,
+        "ilvl": 20
+      }
+    ]
   },
   {
-    "id": "of-fire-ward", "kind": "suffix", "stat": "resFire", "modKind": "flat",
-    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+    "id": "hearty",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Крепкий",
+    "appliesTo": [
+      "armor",
+      "shield",
+      "jewelry"
+    ],
+    "exclude": [],
+    "group": "life",
+    "weight": 1.2,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "maxHp",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 5,
+        "max": 12,
+        "ilvl": 1
+      },
+      {
+        "min": 13,
+        "max": 25,
+        "ilvl": 5
+      },
+      {
+        "min": 26,
+        "max": 45,
+        "ilvl": 18
+      }
+    ]
   },
   {
-    "id": "of-cold-ward", "kind": "suffix", "stat": "resCold", "modKind": "flat",
-    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+    "id": "arcane",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Чародейский",
+    "appliesTo": [
+      "armor",
+      "jewelry",
+      "weapon.magical"
+    ],
+    "exclude": [],
+    "group": "mana",
+    "weight": 0.9,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "maxMana",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 5,
+        "max": 12,
+        "ilvl": 1
+      },
+      {
+        "min": 13,
+        "max": 25,
+        "ilvl": 8
+      },
+      {
+        "min": 26,
+        "max": 45,
+        "ilvl": 20
+      }
+    ]
   },
   {
-    "id": "of-storm-ward", "kind": "suffix", "stat": "resLightning", "modKind": "flat",
-    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+    "id": "warlords",
+    "enabled": true,
+    "kind": "prefix",
+    "word": "Полководческий",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "ed",
+    "weight": 0.4,
+    "onMagic": false,
+    "onRare": true,
+    "mods": [
+      {
+        "stat": "physPct",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 0.1,
+            "max": 0.2,
+            "ilvl": 10
+          },
+          {
+            "min": 0.2,
+            "max": 0.35,
+            "ilvl": 24
+          }
+        ]
+      },
+      {
+        "stat": "accuracy",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 10,
+            "max": 25,
+            "ilvl": 10
+          },
+          {
+            "min": 25,
+            "max": 50,
+            "ilvl": 24
+          }
+        ]
+      }
+    ]
   },
   {
-    "id": "of-poison-ward", "kind": "suffix", "stat": "resPoison", "modKind": "flat",
-    "tiers": [{ "min": 0.05, "max": 0.1, "ilvl": 1 }, { "min": 0.1, "max": 0.2, "ilvl": 5 }]
+    "id": "of-strength",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Силы",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "str",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "strength",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 3,
+        "ilvl": 1
+      },
+      {
+        "min": 4,
+        "max": 8,
+        "ilvl": 5
+      },
+      {
+        "min": 9,
+        "max": 15,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-dexterity",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Ловкости",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "dex",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "dexterity",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 3,
+        "ilvl": 1
+      },
+      {
+        "min": 4,
+        "max": 8,
+        "ilvl": 5
+      },
+      {
+        "min": 9,
+        "max": 15,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-intelligence",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Интеллекта",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "int",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "intelligence",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 3,
+        "ilvl": 1
+      },
+      {
+        "min": 4,
+        "max": 8,
+        "ilvl": 5
+      },
+      {
+        "min": 9,
+        "max": 15,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-vitality",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Живучести",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "vit",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "vitality",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 1,
+        "max": 3,
+        "ilvl": 1
+      },
+      {
+        "min": 4,
+        "max": 8,
+        "ilvl": 5
+      },
+      {
+        "min": 9,
+        "max": 15,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-vigor",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Бодрости",
+    "appliesTo": [
+      "armor",
+      "jewelry"
+    ],
+    "exclude": [],
+    "group": "life",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "maxHp",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 5,
+        "max": 12,
+        "ilvl": 1
+      },
+      {
+        "min": 13,
+        "max": 25,
+        "ilvl": 5
+      },
+      {
+        "min": 26,
+        "max": 45,
+        "ilvl": 18
+      }
+    ]
+  },
+  {
+    "id": "precise",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Меткости",
+    "appliesTo": [
+      "weapon",
+      "jewelry"
+    ],
+    "exclude": [],
+    "group": "accuracy",
+    "weight": 0.9,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "accuracy",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 5,
+        "max": 15,
+        "ilvl": 1
+      },
+      {
+        "min": 15,
+        "max": 35,
+        "ilvl": 5
+      },
+      {
+        "min": 35,
+        "max": 60,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "evasive",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Уклонения",
+    "appliesTo": [
+      "armor",
+      "jewelry"
+    ],
+    "exclude": [],
+    "group": "evade",
+    "weight": 0.9,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "evade",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 5,
+        "max": 12,
+        "ilvl": 1
+      },
+      {
+        "min": 12,
+        "max": 28,
+        "ilvl": 5
+      },
+      {
+        "min": 28,
+        "max": 50,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-fire-ward",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Пламегашения",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "res-fire",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "resFire",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.1,
+        "ilvl": 1
+      },
+      {
+        "min": 0.1,
+        "max": 0.2,
+        "ilvl": 5
+      },
+      {
+        "min": 0.2,
+        "max": 0.35,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-cold-ward",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Хладостойкости",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "res-cold",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "resCold",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.1,
+        "ilvl": 1
+      },
+      {
+        "min": 0.1,
+        "max": 0.2,
+        "ilvl": 5
+      },
+      {
+        "min": 0.2,
+        "max": 0.35,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-storm-ward",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Громостойкости",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "res-light",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "resLightning",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.1,
+        "ilvl": 1
+      },
+      {
+        "min": 0.1,
+        "max": 0.2,
+        "ilvl": 5
+      },
+      {
+        "min": 0.2,
+        "max": 0.35,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-poison-ward",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Противоядия",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "res-poison",
+    "weight": 1,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "resPoison",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.1,
+        "ilvl": 1
+      },
+      {
+        "min": 0.1,
+        "max": 0.2,
+        "ilvl": 5
+      },
+      {
+        "min": 0.2,
+        "max": 0.35,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-haste",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Спешки",
+    "appliesTo": [
+      "boots"
+    ],
+    "exclude": [],
+    "group": "frw",
+    "weight": 0.6,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "moveSpeed",
+    "modKind": "increased",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.1,
+        "ilvl": 1
+      },
+      {
+        "min": 0.1,
+        "max": 0.2,
+        "ilvl": 16
+      }
+    ]
+  },
+  {
+    "id": "of-warding",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Ограждения",
+    "appliesTo": [
+      "shield"
+    ],
+    "exclude": [],
+    "group": "block",
+    "weight": 0.7,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "blockChance",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.03,
+        "max": 0.06,
+        "ilvl": 1
+      },
+      {
+        "min": 0.06,
+        "max": 0.12,
+        "ilvl": 16
+      }
+    ]
+  },
+  {
+    "id": "of-regeneration",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Регенерации",
+    "appliesTo": [
+      "armor",
+      "jewelry"
+    ],
+    "exclude": [],
+    "group": "hp-regen",
+    "weight": 0.7,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "hpRegen",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.15,
+        "ilvl": 5
+      },
+      {
+        "min": 0.15,
+        "max": 0.3,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-energy",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Энергии",
+    "appliesTo": [
+      "jewelry",
+      "armor"
+    ],
+    "exclude": [],
+    "group": "mana-regen",
+    "weight": 0.7,
+    "onMagic": true,
+    "onRare": true,
+    "stat": "manaRegen",
+    "modKind": "flat",
+    "tiers": [
+      {
+        "min": 0.05,
+        "max": 0.15,
+        "ilvl": 5
+      },
+      {
+        "min": 0.15,
+        "max": 0.3,
+        "ilvl": 20
+      }
+    ]
+  },
+  {
+    "id": "of-the-elements",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Стихий",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "res-all",
+    "weight": 0.5,
+    "onMagic": false,
+    "onRare": true,
+    "mods": [
+      {
+        "stat": "resFire",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 0.03,
+            "max": 0.06,
+            "ilvl": 10
+          },
+          {
+            "min": 0.06,
+            "max": 0.12,
+            "ilvl": 24
+          }
+        ]
+      },
+      {
+        "stat": "resCold",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 0.03,
+            "max": 0.06,
+            "ilvl": 10
+          },
+          {
+            "min": 0.06,
+            "max": 0.12,
+            "ilvl": 24
+          }
+        ]
+      },
+      {
+        "stat": "resLightning",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 0.03,
+            "max": 0.06,
+            "ilvl": 10
+          },
+          {
+            "min": 0.06,
+            "max": 0.12,
+            "ilvl": 24
+          }
+        ]
+      },
+      {
+        "stat": "resPoison",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 0.03,
+            "max": 0.06,
+            "ilvl": 10
+          },
+          {
+            "min": 0.06,
+            "max": 0.12,
+            "ilvl": 24
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "of-the-ancestors",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Предков",
+    "appliesTo": [],
+    "exclude": [],
+    "group": "all-attr",
+    "weight": 0.4,
+    "onMagic": false,
+    "onRare": true,
+    "mods": [
+      {
+        "stat": "strength",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 1,
+            "max": 2,
+            "ilvl": 8
+          },
+          {
+            "min": 2,
+            "max": 4,
+            "ilvl": 24
+          }
+        ]
+      },
+      {
+        "stat": "dexterity",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 1,
+            "max": 2,
+            "ilvl": 8
+          },
+          {
+            "min": 2,
+            "max": 4,
+            "ilvl": 24
+          }
+        ]
+      },
+      {
+        "stat": "intelligence",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 1,
+            "max": 2,
+            "ilvl": 8
+          },
+          {
+            "min": 2,
+            "max": 4,
+            "ilvl": 24
+          }
+        ]
+      },
+      {
+        "stat": "vitality",
+        "modKind": "flat",
+        "tiers": [
+          {
+            "min": 1,
+            "max": 2,
+            "ilvl": 8
+          },
+          {
+            "min": 2,
+            "max": 4,
+            "ilvl": 24
+          }
+        ]
+      }
+    ]
   }
 ]
