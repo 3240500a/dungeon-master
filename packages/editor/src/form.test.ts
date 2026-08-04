@@ -15,7 +15,7 @@ describe('defaultValue по схемам конфигов', () => {
       if (s._def.typeName === 'ZodArray') {
         expect(() => defaultValue(s._def.type)).not.toThrow();
         const elemTn = s._def.type._def.typeName;
-        // массив ОБЪЕКТОВ → дефолт-элемент объект; массив примитивов (rare-names) — примитив, это ок
+        // массив ОБЪЕКТОВ → дефолт-элемент объект; массив примитивов (строки) — примитив, это ок
         if (elemTn === 'ZodObject' || elemTn === 'ZodDiscriminatedUnion') expect(defaultValue(s._def.type)).toBeTypeOf('object');
       }
     });

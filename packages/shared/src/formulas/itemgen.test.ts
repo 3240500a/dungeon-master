@@ -97,7 +97,7 @@ describe('enabled-фильтры генерации (тумблер активн
       }
     });
 
-    it('имена рарные: имя базы + титул из пула rare-names', () => {
+    it('имена рарные: имя базы + титул «основа эпитет» из двух пулов', () => {
       const rng = createRng(42);
       const rareNames = reg.get('rare-names');
       let sawRare = false;
@@ -105,8 +105,9 @@ describe('enabled-фильтры генерации (тумблер активн
         const item = generateItem(bases, affixes, uniques, { dropBias: 4, itemLevel: 40, tiers, rarities, rareNames }, rng);
         if (item.rarity === 'rare') {
           sawRare = true;
-          expect(rareNames.some((t) => item.name.endsWith(t))).toBe(true); // заканчивается титулом из пула
-          expect(item.name).toContain(' ');                                 // база + титул
+          // заканчивается «<основа> <эпитет>» из пулов nouns×epithets (перед ним — имя базы)
+          const titled = rareNames.nouns.some((n) => rareNames.epithets.some((e) => item.name.endsWith(`${n} ${e}`)));
+          expect(titled).toBe(true);
         }
       }
       expect(sawRare).toBe(true);

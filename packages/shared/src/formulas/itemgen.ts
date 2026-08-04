@@ -78,16 +78,21 @@ function magicName(baseName: string, gender: string | undefined, rolled: RolledA
   if (sufW) name = `${name} ${sufW}`;                        // слово-суффикс (родительный, без склонения)
   return name;
 }
-/** Имя rare-предмета (D2): два случайных слова из пула («Коготь Гибели»); база — в тултипе отдельно. */
 /** Имя раре/уника: имя базы + титул. Титул-прилагательное согласуется по роду базы (declineTier),
- *  титул родительного падежа («Тёмных братьев», «Погибели») инвариантен. Пусто → только база. */
+ *  титул родительного падежа («Тёмных братьев», «Пепел древних») инвариантен. Пусто → только база. */
 function titledName(baseName: string, gender: string | undefined, title: string): string {
   return title ? `${baseName} ${declineTier(title, gender)}` : baseName;
 }
-/** Раре-имя: база + случайный титул из пула («Короткий меч Погибели»). */
-function rareItemName(baseName: string, gender: string | undefined, pool: string[] | undefined, rng: Rng, fallback: string): string {
-  if (!pool || pool.length === 0) return fallback;
-  return titledName(baseName, gender, pool[rng.int(0, pool.length - 1)]!);
+/** Раре-титул (D2): «основа эпитет» — существительное из nouns + род.-падежный эпитет из epithets
+ *  («Пепел» + «древних» → «Пепел древних»). Имя = база + титул («Ручной топор Пепел древних»).
+ *  Нет основ → fallback (тир-имя); есть основы, но нет эпитетов → только основа (одно слово). */
+function rareItemName(baseName: string, gender: string | undefined, pool: { nouns: string[]; epithets: string[] } | undefined, rng: Rng, fallback: string): string {
+  const nouns = pool?.nouns ?? [];
+  if (nouns.length === 0) return fallback;
+  const noun = nouns[rng.int(0, nouns.length - 1)]!;
+  const eps = pool?.epithets ?? [];
+  const title = eps.length ? `${noun} ${eps[rng.int(0, eps.length - 1)]!}` : noun;
+  return titledName(baseName, gender, title);
 }
 
 /** Поля экземпляра, зависящие от вида базы (сужение по kind), включая слот. */
@@ -304,7 +309,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: string[]; forceRarity?: Rarity },
+  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: string[]; epithets: string[] }; forceRarity?: Rarity },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -352,7 +357,7 @@ export function generateItem(
     { minAffixes: rDef?.minAffixes ?? 0, maxAffixes: rDef?.maxAffixes ?? 0, maxPrefix: rDef?.maxPrefix ?? 0, maxSuffix: rDef?.maxSuffix ?? 0 },
     ilvl, rng);
 
-  // Имя (D2): normal — тир-прилагательное; magic — слова аффиксов вокруг базы; rare — 2 слова из пула.
+  // Имя (D2): normal — тир-прилагательное; magic — слова аффиксов вокруг базы; rare — база + «основа эпитет».
   const tierName = tieredName(tier?.name ?? '', base.name, base.gender);
   let displayName = tierName;
   if (effRarity === 'magic') { const mn = magicName(base.name, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word]))); displayName = mn === base.name ? tierName : mn; }
