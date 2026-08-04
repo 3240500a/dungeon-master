@@ -309,12 +309,19 @@ function rollAffixMods(affix: Affix, itemLevel: number, rng: Rng): RolledAffix[]
   return out;
 }
 /** Взвешенный выбор аффикса по `weight` (нулевая сумма → равномерно). */
-function weightedPickAffix(pool: Affix[], rng: Rng): Affix | undefined {
+/** Эффективный вес аффикса на данной базе: базовый `weight` × произведение множителей `tagWeights`,
+ *  чьи токены совпали с базой (PoE2: магическое оружие чаще катает стихии, физическое — физ и т.п.). */
+function affixWeight(a: Affix, t: AffixTarget): number {
+  let w = Math.max(0, a.weight);
+  for (const tw of a.tagWeights) if (tokenMatches(tw.tag, t)) w *= tw.mult;
+  return w;
+}
+function weightedPickAffix(pool: Affix[], t: AffixTarget, rng: Rng): Affix | undefined {
   if (pool.length === 0) return undefined;
-  const total = pool.reduce((s, a) => s + Math.max(0, a.weight), 0);
+  const total = pool.reduce((s, a) => s + affixWeight(a, t), 0);
   if (total <= 0) return pool[rng.int(0, pool.length - 1)];
   let roll = rng.next() * total;
-  for (const a of pool) { roll -= Math.max(0, a.weight); if (roll < 0) return a; }
+  for (const a of pool) { roll -= affixWeight(a, t); if (roll < 0) return a; }
   return pool[pool.length - 1];
 }
 
@@ -343,7 +350,7 @@ export function rollAffixes(
     const canS = nS < slots.maxSuffix && suffixes.length > 0;
     if (!canP && !canS) break;
     const asPrefix = canP && canS ? rng.next() < 0.5 : canP;
-    const pick = weightedPickAffix(asPrefix ? prefixes : suffixes, rng);
+    const pick = weightedPickAffix(asPrefix ? prefixes : suffixes, target, rng);
     if (!pick) break;
     const keep = (a: Affix): boolean => a.id !== pick.id && !(pick.group && a.group === pick.group);
     prefixes = prefixes.filter(keep);

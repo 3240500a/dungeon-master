@@ -203,3 +203,31 @@ describe('generateItem: колбы дропаются normal без аффикс
     expect(sawConsumable).toBe(true);
   });
 });
+
+describe('сочетания аффиксов: теги базы (PoE2) + роли слотов', () => {
+  it('теги базы: стихийный урон чаще на магическом оружии, чем на физическом', () => {
+    const rareSlots = { minAffixes: 6, maxAffixes: 6, maxPrefix: 3, maxSuffix: 3 };
+    const elemental = new Set(['flaming', 'frozen', 'shocking', 'venomous']);
+    const countElem = (damageKind: string): number => {
+      const rng = createRng(5);
+      const target = { kind: 'weapon', slot: 'weapon', attackType: 'melee', damageKind } as const;
+      let n = 0;
+      for (let i = 0; i < 400; i++) if (rollAffixes(affixes, target, 'rare', rareSlots, 40, rng).some((a) => elemental.has(a.affixId))) n++;
+      return n;
+    };
+    expect(countElem('magical')).toBeGreaterThan(countElem('physical')); // tagWeight ×2 на weapon.magical
+  });
+
+  it('роли слотов (PoE2): чистый урон = префикс, резисты/атрибуты = суффикс', () => {
+    const OFFENSE = new Set(['minDamage', 'maxDamage', 'physPct', 'damagePct', 'addFire', 'addCold', 'addLightning', 'addPoison']);
+    const RESATTR = new Set(['resFire', 'resCold', 'resLightning', 'resPoison', 'strength', 'dexterity', 'intelligence', 'vitality']);
+    const statsOf = (a: (typeof affixes)[number]): string[] => (a.mods?.length ? a.mods.map((m) => m.stat) : a.stat ? [a.stat] : []);
+    for (const a of affixes) {
+      const st = statsOf(a);
+      const hasOff = st.some((s) => OFFENSE.has(s));
+      const hasRA = st.some((s) => RESATTR.has(s));
+      if (hasOff && !hasRA) expect(a.kind).toBe('prefix'); // чистый урон — только префикс
+      if (hasRA && !hasOff) expect(a.kind).toBe('suffix'); // резист/атрибут — только суффикс
+    }
+  });
+});

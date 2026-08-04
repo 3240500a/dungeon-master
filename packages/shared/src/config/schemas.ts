@@ -411,6 +411,10 @@ export const affixesSchema = z.array(
     group: z.string().default(''),
     /** Частота появления (вес взвешенного выбора). */
     weight: z.number().min(0).default(1),
+    /** Веса по ТЕГАМ базы (PoE2): для каждого токена базы (kind/слот/грань оружия, напр.
+     *  `weapon.magical`, `weapon.physical`, `armor`) множитель к `weight`. Так магическое оружие
+     *  чаще катает стихии/ману, физическое — физ-аффиксы. Пусто = вес не зависит от базы. */
+    tagWeights: z.array(z.object({ tag: z.string(), mult: z.number().positive() })).default([]),
     /** Может ли аффикс появляться на magic / rare. */
     onMagic: z.boolean().default(true),
     onRare: z.boolean().default(true),

@@ -135,6 +135,8 @@ fieldEnumSources.weight = () => ((data['weapon-weights'] as { id: string }[]) ??
 const AFFIX_TARGETS = ['weapon', 'weapon.melee', 'weapon.ranged', 'weapon.physical', 'weapon.magical', 'armor', 'shield', 'jewelry', 'helm', 'chest', 'gloves', 'boots', 'belt', 'offhand', 'ring', 'amulet'];
 fieldEnumSources.appliesTo = () => AFFIX_TARGETS;
 fieldEnumSources.exclude = () => AFFIX_TARGETS;
+// tag (в affix.tagWeights[]) — тот же токен-набор базы: множитель веса по типу базы (PoE2).
+fieldEnumSources.tag = () => AFFIX_TARGETS;
 // stat (у аффиксов/мультимодов/базовых статов/бафф-зелий) — выпадашка из ВСЕХ статов движка
 // (атрибуты + производные, включая вампиризм/on-kill). Один источник — не дрейфует.
 fieldEnumSources.stat = () => allStatKeys();

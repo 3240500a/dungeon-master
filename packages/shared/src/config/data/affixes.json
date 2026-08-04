@@ -30,7 +30,8 @@
         "max": 10,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "sharp",
@@ -63,7 +64,8 @@
         "max": 14,
         "ilvl": 16
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "cruel",
@@ -96,6 +98,12 @@
         "max": 0.6,
         "ilvl": 24
       }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.physical",
+        "mult": 1.6
+      }
     ]
   },
   {
@@ -123,6 +131,12 @@
         "min": 0.15,
         "max": 0.3,
         "ilvl": 20
+      }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.physical",
+        "mult": 1.6
       }
     ]
   },
@@ -157,6 +171,12 @@
         "max": 22,
         "ilvl": 18
       }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.magical",
+        "mult": 2
+      }
     ]
   },
   {
@@ -189,6 +209,12 @@
         "min": 10,
         "max": 22,
         "ilvl": 18
+      }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.magical",
+        "mult": 2
       }
     ]
   },
@@ -223,6 +249,12 @@
         "max": 28,
         "ilvl": 18
       }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.magical",
+        "mult": 2
+      }
     ]
   },
   {
@@ -256,6 +288,12 @@
         "max": 18,
         "ilvl": 18
       }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.magical",
+        "mult": 2
+      }
     ]
   },
   {
@@ -283,6 +321,12 @@
         "min": 0.05,
         "max": 0.09,
         "ilvl": 16
+      }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.physical",
+        "mult": 1.4
       }
     ]
   },
@@ -312,7 +356,8 @@
         "max": 0.18,
         "ilvl": 16
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "plated",
@@ -346,7 +391,8 @@
         "max": 35,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "fortified",
@@ -375,7 +421,8 @@
         "max": 0.4,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "hearty",
@@ -410,7 +457,8 @@
         "max": 45,
         "ilvl": 18
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "arcane",
@@ -444,6 +492,12 @@
         "min": 26,
         "max": 45,
         "ilvl": 20
+      }
+    ],
+    "tagWeights": [
+      {
+        "tag": "weapon.magical",
+        "mult": 2
       }
     ]
   },
@@ -493,7 +547,8 @@
           }
         ]
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-strength",
@@ -524,7 +579,8 @@
         "max": 15,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-dexterity",
@@ -555,7 +611,8 @@
         "max": 15,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-intelligence",
@@ -586,7 +643,8 @@
         "max": 15,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-vitality",
@@ -617,7 +675,8 @@
         "max": 15,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-vigor",
@@ -652,7 +711,8 @@
         "max": 45,
         "ilvl": 18
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "precise",
@@ -686,7 +746,8 @@
         "max": 60,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "evasive",
@@ -720,7 +781,8 @@
         "max": 50,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-fire-ward",
@@ -755,7 +817,8 @@
         "max": 0.35,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-cold-ward",
@@ -790,7 +853,8 @@
         "max": 0.35,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-storm-ward",
@@ -825,7 +889,8 @@
         "max": 0.35,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-poison-ward",
@@ -860,7 +925,8 @@
         "max": 0.35,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-haste",
@@ -888,7 +954,8 @@
         "max": 0.2,
         "ilvl": 16
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-warding",
@@ -916,7 +983,8 @@
         "max": 0.12,
         "ilvl": 16
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-regeneration",
@@ -945,7 +1013,8 @@
         "max": 0.3,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-energy",
@@ -974,7 +1043,8 @@
         "max": 0.3,
         "ilvl": 20
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-the-elements",
@@ -1056,7 +1126,8 @@
           }
         ]
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-the-ancestors",
@@ -1138,7 +1209,8 @@
           }
         ]
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-leech",
@@ -1166,7 +1238,8 @@
         "max": 0.08,
         "ilvl": 24
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-siphon",
@@ -1194,7 +1267,8 @@
         "max": 0.06,
         "ilvl": 24
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-the-reaper",
@@ -1220,7 +1294,8 @@
         "max": 12,
         "ilvl": 24
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-souls",
@@ -1246,7 +1321,8 @@
         "max": 8,
         "ilvl": 24
       }
-    ]
+    ],
+    "tagWeights": []
   },
   {
     "id": "of-force-wave",
@@ -1266,7 +1342,8 @@
       "level": 3,
       "chance": 0.1,
       "trigger": "hit"
-    }
+    },
+    "tagWeights": []
   },
   {
     "id": "of-retaliation",
@@ -1287,6 +1364,7 @@
       "level": 3,
       "chance": 0.1,
       "trigger": "struck"
-    }
+    },
+    "tagWeights": []
   }
 ]
