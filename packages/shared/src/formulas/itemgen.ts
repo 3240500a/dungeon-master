@@ -79,12 +79,15 @@ function magicName(baseName: string, gender: string | undefined, rolled: RolledA
   return name;
 }
 /** Имя rare-предмета (D2): два случайных слова из пула («Коготь Гибели»); база — в тултипе отдельно. */
-function rareItemName(pool: string[] | undefined, rng: Rng, fallback: string): string {
-  if (!pool || pool.length < 2) return fallback;
-  const i = rng.int(0, pool.length - 1);
-  let j = rng.int(0, pool.length - 1);
-  if (j === i) j = (j + 1) % pool.length;
-  return `${pool[i]} ${pool[j]}`;
+/** Имя раре/уника: имя базы + титул. Титул-прилагательное согласуется по роду базы (declineTier),
+ *  титул родительного падежа («Тёмных братьев», «Погибели») инвариантен. Пусто → только база. */
+function titledName(baseName: string, gender: string | undefined, title: string): string {
+  return title ? `${baseName} ${declineTier(title, gender)}` : baseName;
+}
+/** Раре-имя: база + случайный титул из пула («Короткий меч Погибели»). */
+function rareItemName(baseName: string, gender: string | undefined, pool: string[] | undefined, rng: Rng, fallback: string): string {
+  if (!pool || pool.length === 0) return fallback;
+  return titledName(baseName, gender, pool[rng.int(0, pool.length - 1)]!);
 }
 
 /** Поля экземпляра, зависящие от вида базы (сужение по kind), включая слот. */
@@ -318,7 +321,7 @@ export function generateItem(
       const tier = pickTierClamped(opts.tiers, ilvl, base.minTier, base.maxTier);
       return buildItem(base, {
         rarity: 'unique',
-        name: unique.name,
+        name: titledName(base.name, base.gender, unique.name), // имя базы + титул уника
         itemLevel: ilvl,
         statMult: tier?.statMult ?? 1,
         reqMult: tier?.reqMult ?? 1,
@@ -353,7 +356,7 @@ export function generateItem(
   const tierName = tieredName(tier?.name ?? '', base.name, base.gender);
   let displayName = tierName;
   if (effRarity === 'magic') { const mn = magicName(base.name, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word]))); displayName = mn === base.name ? tierName : mn; }
-  else if (effRarity === 'rare') displayName = rareItemName(opts.rareNames, rng, tierName);
+  else if (effRarity === 'rare') displayName = rareItemName(base.name, base.gender, opts.rareNames, rng, tierName);
 
   return buildItem(base, {
     rarity: effRarity,

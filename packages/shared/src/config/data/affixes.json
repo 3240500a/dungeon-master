@@ -626,6 +626,7 @@
     "word": "Бодрости",
     "appliesTo": [
       "armor",
+      "shield",
       "jewelry"
     ],
     "exclude": [],
@@ -1062,7 +1063,11 @@
     "enabled": true,
     "kind": "suffix",
     "word": "Предков",
-    "appliesTo": [],
+    "appliesTo": [
+      "armor",
+      "shield",
+      "jewelry"
+    ],
     "exclude": [],
     "group": "all-attr",
     "weight": 0.4,

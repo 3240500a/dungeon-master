@@ -97,7 +97,7 @@ describe('enabled-фильтры генерации (тумблер активн
       }
     });
 
-    it('имена D2: rare = два слова из пула rare-names', () => {
+    it('имена рарные: имя базы + титул из пула rare-names', () => {
       const rng = createRng(42);
       const rareNames = reg.get('rare-names');
       let sawRare = false;
@@ -105,9 +105,8 @@ describe('enabled-фильтры генерации (тумблер активн
         const item = generateItem(bases, affixes, uniques, { dropBias: 4, itemLevel: 40, tiers, rarities, rareNames }, rng);
         if (item.rarity === 'rare') {
           sawRare = true;
-          const parts = item.name.split(' ');
-          expect(parts).toHaveLength(2);
-          expect(rareNames).toContain(parts[0]); expect(rareNames).toContain(parts[1]);
+          expect(rareNames.some((t) => item.name.endsWith(t))).toBe(true); // заканчивается титулом из пула
+          expect(item.name).toContain(' ');                                 // база + титул
         }
       }
       expect(sawRare).toBe(true);

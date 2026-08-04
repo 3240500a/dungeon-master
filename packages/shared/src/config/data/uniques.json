@@ -1,12 +1,34 @@
 [
   {
     "id": "gorefang",
-    "name": "Кровожад",
+    "name": "Кровавого клыка",
     "baseId": "short-sword",
     "fixedAffixes": [
       { "kind": "prefix", "modifier": { "stat": "maxDamage", "kind": "flat", "value": 10 } },
       { "kind": "prefix", "modifier": { "stat": "critChance", "kind": "flat", "value": 0.08 } },
       { "kind": "suffix", "modifier": { "stat": "strength", "kind": "flat", "value": 10 } }
+    ]
+  },
+  {
+    "id": "dark-brotherhood",
+    "name": "Тёмных братьев",
+    "baseId": "executioner-axe",
+    "fixedAffixes": [
+      { "kind": "prefix", "modifier": { "stat": "physPct", "kind": "flat", "value": 0.4 } },
+      { "kind": "prefix", "modifier": { "stat": "maxDamage", "kind": "flat", "value": 18 } },
+      { "kind": "suffix", "modifier": { "stat": "lifeLeechPct", "kind": "flat", "value": 0.05 } },
+      { "kind": "suffix", "modifier": { "stat": "strength", "kind": "flat", "value": 15 } }
+    ]
+  },
+  {
+    "id": "eternal-frost",
+    "name": "Вечной стужи",
+    "baseId": "plate-armor",
+    "fixedAffixes": [
+      { "kind": "prefix", "modifier": { "stat": "armor", "kind": "increased", "value": 0.5 } },
+      { "kind": "prefix", "modifier": { "stat": "maxHp", "kind": "flat", "value": 40 } },
+      { "kind": "suffix", "modifier": { "stat": "resCold", "kind": "flat", "value": 0.35 } },
+      { "kind": "suffix", "modifier": { "stat": "resFire", "kind": "flat", "value": 0.2 } }
     ]
   }
 ]
