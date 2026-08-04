@@ -243,7 +243,7 @@ function rollAffixMods(affix: Affix, itemLevel: number, rng: Rng): RolledAffix[]
     const m = rollSpec(spec, itemLevel, rng);
     if (m) out.push({ affixId: affix.id, kind: affix.kind, modifier: m });
   }
-  if (affix.proc) out.push({ affixId: affix.id, kind: affix.kind, proc: { skillId: affix.proc.skillId, level: affix.proc.level, chance: affix.proc.chance } });
+  if (affix.proc) out.push({ affixId: affix.id, kind: affix.kind, proc: { skillId: affix.proc.skillId, level: affix.proc.level, chance: affix.proc.chance, trigger: affix.proc.trigger } });
   return out;
 }
 /** Взвешенный выбор аффикса по `weight` (нулевая сумма → равномерно). */

@@ -164,7 +164,7 @@ export function itemLines(item: Item): string[] {
   }
   for (const a of item.affixes) {
     if (a.modifier) lines.push(fmtMod(a.modifier));
-    else if (a.proc) lines.push(`${Math.round(a.proc.chance * 100)}% скаст «${labels.skill(a.proc.skillId)}» (ур.${a.proc.level}) при ударе`);
+    else if (a.proc) lines.push(`${Math.round(a.proc.chance * 100)}% скаст «${labels.skill(a.proc.skillId)}» (ур.${a.proc.level}) ${a.proc.trigger === 'struck' ? 'при получении удара' : 'при ударе'}`);
   }
   const reqs = Object.entries(item.requirements);
   if (reqs.length) {

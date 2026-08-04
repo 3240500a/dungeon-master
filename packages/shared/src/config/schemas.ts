@@ -425,6 +425,8 @@ export const affixesSchema = z.array(
       skillId: z.string(),
       level: z.number().int().min(1).default(1),
       chance: z.number().min(0).max(1).default(0.1),
+      /** Триггер: 'hit' — когда бьёшь сам; 'struck' — когда бьют тебя. */
+      trigger: z.enum(['hit', 'struck']).default('hit'),
     }).optional(),
   }),
 );

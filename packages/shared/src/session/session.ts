@@ -923,7 +923,7 @@ export class GameSession {
       }
     }
     // Прок «шанс каста при ударе» (не от ударов самого прок-скилла — иначе рекурсия).
-    if (this.rewards && !this.procActive && res.damage > 0) this.rollHitProcs(killer);
+    if (this.rewards && !this.procActive && res.damage > 0) this.rollHitProcs(killer, 'hit');
     if (!res.died) {
       // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
       if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }
@@ -940,13 +940,13 @@ export class GameSession {
 
   /** Прок «шанс каста при ударе»: по экипировке — аффиксы с proc; шанс → executeAbility(скилл, уровень)
    *  минуя ресурс/КД/оружие/замах. Реентранси-гард (procActive) не даёт проку рекурсить от своих ударов. */
-  private rollHitProcs(p: PlayerEntity): void {
+  private rollHitProcs(p: PlayerEntity, trigger: 'hit' | 'struck'): void {
     const snap = this.snaps.get(p.id);
     if (!snap) return;
     for (const it of equippedItems(p.save)) {
       for (const a of it.affixes) {
         const proc = a.proc;
-        if (!proc || !this.rng.chance(proc.chance)) continue;
+        if (!proc || (proc.trigger ?? 'hit') !== trigger || !this.rng.chance(proc.chance)) continue;
         const active = this.activeById(p.save, proc.skillId);
         if (!active) continue;
         this.procActive = true;
@@ -971,6 +971,9 @@ export class GameSession {
     p.hp = Math.max(0, p.hp - dmg);
     if (source && tk.reflectPct > 0) this.reflectToMonster(p, source, Math.round(dmg * tk.reflectPct), tk.reflectElement);
     if (p.hp <= 0) { p.alive = false; this.events.push({ type: 'player-died', playerId: p.id }); return; }
+
+    // Прок «шанс каста при ПОЛУЧЕНИИ удара» (игрок выжил; не рекурсим от прок-ударов).
+    if (this.rewards && !this.procActive && dmg > 0) this.rollHitProcs(p, 'struck');
 
     if (onHit.length) {
       const equipped = equippedItems(p.save);

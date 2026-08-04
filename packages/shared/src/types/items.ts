@@ -116,12 +116,13 @@ export interface ItemBase extends WeaponSignature {
 }
 
 /** Скатанный на предмете аффикс (конкретное значение из диапазона тира). */
-/** Прок «шанс каста при ударе» (D2 chance-to-cast): при ударе с шансом `chance` кастуется
- *  скилл `skillId` на уровне `level`. */
+/** Прок «шанс каста» (D2 chance-to-cast): с шансом `chance` кастуется скилл `skillId` уровня `level`.
+ *  `trigger`: 'hit' — когда сам бьёшь (наносишь урон); 'struck' — когда бьют тебя (получаешь урон). */
 export interface ProcSpec {
   skillId: string;
   level: number;
   chance: number;
+  trigger?: 'hit' | 'struck';
 }
 export interface RolledAffix {
   affixId: string;

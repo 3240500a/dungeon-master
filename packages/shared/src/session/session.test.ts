@@ -139,6 +139,25 @@ describe('GameSession — бой/лут/прокачка', () => {
     expect(hadProj).toBe(true);
   });
 
+  it('прок «при получении удара»: скилл срабатывает, когда бьют игрока', () => {
+    const r = reg();
+    const s = new GameSession(r, 55, 'normal');
+    const save = newBotSave(r, 'warrior');
+    const p = s.addPlayer('p1', save);
+    // struck-прок 100% каста при ПОЛУЧЕНИИ удара (на оружии — триггер решает, не слот)
+    save.equipment.weapon!.affixes.push({ affixId: 'test-struck', kind: 'suffix', proc: { skillId: 'b-wand-a2', level: 1, chance: 1, trigger: 'struck' } });
+    const def = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(3));
+    def.hp = 99999; def.ai = 'melee-chaser'; def.accuracy = 1000; def.minDamage = 3; def.maxDamage = 3; // бьёт слабо, но точно
+    const mp = cellToWorld(7, 6);
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mp.x, y: mp.y }] });
+    let hadProj = false;
+    for (let i = 0; i < 400 && !hadProj && p.alive; i++) {
+      s.tick(1 / 30, { p1: idle });   // игрок стоит; монстр подходит и бьёт → срабатывает прок
+      if (s.world.projectiles.length > 0) hadProj = true;
+    }
+    expect(hadProj).toBe(true);
+  });
+
   it('монстр бьёт с замахом: в первый кадр замаха урона нет, урон проходит по завершении', () => {
     const r = reg();
     const s = new GameSession(r, 555, 'normal');

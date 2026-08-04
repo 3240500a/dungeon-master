@@ -1239,7 +1239,29 @@
     "proc": {
       "skillId": "b-staff-a2",
       "level": 3,
-      "chance": 0.1
+      "chance": 0.1,
+      "trigger": "hit"
+    }
+  },
+  {
+    "id": "of-retaliation",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Возмездия",
+    "appliesTo": [
+      "armor",
+      "shield"
+    ],
+    "exclude": [],
+    "group": "proc-struck",
+    "weight": 0.3,
+    "onMagic": false,
+    "onRare": true,
+    "proc": {
+      "skillId": "b-staff-a2",
+      "level": 3,
+      "chance": 0.1,
+      "trigger": "struck"
     }
   }
 ]
