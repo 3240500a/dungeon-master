@@ -176,6 +176,47 @@
   },
   {
     "kind": "weapon",
+    "id": "short-spear",
+    "name": "Короткое копьё",
+    "gender": "n",
+    "minTier": "t0",
+    "maxTier": "t6",
+    "baseStats": [
+      {
+        "stat": "minDamage",
+        "kind": "flat",
+        "value": 5
+      },
+      {
+        "stat": "maxDamage",
+        "kind": "flat",
+        "value": 11
+      },
+      {
+        "stat": "blockChance",
+        "kind": "flat",
+        "value": 0.05
+      }
+    ],
+    "requirements": {
+      "strength": 14,
+      "dexterity": 12
+    },
+    "gridW": 1,
+    "gridH": 3,
+    "dropWeight": 1,
+    "slot": "weapon",
+    "attackType": "melee",
+    "damageKind": "physical",
+    "weaponClass": "spear",
+    "weight": "light",
+    "physSub": "piercing",
+    "damageType": "physical",
+    "hands": 1,
+    "reachMult": 1.3
+  },
+  {
+    "kind": "weapon",
     "id": "spear",
     "name": "Копьё",
     "gender": "n",
