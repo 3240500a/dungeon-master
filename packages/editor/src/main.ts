@@ -313,6 +313,70 @@ function renderItemTree(list: HTMLElement, arr: unknown[]): void {
   walk(root, '', 0);
 }
 
+// ── Дерево аффиксов: Префиксы/Суффиксы → тема (по group) → аффиксы ─────────────
+const AFFIX_THEME: Record<string, string> = {
+  'dmg-min': 'Урон', 'dmg-max': 'Урон', ed: 'Урон', crit: 'Урон', ias: 'Урон',
+  'add-fire': 'Стихийный урон', 'add-cold': 'Стихийный урон', 'add-light': 'Стихийный урон', 'add-poison': 'Стихийный урон',
+  'def-flat': 'Защита', 'ed-def': 'Защита', life: 'Защита', mana: 'Защита', block: 'Защита', evade: 'Защита', 'hp-regen': 'Защита', 'mana-regen': 'Защита', frw: 'Защита', accuracy: 'Защита',
+  str: 'Атрибуты', dex: 'Атрибуты', int: 'Атрибуты', vit: 'Атрибуты', 'all-attr': 'Атрибуты',
+  'res-fire': 'Сопротивления', 'res-cold': 'Сопротивления', 'res-light': 'Сопротивления', 'res-poison': 'Сопротивления', 'res-all': 'Сопротивления',
+  leech: 'Вампиризм/убийство', 'mana-leech': 'Вампиризм/убийство', 'life-kill': 'Вампиризм/убийство', 'mana-kill': 'Вампиризм/убийство',
+  'proc-cast': 'Проки', 'proc-struck': 'Проки',
+};
+const KIND_LABEL = (a: Record<string, unknown>): string => (a.kind === 'suffix' ? 'Суффиксы' : 'Префиксы');
+const affixTheme = (a: Record<string, unknown>): string => AFFIX_THEME[String(a.group ?? '')] ?? 'Прочее';
+const THEME_ORDER = ['Урон', 'Стихийный урон', 'Защита', 'Атрибуты', 'Сопротивления', 'Вампиризм/убийство', 'Проки', 'Прочее'];
+
+function renderAffixTree(list: HTMLElement, arr: unknown[]): void {
+  // индексы по Префиксы/Суффиксы → тема
+  const groups = new Map<string, Map<string, number[]>>();
+  arr.forEach((e, i) => {
+    const a = e as Record<string, unknown>;
+    const kind = KIND_LABEL(a), theme = affixTheme(a);
+    let tm = groups.get(kind); if (!tm) { tm = new Map(); groups.set(kind, tm); }
+    const arr2 = tm.get(theme) ?? []; arr2.push(i); tm.set(theme, arr2);
+  });
+  // ветку выбранного держим открытой
+  const sel = arr[selectedIndex] as Record<string, unknown> | undefined;
+  if (sel) { expandedTree.add(`affix/${KIND_LABEL(sel)}`); expandedTree.add(`affix/${KIND_LABEL(sel)}/${affixTheme(sel)}`); }
+
+  const leaf = (i: number): void => {
+    const a = arr[i] as Record<string, unknown>;
+    const off = a?.enabled === false, active = i === selectedIndex;
+    const item = document.createElement('div');
+    item.style.cssText = `display:flex;align-items:center;gap:6px;padding:4px 6px;padding-left:34px;cursor:pointer;font-size:13px;border-radius:4px;margin:1px 0;background:${active ? '#2f2f40' : 'transparent'};color:${active ? '#fff' : '#aab4c4'};${off ? 'opacity:0.5' : ''}`;
+    item.appendChild(enabledToggle(a));
+    const lbl = document.createElement('span');
+    lbl.textContent = entryLabel(arr[i], i);
+    lbl.style.cssText = `flex:1;${off ? 'text-decoration:line-through' : ''}`;
+    item.appendChild(lbl);
+    item.addEventListener('click', () => { selectedIndex = i; render(); });
+    list.appendChild(item);
+  };
+  const header = (text: string, key: string, pad: number, bold: boolean): void => {
+    const open = expandedTree.has(key);
+    const row = document.createElement('div');
+    row.textContent = `${open ? '▾' : '▸'} ${text}`;
+    row.style.cssText = `padding:4px 6px;padding-left:${pad}px;cursor:pointer;font-size:13px;color:${bold ? '#cfd0da' : '#aab4c4'};border-radius:4px;font-weight:${bold ? 600 : 400}`;
+    row.addEventListener('click', () => { if (open) expandedTree.delete(key); else expandedTree.add(key); render(); });
+    list.appendChild(row);
+  };
+
+  for (const kind of ['Префиксы', 'Суффиксы']) {
+    const tm = groups.get(kind); if (!tm) continue;
+    const total = [...tm.values()].reduce((s, a) => s + a.length, 0);
+    const kKey = `affix/${kind}`;
+    header(`${kind} (${total})`, kKey, 6, true);
+    if (!expandedTree.has(kKey)) continue;
+    for (const theme of [...tm.keys()].sort((a, b) => THEME_ORDER.indexOf(a) - THEME_ORDER.indexOf(b))) {
+      const idxs = tm.get(theme)!;
+      const tKey = `${kKey}/${theme}`;
+      header(`${theme} (${idxs.length})`, tKey, 20, false);
+      if (expandedTree.has(tKey)) for (const i of idxs) leaf(i);
+    }
+  }
+}
+
 function render(): void {
   app.innerHTML = '';
   const layout = document.createElement('div');
@@ -512,9 +576,11 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   list.appendChild(crud);
 
   const supportsEnabled = schemaHasField(elemSchema, 'enabled');
-  // Дискриминированные массивы (items.base) — дерево категорий; прочие — плоский список.
+  // Дискриминированные массивы (items.base) — дерево категорий; аффиксы — Префиксы/Суффиксы→тема; прочие — плоский список.
   if (isUnion) {
     renderItemTree(list, arr);
+  } else if (current === 'affixes') {
+    renderAffixTree(list, arr);
   } else {
     arr.forEach((entry, i) => {
       const e = entry as Record<string, unknown>;

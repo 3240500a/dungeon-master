@@ -1,4 +1,4 @@
-import { ConfigRegistry, generateItem, pickTierClamped, createRng, type Item, type Rarity, type StatModifier } from '@dm/shared';
+import { ConfigRegistry, generateItem, pickTierClamped, createRng, describeItem, slotSuffix, type Item, type Rarity, type ItemLabels } from '@dm/shared';
 
 /**
  * Вкладка «Генератор предметов» (песочница дропа): выбираешь базу + уровень (+редкость/MF),
@@ -19,24 +19,6 @@ let forceRarity: '' | Rarity = ''; // '' = натуральный ролл
 let dropBias = 1;
 let seed = 1;
 let batch = 1;                   // 1 — одиночная карточка; >1 — распределение
-
-// ── подписи статов (коротко; неизвестный → сырой ключ) ──────────────────────
-const STAT_LABEL: Record<string, string> = {
-  minDamage: 'мин. урон', maxDamage: 'макс. урон', armor: 'броня', maxHp: 'HP', maxMana: 'мана',
-  attackSpeed: 'скор. атаки', moveSpeed: 'скор. бега', critChance: 'крит', accuracy: 'точность', evade: 'уклонение', blockChance: 'блок',
-  strength: 'сила', dexterity: 'ловкость', intelligence: 'интеллект', vitality: 'живучесть',
-  resFire: 'сопр. огню', resCold: 'сопр. холоду', resLightning: 'сопр. молнии', resPoison: 'сопр. яду',
-  addFire: 'урон огнём', addCold: 'урон холодом', addLightning: 'урон молнией', addPoison: 'урон ядом',
-  damagePct: '% ко всему урону', physPct: '% к физ. урону', firePct: '% к огню', coldPct: '% к холоду', lightningPct: '% к молнии', poisonPct: '% к яду',
-  lifeLeechPct: 'вампиризм жизни', manaLeechPct: 'вампиризм маны', lifeOnKill: 'жизнь за убийство', manaOnKill: 'мана за убийство',
-  hpRegen: 'реген HP', manaRegen: 'реген маны',
-};
-const PERCENT = new Set(['critChance', 'blockChance', 'resFire', 'resCold', 'resLightning', 'resPoison', 'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct', 'lifeLeechPct', 'manaLeechPct']);
-const fmtStat = (m: StatModifier): string => {
-  const label = STAT_LABEL[m.stat] ?? m.stat;
-  if (m.kind === 'increased' || PERCENT.has(m.stat)) return `+${Math.round(m.value * 100)}% ${label}`;
-  return `+${Number.isInteger(m.value) ? m.value : m.value.toFixed(2)} ${label}`;
-};
 
 const h = (tag: string, css: string, html = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (html) e.innerHTML = html; return e; };
 
@@ -113,21 +95,20 @@ export function renderItemGenPage(page: HTMLElement, data: Record<string, unknow
     return pickTierClamped(tiers, item.itemLevel, b.minTier, b.maxTier)?.name ?? 'Сломанный';
   };
 
+  // Резолверы имён из живого конфига → единый форматтер describeItem (тот же, что в игре).
+  const R: ItemLabels = {
+    armorClass: (id) => reg.get('armor-classes').find((c) => c.id === id)?.name ?? id,
+    weight: (id) => (reg.get('weapon-weights').find((w) => w.id === id)?.name ?? id).toLowerCase(),
+    physSub: (id) => { const s = reg.get('phys-subtypes').find((x) => x.id === id); return s ? s.name.toLowerCase() : id; },
+    skill: skillName,
+    dmgShort: (dt) => (dt === 'physical' ? (reg.get('damage-kinds').find((k) => k.id === 'physical')?.short ?? 'физ') : (reg.get('magic-subtypes').find((s) => s.id === dt)?.short ?? dt)),
+  };
   function card(item: Item): HTMLElement {
-    const b = baseById(item.baseId);
     const col = rarityColor(item.rarity);
     const box = h('div', `border:1px solid ${col};border-radius:8px;padding:12px 14px;background:#14141c;max-width:460px`);
-    box.appendChild(h('div', `color:${col};font-weight:700;font-size:15px`, item.name));
-    const meta = [`${rarities.find((r) => r.id === item.rarity)?.name ?? item.rarity}`, `тир: ${tierName(item)}`, `ур.предмета ${item.itemLevel}`];
-    if (b) meta.push(kindLabel[b.kind] ?? b.kind);
-    box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:2px 0 8px', meta.join(' · ')));
-    for (const m of item.baseStats) box.appendChild(h('div', 'color:#cfd0da;font-size:12px', fmtStat(m)));
-    for (const a of item.affixes) {
-      if (a.modifier) box.appendChild(h('div', 'color:#7fa7d8;font-size:12px', fmtStat(a.modifier)));
-      else if (a.proc) box.appendChild(h('div', 'color:#c99a48;font-size:12px', `${Math.round(a.proc.chance * 100)}% скаст «${skillName(a.proc.skillId)}» (ур.${a.proc.level}) ${a.proc.trigger === 'struck' ? 'при получении удара' : 'при ударе'}`));
-    }
-    const reqs = Object.entries(item.requirements);
-    if (reqs.length) box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin-top:6px', 'Требует: ' + reqs.map(([k, v]) => `${STAT_LABEL[k] ?? k} ${v}`).join(', ')));
+    box.appendChild(h('div', `color:${col};font-weight:700;font-size:15px`, item.name + slotSuffix(item)));
+    box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:1px 0 8px', `${rarities.find((r) => r.id === item.rarity)?.name ?? item.rarity} · тир: ${tierName(item)}`)); // тир — доп. для песочницы
+    for (const l of describeItem(item, R)) box.appendChild(h('div', `font-size:12px;margin:1px 0;color:${l.affix ? col : '#eaeaea'}`, l.text));
     return box;
   }
 

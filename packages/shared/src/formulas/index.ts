@@ -3,6 +3,7 @@ export * from './stats.js';
 export * from './combat.js';
 export * from './xp.js';
 export * from './itemgen.js';
+export * from './itemDescribe.js';
 export * from './monstergen.js';
 export * from './power.js';
 export * from './skills.js';
