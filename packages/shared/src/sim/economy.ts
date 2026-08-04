@@ -48,7 +48,7 @@ export function buyPrice(item: Item, rarities: Rarities): number {
 }
 
 function itemMods(item: Item): StatModifier[] {
-  return [...item.baseStats, ...item.affixes.map((a) => a.modifier)];
+  return [...item.baseStats, ...item.affixes.flatMap((a) => (a.modifier ? [a.modifier] : []))];
 }
 
 /** Взвешенная оценка «полезности» набора модификаторов с учётом уклона урон/защита. */

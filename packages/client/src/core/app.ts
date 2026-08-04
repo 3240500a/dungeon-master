@@ -94,6 +94,7 @@ export class App {
         const sub = this.config.get('phys-subtypes').find((s) => s.id === id);
         return sub ? `${sub.name.toLowerCase()} → ${debuffLabel(this.config.get('debuffs'), sub.kind).toLowerCase()}` : id;
       },
+      skill: (id) => this.config.get('skill-tree').nodes.find((n) => n.id === id)?.name ?? id,
     });
     // Метаданные каналов урона из ДВУХ конфигов: 'physical' — из damage-kinds (тип урона),
     // стихии (fire/cold/lightning/poison) — из magic-subtypes (маг. подтипы, у них есть ailment).

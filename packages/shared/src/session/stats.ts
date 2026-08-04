@@ -99,7 +99,7 @@ function equipSummary(item: Item, slot: string): EquipSummary {
     armorClass: item.armorClass,
     weight: item.weight,
     physSub: item.physSub,
-    affixes: item.affixes.map((a) => modLabel(a.modifier)),
+    affixes: item.affixes.flatMap((a) => (a.modifier ? [modLabel(a.modifier)] : a.proc ? [`шанс каста ${a.proc.skillId}`] : [])),
   };
 }
 

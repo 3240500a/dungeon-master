@@ -224,9 +224,9 @@ function affixSpecs(affix: Affix): AffixSpec[] {
   if (affix.stat && affix.tiers.length) return [{ stat: affix.stat, modKind: affix.modKind, tiers: affix.tiers }];
   return [];
 }
-/** Есть ли у аффикса хоть один тир, доступный на этом ilvl (иначе не берём в пул). */
+/** Есть ли у аффикса хоть один тир, доступный на этом ilvl, ИЛИ он прок-аффикс (без тиров). */
 function affixEligible(affix: Affix, itemLevel: number): boolean {
-  return affixSpecs(affix).some((s) => s.tiers.some((t) => t.ilvl <= itemLevel));
+  return !!affix.proc || affixSpecs(affix).some((s) => s.tiers.some((t) => t.ilvl <= itemLevel));
 }
 function rollSpec(spec: AffixSpec, itemLevel: number, rng: Rng): RolledAffix['modifier'] | null {
   const eligible = spec.tiers.filter((t) => t.ilvl <= itemLevel);
@@ -243,6 +243,7 @@ function rollAffixMods(affix: Affix, itemLevel: number, rng: Rng): RolledAffix[]
     const m = rollSpec(spec, itemLevel, rng);
     if (m) out.push({ affixId: affix.id, kind: affix.kind, modifier: m });
   }
+  if (affix.proc) out.push({ affixId: affix.id, kind: affix.kind, proc: { skillId: affix.proc.skillId, level: affix.proc.level, chance: affix.proc.chance } });
   return out;
 }
 /** Взвешенный выбор аффикса по `weight` (нулевая сумма → равномерно). */

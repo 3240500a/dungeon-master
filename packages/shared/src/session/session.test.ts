@@ -119,6 +119,26 @@ describe('GameSession — бой/лут/прокачка', () => {
     expect(withKill).toBeGreaterThan(without + 8);
   });
 
+  it('прок «шанс каста при ударе»: скилл срабатывает при ударе (спавнит снаряды)', () => {
+    const r = reg();
+    const s = new GameSession(r, 55, 'normal');
+    const save = newBotSave(r, 'warrior');
+    const p = s.addPlayer('p1', save);
+    // прок 100% каста «Волшебных снарядов» (boomerang → снаряды) при ударе, минуя оружие/ресурс
+    save.equipment.weapon!.affixes.push({ affixId: 'test-proc', kind: 'suffix', proc: { skillId: 'b-wand-a2', level: 1, chance: 1 } });
+    const def = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(3));
+    def.hp = 99999; def.armor = 0; def.evade = 0; def.accuracy = 0; def.minDamage = 0; def.maxDamage = 0;
+    const mp = cellToWorld(7, 6);
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mp.x, y: mp.y }] });
+    let hadProj = false;
+    for (let i = 0; i < 120 && !hadProj; i++) {
+      const m = s.world.monsters[0]; if (!m) break;
+      s.tick(1 / 30, { p1: { ...idle, facing: Math.atan2(m.pos.y - p.pos.y, m.pos.x - p.pos.x), attack: true } });
+      if (s.world.projectiles.length > 0) hadProj = true;
+    }
+    expect(hadProj).toBe(true);
+  });
+
   it('монстр бьёт с замахом: в первый кадр замаха урона нет, урон проходит по завершении', () => {
     const r = reg();
     const s = new GameSession(r, 555, 'normal');

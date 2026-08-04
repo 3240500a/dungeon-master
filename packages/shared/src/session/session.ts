@@ -158,6 +158,8 @@ export class GameSession {
   /** Кэш боевого снимка каждого игрока на текущий тик. */
   private snaps = new Map<string, PlayerSnapshot>();
   private floorCleared = false;
+  /** Идёт исполнение прок-скилла — не рекурсим прок от его же ударов. */
+  private procActive = false;
   /**
    * Начисляет ли сессия золото/XP/дроп при смерти монстра. true — сим (авторитетно).
    * false — клиент: сессия только детектит смерть и эмитит событие, а лут/XP делают
@@ -920,6 +922,8 @@ export class GameSession {
         if (d.manaLeechPct > 0) killer.mana = Math.min(d.maxMana, killer.mana + res.damage * d.manaLeechPct);
       }
     }
+    // Прок «шанс каста при ударе» (не от ударов самого прок-скилла — иначе рекурсия).
+    if (this.rewards && !this.procActive && res.damage > 0) this.rollHitProcs(killer);
     if (!res.died) {
       // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
       if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }
@@ -931,6 +935,23 @@ export class GameSession {
       }
     } else {
       this.killMonster(m, killer);
+    }
+  }
+
+  /** Прок «шанс каста при ударе»: по экипировке — аффиксы с proc; шанс → executeAbility(скилл, уровень)
+   *  минуя ресурс/КД/оружие/замах. Реентранси-гард (procActive) не даёт проку рекурсить от своих ударов. */
+  private rollHitProcs(p: PlayerEntity): void {
+    const snap = this.snaps.get(p.id);
+    if (!snap) return;
+    for (const it of equippedItems(p.save)) {
+      for (const a of it.affixes) {
+        const proc = a.proc;
+        if (!proc || !this.rng.chance(proc.chance)) continue;
+        const active = this.activeById(p.save, proc.skillId);
+        if (!active) continue;
+        this.procActive = true;
+        try { this.executeAbility(p, snap, active, proc.level); } finally { this.procActive = false; }
+      }
     }
   }
 

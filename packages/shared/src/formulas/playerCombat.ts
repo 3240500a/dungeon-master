@@ -43,7 +43,7 @@ function attrScaleBonus(
 export function flatOf(item: Item, stat: string): number {
   let v = 0;
   for (const m of item.baseStats) if (m.stat === stat && m.kind === 'flat') v += m.value;
-  for (const a of item.affixes) if (a.modifier.stat === stat && a.modifier.kind === 'flat') v += a.modifier.value;
+  for (const a of item.affixes) if (a.modifier && a.modifier.stat === stat && a.modifier.kind === 'flat') v += a.modifier.value;
   return v;
 }
 

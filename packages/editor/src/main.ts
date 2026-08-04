@@ -137,6 +137,8 @@ fieldEnumSources.exclude = () => AFFIX_TARGETS;
 // stat (у аффиксов/мультимодов/базовых статов/бафф-зелий) — выпадашка из ВСЕХ статов движка
 // (атрибуты + производные, включая вампиризм/on-kill). Один источник — не дрейфует.
 fieldEnumSources.stat = () => allStatKeys();
+// skillId (у прока «шанс каста при ударе») — выпадашка активных узлов дерева скилов.
+fieldEnumSources.skillId = () => ((data['skill-tree'] as { nodes?: { id: string; kind?: string }[] } | undefined)?.nodes ?? []).filter((n) => n.kind === 'active').map((n) => n.id);
 // biomeId (в этажах) — выпадашка из конфига биомов.
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.

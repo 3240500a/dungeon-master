@@ -419,6 +419,13 @@ export const affixesSchema = z.array(
     modKind: z.enum(['flat', 'increased']).default('flat'),
     tiers: z.array(affixTierSchema).default([]),
     mods: z.array(affixModSchema).optional(),
+    /** Прок «шанс каста при ударе» (D2 CtC): skillId (id активного узла), уровень скилла, шанс 0..1.
+     *  Прок-аффикс обычно без stat/mods (несёт только этот эффект). */
+    proc: z.object({
+      skillId: z.string(),
+      level: z.number().int().min(1).default(1),
+      chance: z.number().min(0).max(1).default(0.1),
+    }).optional(),
   }),
 );
 

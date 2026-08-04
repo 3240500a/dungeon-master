@@ -40,7 +40,7 @@ export function modifiersFromItems(items: Item[]): StatModifier[] {
   const mods: StatModifier[] = [];
   for (const item of items) {
     mods.push(...item.baseStats);
-    for (const affix of item.affixes) mods.push(affix.modifier);
+    for (const affix of item.affixes) if (affix.modifier) mods.push(affix.modifier);
   }
   return mods;
 }

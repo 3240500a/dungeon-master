@@ -110,8 +110,10 @@ export interface ItemLabelResolvers {
   armorClass: (id: string) => string;
   weight: (id: string) => string;
   physSub: (id: string) => string;
+  /** Имя активного скилла по id узла (для прока «шанс каста»). */
+  skill: (id: string) => string;
 }
-let labels: ItemLabelResolvers = { armorClass: (id) => id, weight: (id) => id, physSub: (id) => id };
+let labels: ItemLabelResolvers = { armorClass: (id) => id, weight: (id) => id, physSub: (id) => id, skill: (id) => id };
 export function setItemLabelResolvers(r: ItemLabelResolvers): void {
   labels = r;
 }
@@ -160,7 +162,10 @@ export function itemLines(item: Item): string[] {
     if (hasDmg && (m === minD || m === maxD)) continue;
     lines.push(fmtMod(m));
   }
-  for (const a of item.affixes) lines.push(fmtMod(a.modifier));
+  for (const a of item.affixes) {
+    if (a.modifier) lines.push(fmtMod(a.modifier));
+    else if (a.proc) lines.push(`${Math.round(a.proc.chance * 100)}% скаст «${labels.skill(a.proc.skillId)}» (ур.${a.proc.level}) при ударе`);
+  }
   const reqs = Object.entries(item.requirements);
   if (reqs.length) {
     lines.push(

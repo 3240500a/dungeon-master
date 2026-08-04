@@ -1222,5 +1222,24 @@
         "ilvl": 24
       }
     ]
+  },
+  {
+    "id": "of-force-wave",
+    "enabled": true,
+    "kind": "suffix",
+    "word": "Волны силы",
+    "appliesTo": [
+      "weapon"
+    ],
+    "exclude": [],
+    "group": "proc-cast",
+    "weight": 0.3,
+    "onMagic": false,
+    "onRare": true,
+    "proc": {
+      "skillId": "b-staff-a2",
+      "level": 3,
+      "chance": 0.1
+    }
   }
 ]
