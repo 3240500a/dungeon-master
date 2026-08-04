@@ -726,7 +726,11 @@
     "enabled": true,
     "kind": "suffix",
     "word": "Пламегашения",
-    "appliesTo": [],
+    "appliesTo": [
+      "armor",
+      "shield",
+      "jewelry"
+    ],
     "exclude": [],
     "group": "res-fire",
     "weight": 1,
@@ -757,7 +761,11 @@
     "enabled": true,
     "kind": "suffix",
     "word": "Хладостойкости",
-    "appliesTo": [],
+    "appliesTo": [
+      "armor",
+      "shield",
+      "jewelry"
+    ],
     "exclude": [],
     "group": "res-cold",
     "weight": 1,
@@ -788,7 +796,11 @@
     "enabled": true,
     "kind": "suffix",
     "word": "Громостойкости",
-    "appliesTo": [],
+    "appliesTo": [
+      "armor",
+      "shield",
+      "jewelry"
+    ],
     "exclude": [],
     "group": "res-light",
     "weight": 1,
@@ -819,7 +831,11 @@
     "enabled": true,
     "kind": "suffix",
     "word": "Противоядия",
-    "appliesTo": [],
+    "appliesTo": [
+      "armor",
+      "shield",
+      "jewelry"
+    ],
     "exclude": [],
     "group": "res-poison",
     "weight": 1,
@@ -964,7 +980,11 @@
     "enabled": true,
     "kind": "suffix",
     "word": "Стихий",
-    "appliesTo": [],
+    "appliesTo": [
+      "armor",
+      "shield",
+      "jewelry"
+    ],
     "exclude": [],
     "group": "res-all",
     "weight": 0.5,
