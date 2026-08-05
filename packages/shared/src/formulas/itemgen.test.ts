@@ -231,3 +231,20 @@ describe('сочетания аффиксов: теги базы (PoE2) + рол
     }
   });
 });
+
+describe('кап суммы требований (maxTotalRequirement)', () => {
+  const sum = (it: { requirements: Record<string, number | undefined> }): number =>
+    Object.values(it.requirements).reduce<number>((s, v) => s + (v ?? 0), 0);
+  const mk = (cap: number): ReturnType<typeof generateItem> =>
+    generateItem(bases, affixes, uniques,
+      { dropBias: 0, itemLevel: 90, baseId: 'maul', tiers, rarities, forceRarity: 'normal', maxReqTotal: cap },
+      createRng(3));
+
+  it('heavy-2H на высоком тире не превышает кап; меньший кап → меньше требований', () => {
+    const a = mk(180), b = mk(90);
+    expect(sum(a)).toBeLessThanOrEqual(180);
+    expect(sum(b)).toBeLessThanOrEqual(90);
+    expect(sum(b)).toBeLessThan(sum(a)); // кап 90 реально ужимает
+    expect(Object.keys(a.requirements)).toEqual(['strength']); // тяжёлое = только сила → весь кап в силу
+  });
+});

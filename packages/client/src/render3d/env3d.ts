@@ -60,9 +60,12 @@ const matDark = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 1 }
 // Факел: мир-позиция + данные пламени. Света СВОЕГО нет — светят лишь TORCH_POOL_N ближайших через общий пул
 // (перф: 20-50 факелов на этаж = столько же PointLight → PBR считал КАЖДЫЙ на каждый фрагмент = дикая фрагментная цена;
 //  пул фиксированного размера → фрагментная цена ограничена И число света постоянно = нет перекомпиляции материалов).
-export interface Torch { x: number; z: number; base: number; attr: THREE.BufferAttribute; pos: Float32Array; life: Float32Array; seed: Float32Array; d2: number; on: boolean }
+export interface Torch { x: number; z: number; base: number; attr: THREE.BufferAttribute; pos: Float32Array; life: Float32Array; seed: Float32Array; d2: number; on: boolean; group: THREE.Object3D; flame: THREE.Points }
 const FLAME_N = 20;
 export const TORCH_POOL_N = 10;   // сколько факелов светят одновременно (ближайшие к игроку); пламя-спрайт есть у всех
+// Дальше этой дистанции факел ПОЛНОСТЬЮ в тумане (FogExp2 0.0012 → почти сплошной цвет к ~2000u) → прячем группу
+// (столбик + пламя-Points): убираем зря рисуемый прозрачный additive-овердро дальних пламён. См. updateTorches.
+const FLAME_CULL2 = 1800 * 1800;
 
 /** Пул света факелов — создаётся ОДИН раз на сессию (постоянное число PointLight → ноль перекомпиляций). */
 export function createTorchPool(scene: THREE.Scene): THREE.PointLight[] {
@@ -92,6 +95,10 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
   const grid = layout.grid, rows = grid.length, cols = grid[0]!.length;
   const walk = (x: number, y: number): boolean => grid[y]?.[x] !== undefined && grid[y]![x] !== Cell.Wall;
   const dummy = new THREE.Object3D();
+  // Общие геометрии повторяющихся пропсов (реюз вместо `new` на КАЖДЫЙ факел/сундук): меньше аллокаций и
+  // GPU-буферов. Живут на время этажа; clearGroup при смене области их dispose (реюз в пределах этажа — ок).
+  const postGeo = new THREE.CylinderGeometry(1.4, 2, 48, 6);
+  const chestBodyGeo = new THREE.BoxGeometry(20, 12, 14), chestLidGeo = new THREE.BoxGeometry(21, 6, 15);
 
   const floorCells: [number, number][] = [];
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (walk(x, y)) floorCells.push([x, y]);
@@ -134,18 +141,19 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
       // Колонны уже отрисованы из грида (Cell.Pillar) выше — пропускаем, иначе двойной меш.
     } else if (o.kind === 'chest') {
       const g = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.BoxGeometry(20, 12, 14), matWood); body.position.y = 6;
-      const lid = new THREE.Mesh(new THREE.BoxGeometry(21, 6, 15), matWood); lid.position.y = 14; g.add(body, lid); g.position.set(o.x, 0, o.y); parent.add(g);
+      const body = new THREE.Mesh(chestBodyGeo, matWood); body.position.y = 6;
+      const lid = new THREE.Mesh(chestLidGeo, matWood); lid.position.y = 14; g.add(body, lid); g.position.set(o.x, 0, o.y); parent.add(g);
     } else if (o.kind === 'torch') {
       const g = new THREE.Group();
-      g.add(new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2, 48, 6), matWood).translateY(24));
+      g.add(new THREE.Mesh(postGeo, matWood).translateY(24));
       const geo = new THREE.BufferGeometry();   // света своего НЕТ — назначит пул (updateTorches) ближайшим к игроку
       const pos = new Float32Array(FLAME_N * 3), life = new Float32Array(FLAME_N), seed = new Float32Array(FLAME_N);
       for (let i = 0; i < FLAME_N; i++) { life[i] = Math.random(); seed[i] = Math.random() * 6.283; pos[i * 3 + 1] = 52; }
       const attr = new THREE.BufferAttribute(pos, 3); geo.setAttribute('position', attr);
-      g.add(new THREE.Points(geo, new THREE.PointsMaterial({ map: FLAME_TEX, color: 0xffa848, size: 16, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })));
+      const flame = new THREE.Points(geo, new THREE.PointsMaterial({ map: FLAME_TEX, color: 0xffa848, size: 16, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+      g.add(flame);
       g.position.set(o.x, 0, o.y); parent.add(g);
-      torches.push({ x: o.x, z: o.y, base: 1500, attr, pos, life, seed, d2: 0, on: false });
+      torches.push({ x: o.x, z: o.y, base: 1500, attr, pos, life, seed, d2: 0, on: false, group: g, flame });
     } else if (o.kind === 'portal') {
       // Портал узла забега (rest → возврат в город; финал → завершение). Аметистовое кольцо + свечение.
       const g = new THREE.Group();
@@ -183,7 +191,7 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
  * Выбор ближайших — O(pool·torches) без аллокаций (транзиентные d2/on на факеле).
  */
 export function updateTorches(torches: Torch[], pool: THREE.PointLight[], px: number, pz: number, t: number): void {
-  for (const tr of torches) { const dx = tr.x - px, dz = tr.z - pz; tr.d2 = dx * dx + dz * dz; tr.on = false; }
+  for (const tr of torches) { const dx = tr.x - px, dz = tr.z - pz; tr.d2 = dx * dx + dz * dz; tr.on = false; tr.group.visible = tr.d2 < FLAME_CULL2; }   // туман-кулинг: дальние (в сплошном тумане) не рисуем
   for (let k = 0; k < pool.length; k++) {
     let best = -1, bd = Infinity;
     for (let i = 0; i < torches.length; i++) { const tr = torches[i]!; if (!tr.on && tr.d2 < bd) { bd = tr.d2; best = i; } }

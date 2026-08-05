@@ -126,6 +126,8 @@
   },
   "weaponAttrScaling": 0.5,
   "twoHandedPowerMult": 1.3,
+  "twoHandReqMult": 1.5,
+  "maxTotalRequirement": 190,
   "forgePrices": {
     "upgradeTier": 200,
     "rerollAffix": 120

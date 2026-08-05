@@ -45,12 +45,20 @@ function scaleBaseStats(stats: StatModifier[], mult: number): StatModifier[] {
     m.kind === 'flat' && TIER_SCALED.has(m.stat) ? { ...m, value: Math.round(m.value * mult) } : m);
 }
 
-function scaleReqs(reqs: Item['requirements'], mult: number): Item['requirements'] {
-  if (mult === 1) return reqs;
+/** Дефолт капа суммы требований (если не передан из `balance.maxTotalRequirement`). */
+const MAX_REQ_TOTAL_DEFAULT = 180;
+/**
+ * Масштабирует требования тиром (`mult`) и КАПИТ сумму `maxTotal` ПРОПОРЦИОНАЛЬНО: если Σ>кап —
+ * все атрибуты ужимаются в (кап/Σ) раз (только сила → кап силы; сила+ловк → делится по доле).
+ * `maxTotal<=0` — без капа.
+ */
+function scaleReqs(reqs: Item['requirements'], mult: number, maxTotal: number = MAX_REQ_TOTAL_DEFAULT): Item['requirements'] {
+  const scaled: Partial<Record<keyof Item['requirements'], number>> = {};
+  let total = 0;
+  for (const [k, v] of Object.entries(reqs)) { if (v !== undefined) { const s = v * mult; scaled[k as keyof Item['requirements']] = s; total += s; } }
+  const f = maxTotal > 0 && total > maxTotal ? maxTotal / total : 1;
   const out: Item['requirements'] = {};
-  for (const [k, v] of Object.entries(reqs)) {
-    if (v !== undefined) out[k as keyof Item['requirements']] = Math.round(v * mult);
-  }
+  for (const [k, s] of Object.entries(scaled)) { const r = Math.round((s as number) * f); if (r > 0) out[k as keyof Item['requirements']] = r; }
   return out;
 }
 
@@ -193,7 +201,7 @@ function nextUid(): string {
  */
 function buildItem(
   base: ItemsBase[number],
-  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[] },
+  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number },
 ): Item {
   return {
     uid: nextUid(),
@@ -203,7 +211,7 @@ function buildItem(
     ...gearFields(base),
     rarity: o.rarity,
     itemLevel: o.itemLevel,
-    requirements: scaleReqs(base.requirements, o.reqMult),
+    requirements: scaleReqs(base.requirements, o.reqMult, o.maxReqTotal),
     baseStats: scaleBaseStats(base.baseStats, o.statMult),
     affixes: o.affixes,
     gridW: base.gridW,
@@ -370,7 +378,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity },
+  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -392,6 +400,7 @@ export function generateItem(
         statMult: tier?.statMult ?? 1,
         reqMult: tier?.reqMult ?? 1,
         affixes: unique.fixedAffixes.map((fa) => ({ affixId: unique.id, kind: fa.kind, modifier: fa.modifier })),
+        maxReqTotal: opts.maxReqTotal,
       });
     }
   }
@@ -431,6 +440,7 @@ export function generateItem(
     statMult: tier?.statMult ?? 1,
     reqMult: tier?.reqMult ?? 1,
     affixes: rolled,
+    maxReqTotal: opts.maxReqTotal,
   });
 }
 

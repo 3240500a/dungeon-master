@@ -88,6 +88,7 @@ export function renderItemGenPage(page: HTMLElement, data: Record<string, unknow
   const rollOne = (s: number): Item => generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
     dropBias, itemLevel, baseId: baseId || undefined, tiers, rarities, rareNames: reg.get('rare-names'),
     categoryWeights: reg.get('balance').loot.categoryWeights, forceRarity: forceRarity || undefined,
+    maxReqTotal: reg.get('balance').maxTotalRequirement,
   }, createRng(s));
 
   const tierName = (item: Item): string => {

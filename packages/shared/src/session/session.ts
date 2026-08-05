@@ -1150,7 +1150,7 @@ export class GameSession {
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),
         this.cfg.get('uniques'),
-        { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, level + diff.ilvlBonus), tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'), categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names') },
+        { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, level + diff.ilvlBonus), tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'), categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement },
         this.rng,
       );
       const x = m.pos.x + this.rng.int(-8, 8);

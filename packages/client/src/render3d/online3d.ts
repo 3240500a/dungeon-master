@@ -104,7 +104,7 @@ export async function startOnline3d(): Promise<void> {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene(); setFog(scene); makeSceneLighting(scene);
   const torchPool = createTorchPool(scene);   // фикс. пул света факелов (перф) — назначается ближайшим к игроку, создаётся раз
-  const camera = new THREE.PerspectiveCamera(52, 1, 1, 6000);
+  const camera = new THREE.PerspectiveCamera(52, 1, 1, 2600);   // far ужат под туман (FogExp2 глушит уже к ~2000u): точнее z-буфер, уже фрустум теней
   const floorGroup = new THREE.Group(); scene.add(floorGroup);
   const actorsGroup = new THREE.Group(); scene.add(actorsGroup);
   const corpsesGroup = new THREE.Group(); scene.add(corpsesGroup);   // запечённые трупы: 1 статич. меш на труп (вместо 22 + кукла), чистятся при смене этажа
@@ -114,6 +114,15 @@ export async function startOnline3d(): Promise<void> {
   const statusFx = new StatusFx(fxGroup);   // зацикленные партикл-эффекты активных статусов на сущностях
   const resize = (): void => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); };
   addEventListener('resize', resize); resize();
+
+  // ── Адаптивное разрешение (авто-perf): pixelRatio по FPS, ступени вплоть до 0.5× ─────────────
+  // Fill-rate — крупнейший рычаг (на ретине DPR=2 = ×4 фрагментов). Просел FPS → опускаем pixelRatio по лестнице
+  // (до 0.5×, т.е. рендерим в половину и апскейлим), поднялся — возвращаем. Гистерезис 48↓/57↑ + шаг раз в 0.6с.
+  const PR_MAX = Math.min(devicePixelRatio, 2), PR_MIN = 0.5;
+  const PR_LADDER = [...new Set([PR_MAX, 1.5, 1.25, 1, 0.85, 0.7, PR_MIN])].filter((v) => v <= PR_MAX + 1e-6 && v >= PR_MIN - 1e-6).sort((a, b) => b - a);
+  let prIdx = 0, adaptiveRes = true, manualPR = 1, resAcc = 0;   // manualPR — ручное значение ползунка (когда авто выкл)
+  const applyPR = (v: number): void => { renderer.setPixelRatio(v); resize(); };
+  const setPrIdx = (i: number): void => { prIdx = Math.max(0, Math.min(PR_LADDER.length - 1, i)); applyPR(PR_LADDER[prIdx]!); };
 
   const root = document.getElementById('ui-root') ?? (() => { const r = document.createElement('div'); r.id = 'ui-root'; Object.assign(r.style, { position: 'fixed', inset: '0', pointerEvents: 'none', zIndex: '10' } satisfies Partial<CSSStyleDeclaration>); document.body.appendChild(r); return r; })();
 
@@ -153,7 +162,8 @@ export async function startOnline3d(): Promise<void> {
     onStatusFx: (on) => statusFx.setDisabled(on),        // без партикл-статусов
     onTorchShadows: (on) => { torchShadows = on; applyShadows(); },   // тени от факелов (тяжело: N ближних кастят)
     onPlayerShadow: (on) => { playerShadows = on; applyShadows(); },   // тень от света героя
-    onLowRes: (on) => { renderer.setPixelRatio(on ? 1 : Math.min(devicePixelRatio, 2)); resize(); },   // 1× пиксели → режем фрагментную цену
+    onAdaptiveRes: (on) => { adaptiveRes = on; if (on) prIdx = 0; else applyPR(manualPR); },   // авто (контроллер по FPS) ↔ ручной (значение ползунка)
+    onResScale: (v) => { manualPR = Math.max(0.5, Math.min(2, v)); if (!adaptiveRes) applyPR(manualPR); },   // ползунок 0.5–2× (>native = суперсэмплинг); применяется в ручном режиме
   });
 
   await initPhysics();
@@ -760,6 +770,15 @@ export async function startOnline3d(): Promise<void> {
   function frame(dt: number): void {
     tsec += dt;
     fps += (1 / Math.max(dt, 1e-3) - fps) * 0.1;
+    // Адаптивное разрешение: раз в 0.6с шаг по лестнице pixelRatio (FPS сглажён EMA выше → «устойчивый» замер).
+    if (adaptiveRes) {
+      resAcc += dt;
+      if (resAcc >= 0.6) {
+        resAcc = 0;
+        if (fps < 48 && prIdx < PR_LADDER.length - 1) setPrIdx(prIdx + 1);       // тормозит → ниже разрешение
+        else if (fps > 57 && prIdx > 0) setPrIdx(prIdx - 1);                     // с запасом → выше
+      }
+    }
     updatePing();
     if (app.net.connected && myId && latest && app.state) {
       const _tw = performance.now();

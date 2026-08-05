@@ -86,6 +86,11 @@ export const balanceSchema = z.object({
   weaponAttrScaling: z.number(),
   /** Доп. множитель силовых сигнатур двуручного оружия. */
   twoHandedPowerMult: z.number().min(1).default(1.3),
+  /** Множитель ТРЕБОВАНИЙ двуручного оружия при авто-заполнении по весу (магнитуда ×это). */
+  twoHandReqMult: z.number().min(0).default(1.6),
+  /** Кап СУММЫ требуемых атрибутов предмета (после тира). Превышение ужимается пропорционально
+   *  (только сила → кап силы; сила+ловк → делится по доле). 0 = без капа. */
+  maxTotalRequirement: z.number().min(0).default(180),
   forgePrices: z.object({
     upgradeTier: z.number().int().min(0),
     rerollAffix: z.number().int().min(0),
@@ -549,6 +554,53 @@ export const monsterBehaviorsSchema = z.array(
   }),
 );
 
+// ── monster-gear ──────────────────────────────────────────────────────────────
+// Отдельная библиотека экипировки монстров по ФРАКЦИЯМ (те же параметры, что у items.base, но не
+// дропается в общий пул). Монстр в дефе ссылается на гир по id (weapon/armor/offhand); статы
+// деривятся из атрибутов монстра + этого гира (deriveMonsterStats). Афиксы элиток катаются на гир.
+const mgFaction = z.enum(['undead', 'demon', 'beast', 'monster']);
+export const monsterGearSchema = z.array(
+  z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('weapon'),
+      id: z.string(),
+      name: z.string(),
+      faction: mgFaction,
+      enabled: z.boolean().default(true),
+      weaponClass: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff']),
+      /** Вес оружия — задаёт долю скейла по атрибуту (STR/DEX/INT). */
+      weight: z.enum(['superlight', 'light', 'medium', 'heavy', 'magical']).default('medium'),
+      attackType: z.enum(['melee', 'ranged']).default('melee'),
+      hands: z.number().int().min(1).max(2).default(1),
+      damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).default('physical'),
+      /** Базовый урон оружия (до скейла по атрибуту). */
+      minDamage: z.number().min(0).default(1),
+      maxDamage: z.number().min(0).default(3),
+      attackSpeed: z.number().min(0.05).default(1),
+      physSub: z.string().optional(),
+    }),
+    z.object({
+      kind: z.literal('armor'),
+      id: z.string(),
+      name: z.string(),
+      faction: mgFaction,
+      enabled: z.boolean().default(true),
+      armorClass: z.enum(['quilted', 'leather', 'chain', 'segmented', 'plate']).default('leather'),
+      /** Базовая защита брони (до вклада STR). */
+      defense: z.number().min(0).default(0),
+    }),
+    z.object({
+      kind: z.literal('shield'),
+      id: z.string(),
+      name: z.string(),
+      faction: mgFaction,
+      enabled: z.boolean().default(true),
+      block: z.number().min(0).max(1).default(0.12),
+      defense: z.number().min(0).default(0),
+    }),
+  ]),
+);
+
 // ── item-tiers ────────────────────────────────────────────────────────────────
 /** Лестница тиров баз (D2-стиль): по ilvl дропа берётся высший доступный тир. */
 export const itemTiersSchema = z.array(
@@ -583,6 +635,13 @@ export const armorClassesSchema = z.array(
     noise: z.number().default(0),
     /** Вклад в вес игрока (расталкивание): тяжёлая броня — больше. */
     weight: z.number().min(0).default(20),
+    /** СКОЛЬКО требования (магнитуда, грудь; ×множитель слота) у этого класса брони. Делится долями
+     *  reqStr/reqDex ниже. Влияет на авто-заполнение требований (кнопка «Заполнить по весу»). */
+    reqBase: z.number().min(0).default(0),
+    /** Доли требования Сила/Ловкость (лёгкая броня → ловкость, тяжёлая → сила; напр. кольчуга 0.5/0.5,
+     *  сегментная 0.75/0.25). */
+    reqStr: z.number().min(0).max(1).default(1),
+    reqDex: z.number().min(0).max(1).default(0),
     /** Выдержка (доля снижения шанса/длит.) к физ-статусам. */
     poise: z
       .object({
@@ -726,12 +785,16 @@ export const weaponWeightsSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
-    /** Доли скейла урона от атрибутов (Сила / Ловкость / Интеллект). Сумма ≈ 1. */
+    /** Доли скейла урона от атрибутов (Сила / Ловкость / Интеллект). Сумма ≈ 1. Эти же доли задают,
+     *  В КАКОЙ атрибут идёт требование (авто-заполнение по весу). */
     strength: z.number().min(0),
     dexterity: z.number().min(0),
     intelligence: z.number().min(0).default(0),
     /** Вклад в вес игрока (расталкивание): тяжёлое оружие — больше. */
     weight: z.number().min(0).default(10),
+    /** СКОЛЬКО требования (магнитуда, 1H) у этого веса; для 2H ×`balance.twoHandReqMult`. Делится по долям
+     *  str/dex/int выше. Влияет на авто-заполнение требований (кнопка «Заполнить по весу»). */
+    reqBase: z.number().min(0).default(0),
   }),
 );
 
@@ -1449,6 +1512,7 @@ export const configSchemas = {
   monsters: monstersSchema,
   'monster-affixes': monsterAffixesSchema,
   'monster-behaviors': monsterBehaviorsSchema,
+  'monster-gear': monsterGearSchema,
   'monster-roles': monsterRolesSchema,
   packs: packsSchema,
   difficulties: difficultiesSchema,

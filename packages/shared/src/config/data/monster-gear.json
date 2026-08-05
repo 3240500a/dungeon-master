@@ -1,0 +1,21 @@
+[
+  { "kind": "weapon", "id": "u-dagger", "name": "Костяной кинжал", "faction": "undead", "weaponClass": "dagger", "weight": "superlight", "attackType": "melee", "hands": 1, "damageType": "physical", "minDamage": 2, "maxDamage": 4, "attackSpeed": 1.4, "physSub": "piercing" },
+  { "kind": "weapon", "id": "u-axe1h", "name": "Ржавый топор", "faction": "undead", "weaponClass": "axe", "weight": "light", "attackType": "melee", "hands": 1, "damageType": "physical", "minDamage": 4, "maxDamage": 9, "attackSpeed": 1.0, "physSub": "slashing" },
+  { "kind": "weapon", "id": "u-throwaxe", "name": "Метательный топор", "faction": "undead", "weaponClass": "axe", "weight": "light", "attackType": "ranged", "hands": 1, "damageType": "physical", "minDamage": 3, "maxDamage": 7, "attackSpeed": 0.8, "physSub": "slashing" },
+  { "kind": "weapon", "id": "u-sword1h", "name": "Костяной меч", "faction": "undead", "weaponClass": "sword", "weight": "medium", "attackType": "melee", "hands": 1, "damageType": "physical", "minDamage": 4, "maxDamage": 8, "attackSpeed": 1.0, "physSub": "slashing" },
+  { "kind": "weapon", "id": "u-mace1h", "name": "Ржавая булава", "faction": "undead", "weaponClass": "mace", "weight": "medium", "attackType": "melee", "hands": 1, "damageType": "physical", "minDamage": 5, "maxDamage": 10, "attackSpeed": 0.8, "physSub": "crushing" },
+  { "kind": "weapon", "id": "u-bow", "name": "Костяной лук", "faction": "undead", "weaponClass": "bow", "weight": "light", "attackType": "ranged", "hands": 2, "damageType": "physical", "minDamage": 3, "maxDamage": 7, "attackSpeed": 0.9, "physSub": "piercing" },
+  { "kind": "weapon", "id": "u-crossbow", "name": "Тяжёлый арбалет", "faction": "undead", "weaponClass": "crossbow", "weight": "heavy", "attackType": "ranged", "hands": 2, "damageType": "physical", "minDamage": 8, "maxDamage": 16, "attackSpeed": 0.5, "physSub": "piercing" },
+  { "kind": "weapon", "id": "u-axe2h", "name": "Секира палача", "faction": "undead", "weaponClass": "axe", "weight": "heavy", "attackType": "melee", "hands": 2, "damageType": "physical", "minDamage": 10, "maxDamage": 20, "attackSpeed": 0.6, "physSub": "slashing" },
+  { "kind": "weapon", "id": "u-sword2h", "name": "Двуручный меч павшего", "faction": "undead", "weaponClass": "sword", "weight": "heavy", "attackType": "melee", "hands": 2, "damageType": "physical", "minDamage": 12, "maxDamage": 22, "attackSpeed": 0.6, "physSub": "slashing" },
+  { "kind": "weapon", "id": "u-staff-weak", "name": "Посох тлена", "faction": "undead", "weaponClass": "staff", "weight": "magical", "attackType": "ranged", "hands": 2, "damageType": "cold", "minDamage": 4, "maxDamage": 9, "attackSpeed": 0.8 },
+  { "kind": "weapon", "id": "u-staff-strong", "name": "Посох некроманта", "faction": "undead", "weaponClass": "staff", "weight": "magical", "attackType": "ranged", "hands": 2, "damageType": "cold", "minDamage": 8, "maxDamage": 16, "attackSpeed": 0.85 },
+
+  { "kind": "armor", "id": "u-quilted", "name": "Истлевший саван", "faction": "undead", "armorClass": "quilted", "defense": 2 },
+  { "kind": "armor", "id": "u-leather", "name": "Кожа мертвеца", "faction": "undead", "armorClass": "leather", "defense": 5 },
+  { "kind": "armor", "id": "u-chain", "name": "Ржавая кольчуга", "faction": "undead", "armorClass": "chain", "defense": 11 },
+  { "kind": "armor", "id": "u-segmented", "name": "Сегментный доспех павшего", "faction": "undead", "armorClass": "segmented", "defense": 18 },
+  { "kind": "armor", "id": "u-plate", "name": "Латы павшего рыцаря", "faction": "undead", "armorClass": "plate", "defense": 30 },
+
+  { "kind": "shield", "id": "u-shield", "name": "Костяной щит", "faction": "undead", "block": 0.18, "defense": 6 }
+]

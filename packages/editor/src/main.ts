@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ConfigRegistry, configSchemas, allStatKeys, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
+import { ConfigRegistry, configSchemas, allStatKeys, schemeRequirements, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources } from './form.js';
 import { mountFloorPreview } from './floorPreview.js';
 import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
@@ -24,6 +24,7 @@ const LABELS: Record<ConfigKey, string> = {
   monsters: 'Монстры',
   'monster-affixes': 'Монстры: аффиксы',
   'monster-behaviors': 'Монстры: поведение ИИ',
+  'monster-gear': 'Монстры: экипировка',
   'monster-roles': 'Роли монстров',
   packs: 'Пачки монстров',
   difficulties: 'Сложности',
@@ -65,7 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques', 'rare-names'] },
-  { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'packs'] },
+  { title: 'Монстры', keys: ['monsters', 'monster-gear', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
@@ -74,7 +75,7 @@ const NAV_GROUPS: NavGroup[] = [
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
+  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
   'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',
@@ -88,7 +89,7 @@ const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
  */
 const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Прогрессия и мощь', keys: ['xpTable', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel', 'passiveRankCostMult', 'power'] },
-  { title: 'Бой и физика', keys: ['melee', 'weaponAttrScaling', 'twoHandedPowerMult', 'affinityDamageBonus', 'moveSpeedBase', 'collision', 'weight'] },
+  { title: 'Бой и физика', keys: ['melee', 'weaponAttrScaling', 'twoHandedPowerMult', 'twoHandReqMult', 'maxTotalRequirement', 'affinityDamageBonus', 'moveSpeedBase', 'collision', 'weight'] },
   { title: 'Монстры', keys: ['monsterXpGrowth', 'championXpMult', 'monsterScaling'] },
   { title: 'Лут', keys: ['loot', 'autoPickup'] },
   { title: 'Экономика', keys: ['forgePrices', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint'] },
@@ -619,6 +620,22 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
     const biomeOpts = ((data['biomes'] as { id: string; name: string }[]) ?? []).map((b) => ({ id: b.id, name: b.name }));
     form.appendChild(renderRoomEditor(arr[selectedIndex] as RoomPrefab, biomeOpts, render));
   } else {
+    // Предметы: кнопка авто-заполнения требований по схеме веса/класса (дальше правится вручную в форме ниже).
+    if (current === 'items.base') {
+      const item = arr[selectedIndex] as { kind?: string; requirements?: unknown };
+      if (item && ['weapon', 'armor', 'shield'].includes(item.kind ?? '')) {
+        const btn = document.createElement('button');
+        btn.textContent = '⚖ Заполнить требования по весу';
+        btn.title = 'Проставить requirements по схеме (weapon-weights / armor-classes). Затем можно докрутить вручную ниже.';
+        btn.style.cssText = 'margin-bottom:8px;padding:5px 10px;cursor:pointer;border-radius:6px;border:1px solid #3c5a3c;background:#22331f;color:#cfe0d6;font-size:12px';
+        btn.addEventListener('click', () => {
+          const t2h = (data['balance'] as { twoHandReqMult?: number } | undefined)?.twoHandReqMult ?? 1.6;
+          item.requirements = schemeRequirements(item as never, data['weapon-weights'] as never, data['armor-classes'] as never, t2h);
+          render();
+        });
+        form.appendChild(btn);
+      }
+    }
     form.appendChild(
       renderField(elemSchema, arr[selectedIndex], (v) => {
         arr[selectedIndex] = v;

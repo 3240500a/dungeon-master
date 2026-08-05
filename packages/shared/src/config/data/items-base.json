@@ -3,9 +3,10 @@
     "kind": "weapon",
     "id": "short-sword",
     "name": "Короткий меч",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
-    "maxTier": "t6",
+    "maxTier": "t3",
     "baseStats": [
       {
         "stat": "minDamage",
@@ -29,7 +30,8 @@
       }
     ],
     "requirements": {
-      "strength": 16
+      "strength": 12,
+      "dexterity": 23
     },
     "gridW": 1,
     "gridH": 3,
@@ -38,7 +40,7 @@
     "attackType": "melee",
     "damageKind": "physical",
     "weaponClass": "sword",
-    "weight": "medium",
+    "weight": "light",
     "physSub": "slashing",
     "damageType": "physical",
     "hands": 1
@@ -47,6 +49,7 @@
     "kind": "weapon",
     "id": "gladius",
     "name": "Гладиус",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -73,8 +76,8 @@
       }
     ],
     "requirements": {
-      "strength": 14,
-      "dexterity": 10
+      "strength": 12,
+      "dexterity": 23
     },
     "gridW": 1,
     "gridH": 2,
@@ -92,6 +95,7 @@
     "kind": "weapon",
     "id": "long-sword",
     "name": "Длинный меч",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -118,7 +122,8 @@
       }
     ],
     "requirements": {
-      "strength": 20
+      "strength": 23,
+      "dexterity": 12
     },
     "gridW": 1,
     "gridH": 3,
@@ -136,6 +141,7 @@
     "kind": "weapon",
     "id": "greatsword",
     "name": "Двуручный меч",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -162,7 +168,7 @@
       }
     ],
     "requirements": {
-      "strength": 35
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -180,6 +186,7 @@
     "kind": "weapon",
     "id": "claymore",
     "name": "Клеймор",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -206,7 +213,7 @@
       }
     ],
     "requirements": {
-      "strength": 40
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -224,6 +231,7 @@
     "kind": "weapon",
     "id": "hand-axe",
     "name": "Ручной топор",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -240,7 +248,8 @@
       }
     ],
     "requirements": {
-      "strength": 18
+      "strength": 12,
+      "dexterity": 23
     },
     "gridW": 1,
     "gridH": 2,
@@ -259,6 +268,7 @@
     "kind": "weapon",
     "id": "war-axe",
     "name": "Боевая секира",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -275,7 +285,8 @@
       }
     ],
     "requirements": {
-      "strength": 22
+      "strength": 23,
+      "dexterity": 12
     },
     "gridW": 1,
     "gridH": 3,
@@ -294,6 +305,7 @@
     "kind": "weapon",
     "id": "broad-axe",
     "name": "Широкий топор",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -315,7 +327,7 @@
       }
     ],
     "requirements": {
-      "strength": 26
+      "strength": 18
     },
     "gridW": 1,
     "gridH": 3,
@@ -334,6 +346,7 @@
     "kind": "weapon",
     "id": "battle-axe",
     "name": "Боевой топор",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -355,7 +368,7 @@
       }
     ],
     "requirements": {
-      "strength": 42
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -374,6 +387,7 @@
     "kind": "weapon",
     "id": "executioner-axe",
     "name": "Секира палача",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -395,7 +409,7 @@
       }
     ],
     "requirements": {
-      "strength": 46
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -415,6 +429,7 @@
     "kind": "weapon",
     "id": "club",
     "name": "Палица",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -431,7 +446,8 @@
       }
     ],
     "requirements": {
-      "strength": 14
+      "strength": 12,
+      "dexterity": 23
     },
     "gridW": 1,
     "gridH": 2,
@@ -450,6 +466,7 @@
     "kind": "weapon",
     "id": "mace",
     "name": "Булава",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -476,7 +493,7 @@
       }
     ],
     "requirements": {
-      "strength": 20
+      "strength": 18
     },
     "gridW": 1,
     "gridH": 3,
@@ -496,6 +513,7 @@
     "kind": "weapon",
     "id": "morningstar",
     "name": "Моргенштерн",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -512,7 +530,8 @@
       }
     ],
     "requirements": {
-      "strength": 22
+      "strength": 23,
+      "dexterity": 12
     },
     "gridW": 1,
     "gridH": 3,
@@ -531,6 +550,7 @@
     "kind": "weapon",
     "id": "war-hammer",
     "name": "Боевой молот",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -552,7 +572,7 @@
       }
     ],
     "requirements": {
-      "strength": 46
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -573,6 +593,7 @@
     "kind": "weapon",
     "id": "maul",
     "name": "Молот-гроза",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -594,7 +615,7 @@
       }
     ],
     "requirements": {
-      "strength": 50
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -615,6 +636,7 @@
     "kind": "weapon",
     "id": "dagger",
     "name": "Кинжал",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -646,7 +668,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 14
+      "dexterity": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -665,6 +687,7 @@
     "kind": "weapon",
     "id": "stiletto",
     "name": "Стилет",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -691,7 +714,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 16
+      "dexterity": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -710,6 +733,7 @@
     "kind": "weapon",
     "id": "kris",
     "name": "Крис",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -731,8 +755,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 15,
-      "strength": 8
+      "dexterity": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -750,6 +773,7 @@
     "kind": "weapon",
     "id": "assassin-blade",
     "name": "Клинок ассасина",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -776,7 +800,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 20
+      "dexterity": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -795,6 +819,7 @@
     "kind": "weapon",
     "id": "cleaver",
     "name": "Тесак",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -817,7 +842,7 @@
     ],
     "requirements": {
       "strength": 12,
-      "dexterity": 10
+      "dexterity": 23
     },
     "gridW": 1,
     "gridH": 2,
@@ -835,6 +860,7 @@
     "kind": "weapon",
     "id": "short-spear",
     "name": "Короткое копьё",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
@@ -856,8 +882,8 @@
       }
     ],
     "requirements": {
-      "strength": 14,
-      "dexterity": 12
+      "strength": 12,
+      "dexterity": 23
     },
     "gridW": 1,
     "gridH": 3,
@@ -876,6 +902,7 @@
     "kind": "weapon",
     "id": "trident",
     "name": "Трезубец",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -892,7 +919,7 @@
       }
     ],
     "requirements": {
-      "strength": 16,
+      "strength": 23,
       "dexterity": 12
     },
     "gridW": 1,
@@ -912,6 +939,7 @@
     "kind": "weapon",
     "id": "spear",
     "name": "Копьё",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
@@ -933,8 +961,8 @@
       }
     ],
     "requirements": {
-      "strength": 18,
-      "dexterity": 12
+      "strength": 34,
+      "dexterity": 18
     },
     "gridW": 1,
     "gridH": 3,
@@ -953,6 +981,7 @@
     "kind": "weapon",
     "id": "pike",
     "name": "Пика",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -974,7 +1003,7 @@
       }
     ],
     "requirements": {
-      "strength": 24
+      "strength": 27
     },
     "gridW": 1,
     "gridH": 3,
@@ -993,6 +1022,7 @@
     "kind": "weapon",
     "id": "lance",
     "name": "Длинное копьё",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1014,8 +1044,7 @@
       }
     ],
     "requirements": {
-      "strength": 26,
-      "dexterity": 12
+      "strength": 27
     },
     "gridW": 1,
     "gridH": 3,
@@ -1034,6 +1063,7 @@
     "kind": "weapon",
     "id": "glaive",
     "name": "Глефа",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1050,7 +1080,7 @@
       }
     ],
     "requirements": {
-      "strength": 28
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1070,6 +1100,7 @@
     "kind": "weapon",
     "id": "halberd",
     "name": "Алебарда",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1091,8 +1122,7 @@
       }
     ],
     "requirements": {
-      "strength": 30,
-      "dexterity": 12
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1112,6 +1142,7 @@
     "kind": "weapon",
     "id": "partisan",
     "name": "Протазан",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1128,8 +1159,7 @@
       }
     ],
     "requirements": {
-      "strength": 30,
-      "dexterity": 12
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1148,6 +1178,7 @@
     "kind": "weapon",
     "id": "bardiche",
     "name": "Бердыш",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1164,7 +1195,7 @@
       }
     ],
     "requirements": {
-      "strength": 32
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1184,6 +1215,7 @@
     "kind": "weapon",
     "id": "poleaxe",
     "name": "Секира на древке",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1205,7 +1237,7 @@
       }
     ],
     "requirements": {
-      "strength": 38
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1226,6 +1258,7 @@
     "kind": "weapon",
     "id": "short-bow",
     "name": "Короткий лук",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1247,7 +1280,8 @@
       }
     ],
     "requirements": {
-      "dexterity": 15
+      "strength": 18,
+      "dexterity": 34
     },
     "gridW": 2,
     "gridH": 3,
@@ -1264,6 +1298,7 @@
     "kind": "weapon",
     "id": "hunting-bow",
     "name": "Охотничий лук",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1285,7 +1320,8 @@
       }
     ],
     "requirements": {
-      "dexterity": 20
+      "strength": 18,
+      "dexterity": 34
     },
     "gridW": 2,
     "gridH": 3,
@@ -1302,6 +1338,7 @@
     "kind": "weapon",
     "id": "long-bow",
     "name": "Длинный лук",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1323,7 +1360,8 @@
       }
     ],
     "requirements": {
-      "dexterity": 28
+      "strength": 34,
+      "dexterity": 18
     },
     "gridW": 2,
     "gridH": 3,
@@ -1340,6 +1378,7 @@
     "kind": "weapon",
     "id": "composite-bow",
     "name": "Составной лук",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1356,8 +1395,8 @@
       }
     ],
     "requirements": {
-      "dexterity": 24,
-      "strength": 8
+      "strength": 34,
+      "dexterity": 18
     },
     "gridW": 2,
     "gridH": 3,
@@ -1374,6 +1413,7 @@
     "kind": "weapon",
     "id": "war-bow",
     "name": "Боевой лук",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1395,7 +1435,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 34
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1412,6 +1452,7 @@
     "kind": "weapon",
     "id": "hand-crossbow",
     "name": "Ручной арбалет",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1433,7 +1474,8 @@
       }
     ],
     "requirements": {
-      "dexterity": 18
+      "strength": 12,
+      "dexterity": 23
     },
     "gridW": 2,
     "gridH": 2,
@@ -1450,6 +1492,7 @@
     "kind": "weapon",
     "id": "light-crossbow",
     "name": "Лёгкий арбалет",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1466,7 +1509,8 @@
       }
     ],
     "requirements": {
-      "dexterity": 20
+      "strength": 34,
+      "dexterity": 18
     },
     "gridW": 2,
     "gridH": 3,
@@ -1483,6 +1527,7 @@
     "kind": "weapon",
     "id": "crossbow",
     "name": "Арбалет",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1499,8 +1544,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 22,
-      "strength": 10
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1517,6 +1561,7 @@
     "kind": "weapon",
     "id": "heavy-crossbow",
     "name": "Тяжёлый арбалет",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1538,8 +1583,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 26,
-      "strength": 14
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1557,6 +1601,7 @@
     "kind": "weapon",
     "id": "arbalest",
     "name": "Осадный арбалет",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1578,8 +1623,7 @@
       }
     ],
     "requirements": {
-      "dexterity": 30,
-      "strength": 16
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1597,6 +1641,7 @@
     "kind": "weapon",
     "id": "storm-wand",
     "name": "Жезл молний",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1613,7 +1658,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 20
+      "intelligence": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -1630,6 +1675,7 @@
     "kind": "weapon",
     "id": "apprentice-wand",
     "name": "Жезл огня",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1646,7 +1692,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 15
+      "intelligence": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -1663,6 +1709,7 @@
     "kind": "weapon",
     "id": "frost-wand",
     "name": "Жезл льда",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1679,7 +1726,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 16
+      "intelligence": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -1696,6 +1743,7 @@
     "kind": "weapon",
     "id": "venom-wand",
     "name": "Жезл яда",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1729,6 +1777,7 @@
     "kind": "weapon",
     "id": "archmage-wand",
     "name": "Жезл архимага",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1745,7 +1794,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 26
+      "intelligence": 18
     },
     "gridW": 1,
     "gridH": 2,
@@ -1762,6 +1811,7 @@
     "kind": "weapon",
     "id": "storm-staff",
     "name": "Посох бури",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1778,7 +1828,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 26
+      "intelligence": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1795,6 +1845,7 @@
     "kind": "weapon",
     "id": "frost-staff",
     "name": "Посох льда",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1811,7 +1862,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 24
+      "intelligence": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1828,6 +1879,7 @@
     "kind": "weapon",
     "id": "blight-staff",
     "name": "Посох гнили",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1844,7 +1896,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 24
+      "intelligence": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1861,6 +1913,7 @@
     "kind": "weapon",
     "id": "flame-staff",
     "name": "Посох огня",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1877,7 +1930,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 22
+      "intelligence": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1894,6 +1947,7 @@
     "kind": "weapon",
     "id": "archmage-staff",
     "name": "Посох архимага",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1910,7 +1964,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 32
+      "intelligence": 27
     },
     "gridW": 2,
     "gridH": 3,
@@ -1927,6 +1981,7 @@
     "kind": "shield",
     "id": "wooden-shield",
     "name": "Деревянный щит",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1943,8 +1998,8 @@
       }
     ],
     "requirements": {
-      "strength": 8,
-      "dexterity": 8
+      "strength": 6,
+      "dexterity": 6
     },
     "gridW": 2,
     "gridH": 2,
@@ -1956,6 +2011,7 @@
     "kind": "shield",
     "id": "buckler",
     "name": "Баклер",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -1984,6 +2040,7 @@
     "kind": "shield",
     "id": "tower-shield",
     "name": "Башенный щит",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2000,7 +2057,7 @@
       }
     ],
     "requirements": {
-      "strength": 20
+      "strength": 24
     },
     "gridW": 2,
     "gridH": 3,
@@ -2012,6 +2069,7 @@
     "kind": "armor",
     "id": "quilted-cap",
     "name": "Стёганый капюшон",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2034,6 +2092,7 @@
     "kind": "armor",
     "id": "leather-cap",
     "name": "Кожаный шлем",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2044,7 +2103,9 @@
         "value": 5
       }
     ],
-    "requirements": {},
+    "requirements": {
+      "dexterity": 14
+    },
     "gridW": 2,
     "gridH": 2,
     "dropWeight": 1,
@@ -2056,6 +2117,7 @@
     "kind": "armor",
     "id": "chain-coif",
     "name": "Кольчужный капюшон",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2067,7 +2129,8 @@
       }
     ],
     "requirements": {
-      "strength": 13
+      "strength": 14,
+      "dexterity": 14
     },
     "gridW": 2,
     "gridH": 2,
@@ -2080,6 +2143,7 @@
     "kind": "armor",
     "id": "segmented-helm",
     "name": "Сегментный шлем",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2091,7 +2155,8 @@
       }
     ],
     "requirements": {
-      "strength": 21
+      "strength": 21,
+      "dexterity": 7
     },
     "gridW": 2,
     "gridH": 2,
@@ -2104,6 +2169,7 @@
     "kind": "armor",
     "id": "plate-helm",
     "name": "Латный шлем",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2115,7 +2181,7 @@
       }
     ],
     "requirements": {
-      "strength": 30
+      "strength": 14
     },
     "gridW": 2,
     "gridH": 2,
@@ -2128,6 +2194,7 @@
     "kind": "armor",
     "id": "quilted-armor",
     "name": "Стёганый доспех",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2150,6 +2217,7 @@
     "kind": "armor",
     "id": "leather-armor",
     "name": "Кожаный доспех",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2160,7 +2228,9 @@
         "value": 12
       }
     ],
-    "requirements": {},
+    "requirements": {
+      "dexterity": 18
+    },
     "gridW": 2,
     "gridH": 3,
     "dropWeight": 1,
@@ -2172,6 +2242,7 @@
     "kind": "armor",
     "id": "chain-mail",
     "name": "Кольчуга",
+    "enabled": true,
     "gender": "f",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2183,7 +2254,8 @@
       }
     ],
     "requirements": {
-      "strength": 16
+      "strength": 18,
+      "dexterity": 18
     },
     "gridW": 2,
     "gridH": 3,
@@ -2196,6 +2268,7 @@
     "kind": "armor",
     "id": "segmented-armor",
     "name": "Сегментный доспех",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2207,7 +2280,8 @@
       }
     ],
     "requirements": {
-      "strength": 26
+      "strength": 26,
+      "dexterity": 9
     },
     "gridW": 2,
     "gridH": 3,
@@ -2220,6 +2294,7 @@
     "kind": "armor",
     "id": "plate-armor",
     "name": "Латный доспех",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2231,7 +2306,7 @@
       }
     ],
     "requirements": {
-      "strength": 38
+      "strength": 18
     },
     "gridW": 2,
     "gridH": 3,
@@ -2244,6 +2319,7 @@
     "kind": "armor",
     "id": "quilted-gloves",
     "name": "Стёганые рукавицы",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2266,6 +2342,7 @@
     "kind": "armor",
     "id": "leather-gloves",
     "name": "Кожаные перчатки",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2276,7 +2353,9 @@
         "value": 3
       }
     ],
-    "requirements": {},
+    "requirements": {
+      "dexterity": 14
+    },
     "gridW": 2,
     "gridH": 2,
     "dropWeight": 1,
@@ -2288,6 +2367,7 @@
     "kind": "armor",
     "id": "chain-gloves",
     "name": "Кольчужные перчатки",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2299,7 +2379,8 @@
       }
     ],
     "requirements": {
-      "strength": 12
+      "strength": 13,
+      "dexterity": 13
     },
     "gridW": 2,
     "gridH": 2,
@@ -2312,6 +2393,7 @@
     "kind": "armor",
     "id": "segmented-gauntlets",
     "name": "Сегментные наручи",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2323,7 +2405,8 @@
       }
     ],
     "requirements": {
-      "strength": 20
+      "strength": 20,
+      "dexterity": 7
     },
     "gridW": 2,
     "gridH": 2,
@@ -2336,6 +2419,7 @@
     "kind": "armor",
     "id": "plate-gauntlets",
     "name": "Латные рукавицы",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2347,7 +2431,7 @@
       }
     ],
     "requirements": {
-      "strength": 29
+      "strength": 14
     },
     "gridW": 2,
     "gridH": 2,
@@ -2360,6 +2444,7 @@
     "kind": "armor",
     "id": "quilted-boots",
     "name": "Стёганые башмаки",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2387,6 +2472,7 @@
     "kind": "armor",
     "id": "leather-boots",
     "name": "Кожаные сапоги",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2402,7 +2488,9 @@
         "value": 0.05
       }
     ],
-    "requirements": {},
+    "requirements": {
+      "dexterity": 14
+    },
     "gridW": 2,
     "gridH": 2,
     "dropWeight": 1,
@@ -2414,6 +2502,7 @@
     "kind": "armor",
     "id": "chain-boots",
     "name": "Кольчужные сапоги",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2430,7 +2519,8 @@
       }
     ],
     "requirements": {
-      "strength": 12
+      "strength": 13,
+      "dexterity": 13
     },
     "gridW": 2,
     "gridH": 2,
@@ -2443,6 +2533,7 @@
     "kind": "armor",
     "id": "segmented-greaves",
     "name": "Сегментные поножи",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2459,7 +2550,8 @@
       }
     ],
     "requirements": {
-      "strength": 20
+      "strength": 20,
+      "dexterity": 7
     },
     "gridW": 2,
     "gridH": 2,
@@ -2472,6 +2564,7 @@
     "kind": "armor",
     "id": "plate-boots",
     "name": "Латные сапоги",
+    "enabled": true,
     "gender": "p",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2483,7 +2576,7 @@
       }
     ],
     "requirements": {
-      "strength": 29
+      "strength": 14
     },
     "gridW": 2,
     "gridH": 2,
@@ -2496,6 +2589,7 @@
     "kind": "armor",
     "id": "cloth-sash",
     "name": "Матерчатый кушак",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2523,6 +2617,7 @@
     "kind": "armor",
     "id": "leather-belt",
     "name": "Кожаный пояс",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2538,7 +2633,9 @@
         "value": 10
       }
     ],
-    "requirements": {},
+    "requirements": {
+      "dexterity": 13
+    },
     "gridW": 2,
     "gridH": 1,
     "dropWeight": 1,
@@ -2550,6 +2647,7 @@
     "kind": "armor",
     "id": "studded-belt",
     "name": "Клёпаный пояс",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2566,7 +2664,8 @@
       }
     ],
     "requirements": {
-      "strength": 11
+      "strength": 12,
+      "dexterity": 12
     },
     "gridW": 2,
     "gridH": 1,
@@ -2579,6 +2678,7 @@
     "kind": "armor",
     "id": "segmented-girdle",
     "name": "Ратный пояс",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2595,7 +2695,8 @@
       }
     ],
     "requirements": {
-      "strength": 18
+      "strength": 18,
+      "dexterity": 6
     },
     "gridW": 2,
     "gridH": 1,
@@ -2608,6 +2709,7 @@
     "kind": "armor",
     "id": "plate-girdle",
     "name": "Латный пояс",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2624,7 +2726,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 13
     },
     "gridW": 2,
     "gridH": 1,
@@ -2637,6 +2739,7 @@
     "kind": "jewelry",
     "id": "simple-ring",
     "name": "Простое кольцо",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2651,6 +2754,7 @@
     "kind": "jewelry",
     "id": "simple-amulet",
     "name": "Простой амулет",
+    "enabled": true,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2665,6 +2769,7 @@
     "kind": "consumable",
     "id": "minor-healing-potion",
     "name": "Малое зелье лечения",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2674,7 +2779,7 @@
     "gridH": 1,
     "dropWeight": 1,
     "use": {
-      "heal": 60,
+      "heal": 30,
       "healPct": 0.2,
       "mana": 0,
       "manaPct": 0,
@@ -2686,6 +2791,7 @@
     "kind": "consumable",
     "id": "healing-potion",
     "name": "Зелье лечения",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2695,7 +2801,7 @@
     "gridH": 1,
     "dropWeight": 1,
     "use": {
-      "heal": 140,
+      "heal": 60,
       "healPct": 0.4,
       "mana": 0,
       "manaPct": 0,
@@ -2707,6 +2813,7 @@
     "kind": "consumable",
     "id": "mana-potion",
     "name": "Зелье маны",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
@@ -2718,7 +2825,7 @@
     "use": {
       "heal": 0,
       "healPct": 0,
-      "mana": 80,
+      "mana": 20,
       "manaPct": 0.4,
       "cure": false,
       "buffDurationSec": 0
@@ -2728,6 +2835,7 @@
     "kind": "consumable",
     "id": "antidote",
     "name": "Противоядие",
+    "enabled": true,
     "gender": "n",
     "minTier": "t0",
     "maxTier": "t6",
