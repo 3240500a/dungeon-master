@@ -352,7 +352,8 @@ export class GameSession {
       m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt);
       if (action === 'attack' || action === 'shoot') {
         // attackCd только что выставлен ИИ = полный цикл атаки; замах — его доля (тот же baseWindupFrac, что у игрока).
-        const windupSec = m.attackCd * this.cfg.get('balance').melee.baseWindupFrac;
+        // windupMult >1 у конструктов — тяжёлый «телеграф» удара.
+        const windupSec = m.attackCd * this.cfg.get('balance').melee.baseWindupFrac * behavior.windupMult;
         if (windupSec > 0) {
           m.windup = { remaining: windupSec, action };
           this.events.push({ type: 'monster-swing', id: m.id, windupMs: windupSec * 1000, x: m.pos.x, y: m.pos.y, facing: m.facing });
@@ -1310,19 +1311,40 @@ export class GameSession {
     const speed = Math.hypot(m.vel.x, m.vel.y);
     if (speed < 1) { m.waypoint = null; return; }
     const toward = m.vel.x * (targetPos.x - m.pos.x) + m.vel.y * (targetPos.y - m.pos.y) > 0;
-    if (!toward || losClear) { m.waypoint = null; return; } // видит / не к цели → напрямую
-    m.pathCd -= dt;
-    const reached = !!m.waypoint && Math.hypot(m.waypoint.x - m.pos.x, m.waypoint.y - m.pos.y) < 16;
-    if (!m.waypoint || reached || m.pathCd <= 0) {
-      const path = findPath(grid, m.pos, targetPos);
-      m.waypoint = path.length ? path[0]! : null;
-      m.pathCd = 0.3;
+    if (toward && !losClear) {
+      // Погоня без прямой видимости → обход стен по BFS-пути.
+      m.pathCd -= dt;
+      const reached = !!m.waypoint && Math.hypot(m.waypoint.x - m.pos.x, m.waypoint.y - m.pos.y) < 16;
+      if (!m.waypoint || reached || m.pathCd <= 0) {
+        const path = findPath(grid, m.pos, targetPos);
+        m.waypoint = path.length ? path[0]! : null;
+        m.pathCd = 0.3;
+      }
+      if (m.waypoint) {
+        const wx = m.waypoint.x - m.pos.x, wy = m.waypoint.y - m.pos.y;
+        const d = Math.hypot(wx, wy) || 1;
+        m.vel.x = (wx / d) * speed;
+        m.vel.y = (wy / d) * speed;
+      }
+      return;
     }
-    if (m.waypoint) {
-      const wx = m.waypoint.x - m.pos.x, wy = m.waypoint.y - m.pos.y;
-      const d = Math.hypot(wx, wy) || 1;
-      m.vel.x = (wx / d) * speed;
-      m.vel.y = (wy / d) * speed;
+    m.waypoint = null;
+    if (!toward) this.avoidWallAhead(m, grid, speed); // кайт/флиа — не пятиться в угол
+  }
+
+  /** Если впереди (по вектору скорости) стена — повернуть скорость к ближайшему открытому
+   *  направлению (для кайта/отхода стрелков и флиа, чтобы не упираться в угол). */
+  private avoidWallAhead(m: MonsterEntity, grid: Grid, speed: number): void {
+    const probe = m.radius + 12;
+    const open = (vx: number, vy: number): boolean => {
+      const c = worldToCell(m.pos.x + (vx / speed) * probe, m.pos.y + (vy / speed) * probe);
+      return !isBlockedCell(grid, c.cx, c.cy);
+    };
+    if (open(m.vel.x, m.vel.y)) return;
+    const base = Math.atan2(m.vel.y, m.vel.x);
+    for (const off of [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, (Math.PI * 3) / 4, -(Math.PI * 3) / 4]) {
+      const a = base + off, vx = Math.cos(a) * speed, vy = Math.sin(a) * speed;
+      if (open(vx, vy)) { m.vel.x = vx; m.vel.y = vy; return; }
     }
   }
 
