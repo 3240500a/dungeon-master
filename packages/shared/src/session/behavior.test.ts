@@ -13,7 +13,7 @@ const r = (() => { const c = new ConfigRegistry(); c.loadAll(); return c; })();
 const behaviors = r.get('monster-behaviors');
 const mrng = createRng(1);
 const monster = (baseId: string) =>
-  makeMonsterEntity(1, generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng), { x: 100, y: 100 }, 0);
+  makeMonsterEntity(1, generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng), { x: 100, y: 100 }, 0);
 
 describe('behaviorFor (резолвер профиля по фракции)', () => {
   it('возвращает профиль своей фракции; дефолт для неизвестной', () => {
@@ -65,7 +65,7 @@ describe('патфайндинг (блок B: обход стены)', () => {
     for (let y = 1; y <= 4; y++) g[y]![wallX] = Cell.Wall; // короткая стена сверху, проход снизу
     const spawn = cellToWorld(7, 2);       // игрок слева от стены
     const mAt = cellToWorld(11, 2);        // монстр справа — прямой путь перекрыт
-    const def = generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId: 'skeleton', depth: 1 }, createRng(3));
+    const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId: 'skeleton', depth: 1 }, createRng(3));
     s.enterFloor(1, { grid: g, spawn, monsters: [{ def, x: mAt.x, y: mAt.y }] } as FloorLayout);
     // игрок стоит и машет (шум держит агро); монстр обходит стену через нижний проход
     const swing: PlayerInput = { move: { x: 0, y: 0 }, facing: 0, attack: true, cast: null, interact: false };

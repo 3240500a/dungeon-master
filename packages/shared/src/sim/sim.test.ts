@@ -13,7 +13,7 @@ const classId = reg.get('classes')[0]!.id;
 
 function pack(cl: number, count: number, rng: ReturnType<typeof createRng>) {
   return Array.from({ length: count }, () =>
-    generateMonster(reg.get('monsters'), reg.get('monster-affixes'), { baseId: 'skeleton', depth: cl }, rng));
+    generateMonster(reg.get('monsters'), reg.get('monster-gear'), reg.get('monster-affixes'), { baseId: 'skeleton', depth: cl }, rng));
 }
 
 function botAt(level: number, build: BuildPolicy = DEFAULT_BUILD) {

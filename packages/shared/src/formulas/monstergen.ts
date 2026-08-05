@@ -3,8 +3,14 @@ import { emptyPacket, type CombatStats, type DamagePacket } from '../types/comba
 import type { MonsterAffix, ScaledMonster } from '../types/world.js';
 import type { DebuffApply, DebuffKind } from '../world/debuffs.js';
 import type { Rng } from './rng.js';
+import { deriveMonsterStats, DEFAULT_MDERIVE, type MonsterDeriveScaling, type MonsterTemplate } from './monsterDerive.js';
 
 type Monsters = ConfigShapes['monsters'];
+type MonsterGear = ConfigShapes['monster-gear'];
+type Gear = MonsterGear[number];
+type GearWeapon = Extract<Gear, { kind: 'weapon' }>;
+type GearArmor = Extract<Gear, { kind: 'armor' }>;
+type GearShield = Extract<Gear, { kind: 'shield' }>;
 type Affixes = ConfigShapes['monster-affixes'];
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type MagicSubtypes = ConfigShapes['magic-subtypes'];
@@ -25,59 +31,41 @@ function applyAffix(m: ScaledMonster, aff: MonsterAffix): void {
   if (aff.damageType) m.damageType = aff.damageType;
 }
 
-/** Коэффициенты прогрессивного роста стата монстра по уровню (см. balance.monsterScaling). */
-export interface MonsterScaling {
-  hpPerLevel: number;
-  damagePerLevel: number;
-  armorPerLevel: number;
-  accuracyPerLevel: number;
-  evadePerLevel: number;
-  blockPerLevel: number;
-  critPerLevel: number;
-  resistPerLevel: number;
-}
-
-/** Фолбэк-коэффициенты (в синхроне с balance.monsterScaling) — для сима/тестов без конфига. */
-const DEFAULT_SCALING: MonsterScaling = {
-  hpPerLevel: 0.8, damagePerLevel: 0.3, armorPerLevel: 1, accuracyPerLevel: 3,
-  evadePerLevel: 2, blockPerLevel: 0.004, critPerLevel: 0.003, resistPerLevel: 0.005,
+/** Резерв-оружие: если у монстра не задано/не найдено оружие — бьёт «кулаками» (валидный монстр). */
+const FISTS: GearWeapon = {
+  kind: 'weapon', id: '__fists', name: 'кулаки', faction: 'monster', enabled: true,
+  weaponClass: 'mace', weight: 'light', attackType: 'melee', hands: 1,
+  damageType: 'physical', minDamage: 1, maxDamage: 2, attackSpeed: 1,
 };
 
+/** Разрешить экипировку монстра по id-ссылкам его заготовки (оружие обязательно → фолбэк FISTS). */
+function resolveGear(gear: MonsterGear, tpl: { weapon?: string; armor?: string; offhand?: string }): {
+  weapon: GearWeapon; armor: GearArmor | null; shield: GearShield | null;
+} {
+  const weapon = (gear.find((g) => g.kind === 'weapon' && g.id === tpl.weapon) as GearWeapon | undefined) ?? FISTS;
+  const armor = tpl.armor ? ((gear.find((g) => g.kind === 'armor' && g.id === tpl.armor) as GearArmor | undefined) ?? null) : null;
+  const shield = tpl.offhand ? ((gear.find((g) => g.kind === 'shield' && g.id === tpl.offhand) as GearShield | undefined) ?? null) : null;
+  return { weapon, armor, shield };
+}
+
 /**
- * Генерирует экземпляр монстра: база из пула + прогрессивный масштаб всего стат-блока по
- * глубине (data-driven, коэффициенты из balance.monsterScaling) + 0–2 аффикса + редкость.
+ * Генерирует экземпляр монстра: заготовка из пула → боевой стат-блок ДЕРИВИТСЯ из АТРИБУТОВ
+ * (STR/DEX/INT/VIT) + ЭКИПИРОВКИ по уровню (`deriveMonsterStats`, зеркально игроку) → +чемпион
+ * (×hp/×dmg/реген) → 0–2 аффикса → редкость. `mderive` перекрывает коэффициенты деривации.
  */
 export function generateMonster(
   monsters: Monsters,
+  monsterGear: MonsterGear,
   affixesPool: Affixes,
-  opts: { baseId?: string; depth: number; xpGrowth?: number; championXpMult?: number; scaling?: MonsterScaling; forceChampion?: boolean },
+  opts: { baseId?: string; depth: number; championXpMult?: number; forceChampion?: boolean; mderive?: MonsterDeriveScaling },
   rng: Rng,
 ): ScaledMonster {
   const base = (opts.baseId ? monsters.find((b) => b.id === opts.baseId) : undefined) ?? rng.pick(monsters);
-  const d = Math.max(0, opts.depth);
-  const xpGrowth = opts.xpGrowth ?? 0.2; // прирост опыта за уровень (balance.monsterXpGrowth)
-  const s = opts.scaling ?? DEFAULT_SCALING;
+  const level = Math.max(0, opts.depth) + 1;
+  const { weapon, armor, shield } = resolveGear(monsterGear, base);
+  const def = deriveMonsterStats(base as MonsterTemplate, weapon, armor, shield, level, opts.mderive ?? DEFAULT_MDERIVE);
 
-  const m: ScaledMonster = {
-    ...base,
-    hp: Math.round(base.hp * (1 + d * s.hpPerLevel)),
-    minDamage: base.minDamage * (1 + d * s.damagePerLevel),
-    maxDamage: base.maxDamage * (1 + d * s.damagePerLevel),
-    armor: base.armor + d * s.armorPerLevel,
-    accuracy: base.accuracy + d * s.accuracyPerLevel,
-    evade: Math.round(base.evade + d * s.evadePerLevel),
-    blockChance: base.blockChance + d * s.blockPerLevel,
-    critChance: base.critChance + d * s.critPerLevel,
-    resFire: base.resFire + d * s.resistPerLevel,
-    resCold: base.resCold + d * s.resistPerLevel,
-    resLightning: base.resLightning + d * s.resistPerLevel,
-    resPoison: base.resPoison + d * s.resistPerLevel,
-    xp: Math.round(base.xp * (1 + d * xpGrowth)),
-    level: d + 1,
-    rarity: 'normal',
-    affixes: [],
-    damage: 0,
-  };
+  const m: ScaledMonster = { ...def, level, rarity: 'normal', affixes: [], damage: 0 };
 
   // rng-бросок делаем всегда (стабильный поток), форс — сверху.
   const champion = rng.chance(0.08) || opts.forceChampion === true;
@@ -87,7 +75,7 @@ export function generateMonster(
     m.minDamage *= 1.5;
     m.maxDamage *= 1.5;
     m.xp = Math.round(m.xp * (opts.championXpMult ?? 3));
-    m.hpRegen = Math.round(m.hp * 0.006); // ~0.6% HP/сек — тут «увечье» ценно
+    m.hpRegen = Math.max(1, Math.round(m.hp * 0.006)); // ~0.6% HP/сек (мин. 1) — тут «увечье» ценно
     m.name = `Чемпион: ${m.name}`;
   }
 

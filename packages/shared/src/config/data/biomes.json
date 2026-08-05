@@ -17,8 +17,18 @@
     ],
     "monsterPool": [
       "skeleton",
-      "zombie",
-      "skeleton-archer"
+      "skeleton-raider",
+      "skeleton-thrower",
+      "skeleton-fighter",
+      "skeleton-archer",
+      "skeleton-guard",
+      "skeleton-warlock",
+      "skeleton-berserker",
+      "skeleton-knight",
+      "skeleton-fanatic",
+      "skeleton-shaman",
+      "skeleton-crossbow",
+      "skeleton-lord"
     ],
     "dropBias": 1,
     "modifiers": [],

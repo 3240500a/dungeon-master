@@ -24,7 +24,7 @@ describe('коллизии сущностей в сессии', () => {
     const spawn = cellToWorld(3, 10);
     const mrng = createRng(5);
     const baseId = r.get('biomes')[0]!.monsterPool[0]!;
-    const mk = () => generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
+    const mk = () => generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
     const at = cellToWorld(20, 10); // далеко от игрока (в покое)
     const monsters = [
       { def: mk(), x: at.x, y: at.y },
@@ -53,7 +53,7 @@ describe('коллизии сущностей в сессии', () => {
     const spawn = cellToWorld(3, 10);
     const mrng = createRng(1);
     const baseId = r.get('biomes')[0]!.monsterPool[0]!;
-    const mk = () => generateMonster(r.get('monsters'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
+    const mk = () => generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
     const at = cellToWorld(20, 10);
     s.enterFloor(1, { grid, spawn, monsters: [{ def: mk(), x: at.x, y: at.y }, { def: mk(), x: at.x + 2, y: at.y }] } as FloorLayout);
     for (let i = 0; i < 10; i++) s.tick(1 / 30, { p1: idle });

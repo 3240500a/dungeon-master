@@ -46,6 +46,7 @@ export function simulateFloor(
   const pool = theme.monsterPool.filter((id) => enabledIds.has(id));
   const packsCfg = reg.get('packs');
   const monAffixes = reg.get('monster-affixes');
+  const monsterGear = reg.get('monster-gear');
   const itemsBase = reg.get('items.base');
   const affixes = reg.get('affixes');
   const uniques = reg.get('uniques');
@@ -74,8 +75,8 @@ export function simulateFloor(
     const entries = spec.entries.length ? spec.entries : [{ role: '', min: 2, max: 4 }];
     const pack = entries.flatMap((e) =>
       Array.from({ length: rng.int(e.min, e.max) }, () =>
-        generateMonster(monsters, monAffixes, { baseId: pickId(e.role), depth: mDepth }, rng)));
-    if (!pack.length) pack.push(generateMonster(monsters, monAffixes, { baseId: rng.pick(pool), depth: mDepth }, rng));
+        generateMonster(monsters, monsterGear, monAffixes, { baseId: pickId(e.role), depth: mDepth }, rng)));
+    if (!pack.length) pack.push(generateMonster(monsters, monsterGear, monAffixes, { baseId: rng.pick(pool), depth: mDepth }, rng));
 
     const r = simulateFight(model, pack, rng, { startHp: hp });
     timeSec += r.timeSec;

@@ -59,15 +59,14 @@ export function spawnPacksEl(
   const pool = pool0.filter((id) => enabledIds.has(id)); // выключенные монстры не спавнятся
   if (!pool.length) return [];
   const monAffixes = reg.get('monster-affixes');
+  const monsterGear = reg.get('monster-gear');
   const packs = reg.get('packs');
 
   const diffs = reg.get('difficulties');
   const diff = diffs.find((d) => d.id === difficultyId) ?? diffs.find((d) => d.id === 'normal') ?? diffs[0]!;
   const balance = reg.get('balance');
   const floorCL = challengeAtFloor(startChallenge(el, diff), diff, depth);
-  const xpGrowth = balance.monsterXpGrowth;
   const championXpMult = balance.championXpMult;
-  const scaling = balance.monsterScaling;
 
   // Монстры пула, сгруппированные по РОЛИ (для состава пачки); фолбэк — любой из пула.
   const roleOf = new Map(monsters.map((m) => [m.id, m.role]));
@@ -101,7 +100,7 @@ export function spawnPacksEl(
         if (layout.grid[cy]?.[cx] !== Cell.Floor) { const fc = firstFloorCell(layout.grid, room); if (!fc) continue; cx = fc.cx; cy = fc.cy; }
         const w = cellToWorld(cx, cy);
         const id = entry.role ? pickByRole(entry.role) : rng.pick(pool);
-        const def = generateMonster(monsters, monAffixes, { baseId: id, depth: mDepth, xpGrowth, championXpMult, scaling, forceChampion }, rng);
+        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion }, rng);
         spawns.push({ def, x: w.x, y: w.y });
       }
     }

@@ -458,38 +458,42 @@ export const uniquesSchema = z.array(
 );
 
 // ── monsters ────────────────────────────────────────────────────────────────
+/** Авторская заготовка монстра: АТРИБУТЫ (STR/DEX/INT/VIT) + ЭКИПИРОВКА (id из monster-gear) —
+ * зеркально игроку. Боевой стат-блок (hp/урон/меткость/армор/резисты/xp/ai/тип урона) НЕ хранится,
+ * а деривится генератором (`generateMonster`→`deriveMonsterStats`) из атрибутов+гира по уровню.
+ * Так масштабирование/баланс задаётся 4 числами + шмотом, а не два десятка полей руками. */
 export const monstersSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
     /** Активен ли монстр в игре (выключенный не спавнится, но остаётся в редакторе). */
     enabled: z.boolean().default(true),
+    /** Фракция монстра (аффинити классов, профиль поведения, пул гира). */
+    faction: z.enum(['undead', 'demon', 'beast', 'monster']).default('monster'),
+    /** Подфракция (чисто визуал + тема аффиксов на магич./рарных, напр. «культ огня»). Пусто = базовая. */
+    subfaction: z.string().default(''),
     /** id роли монстра (из monster-roles) — для состава пачек. */
     role: z.string().default('warrior'),
-    hp: z.number(),
-    minDamage: z.number(),
-    maxDamage: z.number(),
-    damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).default('physical'),
-    /** Фракция монстра (аффинити классов). */
-    faction: z.enum(['undead', 'demon', 'beast', 'monster']).default('monster'),
-    /** id физ-подтипа (из конфига phys-subtypes). */
-    physSub: z.string().optional(),
-    attackSpeed: z.number(),
-    moveSpeed: z.number(),
-    armor: z.number(),
-    accuracy: z.number().default(30),
-    evade: z.number().default(10),
-    blockChance: z.number().default(0),
-    critChance: z.number().default(0.05),
-    critMultiplier: z.number().default(1.5),
-    hpRegen: z.number().default(0),
-    resFire: z.number().default(0),
-    resCold: z.number().default(0),
-    resLightning: z.number().default(0),
-    resPoison: z.number().default(0),
-    xp: z.number(),
-    ai: z.enum(['melee-chaser', 'ranged-kiter', 'stationary']),
+    /** Тир силы — множит xp и помогает подбору пачек (weak/medium/strong/boss). */
+    tier: z.enum(['weak', 'medium', 'strong', 'boss']).default('medium'),
+    // ── Атрибуты (как у игрока) ──
+    str: z.number().min(0).default(10),
+    dex: z.number().min(0).default(10),
+    int: z.number().min(0).default(10),
+    vit: z.number().min(0).default(10),
+    // ── Экипировка (id из monster-gear своей фракции) ──
+    /** Оружие (id monster-gear kind:weapon). Пусто/не найдено → «кулаки». Задаёт урон/тип/AI/скорость. */
+    weapon: z.string().default(''),
+    /** Броня (id monster-gear kind:armor). Пусто = без брони. */
+    armor: z.string().default(''),
+    /** Левая рука — щит (id monster-gear kind:shield). Пусто = без щита. */
+    offhand: z.string().default(''),
+    /** Явный AI (иначе выводится из оружия: дальний→kiter, мили→chaser). */
+    ai: z.enum(['melee-chaser', 'ranged-kiter', 'stationary']).optional(),
+    /** Скорость перемещения (px/с). */
+    moveSpeed: z.number().default(50),
     sprite: z.string(),
+    // ── Восприятие ──
     vision: z.number().default(240),
     visionAngle: z.number().default(100),
     hearing: z.number().default(96),
