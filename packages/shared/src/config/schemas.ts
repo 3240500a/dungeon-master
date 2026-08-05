@@ -490,6 +490,9 @@ export const monstersSchema = z.array(
     offhand: z.string().default(''),
     /** Явный AI (иначе выводится из оружия: дальний→kiter, мили→chaser). */
     ai: z.enum(['melee-chaser', 'ranged-kiter', 'stationary']).optional(),
+    /** Ручная кривая веса спавна по тирам глубины (0 чисел = авто из силового тира; иначе по числу
+     *  тиров в depth-tiers). Гибрид: авто-заполнение по тиру + ручной дотюн в редакторе (график). */
+    spawnCurve: z.array(z.number().min(0)).default([]),
     /** Скорость перемещения (px/с). */
     moveSpeed: z.number().default(50),
     sprite: z.string(),
@@ -499,6 +502,28 @@ export const monstersSchema = z.array(
     hearing: z.number().default(96),
     /** Вес (масса) для расталкивания: тяжёлого двигают меньше. Чемпион ×balance.collision.championWeightMult. */
     weight: z.number().min(0).default(100),
+  }),
+);
+
+// ── depth-tiers ───────────────────────────────────────────────────────────────
+/** Тиры глубины: 6 бэндов этажей, задающих ВЕС спавна по силовому тиру монстра (weak/medium/strong/boss)
+ *  на этой глубине. Кривая монстра = столбец его `tier` по 6 рядам (авто) или его `spawnCurve` (ручной
+ *  оверрайд). Контроль спавна по глубине СВЕРХ скейла от уровня/гира: «этажи 1–3 = почти только weak». */
+export const depthTiersSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    /** Первый этаж бэнда (1-based; = контрольная точка кривой для интерполяции). */
+    fromFloor: z.number().int().min(1).default(1),
+    /** Последний этаж бэнда (последний тир — большим числом = «и глубже»). */
+    toFloor: z.number().int().min(1).default(999),
+    /** Вес спавна (0..100) для каждого силового тира монстра на этом тире глубины. */
+    weights: z.object({
+      weak: z.number().min(0).default(0),
+      medium: z.number().min(0).default(0),
+      strong: z.number().min(0).default(0),
+      boss: z.number().min(0).default(0),
+    }),
   }),
 );
 
@@ -1517,6 +1542,7 @@ export const configSchemas = {
   'monster-affixes': monsterAffixesSchema,
   'monster-behaviors': monsterBehaviorsSchema,
   'monster-gear': monsterGearSchema,
+  'depth-tiers': depthTiersSchema,
   'monster-roles': monsterRolesSchema,
   packs: packsSchema,
   difficulties: difficultiesSchema,

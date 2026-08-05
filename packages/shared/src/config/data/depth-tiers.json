@@ -1,0 +1,14 @@
+[
+  { "id": "d1", "name": "Тир 1 (мелководье)", "fromFloor": 1, "toFloor": 3,
+    "weights": { "weak": 95, "medium": 14, "strong": 1, "boss": 0 } },
+  { "id": "d2", "name": "Тир 2", "fromFloor": 4, "toFloor": 6,
+    "weights": { "weak": 72, "medium": 52, "strong": 6, "boss": 1 } },
+  { "id": "d3", "name": "Тир 3", "fromFloor": 7, "toFloor": 10,
+    "weights": { "weak": 45, "medium": 72, "strong": 20, "boss": 5 } },
+  { "id": "d4", "name": "Тир 4", "fromFloor": 11, "toFloor": 15,
+    "weights": { "weak": 24, "medium": 58, "strong": 50, "boss": 14 } },
+  { "id": "d5", "name": "Тир 5", "fromFloor": 16, "toFloor": 22,
+    "weights": { "weak": 11, "medium": 34, "strong": 74, "boss": 34 } },
+  { "id": "d6", "name": "Тир 6 (бездна)", "fromFloor": 23, "toFloor": 999,
+    "weights": { "weak": 4, "medium": 16, "strong": 66, "boss": 64 } }
+]

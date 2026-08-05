@@ -2,6 +2,7 @@ import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
 import { createRng, type Rng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
+import { spawnWeightAt, weightedPickId } from '../formulas/spawnWeight.js';
 import { effectiveLevel, startChallenge, challengeAtFloor } from '../formulas/power.js';
 import { Cell, cellToWorld } from '../world/grid.js';
 import type { FloorLayout, MonsterSpawn } from '../session/session.js';
@@ -70,11 +71,17 @@ export function spawnPacksEl(
 
   // Монстры пула, сгруппированные по РОЛИ (для состава пачки); фолбэк — любой из пула.
   const roleOf = new Map(monsters.map((m) => [m.id, m.role]));
+  const monById = new Map(monsters.map((m) => [m.id, m]));
   const poolByRole = new Map<string, string[]>();
   for (const id of pool) { const r = roleOf.get(id) ?? ''; (poolByRole.get(r) ?? poolByRole.set(r, []).get(r)!).push(id); }
+  // Вес спавна по ГЛУБИНЕ (тиры глубины): на этаже `depth` weak доминирует на мелководье, boss копится
+  // к бездне. Выбор монстра в пуле/по роли взвешен этим (роль-состав пачки из packs.json — сверху).
+  const depthTiers = reg.get('depth-tiers');
+  const weightAt = (id: string): number => { const m = monById.get(id); return m ? spawnWeightAt(m, depthTiers, depth) : 1; };
+  const wpick = (ids: string[]): string => weightedPickId(ids, weightAt, rng.float(0, 1), (r) => ids[Math.floor(r * ids.length)] ?? pool[0]!);
   const pickByRole = (role: string): string => {
     const c = poolByRole.get(role);
-    return c && c.length ? rng.pick(c) : rng.pick(pool);
+    return c && c.length ? wpick(c) : wpick(pool);
   };
 
   const spawns: MonsterSpawn[] = [];
@@ -99,7 +106,7 @@ export function spawnPacksEl(
         for (let t = 0; t < 6 && layout.grid[cy]?.[cx] !== Cell.Floor; t++) { cx = rng.int(room.x + 1, room.x + room.w - 2); cy = rng.int(room.y + 1, room.y + room.h - 2); }
         if (layout.grid[cy]?.[cx] !== Cell.Floor) { const fc = firstFloorCell(layout.grid, room); if (!fc) continue; cx = fc.cx; cy = fc.cy; }
         const w = cellToWorld(cx, cy);
-        const id = entry.role ? pickByRole(entry.role) : rng.pick(pool);
+        const id = entry.role ? pickByRole(entry.role) : wpick(pool);
         const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion }, rng);
         spawns.push({ def, x: w.x, y: w.y });
       }
