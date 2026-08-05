@@ -8,6 +8,7 @@ import { renderSimPage } from './sim.js';
 import { renderRunGenPage } from './runGen.js';
 import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
+import { renderCalcPage } from './calc.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 
@@ -122,7 +123,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' = 'config';
 /** Активная подветка balance (её страница-срез). */
 let balanceGroup: string = balanceGroupsFull[0]!.title;
 
@@ -432,6 +433,13 @@ function render(): void {
   monGenBtn.addEventListener('click', () => { view = 'monstergen'; render(); });
   nav.appendChild(monGenBtn);
 
+  // Отдельная вкладка-инструмент: калькулятор персонажа (планировщик, à la d2planner).
+  const calcBtn = document.createElement('button');
+  calcBtn.textContent = '🧮 Калькулятор';
+  calcBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'calc' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  calcBtn.addEventListener('click', () => { view = 'calc'; render(); });
+  nav.appendChild(calcBtn);
+
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
   const covered = new Set(NAV_GROUPS.flatMap(groupKeys));
   const extra = (Object.keys(configSchemas) as ConfigKey[]).filter((k) => !covered.has(k));
@@ -494,6 +502,7 @@ function render(): void {
   else if (view === 'rungen') renderRunGenPage(page, data);
   else if (view === 'itemgen') renderItemGenPage(page, data);
   else if (view === 'monstergen') renderMonsterGenPage(page, data);
+  else if (view === 'calc') renderCalcPage(page, data);
   else renderPage(page);
 
   layout.append(nav, page);
