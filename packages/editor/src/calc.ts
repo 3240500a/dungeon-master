@@ -24,6 +24,9 @@ let monChampion = false;
 const equipped: Partial<Record<EquipSlot, Item | null>> = {};
 let itemRarity: '' | Rarity = '';
 let rollSeed = 100;
+/** Вложенные ранги в узлы дерева мастерства (пассивы) → влияют на стат-блок. */
+const masteries: Record<string, number> = {};
+let skillFilter = '';
 
 const SLOTS: { s: EquipSlot; ru: string }[] = [
   { s: 'weapon', ru: 'Оружие' }, { s: 'offhand', ru: 'Щит/офф' }, { s: 'helm', ru: 'Шлем' }, { s: 'chest', ru: 'Броня' },
@@ -60,7 +63,7 @@ export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>)
   const head = h('div', 'display:flex;gap:10px;align-items:flex-end');
   const classSel = document.createElement('select'); classSel.style.cssText = inp + ';flex:1';
   for (const c of classes) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; if (c.id === classId) o.selected = true; classSel.appendChild(o); }
-  classSel.addEventListener('change', () => { classId = classSel.value; spent.strength = spent.dexterity = spent.intelligence = spent.vitality = 0; for (const k of Object.keys(equipped)) delete equipped[k as EquipSlot]; renderCalcPage(page, data); });
+  classSel.addEventListener('change', () => { classId = classSel.value; spent.strength = spent.dexterity = spent.intelligence = spent.vitality = 0; for (const k of Object.keys(equipped)) delete equipped[k as EquipSlot]; for (const k of Object.keys(masteries)) delete masteries[k]; renderCalcPage(page, data); });
   const lvlInp = document.createElement('input'); lvlInp.type = 'number'; lvlInp.min = '1'; lvlInp.max = '99'; lvlInp.value = String(level); lvlInp.style.cssText = inp + ';width:64px';
   lvlInp.addEventListener('change', () => { level = Math.max(1, Math.min(99, Number(lvlInp.value) || 1)); renderCalcPage(page, data); });
   head.append(field('Класс', classSel), field('Уровень', lvlInp));
@@ -128,7 +131,36 @@ export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>)
     if (cur) gearBox.appendChild(h('div', `font-size:11px;color:${rarCol(cur.rarity)};margin:0 0 3px 68px`, cur.name));
   }
   left.appendChild(gearBox);
-  left.appendChild(h('div', 'font-size:11px;color:#6a6a7a', 'Скиллы — след. под-шаг (2c). Требования гира в планировщике не гейтят.'));
+
+  // ── мастерство/пассивы (2c): вложение очков в узлы дерева → влияют на статы ──
+  const mtree = reg.get('mastery-tree');
+  const mBudget = reg.get('balance').masteryPointsPerLevel * Math.max(0, level - 1);
+  const mSpent = Object.values(masteries).reduce((a, b) => a + b, 0);
+  const mRemain = mBudget - mSpent;
+  const passives = mtree.nodes.filter((n) => ((n.effect?.modifiers?.length ?? 0) > 0));
+  const mBox = h('div', 'border:1px solid #2c2c3a;border-radius:8px;padding:10px;background:#14141c');
+  mBox.appendChild(h('div', `font-size:12px;color:#9aa;margin-bottom:6px`, `Мастерство (пассивы): <b style="color:${mRemain > 0 ? '#5dcaa5' : '#e8e8f0'}">${mRemain}</b> / ${mBudget} очков`));
+  const filt = document.createElement('input'); filt.type = 'text'; filt.placeholder = 'поиск узла…'; filt.value = skillFilter; filt.style.cssText = inp + ';width:100%;margin-bottom:6px';
+  filt.addEventListener('input', () => { skillFilter = filt.value; renderCalcPage(page, data); requestAnimationFrame(() => { const el = page.querySelector<HTMLInputElement>('#calcFilt'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }); });
+  filt.id = 'calcFilt';
+  mBox.appendChild(filt);
+  const chosen = passives.filter((n) => (masteries[n.id] ?? 0) > 0);
+  const matched = skillFilter ? passives.filter((n) => n.name.toLowerCase().includes(skillFilter.toLowerCase())) : [];
+  const shown = [...new Set([...chosen, ...matched])].slice(0, 24);
+  if (!shown.length) mBox.appendChild(h('div', 'font-size:11px;color:#6a6a7a', skillFilter ? 'ничего не найдено' : 'введи поиск, чтобы найти узлы (или добавь ранги)'));
+  for (const n of shown) {
+    const rank = masteries[n.id] ?? 0; const max = (n as { maxRank?: number }).maxRank ?? 1;
+    const row = h('div', 'display:flex;align-items:center;gap:5px;margin:2px 0');
+    row.appendChild(h('span', 'flex:1;font-size:11px;color:#e8e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', `${n.name} <span style="color:#6a6a7a">${rank}/${max}</span>`));
+    const dec = miniBtn('−', () => { if (rank > 0) { const nv = rank - 1; if (nv <= 0) delete masteries[n.id]; else masteries[n.id] = nv; renderCalcPage(page, data); } });
+    const inc = miniBtn('+', () => { if (mRemain > 0 && rank < max) { masteries[n.id] = rank + 1; renderCalcPage(page, data); } });
+    if (mRemain <= 0 || rank >= max) inc.style.opacity = '0.4';
+    if (rank <= 0) dec.style.opacity = '0.4';
+    row.append(dec, inc);
+    mBox.appendChild(row);
+  }
+  left.appendChild(mBox);
+  left.appendChild(h('div', 'font-size:11px;color:#6a6a7a', 'Пререквизиты дерева в планировщике не гейтят (калькулятор). Требования гира — тоже.'));
 
   // ── стат-блок ──
   const d = botDerived(reg, save);
@@ -236,5 +268,6 @@ function buildSave(reg: ConfigRegistry, cls: { id: string; startAttributes: Attr
     if (item) save.equipment[slot as EquipSlot] = item;
     else delete save.equipment[slot as EquipSlot];
   }
+  save.masteries = { ...masteries };
   return save;
 }
