@@ -148,6 +148,12 @@ fieldEnumSources.skillId = () => ((data['skill-tree'] as { nodes?: { id: string;
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
 fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []).map((r) => r.id);
+// weapon / armor / offhand (экипировка монстра) — выпадашки из monster-gear по виду; '' = без предмета.
+const monsterGearOf = (kind: 'weapon' | 'armor' | 'shield') => (): string[] =>
+  ['', ...((data['monster-gear'] as { id: string; kind: string }[]) ?? []).filter((g) => g.kind === kind).map((g) => g.id)];
+fieldEnumSources.weapon = monsterGearOf('weapon');
+fieldEnumSources.armor = monsterGearOf('armor');
+fieldEnumSources.offhand = monsterGearOf('shield');
 // poseClips (у активного скила) — упорядоченный мультивыбор имён сохранённых поз из редактора поз
 // (/api/pose → pe_clips). Несколько имён → в 3D удары чередуются. s_hit_ (спец-удар скила) — вперёд, затем hit_, idle_.
 let poseClipNames: string[] = [];
