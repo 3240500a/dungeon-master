@@ -1,4 +1,4 @@
-import { ConfigRegistry, newBotSave, botDerived, makePlayerModel, estimateAttack, type SaveState, type Attributes } from '@dm/shared';
+import { ConfigRegistry, newBotSave, botDerived, makePlayerModel, estimateAttack, generateMonster, createRng, hitChance, armorMitigation, type SaveState, type Attributes } from '@dm/shared';
 
 /**
  * Вкладка «Калькулятор» — планировщик персонажа (à la d2planner). Шаг 2a: класс + уровень → бюджет
@@ -18,6 +18,8 @@ const ATTR: { k: keyof Attributes; short: string }[] = [
 let classId = '';
 let level = 30;
 const spent: Attributes = { strength: 0, dexterity: 0, intelligence: 0, vitality: 0 };
+let monBaseId = '';
+let monChampion = false;
 
 const h = (tag: string, css: string, html = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (html) e.innerHTML = html; return e; };
 const pctS = (x: number): string => `${Math.round(x * 100)}%`;
@@ -107,6 +109,57 @@ export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>)
     ['Вампиризм HP/мана', `${pctS(d.lifeLeechPct)} / ${pctS(d.manaLeechPct)}`],
   ]));
   right.appendChild(grid);
+
+  // ── монстр + TTK (2d) ──
+  const mons = reg.get('monsters');
+  if (!monBaseId || !mons.some((mm) => mm.id === monBaseId)) monBaseId = mons[0]?.id ?? '';
+  if (mons.length) {
+    const monRow = h('div', 'display:flex;gap:10px;align-items:flex-end;margin:16px 0 10px');
+    const monSel = document.createElement('select'); monSel.style.cssText = inp + ';min-width:200px';
+    for (const mm of mons) { const o = document.createElement('option'); o.value = mm.id; o.textContent = `${mm.name} [${mm.tier}]`; if (mm.id === monBaseId) o.selected = true; monSel.appendChild(o); }
+    monSel.addEventListener('change', () => { monBaseId = monSel.value; renderCalcPage(page, data); });
+    const champWrap = h('label', 'display:flex;align-items:center;gap:5px;font-size:13px;color:#e8e8f0;cursor:pointer');
+    const champInp = document.createElement('input'); champInp.type = 'checkbox'; champInp.checked = monChampion;
+    champInp.addEventListener('change', () => { monChampion = champInp.checked; renderCalcPage(page, data); });
+    champWrap.append(champInp, document.createTextNode('чемпион'));
+    monRow.append(field(`Монстр (ур.${level})`, monSel), field(' ', champWrap));
+    right.appendChild(monRow);
+
+    const mon = generateMonster(mons, reg.get('monster-gear'), reg.get('monster-affixes'),
+      { baseId: monBaseId, depth: level - 1, forceChampion: monChampion, mderive: reg.get('monster-derive') }, createRng(1));
+
+    // Ожидаемый урон/сек по формулам игры (hitChance/armorMitigation/крит/блок).
+    const pHitCh = hitChance(d.accuracy, mon.evade);
+    const pExp = hit * pHitCh * (1 - mon.blockChance) * (1 + d.critChance * (d.critMultiplier - 1)) * (1 - armorMitigation(mon.armor, save.level));
+    const pDps = pExp / m.attackInterval;
+    const monAvg = (mon.minDamage + mon.maxDamage) / 2;
+    const mHitCh = hitChance(mon.accuracy, d.evade);
+    const mExp = monAvg * mHitCh * (1 - d.blockChance) * (1 + mon.critChance * (mon.critMultiplier - 1)) * (1 - armorMitigation(d.armor, mon.level));
+    const mDps = mExp * mon.attackSpeed;
+    const ttkKill = mon.hp / Math.max(0.01, pDps);
+    const ttkDeath = d.maxHp / Math.max(0.01, mDps);
+    const pHits = Math.ceil(mon.hp / Math.max(0.01, pExp));
+    const mHits = Math.ceil(d.maxHp / Math.max(0.01, mExp));
+
+    const cols = h('div', 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px');
+    cols.appendChild(statCard(`Монстр: ${mon.name}`, [
+      ['HP', `${mon.hp}${mon.hpRegen ? ` (+${mon.hpRegen}/с)` : ''}`],
+      ['Урон / DPS', `${mon.minDamage}–${mon.maxDamage} / ${Math.round(mDps)}`],
+      ['Меткость / Уворот / Армор', `${mon.accuracy} / ${mon.evade} / ${mon.armor}`],
+      ['Блок / Крит / Скор', `${pctS(mon.blockChance)} / ${pctS(mon.critChance)} / ${mon.attackSpeed.toFixed(2)}`],
+      ['AI / XP', `${mon.ai} / ${mon.xp}`],
+      ['Афиксы', mon.affixes.length ? mon.affixes.join(', ') : '—'],
+    ]));
+    const win = ttkKill < ttkDeath;
+    const ttk = statCard('TTK (время до убийства)', [
+      ['Игрок → монстр', `~${ttkKill.toFixed(1)}с · ${pHits} уд · поп. ${pctS(pHitCh)}`],
+      ['Монстр → игрок', `~${ttkDeath.toFixed(1)}с · ${mHits} уд · поп. ${pctS(mHitCh)}`],
+    ]);
+    ttk.appendChild(h('div', `margin-top:8px;font-size:13px;font-weight:600;color:${win ? '#5dcaa5' : '#e0708a'}`,
+      `${win ? '▲ Игрок побеждает' : '▼ Монстр побеждает'} · запас ×${(Math.max(ttkKill, ttkDeath) / Math.max(0.01, Math.min(ttkKill, ttkDeath))).toFixed(1)}`));
+    cols.append(ttk);
+    right.appendChild(cols);
+  }
 }
 
 function field(labelText: string, ctrl: HTMLElement): HTMLElement { const w = h('div', 'display:flex;flex-direction:column;gap:3px'); w.append(h('label', 'font-size:11px;color:#9aa', labelText), ctrl); return w; }
