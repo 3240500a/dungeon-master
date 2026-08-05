@@ -16,19 +16,19 @@
       "ожившие статуи"
     ],
     "monsterPool": [
-      "skeleton",
-      "skeleton-raider",
-      "skeleton-thrower",
-      "skeleton-fighter",
-      "skeleton-archer",
-      "skeleton-guard",
-      "skeleton-warlock",
-      "skeleton-berserker",
-      "skeleton-knight",
-      "skeleton-fanatic",
-      "skeleton-shaman",
-      "skeleton-crossbow",
-      "skeleton-lord"
+      "zombie",
+      "zombie-raider",
+      "zombie-thrower",
+      "zombie-fighter",
+      "zombie-archer",
+      "zombie-guard",
+      "zombie-warlock",
+      "zombie-berserker",
+      "zombie-knight",
+      "zombie-fanatic",
+      "zombie-shaman",
+      "zombie-crossbow",
+      "zombie-lord"
     ],
     "dropBias": 1,
     "modifiers": [],
@@ -57,7 +57,7 @@
     ],
     "monsterPool": [
       "zombie",
-      "skeleton"
+      "zombie"
     ],
     "dropBias": 1.1,
     "modifiers": [],
@@ -80,8 +80,8 @@
       "искажённые маги"
     ],
     "monsterPool": [
-      "skeleton",
-      "skeleton-archer"
+      "zombie",
+      "zombie-archer"
     ],
     "dropBias": 1,
     "modifiers": [],
@@ -104,8 +104,8 @@
       "бывшие императоры, ставшие демонами"
     ],
     "monsterPool": [
-      "skeleton",
-      "skeleton-archer"
+      "zombie",
+      "zombie-archer"
     ],
     "dropBias": 1,
     "modifiers": [],

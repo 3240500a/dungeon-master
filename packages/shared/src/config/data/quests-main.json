@@ -5,9 +5,9 @@
     "description": "Спуститесь в крипту и уничтожьте нежить.",
     "objectives": [
       {
-        "id": "kill-skeletons",
+        "id": "kill-zombies",
         "type": "kill",
-        "target": "skeleton",
+        "target": "zombie",
         "amount": 5
       }
     ],

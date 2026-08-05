@@ -7,9 +7,9 @@
       12
     ],
     "targetPool": [
-      "skeleton",
       "zombie",
-      "dark-archer"
+      "zombie-raider",
+      "zombie-archer"
     ],
     "rewardGoldRange": [
       50,
