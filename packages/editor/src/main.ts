@@ -23,6 +23,7 @@ const LABELS: Record<ConfigKey, string> = {
   uniques: 'Уники',
   monsters: 'Монстры',
   'monster-affixes': 'Монстры: аффиксы',
+  'monster-behaviors': 'Монстры: поведение ИИ',
   'monster-roles': 'Роли монстров',
   packs: 'Пачки монстров',
   difficulties: 'Сложности',
@@ -64,7 +65,7 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques', 'rare-names'] },
-  { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'monster-roles', 'packs'] },
+  { title: 'Монстры', keys: ['monsters', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
@@ -73,7 +74,7 @@ const NAV_GROUPS: NavGroup[] = [
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', 'monster-roles': 'Роли', packs: 'Пачки',
+  'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
   'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',

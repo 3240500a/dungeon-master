@@ -505,6 +505,50 @@ export const monsterAffixesSchema = z.array(
   }),
 );
 
+// ── monster-behaviors ─────────────────────────────────────────────────────────
+/** Профиль поведения ИИ по ФРАКЦИИ (data-driven FSM). `ai` (melee/ranged/stationary) на монстре —
+ * это КАК он атакует; профиль — КАК себя ведёт. Монстр берёт профиль по своей `faction`.
+ * Ядро одинаково (мясить толпы), фракции дают небольшие отличия (главный рычаг мили — `fleeHpPct`). */
+export const monsterBehaviorsSchema = z.array(
+  z.object({
+    faction: z.enum(['undead', 'demon', 'beast', 'monster']),
+    // ── Восприятие / агро ──
+    /** Задержка «заметил» перед первой атакой, сек (0 = мгновенно). */
+    alertDelaySec: z.number().min(0).default(0),
+    /** Реакция на шум: chase — сразу в погоню; investigate — идти к точке шума, атаковать лишь увидев. */
+    hearingMode: z.enum(['chase', 'investigate']).default('chase'),
+    /** Погоня после потери контакта, сек. */
+    leashTimeSec: z.number().min(0).default(3.5),
+    /** Дальше этого преследование обрывается. */
+    leashRadius: z.number().min(0).default(560),
+    /** Возврат на точку спавна при деагро. */
+    returnHome: z.boolean().default(false),
+    // ── Ближний бой ──
+    /** advance — обычный подход; juggernaut — медленный тяжёлый (большие конструкты). */
+    engageStyle: z.enum(['advance', 'juggernaut']).default('advance'),
+    /** Порог отхода: отступает при HP ниже доли (0 = бесстрашный). ГЛАВНЫЙ per-faction рычаг мили. */
+    fleeHpPct: z.number().min(0).max(1).default(0),
+    /** Множитель замаха (тяжёлый телеграф; >1 у конструктов). */
+    windupMult: z.number().min(0.1).default(1),
+    /** Сопротивление прерыванию/оглушению 0..1 («поза»). */
+    poise: z.number().min(0).max(1).default(0),
+    /** Когезия стаи (звери) — тянуться к центру группы, 0 = нет. */
+    packCohesion: z.number().min(0).default(0),
+    // ── Дальний бой ──
+    /** Ближняя граница «держать дистанцию» (ближе — отходит). */
+    keepDistMin: z.number().min(0).default(140),
+    /** Дальняя граница (дальше — сближается). */
+    keepDistMax: z.number().min(0).default(220),
+    /** Смена позиции стрелка: none — стоять; strafe — боковой сдвиг; blink — телепорт (джинны). */
+    repositionMode: z.enum(['none', 'strafe', 'blink']).default('none'),
+    /** Менять позицию после каждого выстрела. */
+    repositionAfterShot: z.boolean().default(false),
+    // ── Сигнатура ──
+    /** Особая способность: overload — взрыв при смерти (конструкты). */
+    signature: z.enum(['none', 'overload']).default('none'),
+  }),
+);
+
 // ── item-tiers ────────────────────────────────────────────────────────────────
 /** Лестница тиров баз (D2-стиль): по ilvl дропа берётся высший доступный тир. */
 export const itemTiersSchema = z.array(
@@ -1404,6 +1448,7 @@ export const configSchemas = {
   uniques: uniquesSchema,
   monsters: monstersSchema,
   'monster-affixes': monsterAffixesSchema,
+  'monster-behaviors': monsterBehaviorsSchema,
   'monster-roles': monsterRolesSchema,
   packs: packsSchema,
   difficulties: difficultiesSchema,

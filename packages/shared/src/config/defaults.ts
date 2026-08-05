@@ -5,6 +5,7 @@ import affixes from './data/affixes.json' with { type: 'json' };
 import uniques from './data/uniques.json' with { type: 'json' };
 import monsters from './data/monsters.json' with { type: 'json' };
 import monsterAffixes from './data/monster-affixes.json' with { type: 'json' };
+import monsterBehaviors from './data/monster-behaviors.json' with { type: 'json' };
 import monsterRoles from './data/monster-roles.json' with { type: 'json' };
 import packs from './data/packs.json' with { type: 'json' };
 import difficulties from './data/difficulties.json' with { type: 'json' };
@@ -36,6 +37,7 @@ export const defaultConfigData: Record<string, unknown> = {
   uniques,
   monsters,
   'monster-affixes': monsterAffixes,
+  'monster-behaviors': monsterBehaviors,
   'monster-roles': monsterRoles,
   packs,
   difficulties,
