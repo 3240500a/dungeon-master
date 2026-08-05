@@ -38,6 +38,7 @@ import {
 import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js';
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
 import { behaviorFor } from './behavior.js';
+import { findPath } from '../world/pathfind.js';
 
 /**
  * Безголовое авторитетное ядро игрового цикла (Этап 2). Держит `WorldState` как
@@ -347,6 +348,7 @@ export class GameSession {
       const behavior = behaviorFor(m.def.faction, behaviors);
       const losClear = this.hasLos(m.pos, target.pos);
       const action = stepMonsterAi(m, target.pos, behavior, losClear, noiseMult, dt);
+      this.navChase(m, target.pos, w.grid, losClear, dt); // обход стен по BFS, когда не видит цель
       m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt);
       if (action === 'attack' || action === 'shoot') {
         // attackCd только что выставлен ИИ = полный цикл атаки; замах — его доля (тот же baseWindupFrac, что у игрока).
@@ -1296,6 +1298,32 @@ export class GameSession {
 
   private hasLos(a: Vec2, b: Vec2): boolean {
     return hasLineOfSight(this.world.grid, a.x, a.y, b.x, b.y);
+  }
+
+  /**
+   * Патфайндинг-гибрид (блок B). Если монстр в погоне ДВИЖЕТСЯ К цели и прямой видимости нет —
+   * ведём его по BFS-пути (обход стен), заменяя направление m.vel на вектор к следующей путевой
+   * точке (скорость сохраняется). Видит цель или движется ОТ неё (кайт/флиа) — не трогаем.
+   * Пересчёт пути троттлится (~0.3с) и при достижении точки — findPath дёшев, но не каждый тик.
+   */
+  private navChase(m: MonsterEntity, targetPos: Vec2, grid: Grid, losClear: boolean, dt: number): void {
+    const speed = Math.hypot(m.vel.x, m.vel.y);
+    if (speed < 1) { m.waypoint = null; return; }
+    const toward = m.vel.x * (targetPos.x - m.pos.x) + m.vel.y * (targetPos.y - m.pos.y) > 0;
+    if (!toward || losClear) { m.waypoint = null; return; } // видит / не к цели → напрямую
+    m.pathCd -= dt;
+    const reached = !!m.waypoint && Math.hypot(m.waypoint.x - m.pos.x, m.waypoint.y - m.pos.y) < 16;
+    if (!m.waypoint || reached || m.pathCd <= 0) {
+      const path = findPath(grid, m.pos, targetPos);
+      m.waypoint = path.length ? path[0]! : null;
+      m.pathCd = 0.3;
+    }
+    if (m.waypoint) {
+      const wx = m.waypoint.x - m.pos.x, wy = m.waypoint.y - m.pos.y;
+      const d = Math.hypot(wx, wy) || 1;
+      m.vel.x = (wx / d) * speed;
+      m.vel.y = (wy / d) * speed;
+    }
   }
 
   private wrap(a: number): number {

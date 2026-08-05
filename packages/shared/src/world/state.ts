@@ -94,6 +94,12 @@ export interface MonsterEntity {
   leash: number;
   /** Остаток аггро от шума (атака игрока рядом), сек. */
   alertTimer: number;
+  /** Точка спавна — для возврата при потере агро (leash-return). */
+  home: Vec2;
+  /** Троттл пересчёта пути обхода стен, сек. */
+  pathCd: number;
+  /** Кэш следующей путевой точки обхода (null — идти напрямую). */
+  waypoint: Vec2 | null;
   alive: boolean;
 }
 
@@ -212,6 +218,9 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     aiState: 'idle',
     leash: 0,
     alertTimer: 0,
+    home: { x: pos.x, y: pos.y },
+    pathCd: 0,
+    waypoint: null,
     alive: true,
   };
 }
