@@ -31,6 +31,7 @@ const LABELS: Record<ConfigKey, string> = {
   'depth-tiers': 'Монстры: тиры глубины',
   'monster-derive': 'Монстры: деривация статов',
   'monster-roles': 'Роли монстров',
+  subfactions: 'Монстры: подфракции',
   packs: 'Пачки монстров',
   difficulties: 'Сложности',
   biomes: 'Биомы',
@@ -71,7 +72,7 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques', 'rare-names'] },
-  { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'packs'] },
+  { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
@@ -153,6 +154,10 @@ fieldEnumSources.skillId = () => ((data['skill-tree'] as { nodes?: { id: string;
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
 fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []).map((r) => r.id);
+// subfaction (у монстра) — выпадашка из конфига подфракций; '' = базовая (без подфракции).
+fieldEnumSources.subfaction = () => ['', ...((data['subfactions'] as { id: string }[]) ?? []).map((sf) => sf.id)];
+// affixTheme (у подфракции) — теги стихий из маг. подтипов (fire/cold/lightning/poison).
+fieldArrayEnumSources.affixTheme = () => ((data['magic-subtypes'] as { id: string }[]) ?? []).map((s) => s.id);
 // weapon / armor / offhand (экипировка монстра) — выпадашки из monster-gear по виду; '' = без предмета.
 const monsterGearOf = (kind: 'weapon' | 'armor' | 'shield') => (): string[] =>
   ['', ...((data['monster-gear'] as { id: string; kind: string }[]) ?? []).filter((g) => g.kind === kind).map((g) => g.id)];

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "undead-base",
+    "name": "Нежить: базовая",
+    "enabled": true,
+    "faction": "undead",
+    "tint": "#c8ccd0",
+    "affixTheme": []
+  },
+  {
+    "id": "undead-fire",
+    "name": "Нежить: культ огня",
+    "enabled": true,
+    "faction": "undead",
+    "tint": "#e06a3a",
+    "affixTheme": ["fire"]
+  },
+  {
+    "id": "undead-cold",
+    "name": "Нежить: культ стужи",
+    "enabled": true,
+    "faction": "undead",
+    "tint": "#6aa6e0",
+    "affixTheme": ["cold"]
+  },
+  {
+    "id": "undead-poison",
+    "name": "Нежить: культ тлена",
+    "enabled": true,
+    "faction": "undead",
+    "tint": "#7ec06a",
+    "affixTheme": ["poison"]
+  },
+  {
+    "id": "undead-lightning",
+    "name": "Нежить: культ грозы",
+    "enabled": true,
+    "faction": "undead",
+    "tint": "#d0c24a",
+    "affixTheme": ["lightning"]
+  }
+]

@@ -901,6 +901,27 @@ export const packsSchema = z.array(
   }),
 );
 
+// ── subfactions (подфракции: визуал-тинт + тема аффиксов) ──────────────────────
+/**
+ * Подфракция = визуальный скин (tint) + тема аффиксов для magic/rare-монстров. Забег = одна
+ * подфракция. Тема (`affixTheme`) — теги стихий (fire/cold/…): при ролле гир-аффиксов на монстре
+ * этой подфракции подходящие по стихии аффиксы падают чаще. Пустая тема = без смещения (базовая).
+ */
+export const subfactionsSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    /** Активна ли подфракция (выключенная не предлагается в забеге/редакторе-выпадашке). */
+    enabled: z.boolean().default(true),
+    /** Родительская фракция (группировка/фильтр выпадашки у монстра). */
+    faction: z.enum(['undead', 'demon', 'beast', 'monster']).default('undead'),
+    /** Оттенок скина (hex) — визуальный тинт билборда/модели монстра. */
+    tint: z.string().default('#ffffff'),
+    /** Тема аффиксов: теги стихий (fire/cold/lightning/poison), усиливающие подходящий гир-аффикс. */
+    affixTheme: z.array(z.string()).default([]),
+  }),
+);
+
 // ── difficulties ──────────────────────────────────────────────────────────────
 export const difficultiesSchema = z.array(
   z.object({
@@ -1576,6 +1597,7 @@ export const configSchemas = {
   'depth-tiers': depthTiersSchema,
   'monster-derive': monsterDeriveSchema,
   'monster-roles': monsterRolesSchema,
+  subfactions: subfactionsSchema,
   packs: packsSchema,
   difficulties: difficultiesSchema,
   biomes: biomesSchema,

@@ -89,6 +89,7 @@ export function generateMonster(
     m.name = `${aff.name} ${m.name}`;
   }
 
+  m.hp = Math.max(1, Math.round(m.hp)); // афикс-мульты могли расчемпионить hp в дробь — округляем в конце
   m.minDamage = Math.round(m.minDamage);
   m.maxDamage = Math.max(m.minDamage, Math.round(m.maxDamage));
   m.damage = Math.round((m.minDamage + m.maxDamage) / 2);
