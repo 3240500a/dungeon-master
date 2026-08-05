@@ -109,7 +109,7 @@ export function deriveMonsterStats(
     resCold: (res.resCold ?? 0) + rl,
     resLightning: (res.resLightning ?? 0) + rl,
     resPoison: (res.resPoison ?? 0) + rl,
-    xp: Math.round((5 + level * 3) * (TIER_XP[tpl.tier ?? 'medium'])),
+    xp: Math.round((12 + level * 5) * (TIER_XP[tpl.tier ?? 'medium'])),
     ai: tpl.ai ?? (weapon.attackType === 'ranged' ? 'ranged-kiter' : 'melee-chaser'),
     vision: tpl.vision ?? 240,
     visionAngle: tpl.visionAngle ?? 100,
