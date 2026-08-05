@@ -98,6 +98,8 @@ export interface MonsterEntity {
   home: Vec2;
   /** Остаток «заметил» перед первой атакой (alertDelay), сек. */
   noticeTimer: number;
+  /** КД телепорта-уклонения (джинны, repositionMode=blink), сек. */
+  blinkCd: number;
   /** Троттл пересчёта пути обхода стен, сек. */
   pathCd: number;
   /** Кэш следующей путевой точки обхода (null — идти напрямую). */
@@ -222,6 +224,7 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     alertTimer: 0,
     home: { x: pos.x, y: pos.y },
     noticeTimer: 0,
+    blinkCd: 0,
     pathCd: 0,
     waypoint: null,
     alive: true,

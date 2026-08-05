@@ -37,7 +37,7 @@ import {
 } from '../world/state.js';
 import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js';
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
-import { behaviorFor } from './behavior.js';
+import { behaviorFor, type MonsterBehavior } from './behavior.js';
 import { findPath } from '../world/pathfind.js';
 
 /**
@@ -348,6 +348,7 @@ export class GameSession {
       const behavior = behaviorFor(m.def.faction, behaviors);
       const losClear = this.hasLos(m.pos, target.pos);
       const action = stepMonsterAi(m, target.pos, behavior, losClear, noiseMult, dt);
+      if (behavior.repositionMode === 'blink') this.tryBlink(m, target.pos, behavior, dt); // джинн-уклонение
       this.navChase(m, target.pos, w.grid, losClear, dt); // обход стен по BFS, когда не видит цель
       m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt);
       if (action === 'attack' || action === 'shoot') {
@@ -1125,6 +1126,7 @@ export class GameSession {
     if (!m.alive) return;
     m.alive = false;
     this.events.push({ type: 'monster-died', id: m.id, def: m.def, x: m.pos.x, y: m.pos.y, by: killer?.id });
+    this.overloadOnDeath(m); // сигнатура конструктов: взрыв при смерти
     if (!this.rewards) return; // клиент: золото/XP/дроп делают обработчики шины
     const reward = killer ?? this.primaryPlayer();
     if (!reward) return;
@@ -1345,6 +1347,41 @@ export class GameSession {
     for (const off of [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, (Math.PI * 3) / 4, -(Math.PI * 3) / 4]) {
       const a = base + off, vx = Math.cos(a) * speed, vy = Math.sin(a) * speed;
       if (open(vx, vy)) { m.vel.x = vx; m.vel.y = vy; return; }
+    }
+  }
+
+  /** Джинн-уклонение (repositionMode=blink): при слишком близком игроке телепорт на среднюю дистанцию
+   *  (открытая клетка с LoS к игроку), КД blinkCd. Ставит сессия (ИИ только выставляет vel). */
+  private tryBlink(m: MonsterEntity, targetPos: Vec2, b: MonsterBehavior, dt: number): void {
+    m.blinkCd = Math.max(0, m.blinkCd - dt);
+    if (m.aiState !== 'chase' || m.blinkCd > 0) return;
+    if (Math.hypot(targetPos.x - m.pos.x, targetPos.y - m.pos.y) >= b.keepDistMin) return; // не жмут — не блинкуем
+    const r = (b.keepDistMin + b.keepDistMax) / 2;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + this.rng.next() * 0.6;
+      const nx = targetPos.x + Math.cos(a) * r, ny = targetPos.y + Math.sin(a) * r;
+      const c = worldToCell(nx, ny);
+      if (isBlockedCell(this.world.grid, c.cx, c.cy)) continue;
+      if (!this.hasLos({ x: nx, y: ny }, targetPos)) continue;
+      m.pos = { x: nx, y: ny };
+      m.vel.x = 0; m.vel.y = 0; m.waypoint = null;
+      m.blinkCd = 2.5;
+      return;
+    }
+  }
+
+  /** Сигнатура конструктов (signature=overload): при смерти — AoE-урон по игрокам рядом (наказывает мили). */
+  private overloadOnDeath(m: MonsterEntity): void {
+    if (!this.rewards) return; // урон применяем только на авторитетном сервере
+    if (behaviorFor(m.def.faction, this.cfg.get('monster-behaviors')).signature !== 'overload') return;
+    const radius = m.radius + 48;
+    const a = this.monsterPacket(m);
+    for (const id of Object.keys(this.world.players)) {
+      const p = this.world.players[id]!;
+      if (!p.alive) continue;
+      if (Math.hypot(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius + p.radius) {
+        this.hitPlayer(p, a.packet, a.attacker, a.debuffs, `${m.def.name} (взрыв)`, m);
+      }
     }
   }
 
