@@ -1,8 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["vite/client"],
-    "noEmit": true
+    "types": ["vite/client", "phaser"],
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@dm/client/*": ["../client/src/*"]
+    }
   },
   "include": ["src"]
 }

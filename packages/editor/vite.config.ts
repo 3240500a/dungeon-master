@@ -5,6 +5,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@dm/shared': resolve(__dirname, '../shared/src/index.ts'),
+      // Калькулятор переиспользует реальные панели игры (@dm/client) — «одна истина» по статам.
+      '@dm/client': resolve(__dirname, '../client/src'),
     },
   },
   server: {

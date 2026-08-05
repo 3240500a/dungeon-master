@@ -1,4 +1,7 @@
-import { ConfigRegistry, newBotSave, botDerived, makePlayerModel, estimateAttack, generateMonster, generateItem, createRng, hitChance, armorMitigation, describeItem, type SaveState, type Attributes, type Item, type EquipSlot, type Rarity, type ItemLabels } from '@dm/shared';
+import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, generateMonster, generateItem, createRng, hitChance, armorMitigation, describeItem, type SaveState, type Attributes, type Item, type EquipSlot, type Rarity, type ItemLabels, type DerivedStats } from '@dm/shared';
+import { makeHarness } from './gameHarness.js';
+import { renderPassiveTree } from '@dm/client/modules/skills-passive/treeView.js';
+import type { App } from '@dm/client/core/app.js';
 
 /**
  * Вкладка «Калькулятор» — планировщик персонажа (à la d2planner). Вкладки: атрибуты (числом), экипировка
@@ -84,14 +87,15 @@ export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>)
   left.appendChild(tabs);
 
   const save = buildSave(reg, cls, level);
+  const harness = makeHarness(data, save, () => renderCalcPage(page, data)); // мост «одна истина» с игрой
   const R = itemLabels(reg);
 
   if (tab === 'attrs') left.appendChild(attrsPanel(page, data, cls, avail));
   else if (tab === 'gear') left.appendChild(gearPanel(page, data, reg, save, R));
-  else left.appendChild(masteryPanel(page, data, reg));
+  else left.appendChild(masteryPanel(harness));
 
   // ── правая часть: стат-блок игрока + монстр + TTK (всегда) ──
-  const d = botDerived(reg, save);
+  const d = harness.state!.derived(); // РЕАЛЬНАЯ деривация игры (GameState) — одна истина
   const m = makePlayerModel(reg, save, { useSkills: false });
   const hit = estimateAttack(m.derived, m.attrs, m.weapons[0], m.scaling, m.weights);
   const dps = hit / m.attackInterval;
@@ -187,48 +191,15 @@ function gearPanel(page: HTMLElement, data: Record<string, unknown>, reg: Config
   return box;
 }
 
-// ── панель мастерства (кликабельный атлас) ──
-function masteryPanel(page: HTMLElement, data: Record<string, unknown>, reg: ConfigRegistry): HTMLElement {
-  const tree = reg.get('mastery-tree');
-  const budget = reg.get('balance').masteryPointsPerLevel * Math.max(0, level - 1);
-  const spentM = Object.values(masteries).reduce((a, b) => a + b, 0);
-  const remain = budget - spentM;
-  const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;padding:10px;background:#14141c');
-  box.appendChild(h('div', `font-size:12px;color:#9aa;margin-bottom:6px`, `Мастерство: <b style="color:${remain > 0 ? '#5dcaa5' : '#e8e8f0'}">${remain}</b> / ${budget} очков · ЛКМ +1, ПКМ −1`));
-
-  const nodes = tree.nodes as { id: string; name: string; x: number; y: number; maxRank: number; requires: string[]; notable?: boolean; effect: { modifiers?: { stat: string; kind: string; value: number }[] } }[];
-  if (!nodes.length) { box.appendChild(h('div', 'color:#6a6a7a;font-size:12px', 'дерево пустое')); return box; }
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
-  const pad = 20, minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad, minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
-  svg.setAttribute('width', '100%'); svg.style.cssText = 'display:block;background:#0e0e15;border-radius:6px;max-height:460px;touch-action:none';
-
-  const draw = (): void => {
-    let s = '';
-    for (const [a, b] of tree.edges) { const na = byId.get(a), nb = byId.get(b); if (na && nb) s += `<line x1="${na.x}" y1="${na.y}" x2="${nb.x}" y2="${nb.y}" stroke="#2c2c3a" stroke-width="1.5"/>`; }
-    for (const n of nodes) {
-      const rank = masteries[n.id] ?? 0, r = n.notable ? 9 : 6;
-      const fill = rank > 0 ? '#5dcaa5' : '#20202c', stroke = rank > 0 ? '#8ee6c6' : '#3c3c4a';
-      s += `<circle data-id="${n.id}" cx="${n.x}" cy="${n.y}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="2" style="cursor:pointer"/>`;
-      if (rank > 0) s += `<text x="${n.x}" y="${n.y + 3}" text-anchor="middle" font-size="8" fill="#0b0b12" font-weight="700" style="pointer-events:none">${rank}</text>`;
-    }
-    svg.innerHTML = s;
-  };
-  const modSummary = (n: (typeof nodes)[number]): string => (n.effect.modifiers ?? []).map((mm) => `${mm.stat} ${mm.kind === 'increased' ? '+' + Math.round(mm.value * 100) + '%' : '+' + mm.value}`).join(', ') || '—';
-  svg.addEventListener('click', (e) => { const id = (e.target as SVGElement).getAttribute?.('data-id'); if (!id) return; const n = byId.get(id)!; const rank = masteries[id] ?? 0; if (remain > 0 && rank < n.maxRank) { masteries[id] = rank + 1; renderCalcPage(page, data); } });
-  svg.addEventListener('contextmenu', (e) => { e.preventDefault(); const id = (e.target as SVGElement).getAttribute?.('data-id'); if (!id) return; const rank = masteries[id] ?? 0; if (rank > 0) { const nv = rank - 1; if (nv <= 0) delete masteries[id]; else masteries[id] = nv; renderCalcPage(page, data); } });
-  svg.addEventListener('mousemove', (e) => { const id = (e.target as SVGElement).getAttribute?.('data-id'); if (!id) { hideTip(); return; } const n = byId.get(id)!; showTip(`<div style="color:#e8e8f0;font-weight:600">${n.name} <span style="color:#8a8a9a">${masteries[id] ?? 0}/${n.maxRank}</span></div><div style="color:#9fd6c0;margin-top:2px">${modSummary(n)}</div>`, (e as MouseEvent).clientX, (e as MouseEvent).clientY); });
-  svg.addEventListener('mouseleave', hideTip);
-  draw();
-  box.appendChild(svg);
-  box.appendChild(h('div', 'font-size:11px;color:#6a6a7a;margin-top:4px', 'Пререквизиты в планировщике не гейтят (тыкай любой узел).'));
+// ── панель мастерства: РЕАЛЬНЫЙ атлас игры (renderPassiveTree) через мост ──
+function masteryPanel(harness: App): HTMLElement {
+  const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;padding:6px;background:#0e0e15;height:520px;overflow:hidden');
+  renderPassiveTree(harness, box); // зум/пан/пререквизиты — из игры 1:1; клик шлёт allocPassive в мост
   return box;
 }
 
 // ── монстр + TTK ──
-function monsterTtk(page: HTMLElement, data: Record<string, unknown>, reg: ConfigRegistry, d: ReturnType<typeof botDerived>, m: ReturnType<typeof makePlayerModel>, hit: number, save: SaveState): HTMLElement {
+function monsterTtk(page: HTMLElement, data: Record<string, unknown>, reg: ConfigRegistry, d: DerivedStats, m: ReturnType<typeof makePlayerModel>, hit: number, save: SaveState): HTMLElement {
   const box = h('div', 'display:flex;flex-direction:column;gap:12px');
   const mons = reg.get('monsters');
   if (!monBaseId || !mons.some((mm) => mm.id === monBaseId)) monBaseId = mons[0]?.id ?? '';
@@ -295,6 +266,12 @@ function buildSave(reg: ConfigRegistry, cls: { id: string; startAttributes: Attr
     intelligence: cls.startAttributes.intelligence + spent.intelligence, vitality: cls.startAttributes.vitality + spent.vitality,
   };
   for (const [slot, item] of Object.entries(equipped)) { if (item) save.equipment[slot as EquipSlot] = item; else delete save.equipment[slot as EquipSlot]; }
-  save.masteries = { ...masteries };
+  save.masteries = masteries; // РЕФ — реальный атлас мастерства мутирует его
+  const bal = reg.get('balance');
+  const lv = Math.max(0, level - 1);
+  const usedM = Object.values(masteries).reduce((a, b) => a + b, 0);
+  save.unspentAttributePoints = Math.max(0, bal.attributePointsPerLevel * lv - (spent.strength + spent.dexterity + spent.intelligence + spent.vitality));
+  save.unspentMasteryPoints = Math.max(0, bal.masteryPointsPerLevel * lv - usedM);
+  save.unspentSkillPoints = Math.max(0, bal.skillPointsPerLevel * lv - Object.values(save.skills).reduce((a, b) => a + b, 0));
   return save;
 }
