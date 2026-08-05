@@ -6,6 +6,8 @@ export * from './itemgen.js';
 export * from './itemReq.js';
 export * from './itemDescribe.js';
 export * from './monstergen.js';
+export * from './monsterDerive.js';
+export * from './spawnWeight.js';
 export * from './power.js';
 export * from './skills.js';
 export * from './playerCombat.js';
