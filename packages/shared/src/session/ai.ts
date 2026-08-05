@@ -1,21 +1,18 @@
 import { debuffMods } from '../world/debuffs.js';
 import type { MonsterEntity } from '../world/state.js';
 import type { Vec2 } from '../world/movement.js';
+import type { MonsterBehavior } from './behavior.js';
 
 /**
- * Чистый шаг ИИ монстра (headless-порт `client/.../monster.ts`). Мутирует
- * восприятие/скорость/взгляд/КД сущности и возвращает боевое действие для сессии:
- * 'attack' | 'shoot' | null. НЕ двигает монстра — только выставляет `m.vel`
- * (сессия применяет движение с коллизией). LoS считает сессия и передаёт сюда.
+ * Чистый шаг ИИ монстра (headless). Мутирует восприятие/скорость/взгляд/КД и возвращает боевое
+ * действие: 'attack' | 'shoot' | null. НЕ двигает монстра — только выставляет `m.vel` (движение с
+ * коллизией/патфайндингом применяет сессия). LoS и профиль поведения (по фракции) передаёт сессия.
+ * Профиль (`behavior`, см. session/behavior.ts) задаёт leash/keepDist/пороги фракции.
+ * Блок A: дальняя/ближняя атака гейтятся `losClear` — не бьём сквозь стену.
  */
 
 const SCAN_SPEED = 0.8; // рад/с — вращение взгляда в покое
-const LEASH_TIME = 3.5; // сколько секунд преследует после потери контакта
 export const ALERT_TIME = 2.5; // длительность аггро от «шума» (атака игрока рядом)
-const LEASH_RADIUS = 560; // дальше этого преследование обрывается
-// Дальность удара мили = радиус тела монстра + зазор (учитывает тело игрока ~14 + подход).
-// У обычного (r=12) пороги прежние: 12+18=30 (погоня), 12+24=36 (стационар). Крупные (чемпион
-// r=15) так дотягиваются: раньше фикс. 30 не давал подойти из-за расталкивания (14+радиус).
 const MELEE_REACH_GAP = 18; // мили-погоня: остановка/удар
 const STATIONARY_REACH_GAP = 24; // стационарный: реакция/удар
 
@@ -23,7 +20,7 @@ function wrapAngle(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
 }
 
-function perceive(m: MonsterEntity, target: Vec2, losClear: boolean, noiseMult: number, dt: number): number {
+function perceive(m: MonsterEntity, target: Vec2, b: MonsterBehavior, losClear: boolean, noiseMult: number, dt: number): number {
   const dx = target.x - m.pos.x;
   const dy = target.y - m.pos.y;
   const dist = Math.hypot(dx, dy);
@@ -38,10 +35,10 @@ function perceive(m: MonsterEntity, target: Vec2, losClear: boolean, noiseMult: 
 
   if (seeing || hearing || m.alertTimer > 0) {
     m.aiState = 'chase';
-    m.leash = LEASH_TIME;
+    m.leash = b.leashTimeSec;
   } else if (m.aiState === 'chase') {
     m.leash -= dt;
-    if (m.leash <= 0 || dist > LEASH_RADIUS) m.aiState = 'idle';
+    if (m.leash <= 0 || dist > b.leashRadius) m.aiState = 'idle';
   }
   return dist;
 }
@@ -49,6 +46,7 @@ function perceive(m: MonsterEntity, target: Vec2, losClear: boolean, noiseMult: 
 export function stepMonsterAi(
   m: MonsterEntity,
   target: Vec2,
+  b: MonsterBehavior,
   losClear: boolean,
   noiseMult: number,
   dt: number,
@@ -61,11 +59,11 @@ export function stepMonsterAi(
     m.stunTimer = Math.max(0, m.stunTimer - dt);
     m.vel.x = 0;
     m.vel.y = 0;
-    perceive(m, target, losClear, noiseMult, dt);
+    perceive(m, target, b, losClear, noiseMult, dt);
     return null;
   }
 
-  perceive(m, target, losClear, noiseMult, dt);
+  perceive(m, target, b, losClear, noiseMult, dt);
 
   if (m.aiState === 'idle') {
     m.vel.x = 0;
@@ -86,7 +84,7 @@ export function stepMonsterAi(
     case 'stationary': {
       m.vel.x = 0;
       m.vel.y = 0;
-      if (dist < m.radius + STATIONARY_REACH_GAP && m.attackCd <= 0) {
+      if (dist < m.radius + STATIONARY_REACH_GAP && m.attackCd <= 0 && losClear) {
         m.attackCd = 1 / (m.def.attackSpeed * dm.atkSpeedMult);
         return 'attack';
       }
@@ -94,10 +92,11 @@ export function stepMonsterAi(
     }
     case 'ranged-kiter': {
       const speed = m.def.moveSpeed * dm.moveMult;
-      if (dist < 140) { m.vel.x = -Math.cos(angle) * speed; m.vel.y = -Math.sin(angle) * speed; }
-      else if (dist > 220) { m.vel.x = Math.cos(angle) * speed; m.vel.y = Math.sin(angle) * speed; }
+      if (dist < b.keepDistMin) { m.vel.x = -Math.cos(angle) * speed; m.vel.y = -Math.sin(angle) * speed; }
+      else if (dist > b.keepDistMax) { m.vel.x = Math.cos(angle) * speed; m.vel.y = Math.sin(angle) * speed; }
       else { m.vel.x = 0; m.vel.y = 0; }
-      if (dist < 260 && m.attackCd <= 0) {
+      // LoS-гейт: не стрелять сквозь стену (главный фикс блока A).
+      if (losClear && dist <= b.keepDistMax + 40 && m.attackCd <= 0) {
         m.attackCd = 1 / (m.def.attackSpeed * dm.atkSpeedMult);
         return 'shoot';
       }
@@ -112,7 +111,7 @@ export function stepMonsterAi(
       } else {
         m.vel.x = 0;
         m.vel.y = 0;
-        if (m.attackCd <= 0) {
+        if (m.attackCd <= 0 && losClear) {
           m.attackCd = 1 / (m.def.attackSpeed * dm.atkSpeedMult);
           return 'attack';
         }

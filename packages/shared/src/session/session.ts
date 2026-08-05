@@ -37,6 +37,7 @@ import {
 } from '../world/state.js';
 import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js';
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
+import { behaviorFor } from './behavior.js';
 
 /**
  * Безголовое авторитетное ядро игрового цикла (Этап 2). Держит `WorldState` как
@@ -304,6 +305,7 @@ export class GameSession {
 
     // 3) Монстры: тик статуса, ИИ, движение, атака/выстрел.
     const noiseMult = armorNoise(this.primaryEquipped(), this.cfg.get('armor-classes'));
+    const behaviors = this.cfg.get('monster-behaviors');
     for (const m of w.monsters) {
       if (!m.alive) continue;
       // DoT кровотечения + реген (у чемпионов; «увечье» режет реген).
@@ -331,17 +333,20 @@ export class GameSession {
         if (m.windup.remaining <= 0) {
           const act = m.windup.action;
           m.windup = null;
-          if (act === 'shoot') this.monsterShoot(m, target);
+          // Перепроверка LoS на момент удара (как мили перепроверяет дистанцию) — не бьём сквозь стену,
+          // если игрок ушёл за препятствие за время замаха.
+          if (act === 'shoot') { if (this.hasLos(m.pos, target.pos)) this.monsterShoot(m, target); }
           else {
             const reach = m.radius + target.radius + MONSTER_MELEE_WHIFF_SLACK;
-            if (Math.hypot(target.pos.x - m.pos.x, target.pos.y - m.pos.y) <= reach) this.monsterMelee(m, target);
+            if (Math.hypot(target.pos.x - m.pos.x, target.pos.y - m.pos.y) <= reach && this.hasLos(m.pos, target.pos)) this.monsterMelee(m, target);
           }
         }
         continue;
       }
 
+      const behavior = behaviorFor(m.def.faction, behaviors);
       const losClear = this.hasLos(m.pos, target.pos);
-      const action = stepMonsterAi(m, target.pos, losClear, noiseMult, dt);
+      const action = stepMonsterAi(m, target.pos, behavior, losClear, noiseMult, dt);
       m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt);
       if (action === 'attack' || action === 'shoot') {
         // attackCd только что выставлен ИИ = полный цикл атаки; замах — его доля (тот же baseWindupFrac, что у игрока).
