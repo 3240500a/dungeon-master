@@ -69,3 +69,49 @@ describe('generateMonster (деривация из атрибутов+гира)'
     expect(archer.ai).toBe('ranged-kiter');
   });
 });
+
+const itemAffixes = reg.get('affixes');
+const rarities = reg.get('rarities');
+const genR = (opts: Parameters<typeof generateMonster>[3], seed = 1) =>
+  generateMonster(monsters, gear, affixes, { itemAffixes, rarities, ...opts }, createRng(seed));
+
+describe('generateMonster — редкость через гир-афиксы (item-движок)', () => {
+  it('normal → без афиксов; magic → rarity=magic и падают афиксы', () => {
+    const norm = genR({ baseId: 'zombie', depth: 20, rarity: 'normal' }, 5);
+    expect(norm.rarity).toBe('normal');
+    expect(norm.affixes).toEqual([]);
+    let found = false;
+    for (let s = 0; s < 30 && !found; s++) {
+      const m = genR({ baseId: 'zombie', depth: 20, rarity: 'magic' }, s);
+      expect(m.rarity).toBe('magic');
+      if (m.affixes.length > 0) found = true;
+    }
+    expect(found).toBe(true); // хотя бы один сид дал magic-афикс
+  });
+
+  it('гир-афиксы двигают статы (magic отличается от normal при том же сиде)', () => {
+    let diff = false;
+    for (let s = 0; s < 40 && !diff; s++) {
+      const n = genR({ baseId: 'zombie', depth: 30, rarity: 'normal' }, s);
+      const m = genR({ baseId: 'zombie', depth: 30, rarity: 'magic' }, s);
+      if (m.affixes.length > 0 && (m.hp !== n.hp || m.minDamage !== n.minDamage || m.armor !== n.armor || m.accuracy !== n.accuracy || m.critChance !== n.critChance || m.resFire !== n.resFire || m.attackSpeed !== n.attackSpeed)) diff = true;
+    }
+    expect(diff).toBe(true);
+  });
+
+  it('чемпион с rarity=normal всё равно получает гир-афиксы (эффективно magic)', () => {
+    let any = false;
+    for (let s = 0; s < 20 && !any; s++) {
+      const m = genR({ baseId: 'zombie', depth: 20, forceChampion: true, rarity: 'normal' }, s);
+      expect(m.rarity).toBe('champion'); // champion перекрывает поле rarity
+      if (m.affixes.length > 0) any = true;
+    }
+    expect(any).toBe(true);
+  });
+
+  it('детерминизм с редкостью', () => {
+    const a = genR({ baseId: 'zombie', depth: 15, rarity: 'rare' }, 42);
+    const b = genR({ baseId: 'zombie', depth: 15, rarity: 'rare' }, 42);
+    expect(a).toEqual(b);
+  });
+});

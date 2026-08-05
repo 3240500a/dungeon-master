@@ -5,7 +5,7 @@ import { ConfigRegistry, generateMonster, createRng, type ScaledMonster } from '
  * уровень (+чемпион), жмёшь «Ролл» — движок игры (generateMonster) деривит боевой стат-блок на ТЕКУЩЕМ
  * (правленом) конфиге из атрибутов+гира. Одиночный ролл — карточка стат-блока; пакет (N роллов) —
  * распределение редкости/аффиксов + средние hp/урон (для баланса). Правишь мобов/гир/тиры → сюда → видишь.
- * (magic/rare с гир-афиксами — позже, блок C; пока натуральный ролл + чемпион.)
+ * Редкость (normal/magic/rare) катает гир-афиксы item-движком (маппинг в статы) + чемпион ортогонально.
  */
 function regFromData(data: Record<string, unknown>): ConfigRegistry {
   const reg = new ConfigRegistry();
@@ -16,6 +16,7 @@ function regFromData(data: Record<string, unknown>): ConfigRegistry {
 let baseId = '';
 let level = 5;
 let forceChampion = false;
+let rarity: 'normal' | 'magic' | 'rare' = 'normal';
 let seed = 1;
 let batch = 1;
 
@@ -29,9 +30,12 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const monsters = reg.get('monsters');
   const gear = reg.get('monster-gear');
   const affixes = reg.get('monster-affixes');
+  const itemAffixes = reg.get('affixes');
+  const rarities = reg.get('rarities');
   const gearName = (id: string): string => (id ? (gear.find((g) => g.id === id)?.name ?? id) : '—');
   const src = (id: string): (typeof monsters)[number] | undefined => monsters.find((m) => m.id === id);
-  const rarCol = (m: ScaledMonster): string => (m.rarity === 'champion' ? '#e0b040' : '#c8c8c8');
+  const rarName = (id: string): string => rarities.find((r) => r.id === id)?.name ?? id;
+  const rarCol = (m: ScaledMonster): string => (m.rarity === 'champion' ? '#e0b040' : rarities.find((r) => r.id === m.rarity)?.color ?? '#c8c8c8');
 
   page.appendChild(h('div', 'font-size:15px;font-weight:600;color:#e8e8f0;margin:2px 0 12px', '👹 Генератор мобов (песочница спавна)'));
 
@@ -47,6 +51,10 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const lvlInp = document.createElement('input'); lvlInp.type = 'number'; lvlInp.min = '1'; lvlInp.value = String(level); lvlInp.style.cssText = inp + ';width:70px';
   lvlInp.addEventListener('input', () => { level = Math.max(1, Number(lvlInp.value) || 1); run(); });
 
+  const rarSel = document.createElement('select'); rarSel.style.cssText = inp;
+  for (const [v, t] of [['normal', 'обычный'], ['magic', 'магический'], ['rare', 'редкий']] as [typeof rarity, string][]) { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === rarity) o.selected = true; rarSel.appendChild(o); }
+  rarSel.addEventListener('change', () => { rarity = rarSel.value as typeof rarity; run(); });
+
   const champWrap = h('label', 'display:flex;align-items:center;gap:5px;font-size:13px;color:#e8e8f0;cursor:pointer');
   const champInp = document.createElement('input'); champInp.type = 'checkbox'; champInp.checked = forceChampion;
   champInp.addEventListener('change', () => { forceChampion = champInp.checked; run(); });
@@ -58,14 +66,14 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const rollBtn = document.createElement('button'); rollBtn.textContent = '🎲 Ролл'; rollBtn.style.cssText = inp + ';cursor:pointer;background:#2c2c3a;font-weight:600';
   rollBtn.addEventListener('click', () => { seed = (seed + 1) & 0xffffff; run(); });
 
-  bar.append(field('Монстр', monSel), field('Уровень', lvlInp), field(' ', champWrap), field('Кол-во', batchInp), field(' ', rollBtn));
+  bar.append(field('Монстр', monSel), field('Уровень', lvlInp), field('Редкость', rarSel), field(' ', champWrap), field('Кол-во', batchInp), field(' ', rollBtn));
   page.appendChild(bar);
 
   const out = h('div', ''); page.appendChild(out);
 
   const mderive = reg.get('monster-derive');
   const rollOne = (s: number): ScaledMonster =>
-    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, forceChampion, mderive }, createRng(s));
+    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, forceChampion, mderive, itemAffixes, rarities, rarity }, createRng(s));
 
   function row(k: string, v: string): HTMLElement { const r = h('div', 'display:flex;justify-content:space-between;gap:14px;font-size:12px;margin:2px 0'); r.append(h('span', 'color:#8a8a9a', k), h('span', 'color:#eaeaea;text-align:right', v)); return r; }
 
@@ -73,7 +81,7 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
     const col = rarCol(m); const s = src(m.id);
     const box = h('div', `border:1px solid ${col};border-radius:8px;padding:12px 14px;background:#14141c;max-width:440px`);
     box.appendChild(h('div', `color:${col};font-weight:700;font-size:15px`, m.name));
-    box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:1px 0 8px', `${m.rarity === 'champion' ? 'Чемпион' : 'обычный'} · тир ${s?.tier ?? '—'} · ${m.faction} · роль ${s?.role ?? '—'} · ур.${m.level}`));
+    box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:1px 0 8px', `${m.rarity === 'champion' ? 'Чемпион' : rarName(m.rarity)} · тир ${s?.tier ?? '—'} · ${m.faction} · роль ${s?.role ?? '—'} · ур.${m.level}`));
     box.appendChild(row('HP', `${m.hp}${m.hpRegen ? ` (+${m.hpRegen}/с)` : ''}`));
     box.appendChild(row('Урон', `${m.minDamage}–${m.maxDamage} ${DMG_SHORT[m.damageType] ?? m.damageType}${m.physSub ? ` · ${m.physSub}` : ''}`));
     box.appendChild(row('Меткость / Уворот / Армор', `${m.accuracy} / ${m.evade} / ${m.armor}`));

@@ -1,8 +1,10 @@
 import type { ConfigShapes } from '../config/schemas.js';
 import { emptyPacket, type CombatStats, type DamagePacket } from '../types/combat.js';
 import type { MonsterAffix, ScaledMonster } from '../types/world.js';
+import type { RolledAffix } from '../types/items.js';
 import type { DebuffApply, DebuffKind } from '../world/debuffs.js';
 import type { Rng } from './rng.js';
+import { rollAffixes, type AffixTarget } from './itemgen.js';
 import { deriveMonsterStats, DEFAULT_MDERIVE, type MonsterDeriveScaling, type MonsterTemplate } from './monsterDerive.js';
 
 type Monsters = ConfigShapes['monsters'];
@@ -12,6 +14,10 @@ type GearWeapon = Extract<Gear, { kind: 'weapon' }>;
 type GearArmor = Extract<Gear, { kind: 'armor' }>;
 type GearShield = Extract<Gear, { kind: 'shield' }>;
 type Affixes = ConfigShapes['monster-affixes'];
+type ItemAffixes = ConfigShapes['affixes'];
+type Rarities = ConfigShapes['rarities'];
+/** Редкость гира монстра (без champion — тот ортогонален). */
+type GearRarity = 'normal' | 'magic' | 'rare';
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type MagicSubtypes = ConfigShapes['magic-subtypes'];
 type Debuffs = ConfigShapes['debuffs'];
@@ -29,6 +35,58 @@ function applyAffix(m: ScaledMonster, aff: MonsterAffix): void {
     rec[k] = (typeof rec[k] === 'number' ? rec[k]! : 0) + v;
   }
   if (aff.damageType) m.damageType = aff.damageType;
+}
+
+/**
+ * Маппинг гир-афикса (item-движок) → стат монстра — «одна истина» по редкости с предметами. Проценты
+ * урона (physPct/damagePct — kind:flat, но семантика %) множат урон; armor/acc/evade/ias/hp/ms — flat
+ * или ×(1+v) по kind; резисты/крит/блок/реген — прибавка; прочее (атрибуты/мана/лич-стил) монстру не маппим.
+ */
+function applyGearAffix(m: ScaledMonster, mod: NonNullable<RolledAffix['modifier']>): void {
+  const v = mod.value; const inc = mod.kind === 'increased';
+  switch (mod.stat) {
+    case 'minDamage': m.minDamage += v; break;
+    case 'maxDamage': m.maxDamage += v; break;
+    case 'physPct': case 'damagePct': m.minDamage *= 1 + v; m.maxDamage *= 1 + v; break;
+    case 'addFire': case 'addCold': case 'addLightning': case 'addPoison': m.minDamage += v; m.maxDamage += v; break;
+    case 'armor': m.armor = inc ? m.armor * (1 + v) : m.armor + v; break;
+    case 'accuracy': m.accuracy = inc ? m.accuracy * (1 + v) : m.accuracy + v; break;
+    case 'evade': m.evade = inc ? m.evade * (1 + v) : m.evade + v; break;
+    case 'attackSpeed': m.attackSpeed = inc ? m.attackSpeed * (1 + v) : m.attackSpeed + v; break;
+    case 'maxHp': m.hp = inc ? m.hp * (1 + v) : m.hp + v; break;
+    case 'moveSpeed': m.moveSpeed = inc ? m.moveSpeed * (1 + v) : m.moveSpeed + v; break;
+    case 'hpRegen': m.hpRegen += v; break;
+    case 'critChance': m.critChance = Math.min(0.75, m.critChance + v); break;
+    case 'blockChance': m.blockChance = Math.min(0.75, m.blockChance + v); break;
+    case 'resFire': m.resFire += v; break;
+    case 'resCold': m.resCold += v; break;
+    case 'resLightning': m.resLightning += v; break;
+    case 'resPoison': m.resPoison += v; break;
+    default: break; // атрибуты/мана/лич-стил — монстру не применяем
+  }
+}
+
+/** Катит item-афиксы на ОРУЖИИ монстра по редкости (те же слоты, что и у предмета: `rarities[rar]`). */
+function rollMonsterGearAffixes(itemAffixes: ItemAffixes, rarities: Rarities, weapon: GearWeapon, rarity: GearRarity, level: number, rng: Rng): RolledAffix[] {
+  const rDef = rarities.find((r) => r.id === rarity);
+  const target: AffixTarget = {
+    kind: 'weapon', slot: 'weapon', attackType: weapon.attackType,
+    damageKind: weapon.damageType === 'physical' ? 'physical' : 'magic',
+  };
+  return rollAffixes(itemAffixes, target, rarity,
+    { minAffixes: rDef?.minAffixes ?? 0, maxAffixes: rDef?.maxAffixes ?? 0, maxPrefix: rDef?.maxPrefix ?? 0, maxSuffix: rDef?.maxSuffix ?? 0 },
+    level, rng);
+}
+
+/** Имя магич./рарного монстра: слово-префикс + имя + слово-суффикс (как у magic-предмета). */
+function monsterAffixName(name: string, rolled: RolledAffix[], itemAffixes: ItemAffixes): string {
+  const wordOf = (id: string): string => itemAffixes.find((a) => a.id === id)?.word ?? '';
+  const pre = wordOf(rolled.find((r) => r.kind === 'prefix')?.affixId ?? '');
+  const suf = wordOf(rolled.find((r) => r.kind === 'suffix')?.affixId ?? '');
+  let n = name;
+  if (pre) n = `${pre} ${n}`;
+  if (suf) n = `${n} ${suf}`;
+  return n;
 }
 
 /** Резерв-оружие: если у монстра не задано/не найдено оружие — бьёт «кулаками» (валидный монстр). */
@@ -57,7 +115,11 @@ export function generateMonster(
   monsters: Monsters,
   monsterGear: MonsterGear,
   affixesPool: Affixes,
-  opts: { baseId?: string; depth: number; championXpMult?: number; forceChampion?: boolean; mderive?: MonsterDeriveScaling },
+  opts: {
+    baseId?: string; depth: number; championXpMult?: number; forceChampion?: boolean; mderive?: MonsterDeriveScaling;
+    /** НОВОЕ (редкость через гир): item-афиксы + редкости. Переданы → редкость катает гир-афиксы (иначе — старые monster-affixes). */
+    itemAffixes?: ItemAffixes; rarities?: Rarities; rarity?: GearRarity;
+  },
   rng: Rng,
 ): ScaledMonster {
   const base = (opts.baseId ? monsters.find((b) => b.id === opts.baseId) : undefined) ?? rng.pick(monsters);
@@ -79,14 +141,35 @@ export function generateMonster(
     m.name = `Чемпион: ${m.name}`;
   }
 
-  const affCount = champion ? 2 : rng.chance(0.35) ? 1 : 0;
-  const pool = affixesPool.filter((a) => (a as { enabled?: boolean }).enabled !== false); // выключенные аффиксы монстров не навешиваются
-  for (let i = 0; i < affCount && pool.length > 0; i++) {
-    const [aff] = pool.splice(rng.int(0, pool.length - 1), 1);
-    if (!aff) break;
-    applyAffix(m, aff);
-    m.affixes.push(aff.id);
-    m.name = `${aff.name} ${m.name}`;
+  if (opts.itemAffixes && opts.rarities) {
+    // НОВОЕ: редкость монстра = редкость его гира — item-движок катает афиксы на оружии → маппинг в статы.
+    const gearRar: GearRarity = opts.rarity ?? 'normal';
+    const effRar: GearRarity = champion && gearRar === 'normal' ? 'magic' : gearRar; // у элиты всегда есть афиксы
+    if (!champion) m.rarity = effRar;
+    if (effRar !== 'normal') {
+      const rolled = rollMonsterGearAffixes(opts.itemAffixes, opts.rarities, weapon, effRar, level, rng);
+      for (const ra of rolled) if (ra.modifier) applyGearAffix(m, ra.modifier);
+      for (const id of new Set(rolled.map((r) => r.affixId))) m.affixes.push(id);
+      m.name = monsterAffixName(m.name, rolled, opts.itemAffixes);
+      // гир-афиксы могли раздробить деривнутые статы — округляем затронутое.
+      m.armor = Math.max(0, Math.round(m.armor));
+      m.accuracy = Math.round(m.accuracy);
+      m.evade = Math.round(m.evade);
+      m.hpRegen = Math.round(m.hpRegen);
+      m.attackSpeed = Math.round(m.attackSpeed * 100) / 100;
+      m.critChance = Math.round(m.critChance * 1000) / 1000;
+    }
+  } else {
+    // СТАРОЕ (депрекейт): monster-affixes стат-мульты — фолбэк для вызовов без item-афиксов.
+    const affCount = champion ? 2 : rng.chance(0.35) ? 1 : 0;
+    const pool = affixesPool.filter((a) => (a as { enabled?: boolean }).enabled !== false); // выключенные аффиксы монстров не навешиваются
+    for (let i = 0; i < affCount && pool.length > 0; i++) {
+      const [aff] = pool.splice(rng.int(0, pool.length - 1), 1);
+      if (!aff) break;
+      applyAffix(m, aff);
+      m.affixes.push(aff.id);
+      m.name = `${aff.name} ${m.name}`;
+    }
   }
 
   m.hp = Math.max(1, Math.round(m.hp)); // афикс-мульты могли расчемпионить hp в дробь — округляем в конце

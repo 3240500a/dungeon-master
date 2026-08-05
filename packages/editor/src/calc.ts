@@ -21,6 +21,7 @@ let level = 30;
 let tab: 'char' | 'gear' | 'mastery' | 'skills' = 'char';
 let monBaseId = '';
 let monChampion = false;
+let monRarity: 'normal' | 'magic' | 'rare' = 'normal';
 let atkSel = '';               // '' = базовая атака; иначе nodeId выбранного активного скилла
 let itemRarity: '' | Rarity = '';
 let createBaseId = '';
@@ -160,11 +161,14 @@ function monsterTtk(page: HTMLElement, data: Record<string, unknown>, reg: Confi
   const monSel = document.createElement('select'); monSel.style.cssText = INP + ';min-width:170px';
   for (const mm of mons) { const o = document.createElement('option'); o.value = mm.id; o.textContent = `${mm.name} [${mm.tier}]`; if (mm.id === monBaseId) o.selected = true; monSel.appendChild(o); }
   monSel.addEventListener('change', () => { monBaseId = monSel.value; renderCalcPage(page, data); });
+  const rarSel = document.createElement('select'); rarSel.style.cssText = INP;
+  for (const [v, t] of [['normal', 'обычный'], ['magic', 'магический'], ['rare', 'редкий']] as [typeof monRarity, string][]) { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === monRarity) o.selected = true; rarSel.appendChild(o); }
+  rarSel.addEventListener('change', () => { monRarity = rarSel.value as typeof monRarity; renderCalcPage(page, data); });
   const champWrap = h('label', 'display:flex;align-items:center;gap:5px;font-size:13px;color:#e8e8f0;cursor:pointer');
   const champInp = document.createElement('input'); champInp.type = 'checkbox'; champInp.checked = monChampion;
   champInp.addEventListener('change', () => { monChampion = champInp.checked; renderCalcPage(page, data); });
   champWrap.append(champInp, document.createTextNode('чемпион'));
-  monRow.append(field(`Монстр (ур.${level})`, monSel), field(' ', champWrap));
+  monRow.append(field(`Монстр (ур.${level})`, monSel), field('Редкость', rarSel), field(' ', champWrap));
 
   // Выбор скилла на атаке (иначе базовая атака) — урон берётся из той же оценки, что и симовый бой.
   const learned = estimateLearnedSkills(reg, save, d, m.attrs);
@@ -178,7 +182,7 @@ function monsterTtk(page: HTMLElement, data: Record<string, unknown>, reg: Confi
   }
   box.appendChild(monRow);
 
-  const mon = generateMonster(mons, reg.get('monster-gear'), reg.get('monster-affixes'), { baseId: monBaseId, depth: level - 1, forceChampion: monChampion, mderive: reg.get('monster-derive') }, createRng(1));
+  const mon = generateMonster(mons, reg.get('monster-gear'), reg.get('monster-affixes'), { baseId: monBaseId, depth: level - 1, forceChampion: monChampion, mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity: monRarity }, createRng(1));
   // Митигация по типу урона атаки: физ — броня, стихии — сопротивление монстра (как в бою).
   const resById: Record<DamageType, number> = { physical: 0, fire: mon.resFire, cold: mon.resCold, lightning: mon.resLightning, poison: mon.resPoison };
   const atkType: DamageType = selSkill ? selSkill.sim.element : (m.weapons[0]?.damageType ?? 'physical');
