@@ -24,8 +24,17 @@ export const fieldEnumSources: Record<string, () => string[]> = {};
  */
 export const fieldArrayEnumSources: Record<string, () => string[]> = {};
 
-/** Контрол поля: спец-источник по имени (тиры и т.п.), иначе — по схеме. */
-function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void): HTMLElement {
+/**
+ * Полностью КАСТОМНЫЙ рендер поля по имени (напр. `spawnCurve` → редактор кривой глубины). Получает
+ * значение поля, onChange и РОДИТЕЛЬСКИЙ объект (чтобы читать соседние поля — напр. `tier` монстра).
+ * Заполняется снаружи (main.ts). Проверяется ПЕРВЫМ, перекрывает рендер по схеме.
+ */
+export const fieldCustomRenderers: Record<string, (value: unknown, onChange: (v: unknown) => void, parent: Record<string, unknown> | undefined) => HTMLElement> = {};
+
+/** Контрол поля: кастомный рендер по имени → спец-источник (тиры и т.п.) → по схеме. */
+function fieldControl(key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void, parent?: Record<string, unknown>): HTMLElement {
+  const custom = fieldCustomRenderers[key];
+  if (custom) return custom(value, onChange, parent);
   const tn = unwrap(sub).schema._def.typeName;
   // Массив строк из источника (poseClips) — упорядоченный список выпадашек.
   const arrSrc = fieldArrayEnumSources[key];
@@ -129,12 +138,12 @@ function isBlockSchema(schema: AnySchema): boolean {
 /** Сетка полей: скаляры пакуются в колонки (авто-заполнение), блочные — на всю ширину. */
 const FIELD_GRID = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 12px;align-items:end';
 
-/** Кладёт поле в ячейку грида (блочное — на всю строку). */
-function gridCell(grid: HTMLElement, key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void): void {
+/** Кладёт поле в ячейку грида (блочное — на всю строку). `parent` — объект-владелец (для кастом-рендеров). */
+function gridCell(grid: HTMLElement, key: string, sub: AnySchema, value: unknown, onChange: (v: unknown) => void, parent?: Record<string, unknown>): void {
   const cell = document.createElement('div');
-  if (isBlockSchema(sub)) cell.style.gridColumn = '1 / -1';
+  if (isBlockSchema(sub) || fieldCustomRenderers[key]) cell.style.gridColumn = '1 / -1';
   cell.appendChild(label(key));
-  cell.appendChild(fieldControl(key, sub, value, onChange));
+  cell.appendChild(fieldControl(key, sub, value, onChange, parent));
   grid.appendChild(cell);
 }
 
@@ -279,7 +288,7 @@ function renderDiscriminatedUnion(
         value[key] = v;
         value[disc] = activeKind;
         onChange(value);
-      });
+      }, value);
     }
     box.appendChild(grid);
   };
@@ -300,7 +309,7 @@ function renderObject(
     gridCell(box, key, sub, value[key], (v) => {
       value[key] = v;
       onChange(value);
-    });
+    }, value);
   }
   return box;
 }

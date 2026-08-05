@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ConfigRegistry, configSchemas, allStatKeys, schemeRequirements, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
-import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources } from './form.js';
+import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers } from './form.js';
+import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { mountFloorPreview } from './floorPreview.js';
 import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
 import { renderSimPage } from './sim.js';
@@ -155,6 +156,10 @@ const monsterGearOf = (kind: 'weapon' | 'armor' | 'shield') => (): string[] =>
 fieldEnumSources.weapon = monsterGearOf('weapon');
 fieldEnumSources.armor = monsterGearOf('armor');
 fieldEnumSources.offhand = monsterGearOf('shield');
+// spawnCurve (у монстра) — редактор кривой глубины (гибрид авто/ручная); tier берём из соседнего поля.
+fieldCustomRenderers.spawnCurve = (value, onChange, parent) =>
+  renderSpawnCurve(value, onChange, (parent?.tier as 'weak' | 'medium' | 'strong' | 'boss') ?? 'medium',
+    (data['depth-tiers'] as Parameters<typeof renderSpawnCurve>[3]) ?? []);
 // poseClips (у активного скила) — упорядоченный мультивыбор имён сохранённых поз из редактора поз
 // (/api/pose → pe_clips). Несколько имён → в 3D удары чередуются. s_hit_ (спец-удар скила) — вперёд, затем hit_, idle_.
 let poseClipNames: string[] = [];
