@@ -127,28 +127,56 @@ export interface SimSkill {
   projectiles: number;
 }
 
-/** Собирает выученные активки в касты для тик-боя (магнитуда от базового удара оружия). */
-function buildSkills(reg: ConfigRegistry, save: SaveState, d: DerivedStats, attrs: Attributes): SimSkill[] {
+/** Выученная активка с именем узла — для калькулятора (выбор скилла на атаке) и сборки каст-листа. */
+export interface LearnedSkill {
+  nodeId: string;
+  name: string;
+  rank: number;
+  sim: SimSkill;
+}
+
+/**
+ * Оценка ВСЕХ выученных активок (в порядке дерева) — магнитуда от базового удара оружия, как в тик-бое.
+ * Одна истина: и симовый `buildSkills`, и калькулятор редактора берут урон скилла отсюда.
+ */
+export function estimateLearnedSkills(
+  reg: ConfigRegistry,
+  save: SaveState,
+  d: DerivedStats,
+  attrs: Attributes,
+): LearnedSkill[] {
   const tree = reg.get('skill-tree');
   const scaling = reg.get('balance').weaponAttrScaling;
   const base = estimateAttack(d, attrs, save.equipment.weapon, scaling, reg.get('weapon-weights'));
-  const skills: SimSkill[] = [];
+  const out: LearnedSkill[] = [];
   for (const node of tree.nodes) {
     const active = node.effect.active;
     const rank = save.skills[node.id] ?? 0;
     if (!active || rank <= 0) continue;
     const aoe = AOE_RE.test(active.abilityId);
-    skills.push({
-      element: abilityElement(active.abilityId),
-      aoe,
-      cooldown: abilityCooldown(active.cooldown, rank),
-      manaCost: active.manaCost,
-      magnitude: base * (aoe ? 1.5 : 1.4) * abilityRankMult(rank),
-      projectiles: aoe ? 0 : 3,
+    out.push({
+      nodeId: node.id,
+      name: node.name,
+      rank,
+      sim: {
+        element: abilityElement(active.abilityId),
+        aoe,
+        cooldown: abilityCooldown(active.cooldown, rank),
+        manaCost: active.manaCost,
+        magnitude: base * (aoe ? 1.5 : 1.4) * abilityRankMult(rank),
+        projectiles: aoe ? 0 : 3,
+      },
     });
   }
-  // Кастуются только 4 скилла (как хотбар в игре) — берём сильнейшие по магнитуде.
-  return skills.sort((a, b) => b.magnitude - a.magnitude).slice(0, 4);
+  return out;
+}
+
+/** Собирает выученные активки в касты для тик-боя (сильнейшие 4 по магнитуде — как хотбар). */
+function buildSkills(reg: ConfigRegistry, save: SaveState, d: DerivedStats, attrs: Attributes): SimSkill[] {
+  return estimateLearnedSkills(reg, save, d, attrs)
+    .map((x) => x.sim)
+    .sort((a, b) => b.magnitude - a.magnitude)
+    .slice(0, 4);
 }
 
 /** Боевая модель игрока для тик-боя (производные + оружие + скиллы + кайт). */

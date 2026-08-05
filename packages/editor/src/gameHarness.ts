@@ -36,7 +36,8 @@ function applyCmd(app: App, gs: GameState, cmd: TownCommand): void {
     case 'respecPassives': respecPassives(reg, s); break;
     case 'moveItem': moveInventoryItem(reg, s, cmd.uid, cmd.x, cmd.y); break;
     case 'moveBelt': moveToBelt(s, cmd.uid); break;
-    default: break; // прочие команды (магазин/квесты/дроп) калькулятору не нужны
+    case 'drop': { const i = s.inventory.findIndex((it) => it.uid === cmd.uid); if (i >= 0) s.inventory.splice(i, 1); break; } // «выбросить» = просто убрать из билда
+    default: break; // прочие команды (магазин/квесты) калькулятору не нужны
   }
 }
 
