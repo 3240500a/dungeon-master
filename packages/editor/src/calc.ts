@@ -1,4 +1,4 @@
-import { ConfigRegistry, newBotSave, botDerived, makePlayerModel, estimateAttack, generateMonster, createRng, hitChance, armorMitigation, type SaveState, type Attributes } from '@dm/shared';
+import { ConfigRegistry, newBotSave, botDerived, makePlayerModel, estimateAttack, generateMonster, generateItem, createRng, hitChance, armorMitigation, type SaveState, type Attributes, type Item, type EquipSlot, type Rarity } from '@dm/shared';
 
 /**
  * Вкладка «Калькулятор» — планировщик персонажа (à la d2planner). Шаг 2a: класс + уровень → бюджет
@@ -20,6 +20,15 @@ let level = 30;
 const spent: Attributes = { strength: 0, dexterity: 0, intelligence: 0, vitality: 0 };
 let monBaseId = '';
 let monChampion = false;
+/** Надетый гир планировщика (null = слот явно пуст, undefined = дефолт класса). */
+const equipped: Partial<Record<EquipSlot, Item | null>> = {};
+let itemRarity: '' | Rarity = '';
+let rollSeed = 100;
+
+const SLOTS: { s: EquipSlot; ru: string }[] = [
+  { s: 'weapon', ru: 'Оружие' }, { s: 'offhand', ru: 'Щит/офф' }, { s: 'helm', ru: 'Шлем' }, { s: 'chest', ru: 'Броня' },
+  { s: 'gloves', ru: 'Перчатки' }, { s: 'boots', ru: 'Сапоги' }, { s: 'belt', ru: 'Пояс' }, { s: 'ring', ru: 'Кольцо' }, { s: 'amulet', ru: 'Амулет' },
+];
 
 const h = (tag: string, css: string, html = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (html) e.innerHTML = html; return e; };
 const pctS = (x: number): string => `${Math.round(x * 100)}%`;
@@ -51,7 +60,7 @@ export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>)
   const head = h('div', 'display:flex;gap:10px;align-items:flex-end');
   const classSel = document.createElement('select'); classSel.style.cssText = inp + ';flex:1';
   for (const c of classes) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; if (c.id === classId) o.selected = true; classSel.appendChild(o); }
-  classSel.addEventListener('change', () => { classId = classSel.value; spent.strength = spent.dexterity = spent.intelligence = spent.vitality = 0; renderCalcPage(page, data); });
+  classSel.addEventListener('change', () => { classId = classSel.value; spent.strength = spent.dexterity = spent.intelligence = spent.vitality = 0; for (const k of Object.keys(equipped)) delete equipped[k as EquipSlot]; renderCalcPage(page, data); });
   const lvlInp = document.createElement('input'); lvlInp.type = 'number'; lvlInp.min = '1'; lvlInp.max = '99'; lvlInp.value = String(level); lvlInp.style.cssText = inp + ';width:64px';
   lvlInp.addEventListener('change', () => { level = Math.max(1, Math.min(99, Number(lvlInp.value) || 1)); renderCalcPage(page, data); });
   head.append(field('Класс', classSel), field('Уровень', lvlInp));
@@ -75,10 +84,53 @@ export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>)
     attrBox.appendChild(row);
   }
   left.appendChild(attrBox);
-  left.appendChild(h('div', 'font-size:11px;color:#6a6a7a', 'Инвентарь/скиллы/монстр+TTK — след. под-шаги (2b–2d). Пока: класс + атрибуты + стартовое оружие.'));
+
+  const save = buildSave(reg, cls, level);
+
+  // ── экипировка (2b): слоты + создание/надевание предметов ──
+  const itemsBase = reg.get('items.base');
+  const rarities = reg.get('rarities');
+  const rarCol = (id: string): string => rarities.find((r) => r.id === id)?.color ?? '#c8c8c8';
+  const rollFor = (slot: EquipSlot, baseId: string): void => {
+    equipped[slot] = generateItem(itemsBase, reg.get('affixes'), reg.get('uniques'), {
+      dropBias: 1, itemLevel: level, baseId, tiers: reg.get('item-tiers'), rarities,
+      rareNames: reg.get('rare-names'), categoryWeights: reg.get('balance').loot.categoryWeights,
+      forceRarity: itemRarity || undefined, maxReqTotal: reg.get('balance').maxTotalRequirement,
+    }, createRng(rollSeed++));
+  };
+
+  const gearBox = h('div', 'border:1px solid #2c2c3a;border-radius:8px;padding:10px;background:#14141c');
+  const gearHead = h('div', 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px');
+  gearHead.appendChild(h('div', 'font-size:12px;color:#9aa', 'Экипировка (создать/надеть)'));
+  const rarSel = document.createElement('select'); rarSel.style.cssText = inp + ';font-size:11px;padding:2px 6px';
+  const rarOpts: [string, string][] = [['', 'натур.'], ...rarities.map((r) => [r.id, r.name] as [string, string])];
+  for (const [v, t] of rarOpts) { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === itemRarity) o.selected = true; rarSel.appendChild(o); }
+  rarSel.addEventListener('change', () => { itemRarity = rarSel.value as '' | Rarity; renderCalcPage(page, data); });
+  gearHead.appendChild(rarSel);
+  gearBox.appendChild(gearHead);
+
+  for (const { s, ru } of SLOTS) {
+    const bases = itemsBase.filter((b) => (b as { slot?: EquipSlot }).slot === s);
+    if (!bases.length) continue;
+    const cur = equipped[s] !== undefined ? equipped[s] : save.equipment[s];
+    const row = h('div', 'display:flex;align-items:center;gap:5px;margin:3px 0');
+    row.appendChild(h('span', 'width:64px;font-size:11px;color:#9aa', ru));
+    const sel = document.createElement('select'); sel.style.cssText = inp + ';flex:1;font-size:12px;padding:3px 6px';
+    const empty = document.createElement('option'); empty.value = ''; empty.textContent = '— пусто —'; sel.appendChild(empty);
+    for (const b of bases) { const o = document.createElement('option'); o.value = b.id; o.textContent = b.name; if (cur?.baseId === b.id) o.selected = true; sel.appendChild(o); }
+    sel.addEventListener('change', () => { if (!sel.value) equipped[s] = null; else rollFor(s, sel.value); renderCalcPage(page, data); });
+    row.appendChild(sel);
+    const rr = miniBtn('↻', () => { if (cur?.baseId) { rollFor(s, cur.baseId); renderCalcPage(page, data); } });
+    rr.title = 'Перекатать афиксы';
+    if (!cur) rr.style.opacity = '0.4';
+    row.appendChild(rr);
+    gearBox.appendChild(row);
+    if (cur) gearBox.appendChild(h('div', `font-size:11px;color:${rarCol(cur.rarity)};margin:0 0 3px 68px`, cur.name));
+  }
+  left.appendChild(gearBox);
+  left.appendChild(h('div', 'font-size:11px;color:#6a6a7a', 'Скиллы — след. под-шаг (2c). Требования гира в планировщике не гейтят.'));
 
   // ── стат-блок ──
-  const save = buildSave(reg, cls, level);
   const d = botDerived(reg, save);
   const m = makePlayerModel(reg, save, { useSkills: false });
   const hit = estimateAttack(m.derived, m.attrs, m.weapons[0], m.scaling, m.weights);
@@ -179,5 +231,10 @@ function buildSave(reg: ConfigRegistry, cls: { id: string; startAttributes: Attr
     intelligence: cls.startAttributes.intelligence + spent.intelligence,
     vitality: cls.startAttributes.vitality + spent.vitality,
   };
+  // Надетый гир: item → в слот, null → слот пуст (в т.ч. снимаем стартовое оружие).
+  for (const [slot, item] of Object.entries(equipped)) {
+    if (item) save.equipment[slot as EquipSlot] = item;
+    else delete save.equipment[slot as EquipSlot];
+  }
   return save;
 }
