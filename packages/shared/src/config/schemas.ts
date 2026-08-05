@@ -890,6 +890,10 @@ const packEntrySchema = z.object({
   role: z.string(),
   min: z.number().int().min(0),
   max: z.number().int().min(0),
+  /** Шанс, что монстр этой роли будет МАГИЧЕСКИМ (гир-афиксы, 1–2). Редкость «около роли» (D2). */
+  magicChance: z.number().min(0).max(1).default(0.12),
+  /** Шанс РЕДКОГО монстра (гир-афиксы, 3–4). Проверяется до magic; остаток — обычный. */
+  rareChance: z.number().min(0).max(1).default(0.03),
 });
 export const packsSchema = z.array(
   z.object({

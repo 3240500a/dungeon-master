@@ -61,6 +61,8 @@ export function spawnPacksEl(
   if (!pool.length) return [];
   const monAffixes = reg.get('monster-affixes');
   const monsterGear = reg.get('monster-gear');
+  const itemAffixes = reg.get('affixes'); // редкость монстра = item-афиксы на его гире (одна истина с предметами)
+  const rarities = reg.get('rarities');
   const packs = reg.get('packs');
 
   const diffs = reg.get('difficulties');
@@ -91,7 +93,7 @@ export function spawnPacksEl(
     const spec = packs.find((p) => p.roomType === room.type) ?? packs.find((p) => p.roomType === 'small');
     if (!spec) continue;
     // Состав по ролям; фолбэк-состав, если entries пуст (устаревший конфиг).
-    const entries = spec.entries.length ? spec.entries : [{ role: '', min: 2, max: 4 }];
+    const entries = spec.entries.length ? spec.entries : [{ role: '', min: 2, max: 4, magicChance: 0.12, rareChance: 0.03 }];
     // Спец-содержимое комнаты (фичи этажа): чемпионы/босс форсируют чемпиона; босс — сложнее.
     const content = room.content;
     const forceChampion = content === 'champion' || content === 'boss';
@@ -108,7 +110,10 @@ export function spawnPacksEl(
         if (layout.grid[cy]?.[cx] !== Cell.Floor) { const fc = firstFloorCell(layout.grid, room); if (!fc) continue; cx = fc.cx; cy = fc.cy; }
         const w = cellToWorld(cx, cy);
         const id = entry.role ? pickByRole(entry.role) : wpick(pool);
-        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion, mderive }, rng);
+        // Редкость монстра по «галкам роли» (шансы magic/rare пачки): rare проверяется первым, остаток — обычный.
+        const rr = rng.float(0, 1);
+        const rarity: 'normal' | 'magic' | 'rare' = rr < (entry.rareChance ?? 0) ? 'rare' : rr < (entry.rareChance ?? 0) + (entry.magicChance ?? 0) ? 'magic' : 'normal';
+        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion, mderive, itemAffixes, rarities, rarity }, rng);
         spawns.push({ def, x: w.x, y: w.y });
       }
     }
