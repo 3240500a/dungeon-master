@@ -63,8 +63,9 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
 
   const out = h('div', ''); page.appendChild(out);
 
+  const mderive = reg.get('monster-derive');
   const rollOne = (s: number): ScaledMonster =>
-    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, forceChampion }, createRng(s));
+    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, forceChampion, mderive }, createRng(s));
 
   function row(k: string, v: string): HTMLElement { const r = h('div', 'display:flex;justify-content:space-between;gap:14px;font-size:12px;margin:2px 0'); r.append(h('span', 'color:#8a8a9a', k), h('span', 'color:#eaeaea;text-align:right', v)); return r; }
 

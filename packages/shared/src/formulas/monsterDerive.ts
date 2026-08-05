@@ -32,9 +32,11 @@ export interface MonsterTemplate {
   weight?: number;
 }
 
-/** Коэффициенты деривации (тюнятся; дефолты в синхроне с ощущением игрока). */
+/** Коэффициенты деривации монстра (data-driven, конфиг `monster-derive`) — как деривация статов игрока:
+ *  стартовые атрибуты монстра растут за уровень (levelGrowth), а из них считаются hp/урон/меткость/…
+ *  по этим коэффициентам. Всё редактируемо → крутизна кривых задаётся здесь, тюнится в калькуляторе. */
 export interface MonsterDeriveScaling {
-  levelGrowth: number; // прирост атрибутов за уровень (доля от базы)
+  levelGrowth: number; // прирост атрибутов за уровень (доля от базы): A = base × (1 + (L-1)×levelGrowth)
   hpBase: number; hpPerVit: number; hpPerLevel: number;
   dmgPerAttr: number;  // +доля урона оружия за ед. ведущего атрибута
   armorPerStr: number;
@@ -42,12 +44,16 @@ export interface MonsterDeriveScaling {
   evadeBase: number; evadePerDex: number;
   iasPerDex: number; critPerDex: number;
   resistPerLevel: number;
+  xpBase: number; xpPerLevel: number;
+  /** Множитель xp по силовому тиру монстра. */
+  tierXp: Record<'weak' | 'medium' | 'strong' | 'boss', number>;
 }
 export const DEFAULT_MDERIVE: MonsterDeriveScaling = {
   levelGrowth: 0.1, hpBase: 6, hpPerVit: 1.2, hpPerLevel: 1,
   dmgPerAttr: 0.02, armorPerStr: 0.15,
   accBase: 20, accPerLevel: 3, evadeBase: 5, evadePerDex: 1.5,
   iasPerDex: 0.001, critPerDex: 0.0015, resistPerLevel: 0.005,
+  xpBase: 12, xpPerLevel: 5, tierXp: { weak: 0.7, medium: 1, strong: 1.8, boss: 4 },
 };
 
 /** Базовые сопротивления по фракции (характер: нежить — яд+/огонь−, конструкт — яд+/молния−, демон — огонь+). */
@@ -64,9 +70,6 @@ function damageAttr(w: GearWeapon, str: number, dex: number, int: number): numbe
   if (w.attackType === 'ranged') return dex;
   return w.weight === 'heavy' || w.weight === 'medium' ? str : dex;
 }
-
-/** xp-множитель по тиру монстра. */
-const TIER_XP: Record<NonNullable<MonsterTemplate['tier']>, number> = { weak: 0.7, medium: 1, strong: 1.8, boss: 4 };
 
 export function deriveMonsterStats(
   tpl: MonsterTemplate,
@@ -109,7 +112,7 @@ export function deriveMonsterStats(
     resCold: (res.resCold ?? 0) + rl,
     resLightning: (res.resLightning ?? 0) + rl,
     resPoison: (res.resPoison ?? 0) + rl,
-    xp: Math.round((12 + level * 5) * (TIER_XP[tpl.tier ?? 'medium'])),
+    xp: Math.round((s.xpBase + level * s.xpPerLevel) * (s.tierXp[tpl.tier ?? 'medium'] ?? 1)),
     ai: tpl.ai ?? (weapon.attackType === 'ranged' ? 'ranged-kiter' : 'melee-chaser'),
     vision: tpl.vision ?? 240,
     visionAngle: tpl.visionAngle ?? 100,

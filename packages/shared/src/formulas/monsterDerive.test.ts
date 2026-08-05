@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveMonsterStats, type MonsterTemplate } from './monsterDerive.js';
+import { deriveMonsterStats, DEFAULT_MDERIVE, type MonsterTemplate } from './monsterDerive.js';
 import type { ConfigShapes } from '../config/schemas.js';
 
 type Gear = ConfigShapes['monster-gear'][number];
@@ -111,5 +111,17 @@ describe('deriveMonsterStats', () => {
     const weak = deriveMonsterStats({ ...base, tier: 'weak' }, sword, null, null, 5);
     const boss = deriveMonsterStats({ ...base, tier: 'boss' }, sword, null, null, 5);
     expect(boss.xp).toBeGreaterThan(weak.xp);
+  });
+
+  it('коэффициенты деривации (конфиг) управляют крутизной кривой', () => {
+    const steep = { ...DEFAULT_MDERIVE, levelGrowth: 0.3, hpPerVit: 2 };
+    const lo = deriveMonsterStats(base, sword, plate, null, 90);
+    const hi = deriveMonsterStats(base, sword, plate, null, 90, steep);
+    expect(hi.hp).toBeGreaterThan(lo.hp * 1.5);
+  });
+
+  it('xp берётся из xpBase/xpPerLevel/tierXp конфига', () => {
+    const s = { ...DEFAULT_MDERIVE, xpBase: 100, xpPerLevel: 0 };
+    expect(deriveMonsterStats(base, sword, null, null, 1, s).xp).toBe(100); // medium tierXp=1
   });
 });

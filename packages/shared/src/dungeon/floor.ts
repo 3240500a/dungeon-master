@@ -77,6 +77,7 @@ export function spawnPacksEl(
   // Вес спавна по ГЛУБИНЕ (тиры глубины): на этаже `depth` weak доминирует на мелководье, boss копится
   // к бездне. Выбор монстра в пуле/по роли взвешен этим (роль-состав пачки из packs.json — сверху).
   const depthTiers = reg.get('depth-tiers');
+  const mderive = reg.get('monster-derive');
   const weightAt = (id: string): number => { const m = monById.get(id); return m ? spawnWeightAt(m, depthTiers, depth) : 1; };
   const wpick = (ids: string[]): string => weightedPickId(ids, weightAt, rng.float(0, 1), (r) => ids[Math.floor(r * ids.length)] ?? pool[0]!);
   const pickByRole = (role: string): string => {
@@ -107,7 +108,7 @@ export function spawnPacksEl(
         if (layout.grid[cy]?.[cx] !== Cell.Floor) { const fc = firstFloorCell(layout.grid, room); if (!fc) continue; cx = fc.cx; cy = fc.cy; }
         const w = cellToWorld(cx, cy);
         const id = entry.role ? pickByRole(entry.role) : wpick(pool);
-        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion }, rng);
+        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion, mderive }, rng);
         spawns.push({ def, x: w.x, y: w.y });
       }
     }

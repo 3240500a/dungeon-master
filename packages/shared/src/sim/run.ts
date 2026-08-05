@@ -62,8 +62,9 @@ export function runSim(reg: ConfigRegistry, settings: SimSettings): SimOutput {
     const monsters = reg.get('monsters');
     const affx = reg.get('monster-affixes');
     const gear = reg.get('monster-gear');
+    const mderive = reg.get('monster-derive');
     const make = (r: typeof rng) =>
-      Array.from({ length: 3 }, () => generateMonster(monsters, gear, affx, { baseId: r.pick(pool), depth: cl }, r));
+      Array.from({ length: 3 }, () => generateMonster(monsters, gear, affx, { baseId: r.pick(pool), depth: cl, mderive }, r));
     const stats = simulateFights(make, model, settings.iterations, rng);
     return { scenario: 'fight', fight: { ...stats, challengeLevel: cl, playerLevel: save.level, power: el } };
   }

@@ -1,0 +1,18 @@
+{
+  "levelGrowth": 0.1,
+  "hpBase": 6,
+  "hpPerVit": 1.2,
+  "hpPerLevel": 1,
+  "dmgPerAttr": 0.02,
+  "armorPerStr": 0.15,
+  "accBase": 20,
+  "accPerLevel": 3,
+  "evadeBase": 5,
+  "evadePerDex": 1.5,
+  "iasPerDex": 0.001,
+  "critPerDex": 0.0015,
+  "resistPerLevel": 0.005,
+  "xpBase": 12,
+  "xpPerLevel": 5,
+  "tierXp": { "weak": 0.7, "medium": 1, "strong": 1.8, "boss": 4 }
+}

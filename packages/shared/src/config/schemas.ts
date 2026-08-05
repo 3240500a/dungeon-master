@@ -527,6 +527,37 @@ export const depthTiersSchema = z.array(
   }),
 );
 
+// ── monster-derive ──────────────────────────────────────────────────────────
+/** Коэффициенты деривации стат-блока монстра из атрибутов+гира (как деривация статов игрока):
+ *  прирост атрибутов за уровень + сколько hp за VIT / урона за атрибут / меткости за DEX и т.д. Один
+ *  объект (не массив). Крутизна кривых HP/урона задаётся здесь → тюн в калькуляторе. */
+export const monsterDeriveSchema = z.object({
+  /** Прирост атрибутов за уровень (доля от базы): A = base × (1 + (L-1)×levelGrowth). */
+  levelGrowth: z.number().min(0).default(0.1),
+  hpBase: z.number().default(6),
+  hpPerVit: z.number().default(1.2),
+  hpPerLevel: z.number().default(1),
+  /** +доля урона оружия за ед. ведущего атрибута. */
+  dmgPerAttr: z.number().default(0.02),
+  armorPerStr: z.number().default(0.15),
+  accBase: z.number().default(20),
+  accPerLevel: z.number().default(3),
+  evadeBase: z.number().default(5),
+  evadePerDex: z.number().default(1.5),
+  iasPerDex: z.number().default(0.001),
+  critPerDex: z.number().default(0.0015),
+  resistPerLevel: z.number().default(0.005),
+  xpBase: z.number().default(12),
+  xpPerLevel: z.number().default(5),
+  /** Множитель xp по силовому тиру. */
+  tierXp: z.object({
+    weak: z.number().default(0.7),
+    medium: z.number().default(1),
+    strong: z.number().default(1.8),
+    boss: z.number().default(4),
+  }),
+});
+
 export const monsterAffixesSchema = z.array(
   z.object({
     id: z.string(),
@@ -1543,6 +1574,7 @@ export const configSchemas = {
   'monster-behaviors': monsterBehaviorsSchema,
   'monster-gear': monsterGearSchema,
   'depth-tiers': depthTiersSchema,
+  'monster-derive': monsterDeriveSchema,
   'monster-roles': monsterRolesSchema,
   packs: packsSchema,
   difficulties: difficultiesSchema,
