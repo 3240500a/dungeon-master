@@ -1,22 +1,21 @@
-import { debuffLabel, type SaveState, type TownCommand } from '@dm/shared';
+import { allocAttr, equip, unequip, allocActive, allocPassive, respec, respecSkills, respecPassives, moveInventoryItem, moveToBelt, debuffLabel, type SaveState, type TownCommand } from '@dm/shared';
 import { App } from '@dm/client/core/app.js';
 import { GameState } from '@dm/client/core/gameState.js';
 import { setItemLabelResolvers } from '@dm/client/modules/inventory/itemView.js';
 import { setDamageTypeMeta } from '@dm/client/core/damageTypes.js';
 import { setRarityMeta } from '@dm/client/modules/loot/rarity.js';
-import { allocatePassive } from '@dm/client/modules/skills-passive/allocate.js';
 
 /**
  * Мост «редактор → реальная игра»: строит настоящий `App` (@dm/client) + `GameState` из сейва, чтобы
  * калькулятор переиспользовал ПАНЕЛИ игры (стат-блок/паперкукла/атласы) — «одна истина» по статам.
- * Команды панелей (`allocAttr/allocPassive/…`) обрабатываются ЛОКАЛЬНО (мутируем сейв тем же кодом,
- * что игра: `allocatePassive`), сеть не трогаем. Золото раздуто → билд «свободный» (как d2planner).
+ * Команды панелей (`allocAttr/equip/allocPassive/…`) применяются ТЕМИ ЖЕ функциями `townActions`, что
+ * и сервер (одна истина по мутациям), сеть не трогаем. Золото раздуто → билд «свободный» (как d2planner).
  */
 export function makeHarness(data: Record<string, unknown>, save: SaveState, onChange: () => void): App {
   const app = new App();
   app.config.loadAll(data);
   refreshResolvers(app);
-  save.gold = 9_999_999; // калькулятор не гейтит по золоту
+  save.gold = 9_999_999; // калькулятор не гейтит по золоту (комиссии респеков/аллокаций покрыты)
   const gs = new GameState(save);
   app.state = gs; // сеттер подключает провайдеры дерайва/скиллов из конфига
   gs.hp = gs.derived().maxHp; gs.mana = gs.derived().maxMana; gs.stamina = gs.derived().maxStamina;
@@ -25,19 +24,19 @@ export function makeHarness(data: Record<string, unknown>, save: SaveState, onCh
 }
 
 function applyCmd(app: App, gs: GameState, cmd: TownCommand): void {
-  const s = gs.save;
+  const reg = app.config, s = gs.save;
   switch (cmd.cmd) {
-    case 'allocAttr':
-      if (s.unspentAttributePoints > 0) { const a = cmd.attr as keyof typeof s.attributes; s.attributes[a] += 1; s.unspentAttributePoints -= 1; }
-      break;
-    case 'allocPassive':
-      allocatePassive(app, gs, cmd.nodeId);
-      break;
-    case 'respecPassives':
-      for (const k of Object.keys(s.masteries)) delete s.masteries[k];
-      break;
-    default:
-      break; // остальные команды (equip/skill/...) — по мере подключения панелей
+    case 'allocAttr': allocAttr(s, cmd.attr); break;
+    case 'equip': equip(reg, s, cmd.uid); break;
+    case 'unequip': unequip(reg, s, cmd.slot); break;
+    case 'allocSkill': allocActive(reg, s, cmd.nodeId); break;
+    case 'allocPassive': allocPassive(reg, s, cmd.nodeId); break;
+    case 'respec': respec(reg, s); break;
+    case 'respecSkills': respecSkills(reg, s); break;
+    case 'respecPassives': respecPassives(reg, s); break;
+    case 'moveItem': moveInventoryItem(reg, s, cmd.uid, cmd.x, cmd.y); break;
+    case 'moveBelt': moveToBelt(s, cmd.uid); break;
+    default: break; // прочие команды (магазин/квесты/дроп) калькулятору не нужны
   }
 }
 
