@@ -164,6 +164,8 @@ fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []
 fieldEnumSources.subfaction = () => ['', ...((data['subfactions'] as { id: string }[]) ?? []).map((sf) => sf.id)];
 // affixTheme (у подфракции) — теги стихий из маг. подтипов (fire/cold/lightning/poison).
 fieldArrayEnumSources.affixTheme = () => ((data['magic-subtypes'] as { id: string }[]) ?? []).map((s) => s.id);
+// floors (у пачки монстров) — мультивыбор id этажей из вкладки «Мир → Этажи»; пусто = пачка на всех этажах.
+fieldArrayEnumSources.floors = () => ((data['floors'] as { id: string }[]) ?? []).map((f) => f.id);
 // weapon / armor(тело) / helm / offhand (экипировка монстра) — выпадашки из monster-gear по виду+слоту; '' = без предмета.
 const monsterGearOf = (kind: 'weapon' | 'armor' | 'shield', slot?: 'chest' | 'helm') => (): string[] =>
   ['', ...((data['monster-gear'] as { id: string; kind: string; slot?: string }[]) ?? [])
@@ -222,6 +224,12 @@ function loadFromServer(): void {
 
 function entryLabel(entry: unknown, i: number): string {
   const e = entry as Record<string, unknown>;
+  // Пачка монстров (нет id/name): подпись = тип комнаты + привязка к этажам (пусто = все).
+  if (e?.roomType) {
+    const fl = Array.isArray(e.floors) ? (e.floors as string[]) : [];
+    const scope = fl.length ? (fl.length <= 2 ? fl.join(', ') : `${fl.length} этажей`) : 'все этажи';
+    return `${e.roomType} · ${scope}`;
+  }
   return (e?.name as string) || (e?.id as string) || (e?.classId as string) || `#${i}`;
 }
 

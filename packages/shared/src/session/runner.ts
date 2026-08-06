@@ -178,7 +178,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     const pool = resolveMonsterPool(biome, node.depth);
     const el = effectiveLevel(save, powerCfg).total;
     const frng = createRng((node.floorSpec.seed >>> 0) || 1);
-    const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, el, pool, node.floorSpec.packDensity);
+    const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     session.enterFloor(node.depth, {
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters,
       runNodeId: node.id, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers,

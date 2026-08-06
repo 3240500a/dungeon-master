@@ -936,6 +936,9 @@ export const monsterUniquesSchema = z.array(
 export const packsSchema = z.array(
   z.object({
     roomType: z.enum(['entrance', 'small', 'large', 'treasure', 'boss']),
+    /** id этажей (из floors), на которых применима эта пачка. ПУСТО = на всех этажах.
+     *  Так одну и ту же комнату (small/large) можно населять по-разному в зависимости от этажа. */
+    floors: z.array(z.string()).default([]),
     /** Состав пачки по ролям («2–4 воина + 1–2 лучника»). */
     entries: z.array(packEntrySchema).default([]),
   }),

@@ -402,7 +402,7 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     const pool = resolveMonsterPool(biome, node.depth);
     let monsters: MonsterSpawn[] = [];
     if (!isTown) {
-      try { monsters = spawnPacksEl(reg, L, node.depth, plan.tier, createRng((node.floorSpec.seed ^ 0x51ed270b) >>> 0 || 1), t.power, pool, node.floorSpec.packDensity); }
+      try { monsters = spawnPacksEl(reg, L, node.depth, plan.tier, createRng((node.floorSpec.seed ^ 0x51ed270b) >>> 0 || 1), t.power, pool, node.floorSpec.packDensity, node.floorSpec.floorId); }
       catch { monsters = []; }
     }
     // Выход → целевой узел (развилка: exits[i] соответствует edges[i]).

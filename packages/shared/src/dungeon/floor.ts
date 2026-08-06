@@ -27,6 +27,7 @@ export function spawnPacksEl(
   el: number,
   poolOverride?: string[],
   packDensity = 1,
+  floorId = '',
 ): MonsterSpawn[] {
   const monsters = reg.get('monsters');
   const enabledIds = new Set(monsters.filter((m) => m.enabled !== false).map((m) => m.id));
@@ -63,10 +64,20 @@ export function spawnPacksEl(
     return c && c.length ? wpick(c) : wpick(pool);
   };
 
+  // Пачка применима к этажу, если её список floors пуст (=любой этаж) или содержит id текущего этажа.
+  const onFloor = (p: (typeof packs)[number]): boolean => !p.floors?.length || p.floors.includes(floorId);
+  // Выбор пачки под комнату: сперва подходящая по типу И этажу; фолбэк — тип-комнаты без привязки к этажу,
+  // затем «small» (этаж не должен остаться пустым при неполной настройке пачек).
+  const pickPack = (roomType: string): (typeof packs)[number] | undefined =>
+    packs.find((p) => p.roomType === roomType && onFloor(p))
+    ?? packs.find((p) => p.roomType === roomType)
+    ?? packs.find((p) => p.roomType === 'small' && onFloor(p))
+    ?? packs.find((p) => p.roomType === 'small');
+
   const spawns: MonsterSpawn[] = [];
   for (const room of layout.rooms) {
     if (room.type === 'entrance') continue;
-    const spec = packs.find((p) => p.roomType === room.type) ?? packs.find((p) => p.roomType === 'small');
+    const spec = pickPack(room.type);
     if (!spec) continue;
     // Состав по ролям; фолбэк-состав, если entries пуст (устаревший конфиг).
     const entries = spec.entries.length ? spec.entries : [{ role: '', min: 2, max: 4, magicChance: 0.12, rareChance: 0.03 }];

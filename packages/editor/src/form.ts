@@ -388,7 +388,7 @@ function renderArrayEnum(source: () => string[], value: unknown[], onChange: (v:
       row.append(idx, sel, smallBtn('↑', () => { if (i > 0) { const t = value[i - 1]; value[i - 1] = value[i]; value[i] = t; onChange(value); rebuild(); } }), smallBtn('✕', () => { value.splice(i, 1); onChange(value); rebuild(); }));
       box.appendChild(row);
     });
-    box.appendChild(smallBtn('+ Добавить позу', () => { value.push(source()[0] ?? ''); onChange(value); rebuild(); }));
+    box.appendChild(smallBtn('+ Добавить', () => { value.push(source()[0] ?? ''); onChange(value); rebuild(); }));
   };
   rebuild();
   return box;

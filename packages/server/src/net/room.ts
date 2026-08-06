@@ -449,7 +449,7 @@ export class Room {
     const hostSave = this.firstSave();
     const el = hostSave ? effectiveLevel(hostSave, this.cfg.get('balance').power).total : 1;
     const rng = createRng((node.floorSpec.seed >>> 0) || 1);
-    const monsters = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity);
+    const monsters = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     this.session.enterFloor(node.depth, {
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters,
       doors: layout.doors, levers: layout.levers,
