@@ -8,6 +8,12 @@ import type { ScaledMonster } from '../types/world.js';
 import type { PlayerModel } from './playerBot.js';
 import type { FightResult, FightStats } from './types.js';
 
+/**
+ * АБСТРАКТНЫЙ бой (быстрая аппроксимация): зовёт настоящую `resolveAttack`, но упрощает скиллы и
+ * игнорирует DoT/статусы/ИИ/геометрию. НИЗВЕДЁН до быстрого превью — эталон TTK/забега это реальный
+ * `session/microFight.ts` + `session/runner.ts` (настоящий GameSession). Согласие «формула ≈ движок»
+ * держит `sim/crosscheck.test.ts`. Для точных чисел баланса используй реальный движок, не это.
+ */
 const DT = 0.1; // шаг тика, сек
 const MAX_SEC = 120; // если за столько не убил — «стена» (стейлмейт)
 const MANA_PER_MAGIC_HIT = 0; // базовый удар маг. оружием бесплатен (как balance.melee.basicManaCost=0)

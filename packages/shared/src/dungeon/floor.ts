@@ -1,42 +1,16 @@
 import type { ConfigRegistry } from '../config/registry.js';
-import type { SaveState } from '../types/save.js';
-import { createRng, type Rng } from '../formulas/rng.js';
+import { type Rng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { spawnWeightAt, weightedPickId } from '../formulas/spawnWeight.js';
-import { effectiveLevel, startChallenge, challengeAtFloor } from '../formulas/power.js';
+import { startChallenge, challengeAtFloor } from '../formulas/power.js';
 import { Cell, cellToWorld } from '../world/grid.js';
-import type { FloorLayout, MonsterSpawn } from '../session/session.js';
-import { generateDungeon } from './generate.js';
+import type { MonsterSpawn } from '../session/session.js';
 import { type DungeonLayout } from './floorCommon.js';
 
 /** Первая клетка-ПОЛ в прямоугольнике комнаты (фолбэк, если случайные промахи по стене/пустоте нерегулярной комнаты). */
 function firstFloorCell(grid: DungeonLayout['grid'], r: DungeonLayout['rooms'][number]): { cx: number; cy: number } | null {
   for (let cy = r.y; cy < r.y + r.h; cy++) for (let cx = r.x; cx < r.x + r.w; cx++) if (grid[cy]?.[cx] === Cell.Floor) return { cx, cy };
   return null;
-}
-
-/**
- * Строит полный `FloorLayout` для сессии: генерирует этаж и расставляет пачки
- * монстров из packs-конфига по комнатам — headless-порт `DungeonScene.spawnPacks`.
- * Уровень вызова считается от мощи игрока и тира (как в клиенте). Общий провайдер
- * этажа для сима (Этап 4) и будущего перевода клиента (Этап 3).
- */
-/**
- * Расставляет пачки монстров по комнатам этажа (порт `DungeonScene.spawnPacks`).
- * Уровень вызова — от мощи игрока и тира. Клиент вызывает поверх своего
- * `generateDungeon` (чтобы отрисовать полный layout), сим — через `buildFloor`.
- */
-export function spawnPacks(
-  reg: ConfigRegistry,
-  save: SaveState,
-  layout: DungeonLayout,
-  depth: number,
-  difficultyId: string,
-  rng: Rng,
-  poolOverride?: string[],
-): MonsterSpawn[] {
-  const el = effectiveLevel(save, reg.get('balance').power).total;
-  return spawnPacksEl(reg, layout, depth, difficultyId, rng, el, poolOverride);
 }
 
 /**
@@ -120,25 +94,4 @@ export function spawnPacksEl(
     }
   }
   return spawns;   // без капа: этаж = сколько нагенерилось. Перф на клиенте решает окно-culling монстров (online3d).
-}
-
-/** Полный `FloorLayout` для сима: генерация этажа + открытые двери + пачки. */
-export function buildFloor(
-  reg: ConfigRegistry,
-  save: SaveState,
-  seed: number,
-  depth: number,
-  difficultyId: string,
-  rng?: Rng,
-): FloorLayout {
-  const layout = generateDungeon(seed, depth);
-  // Сим-бот не дёргает рычаги — открываем все двери, чтобы этаж был полностью проходим
-  // (замки — навигационный гиммик, не ось баланса).
-  for (const d of layout.doors) for (const dc of d.cells) {
-    const row = layout.grid[dc.cy];
-    if (row) row[dc.cx] = Cell.Floor;
-  }
-  const prng = rng ?? createRng(((seed ^ (depth * 0x9e3779b1)) >>> 0) || 1);
-  const monsters = spawnPacks(reg, save, layout, depth, difficultyId, prng);
-  return { grid: layout.grid, spawn: layout.spawn, stairs: layout.stairsDown, monsters };
 }
