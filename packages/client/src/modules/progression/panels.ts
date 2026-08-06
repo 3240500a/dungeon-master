@@ -90,6 +90,30 @@ const RES: [keyof DerivedStats, DamageType][] = [
 
 const DMG_TYPES: DamageType[] = ['physical', 'fire', 'cold', 'lightning', 'poison'];
 
+/**
+ * Статы, у которых УЖЕ есть своя строка в других секциях листа (Наступление/Защита/Сопротивления/
+ * Атрибуты/Прочее/Статусы) ИЛИ показаны сверху «Бонусов» по типам урона — их в общем списке бонусов
+ * НЕ дублируем. Остаются только «бездомные» бонусы: вампиризм, за-убийство и любой будущий стат без секции.
+ */
+const BONUS_EXCLUDE = new Set<string>([
+  // урон — показан в «Бонусах» сверху по типам
+  'minDamage', 'maxDamage', 'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct',
+  'addFire', 'addCold', 'addLightning', 'addPoison',
+  // Наступление
+  'attackSpeed', 'critChance', 'critMultiplier', 'accuracy', 'castSpeed', 'armorPen',
+  // Защита
+  'armor', 'evade', 'blockChance', 'maxHp', 'maxMana', 'maxStamina', 'hpRegen', 'manaRegen', 'staminaRegen', 'interruptResist',
+  // Сопротивления
+  'resFire', 'resCold', 'resLightning', 'resPoison',
+  // Атрибуты
+  'strength', 'dexterity', 'intelligence', 'vitality',
+  // Прочее
+  'moveSpeed',
+  // Статусы (наложение): глобальные + per-kind
+  'ailmentPct', 'ailmentDurPct',
+  ...['wound', 'bleed', 'sunder', 'daze', 'burn', 'poison', 'shock', 'freeze'].flatMap((k) => [`${k}ChancePct`, `${k}PowerPct`, `${k}DurPct`]),
+]);
+
 function resRow(label: string, frac: number, color: string, tip?: string, labelW = 60): HTMLElement {
   const row = mk('div', 'display:flex;align-items:center;gap:8px;padding:3px 0;cursor:help');
   row.append(mk('span', `width:${labelW}px;font-size:13px;color:${COLORS.dim}`, label));
@@ -482,33 +506,23 @@ export const characterPanel: PanelFactory = (app, ui) => {
         (row.firstElementChild as HTMLElement).style.color = dmgColor(t);
         bon.append(row);
       }
-      // Прочие бонусы: агрегируем ВСЕ модификаторы (гир + деревья), кроме урона (он показан выше по типам).
-      const DMG_MOD = new Set(['minDamage', 'maxDamage', 'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct', 'addFire', 'addCold', 'addLightning', 'addPoison']);
+      // Прочие бонусы: агрегируем модификаторы (гир + деревья), но БЕЗ дублей — только статы без своей
+      // строки в других секциях (см. BONUS_EXCLUDE). Flat+increased одного стата суммируются раздельно.
       const agg = new Map<string, { stat: string; kind: StatModifier['kind']; value: number }>();
       for (const md of state.allModifiers()) {
-        if (DMG_MOD.has(md.stat)) continue;
+        if (BONUS_EXCLUDE.has(md.stat)) continue;
         const key = `${md.stat}|${md.kind}`;
         const e = agg.get(key);
         if (e) e.value += md.value; else agg.set(key, { stat: md.stat, kind: md.kind, value: md.value });
       }
-      const catOf = (s: string): number =>
-        /armor|evade|blockChance|interruptResist/.test(s) ? 0 :
-        /^res/.test(s) ? 1 :
-        /maxHp|hpRegen|maxMana|manaRegen|maxStamina|staminaRegen/.test(s) ? 2 :
-        /strength|dexterity|intelligence|vitality/.test(s) ? 3 :
-        /critChance|critMultiplier|accuracy|attackSpeed|castSpeed|moveSpeed/.test(s) ? 4 : 5;
-      const rest = [...agg.values()].filter((e) => Math.abs(e.value) > 1e-9).sort((a, b) => catOf(a.stat) - catOf(b.stat) || a.stat.localeCompare(b.stat));
-      const RESCOLOR: Record<string, string> = { resFire: dmgColor('fire'), resCold: dmgColor('cold'), resLightning: dmgColor('lightning'), resPoison: dmgColor('poison') };
-      if (rest.length) {
-        if (anyBon) bon.append(mk('div', `height:1px;background:${COLORS.border};margin:8px 0`));
-        for (const e of rest) {
-          const isPct = e.kind === 'increased' || PERCENT_STATS.has(e.stat);
-          const val = isPct ? `+${Math.round(e.value * 100)}%` : `+${Number.isInteger(e.value) ? e.value : e.value.toFixed(2)}`;
-          const row = statRow(STAT_LABEL[e.stat] ?? e.stat, val);
-          if (RESCOLOR[e.stat]) (row.firstElementChild as HTMLElement).style.color = RESCOLOR[e.stat]!;
-          bon.append(row);
-        }
-        anyBon = true;
+      let restShown = false;
+      for (const e of [...agg.values()].sort((a, b) => a.stat.localeCompare(b.stat))) {
+        const isPct = e.kind === 'increased' || PERCENT_STATS.has(e.stat);
+        const num = isPct ? Math.round(e.value * 100) : (Number.isInteger(e.value) ? e.value : Number(e.value.toFixed(2)));
+        if (num === 0) continue;                                   // скруглённые в ноль не показываем
+        if (!restShown && anyBon) bon.append(mk('div', `height:1px;background:${COLORS.border};margin:8px 0`));
+        restShown = true; anyBon = true;
+        bon.append(statRow(STAT_LABEL[e.stat] ?? e.stat, `${num > 0 ? '+' : '−'}${Math.abs(num)}${isPct ? '%' : ''}`)); // знак-осознанно: «−6%», не «+-6%»
       }
       if (!anyBon) bon.append(mk('div', `font-size:12px;color:${COLORS.dim};padding:3px 0`, 'нет бонусов от прокачки/гира'));
       body.append(bon);
