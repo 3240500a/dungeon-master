@@ -30,8 +30,8 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 23
+      "strength": 9,
+      "dexterity": 16
     },
     "gridW": 1,
     "gridH": 3,
@@ -76,8 +76,8 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 23
+      "strength": 9,
+      "dexterity": 16
     },
     "gridW": 1,
     "gridH": 2,
@@ -122,8 +122,8 @@
       }
     ],
     "requirements": {
-      "strength": 23,
-      "dexterity": 12
+      "strength": 16,
+      "dexterity": 9
     },
     "gridW": 1,
     "gridH": 3,
@@ -168,7 +168,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -213,7 +213,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -248,8 +248,8 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 23
+      "strength": 9,
+      "dexterity": 16
     },
     "gridW": 1,
     "gridH": 2,
@@ -285,8 +285,8 @@
       }
     ],
     "requirements": {
-      "strength": 23,
-      "dexterity": 12
+      "strength": 16,
+      "dexterity": 9
     },
     "gridW": 1,
     "gridH": 3,
@@ -368,7 +368,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 42
     },
     "gridW": 2,
     "gridH": 3,
@@ -409,7 +409,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 46
     },
     "gridW": 2,
     "gridH": 3,
@@ -446,8 +446,8 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 23
+      "strength": 9,
+      "dexterity": 16
     },
     "gridW": 1,
     "gridH": 2,
@@ -530,8 +530,8 @@
       }
     ],
     "requirements": {
-      "strength": 23,
-      "dexterity": 12
+      "strength": 16,
+      "dexterity": 9
     },
     "gridW": 1,
     "gridH": 3,
@@ -572,7 +572,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -615,7 +615,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -841,8 +841,8 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 23
+      "strength": 9,
+      "dexterity": 16
     },
     "gridW": 1,
     "gridH": 2,
@@ -882,8 +882,8 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 23
+      "strength": 9,
+      "dexterity": 16
     },
     "gridW": 1,
     "gridH": 3,
@@ -919,8 +919,8 @@
       }
     ],
     "requirements": {
-      "strength": 23,
-      "dexterity": 12
+      "strength": 16,
+      "dexterity": 9
     },
     "gridW": 1,
     "gridH": 3,
@@ -961,8 +961,8 @@
       }
     ],
     "requirements": {
-      "strength": 34,
-      "dexterity": 18
+      "strength": 26,
+      "dexterity": 14
     },
     "gridW": 1,
     "gridH": 3,
@@ -1003,7 +1003,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 1,
     "gridH": 3,
@@ -1044,7 +1044,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 1,
     "gridH": 3,
@@ -1080,7 +1080,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -1122,7 +1122,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -1159,7 +1159,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -1195,7 +1195,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -1237,7 +1237,7 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -1280,8 +1280,7 @@
       }
     ],
     "requirements": {
-      "strength": 18,
-      "dexterity": 34
+      "dexterity": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -1290,7 +1289,7 @@
     "attackType": "ranged",
     "damageKind": "physical",
     "weaponClass": "bow",
-    "weight": "light",
+    "weight": "superlight",
     "damageType": "physical",
     "hands": 2
   },
@@ -1320,8 +1319,8 @@
       }
     ],
     "requirements": {
-      "strength": 18,
-      "dexterity": 34
+      "strength": 14,
+      "dexterity": 26
     },
     "gridW": 2,
     "gridH": 3,
@@ -1360,8 +1359,8 @@
       }
     ],
     "requirements": {
-      "strength": 34,
-      "dexterity": 18
+      "strength": 26,
+      "dexterity": 14
     },
     "gridW": 2,
     "gridH": 3,
@@ -1395,8 +1394,8 @@
       }
     ],
     "requirements": {
-      "strength": 34,
-      "dexterity": 18
+      "strength": 14,
+      "dexterity": 26
     },
     "gridW": 2,
     "gridH": 3,
@@ -1405,7 +1404,7 @@
     "attackType": "ranged",
     "damageKind": "physical",
     "weaponClass": "bow",
-    "weight": "medium",
+    "weight": "light",
     "damageType": "physical",
     "hands": 2
   },
@@ -1435,7 +1434,8 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 26,
+      "dexterity": 14
     },
     "gridW": 2,
     "gridH": 3,
@@ -1444,7 +1444,7 @@
     "attackType": "ranged",
     "damageKind": "physical",
     "weaponClass": "bow",
-    "weight": "heavy",
+    "weight": "medium",
     "damageType": "physical",
     "hands": 2
   },
@@ -1474,8 +1474,7 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 23
+      "dexterity": 18
     },
     "gridW": 2,
     "gridH": 2,
@@ -1509,8 +1508,7 @@
       }
     ],
     "requirements": {
-      "strength": 34,
-      "dexterity": 18
+      "dexterity": 29
     },
     "gridW": 2,
     "gridH": 3,
@@ -1519,7 +1517,7 @@
     "attackType": "ranged",
     "damageKind": "physical",
     "weaponClass": "crossbow",
-    "weight": "medium",
+    "weight": "superlight",
     "damageType": "physical",
     "hands": 2
   },
@@ -1544,7 +1542,8 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 14,
+      "dexterity": 26
     },
     "gridW": 2,
     "gridH": 3,
@@ -1553,7 +1552,7 @@
     "attackType": "ranged",
     "damageKind": "physical",
     "weaponClass": "crossbow",
-    "weight": "heavy",
+    "weight": "light",
     "damageType": "physical",
     "hands": 2
   },
@@ -1583,7 +1582,8 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 26,
+      "dexterity": 14
     },
     "gridW": 2,
     "gridH": 3,
@@ -1592,7 +1592,7 @@
     "attackType": "ranged",
     "damageKind": "physical",
     "weaponClass": "crossbow",
-    "weight": "heavy",
+    "weight": "medium",
     "damageType": "physical",
     "hands": 2,
     "armorPenPct": 0.2
@@ -1623,7 +1623,8 @@
       }
     ],
     "requirements": {
-      "strength": 27
+      "strength": 26,
+      "dexterity": 14
     },
     "gridW": 2,
     "gridH": 3,
@@ -1632,7 +1633,7 @@
     "attackType": "ranged",
     "damageKind": "physical",
     "weaponClass": "crossbow",
-    "weight": "heavy",
+    "weight": "medium",
     "damageType": "physical",
     "hands": 2,
     "armorPenPct": 0.3
@@ -1658,7 +1659,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 18
+      "intelligence": 20
     },
     "gridW": 1,
     "gridH": 2,
@@ -1692,7 +1693,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 18
+      "intelligence": 15
     },
     "gridW": 1,
     "gridH": 2,
@@ -1726,7 +1727,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 18
+      "intelligence": 16
     },
     "gridW": 1,
     "gridH": 2,
@@ -1794,7 +1795,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 18
+      "intelligence": 26
     },
     "gridW": 1,
     "gridH": 2,
@@ -1828,7 +1829,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 27
+      "intelligence": 26
     },
     "gridW": 2,
     "gridH": 3,
@@ -1862,7 +1863,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 27
+      "intelligence": 24
     },
     "gridW": 2,
     "gridH": 3,
@@ -1896,7 +1897,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 27
+      "intelligence": 24
     },
     "gridW": 2,
     "gridH": 3,
@@ -1930,7 +1931,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 27
+      "intelligence": 22
     },
     "gridW": 2,
     "gridH": 3,
@@ -1964,7 +1965,7 @@
       }
     ],
     "requirements": {
-      "intelligence": 27
+      "intelligence": 32
     },
     "gridW": 2,
     "gridH": 3,
@@ -1998,8 +1999,8 @@
       }
     ],
     "requirements": {
-      "strength": 6,
-      "dexterity": 6
+      "strength": 8,
+      "dexterity": 8
     },
     "gridW": 2,
     "gridH": 2,
@@ -2057,7 +2058,7 @@
       }
     ],
     "requirements": {
-      "strength": 24
+      "strength": 20
     },
     "gridW": 2,
     "gridH": 3,
@@ -2103,9 +2104,7 @@
         "value": 5
       }
     ],
-    "requirements": {
-      "dexterity": 14
-    },
+    "requirements": {},
     "gridW": 2,
     "gridH": 2,
     "dropWeight": 1,
@@ -2129,8 +2128,7 @@
       }
     ],
     "requirements": {
-      "strength": 14,
-      "dexterity": 14
+      "strength": 13
     },
     "gridW": 2,
     "gridH": 2,
@@ -2155,8 +2153,7 @@
       }
     ],
     "requirements": {
-      "strength": 21,
-      "dexterity": 7
+      "strength": 21
     },
     "gridW": 2,
     "gridH": 2,
@@ -2181,7 +2178,7 @@
       }
     ],
     "requirements": {
-      "strength": 14
+      "strength": 30
     },
     "gridW": 2,
     "gridH": 2,
@@ -2228,9 +2225,7 @@
         "value": 12
       }
     ],
-    "requirements": {
-      "dexterity": 18
-    },
+    "requirements": {},
     "gridW": 2,
     "gridH": 3,
     "dropWeight": 1,
@@ -2254,8 +2249,7 @@
       }
     ],
     "requirements": {
-      "strength": 18,
-      "dexterity": 18
+      "strength": 16
     },
     "gridW": 2,
     "gridH": 3,
@@ -2280,8 +2274,7 @@
       }
     ],
     "requirements": {
-      "strength": 26,
-      "dexterity": 9
+      "strength": 26
     },
     "gridW": 2,
     "gridH": 3,
@@ -2306,7 +2299,7 @@
       }
     ],
     "requirements": {
-      "strength": 18
+      "strength": 38
     },
     "gridW": 2,
     "gridH": 3,
@@ -2353,9 +2346,7 @@
         "value": 3
       }
     ],
-    "requirements": {
-      "dexterity": 14
-    },
+    "requirements": {},
     "gridW": 2,
     "gridH": 2,
     "dropWeight": 1,
@@ -2379,8 +2370,7 @@
       }
     ],
     "requirements": {
-      "strength": 13,
-      "dexterity": 13
+      "strength": 12
     },
     "gridW": 2,
     "gridH": 2,
@@ -2405,8 +2395,7 @@
       }
     ],
     "requirements": {
-      "strength": 20,
-      "dexterity": 7
+      "strength": 20
     },
     "gridW": 2,
     "gridH": 2,
@@ -2431,7 +2420,7 @@
       }
     ],
     "requirements": {
-      "strength": 14
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 2,
@@ -2488,9 +2477,7 @@
         "value": 0.05
       }
     ],
-    "requirements": {
-      "dexterity": 14
-    },
+    "requirements": {},
     "gridW": 2,
     "gridH": 2,
     "dropWeight": 1,
@@ -2519,8 +2506,7 @@
       }
     ],
     "requirements": {
-      "strength": 13,
-      "dexterity": 13
+      "strength": 12
     },
     "gridW": 2,
     "gridH": 2,
@@ -2550,8 +2536,7 @@
       }
     ],
     "requirements": {
-      "strength": 20,
-      "dexterity": 7
+      "strength": 20
     },
     "gridW": 2,
     "gridH": 2,
@@ -2576,7 +2561,7 @@
       }
     ],
     "requirements": {
-      "strength": 14
+      "strength": 29
     },
     "gridW": 2,
     "gridH": 2,
@@ -2633,9 +2618,7 @@
         "value": 10
       }
     ],
-    "requirements": {
-      "dexterity": 13
-    },
+    "requirements": {},
     "gridW": 2,
     "gridH": 1,
     "dropWeight": 1,
@@ -2664,8 +2647,7 @@
       }
     ],
     "requirements": {
-      "strength": 12,
-      "dexterity": 12
+      "strength": 11
     },
     "gridW": 2,
     "gridH": 1,
@@ -2695,8 +2677,7 @@
       }
     ],
     "requirements": {
-      "strength": 18,
-      "dexterity": 6
+      "strength": 18
     },
     "gridW": 2,
     "gridH": 1,
@@ -2726,7 +2707,7 @@
       }
     ],
     "requirements": {
-      "strength": 13
+      "strength": 27
     },
     "gridW": 2,
     "gridH": 1,

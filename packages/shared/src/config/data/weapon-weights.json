@@ -1,7 +1,47 @@
 [
-  { "id": "superlight", "name": "Сверхлёгкое", "strength": 0, "dexterity": 1, "intelligence": 0, "weight": 3, "reqBase": 18 },
-  { "id": "light", "name": "Лёгкое", "strength": 0.35, "dexterity": 0.65, "intelligence": 0, "weight": 6, "reqBase": 35 },
-  { "id": "medium", "name": "Среднее", "strength": 0.65, "dexterity": 0.35, "intelligence": 0, "weight": 12, "reqBase": 35 },
-  { "id": "heavy", "name": "Тяжёлое", "strength": 1, "dexterity": 0, "intelligence": 0, "weight": 25, "reqBase": 18 },
-  { "id": "magical", "name": "Магическое", "strength": 0, "dexterity": 0, "intelligence": 1, "weight": 8, "reqBase": 18 }
+  {
+    "id": "superlight",
+    "name": "Сверхлёгкое",
+    "strength": 0,
+    "dexterity": 1,
+    "intelligence": 0,
+    "weight": 3,
+    "reqBase": 18
+  },
+  {
+    "id": "light",
+    "name": "Лёгкое",
+    "strength": 0.35,
+    "dexterity": 0.65,
+    "intelligence": 0,
+    "weight": 6,
+    "reqBase": 25
+  },
+  {
+    "id": "medium",
+    "name": "Среднее",
+    "strength": 0.65,
+    "dexterity": 0.35,
+    "intelligence": 0,
+    "weight": 12,
+    "reqBase": 25
+  },
+  {
+    "id": "heavy",
+    "name": "Тяжёлое",
+    "strength": 1,
+    "dexterity": 0,
+    "intelligence": 0,
+    "weight": 25,
+    "reqBase": 18
+  },
+  {
+    "id": "magical",
+    "name": "Магическое",
+    "strength": 0,
+    "dexterity": 0,
+    "intelligence": 1,
+    "weight": 8,
+    "reqBase": 18
+  }
 ]
