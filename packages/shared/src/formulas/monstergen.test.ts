@@ -141,6 +141,15 @@ describe('generateMonster — редкость по слотам гира (per-p
     expect(nLow).toBeGreaterThanOrEqual(1); // хотя бы оружие
   });
 
+  it('derive-override: у моба со своим derive используются ЕГО коэффициенты, не общие', () => {
+    const b = monsters.find((m) => m.id === 'zombie') ?? monsters[0]!;
+    const fat = { ...b, derive: { ...reg.get('monster-derive'), hpPerVit: 100 } }; // жирный HP за Выносливость
+    const monsters2 = monsters.map((m) => (m.id === b.id ? fat : m));
+    const normal = generateMonster(monsters, gear, affixes, { baseId: b.id, depth: 5, randomChampion: false }, createRng(1));
+    const over = generateMonster(monsters2, gear, affixes, { baseId: b.id, depth: 5, randomChampion: false }, createRng(1));
+    expect(over.hp).toBeGreaterThan(normal.hp * 2); // hpPerVit 100 ≫ дефолтный → HP сильно больше
+  });
+
   it('normal — все слоты normal, без афиксов', () => {
     const m = genG({ baseId: multiSlot.id, depth: 20, rarity: 'normal' }, 5);
     for (const r of m.gearRolls ?? []) { expect(r.rarity).toBe('normal'); expect(r.affixes.length).toBe(0); }

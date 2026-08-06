@@ -160,7 +160,9 @@ export function generateMonster(
   const base = (opts.baseId ? monsters.find((b) => b.id === opts.baseId) : undefined) ?? rng.pick(monsters);
   const level = Math.max(0, opts.depth) + 1;
   const { weapon, armor, helm, shield } = resolveGear(monsterGear, base);
-  const def = deriveMonsterStats(base as MonsterTemplate, weapon, armor, shield, level, opts.mderive ?? DEFAULT_MDERIVE, helm);
+  // Коэффициенты деривации: сначала переопределение самого моба (monster.derive), иначе — общие (opts.mderive).
+  const mderive = (base as { derive?: MonsterDeriveScaling }).derive ?? opts.mderive ?? DEFAULT_MDERIVE;
+  const def = deriveMonsterStats(base as MonsterTemplate, weapon, armor, shield, level, mderive, helm);
 
   const m: ScaledMonster = { ...def, level, rarity: 'normal', affixes: [], damage: 0 };
 

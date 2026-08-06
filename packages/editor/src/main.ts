@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ConfigRegistry, configSchemas, allStatKeys, schemeRequirements, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
 import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers } from './form.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
+import { renderDeriveOverride } from './deriveOverrideEditor.js';
 import { mountFloorPreview } from './floorPreview.js';
 import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
 import { renderSimPage } from './sim.js';
@@ -172,6 +173,9 @@ fieldEnumSources.offhand = monsterGearOf('shield');
 fieldCustomRenderers.spawnCurve = (value, onChange, parent) =>
   renderSpawnCurve(value, onChange, (parent?.tier as 'weak' | 'medium' | 'strong' | 'boss') ?? 'medium',
     (data['depth-tiers'] as Parameters<typeof renderSpawnCurve>[3]) ?? []);
+// derive (у монстра) — переопределение коэффициентов деривации per-моб; авто-заполнение из общей «Деривации».
+fieldCustomRenderers.derive = (value, onChange) =>
+  renderDeriveOverride(value, onChange, () => (data['monster-derive'] as Record<string, unknown>) ?? {});
 // poseClips (у активного скила) — упорядоченный мультивыбор имён сохранённых поз из редактора поз
 // (/api/pose → pe_clips). Несколько имён → в 3D удары чередуются. s_hit_ (спец-удар скила) — вперёд, затем hit_, idle_.
 let poseClipNames: string[] = [];

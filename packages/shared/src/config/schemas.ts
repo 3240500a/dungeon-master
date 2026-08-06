@@ -495,6 +495,10 @@ export const monstersSchema = z.array(
     /** Ручная кривая веса спавна по тирам глубины (0 чисел = авто из силового тира; иначе по числу
      *  тиров в depth-tiers). Гибрид: авто-заполнение по тиру + ручной дотюн в редакторе (график). */
     spawnCurve: z.array(z.number().min(0)).default([]),
+    /** Переопределение коэффициентов деривации ДЛЯ ЭТОГО моба (пусто/null = берёт из общей `monster-derive`).
+     *  z.lazy — monsterDeriveSchema объявлена ниже; резолвится при парсинге. nullable — редактор кладёт null
+     *  для «не переопределено» (defaultValue не разворачивает lazy). В редакторе — кастом-рендер. */
+    derive: z.lazy(() => monsterDeriveSchema).nullable().optional(),
     /** Скорость перемещения (px/с). */
     moveSpeed: z.number().default(50),
     sprite: z.string(),
