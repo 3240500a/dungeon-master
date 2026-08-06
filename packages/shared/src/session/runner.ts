@@ -18,7 +18,7 @@ import { newBotSave, classProfileAttr, allocateAttributes } from '../sim/playerB
 import { considerDrop, visitShop, allocateSkillsAndPassives } from '../sim/economy.js';
 import type { BuildPolicy } from '../sim/types.js';
 import { GameSession } from './session.js';
-import { BotController } from './bot.js';
+import { BotController, type BotTier, type BotStyle } from './bot.js';
 import { playerSnapshot } from './derive.js';
 import { buildSnapshot, type RunReport, type CurvePoint } from './stats.js';
 
@@ -50,6 +50,10 @@ export interface SessionSimSettings {
   maxDeaths?: number;
   /** Время на один поход в город (телепорт+лечёж+магазин+возврат), сек. */
   townTripSec?: number;
+  /** Уровень мастерства бота (basic|kite|potions|rotation). По умолчанию rotation. */
+  botTier?: BotTier;
+  /** Стиль прохождения этажа (clear|balanced|rush). По умолчанию balanced. */
+  botStyle?: BotStyle;
 }
 
 function reviveFull(p: PlayerEntity, save: SaveState, reg: ConfigRegistry): void {
@@ -95,7 +99,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const profile = classProfileAttr(reg, settings.classId);
   const session = new GameSession(reg, settings.seed, settings.difficultyId);
   const p = session.addPlayer('p1', save);
-  const bot = new BotController(reg);
+  const bot = new BotController(reg, settings.botTier ?? 'rotation', settings.botStyle ?? 'balanced');
 
   let totalTime = 0;
   let kills = 0;

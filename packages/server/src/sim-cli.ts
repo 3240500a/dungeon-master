@@ -1,4 +1,4 @@
-import { ConfigRegistry, runSim, runSessionSim, microFightStats, generateMonster, createRng, newBotSave, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type RunReport, type SaveState } from '@dm/shared';
+import { ConfigRegistry, runSim, runSessionSim, microFightStats, generateMonster, createRng, newBotSave, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type RunReport, type SaveState, type BotTier, type BotStyle } from '@dm/shared';
 import { getCharacter } from './db/db.js';
 
 /**
@@ -31,6 +31,8 @@ if (str('scenario', 'progression') === 'run') {
     maxHours: num('hours', 6),
     dt: num('dt', 1 / 30),
     townTripSec: num('town', 45),
+    botTier: str('tier', 'rotation') as BotTier,
+    botStyle: str('style', 'balanced') as BotStyle,
     build: {
       ...DEFAULT_BUILD,
       vitalityShare: num('vit', DEFAULT_BUILD.vitalityShare),

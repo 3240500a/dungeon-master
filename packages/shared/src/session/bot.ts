@@ -17,7 +17,6 @@ import { isAoeAbility, ABILITY_AOE_RADIUS, type PlayerInput } from './session.js
 const REPATH_TICKS = 6; // как часто пересчитывать путь (в тиках)
 const WAYPOINT_REACHED = 18; // px до путевой точки, чтобы перейти к следующей
 const AOE_TRIGGER = 3; // столько монстров в радиусе AoE, чтобы швырнуть площадную
-const AGGRO = 300; // не гоняемся за мобами дальше — уходим к выходу (иначе не зачистить весь этаж за таймаут)
 const POTION_HP = 0.5; // пьём зелье ниже этой доли HP
 const POTION_COOLDOWN_TICKS = 30; // ~1с между зельями (не выхлебать пояс за тик)
 
@@ -27,6 +26,15 @@ const POTION_COOLDOWN_TICKS = 30; // ~1с между зельями (не вых
  */
 export type BotTier = 'basic' | 'kite' | 'potions' | 'rotation';
 const TIER_RANK: Record<BotTier, number> = { basic: 0, kite: 1, potions: 2, rotation: 3 };
+
+/**
+ * Стиль прохождения этажа (радиус преследования → когда идём к выходу):
+ *  clear — зачищаем ВЕСЬ этаж (гонимся за любым мобом; выход только после зачистки; больше XP/лута, дольше/рискованнее);
+ *  balanced — чистим по пути и вокруг, затем к выходу (дефолт);
+ *  rush — почти сразу к выходу, бьём только то, что вплотную (быстро, мало XP/лута).
+ */
+export type BotStyle = 'clear' | 'balanced' | 'rush';
+const AGGRO_BY_STYLE: Record<BotStyle, number> = { clear: Infinity, balanced: 300, rush: 140 };
 
 export class BotController {
   private path: Vec2[] = [];
@@ -38,7 +46,10 @@ export class BotController {
   /** Выученные активки бота (id + AoE-флаг), обновляются в syncHotbar. */
   private skills: { id: string; aoe: boolean }[] = [];
 
-  constructor(private cfg: ConfigRegistry, private tier: BotTier = 'rotation') {}
+  private readonly aggro: number;
+  constructor(private cfg: ConfigRegistry, private tier: BotTier = 'rotation', style: BotStyle = 'balanced') {
+    this.aggro = AGGRO_BY_STYLE[style];
+  }
 
   private attackType(save: SaveState): AttackType {
     return save.equipment.weapon?.attackType ?? 'melee';
@@ -110,8 +121,8 @@ export class BotController {
       if (d <= ABILITY_AOE_RADIUS) cluster++;
     }
     // Липкость в пределах aggro; за aggro цель бросаем (пойдём к выходу), не гоняясь через весь этаж.
-    const near = nearest && nd <= AGGRO ? nearest : undefined;
-    const target = sticky && Math.hypot(sticky.pos.x - p.pos.x, sticky.pos.y - p.pos.y) <= AGGRO ? sticky : near;
+    const near = nearest && nd <= this.aggro ? nearest : undefined;
+    const target = sticky && Math.hypot(sticky.pos.x - p.pos.x, sticky.pos.y - p.pos.y) <= this.aggro ? sticky : near;
     this.targetId = target ? target.id : null;
 
     let drop: DropEntity | undefined;
@@ -154,7 +165,7 @@ export class BotController {
       if (useSkills && cast == null && !lowHp && los && tdist <= (at === 'melee' ? 150 : 340)) {
         cast = this.readySkill(p, false);
       }
-    } else if (drop && !lowHp && dd <= AGGRO) {
+    } else if (drop && !lowHp && dd <= this.aggro) {
       facing = Math.atan2(drop.pos.y - p.pos.y, drop.pos.x - p.pos.x);
       if (dd > 24) move = this.navigate(world, p, drop.pos, `d${drop.id}`);
     } else if (world.exits && world.exits.length && !lowHp) {
