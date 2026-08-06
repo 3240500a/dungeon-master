@@ -31,6 +31,7 @@ let harness: App | null = null;
 let hkey = '';
 let charInst: Panel | null = null;
 let rendering = false;         // анти-реэнтранси: панели/held-item шлют state:changed по ходу рендера
+let renderQueued = false;      // коалесцирование отложенной перерисовки (пакеты команд рисуют один раз, после пакета)
 
 const h = (tag: string, css: string, html = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (html) e.innerHTML = html; return e; };
 const pctS = (x: number): string => `${Math.round(x * 100)}%`;
@@ -53,6 +54,19 @@ export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>)
   try { renderCalcInner(page, data); } finally { rendering = false; }
 }
 
+/**
+ * Отложенная коалесцирующая перерисовка (микротаск). Панель атрибутов применяет билд ПАКЕТОМ команд
+ * (OK шлёт по `allocAttr` на каждое очко), а `resetPending` — в самом конце. Синхронная перерисовка на
+ * каждую команду рисовала бы панель со «стейджем», который уже применён → двойной показ атрибутов и
+ * скачущие «нераспределённые очки». Микротаск гарантирует: весь пакет (вкл. resetPending) завершился —
+ * потом ОДНА чистая перерисовка. Прямые вызовы (смена класса/уровня, вкладки) остаются синхронными.
+ */
+function scheduleRender(page: HTMLElement, data: Record<string, unknown>): void {
+  if (renderQueued) return;
+  renderQueued = true;
+  queueMicrotask(() => { renderQueued = false; renderCalcPage(page, data); });
+}
+
 function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void {
   page.innerHTML = '';
   const reg = regFromData(data);
@@ -65,9 +79,11 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
   const key = `${classId}|${level}`;
   if (key !== hkey || !harness) {
     const save = freshSave(reg, classId, level);
-    harness = makeHarness(data, save, () => renderCalcPage(page, data));
+    // Команды панелей рисуют ОТЛОЖЕННО (микротаск, коалесцированно): пакет команд (OK атрибутов) должен
+    // отработать целиком до перерисовки, иначе панель ловит промежуточный «стейдж» (двойные атрибуты).
+    harness = makeHarness(data, save, () => scheduleRender(page, data));
     // Инвентарь/паперкукла перерисовываются по шине (взять/положить/дроп без прямого onChange).
-    harness.bus.on('state:changed', () => renderCalcPage(page, data));
+    harness.bus.on('state:changed', () => scheduleRender(page, data));
     const uiStub = { refresh: () => renderCalcPage(page, data) } as unknown as DomUi;
     charInst = characterPanel(harness, uiStub);
     hkey = key;
