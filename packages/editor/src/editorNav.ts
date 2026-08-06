@@ -2,7 +2,7 @@
  * Крохотный мостик навигации редактора: `main.ts` регистрирует переключатель вкладок,
  * а другие вкладки (напр. «Симулятор») просят перейти на «Калькулятор» — без циклического импорта.
  */
-export type EditorView = 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'config';
+export type EditorView = 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'sweep' | 'config';
 
 let navFn: ((view: EditorView) => void) | null = null;
 export function setEditorNav(fn: (view: EditorView) => void): void { navFn = fn; }

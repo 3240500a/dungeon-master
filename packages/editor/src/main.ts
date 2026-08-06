@@ -10,6 +10,7 @@ import { renderRunGenPage } from './runGen.js';
 import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
 import { renderCalcPage } from './calc.js';
+import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
@@ -128,7 +129,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'sweep' = 'config';
 /** Активная подветка balance (её страница-срез). */
 let balanceGroup: string = balanceGroupsFull[0]!.title;
 
@@ -455,6 +456,13 @@ function render(): void {
   calcBtn.addEventListener('click', () => { view = 'calc'; render(); });
   nav.appendChild(calcBtn);
 
+  // Отдельная вкладка-инструмент: свипы баланса (хитмап ударов-до-смерти).
+  const sweepBtn = document.createElement('button');
+  sweepBtn.textContent = '🔥 Свипы';
+  sweepBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'sweep' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  sweepBtn.addEventListener('click', () => { view = 'sweep'; render(); });
+  nav.appendChild(sweepBtn);
+
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
   const covered = new Set(NAV_GROUPS.flatMap(groupKeys));
   const extra = (Object.keys(configSchemas) as ConfigKey[]).filter((k) => !covered.has(k));
@@ -518,6 +526,7 @@ function render(): void {
   else if (view === 'itemgen') renderItemGenPage(page, data);
   else if (view === 'monstergen') renderMonsterGenPage(page, data);
   else if (view === 'calc') renderCalcPage(page, data);
+  else if (view === 'sweep') renderSweepPage(page, data);
   else renderPage(page);
 
   layout.append(nav, page);

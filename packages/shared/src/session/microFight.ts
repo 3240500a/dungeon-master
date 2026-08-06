@@ -4,7 +4,7 @@ import type { ScaledMonster } from '../types/world.js';
 import type { PlayerEntity } from '../world/state.js';
 import { townLayout } from '../dungeon/town.js';
 import { GameSession } from './session.js';
-import { BotController } from './bot.js';
+import { BotController, type BotTier, type BotStyle } from './bot.js';
 
 /**
  * Реальный микро-бой на настоящем `GameSession` — источник истины для TTK.
@@ -30,6 +30,10 @@ export interface MicroFightOpts {
   /** Дистанция спавна монстров от игрока, px (бот сам подходит в радиус). */
   distancePx?: number;
   difficultyId?: string;
+  /** Уровень мастерства бота (для TTK «по уровню игры»). По умолчанию rotation. */
+  tier?: BotTier;
+  /** Стиль прохождения (в микро-бое почти не важен, но для единообразия). По умолчанию balanced. */
+  style?: BotStyle;
 }
 
 export interface MicroMonsterResult {
@@ -83,7 +87,7 @@ export function simulateMicroFight(reg: ConfigRegistry, opts: MicroFightOpts): M
 
   const session = new GameSession(reg, opts.seed, difficultyId, { sustain: true, economy: false });
   const p: PlayerEntity = session.addPlayer(PID, opts.save);
-  const bot = new BotController(reg);
+  const bot = new BotController(reg, opts.tier ?? 'rotation', opts.style ?? 'balanced');
   bot.syncHotbar(opts.save);
   session.enterFloor(1, arena(opts.save, opts.monsters, distance));
 

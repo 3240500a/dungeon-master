@@ -1,4 +1,4 @@
-import { ConfigRegistry, runSim, runSessionSim, microFightStats, generateMonster, createRng, newBotSave, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type RunReport, type SaveState, type BotTier, type BotStyle } from '@dm/shared';
+import { ConfigRegistry, runSim, runSessionSim, microFightStats, sweepHitsToKill, generateMonster, createRng, newBotSave, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type RunReport, type SaveState, type BotTier, type BotStyle } from '@dm/shared';
 import { getCharacter } from './db/db.js';
 
 /**
@@ -42,6 +42,22 @@ if (str('scenario', 'progression') === 'run') {
     },
   });
   printRunReport(rep, Date.now() - t);
+  process.exit(0);
+}
+
+// Свип уровень×монстр → удары-до-смерти (CSV). `--scenario=sweep --lmin=5 --lmax=85 --lstep=10 --mon=zombie,...`.
+if (str('scenario', 'progression') === 'sweep') {
+  const lmin = num('lmin', 5), lmax = num('lmax', 85), lstep = num('lstep', 10);
+  const levels: number[] = []; for (let l = lmin; l <= lmax; l += lstep) levels.push(l);
+  const monsterIds = args.has('mon') ? str('mon', '').split(',') : reg.get('monsters').filter((m) => m.enabled !== false).map((m) => m.id);
+  const t = Date.now();
+  const cells = sweepHitsToKill(reg, {
+    classId, levels, monsterIds, tier: str('tier', 'rotation') as BotTier, style: str('style', 'balanced') as BotStyle,
+    runs: num('runs', 8), seed: num('seed', 1), depthOffset: num('depthoff', 0), rarity: str('rarity', 'normal') as 'normal',
+  });
+  console.error(`# sweep ${classId} · ${levels.length}ур × ${monsterIds.length}моб × ${num('runs', 8)} прогонов = ${cells.length} ячеек (${Date.now() - t}ms)`);
+  console.log('level,monster,hitsToKill,ttkSec,killRatePct,deathRatePct,dpsOut');
+  for (const c of cells) console.log(`${c.level},${c.monsterId},${c.hitsToKill.toFixed(2)},${c.ttkSec.toFixed(2)},${Math.round(c.killRate * 100)},${Math.round(c.deathRate * 100)},${Math.round(c.dpsOut)}`);
   process.exit(0);
 }
 
