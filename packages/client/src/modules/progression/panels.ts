@@ -486,47 +486,6 @@ export const characterPanel: PanelFactory = (app, ui) => {
         'Игнорирует эту долю брони цели при ударе.'));
       body.append(off);
 
-      // Бонусы: наглядная сводка ВСЕГО, что дают гир + пассивы + мастерства + скиллы. Сверху — урон
-      // ИТОГОВЫМ % по типам («со всем вместе»); ниже — ВСЕ прочие модификаторы (броня/скорость/резисты/
-      // атрибуты/вампиризм/…), агрегированные из allModifiers и подписанные тем же словарём, что предметы.
-      const bon = sheetPanel('Бонусы (прокачка + гир)');
-      const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
-      const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
-      let anyBon = false;
-      if (d.damagePct) { bon.append(statRow('Весь урон', `+${Math.round(d.damagePct * 100)}%`, 'Множитель ко ВСЕМ типам урона (складывается с типовыми ниже).')); anyBon = true; }
-      for (const t of DMG_TYPES) {
-        const combined = d.damagePct + perPct[t];   // «со всем вместе» для этого типа
-        const parts: string[] = [];
-        if (combined) parts.push(`+${Math.round(combined * 100)}%`);
-        if (addFlat[t]) parts.push(`+${Math.round(addFlat[t])} плоск.`);
-        if (!parts.length) continue;
-        anyBon = true;
-        const row = statRow(dmgName(t), parts.join(' · '),
-          `Итоговый бонус к урону «${dmgName(t)}»: общий +${Math.round(d.damagePct * 100)}% + типовой +${Math.round(perPct[t] * 100)}%${addFlat[t] ? ` · плоско +${Math.round(addFlat[t])}` : ''}.`);
-        (row.firstElementChild as HTMLElement).style.color = dmgColor(t);
-        bon.append(row);
-      }
-      // Прочие бонусы: агрегируем модификаторы (гир + деревья), но БЕЗ дублей — только статы без своей
-      // строки в других секциях (см. BONUS_EXCLUDE). Flat+increased одного стата суммируются раздельно.
-      const agg = new Map<string, { stat: string; kind: StatModifier['kind']; value: number }>();
-      for (const md of state.allModifiers()) {
-        if (BONUS_EXCLUDE.has(md.stat)) continue;
-        const key = `${md.stat}|${md.kind}`;
-        const e = agg.get(key);
-        if (e) e.value += md.value; else agg.set(key, { stat: md.stat, kind: md.kind, value: md.value });
-      }
-      let restShown = false;
-      for (const e of [...agg.values()].sort((a, b) => a.stat.localeCompare(b.stat))) {
-        const isPct = e.kind === 'increased' || PERCENT_STATS.has(e.stat);
-        const num = isPct ? Math.round(e.value * 100) : (Number.isInteger(e.value) ? e.value : Number(e.value.toFixed(2)));
-        if (num === 0) continue;                                   // скруглённые в ноль не показываем
-        if (!restShown && anyBon) bon.append(mk('div', `height:1px;background:${COLORS.border};margin:8px 0`));
-        restShown = true; anyBon = true;
-        bon.append(statRow(STAT_LABEL[e.stat] ?? e.stat, `${num > 0 ? '+' : '−'}${Math.abs(num)}${isPct ? '%' : ''}`)); // знак-осознанно: «−6%», не «+-6%»
-      }
-      if (!anyBon) bon.append(mk('div', `font-size:12px;color:${COLORS.dim};padding:3px 0`, 'нет бонусов от прокачки/гира'));
-      body.append(bon);
-
       // Защита.
       const def = sheetPanel('Защита');
       def.append(statRow('Броня', String(Math.round(d.armor)),
@@ -570,8 +529,40 @@ export const characterPanel: PanelFactory = (app, ui) => {
       }
       body.append(res);
 
-      // Статусы (наложение): глобальные + per-kind бонусы от пассивок/гира (ветки скиллов).
+      // Статусы = бонусы прокачки + наложение статусов (объединено). Сверху — урон ИТОГОВЫМ % по типам
+      // («со всем вместе») + вампиризм/за-убийство (агрегат allModifiers, без дублей — BONUS_EXCLUDE);
+      // ниже, за разделителем — бонусы к НАЛОЖЕНИЮ статусов (глобальные + per-kind, ветки скиллов/гир).
       const ail = sheetPanel('Статусы');
+      const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
+      const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
+      if (d.damagePct) ail.append(statRow('Весь урон', `+${Math.round(d.damagePct * 100)}%`, 'Множитель ко ВСЕМ типам урона (складывается с типовыми ниже).'));
+      for (const t of DMG_TYPES) {
+        const combined = d.damagePct + perPct[t];   // «со всем вместе» для этого типа
+        const parts: string[] = [];
+        if (combined) parts.push(`+${Math.round(combined * 100)}%`);
+        if (addFlat[t]) parts.push(`+${Math.round(addFlat[t])} плоск.`);
+        if (!parts.length) continue;
+        const row = statRow(dmgName(t), parts.join(' · '),
+          `Итоговый бонус к урону «${dmgName(t)}»: общий +${Math.round(d.damagePct * 100)}% + типовой +${Math.round(perPct[t] * 100)}%${addFlat[t] ? ` · плоско +${Math.round(addFlat[t])}` : ''}.`);
+        (row.firstElementChild as HTMLElement).style.color = dmgColor(t);
+        ail.append(row);
+      }
+      // Прочие «бездомные» бонусы (вампиризм/за-убийство/…): агрегат модификаторов без своей секции.
+      const agg = new Map<string, { stat: string; kind: StatModifier['kind']; value: number }>();
+      for (const md of state.allModifiers()) {
+        if (BONUS_EXCLUDE.has(md.stat)) continue;
+        const key = `${md.stat}|${md.kind}`;
+        const e = agg.get(key);
+        if (e) e.value += md.value; else agg.set(key, { stat: md.stat, kind: md.kind, value: md.value });
+      }
+      for (const e of [...agg.values()].sort((a, b) => a.stat.localeCompare(b.stat))) {
+        const isPct = e.kind === 'increased' || PERCENT_STATS.has(e.stat);
+        const num = isPct ? Math.round(e.value * 100) : (Number.isInteger(e.value) ? e.value : Number(e.value.toFixed(2)));
+        if (num === 0) continue;                                   // скруглённые в ноль не показываем
+        ail.append(statRow(STAT_LABEL[e.stat] ?? e.stat, `${num > 0 ? '+' : '−'}${Math.abs(num)}${isPct ? '%' : ''}`)); // знак-осознанно: «−6%», не «+-6%»
+      }
+      // ── Наложение статусов ──
+      ail.append(mk('div', `font-size:11px;color:${COLORS.dim};margin:9px 0 3px;text-transform:uppercase;letter-spacing:.04em`, 'Наложение статусов'));
       ail.append(statRow('Все статусы', `шанс/сила +${Math.round(d.ailmentPct * 100)}%  ·  длит. +${Math.round(d.ailmentDurPct * 100)}%`,
         'Глобальные бонусы к наложению ВСЕХ статусов (шанс, сила, длительность). Складываются с бонусами по видам.'));
       for (const k of ['wound', 'bleed', 'sunder', 'daze', 'burn', 'poison', 'shock', 'freeze'] as DebuffKind[]) {
