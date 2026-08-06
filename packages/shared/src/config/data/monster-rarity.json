@@ -1,0 +1,4 @@
+[
+  { "id": "magic", "name": "Магический", "minItems": 1, "maxItems": 4, "levelsPerItem": 12 },
+  { "id": "rare", "name": "Редкий", "minItems": 2, "maxItems": 4, "levelsPerItem": 16 }
+]

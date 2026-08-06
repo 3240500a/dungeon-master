@@ -72,6 +72,14 @@ export interface MonsterAffix {
   damageType?: DamageType;
 }
 
+/** Гир монстра по слоту с редкостью и афиксами — для отображения (генератор мобов, тултип). */
+export interface MonsterGearRoll {
+  slot: 'weapon' | 'armor' | 'helm' | 'shield';
+  name: string;
+  rarity: MonsterRarity;   // normal/magic/rare (редкость конкретного предмета)
+  affixes: string[];       // слова-афиксы этого предмета
+}
+
 /** Сгенерированный экземпляр монстра (база + масштаб глубины + аффиксы + редкость). */
 export interface ScaledMonster extends MonsterDef {
   rarity: MonsterRarity;
@@ -80,4 +88,6 @@ export interface ScaledMonster extends MonsterDef {
   level: number;
   /** Средний урон (для совместимости со старым кодом атаки). */
   damage: number;
+  /** Разбивка гира по слотам (редкость+афиксы каждого предмета) — для генератора/тултипа. Не по сети. */
+  gearRolls?: MonsterGearRoll[];
 }

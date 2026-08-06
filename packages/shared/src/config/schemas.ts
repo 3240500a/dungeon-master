@@ -899,6 +899,25 @@ const packEntrySchema = z.object({
   /** Шанс РЕДКОГО монстра (гир-афиксы, 3–4). Проверяется до magic; остаток — обычный. */
   rareChance: z.number().min(0).max(1).default(0.03),
 });
+// ── monster-rarity (сколько предметов монстра «прокачано» по редкости, растёт с уровнем) ──────────
+/**
+ * По редкости монстра — сколько его СЛОТОВ гира становятся magic/rare (с афиксами), и как это растёт
+ * с уровнем. `#предметов = clamp(minItems + ⌊(ур−1)/levelsPerItem⌋, minItems, maxItems)`, но не больше
+ * числа надетых слотов. Афиксов НА предмет — по `rarities` (magic 1–2, rare 3–5). Тир афиксов = уровень монстра.
+ */
+export const monsterRaritySchema = z.array(
+  z.object({
+    id: z.enum(['magic', 'rare']),
+    name: z.string().default(''),
+    /** Минимум «прокачанных» предметов (на низком уровне). */
+    minItems: z.number().int().min(1).max(4).default(1),
+    /** Максимум «прокачанных» предметов (на глубине). */
+    maxItems: z.number().int().min(1).max(4).default(4),
+    /** Каждые N уровней монстра — +1 предмет (до maxItems). */
+    levelsPerItem: z.number().int().min(1).default(12),
+  }),
+);
+
 export const packsSchema = z.array(
   z.object({
     roomType: z.enum(['entrance', 'small', 'large', 'treasure', 'boss']),
@@ -1606,6 +1625,7 @@ export const configSchemas = {
   'monster-derive': monsterDeriveSchema,
   'monster-roles': monsterRolesSchema,
   subfactions: subfactionsSchema,
+  'monster-rarity': monsterRaritySchema,
   packs: packsSchema,
   difficulties: difficultiesSchema,
   biomes: biomesSchema,

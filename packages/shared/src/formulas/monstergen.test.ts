@@ -115,3 +115,33 @@ describe('generateMonster — редкость через гир-афиксы (i
     expect(a).toEqual(b);
   });
 });
+
+const monsterRarity = reg.get('monster-rarity');
+const genG = (opts: Parameters<typeof generateMonster>[3], seed = 1) =>
+  generateMonster(monsters, gear, affixes, { itemAffixes, rarities, monsterRarity, ...opts }, createRng(seed));
+const multiSlot = monsters.find((m) => m.armor && m.offhand) ?? monsters.find((m) => m.armor) ?? monsters[0]!;
+
+describe('generateMonster — редкость по слотам гира (per-piece)', () => {
+  it('gearRolls: разбивка по слотам, оружие прокачано первым, афиксы только на magic/rare', () => {
+    const m = genG({ baseId: multiSlot.id, depth: 40, rarity: 'rare' }, 3);
+    expect(m.gearRolls?.length).toBeGreaterThan(0);
+    const rolls = m.gearRolls!;
+    expect(rolls.some((r) => r.slot === 'weapon')).toBe(true);
+    expect(rolls.find((r) => r.slot === 'weapon')!.rarity).toBe('rare'); // оружие прокачивается первым
+    for (const r of rolls) if (r.rarity === 'normal') expect(r.affixes.length).toBe(0); // нормальные без афиксов
+  });
+
+  it('число прокачанных слотов растёт с уровнем (rare)', () => {
+    const low = genG({ baseId: multiSlot.id, depth: 1, rarity: 'rare' }, 9);
+    const high = genG({ baseId: multiSlot.id, depth: 60, rarity: 'rare' }, 9);
+    const nLow = (low.gearRolls ?? []).filter((r) => r.rarity !== 'normal').length;
+    const nHigh = (high.gearRolls ?? []).filter((r) => r.rarity !== 'normal').length;
+    expect(nHigh).toBeGreaterThanOrEqual(nLow);
+    expect(nLow).toBeGreaterThanOrEqual(1); // хотя бы оружие
+  });
+
+  it('normal — все слоты normal, без афиксов', () => {
+    const m = genG({ baseId: multiSlot.id, depth: 20, rarity: 'normal' }, 5);
+    for (const r of m.gearRolls ?? []) { expect(r.rarity).toBe('normal'); expect(r.affixes.length).toBe(0); }
+  });
+});

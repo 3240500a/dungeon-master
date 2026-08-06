@@ -72,8 +72,11 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const out = h('div', ''); page.appendChild(out);
 
   const mderive = reg.get('monster-derive');
+  const monsterRarity = reg.get('monster-rarity');
   const rollOne = (s: number): ScaledMonster =>
-    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, forceChampion, mderive, itemAffixes, rarities, rarity }, createRng(s));
+    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, forceChampion, mderive, itemAffixes, rarities, rarity, monsterRarity }, createRng(s));
+  const SLOT_RU: Record<string, string> = { weapon: 'Оружие', armor: 'Броня', helm: 'Шлем', shield: 'Щит' };
+  const rarColOf = (r: string): string => (r === 'champion' ? '#e0b040' : rarities.find((x) => x.id === r)?.color ?? '#c8c8c8');
 
   function row(k: string, v: string): HTMLElement { const r = h('div', 'display:flex;justify-content:space-between;gap:14px;font-size:12px;margin:2px 0'); r.append(h('span', 'color:#8a8a9a', k), h('span', 'color:#eaeaea;text-align:right', v)); return r; }
 
@@ -90,8 +93,18 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
     box.appendChild(row('Зрение / Слух', `${m.vision} (${m.visionAngle}°) / ${m.hearing}`));
     box.appendChild(row('Резисты (О/Х/М/Я)', `${pctS(m.resFire)} / ${pctS(m.resCold)} / ${pctS(m.resLightning)} / ${pctS(m.resPoison)}`));
     box.appendChild(row('XP', String(m.xp)));
-    box.appendChild(row('Оружие / Броня / Щит', `${gearName(s?.weapon ?? '')} / ${gearName(s?.armor ?? '')} / ${gearName(s?.offhand ?? '')}`));
-    if (m.affixes.length) box.appendChild(h('div', `font-size:12px;margin-top:6px;color:${col}`, `Аффиксы: ${m.affixes.join(', ')}`));
+    // Гир по 4 слотам: имя предмета в цвете его редкости + афиксы на нём.
+    if (m.gearRolls?.length) {
+      box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:8px 0 3px;text-transform:uppercase;letter-spacing:.04em', 'Экипировка'));
+      for (const g of m.gearRolls) {
+        const gr = h('div', 'font-size:12px;margin:2px 0;line-height:1.4');
+        gr.innerHTML = `<span style="color:#8a8a9a">${SLOT_RU[g.slot] ?? g.slot}:</span> <span style="color:${rarColOf(g.rarity)}">${g.name}</span>` +
+          (g.affixes.length ? ` <span style="color:${rarColOf(g.rarity)};font-size:11px">[${g.affixes.join(', ')}]</span>` : '');
+        box.appendChild(gr);
+      }
+    } else {
+      box.appendChild(row('Оружие / Броня / Щит', `${gearName(s?.weapon ?? '')} / ${gearName(s?.armor ?? '')} / ${gearName(s?.offhand ?? '')}`));
+    }
     return box;
   }
 

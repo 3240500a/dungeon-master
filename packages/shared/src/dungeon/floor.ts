@@ -63,6 +63,7 @@ export function spawnPacksEl(
   const monsterGear = reg.get('monster-gear');
   const itemAffixes = reg.get('affixes'); // редкость монстра = item-афиксы на его гире (одна истина с предметами)
   const rarities = reg.get('rarities');
+  const monsterRarity = reg.get('monster-rarity'); // сколько слотов гира прокачано по редкости+уровню
   const packs = reg.get('packs');
 
   const diffs = reg.get('difficulties');
@@ -113,7 +114,7 @@ export function spawnPacksEl(
         // Редкость монстра по «галкам роли» (шансы magic/rare пачки): rare проверяется первым, остаток — обычный.
         const rr = rng.float(0, 1);
         const rarity: 'normal' | 'magic' | 'rare' = rr < (entry.rareChance ?? 0) ? 'rare' : rr < (entry.rareChance ?? 0) + (entry.magicChance ?? 0) ? 'magic' : 'normal';
-        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion, mderive, itemAffixes, rarities, rarity }, rng);
+        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion, mderive, itemAffixes, rarities, rarity, monsterRarity }, rng);
         spawns.push({ def, x: w.x, y: w.y });
       }
     }
