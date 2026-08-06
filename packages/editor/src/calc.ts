@@ -1,4 +1,4 @@
-import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, attackByType, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType } from '@dm/shared';
+import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType } from '@dm/shared';
 import { makeHarness } from './gameHarness.js';
 import type { App } from '@dm/client/core/app.js';
 import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
@@ -105,61 +105,11 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
   else if (tab === 'mastery') { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:560px;overflow:hidden'); renderPassiveTree(app, box); left.appendChild(box); }
   else { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:560px;overflow:hidden'); renderSkillTree(app, box); left.appendChild(box); }
 
-  // ── СПРАВА (всегда): полная статистика игры + расширенная разбивка бонусов + монстр/TTK ──
+  // ── СПРАВА (всегда): полная статистика игры (характер-панель уже включает «Бонусы урона») + монстр/TTK ──
   const statsBox = h('div', '');
   charInst!.render(statsBox);
-  right.append(statsBox, bonusPanel(app, reg),
+  right.append(statsBox,
     monsterTtk(page, data, reg, app.state!.derived(), makePlayerModel(reg, app.state!.save, { useSkills: true }), app.state!.save));
-}
-
-/**
- * Расширение статистики: видимая разбивка ИТОГОВЫХ бонусов (гир+пассивы+мастерства+скиллы уже
- * свёрнуты в `derived()`), которых игровая панель показывает лишь в тултипах — %-множители урона по
- * типам (со всем вместе), плоские стих-добавки, вампиризм/за-убийство, пробой брони. Одна истина: `derived()`.
- */
-function bonusPanel(app: App, reg: ConfigRegistry): HTMLElement {
-  const d = app.state!.derived();
-  const save = app.state!.save;
-  const m = makePlayerModel(reg, save, {});
-  const by = attackByType(d, m.attrs, save.equipment.weapon, m.scaling, m.weights);
-  const dcol = (t: DamageType): string => t === 'physical'
-    ? (reg.get('damage-kinds').find((k) => k.id === 'physical')?.color ?? '#c8c8c8')
-    : (reg.get('magic-subtypes').find((s) => s.id === t)?.color ?? '#c8c8c8');
-  const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
-  const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
-  const NAMES: [DamageType, string][] = [['physical', 'Физ'], ['fire', 'Огонь'], ['cold', 'Холод'], ['lightning', 'Молния'], ['poison', 'Яд']];
-
-  const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;padding:12px 14px;background:#14141c');
-  box.appendChild(h('div', 'color:#b8b8c8;font-weight:600;font-size:13px;margin-bottom:2px', '📊 Бонусы урона (итог)'));
-  box.appendChild(h('div', 'color:#8a8a9a;font-size:10px;margin-bottom:8px', 'гир + пассивы + мастерства + скиллы, всё вместе'));
-  const brow = (label: string, value: string, color = '#eaeaea'): void => {
-    const r = h('div', 'display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:2px 0');
-    r.append(h('span', `color:${color}`, label), h('span', 'color:#eaeaea;font-weight:500;text-align:right', value));
-    box.appendChild(r);
-  };
-  if (d.damagePct) brow('Весь урон (глобал.)', `+${Math.round(d.damagePct * 100)}%`, '#cdbd8f');
-  for (const [t, name] of NAMES) {
-    const combined = d.damagePct + perPct[t];
-    const dealt = by[t].max > 0;
-    if (!dealt && !perPct[t] && !addFlat[t]) continue;
-    const parts: string[] = [];
-    if (dealt) parts.push(`${Math.round(by[t].min)}–${Math.round(by[t].max)}`);
-    if (combined) parts.push(`+${Math.round(combined * 100)}% итог`);
-    if (addFlat[t]) parts.push(`+${Math.round(addFlat[t])} плоск.`);
-    brow(name, parts.join(' · '), dcol(t));
-  }
-  // Вампиризм / за убийство / пробой — на игровой панели не выведены отдельно.
-  const extra: [string, string][] = [];
-  if (d.lifeLeechPct) extra.push(['Вампиризм HP', `${(d.lifeLeechPct * 100).toFixed(1)}%`]);
-  if (d.manaLeechPct) extra.push(['Вампиризм маны', `${(d.manaLeechPct * 100).toFixed(1)}%`]);
-  if (d.lifeOnKill) extra.push(['HP за убийство', `+${Math.round(d.lifeOnKill)}`]);
-  if (d.manaOnKill) extra.push(['Мана за убийство', `+${Math.round(d.manaOnKill)}`]);
-  if (d.armorPen) extra.push(['Пробой брони', `${Math.round(d.armorPen * 100)}%`]);
-  if (extra.length) {
-    box.appendChild(h('div', 'height:1px;background:#2c2c3a;margin:7px 0'));
-    for (const [k, v] of extra) brow(k, v, '#cdbd8f');
-  }
-  return box;
 }
 
 /** Вкладка «Экипировка»: генератор предметов → инвентарь + РЕАЛЬНАЯ паперкукла игры (надеваешь как в игре). */

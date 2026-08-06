@@ -462,6 +462,32 @@ export const characterPanel: PanelFactory = (app, ui) => {
         'Игнорирует эту долю брони цели при ударе.'));
       body.append(off);
 
+      // Бонусы урона: ИТОГОВЫЕ %-множители по типам (гир+пассивы+мастерства+скиллы уже свёрнуты в
+      // derived) + плоские стих-добавки + вампиризм/за-убийство. То, что раньше было только в тултипах.
+      const bon = sheetPanel('Бонусы урона (итог)');
+      const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
+      const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
+      let anyBon = false;
+      if (d.damagePct) { bon.append(statRow('Весь урон', `+${Math.round(d.damagePct * 100)}%`, 'Множитель ко ВСЕМ типам урона (складывается с типовыми ниже).')); anyBon = true; }
+      for (const t of DMG_TYPES) {
+        const combined = d.damagePct + perPct[t];   // «со всем вместе» для этого типа
+        const parts: string[] = [];
+        if (combined) parts.push(`+${Math.round(combined * 100)}%`);
+        if (addFlat[t]) parts.push(`+${Math.round(addFlat[t])} плоск.`);
+        if (!parts.length) continue;
+        anyBon = true;
+        const row = statRow(dmgName(t), parts.join(' · '),
+          `Итоговый бонус к урону «${dmgName(t)}»: общий +${Math.round(d.damagePct * 100)}% + типовой +${Math.round(perPct[t] * 100)}%${addFlat[t] ? ` · плоско +${Math.round(addFlat[t])}` : ''}.`);
+        (row.firstElementChild as HTMLElement).style.color = dmgColor(t);
+        bon.append(row);
+      }
+      if (d.lifeLeechPct) { bon.append(statRow('Вампиризм HP', `${(d.lifeLeechPct * 100).toFixed(1)}%`, 'Доля нанесённого урона возвращается в здоровье.')); anyBon = true; }
+      if (d.manaLeechPct) { bon.append(statRow('Вампиризм маны', `${(d.manaLeechPct * 100).toFixed(1)}%`, 'Доля нанесённого урона возвращается в ману.')); anyBon = true; }
+      if (d.lifeOnKill) { bon.append(statRow('HP за убийство', `+${Math.round(d.lifeOnKill)}`, 'Восстановление HP при убийстве врага.')); anyBon = true; }
+      if (d.manaOnKill) { bon.append(statRow('Мана за убийство', `+${Math.round(d.manaOnKill)}`, 'Восстановление маны при убийстве врага.')); anyBon = true; }
+      if (!anyBon) bon.append(mk('div', `font-size:12px;color:${COLORS.dim};padding:3px 0`, 'нет бонусов от прокачки/гира'));
+      body.append(bon);
+
       // Защита.
       const def = sheetPanel('Защита');
       def.append(statRow('Броня', String(Math.round(d.armor)),
