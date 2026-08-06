@@ -85,6 +85,11 @@ function charLoader(page: HTMLElement, data: Record<string, unknown>): HTMLEleme
   return sel;
 }
 
+/** Внешняя загрузка сейва в калькулятор (билд бота из симулятора и т.п.) — затем открой вкладку «Калькулятор». */
+export function loadSaveIntoCalc(save: SaveState): void {
+  loadedSave = save; loadToken++; ttkEngine = null; harness = null;
+}
+
 export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>): void {
   if (rendering) return;           // state:changed из панелей во время рендера не должен запускать вложенный рендер
   rendering = true;

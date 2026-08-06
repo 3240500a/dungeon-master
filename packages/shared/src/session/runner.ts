@@ -105,8 +105,13 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   let kills = 0;
   let deaths = 0;
   let gold = 0;
+  let goldSold = 0;
+  let goldSpent = 0;
+  let itemsBought = 0;
   let items = 0;
   let xp = 0;
+  const lootByType: Record<string, number> = {};
+  const lootByRarity: Record<string, number> = {};
   let curFloor = 0;
   let deepest = 0;
   let floorsCompleted = 0;
@@ -117,7 +122,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     save.level >= settings.targetLevel || totalTime >= settings.maxHours * 3600 || deaths >= maxDeaths;
 
   const drainInventory = (): void => {
-    while (save.inventory.length) considerDrop(reg, save, save.inventory.pop()!, settings.build);
+    while (save.inventory.length) goldSold += considerDrop(reg, save, save.inventory.pop()!, settings.build).sold;
   };
   const sampleCurve = (): void => {
     if (totalTime - lastCurveT >= 60) {
@@ -134,7 +139,11 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   /** Пополняет пояс лечебными зельями (у реального игрока пояс всегда полон перед вылазкой). */
   const stockBelt = (): void => { save.belt = Array.from({ length: 6 }, () => itemFromBaseId(itemsBase, 'healing-potion') ?? null); };
   /** Городская остановка: распределение + пара заходов в магазин + полный пояс зелий (эконом-бот). */
-  const doTown = (): void => { allocate(); for (let k = 0; k < 2; k++) visitShop(reg, save, save.level, rng, settings.build); stockBelt(); };
+  const doTown = (): void => {
+    allocate();
+    for (let k = 0; k < 2; k++) { const r = visitShop(reg, save, save.level, rng, settings.build); goldSpent += r.spent; goldSold += r.sold; itemsBought += r.bought.length; }
+    stockBelt();
+  };
 
   let runPlan: RunPlan | null = null;
   let node: RunNode | null = null;
@@ -185,7 +194,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
       for (const e of session.tick(dt, { p1: bot.input(session.world, p) })) {
         if (e.type === 'monster-died') kills++;
         else if (e.type === 'gold') gold += e.amount;
-        else if (e.type === 'item-dropped') items++;
+        else if (e.type === 'item-dropped') { items++; const t = e.item.kind ?? 'other'; lootByType[t] = (lootByType[t] ?? 0) + 1; lootByRarity[e.item.rarity] = (lootByRarity[e.item.rarity] ?? 0) + 1; }
         else if (e.type === 'xp') xp += e.amount;
         else if (e.type === 'player-died') deaths++;
       }
@@ -231,12 +240,17 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     kills,
     deaths,
     goldEarned: gold,
+    goldSold,
+    goldSpent,
+    itemsBought,
     itemsFound: items,
     xpEarned: xp,
     killsPerHour: hours > 0 ? Math.round(kills / hours) : 0,
     xpPerHour: hours > 0 ? Math.round(xp / hours) : 0,
     lootPerHour: hours > 0 ? Math.round((items / hours) * 10) / 10 : 0,
+    loot: { byType: lootByType, byRarity: lootByRarity },
     levelCurve: curve,
     finalBuild: buildSnapshot(reg, save),
+    finalSave: save,
   };
 }

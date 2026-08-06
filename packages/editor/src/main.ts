@@ -10,6 +10,7 @@ import { renderRunGenPage } from './runGen.js';
 import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
 import { renderCalcPage } from './calc.js';
+import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 
@@ -197,6 +198,7 @@ fetch('/api/pose')
   .catch(() => { /* сервер недоступен — без источника поз */ });
 
 const app = document.getElementById('app')!;
+setEditorNav((v) => { view = v; render(); }); // мостик: «Симулятор» может открыть «Калькулятор» с билдом бота
 render();
 loadFromServer(); // подтянуть актуальный конфиг с сервера — показать реальные значения
 

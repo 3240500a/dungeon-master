@@ -63,6 +63,12 @@ export interface CurvePoint {
   floor: number;
 }
 
+/** Разбивка лута за забег: по виду предмета и по редкости (сколько выпало). */
+export interface LootBreakdown {
+  byType: Record<string, number>;   // weapon/armor/shield/jewelry/consumable
+  byRarity: Record<string, number>; // normal/magic/rare/unique/…
+}
+
 export interface RunReport {
   classId: string;
   difficultyId: string;
@@ -73,14 +79,20 @@ export interface RunReport {
   floorsCompleted: number;
   kills: number;
   deaths: number;
-  goldEarned: number;
+  goldEarned: number;   // с убийств монстров
+  goldSold: number;     // выручено с продажи лута (дроп + заменённый гир)
+  goldSpent: number;    // потрачено в магазине
+  itemsBought: number;  // куплено в магазине
   itemsFound: number;
   xpEarned: number;
   killsPerHour: number;
   xpPerHour: number;
   lootPerHour: number;
+  loot: LootBreakdown;
   levelCurve: CurvePoint[];
   finalBuild: BuildSnapshot;
+  /** Полный финальный сейв бота — для загрузки в калькулятор (карточка персонажа 1:1). */
+  finalSave: SaveState;
 }
 
 function modLabel(m: StatModifier): string {

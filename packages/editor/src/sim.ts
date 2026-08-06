@@ -1,4 +1,6 @@
-import { ConfigRegistry, runSim, runSessionSim, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type SimOutput, type RunReport } from '@dm/shared';
+import { ConfigRegistry, runSim, runSessionSim, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type SimOutput, type RunReport, type BotTier, type BotStyle } from '@dm/shared';
+import { loadSaveIntoCalc } from './calc.js';
+import { navigateTo } from './editorNav.js';
 
 /**
  * Вкладка «Симулятор»: настройки слева, прогон на ТЕКУЩЕЙ (правленой) копии
@@ -11,6 +13,9 @@ import { ConfigRegistry, runSim, runSessionSim, DEFAULT_BUILD, type ScenarioKind
 /** Режим вкладки: полный прогон на GameSession или один из абстрактных сценариев. */
 type Mode = 'run' | ScenarioKind;
 let mode: Mode = 'run';
+let botStyle: BotStyle = 'balanced';  // стиль прохождения этажа (clear|balanced|rush)
+let botTier: BotTier = 'rotation';    // уровень мастерства бота
+let lastRunSave: import('@dm/shared').SaveState | null = null; // финальный сейв последнего прогона — «открыть в калькуляторе»
 
 let S: SimSettings = {
   scenario: 'progression',
@@ -170,6 +175,22 @@ function renderRunReport(r: RunReport, ms: number, rarities: { id: string; color
     statBox('Предм/ч', `${r.lootPerHour}`),
   ]);
 
+  // Экономика забега: потоки золота + счётчики предметов.
+  const economy = grid([
+    statBox('Золото с убийств', `${r.goldEarned}`, '#caa64b'),
+    statBox('Продано лута', `${r.goldSold}`),
+    statBox('Куплено в лавке', `${r.goldSpent}`, '#cf8b6b'),
+    statBox('Чистыми', `${r.goldEarned + r.goldSold - r.goldSpent}`),
+    statBox('Найдено предметов', `${r.itemsFound}`),
+    statBox('Куплено предметов', `${r.itemsBought}`),
+  ]);
+  const typeLabel: Record<string, string> = { weapon: 'Оружие', armor: 'Броня', shield: 'Щиты', jewelry: 'Украшения', consumable: 'Расходники', other: 'Прочее' };
+  const chips = (m: Record<string, number>, colorFn?: (k: string) => string): string => {
+    const es = Object.entries(m).sort((a, c) => c[1] - a[1]);
+    if (!es.length) return '<span style="color:#666">—</span>';
+    return es.map(([k, v]) => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:10px;background:#1c1c26;border:1px solid #2c2c3a;font-size:12px"><span style="color:${colorFn ? colorFn(k) : '#b8b8c8'}">${typeLabel[k] ?? k}</span> <b>${v}</b></span>`).join('');
+  };
+
   const at = b.attributes, ea = b.effectiveAttributes;
   const attrRow = (['strength', 'dexterity', 'intelligence', 'vitality'] as const)
     .map((k) => `<span style="color:#b8b8c8">${k.slice(0, 3).toUpperCase()}</span> ${at[k]}<span style="color:#6a9a6a">→${ea[k]}</span>`).join(' &nbsp; ');
@@ -195,6 +216,11 @@ function renderRunReport(r: RunReport, ms: number, rarities: { id: string; color
   return `<div style="color:#8a8a9a;font-size:12px;margin-bottom:8px">Полный прогон бота на GameSession · ${ms} мс</div>
     <div style="font-size:15px;font-weight:bold;margin-bottom:4px">${r.classId} · ${r.difficultyId} · сид ${r.seed}</div>
     ${runStats}
+    <div style="border-top:1px solid #2c2c3a;margin:12px 0 8px;padding-top:8px;color:#b8b8c8;font-weight:bold">Экономика</div>
+    ${economy}
+    <div style="border-top:1px solid #2c2c3a;margin:12px 0 8px;padding-top:8px;color:#b8b8c8;font-weight:bold">Лут за забег</div>
+    <div style="font-size:12px;color:#8a8a9a;margin:2px 0">по типу:</div><div style="margin-bottom:6px">${chips(r.loot.byType)}</div>
+    <div style="font-size:12px;color:#8a8a9a;margin:2px 0">по редкости:</div><div>${chips(r.loot.byRarity, rarityColor)}</div>
     <div style="border-top:1px solid #2c2c3a;margin:12px 0 8px;padding-top:8px;color:#b8b8c8;font-weight:bold">Финальный билд</div>
     <div style="font-size:13px;margin:4px 0">${attrRow}</div>
     ${derived}
@@ -246,6 +272,19 @@ export function renderSimPage(page: HTMLElement, data: Record<string, unknown>):
   skills.addEventListener('change', () => { S.build.useSkills = skills.checked; });
   cfg.append(row('Скиллы/пассивы', skills));
 
+  // Стиль/мастерство бота — только для реального прогона (влияют на BotController).
+  if (mode === 'run') {
+    const mkSel = (val: string, opts: [string, string][], on: (v: string) => void): HTMLSelectElement => {
+      const s = document.createElement('select');
+      s.style.cssText = 'padding:4px 6px;background:#0f0f16;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px;font-size:12px';
+      for (const [v, t] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === val) o.selected = true; s.appendChild(o); }
+      s.addEventListener('change', () => on(s.value));
+      return s;
+    };
+    cfg.append(row('Стиль (этаж)', mkSel(botStyle, [['clear', 'зачистка'], ['balanced', 'сбаланс.'], ['rush', 'раш к выходу']], (v) => { botStyle = v as BotStyle; })));
+    cfg.append(row('Мастерство', mkSel(botTier, [['basic', 'базовый (автоатака)'], ['kite', '+кайт'], ['potions', '+зелья'], ['rotation', '+скиллы (полный)']], (v) => { botTier = v as BotTier; })));
+  }
+
   const run = document.createElement('button');
   run.textContent = '▶ Запустить';
   run.style.cssText = 'margin-top:10px;width:100%;padding:9px;cursor:pointer;background:#2a4a2a;color:#e8e8f0;border:1px solid #3c3c4a;border-radius:6px;font-size:14px';
@@ -267,8 +306,15 @@ export function renderSimPage(page: HTMLElement, data: Record<string, unknown>):
           const rep = runSessionSim(reg, {
             classId: S.classId, difficultyId: S.difficultyId, seed: S.seed,
             targetLevel: S.targetLevel, maxHours: S.maxHours, build: S.build,
+            botTier, botStyle,
           });
+          lastRunSave = rep.finalSave;
           res.innerHTML = renderRunReport(rep, Math.round(performance.now() - t0), reg.get('rarities'));
+          const openBtn = document.createElement('button');
+          openBtn.textContent = '🧮 Открыть билд бота в калькуляторе';
+          openBtn.style.cssText = 'margin-top:12px;padding:8px 12px;cursor:pointer;background:#2f4d6d;color:#eaf2ff;border:1px solid #3c6a9a;border-radius:6px;font-size:13px';
+          openBtn.addEventListener('click', () => { if (lastRunSave) { loadSaveIntoCalc(lastRunSave); navigateTo('calc'); } });
+          res.appendChild(openBtn);
         } else {
           const out = runSim(reg, { ...S, scenario: mode });
           res.innerHTML = renderResults(out, Math.round(performance.now() - t0));

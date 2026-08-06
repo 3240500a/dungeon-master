@@ -91,35 +91,41 @@ export function scoreItem(reg: ConfigRegistry, save: SaveState, item: Item, poli
   return scoreMods(itemMods(item), policy.offenseBias);
 }
 
+/** Итог рассмотрения дропа: надет ли + сколько золота выручено с продажи (для отчёта забега). */
+export interface DropResult { equipped: boolean; sold: number; }
+
 /**
  * Рассматривает подобранный предмет: если по скору лучше надетого и проходит
  * требования — надевает (старое продаёт); иначе продаёт. Мутирует save.
- * Возвращает true, если предмет надет.
  */
-export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, policy: BuildPolicy): boolean {
+export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, policy: BuildPolicy): DropResult {
   const rarities = reg.get('rarities');
   // Расходники бот не экипирует — сразу в золото (нет слота).
   if (!item.slot || !meetsRequirements(item, save.attributes)) {
-    save.gold += sellValue(item, rarities);
-    return false;
+    const sold = sellValue(item, rarities); save.gold += sold;
+    return { equipped: false, sold };
   }
   const cur = save.equipment[item.slot];
   const curScore = cur ? scoreItem(reg, save, cur, policy) : -Infinity;
   if (scoreItem(reg, save, item, policy) > curScore) {
-    if (cur) save.gold += sellValue(cur, rarities);
+    const sold = cur ? sellValue(cur, rarities) : 0; if (cur) save.gold += sold;
     save.equipment[item.slot] = item;
-    return true;
+    return { equipped: true, sold };
   }
-  save.gold += sellValue(item, rarities);
-  return false;
+  const sold = sellValue(item, rarities); save.gold += sold;
+  return { equipped: false, sold };
 }
 
+/** Итог похода в магазин: потрачено на покупки / выручено с продажи заменённого / что куплено. */
+export interface ShopResult { spent: number; sold: number; bought: Item[]; }
+
 /** Магазин: генерит сток на (level+1), покупает апгрейды по карману. Мутирует save. */
-export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, rng: Rng, policy: BuildPolicy): void {
+export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, rng: Rng, policy: BuildPolicy): ShopResult {
   const itemsBase = reg.get('items.base');
   const affixes = reg.get('affixes');
   const uniques = reg.get('uniques');
   const rarities = reg.get('rarities');
+  let spent = 0, sold = 0; const bought: Item[] = [];
   for (let i = 0; i < 8; i++) {
     const item = generateItem(itemsBase, affixes, uniques,
       { dropBias: 1.3, itemLevel: level + 1, tiers: reg.get('item-tiers'), rarities }, rng);
@@ -128,11 +134,12 @@ export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, r
     const cur = save.equipment[item.slot];
     const curScore = cur ? scoreItem(reg, save, cur, policy) : -Infinity;
     if (scoreItem(reg, save, item, policy) > curScore) {
-      save.gold -= price;
-      if (cur) save.gold += sellValue(cur, rarities);
-      save.equipment[item.slot] = item;
+      save.gold -= price; spent += price;
+      if (cur) { const s = sellValue(cur, rarities); save.gold += s; sold += s; }
+      save.equipment[item.slot] = item; bought.push(item);
     }
   }
+  return { spent, sold, bought };
 }
 
 // ── Скиллы и пассивы ─────────────────────────────────────────────────────────
