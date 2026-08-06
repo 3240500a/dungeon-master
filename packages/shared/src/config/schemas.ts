@@ -911,7 +911,7 @@ const packEntrySchema = z.object({
  */
 export const monsterRaritySchema = z.array(
   z.object({
-    id: z.enum(['magic', 'rare']),
+    id: z.enum(['magic', 'rare', 'unique']),
     name: z.string().default(''),
     /** Минимум «прокачанных» предметов (на низком уровне). */
     minItems: z.number().int().min(1).max(4).default(1),
