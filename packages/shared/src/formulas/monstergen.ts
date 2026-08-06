@@ -163,13 +163,13 @@ export function generateMonster(
     const effRar: GearRarity = champion && gearRar === 'normal' ? 'magic' : gearRar; // у элиты всегда есть афиксы
     if (!champion) m.rarity = effRar;
 
-    // Надетые слоты (оружие всегда) + цель афиксов каждого.
-    const pieces: { slot: MonsterGearRoll['slot']; name: string; target: AffixTarget }[] = [
-      { slot: 'weapon', name: weapon.name, target: { kind: 'weapon', slot: 'weapon', attackType: weapon.attackType, damageKind: weapon.damageType === 'physical' ? 'physical' : 'magic' } },
+    // Надетые слоты (оружие всегда) + цель афиксов + базовые статы каждого (для тултипа).
+    const pieces: { slot: MonsterGearRoll['slot']; name: string; target: AffixTarget; base: MonsterGearRoll['base'] }[] = [
+      { slot: 'weapon', name: weapon.name, target: { kind: 'weapon', slot: 'weapon', attackType: weapon.attackType, damageKind: weapon.damageType === 'physical' ? 'physical' : 'magic' }, base: { minDamage: weapon.minDamage, maxDamage: weapon.maxDamage, damageType: weapon.damageType, attackSpeed: weapon.attackSpeed } },
     ];
-    if (armor) pieces.push({ slot: 'armor', name: armor.name, target: { kind: 'armor', slot: 'chest' } });
-    if (shield) pieces.push({ slot: 'shield', name: shield.name, target: { kind: 'shield', slot: 'offhand' } });
-    if (helm) pieces.push({ slot: 'helm', name: helm.name, target: { kind: 'armor', slot: 'helm' } });
+    if (armor) pieces.push({ slot: 'armor', name: armor.name, target: { kind: 'armor', slot: 'chest' }, base: { defense: armor.defense } });
+    if (shield) pieces.push({ slot: 'shield', name: shield.name, target: { kind: 'shield', slot: 'offhand' }, base: { block: shield.block, defense: shield.defense } });
+    if (helm) pieces.push({ slot: 'helm', name: helm.name, target: { kind: 'armor', slot: 'helm' }, base: { defense: helm.defense } });
 
     const nItems = affixedItemCount(opts.monsterRarity, effRar, level, pieces.length);
     // Выбор слотов: оружие первым (индекс 0), остальные — перетасованы rng (детерминизм по сиду).
@@ -186,9 +186,10 @@ export function generateMonster(
       if (chosen.has(p.slot)) {
         const rolled = rollAffixes(opts.itemAffixes, p.target, effRar, slots, level, rng);
         allRolled.push(...rolled);
-        rolls.push({ slot: p.slot, name: p.name, rarity: effRar, affixes: affixWords(rolled, opts.itemAffixes) });
+        const mods = rolled.filter((r) => r.modifier).map((r) => r.modifier!);
+        rolls.push({ slot: p.slot, name: p.name, rarity: effRar, affixes: affixWords(rolled, opts.itemAffixes), mods, base: p.base });
       } else {
-        rolls.push({ slot: p.slot, name: p.name, rarity: 'normal', affixes: [] });
+        rolls.push({ slot: p.slot, name: p.name, rarity: 'normal', affixes: [], mods: [], base: p.base });
       }
     }
     for (const ra of allRolled) if (ra.modifier) applyGearAffix(m, ra.modifier);

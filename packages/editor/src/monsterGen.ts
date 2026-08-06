@@ -1,4 +1,4 @@
-import { ConfigRegistry, generateMonster, createRng, type ScaledMonster } from '@dm/shared';
+import { ConfigRegistry, generateMonster, createRng, STAT_LABEL, PERCENT_STATS, type ScaledMonster, type MonsterGearRoll } from '@dm/shared';
 
 /**
  * Вкладка «Генератор мобов» (песочница спавна) — зеркало генератора предметов: выбираешь монстра +
@@ -23,6 +23,26 @@ let batch = 1;
 const h = (tag: string, css: string, html = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (html) e.innerHTML = html; return e; };
 const DMG_SHORT: Record<string, string> = { physical: 'физ', fire: 'огонь', cold: 'холод', lightning: 'молния', poison: 'яд' };
 const pctS = (x: number): string => `${Math.round(x * 100)}%`;
+
+// Плавающий тултип со статами предмета (как у предметов игрока: база + афиксы).
+let tipEl: HTMLDivElement | null = null;
+function hideTip(): void { if (tipEl) { tipEl.remove(); tipEl = null; } }
+function showTip(inner: string, x: number, y: number): void {
+  hideTip();
+  tipEl = document.createElement('div');
+  tipEl.style.cssText = 'position:fixed;z-index:9999;max-width:280px;background:#0b0b12;border:1px solid #3c3c4a;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;pointer-events:none;box-shadow:0 4px 16px #000a';
+  tipEl.innerHTML = inner;
+  document.body.appendChild(tipEl);
+  const r = tipEl.getBoundingClientRect();
+  tipEl.style.left = `${Math.min(x + 14, window.innerWidth - r.width - 8)}px`;
+  tipEl.style.top = `${Math.min(y + 14, window.innerHeight - r.height - 8)}px`;
+}
+/** Строка афикса как у предметов игрока: «+15% К физ. урону» / «+8 Броня» (STAT_LABEL + PERCENT_STATS). */
+function fmtMod(m: { stat: string; kind: 'flat' | 'increased'; value: number }): string {
+  const isPct = m.kind === 'increased' || PERCENT_STATS.has(m.stat);
+  const v = isPct ? `+${Math.round(m.value * 100)}%` : `+${Number.isInteger(m.value) ? m.value : m.value.toFixed(2)}`;
+  return `${v} ${STAT_LABEL[m.stat] ?? m.stat}`;
+}
 
 export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unknown>): void {
   page.innerHTML = '';
@@ -93,13 +113,26 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
     box.appendChild(row('Зрение / Слух', `${m.vision} (${m.visionAngle}°) / ${m.hearing}`));
     box.appendChild(row('Резисты (О/Х/М/Я)', `${pctS(m.resFire)} / ${pctS(m.resCold)} / ${pctS(m.resLightning)} / ${pctS(m.resPoison)}`));
     box.appendChild(row('XP', String(m.xp)));
-    // Гир по 4 слотам: имя предмета в цвете его редкости + афиксы на нём.
+    // Гир по 4 слотам: имя предмета в цвете его редкости + афиксы; наведи = полный тултип со статами.
     if (m.gearRolls?.length) {
       box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:8px 0 3px;text-transform:uppercase;letter-spacing:.04em', 'Экипировка'));
+      const gearTip = (g: MonsterGearRoll): string => {
+        const col = rarColOf(g.rarity), b = g.base;
+        const lines = [`<div style="color:${col};font-weight:600;margin-bottom:4px">${g.name}</div>`];
+        if (b.minDamage != null) lines.push(`<div style="color:#dcdce4">Урон ${b.minDamage}–${b.maxDamage} ${DMG_SHORT[b.damageType ?? 'physical'] ?? b.damageType}</div>`);
+        if (b.attackSpeed != null) lines.push(`<div style="color:#9aa">Скор. атаки ${b.attackSpeed}</div>`);
+        if (b.defense) lines.push(`<div style="color:#dcdce4">Защита +${b.defense}</div>`);
+        if (b.block != null) lines.push(`<div style="color:#dcdce4">Блок ${pctS(b.block)}</div>`);
+        for (const mod of g.mods) lines.push(`<div style="color:${col}">${fmtMod(mod)}</div>`);
+        if (g.rarity === 'normal' && !g.mods.length) lines.push('<div style="color:#8a8a9a;font-size:11px">обычный, без афиксов</div>');
+        return lines.join('');
+      };
       for (const g of m.gearRolls) {
-        const gr = h('div', 'font-size:12px;margin:2px 0;line-height:1.4');
+        const gr = h('div', 'font-size:12px;margin:2px 0;line-height:1.4;cursor:help');
         gr.innerHTML = `<span style="color:#8a8a9a">${SLOT_RU[g.slot] ?? g.slot}:</span> <span style="color:${rarColOf(g.rarity)}">${g.name}</span>` +
           (g.affixes.length ? ` <span style="color:${rarColOf(g.rarity)};font-size:11px">[${g.affixes.join(', ')}]</span>` : '');
+        gr.addEventListener('mousemove', (e) => showTip(gearTip(g), (e as MouseEvent).clientX, (e as MouseEvent).clientY));
+        gr.addEventListener('mouseleave', hideTip);
         box.appendChild(gr);
       }
     } else {

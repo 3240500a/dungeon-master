@@ -77,7 +77,11 @@ export interface MonsterGearRoll {
   slot: 'weapon' | 'armor' | 'helm' | 'shield';
   name: string;
   rarity: MonsterRarity;   // normal/magic/rare (редкость конкретного предмета)
-  affixes: string[];       // слова-афиксы этого предмета
+  affixes: string[];       // слова-афиксы этого предмета (компактный список)
+  /** Роллнутые модификаторы афиксов — для тултипа со статами (как у предметов игрока). */
+  mods: { stat: string; kind: 'flat' | 'increased'; value: number }[];
+  /** Базовые статы предмета для тултипа: урон/тип/скорость (оружие), защита (броня/шлем), блок (щит). */
+  base: { minDamage?: number; maxDamage?: number; damageType?: string; attackSpeed?: number; defense?: number; block?: number };
 }
 
 /** Сгенерированный экземпляр монстра (база + масштаб глубины + аффиксы + редкость). */
