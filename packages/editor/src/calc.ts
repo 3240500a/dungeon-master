@@ -1,4 +1,4 @@
-import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType } from '@dm/shared';
+import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, attackByType, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType } from '@dm/shared';
 import { makeHarness } from './gameHarness.js';
 import type { App } from '@dm/client/core/app.js';
 import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
@@ -18,7 +18,7 @@ function regFromData(data: Record<string, unknown>): ConfigRegistry { const reg 
 
 let classId = '';
 let level = 30;
-let tab: 'char' | 'gear' | 'mastery' | 'skills' = 'char';
+let tab: 'gear' | 'mastery' | 'skills' = 'gear';
 let monBaseId = '';
 let monChampion = false;
 let monRarity: 'normal' | 'magic' | 'rare' = 'normal';
@@ -75,11 +75,13 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
   const app = harness;
 
   page.appendChild(h('div', 'font-size:15px;font-weight:600;color:#e8e8f0;margin:2px 0 10px', '🧮 Калькулятор персонажа (1:1 с игрой)'));
-  const wrap = h('div', 'display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start');
-  const left = h('div', 'flex:1 1 560px;min-width:320px;display:flex;flex-direction:column;gap:10px');
-  const right = h('div', 'flex:0 1 380px;min-width:300px;display:flex;flex-direction:column;gap:12px');
+  const wrap = h('div', 'display:flex;gap:16px;align-items:flex-start');
+  const left = h('div', 'flex:2 1 480px;min-width:340px;display:flex;flex-direction:column;gap:10px');
+  // Статистика — ПОСТОЯННАЯ узкая правая колонка (~1/3), «всегда на виду»: липкая + свой скролл.
+  const right = h('div', 'flex:1 1 340px;min-width:300px;max-width:430px;display:flex;flex-direction:column;gap:12px;position:sticky;top:8px;max-height:calc(100vh - 24px);overflow-y:auto;padding-right:4px');
   wrap.append(left, right); page.appendChild(wrap);
 
+  // ── Шапка: класс/уровень ──
   const head = h('div', 'display:flex;gap:10px;align-items:flex-end');
   const classSel = document.createElement('select'); classSel.style.cssText = INP;
   for (const c of classes) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; if (c.id === classId) o.selected = true; classSel.appendChild(o); }
@@ -89,8 +91,9 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
   head.append(field('Класс', classSel), field('Уровень', lvlInp));
   left.appendChild(head);
 
+  // ── Вкладки СЛЕВА: экипировка / мастерство / скиллы (статистика справа НЕ переключается) ──
   const tabs = h('div', 'display:flex;gap:4px');
-  for (const [id, name] of [['char', 'Персонаж'], ['gear', 'Экипировка'], ['mastery', 'Мастерство'], ['skills', 'Скиллы']] as [typeof tab, string][]) {
+  for (const [id, name] of [['gear', 'Экипировка'], ['mastery', 'Мастерство'], ['skills', 'Скиллы']] as [typeof tab, string][]) {
     const b = document.createElement('button'); b.textContent = name;
     b.style.cssText = `flex:1;padding:6px 4px;cursor:pointer;border-radius:5px;border:1px solid #2c2c3a;background:${tab === id ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;font-size:12px`;
     b.addEventListener('click', () => { tab = id; renderCalcPage(page, data); });
@@ -98,14 +101,65 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
   }
   left.appendChild(tabs);
 
-  const body = h('div', '');
-  if (tab === 'char') charInst!.render(body);
-  else if (tab === 'gear') left.appendChild(gearPanel(app, () => renderCalcPage(page, data), reg));
-  else if (tab === 'mastery') { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:520px;overflow:hidden'); renderPassiveTree(app, box); left.appendChild(box); }
-  else { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:520px;overflow:hidden'); renderSkillTree(app, box); left.appendChild(box); }
-  if (tab === 'char') left.appendChild(body);
+  if (tab === 'gear') left.appendChild(gearPanel(app, () => renderCalcPage(page, data), reg));
+  else if (tab === 'mastery') { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:560px;overflow:hidden'); renderPassiveTree(app, box); left.appendChild(box); }
+  else { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:560px;overflow:hidden'); renderSkillTree(app, box); left.appendChild(box); }
 
-  right.appendChild(monsterTtk(page, data, reg, app.state!.derived(), makePlayerModel(reg, app.state!.save, { useSkills: true }), app.state!.save));
+  // ── СПРАВА (всегда): полная статистика игры + расширенная разбивка бонусов + монстр/TTK ──
+  const statsBox = h('div', '');
+  charInst!.render(statsBox);
+  right.append(statsBox, bonusPanel(app, reg),
+    monsterTtk(page, data, reg, app.state!.derived(), makePlayerModel(reg, app.state!.save, { useSkills: true }), app.state!.save));
+}
+
+/**
+ * Расширение статистики: видимая разбивка ИТОГОВЫХ бонусов (гир+пассивы+мастерства+скиллы уже
+ * свёрнуты в `derived()`), которых игровая панель показывает лишь в тултипах — %-множители урона по
+ * типам (со всем вместе), плоские стих-добавки, вампиризм/за-убийство, пробой брони. Одна истина: `derived()`.
+ */
+function bonusPanel(app: App, reg: ConfigRegistry): HTMLElement {
+  const d = app.state!.derived();
+  const save = app.state!.save;
+  const m = makePlayerModel(reg, save, {});
+  const by = attackByType(d, m.attrs, save.equipment.weapon, m.scaling, m.weights);
+  const dcol = (t: DamageType): string => t === 'physical'
+    ? (reg.get('damage-kinds').find((k) => k.id === 'physical')?.color ?? '#c8c8c8')
+    : (reg.get('magic-subtypes').find((s) => s.id === t)?.color ?? '#c8c8c8');
+  const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
+  const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
+  const NAMES: [DamageType, string][] = [['physical', 'Физ'], ['fire', 'Огонь'], ['cold', 'Холод'], ['lightning', 'Молния'], ['poison', 'Яд']];
+
+  const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;padding:12px 14px;background:#14141c');
+  box.appendChild(h('div', 'color:#b8b8c8;font-weight:600;font-size:13px;margin-bottom:2px', '📊 Бонусы урона (итог)'));
+  box.appendChild(h('div', 'color:#8a8a9a;font-size:10px;margin-bottom:8px', 'гир + пассивы + мастерства + скиллы, всё вместе'));
+  const brow = (label: string, value: string, color = '#eaeaea'): void => {
+    const r = h('div', 'display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:2px 0');
+    r.append(h('span', `color:${color}`, label), h('span', 'color:#eaeaea;font-weight:500;text-align:right', value));
+    box.appendChild(r);
+  };
+  if (d.damagePct) brow('Весь урон (глобал.)', `+${Math.round(d.damagePct * 100)}%`, '#cdbd8f');
+  for (const [t, name] of NAMES) {
+    const combined = d.damagePct + perPct[t];
+    const dealt = by[t].max > 0;
+    if (!dealt && !perPct[t] && !addFlat[t]) continue;
+    const parts: string[] = [];
+    if (dealt) parts.push(`${Math.round(by[t].min)}–${Math.round(by[t].max)}`);
+    if (combined) parts.push(`+${Math.round(combined * 100)}% итог`);
+    if (addFlat[t]) parts.push(`+${Math.round(addFlat[t])} плоск.`);
+    brow(name, parts.join(' · '), dcol(t));
+  }
+  // Вампиризм / за убийство / пробой — на игровой панели не выведены отдельно.
+  const extra: [string, string][] = [];
+  if (d.lifeLeechPct) extra.push(['Вампиризм HP', `${(d.lifeLeechPct * 100).toFixed(1)}%`]);
+  if (d.manaLeechPct) extra.push(['Вампиризм маны', `${(d.manaLeechPct * 100).toFixed(1)}%`]);
+  if (d.lifeOnKill) extra.push(['HP за убийство', `+${Math.round(d.lifeOnKill)}`]);
+  if (d.manaOnKill) extra.push(['Мана за убийство', `+${Math.round(d.manaOnKill)}`]);
+  if (d.armorPen) extra.push(['Пробой брони', `${Math.round(d.armorPen * 100)}%`]);
+  if (extra.length) {
+    box.appendChild(h('div', 'height:1px;background:#2c2c3a;margin:7px 0'));
+    for (const [k, v] of extra) brow(k, v, '#cdbd8f');
+  }
+  return box;
 }
 
 /** Вкладка «Экипировка»: генератор предметов → инвентарь + РЕАЛЬНАЯ паперкукла игры (надеваешь как в игре). */
