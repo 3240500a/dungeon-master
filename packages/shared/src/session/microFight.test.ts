@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { createRng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
+import { itemFromBaseId } from '../formulas/itemgen.js';
 import { newBotSave, levelUpBotTo } from '../sim/playerBot.js';
 import { DEFAULT_BUILD } from '../sim/types.js';
 import { townLayout } from '../dungeon/town.js';
@@ -87,6 +88,27 @@ describe('GameSession split rewards→sustain/economy', () => {
     expect(levelups).toBe(0);
     expect(save.level).toBe(startLevel); // левелап-хил не сработал → TTK чист
     expect(save.xp).toBe(startXp);
+  });
+
+  it('пояс: input.useBelt лечит из зелья и тратит слот; на полном HP не тратит', () => {
+    const save = botAt(20);
+    save.belt = [itemFromBaseId(reg.get('items.base'), 'healing-potion')];
+    const session = new GameSession(reg, 1, 'normal', { sustain: true, economy: false });
+    const p = session.addPlayer('p1', save);
+    const { grid, spawn } = townLayout(20, 15);
+    session.enterFloor(1, { grid, spawn, monsters: [] });
+    session.tick(1 / 30, {}); // построить снимок
+    const idle = { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
+
+    p.hp = 10; // ранен
+    session.tick(1 / 30, { p1: { ...idle, useBelt: 0 } });
+    expect(p.hp).toBeGreaterThan(10);       // подлечился
+    expect(save.belt[0]).toBeNull();        // зелье потрачено
+
+    save.belt = [itemFromBaseId(reg.get('items.base'), 'healing-potion')];
+    p.hp = session.snapshotOf('p1')!.derived.maxHp; // полное HP
+    session.tick(1 / 30, { p1: { ...idle, useBelt: 0 } });
+    expect(save.belt[0]).not.toBeNull();    // чистое лечение на фулл-HP зелье не тратит
   });
 
   it('economy:true (дефолт rewards) — награды и XP начисляются', () => {

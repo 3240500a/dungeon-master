@@ -13,6 +13,7 @@ import { generateRunPlan } from '../dungeon/run/generateRunPlan.js';
 import type { RunConfig, RunNode, RunPlan } from '../dungeon/run/types.js';
 import type { DungeonLayout } from '../dungeon/floorCommon.js';
 import { applyDeathPenalty } from '../economy/death.js';
+import { itemFromBaseId } from '../formulas/itemgen.js';
 import { newBotSave, classProfileAttr, allocateAttributes } from '../sim/playerBot.js';
 import { considerDrop, visitShop, allocateSkillsAndPassives } from '../sim/economy.js';
 import type { BuildPolicy } from '../sim/types.js';
@@ -125,8 +126,11 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     allocateAttributes(save, profile, settings.build, rng);
     allocateSkillsAndPassives(reg, save, settings.build, rng);
   };
-  /** Городская остановка: распределение + пара заходов в магазин (эконом-бот). */
-  const doTown = (): void => { allocate(); for (let k = 0; k < 2; k++) visitShop(reg, save, save.level, rng, settings.build); };
+  const itemsBase = reg.get('items.base');
+  /** Пополняет пояс лечебными зельями (у реального игрока пояс всегда полон перед вылазкой). */
+  const stockBelt = (): void => { save.belt = Array.from({ length: 6 }, () => itemFromBaseId(itemsBase, 'healing-potion') ?? null); };
+  /** Городская остановка: распределение + пара заходов в магазин + полный пояс зелий (эконом-бот). */
+  const doTown = (): void => { allocate(); for (let k = 0; k < 2; k++) visitShop(reg, save, save.level, rng, settings.build); stockBelt(); };
 
   let runPlan: RunPlan | null = null;
   let node: RunNode | null = null;
@@ -169,9 +173,11 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     bot.syncHotbar(save);
     deepest = Math.max(deepest, node.depth);
 
-    // Бой до зачистки / смерти / таймаута.
+    // Бой до зачистки / достижения выхода / смерти / таймаута (игрок не обязан зачищать весь этаж).
+    const exits = layout.exits ?? [];
+    let reachedExit = -1;
     let floorTime = 0;
-    while (session.monstersAlive > 0 && p.alive && floorTime < floorCap && !stop()) {
+    while (session.monstersAlive > 0 && p.alive && floorTime < floorCap && reachedExit < 0 && !stop()) {
       for (const e of session.tick(dt, { p1: bot.input(session.world, p) })) {
         if (e.type === 'monster-died') kills++;
         else if (e.type === 'gold') gold += e.amount;
@@ -180,6 +186,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
         else if (e.type === 'player-died') deaths++;
       }
       if (session.world.drops.length === 0 && save.inventory.length > 0) drainInventory();
+      for (let i = 0; i < exits.length; i++) { const e = exits[i]!; if (Math.hypot(e.x - p.pos.x, e.y - p.pos.y) <= 26) { reachedExit = i; break; } }
       floorTime += dt; totalTime += dt; sampleCurve();
     }
     // Фаза сбора лута (добираем оставшийся дроп).
@@ -200,13 +207,12 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
       continue;
     }
     allocate(); // очки за набранные уровни — сразу
-    if (session.monstersAlive === 0) {
-      floorsCompleted++;
-      // Спуск по графу: первое ребро; финал (0 рёбер) → забег окончен → город/новый забег.
-      node = node.edges.length ? nodeById(node.edges[0]!.to) : null;
-    } else {
-      node = null; // не зачистил за floorCap → отступление в город (не лезем глубже застряв)
-    }
+    const cleared = session.monstersAlive === 0;
+    if (cleared || reachedExit >= 0) floorsCompleted++;
+    // Спуск: по достигнутому выходу (ребро того же индекса); иначе зачистил → первое ребро;
+    // финал (0 рёбер) или таймаут без выхода → null (новый забег/город).
+    const edge = reachedExit >= 0 ? node.edges[reachedExit] ?? node.edges[0] : cleared ? node.edges[0] : undefined;
+    node = edge ? nodeById(edge.to) : null;
   }
 
   const hours = totalTime / 3600;

@@ -39,6 +39,7 @@ import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js'
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
 import { behaviorFor, type MonsterBehavior } from './behavior.js';
 import { findPath } from '../world/pathfind.js';
+import { applyConsumable } from '../economy/townActions.js';
 
 /**
  * Безголовое авторитетное ядро игрового цикла (Этап 2). Держит `WorldState` как
@@ -60,6 +61,8 @@ export interface PlayerInput {
   cast: string | null;
   /** Действие/подбор (E). */
   interact: boolean;
+  /** Слот пояса для расходника в этот тик (индекс в save.belt), или undefined. */
+  useBelt?: number;
 }
 
 /** Монстр к спавну (из генератора этажа). */
@@ -411,10 +414,19 @@ export class GameSession {
     }
     p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt);
 
-    if (stunned) return; // оглушён — ни атаки, ни каста
+    if (stunned) return; // оглушён — ни атаки, ни каста, ни зелий
+    if (input?.useBelt != null) this.useBeltSlot(p, snap, input.useBelt);
     if (input?.attack) this.tryPlayerAttack(p, snap);
     if (input?.cast != null) this.castSkill(p, snap, input.cast);
     if (input?.interact) this.tryPickup(p);
+  }
+
+  /** Выпить расходник из слота пояса: единый эффект `applyConsumable`; расход ТОЛЬКО если сработал
+   *  (полное HP чистым лечением не тратит зелье). Тот же путь, что серверный `useConsumable`. */
+  private useBeltSlot(p: PlayerEntity, snap: PlayerSnapshot, slot: number): void {
+    const item = p.save.belt[slot];
+    if (!item?.use) return;
+    if (applyConsumable(p, item.use, snap.derived.maxHp, snap.derived.maxMana)) p.save.belt[slot] = null;
   }
 
   /** Замах удара/скилла как доля цикла атаки (масштабируется скоростью) + явный windup скилла. */

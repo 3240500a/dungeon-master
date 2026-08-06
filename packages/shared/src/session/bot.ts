@@ -17,6 +17,16 @@ import { isAoeAbility, ABILITY_AOE_RADIUS, type PlayerInput } from './session.js
 const REPATH_TICKS = 6; // как часто пересчитывать путь (в тиках)
 const WAYPOINT_REACHED = 18; // px до путевой точки, чтобы перейти к следующей
 const AOE_TRIGGER = 3; // столько монстров в радиусе AoE, чтобы швырнуть площадную
+const AGGRO = 300; // не гоняемся за мобами дальше — уходим к выходу (иначе не зачистить весь этаж за таймаут)
+const POTION_HP = 0.5; // пьём зелье ниже этой доли HP
+const POTION_COOLDOWN_TICKS = 30; // ~1с между зельями (не выхлебать пояс за тик)
+
+/**
+ * Лестница мастерства бота (для калибровки TTK «по уровню игры»): каждый тир добавляет умение.
+ *  basic — только автоатака (фейстанк); kite — +кайт/отход; potions — +зелья; rotation — +скиллы (полная игра).
+ */
+export type BotTier = 'basic' | 'kite' | 'potions' | 'rotation';
+const TIER_RANK: Record<BotTier, number> = { basic: 0, kite: 1, potions: 2, rotation: 3 };
 
 export class BotController {
   private path: Vec2[] = [];
@@ -24,10 +34,11 @@ export class BotController {
   private lastRepathTick = -999;
   private retreating = false;
   private targetId: number | null = null;
+  private lastPotionTick = -999;
   /** Выученные активки бота (id + AoE-флаг), обновляются в syncHotbar. */
   private skills: { id: string; aoe: boolean }[] = [];
 
-  constructor(private cfg: ConfigRegistry) {}
+  constructor(private cfg: ConfigRegistry, private tier: BotTier = 'rotation') {}
 
   private attackType(save: SaveState): AttackType {
     return save.equipment.weapon?.attackType ?? 'melee';
@@ -65,12 +76,22 @@ export class BotController {
 
   input(world: WorldState, p: PlayerEntity): PlayerInput {
     const at = this.attackType(p.save);
+    const useKite = TIER_RANK[this.tier] >= 1;
+    const usePotions = TIER_RANK[this.tier] >= 2;
+    const useSkills = TIER_RANK[this.tier] >= 3;
     const maxHp = playerSnapshot(p.save, this.cfg).derived.maxHp;
     const hpFrac = p.hp / Math.max(1, maxHp);
-    // Гистерезис: уходим в защиту ниже 40% HP, возвращаемся в бой только выше 70%.
+    // Гистерезис: уходим в защиту ниже 40% HP, возвращаемся в бой только выше 70% (тир ≥ kite).
     if (hpFrac < 0.4) this.retreating = true;
     else if (hpFrac > 0.7) this.retreating = false;
-    const lowHp = this.retreating;
+    const lowHp = useKite && this.retreating;
+
+    // Зелье: ниже порога HP и не чаще КД — берём первый лечащий расходник пояса (тир ≥ potions).
+    let useBelt: number | undefined;
+    if (usePotions && hpFrac < POTION_HP && world.tick - this.lastPotionTick >= POTION_COOLDOWN_TICKS) {
+      const slot = p.save.belt.findIndex((it) => !!it?.use && ((it.use.heal ?? 0) > 0 || (it.use.healPct ?? 0) > 0));
+      if (slot >= 0) { useBelt = slot; this.lastPotionTick = world.tick; }
+    }
 
     // Сбор монстров: ближайший, «липкая» цель, центроид и кластер вокруг игрока.
     let nearest: MonsterEntity | undefined;
@@ -88,8 +109,9 @@ export class BotController {
       if (d <= 220) { cx += m.pos.x; cy += m.pos.y; cn++; }
       if (d <= ABILITY_AOE_RADIUS) cluster++;
     }
-    // Липкость: держим текущую цель, пока жива и не слишком далеко, иначе — ближайшая.
-    const target = sticky && Math.hypot(sticky.pos.x - p.pos.x, sticky.pos.y - p.pos.y) <= 360 ? sticky : nearest;
+    // Липкость в пределах aggro; за aggro цель бросаем (пойдём к выходу), не гоняясь через весь этаж.
+    const near = nearest && nd <= AGGRO ? nearest : undefined;
+    const target = sticky && Math.hypot(sticky.pos.x - p.pos.x, sticky.pos.y - p.pos.y) <= AGGRO ? sticky : near;
     this.targetId = target ? target.id : null;
 
     let drop: DropEntity | undefined;
@@ -106,14 +128,14 @@ export class BotController {
     let interact = false;
 
     // Паник/клир: AoE по кластеру — в любом состоянии (в т.ч. отступая — расчистить).
-    if (cluster >= AOE_TRIGGER) cast = this.readySkill(p, true);
+    if (useSkills && cluster >= AOE_TRIGGER) cast = this.readySkill(p, true);
 
     if (target) {
       const dx = target.pos.x - p.pos.x;
       const dy = target.pos.y - p.pos.y;
       facing = Math.atan2(dy, dx);
       const engage = at === 'melee' ? 46 : 300;
-      const kite = at !== 'melee' && nd < 70;
+      const kite = useKite && at !== 'melee' && nd < 70;
       const los = hasLineOfSight(world.grid, p.pos.x, p.pos.y, target.pos.x, target.pos.y);
 
       if (lowHp || kite) {
@@ -129,16 +151,22 @@ export class BotController {
       const atkRange = at === 'melee' ? 60 : 340;
       if (los && tdist <= atkRange) attack = true;
       // Одиночный скилл — только не в защите, по видимой цели в дальности.
-      if (cast == null && !lowHp && los && tdist <= (at === 'melee' ? 150 : 340)) {
+      if (useSkills && cast == null && !lowHp && los && tdist <= (at === 'melee' ? 150 : 340)) {
         cast = this.readySkill(p, false);
       }
-    } else if (drop && !lowHp) {
+    } else if (drop && !lowHp && dd <= AGGRO) {
       facing = Math.atan2(drop.pos.y - p.pos.y, drop.pos.x - p.pos.x);
       if (dd > 24) move = this.navigate(world, p, drop.pos, `d${drop.id}`);
+    } else if (world.exits && world.exits.length && !lowHp) {
+      // рядом ни цели, ни лута — идём к ближайшему выходу (спуск), не зачищая весь этаж (как игрок).
+      let ex = world.exits[0]!, ed = Infinity;
+      for (const e of world.exits) { const d = Math.hypot(e.x - p.pos.x, e.y - p.pos.y); if (d < ed) { ed = d; ex = e; } }
+      facing = Math.atan2(ex.y - p.pos.y, ex.x - p.pos.x);
+      if (ed > 20) move = this.navigate(world, p, ex, 'exit');
     }
 
     if (drop && dd <= 44) interact = true;
 
-    return { move, facing, attack, cast, interact };
+    return { move, facing, attack, cast, interact, useBelt };
   }
 }
