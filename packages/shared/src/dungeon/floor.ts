@@ -35,9 +35,10 @@ export function spawnPacksEl(
   if (!pool.length) return [];
   const monAffixes = reg.get('monster-affixes');
   const monsterGear = reg.get('monster-gear');
-  const itemAffixes = reg.get('affixes'); // редкость монстра = item-афиксы на его гире (одна истина с предметами)
+  const itemAffixes = reg.get('monster-item-affixes'); // редкость монстра = МОНСТРОВЫЕ item-афиксы на его гире (отдельный пул от лута)
   const rarities = reg.get('rarities');
   const monsterRarity = reg.get('monster-rarity'); // сколько слотов гира прокачано по редкости+уровню
+  const monsterUniques = reg.get('monster-uniques'); // пул имён уникальных монстров (иначе дженерик «Уникальный X»)
   const packs = reg.get('packs');
 
   const diffs = reg.get('difficulties');
@@ -90,7 +91,7 @@ export function spawnPacksEl(
         const rr = rng.float(0, 1);
         const rolled: 'normal' | 'magic' | 'rare' = rr < (entry.rareChance ?? 0) ? 'rare' : rr < (entry.rareChance ?? 0) + (entry.magicChance ?? 0) ? 'magic' : 'normal';
         const rarity: 'normal' | 'magic' | 'rare' | 'unique' = forceUnique ? 'unique' : rolled;
-        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, uniqueXpMult, mderive, itemAffixes, rarities, rarity, monsterRarity }, rng);
+        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, uniqueXpMult, mderive, itemAffixes, rarities, rarity, monsterRarity, monsterUniques }, rng);
         spawns.push({ def, x: w.x, y: w.y });
       }
     }

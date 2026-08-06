@@ -79,7 +79,7 @@ export function sweepHitsToKill(reg: ConfigRegistry, opts: SweepOpts): SweepCell
       const depth = Math.max(0, level + depthOff);
       const mon = generateMonster(monsters, gear, affx, {
         baseId: monsterId, depth, mderive: reg.get('monster-derive'),
-        itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity,
+        itemAffixes: reg.get('monster-item-affixes'), rarities: reg.get('rarities'), rarity,
         monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques'),
       }, createRng(1));
       const s = microFightStats(reg, { save, monsters: [mon], tier: opts.tier, style: opts.style }, runs, seed);

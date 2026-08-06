@@ -1632,6 +1632,9 @@ export const configSchemas = {
   uniques: uniquesSchema,
   monsters: monstersSchema,
   'monster-affixes': monsterAffixesSchema,
+  /** Аффиксы ШМОТА монстров (item-движок, таргетинг по типу гира). Отдельный пул от плеерского `affixes` —
+   *  чтобы тюнить редкость монстров независимо от лута. Та же схема, что у предметов игрока. */
+  'monster-item-affixes': affixesSchema,
   'monster-behaviors': monsterBehaviorsSchema,
   'monster-gear': monsterGearSchema,
   'depth-tiers': depthTiersSchema,

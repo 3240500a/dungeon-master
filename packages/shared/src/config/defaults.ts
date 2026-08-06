@@ -5,6 +5,7 @@ import affixes from './data/affixes.json' with { type: 'json' };
 import uniques from './data/uniques.json' with { type: 'json' };
 import monsters from './data/monsters.json' with { type: 'json' };
 import monsterAffixes from './data/monster-affixes.json' with { type: 'json' };
+import monsterItemAffixes from './data/monster-item-affixes.json' with { type: 'json' };
 import monsterBehaviors from './data/monster-behaviors.json' with { type: 'json' };
 import monsterGear from './data/monster-gear.json' with { type: 'json' };
 import depthTiers from './data/depth-tiers.json' with { type: 'json' };
@@ -43,6 +44,7 @@ export const defaultConfigData: Record<string, unknown> = {
   uniques,
   monsters,
   'monster-affixes': monsterAffixes,
+  'monster-item-affixes': monsterItemAffixes,
   'monster-behaviors': monsterBehaviors,
   'monster-gear': monsterGear,
   'depth-tiers': depthTiers,

@@ -155,3 +155,42 @@ describe('generateMonster — редкость по слотам гира (per-p
     expect(rolls.every((g) => g.rarity === 'unique')).toBe(true);               // все слоты — unique
   });
 });
+
+const monsterItemAffixes = reg.get('monster-item-affixes');
+describe('generateMonster — монстровый пул аффиксов шмота (таргетинг по типу предмета)', () => {
+  // Разрешён ли аффикс с данным appliesTo на данном слоте гира (грубо: weapon / armor|helm / shield).
+  const slotAllowed = (appliesTo: string[], slot: string): boolean => {
+    if (appliesTo.length === 0) return true;                                    // пустой appliesTo = любой тип
+    if (slot === 'weapon') return appliesTo.some((t) => t === 'weapon' || t.startsWith('weapon.'));
+    if (slot === 'armor' || slot === 'helm') return appliesTo.some((t) => t === 'armor');
+    if (slot === 'shield') return appliesTo.some((t) => t === 'shield');
+    return false;
+  };
+  const appliesOf = new Map(monsterItemAffixes.map((a) => [a.word, a.appliesTo]));
+
+  it('аффикс садится ТОЛЬКО на разрешённый его appliesTo тип предмета (оружие/броня/щит)', () => {
+    let sawWeapon = false, sawArmor = false;
+    for (let s = 0; s < 60; s++) {
+      const m = generateMonster(monsters, gear, affixes,
+        { baseId: multiSlot.id, depth: 40, rarity: 'rare', itemAffixes: monsterItemAffixes, rarities, monsterRarity, monsterUniques }, createRng(s));
+      for (const roll of m.gearRolls ?? []) {
+        for (const word of roll.affixes) {
+          const appliesTo = appliesOf.get(word);
+          expect(appliesTo, `слово «${word}» должно быть из монстрового пула`).toBeDefined();
+          expect(slotAllowed(appliesTo!, roll.slot), `«${word}» не должно падать на слот «${roll.slot}»`).toBe(true);
+          if (roll.slot === 'weapon') sawWeapon = true;
+          if (roll.slot === 'armor' || roll.slot === 'helm') sawArmor = true;
+        }
+      }
+    }
+    expect(sawWeapon).toBe(true); // покрытие: оружейные аффиксы реально катаются
+    expect(sawArmor).toBe(true);  // и броневые тоже (иначе тест пустой)
+  });
+
+  it('нормальный монстр не берёт монстровых афиксов (пул подключён, но normal = без афиксов)', () => {
+    const m = generateMonster(monsters, gear, affixes,
+      { baseId: multiSlot.id, depth: 30, rarity: 'normal', itemAffixes: monsterItemAffixes, rarities, monsterRarity, monsterUniques }, createRng(3));
+    expect(m.affixes).toEqual([]);
+    for (const roll of m.gearRolls ?? []) expect(roll.affixes.length).toBe(0);
+  });
+});

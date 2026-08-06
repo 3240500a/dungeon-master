@@ -29,6 +29,7 @@ const LABELS: Record<ConfigKey, string> = {
   uniques: 'Уники',
   monsters: 'Монстры',
   'monster-affixes': 'Монстры: аффиксы',
+  'monster-item-affixes': 'Монстры: аффиксы шмота',
   'monster-behaviors': 'Монстры: поведение ИИ',
   'monster-gear': 'Монстры: экипировка',
   'depth-tiers': 'Монстры: тиры глубины',
@@ -77,7 +78,7 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques', 'rare-names'] },
-  { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
+  { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-item-affixes', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
@@ -638,7 +639,7 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   // Дискриминированные массивы (items.base) — дерево категорий; аффиксы — Префиксы/Суффиксы→тема; прочие — плоский список.
   if (isUnion) {
     renderItemTree(list, arr);
-  } else if (current === 'affixes') {
+  } else if (current === 'affixes' || current === 'monster-item-affixes') {
     renderAffixTree(list, arr);
   } else {
     arr.forEach((entry, i) => {

@@ -49,7 +49,7 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const monsters = reg.get('monsters');
   const gear = reg.get('monster-gear');
   const affixes = reg.get('monster-affixes');
-  const itemAffixes = reg.get('affixes');
+  const itemAffixes = reg.get('monster-item-affixes'); // гир монстра катает МОНСТРОВЫЕ item-афиксы (не плеерский лут)
   const rarities = reg.get('rarities');
   const gearName = (id: string): string => (id ? (gear.find((g) => g.id === id)?.name ?? id) : '—');
   const src = (id: string): (typeof monsters)[number] | undefined => monsters.find((m) => m.id === id);

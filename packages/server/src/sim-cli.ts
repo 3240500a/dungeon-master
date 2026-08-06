@@ -77,7 +77,7 @@ if (str('scenario', 'progression') === 'ttk') {
   const monBaseId = str('mon', reg.get('monsters')[0]!.id);
   const rarity = str('rarity', 'normal') as 'normal' | 'magic' | 'rare' | 'unique';
   const mon = generateMonster(reg.get('monsters'), reg.get('monster-gear'), reg.get('monster-affixes'),
-    { baseId: monBaseId, depth: Math.max(0, save.level - 1), mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity, monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques') },
+    { baseId: monBaseId, depth: Math.max(0, save.level - 1), mderive: reg.get('monster-derive'), itemAffixes: reg.get('monster-item-affixes'), rarities: reg.get('rarities'), rarity, monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques') },
     createRng(1));
   const t = Date.now();
   const s = microFightStats(reg, { save, monsters: [mon] }, num('runs', 30), num('seed', 1));
