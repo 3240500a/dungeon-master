@@ -9,7 +9,7 @@ import { ConfigRegistry, newCharacterSave } from '@dm/shared';
 import { hashPassword, verifyPassword } from './auth/password.js';
 import {
   createUser, getUserByName, createSession, deleteSession, getSession,
-  listCharacters, getCharacter, putCharacter, deleteCharacter, countCharacters,
+  listCharacters, listAllCharacters, getCharacter, putCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, setPoseStore, deletePoseStore, clearAllRuns,
 } from './db/db.js';
@@ -140,6 +140,18 @@ app.delete('/api/dev/pose/:key', (req, res) => {
   if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });
   deletePoseStore(req.params.key);
   res.json({ ok: true, deleted: req.params.key });
+});
+
+// ── Dev: загрузка РЕАЛЬНЫХ сейвов в калькулятор/сим баланса (без auth, только не в проде) ──
+app.get('/api/dev/characters', (_req, res) => {
+  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
+  res.json({ characters: listAllCharacters() });
+});
+app.get('/api/dev/characters/:charId', (req, res) => {
+  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
+  const ch = getCharacter(req.params.charId);
+  if (!ch) return res.status(404).json({ error: 'Персонаж не найден' });
+  res.json({ save: ch.data });
 });
 
 // ── Хелперы ────────────────────────────────────────────────────────────────────

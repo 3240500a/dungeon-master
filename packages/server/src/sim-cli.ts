@@ -1,4 +1,5 @@
-import { ConfigRegistry, runSim, runSessionSim, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type RunReport } from '@dm/shared';
+import { ConfigRegistry, runSim, runSessionSim, microFightStats, generateMonster, createRng, newBotSave, DEFAULT_BUILD, type ScenarioKind, type SimSettings, type RunReport, type SaveState } from '@dm/shared';
+import { getCharacter } from './db/db.js';
 
 /**
  * Безголовый запуск симулятора баланса: `npm run sim -- --scenario=progression ...`.
@@ -39,6 +40,34 @@ if (str('scenario', 'progression') === 'run') {
     },
   });
   printRunReport(rep, Date.now() - t);
+  process.exit(0);
+}
+
+// TTK реального билда на настоящем GameSession. `--scenario=ttk --char=<id> --mon=<baseId>`.
+// Без --char строит бот-сейв уровня --level. Отвечает на «делает ли мой билд 5-6 ударов на моба».
+if (str('scenario', 'progression') === 'ttk') {
+  const charId = str('char', '');
+  let save: SaveState;
+  if (charId) {
+    const ch = getCharacter(charId);
+    if (!ch) { console.error(`Персонаж ${charId} не найден в БД`); process.exit(1); }
+    save = ch.data;
+  } else {
+    save = newBotSave(reg, classId);
+    save.level = num('level', 30);
+  }
+  const monBaseId = str('mon', reg.get('monsters')[0]!.id);
+  const rarity = str('rarity', 'normal') as 'normal' | 'magic' | 'rare' | 'unique';
+  const mon = generateMonster(reg.get('monsters'), reg.get('monster-gear'), reg.get('monster-affixes'),
+    { baseId: monBaseId, depth: Math.max(0, save.level - 1), mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity, monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques'), randomChampion: false },
+    createRng(1));
+  const t = Date.now();
+  const s = microFightStats(reg, { save, monsters: [mon] }, num('runs', 30), num('seed', 1));
+  const dp = (x: number) => x.toFixed(1);
+  console.log(`\n=== TTK · ${save.name} (ур.${save.level} ${save.classId}) vs ${mon.name} · ${rarity} (${Date.now() - t}ms) ===`);
+  console.log(`Ударов до смерти: ${dp(s.hitsToKill.mean)}  (p10 ${dp(s.hitsToKill.p10)} … p90 ${dp(s.hitsToKill.p90)})`);
+  console.log(`TTK, сек:         ${dp(s.ttkSec.mean)}  (p10 ${dp(s.ttkSec.p10)} … p90 ${dp(s.ttkSec.p90)})`);
+  console.log(`Убил / погиб:     ${Math.round(s.killRate * 100)}% / ${Math.round(s.deathRate * 100)}%   · исх.DPS ${Math.round(s.dpsOutMean)}`);
   process.exit(0);
 }
 

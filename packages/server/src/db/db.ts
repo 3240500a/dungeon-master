@@ -105,6 +105,7 @@ const upsertCharStmt = db.prepare(
 );
 const charStmt = db.prepare('SELECT userId, data FROM characters WHERE charId = ?');
 const charsByUserStmt = db.prepare('SELECT data FROM characters WHERE userId = ? ORDER BY updatedAt DESC');
+const allCharsStmt = db.prepare('SELECT data FROM characters ORDER BY updatedAt DESC');
 const deleteCharStmt = db.prepare('DELETE FROM characters WHERE charId = ? AND userId = ?');
 const countCharsStmt = db.prepare('SELECT COUNT(*) AS n FROM characters WHERE userId = ?');
 
@@ -121,6 +122,13 @@ export function getCharacter(charId: string): CharacterRow | null {
 export function listCharacters(userId: string): CharacterSummary[] {
   const rows = charsByUserStmt.all(userId) as { data: string }[];
   return rows.map((r) => {
+    const s = JSON.parse(r.data) as SaveState;
+    return { charId: s.charId, name: s.name, classId: s.classId, level: s.level };
+  });
+}
+/** ВСЕ персонажи всех пользователей (только dev-инструменты баланса: загрузка реального билда в калькулятор/сим). */
+export function listAllCharacters(): CharacterSummary[] {
+  return (allCharsStmt.all() as { data: string }[]).map((r) => {
     const s = JSON.parse(r.data) as SaveState;
     return { charId: s.charId, name: s.name, classId: s.classId, level: s.level };
   });

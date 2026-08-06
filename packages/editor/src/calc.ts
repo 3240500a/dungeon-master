@@ -27,6 +27,11 @@ let createBaseId = '';
 let rollSeed = 100;
 // Кэш последнего прогона реального боя (движок) + сигнатура билда/монстра, на котором считали.
 let ttkEngine: { sig: string; stats: MicroFightStats } | null = null;
+// Загрузка РЕАЛЬНОГО сейва (dev-роут /api/dev/characters). null = синтетический бот-сейв.
+let loadedSave: SaveState | null = null;
+let loadToken = 0;
+let charList: { charId: string; name: string; classId: string; level: number }[] | null = null;
+let charListLoading = false;
 // Персистентный мост + инстанс стат-панели (пересобираются при смене класса/уровня).
 let harness: App | null = null;
 let hkey = '';
@@ -47,6 +52,37 @@ function freshSave(reg: ConfigRegistry, clsId: string, lvl: number): SaveState {
   s.unspentSkillPoints = bal.skillPointsPerLevel * n;
   s.unspentMasteryPoints = bal.masteryPointsPerLevel * n;
   return s;
+}
+
+/** Асинхронно тянет список реальных персонажей (dev-роут) и перерисовывает калькулятор. */
+function loadCharList(page: HTMLElement, data: Record<string, unknown>): void {
+  if (charList !== null || charListLoading) return;
+  charListLoading = true;
+  fetch('/api/dev/characters')
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+    .then((j: { characters?: NonNullable<typeof charList> }) => { charList = j.characters ?? []; })
+    .catch(() => { charList = []; }) // нет доступа/роута (прод) — просто пусто
+    .finally(() => { charListLoading = false; renderCalcPage(page, data); });
+}
+
+/** Дропдаун загрузки реального сейва: '' = бот-сейв; иначе тянет /api/dev/characters/:id в билд. */
+function charLoader(page: HTMLElement, data: Record<string, unknown>): HTMLElement {
+  const sel = document.createElement('select'); sel.style.cssText = INP + ';min-width:210px';
+  const opt = (v: string, t: string): void => { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === (loadedSave?.charId ?? '')) o.selected = true; sel.appendChild(o); };
+  opt('', '— бот-сейв (синтетика) —');
+  if (charList === null) { opt('__wait', charListLoading ? 'загрузка…' : 'загрузка…'); loadCharList(page, data); }
+  else if (charList.length === 0) opt('__empty', 'нет сохранённых персонажей');
+  else for (const c of charList) opt(c.charId, `${c.name} · ур.${c.level} ${c.classId}`);
+  sel.addEventListener('change', () => {
+    const v = sel.value;
+    if (v === '__wait' || v === '__empty') { renderCalcPage(page, data); return; }
+    if (!v) { loadedSave = null; harness = null; renderCalcPage(page, data); return; }
+    fetch(`/api/dev/characters/${encodeURIComponent(v)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j: { save: SaveState }) => { loadedSave = j.save; loadToken++; harness = null; ttkEngine = null; renderCalcPage(page, data); })
+      .catch(() => { /* не удалось — оставляем текущий билд */ });
+  });
+  return sel;
 }
 
 export function renderCalcPage(page: HTMLElement, data: Record<string, unknown>): void {
@@ -71,15 +107,17 @@ function scheduleRender(page: HTMLElement, data: Record<string, unknown>): void 
 function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void {
   page.innerHTML = '';
   const reg = regFromData(data);
+  // Загружен реальный сейв → шапка (класс/уровень) отражает его; ручная правка класса/уровня сбросит загрузку.
+  if (loadedSave) { classId = loadedSave.classId; level = loadedSave.level; }
   const classes = reg.get('classes');
   if (!classId || !classes.some((c) => c.id === classId)) classId = classes[0]?.id ?? '';
   const cls = classes.find((c) => c.id === classId);
   if (!cls) { page.appendChild(h('div', 'color:#9aa', 'Нет классов в конфиге.')); return; }
 
-  // Пересобираем мост/панели только при смене класса/уровня — иначе панели теряют своё состояние.
-  const key = `${classId}|${level}`;
+  // Пересобираем мост/панели только при смене класса/уровня/загрузки — иначе панели теряют своё состояние.
+  const key = loadedSave ? `char:${loadToken}` : `${classId}|${level}`;
   if (key !== hkey || !harness) {
-    const save = freshSave(reg, classId, level);
+    const save = loadedSave ? structuredClone(loadedSave) : freshSave(reg, classId, level);
     // Команды панелей рисуют ОТЛОЖЕННО (микротаск, коалесцированно): пакет команд (OK атрибутов) должен
     // отработать целиком до перерисовки, иначе панель ловит промежуточный «стейдж» (двойные атрибуты).
     harness = makeHarness(data, save, () => scheduleRender(page, data));
@@ -102,10 +140,10 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
   const head = h('div', 'display:flex;gap:10px;align-items:flex-end');
   const classSel = document.createElement('select'); classSel.style.cssText = INP;
   for (const c of classes) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; if (c.id === classId) o.selected = true; classSel.appendChild(o); }
-  classSel.addEventListener('change', () => { classId = classSel.value; harness = null; renderCalcPage(page, data); });
+  classSel.addEventListener('change', () => { classId = classSel.value; loadedSave = null; harness = null; renderCalcPage(page, data); });
   const lvlInp = document.createElement('input'); lvlInp.type = 'number'; lvlInp.min = '1'; lvlInp.max = '99'; lvlInp.value = String(level); lvlInp.style.cssText = INP + ';width:64px';
-  lvlInp.addEventListener('change', () => { level = Math.max(1, Math.min(99, Number(lvlInp.value) || 1)); harness = null; renderCalcPage(page, data); });
-  head.append(field('Класс', classSel), field('Уровень', lvlInp));
+  lvlInp.addEventListener('change', () => { level = Math.max(1, Math.min(99, Number(lvlInp.value) || 1)); loadedSave = null; harness = null; renderCalcPage(page, data); });
+  head.append(field('Класс', classSel), field('Уровень', lvlInp), field('Загрузить перса (реальный сейв)', charLoader(page, data)));
   left.appendChild(head);
 
   // ── Вкладки СЛЕВА: экипировка / мастерство / скиллы (статистика справа НЕ переключается) ──
