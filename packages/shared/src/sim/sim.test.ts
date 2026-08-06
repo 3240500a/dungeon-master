@@ -79,7 +79,10 @@ describe('sim: runSim', () => {
   });
 
   it('progression — кривая часы→уровень монотонна и в пределах цели', () => {
-    const out = runSim(reg, settings({ scenario: 'progression', targetLevel: 6, maxHours: 60 }));
+    // maxHours с запасом: бот-эконом доходит до L6 при текущем балансе HP мобов
+    // (monster-derive.hpPerLevel) за ~78 сим-часов; лимит держим выше с запасом,
+    // чтобы инвариант «прогрессия достигает цели» не был хрупким к тюну HP.
+    const out = runSim(reg, settings({ scenario: 'progression', targetLevel: 6, maxHours: 120 }));
     const pr = out.progression!;
     expect(pr.curve.length).toBeGreaterThanOrEqual(1);
     // Может слегка перескочить цель (один этаж даёт XP на несколько уровней сразу).
