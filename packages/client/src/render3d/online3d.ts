@@ -315,7 +315,7 @@ export async function startOnline3d(): Promise<void> {
       const d = makeHumanoidDoll(pw, { x: m.x, z: m.y, weapon: mc.weapon, gaitId: monsterCharId(faction), gaitFallback: 'warrior', gender: mc.gender, build: mc.build, colors: { body: col, limb: 0x5a5a64, head: col } });
       if (monKinematic) d.setPhysicsMode?.('kinematic');   // спавн при активном debug-режиме → сразу кинематический
       actorsGroup.add(d.group);
-      const champion = m.def.rarity === 'champion', special = champion || m.def.affixes.length > 0;
+      const champion = m.def.rarity === 'unique', special = champion || m.def.affixes.length > 0;
       const hp = makeNameplate(m.def.name, champion, special); actorsGroup.add(hp.spr);
       monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp, def: m.def });
     }

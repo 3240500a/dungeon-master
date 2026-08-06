@@ -101,7 +101,7 @@ const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
 const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Прогрессия и мощь', keys: ['xpTable', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel', 'passiveRankCostMult', 'power'] },
   { title: 'Бой и физика', keys: ['melee', 'weaponAttrScaling', 'twoHandedPowerMult', 'twoHandReqMult', 'maxTotalRequirement', 'affinityDamageBonus', 'moveSpeedBase', 'collision', 'weight'] },
-  { title: 'Монстры', keys: ['monsterXpGrowth', 'championXpMult', 'monsterScaling'] },
+  { title: 'Монстры', keys: ['monsterXpGrowth', 'uniqueXpMult', 'monsterScaling'] },
   { title: 'Лут', keys: ['loot', 'autoPickup'] },
   { title: 'Экономика', keys: ['forgePrices', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint'] },
   { title: 'Инвентарь и сундук', keys: ['inventory', 'stash'] },

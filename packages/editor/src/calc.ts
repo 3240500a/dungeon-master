@@ -242,7 +242,7 @@ function monsterTtk(page: HTMLElement, data: Record<string, unknown>, reg: Confi
   }
   box.appendChild(monRow);
 
-  const mon = generateMonster(mons, reg.get('monster-gear'), reg.get('monster-affixes'), { baseId: monBaseId, depth: level - 1, mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity: monRarity, monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques'), randomChampion: false }, createRng(1));
+  const mon = generateMonster(mons, reg.get('monster-gear'), reg.get('monster-affixes'), { baseId: monBaseId, depth: level - 1, mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity: monRarity, monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques') }, createRng(1));
   // Митигация по типу урона атаки: физ — броня, стихии — сопротивление монстра (как в бою).
   const resById: Record<DamageType, number> = { physical: 0, fire: mon.resFire, cold: mon.resCold, lightning: mon.resLightning, poison: mon.resPoison };
   const atkType: DamageType = selSkill ? selSkill.sim.element : (m.weapons[0]?.damageType ?? 'physical');

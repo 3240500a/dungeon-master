@@ -97,7 +97,7 @@
   "masteryPointsPerLevel": 2,
   "moveSpeedBase": 80,
   "monsterXpGrowth": 0.2,
-  "championXpMult": 3,
+  "uniqueXpMult": 3,
   "monsterScaling": {
     "hpPerLevel": 0.8,
     "damagePerLevel": 0.3,
@@ -147,7 +147,7 @@
   "collision": {
     "enabled": true,
     "iterations": 2,
-    "championWeightMult": 2
+    "uniqueWeightMult": 2
   },
   "weight": {
     "base": 100,

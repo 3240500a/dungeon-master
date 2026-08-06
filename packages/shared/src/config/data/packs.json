@@ -5,8 +5,7 @@
       { "role": "scout", "min": 1, "max": 2 },
       { "role": "warrior", "min": 1, "max": 2 },
       { "role": "thrower", "min": 0, "max": 1 }
-    ],
-    "champion": false
+    ]
   },
   {
     "roomType": "large",
@@ -16,8 +15,7 @@
       { "role": "shield-guard", "min": 0, "max": 1 },
       { "role": "archer", "min": 1, "max": 1 },
       { "role": "mage", "min": 0, "max": 1 }
-    ],
-    "champion": false
+    ]
   },
   {
     "roomType": "treasure",
@@ -25,8 +23,7 @@
       { "role": "shield-guard", "min": 1, "max": 1 },
       { "role": "warrior", "min": 1, "max": 2 },
       { "role": "archer", "min": 0, "max": 1 }
-    ],
-    "champion": false
+    ]
   },
   {
     "roomType": "boss",
@@ -35,7 +32,6 @@
       { "role": "shield-guard", "min": 1, "max": 2 },
       { "role": "archer", "min": 1, "max": 1 },
       { "role": "shaman", "min": 0, "max": 1 }
-    ],
-    "champion": true
+    ]
   }
 ]

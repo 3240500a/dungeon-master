@@ -79,7 +79,7 @@ function applyFeatures(L: DungeonLayout, f: FloorFeatures | undefined, rng: Rng)
   if (f.stash && ec) L.decor.push({ ...cellToWorld(ec.cx + 1, ec.cy), kind: 'stash' });
   if (f.shop && ec) L.decor.push({ ...cellToWorld(ec.cx - 1, ec.cy), kind: 'shop' });
   if (f.bossRoom) { const br = roomAt(L, L.stairsDown); if (br) br.content = 'boss'; }
-  tagRooms(L, 'champion', f.championRooms, rng);
+  tagRooms(L, 'unique', f.uniqueRooms, rng);
   for (const r of tagRooms(L, 'treasure', f.treasureRooms, rng)) {
     const c = roomCenter(r);
     L.decor.push({ ...cellToWorld(c.cx, c.cy), kind: 'chest' });

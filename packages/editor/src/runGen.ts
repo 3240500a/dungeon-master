@@ -242,9 +242,9 @@ export function drawFloor(canvas: HTMLCanvasElement, L: DungeonLayout, monsters:
   };
   // монстры
   for (const m of monsters) {
-    const champ = m.def.rarity === 'champion';
-    dotWorld(m.x, m.y, champ ? '#ffcf4a' : factionColor, champ ? cell * 0.7 : cell * 0.5);
-    if (champ) { ctx.strokeStyle = '#101017'; ctx.lineWidth = 1; ctx.stroke(); }
+    const uniq = m.def.rarity === 'unique';
+    dotWorld(m.x, m.y, uniq ? '#ffcf4a' : factionColor, uniq ? cell * 0.7 : cell * 0.5);
+    if (uniq) { ctx.strokeStyle = '#101017'; ctx.lineWidth = 1; ctx.stroke(); }
   }
   // декор: портал/сундук/лавка/добыча
   for (const d of L.decor) {
@@ -274,16 +274,16 @@ function annotationAt(cx: number, cy: number, L: DungeonLayout, monByCell: Map<s
   const ms = monByCell.get(`${cx},${cy}`);
   if (ms && ms.length) {
     const m = ms[0]!.def;
-    const champ = m.rarity === 'champion' ? ' ⭐ЧЕМПИОН' : '';
+    const uniq = m.rarity === 'unique' ? ' ⭐УНИК' : '';
     const aff = m.affixes.length ? ` · ${m.affixes.join(', ')}` : '';
     const extra = ms.length > 1 ? ` (+${ms.length - 1})` : '';
-    return `${m.name} ур.${m.level}${champ}${extra}\nHP ${Math.round(m.hp)} · урон ${m.minDamage}–${m.maxDamage} (${m.damageType})\nфракция: ${FACTION_LABEL[m.faction] ?? m.faction}${aff}`;
+    return `${m.name} ур.${m.level}${uniq}${extra}\nHP ${Math.round(m.hp)} · урон ${m.minDamage}–${m.maxDamage} (${m.damageType})\nфракция: ${FACTION_LABEL[m.faction] ?? m.faction}${aff}`;
   }
   const room = L.rooms.find((r) => cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h);
   const cellVal = L.grid[cy]?.[cx];
   const cellName = cellVal === Cell.Wall ? 'Стена' : cellVal === Cell.Door ? 'Дверь' : cellVal === Cell.Pillar ? 'Колонна' : 'Пол';
   if (room) {
-    const content = room.content === 'champion' ? ' · комната чемпионов' : room.content === 'boss' ? ' · босс-комната' : room.content === 'treasure' ? ' · сокровищница' : '';
+    const content = room.content === 'unique' ? ' · комната уников' : room.content === 'boss' ? ' · босс-комната' : room.content === 'treasure' ? ' · сокровищница' : '';
     return `${cellName} · комната: ${room.type} (${room.w}×${room.h})${content}`;
   }
   return cellName;
@@ -417,7 +417,7 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
     const monByCell = new Map<string, MonsterSpawn[]>();
     for (const m of monsters) { const k = `${Math.floor(m.x / TILE)},${Math.floor(m.y / TILE)}`; (monByCell.get(k) ?? monByCell.set(k, []).get(k)!).push(m); }
     const avgLvl = monsters.length ? Math.round(monsters.reduce((s, m) => s + m.def.level, 0) / monsters.length) : 0;
-    const champs = monsters.filter((m) => m.def.rarity === 'champion').length;
+    const uniques = monsters.filter((m) => m.def.rarity === 'unique').length;
 
     let floors = 0;
     for (const rrow of L.grid) for (const c of rrow) if (c === Cell.Floor) floors++;
@@ -442,13 +442,13 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
       `<span>Комнат: ${L.rooms.length}</span>` +
       `<span>Двери: ${L.doors.length}${node.floorSpec.locked ? ' 🔒' : ''}</span>` +
       `<span>Выходов: <b>${L.exits.length}</b></span>` +
-      (isTown ? '<span style="color:#8a5cff">🏚 Город: портал + сундук</span>' : `<span>Монстры: <b>${monsters.length}</b> (ур.~${avgLvl}${champs ? `, чемп. ${champs}` : ''})</span>`) +
+      (isTown ? '<span style="color:#8a5cff">🏚 Город: портал + сундук</span>' : `<span>Монстры: <b>${monsters.length}</b> (ур.~${avgLvl}${uniques ? `, уник. ${uniques}` : ''})</span>`) +
       `<span style="color:#4ade80">Проходим ✓</span>`;
     preview.appendChild(info);
     const f = node.floorSpec.features;
     const featList = [
       f.portal && '🌀 портал', f.stash && '📦 сундук', f.shop && '🛒 лавка', f.bossRoom && '☠ босс-комната',
-      f.championRooms ? `★ чемпионы ×${f.championRooms}` : '', f.treasureRooms ? `◆ сокровищницы ×${f.treasureRooms}` : '',
+      f.uniqueRooms ? `★ уники ×${f.uniqueRooms}` : '', f.treasureRooms ? `◆ сокровищницы ×${f.treasureRooms}` : '',
     ].filter(Boolean);
     const meta = document.createElement('div');
     meta.style.cssText = 'font-size:12px;color:#8a8a9a;margin-bottom:8px';

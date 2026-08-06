@@ -112,7 +112,7 @@ describe('generateRunPlan — структура забега', () => {
     expect(boss.doors.length).toBeGreaterThan(0); // bossRoom → замок
     const vault = generateFloor(resolveFloorSpec(biome, floors.find((f) => f.id === 'crypt-vault')!, 6, 12, [], { exitCount: 1 }));
     expect(vault.rooms.some((rm) => rm.content === 'treasure')).toBe(true);
-    expect(vault.rooms.some((rm) => rm.content === 'champion')).toBe(true); // страж
+    expect(vault.rooms.some((rm) => rm.content === 'unique')).toBe(true); // страж
     expect(vault.decor.some((d) => d.kind === 'chest')).toBe(true);
   });
 
@@ -126,7 +126,7 @@ describe('generateRunPlan — структура забега', () => {
     // Босс-комната (content:'boss') форсирует чемпионов.
     const inBoss = mons.filter((m) => { const room = bossFloor.rooms.find((rm) => rm.content === 'boss'); if (!room) return false; const cx = Math.floor(m.x / 32), cy = Math.floor(m.y / 32); return cx >= room.x && cx < room.x + room.w && cy >= room.y && cy < room.y + room.h; });
     expect(inBoss.length).toBeGreaterThan(0);
-    expect(inBoss.every((m) => m.def.rarity === 'champion')).toBe(true);
+    expect(inBoss.every((m) => m.def.rarity === 'unique')).toBe(true);
     // Монстры берутся из пула биома (по ролям pack.entries).
     expect(mons.every((m) => biome.monsterPool.includes(m.def.id))).toBe(true);
     // packDensity ×2 → примерно вдвое больше монстров.

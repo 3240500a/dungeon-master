@@ -33,12 +33,12 @@ export class Monster {
   constructor(scene: Phaser.Scene, x: number, y: number, def: ScaledMonster) {
     this.def = def;
     this.hp = def.hp;
-    this.special = def.rarity === 'champion' || def.affixes.length > 0;
-    this.nameColor = def.rarity === 'champion' ? '#dca94b' : this.special ? '#6f9bcf' : '#c4bca8';
+    this.special = def.rarity === 'unique' || def.affixes.length > 0;
+    this.nameColor = def.rarity === 'unique' ? '#dca94b' : this.special ? '#6f9bcf' : '#c4bca8';
     this.facing = Math.random() * Math.PI * 2;
     const tex = scene.textures.exists(def.sprite) ? def.sprite : 'mob-skeleton';
     this.sprite = scene.add.sprite(x, y, tex).setDepth(4);
-    if (def.rarity === 'champion') {
+    if (def.rarity === 'unique') {
       this.sprite.setScale(1.3);
       this.sprite.setTint(0xffe27a);
     }
@@ -93,7 +93,7 @@ export class Monster {
     this.sprite.scene.time.delayedCall(60, () => {
       if (this.sprite.active) {
         this.sprite.clearTint();
-        if (this.def.rarity === 'champion') this.sprite.setTint(0xffe27a);
+        if (this.def.rarity === 'unique') this.sprite.setTint(0xffe27a);
       }
     });
   }
@@ -126,13 +126,13 @@ export class Monster {
     const half = this.sprite.displayHeight / 2;
     const barY = this.sprite.y - half - 8;
     const nameY = barY - 9;
-    const w = this.def.rarity === 'champion' ? 34 : 26;
+    const w = this.def.rarity === 'unique' ? 34 : 26;
     const frac = Phaser.Math.Clamp(this.hp / this.def.hp, 0, 1);
 
     if (!this.nameText) {
       this.nameText = scene.add
         .text(0, 0, this.def.name, {
-          fontSize: this.def.rarity === 'champion' ? '11px' : '10px',
+          fontSize: this.def.rarity === 'unique' ? '11px' : '10px',
           color: this.nameColor,
           fontStyle: this.special ? 'bold' : 'normal',
         })

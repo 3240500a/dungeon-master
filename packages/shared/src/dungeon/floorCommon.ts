@@ -21,7 +21,7 @@ export interface Room {
   /** Форма интерьера (rect по умолчанию). */
   shape?: RoomShape;
   /** Спец-содержимое комнаты (для спавна): чемпионы / босс / сокровищница. */
-  content?: 'champion' | 'boss' | 'treasure';
+  content?: 'unique' | 'boss' | 'treasure';
 }
 
 export interface DecorObject {

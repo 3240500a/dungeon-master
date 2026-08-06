@@ -46,7 +46,7 @@ describe('коллизии сущностей в сессии', () => {
 
   it('выключенные коллизии (balance.collision.enabled=false) не расталкивают', () => {
     const r = reg();
-    r.reload({ balance: { ...r.get('balance'), collision: { enabled: false, iterations: 2, championWeightMult: 2 } } });
+    r.reload({ balance: { ...r.get('balance'), collision: { enabled: false, iterations: 2, uniqueWeightMult: 2 } } });
     const s = new GameSession(r, 7, 'normal');
     s.addPlayer('p1', newBotSave(r, 'warrior'));
     const grid = open(30, 20);

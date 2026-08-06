@@ -833,7 +833,7 @@ export class GameSession {
 
   /** Вес (масса) монстра для расталкивания: базовый вес × множитель чемпиона. */
   private monsterMass(m: MonsterEntity): number {
-    const mult = m.def.rarity === 'champion' ? this.cfg.get('balance').collision.championWeightMult : 1;
+    const mult = m.def.rarity === 'unique' ? this.cfg.get('balance').collision.uniqueWeightMult : 1;
     return m.def.weight * mult;
   }
 

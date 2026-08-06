@@ -7,7 +7,7 @@ import type { RunNodeType } from '@dm/shared';
 export const RUN_NODE_LABEL: Record<RunNodeType, string> = {
   start: 'Вход',
   combat: 'Бой',
-  elite: 'Чемпионы',
+  elite: 'Элита',
   boss: 'Босс',
   treasure: 'Сокровищница',
   event: 'Событие',

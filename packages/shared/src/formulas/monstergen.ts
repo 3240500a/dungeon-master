@@ -18,7 +18,7 @@ type ItemAffixes = ConfigShapes['affixes'];
 type Rarities = ConfigShapes['rarities'];
 type MonsterRarityCfg = ConfigShapes['monster-rarity'];
 type MonsterUniques = ConfigShapes['monster-uniques'];
-/** Редкость гира монстра как у предметов (champion — внутр. случайный элит-флаг игры, отдельно). */
+/** Редкость гира монстра как у предметов: 4 редкости. unique — топ (элит-статы + уник-имя + гир на всех слотах). */
 type GearRarity = 'normal' | 'magic' | 'rare' | 'unique';
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type MagicSubtypes = ConfigShapes['magic-subtypes'];
@@ -145,15 +145,13 @@ export function generateMonster(
   monsterGear: MonsterGear,
   affixesPool: Affixes,
   opts: {
-    baseId?: string; depth: number; championXpMult?: number; forceChampion?: boolean; mderive?: MonsterDeriveScaling;
-    /** НОВОЕ (редкость через гир): item-афиксы + редкости. Переданы → редкость катает гир-афиксы (иначе — старые monster-affixes). */
+    baseId?: string; depth: number; uniqueXpMult?: number; mderive?: MonsterDeriveScaling;
+    /** Редкость монстра = редкость его гира (item-афиксы + редкости). 4 редкости: normal/magic/rare/unique. */
     itemAffixes?: ItemAffixes; rarities?: Rarities; rarity?: GearRarity;
     /** Сколько слотов гира прокачивать по редкости+уровню (monster-rarity). Нет → все надетые. */
     monsterRarity?: MonsterRarityCfg;
     /** Пул имён уникальных монстров (для rarity:'unique'). */
     monsterUniques?: MonsterUniques;
-    /** Разрешить СЛУЧАЙНОГО чемпиона (8%). Дефолт true (игра). Редактор шлёт false — редкость там ручная. */
-    randomChampion?: boolean;
   },
   rng: Rng,
 ): ScaledMonster {
@@ -166,26 +164,16 @@ export function generateMonster(
 
   const m: ScaledMonster = { ...def, level, rarity: 'normal', affixes: [], damage: 0 };
 
-  // rng-бросок делаем ВСЕГДА (стабильный поток), применяем по флагу randomChampion (редактор — false).
-  const rollChamp = rng.chance(0.08);
-  const champion = (opts.randomChampion !== false && rollChamp) || opts.forceChampion === true;
-  if (champion) {
-    m.rarity = 'champion';
-    eliteBoost(m, opts.championXpMult ?? 3);
-    m.name = `Чемпион: ${m.name}`;
-  }
-
   if (opts.itemAffixes && opts.rarities) {
-    // НОВОЕ: редкость монстра = редкость его гира. По редкости+уровню N СЛОТОВ становятся magic/rare
+    // Редкость монстра = редкость его гира (4 редкости). По редкости+уровню N СЛОТОВ становятся magic/rare
     // (item-движок катает афиксы на каждом по его цели: оружие→оружейные, броня/шлем→броневые, щит→блок),
     // все афиксы маппятся в статы. Оружие «прокачиваем» первым (урон), остальное — по rng-порядку.
     const gearRar: GearRarity = opts.rarity ?? 'normal';
-    // unique — топ-редкость (элит-статы + уник-имя, гир катается как rare на ВСЕХ слотах).
-    if (gearRar === 'unique' && !champion) eliteBoost(m, opts.championXpMult ?? 3);
-    // Редкость для количества слотов (unique → все) и для показа предмета; champion+normal → magic.
-    const affRar: GearRarity = gearRar === 'unique' ? 'unique' : (champion && gearRar === 'normal' ? 'magic' : gearRar);
+    // unique — топ-редкость: элит-статы (×hp/×dmg/реген) + уник-имя, гир катается на ВСЕХ слотах.
+    if (gearRar === 'unique') eliteBoost(m, opts.uniqueXpMult ?? 3);
+    const affRar: GearRarity = gearRar;
     const slotRar: GearRarity = affRar === 'unique' ? 'rare' : affRar; // у unique-предметов слоты игрока=0 → монстру берём rare
-    if (!champion) m.rarity = gearRar; // normal/magic/rare/unique
+    m.rarity = gearRar; // normal/magic/rare/unique
 
     // Надетые слоты (оружие всегда) + цель афиксов + базовые статы каждого (для тултипа).
     const pieces: { slot: MonsterGearRoll['slot']; name: string; target: AffixTarget; base: MonsterGearRoll['base'] }[] = [
@@ -231,7 +219,7 @@ export function generateMonster(
     m.critChance = Math.round(m.critChance * 1000) / 1000;
   } else {
     // СТАРОЕ (депрекейт): monster-affixes стат-мульты — фолбэк для вызовов без item-афиксов.
-    const affCount = champion ? 2 : rng.chance(0.35) ? 1 : 0;
+    const affCount = rng.chance(0.35) ? 1 : 0;
     const pool = affixesPool.filter((a) => (a as { enabled?: boolean }).enabled !== false); // выключенные аффиксы монстров не навешиваются
     for (let i = 0; i < affCount && pool.length > 0; i++) {
       const [aff] = pool.splice(rng.int(0, pool.length - 1), 1);

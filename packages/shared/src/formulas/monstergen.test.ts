@@ -37,20 +37,19 @@ describe('generateMonster (деривация из атрибутов+гира)'
     expect(a).toEqual(b);
   });
 
-  it('чемпион крупнее и с регеном', () => {
-    // сид, дающий чемпиона через forceChampion — сравним с обычным той же заготовки.
-    const normal = generateMonster(monsters, gear, affixes, { baseId: 'zombie', depth: 5 }, createRng(2));
-    const champ = generateMonster(monsters, gear, affixes, { baseId: 'zombie', depth: 5, forceChampion: true }, createRng(2));
-    expect(champ.rarity).toBe('champion');
-    expect(champ.hp).toBeGreaterThan(normal.hp);
-    expect(champ.hpRegen).toBeGreaterThan(0);
-    expect(champ.name).toContain('Чемпион');
+  it('unique крупнее обычного и с регеном (элит-статы; чемпионов больше нет)', () => {
+    const full = { itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques') };
+    const normal = generateMonster(monsters, gear, affixes, { baseId: 'zombie', depth: 5, ...full, rarity: 'normal' }, createRng(2));
+    const uniq = generateMonster(monsters, gear, affixes, { baseId: 'zombie', depth: 5, ...full, rarity: 'unique' }, createRng(2));
+    expect(uniq.rarity).toBe('unique');
+    expect(uniq.hp).toBeGreaterThan(normal.hp);
+    expect(uniq.hpRegen).toBeGreaterThan(0);
   });
 
-  it('monster-affixes: выключенные аффиксы не навешиваются даже на чемпиона', () => {
+  it('monster-affixes: выключенные аффиксы не навешиваются', () => {
     const off = affixes.map((a) => ({ ...a, enabled: false }));
     for (let s = 0; s < 40; s++) {
-      const m = generateMonster(monsters, gear, off, { baseId: 'zombie', depth: 5, forceChampion: true }, createRng(s));
+      const m = generateMonster(monsters, gear, off, { baseId: 'zombie', depth: 5 }, createRng(s));
       expect(m.affixes).toEqual([]);
     }
   });
@@ -99,16 +98,6 @@ describe('generateMonster — редкость через гир-афиксы (i
     expect(diff).toBe(true);
   });
 
-  it('чемпион с rarity=normal всё равно получает гир-афиксы (эффективно magic)', () => {
-    let any = false;
-    for (let s = 0; s < 20 && !any; s++) {
-      const m = genR({ baseId: 'zombie', depth: 20, forceChampion: true, rarity: 'normal' }, s);
-      expect(m.rarity).toBe('champion'); // champion перекрывает поле rarity
-      if (m.affixes.length > 0) any = true;
-    }
-    expect(any).toBe(true);
-  });
-
   it('детерминизм с редкостью', () => {
     const a = genR({ baseId: 'zombie', depth: 15, rarity: 'rare' }, 42);
     const b = genR({ baseId: 'zombie', depth: 15, rarity: 'rare' }, 42);
@@ -119,7 +108,7 @@ describe('generateMonster — редкость через гир-афиксы (i
 const monsterRarity = reg.get('monster-rarity');
 const monsterUniques = reg.get('monster-uniques');
 const genG = (opts: Parameters<typeof generateMonster>[3], seed = 1) =>
-  generateMonster(monsters, gear, affixes, { itemAffixes, rarities, monsterRarity, monsterUniques, randomChampion: false, ...opts }, createRng(seed));
+  generateMonster(monsters, gear, affixes, { itemAffixes, rarities, monsterRarity, monsterUniques, ...opts }, createRng(seed));
 const multiSlot = monsters.find((m) => m.armor && m.offhand) ?? monsters.find((m) => m.armor) ?? monsters[0]!;
 
 describe('generateMonster — редкость по слотам гира (per-piece)', () => {
@@ -145,8 +134,8 @@ describe('generateMonster — редкость по слотам гира (per-p
     const b = monsters.find((m) => m.id === 'zombie') ?? monsters[0]!;
     const fat = { ...b, derive: { ...reg.get('monster-derive'), hpPerVit: 100 } }; // жирный HP за Выносливость
     const monsters2 = monsters.map((m) => (m.id === b.id ? fat : m));
-    const normal = generateMonster(monsters, gear, affixes, { baseId: b.id, depth: 5, randomChampion: false }, createRng(1));
-    const over = generateMonster(monsters2, gear, affixes, { baseId: b.id, depth: 5, randomChampion: false }, createRng(1));
+    const normal = generateMonster(monsters, gear, affixes, { baseId: b.id, depth: 5 }, createRng(1));
+    const over = generateMonster(monsters2, gear, affixes, { baseId: b.id, depth: 5 }, createRng(1));
     expect(over.hp).toBeGreaterThan(normal.hp * 2); // hpPerVit 100 ≫ дефолтный → HP сильно больше
   });
 

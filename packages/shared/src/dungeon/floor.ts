@@ -44,7 +44,7 @@ export function spawnPacksEl(
   const diff = diffs.find((d) => d.id === difficultyId) ?? diffs.find((d) => d.id === 'normal') ?? diffs[0]!;
   const balance = reg.get('balance');
   const floorCL = challengeAtFloor(startChallenge(el, diff), diff, depth);
-  const championXpMult = balance.championXpMult;
+  const uniqueXpMult = balance.uniqueXpMult;
 
   // Монстры пула, сгруппированные по РОЛИ (для состава пачки); фолбэк — любой из пула.
   const roleOf = new Map(monsters.map((m) => [m.id, m.role]));
@@ -69,9 +69,9 @@ export function spawnPacksEl(
     if (!spec) continue;
     // Состав по ролям; фолбэк-состав, если entries пуст (устаревший конфиг).
     const entries = spec.entries.length ? spec.entries : [{ role: '', min: 2, max: 4, magicChance: 0.12, rareChance: 0.03 }];
-    // Спец-содержимое комнаты (фичи этажа): чемпионы/босс форсируют чемпиона; босс — сложнее.
+    // Спец-содержимое комнаты (фичи этажа): уник-комнаты и боссы форсируют редкость unique; босс — сложнее.
     const content = room.content;
-    const forceChampion = content === 'champion' || content === 'boss';
+    const forceUnique = content === 'unique' || content === 'boss' || room.type === 'boss';
     const mDepth = room.type === 'boss' || content === 'boss' ? floorCL + 3 : floorCL;
     for (const entry of entries) {
       const count = Math.round(rng.int(entry.min, entry.max) * packDensity);
@@ -85,10 +85,12 @@ export function spawnPacksEl(
         if (layout.grid[cy]?.[cx] !== Cell.Floor) { const fc = firstFloorCell(layout.grid, room); if (!fc) continue; cx = fc.cx; cy = fc.cy; }
         const w = cellToWorld(cx, cy);
         const id = entry.role ? pickByRole(entry.role) : wpick(pool);
-        // Редкость монстра по «галкам роли» (шансы magic/rare пачки): rare проверяется первым, остаток — обычный.
+        // Редкость монстра по «галкам роли» (шансы magic/rare пачки): rare первым, остаток — обычный.
+        // Спец-комнаты (босс/уник) перекрывают → unique (топ-редкость). rng-бросок делаем всегда (стабильный поток).
         const rr = rng.float(0, 1);
-        const rarity: 'normal' | 'magic' | 'rare' = rr < (entry.rareChance ?? 0) ? 'rare' : rr < (entry.rareChance ?? 0) + (entry.magicChance ?? 0) ? 'magic' : 'normal';
-        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, championXpMult, forceChampion, mderive, itemAffixes, rarities, rarity, monsterRarity }, rng);
+        const rolled: 'normal' | 'magic' | 'rare' = rr < (entry.rareChance ?? 0) ? 'rare' : rr < (entry.rareChance ?? 0) + (entry.magicChance ?? 0) ? 'magic' : 'normal';
+        const rarity: 'normal' | 'magic' | 'rare' | 'unique' = forceUnique ? 'unique' : rolled;
+        const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, uniqueXpMult, mderive, itemAffixes, rarities, rarity, monsterRarity }, rng);
         spawns.push({ def, x: w.x, y: w.y });
       }
     }

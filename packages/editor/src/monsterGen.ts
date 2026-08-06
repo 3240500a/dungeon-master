@@ -54,7 +54,7 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const gearName = (id: string): string => (id ? (gear.find((g) => g.id === id)?.name ?? id) : '—');
   const src = (id: string): (typeof monsters)[number] | undefined => monsters.find((m) => m.id === id);
   const rarName = (id: string): string => rarities.find((r) => r.id === id)?.name ?? id;
-  const rarCol = (m: ScaledMonster): string => (m.rarity === 'champion' ? '#e0b040' : rarities.find((r) => r.id === m.rarity)?.color ?? '#c8c8c8');
+  const rarCol = (m: ScaledMonster): string => rarities.find((r) => r.id === m.rarity)?.color ?? '#c8c8c8';
 
   page.appendChild(h('div', 'font-size:15px;font-weight:600;color:#e8e8f0;margin:2px 0 12px', '👹 Генератор мобов (песочница спавна)'));
 
@@ -89,9 +89,9 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const monsterRarity = reg.get('monster-rarity');
   const monsterUniques = reg.get('monster-uniques');
   const rollOne = (s: number): ScaledMonster =>
-    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, mderive, itemAffixes, rarities, rarity, monsterRarity, monsterUniques, randomChampion: false }, createRng(s));
+    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, mderive, itemAffixes, rarities, rarity, monsterRarity, monsterUniques }, createRng(s));
   const SLOT_RU: Record<string, string> = { weapon: 'Оружие', armor: 'Броня', helm: 'Шлем', shield: 'Щит' };
-  const rarColOf = (r: string): string => (r === 'champion' ? '#e0b040' : rarities.find((x) => x.id === r)?.color ?? '#c8c8c8');
+  const rarColOf = (r: string): string => rarities.find((x) => x.id === r)?.color ?? '#c8c8c8';
 
   function row(k: string, v: string): HTMLElement { const r = h('div', 'display:flex;justify-content:space-between;gap:14px;font-size:12px;margin:2px 0'); r.append(h('span', 'color:#8a8a9a', k), h('span', 'color:#eaeaea;text-align:right', v)); return r; }
 
@@ -99,7 +99,7 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
     const col = rarCol(m); const s = src(m.id);
     const box = h('div', `border:1px solid ${col};border-radius:8px;padding:12px 14px;background:#14141c;max-width:440px`);
     box.appendChild(h('div', `color:${col};font-weight:700;font-size:15px`, m.name));
-    box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:1px 0 8px', `${m.rarity === 'champion' ? 'Чемпион' : rarName(m.rarity)} · тир ${s?.tier ?? '—'} · ${m.faction} · роль ${s?.role ?? '—'} · ур.${m.level}`));
+    box.appendChild(h('div', 'color:#8a8a9a;font-size:11px;margin:1px 0 8px', `${rarName(m.rarity)} · тир ${s?.tier ?? '—'} · ${m.faction} · роль ${s?.role ?? '—'} · ур.${m.level}`));
     box.appendChild(row('HP', `${m.hp}${m.hpRegen ? ` (+${m.hpRegen}/с)` : ''}`));
     box.appendChild(row('Урон', `${m.minDamage}–${m.maxDamage} ${DMG_SHORT[m.damageType] ?? m.damageType}${m.physSub ? ` · ${m.physSub}` : ''}`));
     box.appendChild(row('Меткость / Уворот / Армор', `${m.accuracy} / ${m.evade} / ${m.armor}`));

@@ -30,7 +30,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -69,7 +69,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -108,7 +108,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 2,
+      "uniqueRooms": 2,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -150,7 +150,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": true,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -192,7 +192,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 1,
+      "uniqueRooms": 1,
       "treasureRooms": 1
     },
     "packDensity": 1,
@@ -231,7 +231,7 @@
       "stash": true,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -265,7 +265,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -299,7 +299,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 2,
+      "uniqueRooms": 2,
       "treasureRooms": 0
     },
     "packDensity": 1.1,
@@ -333,7 +333,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": true,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -367,7 +367,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 1,
+      "uniqueRooms": 1,
       "treasureRooms": 1
     },
     "packDensity": 1,
@@ -405,7 +405,7 @@
       "stash": true,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -437,7 +437,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -469,7 +469,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 2,
+      "uniqueRooms": 2,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -501,7 +501,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": true,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -533,7 +533,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 1,
+      "uniqueRooms": 1,
       "treasureRooms": 1
     },
     "packDensity": 1,
@@ -571,7 +571,7 @@
       "stash": true,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -610,7 +610,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -649,7 +649,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 2,
+      "uniqueRooms": 2,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -688,7 +688,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": true,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,
@@ -727,7 +727,7 @@
       "stash": false,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 1,
+      "uniqueRooms": 1,
       "treasureRooms": 1
     },
     "packDensity": 1,
@@ -765,7 +765,7 @@
       "stash": true,
       "shop": false,
       "bossRoom": false,
-      "championRooms": 0,
+      "uniqueRooms": 0,
       "treasureRooms": 0
     },
     "packDensity": 1,

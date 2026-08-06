@@ -41,7 +41,7 @@ export const balanceSchema = z.object({
   /** Прирост опыта монстра за уровень: xp = base.xp × (1 + level × growth). */
   monsterXpGrowth: z.number().min(0).default(0.2),
   /** Множитель опыта за чемпионов/уников. */
-  championXpMult: z.number().min(1).default(3),
+  uniqueXpMult: z.number().min(1).default(3),
   /**
    * Прогрессивный рост стат-блока монстра по уровню (множитель роста = глубина).
    * hp/damage — множители (×(1+lvl×k)); остальное — плоская прибавка за уровень.
@@ -117,9 +117,9 @@ export const balanceSchema = z.object({
     .object({
       enabled: z.boolean().default(true),
       iterations: z.number().int().min(1).max(4).default(2),
-      championWeightMult: z.number().min(1).default(2),
+      uniqueWeightMult: z.number().min(1).default(2),
     })
-    .default({ enabled: true, iterations: 2, championWeightMult: 2 }),
+    .default({ enabled: true, iterations: 2, uniqueWeightMult: 2 }),
   /** Вес игрока для расталкивания: база тела + вклад щита по классу (броня/оружие — в их справочниках). */
   weight: z
     .object({
@@ -506,7 +506,7 @@ export const monstersSchema = z.array(
     vision: z.number().default(240),
     visionAngle: z.number().default(100),
     hearing: z.number().default(96),
-    /** Вес (масса) для расталкивания: тяжёлого двигают меньше. Чемпион ×balance.collision.championWeightMult. */
+    /** Вес (масса) для расталкивания: тяжёлого двигают меньше. Уник ×balance.collision.uniqueWeightMult. */
     weight: z.number().min(0).default(100),
   }),
 );
@@ -938,8 +938,6 @@ export const packsSchema = z.array(
     roomType: z.enum(['entrance', 'small', 'large', 'treasure', 'boss']),
     /** Состав пачки по ролям («2–4 воина + 1–2 лучника»). */
     entries: z.array(packEntrySchema).default([]),
-    /** Форсировать чемпиона (для босс-комнат). */
-    champion: z.boolean().default(false),
   }),
 );
 
@@ -1105,8 +1103,8 @@ const floorFeaturesSchema = z
     shop: z.boolean().default(false),
     /** Запертая арена с боссом (замок дверь↔рычаг на дальней комнате). */
     bossRoom: z.boolean().default(false),
-    /** Сколько комнат населить чемпионами. */
-    championRooms: z.number().int().min(0).default(0),
+    /** Сколько комнат населить уникальными монстрами (топ-редкость). */
+    uniqueRooms: z.number().int().min(0).default(0),
     /** Сколько комнат-сокровищниц (сундук). */
     treasureRooms: z.number().int().min(0).default(0),
   })

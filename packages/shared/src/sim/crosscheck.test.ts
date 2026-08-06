@@ -18,7 +18,7 @@ const classId = reg.get('classes')[0]!.id;
 
 function mob(baseId: string, depth: number) {
   return generateMonster(reg.get('monsters'), reg.get('monster-gear'), reg.get('monster-affixes'),
-    { baseId, depth, mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity: 'normal', monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques'), randomChampion: false },
+    { baseId, depth, mderive: reg.get('monster-derive'), itemAffixes: reg.get('affixes'), rarities: reg.get('rarities'), rarity: 'normal', monsterRarity: reg.get('monster-rarity'), monsterUniques: reg.get('monster-uniques') },
     createRng(1));
 }
 
