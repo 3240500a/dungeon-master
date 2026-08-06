@@ -1,0 +1,10 @@
+[
+  { "id": "uq-kostebal", "name": "Костевал Гнилозуб", "enabled": true, "faction": "undead" },
+  { "id": "uq-mertvoust", "name": "Мертвоуст Пожиратель", "enabled": true, "faction": "undead" },
+  { "id": "uq-tlenar", "name": "Тленар Червоточец", "enabled": true, "faction": "undead" },
+  { "id": "uq-grobovoy", "name": "Гробовой Молчун", "enabled": true, "faction": "undead" },
+  { "id": "uq-hladnec", "name": "Хладнец Костоправ", "enabled": true, "faction": "undead" },
+  { "id": "uq-pepelach", "name": "Пепелах Безглазый", "enabled": true, "faction": "undead" },
+  { "id": "uq-smrad", "name": "Смрад Могильный", "enabled": true, "faction": "undead" },
+  { "id": "uq-vernik", "name": "Верник Прогнивший", "enabled": true, "faction": "undead" }
+]

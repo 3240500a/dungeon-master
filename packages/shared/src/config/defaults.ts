@@ -12,6 +12,7 @@ import monsterDerive from './data/monster-derive.json' with { type: 'json' };
 import monsterRoles from './data/monster-roles.json' with { type: 'json' };
 import subfactions from './data/subfactions.json' with { type: 'json' };
 import monsterRarity from './data/monster-rarity.json' with { type: 'json' };
+import monsterUniques from './data/monster-uniques.json' with { type: 'json' };
 import packs from './data/packs.json' with { type: 'json' };
 import difficulties from './data/difficulties.json' with { type: 'json' };
 import biomes from './data/biomes.json' with { type: 'json' };
@@ -49,6 +50,7 @@ export const defaultConfigData: Record<string, unknown> = {
   'monster-roles': monsterRoles,
   subfactions,
   'monster-rarity': monsterRarity,
+  'monster-uniques': monsterUniques,
   packs,
   difficulties,
   biomes,

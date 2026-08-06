@@ -17,8 +17,9 @@ type Affixes = ConfigShapes['monster-affixes'];
 type ItemAffixes = ConfigShapes['affixes'];
 type Rarities = ConfigShapes['rarities'];
 type MonsterRarityCfg = ConfigShapes['monster-rarity'];
-/** Редкость гира монстра (без champion — тот ортогонален). */
-type GearRarity = 'normal' | 'magic' | 'rare';
+type MonsterUniques = ConfigShapes['monster-uniques'];
+/** Редкость гира монстра как у предметов (champion — внутр. случайный элит-флаг игры, отдельно). */
+type GearRarity = 'normal' | 'magic' | 'rare' | 'unique';
 type PhysSubtypes = ConfigShapes['phys-subtypes'];
 type MagicSubtypes = ConfigShapes['magic-subtypes'];
 type Debuffs = ConfigShapes['debuffs'];
@@ -89,6 +90,22 @@ function affixWords(rolled: RolledAffix[], itemAffixes: ItemAffixes): string[] {
   return out;
 }
 
+/** Элит-буст (чемпион/уник): жирный HP/урон/xp + реген (мин. 1). */
+function eliteBoost(m: ScaledMonster, xpMult: number): void {
+  m.hp = Math.round(m.hp * 2.5);
+  m.minDamage *= 1.5; m.maxDamage *= 1.5;
+  m.xp = Math.round(m.xp * xpMult);
+  m.hpRegen = Math.max(1, Math.round(m.hp * 0.006));
+}
+
+/** Имя уникального монстра из пула (по фракции; фолбэк — любой доступный, затем дефолт). */
+function pickUniqueName(pool: MonsterUniques | undefined, faction: string, fallback: string, rng: Rng): string {
+  const usable = (pool ?? []).filter((u) => (u as { enabled?: boolean }).enabled !== false);
+  const byFaction = usable.filter((u) => u.faction === faction);
+  const list = byFaction.length ? byFaction : usable;
+  return list.length ? list[rng.int(0, list.length - 1)]!.name : `Уникальный ${fallback}`;
+}
+
 /** Имя магич./рарного монстра: слово-префикс + имя + слово-суффикс (как у magic-предмета). */
 function monsterAffixName(name: string, rolled: RolledAffix[], itemAffixes: ItemAffixes): string {
   const wordOf = (id: string): string => itemAffixes.find((a) => a.id === id)?.word ?? '';
@@ -133,6 +150,10 @@ export function generateMonster(
     itemAffixes?: ItemAffixes; rarities?: Rarities; rarity?: GearRarity;
     /** Сколько слотов гира прокачивать по редкости+уровню (monster-rarity). Нет → все надетые. */
     monsterRarity?: MonsterRarityCfg;
+    /** Пул имён уникальных монстров (для rarity:'unique'). */
+    monsterUniques?: MonsterUniques;
+    /** Разрешить СЛУЧАЙНОГО чемпиона (8%). Дефолт true (игра). Редактор шлёт false — редкость там ручная. */
+    randomChampion?: boolean;
   },
   rng: Rng,
 ): ScaledMonster {
@@ -143,15 +164,12 @@ export function generateMonster(
 
   const m: ScaledMonster = { ...def, level, rarity: 'normal', affixes: [], damage: 0 };
 
-  // rng-бросок делаем всегда (стабильный поток), форс — сверху.
-  const champion = rng.chance(0.08) || opts.forceChampion === true;
+  // rng-бросок делаем ВСЕГДА (стабильный поток), применяем по флагу randomChampion (редактор — false).
+  const rollChamp = rng.chance(0.08);
+  const champion = (opts.randomChampion !== false && rollChamp) || opts.forceChampion === true;
   if (champion) {
     m.rarity = 'champion';
-    m.hp = Math.round(m.hp * 2.5);
-    m.minDamage *= 1.5;
-    m.maxDamage *= 1.5;
-    m.xp = Math.round(m.xp * (opts.championXpMult ?? 3));
-    m.hpRegen = Math.max(1, Math.round(m.hp * 0.006)); // ~0.6% HP/сек (мин. 1) — тут «увечье» ценно
+    eliteBoost(m, opts.championXpMult ?? 3);
     m.name = `Чемпион: ${m.name}`;
   }
 
@@ -160,8 +178,12 @@ export function generateMonster(
     // (item-движок катает афиксы на каждом по его цели: оружие→оружейные, броня/шлем→броневые, щит→блок),
     // все афиксы маппятся в статы. Оружие «прокачиваем» первым (урон), остальное — по rng-порядку.
     const gearRar: GearRarity = opts.rarity ?? 'normal';
-    const effRar: GearRarity = champion && gearRar === 'normal' ? 'magic' : gearRar; // у элиты всегда есть афиксы
-    if (!champion) m.rarity = effRar;
+    // unique — топ-редкость (элит-статы + уник-имя, гир катается как rare на ВСЕХ слотах).
+    if (gearRar === 'unique' && !champion) eliteBoost(m, opts.championXpMult ?? 3);
+    // Редкость для количества слотов (unique → все) и для показа предмета; champion+normal → magic.
+    const affRar: GearRarity = gearRar === 'unique' ? 'unique' : (champion && gearRar === 'normal' ? 'magic' : gearRar);
+    const slotRar: GearRarity = affRar === 'unique' ? 'rare' : affRar; // у unique-предметов слоты игрока=0 → монстру берём rare
+    if (!champion) m.rarity = gearRar; // normal/magic/rare/unique
 
     // Надетые слоты (оружие всегда) + цель афиксов + базовые статы каждого (для тултипа).
     const pieces: { slot: MonsterGearRoll['slot']; name: string; target: AffixTarget; base: MonsterGearRoll['base'] }[] = [
@@ -171,7 +193,7 @@ export function generateMonster(
     if (shield) pieces.push({ slot: 'shield', name: shield.name, target: { kind: 'shield', slot: 'offhand' }, base: { block: shield.block, defense: shield.defense } });
     if (helm) pieces.push({ slot: 'helm', name: helm.name, target: { kind: 'armor', slot: 'helm' }, base: { defense: helm.defense } });
 
-    const nItems = affixedItemCount(opts.monsterRarity, effRar, level, pieces.length);
+    const nItems = affixedItemCount(opts.monsterRarity, affRar, level, pieces.length); // unique → все слоты
     // Выбор слотов: оружие первым (индекс 0), остальные — перетасованы rng (детерминизм по сиду).
     const restOrder = pieces.slice(1);
     for (let i = restOrder.length - 1; i > 0; i--) { const j = rng.int(0, i); [restOrder[i], restOrder[j]] = [restOrder[j]!, restOrder[i]!]; }
@@ -179,22 +201,24 @@ export function generateMonster(
     if (nItems > 0) chosen.add(pieces[0]!.slot);
     for (const p of restOrder) { if (chosen.size >= nItems) break; chosen.add(p.slot); }
 
-    const slots = affixSlots(opts.rarities, effRar);
+    const slots = affixSlots(opts.rarities, slotRar); // афиксов/предмет: rare-слоты для unique
     const allRolled: RolledAffix[] = [];
     const rolls: MonsterGearRoll[] = [];
     for (const p of pieces) {
       if (chosen.has(p.slot)) {
-        const rolled = rollAffixes(opts.itemAffixes, p.target, effRar, slots, level, rng);
+        const rolled = rollAffixes(opts.itemAffixes, p.target, slotRar, slots, level, rng);
         allRolled.push(...rolled);
         const mods = rolled.filter((r) => r.modifier).map((r) => r.modifier!);
-        rolls.push({ slot: p.slot, name: p.name, rarity: effRar, affixes: affixWords(rolled, opts.itemAffixes), mods, base: p.base });
+        rolls.push({ slot: p.slot, name: p.name, rarity: affRar, affixes: affixWords(rolled, opts.itemAffixes), mods, base: p.base });
       } else {
         rolls.push({ slot: p.slot, name: p.name, rarity: 'normal', affixes: [], mods: [], base: p.base });
       }
     }
     for (const ra of allRolled) if (ra.modifier) applyGearAffix(m, ra.modifier);
     for (const id of new Set(allRolled.map((r) => r.affixId))) m.affixes.push(id);
-    if (allRolled.length) m.name = monsterAffixName(m.name, allRolled, opts.itemAffixes);
+    // Имя: unique — из пула (как у предметов); иначе слова афиксов вокруг базы.
+    if (gearRar === 'unique') m.name = pickUniqueName(opts.monsterUniques, base.faction, m.name, rng);
+    else if (allRolled.length) m.name = monsterAffixName(m.name, allRolled, opts.itemAffixes);
     m.gearRolls = rolls;
     // гир-афиксы могли раздробить деривнутые статы — округляем затронутое.
     m.armor = Math.max(0, Math.round(m.armor));

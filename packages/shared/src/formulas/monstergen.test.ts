@@ -117,8 +117,9 @@ describe('generateMonster — редкость через гир-афиксы (i
 });
 
 const monsterRarity = reg.get('monster-rarity');
+const monsterUniques = reg.get('monster-uniques');
 const genG = (opts: Parameters<typeof generateMonster>[3], seed = 1) =>
-  generateMonster(monsters, gear, affixes, { itemAffixes, rarities, monsterRarity, ...opts }, createRng(seed));
+  generateMonster(monsters, gear, affixes, { itemAffixes, rarities, monsterRarity, monsterUniques, randomChampion: false, ...opts }, createRng(seed));
 const multiSlot = monsters.find((m) => m.armor && m.offhand) ?? monsters.find((m) => m.armor) ?? monsters[0]!;
 
 describe('generateMonster — редкость по слотам гира (per-piece)', () => {
@@ -143,5 +144,16 @@ describe('generateMonster — редкость по слотам гира (per-p
   it('normal — все слоты normal, без афиксов', () => {
     const m = genG({ baseId: multiSlot.id, depth: 20, rarity: 'normal' }, 5);
     for (const r of m.gearRolls ?? []) { expect(r.rarity).toBe('normal'); expect(r.affixes.length).toBe(0); }
+  });
+
+  it('unique — уник-имя из пула + элит-статы + гир на ВСЕХ слотах', () => {
+    const norm = genG({ baseId: multiSlot.id, depth: 20, rarity: 'normal' }, 7);
+    const uniq = genG({ baseId: multiSlot.id, depth: 20, rarity: 'unique' }, 7);
+    expect(uniq.rarity).toBe('unique');
+    expect(uniq.hp).toBeGreaterThan(norm.hp);                                   // элит-статы (жирный HP)
+    expect(monsterUniques.some((u) => u.name === uniq.name)).toBe(true);        // имя из пула
+    const rolls = uniq.gearRolls ?? [];
+    expect(rolls.length).toBeGreaterThan(0);
+    expect(rolls.every((g) => g.rarity === 'unique')).toBe(true);               // все слоты — unique
   });
 });

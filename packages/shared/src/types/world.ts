@@ -59,9 +59,10 @@ export interface MonsterDef {
   weight: number;
 }
 
-/** Редкость монстра = редкость его гира: normal · magic (1–2 гир-афикса) · rare (3–4). `champion` —
- *  ортогональный элит-флаг, ПЕРЕКРЫВАЕТ поле для отображения (магич./рарный чемпион показывается как champion). */
-export type MonsterRarity = 'normal' | 'magic' | 'rare' | 'champion';
+/** Редкость монстра (как у предметов): normal · magic (1–2 гир-афикса) · rare (3–5) · unique (все слоты
+ *  + уник-имя + элит-статы). `champion` — внутренний случайный элит-флаг ИГРЫ (спавн в чемпион/босс-комнатах),
+ *  ПЕРЕКРЫВАЕТ поле для отображения; в генераторе/калькуляторе выбирается редкость (вкл. unique), не champion. */
+export type MonsterRarity = 'normal' | 'magic' | 'rare' | 'unique' | 'champion';
 
 /** Модификаторы аффикса монстра (умножения/добавки к полям + тип урона). */
 export interface MonsterAffix {

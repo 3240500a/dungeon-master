@@ -15,8 +15,7 @@ function regFromData(data: Record<string, unknown>): ConfigRegistry {
 
 let baseId = '';
 let level = 5;
-let forceChampion = false;
-let rarity: 'normal' | 'magic' | 'rare' = 'normal';
+let rarity: 'normal' | 'magic' | 'rare' | 'unique' = 'normal';
 let seed = 1;
 let batch = 1;
 
@@ -72,13 +71,8 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   lvlInp.addEventListener('input', () => { level = Math.max(1, Number(lvlInp.value) || 1); run(); });
 
   const rarSel = document.createElement('select'); rarSel.style.cssText = inp;
-  for (const [v, t] of [['normal', 'обычный'], ['magic', 'магический'], ['rare', 'редкий']] as [typeof rarity, string][]) { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === rarity) o.selected = true; rarSel.appendChild(o); }
+  for (const [v, t] of [['normal', 'обычный'], ['magic', 'магический'], ['rare', 'редкий'], ['unique', 'уникальный']] as [typeof rarity, string][]) { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === rarity) o.selected = true; rarSel.appendChild(o); }
   rarSel.addEventListener('change', () => { rarity = rarSel.value as typeof rarity; run(); });
-
-  const champWrap = h('label', 'display:flex;align-items:center;gap:5px;font-size:13px;color:#e8e8f0;cursor:pointer');
-  const champInp = document.createElement('input'); champInp.type = 'checkbox'; champInp.checked = forceChampion;
-  champInp.addEventListener('change', () => { forceChampion = champInp.checked; run(); });
-  champWrap.append(champInp, document.createTextNode('чемпион'));
 
   const batchInp = document.createElement('input'); batchInp.type = 'number'; batchInp.min = '1'; batchInp.value = String(batch); batchInp.style.cssText = inp + ';width:70px';
   batchInp.addEventListener('input', () => { batch = Math.max(1, Number(batchInp.value) || 1); run(); });
@@ -86,15 +80,16 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   const rollBtn = document.createElement('button'); rollBtn.textContent = '🎲 Ролл'; rollBtn.style.cssText = inp + ';cursor:pointer;background:#2c2c3a;font-weight:600';
   rollBtn.addEventListener('click', () => { seed = (seed + 1) & 0xffffff; run(); });
 
-  bar.append(field('Монстр', monSel), field('Уровень', lvlInp), field('Редкость', rarSel), field(' ', champWrap), field('Кол-во', batchInp), field(' ', rollBtn));
+  bar.append(field('Монстр', monSel), field('Уровень', lvlInp), field('Редкость', rarSel), field('Кол-во', batchInp), field(' ', rollBtn));
   page.appendChild(bar);
 
   const out = h('div', ''); page.appendChild(out);
 
   const mderive = reg.get('monster-derive');
   const monsterRarity = reg.get('monster-rarity');
+  const monsterUniques = reg.get('monster-uniques');
   const rollOne = (s: number): ScaledMonster =>
-    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, forceChampion, mderive, itemAffixes, rarities, rarity, monsterRarity }, createRng(s));
+    generateMonster(monsters, gear, affixes, { baseId: baseId || undefined, depth: level - 1, mderive, itemAffixes, rarities, rarity, monsterRarity, monsterUniques, randomChampion: false }, createRng(s));
   const SLOT_RU: Record<string, string> = { weapon: 'Оружие', armor: 'Броня', helm: 'Шлем', shield: 'Щит' };
   const rarColOf = (r: string): string => (r === 'champion' ? '#e0b040' : rarities.find((x) => x.id === r)?.color ?? '#c8c8c8');
 
@@ -138,6 +133,9 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
     } else {
       box.appendChild(row('Оружие / Броня / Щит', `${gearName(s?.weapon ?? '')} / ${gearName(s?.armor ?? '')} / ${gearName(s?.offhand ?? '')}`));
     }
+    // Все афиксы гира одним списком (быстрый обзор всего, что накатано на монстра).
+    const allAff = (m.gearRolls ?? []).flatMap((g) => g.affixes);
+    if (allAff.length) box.appendChild(h('div', `font-size:11px;margin-top:8px;color:${col};line-height:1.5`, `<b>Афиксы гира (${allAff.length}):</b> ${allAff.join(', ')}`));
     return box;
   }
 
@@ -157,16 +155,15 @@ export function renderMonsterGenPage(page: HTMLElement, data: Record<string, unk
   function run(): void {
     out.innerHTML = '';
     if (batch <= 1) { out.appendChild(card(rollOne(seed))); return; }
-    let champ = 0, hpSum = 0, dmgSum = 0, affSum = 0;
+    let hpSum = 0, dmgSum = 0, affSum = 0;
     const aff: Record<string, number> = {};
     for (let i = 0; i < batch; i++) {
       const m = rollOne((seed + i) & 0xffffff);
-      if (m.rarity === 'champion') champ++;
       hpSum += m.hp; dmgSum += m.damage; affSum += m.affixes.length;
       for (const a of m.affixes) aff[a] = (aff[a] ?? 0) + 1;
     }
     out.appendChild(h('div', 'color:#8a8a9a;font-size:12px;margin-bottom:10px',
-      `${batch} роллов${baseId ? '' : ' (случайный из пула)'} · ур.${level} · средн. HP ${Math.round(hpSum / batch)} · средн. урон ${Math.round(dmgSum / batch)} · чемпионов ${(champ / batch * 100).toFixed(1)}% · средн. аффиксов ${(affSum / batch).toFixed(2)}`));
+      `${batch} роллов${baseId ? '' : ' (случайный из пула)'} · ур.${level} · редкость ${rarName(rarity)} · средн. HP ${Math.round(hpSum / batch)} · средн. урон ${Math.round(dmgSum / batch)} · средн. аффиксов ${(affSum / batch).toFixed(2)}`));
     const wrap = h('div', '');
     const topAff = Object.entries(aff).sort((a, b) => b[1] - a[1]).slice(0, 20) as [string, number][];
     if (topAff.length) wrap.appendChild(distTable('Аффиксы (частота, топ-20)', topAff, batch));

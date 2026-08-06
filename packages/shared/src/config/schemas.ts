@@ -918,6 +918,17 @@ export const monsterRaritySchema = z.array(
   }),
 );
 
+// ── monster-uniques (имена уникальных монстров — как uniques.json для предметов) ──────────────────
+/** Пул имён УНИКАЛЬНЫХ монстров (боссов): при редкости unique берётся имя отсюда (по фракции). */
+export const monsterUniquesSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    enabled: z.boolean().default(true),
+    faction: z.enum(['undead', 'demon', 'beast', 'monster']).default('undead'),
+  }),
+);
+
 export const packsSchema = z.array(
   z.object({
     roomType: z.enum(['entrance', 'small', 'large', 'treasure', 'boss']),
@@ -1626,6 +1637,7 @@ export const configSchemas = {
   'monster-roles': monsterRolesSchema,
   subfactions: subfactionsSchema,
   'monster-rarity': monsterRaritySchema,
+  'monster-uniques': monsterUniquesSchema,
   packs: packsSchema,
   difficulties: difficultiesSchema,
   biomes: biomesSchema,
