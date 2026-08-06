@@ -29,7 +29,7 @@ if (str('scenario', 'progression') === 'run') {
     seed: num('seed', 12345),
     targetLevel: num('target', 30),
     maxHours: num('hours', 6),
-    dt: num('dt', 0.05),
+    dt: num('dt', 1 / 30),
     townTripSec: num('town', 45),
     build: {
       ...DEFAULT_BUILD,
