@@ -24,7 +24,7 @@ const staff: GearWeapon = {
 };
 const plate: GearArmor = {
   kind: 'armor', id: 'a-plate', name: 'латы', faction: 'undead', enabled: true,
-  armorClass: 'plate', defense: 30,
+  armorClass: 'plate', slot: 'chest', defense: 30,
 };
 const shield: GearShield = {
   kind: 'shield', id: 's-shield', name: 'щит', faction: 'undead', enabled: true,

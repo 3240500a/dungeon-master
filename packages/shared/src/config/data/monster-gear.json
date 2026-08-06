@@ -17,5 +17,11 @@
   { "kind": "armor", "id": "u-segmented", "name": "Сегментный доспех павшего", "faction": "undead", "armorClass": "segmented", "defense": 18 },
   { "kind": "armor", "id": "u-plate", "name": "Латы павшего рыцаря", "faction": "undead", "armorClass": "plate", "defense": 30 },
 
+  { "kind": "armor", "id": "u-cap-cloth", "name": "Истлевший капюшон", "faction": "undead", "armorClass": "quilted", "slot": "helm", "defense": 1 },
+  { "kind": "armor", "id": "u-cap-leather", "name": "Кожаный шлем мертвеца", "faction": "undead", "armorClass": "leather", "slot": "helm", "defense": 2 },
+  { "kind": "armor", "id": "u-coif", "name": "Ржавый койф", "faction": "undead", "armorClass": "chain", "slot": "helm", "defense": 4 },
+  { "kind": "armor", "id": "u-helm-seg", "name": "Сегментный шлем павшего", "faction": "undead", "armorClass": "segmented", "slot": "helm", "defense": 7 },
+  { "kind": "armor", "id": "u-helm-plate", "name": "Латный шлем рыцаря", "faction": "undead", "armorClass": "plate", "slot": "helm", "defense": 12 },
+
   { "kind": "shield", "id": "u-shield", "name": "Костяной щит", "faction": "undead", "block": 0.18, "defense": 6 }
 ]

@@ -78,6 +78,7 @@ export function deriveMonsterStats(
   shield: GearShield | null,
   level: number,
   s: MonsterDeriveScaling = DEFAULT_MDERIVE,
+  helm: GearArmor | null = null,   // 4-й слот (опц.): defense шлема суммируется с бронёй
 ): MonsterDef {
   const g = 1 + Math.max(0, level - 1) * s.levelGrowth; // рост атрибутов за уровень
   const str = tpl.str * g, dex = tpl.dex * g, int = tpl.int * g, vit = tpl.vit * g;
@@ -101,7 +102,7 @@ export function deriveMonsterStats(
     physSub: weapon.physSub as PhysSubtype | undefined,
     attackSpeed: weapon.attackSpeed * (1 + dex * s.iasPerDex),
     moveSpeed: tpl.moveSpeed ?? 50,
-    armor: Math.round((armor?.defense ?? 0) + (shield?.defense ?? 0) + str * s.armorPerStr),
+    armor: Math.round((armor?.defense ?? 0) + (helm?.defense ?? 0) + (shield?.defense ?? 0) + str * s.armorPerStr),
     accuracy: Math.round(s.accBase + dex * 2 + level * s.accPerLevel),
     evade: Math.round(s.evadeBase + dex * s.evadePerDex),
     blockChance: shield ? shield.block : 0,

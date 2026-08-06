@@ -158,11 +158,13 @@ fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []
 fieldEnumSources.subfaction = () => ['', ...((data['subfactions'] as { id: string }[]) ?? []).map((sf) => sf.id)];
 // affixTheme (у подфракции) — теги стихий из маг. подтипов (fire/cold/lightning/poison).
 fieldArrayEnumSources.affixTheme = () => ((data['magic-subtypes'] as { id: string }[]) ?? []).map((s) => s.id);
-// weapon / armor / offhand (экипировка монстра) — выпадашки из monster-gear по виду; '' = без предмета.
-const monsterGearOf = (kind: 'weapon' | 'armor' | 'shield') => (): string[] =>
-  ['', ...((data['monster-gear'] as { id: string; kind: string }[]) ?? []).filter((g) => g.kind === kind).map((g) => g.id)];
+// weapon / armor(тело) / helm / offhand (экипировка монстра) — выпадашки из monster-gear по виду+слоту; '' = без предмета.
+const monsterGearOf = (kind: 'weapon' | 'armor' | 'shield', slot?: 'chest' | 'helm') => (): string[] =>
+  ['', ...((data['monster-gear'] as { id: string; kind: string; slot?: string }[]) ?? [])
+    .filter((g) => g.kind === kind && (!slot || (g.slot ?? 'chest') === slot)).map((g) => g.id)];
 fieldEnumSources.weapon = monsterGearOf('weapon');
-fieldEnumSources.armor = monsterGearOf('armor');
+fieldEnumSources.armor = monsterGearOf('armor', 'chest');
+fieldEnumSources.helm = monsterGearOf('armor', 'helm');
 fieldEnumSources.offhand = monsterGearOf('shield');
 // spawnCurve (у монстра) — редактор кривой глубины (гибрид авто/ручная); tier берём из соседнего поля.
 fieldCustomRenderers.spawnCurve = (value, onChange, parent) =>

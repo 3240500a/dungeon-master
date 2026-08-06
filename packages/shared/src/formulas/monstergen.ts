@@ -96,14 +96,15 @@ const FISTS: GearWeapon = {
   damageType: 'physical', minDamage: 1, maxDamage: 2, attackSpeed: 1,
 };
 
-/** Разрешить экипировку монстра по id-ссылкам его заготовки (оружие обязательно → фолбэк FISTS). */
-function resolveGear(gear: MonsterGear, tpl: { weapon?: string; armor?: string; offhand?: string }): {
-  weapon: GearWeapon; armor: GearArmor | null; shield: GearShield | null;
+/** Разрешить экипировку монстра по id-ссылкам его заготовки (оружие обязательно → фолбэк FISTS). 4 слота. */
+function resolveGear(gear: MonsterGear, tpl: { weapon?: string; armor?: string; helm?: string; offhand?: string }): {
+  weapon: GearWeapon; armor: GearArmor | null; helm: GearArmor | null; shield: GearShield | null;
 } {
   const weapon = (gear.find((g) => g.kind === 'weapon' && g.id === tpl.weapon) as GearWeapon | undefined) ?? FISTS;
   const armor = tpl.armor ? ((gear.find((g) => g.kind === 'armor' && g.id === tpl.armor) as GearArmor | undefined) ?? null) : null;
+  const helm = tpl.helm ? ((gear.find((g) => g.kind === 'armor' && g.id === tpl.helm) as GearArmor | undefined) ?? null) : null;
   const shield = tpl.offhand ? ((gear.find((g) => g.kind === 'shield' && g.id === tpl.offhand) as GearShield | undefined) ?? null) : null;
-  return { weapon, armor, shield };
+  return { weapon, armor, helm, shield };
 }
 
 /**
@@ -124,8 +125,8 @@ export function generateMonster(
 ): ScaledMonster {
   const base = (opts.baseId ? monsters.find((b) => b.id === opts.baseId) : undefined) ?? rng.pick(monsters);
   const level = Math.max(0, opts.depth) + 1;
-  const { weapon, armor, shield } = resolveGear(monsterGear, base);
-  const def = deriveMonsterStats(base as MonsterTemplate, weapon, armor, shield, level, opts.mderive ?? DEFAULT_MDERIVE);
+  const { weapon, armor, helm, shield } = resolveGear(monsterGear, base);
+  const def = deriveMonsterStats(base as MonsterTemplate, weapon, armor, shield, level, opts.mderive ?? DEFAULT_MDERIVE, helm);
 
   const m: ScaledMonster = { ...def, level, rarity: 'normal', affixes: [], damage: 0 };
 

@@ -484,8 +484,10 @@ export const monstersSchema = z.array(
     // ── Экипировка (id из monster-gear своей фракции) ──
     /** Оружие (id monster-gear kind:weapon). Пусто/не найдено → «кулаки». Задаёт урон/тип/AI/скорость. */
     weapon: z.string().default(''),
-    /** Броня (id monster-gear kind:armor). Пусто = без брони. */
+    /** Броня тела (id monster-gear kind:armor, slot:chest). Пусто = без брони. */
     armor: z.string().default(''),
+    /** Шлем (id monster-gear kind:armor, slot:helm). Пусто = без шлема. */
+    helm: z.string().default(''),
     /** Левая рука — щит (id monster-gear kind:shield). Пусто = без щита. */
     offhand: z.string().default(''),
     /** Явный AI (иначе выводится из оружия: дальний→kiter, мили→chaser). */
@@ -646,6 +648,8 @@ export const monsterGearSchema = z.array(
       faction: mgFaction,
       enabled: z.boolean().default(true),
       armorClass: z.enum(['quilted', 'leather', 'chain', 'segmented', 'plate']).default('leather'),
+      /** Слот брони: тело (грудь) или шлем — оба дают defense, но занимают разные слоты монстра. */
+      slot: z.enum(['chest', 'helm']).default('chest'),
       /** Базовая защита брони (до вклада STR). */
       defense: z.number().min(0).default(0),
     }),
