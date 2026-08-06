@@ -34,7 +34,7 @@ const WCLASS_LABEL: Record<string, string> = {
 };
 const SHIELD_CLASS_LABEL: Record<string, string> = { light: 'лёгкий', medium: 'средний', heavy: 'тяжёлый' };
 /** Статы-доли: их плоские модификаторы показываем как проценты. */
-const PERCENT_STATS = new Set([
+export const PERCENT_STATS = new Set([
   'critChance', 'blockChance', 'resFire', 'resCold', 'resLightning', 'resPoison',
   'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct', 'ailmentPct', 'lifeLeechPct', 'manaLeechPct',
 ]);

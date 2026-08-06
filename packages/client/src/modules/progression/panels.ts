@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, emptyPacket, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType } from '../combat/playerStats.js';
@@ -462,9 +462,10 @@ export const characterPanel: PanelFactory = (app, ui) => {
         'Игнорирует эту долю брони цели при ударе.'));
       body.append(off);
 
-      // Бонусы урона: ИТОГОВЫЕ %-множители по типам (гир+пассивы+мастерства+скиллы уже свёрнуты в
-      // derived) + плоские стих-добавки + вампиризм/за-убийство. То, что раньше было только в тултипах.
-      const bon = sheetPanel('Бонусы урона (итог)');
+      // Бонусы: наглядная сводка ВСЕГО, что дают гир + пассивы + мастерства + скиллы. Сверху — урон
+      // ИТОГОВЫМ % по типам («со всем вместе»); ниже — ВСЕ прочие модификаторы (броня/скорость/резисты/
+      // атрибуты/вампиризм/…), агрегированные из allModifiers и подписанные тем же словарём, что предметы.
+      const bon = sheetPanel('Бонусы (прокачка + гир)');
       const perPct: Record<DamageType, number> = { physical: d.physPct, fire: d.firePct, cold: d.coldPct, lightning: d.lightningPct, poison: d.poisonPct };
       const addFlat: Record<DamageType, number> = { physical: 0, fire: d.addFire, cold: d.addCold, lightning: d.addLightning, poison: d.addPoison };
       let anyBon = false;
@@ -481,10 +482,34 @@ export const characterPanel: PanelFactory = (app, ui) => {
         (row.firstElementChild as HTMLElement).style.color = dmgColor(t);
         bon.append(row);
       }
-      if (d.lifeLeechPct) { bon.append(statRow('Вампиризм HP', `${(d.lifeLeechPct * 100).toFixed(1)}%`, 'Доля нанесённого урона возвращается в здоровье.')); anyBon = true; }
-      if (d.manaLeechPct) { bon.append(statRow('Вампиризм маны', `${(d.manaLeechPct * 100).toFixed(1)}%`, 'Доля нанесённого урона возвращается в ману.')); anyBon = true; }
-      if (d.lifeOnKill) { bon.append(statRow('HP за убийство', `+${Math.round(d.lifeOnKill)}`, 'Восстановление HP при убийстве врага.')); anyBon = true; }
-      if (d.manaOnKill) { bon.append(statRow('Мана за убийство', `+${Math.round(d.manaOnKill)}`, 'Восстановление маны при убийстве врага.')); anyBon = true; }
+      // Прочие бонусы: агрегируем ВСЕ модификаторы (гир + деревья), кроме урона (он показан выше по типам).
+      const DMG_MOD = new Set(['minDamage', 'maxDamage', 'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct', 'addFire', 'addCold', 'addLightning', 'addPoison']);
+      const agg = new Map<string, { stat: string; kind: StatModifier['kind']; value: number }>();
+      for (const md of state.allModifiers()) {
+        if (DMG_MOD.has(md.stat)) continue;
+        const key = `${md.stat}|${md.kind}`;
+        const e = agg.get(key);
+        if (e) e.value += md.value; else agg.set(key, { stat: md.stat, kind: md.kind, value: md.value });
+      }
+      const catOf = (s: string): number =>
+        /armor|evade|blockChance|interruptResist/.test(s) ? 0 :
+        /^res/.test(s) ? 1 :
+        /maxHp|hpRegen|maxMana|manaRegen|maxStamina|staminaRegen/.test(s) ? 2 :
+        /strength|dexterity|intelligence|vitality/.test(s) ? 3 :
+        /critChance|critMultiplier|accuracy|attackSpeed|castSpeed|moveSpeed/.test(s) ? 4 : 5;
+      const rest = [...agg.values()].filter((e) => Math.abs(e.value) > 1e-9).sort((a, b) => catOf(a.stat) - catOf(b.stat) || a.stat.localeCompare(b.stat));
+      const RESCOLOR: Record<string, string> = { resFire: dmgColor('fire'), resCold: dmgColor('cold'), resLightning: dmgColor('lightning'), resPoison: dmgColor('poison') };
+      if (rest.length) {
+        if (anyBon) bon.append(mk('div', `height:1px;background:${COLORS.border};margin:8px 0`));
+        for (const e of rest) {
+          const isPct = e.kind === 'increased' || PERCENT_STATS.has(e.stat);
+          const val = isPct ? `+${Math.round(e.value * 100)}%` : `+${Number.isInteger(e.value) ? e.value : e.value.toFixed(2)}`;
+          const row = statRow(STAT_LABEL[e.stat] ?? e.stat, val);
+          if (RESCOLOR[e.stat]) (row.firstElementChild as HTMLElement).style.color = RESCOLOR[e.stat]!;
+          bon.append(row);
+        }
+        anyBon = true;
+      }
       if (!anyBon) bon.append(mk('div', `font-size:12px;color:${COLORS.dim};padding:3px 0`, 'нет бонусов от прокачки/гира'));
       body.append(bon);
 
