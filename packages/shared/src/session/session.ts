@@ -163,17 +163,27 @@ export class GameSession {
   /** Идёт исполнение прок-скилла — не рекурсим прок от его же ударов. */
   private procActive = false;
   /**
-   * Начисляет ли сессия золото/XP/дроп при смерти монстра. true — сим (авторитетно).
-   * false — клиент: сессия только детектит смерть и эмитит событие, а лут/XP делают
-   * существующие обработчики шины (LootController/Progression), чтобы не задвоить.
+   * `rewards` — совместимый общий флаг: задаёт дефолт для обоих под-флагов ниже.
+   * Разбит на две НЕЗАВИСИМЫЕ грани, чтобы сим-микробой мерил чистый TTK:
+   *  • `sustain` — боевой сустейн: вампиризм (лич), проки «при ударе/получении», лич-за-килл,
+   *    overload-взрыв конструктов при смерти. Это часть боевой мощи игрока И угрозы моба.
+   *  • `economy` — начисление золота/XP/дропа при смерти монстра (и левелап через awardXp,
+   *    который ПОЛНОСТЬЮ лечит — потому в микробое economy=false, иначе левелап испортит TTK).
+   * Дефолты: оба берут значение `rewards`. Сервер/сим-забег: rewards=true → оба true.
+   * Клиент-вид: rewards=false → оба false (лут/XP/лич делают обработчики шины, чтобы не задвоить).
+   * Сим-микробой: sustain=true, economy=false — реальный сустейн, но без наград/левелап-хила.
    */
   private rewards: boolean;
+  private sustain: boolean;
+  private economy: boolean;
 
-  constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean } = {}) {
+  constructor(cfg: ConfigRegistry, seed: number, difficultyId: string, opts: { rewards?: boolean; sustain?: boolean; economy?: boolean } = {}) {
     this.cfg = cfg;
     this.rng = createRng((seed >>> 0) || 1);
     this.world = newWorldState([], seed, 0, difficultyId);
     this.rewards = opts.rewards ?? true;
+    this.sustain = opts.sustain ?? this.rewards;
+    this.economy = opts.economy ?? this.rewards;
   }
 
   /** Эффекты дебаффов с тюн-коэффициентами из живого конфига `debuffs`. */
@@ -923,8 +933,8 @@ export class GameSession {
     if (!res.hit || res.blocked) return;
 
     m.hp = target.hp;
-    // Вампиризм: доля нанесённого урона → HP/мана атакующего (серверно, кламп по максимуму).
-    if (this.rewards && res.damage > 0) {
+    // Вампиризм: доля нанесённого урона → HP/мана атакующего (боевой сустейн, кламп по максимуму).
+    if (this.sustain && res.damage > 0) {
       const d = this.snaps.get(killer.id)?.derived;
       if (d) {
         if (d.lifeLeechPct > 0) killer.hp = Math.min(d.maxHp, killer.hp + res.damage * d.lifeLeechPct);
@@ -932,7 +942,7 @@ export class GameSession {
       }
     }
     // Прок «шанс каста при ударе» (не от ударов самого прок-скилла — иначе рекурсия).
-    if (this.rewards && !this.procActive && res.damage > 0) this.rollHitProcs(killer, 'hit');
+    if (this.sustain && !this.procActive && res.damage > 0) this.rollHitProcs(killer, 'hit');
     if (!res.died) {
       // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
       if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }
@@ -982,7 +992,7 @@ export class GameSession {
     if (p.hp <= 0) { p.alive = false; this.events.push({ type: 'player-died', playerId: p.id }); return; }
 
     // Прок «шанс каста при ПОЛУЧЕНИИ удара» (игрок выжил; не рекурсим от прок-ударов).
-    if (this.rewards && !this.procActive && dmg > 0) this.rollHitProcs(p, 'struck');
+    if (this.sustain && !this.procActive && dmg > 0) this.rollHitProcs(p, 'struck');
 
     if (onHit.length) {
       const equipped = equippedItems(p.save);
@@ -1127,15 +1137,17 @@ export class GameSession {
     m.alive = false;
     this.events.push({ type: 'monster-died', id: m.id, def: m.def, x: m.pos.x, y: m.pos.y, by: killer?.id });
     this.overloadOnDeath(m); // сигнатура конструктов: взрыв при смерти
-    if (!this.rewards) return; // клиент: золото/XP/дроп делают обработчики шины
     const reward = killer ?? this.primaryPlayer();
-    if (!reward) return;
-    // Восстановление за убийство: плоско HP/мана убийце (кламп по максимуму).
-    const kd = this.snaps.get(reward.id)?.derived;
-    if (kd) {
-      if (kd.lifeOnKill > 0) reward.hp = Math.min(kd.maxHp, reward.hp + kd.lifeOnKill);
-      if (kd.manaOnKill > 0) reward.mana = Math.min(kd.maxMana, reward.mana + kd.manaOnKill);
+    // Восстановление за убийство (лич-за-килл): плоско HP/мана убийце — боевой сустейн, ДО наград.
+    if (this.sustain && reward) {
+      const kd = this.snaps.get(reward.id)?.derived;
+      if (kd) {
+        if (kd.lifeOnKill > 0) reward.hp = Math.min(kd.maxHp, reward.hp + kd.lifeOnKill);
+        if (kd.manaOnKill > 0) reward.mana = Math.min(kd.maxMana, reward.mana + kd.manaOnKill);
+      }
     }
+    if (!this.economy) return; // клиент: золото/XP/дроп делают обработчики шины; сим-микробой: не нужны (и левелап-хил испортил бы TTK)
+    if (!reward) return;
 
     const diff = this.currentDifficulty();
     const level = m.def.level;
@@ -1372,7 +1384,7 @@ export class GameSession {
 
   /** Сигнатура конструктов (signature=overload): при смерти — AoE-урон по игрокам рядом (наказывает мили). */
   private overloadOnDeath(m: MonsterEntity): void {
-    if (!this.rewards) return; // урон применяем только на авторитетном сервере
+    if (!this.sustain) return; // боевой эффект (угроза моба) — только когда сустейн включён
     if (behaviorFor(m.def.faction, this.cfg.get('monster-behaviors')).signature !== 'overload') return;
     const radius = m.radius + 48;
     const a = this.monsterPacket(m);

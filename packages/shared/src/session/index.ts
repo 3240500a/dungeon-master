@@ -4,6 +4,7 @@ export * from './session.js';
 export * from './bot.js';
 export * from './stats.js';
 export * from './runner.js';
+export * from './microFight.js';
 export * from './netTypes.js';
 export * from './serialize.js';
 export * from './weapon3d.js';

@@ -1,4 +1,4 @@
-import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType } from '@dm/shared';
+import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, microFightStats, type MicroFightStats, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType } from '@dm/shared';
 import { makeHarness } from './gameHarness.js';
 import type { App } from '@dm/client/core/app.js';
 import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
@@ -25,6 +25,8 @@ let atkSel = '';               // '' = базовая атака; иначе nod
 let itemRarity: '' | Rarity = '';
 let createBaseId = '';
 let rollSeed = 100;
+// Кэш последнего прогона реального боя (движок) + сигнатура билда/монстра, на котором считали.
+let ttkEngine: { sig: string; stats: MicroFightStats } | null = null;
 // Персистентный мост + инстанс стат-панели (пересобираются при смене класса/уровня).
 let harness: App | null = null;
 let hkey = '';
@@ -226,7 +228,60 @@ function monsterTtk(page: HTMLElement, data: Record<string, unknown>, reg: Confi
   if (selSkill) ttk.appendChild(h('div', 'margin-top:6px;font-size:11px;color:#9aa', `Скилл «${selSkill.name}»: ${dmgShort(reg, selSkill.sim.element)} · ~${Math.round(hit)}/удар · КД ${selSkill.sim.cooldown.toFixed(1)}с · мана ${selSkill.sim.manaCost}${selSkill.sim.aoe ? ' · AoE' : ''}`));
   ttk.appendChild(h('div', `margin-top:8px;font-size:13px;font-weight:600;color:${win ? '#5dcaa5' : '#e0708a'}`, `${win ? '▲ Игрок побеждает' : '▼ Монстр побеждает'} · запас ×${(Math.max(ttkKill, ttkDeath) / Math.max(0.01, Math.min(ttkKill, ttkDeath))).toFixed(1)}`));
   box.appendChild(ttk);
+
+  // ── Реальный бой на движке (Монте-Карло) — точный TTK: DoT/статусы/реальные формы скиллов/ИИ ──
+  box.appendChild(engineTtkCard(page, data, reg, save, mon));
   return box;
+}
+
+/** Сигнатура «билд+монстр» — по ней понимаем, устарел ли кэш реального прогона. */
+function engineSig(save: SaveState, mon: { id: string; hp: number; minDamage: number; maxDamage: number; armor: number }): string {
+  return JSON.stringify({ e: save.equipment, s: save.skills, m: save.masteries, a: save.attributes, l: save.level, mon: [mon.id, mon.hp, mon.minDamage, mon.maxDamage, mon.armor] });
+}
+
+/**
+ * Карточка «реальный бой»: по кнопке гоняет 30 микро-боёв на НАСТОЯЩЕМ GameSession (тот же движок,
+ * что игра/сервер) и показывает распределение ударов-до-смерти/TTK + kill/death-rate. Закрытая формула
+ * выше — мгновенное превью; эта карточка — эталон (кросс-чек). Бот ведёт бой ротацией (не выбранным скиллом).
+ */
+function engineTtkCard(page: HTMLElement, data: Record<string, unknown>, reg: ConfigRegistry, save: SaveState, mon: ReturnType<typeof generateMonster>): HTMLElement {
+  const card = h('div', 'border:1px solid #2c2c3a;border-radius:8px;padding:12px 14px;background:#14141c');
+  card.appendChild(h('div', 'color:#b8b8c8;font-weight:600;font-size:13px;margin-bottom:6px', 'Реальный бой (движок · 30 прогонов)'));
+  const sig = engineSig(save, mon);
+  const fresh = !!ttkEngine && ttkEngine.sig === sig;
+  const btn = document.createElement('button');
+  btn.textContent = fresh ? '↻ пересчитать' : '▶ прогнать реальный бой';
+  btn.style.cssText = 'padding:6px 12px;cursor:pointer;background:#2f5d4a;color:#eafff5;border:1px solid #3c7a60;border-radius:5px;font-size:12px;margin-bottom:8px';
+  btn.addEventListener('click', () => {
+    ttkEngine = { sig, stats: microFightStats(reg, { save: structuredClone(save), monsters: [structuredClone(mon)] }, 30) };
+    renderCalcPage(page, data);
+  });
+  card.appendChild(btn);
+
+  if (!ttkEngine) {
+    card.appendChild(h('div', 'font-size:11px;color:#9aa', 'Кидает игрока и монстра в настоящий GameSession и тикает до смерти — честный TTK с DoT/статусами/реальными формами скиллов/ИИ. Может расходиться с формулой выше — формула это грубое превью.'));
+    return card;
+  }
+  const s = ttkEngine.stats;
+  if (!fresh) card.appendChild(h('div', 'font-size:11px;color:#e0b040;margin-bottom:6px', '⚠ билд или монстр изменились — прогони заново'));
+  const fmtD = (d: MicroFightStats['hitsToKill'], dp = 1) => d.mean ? `${d.mean.toFixed(dp)} (p10 ${d.p10.toFixed(dp)} … p90 ${d.p90.toFixed(dp)})` : '—';
+  for (const [k, v] of [
+    ['Ударов до смерти', fmtD(s.hitsToKill)],
+    ['TTK, сек', fmtD(s.ttkSec)],
+    ['Убил / погиб', `${pctS(s.killRate)} / ${pctS(s.deathRate)}`],
+    ['Исходящий DPS', `${Math.round(s.dpsOutMean)}`],
+  ] as [string, string][]) {
+    const r = h('div', 'display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:2px 0');
+    r.append(h('span', 'color:#8a8a9a', k), h('span', 'color:#eaeaea;font-weight:500;text-align:right', v));
+    card.appendChild(r);
+  }
+  const htk = s.hitsToKill.mean;
+  if (htk) {
+    const band = htk >= 5 && htk <= 6 ? '#5dcaa5' : htk < 5 ? '#e0b040' : '#e0708a';
+    const tag = htk >= 5 && htk <= 6 ? 'в цели' : htk < 5 ? 'слишком быстро' : 'слишком долго';
+    card.appendChild(h('div', `margin-top:8px;font-size:13px;font-weight:600;color:${band}`, `~${htk.toFixed(1)} уд/моб · цель 5–6 (${tag})`));
+  }
+  return card;
 }
 
 /** Все афиксы гира монстра одним списком (слова из gearRolls; фолбэк — id из affixes). */
