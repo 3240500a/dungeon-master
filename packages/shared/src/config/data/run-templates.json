@@ -2,43 +2,102 @@
   {
     "id": "crypt-short",
     "name": "Короткая вылазка",
+    "enabled": true,
     "tier": "easy",
-    "length": { "min": 5, "max": 7 },
-    "width": { "min": 1, "max": 2 },
+    "length": {
+      "min": 3,
+      "max": 5
+    },
+    "width": {
+      "min": 1,
+      "max": 2
+    },
     "branching": 0.4,
-    "returnEvery": 3,
+    "returnEvery": 0,
     "returnJitter": 1,
     "bossEvery": 0,
     "finale": true,
-    "nodeTypeWeights": { "combat": 6, "elite": 1, "treasure": 2, "event": 1, "shop": 1 },
-    "allowedModifiers": ["pack-swarm", "greedy-vault", "relic-vitality", "relic-greed"]
+    "nodeTypeWeights": {
+      "combat": 5,
+      "elite": 1,
+      "treasure": 0,
+      "event": 0,
+      "shop": 0
+    },
+    "allowedModifiers": [
+      "pack-swarm",
+      "greedy-vault",
+      "relic-vitality",
+      "relic-greed"
+    ]
   },
   {
     "id": "dungeon-standard",
     "name": "Стандартный забег",
+    "enabled": true,
     "tier": "normal",
-    "length": { "min": 8, "max": 11 },
-    "width": { "min": 1, "max": 3 },
+    "length": {
+      "min": 8,
+      "max": 11
+    },
+    "width": {
+      "min": 1,
+      "max": 3
+    },
     "branching": 0.55,
     "returnEvery": 4,
     "returnJitter": 1,
     "bossEvery": 5,
     "finale": true,
-    "nodeTypeWeights": { "combat": 6, "elite": 2, "treasure": 1, "event": 1, "shop": 1 },
-    "allowedModifiers": ["pack-swarm", "hardened-foes", "savage-blows", "greedy-vault", "gilded-fortune", "relic-vitality", "relic-greed"]
+    "nodeTypeWeights": {
+      "combat": 6,
+      "elite": 2,
+      "treasure": 1,
+      "event": 1,
+      "shop": 1
+    },
+    "allowedModifiers": [
+      "pack-swarm",
+      "hardened-foes",
+      "savage-blows",
+      "greedy-vault",
+      "gilded-fortune",
+      "relic-vitality",
+      "relic-greed"
+    ]
   },
   {
     "id": "deep-expedition",
     "name": "Глубокая экспедиция",
+    "enabled": true,
     "tier": "hard",
-    "length": { "min": 10, "max": 14 },
-    "width": { "min": 2, "max": 3 },
+    "length": {
+      "min": 10,
+      "max": 14
+    },
+    "width": {
+      "min": 2,
+      "max": 3
+    },
     "branching": 0.7,
     "returnEvery": 5,
     "returnJitter": 2,
     "bossEvery": 5,
     "finale": true,
-    "nodeTypeWeights": { "combat": 5, "elite": 3, "treasure": 1, "event": 2, "shop": 1 },
-    "allowedModifiers": ["pack-swarm", "hardened-foes", "savage-blows", "gilded-fortune", "relic-vitality", "relic-greed"]
+    "nodeTypeWeights": {
+      "combat": 5,
+      "elite": 3,
+      "treasure": 1,
+      "event": 2,
+      "shop": 1
+    },
+    "allowedModifiers": [
+      "pack-swarm",
+      "hardened-foes",
+      "savage-blows",
+      "gilded-fortune",
+      "relic-vitality",
+      "relic-greed"
+    ]
   }
 ]
