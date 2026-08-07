@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { SaveState, AccountStash } from '@dm/shared';
 
@@ -222,4 +222,20 @@ export function setPoseStore(key: string, value: unknown): void {
 /** Удаляет ключ контента поз-редактора (чистка устаревших/тест-ключей). */
 export function deletePoseStore(key: string): void {
   deletePoseStmt.run(key);
+}
+
+const countPoseStmt = db.prepare('SELECT COUNT(*) AS n FROM pose_store');
+/**
+ * Посев авторского 3D-контента (pose_store) из файла-сида `pose-seed.json` при ПУСТОЙ таблице
+ * (свежая/сброшенная БД, напр. чистый прод-сервер). Источник — файл в git (выгружен из поз-редактора),
+ * чтобы 3D-анимации были из коробки и переживали чистку БД. Возвращает число засеянных ключей.
+ */
+export function seedPoseStoreIfEmpty(): number {
+  if ((countPoseStmt.get() as { n: number }).n > 0) return 0; // уже есть контент — не трогаем
+  try {
+    const seed = JSON.parse(readFileSync(new URL('../pose-seed.json', import.meta.url), 'utf8')) as Record<string, unknown>;
+    let k = 0;
+    for (const [key, value] of Object.entries(seed)) { setPoseStore(key, value); k++; }
+    return k;
+  } catch { return 0; } // нет файла/битый — тихо пропускаем (не критично)
 }

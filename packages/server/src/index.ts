@@ -11,7 +11,7 @@ import {
   createUser, getUserByName, createSession, deleteSession, getSession,
   listCharacters, listAllCharacters, getCharacter, putCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
-  getPoseStore, setPoseStore, deletePoseStore, clearAllRuns,
+  getPoseStore, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty,
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
 
@@ -46,6 +46,10 @@ rebuildConfig(); // старт: дефолты + сохранённые прав
 // Рестарт сервера = чистый лист забегов: сбрасываем все НЕЗАВЕРШЁННЫЕ забеги (save.run) у всех персонажей.
 // Иначе спуск из города РЕЗЮМИТ старый забег (со старым биомом/сидом) и игнорит выбор алтаря — «хвосты».
 { const wiped = clearAllRuns(); if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`); }
+
+// Посев авторского 3D-контента поз-редактора при пустой БД (свежий/сброшенный сервер) — чтобы анимации
+// были из коробки. Источник — pose-seed.json в git; на проде поз-редактор выключен, иначе контента бы не было.
+{ const seeded = seedPoseStoreIfEmpty(); if (seeded) console.log(`[dm-server] pose_store засеян из pose-seed.json: ${seeded} ключей`); }
 
 const MAX_CHARS = 5;
 
