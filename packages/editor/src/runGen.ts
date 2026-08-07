@@ -21,11 +21,17 @@ interface Tuning {
   /** Переопределять длину? Выкл = брать из шаблона забега. */
   lengthEnabled: boolean;
   widthMax: number;
+  /** Переопределять макс. ширину? Выкл = из шаблона. */
+  widthMaxEnabled: boolean;
   branching: number;
   /** Переопределять ветвление? Выкл = брать из шаблона забега. */
   branchingEnabled: boolean;
   returnEvery: number;
+  /** Переопределять «возврат каждые» (города-rest)? Выкл = из шаблона. */
+  returnEveryEnabled: boolean;
   bossEvery: number;
+  /** Переопределять «босс каждые»? Выкл = из шаблона. */
+  bossEveryEnabled: boolean;
   /** Мощь персонажа = эфф. уровень (уровень + гир + пассивы) — влияет на уровни монстров. */
   power: number;
   modifiers: Set<string>;
@@ -108,6 +114,23 @@ function rangeRowToggle(label: string, enabled: boolean, onToggle: (on: boolean)
   r.append(s, wrap);
   return r;
 }
+/** Числовое поле с галкой «переопределить»: снята → поле неактивно, значение НЕ уйдёт в конфиг (шаблон). */
+function numRowToggle(label: string, enabled: boolean, onToggle: (on: boolean) => void, value: number, min: number, onChange: (v: number) => void): HTMLElement {
+  const inp = document.createElement('input');
+  inp.type = 'number'; inp.value = String(value); inp.min = String(min);
+  inp.style.cssText = `width:60px;background:#12121a;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px;padding:4px 6px`;
+  inp.disabled = !enabled; inp.style.opacity = enabled ? '1' : '0.4';
+  inp.addEventListener('input', () => onChange(Math.max(min, Number(inp.value) || 0)));
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = enabled;
+  cb.title = 'Переопределить настройку шаблона забега';
+  cb.addEventListener('change', () => { onToggle(cb.checked); inp.disabled = !cb.checked; inp.style.opacity = cb.checked ? '1' : '0.4'; });
+  const r = document.createElement('label');
+  r.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;margin:4px 0';
+  const s = document.createElement('span'); s.style.cssText = 'display:flex;align-items:center;gap:6px;color:#b8b8c8';
+  s.append(cb, document.createTextNode(label));
+  r.append(s, inp);
+  return r;
+}
 function selectInput(opts: [string, string][], value: string, onChange: (v: string) => void): HTMLSelectElement {
   const s = document.createElement('select');
   s.style.cssText = 'background:#12121a;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px;padding:4px 6px;max-width:180px';
@@ -131,8 +154,10 @@ function tuningFromTemplate(reg: ConfigRegistry, templateId: string, seed: numbe
     biomeId: prevBiome && biomes.some((b) => b.id === prevBiome) ? prevBiome : biomes[0]!.id,
     tier: t.tier, seed,
     length: Math.round((t.length.min + t.length.max) / 2), lengthEnabled: false,
-    widthMax: t.width.max, branching: t.branching, branchingEnabled: false,
-    returnEvery: t.returnEvery, bossEvery: t.bossEvery,
+    widthMax: t.width.max, widthMaxEnabled: false,
+    branching: t.branching, branchingEnabled: false,
+    returnEvery: t.returnEvery, returnEveryEnabled: false,
+    bossEvery: t.bossEvery, bossEveryEnabled: false,
     power: prevPower ?? 20,
     modifiers: new Set<string>(),
   };
@@ -141,11 +166,14 @@ function tuningFromTemplate(reg: ConfigRegistry, templateId: string, seed: numbe
 function buildConfig(t: Tuning): RunConfig {
   return {
     templateId: t.templateId, biomeId: t.biomeId, tier: t.tier, seed: t.seed,
-    // length/branching передаём ТОЛЬКО если галка включена; иначе — undefined → генератор берёт из шаблона забега.
+    // Каждый структурный параметр передаём ТОЛЬКО если его галка включена; иначе — undefined →
+    // генератор берёт значение из ШАБЛОНА забега (превью 1:1 совпадает с игрой, которая шлёт лишь шаблон).
     ...(t.lengthEnabled ? { length: t.length } : {}),
+    ...(t.widthMaxEnabled ? { widthMax: t.widthMax } : {}),
     ...(t.branchingEnabled ? { branching: t.branching } : {}),
-    widthMax: t.widthMax,
-    returnEvery: t.returnEvery, bossEvery: t.bossEvery, power: t.power, modifiers: [...t.modifiers],
+    ...(t.returnEveryEnabled ? { returnEvery: t.returnEvery } : {}),
+    ...(t.bossEveryEnabled ? { bossEvery: t.bossEvery } : {}),
+    power: t.power, modifiers: [...t.modifiers],
   };
 }
 
@@ -365,9 +393,9 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
   altar.append(rangeRowToggle('Этажей (слоёв)', t.lengthEnabled, (on) => { t.lengthEnabled = on; }, t.length, 3, 20, 1, (v) => String(v), (v) => { t.length = v; }));
   altar.append(rangeRowToggle('Ветвление', t.branchingEnabled, (on) => { t.branchingEnabled = on; }, t.branching, 0, 1, 0.05, (v) => v.toFixed(2), (v) => { t.branching = v; }));
   altar.append(rangeRow('Мощь (эфф. ур.)', t.power, 1, 80, 1, (v) => String(v), (v) => { t.power = v; if (selectedNodeId && plan) showFloor(selectedNodeId); }));
-  altar.append(row('Макс. ширина', numInput(t.widthMax, (v) => { t.widthMax = Math.max(1, v); }, 60)));
-  altar.append(row('Возврат каждые', numInput(t.returnEvery, (v) => { t.returnEvery = Math.max(0, v); }, 60)));
-  altar.append(row('Босс каждые', numInput(t.bossEvery, (v) => { t.bossEvery = Math.max(0, v); }, 60)));
+  altar.append(numRowToggle('Макс. ширина', t.widthMaxEnabled, (on) => { t.widthMaxEnabled = on; }, t.widthMax, 1, (v) => { t.widthMax = v; }));
+  altar.append(numRowToggle('Возврат каждые', t.returnEveryEnabled, (on) => { t.returnEveryEnabled = on; }, t.returnEvery, 0, (v) => { t.returnEvery = v; }));
+  altar.append(numRowToggle('Босс каждые', t.bossEveryEnabled, (on) => { t.bossEveryEnabled = on; }, t.bossEvery, 0, (v) => { t.bossEvery = v; }));
   altar.append(row('Сид', numInput(t.seed, (v) => { t.seed = v; })));
 
   const sep = document.createElement('div');

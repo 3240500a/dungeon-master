@@ -49,9 +49,11 @@ export function pickFloorForRole(role: FloorRole, biomeId: string, floors: Floor
   return weighted(byDepth(ofRole, depth), seed);
 }
 
-/** Любой этаж биома на глубине (роль-агностик фолбэк). */
-export function pickFloor(biomeId: string, floors: Floor[], depth: number, seed: number): Floor | undefined {
-  const ofBiome = floors.filter((f) => on(f) && f.biomeId === biomeId);
+/** Любой этаж биома на глубине (роль-агностик фолбэк). Членство в шаблоне приоритетно —
+ *  и только если у биома НЕТ ни одного этажа-члена шаблона, берём любой этаж биома (крайний фолбэк). */
+export function pickFloor(biomeId: string, floors: Floor[], depth: number, templateId: string, seed: number): Floor | undefined {
+  const inTpl = floors.filter((f) => on(f) && f.biomeId === biomeId && inTemplate(f, templateId));
+  const ofBiome = inTpl.length ? inTpl : floors.filter((f) => on(f) && f.biomeId === biomeId);
   if (!ofBiome.length) return undefined;
   return weighted(byDepth(ofBiome, depth), seed);
 }

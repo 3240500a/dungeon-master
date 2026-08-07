@@ -77,7 +77,7 @@ export function generateRunPlan(reg: ConfigRegistry, config: RunConfig): RunPlan
       }
     }
     const seed = nodeSeed(config.seed, depth, lane);
-    const floor = pickFloorForRole(floorRole, biome.id, floors, depth, templateId, seed) ?? pickFloor(biome.id, floors, depth, seed);
+    const floor = pickFloorForRole(floorRole, biome.id, floors, depth, templateId, seed) ?? pickFloor(biome.id, floors, depth, templateId, seed);
     const floorSpec = resolveFloorSpec(biome, floor, depth, seed, [...runModIds, ...nodeModIds]);
     return { id: `n${depth}_${lane}`, type: nodeType, depth, lane, biomeId: biome.id, floorSpec, modifiers: nodeModIds, edges: [] };
   };

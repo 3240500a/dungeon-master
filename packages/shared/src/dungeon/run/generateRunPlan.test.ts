@@ -145,4 +145,29 @@ describe('generateRunPlan — структура забега', () => {
     const sample = plan.nodes.find((n: RunNode) => n.type === 'combat')!;
     expect(sample.floorSpec.modifiers).toEqual(expect.arrayContaining(['greedy-vault', 'hardened-foes']));
   });
+
+  it('план честно следует шаблону+членству: returnEvery/bossEvery=0 → нет rest/boss; вес=0 → нет роли; финал уважает членство', () => {
+    const r = reg();
+    // Короткий шаблон без городов/боссов; boss/treasure-этажи НЕ члены шаблона → в план не попадают (даже финалом).
+    r.reload({
+      'run-templates': [{ id: 't-short', name: 'кор', enabled: true, tier: 'easy', length: { min: 3, max: 4 }, width: { min: 1, max: 2 }, branching: 0.4, returnEvery: 0, returnJitter: 0, bossEvery: 0, finale: true, nodeTypeWeights: { combat: 5, elite: 1, treasure: 0, event: 0, shop: 0 }, allowedModifiers: [] }],
+      floors: [
+        { id: 'b-combat', name: 'c', biomeId: 'crypt', role: 'combat', algoParams: { algorithm: 'rooms' } },
+        { id: 'b-elite', name: 'e', biomeId: 'crypt', role: 'elite', algoParams: { algorithm: 'rooms' } },
+        { id: 'b-boss', name: 'bo', biomeId: 'crypt', role: 'boss', templates: ['other-tpl'], algoParams: { algorithm: 'rooms' } },
+        { id: 'b-treasure', name: 't', biomeId: 'crypt', role: 'treasure', templates: ['other-tpl'], algoParams: { algorithm: 'rooms' } },
+        { id: 'b-rest', name: 're', biomeId: 'crypt', role: 'rest', algoParams: { algorithm: 'rooms' } },
+      ],
+    });
+    for (let seed = 1; seed <= 40; seed++) {
+      const plan = generateRunPlan(r, { ...defaultRunConfig(r, 't-short', seed), biomeId: 'crypt' });
+      const ids = plan.nodes.map((n) => n.floorSpec.floorId);
+      expect(plan.nodes.some((n) => n.type === 'rest'), `seed=${seed} rest`).toBe(false);       // returnEvery=0 → нет городов
+      expect(plan.nodes.some((n) => n.type === 'boss'), `seed=${seed} boss`).toBe(false);       // bossEvery=0 → нет боссов
+      expect(ids.includes('b-boss'), `seed=${seed} boss-floor`).toBe(false);                    // не член шаблона → нигде (в т.ч. финал)
+      expect(ids.includes('b-treasure'), `seed=${seed} treasure-floor`).toBe(false);            // вес 0 + не член
+      for (const n of plan.nodes) expect(['combat', 'elite', 'finale']).toContain(n.type);      // только combat/elite/финал
+      expect(plan.nodes.every((n) => n.depth <= 5), `seed=${seed} длина`).toBe(true);           // L≤4, финал L+1≤5
+    }
+  });
 });
