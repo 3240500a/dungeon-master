@@ -36,8 +36,11 @@ describe('generateRunPlan — структура забега', () => {
       expect(reach.has(plan.finaleId!), `seed=${seed} финал`).toBe(true);
       // все узлы достижимы от старта
       for (const n of plan.nodes) expect(reach.has(n.id), `seed=${seed} node=${n.id}`).toBe(true);
-      // старт есть, финал — единственный без исходящих
-      expect(plan.nodes.find((n) => n.id === plan.startId)!.type).toBe('start');
+      // вход = первый БОЕВОЙ этаж (глубина 1), без «старта»
+      const entry = plan.nodes.find((n) => n.id === plan.startId)!;
+      expect(entry.type).toBe('combat');
+      expect(entry.depth).toBe(1);
+      expect(plan.nodes.every((n) => n.type !== 'start' && n.depth >= 1)).toBe(true);
     }
   });
 

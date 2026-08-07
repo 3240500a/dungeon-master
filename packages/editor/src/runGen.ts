@@ -18,8 +18,12 @@ interface Tuning {
   tier: string;
   seed: number;
   length: number;
+  /** Переопределять длину? Выкл = брать из шаблона забега. */
+  lengthEnabled: boolean;
   widthMax: number;
   branching: number;
+  /** Переопределять ветвление? Выкл = брать из шаблона забега. */
+  branchingEnabled: boolean;
   returnEvery: number;
   bossEvery: number;
   /** Мощь персонажа = эфф. уровень (уровень + гир + пассивы) — влияет на уровни монстров. */
@@ -85,6 +89,25 @@ function rangeRow(label: string, value: number, min: number, max: number, step: 
   wrap.append(rng, out);
   return row(label, wrap);
 }
+/** Крутилка с галкой «переопределить»: галка снята → слайдер неактивен, значение НЕ уйдёт в конфиг (шаблон). */
+function rangeRowToggle(label: string, enabled: boolean, onToggle: (on: boolean) => void, value: number, min: number, max: number, step: number, fmt: (v: number) => string, onChange: (v: number) => void): HTMLElement {
+  const out = document.createElement('span'); out.textContent = fmt(value); out.style.cssText = 'color:#caa64b;min-width:34px;text-align:right';
+  const rng = document.createElement('input');
+  rng.type = 'range'; rng.min = String(min); rng.max = String(max); rng.step = String(step); rng.value = String(value);
+  rng.style.cssText = 'width:120px'; rng.disabled = !enabled; rng.style.opacity = enabled ? '1' : '0.4';
+  rng.addEventListener('input', () => { const v = Number(rng.value); out.textContent = fmt(v); onChange(v); });
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = enabled;
+  cb.title = 'Переопределить настройку шаблона забега';
+  cb.addEventListener('change', () => { onToggle(cb.checked); rng.disabled = !cb.checked; rng.style.opacity = cb.checked ? '1' : '0.4'; });
+  const wrap = document.createElement('span'); wrap.style.cssText = 'display:flex;align-items:center;gap:6px';
+  wrap.append(rng, out);
+  const r = document.createElement('label');
+  r.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;margin:4px 0';
+  const s = document.createElement('span'); s.style.cssText = 'display:flex;align-items:center;gap:6px;color:#b8b8c8';
+  s.append(cb, document.createTextNode(label));
+  r.append(s, wrap);
+  return r;
+}
 function selectInput(opts: [string, string][], value: string, onChange: (v: string) => void): HTMLSelectElement {
   const s = document.createElement('select');
   s.style.cssText = 'background:#12121a;color:#e8e8f0;border:1px solid #2c2c3a;border-radius:4px;padding:4px 6px;max-width:180px';
@@ -107,8 +130,8 @@ function tuningFromTemplate(reg: ConfigRegistry, templateId: string, seed: numbe
     templateId: t.id,
     biomeId: prevBiome && biomes.some((b) => b.id === prevBiome) ? prevBiome : biomes[0]!.id,
     tier: t.tier, seed,
-    length: Math.round((t.length.min + t.length.max) / 2),
-    widthMax: t.width.max, branching: t.branching,
+    length: Math.round((t.length.min + t.length.max) / 2), lengthEnabled: false,
+    widthMax: t.width.max, branching: t.branching, branchingEnabled: false,
     returnEvery: t.returnEvery, bossEvery: t.bossEvery,
     power: prevPower ?? 20,
     modifiers: new Set<string>(),
@@ -118,7 +141,10 @@ function tuningFromTemplate(reg: ConfigRegistry, templateId: string, seed: numbe
 function buildConfig(t: Tuning): RunConfig {
   return {
     templateId: t.templateId, biomeId: t.biomeId, tier: t.tier, seed: t.seed,
-    length: t.length, widthMax: t.widthMax, branching: t.branching,
+    // length/branching передаём ТОЛЬКО если галка включена; иначе — undefined → генератор берёт из шаблона забега.
+    ...(t.lengthEnabled ? { length: t.length } : {}),
+    ...(t.branchingEnabled ? { branching: t.branching } : {}),
+    widthMax: t.widthMax,
     returnEvery: t.returnEvery, bossEvery: t.bossEvery, power: t.power, modifiers: [...t.modifiers],
   };
 }
@@ -336,8 +362,8 @@ export function renderRunGenPage(page: HTMLElement, data: Record<string, unknown
   altar.append(row('Биом', selectInput(biomes.filter((b) => b.enabled !== false).map((b) => [b.id, b.name] as [string, string]), t.biomeId,
     (v) => { t.biomeId = v; })));
   altar.append(row('Тир', selectInput(diffs.map((d) => [d.id, d.name] as [string, string]), t.tier, (v) => { t.tier = v; })));
-  altar.append(rangeRow('Этажей (слоёв)', t.length, 3, 20, 1, (v) => String(v), (v) => { t.length = v; }));
-  altar.append(rangeRow('Ветвление', t.branching, 0, 1, 0.05, (v) => v.toFixed(2), (v) => { t.branching = v; }));
+  altar.append(rangeRowToggle('Этажей (слоёв)', t.lengthEnabled, (on) => { t.lengthEnabled = on; }, t.length, 3, 20, 1, (v) => String(v), (v) => { t.length = v; }));
+  altar.append(rangeRowToggle('Ветвление', t.branchingEnabled, (on) => { t.branchingEnabled = on; }, t.branching, 0, 1, 0.05, (v) => v.toFixed(2), (v) => { t.branching = v; }));
   altar.append(rangeRow('Мощь (эфф. ур.)', t.power, 1, 80, 1, (v) => String(v), (v) => { t.power = v; if (selectedNodeId && plan) showFloor(selectedNodeId); }));
   altar.append(row('Макс. ширина', numInput(t.widthMax, (v) => { t.widthMax = Math.max(1, v); }, 60)));
   altar.append(row('Возврат каждые', numInput(t.returnEvery, (v) => { t.returnEvery = Math.max(0, v); }, 60)));

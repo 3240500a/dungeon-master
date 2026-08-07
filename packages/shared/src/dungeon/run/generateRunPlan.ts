@@ -79,34 +79,35 @@ export function generateRunPlan(reg: ConfigRegistry, config: RunConfig): RunPlan
     const seed = nodeSeed(config.seed, depth, lane);
     const floor = pickFloorForRole(floorRole, biome.id, floors, depth, templateId, seed) ?? pickFloor(biome.id, floors, depth, seed);
     const floorSpec = resolveFloorSpec(biome, floor, depth, seed, [...runModIds, ...nodeModIds]);
-    return { id: depth === 0 ? 'start' : `n${depth}_${lane}`, type: nodeType, depth, lane, biomeId: biome.id, floorSpec, modifiers: nodeModIds, edges: [] };
+    return { id: `n${depth}_${lane}`, type: nodeType, depth, lane, biomeId: biome.id, floorSpec, modifiers: nodeModIds, edges: [] };
   };
 
-  // Слой 0 — старт (обычный боевой этаж).
-  const start = makeNode('start', combatRoles[0]!, 0, 0);
-  layers[0] = [start];
-  nodes.push(start);
-
-  // Слои 1..L.
+  // Забег начинается сразу с ПЕРВОГО БОЕВОГО этажа (глубина 1) — никаких «стартовых» этажей.
+  // Слой 1 — одиночный вход-бой; слои 2..L — ветвящиеся боевые + каденция rest/boss; финал — L+1.
+  const entryRole: FloorRole = combatRoles.includes('combat' as FloorRole) ? ('combat' as FloorRole) : combatRoles[0]!;
   let restCursor = returnEvery > 0 ? returnEvery + (returnJitter ? rng.int(-returnJitter, returnJitter) : 0) : Infinity;
   for (let d = 1; d <= L; d++) {
-    const isRest = restAvail && d === restCursor && d < L;
-    const isBoss = bossAvail && d % bossEvery === 0 && d < L;
+    const isEntry = d === 1; // первый этаж всегда одиночный бой (единая точка входа забега)
+    const isRest = !isEntry && restAvail && d === restCursor && d < L;
+    const isBoss = !isEntry && bossAvail && d % bossEvery === 0 && d < L;
     if (returnEvery > 0 && d === restCursor) restCursor = d + returnEvery + (returnJitter ? rng.int(-returnJitter, returnJitter) : 0);
 
-    const width = isRest || isBoss ? 1 : Math.max(1, Math.min(widthMax, rng.int(widthMin, widthMax)));
+    const width = isEntry || isRest || isBoss ? 1 : Math.max(1, Math.min(widthMax, rng.int(widthMin, widthMax)));
     const layer: RunNode[] = [];
     for (let lane = 0; lane < width; lane++) {
       let role: FloorRole;
-      if (isRest) role = 'rest';
+      if (isEntry) role = entryRole;
+      else if (isRest) role = 'rest';
       else if (isBoss) role = 'boss';
       else role = weightedPick(combatRoles.map((t) => ({ item: t, weight: typeWeights[t] ?? 0 })), rng) ?? combatRoles[0]!;
-      const node = makeNode(role as RunNodeType, role, d, lane);
+      const nodeType: RunNodeType = isEntry ? 'combat' : (role as RunNodeType);
+      const node = makeNode(nodeType, role, d, lane);
       layer.push(node);
       nodes.push(node);
     }
     layers[d] = layer;
   }
+  const start = layers[1]![0]!; // точка входа = первый боевой этаж
 
   // Финал: finale-этаж если есть, иначе boss, иначе простой (портал через exitCount 0).
   if (finale) {
