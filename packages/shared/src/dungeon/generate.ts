@@ -11,5 +11,5 @@ export function generateDungeon(seed: number, depth: number, opts: { cols?: numb
   const cols = opts.cols ?? 56;
   const rows = opts.rows ?? 42;
   const roomCount = Math.min(12, 6 + Math.floor(depth / 2));
-  return generateFloorParams({ algorithm: 'rooms', cols, rows, roomCount, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0 }, ((seed + depth * 7919) >>> 0) || 1);
+  return generateFloorParams({ algorithm: 'rooms', cols, rows, roomCount, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0, largeRoomArea: 80 }, ((seed + depth * 7919) >>> 0) || 1);
 }

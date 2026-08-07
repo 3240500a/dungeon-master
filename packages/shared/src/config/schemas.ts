@@ -1021,6 +1021,8 @@ const roomsParamsSchema = z.object({
   }).default({}),
   /** Шанс поставить рукотворный префаб-комнату (room-scope, подходящий по размеру) вместо процедурной. 0 — выкл. */
   prefabChance: z.number().min(0).max(1).default(0),
+  /** Порог площади комнаты (w×h, клеток), с которого она считается «большой» (тип `large` → подбор large-пачек монстров). */
+  largeRoomArea: z.number().int().min(4).max(2000).default(80),
 });
 const bspParamsSchema = z.object({
   algorithm: z.literal('bsp'),
@@ -1045,6 +1047,8 @@ const bspParamsSchema = z.object({
   }).default({}),
   /** Шанс поставить рукотворный префаб-комнату (room-scope, подходящий по размеру) вместо процедурной. 0 — выкл. */
   prefabChance: z.number().min(0).max(1).default(0),
+  /** Порог площади комнаты (w×h, клеток), с которого она считается «большой» (тип `large` → подбор large-пачек монстров). */
+  largeRoomArea: z.number().int().min(4).max(2000).default(80),
 });
 /** Диапазон числа рукотворных room-префаб-камер, врезаемых в органику (пещеры/лабиринт).
  *  Ролл `int(min..max)` за этаж; ставится столько, сколько влезло подходящих префабов (нужны

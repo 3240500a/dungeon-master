@@ -4,8 +4,8 @@ import { validate, type DungeonLayout } from '../floorCommon.js';
 import { Cell, TILE } from '../../world/grid.js';
 import type { FloorAlgoParams } from '../../config/schemas.js';
 
-const ROOMS: FloorAlgoParams = { algorithm: 'rooms', cols: 56, rows: 42, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0 };
-const BSP: FloorAlgoParams = { algorithm: 'bsp', cols: 60, rows: 44, splitDepth: 4, minLeaf: 9, roomPad: 1, loops: 0.45, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0 };
+const ROOMS: FloorAlgoParams = { algorithm: 'rooms', cols: 56, rows: 42, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0, largeRoomArea: 80 };
+const BSP: FloorAlgoParams = { algorithm: 'bsp', cols: 60, rows: 44, splitDepth: 4, minLeaf: 9, roomPad: 1, loops: 0.45, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0, largeRoomArea: 80 };
 const CELLULAR: FloorAlgoParams = { algorithm: 'cellular', cols: 64, rows: 48, fillProb: 0.45, steps: 5, born: 5, survive: 4, prefabRooms: { min: 0, max: 2 } };
 const MAZE: FloorAlgoParams = { algorithm: 'maze', cols: 56, rows: 42, braid: 0.3, width: 1, prefabRooms: { min: 0, max: 2 } };
 
@@ -157,6 +157,18 @@ describe('v3 — формы комнат и размещение старт/вы
       let nonRect = 0;
       for (let s = 1; s <= 20; s++) nonRect += generateFloorParams(cranked, s, { lock: false }).rooms.filter((r) => r.shape && r.shape !== 'rect').length;
       expect(nonRect, base.algorithm).toBeGreaterThan(10);
+    }
+  });
+
+  it('largeRoomArea управляет порогом «большой» комнаты (rooms/bsp)', () => {
+    for (const base of [ROOMS, BSP]) {
+      let lowLarge = 0, highLarge = 0;
+      for (let s = 1; s <= 40; s++) {
+        lowLarge += generateFloorParams({ ...base, largeRoomArea: 1 } as FloorAlgoParams, s, { lock: false }).rooms.filter((r) => r.type === 'large').length;
+        highLarge += generateFloorParams({ ...base, largeRoomArea: 2000 } as FloorAlgoParams, s, { lock: false }).rooms.filter((r) => r.type === 'large').length;
+      }
+      expect(highLarge, `${base.algorithm}: порог 2000 → нет больших`).toBe(0);
+      expect(lowLarge, `${base.algorithm}: порог 1 → есть большие`).toBeGreaterThan(0);
     }
   });
 

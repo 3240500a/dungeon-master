@@ -109,7 +109,7 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
   let effective: FloorAlgoParams = params;
   let algo = ALGORITHMS[params.algorithm];
   if (!algo) {
-    effective = { algorithm: 'rooms', cols: params.cols, rows: params.rows, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0 };
+    effective = { algorithm: 'rooms', cols: params.cols, rows: params.rows, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0, largeRoomArea: 80 };
     algo = roomsAlgorithm;
   }
   // Отбор префабов под этот этаж: по биому + типу генерации (пустой список у префаба = «любой»).

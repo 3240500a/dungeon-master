@@ -87,7 +87,7 @@ export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgo
   const [spawnIdx, exitIdx] = pickSpawnExit(rooms, params.spawnMode, rng);
   const treasureIdx = n > 3 ? ([0, 1, 2].find((i) => i !== spawnIdx && i !== exitIdx) ?? -1) : -1;
   rooms.forEach((r, i) => {
-    r.type = i === spawnIdx ? 'entrance' : i === exitIdx ? 'boss' : i === treasureIdx ? 'treasure' : (r.w * r.h >= 80 ? 'large' : 'small');
+    r.type = i === spawnIdx ? 'entrance' : i === exitIdx ? 'boss' : i === treasureIdx ? 'treasure' : (r.w * r.h >= params.largeRoomArea ? 'large' : 'small');
     r.shape = (i === spawnIdx || i === exitIdx) ? 'rect' : pickShape(params.shapes, rng);
   });
   // Карвинг: с шансом prefabChance ставим рукотворный room-префаб (если подходит), иначе процедурная форма.

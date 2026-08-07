@@ -3,7 +3,7 @@ import { createRng } from '../formulas/rng.js';
 import type { FloorSpec } from './run/types.js';
 
 /** Безопасный дефолт геометрии/фич, если у биома нет подходящих этажей. */
-const DEFAULT_ALGO: FloorAlgoParams = { algorithm: 'rooms', cols: 56, rows: 42, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0 };
+const DEFAULT_ALGO: FloorAlgoParams = { algorithm: 'rooms', cols: 56, rows: 42, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 6, ell: 1, blob: 1, round: 1, hall: 1 }, prefabChance: 0, largeRoomArea: 80 };
 const DEFAULT_FEATURES: FloorFeatures = { portal: false, stash: false, shop: false, bossRoom: false, uniqueRooms: 0, treasureRooms: 0 };
 
 /** Этаж доступен в шаблоне (пустой список = во всех). */

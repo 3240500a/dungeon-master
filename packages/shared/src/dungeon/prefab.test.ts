@@ -24,8 +24,8 @@ const FLOOR_PF: RoomPrefab = {
   tags: [], weight: 1,
 };
 
-const ROOMS: FloorAlgoParams = { algorithm: 'rooms', cols: 56, rows: 42, roomCount: 12, bigChance: 0.4, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 4, ell: 2, blob: 2, round: 2, hall: 2 }, prefabChance: 1 };
-const BSP: FloorAlgoParams = { algorithm: 'bsp', cols: 56, rows: 42, splitDepth: 4, minLeaf: 10, roomPad: 1, loops: 0.45, spawnMode: 'farthest', shapes: { rect: 4, ell: 2, blob: 2, round: 2, hall: 2 }, prefabChance: 1 };
+const ROOMS: FloorAlgoParams = { algorithm: 'rooms', cols: 56, rows: 42, roomCount: 12, bigChance: 0.4, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 4, ell: 2, blob: 2, round: 2, hall: 2 }, prefabChance: 1, largeRoomArea: 80 };
+const BSP: FloorAlgoParams = { algorithm: 'bsp', cols: 56, rows: 42, splitDepth: 4, minLeaf: 10, roomPad: 1, loops: 0.45, spawnMode: 'farthest', shapes: { rect: 4, ell: 2, blob: 2, round: 2, hall: 2 }, prefabChance: 1, largeRoomArea: 80 };
 const PREFAB: FloorAlgoParams = { algorithm: 'prefab', cols: 40, rows: 30 };
 
 const cell = (p: { x: number; y: number }): { cx: number; cy: number } => ({ cx: Math.floor(p.x / TILE), cy: Math.floor(p.y / TILE) });

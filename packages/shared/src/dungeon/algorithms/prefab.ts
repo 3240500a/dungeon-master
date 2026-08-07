@@ -20,7 +20,7 @@ export function prefabAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorA
   const base = pickPrefab(pool, rng);
   if (!base) {
     return roomsAlgorithm(
-      { algorithm: 'rooms', cols: params.cols, rows: params.rows, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 4, ell: 2, blob: 2, round: 2, hall: 2 }, prefabChance: 0 },
+      { algorithm: 'rooms', cols: params.cols, rows: params.rows, roomCount: 9, bigChance: 0.3, loops: 0.5, spawnMode: 'farthest', shapes: { rect: 4, ell: 2, blob: 2, round: 2, hall: 2 }, prefabChance: 0, largeRoomArea: 80 },
       rng, opts,
     );
   }
