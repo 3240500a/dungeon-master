@@ -6,3 +6,4 @@ packages/server/data/
 /data/
 .vite/
 coverage/
+*.tsbuildinfo
