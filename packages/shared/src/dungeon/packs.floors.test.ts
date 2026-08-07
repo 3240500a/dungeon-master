@@ -13,28 +13,24 @@ function oneSmallRoom(): DungeonLayout {
   return { grid, rooms: [{ x: 2, y: 2, w: 8, h: 8, type: 'small', content: undefined }] } as unknown as DungeonLayout;
 }
 
-/** Пачка на N монстров роли-агностик (role:'' → любой из пула), редкость выключена (стабильный count). */
+/** Пачка на N монстров роли-агностик (role:'' → любой из пула), редкость выключена (стабильный count = маркер пачки). */
 const pack = (floors: string[], n: number) => ({
   roomType: 'small', floors, entries: [{ role: '', min: n, max: n, magicChance: 0, rareChance: 0 }],
 });
 
+/** Число заспавненных монстров = маркер выбранной пачки (её N). seed варьирует случайный выбор среди кандидатов. */
+function spawnOn(packs: unknown[], floorId: string, seed = 1): number {
+  const r = reg();
+  r.reload({ packs });
+  const pool = r.get('biomes')[0]!.monsterPool;
+  return spawnPacksEl(r, oneSmallRoom(), 1, 'normal', createRng(seed), 10, pool, 1, floorId).length;
+}
+
 describe('spawnPacksEl — привязка пачки к этажам (packs[].floors)', () => {
-  const spawnOn = (packs: unknown[], floorId: string): number => {
-    const r = reg();
-    r.reload({ packs });
-    const pool = r.get('biomes')[0]!.monsterPool;
-    return spawnPacksEl(r, oneSmallRoom(), 1, 'normal', createRng(1), 10, pool, 1, floorId).length;
-  };
-
-  it('этаж берёт СВОЮ пачку: floor-a→A(5), floor-b→B(1)', () => {
+  it('этаж берёт СВОЮ пачку (единственный кандидат = детерминизм): floor-a→A(5), floor-b→B(1)', () => {
     const packs = [pack(['floor-a'], 5), pack(['floor-b'], 1)];
-    expect(spawnOn(packs, 'floor-a')).toBe(5);
-    expect(spawnOn(packs, 'floor-b')).toBe(1);
-  });
-
-  it('этаж вне всех списков → фолбэк на первую пачку того же типа комнаты (A)', () => {
-    const packs = [pack(['floor-a'], 5), pack(['floor-b'], 1)];
-    expect(spawnOn(packs, 'floor-zzz')).toBe(5);
+    expect(spawnOn(packs, 'floor-a')).toBe(5); // на floor-a подходит только A
+    expect(spawnOn(packs, 'floor-b')).toBe(1); // только B
   });
 
   it('пустой список floors = пачка на ВСЕХ этажах', () => {
@@ -43,10 +39,26 @@ describe('spawnPacksEl — привязка пачки к этажам (packs[].
     expect(spawnOn(packs, 'other')).toBe(3);
   });
 
-  it('пачка, привязанная к чужому этажу, НЕ применяется, если есть безымянная (все этажи)', () => {
-    // A привязана к floor-a; B — на всех этажах. На floor-x первой подходит только B.
+  it('пачка чужого этажа НЕ применяется, если есть подходящая (безымянная)', () => {
     const packs = [pack(['floor-a'], 5), pack([], 2)];
-    expect(spawnOn(packs, 'floor-x')).toBe(2);   // A не подходит (не тот этаж) → B (все этажи)
-    expect(spawnOn(packs, 'floor-a')).toBe(5);   // на floor-a первой стоит A
+    for (let s = 0; s < 12; s++) expect(spawnOn(packs, 'floor-x', s)).toBe(2); // всегда B: A исключена этажом
+  });
+
+  it('этаж вне всех списков → фолбэк на пачки того же типа комнаты (обе, не пусто)', () => {
+    const packs = [pack(['floor-a'], 5), pack(['floor-b'], 1)];
+    const seen = new Set<number>();
+    for (let s = 0; s < 30; s++) seen.add(spawnOn(packs, 'floor-zzz', s));
+    expect([...seen].every((n) => n === 5 || n === 1)).toBe(true); // фолбэк использует roomType-пачки
+    expect(seen.size).toBeGreaterThan(0);
+  });
+});
+
+describe('spawnPacksEl — разнообразие: несколько пачек одного типа+этажа используются ВСЕ', () => {
+  it('две small-пачки на floor-a → по сидам встречаются ОБЕ (не только первая)', () => {
+    const packs = [pack(['floor-a'], 5), pack(['floor-a'], 1)]; // разные N = маркеры
+    const seen = new Set<number>();
+    for (let s = 0; s < 40; s++) seen.add(spawnOn(packs, 'floor-a', s));
+    expect(seen.has(5), 'первая пачка используется').toBe(true);
+    expect(seen.has(1), 'вторая пачка тоже используется (иначе была бы мертва)').toBe(true);
   });
 });

@@ -66,13 +66,19 @@ export function spawnPacksEl(
 
   // Пачка применима к этажу, если её список floors пуст (=любой этаж) или содержит id текущего этажа.
   const onFloor = (p: (typeof packs)[number]): boolean => !p.floors?.length || p.floors.includes(floorId);
-  // Выбор пачки под комнату: сперва подходящая по типу И этажу; фолбэк — тип-комнаты без привязки к этажу,
-  // затем «small» (этаж не должен остаться пустым при неполной настройке пачек).
-  const pickPack = (roomType: string): (typeof packs)[number] | undefined =>
-    packs.find((p) => p.roomType === roomType && onFloor(p))
-    ?? packs.find((p) => p.roomType === roomType)
-    ?? packs.find((p) => p.roomType === 'small' && onFloor(p))
-    ?? packs.find((p) => p.roomType === 'small');
+  // Выбор пачки под комнату по убыванию приоритета: тип+этаж → тип → small+этаж → small (чтобы этаж не
+  // остался пустым при неполной настройке). ВНУТРИ тира — СЛУЧАЙНЫЙ выбор: несколько пачек одного типа =
+  // разнообразие составов (иначе бралась бы всегда первая, а остальные пачки были бы мертвы).
+  const pickPack = (roomType: string): (typeof packs)[number] | undefined => {
+    const tiers = [
+      packs.filter((p) => p.roomType === roomType && onFloor(p)),
+      packs.filter((p) => p.roomType === roomType),
+      packs.filter((p) => p.roomType === 'small' && onFloor(p)),
+      packs.filter((p) => p.roomType === 'small'),
+    ];
+    for (const t of tiers) if (t.length) return t.length === 1 ? t[0]! : t[rng.int(0, t.length - 1)]!;
+    return undefined;
+  };
 
   const spawns: MonsterSpawn[] = [];
   for (const room of layout.rooms) {
