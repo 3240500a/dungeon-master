@@ -247,6 +247,26 @@ export async function startOnline3d(): Promise<void> {
   const dropMeshes = new Map<number, THREE.Object3D>();
   let latest: WorldSnapshot | undefined;
   let smoothX = 0, smoothZ = 0, hasSmooth = false;
+  // Наблюдение: когда локальный игрок мёртв — id живого союзника, за которым ведём камеру (Tab циклит).
+  let spectateId: string | null = null;
+  let spectHint: HTMLDivElement | null = null;
+  const showSpectateHint = (name: string): void => {
+    if (!spectHint) { spectHint = document.createElement('div'); spectHint.style.cssText = 'position:fixed;left:50%;top:13%;transform:translateX(-50%);z-index:40;background:rgba(10,10,16,.72);color:#e8e8f0;border:1px solid #3c3c4a;border-radius:8px;padding:6px 12px;font:600 14px system-ui,sans-serif;pointer-events:none'; root.appendChild(spectHint); }
+    spectHint.textContent = `💀 Наблюдаете за ${name} · Tab — сменить`;
+    spectHint.style.display = 'block';
+  };
+  const hideSpectateHint = (): void => { if (spectHint) spectHint.style.display = 'none'; };
+  const onSpectKey = (e: KeyboardEvent): void => {
+    if (e.key !== 'Tab' || !latest) return;
+    const me = latest.players.find((p) => p.id === myId);
+    if (!me || me.alive) return;                       // Tab-циклинг только когда мёртв
+    const living = latest.players.filter((p) => p.id !== myId && p.alive);
+    if (living.length < 2) return;
+    e.preventDefault();
+    const idx = living.findIndex((p) => p.id === spectateId);
+    spectateId = living[(idx + 1) % living.length]!.id;
+  };
+  window.addEventListener('keydown', onSpectKey);
   let seq = 0;
   let playerLight: THREE.PointLight | undefined;
   let torches: Torch[] = [];
@@ -465,12 +485,24 @@ export async function startOnline3d(): Promise<void> {
     computeActiveWindow();   // AABB видимого окна (+запас) — гейт активности физики монстров ниже
     const mine = latest.players.find((p) => p.id === myId);
     if (mine) {
-      if (!hasSmooth || Math.hypot(mine.x - smoothX, mine.y - smoothZ) > 120) { smoothX = mine.x; smoothZ = mine.y; hasSmooth = true; }
-      else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (mine.x - smoothX) * k; smoothZ += (mine.y - smoothZ) * k; }
-      driveActor(self, smoothX, smoothZ, mine.facing, mine.alive, dt);
       const st = app.state!; st.hp = mine.hp; st.mana = mine.mana; st.stamina = mine.stamina; st.debuffs = mine.debuffs;
-      statusFx.sync('self', smoothX, smoothZ, mine.debuffs);   // эффекты статусов на игроке
       if (st.toggles.join(',') !== mine.toggles.join(',')) { st.toggles = mine.toggles; app.bus.emit('state:changed', {}); } else st.toggles = mine.toggles;
+      // Фокус камеры/окна/миникарты: жив → за собой; мёртв → за живым союзником (наблюдение), иначе держим кадр.
+      let fx = mine.x, fy = mine.y;
+      if (!mine.alive) {
+        const living = latest.players.filter((p) => p.id !== myId && p.alive);
+        if (living.length) {
+          if (!spectateId || !living.some((p) => p.id === spectateId)) spectateId = living[0]!.id;
+          const tgt = living.find((p) => p.id === spectateId)!;
+          fx = tgt.x; fy = tgt.y; showSpectateHint(tgt.name || 'союзник');
+        } else { fx = smoothX; fy = smoothZ; hideSpectateHint(); }
+      } else { spectateId = null; hideSpectateHint(); }
+      if (!hasSmooth || Math.hypot(fx - smoothX, fy - smoothZ) > 120) { smoothX = fx; smoothZ = fy; hasSmooth = true; }
+      else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (fx - smoothX) * k; smoothZ += (fy - smoothZ) * k; }
+      // Тело: живое ведём по сглаженному фокусу; труп — по СВОЕЙ позиции (не уезжает вслед за камерой на союзника).
+      const bx = mine.alive ? smoothX : mine.x, by = mine.alive ? smoothZ : mine.y;
+      driveActor(self, bx, by, mine.facing, mine.alive, dt);
+      statusFx.sync('self', bx, by, mine.debuffs);   // эффекты статусов на игроке
       orbit.target.set(smoothX, 20, smoothZ);
       if (playerLight) playerLight.position.set(smoothX, 90, smoothZ);
     }
@@ -480,9 +512,14 @@ export async function startOnline3d(): Promise<void> {
       if (pv.id === myId) continue; seenP.add(pv.id);
       let a = peers.get(pv.id);
       const wk = weaponKeyFromView(pv);   // реальное оружие пира из снапшота (иначе класс-дефолт)
-      if (!a) { const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y }); actorsGroup.add(d.group); a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk }; peers.set(pv.id, a); }
+      if (!a) {
+        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y }); actorsGroup.add(d.group);
+        const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
+        a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, hp }; peers.set(pv.id, a);
+      }
       else if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }   // пир сменил экипировку → пересобрать меш + адаптировать позы удара
       driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt);
+      if (a.hp) { a.hp.spr.position.set(pv.x, 74, pv.y); a.hp.set(pv.hp / Math.max(1, pv.maxHp)); a.hp.spr.visible = pv.alive; }   // HP пира над головой
     }
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }
     // монстры

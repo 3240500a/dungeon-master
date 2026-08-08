@@ -265,7 +265,7 @@ export class GameSession {
     this.snaps.clear();
     for (const id of Object.keys(w.players)) {
       const p = w.players[id]!;
-      if (p.alive) this.snaps.set(id, playerSnapshot(p.save, this.cfg, this.runtimeMods(p)));
+      if (p.alive) { const s = playerSnapshot(p.save, this.cfg, this.runtimeMods(p)); this.snaps.set(id, s); p.maxHp = s.derived.maxHp; }
     }
 
     // 1) Ввод игроков: движение + взгляд + атака/каст.

@@ -38,6 +38,8 @@ export interface PlayerEntity {
   /** Угол взгляда (к цели/курсору) в радианах. */
   facing: number;
   hp: number;
+  /** Дериватив макс. HP (пересчитывается на тик из снапшота) — для полоски HP пира по сети. */
+  maxHp: number;
   mana: number;
   /** Выносливость — ресурс боевых активок (реген как мана; стойки резервируют). */
   stamina: number;
@@ -239,6 +241,7 @@ export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: num
     vel: { x: 0, y: 0 },
     facing: 0,
     hp,
+    maxHp: hp,
     mana,
     stamina,
     radius: 14,

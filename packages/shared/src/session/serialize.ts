@@ -24,9 +24,9 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
   return {
     tick: w.tick,
     players: Object.values(w.players).map((p) => ({
-      id: p.id, classId: p.save.classId,
+      id: p.id, classId: p.save.classId, name: p.save.name,
       x: p.pos.x, y: p.pos.y, facing: p.facing,
-      hp: p.hp, mana: p.mana, stamina: p.stamina, alive: p.alive,
+      hp: p.hp, maxHp: p.maxHp, mana: p.mana, stamina: p.stamina, alive: p.alive,
       debuffs: p.debuffs, toggles: p.toggles, r: p.radius,
       weaponKey: weapon3dKeyFromEquipment(p.save.equipment.weapon, p.save.equipment.offhand) ?? undefined,
     })),

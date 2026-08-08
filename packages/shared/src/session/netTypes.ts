@@ -23,10 +23,14 @@ export const PROTOCOL_VERSION = 1;
 export interface PlayerView {
   id: string;
   classId: string;
+  /** Имя персонажа — для неймплейта пира. */
+  name: string;
   x: number;
   y: number;
   facing: number;
   hp: number;
+  /** Максимум HP — для полоски здоровья пира (у монстров уже есть, у игроков не хватало). */
+  maxHp: number;
   mana: number;
   stamina: number;
   alive: boolean;
