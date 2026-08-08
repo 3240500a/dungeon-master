@@ -116,6 +116,21 @@ export class Room {
 
   /** Общий путь входа/реконнекта: добавить игрока (опц. в заданную точку) и разослать кадры. */
   private attach(ws: WebSocket, userId: string, save: SaveState, spawnAt?: { x: number; y: number }): string {
+    // Дедуп по charId: если этот персонаж уже активен (реконнект при ещё не разорванном старом ws —
+    // TCP держит мёртвый коннект до heartbeat/таймаута), выселяем СТАРУЮ сущность БЕЗ грейса — иначе
+    // в комнате два «меня» (тот самый баг «игра думает что нас трое»). Ровно один энтити на charId.
+    for (const [oldPid, oc] of this.clients) {
+      const op = this.session.world.players[oldPid];
+      if (!op || op.save.charId !== save.charId) continue;
+      try { oc.ws.close(4001, 'replaced'); } catch { /* уже закрыт */ }
+      this.session.removePlayer(oldPid);
+      this.clients.delete(oldPid);
+      this.broadcast({ t: 'peerLeft', id: oldPid });
+      if (this.vote) { this.vote.yes.delete(oldPid); this.vote.no.delete(oldPid); }
+      break; // на charId максимум один активный
+    }
+    if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
+
     const pid = `p_${randomUUID()}`;
     this.clients.set(pid, { pid, ws, input: idleInput(), userId });
     this.session.addPlayer(pid, save, spawnAt);

@@ -18,7 +18,25 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
     perMessageDeflate: { threshold: 1024, zlibDeflateOptions: { level: 6 } },
   });
   const rooms = new RoomManager(cfg);
-  wss.on('connection', (ws) => rooms.handleConnection(ws));
+  wss.on('connection', (ws) => {
+    // Heartbeat: помечаем «живым» на любой pong/сообщение; мёртвые (обрыв интернета, TCP ещё висит)
+    // добиваем ниже — иначе removePlayer не сработал бы до TCP-таймаута (~2 мин) и в комнате копился
+    // бы «призрак» игрока (дубль при реконнекте).
+    (ws as { isAlive?: boolean }).isAlive = true;
+    ws.on('pong', () => { (ws as { isAlive?: boolean }).isAlive = true; });
+    ws.on('message', () => { (ws as { isAlive?: boolean }).isAlive = true; });
+    rooms.handleConnection(ws);
+  });
+  // Пинг всех раз в 10с; кто не ответил с прошлого пинга — terminate() → 'close' → removePlayer.
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      const w = ws as { isAlive?: boolean };
+      if (w.isAlive === false) { ws.terminate(); continue; }
+      w.isAlive = false;
+      ws.ping();
+    }
+  }, 10_000);
+  wss.on('close', () => clearInterval(heartbeat));
   console.log('[dm-server] WebSocket на /ws');
 
   // Graceful shutdown: при остановке/рестарте (в dev — `tsx watch` шлёт SIGTERM на каждую
