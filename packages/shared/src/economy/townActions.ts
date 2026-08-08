@@ -143,6 +143,10 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string): Action
   const need: Item[] = [];
   if (prev) need.push(prev);
   if (displaced) need.push(displaced);
+  // Смена пояса на меньший: колбы КОМПАКТИМ под новую ёмкость (первые N остаются в поясе), а лишние
+  // возвращаем в инвентарь. Иначе колбы сверх beltSlots висли в save.belt вне видимых слотов («лимбо»).
+  const newBeltCap = slot === 'belt' ? (item.beltSlots ?? 0) : -1;
+  if (slot === 'belt') { for (const c of save.belt.filter((x): x is Item => !!x).slice(newBeltCap)) need.push(c); }
 
   const idx = save.inventory.findIndex((i) => i.uid === uid);
   save.inventory.splice(idx, 1);
@@ -155,6 +159,7 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string): Action
   item.pos = null;
   save.equipment[slot] = item;
   if (twoH && displaced) delete save.equipment.offhand;
+  if (slot === 'belt') { const kept = save.belt.filter((x): x is Item => !!x).slice(0, newBeltCap); save.belt = Array.from({ length: newBeltCap }, (_, i) => kept[i] ?? null); }
   for (const it of need) addToInventory(save.inventory, it, dims);
   return { ok: true };
 }
@@ -163,9 +168,14 @@ export function unequip(reg: ConfigRegistry, save: SaveState, slot: string): Act
   const s = slot as EquipSlot;
   const it = save.equipment[s];
   if (!it) return { ok: false, reason: 'Слот пуст' };
-  if (!hasSpace(save.inventory, it.gridW, it.gridH, dimsOf(reg))) return { ok: false, reason: 'Нет места' };
+  const dims = dimsOf(reg);
+  // Снятие пояса: ёмкость станет 0 → все колбы из пояса тоже уходят в инвентарь (иначе висли бы в лимбо).
+  const beltPotions = s === 'belt' ? save.belt.filter((x): x is Item => !!x) : [];
+  const need: Item[] = [it, ...beltPotions];
+  for (const n of need) if (!hasSpace(save.inventory, n.gridW, n.gridH, dims)) return { ok: false, reason: 'Нет места' };
   delete save.equipment[s];
-  addToInventory(save.inventory, it, dimsOf(reg));
+  if (s === 'belt') save.belt = [];
+  for (const n of need) addToInventory(save.inventory, n, dims);
   return { ok: true };
 }
 

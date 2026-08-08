@@ -102,6 +102,7 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   }
   if (item.armorClass) base(`Броня: ${R.armorClass(item.armorClass)}`);
   if (item.shieldClass) base(`Щит: ${SHIELD_CLASS_LABEL[item.shieldClass] ?? item.shieldClass}`);
+  if (item.beltSlots) base(`Слотов под зелья: ${item.beltSlots}`);
   const minD = item.baseStats.find((m) => m.stat === 'minDamage' && m.kind === 'flat');
   const maxD = item.baseStats.find((m) => m.stat === 'maxDamage' && m.kind === 'flat');
   const hasDmg = item.attackType && minD && maxD;
