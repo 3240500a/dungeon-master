@@ -113,7 +113,11 @@ describe('generateRunPlan — структура забега', () => {
     const boss = generateFloor(resolveFloorSpec(biome, floors.find((f) => f.id === 'crypt-boss')!, 6, 11, [], { exitCount: 1 }));
     expect(boss.rooms.some((rm) => rm.content === 'boss')).toBe(true);
     expect(boss.doors.length).toBeGreaterThan(0); // bossRoom → замок
-    const vault = generateFloor(resolveFloorSpec(biome, floors.find((f) => f.id === 'crypt-vault')!, 6, 12, [], { exitCount: 1 }));
+    // Проверяем ПРИМЕНЕНИЕ фич (treasureRooms→сундук, uniqueRooms→страж) независимо от
+    // балансного тюнинга конкретного этажа: форсим фичи в спеке (в конфиге числа крутит юзер).
+    const vaultFloor = floors.find((f) => f.id === 'crypt-vault')!;
+    const vaultSpec = resolveFloorSpec(biome, { ...vaultFloor, features: { ...vaultFloor.features, treasureRooms: 1, uniqueRooms: 1 } }, 6, 12, [], { exitCount: 1 });
+    const vault = generateFloor(vaultSpec);
     expect(vault.rooms.some((rm) => rm.content === 'treasure')).toBe(true);
     expect(vault.rooms.some((rm) => rm.content === 'unique')).toBe(true); // страж
     expect(vault.decor.some((d) => d.kind === 'chest')).toBe(true);
