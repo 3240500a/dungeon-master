@@ -486,6 +486,7 @@ export async function startOnline3d(): Promise<void> {
     const mine = latest.players.find((p) => p.id === myId);
     if (mine) {
       const st = app.state!; st.hp = mine.hp; st.mana = mine.mana; st.stamina = mine.stamina; st.debuffs = mine.debuffs;
+      if (mine.alive && deathBox) closeDeath();   // ожил (в т.ч. авто-возрождение арены без areaChanged) — снять оверлей смерти
       if (st.toggles.join(',') !== mine.toggles.join(',')) { st.toggles = mine.toggles; app.bus.emit('state:changed', {}); } else st.toggles = mine.toggles;
       // Фокус камеры/окна/миникарты: жив → за собой; мёртв → за живым союзником (наблюдение), иначе держим кадр.
       let fx = mine.x, fy = mine.y;
@@ -723,13 +724,19 @@ export async function startOnline3d(): Promise<void> {
   }
   function hideResume(): void { resumeB?.remove(); resumeB = undefined; }
   function showRoomCode(code: string): void { if (!codeLabel) codeLabel = mk('', 'position:fixed;top:8px;right:12px;z-index:60;background:#171b24;border:1px solid #6f9bcf;border-radius:6px;padding:6px 10px;color:#cfe0f2;font-size:13px;pointer-events:none'); codeLabel.innerHTML = `Комната: <b style="color:#dca94b;letter-spacing:2px">${code}</b>`; }
-  function showVote(kind: 'descend' | 'town'): void { if (voteBox) return; const q = kind === 'town' ? 'Вернуться в город?' : 'Спуск на след. этаж?';
+  function showVote(kind: 'descend' | 'town' | 'arena'): void { if (voteBox) return; const q = kind === 'town' ? 'Вернуться в город?' : kind === 'arena' ? 'Войти в PvP-арену?' : 'Спуск на след. этаж?';
     voteBox = mk(`<div style="margin-bottom:8px">${q} <b class="tally">1/1</b></div><button data-v="1" style="margin:0 4px;padding:6px 14px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Принять</button><button data-v="0" style="margin:0 4px;padding:6px 14px;background:#421;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Отмена</button>`, 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:88;background:#171b24;border:1px solid #6f9bcf;border-radius:8px;padding:12px 16px;color:#e6ddc9;text-align:center;pointer-events:auto');
     voteBox.querySelector('[data-v="1"]')!.addEventListener('click', () => app.net.send({ t: 'vote', accept: true }));
     voteBox.querySelector('[data-v="0"]')!.addEventListener('click', () => app.net.send({ t: 'vote', accept: false }));
   }
   function closeVote(): void { voteBox?.remove(); voteBox = undefined; }
-  function showDeath(f: { goldLost: number; itemsLost: number; toTown: boolean }): void { closeDeath();
+  function showDeath(f: { goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean }): void { closeDeath();
+    // PvP-арена: без потерь, авто-возрождение — иной текст; кнопка «Смотреть» ведёт к камере-наблюдателю.
+    if (f.pvp) {
+      deathBox = mk(`<div style="font-size:24px;margin-bottom:10px">Вы повержены</div><div style="font-size:13px;color:#b09088;margin-top:6px">Возрождение через пару секунд…</div><button data-a="spec" style="margin-top:14px;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Смотреть за соперником</button>`, 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px;pointer-events:auto');
+      deathBox.querySelector('[data-a="spec"]')?.addEventListener('click', () => closeDeath());
+      return;
+    }
     const status = f.toTown ? 'Возвращаетесь в город…' : 'Ожидайте: пати спустится — там возродитесь.';
     deathBox = mk(`<div style="font-size:24px;margin-bottom:10px">Вы погибли</div><div style="font-size:14px;color:#d9a898">Потеряно: <b>${f.goldLost}</b> золота, <b>${f.itemsLost}</b> предм.</div><div style="font-size:13px;color:#b09088;margin-top:10px">${status}</div>${f.toTown ? '' : '<button data-a="spec" style="margin-top:14px;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Смотреть</button>'}`, 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px;pointer-events:auto');
     deathBox.querySelector('[data-a="spec"]')?.addEventListener('click', () => closeDeath());

@@ -153,6 +153,8 @@ export type ClientFrame =
   // Спуск: из города — старт забега (difficultyId=тир; runConfig=выбор алтаря: биом/шаблон/модификаторы);
   // в подземелье — спуск по ребру графа (targetNodeId).
   | { t: 'descend'; difficultyId?: string; targetNodeId?: string; runConfig?: { biomeId?: string; templateId?: string; modifiers?: string[] } }
+  // Вход в PvP-арену из города (через алтарь) — голосование, затем круглый зал с уроном игрок↔игрок.
+  | { t: 'arena' }
   | { t: 'return' }
   | { t: 'lever'; leverId: number }
   | { t: 'vote'; accept: boolean }
@@ -182,8 +184,9 @@ export type ServerFrame =
   | { t: 'runPlan'; plan: RunPlan; currentNodeId: string }
   | { t: 'doorOpened'; doorId: number }
   // Смерть игрока: потери + режим возрождения (город=соло/вайп, иначе ждать пати на след. этаже).
-  | { t: 'died'; goldLost: number; itemsLost: number; toTown: boolean }
-  | { t: 'voteStart'; kind: 'descend' | 'town'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string }
+  // pvp=true — гибель в PvP-арене: без штрафа, авто-возрождение через пару секунд (клиент → иной текст).
+  | { t: 'died'; goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean }
+  | { t: 'voteStart'; kind: 'descend' | 'town' | 'arena'; by: string; needed: number; targetNodeId?: string; targetNodeType?: string }
   | { t: 'voteUpdate'; yes: number; total: number }
   | { t: 'voteEnd'; passed: boolean }
   | { t: 'error'; code: string; msg: string }

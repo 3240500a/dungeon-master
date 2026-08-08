@@ -47,6 +47,16 @@ export const difficultyPanel: PanelFactory = (app, ui) => {
       `<span style="color:${COLORS.dim}">(ур. ${pw.level} + гир +${pw.gearBonus} + мастерства +${pw.passiveBonus})</span>`;
     body.append(head);
 
+    // ── PvP-арена ── круглый зал: игроки бьются друг с другом, без штрафа смерти.
+    const pvpRow = mk('div', 'margin:6px 0 2px');
+    pvpRow.append(button('⚔ PvP-арена (дуэль на алтаре)', () => {
+      ui.close('difficulty');
+      app.net.send({ t: 'arena' });
+    }, 'danger'));
+    body.append(pvpRow);
+    body.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-bottom:2px;font-style:italic`,
+      'Круглый зал: спавн в разных концах, урон по друг другу, гибель без потерь.'));
+
     // ── Биом ──
     if (biomes.length) {
       body.append(sectionLabel('Биом (павшая империя)'));

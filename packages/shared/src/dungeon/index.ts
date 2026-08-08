@@ -7,4 +7,5 @@ export * from './floorSpec.js';
 export * from './algorithms/index.js';
 export * from './floor.js';
 export * from './town.js';
+export * from './arena.js';
 export * from './run/index.js';

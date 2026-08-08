@@ -87,6 +87,8 @@ export interface FloorLayout {
   /** Запертые ворота + рычаги (по модели «дверь ↔ рычаг»). */
   doors?: { id: number; cells: { cx: number; cy: number }[] }[];
   levers?: { id: number; x: number; y: number; doorId: number }[];
+  /** PvP-арена: атаки игроков бьют друг друга (иначе — обычный этаж/город). */
+  pvp?: boolean;
 }
 
 /** События тика — для вью (числа/эффекты) и статистики. */
@@ -225,6 +227,7 @@ export class GameSession {
     w.floorModifiers = layout.floorModifiers;
     w.doors = (layout.doors ?? []).map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) }));
     w.levers = (layout.levers ?? []).map((l) => ({ id: l.id, pos: { x: l.x, y: l.y }, doorId: l.doorId, used: false }));
+    w.pvp = layout.pvp ?? false;   // арена включает урон игрок↔игрок; обычный этаж/город — сбрасывает
     w.monsters = [];
     w.drops = [];
     w.projectiles = [];
@@ -496,6 +499,26 @@ export class GameSession {
       if (Math.abs(this.wrap(ang - p.facing)) > arc) continue;
       this.hitMonster(p, m, packet, attacker, hitOpts);
     }
+    this.hitEnemyPlayers(p, packet, attacker, hitOpts, (t) => {
+      const dx = t.pos.x - p.pos.x, dy = t.pos.y - p.pos.y;
+      if (Math.hypot(dx, dy) > range) return false;
+      return Math.abs(this.wrap(Math.atan2(dy, dx) - p.facing)) <= arc;
+    });
+  }
+
+  /**
+   * PvP-урон: атака игрока `p` бьёт ВРАЖЕСКИХ игроков, попавших в геометрический предикат `inRange`.
+   * Вне арены (`world.pvp=false`) — no-op. Уважает спавн-иммунитет цели. Урон/смерть — через общий
+   * `hitPlayer` (accuracy/evade/блок/броня/статусы), источник урона `by = p.id`.
+   */
+  private hitEnemyPlayers(p: PlayerEntity, packet: DamagePacket, attacker: CombatStats, opts: HitOpts, inRange: (t: PlayerEntity) => boolean): void {
+    if (!this.world.pvp) return;
+    const onHit = opts.onHit ?? [];
+    for (const id of Object.keys(this.world.players)) {
+      const t = this.world.players[id]!;
+      if (t === p || !t.alive || t.spawnImmuneUntil > this.world.timeMs) continue;
+      if (inRange(t)) this.hitPlayer(t, packet, attacker, onHit, p.id);
+    }
   }
 
   /** Опции удара из сигнатур оружия (броне-пробитие/добивание/стан/дебаффы/отброс). */
@@ -749,6 +772,7 @@ export class GameSession {
       if (!m.alive) continue;
       if (this.distToSegment(m.pos, from, to) <= halfW) this.hitMonster(p, m, packet, attacker, opts);
     }
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => this.distToSegment(t.pos, from, to) <= halfW);
     this.launchDash(p, dir, from, to, active, rank);
   }
 
@@ -763,6 +787,7 @@ export class GameSession {
       if (!m.alive) continue;
       if (Math.hypot(m.pos.x - to.x, m.pos.y - to.y) <= r) this.hitMonster(p, m, packet, attacker, opts);
     }
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => Math.hypot(t.pos.x - to.x, t.pos.y - to.y) <= r);
     this.launchDash(p, dir, from, to, active, rank);
   }
 
@@ -806,6 +831,7 @@ export class GameSession {
       if (!m.alive) continue;
       if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= radius) this.hitMonster(p, m, packet, attacker, opts);
     }
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => Math.hypot(t.pos.x - p.pos.x, t.pos.y - p.pos.y) <= radius);
   }
 
   /** Бумеранг (cast boomerang): летит вперёд, разворачивается к владельцу, бьёт на лету в обе стороны. */
@@ -870,6 +896,15 @@ export class GameSession {
       if (active.taunt) m.alertTimer = ALERT_TIME;
       if (kind && active.ailment) {
         addDebuffStack(m.debuffs, { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs }, this.world.timeMs);
+      }
+    }
+    // PvP: проклятие вешает статус на вражеских игроков в радиусе (taunt для игроков смысла не имеет).
+    if (this.world.pvp && kind && active.ailment) {
+      for (const id of Object.keys(this.world.players)) {
+        const t = this.world.players[id]!;
+        if (t === p || !t.alive || t.spawnImmuneUntil > this.world.timeMs) continue;
+        if (Math.hypot(t.pos.x - p.pos.x, t.pos.y - p.pos.y) > active.radius) continue;
+        addDebuffStack(t.debuffs, { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs }, this.world.timeMs);
       }
     }
   }
@@ -1129,6 +1164,17 @@ export class GameSession {
           return true; // обычный снаряд гаснет о первую цель
         }
       }
+      // PvP: снаряд игрока попадает во вражеского игрока (гаснет о первую цель — пирс/бумеранг по игрокам не тянем).
+      if (w.pvp && killer) {
+        for (const id of Object.keys(w.players)) {
+          const t = w.players[id]!;
+          if (t === killer || !t.alive || t.spawnImmuneUntil > w.timeMs) continue;
+          if (Math.hypot(proj.pos.x - t.pos.x, proj.pos.y - t.pos.y) < proj.radius) {
+            this.hitPlayer(t, proj.packet, proj.attacker, proj.hitOpts?.onHit ?? [], killer.id);
+            return true;
+          }
+        }
+      }
     } else {
       for (const id of Object.keys(w.players)) {
         const p = w.players[id]!;
@@ -1232,19 +1278,23 @@ export class GameSession {
     return this.takeDrop(p, i);
   }
 
-  /** Возрождает игрока у входа после смерти: полное HP/мана, сброс дебаффов/стана/тоглов. */
-  respawnPlayer(playerId: string): void {
+  /**
+   * Возрождает игрока после смерти: полное HP/мана, сброс дебаффов/стана/тоглов.
+   * `at` — точка спавна (по умолчанию вход мира); `immuneMs` — спавн-иммунитет в PvP (мс).
+   */
+  respawnPlayer(playerId: string, at?: Vec2, immuneMs = 0): void {
     const p = this.world.players[playerId];
     if (!p) return;
     p.toggles = [];
     p.skillBuffs = {};
     const snap = playerSnapshot(p.save, this.cfg);
-    p.pos = { ...this.world.spawn };
+    p.pos = at ? { ...at } : { ...this.world.spawn };
     p.vel = { x: 0, y: 0 };
     p.hp = snap.derived.maxHp;
     p.mana = snap.derived.maxMana;
     p.stamina = snap.derived.maxStamina;
     p.debuffs = newDebuffState();
+    p.spawnImmuneUntil = immuneMs > 0 ? this.world.timeMs + immuneMs : 0;
     p.stunTimer = 0;
     p.windup = null;
     p.attackCd = 0;

@@ -62,6 +62,8 @@ export interface PlayerEntity {
   /** Остаток стана (сек); >0 — управление/атака заблокированы. */
   stunTimer: number;
   alive: boolean;
+  /** PvP: до этого игрового времени (мс) игрок неуязвим для урона других игроков (спавн-иммунитет арены). 0 — нет. */
+  spawnImmuneUntil: number;
   /** Персистентный персонаж (уровень, атрибуты, экипировка, инвентарь...). */
   save: SaveState;
 }
@@ -176,6 +178,8 @@ export interface WorldState {
   doors: WorldDoor[];
   /** Рычаги этажа — каждый открывает свою дверь (по `doorId`), `used` после нажатия. */
   levers: WorldLever[];
+  /** PvP-режим (арена): атаки игроков бьют ДРУГ ДРУГА; смерть без штрафа забега. По умолчанию false. */
+  pvp: boolean;
 }
 
 /** Дверь этажа: группа клеток, открывается рычагом с тем же `doorId`. */
@@ -203,6 +207,7 @@ export function newWorldState(grid: Grid, seed: number, depth: number, difficult
     spawn: { x: 0, y: 0 },
     doors: [],
     levers: [],
+    pvp: false,
   };
 }
 
@@ -255,6 +260,7 @@ export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: num
     dash: null,
     stunTimer: 0,
     alive: true,
+    spawnImmuneUntil: 0,
     save,
   };
 }

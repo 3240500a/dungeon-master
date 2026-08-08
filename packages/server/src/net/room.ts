@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
-  GameSession, spawnPacksEl, townLayout, serializeWorld, floorInit,
+  GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit,
   generateRunPlan, generateFloor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
   buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
@@ -20,6 +20,9 @@ const TICK_MS = 1000 / 30;
 const TICK_DT = TICK_MS / 1000;
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
+const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARENA_SIZE клеток
+const ARENA_IMMUNE_MS = 2_000;      // спавн-иммунитет игрока в арене (мс)
+const ARENA_RESPAWN_MS = 3_000;     // задержка авто-возрождения после гибели в арене (мс)
 
 interface Client { pid: string; ws: WebSocket; input: PlayerInput; userId: string; }
 
@@ -52,15 +55,19 @@ export class Room {
   private session: GameSession;
   private seed: number;
   private difficultyId = 'normal';
-  private area: 'town' | 'dungeon' = 'town';
+  private area: 'town' | 'dungeon' | 'arena' = 'town';
   private depth = 0;
+  /** PvP-арена: точки спавна (противоположные концы) + возрождения по pid, deadline'ы возрождения (serverTime). */
+  private arenaSpawns: { x: number; y: number }[] = [];
+  private arenaSpawnByPid = new Map<string, { x: number; y: number }>();
+  private arenaRespawns = new Map<string, number>();
   private decor: DecorObject[] = [];
   private clients = new Map<string, Client>();
   private shop: Item[] = [];
   private questBoard: QuestDef[] = [];
   private wipeAt = 0; // serverTime авто-возврата в город после вайпа пати (0 = не запланирован)
   private lastSaveAt = 0; // serverTime последнего автосейва в БД (0 = ещё не было)
-  private vote: { kind: 'descend' | 'town'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
+  private vote: { kind: 'descend' | 'town' | 'arena'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
   // Активный забег v2: конфиг (сид/биом/шаблон/тир), регенерируемый граф и текущий узел.
   private runConfig: RunConfig | null = null;
   private runPlan: RunPlan | null = null;
@@ -368,6 +375,14 @@ export class Room {
     this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
     this.checkVote();
   }
+  /** Вход в PvP-арену из города (через алтарь) — голосование, затем круглый зал с уроном игрок↔игрок. */
+  enterArena(pid: string): void {
+    if (this.vote || this.area !== 'town') return; // арена только из города
+    this.vote = { kind: 'arena', yes: new Set([pid]), no: new Set() };
+    this.broadcast({ t: 'voteStart', kind: 'arena', by: pid, needed: this.clients.size });
+    this.broadcast({ t: 'voteUpdate', yes: 1, total: this.clients.size });
+    this.checkVote();
+  }
   /** Возвращает выбранную сложность, если она разблокирована для игрока, иначе текущую. */
   private validDifficulty(pid: string, id: string | undefined): string {
     if (!id || id === this.difficultyId) return this.difficultyId;
@@ -391,6 +406,7 @@ export class Room {
       this.vote = null;
       this.broadcast({ t: 'voteEnd', passed: true });
       if (v.kind === 'town') { this.enterTown(); return; }
+      if (v.kind === 'arena') { this.enterArenaFloor(); return; }
       // descend
       if (this.area === 'town') {
         if (v.diffId) this.difficultyId = v.diffId; // тир забега
@@ -501,6 +517,27 @@ export class Room {
     for (const pid of this.clients.keys()) this.sendSave(pid); // город мог выдать main-квест
     this.persistAll(); // чекпойнт: возврат в город
   }
+  /**
+   * PvP-арена: круглый зал, урон игрок↔игрок, монстров нет. Игроки расставлены по
+   * противоположным концам со спавн-иммунитетом; смерть без штрафа + авто-возрождение.
+   * Выход — «В город» (returnTown), как из подземелья.
+   */
+  private enterArenaFloor(): void {
+    this.wipeAt = 0;
+    this.area = 'arena'; this.depth = 0; this.decor = [];
+    this.arenaRespawns.clear(); this.arenaSpawnByPid.clear();
+    const a = arenaLayout(ARENA_SIZE);
+    this.arenaSpawns = a.spawns;
+    this.session.enterFloor(0, { grid: a.grid, spawn: a.spawns[0]!, monsters: [], pvp: true });
+    let i = 0;
+    for (const pid of this.clients.keys()) {                 // по противоположным концам + иммунитет
+      const at = a.spawns[i % a.spawns.length]!;
+      this.arenaSpawnByPid.set(pid, at);
+      this.session.respawnPlayer(pid, at, ARENA_IMMUNE_MS);
+      i++;
+    }
+    this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+  }
   private regenShop(): void {
     const itemsBase = this.cfg.get('items.base');
     const rarities = this.cfg.get('rarities');
@@ -534,6 +571,7 @@ export class Room {
     this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world) });
     if (Date.now() - this.lastSaveAt >= AUTOSAVE_MS) this.persistAll(); // периодический автосейв прогресса
     if (this.wipeAt && Date.now() >= this.wipeAt) this.enterTown(); // вайп → авто-возврат в город
+    if (this.area === 'arena' && this.arenaRespawns.size) this.tickArenaRespawns(); // авто-возрождение в PvP
     if (!events.length) return;
 
     const touched = new Set<string>();
@@ -542,7 +580,7 @@ export class Room {
       if (e.type === 'gold' || e.type === 'xp' || e.type === 'levelup' || e.type === 'item-picked') touched.add(e.playerId);
       if (e.type === 'monster-died' && e.by) this.track(e.by, 'kill', e.def.id, touched, quest);
       else if (e.type === 'item-picked') this.track(e.playerId, 'collect-item', e.item.baseId, touched, quest);
-      else if (e.type === 'player-died') this.onPlayerDeath(e.playerId, touched);
+      else if (e.type === 'player-died') { if (this.area === 'arena') this.onArenaDeath(e.playerId); else this.onPlayerDeath(e.playerId, touched); }
     }
     this.broadcast({ t: 'events', events: quest.length ? [...events, ...quest] : events });
     for (const pid of touched) this.sendSave(pid);
@@ -571,6 +609,26 @@ export class Room {
     }
   }
 
+  /** Гибель в PvP-арене: без штрафа, окно «наблюдения» + авто-возрождение через ARENA_RESPAWN_MS. */
+  private onArenaDeath(pid: string): void {
+    const c = this.clients.get(pid);
+    if (!c) return;
+    this.send(c.ws, { t: 'died', goldLost: 0, itemsLost: 0, toTown: false, pvp: true });
+    this.arenaRespawns.set(pid, Date.now() + ARENA_RESPAWN_MS);
+  }
+  /** Тик авто-возрождений арены: воскрешает игроков, чей таймер истёк, на их конце со спавн-иммунитетом. */
+  private tickArenaRespawns(): void {
+    const now = Date.now();
+    for (const [pid, at] of [...this.arenaRespawns]) {
+      if (now < at) continue;
+      this.arenaRespawns.delete(pid);
+      const p = this.session.world.players[pid];
+      if (!p) continue;                          // игрок вышел — просто снимаем таймер
+      const spawn = this.arenaSpawnByPid.get(pid) ?? this.arenaSpawns[0];
+      if (spawn) this.session.respawnPlayer(pid, spawn, ARENA_IMMUNE_MS);
+    }
+  }
+
   /** Трекинг цели квеста для игрока: мутирует сейв, копит «выполнено»-события. */
   private track(pid: string, type: 'kill' | 'collect-item', target: string, touched: Set<string>, out: SessionEvent[]): void {
     const s = this.session.world.players[pid]?.save;
@@ -591,7 +649,8 @@ export class Room {
     return pid ? this.session.world.players[pid]?.save : undefined;
   }
   private currentFloorInit(): FloorInit {
-    return floorInit(this.area, this.session.world, this.decor);
+    // Арена рендерится клиентом как обычный этаж (грид+спавн), поэтому area → 'dungeon'.
+    return floorInit(this.area === 'town' ? 'town' : 'dungeon', this.session.world, this.decor);
   }
   private peerLite(pid: string): PeerLite {
     const s = this.session.world.players[pid]!.save;

@@ -327,18 +327,24 @@ export class OnlineScene extends Phaser.Scene {
    * Окно смерти: потери (золото/предметы) + режим возрождения. Соло/вайп → «возврат в город»
    * (окно закроется на areaChanged). Кооп → «ждите пати» + кнопка «Смотреть» (спектейт до спуска).
    */
-  private showDeathModal(f: { goldLost: number; itemsLost: number; toTown: boolean }): void {
+  private showDeathModal(f: { goldLost: number; itemsLost: number; toTown: boolean; pvp?: boolean }): void {
     this.closeDeathModal();
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;background:rgba(30,8,10,0.96);border:1px solid #c85a48;border-radius:12px;padding:22px 30px;color:#e6c8bd;text-align:center;min-width:280px';
+    // PvP-арена: без потерь, авто-возрождение — иной текст.
+    if (f.pvp) {
+      box.innerHTML = `<div style="font-size:24px;margin-bottom:10px">Вы повержены</div>
+        <div style="font-size:13px;color:#b09088;margin-top:6px">Возрождение через пару секунд…</div>`;
+    } else {
     const status = f.toTown ? 'Возвращаетесь в город…' : 'Ожидайте: пати зачистит этаж и спустится — там вы возродитесь.';
     box.innerHTML = `<div style="font-size:24px;margin-bottom:10px">Вы погибли</div>
       <div style="font-size:14px;color:#d9a898">Потеряно: <b>${f.goldLost}</b> золота, <b>${f.itemsLost}</b> предм.</div>
       <div style="font-size:13px;color:#b09088;margin-top:10px">${status}</div>`;
-    if (!f.toTown) {
+    }
+    if (f.pvp || !f.toTown) {
       const btn = document.createElement('button');
-      btn.textContent = 'Смотреть за пати';
+      btn.textContent = f.pvp ? 'Смотреть за соперником' : 'Смотреть за пати';
       btn.style.cssText = 'margin-top:14px;padding:8px 16px;background:#3a2030;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer';
       btn.addEventListener('click', () => this.closeDeathModal());
       box.appendChild(btn);
@@ -360,12 +366,12 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   // ── Голосование ─────────────────────────────────────────────────────────────
-  private showVote(kind: 'descend' | 'town', by: string): void {
+  private showVote(kind: 'descend' | 'town' | 'arena', by: string): void {
     if (this.voteBox) return;
     const root = document.getElementById('ui-root') ?? document.body;
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:88;background:#171b24;border:1px solid #6f9bcf;border-radius:8px;padding:12px 16px;color:#e6ddc9;text-align:center';
-    const q = kind === 'town' ? 'Вернуться в город?' : 'Спуск на след. этаж?';
+    const q = kind === 'town' ? 'Вернуться в город?' : kind === 'arena' ? 'Войти в PvP-арену?' : 'Спуск на след. этаж?';
     box.innerHTML = `<div style="margin-bottom:8px">${q} <b class="tally">1/1</b></div>
       <button data-v="1" style="margin:0 4px;padding:6px 14px;background:#22301c;color:#cfe0c0;border:1px solid #8aa84a;border-radius:6px;cursor:pointer">Принять</button>
       <button data-v="0" style="margin:0 4px;padding:6px 14px;background:#421;color:#e6bcae;border:1px solid #c85a48;border-radius:6px;cursor:pointer">Отмена</button>`;
