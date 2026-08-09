@@ -11,13 +11,12 @@ export interface Clip { name: string; character: string; weapon: string; loop: b
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
 export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth убран (дубль stanceWidth); боб таза — в GAIT.bobWalk/bobRun (× в bobY)
 /**
- * Скрутка корпуса (torso-lead): голова/плечи ведут за ПРИЦЕЛОМ, таз ведёт по «цели таза» (стоя = прицел; на ходу
- * = НАПРАВЛЕНИЕ ДВИЖЕНИЯ — тогда стопы чистые, а верх скручивается к прицелу; так torso-lead работает и на бегу).
- * `threshold` — мёртвая зона таза стоя (рад): пока таз в ней, он ДЕРЖИТСЯ, разница «размазана» по позвоночнику.
+ * Скрутка корпуса (torso-lead): голова/плечи ведут за ПРИЦЕЛОМ, таз догоняет прицел. ОДНА система стоя и на бегу.
+ * `threshold` — мёртвая зона (рад): пока |прицел−таз| ≤ неё, таз ДЕРЖИТСЯ, разница «размазана» по позвоночнику (голова ведёт).
  * `turnRate` — скорость доворота таза (рад/с). КРИТИЧНО для стоп-шагов: таз кормит планировщик; слишком быстро →
  *   обе стопы за кадр = прыжок; слишком медленно + лаг → семенит. ~3 рад/с: за приставной шаг (0.18с) таз повернётся
  *   < turnStepDist → стопы переступают поочерёдно и успевают.
- * `maxTwist` — кламп скрутки ВЕРХА к прицелу (рад): голова/спина не выворачиваются сверх (на страйфе прицел ≠ движение).
+ * `maxTwist` — кламп скрутки ВЕРХА (рад): голова/спина не выворачиваются сверх порога.
  * `weights` — распределение скрутки по цепочке [Spine, Chest, UpperChest, Neck, Head] (в сумме ~1 → голова доходит до прицела).
  * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше сегментов/порог, лёгкая → свободнее).
  */
@@ -359,22 +358,19 @@ export function loadTwist(charId: string, fallbackId?: string): TwistProfile {
 const wrapPi = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 
 /**
- * Шаг torso-lead: таз ведёт к `pelvisTarget` (стоя = прицел; на ходу = направление движения) удержанием в зоне +
- * ПЛАВНЫМ доворотом с защёлкой. Скрутка ВЕРХА = (прицел − таз), клампится `maxTwist`. Возвращает yaw таза, остаток
- * скрутки и состояние защёлки. ОБЩИЙ код игры и редактора. Чистая математика — тестируемо.
+ * Шаг torso-lead: таз догоняет ПРИЦЕЛ удержанием в зоне + ПЛАВНЫМ доворотом с защёлкой. ОДНА система стоя и на бегу.
+ * Скрутка ВЕРХА = (прицел − таз), клампится `maxTwist`. Возвращает yaw таза, остаток скрутки и состояние защёлки.
+ * ОБЩИЙ код игры и редактора. Чистая математика — тестируемо.
  *
- * ЛОГИКА: пока |цель−таз| ≤ порога и защёлка выкл — таз ДЕРЖИТСЯ (планировщик не шагает). За зоной защёлка ВКЛ:
- * таз плавно доворачивается со скоростью `turnRate` рад/с, пока не догонит (|разница| ≤ SETTLE) → ВЫКЛ, держит.
- * Плавный доворот (не мгновенный) → стопы переступают ПООЧЕРЁДНО (не прыжок); ~3 рад/с → успевают (не семенят).
- * `standing=false` (движемся): мёртвой зоны нет (таз плотно по направлению движения → чистый гейт), а скрутка верха
- * = прицел − движение (бежишь вперёд, водишь курсором вбок → корпус скручивается, таз идёт прямо — torso-lead на ходу).
+ * ЛОГИКА: пока |прицел−таз| ≤ порога и защёлка выкл — таз ДЕРЖИТСЯ (голова ведёт, планировщик не шагает). За зоной
+ * защёлка ВКЛ: таз плавно доворачивается со скоростью `turnRate` рад/с, пока не догонит (|разница| ≤ SETTLE) → ВЫКЛ,
+ * держит. Плавный доворот (не мгновенный) → стопы переступают ПООЧЕРЁДНО (не прыжок); ~3 рад/с → успевают (не семенят).
  */
-const TWIST_SETTLE = 0.03; // рад (~1.7°): таз догнал цель → гасим защёлку
-export function stepTorsoLead(prevRoot: number, pelvisTarget: number, aimYaw: number, twist: TwistProfile, standing: boolean, dt: number, prevTurning: boolean): { rootYaw: number; residual: number; turning: boolean } {
-  const thr = standing ? twist.threshold : 0;               // стоя — мёртвая зона; на ходу таз плотно по движению
-  const err = wrapPi(pelvisTarget - prevRoot);
+const TWIST_SETTLE = 0.03; // рад (~1.7°): таз догнал прицел → гасим защёлку
+export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProfile, dt: number, prevTurning: boolean): { rootYaw: number; residual: number; turning: boolean } {
+  const err = wrapPi(aimYaw - prevRoot);
   let turning = prevTurning;
-  if (Math.abs(err) > thr) turning = true;                  // вышли за зону → начинаем доворот
+  if (Math.abs(err) > twist.threshold) turning = true;      // вышли за зону → начинаем доворот
   else if (Math.abs(err) <= TWIST_SETTLE) turning = false;  // догнали → держим (deadzone)
   let root = prevRoot;
   if (turning) root += Math.sign(err) * Math.min(Math.abs(err), twist.turnRate * dt);   // плавный рейт-лимит, без перелёта
@@ -484,10 +480,8 @@ export class PosePlayer {
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
     // Torso-lead: таз (rootYaw) догоняет прицел (aimYaw) с задержкой (голова/плечи ведут). rootYaw кормит и StepPlanner,
     // и Hips → приставной шаг случается ровно когда таз доворачивает. Остаток `tw` размажем по позвоночнику после позинга.
-    // Цель таза: стоя — прицел (с мёртвой зоной); на ходу — направление движения (стопы чистые, верх скручен к прицелу).
-    const standing = this.moveMag < 0.03;
-    const pelvisTarget = standing ? this.aimYaw : Math.atan2(vx, vz);
-    const tl = stepTorsoLead(this.rootYaw, pelvisTarget, this.aimYaw, this.twist, standing, dt, this.turning);
+    // Таз догоняет прицел (одна система стоя и на бегу): голова ведёт, таз держится в зоне и плавно доворачивает.
+    const tl = stepTorsoLead(this.rootYaw, this.aimYaw, this.twist, dt, this.turning);
     const yaw = tl.rootYaw, tw = tl.residual; this.rootYaw = yaw; this.turning = tl.turning;
     this.px += vx * dt; this.pz += vz * dt;
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте

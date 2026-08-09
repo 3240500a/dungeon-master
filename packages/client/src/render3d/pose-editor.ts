@@ -796,15 +796,11 @@ function renderGaitTune(): void {
 
 // ── Вкладка «Повороты»: тест torso-lead как в игре (прицел=курсор) + приставные шаги + видимые планты ──
 const TURN_SPD: Record<'stand' | 'walk' | 'run', number> = { stand: 0, walk: 0.34, run: 0.95 };
-function updateTurnTest(dt: number): void {
-  gaitFaceMove = false; gaitYawManual = turnAim;                 // прицел = точка под курсором
+function updateTurnTest(_dt: number): void {
+  gaitFaceMove = false; gaitYawManual = turnAim;                 // прицел = точка под курсором (голова/верх ведут за ним)
   const spd = TURN_SPD[turnTestMove];
-  if (spd > 0) {
-    // Инерция бега: направление движения едет к прицелу ~2.5 рад/с → таз (ведёт по движению) отстаёт от головы (прицел).
-    const d = Math.atan2(Math.sin(turnAim - turnMoveDir), Math.cos(turnAim - turnMoveDir));
-    turnMoveDir += Math.sign(d) * Math.min(Math.abs(d), 2.5 * dt);
-    locoVx = Math.sin(turnMoveDir) * spd; locoVz = Math.cos(turnMoveDir) * spd;
-  } else { locoVx = 0; locoVz = 0; turnMoveDir = turnAim; }
+  // Идём туда, куда смотрит ТАЗ (как в игре: тело идёт по своему фейсингу, а таз догоняет прицел с мёртвой зоной).
+  if (spd > 0) { locoVx = Math.sin(editorRootYaw) * spd; locoVz = Math.cos(editorRootYaw) * spd; } else { locoVx = 0; locoVz = 0; }
 }
 function updateTurnPlants(): void {
   const show = tab === 'turn' && showTurnPlants && locoOn;
@@ -907,7 +903,6 @@ const turnPlantMarks = [mkHandle(PLANT_BLUE, 3, false), mkHandle(PLANT_RED, 3, f
 // ── Тест поворотов (вкладка «Повороты»): прицел = курсор над сценой; движение = стой/ходьба/бег ──
 let turnTestMove: 'stand' | 'walk' | 'run' = 'stand';
 let turnAim = 0;         // прицел (угол к точке под курсором)
-let turnMoveDir = 0;     // направление движения — инерция бега (едет к прицелу), чтобы был виден лаг таза за головой
 let showTurnPlants = true;
 type AuthMark = { mesh: THREE.Mesh; foot: 0 | 1; kind: 'plant' | 'via'; k: number };   // реестр перетаскиваемых авторских точек
 let authMarks: AuthMark[] = [];
@@ -1206,9 +1201,7 @@ function stepGait(dt: number): void {
   // иначе — фикс. угол `gaitYawManual` (страйф: тело смотрит в одну сторону, шаги идут в другую).
   if (gaitFaceMove) { if (spd > 1) gaitYaw = Math.atan2(vx, vz); } else gaitYaw = gaitYawManual;
   // Torso-lead: gaitYaw = ПРИЦЕЛ; таз (rYaw) догоняет с задержкой → и планировщик, и Hips ведёт rYaw (голова/плечи впереди).
-  const twStanding = gaitMoveMag < 0.03;                                   // цель таза: стоя — прицел; на ходу — направление движения
-  const pelvisTarget = twStanding ? gaitYaw : Math.atan2(vx, vz);
-  const tl = stepTorsoLead(editorRootYaw, pelvisTarget, gaitYaw, editorTwist, twStanding, dt, editorTurning);
+  const tl = stepTorsoLead(editorRootYaw, gaitYaw, editorTwist, dt, editorTurning);   // таз догоняет прицел (одна система стоя/бег)
   const rYaw = tl.rootYaw, twRes = tl.residual; editorRootYaw = rYaw; editorTurning = tl.turning;
   gaitPx += vx * dt; gaitPz += vz * dt;
   gaitDriver.setWorld(gaitPx, gaitPz, rYaw, vx, vz);        // yaw ТАЗА кормит планировщик — стопы в правильном body-кадре
