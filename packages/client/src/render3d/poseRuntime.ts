@@ -19,7 +19,7 @@ export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth у
  * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше max/сегментов, лёгкая → свободнее).
  */
 export interface TwistProfile { threshold: number; max: number; catchup: number; moveEase: number; weights: [number, number, number, number, number] }
-export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, max: 1.20, catchup: 7, moveEase: 0.6, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
+export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, max: 1.20, catchup: 7, moveEase: 1, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
 const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
@@ -357,11 +357,17 @@ const wrapPi = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 
 /**
  * Шаг torso-lead: догнать таз (`prevRoot`) к прицелу (`aimYaw`) с задержкой. Возвращает новый yaw таза
- * и ОСТАТОЧНУЮ скрутку (для распределения по позвоночнику). Порог ужимается на бегу (moveEase). ОБЩИЙ
- * код игры (`PosePlayer`) и редактора (превью). Чистая математика — тестируемо без рига.
+ * и ОСТАТОЧНУЮ скрутку (для распределения по позвоночнику). ОБЩИЙ код игры (`PosePlayer`) и редактора
+ * (превью). Чистая математика — тестируемо без рига.
+ *
+ * ВАЖНО: мёртвая зона таза активна ТОЛЬКО почти стоя. Таз кормит планировщик шагов, поэтому даже
+ * небольшой лаг таза на ходу гейт видит как страйф → мелкие шажки. Поэтому зона закрывается при ЛЮБОМ
+ * реальном движении (moveMag ≳ MOVE_CLOSE), а не пропорционально скорости бега. moveEase = насколько закрыть.
  */
+const MOVE_CLOSE = 0.06;   // доля скорости ходьбы, выше которой мёртвая зона таза считается закрытой (движемся)
 export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProfile, moveMag: number, dt: number): { rootYaw: number; residual: number } {
-  const thr = twist.threshold * (1 - twist.moveEase * moveMag);
+  const mv = Math.min(1, moveMag / MOVE_CLOSE);              // 0 стоя … 1 при любом реальном движении
+  const thr = twist.threshold * (1 - twist.moveEase * mv);
   let root = prevRoot;
   let d = wrapPi(aimYaw - root);
   const over = Math.abs(d) - thr;
