@@ -78,7 +78,7 @@ let weaponGroups: THREE.Group[] = [];
 function updateWeapon(): void {
   if (weaponGroups.some((g) => gizmo.object === g)) gizmo.detach();   // не держать гизмо на удаляемом оружии
   for (const g of weaponGroups) { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-  weaponGroups = attachWeapons(human, weapon);                        // сборка+хват+базы поворота — в weapon3d
+  weaponGroups = attachWeapons(ghostHuman ?? human, weapon);          // оружие — на ФИЗ-теле (как в игре на solid); до физики fallback на манекен
   lgripMark = null;                                                   // маркер хвата был ребёнком старого груп — пересоздастся из позы
 }
 
@@ -412,8 +412,9 @@ function applyChar(id: string): void {
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
   human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle() }); curHumanStyle = manStyle();
-  scene.add(human.root); human.root.visible = manView !== 'hidden'; updateWeapon(); captureRig();
-  if (pw) buildGhost();                                       // призрак под новые пропорции
+  scene.add(human.root); human.root.visible = manView !== 'hidden';
+  if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
+  updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
   disposeOnion();                                             // онион-призраки пересоберутся под новые пропорции
   clipIdx = 0; frameIdx = 0; undoStack = []; redoStack = [];
   syncAllAttackEnds();                                        // концы ударов этого персонажа = его стойки
@@ -425,10 +426,10 @@ function manStyle(): 'solid' | 'skeleton' { return manView === 'skel' ? 'skeleto
 function rebuildManikin(): void {
   const c = curChar(); const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
-  gizmo.detach(); selMesh = null; selected = null; weaponGroups = [];
+  gizmo.detach(); selMesh = null; selected = null;
   human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle() }); curHumanStyle = manStyle();
   scene.add(human.root); human.root.visible = manView !== 'hidden';
-  updateWeapon(); applyPose(pose); if (mode === 'ik') captureRig();
+  applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
 function setManView(): void {
   const lbl = { skel: 'манекен: скелет', solid: 'манекен: тело', hidden: 'манекен: скрыт' } as const;
@@ -1352,6 +1353,7 @@ async function ensurePhysics(): Promise<void> {
   ragdoll = makeHumanoidRagdoll(pw);
   scene.add(ragdoll.group); ragdoll.group.visible = false;   // боксы-физтела скрыты — показываем гуманоид-призрак
   buildGhost();
+  updateWeapon();   // до физики оружие висело на манекене (fallback) → переносим на свежий физ-призрак
 }
 // RB3: пересборка рэгдолла с текущими LIMITS/MOTOR (они читаются при СОЗДАНИИ в makeCon; live-правка сустава роняет wasm).
 function rebuildRagdoll(): void {
