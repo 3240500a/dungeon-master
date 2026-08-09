@@ -76,11 +76,36 @@ function segment(to: THREE.Vector3, r: number, mat: THREE.Material): THREE.Mesh 
   return m;
 }
 
+/**
+ * Гранёная (low-poly) голова с ЛИЦОМ вперёд (+Z): икосаэдр (детализация 1 → 80 граней) деформируем в «яйцо»
+ * и добавляем асимметрию перёд/зад — выдвинутый лоб/нос спереди + подобранный подбородок + округлый затылок.
+ * Только двигаем вершины валидного меша (топология цела) → не ломается; flatShading материала даёт грани.
+ * Асимметрия перёд/зад делает направление взгляда читаемым СВЕРХУ (камера игры), в отличие от сферы.
+ */
+function makeHeadGeometry(R: number): THREE.BufferGeometry {
+  const g = new THREE.IcosahedronGeometry(R, 1);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const d = v.length() || 1, nz = v.z / d, ny = v.y / d;   // направление вершины
+    v.x *= 0.88;                                             // уже по бокам
+    v.y *= 1.06;                                             // чуть выше макушка
+    if (nz > 0.2) v.z += R * 0.24 * (nz - 0.2);              // лицо/нос — вперёд (главный указатель направления)
+    if (nz > 0.2 && ny < -0.15) v.y -= R * 0.12;            // подбородок подобран (лицо-клин)
+    if (nz < -0.2) v.z *= 1.10;                              // затылок круглее/длиннее
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  p.needsUpdate = true;
+  g.computeVertexNormals();
+  return g;
+}
+
 export interface BuildScale { arm?: number; leg?: number; torso?: number; head?: number }
 export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale } = {}): Humanoid {
   const matLimb = new THREE.MeshStandardMaterial({ color: opts.limb ?? 0x8a93ad, roughness: 0.6, metalness: 0.15 });
   const matBody = new THREE.MeshStandardMaterial({ color: opts.body ?? 0x6f7690, roughness: 0.62, metalness: 0.2 });
-  const matHead = new THREE.MeshStandardMaterial({ color: opts.head ?? 0xd8c0a0, roughness: 0.75 });
+  const matHead = new THREE.MeshStandardMaterial({ color: opts.head ?? 0xd8c0a0, roughness: 0.75, flatShading: true });   // грани головы ловят свет (low-poly)
   // Масштаб толщины по группам (для разных телосложений персонажей). 1 = как база.
   const bd = opts.build ?? {};
   const sc = (name: string): number => {
@@ -110,7 +135,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
     const s = sc(b.name);   // масштаб толщины группы
     let mesh: THREE.Mesh | null = null;
     if (b.shape === 'pelvis') { mesh = new THREE.Mesh(new THREE.BoxGeometry(9 * s, 5, 5 * s), matBody); mesh.position.y = -1; }
-    else if (b.shape === 'head') { mesh = new THREE.Mesh(new THREE.SphereGeometry(b.r * s, 16, 14), matHead); mesh.position.y = b.r * 0.7; }
+    else if (b.shape === 'head') { mesh = new THREE.Mesh(makeHeadGeometry(b.r * s), matHead); mesh.position.y = b.r * 0.7; }
     else if (b.shape === 'hand') { mesh = new THREE.Mesh(new THREE.BoxGeometry(3.6 * s, 2.2 * s, 5), matLimb); mesh.position.set(Math.sign(b.pos[0]) * 2.5, 0, 0); }
     else if (b.shape === 'foot') { mesh = new THREE.Mesh(new THREE.BoxGeometry(5 * s, 3, 11), matLimb); mesh.position.set(0, -1.5, 3); }
     else if (b.shape === 'toe') { mesh = new THREE.Mesh(new THREE.BoxGeometry(5 * s, 2.4, 4), matLimb); mesh.position.set(0, -0.6, 2); }
