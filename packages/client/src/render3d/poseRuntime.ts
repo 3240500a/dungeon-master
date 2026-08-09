@@ -11,15 +11,15 @@ export interface Clip { name: string; character: string; weapon: string; loop: b
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
 export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth убран (дубль stanceWidth); боб таза — в GAIT.bobWalk/bobRun (× в bobY)
 /**
- * Скрутка корпуса (torso-lead / hips-follow): голова/плечи ведут за прицелом, таз догоняет с задержкой.
- * `threshold` — мёртвая зона (рад): пока |прицел−таз| ≤ неё, таз стоит, разница «размазана» по позвоночнику.
- * `max` — кламп скрутки (рад): шея не выворачивается сверх, таз доворачивается принудительно.
- * `catchup` — скорость доворота таза за порогом (рад/с). `moveEase` — во сколько (0..1) ужимать порог на бегу (отзывчивость).
- * `weights` — распределение скрутки по цепочке [Spine, Chest, UpperChest, Neck, Head] (нормируется в сумму скрутки).
- * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше max/сегментов, лёгкая → свободнее).
+ * Скрутка корпуса (torso-lead): голова/плечи ведут за прицелом, таз догоняет ШАГОМ.
+ * `threshold` — мёртвая зона (рад): пока |прицел−таз| ≤ неё, таз ДЕРЖИТСЯ, разница «размазана» по позвоночнику
+ *   (голова ведёт). Как только зона пройдена — таз КОММИТИТСЯ к прицелу сразу (один большой приставной шаг).
+ * `moveEase` — во сколько (0..1) ужимать порог при движении (на ходу таз смотрит по движению, без семенящих подшагов).
+ * `weights` — распределение скрутки по цепочке [Spine, Chest, UpperChest, Neck, Head] (в сумме ~1 → голова доходит до прицела).
+ * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше сегментов/порог, лёгкая → свободнее).
  */
-export interface TwistProfile { threshold: number; max: number; catchup: number; moveEase: number; weights: [number, number, number, number, number] }
-export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, max: 1.20, catchup: 7, moveEase: 1, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
+export interface TwistProfile { threshold: number; moveEase: number; weights: [number, number, number, number, number] }
+export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, moveEase: 1, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
 const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
@@ -356,25 +356,24 @@ export function loadTwist(charId: string, fallbackId?: string): TwistProfile {
 const wrapPi = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 
 /**
- * Шаг torso-lead: догнать таз (`prevRoot`) к прицелу (`aimYaw`) с задержкой. Возвращает новый yaw таза
- * и ОСТАТОЧНУЮ скрутку (для распределения по позвоночнику). ОБЩИЙ код игры (`PosePlayer`) и редактора
- * (превью). Чистая математика — тестируемо без рига.
+ * Шаг torso-lead: «удержание + коммит». Возвращает новый yaw таза и ОСТАТОЧНУЮ скрутку (для позвоночника).
+ * ОБЩИЙ код игры (`PosePlayer`) и редактора (превью). Чистая математика — тестируемо без рига.
  *
- * ВАЖНО: мёртвая зона таза активна ТОЛЬКО почти стоя. Таз кормит планировщик шагов, поэтому даже
- * небольшой лаг таза на ходу гейт видит как страйф → мелкие шажки. Поэтому зона закрывается при ЛЮБОМ
- * реальном движении (moveMag ≳ MOVE_CLOSE), а не пропорционально скорости бега. moveEase = насколько закрыть.
+ * ЛОГИКА: в мёртвой зоне (|прицел−таз| ≤ порога) таз ДЕРЖИТСЯ — yaw постоянен, планировщик не шагает,
+ * голова/плечи ведут (residual = разница). Как только зона пройдена — таз КОММИТИТСЯ к прицелу МГНОВЕННО
+ * (скачок yaw) → планировщик видит один большой сдвиг → ОДИН приставной шаг в финальный плант.
+ * КРАДУЩИЙСЯ доворот (как было) гнал планировщик за уезжающей целью → серия мелких подшагов = семенит.
+ *
+ * ВАЖНО: мёртвая зона активна ТОЛЬКО почти стоя. Таз кормит планировщик, поэтому на ходу лаг = страйф-шажки;
+ * поэтому при ЛЮБОМ реальном движении (moveMag ≳ MOVE_CLOSE) порог → 0 → таз точно по движению. moveEase = насколько.
  */
 const MOVE_CLOSE = 0.06;   // доля скорости ходьбы, выше которой мёртвая зона таза считается закрытой (движемся)
-export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProfile, moveMag: number, dt: number): { rootYaw: number; residual: number } {
+export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProfile, moveMag: number, _dt: number): { rootYaw: number; residual: number } {
   const mv = Math.min(1, moveMag / MOVE_CLOSE);              // 0 стоя … 1 при любом реальном движении
   const thr = twist.threshold * (1 - twist.moveEase * mv);
-  let root = prevRoot;
-  let d = wrapPi(aimYaw - root);
-  const over = Math.abs(d) - thr;
-  if (over > 0) root += Math.sign(d) * Math.min(over, twist.catchup * dt);   // за порогом — плавный доворот таза
-  d = wrapPi(aimYaw - root);
-  if (Math.abs(d) > twist.max) { root += Math.sign(d) * (Math.abs(d) - twist.max); d = Math.sign(d) * twist.max; }   // кламп |скрутки| ≤ max
-  return { rootYaw: root, residual: d };
+  const d = wrapPi(aimYaw - prevRoot);
+  const root = Math.abs(d) > thr ? aimYaw : prevRoot;        // в зоне — держим; за зоной — коммит к прицелу СРАЗУ
+  return { rootYaw: root, residual: wrapPi(aimYaw - root) };  // держим → residual=d (ведёт голова); коммит → ≈0
 }
 /** Навесить скрутку на риг: таз на rootYaw + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ gaitToHumanoid. */
 export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number]): void {

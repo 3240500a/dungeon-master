@@ -294,7 +294,7 @@ describe('localStorageContent: адаптация позы под оружие +
   });
 });
 
-describe('PosePlayer — torso-lead (голова ведёт за прицелом, таз догоняет с задержкой)', () => {
+describe('PosePlayer — torso-lead (голова ведёт; таз держится в зоне, за порогом коммит-шаг)', () => {
   beforeEach(() => {
     (globalThis as unknown as { localStorage: Storage }).localStorage = {
       getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, length: 0,   // нет idle-контента → кости ~единичны, чистая математика yaw
@@ -325,25 +325,26 @@ describe('PosePlayer — torso-lead (голова ведёт за прицело
     expect(headYaw(h)).toBeGreaterThan(0.2);          // голова/плечи повернулись к прицелу
   });
 
-  it('за порогом таз доворачивается и держит скрутку у порога', () => {
+  it('за порогом таз КОММИТИТСЯ к прицелу сразу (один большой шаг, не крадётся)', () => {
     const { p } = mk();
-    run(p, 1.5, 300);                                          // прицел 1.5 рад > порога — ждём устаканивания
-    expect(p.pelvisYaw).toBeGreaterThan(0.5);                  // таз повернулся вслед за прицелом
-    expect(p.facing - p.pelvisYaw).toBeCloseTo(0.70, 1);       // остаточная скрутка ≈ порог (deadzone)
+    const before = p.pelvisYaw;
+    p.setYaw(1.0); p.step(1 / 60);                             // прицел 1.0 рад > порога 0.70 — один тик
+    expect(before).toBeCloseTo(0, 6);                          // до этого таз стоял
+    expect(p.pelvisYaw).toBeCloseTo(1.0, 3);                   // таз доведён к прицелу СРАЗУ (за 1 кадр), а не частично
+    expect(Math.abs(p.facing - p.pelvisYaw)).toBeLessThan(0.02); // скрутка сброшена — планировщик увидит скачок yaw → 1 шаг
+  });
+
+  it('коммит происходит РОВНО на пороге (в зоне держится, чуть за — прыгает)', () => {
+    const a = mk(); a.p.setYaw(0.68); a.p.step(1 / 60);       // 0.68 < порога 0.70 → держится
+    expect(Math.abs(a.p.pelvisYaw)).toBeLessThan(0.02);
+    const b = mk(); b.p.setYaw(0.72); b.p.step(1 / 60);       // 0.72 > порога → коммит
+    expect(b.p.pelvisYaw).toBeCloseTo(0.72, 3);
   });
 
   it('на ходу лаг таза исчезает — таз смотрит по движению (регресс «мелких шажков»)', () => {
     const { p } = mk();
     run(p, 0.5, 120, 0, 100);                                  // движемся вперёд (vz=100) с прицелом 0.5 рад
     expect(Math.abs(p.facing - p.pelvisYaw)).toBeLessThan(0.05); // таз догнал прицел → гейт видит ЧИСТОЕ движение, не страйф
-  });
-
-  it('кламп max: даже без доворота таза скрутка не превышает max', () => {
-    const { h, p } = mk();
-    p.twist.catchup = 0;                              // таз сам не догоняет
-    run(p, 2.0, 5);                                   // прицел 2.0 рад > max 1.20
-    expect(p.facing - p.pelvisYaw).toBeCloseTo(1.20, 2);        // клампнуто к max (таз принудительно доведён)
-    expect(headYaw(h) - p.pelvisYaw).toBeCloseTo(1.20, 1);      // скрутка головы ОТН. таза не больше max (голова догоняет прицел за счёт доворота таза)
   });
 
   it('снап при спавне/телепорте: setYaw до init и snapYaw убирают лаг таза', () => {

@@ -790,10 +790,8 @@ function renderGaitTune(): void {
   };
   // «Прицел» — крутит только превью (не пишется в профиль): встань в центр пада, тяни → голова ведёт, таз догоняет.
   tsl('прицел ⟲ (превью, °)', () => gaitYawManual * R2D, (d) => { gaitFaceMove = false; gaitYawManual = d / R2D; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; void ensurePhysics(); renderLoco(); } }, -180, 180, 5, (v) => `${Math.round(v)}°`);
-  tsl('порог таза (°)', () => editorTwist.threshold * R2D, (d) => { editorTwist.threshold = d / R2D; }, 0, 90, 1, (v) => `${Math.round(v)}°`);
-  tsl('макс. скрутка (°)', () => editorTwist.max * R2D, (d) => { editorTwist.max = d / R2D; }, 10, 120, 1, (v) => `${Math.round(v)}°`);
-  tsl('догон таза (рад/с)', () => editorTwist.catchup, (v) => { editorTwist.catchup = v; }, 1, 20, 0.5);
-  tsl('отзыв на бегу (0..1)', () => editorTwist.moveEase, (v) => { editorTwist.moveEase = v; }, 0, 1, 0.05);
+  tsl('порог таза — коммит-шаг (°)', () => editorTwist.threshold * R2D, (d) => { editorTwist.threshold = d / R2D; }, 5, 90, 1, (v) => `${Math.round(v)}°`);
+  tsl('отзыв на ходу (0..1)', () => editorTwist.moveEase, (v) => { editorTwist.moveEase = v; }, 0, 1, 0.05);
   const WNAMES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'];
   for (let i = 0; i < 5; i++) tsl(`вес: ${WNAMES[i]}`, () => editorTwist.weights[i]!, (v) => { editorTwist.weights[i] = v; }, 0, 1, 0.05);
   const twHint = el('div', 'color:#7a869e;font-size:10px;margin-top:3px'); twHint.textContent = 'веса — распределение по сегментам (в сумме ~1 → голова доходит до прицела; под латы вес на Head, лёгкая — размазать).'; box.append(twHint);
