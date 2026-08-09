@@ -17,6 +17,7 @@ import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measure
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
+import { createModelsTab } from './poseModelsTab.js';
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 const V = (): THREE.Vector3 => new THREE.Vector3();
@@ -482,15 +483,17 @@ bar.append(personaB, document.createTextNode('Персонаж'), charSel, docum
   mkBtn('↶ undo', () => undo()), mkBtn('↷ redo', () => redo()), sep(), physB, manB);
 
 // ── Панель-вкладки (Анимация = клипы+кадры+поза; Бег = 2D бленд локомоции; Персонаж = setup) ──
-let tab: 'anim' | 'loco' | 'turn' | 'char' = 'anim';
+let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' = 'anim';
 const tabBar = document.createElement('div'); tabBar.style.cssText = 'display:flex;gap:3px;margin-bottom:6px';
 const body = document.createElement('div');
 panel.append(tabBar, body);
 const el = (t: string, css: string): HTMLElement => { const e = document.createElement(t); e.style.cssText = css; return e; };
 const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = `margin:2px 3px 2px 0;padding:3px 7px;background:${on ? '#3a5030' : '#2a3350'};color:#cfd3e0;border:1px solid #4a5680;border-radius:4px;cursor:pointer;font:11px monospace`; b.onclick = fn; return b; };
-for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => { tab = k; refreshAll(); }; b.dataset.tab = k; tabBar.append(b); }
+for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => { tab = k; refreshAll(); }; b.dataset.tab = k; tabBar.append(b); }
+// Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
+const modelsTab = createModelsTab(scene);
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else renderChar(); refreshTimeline(); updateOnion(); updateLimitGizmo(); }
+function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateLimitGizmo(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 function refreshLimbs(): void { if (tab === 'anim') renderAnim(); }
 
@@ -1499,6 +1502,10 @@ function loop(): void {
   scrollFloor();   // тредмилл-пол под бегущим (тянется по gaitPx/gaitPz)
   stepPhysics(dt);
   jiggle(dt);   // вторичное движение груди (female)
+  modelsTab.drive(human);   // «Модели»: импортный скелет ведётся нашей позой (live-ретаргет)
+  const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
+  human.root.visible = !hideMan;
+  if (ghostHuman) ghostHuman.root.visible = physOn && !hideMan;
   orbit.update(); renderer.render(scene, camera); requestAnimationFrame(loop);
 }
 loop();
@@ -1511,4 +1518,5 @@ loop();
   get lgrip() { return lgripMark; }, lgripEnsure: (): unknown => ensureLgripMark(), lgripPreview: (): void => applyLgripPreview(),   // двуручный хват: маркер + off-hand IK превью (дебаг)
   goFrame, writeFramePhys, get frameIdx() { return frameIdx; },   // per-кадр физ (match/pinKp) — дебаг: goFrame читает, writeFramePhys фиксирует
   gaitAttack: (name: string): void => { const c = clipsHere().find((x) => x.name === name) ?? library.find((x) => x.name === name); if (c) triggerAttack(c); }, get attackT() { return attackT; }, markAttack: (name: string): void => toggleAtk(name),
-  physStep: (dt: number, n: number): unknown => { if (!pw || !ragdoll) return null; physOn = true; for (let i = 0; i < n; i++) { stepPhysics(dt); } return { Hips: ragdoll.bodyPos('Hips'), Head: ragdoll.bodyPos('Head'), HandL: ragdoll.bodyPos('HandL'), HandR: ragdoll.bodyPos('HandR'), FootL: ragdoll.bodyPos('FootL'), Torso: ragdoll.bodyPos('Torso') }; } };
+  physStep: (dt: number, n: number): unknown => { if (!pw || !ragdoll) return null; physOn = true; for (let i = 0; i < n; i++) { stepPhysics(dt); } return { Hips: ragdoll.bodyPos('Hips'), Head: ragdoll.bodyPos('Head'), HandL: ragdoll.bodyPos('HandL'), HandR: ragdoll.bodyPos('HandR'), FootL: ragdoll.bodyPos('FootL'), Torso: ragdoll.bodyPos('Torso') }; },
+  modelsTab, modelsImport: (url: string): Promise<void> => modelsTab.importUrl(url), modelsExport: (): Promise<void> => modelsTab.exportNow(), modelsDebug: (): unknown => modelsTab.debug() };   // C5: импорт/ретаргет моделей (дебаг-хуки)

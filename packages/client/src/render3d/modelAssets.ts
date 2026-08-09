@@ -8,19 +8,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
-/** Загрузить модель из выбранного файла (.fbx / .glb / .gltf) → корневой Object3D (со скелетом/скиннед-мешами). */
-export async function loadModelFile(file: File): Promise<THREE.Group> {
-  const buf = await file.arrayBuffer();
-  const ext = file.name.toLowerCase().split('.').pop();
+/** Разобрать буфер по расширению → корневой Object3D (FBX через FBXLoader, GLB/GLTF через GLTFLoader). */
+async function parseModel(buf: ArrayBuffer, ext: string): Promise<THREE.Group> {
   if (ext === 'fbx') return new FBXLoader().parse(buf, '') as unknown as THREE.Group;
   return await new Promise<THREE.Group>((resolve, reject) =>
     new GLTFLoader().parse(buf, '', (g) => resolve(g.scene as unknown as THREE.Group), reject));
 }
 
-/** Загрузить GLB по URL (для игры / повторной загрузки в редакторе из /assets/<id>.glb). */
+/** Загрузить модель из выбранного файла (.fbx / .glb / .gltf) → корневой Object3D (со скелетом/скиннед-мешами). */
+export async function loadModelFile(file: File): Promise<THREE.Group> {
+  return parseModel(await file.arrayBuffer(), file.name.toLowerCase().split('.').pop() ?? '');
+}
+
+/** Загрузить модель по URL (FBX/GLB/GLTF — расширение из URL). Для игры/редактора из /assets/<id>.<ext>. */
 export async function loadModelUrl(url: string): Promise<THREE.Group> {
-  return await new Promise<THREE.Group>((resolve, reject) =>
-    new GLTFLoader().load(url, (g) => resolve(g.scene as unknown as THREE.Group), undefined, reject));
+  const ext = (url.toLowerCase().split('?')[0] ?? '').split('.').pop() ?? '';
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('load ' + r.status + ' ' + url);
+  return parseModel(await r.arrayBuffer(), ext);
 }
 
 /** Экспорт объекта в бинарный GLB (ArrayBuffer). */
