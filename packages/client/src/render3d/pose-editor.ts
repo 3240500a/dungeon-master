@@ -9,8 +9,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, jointLimitView, canonOfHuman, jointOv, JOINT_DEF, RAG_OF_HUMAN } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, jointLimitView, canonOfHuman, jointOv, JOINT_DEF, RAG_OF_HUMAN, type LimitView } from './humanoidRagdoll.js';
 import { makeLimitGizmo } from './poseLimitGizmo.js';
+import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
 import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, TWIST_DEFAULT, type TwistProfile, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
@@ -46,19 +47,25 @@ gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unkno
 
 const limitGizmo = makeLimitGizmo(); scene.add(limitGizmo.group);   // гизмо предела выбранного сустава (на манекене)
 let showLimits = true;                                              // рисовать пределы выбранного сустава (дефолт вкл)
+let clampFk = true;                                                 // FK-драг клэмпит кость к пределу сустава (дефолт вкл)
 let human!: Humanoid;
 let mode: 'fk' | 'ik' = 'ik';
 // Перестроить гизмо предела под ВЫБРАННЫЙ сустав (FK-кость → rag-кость → эффективные лимиты). Дёшево — на выбор/правку.
+let curLimitView: LimitView | null = null;
 function updateLimitGizmo(): void {
   const nm = tab === 'anim' && showLimits && selected ? selected : null;
   const rag = nm ? RAG_OF_HUMAN[nm] : undefined;
-  limitGizmo.set(rag ? jointLimitView(rag) : null);
+  curLimitView = rag ? jointLimitView(rag) : null;
+  limitGizmo.set(curLimitView);
 }
 // Поставить гизмо на сустав манекена: позиция сустава (мир) + ориентация РОДИТЕЛЬСКОЙ кости (лимиты заданы от родителя).
+// + индикатор текущего положения кости в зоне (декомпозиция локального кватерниона в оси предела).
 function placeLimitGizmo(): void {
-  if (!limitGizmo.group.visible || !selected) return;
+  if (!limitGizmo.group.visible || !selected || !curLimitView) return;
   const b = human.bones.get(selected); if (!b) return;
   limitGizmo.place(b.getWorldPosition(V()), b.parent ? b.parent.getWorldQuaternion(Q()) : Q());
+  const d = decomposeToLimit(b.quaternion, curLimitView);
+  limitGizmo.mark(curLimitView, d.rP, d.rN, d.twist);
 }
 let hipsMode: 'translate' | 'rotate' = 'translate';
 let bodyFollow = 0.45;
@@ -219,6 +226,10 @@ gizmo.addEventListener('objectChange', () => {
   }
   if (mode === 'fk') {
     const nm = (gizmo.object as THREE.Object3D | undefined)?.name;
+    if (nm && clampFk) {   // КЛЭМП к пределу сустава: кость упирается в границу конуса/шарнира (не согнуть назад)
+      const rag = RAG_OF_HUMAN[nm]; const view = rag ? jointLimitView(rag) : null;
+      if (view) { const b = human.bones.get(nm); if (b) b.quaternion.copy(clampLocalToLimit(b.quaternion, view)); }
+    }
     if (nm) { const lk = LIMB_OF[nm]; if (lk) { rig.eff[lk]!.ik = false; refreshLimbs(); } if (nm === 'Hips') rig.hipsQuat.copy(human.bones.get('Hips')!.quaternion); const fk = nm === 'LeftFoot' ? 'LF' : nm === 'RightFoot' ? 'RF' : null; if (fk) rig.eff[fk]!.footQuat.copy(human.bones.get(nm)!.getWorldQuaternion(Q())); }
     return;
   }
@@ -544,25 +555,33 @@ function poseTools(): void {
   ragRow('мотор нога · сила', () => MOTOR.leg[1], (v) => { MOTOR.leg[1] = v; }, 1e6, 2e7, 5e5);
   ragRow('мотор торс · сила', () => MOTOR.core[1], (v) => { MOTOR.core[1] = v; }, 5e5, 1e7, 5e5);
   body.append(pbtn('сброс лимитов/моторов', () => { LIMITS.arm = LIMITS.leg = LIMITS.core = LIMITS.head = 1; MOTOR.leg = [20, 6e6]; MOTOR.arm = [20, 6e6]; MOTOR.core = [15, 3e6]; MOTOR.head = [13, 2e5]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); if (ragdoll) rebuildRagdoll(); renderAnim(); }));
-  // ── ПЕР-СУСТАВ: предел ВЫБРАННОГО сустава (правится симметрично L/R; групповой × выше — множитель поверх) ──
-  body.append(pbtn(showLimits ? 'пределы сустава: вкл (гизмо)' : 'пределы сустава: выкл', () => { showLimits = !showLimits; renderAnim(); }, showLimits));
+  // ── ПРЕДЕЛЫ СУСТАВА: тумблеры + пер-сустав диапазоны (правится симметрично L/R; групповой × выше — множитель) ──
+  const lt = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:4px'); body.append(lt);
+  lt.append(
+    pbtn(showLimits ? 'гизмо предела: вкл' : 'гизмо предела: выкл', () => { showLimits = !showLimits; renderAnim(); }, showLimits),
+    pbtn(clampFk ? 'клэмп FK: вкл' : 'клэмп FK: выкл', () => { clampFk = !clampFk; renderAnim(); }, clampFk),
+    pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; renderAnim(); }, footGround),
+  );
   const canon = (tab === 'anim' && selected) ? canonOfHuman(selected) : null;
   if (canon && JOINT_DEF[canon]) {
     const def = JOINT_DEF[canon]!;
     const jh = el('div', 'color:#ffcf66;font-weight:bold;margin:6px 0 2px'); jh.textContent = `СУСТАВ: ${selected} → ${canon} (симметрия L/R)`; body.append(jh);
     const D = 180 / Math.PI, r2d = (r: number): number => Math.round(r * D), d2r = (d: number): number => d / D;
-    type JF = 'pCone' | 'nCone' | 'twistMin' | 'twistMax' | 'flex' | 'hyperext';
+    type JF = 'planeMin' | 'planeMax' | 'normalMin' | 'normalMax' | 'twistMin' | 'twistMax' | 'flex' | 'hyperext';
     const jRow = (label: string, field: JF, min: number, max: number): void => {
       const cur = (jointOv[canon]?.[field] ?? def[field] ?? 0);
       const row = el('label', 'display:flex;align-items:center;gap:6px'); row.innerHTML = `<span style="flex:1">${label}</span>`;
-      const s = el('input', 'width:100px') as HTMLInputElement; s.type = 'range'; s.min = String(min); s.max = String(max); s.step = '1'; s.value = String(r2d(cur));
+      const s = el('input', 'width:96px') as HTMLInputElement; s.type = 'range'; s.min = String(min); s.max = String(max); s.step = '1'; s.value = String(r2d(cur));
       const v = el('span', 'width:44px;text-align:right;color:#9ae6a0'); v.textContent = s.value + '°';
-      s.oninput = () => { v.textContent = s.value + '°'; (jointOv[canon] ??= {})[field] = d2r(parseFloat(s.value)); updateLimitGizmo(); };   // живой конус, без пересборки
+      s.oninput = () => { v.textContent = s.value + '°'; (jointOv[canon] ??= {})[field] = d2r(parseFloat(s.value)); updateLimitGizmo(); };   // живая зона, без пересборки
       s.onchange = () => { saveRagdollConfig(); savePoseKey('pe_ragdoll'); if (ragdoll) rebuildRagdoll(); };   // пересборка куклы на отпускание
       row.append(s, v); body.append(row);
     };
-    if (def.kind === 'swing') { jRow('конус · план', 'pCone', 0, 170); jRow('конус · норм', 'nCone', 0, 170); jRow('твист −', 'twistMin', -180, 0); jRow('твист +', 'twistMax', 0, 180); }
-    else { jRow('сгиб', 'flex', 0, 170); jRow('переразгиб', 'hyperext', 0, 60); }
+    if (def.kind === 'swing') {   // асимметрично по осям: план (питч/вперёд-назад), норм (крен/вбок), твист (осевое)
+      jRow('план −', 'planeMin', -180, 0); jRow('план +', 'planeMax', 0, 180);
+      jRow('норм −', 'normalMin', -180, 0); jRow('норм +', 'normalMax', 0, 180);
+      jRow('твист −', 'twistMin', -180, 0); jRow('твист +', 'twistMax', 0, 180);
+    } else { jRow('сгиб', 'flex', 0, 170); jRow('переразгиб', 'hyperext', 0, 60); }
     body.append(pbtn('сброс сустава', () => { delete jointOv[canon]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); if (ragdoll) rebuildRagdoll(); updateLimitGizmo(); renderAnim(); }));
   } else if (tab === 'anim') { const hint = el('div', 'color:#6b7180;font-size:10px;margin:4px 0'); hint.textContent = 'выбери кость (FK) — покажется предел её сустава'; body.append(hint); }
   updateLimitGizmo();
@@ -932,6 +951,7 @@ let pw: PhysWorld | null = null; let physOn = false; let physDead = false;
 let manView: 'skel' | 'solid' | 'hidden' = 'skel';   // вид манекена: скелет-арматура / солид-тело / скрыт (дефолт — скелет)
 let curHumanStyle: 'solid' | 'skeleton' = 'skeleton';   // с каким стилем реально построен human (чтобы не пересобирать зря)
 let showBoxes = false;   // дебаг: показать сырые физ-боксы рэгдолла (по умолчанию — только силуэт-призрак)
+let footGround = true;   // заземление стоп (foot-IK) на физ-теле; выкл → авторская ротация стопы видна
 let ragdoll: HumanoidRagdoll | null = null;
 let reviveT = -1; const reviveFrom = new THREE.Vector3(); const reviveDur = 0.9;   // плавное вставание с пола
 let locoOn = false, locoPhase = 0, locoVx = 0, locoVz = 0.7, locoTempo = 1, locoGait = true;   // превью локомоции (движок: gait/бленд)
@@ -1388,7 +1408,7 @@ function stepPhysics(dt: number): void {
   if (ghostHuman) {
     const sw = gaitDriver.swingLegs;   // при loco: опора = !swing → заземляем только опорную стопу (маховую ведёт поза)
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
-      !physDead && PHYS.match > 0.001 ? human.readPose() : null, physDead ? 0 : PHYS.match, undefined, locoOn ? [!sw[0], !sw[1]] : undefined);
+      !physDead && PHYS.match > 0.001 ? human.readPose() : null, physDead ? 0 : PHYS.match, undefined, locoOn ? [!sw[0], !sw[1]] : undefined, footGround);
   }
 }
 const ghostGround = newGhostGround();

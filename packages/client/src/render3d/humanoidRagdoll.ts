@@ -18,7 +18,9 @@ import { groundFeet, type GroundQuery } from './footIk.js';
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 type Vec3 = [number, number, number];
 type Con =
-  | { kind: 'swing'; twist: Vec3; plane: Vec3; pCone: number; nCone: number; twistLim: [number, number] }
+  // swing: диапазоны АСИММЕТРИЧНЫ по осям (planeLim вокруг plane-оси, normalLim вокруг normal=twist×plane, twistLim вокруг twist).
+  // Заданы в конвенции КОНКРЕТНОЙ кости (B[] правая сторона зеркальна — см. jointLimitView flip-right).
+  | { kind: 'swing'; twist: Vec3; plane: Vec3; planeLim: [number, number]; normalLim: [number, number]; twistLim: [number, number] }
   | { kind: 'hinge'; axis: Vec3; normal: Vec3; lim: [number, number] };
 type MGroup = 'leg' | 'arm' | 'core' | 'head';
 
@@ -32,27 +34,31 @@ interface HBone {
   damp: number;
 }
 
-const swing = (pCone: number, nCone: number, twistLim: [number, number], twist: Vec3, plane: Vec3): Con =>
-  ({ kind: 'swing', twist, plane, pCone, nCone, twistLim });
+const swing = (planeLim: [number, number], normalLim: [number, number], twistLim: [number, number], twist: Vec3, plane: Vec3): Con =>
+  ({ kind: 'swing', twist, plane, planeLim, normalLim, twistLim });
 const hinge = (lim: [number, number], axis: Vec3, normal: Vec3): Con => ({ kind: 'hinge', axis, normal, lim });
 
 // Кости в порядке скелета (родитель раньше ребёнка — требование Jolt). Пропорции = гуманоид T-поза.
 const B: HBone[] = [
   { name: 'Hips', parent: -1, anchor: [0, 32, 0], off: [0, 0, 0], shape: { k: 'box', h: [5, 3, 3] }, con: null, group: 'core', damp: 1 },
-  { name: 'Torso', parent: 0, anchor: [0, 35, 0], off: [0, 8.5, 0], shape: { k: 'box', h: [5, 8.5, 3.2] }, con: swing(0.7, 0.4, [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1 },
-  { name: 'Head', parent: 1, anchor: [0, 53, 0], off: [0, 4, 0], shape: { k: 'sphere', r: 5 }, con: swing(0.5, 0.4, [-0.6, 0.6], [0, 1, 0], [1, 0, 0]), group: 'head', damp: 1 },
-  { name: 'ArmL', parent: 1, anchor: [6, 51, 0], off: [7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing(1.7, 1.2, [-0.8, 0.8], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ArmR', parent: 1, anchor: [-6, 51, 0], off: [-7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing(1.7, 1.2, [-0.8, 0.8], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  { name: 'Torso', parent: 0, anchor: [0, 35, 0], off: [0, 8.5, 0], shape: { k: 'box', h: [5, 8.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1 },
+  { name: 'Head', parent: 1, anchor: [0, 53, 0], off: [0, 4, 0], shape: { k: 'sphere', r: 5 }, con: swing([-0.5, 0.5], [-0.4, 0.4], [-0.7, 0.7], [0, 1, 0], [1, 0, 0]), group: 'head', damp: 1 },
+  { name: 'ArmL', parent: 1, anchor: [6, 51, 0], off: [7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.2, 1.2], [-0.8, 0.8], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ArmR', parent: 1, anchor: [-6, 51, 0], off: [-7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.2, 1.2], [-0.8, 0.8], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
   { name: 'ForeL', parent: 3, anchor: [20, 51, 0], off: [5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-2.4, 0.1], [0, 1, 0], [1, 0, 0]), group: 'arm', damp: 0.9 },
   { name: 'ForeR', parent: 4, anchor: [-20, 51, 0], off: [-5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-0.1, 2.4], [0, 1, 0], [-1, 0, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ThighL', parent: 0, anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.4, 7.5, 3.4] }, con: swing(0.9, 1.4, [-0.4, 0.4], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'ThighR', parent: 0, anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.4, 7.5, 3.4] }, con: swing(0.9, 1.4, [-0.4, 0.4], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'ThighL', parent: 0, anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.4, 7.5, 3.4] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.4, 0.4], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'ThighR', parent: 0, anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.4, 7.5, 3.4] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.4, 0.4], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
   { name: 'ShinL', parent: 7, anchor: [4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [2.9, 7, 2.9] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
   { name: 'ShinR', parent: 8, anchor: [-4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [2.9, 7, 2.9] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  { name: 'FootL', parent: 9, anchor: [4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: hinge([-0.4, 0.4], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  { name: 'FootR', parent: 10, anchor: [-4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: hinge([-0.4, 0.4], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  { name: 'HandL', parent: 5, anchor: [31, 51, 0], off: [2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing(1.0, 1.0, [-1.2, 1.2], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
-  { name: 'HandR', parent: 6, anchor: [-31, 51, 0], off: [-2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing(1.0, 1.0, [-1.2, 1.2], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
+  // Голеностоп — SWING (малый многоосевой ход): twist вдоль голени = лево-право (рыск), plane=питч (плантар/дорси), normal=крен.
+  { name: 'FootL', parent: 9, anchor: [4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'FootR', parent: 10, anchor: [-4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'HandL', parent: 5, anchor: [31, 51, 0], off: [2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.2, 1.2], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
+  { name: 'HandR', parent: 6, anchor: [-31, 51, 0], off: [-2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.2, 1.2], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
+  // Носок — HINGE (сгиб вверх на отталкивании), крошечное тело спереди стопы. Даёт носку физику + предел.
+  { name: 'ToeL', parent: 11, anchor: [4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  { name: 'ToeR', parent: 12, anchor: [-4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
 ];
 /** Имя физ-кости → индекс (для ретаргета humanoid-поза → цели, Ф3). */
 export const RAG_INDEX: Record<string, number> = Object.fromEntries(B.map((b, i) => [b.name, i]));
@@ -72,6 +78,7 @@ const RETARGET: Record<string, string[]> = {
   ThighL: ['LeftUpperLeg'], ThighR: ['RightUpperLeg'],
   ShinL: ['LeftLowerLeg'], ShinR: ['RightLowerLeg'],
   FootL: ['LeftFoot'], FootR: ['RightFoot'], HandL: ['LeftHand'], HandR: ['RightHand'],
+  ToeL: ['LeftToes'], ToeR: ['RightToes'],
 };
 const _rtQ = new THREE.Quaternion(), _rtQ2 = new THREE.Quaternion(), _rtE = new THREE.Euler();
 export function retargetHumanoidPose(pose: Record<string, [number, number, number]>): (Vec3 | null)[] {
@@ -90,13 +97,13 @@ export function retargetHumanoidPose(pose: Record<string, [number, number, numbe
 const PRIMARY: Record<string, string> = {
   Torso: 'Spine', Head: 'Neck', ArmL: 'LeftUpperArm', ArmR: 'RightUpperArm', ForeL: 'LeftLowerArm', ForeR: 'RightLowerArm',
   ThighL: 'LeftUpperLeg', ThighR: 'RightUpperLeg', ShinL: 'LeftLowerLeg', ShinR: 'RightLowerLeg',
-  FootL: 'LeftFoot', FootR: 'RightFoot', HandL: 'LeftHand', HandR: 'RightHand',
+  FootL: 'LeftFoot', FootR: 'RightFoot', HandL: 'LeftHand', HandR: 'RightHand', ToeL: 'LeftToes', ToeR: 'RightToes',
 };
 /** Цель ПИНА (позиц. подтяжка тела к анимации, идея PuppetMaster): физ-кость → humanoid-сустав (его мир-позиция). */
 export const PIN_SRC: Record<string, string> = {
   Torso: 'Spine', Head: 'Neck', ArmL: 'LeftUpperArm', ArmR: 'RightUpperArm', ForeL: 'LeftLowerArm', ForeR: 'RightLowerArm',
   ThighL: 'LeftUpperLeg', ThighR: 'RightUpperLeg', ShinL: 'LeftLowerLeg', ShinR: 'RightLowerLeg',
-  FootL: 'LeftFoot', FootR: 'RightFoot', HandL: 'LeftHand', HandR: 'RightHand',
+  FootL: 'LeftFoot', FootR: 'RightFoot', HandL: 'LeftHand', HandR: 'RightHand', ToeL: 'LeftToes', ToeR: 'RightToes',
 };
 /** Живые тюн-параметры физики (панель редактора). Пины = пружина к позиции цели; muscle = вес ведения к позе;
  *  match = вес совпадения РЕНДЕРА с манекеном (0 физика … 1 ровно поза-цель) — обрабатывается в renderRagdollGhost. */
@@ -134,12 +141,14 @@ export const LIMITS: Record<MGroup, number> = { leg: 1, arm: 1, core: 1, head: 1
 // Оси/знак сгиба остаются per-bone в B[] (они зеркальны), тут храним только УГЛЫ в «канон-форме».
 export const CANON: Record<string, string> = {
   Torso: 'spine', Head: 'head', ArmL: 'shoulder', ArmR: 'shoulder', ForeL: 'elbow', ForeR: 'elbow',
-  HandL: 'wrist', HandR: 'wrist', ThighL: 'hip', ThighR: 'hip', ShinL: 'knee', ShinR: 'knee', FootL: 'ankle', FootR: 'ankle',
+  HandL: 'wrist', HandR: 'wrist', ThighL: 'hip', ThighR: 'hip', ShinL: 'knee', ShinR: 'knee',
+  FootL: 'ankle', FootR: 'ankle', ToeL: 'toe', ToeR: 'toe',
 };
 export interface JointLim {
   kind: 'swing' | 'hinge'; group: MGroup;
-  pCone?: number; nCone?: number; twistMin?: number; twistMax?: number;   // swing: полу-углы конуса (план/норм) + диапазон твиста
-  flex?: number; hyperext?: number;                                       // hinge: осн. сгиб + малый переразгиб (знак → из базы B[])
+  // swing: АСИММЕТРИЧНЫЙ диапазон по осям (в конвенции ЛЕВОЙ канон-кости). ± = раскрытие вперёд/назад независимо.
+  planeMin?: number; planeMax?: number; normalMin?: number; normalMax?: number; twistMin?: number; twistMax?: number;
+  flex?: number; hyperext?: number;   // hinge: осн. сгиб + малый переразгиб (знак → из базы B[])
 }
 const _cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const _bBone = new Map(B.map((b) => [b.name, b]));
@@ -149,13 +158,13 @@ function hingeLimits(baseLim: [number, number], e: JointLim | null): [number, nu
   const flex = e.flex, hyper = e.hyperext ?? 0;
   return Math.abs(baseLim[0]) >= Math.abs(baseLim[1]) ? [-flex, hyper] : [-hyper, flex];   // сгиб в ту же сторону, что и база
 }
-// Дефолты по канон-суставу (из B[], первое вхождение).
+// Дефолты по канон-суставу (из B[], первое вхождение = ЛЕВАЯ кость → канон-конвенция).
 export const JOINT_DEF: Record<string, JointLim> = (() => {
   const out: Record<string, JointLim> = {};
   for (const b of B) {
     const canon = CANON[b.name]; if (!canon || !b.con || out[canon]) continue;
     const c = b.con;
-    if (c.kind === 'swing') out[canon] = { kind: 'swing', group: b.group, pCone: c.pCone, nCone: c.nCone, twistMin: c.twistLim[0], twistMax: c.twistLim[1] };
+    if (c.kind === 'swing') out[canon] = { kind: 'swing', group: b.group, planeMin: c.planeLim[0], planeMax: c.planeLim[1], normalMin: c.normalLim[0], normalMax: c.normalLim[1], twistMin: c.twistLim[0], twistMax: c.twistLim[1] };
     else out[canon] = { kind: 'hinge', group: b.group, flex: Math.max(Math.abs(c.lim[0]), Math.abs(c.lim[1])), hyperext: Math.min(Math.abs(c.lim[0]), Math.abs(c.lim[1])) };
   }
   return out;
@@ -169,32 +178,42 @@ export const RAG_OF_HUMAN: Record<string, string> = (() => {
   return out;
 })();
 export function canonOfHuman(humanBone: string): string | null { const r = RAG_OF_HUMAN[humanBone]; return r ? (CANON[r] ?? null) : null; }
-/** Всё для рисования гизмо предела на суставе `ragName`: оси (лок., T-поза) + ЭФФЕКТИВНЫЕ углы (× групповой LIMITS). */
+/** Всё для клэмпа/гизмо предела на суставе `ragName`: оси (лок., T-поза) + ЭФФЕКТИВНЫЕ диапазоны (× групповой LIMITS). */
 export interface LimitView {
   kind: 'swing' | 'hinge'; group: MGroup; canon: string;
-  twist?: Vec3; plane?: Vec3; normal?: Vec3; pCone?: number; nCone?: number; twistMin?: number; twistMax?: number;   // swing
+  twist?: Vec3; plane?: Vec3; normal?: Vec3;   // swing оси (лок. фрейм родителя, T-поза)
+  planeMin?: number; planeMax?: number; normalMin?: number; normalMax?: number; twistMin?: number; twistMax?: number;   // swing диапазоны
   axis?: Vec3; hingeNormal?: Vec3; min?: number; max?: number;   // hinge
 }
 export function jointLimitView(ragName: string): LimitView | null {
   const b = _bBone.get(ragName); if (!b || !b.con) return null;
   const canon = CANON[ragName]; if (!canon) return null;
   const e = effJoint(canon), c = b.con, L = LIMITS[b.group];
-  if (c.kind === 'swing') return {
-    kind: 'swing', group: b.group, canon, twist: c.twist, plane: c.plane, normal: _cross(c.twist, c.plane),
-    pCone: (e.pCone ?? c.pCone) * L, nCone: (e.nCone ?? c.nCone) * L, twistMin: (e.twistMin ?? c.twistLim[0]) * L, twistMax: (e.twistMax ?? c.twistLim[1]) * L,
-  };
+  if (c.kind === 'swing') {
+    // Оси — этой кости (правая уже зеркальна в B[]). Диапазоны — канон (левая конвенция) × L. Для СИММЕТРИЧНЫХ
+    // дефолтов зеркальные оси дают верное L/R автоматически; асимметрия (юзер-тюн) калибруется отдельно (Ф5).
+    return {
+      kind: 'swing', group: b.group, canon, twist: c.twist, plane: c.plane, normal: _cross(c.twist, c.plane),
+      planeMin: e.planeMin! * L, planeMax: e.planeMax! * L, normalMin: e.normalMin! * L, normalMax: e.normalMax! * L, twistMin: e.twistMin! * L, twistMax: e.twistMax! * L,
+    };
+  }
   const [lo, hi] = hingeLimits(c.lim, e);
   return { kind: 'hinge', group: b.group, canon, axis: c.axis, hingeNormal: c.normal, min: lo * L, max: hi * L };
 }
 /** Загрузить лимиты/моторы (localStorage `pe_ragdoll`, ГЛОБАЛЬНО на всех) в LIMITS/MOTOR — ЗВАТЬ ДО создания рэгдолла. */
 export function loadRagdollConfig(): void {
   try {
-    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>>; joints?: Record<string, Partial<JointLim>> };
+    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>>; joints?: Record<string, Record<string, number>> };
     const gs: MGroup[] = ['leg', 'arm', 'core', 'head'];
     if (c.limits) for (const g of gs) if (typeof c.limits[g] === 'number') LIMITS[g] = c.limits[g]!;
     if (c.motor) for (const g of gs) if (Array.isArray(c.motor[g])) MOTOR[g] = c.motor[g]!;
     for (const k in jointOv) delete jointOv[k];
-    if (c.joints) for (const k in c.joints) jointOv[k] = c.joints[k]!;
+    if (c.joints) for (const k in c.joints) {
+      const j = { ...c.joints[k]! } as Record<string, number>;
+      if (j.pCone !== undefined) { j.planeMin = -j.pCone; j.planeMax = j.pCone; delete j.pCone; }   // миграция: старый симм. конус → асимм.
+      if (j.nCone !== undefined) { j.normalMin = -j.nCone; j.normalMax = j.nCone; delete j.nCone; }
+      jointOv[k] = j as Partial<JointLim>;
+    }
   } catch { /* */ }
 }
 export function saveRagdollConfig(): void {
@@ -281,8 +300,13 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     const pl1 = new J.Vec3(...c.plane), pl2 = new J.Vec3(...c.plane);
     s.mPosition1 = p1; s.mPosition2 = p2; s.mTwistAxis1 = t1; s.mTwistAxis2 = t2; s.mPlaneAxis1 = pl1; s.mPlaneAxis2 = pl2;
     s.mSwingType = J.ESwingType_Pyramid;
-    const pc = e?.pCone ?? c.pCone, nc = e?.nCone ?? c.nCone, tmin = e?.twistMin ?? c.twistLim[0], tmax = e?.twistMax ?? c.twistLim[1];
-    s.mNormalHalfConeAngle = clamp(nc * L, 0, 3.0); s.mPlaneHalfConeAngle = clamp(pc * L, 0, 3.0);
+    // Jolt-конус СИММЕТРИЧЕН по осям — берём макс. полу-угол из асимм. диапазона (физика приближённо; точный
+    // асимм. предел — на манекене через FK-клэмп/гизмо). Твист Jolt поддерживает асимметрию напрямую.
+    const pMin = e?.planeMin ?? c.planeLim[0], pMax = e?.planeMax ?? c.planeLim[1];
+    const nMin = e?.normalMin ?? c.normalLim[0], nMax = e?.normalMax ?? c.normalLim[1];
+    const tmin = e?.twistMin ?? c.twistLim[0], tmax = e?.twistMax ?? c.twistLim[1];
+    s.mPlaneHalfConeAngle = clamp(Math.max(Math.abs(pMin), Math.abs(pMax)) * L, 0, 3.0);
+    s.mNormalHalfConeAngle = clamp(Math.max(Math.abs(nMin), Math.abs(nMax)) * L, 0, 3.0);
     s.mTwistMinAngle = clamp(tmin * L, -3.1, 3.1); s.mTwistMaxAngle = clamp(tmax * L, -3.1, 3.1);
     spring(s.mSwingMotorSettings); spring(s.mTwistMotorSettings);
     J.destroy(p1); J.destroy(p2); J.destroy(t1); J.destroy(t2); J.destroy(pl1); J.destroy(pl2);
