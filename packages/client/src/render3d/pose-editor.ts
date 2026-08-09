@@ -877,6 +877,10 @@ let locoOn = false, locoPhase = 0, locoVx = 0, locoVz = 0.7, locoTempo = 1, loco
 const gaitDriver = new PoseDriver();
 let gaitPx = 0, gaitPz = 0; const GAIT_MAXSPD = 120;
 let gaitMoveMag = 0;   // 0 стоишь … 1 бежишь: по нему ноги/торс блендятся idle-стойка ↔ физ-гейт
+// legMag/stepHold — ТОЧНО как в игре (PosePlayer): держим ноги на гейте ещё STEP_HOLD после подшага (settled мерцает),
+// иначе стоя поворот идёт без приставных шагов. Один код с игрой (не две системы).
+const STEP_HOLD_ED = 0.35;
+let gaitStepHold = 0, gaitLegMag = 0;
 let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing: по движению (поворот) / ручной угол (страйф)
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
 // Скрутка корпуса (torso-lead): голова/плечи ведут за прицелом (gaitYaw), таз (editorRootYaw) догоняет. Превью в редакторе.
@@ -957,7 +961,7 @@ const editorContent: PoseContent = {
   shieldOverlay: (wk) => { const c = stanceClip(wk) ?? stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMixFor(wk) } : null; },
 };
 function gaitToHumanoid(t: PoseTargets): void {   // тонкая обёртка над ОБЩИМ пайплайном (Ф5) — редактор и игра одним кодом
-  rtGaitToHumanoid(human, weaponGroups, GX, gaitMoveMag, t, editorContent, weapon, { clip: attackClip, t: attackT });
+  rtGaitToHumanoid(human, weaponGroups, GX, gaitLegMag, t, editorContent, weapon, { clip: attackClip, t: attackT }, gaitMoveMag);   // legMag=gaitLegMag, armMag=gaitMoveMag (как PosePlayer)
 }
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
 interface UpperPose { pose: Pose; swing: number }
@@ -1218,9 +1222,15 @@ function stepGait(dt: number): void {
   gaitDriver.setPlantOffset(bl('l', 0), bl('l', 1), bl('r', 0), bl('r', 1));
   gaitDriver.setPlantVia(blendVia(gaitPlant, 'lVia', i0, i1, ft, spB), blendVia(gaitPlant, 'rVia', i0, i1, ft, spB));
   if (plantDrag < 0 && spd > 1) { plantDirSel = (Math.round(a) % 8 + 8) % 8; plantSpeedRun = spB >= 0.5; }   // активная ячейка следит за падом
-  human.root.updateMatrixWorld(true);                        // фидбэк фактических стоп в мир гейта (иначе шпагат)
-  const fl = human.bones.get('LeftFoot')!.getWorldPosition(V()), fr = human.bones.get('RightFoot')!.getWorldPosition(V());
-  gaitDriver.setFeet(fl.x + gaitPx, fl.z + gaitPz, fr.x + gaitPx, fr.z + gaitPz);
+  // legMag: держим 1 ещё STEP_HOLD после подшага (settled мерцает) — иначе стоя поворот без приставных шагов. ТОЧНО как игра.
+  if (gaitDriver.stepping) gaitStepHold = STEP_HOLD_ED; else gaitStepHold = Math.max(0, gaitStepHold - dt);
+  const want = gaitStepHold > 0 ? 1 : gaitMoveMag;
+  gaitLegMag += (want - gaitLegMag) * Math.min(1, dt * 6);
+  human.root.updateMatrixWorld(true);
+  if (gaitLegMag > 0.5) {                                     // фидбэк фактических стоп — ТОЛЬКО когда ноги ведёт гейт (иначе шпагат)
+    const fl = human.bones.get('LeftFoot')!.getWorldPosition(V()), fr = human.bones.get('RightFoot')!.getWorldPosition(V());
+    gaitDriver.setFeet(fl.x + gaitPx, fl.z + gaitPz, fr.x + gaitPx, fr.z + gaitPz);
+  }
   gaitToHumanoid(gaitDriver.update(dt));
   applyTorsoTwist(human, rYaw, twRes, editorTwist.weights);  // таз на rYaw + скрутка позвоночника к прицелу (голова/плечи ведут)
   if (gaitReadout && gaitReadout.isConnected) {              // живой индикатор скорости + режим ходьба↔бег
