@@ -10,6 +10,17 @@ export interface Keyframe { pose: Pose; t: number }
 export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[] }
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
 export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth убран (дубль stanceWidth); боб таза — в GAIT.bobWalk/bobRun (× в bobY)
+/**
+ * Скрутка корпуса (torso-lead / hips-follow): голова/плечи ведут за прицелом, таз догоняет с задержкой.
+ * `threshold` — мёртвая зона (рад): пока |прицел−таз| ≤ неё, таз стоит, разница «размазана» по позвоночнику.
+ * `max` — кламп скрутки (рад): шея не выворачивается сверх, таз доворачивается принудительно.
+ * `catchup` — скорость доворота таза за порогом (рад/с). `moveEase` — во сколько (0..1) ужимать порог на бегу (отзывчивость).
+ * `weights` — распределение скрутки по цепочке [Spine, Chest, UpperChest, Neck, Head] (нормируется в сумму скрутки).
+ * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше max/сегментов, лёгкая → свободнее).
+ */
+export interface TwistProfile { threshold: number; max: number; catchup: number; moveEase: number; weights: [number, number, number, number, number] }
+export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, max: 1.20, catchup: 7, moveEase: 0.6, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
+const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
 export interface PoseContent {
@@ -334,6 +345,38 @@ export function loadMatch(charId: string, fallbackId?: string): number {
   const cfg = readJSON<Record<string, { match?: number }>>('pe_phys', {});
   return cfg[charId]?.match ?? (fallbackId ? cfg[fallbackId]?.match : undefined) ?? 0;
 }
+/** Профиль скрутки корпуса per-char из pe_twist (мерж поверх дефолта); фолбэк (монстры → Волкодав). */
+export function loadTwist(charId: string, fallbackId?: string): TwistProfile {
+  const cfg = readJSON<Record<string, Partial<TwistProfile>>>('pe_twist', {});
+  const c = cfg[charId] ?? (fallbackId ? cfg[fallbackId] : undefined);
+  const d = TWIST_DEFAULT();
+  return { ...d, ...c, weights: (c?.weights && c.weights.length === 5 ? c.weights : d.weights) };
+}
+/** Обёртка угла в (−π, π]. */
+const wrapPi = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+
+/**
+ * Шаг torso-lead: догнать таз (`prevRoot`) к прицелу (`aimYaw`) с задержкой. Возвращает новый yaw таза
+ * и ОСТАТОЧНУЮ скрутку (для распределения по позвоночнику). Порог ужимается на бегу (moveEase). ОБЩИЙ
+ * код игры (`PosePlayer`) и редактора (превью). Чистая математика — тестируемо без рига.
+ */
+export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProfile, moveMag: number, dt: number): { rootYaw: number; residual: number } {
+  const thr = twist.threshold * (1 - twist.moveEase * moveMag);
+  let root = prevRoot;
+  let d = wrapPi(aimYaw - root);
+  const over = Math.abs(d) - thr;
+  if (over > 0) root += Math.sign(d) * Math.min(over, twist.catchup * dt);   // за порогом — плавный доворот таза
+  d = wrapPi(aimYaw - root);
+  if (Math.abs(d) > twist.max) { root += Math.sign(d) * (Math.abs(d) - twist.max); d = Math.sign(d) * twist.max; }   // кламп |скрутки| ≤ max
+  return { rootYaw: root, residual: d };
+}
+/** Навесить скрутку на риг: таз на rootYaw + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ gaitToHumanoid. */
+export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number]): void {
+  const H = human.bones;
+  H.get('Hips')!.rotation.y = rootYaw;                        // facing таза (углы ног body-local → корень на rootYaw)
+  // rotateY аддитивен поверх авторской позы; цепочка Spine→…→Head накапливает → плечи/голова ведут, оружие (на UpperChest) следом.
+  for (let i = 0; i < TWIST_BONES.length; i++) { const b = H.get(TWIST_BONES[i]!); if (b && weights[i]) b.rotateY(residual * weights[i]!); }
+}
 
 // ── Замер ТОЧНЫХ плантов стоп из авторской idle-позы (для приставного шага при повороте на месте) ──
 const STANCE_LEG_BONES = ['LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot'];
@@ -363,7 +406,10 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
 const _vfl = new THREE.Vector3(), _vfr = new THREE.Vector3();
 export class PosePlayer {
   readonly driver = new PoseDriver();
-  private px = 0; private pz = 0; private vx = 0; private vz = 0; private yaw = 0;
+  private px = 0; private pz = 0; private vx = 0; private vz = 0;
+  private aimYaw = 0;    // прицел (курсор/facing с сервера)
+  private rootYaw = 0;   // таз — догоняет aimYaw с задержкой (torso-lead)
+  private yawInit = false;
   moveMag = 0; atkSpeed = 1;
   private noIk = false;   // поза-LOD: пропуск off-hand IK (FOOT-IK пропускает рендер отдельно)
   setNoIk(on: boolean): void { this.noIk = on; }
@@ -378,6 +424,7 @@ export class PosePlayer {
     public weapon: string,
     public gx: GXKnobs,
     public plant: PlantGrid,
+    public twist: TwistProfile = TWIST_DEFAULT(),
   ) { this.measureStance(); }
   /** Замерить планты стоп из idle-стойки текущего оружия и отдать планировщику (подшаг при повороте идёт в эти точки). */
   measureStance(): void {
@@ -386,7 +433,9 @@ export class PosePlayer {
   }
   setWeapon(w: string): void { this.weapon = w; this.measureStance(); }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
-  setYaw(yaw: number): void { this.yaw = yaw; }
+  setYaw(yaw: number): void { this.aimYaw = yaw; if (!this.yawInit) { this.rootYaw = yaw; this.yawInit = true; } }
+  /** Снять лаг таза (спавн/пробуждение/телепорт): таз мгновенно = прицел, без доворота-«юлы». */
+  snapYaw(): void { this.rootYaw = this.aimYaw; }
   /** Запустить удар. windowSec — окно атаки (attack-лок из сервера): клип ужимается, чтобы отыграть ЦЕЛИКОМ за это
    *  окно (быстрее бьёшь — быстрее клип, но всегда до конечных кадров). Медленнее авторского темпа не растягиваем (min 1×). */
   triggerAttack(clip: Clip | null, windowSec = 0): void {
@@ -409,17 +458,23 @@ export class PosePlayer {
   get attackMatch(): number | null { return this.atkPhys('__match'); }
   /** Авторская per-кадр жёсткость пинов удара (__pinKp). null → дефолт. */
   get attackPinKp(): number | null { return this.atkPhys('__pinKp'); }
-  /** Видимый facing (радианы) = yaw гейта (в Hips). */
-  get facing(): number { return this.yaw; }
+  /** Видимый facing (радианы) = ПРИЦЕЛ (куда целится корпус/голова), не таз. */
+  get facing(): number { return this.aimYaw; }
+  /** Текущий yaw таза (лаг) — для отладки/редактора. */
+  get pelvisYaw(): number { return this.rootYaw; }
   /** Позировать this.human: тредмил-ноги (idle↔гейт по скорости) + верх (idle-стойка + мах + удар).
    *  Кормим гейт РЕАЛЬНЫМ yaw — StepPlanner видит смену facing и делает подшаг при повороте на месте; узость ног
    *  держит ЧИСТАЯ скорость (p.vel), а не дёрганая Δpos (её джиттер в vLat = ложный страйф разводил ноги). */
   step(dt: number): void {
     if (this.atk.clip) { this.atk.t += dt * this.atkSpeed; if (this.atk.t > clipDur(this.atk.clip)) { this.atk.clip = null; this.atk.t = -1; } }
-    const vx = this.vx, vz = this.vz, yaw = this.yaw, spd = Math.hypot(vx, vz);
+    const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
+    // Torso-lead: таз (rootYaw) догоняет прицел (aimYaw) с задержкой (голова/плечи ведут). rootYaw кормит и StepPlanner,
+    // и Hips → приставной шаг случается ровно когда таз доворачивает. Остаток `tw` размажем по позвоночнику после позинга.
+    const { rootYaw: yaw, residual: tw } = stepTorsoLead(this.rootYaw, this.aimYaw, this.twist, this.moveMag, dt);
+    this.rootYaw = yaw;
     this.px += vx * dt; this.pz += vz * dt;
-    this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // реальный yaw → стопы в верном body-кадре + подшаг при повороте
+    this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
     const fwdC = vx * Math.sin(yaw) + vz * Math.cos(yaw), latC = vx * Math.cos(yaw) - vz * Math.sin(yaw);
     let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
     const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
@@ -444,6 +499,6 @@ export class PosePlayer {
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
     gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk);
-    this.human.bones.get('Hips')!.rotation.y = yaw;            // facing в Hips (углы ног body-local → корень крутим на yaw)
+    applyTorsoTwist(this.human, yaw, tw, this.twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
   }
 }

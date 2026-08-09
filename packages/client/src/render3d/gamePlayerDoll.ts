@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
-import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, type GXKnobs } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadTwist, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
 
@@ -48,6 +48,8 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       : localStorageContent('__none__');
   // Вес совпадения рендера с манекеном (RB2) — настроенный в редакторе per-персонаж (pe_phys). Монстр → фолбэк.
   const matchWeight = opts.classId ? loadMatch(opts.classId) : opts.gaitId ? loadMatch(opts.gaitId, opts.gaitFallback) : 0;
+  // Профиль скрутки корпуса (torso-lead) per-персонаж: игрок → по classId, монстр → по gaitId с фолбэком.
+  const twist = opts.classId ? loadTwist(opts.classId) : opts.gaitId ? loadTwist(opts.gaitId, opts.gaitFallback) : loadTwist('__none__');
   let weapon = opts.weapon;
   const ch = opts.classId ? charFor(opts.classId) : null;
   const gender = opts.gender ?? ch?.gender ?? 'male';
@@ -69,7 +71,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   ragdoll.group.visible = false; group.add(ragdoll.group);
   ragdoll.setPelvis(new THREE.Vector3(opts.x, PELVIS_Y, opts.z), new THREE.Quaternion());
 
-  const player = new PosePlayer(target, () => weaponGroups, content, weapon, gx, plant);
+  const player = new PosePlayer(target, () => weaponGroups, content, weapon, gx, plant, twist);
   const ground = newGhostGround();     // сглаженный прижим низшей стопы к полу (общий с редактором)
 
   // ── состояние синхронизации ──
@@ -175,6 +177,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
         renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
         return;
       }
+      const yawSnap = snapNext || first;                     // телепорт/спавн/пробуждение → таз мгновенно к прицелу (без «юлы»)
       if (snapNext) { rx = tx; rz = tz; snapNext = false; }  // пробуждение — снап к текущей цели (без слайда со старой позиции)
       // сглаживание мир-позиции (сим 30Гц телепортит tx/tz): предсказание по чистой скорости + мягкая коррекция
       if (!first) { rx += wvx * dt; rz += wvz * dt; }
@@ -189,6 +192,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       }
       first = false; lastX = tx; lastZ = tz;
       player.setYaw(tyaw);
+      if (yawSnap) player.snapYaw();                          // после setYaw: снять лаг таза на телепорте/пробуждении
       player.step(dt);                                       // позирует target (гейт+idle-стойка+удар) + грип оружия на solid — дёшево, в обоих режимах
       const sw = player.driver.swingLegs;   // опора = !swing → заземляем только стоящую ногу (иначе «лыжник» на спуске)
       if (kinematic && physHold <= 0) {                      // KINEMATIC: рисуем ПРЯМО из позы манекена, физику монстра не считаем

@@ -294,6 +294,59 @@ describe('localStorageContent: адаптация позы под оружие +
   });
 });
 
+describe('PosePlayer — torso-lead (голова ведёт за прицелом, таз догоняет с задержкой)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, length: 0,   // нет idle-контента → кости ~единичны, чистая математика yaw
+    } as Storage;
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
+
+  const mk = (): { h: ReturnType<typeof buildHumanoid>; p: PosePlayer } => {
+    const h = buildHumanoid({});
+    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+    p.setYaw(0); p.snapYaw();   // инициализируем таз на 0 (facing спавна), затем меняем прицел
+    return { h, p };
+  };
+  const headYaw = (h: ReturnType<typeof buildHumanoid>): number => {
+    h.root.updateMatrixWorld(true);
+    const q = h.bones.get('Head')!.getWorldQuaternion(new THREE.Quaternion());
+    return new THREE.Euler().setFromQuaternion(q, 'YXZ').y;
+  };
+  const run = (p: PosePlayer, aim: number, frames: number, vx = 0, vz = 0): void => {
+    p.setVel(vx, vz);
+    for (let i = 0; i < frames; i++) { p.setYaw(aim); p.step(1 / 60); }
+  };
+
+  it('в мёртвой зоне (|прицел| ≤ порога) таз стоит, а голова доведена к прицелу', () => {
+    const { h, p } = mk();
+    run(p, 0.3, 60);                                 // прицел 0.3 рад < порога 0.70, стоя
+    expect(Math.abs(p.pelvisYaw)).toBeLessThan(0.02); // таз не тронулся
+    expect(headYaw(h)).toBeGreaterThan(0.2);          // голова/плечи повернулись к прицелу
+  });
+
+  it('за порогом таз доворачивается и держит скрутку у порога', () => {
+    const { p } = mk();
+    run(p, 1.5, 300);                                          // прицел 1.5 рад > порога — ждём устаканивания
+    expect(p.pelvisYaw).toBeGreaterThan(0.5);                  // таз повернулся вслед за прицелом
+    expect(p.facing - p.pelvisYaw).toBeCloseTo(0.70, 1);       // остаточная скрутка ≈ порог (deadzone)
+  });
+
+  it('кламп max: даже без доворота таза скрутка не превышает max', () => {
+    const { h, p } = mk();
+    p.twist.catchup = 0;                              // таз сам не догоняет
+    run(p, 2.0, 5);                                   // прицел 2.0 рад > max 1.20
+    expect(p.facing - p.pelvisYaw).toBeCloseTo(1.20, 2);        // клампнуто к max (таз принудительно доведён)
+    expect(headYaw(h) - p.pelvisYaw).toBeCloseTo(1.20, 1);      // скрутка головы ОТН. таза не больше max (голова догоняет прицел за счёт доворота таза)
+  });
+
+  it('снап при спавне/телепорте: setYaw до init и snapYaw убирают лаг таза', () => {
+    const { p } = mk();
+    p.setYaw(1.0); p.snapYaw();                       // телепорт с новым facing
+    expect(p.pelvisYaw).toBeCloseTo(1.0, 6);          // таз мгновенно на прицеле (нет «юлы»)
+  });
+});
+
 describe('PosePlayer.triggerAttack: клип ужимается в окно атаки (скорость атаки → быстрее, но целиком)', () => {
   beforeEach(() => {
     (globalThis as unknown as { localStorage: Storage }).localStorage = {

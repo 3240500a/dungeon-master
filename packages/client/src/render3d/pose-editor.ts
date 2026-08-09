@@ -11,7 +11,7 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround } from './humanoidRagdoll.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, TWIST_DEFAULT, type TwistProfile, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -384,6 +384,7 @@ function applyChar(id: string): void {
   curCharId = id; const c = curChar(); weapon = c.weapon;
   loadPhys(id);                                               // физ-настройки (match) этого персонажа
   loadShieldMix(id);                                          // вес подмешивания щита этого персонажа
+  loadTwistCfg(id);                                           // профиль скрутки корпуса (torso-lead) этого персонажа
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
@@ -775,6 +776,28 @@ function renderGaitTune(): void {
   gsl('поворот: шаг через (u)', GAITo, 'turnStepDist', 2, 16, 0.5);
   gsl('поворот: ведёт внутр. нога', GAITo, 'turnLeadBias', 0.3, 1.0, 0.05);
   box.append(pbtn('сброс настроек бега', () => { delete gaitCfgs[curCharId]; try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ } applyGaitCfg(curCharId); renderLoco(); }));
+
+  // ── Скрутка корпуса (torso-lead): голова/плечи ведут за прицелом, таз догоняет. Пишется per-char в pe_twist. ──
+  grp('скрутка корпуса (голова ведёт, таз догоняет)');
+  const R2D = 180 / Math.PI;
+  const tsl = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number, fmt: (v: number) => string = (v) => v.toFixed(2)): void => {
+    const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
+    const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = label; row.append(nm);
+    const s = el('input', 'flex:2') as HTMLInputElement; s.type = 'range'; s.min = String(min); s.max = String(max); s.step = String(step); s.value = String(get());
+    const v = el('span', 'width:42px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = fmt(get());
+    s.oninput = () => { set(parseFloat(s.value)); v.textContent = fmt(get()); saveTwistCfg(); };
+    row.append(s, v); box.append(row);
+  };
+  // «Прицел» — крутит только превью (не пишется в профиль): встань в центр пада, тяни → голова ведёт, таз догоняет.
+  tsl('прицел ⟲ (превью, °)', () => gaitYawManual * R2D, (d) => { gaitFaceMove = false; gaitYawManual = d / R2D; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; void ensurePhysics(); renderLoco(); } }, -180, 180, 5, (v) => `${Math.round(v)}°`);
+  tsl('порог таза (°)', () => editorTwist.threshold * R2D, (d) => { editorTwist.threshold = d / R2D; }, 0, 90, 1, (v) => `${Math.round(v)}°`);
+  tsl('макс. скрутка (°)', () => editorTwist.max * R2D, (d) => { editorTwist.max = d / R2D; }, 10, 120, 1, (v) => `${Math.round(v)}°`);
+  tsl('догон таза (рад/с)', () => editorTwist.catchup, (v) => { editorTwist.catchup = v; }, 1, 20, 0.5);
+  tsl('отзыв на бегу (0..1)', () => editorTwist.moveEase, (v) => { editorTwist.moveEase = v; }, 0, 1, 0.05);
+  const WNAMES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'];
+  for (let i = 0; i < 5; i++) tsl(`вес: ${WNAMES[i]}`, () => editorTwist.weights[i]!, (v) => { editorTwist.weights[i] = v; }, 0, 1, 0.05);
+  const twHint = el('div', 'color:#7a869e;font-size:10px;margin-top:3px'); twHint.textContent = 'веса — распределение по сегментам (в сумме ~1 → голова доходит до прицела; под латы вес на Head, лёгкая — размазать).'; box.append(twHint);
+  box.append(pbtn('сброс скрутки', () => { delete twistCfgs[curCharId]; loadTwistCfg(curCharId); try { localStorage.setItem('pe_twist', JSON.stringify(twistCfgs)); savePoseKey('pe_twist'); } catch { /* */ } renderLoco(); }));
   // Экспорт/импорт настроек бега ВСЕХ персонажей (pe_gait) — портируемый артефакт (бэкап + вход для Ф5).
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px;font-size:11px'); eh.textContent = 'НАСТРОЙКИ БЕГА → JSON (все персонажи)'; box.append(eh);
   const ga = el('textarea', 'width:100%;height:56px;background:#0e1016;color:#9ae6a0;border:1px solid #39415a;border-radius:4px;font:10px monospace') as HTMLTextAreaElement; box.append(ga);
@@ -821,6 +844,15 @@ let gaitPx = 0, gaitPz = 0; const GAIT_MAXSPD = 120;
 let gaitMoveMag = 0;   // 0 стоишь … 1 бежишь: по нему ноги/торс блендятся idle-стойка ↔ физ-гейт
 let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing: по движению (поворот) / ручной угол (страйф)
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
+// Скрутка корпуса (torso-lead): голова/плечи ведут за прицелом (gaitYaw), таз (editorRootYaw) догоняет. Превью в редакторе.
+let editorRootYaw = 0;                                      // yaw таза в превью (лаг за gaitYaw)
+let editorTwist: TwistProfile = TWIST_DEFAULT();            // активный профиль скрутки текущего персонажа
+let twistCfgs: Record<string, Partial<TwistProfile>> = (() => { try { return JSON.parse(localStorage.getItem('pe_twist') || '{}') as Record<string, Partial<TwistProfile>>; } catch { return {}; } })();
+function loadTwistCfg(id: string): void {
+  const c = twistCfgs[id]; const d = TWIST_DEFAULT();
+  editorTwist = { ...d, ...c, weights: (c?.weights && c.weights.length === 5 ? [...c.weights] : d.weights) as [number, number, number, number, number] };
+}
+function saveTwistCfg(): void { twistCfgs[curCharId] = editorTwist; try { localStorage.setItem('pe_twist', JSON.stringify(twistCfgs)); savePoseKey('pe_twist'); } catch { /* */ } }
 // ── Маркеры планта + точки ОБВОДА (via) свинга. Авторские = СТАТИЧЕСКИЕ (не тредмиллят), тянутся гизмо → body-local offset.
 // Левая нога — СИНИЙ, правая — КРАСНЫЙ. via — те же цвета, поменьше. Живой индикатор (жёлтый мелкий) ездит по факту (динамика).
 let editPlant = false;
@@ -1127,10 +1159,13 @@ function stepGait(dt: number): void {
   // Facing (yaw): «лицом по движению» → тело поворачивается к скорости (всегда бег вперёд, виден поворот);
   // иначе — фикс. угол `gaitYawManual` (страйф: тело смотрит в одну сторону, шаги идут в другую).
   if (gaitFaceMove) { if (spd > 1) gaitYaw = Math.atan2(vx, vz); } else gaitYaw = gaitYawManual;
+  // Torso-lead: gaitYaw = ПРИЦЕЛ; таз (rYaw) догоняет с задержкой → и планировщик, и Hips ведёт rYaw (голова/плечи впереди).
+  const { rootYaw: rYaw, residual: twRes } = stepTorsoLead(editorRootYaw, gaitYaw, editorTwist, gaitMoveMag, dt);
+  editorRootYaw = rYaw;
   gaitPx += vx * dt; gaitPz += vz * dt;
-  gaitDriver.setWorld(gaitPx, gaitPz, gaitYaw, vx, vz);      // yaw кормит планировщик — стопы в правильном body-кадре
+  gaitDriver.setWorld(gaitPx, gaitPz, rYaw, vx, vz);        // yaw ТАЗА кормит планировщик — стопы в правильном body-кадре
   // Планты по 8 направлениям × 2 скорости: body-local угол движения + скорость → билинейная интерп 4 ячеек.
-  const fwdC = vx * Math.sin(gaitYaw) + vz * Math.cos(gaitYaw), latC = vx * Math.cos(gaitYaw) - vz * Math.sin(gaitYaw);
+  const fwdC = vx * Math.sin(rYaw) + vz * Math.cos(rYaw), latC = vx * Math.cos(rYaw) - vz * Math.sin(rYaw);
   let a = Math.atan2(latC, fwdC) / DIR_STEP; a = ((a % 8) + 8) % 8;
   const i0 = Math.floor(a) % 8, i1 = (i0 + 1) % 8, ft = a - Math.floor(a);
   const spB = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
@@ -1146,7 +1181,7 @@ function stepGait(dt: number): void {
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(V()), fr = human.bones.get('RightFoot')!.getWorldPosition(V());
   gaitDriver.setFeet(fl.x + gaitPx, fl.z + gaitPz, fr.x + gaitPx, fr.z + gaitPz);
   gaitToHumanoid(gaitDriver.update(dt));
-  human.bones.get('Hips')!.rotation.y = gaitYaw;             // визуальный facing (углы ног body-local → корень крутим на yaw)
+  applyTorsoTwist(human, rYaw, twRes, editorTwist.weights);  // таз на rYaw + скрутка позвоночника к прицелу (голова/плечи ведут)
   if (gaitReadout && gaitReadout.isConnected) {              // живой индикатор скорости + режим ходьба↔бег
     const mode = spd < 5 ? 'стоит' : spd < GAIT.speedWalk ? 'ходьба' : 'бег';
     gaitReadout.textContent = `скорость: ${spd.toFixed(0)} u/с · ${mode}` + (gaitFaceMove ? '' : ` · страйф ${Math.round(gaitYaw * 180 / Math.PI)}°`);
