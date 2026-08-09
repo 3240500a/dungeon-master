@@ -76,6 +76,23 @@ function segment(to: THREE.Vector3, r: number, mat: THREE.Material): THREE.Mesh 
   return m;
 }
 
+/** Октаэдр-«кость» от сустава (0,0,0) до первого ребёнка `to` (лок.) — классический ромб арматуры Blender:
+ *  остриё-голова у сустава, широкое кольцо на ~15% длины, длинный конус к ребёнку. Показывает направление кости. */
+function octaBone(to: THREE.Vector3, mat: THREE.Material): THREE.Mesh {
+  const len = to.length(), w = Math.min(3, Math.max(0.8, len * 0.14));
+  const g = new THREE.OctahedronGeometry(1, 0);            // 6 вершин, 8 граней
+  const p = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {                      // тянем вдоль +Y: голова→0, кольцо→0.15·len, хвост→len
+    const vy = p.getY(i);
+    const yy = vy > 0.5 ? len : vy < -0.5 ? 0 : len * 0.15;
+    p.setXYZ(i, p.getX(i) * w, yy, p.getZ(i) * w);
+  }
+  p.needsUpdate = true; g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat);
+  m.quaternion.setFromUnitVectors(UP, to.clone().normalize());   // ось кости +Y → направление `to` (как segment)
+  return m;
+}
+
 /**
  * Гранёная (low-poly) голова с ЛИЦОМ вперёд (+Z): икосаэдр (детализация 1 → 80 граней) деформируем в «яйцо»
  * и добавляем асимметрию перёд/зад — выдвинутый лоб/нос спереди + подобранный подбородок + округлый затылок.
@@ -102,10 +119,14 @@ function makeHeadGeometry(R: number): THREE.BufferGeometry {
 }
 
 export interface BuildScale { arm?: number; leg?: number; torso?: number; head?: number }
-export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale } = {}): Humanoid {
+export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton' } = {}): Humanoid {
+  const skel = opts.style === 'skeleton';
   const matLimb = new THREE.MeshStandardMaterial({ color: opts.limb ?? 0x8a93ad, roughness: 0.6, metalness: 0.15 });
   const matBody = new THREE.MeshStandardMaterial({ color: opts.body ?? 0x6f7690, roughness: 0.62, metalness: 0.2 });
   const matHead = new THREE.MeshStandardMaterial({ color: opts.head ?? 0xd8c0a0, roughness: 0.75, flatShading: true });   // грани головы ловят свет (low-poly)
+  // Скелет-вид (арматура Blender/Unity): каждый меш — свой материал, чтобы highlight() подсвечивал ровно один сустав/кость.
+  const boneMat = (): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({ color: 0x9fb4d8, emissive: 0x24406e, roughness: 0.5, metalness: 0.1 });
+  const jointMat = (): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({ color: 0xffcf66, emissive: 0x6e4a10, roughness: 0.5, metalness: 0.1 });
   // Масштаб толщины по группам (для разных телосложений персонажей). 1 = как база.
   const bd = opts.build ?? {};
   const sc = (name: string): number => {
@@ -133,6 +154,22 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
 
     // Сегмент-меш кости: спец-форма или цилиндр к ПЕРВОМУ ребёнку (визуально «кость до сустава-ребёнка»).
     const s = sc(b.name);   // масштаб толщины группы
+    if (skel) {   // СКЕЛЕТ-вид: шар-сустав (клик-цель) + октаэдр-кость к первому ребёнку (направление). Игнорируем спец-формы.
+      const jr = Math.min(3.2, Math.max(1.6, b.r * s * 0.5));
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(jr, 12, 10), jointMat());
+      ball.userData.bone = b.name; g.add(ball); meshes.push(ball);
+      const kids = childrenOf.get(b.name);
+      if (kids && kids.length) {
+        const c = kids[0]!;   // первый ребёнок задаёт направление кости
+        const bone = octaBone(new THREE.Vector3(c.pos[0], c.pos[1], c.pos[2]), boneMat());
+        bone.userData.bone = b.name; g.add(bone); meshes.push(bone);
+      }
+      if (b.shape === 'head') {   // нуб-указатель взгляда (в +Z) — направление головы читается
+        const nub = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 4), boneMat());
+        nub.position.set(0, 0, b.r * s * 0.6); nub.userData.bone = b.name; g.add(nub); meshes.push(nub);
+      }
+      continue;
+    }
     let mesh: THREE.Mesh | null = null;
     if (b.shape === 'pelvis') { mesh = new THREE.Mesh(new THREE.BoxGeometry(9 * s, 5, 5 * s), matBody); mesh.position.y = -1; }
     else if (b.shape === 'head') { mesh = new THREE.Mesh(makeHeadGeometry(b.r * s), matHead); mesh.position.y = b.r * 0.7; }

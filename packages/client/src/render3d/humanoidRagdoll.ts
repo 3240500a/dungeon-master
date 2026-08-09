@@ -128,17 +128,77 @@ export const MOTOR: Record<MGroup, [number, number]> = { leg: [20, 6e6], arm: [2
 // ЛИМИТЫ суставов — МНОЖИТЕЛЬ конусов swing / диапазонов hinge по группам (RB3): >1 = сгибается сильнее (дотянуться до
 // экстремальных поз), <1 = жёстче. Применяется при СОЗДАНИИ (makeCon) → смена = пересборка куклы. Глобально на всех гуманоидов.
 export const LIMITS: Record<MGroup, number> = { leg: 1, arm: 1, core: 1, head: 1 };
+
+// ── ПЕР-СУСТАВ ЛИМИТЫ (симметрия L/R) ──────────────────────────────────────────────────────
+// Канон-id объединяет левую/правую кость в ОДИН сустав → правишь один раз, применяется к обеим сторонам.
+// Оси/знак сгиба остаются per-bone в B[] (они зеркальны), тут храним только УГЛЫ в «канон-форме».
+export const CANON: Record<string, string> = {
+  Torso: 'spine', Head: 'head', ArmL: 'shoulder', ArmR: 'shoulder', ForeL: 'elbow', ForeR: 'elbow',
+  HandL: 'wrist', HandR: 'wrist', ThighL: 'hip', ThighR: 'hip', ShinL: 'knee', ShinR: 'knee', FootL: 'ankle', FootR: 'ankle',
+};
+export interface JointLim {
+  kind: 'swing' | 'hinge'; group: MGroup;
+  pCone?: number; nCone?: number; twistMin?: number; twistMax?: number;   // swing: полу-углы конуса (план/норм) + диапазон твиста
+  flex?: number; hyperext?: number;                                       // hinge: осн. сгиб + малый переразгиб (знак → из базы B[])
+}
+const _cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const _bBone = new Map(B.map((b) => [b.name, b]));
+// hinge [min,max] в конвенции КОНКРЕТНОЙ кости из канон-формы {flex,hyperext} (знак = как в базе baseLim).
+function hingeLimits(baseLim: [number, number], e: JointLim | null): [number, number] {
+  if (!e || e.flex === undefined) return baseLim;
+  const flex = e.flex, hyper = e.hyperext ?? 0;
+  return Math.abs(baseLim[0]) >= Math.abs(baseLim[1]) ? [-flex, hyper] : [-hyper, flex];   // сгиб в ту же сторону, что и база
+}
+// Дефолты по канон-суставу (из B[], первое вхождение).
+export const JOINT_DEF: Record<string, JointLim> = (() => {
+  const out: Record<string, JointLim> = {};
+  for (const b of B) {
+    const canon = CANON[b.name]; if (!canon || !b.con || out[canon]) continue;
+    const c = b.con;
+    if (c.kind === 'swing') out[canon] = { kind: 'swing', group: b.group, pCone: c.pCone, nCone: c.nCone, twistMin: c.twistLim[0], twistMax: c.twistLim[1] };
+    else out[canon] = { kind: 'hinge', group: b.group, flex: Math.max(Math.abs(c.lim[0]), Math.abs(c.lim[1])), hyperext: Math.min(Math.abs(c.lim[0]), Math.abs(c.lim[1])) };
+  }
+  return out;
+})();
+export const jointOv: Record<string, Partial<JointLim>> = {};   // оверрайды сустава (pe_ragdoll.joints)
+export function effJoint(canon: string): JointLim { return { ...JOINT_DEF[canon]!, ...(jointOv[canon] || {}) }; }
+// humanoid-кость → rag-кость (инверсия RETARGET) → канон-сустав. Для гизмо/панели по выбранной кости манекена.
+export const RAG_OF_HUMAN: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const rag in RETARGET) for (const h of RETARGET[rag]!) out[h] = rag;
+  return out;
+})();
+export function canonOfHuman(humanBone: string): string | null { const r = RAG_OF_HUMAN[humanBone]; return r ? (CANON[r] ?? null) : null; }
+/** Всё для рисования гизмо предела на суставе `ragName`: оси (лок., T-поза) + ЭФФЕКТИВНЫЕ углы (× групповой LIMITS). */
+export interface LimitView {
+  kind: 'swing' | 'hinge'; group: MGroup; canon: string;
+  twist?: Vec3; plane?: Vec3; normal?: Vec3; pCone?: number; nCone?: number; twistMin?: number; twistMax?: number;   // swing
+  axis?: Vec3; hingeNormal?: Vec3; min?: number; max?: number;   // hinge
+}
+export function jointLimitView(ragName: string): LimitView | null {
+  const b = _bBone.get(ragName); if (!b || !b.con) return null;
+  const canon = CANON[ragName]; if (!canon) return null;
+  const e = effJoint(canon), c = b.con, L = LIMITS[b.group];
+  if (c.kind === 'swing') return {
+    kind: 'swing', group: b.group, canon, twist: c.twist, plane: c.plane, normal: _cross(c.twist, c.plane),
+    pCone: (e.pCone ?? c.pCone) * L, nCone: (e.nCone ?? c.nCone) * L, twistMin: (e.twistMin ?? c.twistLim[0]) * L, twistMax: (e.twistMax ?? c.twistLim[1]) * L,
+  };
+  const [lo, hi] = hingeLimits(c.lim, e);
+  return { kind: 'hinge', group: b.group, canon, axis: c.axis, hingeNormal: c.normal, min: lo * L, max: hi * L };
+}
 /** Загрузить лимиты/моторы (localStorage `pe_ragdoll`, ГЛОБАЛЬНО на всех) в LIMITS/MOTOR — ЗВАТЬ ДО создания рэгдолла. */
 export function loadRagdollConfig(): void {
   try {
-    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>> };
+    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>>; joints?: Record<string, Partial<JointLim>> };
     const gs: MGroup[] = ['leg', 'arm', 'core', 'head'];
     if (c.limits) for (const g of gs) if (typeof c.limits[g] === 'number') LIMITS[g] = c.limits[g]!;
     if (c.motor) for (const g of gs) if (Array.isArray(c.motor[g])) MOTOR[g] = c.motor[g]!;
+    for (const k in jointOv) delete jointOv[k];
+    if (c.joints) for (const k in c.joints) jointOv[k] = c.joints[k]!;
   } catch { /* */ }
 }
 export function saveRagdollConfig(): void {
-  try { localStorage.setItem('pe_ragdoll', JSON.stringify({ limits: { ...LIMITS }, motor: { ...MOTOR } })); } catch { /* */ }
+  try { localStorage.setItem('pe_ragdoll', JSON.stringify({ limits: { ...LIMITS }, motor: { ...MOTOR }, joints: { ...jointOv } })); } catch { /* */ }
 }
 
 export interface HumanoidRagdoll {
@@ -197,6 +257,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     const [ax, ay, az] = b.anchor;
     const [freq, torque] = MOTOR[b.group]; const L = LIMITS[b.group];   // L = множитель лимитов группы (RB3)
     const c = b.con!;
+    const canon = CANON[b.name]; const e = canon ? effJoint(canon) : null;   // пер-сустав оверрайд (симметрия L/R) поверх базы
     const spring = (m: InstanceType<JoltNS['MotorSettings']>): void => {
       m.mSpringSettings.mMode = J.ESpringMode_FrequencyAndDamping;
       m.mSpringSettings.mFrequency = freq; m.mSpringSettings.mDamping = b.damp;
@@ -208,7 +269,8 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       const h1 = new J.Vec3(...c.axis), h2 = new J.Vec3(...c.axis);
       const n1 = new J.Vec3(...c.normal), n2 = new J.Vec3(...c.normal);
       s.mPoint1 = p1; s.mPoint2 = p2; s.mHingeAxis1 = h1; s.mHingeAxis2 = h2; s.mNormalAxis1 = n1; s.mNormalAxis2 = n2;
-      s.mLimitsMin = clamp(c.lim[0] * L, -3.1, 3.1); s.mLimitsMax = clamp(c.lim[1] * L, -3.1, 3.1);
+      const [lo, hi] = hingeLimits(c.lim, e);
+      s.mLimitsMin = clamp(lo * L, -3.1, 3.1); s.mLimitsMax = clamp(hi * L, -3.1, 3.1);
       spring(s.mMotorSettings);
       J.destroy(p1); J.destroy(p2); J.destroy(h1); J.destroy(h2); J.destroy(n1); J.destroy(n2);
       return s;
@@ -219,8 +281,9 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     const pl1 = new J.Vec3(...c.plane), pl2 = new J.Vec3(...c.plane);
     s.mPosition1 = p1; s.mPosition2 = p2; s.mTwistAxis1 = t1; s.mTwistAxis2 = t2; s.mPlaneAxis1 = pl1; s.mPlaneAxis2 = pl2;
     s.mSwingType = J.ESwingType_Pyramid;
-    s.mNormalHalfConeAngle = clamp(c.nCone * L, 0, 3.0); s.mPlaneHalfConeAngle = clamp(c.pCone * L, 0, 3.0);
-    s.mTwistMinAngle = clamp(c.twistLim[0] * L, -3.1, 3.1); s.mTwistMaxAngle = clamp(c.twistLim[1] * L, -3.1, 3.1);
+    const pc = e?.pCone ?? c.pCone, nc = e?.nCone ?? c.nCone, tmin = e?.twistMin ?? c.twistLim[0], tmax = e?.twistMax ?? c.twistLim[1];
+    s.mNormalHalfConeAngle = clamp(nc * L, 0, 3.0); s.mPlaneHalfConeAngle = clamp(pc * L, 0, 3.0);
+    s.mTwistMinAngle = clamp(tmin * L, -3.1, 3.1); s.mTwistMaxAngle = clamp(tmax * L, -3.1, 3.1);
     spring(s.mSwingMotorSettings); spring(s.mTwistMotorSettings);
     J.destroy(p1); J.destroy(p2); J.destroy(t1); J.destroy(t2); J.destroy(pl1); J.destroy(pl2);
     return s;
