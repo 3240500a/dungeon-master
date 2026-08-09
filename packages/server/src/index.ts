@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { ConfigRegistry, newCharacterSave } from '@dm/shared';
 import { hashPassword, verifyPassword } from './auth/password.js';
 import {
@@ -144,6 +144,22 @@ app.delete('/api/dev/pose/:key', (req, res) => {
   if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });
   deletePoseStore(req.params.key);
   res.json({ ok: true, deleted: req.params.key });
+});
+
+// ── Dev: ассеты 3D-моделей (GLB) — импорт из поз-редактора (FBX→настройка→экспорт GLB), раздача в игру ──
+// GLB — бинарь, в pose_store НЕ кладём (там мелкие JSON); файлы на диске, мелкий конфиг (карта костей/тип/хват)
+// — в pose_store (pe_models). Раздача статикой /assets/<id>.glb; в проде запись отключена (DEV_CONFIG_APPLY).
+const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
+if (!existsSync(ASSETS_DIR)) mkdirSync(ASSETS_DIR, { recursive: true });
+app.use('/assets', express.static(ASSETS_DIR, { maxAge: '1h' }));
+app.post('/api/dev/assets/:id', express.raw({ type: ['model/gltf-binary', 'application/octet-stream'], limit: '64mb' }), (req, res) => {
+  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
+  const id = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, '');   // sanitize → без path-traversal
+  if (!id) return res.status(400).json({ error: 'bad id' });
+  const buf = req.body as Buffer;
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'empty body' });
+  writeFileSync(join(ASSETS_DIR, id + '.glb'), buf);
+  res.json({ ok: true, id, url: '/assets/' + id + '.glb', bytes: buf.length });
 });
 
 // ── Dev: загрузка РЕАЛЬНЫХ сейвов в калькулятор/сим баланса (без auth, только не в проде) ──

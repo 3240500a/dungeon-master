@@ -22,6 +22,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': 'http://localhost:3001',
+      '/assets': 'http://localhost:3001',   // GLB-модели (импорт из редактора) раздаёт сервер
       '/ws': { target: 'ws://localhost:3001', ws: true },
     },
     // Не перезагружать страницу при записи конфигов из редактора («Применить везде» пишет
