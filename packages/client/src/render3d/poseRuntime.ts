@@ -17,11 +17,13 @@ export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth у
  *   обе стопы за кадр = прыжок; слишком медленно + лаг → семенит. ~3 рад/с: за приставной шаг (0.18с) таз повернётся
  *   < turnStepDist → стопы переступают поочерёдно и успевают.
  * `maxTwist` — кламп скрутки ВЕРХА (рад): голова/спина не выворачиваются сверх порога.
+ * `relaxTime` — сек: если прицел стабилен столько, а таз лагает (скрутка есть) — таз доворачивается к прицелу (скрутка→0,
+ *   выравнивание в нейтраль). Т.е. torso-lead = лид ТОЛЬКО пока активно водишь прицелом; замер на цели → корпус выравнивается.
  * `weights` — распределение скрутки по цепочке [Spine, Chest, UpperChest, Neck, Head] (в сумме ~1 → голова доходит до прицела).
  * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше сегментов/порог, лёгкая → свободнее).
  */
-export interface TwistProfile { threshold: number; turnRate: number; maxTwist: number; weights: [number, number, number, number, number] }
-export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, turnRate: 3, maxTwist: 1.4, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
+export interface TwistProfile { threshold: number; turnRate: number; maxTwist: number; relaxTime: number; weights: [number, number, number, number, number] }
+export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, turnRate: 3, maxTwist: 1.4, relaxTime: 1.2, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
 const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
@@ -367,10 +369,11 @@ const wrapPi = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
  * держит. Плавный доворот (не мгновенный) → стопы переступают ПООЧЕРЁДНО (не прыжок); ~3 рад/с → успевают (не семенят).
  */
 const TWIST_SETTLE = 0.03; // рад (~1.7°): таз догнал прицел → гасим защёлку
-export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProfile, dt: number, prevTurning: boolean): { rootYaw: number; residual: number; turning: boolean } {
+export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProfile, dt: number, prevTurning: boolean, relax = false): { rootYaw: number; residual: number; turning: boolean } {
   const err = wrapPi(aimYaw - prevRoot);
   let turning = prevTurning;
   if (Math.abs(err) > twist.threshold) turning = true;      // вышли за зону → начинаем доворот
+  else if (relax && Math.abs(err) > TWIST_SETTLE) turning = true;   // прицел стабилен relaxTime → доворот к нейтрали (выравнивание)
   else if (Math.abs(err) <= TWIST_SETTLE) turning = false;  // догнали → держим (deadzone)
   let root = prevRoot;
   if (turning) root += Math.sign(err) * Math.min(Math.abs(err), twist.turnRate * dt);   // плавный рейт-лимит, без перелёта
@@ -419,6 +422,7 @@ export class PosePlayer {
   private rootYaw = 0;   // таз — догоняет aimYaw с задержкой (torso-lead)
   private yawInit = false;
   private turning = false;   // защёлка доворота таза (torso-lead): вкл за порогом, выкл когда догнал
+  private prevAim = 0; private aimStableFor = 0;   // сколько прицел стабилен (для relaxTime — доворот таза к нейтрали)
   moveMag = 0; atkSpeed = 1;
   private noIk = false;   // поза-LOD: пропуск off-hand IK (FOOT-IK пропускает рендер отдельно)
   setNoIk(on: boolean): void { this.noIk = on; }
@@ -481,7 +485,10 @@ export class PosePlayer {
     // Torso-lead: таз (rootYaw) догоняет прицел (aimYaw) с задержкой (голова/плечи ведут). rootYaw кормит и StepPlanner,
     // и Hips → приставной шаг случается ровно когда таз доворачивает. Остаток `tw` размажем по позвоночнику после позинга.
     // Таз догоняет прицел (одна система стоя и на бегу): голова ведёт, таз держится в зоне и плавно доворачивает.
-    const tl = stepTorsoLead(this.rootYaw, this.aimYaw, this.twist, dt, this.turning);
+    // relaxTime: прицел стабилен долго и есть скрутка → таз доворачивается к нейтрали (не держим лид вечно).
+    this.aimStableFor = Math.abs(wrapPi(this.aimYaw - this.prevAim)) < 0.01 ? this.aimStableFor + dt : 0;
+    this.prevAim = this.aimYaw;
+    const tl = stepTorsoLead(this.rootYaw, this.aimYaw, this.twist, dt, this.turning, this.aimStableFor > this.twist.relaxTime);
     const yaw = tl.rootYaw, tw = tl.residual; this.rootYaw = yaw; this.turning = tl.turning;
     this.px += vx * dt; this.pz += vz * dt;
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте

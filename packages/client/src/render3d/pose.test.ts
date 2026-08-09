@@ -110,6 +110,29 @@ describe('StepPlanner — поворот на месте держит стойк
     expect(r.crossed).toBe(false);
   });
 
+  it('предел ПО УГЛУ: шаг при повороте таза примерно на turnLimitDeg (тумблер режима)', () => {
+    const saved = { by: GAIT.turnLimitByAngle, deg: GAIT.turnLimitDeg, idle: GAIT.turnIdleTime };
+    GAIT.turnLimitByAngle = 1; GAIT.turnLimitDeg = 30; GAIT.turnIdleTime = 0;
+    const d = new PoseDriver(); d.setStance(9, 0, -9, 0);
+    for (let i = 0; i < 60; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться (plantYaw=0)
+    let yaw = 0, stepDeg = -1;
+    for (let i = 0; i < 200 && stepDeg < 0; i++) { yaw -= 0.03; d.setWorld(0, 0, yaw, 0, 0); d.update(1 / 60); if (d.swingLegs[0] || d.swingLegs[1]) stepDeg = Math.abs(yaw) * 180 / Math.PI; }
+    Object.assign(GAIT, { turnLimitByAngle: saved.by, turnLimitDeg: saved.deg, turnIdleTime: saved.idle });
+    expect(stepDeg).toBeGreaterThan(22); expect(stepDeg).toBeLessThan(45);   // шаг около 30° (± сглаживание yawRate)
+  });
+
+  it('доступить по времени: перестал крутить, стопа не дома → шаг через turnSettleTime', () => {
+    const saved = { st: GAIT.turnSettleTime, idle: GAIT.turnIdleTime };
+    GAIT.turnSettleTime = 0.3; GAIT.turnIdleTime = 5;   // idle далеко, чтобы не мешал
+    const d = new PoseDriver(); d.setStance(9, 0, -9, 0);
+    for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }
+    let yaw = 0; for (let i = 0; i < 15; i++) { yaw -= 0.02; d.setWorld(0, 0, yaw, 0, 0); d.update(1 / 60); }   // повернуть на ~0.3 рад (ниже предела дист.) и замереть
+    let stepped = false;
+    for (let i = 0; i < 60; i++) { d.setWorld(0, 0, yaw, 0, 0); d.update(1 / 60); if (d.swingLegs[0] || d.swingLegs[1]) stepped = true; }
+    Object.assign(GAIT, { turnSettleTime: saved.st, turnIdleTime: saved.idle });
+    expect(stepped).toBe(true);   // стоя taz замер → доступил, чтобы встать ровно (не дожидаясь предела)
+  });
+
   it('МЕДЛЕННЫЙ поворот (ниже turnStep) → опорная стопа ПРИБИТА (не скользит), но подшаг всё равно происходит', () => {
     const d = new PoseDriver(); d.setStance(9, 0, -9, 0);
     for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться
@@ -370,6 +393,17 @@ describe('PosePlayer — torso-lead (голова ведёт; таз держи�
     const { p } = mk();
     p.setYaw(1.0); p.snapYaw();                       // телепорт с новым facing
     expect(p.pelvisYaw).toBeCloseTo(1.0, 6);          // таз мгновенно на прицеле (нет «юлы»)
+  });
+
+  it('stepTorsoLead: relax доворачивает таз к прицелу в мёртвой зоне (выравнивание после лида)', () => {
+    const tw = TWIST_DEFAULT();
+    let a = 0, at = false, b = 0, bt = false;
+    for (let i = 0; i < 200; i++) {                   // прицел 0.4 < порога 0.7 → в зоне держится
+      const ra = stepTorsoLead(a, 0.4, tw, 1 / 60, at, false); a = ra.rootYaw; at = ra.turning;   // без relax
+      const rb = stepTorsoLead(b, 0.4, tw, 1 / 60, bt, true); b = rb.rootYaw; bt = rb.turning;     // с relax
+    }
+    expect(Math.abs(a)).toBeLessThan(0.02);           // без relax — таз держит лид (в зоне не двигается)
+    expect(b).toBeCloseTo(0.4, 1);                    // с relax — таз доехал к прицелу (выравнивание)
   });
 });
 

@@ -63,8 +63,12 @@ export const GAIT = {
   idleStep: 11,   // стоя: переступ, только если стопа уехала дальше этого (с гистерезисом) — против «топтания»
   footClear: 8,   // мин. зазор между стопами: цель ближе → уводится ВПЕРЁД, чтобы ноги обходили, а не влезали
   turnStep: 0.45, // поворот на месте: скорость вращения (рад/с) выше этой → считаем, что крутимся
-  turnStepDist: 6, // поворот на месте: стопа отъехала от своего планта дальше этого (u) → приставной шаг ровно в плант
-  turnLeadBias: 0.6, // внутренняя нога (в сторону поворота) шагает раньше: её порог = turnStepDist·turnLeadBias (меньше → заметнее ведёт)
+  turnStepDist: 6, // поворот на месте (режим ДИСТАНЦИЯ): стопа отъехала от планта дальше этого (u) → приставной шаг в плант
+  turnLeadBias: 0.6, // (устар., не используется — теперь внутренняя нога ВСЕГДА первой по очерёдности, а не по порогу)
+  turnLimitByAngle: 0, // 0 = предел по ДИСТАНЦИИ (turnStepDist), 1 = по УГЛУ (turnLimitDeg) — тумблер в редакторе, сравнить фил
+  turnLimitDeg: 35, // поворот на месте (режим УГОЛ): таз повернулся отн. прибитой стопы дальше этого (°) → шаг
+  turnSettleTime: 0.8, // сек: таз перестал крутиться, а стопа не в доме → доступить (устаканиться) не дожидаясь предела
+  turnIdleTime: 0.5, // сек: обе стопы дома + не крутимся → через это время ноги в чистую idle-позу (не мгновенно)
   // ФОРМА СТОЙКИ (аддитивно, нейтральные дефолты). stanceWidth: базовый боковой развод стоп (u, + = шире).
   // strafeReach: множитель ТОЛЬКО боковой компоненты выноса (1 = как есть; <1 = нога меньше улетает вбок при страйфе).
   // crossClamp: предел захода стопы за среднюю линию тела (u; 99 = без ограничения).
@@ -152,6 +156,10 @@ class StepPlanner {
   ];
   private placed = false;
   private settled = false;   // стоим смирно (гистерезис против топтания на месте)
+  private plantYaw: [number, number] = [0, 0];   // yaw таза в момент планта каждой стопы (предел ПО УГЛУ)
+  private stableFor = 0;     // сек: сколько таз почти не крутится (для «доступить по времени»)
+  private idleFor = 0;       // сек: сколько обе стопы дома и не крутимся (для ухода в idle по времени)
+  private turnLead = -1;     // чья очередь шагать при повороте (внутренняя первой; чередование). -1 = поворот не начат
   private prevYaw = 0;       // рыск прошлого кадра
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
@@ -195,13 +203,14 @@ class StepPlanner {
   /** Текущая плант-цель ноги i в мире (свинг-цель tx/tz или опорная px/pz) — для наземных маркеров редактора. */
   getTarget(i: number): [number, number] { const l = this.legs[i]!; return l.sw > 0 ? [l.tx, l.tz] : [l.px, l.pz]; }
 
-  private reset(px: number, pz: number, fx: number, fz: number, rx: number, rz: number): void {
+  private reset(px: number, pz: number, fx: number, fz: number, rx: number, rz: number, yaw: number): void {
     for (let i = 0; i < 2; i++) {
       const lat = i === 0 ? this.stanceLatL : this.stanceLatR, fwd = i === 0 ? this.stanceFwdL : this.stanceFwdR;
       const l = this.legs[i]!;
       l.px = px + rx * lat + fx * fwd; l.pz = pz + rz * lat + fz * fwd; l.sw = 0;   // стартуем сразу в планте стойки
+      this.plantYaw[i] = yaw;   // предел ПО УГЛУ отсчитывается от свежего yaw (иначе спавн при повёрнутом yaw → ложный шаг)
     }
-    this.placed = true;
+    this.placed = true; this.turnLead = -1;
   }
 
 
@@ -209,7 +218,7 @@ class StepPlanner {
     // Оси тела в мире: вперёд = локальный +Z, вправо = локальный +X.
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
     const rx = Math.cos(yaw), rz = -Math.sin(yaw);
-    if (!this.placed || Math.hypot(this.legs[0].px - px, this.legs[0].pz - pz) > 100) this.reset(px, pz, fx, fz, rx, rz);
+    if (!this.placed || Math.hypot(this.legs[0].px - px, this.legs[0].pz - pz) > 100) this.reset(px, pz, fx, fz, rx, rz, yaw);
 
     // Сглаженная скорость поворота (рад/с). Сырая мигает [0.1,0,0.1,0] из-за сим 30Гц / физика 60Гц.
     if (dt > 0) {
@@ -242,46 +251,51 @@ class StepPlanner {
       this.sideT[0] = 0; this.sideT[1] = 0;                     // ход перебивает приставные шаги
       this.phase += (speed * dt / stepLen) * Math.PI;
     } else {
-      // СТОИМ. Ноги держат ПЛАНТЫ idle-стойки (точки стоп отн. таза), приколотые к миру; таз крутится ОТНОСИТЕЛЬНО них.
-      // Плант каждой ноги крутится вместе с yaw. Стопа отъехала от своего планта дальше turnStepDist — ПРИСТАВНОЙ ШАГ ровно
-      // в плант (idl-стойка в новом фейсинге). Ноги НЕЗАВИСИМО (не ждут друг друга → опорная не перекручивается за таз = не X).
+      // СТОИМ. Планты (дом стопы отн. ТАЗА) крутятся с yaw; стопа прибита к миру. Шаг — когда стопа отъехала на ПРЕДЕЛ
+      // (по ДИСТАНЦИИ turnStepDist ИЛИ по УГЛУ turnLimitDeg — тумблер turnLimitByAngle). Внутренняя нога (в сторону
+      // вращения) ВСЕГДА первой, строгое чередование (turnLead), без одновременного двойного свинга. Плюс «доступить»
+      // когда таз перестал крутиться (turnSettleTime) и уход в idle-позу по времени (turnIdleTime).
       const stanceX = (i: number): number => px + rx * (i === 0 ? this.stanceLatL : this.stanceLatR) + fx * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
       const stanceZ = (i: number): number => pz + rz * (i === 0 ? this.stanceLatL : this.stanceLatR) + fz * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
       const turning = this.yawRate > GAIT.turnStep;
-      // ПРИОРИТЕТ ведущей ноги: внутренняя (в сторону поворота) шагает РАНЬШЕ — её порог × turnLeadBias, но БЕЗ ожидания второй.
-      // По факту в игре: поворот ПРОТИВ часовой (сверху) → первой ЛЕВАЯ (нога 0); ПО часовой → правая (нога 1).
-      const inside = this.yawSigned > 0 ? 0 : 1;
-      for (let i = 0; i < 2; i++) {                            // 1) двигаем текущие переносы к планту
+      const inside = this.yawSigned >= 0 ? 0 : 1;               // нога в сторону вращения (ведущая)
+      this.stableFor = this.yawRate < 0.02 ? this.stableFor + dt : 0;   // таз ПРАКТИЧЕСКИ стоит (~1°/с) → плант стабилен (медленный поворот НЕ считается стоянием)
+      for (let i = 0; i < 2; i++) {                            // двигаем текущие переносы к планту; на приземлении фиксируем plantYaw
         const l = this.legs[i]!;
         if (l.sw <= 0) continue;
         let st = this.sideT[i]! + dt / SIDESTEP_DUR;
-        if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; }
-        else l.sw = clamp(st, 0.001, 1);
+        if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; this.plantYaw[i] = yaw; } else l.sw = clamp(st, 0.001, 1);
         this.sideT[i] = st;
       }
       const startStep = (i: number): void => { const l = this.legs[i]!; l.fx = l.px; l.fz = l.pz; l.tx = stanceX(i); l.tz = stanceZ(i); this.sideT[i] = 0; l.sw = 0.001; };
-      // 2) FOOTLOCK: опорная стопа ЖЁСТКО стоит в мире (l.px не двигаем) при ЛЮБОЙ скорости поворота — не скользит.
-      //    Шаг по РАССТОЯНИЮ стопа↔(повёрнутый) плант, а не по скорости: медленно крутишь → дистанция копится → подшаг.
-      let maxDist = 0;
-      for (let i = 0; i < 2; i++) {
-        const l = this.legs[i]!; if (l.sw > 0) continue;
-        const dist = Math.hypot(l.px - stanceX(i), l.pz - stanceZ(i));
-        maxDist = Math.max(maxDist, dist);
-        let thr = GAIT.turnStepDist;
-        if (turning && i === inside) thr *= GAIT.turnLeadBias;   // ведущая (внутренняя) нога шагает раньше — только при повороте
-        // Страховка от X: опорная стопа перешла среднюю линию (знак её body-local lat ≠ знаку планта) → форс-шаг.
-        const plantLat = i === 0 ? this.stanceLatL : this.stanceLatR;
+      const homeDist = (i: number): number => Math.hypot(this.legs[i]!.px - stanceX(i), this.legs[i]!.pz - stanceZ(i));
+      const beyondLimit = (i: number): boolean => GAIT.turnLimitByAngle   // ПРЕДЕЛ: по углу поворота таза отн. прибитой стопы, либо по дистанции отъезда
+        ? Math.abs(Math.atan2(Math.sin(yaw - this.plantYaw[i]!), Math.cos(yaw - this.plantYaw[i]!))) > GAIT.turnLimitDeg * Math.PI / 180
+        : homeDist(i) > GAIT.turnStepDist;
+      const crossed = (i: number): boolean => {                // страховка от X: опорная перешла среднюю линию
+        const l = this.legs[i]!; const plantLat = i === 0 ? this.stanceLatL : this.stanceLatR;
         const footLat = (l.px - px) * rx + (l.pz - pz) * rz;
-        const crossed = Math.abs(plantLat) > 0.1 && Math.sign(footLat) !== Math.sign(plantLat) && Math.abs(footLat) > 1;
-        if (dist > thr || crossed) startStep(i);
-      }
+        return Math.abs(plantLat) > 0.1 && Math.sign(footLat) !== Math.sign(plantLat) && Math.abs(footLat) > 1;
+      };
+      const settleReady = this.stableFor > GAIT.turnSettleTime;   // таз стоит → доступить не дожидаясь предела
+      const wantStep = (i: number): boolean => this.legs[i]!.sw <= 0 && (beyondLimit(i) || crossed(i) || (settleReady && homeDist(i) > SETTLE_EPS));
+      // ПОРЯДОК: очередь turnLead (внутренняя первой), одновременный двойной свинг запрещён, строгое чередование.
+      // Латчим ТОЛЬКО когда реально крутимся (yawSigned уже с чётким знаком); стоя латч сброшен, ведущая берётся вживую.
+      if (turning && this.turnLead < 0) this.turnLead = inside;
+      if (!turning) this.turnLead = -1;
+      const lead = this.turnLead >= 0 ? this.turnLead : inside, other = lead === 0 ? 1 : 0;
+      if (wantStep(lead) && this.legs[other]!.sw <= 0) { startStep(lead); if (this.turnLead >= 0) this.turnLead = other; }
+      else if (wantStep(other) && this.legs[lead]!.sw <= 0 && homeDist(lead) <= SETTLE_EPS) { startStep(other); if (this.turnLead >= 0) this.turnLead = lead; }
       const anySwing = this.legs[0]!.sw > 0 || this.legs[1]!.sw > 0;
-      // ЗАМИРАНИЕ (отпустить ноги в чистую idle-позу, legMag→0) — ТОЛЬКО когда обе стопы уже в своих плантах (без свинга).
-      // Иначе не settled → рендер держит МИРОВУЮ (прибитую) стопу, а не idle-позу-за-тазом → при повороте стопа стоит, не едет.
-      if (anySwing || maxDist > SETTLE_EPS) this.settled = false;
-      else if (!this.settled) {                                // покой → замираем РОВНО В ПЛАНТАХ стойки (idl-точки)
-        this.settled = true;
-        for (let i = 0; i < 2; i++) { const l = this.legs[i]!; l.px = stanceX(i); l.pz = stanceZ(i); l.sw = 0; }
+      const maxDist = Math.max(homeDist(0), homeDist(1));
+      // УХОД В IDLE ПО ВРЕМЕНИ: обе стопы дома + не крутимся + нет свинга → копим idleFor; через turnIdleTime → idle-поза.
+      if (anySwing || maxDist > SETTLE_EPS || turning) { this.settled = false; this.idleFor = 0; }
+      else {
+        this.idleFor += dt;
+        if (this.idleFor > GAIT.turnIdleTime && !this.settled) {
+          this.settled = true; this.turnLead = -1;
+          for (let i = 0; i < 2; i++) { const l = this.legs[i]!; l.px = stanceX(i); l.pz = stanceZ(i); l.sw = 0; this.plantYaw[i] = yaw; }
+        }
       }
     }
 
