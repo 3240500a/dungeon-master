@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid } from './poseRuntime.js';
+import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
 import * as THREE from 'three';
 
@@ -347,10 +347,24 @@ describe('PosePlayer — torso-lead (голова ведёт; таз держи�
     expect(Math.abs(b.p.pelvisYaw - 0.72)).toBeLessThan(0.05);   // догнал прицел (в пределах settle)
   });
 
-  it('на ходу лаг таза исчезает — таз смотрит по движению (регресс «мелких шажков»)', () => {
-    const { p } = mk();
-    run(p, 0.5, 120, 0, 100);                                  // движемся вперёд (vz=100) с прицелом 0.5 рад
-    expect(Math.abs(p.facing - p.pelvisYaw)).toBeLessThan(0.05); // таз догнал прицел → гейт видит ЧИСТОЕ движение, не страйф
+  it('на ходу таз идёт ПО ДВИЖЕНИЮ, верх скручивается к прицелу (torso-lead на бегу; стопы без страйфа)', () => {
+    const { h, p } = mk();
+    run(p, 0.5, 120, 0, 100);                                  // бежим вперёд (vz=100 → dir 0) с прицелом 0.5 рад
+    expect(Math.abs(p.pelvisYaw)).toBeLessThan(0.05);          // таз смотрит по ДВИЖЕНИЮ (0), не по прицелу → гейт чистый, не страйф
+    expect(headYaw(h)).toBeGreaterThan(0.3);                   // голова/верх скручены к прицелу (0.5) — torso-lead работает и на ходу
+  });
+
+  it('stepTorsoLead: кламп скрутки верха к maxTwist (страйф — прицел далеко от движения)', () => {
+    const tw = { ...TWIST_DEFAULT(), maxTwist: 0.8 };
+    const r = stepTorsoLead(0, 0, 2.5, tw, false, 1 / 60, false);   // таз=0 (движение вперёд), прицел 2.5 → скрутка клампится
+    expect(Math.abs(r.residual)).toBeCloseTo(0.8, 5);
+  });
+
+  it('stepTorsoLead: на ходу таз ведёт к цели-движению, а residual = прицел − таз', () => {
+    const tw = TWIST_DEFAULT();
+    let root = 0, turning = false;
+    for (let i = 0; i < 200; i++) { const r = stepTorsoLead(root, 1.2, 0.3, tw, false, 1 / 60, turning); root = r.rootYaw; turning = r.turning; }
+    expect(root).toBeCloseTo(1.2, 1);                          // таз догнал направление движения (1.2), не прицел
   });
 
   it('снап при спавне/телепорте: setYaw до init и snapYaw убирают лаг таза', () => {
