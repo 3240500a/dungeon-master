@@ -790,7 +790,8 @@ function renderGaitTune(): void {
   };
   // «Прицел» — крутит только превью (не пишется в профиль): встань в центр пада, тяни → голова ведёт, таз догоняет.
   tsl('прицел ⟲ (превью, °)', () => gaitYawManual * R2D, (d) => { gaitFaceMove = false; gaitYawManual = d / R2D; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; void ensurePhysics(); renderLoco(); } }, -180, 180, 5, (v) => `${Math.round(v)}°`);
-  tsl('порог таза — коммит-шаг (°)', () => editorTwist.threshold * R2D, (d) => { editorTwist.threshold = d / R2D; }, 5, 90, 1, (v) => `${Math.round(v)}°`);
+  tsl('порог таза (°)', () => editorTwist.threshold * R2D, (d) => { editorTwist.threshold = d / R2D; }, 5, 90, 1, (v) => `${Math.round(v)}°`);
+  tsl('скорость доворота (рад/с)', () => editorTwist.turnRate, (v) => { editorTwist.turnRate = v; }, 1, 8, 0.25);
   tsl('отзыв на ходу (0..1)', () => editorTwist.moveEase, (v) => { editorTwist.moveEase = v; }, 0, 1, 0.05);
   const WNAMES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'];
   for (let i = 0; i < 5; i++) tsl(`вес: ${WNAMES[i]}`, () => editorTwist.weights[i]!, (v) => { editorTwist.weights[i] = v; }, 0, 1, 0.05);
@@ -844,6 +845,7 @@ let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing: по дв�
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
 // Скрутка корпуса (torso-lead): голова/плечи ведут за прицелом (gaitYaw), таз (editorRootYaw) догоняет. Превью в редакторе.
 let editorRootYaw = 0;                                      // yaw таза в превью (лаг за gaitYaw)
+let editorTurning = false;                                  // защёлка доворота таза (torso-lead) в превью
 let editorTwist: TwistProfile = TWIST_DEFAULT();            // активный профиль скрутки текущего персонажа
 let twistCfgs: Record<string, Partial<TwistProfile>> = (() => { try { return JSON.parse(localStorage.getItem('pe_twist') || '{}') as Record<string, Partial<TwistProfile>>; } catch { return {}; } })();
 function loadTwistCfg(id: string): void {
@@ -1158,8 +1160,8 @@ function stepGait(dt: number): void {
   // иначе — фикс. угол `gaitYawManual` (страйф: тело смотрит в одну сторону, шаги идут в другую).
   if (gaitFaceMove) { if (spd > 1) gaitYaw = Math.atan2(vx, vz); } else gaitYaw = gaitYawManual;
   // Torso-lead: gaitYaw = ПРИЦЕЛ; таз (rYaw) догоняет с задержкой → и планировщик, и Hips ведёт rYaw (голова/плечи впереди).
-  const { rootYaw: rYaw, residual: twRes } = stepTorsoLead(editorRootYaw, gaitYaw, editorTwist, gaitMoveMag, dt);
-  editorRootYaw = rYaw;
+  const tl = stepTorsoLead(editorRootYaw, gaitYaw, editorTwist, gaitMoveMag, dt, editorTurning);
+  const rYaw = tl.rootYaw, twRes = tl.residual; editorRootYaw = rYaw; editorTurning = tl.turning;
   gaitPx += vx * dt; gaitPz += vz * dt;
   gaitDriver.setWorld(gaitPx, gaitPz, rYaw, vx, vz);        // yaw ТАЗА кормит планировщик — стопы в правильном body-кадре
   // Планты по 8 направлениям × 2 скорости: body-local угол движения + скорость → билинейная интерп 4 ячеек.

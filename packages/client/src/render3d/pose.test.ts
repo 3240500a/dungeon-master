@@ -294,7 +294,7 @@ describe('localStorageContent: адаптация позы под оружие +
   });
 });
 
-describe('PosePlayer — torso-lead (голова ведёт; таз держится в зоне, за порогом коммит-шаг)', () => {
+describe('PosePlayer — torso-lead (голова ведёт; таз держится в зоне, за порогом плавно доворачивается)', () => {
   beforeEach(() => {
     (globalThis as unknown as { localStorage: Storage }).localStorage = {
       getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, length: 0,   // нет idle-контента → кости ~единичны, чистая математика yaw
@@ -325,20 +325,26 @@ describe('PosePlayer — torso-lead (голова ведёт; таз держи�
     expect(headYaw(h)).toBeGreaterThan(0.2);          // голова/плечи повернулись к прицелу
   });
 
-  it('за порогом таз КОММИТИТСЯ к прицелу сразу (один большой шаг, не крадётся)', () => {
+  it('за порогом таз ПЛАВНО доворачивается к прицелу (не рывок), потом держит', () => {
     const { p } = mk();
-    const before = p.pelvisYaw;
-    p.setYaw(1.0); p.step(1 / 60);                             // прицел 1.0 рад > порога 0.70 — один тик
-    expect(before).toBeCloseTo(0, 6);                          // до этого таз стоял
-    expect(p.pelvisYaw).toBeCloseTo(1.0, 3);                   // таз доведён к прицелу СРАЗУ (за 1 кадр), а не частично
-    expect(Math.abs(p.facing - p.pelvisYaw)).toBeLessThan(0.02); // скрутка сброшена — планировщик увидит скачок yaw → 1 шаг
+    p.setYaw(1.0); p.step(1 / 60); p.step(1 / 60);            // прицел 1.0 > порога 0.70 — 2 кадра
+    expect(p.pelvisYaw).toBeGreaterThan(0.02);                // таз тронулся (доворачивается)
+    expect(p.pelvisYaw).toBeLessThan(0.3);                    // но НЕ прыгнул к прицелу — плавно (стопы переступят поочерёдно)
+    run(p, 1.0, 60);                                          // добегаем
+    expect(Math.abs(p.facing - p.pelvisYaw)).toBeLessThan(0.05); // догнал полностью → защёлка гасится, держит
   });
 
-  it('коммит происходит РОВНО на пороге (в зоне держится, чуть за — прыгает)', () => {
+  it('нет рывка: за 1 кадр таз крутится не больше turnRate·dt (иначе прыжок двумя ногами)', () => {
+    const { p } = mk();
+    p.setYaw(2.0); p.step(1 / 60);                            // большой прицел — но за кадр только turnRate·dt
+    expect(p.pelvisYaw).toBeLessThan(3 * (1 / 60) + 0.005);   // ≤ ~0.05 рад/кадр — планировщик увидит плавный поворот, а не скачок
+  });
+
+  it('коммит РОВНО на пороге: в зоне держится, чуть за — доворачивается полностью', () => {
     const a = mk(); a.p.setYaw(0.68); a.p.step(1 / 60);       // 0.68 < порога 0.70 → держится
-    expect(Math.abs(a.p.pelvisYaw)).toBeLessThan(0.02);
-    const b = mk(); b.p.setYaw(0.72); b.p.step(1 / 60);       // 0.72 > порога → коммит
-    expect(b.p.pelvisYaw).toBeCloseTo(0.72, 3);
+    expect(Math.abs(a.p.pelvisYaw)).toBeLessThan(0.001);
+    const b = mk(); b.p.setYaw(0.72); for (let i = 0; i < 40; i++) b.p.step(1 / 60);   // 0.72 > порога → доворот
+    expect(Math.abs(b.p.pelvisYaw - 0.72)).toBeLessThan(0.05);   // догнал прицел (в пределах settle)
   });
 
   it('на ходу лаг таза исчезает — таз смотрит по движению (регресс «мелких шажков»)', () => {
