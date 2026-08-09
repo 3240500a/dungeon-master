@@ -47,6 +47,8 @@ export interface PlayerEntity {
   debuffs: DebuffState;
   /** Секунд до следующей базовой атаки. */
   attackCd: number;
+  /** «В бою» — линга-таймер (сек, >0 = в бою): своя атака ИЛИ на игрока целится монстр. Для боевого айдла (клиент). */
+  combatTimer: number;
   /** Счётчик взмахов для чередования рук при дуал-вилде. */
   swingHand: number;
   /** Кулдаун по id скилла, сек (общий для всех биндов этого скилла). */
@@ -252,6 +254,7 @@ export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: num
     radius: 14,
     debuffs: newDebuffState(),
     attackCd: 0,
+    combatTimer: 0,
     swingHand: 0,
     skillCd: {},
     toggles: [],

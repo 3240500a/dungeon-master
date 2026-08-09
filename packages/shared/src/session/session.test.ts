@@ -704,3 +704,28 @@ describe('GameSession — реактивные мастерства (тригг�
     expect(totalDamage(1)).toBeGreaterThan(totalDamage(0) * 1.5); // с мастерством урона заметно больше
   });
 });
+
+describe('GameSession — боевой айдл (combatTimer)', () => {
+  it('своя атака → combatTimer>0, затем тает после линги', () => {
+    const r = reg();
+    const s = new GameSession(r, 7, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(3, 6), monsters: [] });
+    for (let i = 0; i < 6; i++) s.tick(1 / 30, { p1: { ...idle, attack: true } });   // замах базовой атаки → в бою
+    expect(p.combatTimer).toBeGreaterThan(0);
+    const linger = r.get('balance').melee.combatLingerSec;
+    for (let i = 0; i < Math.ceil((linger + 1) * 30); i++) s.tick(1 / 30, { p1: idle });   // стоим смирно дольше линги
+    expect(p.combatTimer).toBe(0);   // вышли из боя
+  });
+
+  it('монстр аггрится на игрока → игрок «в бою»', () => {
+    const r = reg();
+    const s = new GameSession(r, 9, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const mp = cellToWorld(8, 6);
+    const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(4));
+    s.enterFloor(1, { grid: openField(24, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mp.x, y: mp.y }] });
+    for (let i = 0; i < 120; i++) s.tick(1 / 30, { p1: idle });   // монстр рядом замечает игрока → chase → игрок в бою
+    expect(p.combatTimer).toBeGreaterThan(0);
+  });
+});

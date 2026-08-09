@@ -307,6 +307,8 @@ export class GameSession {
         else if (p.stamina < effStam) p.stamina = Math.min(effStam, p.stamina + d.staminaRegen * dt);
       }
       p.attackCd = Math.max(0, p.attackCd - dt);
+      // «В бою»: своя атака/скилл (windup) освежает линга-таймер; иначе он тает. Монстр-таргетинг стамп ниже.
+      p.combatTimer = p.windup ? this.cfg.get('balance').melee.combatLingerSec : Math.max(0, p.combatTimer - dt);
       for (const k of Object.keys(p.skillCd)) {
         const left = (p.skillCd[k] ?? 0) - dt;
         if (left <= 0) delete p.skillCd[k];
@@ -338,6 +340,8 @@ export class GameSession {
 
       const target = this.nearestPlayer(m.pos);
       if (!target) { m.vel.x = 0; m.vel.y = 0; continue; }
+      // Монстр аггрится/целится в ЭТОГО игрока → он «в бою» (боевой айдл). Стамп линга-таймера.
+      if (m.aiState === 'chase' || m.windup) target.combatTimer = this.cfg.get('balance').melee.combatLingerSec;
 
       // Замах (как у игрока): между решением ударить и уроном — задержка. Монстр укоренён и смотрит
       // на цель; стан замах сбивает. По завершении — реальный удар/выстрел (у ближнего — если игрок

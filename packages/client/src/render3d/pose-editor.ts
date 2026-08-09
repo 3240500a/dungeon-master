@@ -1040,11 +1040,11 @@ const GX = { armDown: 1.35, elbowBend: 0.25 };   // legWidth убран (дуб�
 // Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита per-оружие (idle_<wk> → фолбэк idle_shield)
 // + вес shieldMixFor(wk) (ползунок), подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
 const editorContent: PoseContent = {
-  resolveUpper: (w) => resolveUpper(w),
+  resolveUpper: (w, combat) => resolveUpper(w, combat),
   shieldOverlay: (wk) => { const c = stanceClip(wk) ?? stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMixFor(wk) } : null; },
 };
 function gaitToHumanoid(t: PoseTargets): void {   // тонкая обёртка над ОБЩИМ пайплайном (Ф5) — редактор и игра одним кодом
-  rtGaitToHumanoid(human, weaponGroups, GX, gaitLegMag, t, editorContent, weapon, { clip: attackClip, t: attackT }, gaitMoveMag);   // legMag=gaitLegMag, armMag=gaitMoveMag (как PosePlayer)
+  rtGaitToHumanoid(human, weaponGroups, GX, gaitLegMag, t, editorContent, weapon, { clip: attackClip, t: attackT }, gaitMoveMag, false, editorCombat);   // combat=editorCombat (превью боевой стойки)
 }
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
 interface UpperPose { pose: Pose; swing: number }
@@ -1054,12 +1054,17 @@ function loadSway(): Record<string, Record<string, number>> { try { return JSON.
 let swayCfg: Record<string, Record<string, number>> = loadSway();
 function saveSway(): void { try { localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); } catch { /* */ } }
 const swayOf = (w: string): number => swayCfg[curCharId]?.[w] ?? 0.2;   // остаточный мах поверх idle (физпокачивание)
-function resolveUpper(wpn: string): UpperPose | null {   // idle-поза: ПОЛНАЯ per-оружие (idle_<wpn>) в приоритете (щит/дуал целиком), иначе по БАЗОВОМУ + оверлей
+const combatStanceName = (w: string): string => 'combat_idle_' + w;
+function combatStanceClip(w: string): Clip | null { return library.find((c) => c.name === combatStanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
+let editorCombat = 0;   // превью боевой стойки в редакторе (0/1)
+function resolveUpper(wpn: string, combat = 0): UpperPose | null {   // idle-поза: ПОЛНАЯ per-оружие (idle_<wpn>) в приоритете (щит/дуал целиком), иначе по БАЗОВОМУ + оверлей; combat>0 → блендим к combat_idle
   let c = stanceClip(wpn); let wk = wpn;
   if (!c) { wk = rtBaseWeapon(wpn); c = stanceClip(wk); }
   if (!c) { const base = rtBaseWeapon(curChar().weapon); if (base !== wk) { c = stanceClip(base); wk = base; } }
   if (!c || !c.keys[0]) return null;
-  return { pose: c.keys[0]!.pose, swing: swayOf(wk) };
+  let pose = c.keys[0]!.pose;
+  if (combat > 0.001) { const cc = combatStanceClip(wpn) ?? combatStanceClip(rtBaseWeapon(wpn)); if (cc && cc.keys[0]) pose = blendTwo(pose, cc.keys[0]!.pose, combat); }
+  return { pose, swing: swayOf(wk) };
 }
 // Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');
@@ -1069,9 +1074,8 @@ function syncAttackEnds(c: Clip): void {
   c.keys[0]!.pose = pose; c.keys[c.keys.length - 1]!.pose = JSON.parse(JSON.stringify(st.keys[0].pose)) as Pose;
 }
 function syncAllAttackEnds(): void { for (const c of library) if (c.character === curCharId && isAttackClip(c)) syncAttackEnds(c); }
-function captureUpper(): void {   // снять ВСЮ позу манекена (ноги+торс+верх+оружие) → клип «стойка_<оружие>» = начальная позиция всего тела
+function captureUpper(nm: string = stanceName(weapon)): void {   // снять ВСЮ позу манекена (ноги+торс+верх+оружие) → клип-стойка (idle_ или combat_idle_)
   if (locoOn || playing) { alert('Идёт превью/воспроизведение — сначала останови (⏸), иначе схватишь кадр бега, а не стойку.'); return; }
-  const nm = stanceName(weapon);
   const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon);
   if (i >= 0 && !confirm(`Перезаписать «${nm}» текущей позой манекена?`)) return;   // защита от случайной перезаписи idle
   pushUndo();                       // на случай ошибки — Ctrl+Z вернёт прежнюю стойку
@@ -1186,6 +1190,19 @@ function renderUpperPanel(): void {   // панель idle-стойки по о�
   h.textContent = `IDLE-СТОЙКА · ${weapon}` + (has ? ' (клип «' + stanceName(weapon) + '»)' : ' — не задана (полный мах)'); box.append(h);
   box.append(pbtn(has ? '⟳ перезахватить стойку (в клип)' : '✎ захватить стойку (в клип)', () => { captureUpper(); renderLoco(); }));
   if (curCharId === 'warrior') box.append(pbtn('↺ сид Волкодава (16 стоек + 16 ударов)', () => { if (confirm('Перезаписать все стойки и удары Волкодава примерным сидом?')) { seedWarrior(true); renderLoco(); } }));
+  // Боевая стойка (combat_idle): в игре включается в бою (своя атака / монстр целится в тебя). Фолбэк на idle, если не задана.
+  const hasC = !!combatStanceClip(weapon);
+  const ch = el('div', 'color:#ff9f6b;font-weight:bold;margin:6px 0 2px;font-size:11px'); ch.textContent = `БОЕВАЯ СТОЙКА · ${weapon}` + (hasC ? ' (combat_idle)' : ' — нет (фолбэк на idle)'); box.append(ch);
+  const crow = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); box.append(crow);
+  crow.append(
+    pbtn(hasC ? '⟳ перезахватить боевую' : '✎ захватить боевую (в клип)', () => { captureUpper(combatStanceName(weapon)); renderLoco(); }),
+    pbtn(editorCombat ? '👁 превью боевой: вкл' : '👁 превью боевой', () => { editorCombat = editorCombat ? 0 : 1; renderLoco(); }, !!editorCombat),
+  );
+  if (hasC) crow.append(pbtn('сброс боевой', () => { library = library.filter((c) => !(c.name === combatStanceName(weapon) && c.character === curCharId && c.weapon === weapon)); saveLib(); renderLoco(); }));
+  { const cbrow = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px'); cbrow.innerHTML = '<span style="flex:1;font-size:11px">кроссфейд боевой (с)</span>';
+    const cbs = el('input', 'flex:2') as HTMLInputElement; cbs.type = 'range'; cbs.min = '0.02'; cbs.max = '0.6'; cbs.step = '0.02'; cbs.value = String(GAIT.combatBlend);
+    const cbv = el('span', 'width:34px;text-align:right;color:#9ae6a0;font-size:11px'); cbv.textContent = GAIT.combatBlend.toFixed(2);
+    cbs.oninput = () => { GAIT.combatBlend = parseFloat(cbs.value); cbv.textContent = GAIT.combatBlend.toFixed(2); saveGaitCfg(); }; cbrow.append(cbs, cbv); box.append(cbrow); }
   if (has) {
     const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:4px'); row.innerHTML = '<span style="flex:1;font-size:11px">остаточный мах (сверх физики)</span>';
     const s = el('input', 'flex:2') as HTMLInputElement; s.type = 'range'; s.min = '0'; s.max = '1'; s.step = '0.05'; s.value = String(swayOf(weapon));
@@ -1229,7 +1246,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
 const GX_KEYS = ['armDown', 'elbowBend'] as const;
 type NumRec = Record<string, number>;

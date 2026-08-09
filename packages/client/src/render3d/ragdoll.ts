@@ -134,6 +134,8 @@ export interface RagdollHandle {
   knockback?(dx: number, dz: number, frac: number): void;
   /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…). */
   setWeapon?(key: string): void;
+  /** Боевой айдл: on=true → боевая стойка (combat_idle), off → обычная. Кроссфейд плавный (GAIT.combatBlend). */
+  setCombat?(on: boolean): void;
   /** Окно-culling: on=false → тела куклы вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап. */
   setSimEnabled?(on: boolean): void;
   /** Debug-режим физики монстра: 'kinematic' = рисовать из позы (тела вон из pw.step), физика лишь транзиентно на удар/смерть; 'physics' = как обычно. */

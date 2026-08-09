@@ -147,8 +147,11 @@ export const balanceSchema = z.object({
       // Доля скорости движения во время удара/замаха/восстановления (0 = стоит колом, 1 = без замедления).
       // Позволяет «идти медленно и бить». Стан всё равно полностью укореняет.
       attackMoveMult: z.number().min(0).max(1).default(0.2),
+      // «В бою» линга (сек): столько держим боевую стойку после последнего боевого события (своя атака /
+      // монстр целится). Клиент-вид (боевой айдл), баланс не трогает.
+      combatLingerSec: z.number().min(0).max(30).default(3),
     })
-    .default({ baseRange: 52, baseArc: 0.8, baseWindupFrac: 0.35, basicManaCost: 0, attackMoveMult: 0.2 }),
+    .default({ baseRange: 52, baseArc: 0.8, baseWindupFrac: 0.35, basicManaCost: 0, attackMoveMult: 0.2, combatLingerSec: 3 }),
   /** Освещение (клиент-вид): тьма растёт с глубиной, свет от факелов и игрока. */
   lighting: z
     .object({

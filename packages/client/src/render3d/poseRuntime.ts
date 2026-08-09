@@ -28,7 +28,7 @@ const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
 export interface PoseContent {
-  resolveUpper(weapon: string): UpperPose | null;
+  resolveUpper(weapon: string, combat?: number): UpperPose | null;   // combat 0..1 — блендит relaxed idle ↔ combat_idle (боевая стойка)
   shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
 }
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
@@ -55,7 +55,7 @@ export const migratePoseName = (name: string): string =>
 /** Ретаргет имени клипа при копировании в другое оружие: конвенционное `<idle_|hit_|s_hit_><fromW>` → `<prefix><toW>`;
  *  иначе если имя содержит подстроку fromW — заменить первое вхождение; иначе имя без изменений. */
 export function retargetClipName(name: string, fromW: string, toW: string): string {
-  for (const p of ['idle_', 'hit_', 's_hit_']) if (name === p + fromW) return p + toW;
+  for (const p of ['combat_idle_', 'idle_', 'hit_', 's_hit_']) if (name === p + fromW) return p + toW;
   return fromW && name.includes(fromW) ? name.replace(fromW, toW) : name;
 }
 const AB_IN = 0.1, AB_OUT = 0.14;                              // огибающая входа/выхода удара (сек)
@@ -154,9 +154,9 @@ function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: Attack
     if (pk && ap[pk]) { const h = ap[pk]!; g.position.set(g.position.x + (h[0] - g.position.x) * ab, g.position.y + (h[1] - g.position.y) * ab, g.position.z + (h[2] - g.position.z) * ab); }
   });
 }
-function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState): void {
+function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0): void {
   const H = human.bones;
-  const up = content.resolveUpper(weapon);
+  const up = content.resolveUpper(weapon, combat);
   if (!up) {   // нет idle-позы → полный мах гейта
     gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, gx);
     gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, gx);
@@ -177,9 +177,9 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
 }
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
  *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false): void {
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0): void {
   human.reset();
-  const idle = content.resolveUpper(weapon)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх)
+  const idle = content.resolveUpper(weapon, combat)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   const m = legMag;
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
   blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL], idle, m);
@@ -191,7 +191,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, m);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, m);
   blendBone(human, 'Head', [0, 0, 0], idle, m);
-  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
+  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
@@ -300,6 +300,7 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   const shieldCfg = readJSON<Record<string, { mix?: number; perWeapon?: Record<string, number> }>>('pe_shield', {});   // щит: базовый mix + per-оружие
   const find = (kind: string, id: string, w: string): Clip | null => clips.find((c) => c.name === kind + '_' + w && c.character === id && c.weapon === w) ?? null;
   const stance = (w: string): Clip | null => find('idle', charId, w) ?? (fallbackId ? find('idle', fallbackId, w) : null);
+  const combatStance = (w: string): Clip | null => find('combat_idle', charId, w) ?? (fallbackId ? find('combat_idle', fallbackId, w) : null);   // боевая стойка (нет → null → фолбэк на relaxed idle)
   const atk = (w: string): Clip | null => find('hit', charId, w) ?? (fallbackId ? find('hit', fallbackId, w) : null);
   const swayOf = (w: string): number => sway[charId]?.[w] ?? (fallbackId ? sway[fallbackId]?.[w] : undefined) ?? 0.2;
   // Клип по имени (нормализуем старое удар_→hit_) — свой персонаж, иначе фолбэк.
@@ -307,7 +308,17 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   return {
     // Idle-стойка: ПОЛНАЯ авторская поза per-оружие (idle_<weapon>) в приоритете — так стойка с щитом/дуалом целиком как в
     // редакторе (оба оружия + грипы). Нет полной → по БАЗОВОМУ оружию (axe+shield → axe) + щит идёт оверлеем.
-    resolveUpper(weapon: string): UpperPose | null { const full = stance(weapon); const wk = (full && full.keys.length) ? weapon : baseWeapon(weapon); const c = (full && full.keys.length) ? full : stance(baseWeapon(weapon)); return c && c.keys.length ? { pose: c.keys[0]!.pose, swing: swayOf(wk) } : null; },
+    resolveUpper(weapon: string, combat = 0): UpperPose | null {
+      const full = stance(weapon); const wk = (full && full.keys.length) ? weapon : baseWeapon(weapon);
+      const c = (full && full.keys.length) ? full : stance(baseWeapon(weapon));
+      if (!c || !c.keys.length) return null;
+      let pose = c.keys[0]!.pose;
+      if (combat > 0.001) {   // блендим к боевой стойке combat_idle_<w> (нет клипа → остаётся relaxed)
+        const cf = combatStance(weapon); const cc = (cf && cf.keys.length) ? cf : combatStance(baseWeapon(weapon));
+        if (cc && cc.keys.length) pose = blendTwo(pose, cc.keys[0]!.pose, combat);
+      }
+      return { pose, swing: swayOf(wk) };
+    },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
     clipByName(name: string): Clip | null { return byName(name); },
     // Поза скила под экип. оружие: если авторская на другом оружии — ретаргетим семейство (по clip.weapon) на текущее/базовое/главное; иначе авторская как есть.
@@ -424,6 +435,9 @@ export class PosePlayer {
   private turning = false;   // защёлка доворота таза (torso-lead): вкл за порогом, выкл когда догнал
   private prevAim = 0; private aimStableFor = 0;   // сколько прицел стабилен (для relaxTime — доворот таза к нейтрали)
   moveMag = 0; atkSpeed = 1;
+  combat = 0;                     // боевой айдл 0..1 (сглажен, кроссфейд за GAIT.combatBlend сек)
+  private combatTarget = 0;
+  setCombat(on: boolean): void { this.combatTarget = on ? 1 : 0; }   // вход/выход боевой стойки (сервер-авторитетный флаг)
   private noIk = false;   // поза-LOD: пропуск off-hand IK (FOOT-IK пропускает рендер отдельно)
   setNoIk(on: boolean): void { this.noIk = on; }
   /** Вес ГЕЙТА в ногах (0 = поза idle-стойки, 1 = шаг планировщика). Сглажен: резкий скачок = дребезг ног. */
@@ -480,6 +494,8 @@ export class PosePlayer {
    *  держит ЧИСТАЯ скорость (p.vel), а не дёрганая Δpos (её джиттер в vLat = ложный страйф разводил ноги). */
   step(dt: number): void {
     if (this.atk.clip) { this.atk.t += dt * this.atkSpeed; if (this.atk.t > clipDur(this.atk.clip)) { this.atk.clip = null; this.atk.t = -1; } }
+    const cstep = dt / Math.max(0.01, GAIT.combatBlend);   // кроссфейд боевой стойки (линейно за combatBlend сек)
+    this.combat += clamp(this.combatTarget - this.combat, -cstep, cstep);
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
     // Torso-lead: таз (rootYaw) догоняет прицел (aimYaw) с задержкой (голова/плечи ведут). rootYaw кормит и StepPlanner,
@@ -515,7 +531,7 @@ export class PosePlayer {
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk);
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat);
     applyTorsoTwist(this.human, yaw, tw, this.twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
   }
 }

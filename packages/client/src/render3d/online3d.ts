@@ -469,7 +469,7 @@ export async function startOnline3d(): Promise<void> {
     const ex = (mxx - mnx) * WIN_MARGIN, ez = (mxz - mnz) * WIN_MARGIN;
     winMinX = mnx - ex; winMaxX = mxx + ex; winMinZ = mnz - ez; winMaxZ = mxz + ez;
   }
-  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true): void {
+  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true, combat = false): void {
     const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
     a.vx += (nvx - a.vx) * 0.25; a.vz += (nvz - a.vz) * 0.25;   // low-pass: гасит 30/60Гц-джиттер (иначе ложный страйф)
     a.lx = x; a.lz = z;
@@ -477,6 +477,7 @@ export async function startOnline3d(): Promise<void> {
     a.d.setWorldVel?.(a.vx, a.vz);
     a.d.setMove(Math.min(1, Math.hypot(a.vx, a.vz) / 120));
     a.d.setDead(!alive);
+    a.d.setCombat?.(combat);   // боевой айдл (серверный флаг PlayerView.inCombat) — self и пиры одинаково
     if (doUpdate) a.d.update(dt);
   }
 
@@ -502,7 +503,7 @@ export async function startOnline3d(): Promise<void> {
       else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (fx - smoothX) * k; smoothZ += (fy - smoothZ) * k; }
       // Тело: живое ведём по сглаженному фокусу; труп — по СВОЕЙ позиции (не уезжает вслед за камерой на союзника).
       const bx = mine.alive ? smoothX : mine.x, by = mine.alive ? smoothZ : mine.y;
-      driveActor(self, bx, by, mine.facing, mine.alive, dt);
+      driveActor(self, bx, by, mine.facing, mine.alive, dt, true, !!mine.inCombat);
       statusFx.sync('self', bx, by, mine.debuffs);   // эффекты статусов на игроке
       orbit.target.set(smoothX, 20, smoothZ);
       if (playerLight) playerLight.position.set(smoothX, 90, smoothZ);
@@ -519,7 +520,7 @@ export async function startOnline3d(): Promise<void> {
         a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, hp }; peers.set(pv.id, a);
       }
       else if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }   // пир сменил экипировку → пересобрать меш + адаптировать позы удара
-      driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt);
+      driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt, true, !!pv.inCombat);
       if (a.hp) { a.hp.spr.position.set(pv.x, 74, pv.y); a.hp.set(pv.hp / Math.max(1, pv.maxHp)); a.hp.spr.visible = pv.alive; }   // HP пира над головой
     }
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }

@@ -40,6 +40,8 @@ export interface PlayerView {
   r: number;
   /** 3D-ключ экипированного оружия (для рендера кукол пиров: меш + адаптация поз). Нет оружия — поле отсутствует (клиент → класс-дефолт). */
   weaponKey?: string;
+  /** «В бою» (боевой айдл): своя атака ИЛИ на игрока целится монстр. Клиент → боевая стойка. */
+  inCombat?: boolean;
 }
 export interface MonsterView {
   id: number;
