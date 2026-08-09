@@ -14,6 +14,7 @@ import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
+import { renderColorField, renderUploadField } from './assetFields.js';
 
 /**
  * HTML-редактор конфигов. Страницы по механикам (по одному конфигу на страницу),
@@ -58,6 +59,9 @@ const LABELS: Record<ConfigKey, string> = {
   'quests.main': 'Квесты: основные',
   'quests.random': 'Квесты: случайные',
   'room-prefabs': 'Комнаты (префабы)',
+  textures: '3D: текстуры',
+  materials: '3D: материалы',
+  models: '3D: меши',
 };
 
 /**
@@ -82,6 +86,7 @@ const NAV_GROUPS: NavGroup[] = [
   { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
+  { title: '🧊 3D-ассеты', keys: ['models', 'materials', 'textures'] },
 ];
 /** Все ключи группы (из плоского `keys` или из подсекций `subs`). */
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
@@ -130,7 +135,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'sweep' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'sweep' | 'poses' = 'config';
 /** Активная подветка balance (её страница-срез). */
 let balanceGroup: string = balanceGroupsFull[0]!.title;
 
@@ -138,6 +143,15 @@ let balanceGroup: string = balanceGroupsFull[0]!.title;
 const tierIds = (): string[] => ((data['item-tiers'] as { id: string }[]) ?? []).map((t) => t.id);
 fieldEnumSources.minTier = tierIds;
 fieldEnumSources.maxTier = tierIds;
+// 3D-ассеты (вкладки Меши/Текстуры/Материалы). modelId (у предмета) → id меша; '' = база слота.
+fieldEnumSources.modelId = () => ['', ...((data['models'] as { id: string }[]) ?? []).map((m) => m.id)];
+// map/normalMap/… (у материала) → id текстуры из вкладки «Текстуры»; '' = без карты.
+const textureIds = (): string[] => ['', ...((data['textures'] as { id: string }[]) ?? []).map((t) => t.id)];
+for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) fieldEnumSources[k] = textureIds;
+// baseColor/emissive (материал) → пикер цвета (tuple [r,g,b] 0..1); url (текстура/меш) → поле + аплоад файла.
+fieldCustomRenderers.baseColor = (value, onChange) => renderColorField(value, onChange);
+fieldCustomRenderers.emissive = (value, onChange) => renderColorField(value, onChange);
+fieldCustomRenderers.url = (value, onChange, parent) => renderUploadField(value, onChange, parent);
 // armorClass / requireArmorClass — выпадашки из конфига классов брони.
 const armorClassIds = (): string[] => ((data['armor-classes'] as { id: string }[]) ?? []).map((c) => c.id);
 fieldEnumSources.armorClass = armorClassIds;
@@ -472,6 +486,13 @@ function render(): void {
   sweepBtn.addEventListener('click', () => { view = 'sweep'; render(); });
   nav.appendChild(sweepBtn);
 
+  // Отдельная вкладка-инструмент: поз-редактор (iframe клиента 5173) — авторинг поз/моделей рядом с конфигом.
+  const posesBtn = document.createElement('button');
+  posesBtn.textContent = '🧍 Поз-редактор';
+  posesBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'poses' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  posesBtn.addEventListener('click', () => { view = 'poses'; render(); });
+  nav.appendChild(posesBtn);
+
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
   const covered = new Set(NAV_GROUPS.flatMap(groupKeys));
   const extra = (Object.keys(configSchemas) as ConfigKey[]).filter((k) => !covered.has(k));
@@ -536,10 +557,29 @@ function render(): void {
   else if (view === 'monstergen') renderMonsterGenPage(page, data);
   else if (view === 'calc') renderCalcPage(page, data);
   else if (view === 'sweep') renderSweepPage(page, data);
+  else if (view === 'poses') renderPosesPage(page);
   else renderPage(page);
 
   layout.append(nav, page);
   app.appendChild(layout);
+}
+
+/**
+ * Поз-редактор вкладкой (iframe). Живёт в клиенте (`pose-editor.html`, Three.js) — тянуть его код в
+ * editor-бандл нельзя (тяжёлый), поэтому встраиваем страницу клиента как есть. Сохранения идут через
+ * общий серверный `pose_store` (`/api/pose`) — редактор и iframe видят одни и те же клипы/модели.
+ * DEV: editor на своём порту (напр. 5174), клиент на 5173 — src на кросс-ориджин 5173.
+ * PROD: собранный клиент и редактор на одном origin — относительный `/pose-editor.html`.
+ */
+function renderPosesPage(page: HTMLElement): void {
+  const crossOrigin = location.port && location.port !== '5173';
+  const src = crossOrigin ? 'http://localhost:5173/pose-editor.html' : '/pose-editor.html';
+  const frame = document.createElement('iframe');
+  frame.src = src;
+  frame.style.cssText = 'width:100%;height:100%;border:0;border-radius:8px;background:#0f0f16';
+  frame.allow = 'fullscreen';
+  page.style.padding = '0';
+  page.appendChild(frame);
 }
 
 function renderPage(page: HTMLElement): void {

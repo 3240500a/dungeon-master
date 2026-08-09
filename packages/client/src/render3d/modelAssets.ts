@@ -29,10 +29,10 @@ export function exportGLB(obj: THREE.Object3D): Promise<ArrayBuffer> {
     new GLTFExporter().parse(obj, (res) => resolve(res as ArrayBuffer), (e) => reject(e), { binary: true }));
 }
 
-/** Залить GLB на сервер под id → { url }. DEV-only (в проде 403). */
-export async function uploadAsset(id: string, glb: ArrayBuffer): Promise<{ ok: boolean; id: string; url: string; bytes: number }> {
+/** Залить бинарь (GLB/PNG/JPG) на сервер под id → { url }. DEV-only (в проде 403). contentType задаёт расширение. */
+export async function uploadAsset(id: string, data: ArrayBuffer, contentType = 'application/octet-stream'): Promise<{ ok: boolean; id: string; url: string; bytes: number }> {
   const r = await fetch('/api/dev/assets/' + encodeURIComponent(id), {
-    method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: glb,
+    method: 'POST', headers: { 'content-type': contentType }, body: data,
   });
   if (!r.ok) throw new Error('upload failed: ' + r.status);
   return r.json() as Promise<{ ok: boolean; id: string; url: string; bytes: number }>;

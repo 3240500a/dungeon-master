@@ -152,14 +152,17 @@ app.delete('/api/dev/pose/:key', (req, res) => {
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
 if (!existsSync(ASSETS_DIR)) mkdirSync(ASSETS_DIR, { recursive: true });
 app.use('/assets', express.static(ASSETS_DIR, { maxAge: '1h' }));
-app.post('/api/dev/assets/:id', express.raw({ type: ['model/gltf-binary', 'application/octet-stream'], limit: '64mb' }), (req, res) => {
+// Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
+const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), (req, res) => {
   if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
   const id = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, '');   // sanitize → без path-traversal
   if (!id) return res.status(400).json({ error: 'bad id' });
   const buf = req.body as Buffer;
   if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'empty body' });
-  writeFileSync(join(ASSETS_DIR, id + '.glb'), buf);
-  res.json({ ok: true, id, url: '/assets/' + id + '.glb', bytes: buf.length });
+  const ext = ASSET_EXT[(req.headers['content-type'] ?? '').split(';')[0]!.trim()] ?? 'bin';
+  writeFileSync(join(ASSETS_DIR, id + '.' + ext), buf);
+  res.json({ ok: true, id, url: '/assets/' + id + '.' + ext, bytes: buf.length });
 });
 
 // ── Dev: загрузка РЕАЛЬНЫХ сейвов в калькулятор/сим баланса (без auth, только не в проде) ──

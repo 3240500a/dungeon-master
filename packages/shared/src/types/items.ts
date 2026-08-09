@@ -113,6 +113,8 @@ export interface ItemBase extends WeaponSignature {
   /** Размер в клетках инвентаря. */
   gridW: number;
   gridH: number;
+  /** id 3D-модели (конфиг models) для меша брони/оружия. Нет → база слота / процедурка. */
+  modelId?: string;
 }
 
 /** Скатанный на предмете аффикс (конкретное значение из диапазона тира). */
@@ -165,4 +167,6 @@ export interface Item extends WeaponSignature {
   gridH: number;
   /** Позиция в сетке инвентаря (клетки). null — не размещён/на земле. */
   pos?: { x: number; y: number } | null;
+  /** id 3D-модели (конфиг models) для меша брони/оружия. Нет → база слота / процедурка. */
+  modelId?: string;
 }

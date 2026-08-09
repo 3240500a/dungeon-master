@@ -335,6 +335,8 @@ const weaponBaseSchema = z.object({
   reachMult: z.number().min(0).optional(),
   lowHpBonusPct: z.number().min(0).optional(),
   knockback: z.number().min(0).optional(),
+  /** id 3D-модели (конфиг models) для рендера меша оружия в руке. Нет → процедурный меш по weaponClass. */
+  modelId: z.string().optional(),
 });
 
 const armorBaseSchema = z.object({
@@ -345,6 +347,8 @@ const armorBaseSchema = z.object({
   armorClass: z.string(),
   /** Кол-во быстрых слотов пояса (значимо только для slot='belt'; 0 — не пояс). */
   beltSlots: z.number().int().min(0).default(0),
+  /** id 3D-модели (конфиг models) для меша брони в этом слоте. Нет → базовый меш слота (или процедурка). */
+  modelId: z.string().optional(),
 });
 
 /** Эффект применения расходника (зелья/колбы). */
@@ -377,6 +381,8 @@ const shieldBaseSchema = z.object({
   /** Класс щита (вес): лёгкий(Ловк) / средний(Сил+Ловк) / тяжёлый(Сила). Профиль
    * требований — авторский (в requirements базы). */
   shieldClass: z.enum(['light', 'medium', 'heavy']),
+  /** id 3D-модели (конфиг models) для меша щита. Нет → процедурный. */
+  modelId: z.string().optional(),
 });
 
 const jewelryBaseSchema = z.object({
@@ -1633,6 +1639,49 @@ export const roomPrefabsSchema = z.array(
 );
 export type RoomPrefab = z.infer<typeof roomPrefabsSchema>[number];
 
+// ── 3D-АССЕТЫ (текстуры/материалы/модели) — импорт в поз-редакторе; бинари GLB/PNG на диске /assets по url ──
+const rgb = z.tuple([z.number(), z.number(), z.number()]);
+/** Текстура = картинка (/assets/<id>.png) + параметры сэмплера. ПЕРЕИСПОЛЬЗУЕТСЯ материалами. */
+export const texturesSchema = z.array(z.object({
+  id: z.string(),
+  name: z.string().default(''),
+  url: z.string(),                                       // /assets/<id>.png|jpg (сервер /assets)
+  colorSpace: z.enum(['srgb', 'linear']).default('srgb'),   // srgb для цвета/эмиссии, linear для normal/rough/metal
+  wrapS: z.enum(['repeat', 'clamp']).default('repeat'),
+  wrapT: z.enum(['repeat', 'clamp']).default('repeat'),
+  flipY: z.boolean().default(false),                    // glTF-конвенция: false
+}));
+/** Материал PBR (metallic-roughness, как glTF/three/Unity/UE). ПЕРЕИСПОЛЬЗУЕМЫЙ — назначается на сабмеши моделей. */
+export const materialsSchema = z.array(z.object({
+  id: z.string(),
+  name: z.string().default(''),
+  baseColor: rgb.default([1, 1, 1]),
+  opacity: z.number().min(0).max(1).default(1),
+  metalness: z.number().min(0).max(1).default(0),
+  roughness: z.number().min(0).max(1).default(0.8),
+  emissive: rgb.default([0, 0, 0]),
+  emissiveIntensity: z.number().min(0).default(1),
+  normalScale: z.number().default(1),
+  map: z.string().optional(),                           // textureId (albedo)
+  normalMap: z.string().optional(), roughnessMap: z.string().optional(), metalnessMap: z.string().optional(),
+  emissiveMap: z.string().optional(), aoMap: z.string().optional(),
+}));
+/** 3D-модель (часть персонажа / оружие): GLB на /assets + карта ретаргета + материалы по сабмешам. */
+export const modelsSchema = z.array(z.object({
+  id: z.string(),
+  name: z.string().default(''),
+  url: z.string(),                                      // /assets/<id>.glb
+  kind: z.enum(['part', 'weapon']).default('part'),
+  slot: z.enum(['helm', 'chest', 'gloves', 'boots', 'head']).optional(),   // kind='part': область тела
+  weaponType: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield']).optional(),   // kind='weapon'
+  base: z.boolean().default(false),                     // базовый меш слота (нет надетого / нет modelId → показываем его)
+  hideHair: z.boolean().default(false),                 // шлем скрывает базовые волосы (корона/тиара — false)
+  scale: z.number().default(1),                         // нормализация размера (наш TILE=32u=1м)
+  boneMap: z.record(z.string(), z.string()).default({}),   // наша кость → имя кости импорт-скелета (ретаргет)
+  grip: z.object({ pos: rgb.default([0, 0, 0]), rot: rgb.default([0, 0, 0]) }).optional(),   // хват оружия на кисти
+  submeshMaterials: z.record(z.string(), z.string()).default({}),   // имя сабмеша → materialId
+}));
+
 /** Реестр всех схем: ключ конфига → схема. */
 export const configSchemas = {
   balance: balanceSchema,
@@ -1673,6 +1722,9 @@ export const configSchemas = {
   'quests.main': questsMainSchema,
   'quests.random': questsRandomSchema,
   'room-prefabs': roomPrefabsSchema,
+  textures: texturesSchema,
+  materials: materialsSchema,
+  models: modelsSchema,
 } as const;
 
 export type ConfigKey = keyof typeof configSchemas;

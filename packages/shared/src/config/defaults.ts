@@ -34,6 +34,9 @@ import skillTree from './data/skill-tree.json' with { type: 'json' };
 import questsMain from './data/quests-main.json' with { type: 'json' };
 import questsRandom from './data/quests-random.json' with { type: 'json' };
 import roomPrefabs from './data/room-prefabs.json' with { type: 'json' };
+import textures from './data/textures.json' with { type: 'json' };
+import materials from './data/materials.json' with { type: 'json' };
+import models from './data/models.json' with { type: 'json' };
 
 /** Сырые данные конфигов по умолчанию (до валидации). */
 export const defaultConfigData: Record<string, unknown> = {
@@ -73,4 +76,7 @@ export const defaultConfigData: Record<string, unknown> = {
   'quests.main': questsMain,
   'quests.random': questsRandom,
   'room-prefabs': roomPrefabs,
+  textures,
+  materials,
+  models,
 };
