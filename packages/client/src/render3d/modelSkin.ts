@@ -126,7 +126,8 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
         // boneMap с исходными именами не матчится). autoBoneMap нормализует (CC_Base_Hip_4→Hips); сохранённый — override.
         const map = resolveBoneMap(g, spec.boneMap);
         g.rotation.set(detectUpZ(g, map) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);
-        const rig = makeRetargetRig(g, map, scaleToSource(g, source));
+        // конформ длин звеньев к source (наш риг с профилем) → повороты 1:1, меш морфится, стопы/кисти совпадают
+        const rig = makeRetargetRig(g, map, scaleToSource(g, source), source);
         g.traverse((o) => {
           if (!(o as THREE.SkinnedMesh).isSkinnedMesh) return;
           const mid = spec.submeshMaterials?.[o.name]; if (!mid) return;

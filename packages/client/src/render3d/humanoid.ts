@@ -5,6 +5,7 @@
  * Масштаб: TILE=32u=1 м, рост ~1.9 м. Имена костей — Unity (`LeftUpperArm` и т.д.) для карты ретаргета.
  */
 import * as THREE from 'three';
+import { lenMult, pelvisHeight, girthMult, type BodyProfile } from './bodyProfile.js';
 
 /** Кость: имя, родитель (или null=корень), смещение сустава от родителя (лок.), радиус сегмент-меша, форма. */
 interface HBone {
@@ -119,7 +120,7 @@ function makeHeadGeometry(R: number): THREE.BufferGeometry {
 }
 
 export interface BuildScale { arm?: number; leg?: number; torso?: number; head?: number }
-export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton' } = {}): Humanoid {
+export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton'; profile?: BodyProfile } = {}): Humanoid {
   const skel = opts.style === 'skeleton';
   const matLimb = new THREE.MeshStandardMaterial({ color: opts.limb ?? 0x8a93ad, roughness: 0.6, metalness: 0.15 });
   const matBody = new THREE.MeshStandardMaterial({ color: opts.body ?? 0x6f7690, roughness: 0.62, metalness: 0.2 });
@@ -127,13 +128,21 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   // Скелет-вид (арматура Blender/Unity): каждый меш — свой материал, чтобы highlight() подсвечивал ровно один сустав/кость.
   const boneMat = (): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({ color: 0x9fb4d8, emissive: 0x24406e, roughness: 0.5, metalness: 0.1 });
   const jointMat = (): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({ color: 0xffcf66, emissive: 0x6e4a10, roughness: 0.5, metalness: 0.1 });
-  // Масштаб толщины по группам (для разных телосложений персонажей). 1 = как база.
+  // Масштаб толщины по группам (для разных телосложений персонажей). 1 = как база. profile.girth множит всё (толстый/худой).
   const bd = opts.build ?? {};
+  const prof = opts.profile;
+  const gir = girthMult(prof);
   const sc = (name: string): number => {
-    if (name.includes('Arm') || name === 'LeftHand' || name === 'RightHand' || name.includes('Shoulder')) return bd.arm ?? 1;
-    if (name.includes('Leg') || name.includes('Foot') || name.includes('Toes')) return bd.leg ?? 1;
-    if (name === 'Head' || name === 'Neck') return bd.head ?? 1;
-    return bd.torso ?? 1;   // Spine/Chest/UpperChest/Hips/Breast
+    if (name.includes('Arm') || name === 'LeftHand' || name === 'RightHand' || name.includes('Shoulder')) return (bd.arm ?? 1) * gir;
+    if (name.includes('Leg') || name.includes('Foot') || name.includes('Toes')) return (bd.leg ?? 1) * gir;
+    if (name === 'Head' || name === 'Neck') return bd.head ?? 1;   // голову girth не раздуваем
+    return (bd.torso ?? 1) * gir;   // Spine/Chest/UpperChest/Hips/Breast
+  };
+  // ДЛИНА звеньев (profile): офсет кости × lenMult(регион); таз по высоте — из pelvisHeight (заземление при любой ноге).
+  const posOf = (b: HBone): [number, number, number] => {
+    if (b.name === 'Hips') return [b.pos[0], pelvisHeight(prof), b.pos[2]];
+    const m = lenMult(b.name, prof);
+    return [b.pos[0] * m, b.pos[1] * m, b.pos[2] * m];
   };
 
   // Female-кости (грудь) — только для gender:'female'. Иначе гуманоид без них (обязательный набор Unity).
@@ -148,7 +157,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   for (const b of table) {
     const g = new THREE.Group();
     g.name = b.name;
-    g.position.set(b.pos[0], b.pos[1], b.pos[2]);
+    { const p = posOf(b); g.position.set(p[0], p[1], p[2]); }   // длина по profile (офсет × lenMult; таз — pelvisHeight)
     if (b.parent) bones.get(b.parent)!.add(g); else root = g;
     bones.set(b.name, g);
 
@@ -161,7 +170,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
       const kids = childrenOf.get(b.name);
       if (kids && kids.length) {
         const c = kids[0]!;   // первый ребёнок задаёт направление кости
-        const bone = octaBone(new THREE.Vector3(c.pos[0], c.pos[1], c.pos[2]), boneMat());
+        const bone = octaBone(new THREE.Vector3(...posOf(c)), boneMat());
         bone.userData.bone = b.name; g.add(bone); meshes.push(bone);
       }
       if (b.shape === 'head') {   // нуб-указатель взгляда (в +Z) — направление головы читается
@@ -182,7 +191,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
       if (kids && kids.length) {
         const c = kids[0]!;   // первый ребёнок задаёт направление сегмента
         const mat = (b.name === 'Spine' || b.name === 'Chest') ? matBody : matLimb;
-        mesh = segment(new THREE.Vector3(c.pos[0], c.pos[1], c.pos[2]), b.r * s, mat);
+        mesh = segment(new THREE.Vector3(...posOf(c)), b.r * s, mat);
       }
     }
     if (mesh) { mesh.userData.bone = b.name; g.add(mesh); meshes.push(mesh); }

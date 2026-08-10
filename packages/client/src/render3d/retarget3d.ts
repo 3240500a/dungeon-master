@@ -21,6 +21,15 @@ export const OUR_BONES = [
 ] as const;
 export type OurBone = typeof OUR_BONES[number];
 
+/** Родитель в цепи ретаргета (для конформа длин звеньев: segment = parent→child). */
+const OUR_PARENT: Partial<Record<OurBone, OurBone>> = {
+  Spine: 'Hips', Chest: 'Spine', UpperChest: 'Chest', Neck: 'UpperChest', Head: 'Neck',
+  LeftShoulder: 'UpperChest', LeftUpperArm: 'LeftShoulder', LeftLowerArm: 'LeftUpperArm', LeftHand: 'LeftLowerArm',
+  RightShoulder: 'UpperChest', RightUpperArm: 'RightShoulder', RightLowerArm: 'RightUpperArm', RightHand: 'RightLowerArm',
+  LeftUpperLeg: 'Hips', LeftLowerLeg: 'LeftUpperLeg', LeftFoot: 'LeftLowerLeg', LeftToes: 'LeftFoot',
+  RightUpperLeg: 'Hips', RightLowerLeg: 'RightUpperLeg', RightFoot: 'RightLowerLeg', RightToes: 'RightFoot',
+};
+
 // Синонимы имён костей у разных ригов. Сторона детектится ДО стрипа разделителей (иначе _l/_r слипаются с ядром).
 const stripPrefix = (s: string): string => s.toLowerCase().replace(/^(cc_base_|mixamorig:?|bip01_?|bip_?|armature\|)/, '');
 const SEP = '[_.:| -]';   // разделители сегментов имени кости
@@ -81,12 +90,30 @@ export interface RetargetRig {
 const _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _sw = new THREE.Quaternion(), _v = new THREE.Vector3();
 const IDENT = new THREE.Quaternion();
 
-/** Собрать ретаргет-риг из загруженной сцены (glTF/FBX) + карты костей. `scale` нормализует размер (наш TILE=32u=1м). */
-export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, string>, scale = 1): RetargetRig {
+/** Собрать ретаргет-риг из загруженной сцены (glTF/FBX) + карты костей. `scale` нормализует размер (наш TILE=32u=1м).
+ *  `source` (опц.) — КОНФОРМ: длины звеньев импорта подгоняются под длины скелета source (наш риг с профилем) →
+ *  повороты ложатся 1:1, меш морфится под пропорции source, контакты (стопы/кисти) совпадают. */
+export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, string>, scale = 1, source?: Humanoid): RetargetRig {
   loaded.scale.setScalar(scale);
   loaded.updateMatrixWorld(true);
   const byName = new Map<string, THREE.Bone>();
   loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
+  // КОНФОРМ ДЛИН: для каждой пары кость→родитель масштабируем локальную позицию импорт-кости так, чтобы длина
+  // звена совпала с source (наш риг). Порядок родитель→ребёнок; длина пос-инвариантна (можно на любой позе source).
+  if (source) {
+    const a = new THREE.Vector3(), b = new THREE.Vector3();
+    for (const our of OUR_BONES) {
+      const p = OUR_PARENT[our]; if (!p) continue;
+      const cb = byName.get(boneMap[our] ?? ''), pb = byName.get(boneMap[p] ?? '');
+      const sc2 = source.bones.get(our), sp = source.bones.get(p);
+      if (!cb || !pb || !sc2 || !sp) continue;
+      loaded.updateMatrixWorld(true);
+      const impLen = cb.getWorldPosition(a).distanceTo(pb.getWorldPosition(b));
+      const srcLen = sc2.getWorldPosition(a).distanceTo(sp.getWorldPosition(b));
+      if (impLen > 1e-3 && srcLen > 1e-3) cb.position.multiplyScalar(srcLen / impLen);
+    }
+    loaded.updateMatrixWorld(true);
+  }
   const restW = new Map<string, THREE.Quaternion>();   // bind мировой кватернион цели (оффсет, считается ОДИН РАЗ)
   const bake = (targetName: string): void => { const b = byName.get(targetName); if (b) restW.set(targetName, b.getWorldQuaternion(new THREE.Quaternion())); };
   for (const t of Object.values(boneMap)) bake(t);
