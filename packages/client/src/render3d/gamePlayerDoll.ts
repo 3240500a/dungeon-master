@@ -181,6 +181,8 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       for (const g of weaponGroups) { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
       weapon = key; weaponGroups = attachWeapons(solid, weapon); player.setWeapon(weapon);
     },
+    setAppearance(equip) { equipModels = equip; refreshSkin(); },   // C6c: слоты брони (modelId) → пересобрать скин-слой
+
     setCombat(on) { player.setCombat(on); },   // боевой айдл (сервер-авторитетный флаг → боевая стойка)
     update(dt) {
       if (!simEnabled) return;                               // спит (вне окна): физика вынута, меш заморожен в позе — не считаем

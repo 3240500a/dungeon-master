@@ -92,6 +92,13 @@ function weaponKeyFromSave(save: SaveState): string {
 function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string {
   return pv.weaponKey ?? charFor(pv.classId).weapon;
 }
+/** C6c: внешность брони по слотам из сейва — slot→{modelId} надетых предметов (голову/волосы даёт база слота). */
+function appearanceFromSave(save: SaveState): Record<string, { modelId?: string } | undefined> {
+  const eq = save.equipment as Record<string, { modelId?: string } | undefined> | undefined;
+  const out: Record<string, { modelId?: string } | undefined> = {};
+  for (const slot of ['helm', 'chest', 'gloves', 'boots'] as const) { const it = eq?.[slot]; if (it) out[slot] = { modelId: it.modelId }; }
+  return out;
+}
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
@@ -321,6 +328,7 @@ export async function startOnline3d(): Promise<void> {
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
       self.lx = floor.spawn.x; self.lz = floor.spawn.y;
     }
+    self.d.setAppearance?.(appearanceFromSave(app.state!.save));   // C6c: слоты брони (modelId) → скин-слой (базы/предметы)
     self.d.setPhysicsMode?.(playerKinematic ? 'kinematic' : 'physics');   // debug-тумблеры игрока (сохранены между этажами)
     self.d.setPoseLod?.(playerNoIk);
     // Пояс (слева-внизу) + панель биндов ЛКМ/ПКМ/Shift/Space/Alt (по центру) — те же DOM-компоненты, что в 2D UIScene.
@@ -676,7 +684,7 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;
-    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k); } }   // сменил оружие/щит → пересобрать меши
+    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k); } self.d.setAppearance?.(appearanceFromSave(f.save)); }   // сменил оружие/щит → меши; сменил броню → скин-слой (свап дешёвый: диф по ключу)
     app.bus.emit('state:changed', {});
   });
   app.net.on('shop', (f) => { app.shopStock = f.items; app.bus.emit('state:changed', {}); });
