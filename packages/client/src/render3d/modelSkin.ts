@@ -8,8 +8,8 @@
  */
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { loadModelUrl } from './modelAssets.js';
-import { makeRetargetRig, type RetargetRig } from './retarget3d.js';
+import { loadModelUrl, skeletonBoneNames } from './modelAssets.js';
+import { makeRetargetRig, autoBoneMap, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 
 /** Разрешённая модель для слота (из resolveSlotModels). */
@@ -56,6 +56,16 @@ function humanoidHeight(h: Humanoid): number {
 function scaleToSource(obj: THREE.Object3D, source: Humanoid): number {
   const imp = skeletonBox(obj); const ih = imp.max.y - imp.min.y; const sh = humanoidHeight(source);
   return (sh > 1e-3 && ih > 1e-3) ? sh / ih : 1;
+}
+
+/** Карта костей под ФАКТИЧЕСКИ загруженный скелет: авто по именам (нормализует суффиксы экспорта CC_Base_Hip_4) +
+ *  сохранённый boneMap как override, если такое имя реально присутствует. Иначе стор с исходными именами не матчится. */
+function resolveBoneMap(g: THREE.Object3D, stored: Record<string, string>): Record<string, string> {
+  const names = skeletonBoneNames(g);
+  const out: Record<string, string> = { ...(autoBoneMap(names) as Record<string, string>) };
+  const have = new Set(names);
+  for (const [our, tgt] of Object.entries(stored)) if (tgt && have.has(tgt)) out[our] = tgt;
+  return out;
 }
 
 let cfgCache: Promise<AssetConfig> | null = null;
@@ -112,8 +122,11 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
       try {
         const g = await loadModelUrl(spec.url);
         if (my !== gen) { g.traverse((o) => { const mm = o as THREE.Mesh; if (mm.geometry) mm.geometry.dispose(); }); return; }   // устарело
-        g.rotation.set(detectUpZ(g, spec.boneMap) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);
-        const rig = makeRetargetRig(g, { ...spec.boneMap }, scaleToSource(g, source));
+        // D0: карту костей ВЫВОДИМ из ФАКТИЧЕСКИ загруженного скелета (экспорт-GLB суффиксит имена → сохранённый
+        // boneMap с исходными именами не матчится). autoBoneMap нормализует (CC_Base_Hip_4→Hips); сохранённый — override.
+        const map = resolveBoneMap(g, spec.boneMap);
+        g.rotation.set(detectUpZ(g, map) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);
+        const rig = makeRetargetRig(g, map, scaleToSource(g, source));
         g.traverse((o) => {
           if (!(o as THREE.SkinnedMesh).isSkinnedMesh) return;
           const mid = spec.submeshMaterials?.[o.name]; if (!mid) return;
