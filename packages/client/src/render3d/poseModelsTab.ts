@@ -6,6 +6,7 @@
  * Игра берёт GLB из конфига (`models[].url`). Редактор = конвертер; тяжёлый FBXLoader только тут, в игре — GLB.
  */
 import * as THREE from 'three';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import type { Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
 import { autoBoneMap, makeRetargetRig, OUR_BONES, type RetargetRig } from './retarget3d.js';
@@ -26,6 +27,7 @@ export interface ModelsTabHandle {
   hideMannequin(): boolean;                 // прятать ли манекен/призрак (чтобы виден был импорт)
   importUrl(url: string): Promise<void>;    // импорт по URL (тесты/дебаг — то же, что кнопка «Из URL»)
   exportNow(): Promise<void>;               // экспорт GLB + запись в конфиг (тесты/дебаг — то же, что кнопка)
+  exportSplitNow(): Promise<void>;          // сплит-экспорт по слотам (тесты/дебаг)
   debug(): Record<string, unknown>;         // состояние (тесты/дебаг): загружено, карта костей, сабмеши, статус
   dispose(): void;
 }
@@ -38,14 +40,16 @@ const css = {
 const el = (tag: string, style = '', text = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = style; if (text) e.textContent = text; return e; };
 const btn = (label: string, fn: () => void, on = false): HTMLButtonElement => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = on ? css.btnOn : css.btn; b.onclick = fn; return b; };
 
-/** Инференс слота по имени сабмеша AccuRIG-модуляра (plate_armor→chest, legs→boots, hand→gloves, head/hair→head). */
+/** Инференс слота по имени сабмеша AccuRIG-модуляра. Волосы→helm (база слота шлема: видны, пока шлем не надет);
+ *  голова/лицо→head (всегда). plate_armor→chest, legs→boots, hand→gloves. */
 function slotOfSubmesh(name: string): ModelEntry['slot'] | undefined {
   const n = name.toLowerCase();
+  if (/hair/.test(n)) return 'helm';                                   // волосы = база слота шлема (снимаются надетым helm+hideHair)
   if (/helm|hood|cap|crown|tiara/.test(n)) return 'helm';
   if (/armor|plate|body|chest|torso|cloth|shirt|coat/.test(n)) return 'chest';
   if (/hand|glove|gaunt|heand/.test(n)) return 'gloves';
   if (/leg|boot|foot|pant|greave/.test(n)) return 'boots';
-  if (/head|hair|face/.test(n)) return 'head';
+  if (/head|face|skin/.test(n)) return 'head';
   return undefined;
 }
 
@@ -158,6 +162,46 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     renderBody();
   }
 
+  // ── C6a: экспорт-СПЛИТ модульного меша на послотные базы. Каждый сабмеш → свой GLB (скелет + один SkinnedMesh
+  //    через SkeletonUtils.clone) → отдельная `models`-запись base=true со своим слотом. Игра свапит слоты независимо. ──
+  async function exportSplitBySlot(): Promise<void> {
+    if (!loaded || !rig || !entry || !submeshes.length) return;
+    status = 'сплит-экспорт по слотам…'; renderBody();
+    exporting = true;
+    try {
+      for (const m of submeshes) { const s = (m as THREE.SkinnedMesh).skeleton; if (s) s.pose(); }   // bind-поза
+      loaded.updateMatrixWorld(true);
+      const models = cfg.models.slice();
+      const boneMap = { ...rig.boneMap };
+      const made: string[] = [];
+      for (const sm of submeshes) {
+        const slot = slotOfSubmesh(sm.name) ?? 'chest';
+        const clone = skeletonClone(loaded) as THREE.Object3D;   // клон со СВОИМ скелетом (перепривязывает скиннинг)
+        const drop: THREE.Object3D[] = [];
+        clone.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh && o.name !== sm.name) drop.push(o); });
+        for (const o of drop) o.parent?.remove(o);               // оставить только целевой сабмеш (+ полный скелет)
+        const glb = await exportGLB(clone);
+        const id = (entry.id + '_' + sm.name).replace(/[^a-zA-Z0-9_-]/g, '');
+        const up = await uploadAsset(id, glb, 'model/gltf-binary');
+        const mid = entry.submeshMaterials[sm.name];
+        const e: ModelEntry = {
+          id, name: sm.name, url: up.url, kind: 'part', slot, base: true, hideHair: false, scale: 1,
+          boneMap, submeshMaterials: mid ? { [sm.name]: mid } : {},
+        };
+        const i = models.findIndex((x) => x.id === id);
+        if (i >= 0) models[i] = e; else models.push(e);
+        made.push(`${slot}:${sm.name}`);
+      }
+      const body = JSON.stringify({ models });
+      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      cfg.models = models;
+      status = `сплит готов: ${made.join(', ')}`;
+    } catch (e) { status = 'ошибка сплита: ' + (e as Error).message; }
+    exporting = false;
+    renderBody();
+  }
+
   async function deleteModel(id: string): Promise<void> {
     const models = cfg.models.filter((m) => m.id !== id);
     const body = JSON.stringify({ models });
@@ -243,6 +287,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       body.append(bmBox);
 
       body.append(btn('💾 Экспорт GLB + в конфиг', () => void exportToConfig()));
+      if (submeshes.length > 1) body.append(btn('🪓 Экспорт по слотам (' + submeshes.length + ' баз)', () => void exportSplitBySlot()));
     }
 
     // Список моделей в конфиге
@@ -276,6 +321,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     hideMannequin: () => hideMan,
     importUrl: (url) => importFrom(() => loadModelUrl(url), url.split('/').pop() ?? 'model'),
     exportNow: () => exportToConfig(),
+    exportSplitNow: () => exportSplitBySlot(),
     debug: () => ({
       loaded: !!loaded, mappedBones: rig ? Object.values(rig.boneMap).filter(Boolean).length : 0,
       submeshes: submeshes.map((m) => m.name), status, upZ,
