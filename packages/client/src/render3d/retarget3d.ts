@@ -9,7 +9,11 @@
  * Затем в локаль цели: targetLocal = parentTargetWorld⁻¹ · targetWorld. Разница bind-поз учтена R_restTarget.
  */
 import * as THREE from 'three';
-import type { Humanoid } from './humanoid.js';
+import { buildHumanoid, type Humanoid } from './humanoid.js';
+
+// Эталонный скелет БЕЗ профиля (дефолтные длины) — знаменатель относительного конформа. Строим один раз.
+let _baseH: Humanoid | null = null;
+const baseHumanoid = (): Humanoid => { if (!_baseH) { _baseH = buildHumanoid(); _baseH.root.updateMatrixWorld(true); } return _baseH; };
 
 /** Наши 21 гуманоид-кость (порядок родитель→ребёнок) — источник ретаргета. */
 export const OUR_BONES = [
@@ -98,19 +102,23 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   loaded.updateMatrixWorld(true);
   const byName = new Map<string, THREE.Bone>();
   loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
-  // КОНФОРМ ДЛИН: для каждой пары кость→родитель масштабируем локальную позицию импорт-кости так, чтобы длина
-  // звена совпала с source (наш риг). Порядок родитель→ребёнок; длина пос-инвариантна (можно на любой позе source).
+  // КОНФОРМ ДЛИН — ОТНОСИТЕЛЬНЫЙ (профиль как множитель поверх РОДНЫХ длин ФБХ, НЕ подгон под наш скелет).
+  // Множитель звена = srcLen/baseLen = (длина сегмента source-профиля)/(длина того же сегмента ДЕФОЛТНОГО скелета)
+  // = сам множитель профиля (arm/leg/torso/height). При профиле=1 → ×1 → импорт-скелет НЕ трогаем (родные пропорции
+  // художника, как в 3ds Max). Раньше делили на impLen (длину ФБХ) → ФБХ абсолютно переформовывался в наши пропорции
+  // (при 1 куцые руки/ноги — «манекен»). Порядок родитель→ребёнок; длина поза-инвариантна.
   if (source) {
+    const base = baseHumanoid();
     const a = new THREE.Vector3(), b = new THREE.Vector3();
     for (const our of OUR_BONES) {
       const p = OUR_PARENT[our]; if (!p) continue;
-      const cb = byName.get(boneMap[our] ?? ''), pb = byName.get(boneMap[p] ?? '');
+      const cb = byName.get(boneMap[our] ?? '');
       const sc2 = source.bones.get(our), sp = source.bones.get(p);
-      if (!cb || !pb || !sc2 || !sp) continue;
-      loaded.updateMatrixWorld(true);
-      const impLen = cb.getWorldPosition(a).distanceTo(pb.getWorldPosition(b));
-      const srcLen = sc2.getWorldPosition(a).distanceTo(sp.getWorldPosition(b));
-      if (impLen > 1e-3 && srcLen > 1e-3) cb.position.multiplyScalar(srcLen / impLen);
+      const bc = base.bones.get(our), bp = base.bones.get(p);
+      if (!cb || !sc2 || !sp || !bc || !bp) continue;
+      const srcLen = sc2.getWorldPosition(a).distanceTo(sp.getWorldPosition(b));   // сегмент профиля
+      const baseLen = bc.getWorldPosition(a).distanceTo(bp.getWorldPosition(b));   // сегмент дефолта (профиль=1)
+      if (baseLen > 1e-3 && srcLen > 1e-3) cb.position.multiplyScalar(srcLen / baseLen);   // = множитель профиля; ×1 при профиле=1
     }
     loaded.updateMatrixWorld(true);
   }
