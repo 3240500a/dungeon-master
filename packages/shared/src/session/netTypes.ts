@@ -42,6 +42,8 @@ export interface PlayerView {
   weaponKey?: string;
   /** «В бою» (боевой айдл): своя атака ИЛИ на игрока целится монстр. Клиент → боевая стойка. */
   inCombat?: boolean;
+  /** Внешность брони по слотам (C7): slot→modelId надетых предметов (helm/chest/gloves/boots). Клиент → скин-слой пира. Пусто — базы слотов. */
+  armorModels?: Record<string, string>;
 }
 export interface MonsterView {
   id: number;

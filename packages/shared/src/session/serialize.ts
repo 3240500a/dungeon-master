@@ -11,6 +11,13 @@ import { weapon3dKeyFromEquipment } from './weapon3d.js';
 
 const DTYPES: DamageType[] = ['physical', 'fire', 'cold', 'lightning', 'poison'];
 
+/** C7: slot→modelId надетой брони (helm/chest/gloves/boots) — только слоты с моделью; пусто → undefined (базы слотов). */
+function armorModelsOf(eq: Record<string, { modelId?: string } | undefined>): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const slot of ['helm', 'chest', 'gloves', 'boots']) { const id = eq[slot]?.modelId; if (id) out[slot] = id; }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Доминирующая стихия пакета урона (для цвета вида снаряда). */
 export function dominantType(pk: DamagePacket): DamageType {
   let dom: DamageType = 'physical';
@@ -30,6 +37,7 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
       debuffs: p.debuffs, toggles: p.toggles, r: p.radius,
       weaponKey: weapon3dKeyFromEquipment(p.save.equipment.weapon, p.save.equipment.offhand) ?? undefined,
       inCombat: p.combatTimer > 0 ? true : undefined,
+      armorModels: armorModelsOf(p.save.equipment),
     })),
     monsters: w.monsters.map((m) => ({
       id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,

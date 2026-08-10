@@ -99,10 +99,16 @@ function appearanceFromSave(save: SaveState): Record<string, { modelId?: string 
   for (const slot of ['helm', 'chest', 'gloves', 'boots'] as const) { const it = eq?.[slot]; if (it) out[slot] = { modelId: it.modelId }; }
   return out;
 }
+/** C7: внешность пира из снапшота (PlayerView.armorModels: slot→modelId) → формат setAppearance. */
+function appearanceFromModels(am?: Record<string, string>): Record<string, { modelId?: string } | undefined> {
+  const out: Record<string, { modelId?: string } | undefined> = {};
+  if (am) for (const s of Object.keys(am)) out[s] = { modelId: am[s] };
+  return out;
+}
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; akey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -522,12 +528,17 @@ export async function startOnline3d(): Promise<void> {
       if (pv.id === myId) continue; seenP.add(pv.id);
       let a = peers.get(pv.id);
       const wk = weaponKeyFromView(pv);   // реальное оружие пира из снапшота (иначе класс-дефолт)
+      const ak = JSON.stringify(pv.armorModels ?? {});   // C7: ключ внешности брони пира (детект смены экипа)
       if (!a) {
         const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y }); actorsGroup.add(d.group);
+        d.setAppearance?.(appearanceFromModels(pv.armorModels));   // C7: скин-слой пира (базы слотов + надетая броня)
         const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
-        a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, hp }; peers.set(pv.id, a);
+        a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, hp }; peers.set(pv.id, a);
       }
-      else if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }   // пир сменил экипировку → пересобрать меш + адаптировать позы удара
+      else {
+        if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }         // пир сменил оружие/щит → пересобрать меш + адаптировать позы удара
+        if (a.akey !== ak) { a.akey = ak; a.d.setAppearance?.(appearanceFromModels(pv.armorModels)); }   // сменил броню → пересобрать скин-слой
+      }
       driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt, true, !!pv.inCombat);
       if (a.hp) { a.hp.spr.position.set(pv.x, 74, pv.y); a.hp.set(pv.hp / Math.max(1, pv.maxHp)); a.hp.spr.visible = pv.alive; }   // HP пира над головой
     }
