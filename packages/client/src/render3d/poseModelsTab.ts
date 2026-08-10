@@ -7,10 +7,12 @@
  */
 import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
-import type { Humanoid } from './humanoid.js';
+import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
 import { autoBoneMap, makeRetargetRig, OUR_BONES, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
+import { createModelSkin, resolveSlotModels, type SlotModel } from './modelSkin.js';
+import { DEFAULT_PROFILE, type BodyProfile } from './bodyProfile.js';
 
 /** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). */
 interface ModelEntry {
@@ -64,6 +66,32 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   let status = '';                             // строка статуса под кнопками
   let bodyRef: HTMLElement | null = null;
   let upZ = false;                             // импорт Z-up (CC/AccuRIG FBX «лежит») → доворот −90°X в стойку Y-up
+
+  // ── СБОРКА ПЕРСОНАЖА (5 слотов + профиль тела) — превью через ТОТ ЖЕ modelSkin, что в игре ──
+  const SLOTS = ['helm', 'head', 'chest', 'gloves', 'boots'] as const;
+  const asmSlots: Record<string, string> = {};   // слот → id модели ('' = база слота)
+  const asmProfile: BodyProfile = { ...DEFAULT_PROFILE };
+  let asmSrc: Humanoid | null = null;            // источник-риг превью (с профилем), позу копируем с манекена editor'а
+  let asmSkin: ReturnType<typeof createModelSkin> | null = null;
+  let asmOn = false;                             // показывать сборку (прячет одиночный импорт-превью)
+
+  /** (Пере)собрать источник-риг сборки под текущий профиль + пересобрать скин-слой (конформ к новому профилю). */
+  function rebuildAsm(): void {
+    if (asmSrc) { scene.remove(asmSrc.root); asmSrc.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
+    asmSrc = buildHumanoid({ profile: asmProfile });
+    asmSrc.root.visible = false;                  // источник невидим — видим импортные меши поверх
+    scene.add(asmSrc.root);
+    if (!asmSkin) asmSkin = createModelSkin(scene, asmSrc);
+    void applyAsm();
+  }
+  /** Разрешить модели по 5 слотам (выбор пользователя → база слота → ничего) и загрузить в скин. */
+  async function applyAsm(): Promise<void> {
+    if (!asmSkin) return;
+    const equip: Record<string, { modelId?: string } | undefined> = {};
+    for (const s of SLOTS) if (asmSlots[s]) equip[s] = { modelId: asmSlots[s] };
+    const specs: SlotModel[] = resolveSlotModels(cfg, equip);
+    await asmSkin.set(specs, { materials: cfg.materials, textures: cfg.textures });
+  }
 
   // ── Загрузка эффективного конфига (истина — /api/config: дефолты + правки редактора) ──
   async function fetchCfg(): Promise<void> {
@@ -224,6 +252,32 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   function render(body: HTMLElement): void {
     bodyRef = body; body.innerHTML = '';
 
+    // ── СБОРКА ПЕРСОНАЖА (5 слотов + профиль тела) — превью через modelSkin, как в игре ──
+    const asm = el('div', 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px');
+    asm.append(btn(asmOn ? '✅ Сборка персонажа' : '🧩 Сборка персонажа', () => { asmOn = !asmOn; if (asmOn && !asmSrc) rebuildAsm(); renderBody(); }, asmOn));
+    if (asmOn) {
+      asm.append(el('div', 'color:#8fa0c0;font-size:10px;margin:4px 0 2px', 'Меш на слот (всё видно разом):'));
+      for (const slot of SLOTS) {
+        const opts = ['', ...cfg.models.filter((m) => (m.slot ?? '') === slot).map((m) => m.id)];
+        const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0');
+        r.append(el('span', 'color:#8b93a6;font-size:10px;min-width:56px', slot));
+        const sel = mkSelect(opts, asmSlots[slot] ?? '', (v) => { asmSlots[slot] = v; void applyAsm(); }); sel.style.flex = '1';
+        r.append(sel); asm.append(r);
+      }
+      asm.append(el('div', 'color:#8fa0c0;font-size:10px;margin:6px 0 2px', 'Пропорции тела (морф):'));
+      const slider = (label: string, key: keyof BodyProfile, min: number, max: number): void => {
+        const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0');
+        r.append(el('span', 'color:#8b93a6;font-size:10px;min-width:56px', label));
+        const s = document.createElement('input'); s.type = 'range'; s.min = String(min); s.max = String(max); s.step = '0.02'; s.value = String(asmProfile[key] ?? 1); s.style.flex = '1';
+        const v = el('span', 'color:#c8b06a;font-size:10px;min-width:30px', (asmProfile[key] ?? 1).toFixed(2));
+        s.oninput = () => { v.textContent = parseFloat(s.value).toFixed(2); };
+        s.onchange = () => { asmProfile[key] = parseFloat(s.value); rebuildAsm(); };   // тяжёлую пересборку (конформ) — на отпускании
+        r.append(s, v); asm.append(r);
+      };
+      slider('рост', 'height', 0.7, 1.4); slider('руки', 'arm', 0.6, 1.6); slider('ноги', 'leg', 0.6, 1.6); slider('торс', 'torso', 0.7, 1.4); slider('толщина', 'girth', 0.6, 1.8);
+    }
+    body.append(asm);
+
     // Импорт
     const imp = el('div', 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px');
     imp.append(el('div', 'color:#8fa0c0;font-size:11px;margin-bottom:4px', 'Импорт модели (FBX / GLB)'));
@@ -315,10 +369,18 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
 
   void fetchCfg().then(renderBody);
 
+  // Сборка: копируем ПОЗУ (повороты) манекена editor'а в источник-риг сборки (таз держим на своей высоте профиля), ведём скин.
+  function driveAsm(source: Humanoid): void {
+    if (!asmOn || !asmSrc || !asmSkin) return;
+    for (const nm of asmSrc.boneNames) { const sb = source.bones.get(nm); const tb = asmSrc.bones.get(nm); if (sb && tb) tb.rotation.copy(sb.rotation); }
+    asmSrc.root.updateMatrixWorld(true);
+    asmSkin.update();
+  }
+
   return {
     render,
-    drive(source) { if (rig && !exporting) rig.drive(source); },
-    hideMannequin: () => hideMan,
+    drive(source) { if (asmOn) driveAsm(source); else if (rig && !exporting) rig.drive(source); },
+    hideMannequin: () => hideMan || asmOn,   // сборка активна → прячем манекен editor'а (виден только собранный персонаж)
     importUrl: (url) => importFrom(() => loadModelUrl(url), url.split('/').pop() ?? 'model'),
     exportNow: () => exportToConfig(),
     exportSplitNow: () => exportSplitBySlot(),
@@ -327,7 +389,8 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       submeshes: submeshes.map((m) => m.name), status, upZ,
       entry: entry ? { id: entry.id, kind: entry.kind, slot: entry.slot, scale: entry.scale, url: entry.url } : null,
       configModels: cfg.models.map((m) => m.id), inScene: rig ? scene.children.includes(rig.root) : false,
+      asmOn, asmSlots: { ...asmSlots }, asmProfile: { ...asmProfile }, asmSkinCount: asmSkin ? asmSkin.count() : 0,
     }),
-    dispose() { if (rig) { scene.remove(rig.root); rig.dispose(); } },
+    dispose() { if (rig) { scene.remove(rig.root); rig.dispose(); } if (asmSkin) asmSkin.dispose(); if (asmSrc) scene.remove(asmSrc.root); },
   };
 }
