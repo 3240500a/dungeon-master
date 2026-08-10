@@ -38,7 +38,7 @@ const coreOf = (raw: string): string => stripPrefix(raw)
   .replace(/[\s_.:|-]/g, '');
 // Ядро-имена (без стороны) → наши кости [центр, левая, правая].
 const CORE: Record<string, [OurBone] | [null, OurBone, OurBone]> = {
-  hips: ['Hips'], hip: ['Hips'], pelvis: ['Hips'], root: ['Hips'],
+  hips: ['Hips'], hip: ['Hips'], pelvis: ['Hips'],   // НЕ мапим 'root' на Hips: арм底-рут (RL_BoneRoot/Bip01) стоит у стоп, не таз → ретаргет пинил бы не ту кость (парение)
   spine: ['Spine'], spine01: ['Spine'], spine1: ['Spine'],
   chest: ['Chest'], spine02: ['Chest'], spine2: ['Chest'],
   upperchest: ['UpperChest'], spine03: ['UpperChest'], spine3: ['UpperChest'],
@@ -105,8 +105,9 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
       tb.quaternion.copy(pw.invert().multiply(_q));    // → локаль цели
       tb.updateMatrixWorld(false);                     // дети прочитают верный parentWorld
     }
-    // позиция корня = мир-таз источника (как renderRagdollGhost ставит mesh.root)
-    const hips = source.bones.get('Hips'); if (hips) { hips.getWorldPosition(_v); loaded.position.set(_v.x, _v.y - hipRestY * scale, _v.z); }
+    // позиция корня = мир-таз источника (как renderRagdollGhost ставит mesh.root). hipRestY уже в масштабе
+    // (замерян ПОСЛЕ loaded.scale=scale при position=0) → вычитаем без повторного ×scale (иначе двойной масштаб → парение).
+    const hips = source.bones.get('Hips'); if (hips) { hips.getWorldPosition(_v); loaded.position.set(_v.x, _v.y - hipRestY, _v.z); }
   }
 
   return {

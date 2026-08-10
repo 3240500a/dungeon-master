@@ -16,6 +16,7 @@ import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdol
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadTwist, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
+import { createModelSkin, loadAssetConfig, resolveSlotModels } from './modelSkin.js';
 
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
 const PELVIS_Y = 32;
@@ -73,6 +74,16 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 
   const player = new PosePlayer(target, () => weaponGroups, content, weapon, gx, plant, twist);
   const ground = newGhostGround();     // сглаженный прижим низшей стопы к полу (общий с редактором)
+
+  // ── C6b: слой скинов (импортные GLB по слотам) поверх процедурного solid — только для игрока (classId).
+  //    Ретаргет ведётся solid (физ-результат). База слотов из config `models` (base=true); свап по экипу — setAppearance. ──
+  const skin = opts.classId ? createModelSkin(group, solid) : null;
+  let equipModels: Record<string, { modelId?: string } | undefined> | undefined;
+  function refreshSkin(): void {
+    if (!skin) return;
+    void loadAssetConfig().then((cfg) => skin.set(resolveSlotModels(cfg, equipModels), { materials: cfg.materials, textures: cfg.textures }));
+  }
+  refreshSkin();
 
   // ── состояние синхронизации ──
   let tx = opts.x, tz = opts.z, tyaw = 0, lastX = opts.x, lastZ = opts.z, first = true, dead = false;
@@ -176,6 +187,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       if (dead) {                                            // мёртв — свободный коллапс, рендерим без прижима
         ragdoll.update(dt);
         renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
+        skin?.update();                                      // GLB-слои ведутся solid (после позирования физрезультатом)
         return;
       }
       const yawSnap = snapNext || first;                     // телепорт/спавн/пробуждение → таз мгновенно к прицелу (без «юлы»)
@@ -201,6 +213,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
         const hips = target.bones.get('Hips')!;
         hips.getWorldPosition(pelWorld); pelWorld.x += rx; pelWorld.z += rz;   // мир-таз позы + оффсет сглаженной позиции
         renderKinematicPose(solid, target.readPose(), pelWorld, ground, dt, GROUND0, [!sw[0], !sw[1]], !poseLod);
+        skin?.update();
         return;
       }
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
@@ -212,9 +225,11 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       const am = player.attackMatch;
       const effMatch = am != null ? am : Math.max(matchWeight, ATK_MATCH * player.attackWeight);
       renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]], !poseLod);
+      skin?.update();                                        // GLB-слои ведутся solid (после физрезультата + бленда к позе)
       if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику
     },
     dispose() {
+      skin?.dispose();
       ragdoll.dispose();
       for (const h of [solid, target]) h.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
       for (const g of weaponGroups) g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
