@@ -16,7 +16,7 @@ import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdol
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadTwist, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
-import { createModelSkin, loadAssetConfig, resolveSlotModels } from './modelSkin.js';
+import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel } from './modelSkin.js';
 import type { BodyProfile } from './bodyProfile.js';
 
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
@@ -84,7 +84,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   let equipModels: Record<string, { modelId?: string } | undefined> | undefined;
   function refreshSkin(): void {
     if (!skin) return;
-    void loadAssetConfig().then((cfg) => skin.set(resolveSlotModels(cfg, equipModels), { materials: cfg.materials, textures: cfg.textures }));
+    void loadAssetConfig().then((cfg) => {
+      const assets = { materials: cfg.materials, textures: cfg.textures };
+      const char = resolveCharacterModel(cfg);   // E3: атлас персонажа (один GLB) в приоритете
+      if (char) { void skin.setAtlas(char, {}, assets); return; }   // visible={} → все части атласа (базовый вид); свап по слоту — позже
+      void skin.set(resolveSlotModels(cfg, equipModels), assets);   // легаси: послотные GLB
+    });
   }
   refreshSkin();
 

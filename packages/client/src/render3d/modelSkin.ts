@@ -14,8 +14,31 @@ import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js'
 
 /** Разрешённая модель для слота (из resolveSlotModels). */
 export interface SlotModel { slot: string; url: string; boneMap: Record<string, string>; submeshMaterials?: Record<string, string> }
+
+/** Слоты тела персонажа-атласа (порядок = порядок в UI). helm = шлем/волосы, head = лицо/кожа. */
+export const BODY_SLOTS = ['helm', 'head', 'chest', 'gloves', 'boots'] as const;
+export type BodySlot = typeof BODY_SLOTS[number];
+
+/** Классификация сабмеша атласа по ИМЕНИ объекта → слот тела ('' = не опознан, скрыть/назначить вручную).
+ *  Порядок проверок важен: armor→chest раньше, чем hand→gloves; hair→helm раньше head. */
+export function classifySubmesh(name: string): BodySlot | '' {
+  const n = name.toLowerCase();
+  if (/hair/.test(n)) return 'helm';                                   // волосы = база слота шлема
+  if (/helm|hood|\bcap\b|crown|tiara|\bhat\b|coif/.test(n)) return 'helm';
+  if (/armor|plate|chest|torso|\bbody\b|cloth|shirt|coat|jacket|tunic|robe|vest|cuirass/.test(n)) return 'chest';
+  if (/hand|glove|gaunt|heand|wrist|mitt/.test(n)) return 'gloves';
+  if (/\bleg|boot|foot|pant|greave|shoe|trous|calf|thigh|feet/.test(n)) return 'boots';
+  if (/head|face|skin/.test(n)) return 'head';
+  return '';
+}
+/** Авто-карта сабмеш→слот для всех мешей атласа (правится в редакторе). */
+export function classifyAtlas(meshNames: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const n of meshNames) out[n] = classifySubmesh(n);
+  return out;
+}
 export interface AssetConfig { models: ModelCfg[]; materials: MaterialCfg[]; textures: TextureCfg[] }
-interface ModelCfg { id: string; url: string; slot?: string; base?: boolean; hideHair?: boolean; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
+interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
 
 // Кость нашего рига → регион экипировки: покрытый слотом регион прячет свои процедурные меши.
 const BONE_REGION: Record<string, 'head' | 'chest' | 'gloves' | 'boots'> = {
@@ -95,13 +118,22 @@ export function resolveSlotModels(cfg: AssetConfig, equipment?: Record<string, {
 
 interface Worn { slot: string; rig: RetargetRig }
 
-/** Скин над источником-мешем `source` (физ-ведомый solid). set(specs,assets) грузит/ретаргетит слоты, update() ведёт. */
+/** Модель-атлас персонажа (kind:'character') из конфига, если задана. */
+export function resolveCharacterModel(cfg: AssetConfig): ModelCfg | undefined {
+  return cfg.models.find((m) => m.kind === 'character' && !!m.url);
+}
+
+/** Скин над источником-мешем `source` (физ-ведомый solid). set(specs) — легаси послотные GLB; setAtlas — ОДИН
+ *  GLB-атлас персонажа (submesh-тумблер по слоту). update() ведёт риги. */
 export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
-  set(specs: SlotModel[], assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<void>; update(): void; count(): number; dispose(): void;
+  set(specs: SlotModel[], assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<void>;
+  setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<string[]>;
+  update(): void; count(): number; dispose(): void;
 } {
   const worn: Worn[] = [];
   let curKey = '';
   let gen = 0;   // поколение — гонки async-загрузок: применяем только последнюю set()
+  let lastAtlasMeshes: string[] = [];   // имена сабмешей последнего загруженного атласа (для UI)
 
   function showAllProcedural(v: boolean): void { for (const m of source.meshes) m.visible = v; }
   function hideCovered(slots: Set<string>): void {
@@ -142,8 +174,42 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
     hideCovered(new Set(specs.map((s) => s.slot)));
   }
 
+  // АТЛАС: ОДИН GLB (скелет + все сабмеши-части), ОДИН риг (конформ к профилю source), submesh-тумблер по слоту.
+  // `visible[slot]`: имя сабмеша = показать только его; '' = скрыть слот; НЕТ ключа = показать все сабмеши слота (дефолт).
+  // Всё авто-садится (общий скелет, засканы на месте). Возвращает список имён сабмешей (для UI редактора).
+  async function setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<string[]> {
+    const key = 'atlas:' + model.url + '|' + JSON.stringify(visible) + '|' + JSON.stringify(model.slots ?? {}) + '|' + JSON.stringify(model.submeshMaterials ?? {});
+    if (key === curKey) return worn.length ? lastAtlasMeshes : [];
+    curKey = key;
+    const my = ++gen;
+    clearWorn();
+    const meshNames: string[] = [];
+    try {
+      const g = await loadModelUrl(model.url);
+      if (my !== gen) { g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); return []; }
+      const map = resolveBoneMap(g, model.boneMap ?? {});
+      g.rotation.set(detectUpZ(g, map) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);
+      const rig = makeRetargetRig(g, map, scaleToSource(g, source), source);
+      g.traverse((o) => {
+        if (!(o as THREE.SkinnedMesh).isSkinnedMesh) return;
+        const mesh = o as THREE.Mesh; meshNames.push(mesh.name);
+        const slot = (model.slots?.[mesh.name]) || classifySubmesh(mesh.name);   // конфиг-карта → авто-классификация
+        let show = !!slot;
+        if (slot) { const v = visible[slot]; if (v !== undefined) show = (v !== '' && v === mesh.name); }   // выбор варианта/скрытие
+        mesh.visible = show; if (show) mesh.castShadow = true;
+        const mid = model.submeshMaterials?.[mesh.name]; if (mid) { const mat = getMaterial(assets, mid); if (mat) mesh.material = mat; }
+      });
+      parent.add(rig.root); worn.push({ slot: 'atlas', rig });
+      showAllProcedural(false);   // атлас = всё тело → процедурный риг прячем целиком
+    } catch { /* битый url */ }
+    if (my !== gen) { clearWorn(); return []; }
+    lastAtlasMeshes = meshNames;
+    return meshNames;
+  }
+
   return {
     set,
+    setAtlas,
     update() { for (const w of worn) w.rig.drive(source); },
     count: () => worn.length,
     dispose() { gen++; clearWorn(); showAllProcedural(true); },

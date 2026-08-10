@@ -11,13 +11,14 @@ import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
 import { autoBoneMap, makeRetargetRig, OUR_BONES, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
-import { createModelSkin, resolveSlotModels, type SlotModel } from './modelSkin.js';
+import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
 import { DEFAULT_PROFILE, type BodyProfile } from './bodyProfile.js';
 
-/** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). */
+/** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). character = атлас (один GLB + slots). */
 interface ModelEntry {
-  id: string; name: string; url: string; kind: 'part' | 'weapon';
+  id: string; name: string; url: string; kind: 'character' | 'part' | 'weapon';
   slot?: 'helm' | 'chest' | 'gloves' | 'boots' | 'head'; weaponType?: string;
+  slots?: Record<string, string>;   // character: сабмеш → слот
   base: boolean; hideHair: boolean; scale: number;
   boneMap: Record<string, string>; submeshMaterials: Record<string, string>;
 }
@@ -27,10 +28,8 @@ export interface ModelsTabHandle {
   render(body: HTMLElement): void;         // отрисовать UI вкладки в панель
   drive(source: Humanoid): void;           // per-кадр из loop(): наша поза ведёт импортный скелет
   hideMannequin(): boolean;                 // прятать ли манекен/призрак (чтобы виден был импорт)
-  importUrl(url: string): Promise<void>;    // импорт по URL (тесты/дебаг — то же, что кнопка «Из URL»)
-  exportNow(): Promise<void>;               // экспорт GLB + запись в конфиг (тесты/дебаг — то же, что кнопка)
-  exportSplitNow(): Promise<void>;          // сплит-экспорт по слотам (тесты/дебаг)
-  debug(): Record<string, unknown>;         // состояние (тесты/дебаг): загружено, карта костей, сабмеши, статус
+  importUrl(url: string): Promise<void>;    // импорт атласа по URL (тесты/дебаг — то же, что кнопка «Импорт из URL»)
+  debug(): Record<string, unknown>;         // состояние (тесты/дебаг): атлас, сабмеши, видимость слотов, профиль
   dispose(): void;
 }
 
@@ -67,30 +66,64 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   let bodyRef: HTMLElement | null = null;
   let upZ = false;                             // импорт Z-up (CC/AccuRIG FBX «лежит») → доворот −90°X в стойку Y-up
 
-  // ── СБОРКА ПЕРСОНАЖА (5 слотов + профиль тела) — превью через ТОТ ЖЕ modelSkin, что в игре ──
-  const SLOTS = ['helm', 'head', 'chest', 'gloves', 'boots'] as const;
-  const asmSlots: Record<string, string> = {};   // слот → id модели ('' = база слота)
+  // ── КОНСТРУКТОР ПЕРСОНАЖА (атлас: ОДИН GLB, submesh-тумблер по слоту + профиль тела) — превью через modelSkin ──
   const asmProfile: BodyProfile = { ...DEFAULT_PROFILE };
   let asmSrc: Humanoid | null = null;            // источник-риг превью (с профилем), позу копируем с манекена editor'а
   let asmSkin: ReturnType<typeof createModelSkin> | null = null;
-  let asmOn = false;                             // показывать сборку (прячет одиночный импорт-превью)
+  let asmOn = true;                              // конструктор — основной режим вкладки
+  let asmAtlas: ModelEntry | null = null;        // текущий атлас (character-запись); из импорта или конфига
+  let asmMeshes: string[] = [];                  // имена сабмешей атласа (для UI)
+  const asmVisible: Record<string, string> = {}; // слот → выбранный сабмеш ('' = скрыть; НЕТ ключа = показать все)
+  let asmStatus = '';
 
-  /** (Пере)собрать источник-риг сборки под текущий профиль + пересобрать скин-слой (конформ к новому профилю). */
+  /** Текущий атлас: свежий импорт → character из конфига. */
+  function curAtlas(): ModelEntry | null { return asmAtlas ?? (resolveCharacterModel(cfg) as ModelEntry | undefined) ?? null; }
+
+  /** (Пере)собрать источник-риг под профиль + перезагрузить атлас (конформ к профилю, submesh-видимость). */
   function rebuildAsm(): void {
     if (asmSrc) { scene.remove(asmSrc.root); asmSrc.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
     asmSrc = buildHumanoid({ profile: asmProfile });
-    asmSrc.root.visible = false;                  // источник невидим — видим импортные меши поверх
+    asmSrc.root.visible = false;                  // источник невидим — видим меши атласа поверх
     scene.add(asmSrc.root);
     if (!asmSkin) asmSkin = createModelSkin(scene, asmSrc);
     void applyAsm();
   }
-  /** Разрешить модели по 5 слотам (выбор пользователя → база слота → ничего) и загрузить в скин. */
   async function applyAsm(): Promise<void> {
     if (!asmSkin) return;
-    const equip: Record<string, { modelId?: string } | undefined> = {};
-    for (const s of SLOTS) if (asmSlots[s]) equip[s] = { modelId: asmSlots[s] };
-    const specs: SlotModel[] = resolveSlotModels(cfg, equip);
-    await asmSkin.set(specs, { materials: cfg.materials, textures: cfg.textures });
+    const atlas = curAtlas();
+    if (atlas) asmMeshes = await asmSkin.setAtlas(atlas, asmVisible, { materials: cfg.materials, textures: cfg.textures });
+  }
+  /** Импорт АТЛАСА: FBX/GLB (скелет + все части) → авто-классификация сабмешей → ОДИН GLB → конфиг character → превью. */
+  async function importAtlas(get: () => Promise<THREE.Group>, name: string): Promise<void> {
+    asmStatus = 'импорт атласа…'; renderBody();
+    try {
+      const g = await get();
+      const meshNames: string[] = []; g.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshNames.push(o.name); });
+      const slots = classifyAtlas(meshNames);
+      const id = (name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '') || 'character');
+      g.traverse((o) => { const s = (o as THREE.SkinnedMesh).skeleton; if (s) s.pose(); });   // bind-поза для чистого GLB
+      const glb = await exportGLB(g);
+      g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });   // g больше не нужен (превью грузит из url)
+      const up = await uploadAsset(id, glb, 'model/gltf-binary');
+      const e: ModelEntry = { id, name, url: up.url, kind: 'character', slots, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
+      const models = (cfg.models as ModelEntry[]).filter((m) => m.kind !== 'character').concat(e);   // один персонаж-атлас
+      const bodyJson = JSON.stringify({ models });
+      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+      await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+      cfg.models = models; asmAtlas = e;
+      if (!asmSkin) rebuildAsm(); else await applyAsm();   // гарантируем построенный превью-скин
+      asmStatus = `атлас «${id}»: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`;
+    } catch (err) { asmStatus = 'ошибка: ' + (err as Error).message; }
+    renderBody();
+  }
+  /** Сохранить правки атласа (классификация/материалы) в конфиг. */
+  async function saveAtlas(): Promise<void> {
+    if (!asmAtlas) return;
+    const models = (cfg.models as ModelEntry[]).map((m) => (m.id === asmAtlas!.id ? asmAtlas! : m));
+    const bodyJson = JSON.stringify({ models });
+    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    cfg.models = models;
   }
 
   // ── Загрузка эффективного конфига (истина — /api/config: дефолты + правки редактора) ──
@@ -249,112 +282,75 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   // ── UI ──
   function renderBody(): void { if (bodyRef) render(bodyRef); }
 
+  // ── КОНСТРУКТОР ПЕРСОНАЖА (единственный экран вкладки): атлас (один FBX/GLB) + слоты + пропорции ──
+  const rowFlex = 'display:flex;align-items:center;gap:6px;margin:2px 0';
+  const lblCss = 'color:#8b93a6;font-size:10px;min-width:64px';
+  const boxCss = 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px';
+  const headCss = 'color:#8fa0c0;font-size:11px;margin-bottom:4px';
+
   function render(body: HTMLElement): void {
     bodyRef = body; body.innerHTML = '';
+    if (!asmSrc) rebuildAsm();
 
-    // ── СБОРКА ПЕРСОНАЖА (5 слотов + профиль тела) — превью через modelSkin, как в игре ──
-    const asm = el('div', 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px');
-    asm.append(btn(asmOn ? '✅ Сборка персонажа' : '🧩 Сборка персонажа', () => { asmOn = !asmOn; if (asmOn && !asmSrc) rebuildAsm(); renderBody(); }, asmOn));
-    if (asmOn) {
-      asm.append(el('div', 'color:#8fa0c0;font-size:10px;margin:4px 0 2px', 'Меш на слот (всё видно разом):'));
-      for (const slot of SLOTS) {
-        const opts = ['', ...cfg.models.filter((m) => (m.slot ?? '') === slot).map((m) => m.id)];
-        const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0');
-        r.append(el('span', 'color:#8b93a6;font-size:10px;min-width:56px', slot));
-        const sel = mkSelect(opts, asmSlots[slot] ?? '', (v) => { asmSlots[slot] = v; void applyAsm(); }); sel.style.flex = '1';
-        r.append(sel); asm.append(r);
-      }
-      asm.append(el('div', 'color:#8fa0c0;font-size:10px;margin:6px 0 2px', 'Пропорции тела (морф):'));
-      const slider = (label: string, key: keyof BodyProfile, min: number, max: number): void => {
-        const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0');
-        r.append(el('span', 'color:#8b93a6;font-size:10px;min-width:56px', label));
-        const s = document.createElement('input'); s.type = 'range'; s.min = String(min); s.max = String(max); s.step = '0.02'; s.value = String(asmProfile[key] ?? 1); s.style.flex = '1';
-        const v = el('span', 'color:#c8b06a;font-size:10px;min-width:30px', (asmProfile[key] ?? 1).toFixed(2));
-        s.oninput = () => { v.textContent = parseFloat(s.value).toFixed(2); };
-        s.onchange = () => { asmProfile[key] = parseFloat(s.value); rebuildAsm(); };   // тяжёлую пересборку (конформ) — на отпускании
-        r.append(s, v); asm.append(r);
-      };
-      slider('рост', 'height', 0.7, 1.4); slider('руки', 'arm', 0.6, 1.6); slider('ноги', 'leg', 0.6, 1.6); slider('торс', 'torso', 0.7, 1.4); slider('толщина', 'girth', 0.6, 1.8);
-    }
-    body.append(asm);
-
-    // Импорт
-    const imp = el('div', 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px');
-    imp.append(el('div', 'color:#8fa0c0;font-size:11px;margin-bottom:4px', 'Импорт модели (FBX / GLB)'));
+    // Импорт АТЛАСА (скелет + все части одним файлом)
+    const imp = el('div', boxCss);
+    imp.append(el('div', headCss, 'Персонаж-атлас (FBX/GLB: скелет + все части в одном файле)'));
     const file = document.createElement('input'); file.type = 'file'; file.accept = '.fbx,.glb,.gltf'; file.style.display = 'none';
-    file.onchange = () => { const f = file.files?.[0]; if (f) void importFrom(() => loadModelFile(f), f.name); };
+    file.onchange = () => { const f = file.files?.[0]; if (f) void importAtlas(() => loadModelFile(f), f.name); };
     const urlIn = document.createElement('input'); urlIn.type = 'text'; urlIn.value = '/assets/knight_02_modular_rig.fbx'; urlIn.style.cssText = css.input + ';width:100%;margin:3px 0';
-    imp.append(btn('📁 Из файла', () => file.click()), file);
-    imp.append(urlIn, btn('🌐 Из URL', () => { const u = urlIn.value.trim(); if (u) void importFrom(() => loadModelUrl(u), u.split('/').pop() ?? 'model'); }));
-    imp.append(btn(hideMan ? '👁 показать манекен' : '🙈 спрятать манекен', () => { hideMan = !hideMan; renderBody(); }, hideMan));
-    if (loaded) imp.append(btn('ось вверх: ' + (upZ ? 'Z→Y' : 'Y'), () => { upZ = !upZ; if (entry && loaded) { loaded.rotation.set(upZ ? -Math.PI / 2 : 0, 0, 0); loaded.updateMatrixWorld(true); entry.scale = autoScale(loaded); buildRig(entry.boneMap, entry.scale); } renderBody(); }, upZ));
+    imp.append(btn('📁 Импорт из файла', () => file.click()), file);
+    imp.append(urlIn, btn('🌐 Импорт из URL', () => { const u = urlIn.value.trim(); if (u) void importAtlas(() => loadModelUrl(u), u.split('/').pop() ?? 'character'); }));
     body.append(imp);
+    if (asmStatus) body.append(el('div', 'color:#c8b06a;font-size:10px;margin:2px 0 6px', asmStatus));
 
-    if (status) body.append(el('div', 'color:#c8b06a;font-size:10px;margin:2px 0 6px', status));
+    const atlas = curAtlas();
+    if (!atlas) { body.append(el('div', 'color:#6b7180;font-size:10px;padding:8px', 'Импортируй FBX-атлас персонажа — части (голова/тело/руки/ноги/волосы) авто-разложатся по слотам и соберутся на скелете.')); return; }
 
-    // Метаданные + карта костей + материалы редактируемой модели
-    if (entry && rig) {
-      const meta = el('div', 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px');
-      meta.append(el('div', 'color:#8fa0c0;font-size:11px;margin-bottom:4px', 'Модель'));
-      const row = (label: string, ctrl: HTMLElement): HTMLElement => { const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0'); r.append(el('span', 'color:#8b93a6;font-size:10px;min-width:64px', label), ctrl); ctrl.style.flex = '1'; return r; };
-      const idIn = document.createElement('input'); idIn.type = 'text'; idIn.value = entry.id; idIn.style.cssText = css.input; idIn.oninput = () => { entry!.id = idIn.value.replace(/[^a-zA-Z0-9_-]/g, ''); };
-      const nameIn = document.createElement('input'); nameIn.type = 'text'; nameIn.value = entry.name; nameIn.style.cssText = css.input; nameIn.oninput = () => { entry!.name = nameIn.value; };
-      const kindSel = mkSelect(['part', 'weapon'], entry.kind, (v) => { entry!.kind = v as ModelEntry['kind']; renderBody(); });
-      meta.append(row('id', idIn), row('имя', nameIn), row('вид', kindSel));
-      if (entry.kind === 'part') {
-        meta.append(row('слот', mkSelect(['', 'helm', 'chest', 'gloves', 'boots', 'head'], entry.slot ?? '', (v) => { entry!.slot = (v || undefined) as ModelEntry['slot']; })));
-        const baseCb = mkCheck(entry.base, (v) => { entry!.base = v; }); const hairCb = mkCheck(entry.hideHair, (v) => { entry!.hideHair = v; });
-        meta.append(row('база слота', baseCb), row('прятать волосы', hairCb));
-      } else {
-        meta.append(row('тип оружия', mkSelect(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield'], entry.weaponType ?? 'sword', (v) => { entry!.weaponType = v; })));
-      }
-      const scaleIn = document.createElement('input'); scaleIn.type = 'number'; scaleIn.step = '0.001'; scaleIn.value = String(entry.scale); scaleIn.style.cssText = css.input;
-      scaleIn.oninput = () => { const s = parseFloat(scaleIn.value); if (s > 0) { entry!.scale = s; buildRig(rig!.boneMap, s); } };
-      meta.append(row('масштаб', scaleIn));
-      body.append(meta);
+    // сгруппировать сабмеши по слоту (карта конфига → авто-классификация)
+    const bySlot: Record<string, string[]> = {};
+    for (const m of asmMeshes) { const s = (atlas.slots?.[m]) || classifySubmesh(m); (bySlot[s] ??= []).push(m); }
 
-      // Материалы по сабмешам
-      if (submeshes.length) {
-        const ms = el('div', 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px');
-        ms.append(el('div', 'color:#8fa0c0;font-size:11px;margin-bottom:4px', 'Материалы по сабмешам'));
-        const matIds = ['', ...cfg.materials.map((m) => m.id)];
-        for (const mesh of submeshes) {
-          const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0');
-          r.append(el('span', 'color:#8b93a6;font-size:10px;min-width:90px;overflow:hidden;text-overflow:ellipsis', mesh.name || '(без имени)'));
-          const sel = mkSelect(matIds, entry.submeshMaterials[mesh.name] ?? '', (v) => applyMaterial(mesh, v)); sel.style.flex = '1';
-          r.append(sel); ms.append(r);
-        }
-        if (!cfg.materials.length) ms.append(el('div', 'color:#6b7180;font-size:9px', 'нет материалов в конфиге — создай во вкладке «3D: материалы»'));
-        body.append(ms);
-      }
-
-      // Карта костей (наша → цель) — свёрнута
-      const bmBox = el('details', 'border:1px solid #2c3350;border-radius:6px;padding:6px;margin-bottom:6px');
-      const sum = document.createElement('summary'); sum.textContent = 'Карта костей (ретаргет)'; sum.style.cssText = 'color:#8fa0c0;font-size:11px;cursor:pointer'; bmBox.append(sum);
-      const tgt = ['', ...rig.targetBoneNames()];
-      for (const our of OUR_BONES) {
-        const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0');
-        r.append(el('span', 'color:#8b93a6;font-size:10px;min-width:96px', our));
-        const sel = mkSelect(tgt, rig.boneMap[our] ?? '', (v) => { rig!.setBone(our, v); entry!.boneMap[our] = v; });
-        sel.style.flex = '1'; r.append(sel); bmBox.append(r);
-      }
-      body.append(bmBox);
-
-      body.append(btn('💾 Экспорт GLB + в конфиг', () => void exportToConfig()));
-      if (submeshes.length > 1) body.append(btn('🪓 Экспорт по слотам (' + submeshes.length + ' баз)', () => void exportSplitBySlot()));
+    // Части по слотам — тумблер видимости (вариант / все / скрыть)
+    const slotsBox = el('div', boxCss);
+    slotsBox.append(el('div', headCss, 'Части по слотам (что показывать):'));
+    for (const slot of BODY_SLOTS) {
+      const parts = bySlot[slot] ?? [];
+      const r = el('div', rowFlex);
+      r.append(el('span', lblCss, `${slot} (${parts.length})`));
+      const opts = ['(все)', '(скрыть)', ...parts];
+      const cur = asmVisible[slot] === '' ? '(скрыть)' : (asmVisible[slot] ?? '(все)');
+      const sel = mkSelect(opts, cur, (v) => { if (v === '(все)') delete asmVisible[slot]; else asmVisible[slot] = (v === '(скрыть)' ? '' : v); void applyAsm(); });
+      sel.style.flex = '1'; r.append(sel); slotsBox.append(r);
     }
+    body.append(slotsBox);
 
-    // Список моделей в конфиге
-    const list = el('div', 'border:1px solid #2c3350;border-radius:6px;padding:6px');
-    list.append(el('div', 'color:#8fa0c0;font-size:11px;margin-bottom:4px', `Модели в конфиге (${cfg.models.length})`));
-    for (const m of cfg.models) {
-      const r = el('div', 'display:flex;align-items:center;gap:6px;margin:2px 0');
-      r.append(el('span', 'color:#c0c6d4;font-size:10px;flex:1', `${m.id} · ${m.kind}${m.slot ? '/' + m.slot : ''}`));
-      r.append(btn('загрузить', () => { if (m.url) void importFrom(() => loadModelUrl(m.url).then((g) => { entry = { ...m }; return g; }), m.id); }));
-      r.append(btn('✕', () => void deleteModel(m.id)));
-      list.append(r);
+    // Классификация частей (переназначить слот + материал) — свёрнуто
+    const clsBox = el('details', boxCss);
+    const sum = document.createElement('summary'); sum.textContent = `Части атласа (${asmMeshes.length}) — слот + материал`; sum.style.cssText = 'color:#8fa0c0;font-size:11px;cursor:pointer'; clsBox.append(sum);
+    const matIds = ['', ...cfg.materials.map((m) => m.id)];
+    for (const m of asmMeshes) {
+      const r = el('div', rowFlex);
+      r.append(el('span', 'color:#c0c6d4;font-size:10px;min-width:90px;overflow:hidden;text-overflow:ellipsis', m));
+      const sSel = mkSelect(['', ...BODY_SLOTS], (atlas.slots?.[m]) ?? classifySubmesh(m), (v) => { atlas.slots = { ...(atlas.slots ?? {}), [m]: v }; void saveAtlas(); void applyAsm(); });
+      const mSel = mkSelect(matIds, atlas.submeshMaterials?.[m] ?? '', (v) => { atlas.submeshMaterials = { ...(atlas.submeshMaterials ?? {}), [m]: v }; void saveAtlas(); void applyAsm(); }); mSel.style.flex = '1';
+      r.append(sSel, mSel); clsBox.append(r);
     }
-    body.append(list);
+    body.append(clsBox);
+
+    // Пропорции тела (морф)
+    const prof = el('div', boxCss);
+    prof.append(el('div', headCss, 'Пропорции тела (морф всего персонажа):'));
+    const slider = (label: string, key: keyof BodyProfile, min: number, max: number): void => {
+      const r = el('div', rowFlex);
+      r.append(el('span', lblCss, label));
+      const s = document.createElement('input'); s.type = 'range'; s.min = String(min); s.max = String(max); s.step = '0.02'; s.value = String(asmProfile[key] ?? 1); s.style.flex = '1';
+      const v = el('span', 'color:#c8b06a;font-size:10px;min-width:30px', (asmProfile[key] ?? 1).toFixed(2));
+      s.oninput = () => { v.textContent = parseFloat(s.value).toFixed(2); };
+      s.onchange = () => { asmProfile[key] = parseFloat(s.value); rebuildAsm(); };
+      r.append(s, v); prof.append(r);
+    };
+    slider('рост', 'height', 0.7, 1.4); slider('руки', 'arm', 0.6, 1.6); slider('ноги', 'leg', 0.6, 1.6); slider('торс', 'torso', 0.7, 1.4); slider('толщина', 'girth', 0.6, 1.8);
+    body.append(prof);
   }
 
   function mkSelect(opts: string[], val: string, on: (v: string) => void): HTMLSelectElement {
@@ -379,18 +375,14 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
 
   return {
     render,
-    drive(source) { if (asmOn) driveAsm(source); else if (rig && !exporting) rig.drive(source); },
-    hideMannequin: () => hideMan || asmOn,   // сборка активна → прячем манекен editor'а (виден только собранный персонаж)
-    importUrl: (url) => importFrom(() => loadModelUrl(url), url.split('/').pop() ?? 'model'),
-    exportNow: () => exportToConfig(),
-    exportSplitNow: () => exportSplitBySlot(),
+    drive(source) { driveAsm(source); },
+    hideMannequin: () => true,   // конструктор — единственный экран → манекен editor'а всегда скрыт (виден собранный персонаж)
+    importUrl: (url) => importAtlas(() => loadModelUrl(url), url.split('/').pop() ?? 'character'),   // тест/дебаг: импорт атласа
     debug: () => ({
-      loaded: !!loaded, mappedBones: rig ? Object.values(rig.boneMap).filter(Boolean).length : 0,
-      submeshes: submeshes.map((m) => m.name), status, upZ,
-      entry: entry ? { id: entry.id, kind: entry.kind, slot: entry.slot, scale: entry.scale, url: entry.url } : null,
-      configModels: cfg.models.map((m) => m.id), inScene: rig ? scene.children.includes(rig.root) : false,
-      asmOn, asmSlots: { ...asmSlots }, asmProfile: { ...asmProfile }, asmSkinCount: asmSkin ? asmSkin.count() : 0,
+      status: asmStatus, atlas: asmAtlas ? { id: asmAtlas.id, url: asmAtlas.url, slots: asmAtlas.slots } : null,
+      asmMeshes, asmVisible: { ...asmVisible }, asmProfile: { ...asmProfile }, asmSkinCount: asmSkin ? asmSkin.count() : 0,
+      configModels: cfg.models.map((m) => `${m.id}:${m.kind}`),
     }),
-    dispose() { if (rig) { scene.remove(rig.root); rig.dispose(); } if (asmSkin) asmSkin.dispose(); if (asmSrc) scene.remove(asmSrc.root); },
+    dispose() { if (asmSkin) asmSkin.dispose(); if (asmSrc) scene.remove(asmSrc.root); },
   };
 }

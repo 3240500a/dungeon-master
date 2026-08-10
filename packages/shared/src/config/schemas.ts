@@ -1666,14 +1666,16 @@ export const materialsSchema = z.array(z.object({
   normalMap: z.string().optional(), roughnessMap: z.string().optional(), metalnessMap: z.string().optional(),
   emissiveMap: z.string().optional(), aoMap: z.string().optional(),
 }));
-/** 3D-модель (часть персонажа / оружие): GLB на /assets + карта ретаргета + материалы по сабмешам. */
+/** 3D-модель: `character` = ОДИН GLB-атлас персонажа (скелет + все сабмеши-части, тумблер по слоту),
+ *  `part` = отдельный меш слота (легаси), `weapon` = оружие. GLB на /assets + карта ретаргета + материалы. */
 export const modelsSchema = z.array(z.object({
   id: z.string(),
   name: z.string().default(''),
   url: z.string(),                                      // /assets/<id>.glb
-  kind: z.enum(['part', 'weapon']).default('part'),
+  kind: z.enum(['character', 'part', 'weapon']).default('part'),
   slot: z.enum(['helm', 'chest', 'gloves', 'boots', 'head']).optional(),   // kind='part': область тела
   weaponType: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield']).optional(),   // kind='weapon'
+  slots: z.record(z.string(), z.string()).default({}),  // kind='character': имя сабмеша → слот (helm/head/chest/gloves/boots; '' = скрыт). Авто-классификация при импорте, правится.
   base: z.boolean().default(false),                     // базовый меш слота (нет надетого / нет modelId → показываем его)
   hideHair: z.boolean().default(false),                 // шлем скрывает базовые волосы (корона/тиара — false)
   scale: z.number().default(1),                         // нормализация размера (наш TILE=32u=1м)
