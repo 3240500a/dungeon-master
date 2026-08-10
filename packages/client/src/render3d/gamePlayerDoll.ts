@@ -17,6 +17,7 @@ import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPl
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
 import { createModelSkin, loadAssetConfig, resolveSlotModels } from './modelSkin.js';
+import type { BodyProfile } from './bodyProfile.js';
 
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
 const PELVIS_Y = 32;
@@ -35,6 +36,7 @@ export interface HumanoidDollOpts {
   colors?: { body?: number; limb?: number; head?: number };
   scale?: number;                                    // масштаб меша (чемпионы крупнее); физика — в базовом размере
   gender?: 'male' | 'female'; build?: BuildScale;    // если не заданы и есть classId — из charFor
+  profile?: BodyProfile;                             // модульные пропорции (рост/руки/ноги/торс/толщина); импорт-меш конформится
 }
 
 export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): RagdollHandle {
@@ -57,15 +59,16 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const build = opts.build ?? ch?.build ?? {};
   const col = opts.colors ?? {};
 
+  const profile = opts.profile;   // модульные пропорции: solid/target строятся с ним, импорт-скин конформится к solid
   const group = new THREE.Group();
   // solid — ВИДИМЫЙ humanoid-меш, ведём результатом физики (как призрак в редакторе). Оружие на кистях.
-  const solid = buildHumanoid({ gender, build, body: col.body ?? 0x8a93ad, limb: col.limb ?? 0x6f7690, head: col.head });
+  const solid = buildHumanoid({ gender, build, body: col.body ?? 0x8a93ad, limb: col.limb ?? 0x6f7690, head: col.head, profile });
   if (opts.scale && opts.scale !== 1) solid.root.scale.setScalar(opts.scale);   // визуальный масштаб (физика базовая)
   solid.root.traverse((o) => { if (o instanceof THREE.Mesh) o.castShadow = true; });   // тени от факелов (вкл. по тумблеру) — актёр отбрасывает
   group.add(solid.root);
   let weaponGroups = attachWeapons(solid, weapon);
   // target — НЕВИДИМЫЙ манекен-источник позы: PosePlayer его позирует, с него кормим физику (цель + пины).
-  const target = buildHumanoid({ gender, build });
+  const target = buildHumanoid({ gender, build, profile });
   target.root.visible = false; group.add(target.root);
   // физ-рэгдолл — единый риг. Собственные полупрозрачные боксы не показываем (рисуем solid).
   const ragdoll = makeHumanoidRagdoll(pw);
