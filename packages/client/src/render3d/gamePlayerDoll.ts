@@ -82,12 +82,19 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   //    Ретаргет ведётся solid (физ-результат). База слотов из config `models` (base=true); свап по экипу — setAppearance. ──
   const skin = opts.classId ? createModelSkin(group, solid) : null;
   let equipModels: Record<string, { modelId?: string } | undefined> | undefined;
+  // Экипировка → выбор сабмеш-варианта по слоту атласа (modelId = имя сабмеша-варианта). Незнакомый id безопасен
+  // (setAtlas variant-safe: покажет все сабмеши слота). Надет шлем → прячем волосы.
+  function atlasVisible(): { visible: Record<string, string>; hideHair: boolean } {
+    const visible: Record<string, string> = {};
+    for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) { const id = equipModels?.[slot]?.modelId; if (id) visible[slot] = id; }
+    return { visible, hideHair: equipModels?.helm !== undefined };   // helm-слот занят (любой шлем) → волосы прочь
+  }
   function refreshSkin(): void {
     if (!skin) return;
     void loadAssetConfig().then((cfg) => {
       const assets = { materials: cfg.materials, textures: cfg.textures };
       const char = resolveCharacterModel(cfg);   // E3: атлас персонажа (один GLB) в приоритете
-      if (char) { void skin.setAtlas(char, {}, assets); return; }   // visible={} → все части атласа (базовый вид); свап по слоту — позже
+      if (char) { const { visible, hideHair } = atlasVisible(); void skin.setAtlas(char, visible, assets, { hideHair }); return; }
       void skin.set(resolveSlotModels(cfg, equipModels), assets);   // легаси: послотные GLB
     });
   }
@@ -250,7 +257,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 }
 
 /** Игрок — тонкая обёртка над единой куклой: внешность/оружие класса из CLASS_CHARS. */
-export interface GamePlayerOpts { classId: string; weapon: string; x: number; z: number }
+export interface GamePlayerOpts { classId: string; weapon: string; x: number; z: number; profile?: BodyProfile }
 export function makeGamePlayerDoll(pw: PhysWorld, opts: GamePlayerOpts): RagdollHandle {
-  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, classId: opts.classId, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
+  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, classId: opts.classId, profile: opts.profile, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
 }

@@ -19,6 +19,7 @@ interface ModelEntry {
   id: string; name: string; url: string; kind: 'character' | 'part' | 'weapon';
   slot?: 'helm' | 'chest' | 'gloves' | 'boots' | 'head'; weaponType?: string;
   slots?: Record<string, string>;   // character: сабмеш → слот
+  body?: BodyProfile;                // character: модульные пропорции (слайдеры конструктора)
   base: boolean; hideHair: boolean; scale: number;
   boneMap: Record<string, string>; submeshMaterials: Record<string, string>;
 }
@@ -105,7 +106,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       const glb = await exportGLB(g);
       g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });   // g больше не нужен (превью грузит из url)
       const up = await uploadAsset(id, glb, 'model/gltf-binary');
-      const e: ModelEntry = { id, name, url: up.url, kind: 'character', slots, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
+      const e: ModelEntry = { id, name, url: up.url, kind: 'character', slots, body: { ...asmProfile }, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
       const models = (cfg.models as ModelEntry[]).filter((m) => m.kind !== 'character').concat(e);   // один персонаж-атлас
       const bodyJson = JSON.stringify({ models });
       await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
@@ -124,6 +125,18 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
     await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
     cfg.models = models;
+  }
+  /** Сохранить профиль тела (F2) в character-запись → игра строит solid/target с ним (превью = игра). */
+  async function saveProfile(): Promise<void> {
+    const atlas = curAtlas(); if (!atlas) return;
+    atlas.body = { ...asmProfile };
+    asmAtlas = atlas;                    // saveAtlas персистит asmAtlas (ссылка = запись в cfg.models)
+    await saveAtlas();
+  }
+  /** Подтянуть профиль из сохранённого атласа (при открытии вкладки — слайдеры = сохранённые пропорции). */
+  function syncProfileFromAtlas(): void {
+    const b = curAtlas()?.body; if (!b) return;
+    for (const k of Object.keys(DEFAULT_PROFILE) as (keyof BodyProfile)[]) asmProfile[k] = b[k] ?? DEFAULT_PROFILE[k];
   }
 
   // ── Загрузка эффективного конфига (истина — /api/config: дефолты + правки редактора) ──
@@ -346,7 +359,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       const s = document.createElement('input'); s.type = 'range'; s.min = String(min); s.max = String(max); s.step = '0.02'; s.value = String(asmProfile[key] ?? 1); s.style.flex = '1';
       const v = el('span', 'color:#c8b06a;font-size:10px;min-width:30px', (asmProfile[key] ?? 1).toFixed(2));
       s.oninput = () => { v.textContent = parseFloat(s.value).toFixed(2); };
-      s.onchange = () => { asmProfile[key] = parseFloat(s.value); rebuildAsm(); };
+      s.onchange = () => { asmProfile[key] = parseFloat(s.value); rebuildAsm(); void saveProfile(); };
       r.append(s, v); prof.append(r);
     };
     slider('рост', 'height', 0.7, 1.4); slider('руки', 'arm', 0.6, 1.6); slider('ноги', 'leg', 0.6, 1.6); slider('торс', 'torso', 0.7, 1.4); slider('толщина', 'girth', 0.6, 1.8);
@@ -363,7 +376,8 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     const w = el('div', 'display:flex'); w.append(c); return w;
   }
 
-  void fetchCfg().then(renderBody);
+  // Конфиг загружен → подтянуть сохранённый профиль тела в слайдеры и пересобрать превью (превью = игра).
+  void fetchCfg().then(() => { syncProfileFromAtlas(); if (asmSrc) rebuildAsm(); renderBody(); });
 
   // Сборка: копируем ПОЗУ (повороты) манекена editor'а в источник-риг сборки (таз держим на своей высоте профиля), ведём скин.
   function driveAsm(source: Humanoid): void {

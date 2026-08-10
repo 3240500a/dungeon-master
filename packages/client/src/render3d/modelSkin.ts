@@ -11,6 +11,7 @@ import type { Humanoid } from './humanoid.js';
 import { loadModelUrl, skeletonBoneNames } from './modelAssets.js';
 import { makeRetargetRig, autoBoneMap, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
+import type { BodyProfile } from './bodyProfile.js';
 
 /** Разрешённая модель для слота (из resolveSlotModels). */
 export interface SlotModel { slot: string; url: string; boneMap: Record<string, string>; submeshMaterials?: Record<string, string> }
@@ -38,7 +39,7 @@ export function classifyAtlas(meshNames: string[]): Record<string, string> {
   return out;
 }
 export interface AssetConfig { models: ModelCfg[]; materials: MaterialCfg[]; textures: TextureCfg[] }
-interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
+interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; body?: BodyProfile; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
 
 // Кость нашего рига → регион экипировки: покрытый слотом регион прячет свои процедурные меши.
 const BONE_REGION: Record<string, 'head' | 'chest' | 'gloves' | 'boots'> = {
@@ -92,14 +93,23 @@ function resolveBoneMap(g: THREE.Object3D, stored: Record<string, string>): Reco
 }
 
 let cfgCache: Promise<AssetConfig> | null = null;
-/** Эффективный конфиг ассетов (модели/материалы/текстуры) — из /api/config, кэш на процесс. */
+const EMPTY_CFG = (): AssetConfig => ({ models: [], materials: [], textures: [] });
+/** Эффективный конфиг ассетов (модели/материалы/текстуры) — из /api/config, кэш на процесс.
+ *  ОШИБКУ НЕ КЭШИРУЕМ: если fetch упал (500 при рестарте tsx-watch / гонка на бусте), сбрасываем кэш, чтобы
+ *  следующий вызов ретаил — иначе кукла навсегда осталась бы с пустым конфигом (персонаж-атлас не появился бы). */
 export function loadAssetConfig(force = false): Promise<AssetConfig> {
   if (!cfgCache || force) {
-    cfgCache = fetch('/api/config').then((r) => r.ok ? r.json() : {}).then((d: Record<string, unknown>) => ({
-      models: (Array.isArray(d.models) ? d.models : []) as ModelCfg[],
-      materials: (Array.isArray(d.materials) ? d.materials : []) as MaterialCfg[],
-      textures: (Array.isArray(d.textures) ? d.textures : []) as TextureCfg[],
-    })).catch(() => ({ models: [], materials: [], textures: [] }));
+    let failed = false;
+    const p: Promise<AssetConfig> = fetch('/api/config')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('config http ' + r.status))))
+      .then((d: Record<string, unknown>) => ({
+        models: (Array.isArray(d.models) ? d.models : []) as ModelCfg[],
+        materials: (Array.isArray(d.materials) ? d.materials : []) as MaterialCfg[],
+        textures: (Array.isArray(d.textures) ? d.textures : []) as TextureCfg[],
+      }))
+      .catch(() => { failed = true; return EMPTY_CFG(); });
+    cfgCache = p;
+    void p.then(() => { if (failed && cfgCache === p) cfgCache = null; });   // не кэшируем провал → ретрай на след. вызове
   }
   return cfgCache;
 }
@@ -123,11 +133,18 @@ export function resolveCharacterModel(cfg: AssetConfig): ModelCfg | undefined {
   return cfg.models.find((m) => m.kind === 'character' && !!m.url);
 }
 
+/** Профиль тела персонажа-атласа (модульные пропорции) из конфига — игра строит solid/target с ним, атлас конформится. */
+export function resolveBodyProfile(cfg: AssetConfig): BodyProfile | undefined {
+  const c = resolveCharacterModel(cfg);
+  const b = c?.body;
+  return b && Object.keys(b).length ? b : undefined;
+}
+
 /** Скин над источником-мешем `source` (физ-ведомый solid). set(specs) — легаси послотные GLB; setAtlas — ОДИН
  *  GLB-атлас персонажа (submesh-тумблер по слоту). update() ведёт риги. */
 export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
   set(specs: SlotModel[], assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<void>;
-  setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<string[]>;
+  setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean }): Promise<string[]>;
   update(): void; count(): number; dispose(): void;
 } {
   const worn: Worn[] = [];
@@ -175,10 +192,13 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
   }
 
   // АТЛАС: ОДИН GLB (скелет + все сабмеши-части), ОДИН риг (конформ к профилю source), submesh-тумблер по слоту.
-  // `visible[slot]`: имя сабмеша = показать только его; '' = скрыть слот; НЕТ ключа = показать все сабмеши слота (дефолт).
+  // `visible[slot]`: имя сабмеша = показать только его (ВАРИАНТ); '' = скрыть слот; НЕТ ключа = показать все сабмеши слота.
+  // `opt.hideHair` = спрятать волосы (сабмеш helm-слота с /hair/ в имени) — надет шлем. Variant-safe: если запрошенный
+  // вариант не найден среди сабмешей слота, показываем ВСЕ сабмеши слота (не прячем весь слот из-за незнакомого modelId).
   // Всё авто-садится (общий скелет, засканы на месте). Возвращает список имён сабмешей (для UI редактора).
-  async function setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<string[]> {
-    const key = 'atlas:' + model.url + '|' + JSON.stringify(visible) + '|' + JSON.stringify(model.slots ?? {}) + '|' + JSON.stringify(model.submeshMaterials ?? {});
+  async function setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean }): Promise<string[]> {
+    const hideHair = !!opt?.hideHair;
+    const key = 'atlas:' + model.url + '|' + JSON.stringify(visible) + '|' + (hideHair ? 'H' : '') + '|' + JSON.stringify(model.slots ?? {}) + '|' + JSON.stringify(model.submeshMaterials ?? {});
     if (key === curKey) return worn.length ? lastAtlasMeshes : [];
     curKey = key;
     const my = ++gen;
@@ -190,15 +210,29 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
       const map = resolveBoneMap(g, model.boneMap ?? {});
       g.rotation.set(detectUpZ(g, map) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);
       const rig = makeRetargetRig(g, map, scaleToSource(g, source), source);
+      // Проход 1: собрать сабмеши со слотами. Variant-safe требует знать, ЕСТЬ ли в слоте запрошенный вариант.
+      const subs: { mesh: THREE.Mesh; slot: string }[] = [];
       g.traverse((o) => {
         if (!(o as THREE.SkinnedMesh).isSkinnedMesh) return;
         const mesh = o as THREE.Mesh; meshNames.push(mesh.name);
-        const slot = (model.slots?.[mesh.name]) || classifySubmesh(mesh.name);   // конфиг-карта → авто-классификация
+        subs.push({ mesh, slot: (model.slots?.[mesh.name]) || classifySubmesh(mesh.name) });   // конфиг-карта → авто-классификация
+      });
+      const hasVariant = new Set<string>();   // слоты, где запрошенный вариант реально присутствует
+      for (const { mesh, slot } of subs) { if (slot && visible[slot] && visible[slot] === mesh.name) hasVariant.add(slot); }
+      // Проход 2: видимость + материалы.
+      for (const { mesh, slot } of subs) {
         let show = !!slot;
-        if (slot) { const v = visible[slot]; if (v !== undefined) show = (v !== '' && v === mesh.name); }   // выбор варианта/скрытие
+        if (slot) {
+          const v = visible[slot];
+          if (v !== undefined) {
+            if (v === '') show = false;                                    // явное скрытие слота
+            else show = hasVariant.has(slot) ? (v === mesh.name) : true;   // вариант есть → только он; нет (незнакомый modelId) → все
+          }
+          if (show && hideHair && /hair/i.test(mesh.name)) show = false;   // шлем надет → волосы прочь
+        }
         mesh.visible = show; if (show) mesh.castShadow = true;
         const mid = model.submeshMaterials?.[mesh.name]; if (mid) { const mat = getMaterial(assets, mid); if (mat) mesh.material = mat; }
-      });
+      }
       parent.add(rig.root); worn.push({ slot: 'atlas', rig });
       showAllProcedural(false);   // атлас = всё тело → процедурный риг прячем целиком
     } catch { /* битый url */ }

@@ -1676,6 +1676,8 @@ export const modelsSchema = z.array(z.object({
   slot: z.enum(['helm', 'chest', 'gloves', 'boots', 'head']).optional(),   // kind='part': область тела
   weaponType: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield']).optional(),   // kind='weapon'
   slots: z.record(z.string(), z.string()).default({}),  // kind='character': имя сабмеша → слот (helm/head/chest/gloves/boots; '' = скрыт). Авто-классификация при импорте, правится.
+  // kind='character': модульные пропорции тела (слайдеры конструктора). Игра строит solid/target с ним, атлас конформится.
+  body: z.object({ height: z.number(), arm: z.number(), leg: z.number(), torso: z.number(), girth: z.number() }).partial().optional(),
   base: z.boolean().default(false),                     // базовый меш слота (нет надетого / нет modelId → показываем его)
   hideHair: z.boolean().default(false),                 // шлем скрывает базовые волосы (корона/тиара — false)
   scale: z.number().default(1),                         // нормализация размера (наш TILE=32u=1м)
