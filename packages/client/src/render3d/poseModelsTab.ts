@@ -80,13 +80,16 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   /** Текущий атлас: свежий импорт → character из конфига. */
   function curAtlas(): ModelEntry | null { return asmAtlas ?? (resolveCharacterModel(cfg) as ModelEntry | undefined) ?? null; }
 
-  /** (Пере)собрать источник-риг под профиль + перезагрузить атлас (конформ к профилю, submesh-видимость). */
+  /** (Пере)собрать источник-риг под профиль + перезагрузить атлас (конформ к профилю, submesh-видимость).
+   *  ВАЖНО: пересобираем И asmSkin — он привязан к КОНКРЕТНОМУ asmSrc (source в замыкании: конформ + drive идут по
+   *  нему). Иначе слайдеры строят новый asmSrc, а скин конформит/ведёт СТАРЫЙ (дефолт-профиль) → морф не виден. */
   function rebuildAsm(): void {
+    if (asmSkin) { asmSkin.dispose(); asmSkin = null; }
     if (asmSrc) { scene.remove(asmSrc.root); asmSrc.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
     asmSrc = buildHumanoid({ profile: asmProfile });
     asmSrc.root.visible = false;                  // источник невидим — видим меши атласа поверх
     scene.add(asmSrc.root);
-    if (!asmSkin) asmSkin = createModelSkin(scene, asmSrc);
+    asmSkin = createModelSkin(scene, asmSrc);     // новый скин на НОВЫЙ источник (конформ к профилю с нуля)
     void applyAsm();
   }
   async function applyAsm(): Promise<void> {

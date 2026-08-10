@@ -83,18 +83,20 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const skin = opts.classId ? createModelSkin(group, solid) : null;
   let equipModels: Record<string, { modelId?: string } | undefined> | undefined;
   // Экипировка → выбор сабмеш-варианта по слоту атласа (modelId = имя сабмеша-варианта). Незнакомый id безопасен
-  // (setAtlas variant-safe: покажет все сабмеши слота). Надет шлем → прячем волосы.
-  function atlasVisible(): { visible: Record<string, string>; hideHair: boolean } {
+  // (setAtlas variant-safe: покажет все сабмеши слота). Волосы прячет ТОЛЬКО показ реальной модели шлема (=выбор
+  // helm-варианта в атласе), а НЕ сам факт надетого шлема-предмета — иначе стат-шлем без модели балдил бы голову
+  // (и расходился с редактором, где волосы всегда видны в базе).
+  function atlasVisible(): Record<string, string> {
     const visible: Record<string, string> = {};
     for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) { const id = equipModels?.[slot]?.modelId; if (id) visible[slot] = id; }
-    return { visible, hideHair: equipModels?.helm !== undefined };   // helm-слот занят (любой шлем) → волосы прочь
+    return visible;
   }
   function refreshSkin(): void {
     if (!skin) return;
     void loadAssetConfig().then((cfg) => {
       const assets = { materials: cfg.materials, textures: cfg.textures };
       const char = resolveCharacterModel(cfg);   // E3: атлас персонажа (один GLB) в приоритете
-      if (char) { const { visible, hideHair } = atlasVisible(); void skin.setAtlas(char, visible, assets, { hideHair }); return; }
+      if (char) { void skin.setAtlas(char, atlasVisible(), assets); return; }   // = превью редактора (без hideHair)
       void skin.set(resolveSlotModels(cfg, equipModels), assets);   // легаси: послотные GLB
     });
   }
