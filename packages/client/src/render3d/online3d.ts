@@ -13,7 +13,7 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
-import { resolveBodyProfile, resolveBoneScale } from './modelSkin.js';
+import { resolveBodyProfile, resolveBoneScale, resolveBoneOffsets } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
@@ -301,6 +301,7 @@ export async function startOnline3d(): Promise<void> {
   // Читаем синхронно из уже загруженного реестра (app.config). body = слайдеры-морф; boneScale = пропорции ФБХ (физ-скелет 1:1).
   function bodyProfile(): BodyProfile | undefined { return resolveBodyProfile({ models: app.config.get('models'), materials: [], textures: [] }); }
   function bodyScale(): BoneScale | undefined { return resolveBoneScale({ models: app.config.get('models'), materials: [], textures: [] }); }
+  function bodyOffsets(): Record<string, number[]> | undefined { return resolveBoneOffsets({ models: app.config.get('models'), materials: [], textures: [] }); }
 
   // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
   function buildArea(floor: FloorInit): void {
@@ -329,7 +330,7 @@ export async function startOnline3d(): Promise<void> {
     const classId = app.state!.save.classId;
     selfWeaponKey = weaponKeyFromSave(app.state!.save);
     if (!self) {
-      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, x: floor.spawn.x, z: floor.spawn.y, profile: bodyProfile(), boneScale: bodyScale() });
+      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, x: floor.spawn.x, z: floor.spawn.y, profile: bodyProfile(), boneScale: bodyScale(), boneOffsets: bodyOffsets() });
       actorsGroup.add(d.group);
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
       const sh = app.config.get('balance').lighting.shadow3d;
@@ -537,7 +538,7 @@ export async function startOnline3d(): Promise<void> {
       const wk = weaponKeyFromView(pv);   // реальное оружие пира из снапшота (иначе класс-дефолт)
       const ak = JSON.stringify(pv.armorModels ?? {});   // C7: ключ внешности брони пира (детект смены экипа)
       if (!a) {
-        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, profile: bodyProfile(), boneScale: bodyScale() }); actorsGroup.add(d.group);
+        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, profile: bodyProfile(), boneScale: bodyScale(), boneOffsets: bodyOffsets() }); actorsGroup.add(d.group);
         d.setAppearance?.(appearanceFromModels(pv.armorModels));   // C7: скин-слой пира (базы слотов + надетая броня)
         const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
         a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, hp }; peers.set(pv.id, a);

@@ -1680,6 +1680,9 @@ export const modelsSchema = z.array(z.object({
   body: z.object({ height: z.number(), arm: z.number(), leg: z.number(), torso: z.number(), girth: z.number() }).partial().optional(),
   // kind='character': пер-костные множители длины, снятые с ФБХ (measureBoneScales) → наш физ-скелет 1:1 повторяет модель.
   boneScale: z.record(z.string(), z.number()).optional(),
+  // kind='character': ПОЛНЫЕ rest-офсеты костей ФБХ (вектор [x,y,z]) — приоритет над boneScale, повторяет геометрию 1:1
+  // (направление+длина; чинит «раскоряку» ног, где скаляр искажал узкий-вниз хип ФБХ в широкий).
+  boneOffsets: z.record(z.string(), z.array(z.number())).optional(),
   base: z.boolean().default(false),                     // базовый меш слота (нет надетого / нет modelId → показываем его)
   hideHair: z.boolean().default(false),                 // шлем скрывает базовые волосы (корона/тиара — false)
   scale: z.number().default(1),                         // нормализация размера (наш TILE=32u=1м)

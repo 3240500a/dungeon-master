@@ -120,7 +120,7 @@ function makeHeadGeometry(R: number): THREE.BufferGeometry {
 }
 
 export interface BuildScale { arm?: number; leg?: number; torso?: number; head?: number }
-export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton'; profile?: BodyProfile; boneScale?: BoneScale } = {}): Humanoid {
+export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton'; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> } = {}): Humanoid {
   const skel = opts.style === 'skeleton';
   const matLimb = new THREE.MeshStandardMaterial({ color: opts.limb ?? 0x8a93ad, roughness: 0.6, metalness: 0.15 });
   const matBody = new THREE.MeshStandardMaterial({ color: opts.body ?? 0x6f7690, roughness: 0.62, metalness: 0.2 });
@@ -138,12 +138,16 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
     if (name === 'Head' || name === 'Neck') return bd.head ?? 1;   // голову girth не раздуваем
     return (bd.torso ?? 1) * gir;   // Spine/Chest/UpperChest/Hips/Breast
   };
-  // ДЛИНА звеньев: офсет кости × lenMult(регион-профиль) × boneScale(пер-костный из ФБХ). boneScale делает наш
-  // скелет ПОВТОРЯЮЩИМ пропорции импорт-модели 1:1; профиль — морф поверх. Таз по высоте — pelvisHeight (заземление).
-  const bsc = opts.boneScale;
+  // ДЛИНА/НАПРАВЛЕНИЕ звеньев. boneOffsets (ВЕКТОР rest-офсета из ФБХ) — приоритет: наш скелет ПОВТОРЯЕТ геометрию
+  // модели 1:1 (направление+длина; чинит «раскоряку» — узкий-вниз хип ФБХ, а не широкий как у boneScale-скаляра).
+  // Нет офсета кости → фолбэк base × boneScale-скаляр. Профиль (lenMult) — морф поверх. Таз — высота (заземление).
+  const bsc = opts.boneScale, bo = opts.boneOffsets;
   const posOf = (b: HBone): [number, number, number] => {
-    if (b.name === 'Hips') return [b.pos[0], pelvisHeight(prof, bsc), b.pos[2]];
-    const m = lenMult(b.name, prof) * boneScaleOf(b.name, bsc);
+    const off = bo?.[b.name];
+    if (b.name === 'Hips') { const hy = off ? (off[1] ?? 0) * (prof?.leg ?? 1) * (prof?.height ?? 1) : pelvisHeight(prof, bsc); return [b.pos[0], hy, b.pos[2]]; }
+    const region = lenMult(b.name, prof);
+    if (off) return [(off[0] ?? 0) * region, (off[1] ?? 0) * region, (off[2] ?? 0) * region];   // ФБХ-офсет × профиль-морф
+    const m = region * boneScaleOf(b.name, bsc);
     return [b.pos[0] * m, b.pos[1] * m, b.pos[2] * m];
   };
 

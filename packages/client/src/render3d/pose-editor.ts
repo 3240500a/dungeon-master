@@ -419,6 +419,7 @@ function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.strin
 /** Пер-костные пропорции загруженного атласа (ФБХ). Редакторные скелеты (манекен/призрак/онион) СТРОЯТСЯ ими →
  *  совпадают с мешем 1:1. Нет атласа → undefined (база, как раньше; классы/монстры без атласа не трогаем). */
 function atlasBS(): BoneScale | undefined { return modelsTab.boneScale(); }
+function atlasOff(): Record<string, number[]> | undefined { return modelsTab.boneOffsets(); }   // полные rest-офсеты ФБХ (приоритет над boneScale)
 /** Скелет-манекен ПОВЕРХ импортного меша (depthTest off) — виден и кликается сквозь модель. Только для skeleton-стиля. */
 function manikinOnTop(): void {
   if (curHumanStyle !== 'skeleton') return;
@@ -432,7 +433,7 @@ function applyChar(id: string): void {
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff() }); curHumanStyle = manStyle();
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
@@ -448,7 +449,7 @@ function rebuildManikin(): void {
   const c = curChar(); const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff() }); curHumanStyle = manStyle();
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
@@ -1364,7 +1365,7 @@ let ghostHuman: Humanoid | null = null;   // физ-призрак — ТАКО�
 function buildGhost(): void {
   if (ghostHuman) { scene.remove(ghostHuman.root); ghostHuman.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   const c = curChar();
-  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), limb: 0x8fb0d8, body: 0x7fa0c8, head: 0xafc8e8 });   // нейтральный серо-голубой силуэт «мяса»
+  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), limb: 0x8fb0d8, body: 0x7fa0c8, head: 0xafc8e8 });   // нейтральный серо-голубой силуэт «мяса»
   for (const m of ghostHuman.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; }
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
 }
@@ -1373,7 +1374,7 @@ function setPhysVis(on: boolean): void { if (ghostHuman) ghostHuman.root.visible
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
 function mkOnion(tint: number): Humanoid {
   const c = curChar();
-  const h = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), limb: tint, body: tint, head: tint });
+  const h = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), limb: tint, body: tint, head: tint });
   for (const m of h.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25; }
   scene.add(h.root); h.root.visible = false; return h;
 }

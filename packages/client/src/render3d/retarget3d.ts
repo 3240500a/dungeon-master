@@ -120,6 +120,33 @@ export function measureBoneScales(loaded: THREE.Object3D, boneMap: Record<string
   return out;
 }
 
+/** Снять ПОЛНЫЕ rest-ОФСЕТЫ костей ФБХ (вектор направление+длина в НАШЕЙ Y-up системе, нормировано к росту ~57u) →
+ *  наш скелет строится ИМИ (buildHumanoid.boneOffsets) и повторяет геометрию ФБХ 1:1 (в отличие от boneScale-скаляра,
+ *  который искажал направление: узкий-вниз хип-джойнт ФБХ превращался в широкий). ФБХ риганы в T-позе → офсеты
+ *  переносятся в наши T-позные без миграции. Авто-детект Z-up (CC/AccuRIG) → доворот. Hips = высота таза (заземление). */
+export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<string, string>): Record<string, [number, number, number]> {
+  const r0 = loaded.rotation.clone();
+  loaded.rotation.set(0, 0, 0); loaded.updateMatrixWorld(true);
+  const byName = new Map<string, THREE.Bone>();
+  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
+  const w = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
+  const hip0 = w('Hips'), head0 = w('Head');
+  if (hip0 && head0 && Math.abs(head0.z - hip0.z) > Math.abs(head0.y - hip0.y)) { loaded.rotation.set(-Math.PI / 2, 0, 0); loaded.updateMatrixWorld(true); }   // Z-up → Y-up
+  const hip = w('Hips'), head = w('Head'), foot = w('LeftFoot');
+  const fbxH = (head && foot) ? (head.y - foot.y) : 0;
+  const scale = fbxH > 1e-3 ? 57 / fbxH : 1;   // нормировка к нашему росту ~57u
+  const out: Record<string, [number, number, number]> = {};
+  const legDrop = (hip && foot) ? (hip.y - foot.y) * scale : 32;
+  for (const our of OUR_BONES) {
+    if (our === 'Hips') { out['Hips'] = [0, +(legDrop + 1).toFixed(2), 0]; continue; }   // высота таза = дроп ноги + зазор подошвы
+    const p = OUR_PARENT[our]; if (!p) continue;
+    const c = w(our), pp = w(p);
+    if (c && pp) out[our] = [+((c.x - pp.x) * scale).toFixed(2), +((c.y - pp.y) * scale).toFixed(2), +((c.z - pp.z) * scale).toFixed(2)];
+  }
+  loaded.rotation.copy(r0); loaded.updateMatrixWorld(true);
+  return out;
+}
+
 /** Собрать ретаргет-риг из загруженной сцены (glTF/FBX) + карты костей. `scale` нормализует размер (наш TILE=32u=1м).
  *  `source` (опц.) — КОНФОРМ: длины звеньев импорта подгоняются под длины скелета source (наш риг с профилем) →
  *  повороты ложатся 1:1, меш морфится под пропорции source, контакты (стопы/кисти) совпадают. */

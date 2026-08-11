@@ -39,7 +39,7 @@ export function classifyAtlas(meshNames: string[]): Record<string, string> {
   return out;
 }
 export interface AssetConfig { models: ModelCfg[]; materials: MaterialCfg[]; textures: TextureCfg[] }
-interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; body?: BodyProfile; boneScale?: BoneScale; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
+interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; body?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]>; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
 
 // Кость нашего рига → регион экипировки: покрытый слотом регион прячет свои процедурные меши.
 const BONE_REGION: Record<string, 'head' | 'chest' | 'gloves' | 'boots'> = {
@@ -145,6 +145,13 @@ export function resolveBoneScale(cfg: AssetConfig): BoneScale | undefined {
   const c = resolveCharacterModel(cfg);
   const s = c?.boneScale;
   return s && Object.keys(s).length ? s : undefined;
+}
+
+/** ПОЛНЫЕ rest-офсеты костей ФБХ персонажа-атласа (вектор) — приоритет над boneScale, наш скелет повторяет геометрию 1:1. */
+export function resolveBoneOffsets(cfg: AssetConfig): Record<string, number[]> | undefined {
+  const c = resolveCharacterModel(cfg);
+  const o = c?.boneOffsets;
+  return o && Object.keys(o).length ? o : undefined;
 }
 
 /** Скин над источником-мешем `source` (физ-ведомый solid). set(specs) — легаси послотные GLB; setAtlas — ОДИН
