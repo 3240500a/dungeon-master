@@ -62,17 +62,17 @@ const AB_IN = 0.1, AB_OUT = 0.14;                              // огибающ
 
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
 export const clipDur = (c: Clip): number => (c.keys.length ? c.keys[c.keys.length - 1]!.t : 0);
-// Интерп углов КРАТЧАЙШИМ путём (в [-π,π]): линейный лерп эйлеров между кадрами с разницей >180° прокручивает кость
-// на ~360° (полный оборот руки между кадрами удара). Позиц-ключи (…P) — линейно.
-const TAU = Math.PI * 2;
-const shortDelta = (from: number, to: number): number => { let d = (to - from) % TAU; if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU; return d; };
-const lerpAng = (from: number, to: number, t: number): number => from + shortDelta(from, to) * t;
-export function blendTwo(a: Pose, b: Pose, t: number): Pose {   // Σ поз по ключам (union), лерп (повороты — кратчайшим путём)
+// Интерп ПОВОРОТОВ кадров — кватернионный SLERP (истинная кратчайшая дуга, без gimbal): линейный лерп эйлеров (даже с
+// обёрткой углов) на многоосевых кадрах прокручивает кость на ~360° (полный оборот руки между кадрами удара). slerp учитывает
+// двойное покрытие (q/−q = один поворот) → всегда короткий путь. Позиц-ключи (…P) и скаляры (__match/__pinKp=6000!) — линейно.
+const _btA = new THREE.Quaternion(), _btB = new THREE.Quaternion(), _btEA = new THREE.Euler(), _btEB = new THREE.Euler(), _btER = new THREE.Euler();
+export function blendTwo(a: Pose, b: Pose, t: number): Pose {   // Σ поз по ключам (union), лерп (повороты — slerp'ом)
   const out: Pose = {};
   for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
     const pa = a[k] ?? [0, 0, 0], pb = b[k] ?? [0, 0, 0];
-    const ang = k[0] !== '_' || k === '__wpnMain' || k === '__wpnOff' || k === '__lgripR';   // повороты (кратчайший путь): кости+оружие+грип. Позиции(…P)/скаляры(__match,__pinKp=6000!) — ЛИНЕЙНО
-    out[k] = ang ? [lerpAng(pa[0], pb[0], t), lerpAng(pa[1], pb[1], t), lerpAng(pa[2], pb[2], t)] : [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t];
+    const ang = k[0] !== '_' || k === '__wpnMain' || k === '__wpnOff' || k === '__lgripR';   // повороты: кости+оружие+грип
+    if (ang) { _btA.setFromEuler(_btEA.set(pa[0] ?? 0, pa[1] ?? 0, pa[2] ?? 0)); _btB.setFromEuler(_btEB.set(pb[0] ?? 0, pb[1] ?? 0, pb[2] ?? 0)); _btER.setFromQuaternion(_btA.slerp(_btB, t)); out[k] = [_btER.x, _btER.y, _btER.z]; }
+    else out[k] = [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t];   // позиции(…P)/скаляры — линейно
   }
   return out;
 }

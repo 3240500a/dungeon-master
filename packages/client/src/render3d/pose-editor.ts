@@ -23,6 +23,7 @@ import { createModelsTab } from './poseModelsTab.js';
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 const V = (): THREE.Vector3 => new THREE.Vector3();
 const Q = (): THREE.Quaternion => new THREE.Quaternion();
+const _eA = new THREE.Euler(), _eB = new THREE.Euler(), _qLA = new THREE.Quaternion(), _qLB = new THREE.Quaternion(), _qLR = new THREE.Quaternion(), _eR = new THREE.Euler();   // темпы для slerp интерп кадров
 
 const canvas = document.getElementById('app') as HTMLCanvasElement;
 const bar = document.getElementById('toolbar')!, panel = document.getElementById('panel')!, timeline = document.getElementById('timeline')!;
@@ -315,17 +316,23 @@ function applyWeaponPose(p: Pose): void {
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
 function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } applyWeaponPose(p); applyFramePhys(p); }
-// Интерп УГЛОВ по КРАТЧАЙШЕМУ пути: разница углов сводится в [-π,π], иначе линейный лерп эйлеров между кадрами, чьи
-// значения различаются >180° (переход через ±π), «прокручивает» кость на ~360° (рука делает полный оборот между кадрами).
+// Интерп ПОВОРОТОВ кадров — КВАТЕРНИОННЫЙ SLERP (истинная кратчайшая дуга, без gimbal). Покомпонентный лерп эйлеров
+// (даже с обёрткой углов в [-π,π]) на многоосевых кадрах даёт «прокрутку» руки (эйлеры далеки, хотя поворот близок).
+// slerp учитывает двойное покрытие (q и −q = один поворот) → всегда короткий путь. lerpAng оставлен для скаляров/маркера.
 const TAU = Math.PI * 2;
 const shortDelta = (from: number, to: number): number => { let d = (to - from) % TAU; if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU; return d; };
 const lerpAng = (from: number, to: number, t: number): number => from + shortDelta(from, to) * t;
+const slerpEuler = (out: THREE.Quaternion, pa: number[], pb: number[], t: number): THREE.Quaternion => {
+  _qLA.setFromEuler(_eA.set(pa[0] ?? 0, pa[1] ?? 0, pa[2] ?? 0));
+  _qLB.setFromEuler(_eB.set(pb[0] ?? 0, pb[1] ?? 0, pb[2] ?? 0));
+  return out.copy(_qLA).slerp(_qLB, t);
+};
 function lerpPose(a: Pose, b: Pose, t: number): void {
   human.reset();
-  for (const nm of human.boneNames) { const pa = a[nm] ?? [0, 0, 0], pb = b[nm] ?? [0, 0, 0]; human.bones.get(nm)!.rotation.set(lerpAng(pa[0], pb[0], t), lerpAng(pa[1], pb[1], t), lerpAng(pa[2], pb[2], t)); }
+  for (const nm of human.boneNames) { const pa = a[nm] ?? [0, 0, 0], pb = b[nm] ?? [0, 0, 0]; slerpEuler(human.bones.get(nm)!.quaternion, pa, pb, t); }
   weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
-    if (rk) { const pa = a[rk], pb = b[rk]; if (pa && pb) g.rotation.set(lerpAng(pa[0], pb[0], t), lerpAng(pa[1], pb[1], t), lerpAng(pa[2], pb[2], t)); else if (pa) g.rotation.set(pa[0], pa[1], pa[2]); }
+    if (rk) { const pa = a[rk], pb = b[rk]; if (pa && pb) slerpEuler(g.quaternion, pa, pb, t); else if (pa) g.rotation.set(pa[0], pa[1], pa[2]); }
     if (pk) { const pa = a[pk], pb = b[pk]; if (pa && pb) g.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); else if (pa) g.position.set(pa[0], pa[1], pa[2]); }
   });
   const ip = (k: string, d: number): number => { const va = a[k]?.[0] ?? d, vb = b[k]?.[0] ?? va; return va + (vb - va) * t; };
@@ -348,8 +355,9 @@ function blendTwo(a: Pose, b: Pose, t: number): Pose {
   const out: Pose = {};
   for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
     const pa = a[k] ?? [0, 0, 0], pb = b[k] ?? [0, 0, 0];
-    const ang = k[0] !== '_' || WPN_KEYS.includes(k) || k === '__lgripR';   // повороты (кратчайший путь): кости + оружие + грип-поворот. Позиции(…P) и скаляры(__match/__pinKp=6000!) — ЛИНЕЙНО (иначе большой скаляр свернётся mod 2π)
-    out[k] = ang ? [lerpAng(pa[0], pb[0], t), lerpAng(pa[1], pb[1], t), lerpAng(pa[2], pb[2], t)] : [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t];
+    const ang = k[0] !== '_' || WPN_KEYS.includes(k) || k === '__lgripR';   // повороты: кости + оружие + грип. Позиции(…P)/скаляры(__match/__pinKp=6000!) — ЛИНЕЙНО.
+    if (ang) { slerpEuler(_qLR, pa, pb, t); _eR.setFromQuaternion(_qLR); out[k] = [+_eR.x, +_eR.y, +_eR.z]; }   // slerp (кратчайшая дуга, без gimbal) → обратно в эйлер
+    else out[k] = [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t];
   }
   return out;
 }
