@@ -402,7 +402,7 @@ export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: numb
 
 // ── Замер ТОЧНЫХ плантов стоп из авторской idle-позы (для приставного шага при повороте на месте) ──
 const STANCE_LEG_BONES = ['LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot'];
-const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.Vector3();
+const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.Vector3(), _ms3 = new THREE.Vector3(), _ms4 = new THREE.Vector3();
 /** Плант ноги = ТОЧНАЯ позиция стопы в idle-стойке отн. таза (body-local, yaw 0): lat (X, + = сторона своей кости) + fwd (Z).
  *  Позируем ноги авторской стойкой, читаем мировые стопы отн. таза → по каждой ноге СВОЙ (lat, fwd) СО ЗНАКОМ (не усредняем).
  *  Планировщик (setStance) при повороте держит стопы В ЭТИХ точках и переступает ровно в них (idl-стойка в новом фейсинге).
@@ -413,6 +413,15 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   human.reset();
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
+  human.root.updateMatrixWorld(true);
+  // РЕСТ (без авторской позы ног): геометрический разнос стопы НАРУЖУ за тазобедренный сустав. У процедурных ≈0; у ФБХ-
+  // атласа A-стойка бинда разносит ногу (бедро+колено+лодыжка → стопа x≈8.5 при бедре 4.0) → geom≈4.5. Этот геом-разнос
+  // ВЫЧИТАЕМ из замера: меш скинён под A-стойку (менять рест-геометрию нельзя — гнёт бёдра), но гейт-стойку сводим к
+  // ширине бедра IK-поворотом (без искажения). Авторский боковой развод стойки (поза) при этом СОХРАНЯЕТСЯ (geom его не трогает).
+  const rFlx = human.bones.get('LeftFoot')!.getWorldPosition(_ms1).x;
+  const rFrx = human.bones.get('RightFoot')!.getWorldPosition(_ms2).x;
+  const geomL = rFlx - (human.bones.get('LeftUpperLeg')?.getWorldPosition(_ms3).x ?? rFlx);   // разнос ЛЕВОЙ стопы за бедро в бинде
+  const geomR = rFrx - (human.bones.get('RightUpperLeg')?.getWorldPosition(_ms4).x ?? rFrx);
   for (const nm of STANCE_LEG_BONES) { const e = idle[nm]; if (e) { const b = human.bones.get(nm); if (b) b.rotation.set(e[0], e[1], e[2]); } }
   human.root.updateMatrixWorld(true);
   const h = hips.getWorldPosition(_ms0);
@@ -421,7 +430,7 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   // Базовая высота таза = такая, чтобы стопы idle-стойки стояли на полу (FOOT_Y). Таз позировали на 30 → падение стоп
   // = 30 − footY; высота таза = FOOT_Y + падение. Это база гейта → бег/подшаг не поднимают таз выше стойки (нет подскока).
   const standY = FOOT_Y + (h.y - (fl.y + fr.y) / 2);
-  return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
+  return { latL: (fl.x - h.x) - geomL, fwdL: fl.z - h.z, latR: (fr.x - h.x) - geomR, fwdR: fr.z - h.z, standY };
 }
 
 // ── PosePlayer: драйвер гейта для ИГРЫ (владеет своим состоянием) — тредмил-ноги + idle-стойка + физ-удар ──
