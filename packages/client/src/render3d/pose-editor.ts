@@ -315,12 +315,17 @@ function applyWeaponPose(p: Pose): void {
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
 function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } applyWeaponPose(p); applyFramePhys(p); }
+// Интерп УГЛОВ по КРАТЧАЙШЕМУ пути: разница углов сводится в [-π,π], иначе линейный лерп эйлеров между кадрами, чьи
+// значения различаются >180° (переход через ±π), «прокручивает» кость на ~360° (рука делает полный оборот между кадрами).
+const TAU = Math.PI * 2;
+const shortDelta = (from: number, to: number): number => { let d = (to - from) % TAU; if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU; return d; };
+const lerpAng = (from: number, to: number, t: number): number => from + shortDelta(from, to) * t;
 function lerpPose(a: Pose, b: Pose, t: number): void {
   human.reset();
-  for (const nm of human.boneNames) { const pa = a[nm] ?? [0, 0, 0], pb = b[nm] ?? [0, 0, 0]; human.bones.get(nm)!.rotation.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); }
+  for (const nm of human.boneNames) { const pa = a[nm] ?? [0, 0, 0], pb = b[nm] ?? [0, 0, 0]; human.bones.get(nm)!.rotation.set(lerpAng(pa[0], pb[0], t), lerpAng(pa[1], pb[1], t), lerpAng(pa[2], pb[2], t)); }
   weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
-    if (rk) { const pa = a[rk], pb = b[rk]; if (pa && pb) g.rotation.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); else if (pa) g.rotation.set(pa[0], pa[1], pa[2]); }
+    if (rk) { const pa = a[rk], pb = b[rk]; if (pa && pb) g.rotation.set(lerpAng(pa[0], pb[0], t), lerpAng(pa[1], pb[1], t), lerpAng(pa[2], pb[2], t)); else if (pa) g.rotation.set(pa[0], pa[1], pa[2]); }
     if (pk) { const pa = a[pk], pb = b[pk]; if (pa && pb) g.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t); else if (pa) g.position.set(pa[0], pa[1], pa[2]); }
   });
   const ip = (k: string, d: number): number => { const va = a[k]?.[0] ?? d, vb = b[k]?.[0] ?? va; return va + (vb - va) * t; };
@@ -328,7 +333,7 @@ function lerpPose(a: Pose, b: Pose, t: number): void {
   if (a['__lgripP'] || b['__lgripP']) { const m = ensureLgripMark(); if (m) {   // точка хвата скользит по кадрам (перехват)
     const pa = a['__lgripP'] ?? b['__lgripP']!, pb = b['__lgripP'] ?? pa, ra = a['__lgripR'] ?? [0, 0, 0], rb = b['__lgripR'] ?? ra;
     m.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t);
-    m.rotation.set(ra[0] + (rb[0] - ra[0]) * t, ra[1] + (rb[1] - ra[1]) * t, ra[2] + (rb[2] - ra[2]) * t); m.visible = true;
+    m.rotation.set(lerpAng(ra[0], rb[0], t), lerpAng(ra[1], rb[1], t), lerpAng(ra[2], rb[2], t)); m.visible = true;
   } } else if (lgripMark) lgripMark.visible = false;
 }
 function mirrorLR(): void { const p = human.readPose(); for (const nm of human.boneNames) { if (!nm.startsWith('Left')) continue; const rb = human.bones.get('Right' + nm.slice(4)); const s = p[nm]!; if (rb) rb.rotation.set(s[0], -s[1], -s[2]); } if (mode === 'ik') captureRig(); }
@@ -341,7 +346,11 @@ function saveLoco(): void { try { localStorage.setItem('pe_loco', JSON.stringify
 const locoHere = (): LocoNode[] => locoNodes.filter((n) => n.character === curCharId && n.weapon === weapon);
 function blendTwo(a: Pose, b: Pose, t: number): Pose {
   const out: Pose = {};
-  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) { const pa = a[k] ?? [0, 0, 0], pb = b[k] ?? [0, 0, 0]; out[k] = [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t]; }
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const pa = a[k] ?? [0, 0, 0], pb = b[k] ?? [0, 0, 0];
+    const ang = k[0] !== '_' || WPN_KEYS.includes(k) || k === '__lgripR';   // повороты (кратчайший путь): кости + оружие + грип-поворот. Позиции(…P) и скаляры(__match/__pinKp=6000!) — ЛИНЕЙНО (иначе большой скаляр свернётся mod 2π)
+    out[k] = ang ? [lerpAng(pa[0], pb[0], t), lerpAng(pa[1], pb[1], t), lerpAng(pa[2], pb[2], t)] : [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t];
+  }
   return out;
 }
 function clipPoseAt(c: Clip, t01: number): Pose {   // поза клипа на нормализованной фазе 0..1
