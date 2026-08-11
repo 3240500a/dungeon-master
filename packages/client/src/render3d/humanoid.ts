@@ -147,11 +147,15 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   // октаэдр) читается как ГОРБ. Обнуление ставит голову над плечами/тазом — прямая стойка, как бинд в 3ds Max.
   // Руки/кисти/стопы/носки СВОЙ Z сохраняют (согнутая кисть, носок вперёд — норма геометрии).
   const AXIAL = new Set(['Spine', 'Chest', 'UpperChest', 'Neck', 'Head']);
+  // Ноги ВЕРТИКАЛЬНО: боковой (X) дрейф голени/стопы/носка обнуляется → стопа под тазобедренным суставом. Иначе ФБХ-бинд
+  // A-стойки (бедро +4, колено +2.7, лодыжка +1.7 — всё наружу → стопа x≈8.5) даёт СЛИШКОМ ШИРОКУЮ стойку: стопы не
+  // попадают в планты (HIP_DX=3.6). Ширину таза (бедра, UpperLeg.X) сохраняем; длину (Y) и носок-вперёд (Toes.Z) тоже.
+  const LEG_VERTICAL = new Set(['LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightLowerLeg', 'RightFoot', 'RightToes']);
   const posOf = (b: HBone): [number, number, number] => {
     const off = bo?.[b.name];
     if (b.name === 'Hips') { const hy = off ? (off[1] ?? 0) * (prof?.leg ?? 1) * (prof?.height ?? 1) : pelvisHeight(prof, bsc); return [b.pos[0], hy, b.pos[2]]; }
     const region = lenMult(b.name, prof);
-    if (off) { const oz = AXIAL.has(b.name) ? 0 : (off[2] ?? 0); return [(off[0] ?? 0) * region, (off[1] ?? 0) * region, oz * region]; }   // ФБХ-офсет × профиль-морф (ось выпрямлена)
+    if (off) { const ox = LEG_VERTICAL.has(b.name) ? 0 : (off[0] ?? 0); const oz = AXIAL.has(b.name) ? 0 : (off[2] ?? 0); return [ox * region, (off[1] ?? 0) * region, oz * region]; }   // ФБХ-офсет × профиль-морф (ось выпрямлена, ноги вертикально)
     const m = region * boneScaleOf(b.name, bsc);
     return [b.pos[0] * m, b.pos[1] * m, b.pos[2] * m];
   };
