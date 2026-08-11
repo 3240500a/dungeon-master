@@ -177,6 +177,20 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
 }
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
  *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
+/** Компенсация A-стойки бинда ФБХ: нога splay-ит наружу (стопа сбоку от таза), а поза-система (PoseDriver, стойка)
+ *  считает «поворот бедра 0 = нога прямо вниз». Доворачиваем БЕДРО внутрь на human.legAdduct (замер наклона бинда) →
+ *  нога вертикальна, стопы попадают в планты. Компонентно к Z бедра (боковая ось = приведение). Процедурным legAdduct=0 → no-op.
+ *  Зовётся ПОСЛЕ поз ног (в gaitToHumanoid и measureStancePlants), чтобы бег и стойка компенсировались одинаково. */
+export function applyLegAdduct(human: Humanoid): void {
+  const at = human.legAdduct ?? 0;                            // splay бедра (hip→колено)
+  const kc = at - (human.legAdductKnee ?? 0);                 // коррекция колена = splayБедра − splayГолени: доворот бедра УЖЕ
+  if (Math.abs(at) < 1e-4 && Math.abs(kc) < 1e-4) return;     // повернул голень (она ребёнок) → на колене добираем только разницу,
+  const lu = human.bones.get('LeftUpperLeg'), ru = human.bones.get('RightUpperLeg');   // чтобы голень стала ПАРАЛЛЕЛЬНА бедру (как у базового = прямая нога).
+  const ll = human.bones.get('LeftLowerLeg'), rl = human.bones.get('RightLowerLeg');
+  if (lu) lu.rotation.z -= at; if (ru) ru.rotation.z += at;   // бедро: Left splay +X → −Z сводит вертикально (риг: Left на +X, см. [[humanoid-rig-mirror]])
+  if (ll) ll.rotation.z += kc; if (rl) rl.rotation.z -= kc;   // колено: голень ∥ бедру → нога вертикальна В ЛЮБОМ сгибе колена
+}
+
 export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
@@ -188,6 +202,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'RightLowerLeg', [t.knR, 0, 0], idle, m);
   blendBone(human, 'LeftFoot', [0, 0, 0], idle, m); blendBone(human, 'RightFoot', [0, 0, 0], idle, m);
   blendBone(human, 'LeftToes', [0, 0, 0], idle, m); blendBone(human, 'RightToes', [0, 0, 0], idle, m);
+  applyLegAdduct(human);   // сведение ног под таз (компенсация splay-бинда ФБХ) — стопы в планты, меш без искажения (поворот)
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, m);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, m);
   blendBone(human, 'Head', [0, 0, 0], idle, m);
@@ -402,7 +417,7 @@ export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: numb
 
 // ── Замер ТОЧНЫХ плантов стоп из авторской idle-позы (для приставного шага при повороте на месте) ──
 const STANCE_LEG_BONES = ['LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot'];
-const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.Vector3(), _ms3 = new THREE.Vector3(), _ms4 = new THREE.Vector3();
+const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.Vector3();
 /** Плант ноги = ТОЧНАЯ позиция стопы в idle-стойке отн. таза (body-local, yaw 0): lat (X, + = сторона своей кости) + fwd (Z).
  *  Позируем ноги авторской стойкой, читаем мировые стопы отн. таза → по каждой ноге СВОЙ (lat, fwd) СО ЗНАКОМ (не усредняем).
  *  Планировщик (setStance) при повороте держит стопы В ЭТИХ точках и переступает ровно в них (idl-стойка в новом фейсинге).
@@ -413,16 +428,8 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   human.reset();
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
-  human.root.updateMatrixWorld(true);
-  // РЕСТ (без авторской позы ног): геометрический разнос стопы НАРУЖУ за тазобедренный сустав. У процедурных ≈0; у ФБХ-
-  // атласа A-стойка бинда разносит ногу (бедро+колено+лодыжка → стопа x≈8.5 при бедре 4.0) → geom≈4.5. Этот геом-разнос
-  // ВЫЧИТАЕМ из замера: меш скинён под A-стойку (менять рест-геометрию нельзя — гнёт бёдра), но гейт-стойку сводим к
-  // ширине бедра IK-поворотом (без искажения). Авторский боковой развод стойки (поза) при этом СОХРАНЯЕТСЯ (geom его не трогает).
-  const rFlx = human.bones.get('LeftFoot')!.getWorldPosition(_ms1).x;
-  const rFrx = human.bones.get('RightFoot')!.getWorldPosition(_ms2).x;
-  const geomL = rFlx - (human.bones.get('LeftUpperLeg')?.getWorldPosition(_ms3).x ?? rFlx);   // разнос ЛЕВОЙ стопы за бедро в бинде
-  const geomR = rFrx - (human.bones.get('RightUpperLeg')?.getWorldPosition(_ms4).x ?? rFrx);
   for (const nm of STANCE_LEG_BONES) { const e = idle[nm]; if (e) { const b = human.bones.get(nm); if (b) b.rotation.set(e[0], e[1], e[2]); } }
+  applyLegAdduct(human);   // компенсация A-стойки бинда (стопа под таз) — ТОЧНО как в gaitToHumanoid, чтобы стойка ≡ бегу (иначе поворот дёргает ногу)
   human.root.updateMatrixWorld(true);
   const h = hips.getWorldPosition(_ms0);
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
@@ -430,7 +437,7 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   // Базовая высота таза = такая, чтобы стопы idle-стойки стояли на полу (FOOT_Y). Таз позировали на 30 → падение стоп
   // = 30 − footY; высота таза = FOOT_Y + падение. Это база гейта → бег/подшаг не поднимают таз выше стойки (нет подскока).
   const standY = FOOT_Y + (h.y - (fl.y + fr.y) / 2);
-  return { latL: (fl.x - h.x) - geomL, fwdL: fl.z - h.z, latR: (fr.x - h.x) - geomR, fwdR: fr.z - h.z, standY };
+  return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
 }
 
 // ── PosePlayer: драйвер гейта для ИГРЫ (владеет своим состоянием) — тредмил-ноги + idle-стойка + физ-удар ──

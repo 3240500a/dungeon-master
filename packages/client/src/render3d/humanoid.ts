@@ -62,6 +62,11 @@ export interface Humanoid {
   readPose(): Record<string, [number, number, number]>;
   /** Сбросить в T-позу. */
   reset(): void;
+  /** Приведение БЕДРА (рад, splay бедра hip→колено) и КОЛЕНА (legAdductKnee, splay голени колено→лодыжка) для компенсации
+   *  A-стойки бинда ФБХ: нога splay-ит наружу посегментно, поза-система считает «поворот 0 = прямо вниз». Гейт/стойка
+   *  доворачивают оба сустава → нога вертикальна В ЛЮБОМ сгибе (один hip-доворот не хватает при согнутом колене). 0 у процедурных. */
+  legAdduct: number;
+  legAdductKnee: number;
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -211,8 +216,18 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   const restQuat = new Map<string, THREE.Quaternion>();
   for (const [nm, g] of bones) restQuat.set(nm, g.quaternion.clone());
 
+  // Углы приведения ПОСЕГМЕНТНО: бедро = наклон бедра (hip→колено) от вертикали, колено = наклон голени (колено→лодыжка).
+  // ФБХ A-стойка splay-ит оба звена (~10°/7°); один hip-доворот верно верт-т ТОЛЬКО прямую ногу, при сгибе колена звенья
+  // расходятся → нужен доворот и колена. Компенсируем каждое в СВОЁМ суставе (см. applyLegAdduct). 0 если нет boneOffsets.
+  let legAdduct = 0, legAdductKnee = 0;
+  if (bo) {
+    const ll = bo['LeftLowerLeg'], lf = bo['LeftFoot'];
+    if (ll) { const y = -(ll[1] ?? 0); if (y > 1e-3) legAdduct = Math.atan2(ll[0] ?? 0, y); }        // splay бедра (hip→колено)
+    if (lf) { const y = -(lf[1] ?? 0); if (y > 1e-3) legAdductKnee = Math.atan2(lf[0] ?? 0, y); }     // splay голени (колено→лодыжка)
+  }
+
   return {
-    root, bones, meshes, boneNames: table.map((b) => b.name), restQuat,
+    root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee,
     readPose() {
       const out: Record<string, [number, number, number]> = {};
       for (const [nm, g] of bones) { const e = g.rotation; out[nm] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }
