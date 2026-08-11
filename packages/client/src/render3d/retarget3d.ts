@@ -92,6 +92,7 @@ export interface RetargetRig {
 }
 
 const _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _sw = new THREE.Quaternion(), _v = new THREE.Vector3();
+const _wp = new THREE.Vector3(), _m = new THREE.Matrix4();   // для позиц-ведения костей (точное совпадение суставов)
 const IDENT = new THREE.Quaternion();
 
 /** Снять ПЕР-КОСТНЫЕ множители длины с импорт-ФБХ (относительно ДЕФОЛТНОГО скелета, нормируя на осевую длину тела).
@@ -155,23 +156,33 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   const bake = (targetName: string): void => { const b = byName.get(targetName); if (b) restW.set(targetName, b.getWorldQuaternion(new THREE.Quaternion())); };
   for (const t of Object.values(boneMap)) bake(t);
   let hipRestY = 0; { const h = boneMap['Hips'] && byName.get(boneMap['Hips']); if (h) hipRestY = h.getWorldPosition(new THREE.Vector3()).y; }
+  const posDrive = !!source;   // conform-режим (атлас/игра) → ведём и ПОЗИЦИИ костей (точное совпадение с физ-аватаром)
 
-  function drive(source: Humanoid): void {
-    source.root.updateMatrixWorld(true);
+  function drive(driver: Humanoid): void {
+    driver.root.updateMatrixWorld(true);
+    // Корень импорта на мир-таз источника — непривязанные кости (twist/Waist/пальцы) следуют иерархии.
+    const hips = driver.bones.get('Hips'); if (hips) { hips.getWorldPosition(_v); loaded.position.set(_v.x, _v.y - hipRestY, _v.z); }
+    loaded.updateMatrixWorld(true);
     // порядок родитель→ребёнок → parentWorld цели уже обновлён к моменту ребёнка
     for (const our of OUR_BONES) {
       const tName = boneMap[our]; if (!tName) continue;
-      const tb = byName.get(tName); const sb = source.bones.get(our); const rt = restW.get(tName);
+      const tb = byName.get(tName); const sb = driver.bones.get(our); const rt = restW.get(tName);
       if (!tb || !sb || !rt) continue;
       sb.getWorldQuaternion(_q);                       // W_src
       _q.multiply(rt);                                 // targetWorld = W_src · R_restTarget
       const pw = tb.parent ? tb.parent.getWorldQuaternion(_pq) : _pq.copy(IDENT);
-      tb.quaternion.copy(pw.invert().multiply(_q));    // → локаль цели
+      tb.quaternion.copy(pw.invert().multiply(_q));    // ориентация → локаль цели
+      // ПОЗИЦ-ВЕДЕНИЕ (только при conform=source, т.е. атлас/игра): мир-позиция кости цели = мир-позиция кости
+      // нашего скелета → суставы СОВПАДАЮТ ТОЧНО, меш ложится на физ-аватар 1:1 (устраняет остаток промежут.костей
+      // и бинд-поворотов ретаргета). Непривязанные кости (twist) остаются на иерархии. Наш скелет с boneScale ≈ бинд
+      // ФБХ → кости не улетают далеко от бинда, LBS-стретч минимален.
+      if (posDrive && tb.parent) {
+        sb.getWorldPosition(_wp);
+        _m.copy(tb.parent.matrixWorld).invert();
+        tb.position.copy(_wp).applyMatrix4(_m);
+      }
       tb.updateMatrixWorld(false);                     // дети прочитают верный parentWorld
     }
-    // позиция корня = мир-таз источника (как renderRagdollGhost ставит mesh.root). hipRestY уже в масштабе
-    // (замерян ПОСЛЕ loaded.scale=scale при position=0) → вычитаем без повторного ×scale (иначе двойной масштаб → парение).
-    const hips = source.bones.get('Hips'); if (hips) { hips.getWorldPosition(_v); loaded.position.set(_v.x, _v.y - hipRestY, _v.z); }
   }
 
   return {
