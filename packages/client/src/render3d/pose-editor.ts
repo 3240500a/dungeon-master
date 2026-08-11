@@ -46,7 +46,45 @@ floor.rotation.x = -Math.PI / 2; scene.add(floor);
 function scrollFloor(): void { checkerTex.offset.set(gaitPx / FLOOR_TILE, -gaitPz / FLOOR_TILE); }   // тредмилл: пол едет под бегущим (V текстуры смотрит в −Z из-за поворота пола → Z со знаком минус)
 
 const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); scene.add(gizmo.getHelper());
-gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (!dragging) { if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else pushUndo(); } });
+// ── FK-ГИЗМО ПО ОСЯМ СУСТАВА (локальное, а не мировое): гизмо цепляется к ПРОКСИ, ориентированному по DOF-осям сустава
+//    (twist/plane/normal из jointLimitView — те же, что рисует гизмо пределов). Кольцо twist охватывает ось кости → удобно
+//    твистить/сгибать сустав. Дельта прокси (мир) → лок. поворот кости → клэмп. Кость без сустава → оси самой кости. ──
+const boneProxy = new THREE.Object3D(); boneProxy.name = '__boneProxy'; scene.add(boneProxy);
+let fkProxyBone: string | null = null;                       // кость, редактируемая через прокси (null = прокси не активен)
+const _pBase = new THREE.Quaternion(), _pBaseInv = new THREE.Quaternion(), _bBase = new THREE.Quaternion();
+const _parInv = new THREE.Quaternion(), _rdof = new THREE.Quaternion(), _dq = new THREE.Quaternion(), _nw = new THREE.Quaternion();
+const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bz = new THREE.Vector3(), _m4 = new THREE.Matrix4();
+/** DOF-базис сустава кости nm (правосторонний): X=normal, Y=twist(green), Z=plane. Hinge → ось сгиба на Y. Нет сустава → identity. */
+function dofBasis(nm: string, out: THREE.Quaternion): void {
+  const rag = RAG_OF_HUMAN[nm]; const v = rag ? jointLimitView(rag) : null;
+  if (v && v.kind === 'swing' && v.twist && v.plane && v.normal) {   // X=normal,Y=twist,Z=plane → Z=X×Y=plane (правостор.)
+    _bx.set(v.normal[0], v.normal[1], v.normal[2]).normalize();
+    _by.set(v.twist[0], v.twist[1], v.twist[2]).normalize();
+    _bz.set(v.plane[0], v.plane[1], v.plane[2]).normalize();
+    _m4.makeBasis(_bx, _by, _bz); out.setFromRotationMatrix(_m4); return;
+  }
+  if (v && v.kind === 'hinge' && v.axis) {                    // шарнир: ось сгиба на Y, X/Z — любой перпендикуляр
+    _by.set(v.axis[0], v.axis[1], v.axis[2]).normalize();
+    _bx.set(1, 0, 0); if (Math.abs(_by.dot(_bx)) > 0.9) _bx.set(0, 0, 1);
+    _bx.addScaledVector(_by, -_by.dot(_bx)).normalize(); _bz.crossVectors(_bx, _by).normalize();
+    _m4.makeBasis(_bx, _by, _bz); out.setFromRotationMatrix(_m4); return;
+  }
+  out.identity();
+}
+/** Пере-выставить прокси на ТЕКУЩУЮ кость: DOF-базис в мире · её мир-ориентация + позиция сустава. Зов при attach и старте драга. */
+function rebaselineProxy(): void {
+  if (!fkProxyBone) return;
+  const b = human.bones.get(fkProxyBone); if (!b) return;
+  human.root.updateMatrixWorld(true);
+  b.getWorldQuaternion(_bBase);
+  b.parent!.getWorldQuaternion(_parInv); _parInv.invert();
+  dofBasis(fkProxyBone, _rdof);
+  _pBase.copy(_bBase).multiply(_rdof); _pBaseInv.copy(_pBase).invert();
+  boneProxy.quaternion.copy(_pBase); b.getWorldPosition(boneProxy.position); boneProxy.updateMatrixWorld(true);
+}
+/** Прицепить гизмо вращения к кости ЧЕРЕЗ прокси (кольца по осям сустава). Замена прямого gizmo.attach(bone). */
+function attachBoneGizmo(nm: string): void { fkProxyBone = nm; rebaselineProxy(); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(boneProxy); }
+gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) rebaselineProxy(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else pushUndo(); });
 
 const limitGizmo = makeLimitGizmo(); scene.add(limitGizmo.group);   // гизмо предела выбранного сустава (на манекене)
 let showLimits = true;                                              // рисовать пределы выбранного сустава (дефолт вкл)
@@ -207,10 +245,10 @@ canvas.addEventListener('pointerdown', (ev) => {
   const hit = ray.intersectObjects(meshes, false)[0];
   if (hit) {
     const obj = hit.object as THREE.Mesh;
-    if (obj.userData.bone) { const nm = obj.userData.bone as string; selected = nm; highlight(obj); gizmo.setSpace('world'); gizmo.setMode('rotate'); gizmo.attach(human.bones.get(nm)!); refreshPose(); }
-    else { let g: THREE.Object3D | null = obj; while (g && !(weaponGroups as THREE.Object3D[]).includes(g)) g = g.parent; if (g) { selected = null; highlight(null); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(g); refreshPose(); } }
+    if (obj.userData.bone) { const nm = obj.userData.bone as string; selected = nm; highlight(obj); attachBoneGizmo(nm); refreshPose(); }
+    else { let g: THREE.Object3D | null = obj; while (g && !(weaponGroups as THREE.Object3D[]).includes(g)) g = g.parent; if (g) { fkProxyBone = null; selected = null; highlight(null); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(g); refreshPose(); } }
   }
-  else { gizmo.detach(); highlight(null); selected = null; refreshPose(); }
+  else { fkProxyBone = null; gizmo.detach(); highlight(null); selected = null; refreshPose(); }
 });
 // Вкладка «Повороты»: прицел = точка пола под курсором (как курсор в игре). Только читаем позицию, орбиту не трогаем.
 canvas.addEventListener('pointermove', (ev) => {
@@ -231,13 +269,17 @@ gizmo.addEventListener('objectChange', () => {
     return;
   }
   if (mode === 'fk') {
-    const nm = (gizmo.object as THREE.Object3D | undefined)?.name;
-    if (nm && clampFk) {   // КЛЭМП к пределу сустава: кость упирается в границу конуса/шарнира (не согнуть назад)
-      const rag = RAG_OF_HUMAN[nm]; const view = rag ? jointLimitView(rag) : null;
-      if (view) { const b = human.bones.get(nm); if (b) b.quaternion.copy(clampLocalToLimit(b.quaternion, view)); }
+    if (gizmo.object === boneProxy && fkProxyBone) {           // прокси-вращение ПО ОСЯМ СУСТАВА: дельта прокси (мир) → лок. кость → клэмп
+      const nm = fkProxyBone; const b = human.bones.get(nm);
+      if (b) {
+        _dq.copy(boneProxy.quaternion).multiply(_pBaseInv);     // deltaWorld = proxyNow · pBase⁻¹
+        _nw.copy(_dq).multiply(_bBase);                         // newBoneWorld = deltaWorld · boneWorld0
+        b.quaternion.copy(_parInv).multiply(_nw);               // newBoneLocal = parent⁻¹ · newBoneWorld
+        if (clampFk) { const rag = RAG_OF_HUMAN[nm]; const view = rag ? jointLimitView(rag) : null; if (view) b.quaternion.copy(clampLocalToLimit(b.quaternion, view)); }
+        const lk = LIMB_OF[nm]; if (lk) { rig.eff[lk]!.ik = false; refreshLimbs(); } if (nm === 'Hips') rig.hipsQuat.copy(b.quaternion); const fk = nm === 'LeftFoot' ? 'LF' : nm === 'RightFoot' ? 'RF' : null; if (fk) rig.eff[fk]!.footQuat.copy(b.getWorldQuaternion(Q()));
+      }
     }
-    if (nm) { const lk = LIMB_OF[nm]; if (lk) { rig.eff[lk]!.ik = false; refreshLimbs(); } if (nm === 'Hips') rig.hipsQuat.copy(human.bones.get('Hips')!.quaternion); const fk = nm === 'LeftFoot' ? 'LF' : nm === 'RightFoot' ? 'RF' : null; if (fk) rig.eff[fk]!.footQuat.copy(human.bones.get(nm)!.getWorldQuaternion(Q())); }
-    return;
+    return;   // оружие (gizmo.object = группа) вращается гизмо напрямую — доп. обработки не нужно
   }
   if (mode !== 'ik' || (!activeKey && !activePole)) return;
   if (activePole) { const e = rig.eff[activePole]!; const rp = human.bones.get(e.root)!.getWorldPosition(V()); const pv = e.poleHandle.position.clone().sub(rp); if (pv.lengthSq() > 1e-6) e.pole.copy(pv.normalize()); return; }
@@ -506,7 +548,7 @@ for (const o of OFFHANDS) { const op = document.createElement('option'); op.valu
 const composeWeapon = (): void => { const m = wpnSel.value, o = offSel.value; setWeapon(o === 'none' ? m : m + '+' + o); };
 wpnSel.onchange = composeWeapon; offSel.onchange = composeWeapon;
 let fkB!: HTMLButtonElement, ikB!: HTMLButtonElement, hipsB!: HTMLButtonElement;
-function setMode(m: 'fk' | 'ik'): void { mode = m; gizmo.detach(); highlight(null); selected = null; activeKey = null; activePole = null; for (const e of effList()) { e.handle.visible = m === 'ik'; e.poleHandle.visible = m === 'ik'; } rig.hipsHandle.visible = m === 'ik'; if (m === 'ik') captureRig(); fkB.classList.toggle('on', m === 'fk'); ikB.classList.toggle('on', m === 'ik'); refreshPose(); }
+function setMode(m: 'fk' | 'ik'): void { mode = m; gizmo.detach(); fkProxyBone = null; highlight(null); selected = null; activeKey = null; activePole = null; for (const e of effList()) { e.handle.visible = m === 'ik'; e.poleHandle.visible = m === 'ik'; } rig.hipsHandle.visible = m === 'ik'; if (m === 'ik') captureRig(); fkB.classList.toggle('on', m === 'fk'); ikB.classList.toggle('on', m === 'ik'); refreshPose(); }
 ikB = mkBtn('IK', () => setMode('ik')); fkB = mkBtn('FK', () => setMode('fk'));
 hipsB = mkBtn('таз: двигать', () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); } });
 const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => { physOn = !physOn; physB.textContent = 'физ: ' + (physOn ? 'вкл' : 'выкл'); physB.classList.toggle('on', physOn); setPhysVis(physOn); }); });
@@ -559,7 +601,7 @@ function poseTools(): void {
     const wh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); wh.textContent = 'ОРУЖИЕ · ⟳ вращать / ✥ двигать (в кадр)'; body.append(wh);
     const wr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(wr);
     const wlbl = ['осн', 'офф'];
-    const pickWeapon = (g: THREE.Object3D, m: 'rotate' | 'translate'): void => { setMode('fk'); selected = null; highlight(null); gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(g); };
+    const pickWeapon = (g: THREE.Object3D, m: 'rotate' | 'translate'): void => { setMode('fk'); fkProxyBone = null; selected = null; highlight(null); gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(g); };
     weaponGroups.forEach((g, i) => { const nm = wlbl[i] ?? ('о' + (i + 1)); wr.append(pbtn(nm + ' ⟳', () => pickWeapon(g, 'rotate')), pbtn(nm + ' ✥', () => pickWeapon(g, 'translate'))); });
     wr.append(pbtn('сброс', () => { updateWeapon(); renderAnim(); }));   // пересборка = базовые позиция/поворот
     if (weaponGroups.length === 1 && !weapon.includes('+')) {            // двуручка: левая кисть держит оружие в точке хвата (покадрово, IK)
@@ -572,7 +614,7 @@ function poseTools(): void {
         else { const def: [number, number, number] = [0, -14, 0]; for (const k of c.keys) { if (!k.pose['__lgripP']) { k.pose['__lgripP'] = [...def]; k.pose['__lgripR'] = [0, 0, 0]; } } const m = ensureLgripMark(); if (m) { m.position.set(def[0], def[1], def[2]); m.rotation.set(0, 0, 0); m.visible = true; } }
         saveLib(); renderAnim();
       }, on));
-      if (on) { const pickGrip = (m: 'rotate' | 'translate'): void => { const mk = ensureLgripMark(); if (!mk) return; setMode('fk'); selected = null; highlight(null); mk.visible = true; gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(mk); }; gr.append(pbtn('хват ✥', () => pickGrip('translate')), pbtn('хват ⟳', () => pickGrip('rotate'))); }
+      if (on) { const pickGrip = (m: 'rotate' | 'translate'): void => { const mk = ensureLgripMark(); if (!mk) return; setMode('fk'); fkProxyBone = null; selected = null; highlight(null); mk.visible = true; gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(mk); }; gr.append(pbtn('хват ✥', () => pickGrip('translate')), pbtn('хват ⟳', () => pickGrip('rotate'))); }
     }
   }
   // ── ФИЗИКА (PuppetMaster-стиль: пины/мышцы + дёрг/падение) ──
@@ -657,7 +699,7 @@ function poseTools(): void {
   );
   const bh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); bh.textContent = 'FK · выбрать кость'; body.append(bh);
   const bl = el('div', 'display:flex;flex-wrap:wrap;gap:2px;max-height:150px;overflow:auto'); body.append(bl);
-  for (const nm of human.boneNames) { const b = document.createElement('button'); b.textContent = nm; b.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;cursor:pointer;border:1px solid #39415a;background:${nm === selected ? '#3a5030' : '#20242f'};color:#b8bec8`; b.onclick = () => { setMode('fk'); selected = nm; highlight(human.meshes.find((x) => x.userData.bone === nm) ?? null); gizmo.setMode('rotate'); gizmo.attach(human.bones.get(nm)!); renderAnim(); }; bl.append(b); }
+  for (const nm of human.boneNames) { const b = document.createElement('button'); b.textContent = nm; b.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;cursor:pointer;border:1px solid #39415a;background:${nm === selected ? '#3a5030' : '#20242f'};color:#b8bec8`; b.onclick = () => { setMode('fk'); selected = nm; highlight(human.meshes.find((x) => x.userData.bone === nm) ?? null); attachBoneGizmo(nm); renderAnim(); }; bl.append(b); }
 }
 
 // Вкладка АНИМАЦИЯ = клипы + кадры(с временем) + инструменты позы (правишь позу = правишь текущий кадр)
