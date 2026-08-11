@@ -42,6 +42,14 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
     expect(minAfter).toBeLessThan(2.5);        // сели на пол (~SOLE=1.5), не улетели
   });
 
+  it('groundFeet: footLift поднимает цель заземления (подошва меша атласа на полу, а не тонет)', () => {
+    const mk = (): ReturnType<typeof buildHumanoid> => { const h = buildHumanoid({ gender: 'male', build: {} }); h.root.position.set(0, 20, 0); h.root.updateMatrixWorld(true); return h; };
+    const footMinY = (h: ReturnType<typeof buildHumanoid>): number => Math.min(h.bones.get('LeftFoot')!.getWorldPosition(V(0, 0, 0)).y, h.bones.get('RightFoot')!.getWorldPosition(V(0, 0, 0)).y);
+    const h0 = mk(); groundFeet(h0, 20, { off: 0 }, 1 / 60, () => 0); const y0 = footMinY(h0);
+    const h1 = mk(); h1.footLift = 3; groundFeet(h1, 20, { off: 0 }, 1 / 60, () => 0); const y1 = footMinY(h1);
+    expect(y1 - y0).toBeGreaterThan(2);   // footLift=3 → кость стопы ~на 3 выше (лодыжка атласа выше → подошва меша на полу)
+  });
+
   it('groundFeet: МАХОВУЮ (support=false) не выравнивает — её ориентацию ведёт поза (нет «лыжника»)', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
     h.root.position.set(0, 20, 0);

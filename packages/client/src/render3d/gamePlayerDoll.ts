@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
-import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadTwist, type GXKnobs } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwist, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
 import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel } from './modelSkin.js';
@@ -74,6 +74,9 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // target — НЕВИДИМЫЙ манекен-источник позы: PosePlayer его позирует, с него кормим физику (цель + пины).
   const target = buildHumanoid({ gender, build, profile, boneScale, boneOffsets });
   target.root.visible = false; group.add(target.root);
+  // Подъём стопы per-персонаж (pe_phys.footLift): поднимает цель стойки (standY) и заземления → подошва МЕША атласа на полу
+  // (лодыжка выше FOOT_Y, иначе тонет). solid грунтится footIk, target даёт standY через PosePlayer → оба должны совпадать.
+  solid.footLift = target.footLift = opts.classId ? loadFootLift(opts.classId) : opts.gaitId ? loadFootLift(opts.gaitId, opts.gaitFallback) : 0;
   // физ-рэгдолл — единый риг. Собственные полупрозрачные боксы не показываем (рисуем solid).
   const ragdoll = makeHumanoidRagdoll(pw);
   ragdoll.group.visible = false; group.add(ragdoll.group);

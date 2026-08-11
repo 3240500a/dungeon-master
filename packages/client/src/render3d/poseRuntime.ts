@@ -388,6 +388,13 @@ export function loadMatch(charId: string, fallbackId?: string): number {
   const cfg = readJSON<Record<string, { match?: number }>>('pe_phys', {});
   return cfg[charId]?.match ?? (fallbackId ? cfg[fallbackId]?.match : undefined) ?? DEFAULT_MATCH;
 }
+/** Подъём стопы (юниты) per-char из pe_phys.footLift; фолбэк (монстры → gaitFallback). 0 = процедурная стопа на полу.
+ *  Ставится на solid/target куклы → measureStancePlants (standY) и footIk.groundFeet поднимают цель заземления, чтобы
+ *  ПОДОШВА МЕША атласа (лодыжка выше FOOT_Y) легла на пол. Редактор пишет тем же ключом → редактор ≡ игра. */
+export function loadFootLift(charId: string, fallbackId?: string): number {
+  const cfg = readJSON<Record<string, { footLift?: number }>>('pe_phys', {});
+  return cfg[charId]?.footLift ?? (fallbackId ? cfg[fallbackId]?.footLift : undefined) ?? 0;
+}
 /** Профиль скрутки корпуса per-char из pe_twist (мерж поверх дефолта); фолбэк (монстры → Волкодав). */
 export function loadTwist(charId: string, fallbackId?: string): TwistProfile {
   const cfg = readJSON<Record<string, Partial<TwistProfile>>>('pe_twist', {});
@@ -447,9 +454,10 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   const h = hips.getWorldPosition(_ms0);
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
   const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);   // yaw 0 → world X = body-lateral, world Z = forward
-  // Базовая высота таза = такая, чтобы стопы idle-стойки стояли на полу (FOOT_Y). Таз позировали на 30 → падение стоп
-  // = 30 − footY; высота таза = FOOT_Y + падение. Это база гейта → бег/подшаг не поднимают таз выше стойки (нет подскока).
-  const standY = FOOT_Y + (h.y - (fl.y + fr.y) / 2);
+  // Базовая высота таза = такая, чтобы стопы idle-стойки стояли на полу (FOOT_Y + footLift). Таз позировали на 30 → падение
+  // стоп = 30 − footY; высота таза = цель_стопы + падение. footLift поднимает цель, чтобы ПОДОШВА МЕША атласа (лодыжка выше
+  // FOOT_Y) легла на пол, а не тонула. Это база гейта → бег/подшаг не поднимают таз выше стойки (нет подскока).
+  const standY = (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
   return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
 }
 

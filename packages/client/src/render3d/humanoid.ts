@@ -67,6 +67,10 @@ export interface Humanoid {
    *  доворачивают оба сустава → нога вертикальна В ЛЮБОМ сгибе (один hip-доворот не хватает при согнутом колене). 0 у процедурных. */
   legAdduct: number;
   legAdductKnee: number;
+  /** Подъём стопы (юниты): смещение цели заземления/стойки вверх, чтобы ПОДОШВА МЕША (не кость-лодыжка) легла на пол.
+   *  У атласа лодыжка выше процедурной (FOOT_Y=1.5) → без подъёма стопы меша тонут. Per-персонаж из pe_phys.footLift;
+   *  читают measureStancePlants (standY) и footIk.groundFeet (цель = пол + SOLE + footLift) → редактор ≡ игра. 0 у процедурных. */
+  footLift: number;
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -227,7 +231,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   }
 
   return {
-    root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee,
+    root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0,
     readPose() {
       const out: Record<string, [number, number, number]> = {};
       for (const [nm, g] of bones) { const e = g.rotation; out[nm] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }

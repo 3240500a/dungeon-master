@@ -17,12 +17,15 @@ const IK_LEGS = [{ u: 'LeftUpperLeg', l: 'LeftLowerLeg', f: 'LeftFoot' }, { u: '
 const _DOWN = new THREE.Vector3(0, -1, 0), _UP = new THREE.Vector3(0, 1, 0);
 const _iH = new THREE.Vector3(), _iT = new THREE.Vector3(), _iK = new THREE.Vector3(), _iDir = new THREE.Vector3();
 const _iThigh = new THREE.Vector3(), _iShin = new THREE.Vector3(), _iBend = new THREE.Vector3(), _iPole = new THREE.Vector3(), _iFoot = new THREE.Vector3();
-const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion(), _iFace = new THREE.Quaternion();
+const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion(), _iFace = new THREE.Quaternion(), _iAxis = new THREE.Vector3();
 
-/** Прицелить кость так, чтобы её локальная ось −Y (ось конечности в риге) смотрела в мировое направление dir. */
-function aimBoneDown(bone: THREE.Object3D, dir: THREE.Vector3): void {
+/** Прицелить кость так, чтобы её ось СЕГМЕНТА (направление на ребёнка = смещение child в лок.системе кости) смотрела в
+ *  мировое `dir`. У процедурного скелета ось = −Y (backward-compat), у splay-ног атласа (boneOffsets) — наклонена, поэтому
+ *  прицеливание фикс. −Y расклинивало ноги при заземлении; ось из ребёнка чинит это. child=null → фолбэк −Y. */
+function aimBone(bone: THREE.Object3D, child: THREE.Object3D | null, dir: THREE.Vector3): void {
+  _iAxis.copy(child ? child.position : _DOWN); if (_iAxis.lengthSq() < 1e-9) _iAxis.copy(_DOWN); else _iAxis.normalize();
   bone.parent!.getWorldQuaternion(_ipq);
-  _iwq.setFromUnitVectors(_DOWN, dir);                 // мировой поворот: −Y → dir
+  _iwq.setFromUnitVectors(_iAxis, dir);                // мировой поворот: ось сегмента → dir
   bone.quaternion.copy(_ipq).invert().multiply(_iwq);  // локальный = parent⁻¹ · мировой
 }
 
@@ -38,10 +41,10 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
   _iBend.crossVectors(_iDir, pole);
   if (_iBend.lengthSq() < 1e-6) _iBend.set(1, 0, 0); else _iBend.normalize();
   _iThigh.copy(_iDir).applyAxisAngle(_iBend, a);       // бедро: линия к цели, отклонённая на a → колено вперёд
-  aimBoneDown(upper, _iThigh); upper.updateMatrixWorld(true);
+  aimBone(upper, lower, _iThigh); upper.updateMatrixWorld(true);   // ось = бедро→колено (у splay-ног не −Y)
   _iK.copy(_iH).addScaledVector(_iThigh, IK_THIGH);    // колено в мире
   _iShin.subVectors(targetWorld, _iK).normalize();
-  aimBoneDown(lower, _iShin); lower.updateMatrixWorld(true);
+  aimBone(lower, foot, _iShin); lower.updateMatrixWorld(true);     // ось = колено→лодыжка
   lower.getWorldQuaternion(_ipq);                      // выровнять СТОПУ: мир-ориентация = faceQuat (плоско, носок по телу)
   foot.quaternion.copy(_ipq).invert().multiply(faceQuat);
   foot.updateMatrixWorld(true);
@@ -56,6 +59,7 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
  */
 export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery, support?: [boolean, boolean]): void {
   const hips = mesh.bones.get('Hips'); if (!hips) return;
+  const sole = SOLE + (mesh.footLift ?? 0);   // подъём цели: кость-лодыжка выше на footLift → ПОДОШВА МЕША атласа на полу (не тонет)
   hips.getWorldQuaternion(_ipq); _iPole.set(0, 0, 1).applyQuaternion(_ipq); _iPole.y = 0;   // фронт тела = pole колена
   if (_iPole.lengthSq() < 1e-6) _iPole.set(0, 0, 1); else _iPole.normalize();
   _iFace.setFromAxisAngle(_UP, Math.atan2(_iPole.x, _iPole.z));   // рыск тела (плоско): стопа лежит и носок по фейсингу
@@ -63,7 +67,7 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
   for (let i = 0; i < IK_LEGS.length; i++) {
     const fb = mesh.bones.get(IK_LEGS[i]!.f); if (!fb) { tgt.push(NaN); sup.push(false); continue; }
     fb.getWorldPosition(_iFoot);
-    const ty = gnd(_iFoot.x, _iFoot.z) + SOLE; tgt.push(ty);
+    const ty = gnd(_iFoot.x, _iFoot.z) + sole; tgt.push(ty);
     const isSup = support ? support[i]! : (_iFoot.y - ty < PLANT_MAX);   // опора из позы (маховую не заземляем); фолбэк — по высоте
     sup.push(isSup);
     if (isSup) worst = Math.max(worst, ty - _iFoot.y);

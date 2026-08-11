@@ -414,7 +414,8 @@ addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLow
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
 const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов (фолбэк для кадров без __pinKp)
 let physMatchBase = DEFAULT_MATCH;   // база match персонажа (pe_phys) — фолбэк для кадров БЕЗ __match (и для покоя/бега в игре); дефолт = игровой (DEFAULT_MATCH)
-function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; physMatchBase = c[id]?.match ?? DEFAULT_MATCH; } catch { physMatchBase = DEFAULT_MATCH; } PHYS.match = physMatchBase; PHYS.pinKp = DEF_PINKP; }
+let physFootLift = 0;   // подъём стопы персонажа (pe_phys.footLift) — ставится на human/ghostHuml после сборки; standY+заземление подошвы меша на пол
+function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number; footLift?: number }>; physMatchBase = c[id]?.match ?? DEFAULT_MATCH; physFootLift = c[id]?.footLift ?? 0; } catch { physMatchBase = DEFAULT_MATCH; physFootLift = 0; } PHYS.match = physMatchBase; PHYS.pinKp = DEF_PINKP; }
 // per-кадр физ-настройки match/pinKp хранятся в позе кадра (__match/__pinKp = [v,0,0]); интерполируются как обычные ключи позы.
 // applyFramePhys: поза кадра → PHYS (для превью-физики и ползунков). Нет ключа → база персонажа / дефолт.
 function applyFramePhys(p: Pose): void { PHYS.match = p['__match'] ? p['__match']![0] : physMatchBase; PHYS.pinKp = p['__pinKp'] ? p['__pinKp']![0] : DEF_PINKP; }
@@ -425,6 +426,14 @@ function writeFramePhys(): void {
   for (const k of c.keys) { if (!k.pose['__match']) k.pose['__match'] = [+physMatchBase.toFixed(3), 0, 0]; if (!k.pose['__pinKp']) k.pose['__pinKp'] = [DEF_PINKP, 0, 0]; }
   kk.pose['__match'] = [+PHYS.match.toFixed(3), 0, 0]; kk.pose['__pinKp'] = [Math.round(PHYS.pinKp), 0, 0];
   saveLib();
+}
+// Подъём стопы per-персонаж → pe_phys[char].footLift (та же секция, что RB2-match; читает игра loadFootLift → редактор ≡ игра).
+function saveFootLift(): void {
+  try {
+    const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number; footLift?: number }>;
+    (c[curCharId] ??= {}).footLift = +physFootLift.toFixed(3);
+    localStorage.setItem('pe_phys', JSON.stringify(c)); savePoseKey('pe_phys');
+  } catch { /* офлайн — норм */ }
 }
 // ── Вес подмешивания ЩИТА per-(персонаж, оружие) (pe_shield): поза щита наслаивается на позу оружия с этим весом. ──
 // Хранилище: { [char]: { mix?: базовый; perWeapon?: {[weaponKey]: number} } }. Старый {char:{mix}} читается как база-фолбэк.
@@ -455,6 +464,7 @@ function applyChar(id: string): void {
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
   human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile() }); curHumanStyle = manStyle();
+  human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
@@ -471,6 +481,7 @@ function rebuildManikin(): void {
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
   human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile() }); curHumanStyle = manStyle();
+  human.footLift = physFootLift;                              // подъём стопы сохраняется при пересборке стиля манекена
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
@@ -575,6 +586,20 @@ function poseTools(): void {
   };
   phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('★ пин · жёсткость (кадр)', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
   phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
+  // Подъём стопы (per-персонаж, pe_phys.footLift): поднимает цель стойки (standY) и заземления → ПОДОШВА МЕША атласа на полу
+  // (лодыжка атласа выше процедурной FOOT_Y=1.5, без подъёма тонет). Держится после бега (это база персонажа, не поза-кадр).
+  {
+    const row = el('label', 'display:flex;align-items:center;gap:6px'); row.innerHTML = `<span style="flex:1">подъём стопы (заземл.)</span>`;
+    const s = el('input', 'width:100px') as HTMLInputElement; s.type = 'range'; s.min = '0'; s.max = '8'; s.step = '0.25'; s.value = String(physFootLift);
+    const v = el('span', 'width:44px;text-align:right;color:#9ae6a0'); v.textContent = physFootLift.toFixed(2);
+    s.oninput = () => {
+      physFootLift = parseFloat(s.value); v.textContent = physFootLift.toFixed(2);
+      human.footLift = physFootLift; if (ghostHuman) ghostHuman.footLift = physFootLift;
+      stanceMeasuredFor = '';   // пере-замерить standY под новый подъём (стойка держит высоту)
+      saveFootLift(); renderAnim();
+    };
+    row.append(s, v); body.append(row);
+  }
   // ── ЛИМИТЫ/МОТОРЫ суставов (RB3): множитель конусов/диапазонов + сила моторов. Применяется ПЕРЕСБОРКОЙ куклы на отпускание. ──
   const rgh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rgh.textContent = 'ЛИМИТЫ/МОТОРЫ (пересборка)'; body.append(rgh);
   const ragRow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
@@ -1392,6 +1417,7 @@ function buildGhost(): void {
   // Физ-тело = ОСНОВНОЙ рендер как `solid` в игре (единый путь редактор↔игра): те же цвета (body/limb дефолты buildHumanoid),
   // НЕПРОЗРАЧНОЕ. Скелет-манекен (октаэдры) рисуется поверх (manikinOnTop, depthTest off) — кликается для позинга.
   ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), body: 0x8a93ad, limb: 0x6f7690, profile: atlasProfile() });
+  ghostHuman.footLift = physFootLift;                           // подъём стопы: заземление физ-тела на пол (footIk.groundFeet)
   ghostHuman.meshes.forEach((m) => { m.castShadow = true; });   // тени как у игрового solid
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
 }
