@@ -142,11 +142,16 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   // модели 1:1 (направление+длина; чинит «раскоряку» — узкий-вниз хип ФБХ, а не широкий как у boneScale-скаляра).
   // Нет офсета кости → фолбэк base × boneScale-скаляр. Профиль (lenMult) — морф поверх. Таз — высота (заземление).
   const bsc = opts.boneScale, bo = opts.boneOffsets;
+  // Осевая цепь (позвоночник→шея→голова) ВЫПРЯМЛЯЕТСЯ: forward-Z офсета обнуляется. Иначе ФБХ-бинд с наклоном головы
+  // вперёд (forward-head: Neck→Head z≈2.4 над высотой 4.63 ≈ 27°, шеи нет отдельным суставом → один диагональный
+  // октаэдр) читается как ГОРБ. Обнуление ставит голову над плечами/тазом — прямая стойка, как бинд в 3ds Max.
+  // Руки/кисти/стопы/носки СВОЙ Z сохраняют (согнутая кисть, носок вперёд — норма геометрии).
+  const AXIAL = new Set(['Spine', 'Chest', 'UpperChest', 'Neck', 'Head']);
   const posOf = (b: HBone): [number, number, number] => {
     const off = bo?.[b.name];
     if (b.name === 'Hips') { const hy = off ? (off[1] ?? 0) * (prof?.leg ?? 1) * (prof?.height ?? 1) : pelvisHeight(prof, bsc); return [b.pos[0], hy, b.pos[2]]; }
     const region = lenMult(b.name, prof);
-    if (off) return [(off[0] ?? 0) * region, (off[1] ?? 0) * region, (off[2] ?? 0) * region];   // ФБХ-офсет × профиль-морф
+    if (off) { const oz = AXIAL.has(b.name) ? 0 : (off[2] ?? 0); return [(off[0] ?? 0) * region, (off[1] ?? 0) * region, oz * region]; }   // ФБХ-офсет × профиль-морф (ось выпрямлена)
     const m = region * boneScaleOf(b.name, bsc);
     return [b.pos[0] * m, b.pos[1] * m, b.pos[2] * m];
   };
