@@ -34,6 +34,7 @@ export interface ModelsTabHandle {
   importUrl(url: string): Promise<void>;    // импорт атласа по URL (тесты/дебаг — то же, что кнопка «Импорт из URL»)
   boneScale(): BoneScale | undefined;       // пер-костные пропорции текущего атласа → редактор строит манекен/призрак ими (совпадение с мешем)
   boneOffsets(): Record<string, number[]> | undefined;   // ПОЛНЫЕ rest-офсеты ФБХ текущего атласа (приоритет; геометрия 1:1)
+  profile(): BodyProfile | undefined;       // профиль тела (модульные пропорции) — редактор/игра строят тело им (единый opts)
   debug(): Record<string, unknown>;         // состояние (тесты/дебаг): атлас, сабмеши, видимость слотов, профиль
   dispose(): void;
 }
@@ -407,6 +408,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     importUrl: (url) => importAtlas(() => loadModelUrl(url), url.split('/').pop() ?? 'character'),   // тест/дебаг: импорт атласа
     boneScale: () => curAtlas()?.boneScale,   // пропорции ФБХ текущего атласа для манекена/призрака редактора
     boneOffsets: () => curAtlas()?.boneOffsets,   // полные rest-офсеты ФБХ для манекена/призрака (приоритет)
+    profile: () => curAtlas()?.body,          // профиль тела атласа (как игра: solid/target с profile) → редактор строит тело им
 
     debug: () => ({
       status: asmStatus, atlas: asmAtlas ? { id: asmAtlas.id, url: asmAtlas.url, slots: asmAtlas.slots } : null,

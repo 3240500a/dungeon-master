@@ -8,13 +8,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
-import type { BoneScale } from './bodyProfile.js';
+import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, jointLimitView, canonOfHuman, jointOv, JOINT_DEF, RAG_OF_HUMAN, type LimitView } from './humanoidRagdoll.js';
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, TWIST_DEFAULT, type TwistProfile, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, TWIST_DEFAULT, DEFAULT_MATCH, type TwistProfile, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -413,8 +413,8 @@ addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLow
 
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
 const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов (фолбэк для кадров без __pinKp)
-let physMatchBase = 0;          // база match персонажа (pe_phys) — фолбэк для кадров БЕЗ __match (и для покоя/бега в игре)
-function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; physMatchBase = c[id]?.match ?? 0; } catch { physMatchBase = 0; } PHYS.match = physMatchBase; PHYS.pinKp = DEF_PINKP; }
+let physMatchBase = DEFAULT_MATCH;   // база match персонажа (pe_phys) — фолбэк для кадров БЕЗ __match (и для покоя/бега в игре); дефолт = игровой (DEFAULT_MATCH)
+function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number }>; physMatchBase = c[id]?.match ?? DEFAULT_MATCH; } catch { physMatchBase = DEFAULT_MATCH; } PHYS.match = physMatchBase; PHYS.pinKp = DEF_PINKP; }
 // per-кадр физ-настройки match/pinKp хранятся в позе кадра (__match/__pinKp = [v,0,0]); интерполируются как обычные ключи позы.
 // applyFramePhys: поза кадра → PHYS (для превью-физики и ползунков). Нет ключа → база персонажа / дефолт.
 function applyFramePhys(p: Pose): void { PHYS.match = p['__match'] ? p['__match']![0] : physMatchBase; PHYS.pinKp = p['__pinKp'] ? p['__pinKp']![0] : DEF_PINKP; }
@@ -440,6 +440,7 @@ function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.strin
  *  совпадают с мешем 1:1. Нет атласа → undefined (база, как раньше; классы/монстры без атласа не трогаем). */
 function atlasBS(): BoneScale | undefined { return modelsTab.boneScale(); }
 function atlasOff(): Record<string, number[]> | undefined { return modelsTab.boneOffsets(); }   // полные rest-офсеты ФБХ (приоритет над boneScale)
+function atlasProfile(): BodyProfile | undefined { return modelsTab.profile(); }   // профиль тела (модульные пропорции) — как игра строит solid/target; редактор строит манекен/призрак им (P3: opts 1:1)
 /** Скелет-манекен ПОВЕРХ импортного меша (depthTest off) — виден и кликается сквозь модель. Только для skeleton-стиля. */
 function manikinOnTop(): void {
   if (curHumanStyle !== 'skeleton') return;
@@ -453,7 +454,7 @@ function applyChar(id: string): void {
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile() }); curHumanStyle = manStyle();
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
@@ -469,7 +470,7 @@ function rebuildManikin(): void {
   const c = curChar(); const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile() }); curHumanStyle = manStyle();
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
@@ -1388,8 +1389,10 @@ let ghostHuman: Humanoid | null = null;   // физ-призрак — ТАКО�
 function buildGhost(): void {
   if (ghostHuman) { scene.remove(ghostHuman.root); ghostHuman.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   const c = curChar();
-  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), limb: 0x8fb0d8, body: 0x7fa0c8, head: 0xafc8e8 });   // нейтральный серо-голубой силуэт «мяса»
-  for (const m of ghostHuman.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; }
+  // Физ-тело = ОСНОВНОЙ рендер как `solid` в игре (единый путь редактор↔игра): те же цвета (body/limb дефолты buildHumanoid),
+  // НЕПРОЗРАЧНОЕ. Скелет-манекен (октаэдры) рисуется поверх (manikinOnTop, depthTest off) — кликается для позинга.
+  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), body: 0x8a93ad, limb: 0x6f7690, profile: atlasProfile() });
+  ghostHuman.meshes.forEach((m) => { m.castShadow = true; });   // тени как у игрового solid
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
 }
 function setPhysVis(on: boolean): void { if (ghostHuman) ghostHuman.root.visible = on; }

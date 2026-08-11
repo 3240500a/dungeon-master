@@ -379,14 +379,14 @@ export function loadGaitLocal(charId: string, gx: GXKnobs, fallbackId?: string):
   if (c?.gx) Object.assign(gx, c.gx);
   return loadPlantGrid(c?.plant);
 }
-/** Вес совпадения РЕНДЕРА с манекеном (RB2, 0..1) per-char из pe_phys; фолбэк (монстры → Волкодав). Для ИГРЫ.
- *  Дефолт 0.85 (не 0): без тюна игрок рисовался ЧИСТОЙ физикой — быстрый бег моторы не догоняют + реконструкция
- *  21-кости из 15-тел укорачивает ноги (стопы вниз/ломаются, проваливаются под пол). В редакторе ноги ок, т.к. там
- *  рисуется аналитический манекен напрямую. Высокий match → рендер ведёт та же аналит-поза (стопы на полу), физика —
- *  лёгкий оверлей + удары (ATK_MATCH) + смерть (отдельная ветка). Пер-персонажный тюн (RB2) перекрывает. */
+/** Дефолт веса совпадения рендера с манекеном (RB2). ЕДИНЫЙ для игры (loadMatch) и редактора (loadPhys) → редактор =
+ *  игра при нетюненом персонаже. 0.85 (не 0): без тюна рендер вёлся ЧИСТОЙ физикой — быстрый бег моторы не догоняют +
+ *  реконструкция 21-кости из 15-тел укорачивает ноги (стопы вниз/провал). Высокий match → рендер ведёт аналит-поза. */
+export const DEFAULT_MATCH = 0.85;
+/** Вес совпадения РЕНДЕРА с манекеном (RB2, 0..1) per-char из pe_phys; фолбэк (монстры → Волкодав). Для ИГРЫ. */
 export function loadMatch(charId: string, fallbackId?: string): number {
   const cfg = readJSON<Record<string, { match?: number }>>('pe_phys', {});
-  return cfg[charId]?.match ?? (fallbackId ? cfg[fallbackId]?.match : undefined) ?? 0.85;
+  return cfg[charId]?.match ?? (fallbackId ? cfg[fallbackId]?.match : undefined) ?? DEFAULT_MATCH;
 }
 /** Профиль скрутки корпуса per-char из pe_twist (мерж поверх дефолта); фолбэк (монстры → Волкодав). */
 export function loadTwist(charId: string, fallbackId?: string): TwistProfile {
