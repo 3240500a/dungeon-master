@@ -1543,7 +1543,9 @@ function loop(): void {
   // Атлас загрузился/сменился → пересобрать манекен/призрак/онион под пропорции ФБХ (boneScale), чтобы скелет
   // совпадал с мешем. Сравнение по ссылке (меняется только на импорте/загрузке конфига — редко).
   { const bs = modelsTab.boneScale(); if (bs !== lastBS) { lastBS = bs; rebuildManikin(); if (pw) buildGhost(); disposeOnion(); } }
-  modelsTab.drive(human);   // «Модели»: импортный скелет ведётся нашей позой (live-ретаргет)
+  // Атлас-скин ведём ФИЗ-телом (ghostHuman) — как игра (скин на solid) → превью атласа = игра. Физ off → манекеном.
+  // ghostHuman позирован stepPhysics выше (физ-бленд по PHYS.match), у него та же геометрия атласа (buildGhost).
+  modelsTab.drive(physOn && ghostHuman ? ghostHuman : human);   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена
   const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
   human.root.visible = !hideMan;
   // Загружен атлас → «только скелет + модель»: прячем ЛИШНИЕ процедурные тела (физ-призрак, онион). Меш = визуал тела.
