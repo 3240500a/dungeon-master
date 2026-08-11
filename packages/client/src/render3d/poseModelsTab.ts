@@ -389,9 +389,12 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   // Конфиг загружен → подтянуть сохранённый профиль тела в слайдеры и пересобрать превью (превью = игра).
   void fetchCfg().then(() => { syncProfileFromAtlas(); if (asmSrc) rebuildAsm(); renderBody(); });
 
-  // Сборка: копируем ПОЗУ (повороты) манекена editor'а в источник-риг сборки (таз держим на своей высоте профиля), ведём скин.
+  // Сборка: копируем ПОЗУ манекена editor'а в источник-риг сборки → меш СОВПАДАЕТ с манекеном. Корень (таз) ведём за
+  // манекеном (position тоже, не только rotation) — иначе меш стоит в origin, а манекен уезжает при IK-перетаскивании
+  // таза → тело «не движется за тазом» + оружие (на кисти манекена) висит мимо меша. Совпадение = обе проблемы решены.
   function driveAsm(source: Humanoid): void {
     if (!asmOn || !asmSrc || !asmSkin) return;
+    asmSrc.root.position.copy(source.root.position);   // таз/корень: меш едет за манекеном (IK-таз, ходьба)
     for (const nm of asmSrc.boneNames) { const sb = source.bones.get(nm); const tb = asmSrc.bones.get(nm); if (sb && tb) tb.rotation.copy(sb.rotation); }
     asmSrc.root.updateMatrixWorld(true);
     asmSkin.update();

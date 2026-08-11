@@ -87,7 +87,10 @@ let weaponGroups: THREE.Group[] = [];
 function updateWeapon(): void {
   if (weaponGroups.some((g) => gizmo.object === g)) gizmo.detach();   // не держать гизмо на удаляемом оружии
   for (const g of weaponGroups) { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-  weaponGroups = attachWeapons(ghostHuman ?? human, weapon);          // оружие — на ФИЗ-теле (как в игре на solid); до физики fallback на манекен
+  // Атлас-режим: физ-призрак СКРЫТ (виден меш), поэтому оружие на нём было бы невидимо → крепим к манекену (меш с ним
+  // совпадает, driveAsm ведёт корень) → оружие ложится на кисть меша. Иначе (без атласа) — на физ-призрак, как в игре.
+  const wpnHost = atlasBS() ? human : (ghostHuman ?? human);
+  weaponGroups = attachWeapons(wpnHost, weapon);                       // оружие — на ФИЗ-теле (как в игре на solid); атлас/до физики — на манекен
   lgripMark = null;                                                   // маркер хвата был ребёнком старого груп — пересоздастся из позы
 }
 
