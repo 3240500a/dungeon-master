@@ -140,7 +140,14 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
       loaded.updateMatrixWorld(true);
       const impLen = cb.getWorldPosition(a).distanceTo(pb.getWorldPosition(b));
       const srcLen = sc2.getWorldPosition(a).distanceTo(sp.getWorldPosition(b));
-      if (impLen > 1e-3 && srcLen > 1e-3) cb.position.multiplyScalar(srcLen / impLen);
+      if (impLen > 1e-3 && srcLen > 1e-3) {
+        // Масштабируем ВЕСЬ под-сегмент cb..pb, включая ПРОМЕЖУТОЧНЫЕ кости ФБХ (Waist между Hip↔Spine01,
+        // NeckTwist02 между NeckTwist01↔Head и т.п.). Раньше масштабировали только cb → промежуточные оставались
+        // родной длины → остаток ~3u по спине/голове. Идём вверх cb→pb (не включая pb), максимум 8 шагов (страховка).
+        const ratio = srcLen / impLen;
+        let node: THREE.Object3D | null = cb;
+        for (let step = 0; node && node !== pb && step < 8; step++) { node.position.multiplyScalar(ratio); node = node.parent; }
+      }
     }
     loaded.updateMatrixWorld(true);
   }

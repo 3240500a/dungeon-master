@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
+import type { BoneScale } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, jointLimitView, canonOfHuman, jointOv, JOINT_DEF, RAG_OF_HUMAN, type LimitView } from './humanoidRagdoll.js';
 import { makeLimitGizmo } from './poseLimitGizmo.js';
@@ -415,6 +416,9 @@ function setShieldMix(wk: string, v: number): void { const c = (shieldCfgAll[cur
 function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.stringify(shieldCfgAll)); savePoseKey('pe_shield'); } catch { /* */ } }
 
 // ── Персонаж: пересборка ──
+/** Пер-костные пропорции загруженного атласа (ФБХ). Редакторные скелеты (манекен/призрак/онион) СТРОЯТСЯ ими →
+ *  совпадают с мешем 1:1. Нет атласа → undefined (база, как раньше; классы/монстры без атласа не трогаем). */
+function atlasBS(): BoneScale | undefined { return modelsTab.boneScale(); }
 function applyChar(id: string): void {
   curCharId = id; const c = curChar(); weapon = c.weapon;
   loadPhys(id);                                               // физ-настройки (match) этого персонажа
@@ -423,7 +427,7 @@ function applyChar(id: string): void {
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS() }); curHumanStyle = manStyle();
   scene.add(human.root); human.root.visible = manView !== 'hidden';
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
@@ -439,7 +443,7 @@ function rebuildManikin(): void {
   const c = curChar(); const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS() }); curHumanStyle = manStyle();
   scene.add(human.root); human.root.visible = manView !== 'hidden';
   applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
@@ -492,6 +496,7 @@ const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => {
 for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => { tab = k; refreshAll(); }; b.dataset.tab = k; tabBar.append(b); }
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
 const modelsTab = createModelsTab(scene);
+let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
 
 function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateLimitGizmo(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
@@ -1354,7 +1359,7 @@ let ghostHuman: Humanoid | null = null;   // физ-призрак — ТАКО�
 function buildGhost(): void {
   if (ghostHuman) { scene.remove(ghostHuman.root); ghostHuman.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   const c = curChar();
-  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, limb: 0x8fb0d8, body: 0x7fa0c8, head: 0xafc8e8 });   // нейтральный серо-голубой силуэт «мяса»
+  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), limb: 0x8fb0d8, body: 0x7fa0c8, head: 0xafc8e8 });   // нейтральный серо-голубой силуэт «мяса»
   for (const m of ghostHuman.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; }
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
 }
@@ -1363,7 +1368,7 @@ function setPhysVis(on: boolean): void { if (ghostHuman) ghostHuman.root.visible
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
 function mkOnion(tint: number): Humanoid {
   const c = curChar();
-  const h = buildHumanoid({ gender: c.gender, build: c.build, limb: tint, body: tint, head: tint });
+  const h = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), limb: tint, body: tint, head: tint });
   for (const m of h.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25; }
   scene.add(h.root); h.root.visible = false; return h;
 }
@@ -1502,6 +1507,9 @@ function loop(): void {
   scrollFloor();   // тредмилл-пол под бегущим (тянется по gaitPx/gaitPz)
   stepPhysics(dt);
   jiggle(dt);   // вторичное движение груди (female)
+  // Атлас загрузился/сменился → пересобрать манекен/призрак/онион под пропорции ФБХ (boneScale), чтобы скелет
+  // совпадал с мешем. Сравнение по ссылке (меняется только на импорте/загрузке конфига — редко).
+  { const bs = modelsTab.boneScale(); if (bs !== lastBS) { lastBS = bs; rebuildManikin(); if (pw) buildGhost(); disposeOnion(); } }
   modelsTab.drive(human);   // «Модели»: импортный скелет ведётся нашей позой (live-ретаргет)
   const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
   human.root.visible = !hideMan;

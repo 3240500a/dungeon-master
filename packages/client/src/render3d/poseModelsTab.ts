@@ -31,6 +31,7 @@ export interface ModelsTabHandle {
   drive(source: Humanoid): void;           // per-кадр из loop(): наша поза ведёт импортный скелет
   hideMannequin(): boolean;                 // прятать ли манекен/призрак (чтобы виден был импорт)
   importUrl(url: string): Promise<void>;    // импорт атласа по URL (тесты/дебаг — то же, что кнопка «Импорт из URL»)
+  boneScale(): BoneScale | undefined;       // пер-костные пропорции текущего атласа → редактор строит манекен/призрак ими (совпадение с мешем)
   debug(): Record<string, unknown>;         // состояние (тесты/дебаг): атлас, сабмеши, видимость слотов, профиль
   dispose(): void;
 }
@@ -397,6 +398,8 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     drive(source) { driveAsm(source); },
     hideMannequin: () => true,   // конструктор — единственный экран → манекен editor'а всегда скрыт (виден собранный персонаж)
     importUrl: (url) => importAtlas(() => loadModelUrl(url), url.split('/').pop() ?? 'character'),   // тест/дебаг: импорт атласа
+    boneScale: () => curAtlas()?.boneScale,   // пропорции ФБХ текущего атласа для манекена/призрака редактора
+
     debug: () => ({
       status: asmStatus, atlas: asmAtlas ? { id: asmAtlas.id, url: asmAtlas.url, slots: asmAtlas.slots } : null,
       asmMeshes, asmVisible: { ...asmVisible }, asmProfile: { ...asmProfile }, asmSkinCount: asmSkin ? asmSkin.count() : 0,
