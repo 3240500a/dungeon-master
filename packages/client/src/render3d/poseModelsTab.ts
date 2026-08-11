@@ -396,7 +396,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   return {
     render,
     drive(source) { driveAsm(source); },
-    hideMannequin: () => true,   // конструктор — единственный экран → манекен editor'а всегда скрыт (виден собранный персонаж)
+    hideMannequin: () => false,   // показываем И скелет-манекен, И меш (позинг импортного персонажа: кости поверх модели)
     importUrl: (url) => importAtlas(() => loadModelUrl(url), url.split('/').pop() ?? 'character'),   // тест/дебаг: импорт атласа
     boneScale: () => curAtlas()?.boneScale,   // пропорции ФБХ текущего атласа для манекена/призрака редактора
 

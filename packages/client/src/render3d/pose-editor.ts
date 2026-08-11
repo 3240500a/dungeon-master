@@ -419,6 +419,11 @@ function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.strin
 /** Пер-костные пропорции загруженного атласа (ФБХ). Редакторные скелеты (манекен/призрак/онион) СТРОЯТСЯ ими →
  *  совпадают с мешем 1:1. Нет атласа → undefined (база, как раньше; классы/монстры без атласа не трогаем). */
 function atlasBS(): BoneScale | undefined { return modelsTab.boneScale(); }
+/** Скелет-манекен ПОВЕРХ импортного меша (depthTest off) — виден и кликается сквозь модель. Только для skeleton-стиля. */
+function manikinOnTop(): void {
+  if (curHumanStyle !== 'skeleton') return;
+  for (const m of human.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.depthTest = false; m.renderOrder = 998; }
+}
 function applyChar(id: string): void {
   curCharId = id; const c = curChar(); weapon = c.weapon;
   loadPhys(id);                                               // физ-настройки (match) этого персонажа
@@ -428,7 +433,7 @@ function applyChar(id: string): void {
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
   human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS() }); curHumanStyle = manStyle();
-  scene.add(human.root); human.root.visible = manView !== 'hidden';
+  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
   disposeOnion();                                             // онион-призраки пересоберутся под новые пропорции
@@ -444,7 +449,7 @@ function rebuildManikin(): void {
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
   human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS() }); curHumanStyle = manStyle();
-  scene.add(human.root); human.root.visible = manView !== 'hidden';
+  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
 function setManView(): void {
@@ -1382,6 +1387,7 @@ function applyPoseTo(h: Humanoid, p: Pose): void {   // применить по�
   h.bones.get('Hips')!.position.copy(human.bones.get('Hips')!.position);
 }
 function updateOnion(): void {
+  if (atlasBS()) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; return; }   // атлас → только скелет+модель
   const c = onionOn && tab === 'anim' ? curClip() : null;
   if (!c || c.keys.length < 2) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; return; }
   if (!onionPrev) { onionPrev = mkOnion(0x4a8cff); onionNext = mkOnion(0xff8c3a); }
@@ -1513,7 +1519,10 @@ function loop(): void {
   modelsTab.drive(human);   // «Модели»: импортный скелет ведётся нашей позой (live-ретаргет)
   const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
   human.root.visible = !hideMan;
-  if (ghostHuman) ghostHuman.root.visible = physOn && !hideMan;
+  // Загружен атлас → «только скелет + модель»: прячем ЛИШНИЕ процедурные тела (физ-призрак, онион). Меш = визуал тела.
+  const atlasOn = !!atlasBS();
+  if (ghostHuman) ghostHuman.root.visible = physOn && !hideMan && !atlasOn;
+  if (atlasOn) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; }
   orbit.update(); renderer.render(scene, camera); requestAnimationFrame(loop);
 }
 loop();
