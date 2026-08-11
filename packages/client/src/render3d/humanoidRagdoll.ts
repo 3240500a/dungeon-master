@@ -486,6 +486,8 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
 
 // ── ЕДИНЫЙ РЕНДЕР ФИЗ-ПРИЗРАКА (редактор + игра) ─────────────────────────────────────
 const _gq = new THREE.Quaternion(), _gqT = new THREE.Quaternion(), _geu = new THREE.Euler();
+// Кости ног МЕША — их ведём ровно позой (match=1), а не физ-блендом: рагдолл фикс-геометрии искажает ноги splay-меша (P4).
+const LEG_MESH = new Set(['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes']);
 
 /** Состояние заземления призрака — сглаженный вертикальный сдвиг корня. По одному на куклу/призрак. */
 export interface GhostGround { off: number }
@@ -518,7 +520,12 @@ export function renderRagdollGhost(
       const t = targetPose[nm]!; _geu.set(t[0], t[1], t[2]); _gqT.setFromEuler(_geu);   // цель (манекен)
       const baked = bp[nm];
       if (baked) { _geu.set(baked[0], baked[1], baked[2]); _gq.setFromEuler(_geu); } else _gq.copy(b.quaternion);   // физика (или покой у слитых костей)
-      b.quaternion.copy(_gq).slerp(_gqT, match);
+      // НОГИ — ровно по позе (match=1): физ-рагдолл строится ФИКС-геометрией (ноги вертикально x=±4), а меш — со своей
+      // (boneOffsets/приведение). readBakedPose даёт повороты относит. вертикального рест-рагдолла → на splay-меше ноги
+      // РАСШИРЯЮТСЯ и «плывут пропорции» при match<1. Пока рагдолл не пересобран под геометрию (P4) — ведём ноги позой
+      // (как в редакторе-манекене), верх тела — физ-бленд по match. Смерть/коллапс идут отдельной веткой (match=0, ниже).
+      const m = LEG_MESH.has(nm) ? 1 : match;
+      b.quaternion.copy(_gq).slerp(_gqT, m);
     }
   } else {
     for (const nm in bp) { const b = mesh.bones.get(nm); if (b) b.rotation.set(bp[nm]![0], bp[nm]![1], bp[nm]![2]); }
