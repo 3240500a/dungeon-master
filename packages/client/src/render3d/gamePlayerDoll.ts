@@ -17,7 +17,7 @@ import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPl
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
 import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel } from './modelSkin.js';
-import type { BodyProfile } from './bodyProfile.js';
+import type { BodyProfile, BoneScale } from './bodyProfile.js';
 
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
 const PELVIS_Y = 32;
@@ -37,6 +37,7 @@ export interface HumanoidDollOpts {
   scale?: number;                                    // масштаб меша (чемпионы крупнее); физика — в базовом размере
   gender?: 'male' | 'female'; build?: BuildScale;    // если не заданы и есть classId — из charFor
   profile?: BodyProfile;                             // модульные пропорции (рост/руки/ноги/торс/толщина); импорт-меш конформится
+  boneScale?: BoneScale;                             // пер-костные множители из ФБХ → наш физ-скелет 1:1 повторяет модель
 }
 
 export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): RagdollHandle {
@@ -60,15 +61,16 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const col = opts.colors ?? {};
 
   const profile = opts.profile;   // модульные пропорции: solid/target строятся с ним, импорт-скин конформится к solid
+  const boneScale = opts.boneScale;   // пер-костные множители из ФБХ → физ-скелет повторяет модель 1:1
   const group = new THREE.Group();
   // solid — ВИДИМЫЙ humanoid-меш, ведём результатом физики (как призрак в редакторе). Оружие на кистях.
-  const solid = buildHumanoid({ gender, build, body: col.body ?? 0x8a93ad, limb: col.limb ?? 0x6f7690, head: col.head, profile });
+  const solid = buildHumanoid({ gender, build, body: col.body ?? 0x8a93ad, limb: col.limb ?? 0x6f7690, head: col.head, profile, boneScale });
   if (opts.scale && opts.scale !== 1) solid.root.scale.setScalar(opts.scale);   // визуальный масштаб (физика базовая)
   solid.root.traverse((o) => { if (o instanceof THREE.Mesh) o.castShadow = true; });   // тени от факелов (вкл. по тумблеру) — актёр отбрасывает
   group.add(solid.root);
   let weaponGroups = attachWeapons(solid, weapon);
   // target — НЕВИДИМЫЙ манекен-источник позы: PosePlayer его позирует, с него кормим физику (цель + пины).
-  const target = buildHumanoid({ gender, build, profile });
+  const target = buildHumanoid({ gender, build, profile, boneScale });
   target.root.visible = false; group.add(target.root);
   // физ-рэгдолл — единый риг. Собственные полупрозрачные боксы не показываем (рисуем solid).
   const ragdoll = makeHumanoidRagdoll(pw);
@@ -259,7 +261,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 }
 
 /** Игрок — тонкая обёртка над единой куклой: внешность/оружие класса из CLASS_CHARS. */
-export interface GamePlayerOpts { classId: string; weapon: string; x: number; z: number; profile?: BodyProfile }
+export interface GamePlayerOpts { classId: string; weapon: string; x: number; z: number; profile?: BodyProfile; boneScale?: BoneScale }
 export function makeGamePlayerDoll(pw: PhysWorld, opts: GamePlayerOpts): RagdollHandle {
-  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, classId: opts.classId, profile: opts.profile, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
+  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, classId: opts.classId, profile: opts.profile, boneScale: opts.boneScale, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
 }

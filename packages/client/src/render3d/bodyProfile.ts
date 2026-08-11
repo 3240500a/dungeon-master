@@ -15,6 +15,15 @@ export interface BodyProfile {
 
 export const DEFAULT_PROFILE: Required<BodyProfile> = { height: 1, arm: 1, leg: 1, torso: 1, girth: 1 };
 
+/** Пер-костный множитель длины (наша кость → scale) — снимается с импорт-ФБХ (measureBoneScales), чтобы наш
+ *  процедурный скелет ПОВТОРЯЛ пропорции модели 1:1. Правая сторона берёт левый scale (симметрия). */
+export type BoneScale = Record<string, number>;
+/** scale кости с зеркалом L→R и дефолтом 1. */
+export function boneScaleOf(name: string, bs?: BoneScale): number {
+  if (!bs) return 1;
+  return bs[name] ?? bs[name.replace('Right', 'Left')] ?? 1;
+}
+
 /** Множитель ДЛИНЫ для офсета кости (сегмент, оканчивающийся этой костью). height множит ВСЁ (общий рост),
  *  arm/leg/torso — регион (пропорция). Всё печём в офсеты (не root.scale) — чтобы физ-рагдолл был в тех же размерах. */
 export function lenMult(boneName: string, p?: BodyProfile): number {
@@ -26,10 +35,12 @@ export function lenMult(boneName: string, p?: BodyProfile): number {
   return h;   // шея/голова/плечи/таз-офсеты/бёдра-офсет — общий рост
 }
 
-/** Высота таза в rest-T-позе для заземления стоп (нога = бедро15+голень14 + таз-офсет2). Держит стопы у пола при любых leg/height. */
-export function pelvisHeight(p?: BodyProfile): number {
+/** Высота таза в rest-T-позе для заземления стоп. Нога = таз-офсет(2) + бедро(15) + голень(14), каждое ×своим
+ *  пер-костным scale (пропорции ФБХ) × leg×height. При дефолте (scale=1, профиль=1) = 1+2+15+14 = 32 (PELVIS_Y базы). */
+export function pelvisHeight(p?: BodyProfile, bs?: BoneScale): number {
   const leg = (p?.leg ?? 1) * (p?.height ?? 1);
-  return 3 + 29 * leg;   // 3(зазор+таз-офсет) + (15+14)·leg·height; при 1 = 32 (= PELVIS_Y базы)
+  const up = boneScaleOf('LeftUpperLeg', bs), th = boneScaleOf('LeftLowerLeg', bs), sh = boneScaleOf('LeftFoot', bs);
+  return 1 + (2 * up + 15 * th + 14 * sh) * leg;   // клиренс 1 + (таз-офсет+бедро+голень)·scale·leg·height
 }
 
 /** Множитель ТОЛЩИНЫ (girth) поверх per-регионного build-масштаба. */

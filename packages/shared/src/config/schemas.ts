@@ -1678,6 +1678,8 @@ export const modelsSchema = z.array(z.object({
   slots: z.record(z.string(), z.string()).default({}),  // kind='character': имя сабмеша → слот (helm/head/chest/gloves/boots; '' = скрыт). Авто-классификация при импорте, правится.
   // kind='character': модульные пропорции тела (слайдеры конструктора). Игра строит solid/target с ним, атлас конформится.
   body: z.object({ height: z.number(), arm: z.number(), leg: z.number(), torso: z.number(), girth: z.number() }).partial().optional(),
+  // kind='character': пер-костные множители длины, снятые с ФБХ (measureBoneScales) → наш физ-скелет 1:1 повторяет модель.
+  boneScale: z.record(z.string(), z.number()).optional(),
   base: z.boolean().default(false),                     // базовый меш слота (нет надетого / нет modelId → показываем его)
   hideHair: z.boolean().default(false),                 // шлем скрывает базовые волосы (корона/тиара — false)
   scale: z.number().default(1),                         // нормализация размера (наш TILE=32u=1м)

@@ -94,6 +94,31 @@ export interface RetargetRig {
 const _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _sw = new THREE.Quaternion(), _v = new THREE.Vector3();
 const IDENT = new THREE.Quaternion();
 
+/** Снять ПЕР-КОСТНЫЕ множители длины с импорт-ФБХ (относительно ДЕФОЛТНОГО скелета, нормируя на осевую длину тела).
+ *  Наш процедурный скелет, построенный с этими scale (buildHumanoid.boneScale), ПОВТОРЯЕТ пропорции модели 1:1 →
+ *  физ-аватар совпадает с мешем. Ось-инвариантно (мировые расстояния сегментов, поза/ось не важны). Правую сторону
+ *  buildHumanoid зеркалит с левой (boneScaleOf), поэтому меряем по нашим 22 костям как есть. */
+export function measureBoneScales(loaded: THREE.Object3D, boneMap: Record<string, string>): Record<string, number> {
+  loaded.updateMatrixWorld(true);
+  const byName = new Map<string, THREE.Bone>();
+  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
+  const base = baseHumanoid();
+  const a = new THREE.Vector3(), b = new THREE.Vector3();
+  const segF: Record<string, number> = {}, segB: Record<string, number> = {};
+  for (const our of OUR_BONES) {
+    const p = OUR_PARENT[our]; if (!p) continue;
+    const cb = byName.get(boneMap[our] ?? ''), pb = byName.get(boneMap[p] ?? '');
+    const bc = base.bones.get(our), bp = base.bones.get(p);
+    if (cb && pb) segF[our] = cb.getWorldPosition(a).distanceTo(pb.getWorldPosition(b));
+    if (bc && bp) segB[our] = bc.getWorldPosition(a).distanceTo(bp.getWorldPosition(b));
+  }
+  const AXIAL = ['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'Spine', 'Chest', 'UpperChest', 'Neck', 'Head'];   // ось-инвариантный масштаб тела
+  const refF = AXIAL.reduce((t, k) => t + (segF[k] ?? 0), 0), refB = AXIAL.reduce((t, k) => t + (segB[k] ?? 0), 0);
+  const out: Record<string, number> = {};
+  if (refF > 1e-3 && refB > 1e-3) for (const our of OUR_BONES) { const f = segF[our], bs = segB[our]; if (f && bs) out[our] = +(((f / refF) / (bs / refB)).toFixed(3)); }
+  return out;
+}
+
 /** Собрать ретаргет-риг из загруженной сцены (glTF/FBX) + карты костей. `scale` нормализует размер (наш TILE=32u=1м).
  *  `source` (опц.) — КОНФОРМ: длины звеньев импорта подгоняются под длины скелета source (наш риг с профилем) →
  *  повороты ложатся 1:1, меш морфится под пропорции source, контакты (стопы/кисти) совпадают. */
@@ -102,23 +127,20 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   loaded.updateMatrixWorld(true);
   const byName = new Map<string, THREE.Bone>();
   loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
-  // КОНФОРМ ДЛИН — ОТНОСИТЕЛЬНЫЙ (профиль как множитель поверх РОДНЫХ длин ФБХ, НЕ подгон под наш скелет).
-  // Множитель звена = srcLen/baseLen = (длина сегмента source-профиля)/(длина того же сегмента ДЕФОЛТНОГО скелета)
-  // = сам множитель профиля (arm/leg/torso/height). При профиле=1 → ×1 → импорт-скелет НЕ трогаем (родные пропорции
-  // художника, как в 3ds Max). Раньше делили на impLen (длину ФБХ) → ФБХ абсолютно переформовывался в наши пропорции
-  // (при 1 куцые руки/ноги — «манекен»). Порядок родитель→ребёнок; длина поза-инвариантна.
+  // КОНФОРМ ДЛИН к source (наш скелет). source строится с boneScale, снятым с ЭТОГО ЖЕ ФБХ (measureBoneScales) →
+  // source ПОВТОРЯЕТ пропорции ФБХ → конформ = почти идентичность, но добивает ФБХ ТОЧНО на кости source (устраняет
+  // остаток нормировки/масштаба) → меш ложится на физ-аватар 1:1. Множитель = srcLen/impLen. Порядок родитель→ребёнок.
   if (source) {
-    const base = baseHumanoid();
     const a = new THREE.Vector3(), b = new THREE.Vector3();
     for (const our of OUR_BONES) {
       const p = OUR_PARENT[our]; if (!p) continue;
-      const cb = byName.get(boneMap[our] ?? '');
+      const cb = byName.get(boneMap[our] ?? ''), pb = byName.get(boneMap[p] ?? '');
       const sc2 = source.bones.get(our), sp = source.bones.get(p);
-      const bc = base.bones.get(our), bp = base.bones.get(p);
-      if (!cb || !sc2 || !sp || !bc || !bp) continue;
-      const srcLen = sc2.getWorldPosition(a).distanceTo(sp.getWorldPosition(b));   // сегмент профиля
-      const baseLen = bc.getWorldPosition(a).distanceTo(bp.getWorldPosition(b));   // сегмент дефолта (профиль=1)
-      if (baseLen > 1e-3 && srcLen > 1e-3) cb.position.multiplyScalar(srcLen / baseLen);   // = множитель профиля; ×1 при профиле=1
+      if (!cb || !pb || !sc2 || !sp) continue;
+      loaded.updateMatrixWorld(true);
+      const impLen = cb.getWorldPosition(a).distanceTo(pb.getWorldPosition(b));
+      const srcLen = sc2.getWorldPosition(a).distanceTo(sp.getWorldPosition(b));
+      if (impLen > 1e-3 && srcLen > 1e-3) cb.position.multiplyScalar(srcLen / impLen);
     }
     loaded.updateMatrixWorld(true);
   }

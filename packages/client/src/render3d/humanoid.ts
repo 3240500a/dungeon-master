@@ -5,7 +5,7 @@
  * Масштаб: TILE=32u=1 м, рост ~1.9 м. Имена костей — Unity (`LeftUpperArm` и т.д.) для карты ретаргета.
  */
 import * as THREE from 'three';
-import { lenMult, pelvisHeight, girthMult, type BodyProfile } from './bodyProfile.js';
+import { lenMult, pelvisHeight, girthMult, boneScaleOf, type BodyProfile, type BoneScale } from './bodyProfile.js';
 
 /** Кость: имя, родитель (или null=корень), смещение сустава от родителя (лок.), радиус сегмент-меша, форма. */
 interface HBone {
@@ -120,7 +120,7 @@ function makeHeadGeometry(R: number): THREE.BufferGeometry {
 }
 
 export interface BuildScale { arm?: number; leg?: number; torso?: number; head?: number }
-export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton'; profile?: BodyProfile } = {}): Humanoid {
+export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton'; profile?: BodyProfile; boneScale?: BoneScale } = {}): Humanoid {
   const skel = opts.style === 'skeleton';
   const matLimb = new THREE.MeshStandardMaterial({ color: opts.limb ?? 0x8a93ad, roughness: 0.6, metalness: 0.15 });
   const matBody = new THREE.MeshStandardMaterial({ color: opts.body ?? 0x6f7690, roughness: 0.62, metalness: 0.2 });
@@ -138,10 +138,12 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
     if (name === 'Head' || name === 'Neck') return bd.head ?? 1;   // голову girth не раздуваем
     return (bd.torso ?? 1) * gir;   // Spine/Chest/UpperChest/Hips/Breast
   };
-  // ДЛИНА звеньев (profile): офсет кости × lenMult(регион); таз по высоте — из pelvisHeight (заземление при любой ноге).
+  // ДЛИНА звеньев: офсет кости × lenMult(регион-профиль) × boneScale(пер-костный из ФБХ). boneScale делает наш
+  // скелет ПОВТОРЯЮЩИМ пропорции импорт-модели 1:1; профиль — морф поверх. Таз по высоте — pelvisHeight (заземление).
+  const bsc = opts.boneScale;
   const posOf = (b: HBone): [number, number, number] => {
-    if (b.name === 'Hips') return [b.pos[0], pelvisHeight(prof), b.pos[2]];
-    const m = lenMult(b.name, prof);
+    if (b.name === 'Hips') return [b.pos[0], pelvisHeight(prof, bsc), b.pos[2]];
+    const m = lenMult(b.name, prof) * boneScaleOf(b.name, bsc);
     return [b.pos[0] * m, b.pos[1] * m, b.pos[2] * m];
   };
 

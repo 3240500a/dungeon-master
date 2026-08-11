@@ -9,10 +9,10 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, makeRetargetRig, OUR_BONES, type RetargetRig } from './retarget3d.js';
+import { autoBoneMap, makeRetargetRig, measureBoneScales, OUR_BONES, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
-import { DEFAULT_PROFILE, type BodyProfile } from './bodyProfile.js';
+import { DEFAULT_PROFILE, type BodyProfile, type BoneScale } from './bodyProfile.js';
 
 /** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). character = атлас (один GLB + slots). */
 interface ModelEntry {
@@ -20,6 +20,7 @@ interface ModelEntry {
   slot?: 'helm' | 'chest' | 'gloves' | 'boots' | 'head'; weaponType?: string;
   slots?: Record<string, string>;   // character: сабмеш → слот
   body?: BodyProfile;                // character: модульные пропорции (слайдеры конструктора)
+  boneScale?: BoneScale;             // character: пер-костные множители из ФБХ (физ-скелет 1:1)
   base: boolean; hideHair: boolean; scale: number;
   boneMap: Record<string, string>; submeshMaterials: Record<string, string>;
 }
@@ -86,7 +87,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   function rebuildAsm(): void {
     if (asmSkin) { asmSkin.dispose(); asmSkin = null; }
     if (asmSrc) { scene.remove(asmSrc.root); asmSrc.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-    asmSrc = buildHumanoid({ profile: asmProfile });
+    asmSrc = buildHumanoid({ profile: asmProfile, boneScale: curAtlas()?.boneScale });   // boneScale = пропорции ФБХ → source=физ-скелет 1:1
     asmSrc.root.visible = false;                  // источник невидим — видим меши атласа поверх
     scene.add(asmSrc.root);
     asmSkin = createModelSkin(scene, asmSrc);     // новый скин на НОВЫЙ источник (конформ к профилю с нуля)
@@ -104,12 +105,13 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       const g = await get();
       const meshNames: string[] = []; g.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshNames.push(o.name); });
       const slots = classifyAtlas(meshNames);
+      const boneScale = measureBoneScales(g, autoBoneMap(skeletonBoneNames(g)));   // пер-костные пропорции ФБХ → физ-скелет 1:1
       const id = (name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '') || 'character');
       g.traverse((o) => { const s = (o as THREE.SkinnedMesh).skeleton; if (s) s.pose(); });   // bind-поза для чистого GLB
       const glb = await exportGLB(g);
       g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });   // g больше не нужен (превью грузит из url)
       const up = await uploadAsset(id, glb, 'model/gltf-binary');
-      const e: ModelEntry = { id, name, url: up.url, kind: 'character', slots, body: { ...asmProfile }, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
+      const e: ModelEntry = { id, name, url: up.url, kind: 'character', slots, body: { ...asmProfile }, boneScale, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
       const models = (cfg.models as ModelEntry[]).filter((m) => m.kind !== 'character').concat(e);   // один персонаж-атлас
       const bodyJson = JSON.stringify({ models });
       await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });

@@ -11,7 +11,7 @@ import type { Humanoid } from './humanoid.js';
 import { loadModelUrl, skeletonBoneNames } from './modelAssets.js';
 import { makeRetargetRig, autoBoneMap, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
-import type { BodyProfile } from './bodyProfile.js';
+import type { BodyProfile, BoneScale } from './bodyProfile.js';
 
 /** Разрешённая модель для слота (из resolveSlotModels). */
 export interface SlotModel { slot: string; url: string; boneMap: Record<string, string>; submeshMaterials?: Record<string, string> }
@@ -39,7 +39,7 @@ export function classifyAtlas(meshNames: string[]): Record<string, string> {
   return out;
 }
 export interface AssetConfig { models: ModelCfg[]; materials: MaterialCfg[]; textures: TextureCfg[] }
-interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; body?: BodyProfile; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
+interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; body?: BodyProfile; boneScale?: BoneScale; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
 
 // Кость нашего рига → регион экипировки: покрытый слотом регион прячет свои процедурные меши.
 const BONE_REGION: Record<string, 'head' | 'chest' | 'gloves' | 'boots'> = {
@@ -138,6 +138,13 @@ export function resolveBodyProfile(cfg: AssetConfig): BodyProfile | undefined {
   const c = resolveCharacterModel(cfg);
   const b = c?.body;
   return b && Object.keys(b).length ? b : undefined;
+}
+
+/** Пер-костные множители длины персонажа-атласа (снятые с ФБХ) — наш физ-скелет строится с ними и повторяет модель 1:1. */
+export function resolveBoneScale(cfg: AssetConfig): BoneScale | undefined {
+  const c = resolveCharacterModel(cfg);
+  const s = c?.boneScale;
+  return s && Object.keys(s).length ? s : undefined;
 }
 
 /** Скин над источником-мешем `source` (физ-ведомый solid). set(specs) — легаси послотные GLB; setAtlas — ОДИН
