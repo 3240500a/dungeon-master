@@ -192,5 +192,22 @@ NB: в скрытой вкладке браузер паузит `requestAnimati
   (`online3d`) читает профиль из `app.config` и передаёт в `makeGamePlayerDoll` → `solid`/`target` строятся с ним,
   атлас конформится (превью редактора = игра). Слайдеры конструктора персистят в `character.body`. Рагдолл базового
   размера (сильный профиль → возможный фут-слайд — на потом).
+
+### Атлас-на-персонаж + базовый вид + монстры (3D-items)
+- **Ключ атласа `models.classId`** — generic: id класса игрока ИЛИ семья монстра (`subfaction||faction`, «один FBX на
+  всех зомби»). `resolveCharacterModel(cfg, key, allowFallback)`: есть атлас с этим classId → он; иначе игрок → глобальный
+  фолбэк (allowFallback=true), МОНСТР → `undefined` (allowFallback=false: нет атласа семьи → процедурка, не knight).
+- **Базовый вид пустых слотов (M0):** `classes.baseAppearance{hair→helm, head, hands→gloves, body→chest, feet→boots}` =
+  submesh-вариант по умолчанию. `atlasVisible` слот = `equip.modelId ?? baseAppearance[slot]`; нет ни того, ни другого →
+  ключ не задаём (setAtlas покажет все submesh слота). Редактор: `fieldCustomRenderers.baseAppearance` = 5 выпадашек по слотам.
+- **Гир монстра как 3D (M1-M3):** `monster-gear.modelId` (weapon→GLB kind:'weapon', armor→submesh-вариант атласа семьи,
+  shield→GLB). `generateMonster` застолбляет на `ScaledMonster` (летит клиенту в `FloorInit.monsters[].def` целиком):
+  `atlasKey`, `weaponKey` (форма процедур.меша, `weapon3dKeyFromEquipment`), `weaponModelId/shieldModelId`, `armorModels{chest,helm}`.
+  Клиент (`online3d`): монстру — `atlasKey` + `weaponModels` + `setAppearance(armorModels)` (зеркало peer-пути). Скин
+  монстра разблокирован (был гейт по `classId` → теперь `classId ?? atlasKey`).
+- **Выпадашка `item.modelId` в редакторе** фильтруется по виду/слоту (`modelIdOptions`): armor→submesh-варианты атласов
+  слота; weapon→models kind:'weapon' по `weaponType===weaponClass`; shield→weaponType='shield'. Обслуживает и предметы, и monster-gear.
+- **Оружие GLB (Ф3):** `attachWeapons(human, weapon, models?)` тег `weaponModelId`; `applyWeaponModels` свапит процедурных
+  детей на GLB (хват/хост-синк целы). Оружие ОБЩЕЕ на всех, per-char только хват (`pe_grip`). Пиры/монстры на ПРОД — редеплой.
 - **Устойчивость:** `loadAssetConfig` не кэширует провал `/api/config` (ретаит), иначе кукла зависла бы с пустым
   конфигом и атлас не появился бы.
