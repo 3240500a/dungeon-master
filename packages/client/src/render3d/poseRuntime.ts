@@ -377,7 +377,13 @@ export function applyGaitConfig(charId: string, gx: GXKnobs): PlantGrid {
   const cfgs = readJSON<Record<string, GaitCfg>>('pe_gait', {});
   const c = cfgs[charId];
   if (c?.gait) Object.assign(GAIT, c.gait);
-  if (c?.pose) Object.assign(POSE, c.pose);
+  if (c?.pose) {
+    Object.assign(POSE, c.pose);
+    // RUN-твины рук: если конфиг задал walk-значение, но не задал run — run = walk (иначе run брал бы глобал-дефолт).
+    if (c.pose['armShRun'] === undefined) POSE.armShRun = POSE.armSh;
+    if (c.pose['armElRun'] === undefined) POSE.armElRun = POSE.armEl;
+    if (c.pose['armSwingRun'] === undefined) POSE.armSwingRun = POSE.armSwing;
+  }
   if (c?.gx) Object.assign(gx, c.gx);
   return loadPlantGrid(c?.plant);
 }
