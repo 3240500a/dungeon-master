@@ -129,8 +129,17 @@ function updateWeapon(): void {
   // Атлас-режим: физ-призрак СКРЫТ (виден меш), поэтому оружие на нём было бы невидимо → крепим к манекену (меш с ним
   // совпадает, driveAsm ведёт корень) → оружие ложится на кисть меша. Иначе (без атласа) — на физ-призрак, как в игре.
   const wpnHost = atlasBS() ? human : (ghostHuman ?? human);
-  weaponGroups = attachWeapons(wpnHost, weapon);                       // оружие — на ФИЗ-теле (как в игре на solid); атлас/до физики — на манекен
+  weaponGroups = attachWeapons(wpnHost, weapon);                       // старт: на манекен/призрак (fallback); syncWeaponHost переносит на кисть атласа
   lgripMark = null;                                                   // маркер хвата был ребёнком старого груп — пересоздастся из позы
+}
+/** 2B: КАЖДЫЙ кадр переносим оружие на кисть ВИДИМОГО атлас-меша (asmSkin, физ-ведомый) — иначе оно на манекене и плавает
+ *  относительно модели покадрово. `.add` сохраняет локаль (авторский хват), меняет мир. Нет атласа/не загружен → на призраке. */
+function syncWeaponHost(): void {
+  for (const g of weaponGroups) {
+    const hn = g.userData.handBone as string | undefined; if (!hn) continue;
+    const target = modelsTab.handBone(hn) ?? (ghostHuman ?? human).bones.get(hn) ?? human.bones.get(hn);
+    if (target && g.parent !== target) target.add(g);
+  }
 }
 
 // ── FK-подсветка ──
@@ -1616,6 +1625,7 @@ function loop(): void {
   // Атлас-скин ведём ФИЗ-телом (ghostHuman) — как игра (скин на solid) → превью атласа = игра. Физ off → манекеном.
   // ghostHuman позирован stepPhysics выше (физ-бленд по PHYS.match), у него та же геометрия атласа (buildGhost).
   modelsTab.drive(physOn && ghostHuman ? ghostHuman : human);   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена
+  syncWeaponHost();   // 2B: оружие на кисть ВИДИМОГО атлас-меша (после drive — кисть уже позирована)
   const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
   human.root.visible = !hideMan;
   // Загружен атлас → «только скелет + модель»: прячем ЛИШНИЕ процедурные тела (физ-призрак, онион). Меш = визуал тела.

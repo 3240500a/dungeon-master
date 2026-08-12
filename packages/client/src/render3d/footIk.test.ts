@@ -62,6 +62,17 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
     expect(y1 - y0).toBeGreaterThan(2);   // footLift=3 → кость стопы ~на 3 выше (лодыжка атласа выше → подошва меша на полу)
   });
 
+  it('groundFeet: рыск стопы следует за ПОЗОЙ бедра (не сбрасывается к фейсингу тела)', () => {
+    const h = buildHumanoid({ gender: 'male', build: {} });
+    h.root.position.set(0, 20, 0);
+    h.bones.get('LeftUpperLeg')!.rotation.set(0, 0.5, 0);              // твист бедра вокруг вертикали (рыск)
+    h.root.updateMatrixWorld(true);
+    groundFeet(h, 20, { off: 0 }, 1 / 60, () => 0, [true, false]);    // левая ОПОРА
+    h.root.updateMatrixWorld(true);
+    const fwd = V(0, 0, 1).applyQuaternion(h.bones.get('LeftFoot')!.getWorldQuaternion(new THREE.Quaternion()));
+    expect(Math.atan2(fwd.x, fwd.z)).toBeGreaterThan(0.2);            // стопа повёрнута ЗА бедром (не сброшена к 0/телу)
+  });
+
   it('groundFeet: МАХОВУЮ (support=false) не выравнивает — её ориентацию ведёт поза (нет «лыжника»)', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
     h.root.position.set(0, 20, 0);

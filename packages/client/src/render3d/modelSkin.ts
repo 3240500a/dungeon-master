@@ -159,7 +159,7 @@ export function resolveBoneOffsets(cfg: AssetConfig): Record<string, number[]> |
 export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
   set(specs: SlotModel[], assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<void>;
   setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean }): Promise<string[]>;
-  update(): void; count(): number; dispose(): void;
+  update(): void; count(): number; atlasBone(our: string): THREE.Object3D | null; dispose(): void;
 } {
   const worn: Worn[] = [];
   let curKey = '';
@@ -260,6 +260,7 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
     setAtlas,
     update() { for (const w of worn) w.rig.drive(source); },
     count: () => worn.length,
+    atlasBone: (our) => worn.find((w) => w.slot === 'atlas')?.rig.targetBone(our) ?? null,   // кисть ВИДИМОГО атласа (для оружия)
     dispose() { gen++; clearWorn(); showAllProcedural(true); },
   };
 }

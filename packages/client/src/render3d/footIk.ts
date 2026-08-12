@@ -17,7 +17,7 @@ const IK_LEGS = [{ u: 'LeftUpperLeg', l: 'LeftLowerLeg', f: 'LeftFoot' }, { u: '
 const _DOWN = new THREE.Vector3(0, -1, 0), _UP = new THREE.Vector3(0, 1, 0);
 const _iH = new THREE.Vector3(), _iT = new THREE.Vector3(), _iK = new THREE.Vector3(), _iDir = new THREE.Vector3();
 const _iThigh = new THREE.Vector3(), _iShin = new THREE.Vector3(), _iBend = new THREE.Vector3(), _iPole = new THREE.Vector3(), _iFoot = new THREE.Vector3();
-const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion(), _iFace = new THREE.Quaternion(), _iAxis = new THREE.Vector3();
+const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion(), _iFace = new THREE.Quaternion(), _iAxis = new THREE.Vector3(), _iFtFwd = new THREE.Vector3();
 const _fFwdL = new THREE.Vector3(), _fThirdL = new THREE.Vector3(), _fDir = new THREE.Vector3(), _fFwdW = new THREE.Vector3(), _fThirdW = new THREE.Vector3();
 const _mL = new THREE.Matrix4(), _mW = new THREE.Matrix4(), _FWD_L = new THREE.Vector3(0, 0, 1);
 
@@ -70,9 +70,6 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
 export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery, support?: [boolean, boolean]): void {
   const hips = mesh.bones.get('Hips'); if (!hips) return;
   const sole = SOLE + (mesh.footLift ?? 0);   // подъём цели: кость-лодыжка выше на footLift → ПОДОШВА МЕША атласа на полу (не тонет)
-  hips.getWorldQuaternion(_ipq); _iPole.set(0, 0, 1).applyQuaternion(_ipq); _iPole.y = 0;   // фронт тела = pole колена
-  if (_iPole.lengthSq() < 1e-6) _iPole.set(0, 0, 1); else _iPole.normalize();
-  _iFace.setFromAxisAngle(_UP, Math.atan2(_iPole.x, _iPole.z));   // рыск тела (плоско): стопа лежит и носок по фейсингу
   const tgt: number[] = [], sup: boolean[] = []; let worst = -Infinity;
   for (let i = 0; i < IK_LEGS.length; i++) {
     const fb = mesh.bones.get(IK_LEGS[i]!.f); if (!fb) { tgt.push(NaN); sup.push(false); continue; }
@@ -93,6 +90,14 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     const leg = IK_LEGS[i]!, ty = tgt[i]!; if (!Number.isFinite(ty)) continue;
     const ub = mesh.bones.get(leg.u), lb = mesh.bones.get(leg.l), fb = mesh.bones.get(leg.f);
     if (!ub || !lb || !fb) continue;
+    // pole колена + рыск стопы БЕРЁМ ИЗ ПОЗЫ (перёд ПОЗИРОВАННОГО бедра/стопы), не из тела → заземление держит только ВЫСОТУ
+    // и плоскость; рыск свободен (стопа крутится на полу за бедром при повороте вокруг вертикали). Раньше pole/рыск = фейсинг
+    // ТЕЛА → заземление возвращало ногу к телу, теряя твист бедра.
+    ub.getWorldQuaternion(_ipq); _iPole.set(0, 0, 1).applyQuaternion(_ipq); _iPole.y = 0;   // перёд бедра (лок +Z в мире, гориз.)
+    if (_iPole.lengthSq() < 1e-6) _iPole.set(0, 0, 1); else _iPole.normalize();
+    fb.getWorldQuaternion(_ipq); _iFtFwd.set(0, 0, 1).applyQuaternion(_ipq);                 // перёд стопы → её рыск
+    if (_iFtFwd.x * _iFtFwd.x + _iFtFwd.z * _iFtFwd.z < 1e-8) _iFace.copy(_ipq);              // стопа вертикально → берём как есть
+    else _iFace.setFromAxisAngle(_UP, Math.atan2(_iFtFwd.x, _iFtFwd.z));                      // плоско по полу, носок по позе-рыску
     fb.getWorldPosition(_iFoot);
     legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace);
   }

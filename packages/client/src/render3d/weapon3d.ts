@@ -59,6 +59,7 @@ export function attachWeapons(human: Humanoid, weapon: string): THREE.Group[] {
     else if (kind === 'bow') { g.rotation.set(0, 0, 0); }                                        // лук уже вертикальный (дуга в XY)
     else g.rotation.set(-Math.PI / 2, 0, 0);                                                    // клинок/древко — вперёд (+Z), параллельно земле
     g.userData.baseRot = g.rotation.clone(); g.userData.basePos = g.position.clone();           // база хвата — для бленда idle-верха/удара
+    g.userData.handBone = boneName;   // имя кисти → рантайм переносит оружие на кисть ВИДИМОГО атлас-меша (2B)
     bone.add(g); groups.push(g);
   };
   if (weapon === 'dual') weapon = 'sword+dagger';   // легаси-алиас старого комбо

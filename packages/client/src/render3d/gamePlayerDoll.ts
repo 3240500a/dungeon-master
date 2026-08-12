@@ -160,6 +160,16 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // висит в сырой T-позе из buildHumanoid до первого пробуждения. Виден за стеной (нет тумана) как «Т-поза».
   renderRagdollGhost(solid, ragdoll, ground, 1 / 60, 0, true, null, 0);
 
+  // 2B: оружие крепим к кисти ВИДИМОГО атлас-меша (skin.atlasBone), не к solid — иначе offset ретаргета (solid≠атлас).
+  // `.add` сохраняет локаль (авторский хват). Нет атласа/не загружен → на solid (как было). Зовём после skin.update().
+  function syncWeaponHost(): void {
+    for (const g of weaponGroups) {
+      const hn = g.userData.handBone as string | undefined; if (!hn) continue;
+      const target = (skin?.atlasBone(hn)) ?? solid.bones.get(hn);
+      if (target && g.parent !== target) target.add(g);
+    }
+  }
+
   return {
     group,
     setPose(x, z, yaw) { if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(yaw)) { tx = x; tz = z; tyaw = yaw; } },
@@ -213,7 +223,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       if (dead) {                                            // мёртв — свободный коллапс, рендерим без прижима
         ragdoll.update(dt);
         renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
-        skin?.update();                                      // GLB-слои ведутся solid (после позирования физрезультатом)
+        skin?.update(); syncWeaponHost();                                      // GLB-слои ведутся solid (после позирования физрезультатом)
         return;
       }
       const yawSnap = snapNext || first;                     // телепорт/спавн/пробуждение → таз мгновенно к прицелу (без «юлы»)
@@ -239,7 +249,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
         const hips = target.bones.get('Hips')!;
         hips.getWorldPosition(pelWorld); pelWorld.x += rx; pelWorld.z += rz;   // мир-таз позы + оффсет сглаженной позиции
         renderKinematicPose(solid, target.readPose(), pelWorld, ground, dt, GROUND0, [!sw[0], !sw[1]], !poseLod);
-        skin?.update();
+        skin?.update(); syncWeaponHost();
         return;
       }
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
@@ -251,7 +261,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       const am = player.attackMatch;
       const effMatch = am != null ? am : Math.max(matchWeight, ATK_MATCH * player.attackWeight);
       renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]], !poseLod);
-      skin?.update();                                        // GLB-слои ведутся solid (после физрезультата + бленда к позе)
+      skin?.update(); syncWeaponHost();                                        // GLB-слои ведутся solid (после физрезультата + бленда к позе)
       if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику
     },
     dispose() {

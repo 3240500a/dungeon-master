@@ -88,6 +88,7 @@ export interface RetargetRig {
   boneMap: Record<string, string>;                   // наша кость → имя кости цели
   setBone(our: OurBone, targetName: string): void;   // ручная правка карты (пересчёт оффсета)
   targetBoneNames(): string[];
+  targetBone(our: string): THREE.Object3D | null;    // кость ИМПОРТНОГО скелета по нашему имени (для крепления оружия к видимой кисти)
   dispose(): void;
 }
 
@@ -215,6 +216,7 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   return {
     root: loaded, boneMap, drive,
     targetBoneNames: () => [...byName.keys()],
+    targetBone: (our) => byName.get(boneMap[our] ?? '') ?? null,   // импортная кость по нашему имени
     setBone(our, targetName) { boneMap[our] = targetName; bake(targetName); },
     dispose() { loaded.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); },
   };
