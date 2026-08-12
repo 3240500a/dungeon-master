@@ -11,10 +11,18 @@ import { weapon3dKeyFromEquipment } from './weapon3d.js';
 
 const DTYPES: DamageType[] = ['physical', 'fire', 'cold', 'lightning', 'poison'];
 
-/** C7: slot→modelId надетой брони (helm/chest/gloves/boots) — только слоты с моделью; пусто → undefined (базы слотов). */
-function armorModelsOf(eq: Record<string, { modelId?: string } | undefined>): Record<string, string> | undefined {
+/** Мин. форма базы предмета для резолва 3D-модели (per-class). */
+type ItemBaseLite = { id: string; modelId?: string; modelByClass?: Record<string, string> };
+/** C7: slot→modelId надетой брони (helm/chest/gloves/boots) для КЛАССА носителя. Приоритет: per-class модель базы
+ *  (modelByClass[класс]) → modelId инстанса → modelId базы. Только слоты с моделью; пусто → undefined (базы слотов). */
+function armorModelsOf(eq: Record<string, { modelId?: string; baseId?: string } | undefined>, classId: string, itemsBase?: ItemBaseLite[]): Record<string, string> | undefined {
   const out: Record<string, string> = {};
-  for (const slot of ['helm', 'chest', 'gloves', 'boots']) { const id = eq[slot]?.modelId; if (id) out[slot] = id; }
+  for (const slot of ['helm', 'chest', 'gloves', 'boots']) {
+    const it = eq[slot]; if (!it) continue;
+    const b = itemsBase?.find((x) => x.id === it.baseId);
+    const id = b?.modelByClass?.[classId] ?? it.modelId ?? b?.modelId;
+    if (id) out[slot] = id;
+  }
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -27,7 +35,7 @@ export function dominantType(pk: DamagePacket): DamageType {
 }
 
 /** Снапшот мира за тик: игроки/монстры/снаряды/дропы (по id, только рантайм-поля). */
-export function serializeWorld(w: WorldState): WorldSnapshot {
+export function serializeWorld(w: WorldState, itemsBase?: ItemBaseLite[]): WorldSnapshot {
   return {
     tick: w.tick,
     players: Object.values(w.players).map((p) => ({
@@ -37,7 +45,7 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
       debuffs: p.debuffs, toggles: p.toggles, r: p.radius,
       weaponKey: weapon3dKeyFromEquipment(p.save.equipment.weapon, p.save.equipment.offhand) ?? undefined,
       inCombat: p.combatTimer > 0 ? true : undefined,
-      armorModels: armorModelsOf(p.save.equipment),
+      armorModels: armorModelsOf(p.save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined>, p.save.classId, itemsBase),
     })),
     monsters: w.monsters.map((m) => ({
       id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,

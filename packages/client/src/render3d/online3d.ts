@@ -102,13 +102,14 @@ function weaponModelsFromSave(save: SaveState, itemsBase: { id: string; modelId?
   return { main: of(eq?.weapon), off: of(eq?.offhand) };
 }
 /** C6c: внешность брони по слотам из сейва — slot→{modelId} надетых предметов (голову/волосы даёт база слота). */
-function appearanceFromSave(save: SaveState, itemsBase: { id: string; modelId?: string }[]): Record<string, { modelId?: string } | undefined> {
+function appearanceFromSave(save: SaveState, itemsBase: { id: string; modelId?: string; modelByClass?: Record<string, string> }[]): Record<string, { modelId?: string } | undefined> {
   const eq = save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined> | undefined;
+  const cls = save.classId;
   const out: Record<string, { modelId?: string } | undefined> = {};
-  // modelId инстанса (gearFields копирует его с базы), фолбэк — modelId базы по baseId (старые предметы без стампа).
+  // Приоритет: per-class модель базы (modelByClass[класс]) → modelId инстанса (gearFields стампит с базы) → modelId базы.
   for (const slot of ['helm', 'chest', 'gloves', 'boots'] as const) {
     const it = eq?.[slot];
-    if (it) out[slot] = { modelId: it.modelId ?? itemsBase.find((b) => b.id === it.baseId)?.modelId };
+    if (it) { const b = itemsBase.find((x) => x.id === it.baseId); out[slot] = { modelId: b?.modelByClass?.[cls] ?? it.modelId ?? b?.modelId }; }
   }
   return out;
 }

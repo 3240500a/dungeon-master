@@ -188,6 +188,23 @@ fieldCustomRenderers.baseAppearance = (value, onChange) => {
   }
   return wrap;
 };
+// 3D-модель брони ПО КЛАССУ (modelByClass): выпадашка modelId на КАЖДЫЙ класс, фильтр по слоту брони (parent.slot).
+//  '' = использовать общий modelId. Так у каждого класса СВОЯ 3D-броня для этого предмета.
+fieldCustomRenderers.modelByClass = (value, onChange, parent) => {
+  const slot = String(parent?.['slot'] ?? '');
+  const v: Record<string, string> = (value && typeof value === 'object') ? { ...(value as Record<string, string>) } : {};
+  const classes = (data['classes'] as { id: string; name?: string }[]) ?? [];
+  const opts = ['', ...atlasVariantsForSlot(slot)];
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  if (!classes.length) { wrap.textContent = 'нет классов в конфиге'; return wrap; }
+  for (const c of classes) {
+    const row = document.createElement('label'); row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
+    const lbl = document.createElement('span'); lbl.textContent = c.name ?? c.id; lbl.style.cssText = 'min-width:110px;color:#aab';
+    const sel = renderEnum(opts, v[c.id] ?? '', (nv) => { const s = String(nv ?? ''); if (s) v[c.id] = s; else delete v[c.id]; onChange({ ...v }); });
+    row.append(lbl, sel); wrap.append(row);
+  }
+  return wrap;
+};
 // map/normalMap/… (у материала) → id текстуры из вкладки «Текстуры»; '' = без карты.
 const textureIds = (): string[] => ['', ...((data['textures'] as { id: string }[]) ?? []).map((t) => t.id)];
 for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) fieldEnumSources[k] = textureIds;

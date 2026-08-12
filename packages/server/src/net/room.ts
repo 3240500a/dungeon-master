@@ -568,7 +568,7 @@ export class Room {
     const inputs: Record<string, PlayerInput> = {};
     for (const [pid, c] of this.clients) inputs[pid] = c.input;
     const events = this.session.tick(TICK_DT, inputs);
-    this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world) });
+    this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world, this.cfg.get('items.base')) });
     if (Date.now() - this.lastSaveAt >= AUTOSAVE_MS) this.persistAll(); // периодический автосейв прогресса
     if (this.wipeAt && Date.now() >= this.wipeAt) this.enterTown(); // вайп → авто-возврат в город
     if (this.area === 'arena' && this.arenaRespawns.size) this.tickArenaRespawns(); // авто-возрождение в PvP
