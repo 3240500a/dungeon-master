@@ -24,6 +24,8 @@ export interface PoseTargets {
   headNod: number; headTurn: number; headTilt: number;
   // Запястья (кисти-кости): X сгиб, Y скрутка (крутит меч вокруг оси руки), Z вбок. Нужны вооружённому/редактору.
   wLX: number; wLY: number; wLZ: number; wRX: number; wRY: number; wRZ: number;
+  /** Блен ходьба(0)↔бег(1) — для раздельных рук walk/run (armDown/elbowBend блендятся по нему в poseRuntime). */
+  sb?: number;
 }
 
 const ATTACK_DUR = 0.62;   // взмах небыстрый: мотор рук физически не развернёт большой мах за 0.1с (иначе рука «зависает»)
@@ -85,6 +87,8 @@ export const GAIT = {
  */
 export const POSE = {
   armSh: -0.22, armEl: 0.6, armSwing: 0.55, armElWalk: 0.2,
+  // РУН-твины (бег): база плеча/локтя + амплитуда маха ОТДЕЛЬНО для бега (интерп по sb). Дефолт = ходьба (без изменений).
+  armShRun: -0.22, armElRun: 0.6, armSwingRun: 0.55,
 };
 
 /**
@@ -162,6 +166,7 @@ class StepPlanner {
   private idleFor = 0;       // сек: сколько обе стопы дома и не крутимся (для ухода в idle по времени)
   private turnLead = -1;     // чья очередь шагать при повороте (внутренняя первой; чередование). -1 = поворот не начат
   private prevYaw = 0;       // рыск прошлого кадра
+  sb = 0;                    // блен ходьба(0)↔бег(1) — читает PoseDriver для раздельных рук walk/run
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
   /** ФАКТИЧЕСКОЕ положение щиколоток из физики (мир). Плантуем туда, где нога реально стоит. */
@@ -231,6 +236,7 @@ class StepPlanner {
     }
     const speed = Math.hypot(vx, vz);
     const sb = clamp((speed - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);   // 0 ходьба … 1 бег → раздельные длина шага/боб/подъём
+    this.sb = sb;   // отдаём наружу (PoseDriver блендит руки walk/run по нему)
     // Доля хода для рук/наклона (0 стоя … ~1 быстрый шаг). Сглаживаем — сырая скорость мигает (сим 30/физ 60).
     if (dt > 0) this.moveAmt += (clamp(speed / GAIT.speedWalk, 0, 1.4) - this.moveAmt) * Math.min(1, dt * 8);
     const moving = speed > MOVE_EPS;
@@ -497,6 +503,10 @@ export class PoseDriver {
     const amp = walking ? 0.45 + drive * 0.4 : 0;
     o.lean = walking ? 0.05 + drive * 0.06 : 0.02;
     o.splay = 0;
+    // Раздельные руки ходьба↔бег: sb (0 ходьба … 1 бег) из планировщика (игрок), у монстра (без планировщика) — из drive.
+    const sb = this.planner?.sb ?? clamp((drive - 1) / 0.4, 0, 1);
+    o.sb = sb;
+    const eArmSh = lerp(POSE.armSh, POSE.armShRun, sb), eArmEl = lerp(POSE.armEl, POSE.armElRun, sb), eArmSwing = lerp(POSE.armSwing, POSE.armSwingRun, sb);
 
     if (this.attackT <= 0 && this.armed) {
       // БОЕВОЙ ГАРД меч+щит: держим позу всегда (и в покое, и на ходу — не машем).
@@ -509,9 +519,9 @@ export class PoseDriver {
     } else if (this.attackT <= 0) {
       // ПОЗА РУК (без оружия). База в покое: плечи чуть вперёд (POSE.armSh), локти согнуты (POSE.armEl) — чтобы
       // не висели палками. На ходу машем вокруг базы (анти-фаза ног), локоть добираем сгиб.
-      const sw = amp * POSE.armSwing;
-      o.shL = POSE.armSh - s * sw; o.shR = POSE.armSh + s * sw;
-      o.elL = POSE.armEl + amp * POSE.armElWalk; o.elR = POSE.armEl + amp * POSE.armElWalk;
+      const sw = amp * eArmSwing;
+      o.shL = eArmSh - s * sw; o.shR = eArmSh + s * sw;
+      o.elL = eArmEl + amp * POSE.armElWalk; o.elR = eArmEl + amp * POSE.armElWalk;
       o.twist = s * amp * 0.15;
     } else {
       this.attackT -= dt;
@@ -525,7 +535,7 @@ export class PoseDriver {
       let shR: number, shSp: number, elR: number;
       if (p < 0.36) {                                          // ЗАМАХ: рука вверх-вбок, локоть взведён
         const t = ss(p / 0.36);
-        shR = lerp(POSE.armSh, -0.25, t); shSp = lerp(0, 1.2, t); elR = lerp(POSE.armEl, 1.35, t);
+        shR = lerp(eArmSh, -0.25, t); shSp = lerp(0, 1.2, t); elR = lerp(eArmEl, 1.35, t);
         o.lean = lerp(0.02, -0.06, t); o.twist = lerp(0, -0.2, t);
       } else if (p < 0.68) {                                   // УДАР: рука падает со стороны ВНИЗ-вперёд (диагональ)
         const t = ss((p - 0.36) / 0.32);
@@ -533,7 +543,7 @@ export class PoseDriver {
         o.lean = lerp(-0.06, 0.24, t); o.twist = lerp(-0.2, 0.26, t);
       } else {                                                 // ВОЗВРАТ в стойку
         const t = ss((p - 0.68) / 0.32);
-        shR = lerp(-0.45, POSE.armSh, t); shSp = lerp(-0.1, 0, t); elR = lerp(0.15, POSE.armEl, t);
+        shR = lerp(-0.45, eArmSh, t); shSp = lerp(-0.1, 0, t); elR = lerp(0.15, eArmEl, t);
         o.lean = lerp(0.24, 0.02, t); o.twist = lerp(0.26, 0, t);
       }
       // ⚠️ Риг L/R зеркальны: МЕЧ визуально СПРАВА = L-кости. Машем L-рукой, twist зеркалим.
@@ -542,7 +552,7 @@ export class PoseDriver {
       if (this.armed) {   // off-рука (виз. слева = R-кости) держит щит-гард
         o.shR = GUARD.shLX; o.shSpR = GUARD.shLZ; o.shTwR = GUARD.shLY; o.elR = GUARD.elL;
       } else {
-        o.shR = POSE.armSh; o.elR = POSE.armEl;                // не-бьющая рука в базовой позе
+        o.shR = eArmSh; o.elR = eArmEl;                // не-бьющая рука в базовой позе
       }
     }
     return o;

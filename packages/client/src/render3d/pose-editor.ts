@@ -1002,13 +1002,21 @@ function renderGaitTune(): void {
   };
   const grp = (t: string): void => { const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:6px 0 1px;font-size:11px'); h.textContent = t; box.append(h); };
   const GXo = GX as unknown as NumRec, POSEo = POSE as unknown as NumRec, GAITo = GAIT as unknown as NumRec;
+  // Руки РАЗДЕЛЬНО ходьба/бег (интерп по скорости sb, как ноги). Run-твины GX сидим из ходьбы, если ещё не заданы.
+  if (GXo['armDownRun'] === undefined) GXo['armDownRun'] = GXo['armDown'] ?? 1.35;
+  if (GXo['elbowBendRun'] === undefined) GXo['elbowBendRun'] = GXo['elbowBend'] ?? 0.25;
   grp('поза (ретаргет)');
-  gsl('руки вниз', GXo, 'armDown', 0.6, 1.8, 0.01);
-  gsl('сгиб локтя', GXo, 'elbowBend', 0, 1.2, 0.02);
+  gsl('руки вниз (ходьба)', GXo, 'armDown', 0.6, 1.8, 0.01);
+  gsl('руки вниз (бег)', GXo, 'armDownRun', 0.6, 1.8, 0.01);
+  gsl('сгиб локтя (ходьба)', GXo, 'elbowBend', 0, 1.2, 0.02);
+  gsl('сгиб локтя (бег)', GXo, 'elbowBendRun', 0, 1.2, 0.02);
   grp('руки (мах)');
-  gsl('плечо база', POSEo, 'armSh', -0.8, 0.4, 0.02);
-  gsl('локоть база', POSEo, 'armEl', 0, 1.4, 0.02);
-  gsl('амплитуда маха', POSEo, 'armSwing', 0, 1.2, 0.02);
+  gsl('плечо база (ходьба)', POSEo, 'armSh', -0.8, 0.4, 0.02);
+  gsl('плечо база (бег)', POSEo, 'armShRun', -0.8, 0.4, 0.02);
+  gsl('локоть база (ходьба)', POSEo, 'armEl', 0, 1.4, 0.02);
+  gsl('локоть база (бег)', POSEo, 'armElRun', 0, 1.4, 0.02);
+  gsl('амплитуда маха (ходьба)', POSEo, 'armSwing', 0, 1.2, 0.02);
+  gsl('амплитуда маха (бег)', POSEo, 'armSwingRun', 0, 1.2, 0.02);
   grp('ноги / посадка');
   // «высота таза» убрана — база берётся из idle-стойки (measureStancePlants.standY), чтобы бег/подшаг не подскакивали.
   gsl('присед (мин.таз)', GAITo, 'pelvisMin', 16, 34, 0.5);

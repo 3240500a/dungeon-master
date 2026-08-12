@@ -9,7 +9,7 @@ export type Pose = Record<string, [number, number, number]>;
 export interface Keyframe { pose: Pose; t: number }
 export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[] }
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
-export interface GXKnobs { armDown: number; elbowBend: number }   // legWidth убран (дубль stanceWidth); боб таза — в GAIT.bobWalk/bobRun (× в bobY)
+export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: number; elbowBendRun?: number }   // *Run — раздельно для бега (интерп по sb); нет → = ходьба. legWidth убран (дубль stanceWidth)
 /**
  * Скрутка корпуса (torso-lead): голова/плечи ведут за ПРИЦЕЛОМ, таз догоняет прицел. ОДНА система стоя и на бегу.
  * `threshold` — мёртвая зона (рад): пока |прицел−таз| ≤ неё, таз ДЕРЖИТСЯ, разница «размазана» по позвоночнику (голова ведёт).
@@ -116,9 +116,9 @@ function aimBone(bone: THREE.Object3D, aim: THREE.Vector3, t: THREE.Vector3): vo
 const _wX = new THREE.Vector3(1, 0, 0), _qd = new THREE.Quaternion(), _qs = new THREE.Quaternion(), _ed = new THREE.Euler();
 const _qA = new THREE.Quaternion(), _qB = new THREE.Quaternion(), _qSh = new THREE.Quaternion(), _euH = new THREE.Euler();
 function qEuler(e: [number, number, number] | undefined, out: THREE.Quaternion): void { if (e) { _euH.set(e[0], e[1], e[2]); out.setFromEuler(_euH); } else out.identity(); }
-function gaitArm(bone: THREE.Object3D | undefined, side: number, sh: number, sp: number, tw: number, gx: GXKnobs): void {
+function gaitArm(bone: THREE.Object3D | undefined, side: number, sh: number, sp: number, tw: number, armDown: number): void {
   if (!bone) return;
-  _ed.set(0, tw, side * gx.armDown + sp); _qd.setFromEuler(_ed); _qs.setFromAxisAngle(_wX, sh);   // рука ВНИЗ + мах вокруг X
+  _ed.set(0, tw, side * armDown + sp); _qd.setFromEuler(_ed); _qs.setFromAxisAngle(_wX, sh);   // рука ВНИЗ + мах вокруг X
   bone.quaternion.multiplyQuaternions(_qs, _qd);
 }
 function blendBone(human: Humanoid, name: string, gaitE: [number, number, number], idle: Pose | null, mag: number): void {
@@ -127,9 +127,9 @@ function blendBone(human: Humanoid, name: string, gaitE: [number, number, number
   if (!held) { b.rotation.set(gaitE[0], gaitE[1], gaitE[2]); return; }   // нет idle → чистый гейт
   qEuler(gaitE, _qA); qEuler(held, _qB); b.quaternion.copy(_qB).slerp(_qA, mag);   // idle(0) → гейт(1)
 }
-function blendArm(bone: THREE.Object3D | undefined, side: number, sh: number, sp: number, tw: number, held: [number, number, number] | undefined, hw: number, gx: GXKnobs): void {
+function blendArm(bone: THREE.Object3D | undefined, side: number, sh: number, sp: number, tw: number, held: [number, number, number] | undefined, hw: number, armDown: number): void {
   if (!bone) return;
-  _ed.set(0, tw, side * gx.armDown + sp); _qd.setFromEuler(_ed); _qs.setFromAxisAngle(_wX, sh); _qA.multiplyQuaternions(_qs, _qd);
+  _ed.set(0, tw, side * armDown + sp); _qd.setFromEuler(_ed); _qs.setFromAxisAngle(_wX, sh); _qA.multiplyQuaternions(_qs, _qd);
   qEuler(held, _qB); bone.quaternion.copy(_qA).slerp(_qB, hw);
 }
 function blendEuler(bone: THREE.Object3D | undefined, gaitE: [number, number, number], held: [number, number, number] | undefined, hw: number): void {
@@ -170,21 +170,25 @@ function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: Attack
 function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0): void {
   const H = human.bones;
   const up = content.resolveUpper(weapon, combat);
+  // Раздельные руки ходьба↔бег: armDown/elbowBend блендятся walk→run по t.sb (POSE armSh/armEl/armSwing уже слиты в pose.ts).
+  const sb = t.sb ?? 0;
+  const eDown = gx.armDown + ((gx.armDownRun ?? gx.armDown) - gx.armDown) * sb;
+  const eBend = gx.elbowBend + ((gx.elbowBendRun ?? gx.elbowBend) - gx.elbowBend) * sb;
   if (!up) {   // нет idle-позы → полный мах гейта
-    gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, gx);
-    gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, gx);
+    gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, eDown);
+    gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, eDown);
     // Локоть гнётся вокруг ЛОКАЛЬНОЙ Y (лево −Y / право +Y): кисть форерукава лежит на локальной +X, поэтому X =
     // ТВИСТ вдоль кости (кисть не двигается), а сгиб — вокруг Y (замерено; так же в правильных авторских idle_*).
-    H.get('LeftLowerArm')!.rotation.set(0, -(Math.abs(t.elL) + gx.elbowBend), 0);
-    H.get('RightLowerArm')!.rotation.set(0, Math.abs(t.elR) + gx.elbowBend, 0);
+    H.get('LeftLowerArm')!.rotation.set(0, -(Math.abs(t.elL) + eBend), 0);
+    H.get('RightLowerArm')!.rotation.set(0, Math.abs(t.elR) + eBend, 0);
   } else {
     // sway (остаточный мах) влияет ПО МЕРЕ ДВИЖЕНИЯ: в покое hw=1 → руки ТОЧНО как в авторской idle (стойка = как в редакторе),
     // на бегу hw=1-sway → мах гейта подмешивается. Раньше hw был константой → idle искажался даже стоя.
     const hw = clamp(1 - up.swing * moveMag, 0, 1);
-    blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hw, gx);
-    blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hw, gx);
-    blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + gx.elbowBend), 0], up.pose['LeftLowerArm'], hw);   // локоть = Y (см. выше), не X
-    blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + gx.elbowBend, 0], up.pose['RightLowerArm'], hw);
+    blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hw, eDown);
+    blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hw, eDown);
+    blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + eBend), 0], up.pose['LeftLowerArm'], hw);   // локоть = Y (см. выше), не X
+    blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + eBend, 0], up.pose['RightLowerArm'], hw);
     for (const nm of UPPER_BONES) blendEuler(H.get(nm), [0, 0, 0], up.pose[nm], hw);
     applyWeaponUpper(weaponGroups, up.pose, hw);
   }
