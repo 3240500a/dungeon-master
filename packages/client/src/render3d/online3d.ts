@@ -122,7 +122,7 @@ function appearanceFromModels(am?: Record<string, string>): Record<string, { mod
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; akey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; akey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean; animAcc?: number }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -389,7 +389,7 @@ export async function startOnline3d(): Promise<void> {
       actorsGroup.add(d.group);
       const champion = m.def.rarity === 'unique', special = champion || m.def.affixes.length > 0;
       const hp = makeNameplate(m.def.name, champion, special); actorsGroup.add(hp.spr);
-      monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp, def: m.def });
+      monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp, def: m.def, animAcc: 0 });
     }
 
     if (floor.area === 'dungeon') {
@@ -493,6 +493,11 @@ export async function startOnline3d(): Promise<void> {
   const WIN_MAX_R = 2000;               // кламп дальности угловых лучей от цели (near-горизонт. верх экрана не улетает в ∞)
   const WIN_HYST = 140;                 // гистерезис-полоса (u): бодрствующего усыпляем лишь за окном + полосой — нет флаттера на кромке
   const POSE_LOD_R2 = 600 * 600;        // радиус² поза-LOD: дальше игрока → без FOOT-IK (монстр всё так же шагает, стопы вдали не видно)
+  // Temporal (rate) LOD: дальние монстры пересчитывают ТЯЖЁЛУЮ анимацию (поза+физ-бленд+скин) не каждый кадр — тело
+  // «замирает» на 1-2 кадра (на дистанции ~пиксели), dt накапливается → фаза идёт верно. Ближние (бой) — каждый кадр.
+  const ANIM_FULL_R2 = 480 * 480;       // ближе → анимация КАЖДЫЙ кадр (stride 1)
+  const ANIM_MID_R2 = 900 * 900;        // до этого — через кадр (stride 2); дальше — через два (stride 3)
+  let animFrame = 0;                    // счётчик кадров рендера — фазирует temporal-LOD по (id % stride) (пачку не апдейтим синхронно)
   const WAKE_BUDGET = 3;                // макс. пробуждений (AddToPhysicsSystem) за кадр — амортизация спайка при подходе к пачке спящих
   // Физ-LOD: физику (pw.step) считаем только БЛИЖНИМ монстрам (кого бьёшь) — дальние кинематические (вон из физики), но
   // всё так же анимируются позой. В бою ms_phys — главный расход (30+ регдоллов). Гистерезис PHYS_NEAR→FAR + бюджет флипов/кадр.
@@ -521,7 +526,10 @@ export async function startOnline3d(): Promise<void> {
     const ex = (mxx - mnx) * WIN_MARGIN, ez = (mxz - mnz) * WIN_MARGIN;
     winMinX = mnx - ex; winMaxX = mxx + ex; winMinZ = mnz - ez; winMaxZ = mxz + ez;
   }
-  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true, combat = false): void {
+  // updateDt — dt для тяжёлого a.d.update (позинг/физика/скин). Обычно = dt; при temporal-LOD (дальние монстры обновляются
+  // не каждый кадр) сюда идёт НАКОПЛЕННЫЙ dt, чтобы фаза анимации/сглаживание шли верно, а не в slow-mo. Дешёвые сеттеры
+  // (цель/скорость/бой) — каждый кадр (velocity low-pass с per-frame dt), тяжёлый шаг — только на strideFrame.
+  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true, combat = false, updateDt = dt): void {
     const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
     a.vx += (nvx - a.vx) * 0.25; a.vz += (nvz - a.vz) * 0.25;   // low-pass: гасит 30/60Гц-джиттер (иначе ложный страйф)
     a.lx = x; a.lz = z;
@@ -530,11 +538,12 @@ export async function startOnline3d(): Promise<void> {
     a.d.setMove(Math.min(1, Math.hypot(a.vx, a.vz) / 120));
     a.d.setDead(!alive);
     a.d.setCombat?.(combat);   // боевой айдл (серверный флаг PlayerView.inCombat) — self и пиры одинаково
-    if (doUpdate) a.d.update(dt);
+    if (doUpdate) a.d.update(updateDt);
   }
 
   function renderWorld(dt: number): void {
     if (!latest || !self) return;
+    animFrame++;
     computeActiveWindow();   // AABB видимого окна (+запас) — гейт активности физики монстров ниже
     const mine = latest.players.find((p) => p.id === myId);
     if (mine) {
@@ -607,7 +616,14 @@ export async function startOnline3d(): Promise<void> {
         else active = false;   // бюджет исчерпан → остаётся спящим ещё кадр (в запасе окна, за кадром — не видно)
       } else if (!active && !a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); }   // выход за окно → вон из физики, меш заморожен
       if (active) a.d.setPoseLod?.(monNoIk || d2 > POSE_LOD_R2);   // дальний в кадре (или debug J: все) → без вспом. IK
-      driveActor(a, mv.x, mv.y, mv.facing, true, dt, active);   // dormant → doUpdate=false: setPose держит цель живой, тяжёлый шаг пропущен
+      // Temporal-LOD: дальний активный монстр пересчитывает ТЯЖЁЛУЮ анимацию (поза+физ-бленд+скин) не каждый кадр (stride
+      // по дистанции). dt копится в animAcc → на strideFrame отдаём НАКОПЛЕННЫЙ (фаза/сглаживание верны, не slow-mo).
+      // Дешёвые сеттеры (цель/скорость) — каждый кадр. Ближние (бой) stride 1 = как раньше. Спящие/dormant — не копим.
+      const stride = d2 <= ANIM_FULL_R2 ? 1 : d2 <= ANIM_MID_R2 ? 2 : 3;
+      const acc = (a.animAcc ?? 0) + dt;
+      const strideFrame = active && (stride <= 1 || (animFrame + (mv.id % stride)) % stride === 0);
+      driveActor(a, mv.x, mv.y, mv.facing, true, dt, strideFrame, false, acc);   // dormant/skip → doUpdate=false: setPose держит цель, тяжёлый шаг пропущен
+      a.animAcc = active && !strideFrame ? acc : 0;   // копим только пока активен и кадр пропущен; сон/апдейт → сброс
       // Есть ли у монстра дебаффы — дёшево, БЕЗ аллокаций (у большинства их нет). Строку иконок и statusFx.sync
       // считаем ТОЛЬКО когда дебаффы есть (или были) — иначе per-frame Object.keys/filter/map × N монстров = мусор → GC-паузы.
       let hasDeb = false; for (const k in mv.debuffs) if (mv.debuffs[k as DebuffKind]) { hasDeb = true; break; }

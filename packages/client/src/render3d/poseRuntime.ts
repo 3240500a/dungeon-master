@@ -50,19 +50,22 @@ export function resolveTwistStates(raw: TwistCfgStored | undefined): TwistStates
   return { stand: flat, walk: { ...flat }, run: { ...flat } };
 }
 const lerpN = (a: number, b: number, t: number): number => a + (b - a) * t;
-/** Линейно смешать два профиля скрутки (числа + веса поэлементно). */
-export function lerpTwist(a: TwistProfile, b: TwistProfile, t: number): TwistProfile {
-  return {
-    threshold: lerpN(a.threshold, b.threshold, t), turnRate: lerpN(a.turnRate, b.turnRate, t),
-    maxTwist: lerpN(a.maxTwist, b.maxTwist, t), relaxTime: lerpN(a.relaxTime, b.relaxTime, t),
-    weights: a.weights.map((w, i) => lerpN(w, b.weights[i]!, t)) as TwistProfile['weights'],
-  };
+/** Записать смешанный профиль скрутки в out (in-place, БЕЗ аллокаций — для горячего цикла). */
+function lerpTwistInto(out: TwistProfile, a: TwistProfile, b: TwistProfile, t: number): TwistProfile {
+  out.threshold = lerpN(a.threshold, b.threshold, t); out.turnRate = lerpN(a.turnRate, b.turnRate, t);
+  out.maxTwist = lerpN(a.maxTwist, b.maxTwist, t); out.relaxTime = lerpN(a.relaxTime, b.relaxTime, t);
+  for (let i = 0; i < 5; i++) out.weights[i] = lerpN(a.weights[i]!, b.weights[i]!, t);
+  return out;
 }
-/** Эффективный профиль скрутки по скорости: 3 якоря (стой@0, ходьба@speedWalk, бег@speedRun), кусочно-линейно. */
+/** Линейно смешать два профиля скрутки в НОВЫЙ объект (тесты/редкие вызовы). */
+export function lerpTwist(a: TwistProfile, b: TwistProfile, t: number): TwistProfile { return lerpTwistInto(TWIST_DEFAULT(), a, b, t); }
+const _twBlend = TWIST_DEFAULT();   // scratch: blendTwist зовётся на каждого актёра каждый кадр → пишем сюда, результат потребляется СИНХРОННО в step (не удерживается)
+/** Эффективный профиль скрутки по скорости: 3 якоря (стой@0, ходьба@speedWalk, бег@speedRun), кусочно-линейно.
+ *  Пишет в общий scratch БЕЗ аллокаций (результат используется сразу в том же кадре — между актёрами не пересекается). */
 export function blendTwist(s: TwistStates, speed: number): TwistProfile {
   const w = GAIT.speedWalk, r = Math.max(w + 1, GAIT.speedRun);
-  if (speed <= w) return lerpTwist(s.stand, s.walk, clamp(speed / Math.max(1, w), 0, 1));
-  return lerpTwist(s.walk, s.run, clamp((speed - w) / (r - w), 0, 1));
+  if (speed <= w) return lerpTwistInto(_twBlend, s.stand, s.walk, clamp(speed / Math.max(1, w), 0, 1));
+  return lerpTwistInto(_twBlend, s.walk, s.run, clamp((speed - w) / (r - w), 0, 1));
 }
 const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
