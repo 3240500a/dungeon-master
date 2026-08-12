@@ -134,11 +134,21 @@ function updateWeapon(): void {
 }
 /** 2B: КАЖДЫЙ кадр переносим оружие на кисть ВИДИМОГО атлас-меша (asmSkin, физ-ведомый) — иначе оно на манекене и плавает
  *  относительно модели покадрово. `.add` сохраняет локаль (авторский хват), меняет мир. Нет атласа/не загружен → на призраке. */
+const _wsA = new THREE.Vector3(), _wsF = new THREE.Vector3();
 function syncWeaponHost(): void {
   for (const g of weaponGroups) {
     const hn = g.userData.handBone as string | undefined; if (!hn) continue;
-    const target = modelsTab.handBone(hn) ?? (ghostHuman ?? human).bones.get(hn) ?? human.bones.get(hn);
+    const fallback = (ghostHuman ?? human).bones.get(hn) ?? human.bones.get(hn);
+    const atlasHand = modelsTab.handBone(hn);
+    const target = atlasHand ?? fallback;
     if (target && g.parent !== target) target.add(g);
+    // Компенсация масштаба: кисть атласа несёт импорт-скейл (ФБХ ~0.35×) → оружие мельчало. Держим размер как на манекене:
+    // локаль-скейл = мир-скейл манекен-кисти / мир-скейл атлас-кисти (мир-размер оружия = как на физ-теле).
+    if (atlasHand && fallback) {
+      atlasHand.updateWorldMatrix(true, false); fallback.updateWorldMatrix(true, false);
+      atlasHand.getWorldScale(_wsA); fallback.getWorldScale(_wsF);
+      if (_wsA.x > 1e-6 && _wsA.y > 1e-6 && _wsA.z > 1e-6) g.scale.set(_wsF.x / _wsA.x, _wsF.y / _wsA.y, _wsF.z / _wsA.z);
+    } else if (g.scale.x !== 1) g.scale.set(1, 1, 1);
   }
 }
 

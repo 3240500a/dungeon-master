@@ -162,11 +162,20 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 
   // 2B: оружие крепим к кисти ВИДИМОГО атлас-меша (skin.atlasBone), не к solid — иначе offset ретаргета (solid≠атлас).
   // `.add` сохраняет локаль (авторский хват). Нет атласа/не загружен → на solid (как было). Зовём после skin.update().
+  const _wsA = new THREE.Vector3(), _wsF = new THREE.Vector3();
   function syncWeaponHost(): void {
     for (const g of weaponGroups) {
       const hn = g.userData.handBone as string | undefined; if (!hn) continue;
-      const target = (skin?.atlasBone(hn)) ?? solid.bones.get(hn);
+      const fallback = solid.bones.get(hn);
+      const atlasHand = skin?.atlasBone(hn) ?? null;
+      const target = atlasHand ?? fallback;
       if (target && g.parent !== target) target.add(g);
+      // Компенсация масштаба: кисть атласа несёт импорт-скейл → оружие мельчает. Держим размер как на solid.
+      if (atlasHand && fallback) {
+        atlasHand.updateWorldMatrix(true, false); fallback.updateWorldMatrix(true, false);
+        atlasHand.getWorldScale(_wsA); fallback.getWorldScale(_wsF);
+        if (_wsA.x > 1e-6 && _wsA.y > 1e-6 && _wsA.z > 1e-6) g.scale.set(_wsF.x / _wsA.x, _wsF.y / _wsA.y, _wsF.z / _wsA.z);
+      } else if (g.scale.x !== 1) g.scale.set(1, 1, 1);
     }
   }
 
