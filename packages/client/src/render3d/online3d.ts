@@ -94,6 +94,12 @@ function weaponKeyFromSave(save: SaveState): string {
 function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string {
   return pv.weaponKey ?? charFor(pv.classId).weapon;
 }
+/** Ф3: id 3D-моделей оружия из экипировки (main=оружие → правая, off=офф-рука/щит → левая) → GLB вместо процедурки.
+ *  Пусто → процедурный меш. Оружие ОБЩЕЕ на всех (per-char только хват). Пиры пока без моделей (нужен поле в снапшоте). */
+function weaponModelsFromSave(save: SaveState): { main?: string; off?: string } {
+  const eq = save.equipment as Record<string, { modelId?: string } | undefined> | undefined;
+  return { main: eq?.weapon?.modelId, off: eq?.offhand?.modelId };
+}
 /** C6c: внешность брони по слотам из сейва — slot→{modelId} надетых предметов (голову/волосы даёт база слота). */
 function appearanceFromSave(save: SaveState): Record<string, { modelId?: string } | undefined> {
   const eq = save.equipment as Record<string, { modelId?: string } | undefined> | undefined;
@@ -297,11 +303,12 @@ export async function startOnline3d(): Promise<void> {
   const markDead = (a: Actor): void => { if (a.dead != null) return; a.dormant = false; a.d.setDead(true); a.dead = 1.1; if (a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти (setDead будит уснувшего)
   const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
 
-  // Модульные пропорции персонажа-атласа из конфига (kind:'character'). Игрок И пиры делят один атлас → общие.
+  // Модульные пропорции персонажа-атласа из конфига (kind:'character') ПО КЛАССУ (броня per-персонажна: у каждого
+  // класса свой атлас → свои body/boneScale/boneOffsets; фолбэк — глобальный атлас без classId).
   // Читаем синхронно из уже загруженного реестра (app.config). body = слайдеры-морф; boneScale = пропорции ФБХ (физ-скелет 1:1).
-  function bodyProfile(): BodyProfile | undefined { return resolveBodyProfile({ models: app.config.get('models'), materials: [], textures: [] }); }
-  function bodyScale(): BoneScale | undefined { return resolveBoneScale({ models: app.config.get('models'), materials: [], textures: [] }); }
-  function bodyOffsets(): Record<string, number[]> | undefined { return resolveBoneOffsets({ models: app.config.get('models'), materials: [], textures: [] }); }
+  function bodyProfile(classId?: string): BodyProfile | undefined { return resolveBodyProfile({ models: app.config.get('models'), materials: [], textures: [] }, classId); }
+  function bodyScale(classId?: string): BoneScale | undefined { return resolveBoneScale({ models: app.config.get('models'), materials: [], textures: [] }, classId); }
+  function bodyOffsets(classId?: string): Record<string, number[]> | undefined { return resolveBoneOffsets({ models: app.config.get('models'), materials: [], textures: [] }, classId); }
 
   // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
   function buildArea(floor: FloorInit): void {
@@ -330,7 +337,7 @@ export async function startOnline3d(): Promise<void> {
     const classId = app.state!.save.classId;
     selfWeaponKey = weaponKeyFromSave(app.state!.save);
     if (!self) {
-      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, x: floor.spawn.x, z: floor.spawn.y, profile: bodyProfile(), boneScale: bodyScale(), boneOffsets: bodyOffsets() });
+      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save), x: floor.spawn.x, z: floor.spawn.y, profile: bodyProfile(classId), boneScale: bodyScale(classId), boneOffsets: bodyOffsets(classId) });
       actorsGroup.add(d.group);
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
       const sh = app.config.get('balance').lighting.shadow3d;
@@ -338,7 +345,7 @@ export async function startOnline3d(): Promise<void> {
       playerLight.shadow.camera.near = 8; playerLight.shadow.camera.far = sh.playerLightDist;   // конфиг теней применит applyShadows()
       scene.add(playerLight); applyShadows();   // применить текущее состояние теней к новому свету героя
     } else {
-      self.d.setWeapon?.(selfWeaponKey);   // на новом этаже снаряжение могло смениться
+      self.d.setWeapon?.(selfWeaponKey, weaponModelsFromSave(app.state!.save));   // на новом этаже снаряжение могло смениться
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
       self.lx = floor.spawn.x; self.lz = floor.spawn.y;
     }
@@ -538,7 +545,7 @@ export async function startOnline3d(): Promise<void> {
       const wk = weaponKeyFromView(pv);   // реальное оружие пира из снапшота (иначе класс-дефолт)
       const ak = JSON.stringify(pv.armorModels ?? {});   // C7: ключ внешности брони пира (детект смены экипа)
       if (!a) {
-        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, profile: bodyProfile(), boneScale: bodyScale(), boneOffsets: bodyOffsets() }); actorsGroup.add(d.group);
+        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, profile: bodyProfile(pv.classId), boneScale: bodyScale(pv.classId), boneOffsets: bodyOffsets(pv.classId) }); actorsGroup.add(d.group);
         d.setAppearance?.(appearanceFromModels(pv.armorModels));   // C7: скин-слой пира (базы слотов + надетая броня)
         const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
         a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, hp }; peers.set(pv.id, a);
@@ -703,7 +710,7 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;
-    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k); } self.d.setAppearance?.(appearanceFromSave(f.save)); }   // сменил оружие/щит → меши; сменил броню → скин-слой (свап дешёвый: диф по ключу)
+    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k, weaponModelsFromSave(f.save)); } self.d.setAppearance?.(appearanceFromSave(f.save)); }   // сменил оружие/щит → меши; сменил броню → скин-слой (свап дешёвый: диф по ключу)
     app.bus.emit('state:changed', {});
   });
   app.net.on('shop', (f) => { app.shopStock = f.items; app.bus.emit('state:changed', {}); });

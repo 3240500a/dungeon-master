@@ -211,7 +211,7 @@ function renderBoolean(value: boolean, onChange: (v: unknown) => void): HTMLElem
   return input;
 }
 
-function renderEnum(values: string[], value: string, onChange: (v: unknown) => void): HTMLElement {
+export function renderEnum(values: string[], value: string, onChange: (v: unknown) => void): HTMLElement {
   const sel = document.createElement('select');
   sel.style.cssText = inputStyle;
   for (const v of values) {

@@ -39,7 +39,7 @@ export function classifyAtlas(meshNames: string[]): Record<string, string> {
   return out;
 }
 export interface AssetConfig { models: ModelCfg[]; materials: MaterialCfg[]; textures: TextureCfg[] }
-interface ModelCfg { id: string; url: string; kind?: string; slot?: string; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; body?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]>; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
+interface ModelCfg { id: string; url: string; kind?: string; slot?: string; classId?: string; weaponType?: string; scale?: number; base?: boolean; hideHair?: boolean; slots?: Record<string, string>; body?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]>; boneMap?: Record<string, string>; submeshMaterials?: Record<string, string> }
 
 // Кость нашего рига → регион экипировки: покрытый слотом регион прячет свои процедурные меши.
 const BONE_REGION: Record<string, 'head' | 'chest' | 'gloves' | 'boots'> = {
@@ -128,30 +128,55 @@ export function resolveSlotModels(cfg: AssetConfig, equipment?: Record<string, {
 
 interface Worn { slot: string; rig: RetargetRig }
 
-/** Модель-атлас персонажа (kind:'character') из конфига, если задана. */
-export function resolveCharacterModel(cfg: AssetConfig): ModelCfg | undefined {
-  return cfg.models.find((m) => m.kind === 'character' && !!m.url);
+/** Модель-атлас персонажа (kind:'character') из конфига. classId → АТЛАС ЭТОГО КЛАССА (броня per-персонажна);
+ *  фолбэк — глобальный атлас (без classId) или первый. Так одиночный (глобальный) атлас работает как раньше. */
+export function resolveCharacterModel(cfg: AssetConfig, classId?: string): ModelCfg | undefined {
+  const chars = cfg.models.filter((m) => m.kind === 'character' && !!m.url);
+  if (classId) { const own = chars.find((m) => m.classId === classId); if (own) return own; }
+  return chars.find((m) => !m.classId) ?? chars[0];
 }
 
 /** Профиль тела персонажа-атласа (модульные пропорции) из конфига — игра строит solid/target с ним, атлас конформится. */
-export function resolveBodyProfile(cfg: AssetConfig): BodyProfile | undefined {
-  const c = resolveCharacterModel(cfg);
+export function resolveBodyProfile(cfg: AssetConfig, classId?: string): BodyProfile | undefined {
+  const c = resolveCharacterModel(cfg, classId);
   const b = c?.body;
   return b && Object.keys(b).length ? b : undefined;
 }
 
 /** Пер-костные множители длины персонажа-атласа (снятые с ФБХ) — наш физ-скелет строится с ними и повторяет модель 1:1. */
-export function resolveBoneScale(cfg: AssetConfig): BoneScale | undefined {
-  const c = resolveCharacterModel(cfg);
+export function resolveBoneScale(cfg: AssetConfig, classId?: string): BoneScale | undefined {
+  const c = resolveCharacterModel(cfg, classId);
   const s = c?.boneScale;
   return s && Object.keys(s).length ? s : undefined;
 }
 
 /** ПОЛНЫЕ rest-офсеты костей ФБХ персонажа-атласа (вектор) — приоритет над boneScale, наш скелет повторяет геометрию 1:1. */
-export function resolveBoneOffsets(cfg: AssetConfig): Record<string, number[]> | undefined {
-  const c = resolveCharacterModel(cfg);
+export function resolveBoneOffsets(cfg: AssetConfig, classId?: string): Record<string, number[]> | undefined {
+  const c = resolveCharacterModel(cfg, classId);
   const o = c?.boneOffsets;
   return o && Object.keys(o).length ? o : undefined;
+}
+
+/** Ф3: свап процедурных мешей оружия на импортные GLB (kind:'weapon'). Группы (из attachWeapons) с
+ *  `userData.weaponModelId` → грузим модель, заменяем ВИЗУАЛЬНЫХ детей группы на GLB. Трансформ/хват группы
+ *  (baseRot/basePos, pe_grip) и хост-синк не трогаем — статичный меш крепится к кисти как процедурный. Оружие
+ *  ОБЩЕЕ на всех персонажей; масштаб/материалы — из конфига модели. Нет модели/битый url → остаётся процедурка. */
+export async function applyWeaponModels(weaponGroups: THREE.Group[], cfg: AssetConfig, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<void> {
+  for (const g of weaponGroups) {
+    const modelId = g.userData.weaponModelId as string | undefined;
+    if (!modelId) continue;
+    const m = cfg.models.find((x) => x.kind === 'weapon' && x.id === modelId && !!x.url);
+    if (!m) continue;                                                  // нет модели оружия → процедурный фолбэк
+    const my = (g.userData.weaponGen = ((g.userData.weaponGen as number) ?? 0) + 1);   // анти-гонка смены оружия
+    try {
+      const glb = await loadModelUrl(m.url);
+      if (g.userData.stale || g.userData.weaponGen !== my) { glb.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); return; }
+      for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); }   // снести процедурные дети
+      if (m.scale && m.scale !== 1) glb.scale.multiplyScalar(m.scale);
+      glb.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = true; const mid = m.submeshMaterials?.[o.name]; if (mid) { const mat = getMaterial(assets, mid); if (mat) o.material = mat; } } });
+      g.add(glb);
+    } catch { /* битый url — оставляем процедурку */ }
+  }
 }
 
 /** Скин над источником-мешем `source` (физ-ведомый solid). set(specs) — легаси послотные GLB; setAtlas — ОДИН

@@ -48,10 +48,13 @@ export function makeWeaponMesh(kind: string): THREE.Group {
   return g;
 }
 
-/** Собрать и прицепить оружие(я) выбранного набора к кистям гуманоида. Возвращает группы (для позинга в poseRuntime). */
-export function attachWeapons(human: Humanoid, weapon: string): THREE.Group[] {
+/** Собрать и прицепить оружие(я) выбранного набора к кистям гуманоида. Возвращает группы (для позинга в poseRuntime).
+ *  `models` (опц.) — id 3D-моделей оружия (kind:'weapon') на main/off руки: тегаем `g.userData.weaponModelId`, а
+ *  ВИЗУАЛЬНЫЕ дети процедурного меша позже свапаются на GLB (`applyWeaponModels`, modelSkin) — группа/хват/хост-синк
+ *  остаются те же. Нет модели → остаётся процедурный меш (фолбэк). Оружие ОБЩЕЕ на всех (per-char только хват pe_grip). */
+export function attachWeapons(human: Humanoid, weapon: string, models?: { main?: string; off?: string }): THREE.Group[] {
   const groups: THREE.Group[] = [];
-  const attach = (kind: string, boneName: string): void => {
+  const attach = (kind: string, boneName: string, modelId?: string): void => {
     if (kind === 'none') return;
     const g = makeWeaponMesh(kind); const bone = human.bones.get(boneName);
     if (!bone) return;
@@ -60,14 +63,15 @@ export function attachWeapons(human: Humanoid, weapon: string): THREE.Group[] {
     else g.rotation.set(-Math.PI / 2, 0, 0);                                                    // клинок/древко — вперёд (+Z), параллельно земле
     g.userData.baseRot = g.rotation.clone(); g.userData.basePos = g.position.clone();           // база хвата — для бленда idle-верха/удара
     g.userData.handBone = boneName;   // имя кисти → рантайм переносит оружие на кисть ВИДИМОГО атлас-меша (2B)
+    if (modelId) g.userData.weaponModelId = modelId;   // Ф3: async-своп процедурных детей на GLB (applyWeaponModels)
     bone.add(g); groups.push(g);
   };
   if (weapon === 'dual') weapon = 'sword+dagger';   // легаси-алиас старого комбо
   if (weapon === 'none') return groups;
   const plus = weapon.lastIndexOf('+');
-  if (plus > 0) { attach(weapon.slice(0, plus), 'RightHand'); attach(weapon.slice(plus + 1), 'LeftHand'); }   // main+off: щит ИЛИ второе оружие в левую руку
-  else if (weapon === 'shield') { attach('shield', 'LeftHand'); }
-  else if (weapon === 'bow') { attach('bow', 'LeftHand'); }
-  else attach(weapon, 'RightHand');
+  if (plus > 0) { attach(weapon.slice(0, plus), 'RightHand', models?.main); attach(weapon.slice(plus + 1), 'LeftHand', models?.off); }   // main+off: щит ИЛИ второе оружие в левую руку
+  else if (weapon === 'shield') { attach('shield', 'LeftHand', models?.off ?? models?.main); }   // только щит (в офф-руке)
+  else if (weapon === 'bow') { attach('bow', 'LeftHand', models?.main); }
+  else attach(weapon, 'RightHand', models?.main);
   return groups;
 }

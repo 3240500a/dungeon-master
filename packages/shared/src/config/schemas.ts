@@ -1675,6 +1675,10 @@ export const modelsSchema = z.array(z.object({
   kind: z.enum(['character', 'part', 'weapon']).default('part'),
   slot: z.enum(['helm', 'chest', 'gloves', 'boots', 'head']).optional(),   // kind='part': область тела
   weaponType: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield']).optional(),   // kind='weapon'
+  // kind='character': ЗА КАКОЙ КЛАСС этот атлас (id класса). Броня per-персонажна: у каждого класса свой атлас со
+  //   своими submesh-вариантами. Пусто = глобальный фолбэк (если нет атласа под класс игрока). Оружие (kind='weapon')
+  //   ОБЩЕЕ на всех — classId не задаётся.
+  classId: z.string().optional(),
   slots: z.record(z.string(), z.string()).default({}),  // kind='character': имя сабмеша → слот (helm/head/chest/gloves/boots; '' = скрыт). Авто-классификация при импорте, правится.
   // kind='character': модульные пропорции тела (слайдеры конструктора). Игра строит solid/target с ним, атлас конформится.
   body: z.object({ height: z.number(), arm: z.number(), leg: z.number(), torso: z.number(), girth: z.number() }).partial().optional(),

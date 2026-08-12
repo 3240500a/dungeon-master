@@ -16,7 +16,7 @@ import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdol
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwist, applyBaseGrip, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
-import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel } from './modelSkin.js';
+import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel, applyWeaponModels } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
@@ -30,6 +30,7 @@ const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов �
 export interface HumanoidDollOpts {
   x: number; z: number;
   weapon: string;                                    // редакторный ключ оружия ('axe','staff','none',…)
+  weaponModels?: { main?: string; off?: string };    // Ф3: id 3D-моделей оружия (kind:'weapon') на main/off руки → GLB вместо процедурки (общее на всех)
   classId?: string;                                  // задан → ИГРОК (гейт класса → global GAIT + контент класса)
   gaitId?: string;                                   // задан (без classId) → МОНСТР: локальный plant/gx + контент этого id
   gaitFallback?: string;                             // фолбэк для gaitId, если он ещё не настроен (монстры → 'warrior')
@@ -71,7 +72,11 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   solid.root.traverse((o) => { if (o instanceof THREE.Mesh) o.castShadow = true; });   // тени от факелов (вкл. по тумблеру) — актёр отбрасывает
   group.add(solid.root);
   const gripChar = opts.classId ?? opts.gaitId ?? '';   // ключ для базового хвата pe_grip (игрок→class, монстр→gaitId)
-  let weaponGroups = attachWeapons(solid, weapon); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback);   // единый базовый хват
+  let weaponModels = opts.weaponModels;   // id GLB-моделей оружия (main/off) — общие на всех; меняются со сменой оружия
+  let weaponGroups = attachWeapons(solid, weapon, weaponModels); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback);   // единый базовый хват
+  // Ф3: свап процедурных мешей на GLB (если у экипа задан modelId оружия). Дёшево-ноуп без моделей (монстры/без GLB).
+  const syncWeaponModels = (): void => { if (!(weaponModels?.main || weaponModels?.off)) return; void loadAssetConfig().then((cfg) => applyWeaponModels(weaponGroups, cfg, { materials: cfg.materials, textures: cfg.textures })); };
+  syncWeaponModels();
   // target — НЕВИДИМЫЙ манекен-источник позы: PosePlayer его позирует, с него кормим физику (цель + пины).
   const target = buildHumanoid({ gender, build, profile, boneScale, boneOffsets });
   target.root.visible = false; group.add(target.root);
@@ -103,7 +108,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     if (!skin) return;
     void loadAssetConfig().then((cfg) => {
       const assets = { materials: cfg.materials, textures: cfg.textures };
-      const char = resolveCharacterModel(cfg);   // E3: атлас персонажа (один GLB) в приоритете
+      const char = resolveCharacterModel(cfg, opts.classId);   // E3: атлас персонажа (один GLB); classId → атлас ЭТОГО класса (броня per-char)
       if (char) { void skin.setAtlas(char, atlasVisible(), assets); return; }   // = превью редактора (без hideHair)
       void skin.set(resolveSlotModels(cfg, equipModels), assets);   // легаси: послотные GLB
     });
@@ -220,10 +225,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       const p = Math.max(0, Math.min(1, frac)) * KNOCK;
       ragdoll.hit('Hips', dx, 0.1, dz, p); ragdoll.hit('Torso', dx, 0.18, dz, p * 0.5);
     },
-    setWeapon(key) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
+    setWeapon(key, models) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
       if (key === weapon) return;
-      for (const g of weaponGroups) { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-      weapon = key; weaponGroups = attachWeapons(solid, weapon); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback); player.setWeapon(weapon);
+      if (models !== undefined) weaponModels = models;   // Ф3: новые id GLB-моделей оружия (self); пиры — undefined (нужна сеть)
+      for (const g of weaponGroups) { g.userData.stale = true; g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
+      weapon = key; weaponGroups = attachWeapons(solid, weapon, weaponModels); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback); player.setWeapon(weapon);
+      syncWeaponModels();
     },
     setAppearance(equip) { equipModels = equip; refreshSkin(); },   // C6c: слоты брони (modelId) → пересобрать скин-слой
 
@@ -286,7 +293,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 }
 
 /** Игрок — тонкая обёртка над единой куклой: внешность/оружие класса из CLASS_CHARS. */
-export interface GamePlayerOpts { classId: string; weapon: string; x: number; z: number; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> }
+export interface GamePlayerOpts { classId: string; weapon: string; weaponModels?: { main?: string; off?: string }; x: number; z: number; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> }
 export function makeGamePlayerDoll(pw: PhysWorld, opts: GamePlayerOpts): RagdollHandle {
-  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, classId: opts.classId, profile: opts.profile, boneScale: opts.boneScale, boneOffsets: opts.boneOffsets, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
+  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, weaponModels: opts.weaponModels, classId: opts.classId, profile: opts.profile, boneScale: opts.boneScale, boneOffsets: opts.boneOffsets, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
 }

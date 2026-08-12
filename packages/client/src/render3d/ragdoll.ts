@@ -133,7 +133,7 @@ export interface RagdollHandle {
   /** Отброс трупа на смерти: сильный горизонтальный импульс в таз/торс (frac 0..1 — доля урона от HP → дальность). */
   knockback?(dx: number, dz: number, frac: number): void;
   /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…). */
-  setWeapon?(key: string): void;
+  setWeapon?(key: string, models?: { main?: string; off?: string }): void;
   /** Свап внешности брони по слотам (C6c): slot→{modelId} надетых предметов → пересобрать скин-слой (GLB по слотам). */
   setAppearance?(equip: Record<string, { modelId?: string } | undefined>): void;
   /** Боевой айдл: on=true → боевая стойка (combat_idle), off → обычная. Кроссфейд плавный (GAIT.combatBlend). */

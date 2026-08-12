@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ConfigRegistry, configSchemas, allStatKeys, schemeRequirements, type ConfigKey, type FloorAlgoParams, type FloorFeatures } from '@dm/shared';
-import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers } from './form.js';
+import { renderField, defaultValue, fieldEnumSources, fieldArrayEnumSources, fieldCustomRenderers, renderEnum } from './form.js';
 import { renderSpawnCurve } from './spawnCurveEditor.js';
 import { renderDeriveOverride } from './deriveOverrideEditor.js';
 import { mountFloorPreview } from './floorPreview.js';
@@ -143,8 +143,32 @@ let balanceGroup: string = balanceGroupsFull[0]!.title;
 const tierIds = (): string[] => ((data['item-tiers'] as { id: string }[]) ?? []).map((t) => t.id);
 fieldEnumSources.minTier = tierIds;
 fieldEnumSources.maxTier = tierIds;
-// 3D-ассеты (вкладки Меши/Текстуры/Материалы). modelId (у предмета) → id меша; '' = база слота.
-fieldEnumSources.modelId = () => ['', ...((data['models'] as { id: string }[]) ?? []).map((m) => m.id)];
+// 3D-модель предмета (modelId): выпадашка ФИЛЬТРУЕТСЯ по виду/слоту предмета (parent). '' = база слота / процедурка.
+//  • armor  → имена submesh-ВАРИАНТОВ персонаж-атласов (kind='character'), классифицированные в parent.slot
+//    (item.modelId = имя submesh; вариант-по-имени в setAtlas). Плюс легаси per-slot part-меши того же слота.
+//  • weapon → models kind='weapon' с weaponType===parent.weaponClass (оружие ОБЩЕЕ на всех, per-char только хват).
+//  • shield → models kind='weapon' с weaponType==='shield'.
+type ModelRow = { id: string; kind?: string; slot?: string; weaponType?: string; slots?: Record<string, string> };
+const modelIdOptions = (parent: Record<string, unknown> | undefined): string[] => {
+  const ms = (data['models'] as ModelRow[]) ?? [];
+  const pkind = parent?.['kind'];
+  if (pkind === 'weapon') {
+    const wc = parent?.['weaponClass'];
+    return ['', ...ms.filter((m) => m.kind === 'weapon' && (!wc || m.weaponType === wc)).map((m) => m.id)];
+  }
+  if (pkind === 'shield') return ['', ...ms.filter((m) => m.kind === 'weapon' && m.weaponType === 'shield').map((m) => m.id)];
+  if (pkind === 'armor') {
+    const slot = parent?.['slot'];                                  // helm/chest/gloves/boots/belt (belt пока без 3D)
+    const variants = new Set<string>();
+    for (const m of ms) {
+      if (m.kind === 'character' && m.slots) for (const [mesh, sl] of Object.entries(m.slots)) { if (sl === slot) variants.add(mesh); }
+      if (m.kind === 'part' && m.slot === slot) variants.add(m.id);  // легаси послотный меш
+    }
+    return ['', ...[...variants].sort()];
+  }
+  return ['', ...ms.map((m) => m.id)];                              // фолбэк (не должно вызываться: modelId только у weapon/armor/shield)
+};
+fieldCustomRenderers.modelId = (value, onChange, parent) => renderEnum(modelIdOptions(parent), value == null ? '' : String(value), onChange);
 // map/normalMap/… (у материала) → id текстуры из вкладки «Текстуры»; '' = без карты.
 const textureIds = (): string[] => ['', ...((data['textures'] as { id: string }[]) ?? []).map((t) => t.id)];
 for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) fieldEnumSources[k] = textureIds;
