@@ -14,7 +14,7 @@ import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRag
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, TWIST_DEFAULT, DEFAULT_MATCH, type TwistProfile, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, applyBaseGrip, TWIST_DEFAULT, DEFAULT_MATCH, type TwistProfile, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -84,7 +84,7 @@ function rebaselineProxy(): void {
 }
 /** Прицепить гизмо вращения к кости ЧЕРЕЗ прокси (кольца по осям сустава). Замена прямого gizmo.attach(bone). */
 function attachBoneGizmo(nm: string): void { fkProxyBone = nm; rebaselineProxy(); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(boneProxy); }
-gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) rebaselineProxy(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else pushUndo(); });
+gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) rebaselineProxy(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else { pushUndo(); if (!wpnOverride && weaponGroups.includes(gizmo.object as THREE.Group)) saveGripBase(); } });   // правка оружия без галки → авто в БАЗУ pe_grip
 
 const limitGizmo = makeLimitGizmo(); scene.add(limitGizmo.group);   // гизмо предела выбранного сустава (на манекене)
 let showLimits = true;                                              // рисовать пределы выбранного сустава (дефолт вкл)
@@ -130,7 +130,31 @@ function updateWeapon(): void {
   // совпадает, driveAsm ведёт корень) → оружие ложится на кисть меша. Иначе (без атласа) — на физ-призрак, как в игре.
   const wpnHost = atlasBS() ? human : (ghostHuman ?? human);
   weaponGroups = attachWeapons(wpnHost, weapon);                       // старт: на манекен/призрак (fallback); syncWeaponHost переносит на кисть атласа
+  applyBaseGrip(weaponGroups, curCharId, weapon);                     // ЕДИНЫЙ базовый хват pe_grip → g.userData.baseRot/basePos (поверх weapon-type дефолта)
+  seedGripBaseFromIdle();                                             // миграция: pe_grip пуст → сид из idle-хвата (не терять уже настроенное)
   lgripMark = null;                                                   // маркер хвата был ребёнком старого груп — пересоздастся из позы
+}
+/** Если базы хвата ещё нет в pe_grip — сидим её из idle-хвата (старые покадровые __wpnMain), чтобы не терять настроенное. */
+function seedGripBaseFromIdle(): void {
+  try {
+    const c = JSON.parse(localStorage.getItem('pe_grip') || '{}') as Record<string, Record<string, unknown>>;
+    if (c[curCharId]?.[weapon]) return;   // база уже есть
+    const idle = editorContent.resolveUpper(weapon)?.pose; if (!idle) return;
+    let any = false;
+    weaponGroups.forEach((g, i) => { const rk = WPN_KEYS[i], pk = WPN_POS[i]; if (rk && idle[rk]) { g.rotation.set(idle[rk]![0], idle[rk]![1], idle[rk]![2]); any = true; } if (pk && idle[pk]) { g.position.set(idle[pk]![0], idle[pk]![1], idle[pk]![2]); any = true; } });
+    if (any) saveGripBase();
+  } catch { /* */ }
+}
+/** Сохранить ТЕКУЩИЙ хват (rotation/position групп оружия) в базу pe_grip[char][weapon] → применяется во всех позах без override. */
+function saveGripBase(): void {
+  try {
+    const c = JSON.parse(localStorage.getItem('pe_grip') || '{}') as Record<string, Record<string, { main?: unknown; off?: unknown }>>;
+    const slot = ((c[curCharId] ??= {})[weapon] ??= {}) as Record<string, { r: number[]; p: number[] }>;
+    const KEY = ['main', 'off'];
+    weaponGroups.forEach((g, i) => { const k = KEY[i]; if (!k) return; const e = g.rotation, q = g.position; slot[k] = { r: [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)], p: [+q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2)] }; });
+    localStorage.setItem('pe_grip', JSON.stringify(c)); savePoseKey('pe_grip');
+    applyBaseGrip(weaponGroups, curCharId, weapon);   // база в userData обновлена → все позы без override берут её
+  } catch { /* */ }
 }
 /** 2B: КАЖДЫЙ кадр переносим оружие на кисть ВИДИМОГО атлас-меша (asmSkin, физ-ведомый) — иначе оно на манекене и плавает
  *  относительно модели покадрово. `.add` сохраняет локаль (авторский хват), меняет мир. Нет атласа/не загружен → на призраке. */
@@ -355,11 +379,14 @@ function readPoseFull(): Pose {
   const p = human.readPose();
   delete p['LeftBreast']; delete p['RightBreast'];           // jiggle груди — рантайм, не пишем в позу
 
-  weaponGroups.forEach((g, i) => {
-    const rk = WPN_KEYS[i], pk = WPN_POS[i];
-    if (rk) { const e = g.rotation; p[rk] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }
-    if (pk) { const q = g.position; p[pk] = [+q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2)]; }
-  });
+  if (wpnOverride) {   // хват пишем в позу ТОЛЬКО при галке «своя правка (кадр)»; иначе поза берёт БАЗУ pe_grip (единый хват)
+    p['__wpnOverride'] = [1, 0, 0];
+    weaponGroups.forEach((g, i) => {
+      const rk = WPN_KEYS[i], pk = WPN_POS[i];
+      if (rk) { const e = g.rotation; p[rk] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }
+      if (pk) { const q = g.position; p[pk] = [+q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2)]; }
+    });
+  }
   if (lgripMark && lgripMark.parent === weaponGroups[0]) {   // точка хвата левой (локаль оружия) — если включена
     const lp = lgripMark.position, lr = lgripMark.rotation;
     p['__lgripP'] = [+lp.x.toFixed(2), +lp.y.toFixed(2), +lp.z.toFixed(2)];
@@ -368,11 +395,14 @@ function readPoseFull(): Pose {
   p['__hipsY'] = [+human.bones.get('Hips')!.position.y.toFixed(2), 0, 0];   // АВТОРСКАЯ высота таза → база стойки (standY) + восстановление на applyPose (иначе после бега таз оставался на gait-standY → провал)
   return p;
 }
+let wpnOverride = false;   // галка «хват: своя правка (кадр)» текущего кадра (иначе — БАЗА pe_grip, единый хват во всех позах)
 function applyWeaponPose(p: Pose): void {
+  wpnOverride = !!p['__wpnOverride'];   // синк галки с кадром
   weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
-    if (rk && p[rk]) g.rotation.set(p[rk]![0], p[rk]![1], p[rk]![2]);
-    if (pk && p[pk]) g.position.set(p[pk]![0], p[pk]![1], p[pk]![2]);
+    const br = g.userData.baseRot as THREE.Euler | undefined, bp = g.userData.basePos as THREE.Vector3 | undefined;
+    if (wpnOverride && rk && p[rk]) g.rotation.set(p[rk]![0], p[rk]![1], p[rk]![2]); else if (br) g.rotation.copy(br);   // override → своя; иначе база
+    if (wpnOverride && pk && p[pk]) g.position.set(p[pk]![0], p[pk]![1], p[pk]![2]); else if (bp) g.position.copy(bp);
   });
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
@@ -624,7 +654,22 @@ function poseTools(): void {
     const wlbl = ['осн', 'офф'];
     const pickWeapon = (g: THREE.Object3D, m: 'rotate' | 'translate'): void => { setMode('fk'); fkProxyBone = null; selected = null; highlight(null); gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(g); };
     weaponGroups.forEach((g, i) => { const nm = wlbl[i] ?? ('о' + (i + 1)); wr.append(pbtn(nm + ' ⟳', () => pickWeapon(g, 'rotate')), pbtn(nm + ' ✥', () => pickWeapon(g, 'translate'))); });
-    wr.append(pbtn('сброс', () => { updateWeapon(); renderAnim(); }));   // пересборка = базовые позиция/поворот
+    wr.append(pbtn('сброс', () => { updateWeapon(); renderAnim(); }));   // пересборка = базовый хват pe_grip
+    // ХВАТ = единая БАЗА pe_grip (во всех анимациях одинаково). Правишь оружие с ВЫКЛ галкой → авто-в базу. Галка ВКЛ →
+    // хват правится ОТДЕЛЬНО на этот кадр (override поверх базы; удар может двигать оружие только с галкой).
+    const ovrLab = el('label', 'font-size:11px;display:flex;align-items:center;gap:4px;margin-top:4px');
+    const ovrCb = el('input', '') as HTMLInputElement; ovrCb.type = 'checkbox'; ovrCb.checked = wpnOverride;
+    ovrCb.onchange = () => {
+      wpnOverride = ovrCb.checked; const c = curClip(); const kk = c?.keys[frameIdx];
+      if (kk) {
+        if (wpnOverride) kk.pose = readPoseFull();   // захватить текущий хват как override ЭТОГО кадра
+        else { delete kk.pose['__wpnOverride']; for (const k of [...WPN_KEYS, ...WPN_POS]) delete kk.pose[k]; applyWeaponPose(kk.pose); }   // убрать → база
+        saveLib();
+      }
+      renderAnim();
+    };
+    ovrLab.append(ovrCb, document.createTextNode('хват: своя правка (этот кадр)')); body.append(ovrLab);
+    body.append(pbtn('★ хват → БАЗА (все анимации)', () => { saveGripBase(); renderAnim(); }));
     if (weaponGroups.length === 1 && !weapon.includes('+')) {            // двуручка: левая кисть держит оружие в точке хвата (покадрово, IK)
       const gh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); gh.textContent = 'ДВУРУЧНЫЙ ХВАТ · левая кисть на оружии (IK)'; body.append(gh);
       const gr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(gr);

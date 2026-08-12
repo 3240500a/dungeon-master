@@ -136,12 +136,15 @@ function blendEuler(bone: THREE.Object3D | undefined, gaitE: [number, number, nu
   if (!bone) return;
   qEuler(gaitE, _qA); qEuler(held, _qB); bone.quaternion.copy(_qA).slerp(_qB, hw);
 }
-function applyWeaponUpper(weaponGroups: THREE.Group[], pose: Pose, hw: number): void {   // оружие: база хвата → авторская idle по hw
+function applyWeaponUpper(weaponGroups: THREE.Group[], pose: Pose, hw: number): void {   // оружие: БАЗА хвата; поза с __wpnOverride доредактирует её по hw
+  const ovr = !!pose['__wpnOverride'];   // нет флага → жёстко база (единый хват во всех анимациях)
   weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
     const br = g.userData.baseRot as THREE.Euler | undefined, bp = g.userData.basePos as THREE.Vector3 | undefined;
-    if (rk && pose[rk] && br) { const h = pose[rk]!; g.rotation.set(br.x + (h[0] - br.x) * hw, br.y + (h[1] - br.y) * hw, br.z + (h[2] - br.z) * hw); }
-    if (pk && pose[pk] && bp) { const h = pose[pk]!; g.position.set(bp.x + (h[0] - bp.x) * hw, bp.y + (h[1] - bp.y) * hw, bp.z + (h[2] - bp.z) * hw); }
+    if (ovr && rk && pose[rk] && br) { const h = pose[rk]!; g.rotation.set(br.x + (h[0] - br.x) * hw, br.y + (h[1] - br.y) * hw, br.z + (h[2] - br.z) * hw); }
+    else if (br) g.rotation.copy(br);   // база (нет override) — хват держится жёстко
+    if (ovr && pk && pose[pk] && bp) { const h = pose[pk]!; g.position.set(bp.x + (h[0] - bp.x) * hw, bp.y + (h[1] - bp.y) * hw, bp.z + (h[2] - bp.z) * hw); }
+    else if (bp) g.position.copy(bp);
   });
 }
 function attackEnv(tt: number, dur: number): number {
@@ -157,7 +160,8 @@ function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: Attack
   const ap = clipPoseAt(clip, atk.t / dur);
   const H = human.bones;
   for (const nm of ATK_BONES) { const e = ap[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qB); b.quaternion.slerp(_qB, ab); }
-  weaponGroups.forEach((g, i) => {
+  const ovr = !!ap['__wpnOverride'];   // удар двигает хват ТОЛЬКО если у кадра-удара стоит галка override; иначе хват жёсткий (база)
+  if (ovr) weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
     if (rk && ap[rk]) { const h = ap[rk]!; g.rotation.set(g.rotation.x + (h[0] - g.rotation.x) * ab, g.rotation.y + (h[1] - g.rotation.y) * ab, g.rotation.z + (h[2] - g.rotation.z) * ab); }
     if (pk && ap[pk]) { const h = ap[pk]!; g.position.set(g.position.x + (h[0] - g.position.x) * ab, g.position.y + (h[1] - g.position.y) * ab, g.position.z + (h[2] - g.position.z) * ab); }
@@ -394,6 +398,26 @@ export function loadMatch(charId: string, fallbackId?: string): number {
 export function loadFootLift(charId: string, fallbackId?: string): number {
   const cfg = readJSON<Record<string, { footLift?: number }>>('pe_phys', {});
   return cfg[charId]?.footLift ?? (fallbackId ? cfg[fallbackId]?.footLift : undefined) ?? 0;
+}
+type GripSlot = { r: [number, number, number]; p: [number, number, number] };
+/** БАЗОВЫЙ хват оружия/щита per-(char, weapon) из pe_grip (редактор пишет). Слоты [main(RightHand), off(LeftHand)].
+ *  Это ЕДИНАЯ база хвата: применяется во ВСЕХ анимациях (idle/бег/удар) одинаково — оружие не «плавает» покадрово.
+ *  Поза с флагом `__wpnOverride` может доредактировать хват поверх базы (галка в редакторе); без флага — жёстко база. */
+export function loadGrip(charId: string, weapon: string, fallbackId?: string): (GripSlot | null)[] {
+  const cfg = readJSON<Record<string, Record<string, { main?: GripSlot; off?: GripSlot }>>>('pe_grip', {});
+  const g = cfg[charId]?.[weapon] ?? (fallbackId ? cfg[fallbackId]?.[weapon] : undefined);
+  return [g?.main ?? null, g?.off ?? null];
+}
+/** Поставить базовый хват pe_grip на `g.userData.baseRot/basePos` групп оружия (поверх weapon-type дефолта из attachWeapons).
+ *  Зови ПОСЛЕ attachWeapons и при смене оружия. Нет базы в конфиге → остаётся weapon-type дефолт. */
+export function applyBaseGrip(weaponGroups: THREE.Group[], charId: string, weapon: string, fallbackId?: string): void {
+  const base = loadGrip(charId, weapon, fallbackId);
+  weaponGroups.forEach((g, i) => {
+    const b = base[i]; if (!b) return;
+    const br = g.userData.baseRot as THREE.Euler | undefined, bp = g.userData.basePos as THREE.Vector3 | undefined;
+    if (br) br.set(b.r[0], b.r[1], b.r[2]);
+    if (bp) bp.set(b.p[0], b.p[1], b.p[2]);
+  });
 }
 /** Профиль скрутки корпуса per-char из pe_twist (мерж поверх дефолта); фолбэк (монстры → Волкодав). */
 export function loadTwist(charId: string, fallbackId?: string): TwistProfile {
