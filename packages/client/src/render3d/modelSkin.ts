@@ -128,11 +128,14 @@ export function resolveSlotModels(cfg: AssetConfig, equipment?: Record<string, {
 
 interface Worn { slot: string; rig: RetargetRig }
 
-/** Модель-атлас персонажа (kind:'character') из конфига. classId → АТЛАС ЭТОГО КЛАССА (броня per-персонажна);
- *  фолбэк — глобальный атлас (без classId) или первый. Так одиночный (глобальный) атлас работает как раньше. */
-export function resolveCharacterModel(cfg: AssetConfig, classId?: string): ModelCfg | undefined {
+/** Модель-атлас персонажа (kind:'character') из конфига по КЛЮЧУ (id класса игрока ИЛИ семья монстра =
+ *  subfaction||faction). Есть атлас с этим classId → он. `allowFallback` (игрок): фолбэк на глобальный атлас
+ *  (без classId) или первый — одиночный атлас работает как раньше. `allowFallback=false` (монстр): нет своего
+ *  атласа → undefined (рисуем процедурно, а не глобальным knight'ом). */
+export function resolveCharacterModel(cfg: AssetConfig, key?: string, allowFallback = true): ModelCfg | undefined {
   const chars = cfg.models.filter((m) => m.kind === 'character' && !!m.url);
-  if (classId) { const own = chars.find((m) => m.classId === classId); if (own) return own; }
+  if (key) { const own = chars.find((m) => m.classId === key); if (own) return own; }
+  if (!allowFallback) return undefined;
   return chars.find((m) => !m.classId) ?? chars[0];
 }
 

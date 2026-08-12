@@ -94,4 +94,15 @@ export interface ScaledMonster extends MonsterDef {
   damage: number;
   /** Разбивка гира по слотам (редкость+афиксы каждого предмета) — для генератора/тултипа. Не по сети. */
   gearRolls?: MonsterGearRoll[];
+  // ── 3D-внешность монстра (летит клиенту в FloorInit.monsters[].def целиком; рендер: атлас семьи + гир как submesh/GLB) ──
+  /** Ключ атласа монстра = семья (subfaction||faction), напр. 'zombie'/'undead': «один FBX на всех зомби». */
+  atlasKey?: string;
+  /** id 3D-моделей надетой брони по слоту атласа (chest/helm = имя submesh-варианта). */
+  armorModels?: { chest?: string; helm?: string };
+  /** id 3D-модели оружия (kind:'weapon'). */
+  weaponModelId?: string;
+  /** 3D-ключ оружия монстра (форма процедурного меша: 'sword+shield'/'greataxe'/…), как PlayerView.weaponKey. */
+  weaponKey?: string;
+  /** id 3D-модели щита (kind:'weapon' weaponType='shield'). */
+  shieldModelId?: string;
 }

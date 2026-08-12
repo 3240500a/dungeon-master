@@ -32,6 +32,8 @@ export interface HumanoidDollOpts {
   weapon: string;                                    // редакторный ключ оружия ('axe','staff','none',…)
   weaponModels?: { main?: string; off?: string };    // Ф3: id 3D-моделей оружия (kind:'weapon') на main/off руки → GLB вместо процедурки (общее на всех)
   classId?: string;                                  // задан → ИГРОК (гейт класса → global GAIT + контент класса)
+  atlasKey?: string;                                 // ключ атласа для МОНСТРА (семья subfaction||faction): скин по нему БЕЗ глобал-фолбэка (нет атласа→процедурка)
+  baseAppearance?: { hair?: string; head?: string; hands?: string; body?: string; feet?: string };   // submesh-вид пустых слотов (нет экипа): hair→helm/head/gloves(hands)/chest(body)/boots(feet)
   gaitId?: string;                                   // задан (без classId) → МОНСТР: локальный plant/gx + контент этого id
   gaitFallback?: string;                             // фолбэк для gaitId, если он ещё не настроен (монстры → 'warrior')
   colors?: { body?: number; limb?: number; head?: number };
@@ -93,7 +95,11 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 
   // ── C6b: слой скинов (импортные GLB по слотам) поверх процедурного solid — только для игрока (classId).
   //    Ретаргет ведётся solid (физ-результат). База слотов из config `models` (base=true); свап по экипу — setAppearance. ──
-  const skin = opts.classId ? createModelSkin(group, solid) : null;
+  // Ключ атласа: игрок = classId (фолбэк на глобальный ок); монстр = atlasKey (СТРОГО — нет атласа → процедурка).
+  const atlasKey = opts.classId ?? opts.atlasKey;
+  const atlasStrict = !opts.classId && !!opts.atlasKey;   // монстр: без своего атласа не подмешиваем глобальный/легаси
+  const skin = atlasKey ? createModelSkin(group, solid) : null;
+  const baseApp = opts.baseAppearance;   // submesh пустых слотов (нет экипа)
   let equipModels: Record<string, { modelId?: string } | undefined> | undefined;
   // Экипировка → выбор сабмеш-варианта по слоту атласа (modelId = имя сабмеша-варианта). Незнакомый id безопасен
   // (setAtlas variant-safe: покажет все сабмеши слота). Волосы прячет ТОЛЬКО показ реальной модели шлема (=выбор
@@ -101,15 +107,19 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // (и расходился с редактором, где волосы всегда видны в базе).
   function atlasVisible(): Record<string, string> {
     const visible: Record<string, string> = {};
-    for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) { const id = equipModels?.[slot]?.modelId; if (id) visible[slot] = id; }
+    // Пустой слот → базовый submesh-вид класса (baseAppearance); надетый предмет (modelId) перекрывает; нет ни того ни
+    // другого → ключ не задаём (setAtlas покажет все submesh слота, как раньше). hair→helm-слот (причёска без шлема).
+    const baseBySlot: Record<string, string | undefined> = baseApp ? { helm: baseApp.hair, head: baseApp.head, gloves: baseApp.hands, chest: baseApp.body, boots: baseApp.feet } : {};
+    for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) { const id = equipModels?.[slot]?.modelId ?? baseBySlot[slot]; if (id) visible[slot] = id; }
     return visible;
   }
   function refreshSkin(): void {
     if (!skin) return;
     void loadAssetConfig().then((cfg) => {
       const assets = { materials: cfg.materials, textures: cfg.textures };
-      const char = resolveCharacterModel(cfg, opts.classId);   // E3: атлас персонажа (один GLB); classId → атлас ЭТОГО класса (броня per-char)
+      const char = resolveCharacterModel(cfg, atlasKey, !atlasStrict);   // E3: атлас по ключу (класс/семья); монстр строго (нет→процедурка)
       if (char) { void skin.setAtlas(char, atlasVisible(), assets); return; }   // = превью редактора (без hideHair)
+      if (atlasStrict) return;   // монстр без своего атласа → процедурный меш (не подмешивать легаси base-парты)
       void skin.set(resolveSlotModels(cfg, equipModels), assets);   // легаси: послотные GLB
     });
   }
@@ -293,7 +303,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
 }
 
 /** Игрок — тонкая обёртка над единой куклой: внешность/оружие класса из CLASS_CHARS. */
-export interface GamePlayerOpts { classId: string; weapon: string; weaponModels?: { main?: string; off?: string }; x: number; z: number; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> }
+export interface GamePlayerOpts { classId: string; weapon: string; weaponModels?: { main?: string; off?: string }; baseAppearance?: HumanoidDollOpts['baseAppearance']; x: number; z: number; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> }
 export function makeGamePlayerDoll(pw: PhysWorld, opts: GamePlayerOpts): RagdollHandle {
-  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, weaponModels: opts.weaponModels, classId: opts.classId, profile: opts.profile, boneScale: opts.boneScale, boneOffsets: opts.boneOffsets, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
+  return makeHumanoidDoll(pw, { x: opts.x, z: opts.z, weapon: opts.weapon, weaponModels: opts.weaponModels, baseAppearance: opts.baseAppearance, classId: opts.classId, profile: opts.profile, boneScale: opts.boneScale, boneOffsets: opts.boneOffsets, colors: { body: 0x8a93ad, limb: 0x6f7690 } });
 }

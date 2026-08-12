@@ -6,6 +6,7 @@ import type { DebuffApply, DebuffKind } from '../world/debuffs.js';
 import type { Rng } from './rng.js';
 import { rollAffixes, type AffixTarget } from './itemgen.js';
 import { deriveMonsterStats, DEFAULT_MDERIVE, type MonsterDeriveScaling, type MonsterTemplate } from './monsterDerive.js';
+import { weapon3dKeyFromEquipment } from '../session/weapon3d.js';   // 3D-ключ оружия монстра (форма меша) — общий с игроком
 
 type Monsters = ConfigShapes['monsters'];
 type MonsterGear = ConfigShapes['monster-gear'];
@@ -163,6 +164,17 @@ export function generateMonster(
   const def = deriveMonsterStats(base as MonsterTemplate, weapon, armor, shield, level, mderive, helm);
 
   const m: ScaledMonster = { ...def, level, rarity: 'normal', affixes: [], damage: 0 };
+
+  // 3D-внешность: семья (атлас) + id моделей надетого гира → клиент рисует submesh/GLB (летит в FloorInit целиком).
+  m.atlasKey = (base as { subfaction?: string }).subfaction || base.faction;
+  const wk = weapon3dKeyFromEquipment(weapon, shield ?? undefined);   // форма процедурного меша (как у игрока)
+  if (wk) m.weaponKey = wk;
+  if (weapon.modelId) m.weaponModelId = weapon.modelId;
+  if (shield?.modelId) m.shieldModelId = shield.modelId;
+  const am: { chest?: string; helm?: string } = {};
+  if (armor?.modelId) am.chest = armor.modelId;
+  if (helm?.modelId) am.helm = helm.modelId;
+  if (am.chest || am.helm) m.armorModels = am;
 
   if (opts.itemAffixes && opts.rarities) {
     // Редкость монстра = редкость его гира (4 редкости). По редкости+уровню N СЛОТОВ становятся magic/rare

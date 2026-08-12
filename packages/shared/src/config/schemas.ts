@@ -283,6 +283,13 @@ export const classesSchema = z.array(
     affinity: z.array(z.enum(['undead', 'demon', 'beast', 'monster'])).default([]),
     /** Масштаб пулов HP/маны/выносливости этого класса (от атрибутов и уровня). */
     derived: hpManaScalingSchema,
+    /** Базовый 3D-вид класса (атлас), когда слот ПУСТ (нет экипировки): submesh-вариант по умолчанию.
+     *  Ключи — логические части тела → слоты атласа: hair→helm (причёска без шлема), head→head, hands→gloves,
+     *  body→chest, feet→boots. Пусто/нет → показать все submesh слота (как раньше). Надетый предмет (modelId) перекрывает. */
+    baseAppearance: z.object({
+      hair: z.string().optional(), head: z.string().optional(), hands: z.string().optional(),
+      body: z.string().optional(), feet: z.string().optional(),
+    }).optional(),
   }),
 );
 
@@ -653,6 +660,8 @@ export const monsterGearSchema = z.array(
       maxDamage: z.number().min(0).default(3),
       attackSpeed: z.number().min(0.05).default(1),
       physSub: z.string().optional(),
+      /** id 3D-модели (конфиг models, kind='weapon' с weaponType===weaponClass) для меша оружия монстра. Нет → процедурка. */
+      modelId: z.string().optional(),
     }),
     z.object({
       kind: z.literal('armor'),
@@ -665,6 +674,8 @@ export const monsterGearSchema = z.array(
       slot: z.enum(['chest', 'helm']).default('chest'),
       /** Базовая защита брони (до вклада STR). */
       defense: z.number().min(0).default(0),
+      /** id 3D-модели (submesh-вариант атласа монстра для этого слота). Нет → базовый вид слота. */
+      modelId: z.string().optional(),
     }),
     z.object({
       kind: z.literal('shield'),
@@ -674,6 +685,8 @@ export const monsterGearSchema = z.array(
       enabled: z.boolean().default(true),
       block: z.number().min(0).max(1).default(0.12),
       defense: z.number().min(0).default(0),
+      /** id 3D-модели (конфиг models, kind='weapon' weaponType='shield') для меша щита монстра. Нет → процедурка. */
+      modelId: z.string().optional(),
     }),
   ]),
 );
@@ -1675,9 +1688,10 @@ export const modelsSchema = z.array(z.object({
   kind: z.enum(['character', 'part', 'weapon']).default('part'),
   slot: z.enum(['helm', 'chest', 'gloves', 'boots', 'head']).optional(),   // kind='part': область тела
   weaponType: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield']).optional(),   // kind='weapon'
-  // kind='character': ЗА КАКОЙ КЛАСС этот атлас (id класса). Броня per-персонажна: у каждого класса свой атлас со
-  //   своими submesh-вариантами. Пусто = глобальный фолбэк (если нет атласа под класс игрока). Оружие (kind='weapon')
-  //   ОБЩЕЕ на всех — classId не задаётся.
+  // kind='character': КЛЮЧ АТЛАСА — за какой персонаж этот атлас. Для игрока = id класса; для монстра = семья
+  //   (subfaction||faction, напр. 'undead'/'zombie'): «один FBX на всех зомби». У каждого свой атлас со своими
+  //   submesh-вариантами (броня/причёска per-персонажны). Пусто = глобальный фолбэк (только для игрока; монстр без
+  //   атласа = процедурка). Оружие (kind='weapon') ОБЩЕЕ на всех — classId не задаётся.
   classId: z.string().optional(),
   slots: z.record(z.string(), z.string()).default({}),  // kind='character': имя сабмеша → слот (helm/head/chest/gloves/boots; '' = скрыт). Авто-классификация при импорте, правится.
   // kind='character': модульные пропорции тела (слайдеры конструктора). Игра строит solid/target с ним, атлас конформится.

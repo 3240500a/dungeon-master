@@ -1,4 +1,5 @@
-import type { Item } from '../types/items.js';
+/** Структурный минимум для маппинга 3D-ключа: подходит и игроцкий Item, и гир монстра (GearWeapon/GearShield). */
+type Weaponish = { weaponClass?: string; hands?: number; kind?: string };
 
 /** Ключ одноручного оружия по weaponClass (для офф-руки: дуал). null — не одноручное/неизвестно. */
 function oneHandKey(weaponClass: string | undefined): string | null {
@@ -15,7 +16,7 @@ function oneHandKey(weaponClass: string | undefined): string | null {
  * (вызывающий подставит класс-дефолт). Чистая функция — единый источник маппинга для сервера (снапшот)
  * и клиента (рендер 3D).
  */
-export function weapon3dKeyFromEquipment(weapon: Item | undefined, offhand: Item | undefined): string | null {
+export function weapon3dKeyFromEquipment(weapon: Weaponish | undefined, offhand: Weaponish | undefined): string | null {
   if (!weapon) return null;
   const two = (weapon.hands ?? 1) >= 2;
   let base: string;

@@ -149,6 +149,16 @@ fieldEnumSources.maxTier = tierIds;
 //  • weapon → models kind='weapon' с weaponType===parent.weaponClass (оружие ОБЩЕЕ на всех, per-char только хват).
 //  • shield → models kind='weapon' с weaponType==='shield'.
 type ModelRow = { id: string; kind?: string; slot?: string; weaponType?: string; slots?: Record<string, string> };
+// Имена submesh-ВАРИАНТОВ персонаж-атласов (kind='character'), классифицированные в этот слот атласа, + легаси per-slot part.
+const atlasVariantsForSlot = (slot: string): string[] => {
+  const ms = (data['models'] as ModelRow[]) ?? [];
+  const variants = new Set<string>();
+  for (const m of ms) {
+    if (m.kind === 'character' && m.slots) for (const [mesh, sl] of Object.entries(m.slots)) { if (sl === slot) variants.add(mesh); }
+    if (m.kind === 'part' && m.slot === slot) variants.add(m.id);
+  }
+  return [...variants].sort();
+};
 const modelIdOptions = (parent: Record<string, unknown> | undefined): string[] => {
   const ms = (data['models'] as ModelRow[]) ?? [];
   const pkind = parent?.['kind'];
@@ -157,18 +167,27 @@ const modelIdOptions = (parent: Record<string, unknown> | undefined): string[] =
     return ['', ...ms.filter((m) => m.kind === 'weapon' && (!wc || m.weaponType === wc)).map((m) => m.id)];
   }
   if (pkind === 'shield') return ['', ...ms.filter((m) => m.kind === 'weapon' && m.weaponType === 'shield').map((m) => m.id)];
-  if (pkind === 'armor') {
-    const slot = parent?.['slot'];                                  // helm/chest/gloves/boots/belt (belt пока без 3D)
-    const variants = new Set<string>();
-    for (const m of ms) {
-      if (m.kind === 'character' && m.slots) for (const [mesh, sl] of Object.entries(m.slots)) { if (sl === slot) variants.add(mesh); }
-      if (m.kind === 'part' && m.slot === slot) variants.add(m.id);  // легаси послотный меш
-    }
-    return ['', ...[...variants].sort()];
-  }
+  if (pkind === 'armor') return ['', ...atlasVariantsForSlot(String(parent?.['slot'] ?? ''))];   // helm/chest/gloves/boots/belt (belt пока без 3D)
   return ['', ...ms.map((m) => m.id)];                              // фолбэк (не должно вызываться: modelId только у weapon/armor/shield)
 };
 fieldCustomRenderers.modelId = (value, onChange, parent) => renderEnum(modelIdOptions(parent), value == null ? '' : String(value), onChange);
+// Базовый 3D-вид класса (пустые слоты): 5 выпадашек по частям тела → submesh-варианты соответствующего слота атласа.
+//  Ключ поля 'baseAppearance' уникален (не коллизится с monster-gear helm/… через fieldEnumSources). '' = все submesh слота.
+const APPR: [key: string, slot: string, label: string][] = [
+  ['hair', 'helm', 'Причёска / шлем'], ['head', 'head', 'Голова'], ['hands', 'gloves', 'Руки / перчатки'],
+  ['body', 'chest', 'Броня (тело)'], ['feet', 'boots', 'Сапоги'],
+];
+fieldCustomRenderers.baseAppearance = (value, onChange) => {
+  const v: Record<string, string> = (value && typeof value === 'object') ? { ...(value as Record<string, string>) } : {};
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  for (const [key, slot, label] of APPR) {
+    const row = document.createElement('label'); row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
+    const lbl = document.createElement('span'); lbl.textContent = label; lbl.style.cssText = 'min-width:130px;color:#aab';
+    const sel = renderEnum(['', ...atlasVariantsForSlot(slot)], v[key] ?? '', (nv) => { const s = String(nv ?? ''); if (s) v[key] = s; else delete v[key]; onChange({ ...v }); });
+    row.append(lbl, sel); wrap.append(row);
+  }
+  return wrap;
+};
 // map/normalMap/… (у материала) → id текстуры из вкладки «Текстуры»; '' = без карты.
 const textureIds = (): string[] => ['', ...((data['textures'] as { id: string }[]) ?? []).map((t) => t.id)];
 for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) fieldEnumSources[k] = textureIds;
