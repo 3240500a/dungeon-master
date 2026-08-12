@@ -173,16 +173,18 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   if (!up) {   // нет idle-позы → полный мах гейта
     gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, gx);
     gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, gx);
-    H.get('LeftLowerArm')!.rotation.set(-Math.abs(t.elL) - gx.elbowBend, 0, 0);
-    H.get('RightLowerArm')!.rotation.set(-Math.abs(t.elR) - gx.elbowBend, 0, 0);
+    // Локоть гнётся вокруг ЛОКАЛЬНОЙ Y (лево −Y / право +Y): кисть форерукава лежит на локальной +X, поэтому X =
+    // ТВИСТ вдоль кости (кисть не двигается), а сгиб — вокруг Y (замерено; так же в правильных авторских idle_*).
+    H.get('LeftLowerArm')!.rotation.set(0, -(Math.abs(t.elL) + gx.elbowBend), 0);
+    H.get('RightLowerArm')!.rotation.set(0, Math.abs(t.elR) + gx.elbowBend, 0);
   } else {
     // sway (остаточный мах) влияет ПО МЕРЕ ДВИЖЕНИЯ: в покое hw=1 → руки ТОЧНО как в авторской idle (стойка = как в редакторе),
     // на бегу hw=1-sway → мах гейта подмешивается. Раньше hw был константой → idle искажался даже стоя.
     const hw = clamp(1 - up.swing * moveMag, 0, 1);
     blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hw, gx);
     blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hw, gx);
-    blendEuler(H.get('LeftLowerArm'), [-Math.abs(t.elL) - gx.elbowBend, 0, 0], up.pose['LeftLowerArm'], hw);
-    blendEuler(H.get('RightLowerArm'), [-Math.abs(t.elR) - gx.elbowBend, 0, 0], up.pose['RightLowerArm'], hw);
+    blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + gx.elbowBend), 0], up.pose['LeftLowerArm'], hw);   // локоть = Y (см. выше), не X
+    blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + gx.elbowBend, 0], up.pose['RightLowerArm'], hw);
     for (const nm of UPPER_BONES) blendEuler(H.get(nm), [0, 0, 0], up.pose[nm], hw);
     applyWeaponUpper(weaponGroups, up.pose, hw);
   }
