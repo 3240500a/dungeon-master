@@ -175,10 +175,11 @@ function gearFields(base: ItemsBase[number]): Partial<Item> {
       reachMult: base.reachMult,
       lowHpBonusPct: base.lowHpBonusPct,
       knockback: base.knockback,
+      modelId: base.modelId,   // 3D-модель оружия (GLB) — несётся на инстанс (рендер + сеть пиров)
     };
   }
-  if (base.kind === 'armor') return { slot: base.slot, armorClass: base.armorClass, beltSlots: base.beltSlots };
-  if (base.kind === 'shield') return { slot: base.slot, shieldClass: base.shieldClass };
+  if (base.kind === 'armor') return { slot: base.slot, armorClass: base.armorClass, beltSlots: base.beltSlots, modelId: base.modelId };   // 3D submesh-вариант брони
+  if (base.kind === 'shield') return { slot: base.slot, shieldClass: base.shieldClass, modelId: base.modelId };
   if (base.kind === 'consumable') return { use: base.use }; // без слота — не экипируется
   return { slot: base.slot }; // jewelry — только слот + baseStats/requirements
 }

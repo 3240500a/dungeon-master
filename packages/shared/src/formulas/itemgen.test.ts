@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { pickDropBase, generateItem, rollRarity, rollAffixes } from './itemgen.js';
+import { pickDropBase, generateItem, rollRarity, rollAffixes, itemFromBase } from './itemgen.js';
 import { createRng } from './rng.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
@@ -19,6 +19,17 @@ function distribution(weights: Record<string, number>, n: number): Record<string
   }
   return counts;
 }
+
+describe('buildItem: 3D modelId несётся с базы на инстанс (регресс: gearFields ронял его → броня не отображалась)', () => {
+  it('armor/weapon/shield инстанс получает modelId базы', () => {
+    for (const kind of ['armor', 'weapon', 'shield'] as const) {
+      const base = bases.find((b) => b.kind === kind);
+      if (!base) continue;
+      const it = itemFromBase({ ...base, modelId: 'test_model_01' } as typeof base, tiers);
+      expect((it as { modelId?: string }).modelId).toBe('test_model_01');
+    }
+  });
+});
 
 describe('pickDropBase (взвешенный дроп по категориям)', () => {
   it('щиты выпадают при shield>0', () => {

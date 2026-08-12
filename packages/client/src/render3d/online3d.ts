@@ -96,15 +96,20 @@ function weaponKeyFromView(pv: { weaponKey?: string; classId: string }): string 
 }
 /** Ф3: id 3D-моделей оружия из экипировки (main=оружие → правая, off=офф-рука/щит → левая) → GLB вместо процедурки.
  *  Пусто → процедурный меш. Оружие ОБЩЕЕ на всех (per-char только хват). Пиры пока без моделей (нужен поле в снапшоте). */
-function weaponModelsFromSave(save: SaveState): { main?: string; off?: string } {
-  const eq = save.equipment as Record<string, { modelId?: string } | undefined> | undefined;
-  return { main: eq?.weapon?.modelId, off: eq?.offhand?.modelId };
+function weaponModelsFromSave(save: SaveState, itemsBase: { id: string; modelId?: string }[]): { main?: string; off?: string } {
+  const eq = save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined> | undefined;
+  const of = (it?: { modelId?: string; baseId?: string }): string | undefined => it && (it.modelId ?? itemsBase.find((b) => b.id === it.baseId)?.modelId);
+  return { main: of(eq?.weapon), off: of(eq?.offhand) };
 }
 /** C6c: внешность брони по слотам из сейва — slot→{modelId} надетых предметов (голову/волосы даёт база слота). */
-function appearanceFromSave(save: SaveState): Record<string, { modelId?: string } | undefined> {
-  const eq = save.equipment as Record<string, { modelId?: string } | undefined> | undefined;
+function appearanceFromSave(save: SaveState, itemsBase: { id: string; modelId?: string }[]): Record<string, { modelId?: string } | undefined> {
+  const eq = save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined> | undefined;
   const out: Record<string, { modelId?: string } | undefined> = {};
-  for (const slot of ['helm', 'chest', 'gloves', 'boots'] as const) { const it = eq?.[slot]; if (it) out[slot] = { modelId: it.modelId }; }
+  // modelId инстанса (gearFields копирует его с базы), фолбэк — modelId базы по baseId (старые предметы без стампа).
+  for (const slot of ['helm', 'chest', 'gloves', 'boots'] as const) {
+    const it = eq?.[slot];
+    if (it) out[slot] = { modelId: it.modelId ?? itemsBase.find((b) => b.id === it.baseId)?.modelId };
+  }
   return out;
 }
 /** C7: внешность пира из снапшота (PlayerView.armorModels: slot→modelId) → формат setAppearance. */
@@ -341,7 +346,7 @@ export async function startOnline3d(): Promise<void> {
     const classId = app.state!.save.classId;
     selfWeaponKey = weaponKeyFromSave(app.state!.save);
     if (!self) {
-      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save), baseAppearance: baseAppearanceOf(classId), x: floor.spawn.x, z: floor.spawn.y, profile: bodyProfile(classId), boneScale: bodyScale(classId), boneOffsets: bodyOffsets(classId) });
+      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save, app.config.get('items.base')), baseAppearance: baseAppearanceOf(classId), x: floor.spawn.x, z: floor.spawn.y, profile: bodyProfile(classId), boneScale: bodyScale(classId), boneOffsets: bodyOffsets(classId) });
       actorsGroup.add(d.group);
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
       const sh = app.config.get('balance').lighting.shadow3d;
@@ -349,11 +354,11 @@ export async function startOnline3d(): Promise<void> {
       playerLight.shadow.camera.near = 8; playerLight.shadow.camera.far = sh.playerLightDist;   // конфиг теней применит applyShadows()
       scene.add(playerLight); applyShadows();   // применить текущее состояние теней к новому свету героя
     } else {
-      self.d.setWeapon?.(selfWeaponKey, weaponModelsFromSave(app.state!.save));   // на новом этаже снаряжение могло смениться
+      self.d.setWeapon?.(selfWeaponKey, weaponModelsFromSave(app.state!.save, app.config.get('items.base')));   // на новом этаже снаряжение могло смениться
       self.d.setPose(floor.spawn.x, floor.spawn.y, 0);
       self.lx = floor.spawn.x; self.lz = floor.spawn.y;
     }
-    self.d.setAppearance?.(appearanceFromSave(app.state!.save));   // C6c: слоты брони (modelId) → скин-слой (базы/предметы)
+    self.d.setAppearance?.(appearanceFromSave(app.state!.save, app.config.get('items.base')));   // C6c: слоты брони (modelId) → скин-слой (базы/предметы)
     self.d.setPhysicsMode?.(playerKinematic ? 'kinematic' : 'physics');   // debug-тумблеры игрока (сохранены между этажами)
     self.d.setPoseLod?.(playerNoIk);
     // Пояс (слева-внизу) + панель биндов ЛКМ/ПКМ/Shift/Space/Alt (по центру) — те же DOM-компоненты, что в 2D UIScene.
@@ -727,7 +732,7 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;
-    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k, weaponModelsFromSave(f.save)); } self.d.setAppearance?.(appearanceFromSave(f.save)); }   // сменил оружие/щит → меши; сменил броню → скин-слой (свап дешёвый: диф по ключу)
+    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k, weaponModelsFromSave(f.save, app.config.get('items.base'))); } self.d.setAppearance?.(appearanceFromSave(f.save, app.config.get('items.base'))); }   // сменил оружие/щит → меши; сменил броню → скин-слой (свап дешёвый: диф по ключу)
     app.bus.emit('state:changed', {});
   });
   app.net.on('shop', (f) => { app.shopStock = f.items; app.bus.emit('state:changed', {}); });
