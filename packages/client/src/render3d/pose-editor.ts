@@ -630,20 +630,6 @@ function poseTools(): void {
   };
   phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('★ пин · жёсткость (кадр)', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
   phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
-  // Подъём стопы (per-персонаж, pe_phys.footLift): поднимает цель стойки (standY) и заземления → ПОДОШВА МЕША атласа на полу
-  // (лодыжка атласа выше процедурной FOOT_Y=1.5, без подъёма тонет). Держится после бега (это база персонажа, не поза-кадр).
-  {
-    const row = el('label', 'display:flex;align-items:center;gap:6px'); row.innerHTML = `<span style="flex:1">подъём стопы (заземл.)</span>`;
-    const s = el('input', 'width:100px') as HTMLInputElement; s.type = 'range'; s.min = '0'; s.max = '8'; s.step = '0.25'; s.value = String(physFootLift);
-    const v = el('span', 'width:44px;text-align:right;color:#9ae6a0'); v.textContent = physFootLift.toFixed(2);
-    s.oninput = () => {
-      physFootLift = parseFloat(s.value); v.textContent = physFootLift.toFixed(2);
-      human.footLift = physFootLift; if (ghostHuman) ghostHuman.footLift = physFootLift;
-      stanceMeasuredFor = '';   // пере-замерить standY под новый подъём (стойка держит высоту)
-      saveFootLift(); renderAnim();
-    };
-    row.append(s, v); body.append(row);
-  }
   // ── ЛИМИТЫ/МОТОРЫ суставов (RB3): множитель конусов/диапазонов + сила моторов. Применяется ПЕРЕСБОРКОЙ куклы на отпускание. ──
   const rgh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rgh.textContent = 'ЛИМИТЫ/МОТОРЫ (пересборка)'; body.append(rgh);
   const ragRow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
@@ -669,6 +655,20 @@ function poseTools(): void {
     pbtn(clampFk ? 'клэмп FK: вкл' : 'клэмп FK: выкл', () => { clampFk = !clampFk; renderAnim(); }, clampFk),
     pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; renderAnim(); }, footGround),
   );
+  // Офсет заземления стоп (per-персонаж, pe_phys.footLift): цель foot-IK = пол + SOLE + офсет. + поднять (стопы тонут под пол),
+  // − опустить (парят над полом). Живо, per-персонаж, держится после бега. Тот же офсет читает игра (loadFootLift).
+  {
+    const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px'); row.innerHTML = `<span style="flex:1;color:#9ae6a0">офсет заземл. стоп (± под/над пол)</span>`;
+    const s = el('input', 'width:120px') as HTMLInputElement; s.type = 'range'; s.min = '-4'; s.max = '8'; s.step = '0.1'; s.value = String(physFootLift);
+    const v = el('span', 'width:44px;text-align:right;color:#9ae6a0'); v.textContent = physFootLift.toFixed(1);
+    s.oninput = () => {
+      physFootLift = parseFloat(s.value); v.textContent = physFootLift.toFixed(1);
+      human.footLift = physFootLift; if (ghostHuman) ghostHuman.footLift = physFootLift;
+      stanceMeasuredFor = '';   // пере-замерить стойку под новый офсет (без __hipsY — фолбэк-высота; с __hipsY не трогает стойку)
+      saveFootLift(); renderAnim();
+    };
+    row.append(s, v); body.append(row);
+  }
   const canon = (tab === 'anim' && selected) ? canonOfHuman(selected) : null;
   if (canon && JOINT_DEF[canon]) {
     const def = JOINT_DEF[canon]!;
