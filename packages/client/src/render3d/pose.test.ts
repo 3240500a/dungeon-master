@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT } from './poseRuntime.js';
+import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT, measureStancePlants } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
 import * as THREE from 'three';
 
@@ -457,5 +457,25 @@ describe('PosePlayer.triggerAttack: клип ужимается в окно ат
     expect(p.attackWeight).toBeCloseTo(1, 5);
     p.atk.t = 0.6;                            // конец → возврат в стойку
     expect(p.attackWeight).toBeCloseTo(0, 2);
+  });
+});
+
+// measureStancePlants: авторская высота таза (__hipsY) = ЕДИНАЯ база стойки (standY). Иначе после бега таз оставался
+// на gait-standY и idle проваливался (юзер: «посмотрел бег, нажал стоп — скелет провалился под землю»).
+describe('measureStancePlants — __hipsY = standY (авторская высота таза)', () => {
+  it('__hipsY в позе → standY = __hipsY (истина, не пересчёт из стоп)', () => {
+    const h = buildHumanoid({});
+    const s = measureStancePlants(h, { __hipsY: [35, 0, 0] });
+    expect(s.standY).toBeCloseTo(35, 3);
+  });
+  it('нет __hipsY (старая поза) → фолбэк-расчёт из стоп (конечный, не 35)', () => {
+    const h = buildHumanoid({});
+    const s = measureStancePlants(h, { LeftUpperLeg: [0.1, 0, 0], RightUpperLeg: [0.1, 0, 0] });
+    expect(Number.isFinite(s.standY)).toBe(true);
+    expect(s.standY).not.toBeCloseTo(35, 1);
+  });
+  it('idle=null → GAIT.standY (фолбэк по умолчанию)', () => {
+    const h = buildHumanoid({});
+    expect(measureStancePlants(h, null).standY).toBe(GAIT.standY);
   });
 });

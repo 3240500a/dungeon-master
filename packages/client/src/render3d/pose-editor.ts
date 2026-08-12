@@ -346,6 +346,7 @@ function readPoseFull(): Pose {
     p['__lgripP'] = [+lp.x.toFixed(2), +lp.y.toFixed(2), +lp.z.toFixed(2)];
     p['__lgripR'] = [+lr.x.toFixed(3), +lr.y.toFixed(3), +lr.z.toFixed(3)];
   }
+  p['__hipsY'] = [+human.bones.get('Hips')!.position.y.toFixed(2), 0, 0];   // АВТОРСКАЯ высота таза → база стойки (standY) + восстановление на applyPose (иначе после бега таз оставался на gait-standY → провал)
   return p;
 }
 function applyWeaponPose(p: Pose): void {
@@ -357,7 +358,7 @@ function applyWeaponPose(p: Pose): void {
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
-function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } applyWeaponPose(p); applyFramePhys(p); }
+function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } if (p['__hipsY']) human.bones.get('Hips')!.position.y = p['__hipsY']![0]; applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторскую высоту таза (иначе после бега остаётся gait-standY → провал скелета)
 // Интерп ПОВОРОТОВ кадров — КВАТЕРНИОННЫЙ SLERP (истинная кратчайшая дуга, без gimbal). Покомпонентный лерп эйлеров
 // (даже с обёрткой углов в [-π,π]) на многоосевых кадрах даёт «прокрутку» руки (эйлеры далеки, хотя поворот близок).
 // slerp учитывает двойное покрытие (q и −q = один поворот) → всегда короткий путь. lerpAng оставлен для скаляров/маркера.
@@ -379,6 +380,7 @@ function lerpPose(a: Pose, b: Pose, t: number): void {
   });
   const ip = (k: string, d: number): number => { const va = a[k]?.[0] ?? d, vb = b[k]?.[0] ?? va; return va + (vb - va) * t; };
   PHYS.match = ip('__match', physMatchBase); PHYS.pinKp = ip('__pinKp', DEF_PINKP);   // per-кадр физ скользит в проигрывании
+  if (a['__hipsY'] || b['__hipsY']) human.bones.get('Hips')!.position.y = ip('__hipsY', human.bones.get('Hips')!.position.y);   // высота таза скользит по кадрам (иначе провал при скрабе клипа)
   if (a['__lgripP'] || b['__lgripP']) { const m = ensureLgripMark(); if (m) {   // точка хвата скользит по кадрам (перехват)
     const pa = a['__lgripP'] ?? b['__lgripP']!, pb = b['__lgripP'] ?? pa, ra = a['__lgripR'] ?? [0, 0, 0], rb = b['__lgripR'] ?? ra;
     m.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t);

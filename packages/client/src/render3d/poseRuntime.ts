@@ -454,10 +454,11 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   const h = hips.getWorldPosition(_ms0);
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
   const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);   // yaw 0 → world X = body-lateral, world Z = forward
-  // Базовая высота таза = такая, чтобы стопы idle-стойки стояли на полу (FOOT_Y + footLift). Таз позировали на 30 → падение
-  // стоп = 30 − footY; высота таза = цель_стопы + падение. footLift поднимает цель, чтобы ПОДОШВА МЕША атласа (лодыжка выше
-  // FOOT_Y) легла на пол, а не тонула. Это база гейта → бег/подшаг не поднимают таз выше стойки (нет подскока).
-  const standY = (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
+  // Высота таза стойки. ПРИОРИТЕТ — авторская `__hipsY` из idle-позы (где юзер поставил таз = ИСТИНА): и стойка, и бег, и
+  // восстановление на applyPose берут ОДНУ величину → нет провала после бега и рассинхрона бег↔стойка (редактор ≡ игра).
+  // Фолбэк (старые позы без __hipsY): расчёт из стоп — таз так, чтобы стопы idle стояли на полу (FOOT_Y + footLift).
+  const authored = idle['__hipsY'];
+  const standY = authored ? authored[0] : (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
   return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
 }
 
