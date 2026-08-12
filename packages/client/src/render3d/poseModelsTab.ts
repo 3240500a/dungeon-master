@@ -82,6 +82,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   let asmMeshes: string[] = [];                  // имена сабмешей атласа (для UI)
   const asmVisible: Record<string, string> = {}; // слот → выбранный сабмеш ('' = скрыть; НЕТ ключа = показать все)
   let asmStatus = '';
+  let wpnStatus = '';                            // статус импорта оружия (один FBX → GLB на каждое)
 
   /** Текущий атлас: свежий импорт → character из конфига. */
   function curAtlas(): ModelEntry | null { return asmAtlas ?? (resolveCharacterModel(cfg) as ModelEntry | undefined) ?? null; }
@@ -296,6 +297,71 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     cfg.models = models; renderBody();
   }
 
+  // ── ОРУЖИЕ: один FBX со всеми оружиями → GLB на каждый меш (kind='weapon' + weaponType). ОБЩЕЕ на всех
+  //    персонажей (per-char только хват pe_grip). Тип авто-по имени, правится в списке. Как атлас-броня, но per-меш. ──
+  const WEAPON_TYPES = ['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield'];
+  /** Имя меша → weaponType. Порядок важен: узкие перед общими (crossbow до bow, halberd/spear до др.). */
+  function classifyWeapon(name: string): string {
+    const n = name.toLowerCase();
+    if (/shield|buckler|targe|kite|heater/.test(n)) return 'shield';
+    if (/crossbow|xbow|arbalest/.test(n)) return 'crossbow';
+    if (/bow|longbow|shortbow/.test(n)) return 'bow';
+    if (/dagger|knife|dirk|kris/.test(n)) return 'dagger';
+    if (/halberd|glaive|poleaxe|pole|bardiche/.test(n)) return 'halberd';
+    if (/spear|(?<!s)pike|lance|javelin/.test(n)) return 'spear';   // (?<!s)pike: ловить «pike», но не «spike» (mace_spiked)
+    if (/staff|stave|rod/.test(n)) return 'staff';
+    if (/wand|scepter|sceptre/.test(n)) return 'wand';
+    if (/axe|hatchet|cleaver/.test(n)) return 'axe';
+    if (/mace|hammer|maul|club|flail|morningstar/.test(n)) return 'mace';
+    if (/sword|blade|falchion|scimitar|katana|sabre|saber|rapier/.test(n)) return 'sword';
+    return 'sword';
+  }
+  async function importWeaponSet(get: () => Promise<THREE.Group>, srcName: string): Promise<void> {
+    void srcName; wpnStatus = 'импорт оружия…'; renderBody();
+    try {
+      const g = await get();
+      g.rotation.set(detectUpZ(g) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);   // Z-up FBX → Y-up
+      const meshes: THREE.Mesh[] = [];
+      g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+      if (!meshes.length) { wpnStatus = 'в файле нет мешей'; renderBody(); return; }
+      const models = cfg.models.slice();
+      const made: string[] = [];
+      for (const wm of meshes) {
+        const weaponType = classifyWeapon(wm.name);
+        const clone = g.clone(true) as THREE.Object3D;               // клон сцены → оставить только целевой меш
+        const drop: THREE.Object3D[] = [];
+        clone.traverse((o) => { if ((o as THREE.Mesh).isMesh && o.name !== wm.name) drop.push(o); });
+        for (const o of drop) o.parent?.remove(o);
+        clone.updateMatrixWorld(true);
+        const c = new THREE.Box3().setFromObject(clone).getCenter(new THREE.Vector3());   // рецентр меша в origin (грип позиционирует)
+        clone.position.sub(c); clone.updateMatrixWorld(true);
+        const glb = await exportGLB(clone);
+        clone.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry && m.name !== wm.name) m.geometry.dispose(); });
+        const id = ('weapon_' + (wm.name || weaponType)).replace(/[^a-zA-Z0-9_-]/g, '') || ('weapon_' + weaponType);
+        const up = await uploadAsset(id, glb, 'model/gltf-binary');
+        const e: ModelEntry = { id, name: wm.name || weaponType, url: up.url, kind: 'weapon', weaponType, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
+        const i = models.findIndex((x) => x.id === id);
+        if (i >= 0) models[i] = e; else models.push(e);
+        made.push(`${weaponType}:${wm.name}`);
+      }
+      g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
+      const body = JSON.stringify({ models });
+      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      cfg.models = models;
+      wpnStatus = `оружие: ${meshes.length} → ${made.join(', ')}`;
+    } catch (e) { wpnStatus = 'ошибка: ' + (e as Error).message; }
+    renderBody();
+  }
+  /** Сменить weaponType оружия-модели в конфиге (правка авто-классификации). */
+  async function setWeaponType(id: string, weaponType: string): Promise<void> {
+    const models = (cfg.models as ModelEntry[]).map((m) => (m.id === id ? { ...m, weaponType } : m));
+    const body = JSON.stringify({ models });
+    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    cfg.models = models; renderBody();
+  }
+
   // ── Назначить материал (из config `materials`) сабмешу ──
   function applyMaterial(mesh: THREE.Mesh, matId: string): void {
     if (!entry) return;
@@ -327,6 +393,30 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     imp.append(urlIn, btn('🌐 Импорт из URL', () => { const u = urlIn.value.trim(); if (u) void importAtlas(() => loadModelUrl(u), u.split('/').pop() ?? 'character'); }));
     body.append(imp);
     if (asmStatus) body.append(el('div', 'color:#c8b06a;font-size:10px;margin:2px 0 6px', asmStatus));
+
+    // Импорт ОРУЖИЯ (один FBX со всеми оружиями → GLB на каждый меш). Доступен всегда (не зависит от атласа).
+    const wimp = el('div', boxCss);
+    wimp.append(el('div', headCss, 'Оружие (один FBX со всеми → GLB на каждое, kind=weapon; ОБЩЕЕ на всех, хват per-char)'));
+    const wfile = document.createElement('input'); wfile.type = 'file'; wfile.accept = '.fbx,.glb,.gltf'; wfile.style.display = 'none';
+    wfile.onchange = () => { const f = wfile.files?.[0]; if (f) void importWeaponSet(() => loadModelFile(f), f.name); };
+    const wurl = document.createElement('input'); wurl.type = 'text'; wurl.placeholder = '/assets/weapons.fbx'; wurl.style.cssText = css.input + ';width:100%;margin:3px 0';
+    wimp.append(btn('📁 Импорт оружия (файл)', () => wfile.click()), wfile);
+    wimp.append(wurl, btn('🌐 Импорт оружия (URL)', () => { const u = wurl.value.trim(); if (u) void importWeaponSet(() => loadModelUrl(u), u.split('/').pop() ?? 'weapons'); }));
+    body.append(wimp);
+    if (wpnStatus) body.append(el('div', 'color:#c8b06a;font-size:10px;margin:2px 0 6px', wpnStatus));
+    const weaponModels = (cfg.models as ModelEntry[]).filter((m) => m.kind === 'weapon');
+    if (weaponModels.length) {
+      const wbox = el('details', boxCss);
+      const wsum = document.createElement('summary'); wsum.textContent = `Оружие-модели (${weaponModels.length}) — тип + удалить`; wsum.style.cssText = 'color:#8fa0c0;font-size:11px;cursor:pointer'; wbox.append(wsum);
+      for (const w of weaponModels) {
+        const r = el('div', rowFlex);
+        r.append(el('span', 'color:#c0c6d4;font-size:10px;min-width:90px;overflow:hidden;text-overflow:ellipsis', w.id));
+        const tSel = mkSelect(WEAPON_TYPES, w.weaponType ?? 'sword', (v) => { void setWeaponType(w.id, v); }); tSel.style.flex = '1';
+        r.append(tSel, btn('✕', () => void deleteModel(w.id)));
+        wbox.append(r);
+      }
+      body.append(wbox);
+    }
 
     const atlas = curAtlas();
     if (!atlas) { body.append(el('div', 'color:#6b7180;font-size:10px;padding:8px', 'Импортируй FBX-атлас персонажа — части (голова/тело/руки/ноги/волосы) авто-разложатся по слотам и соберутся на скелете.')); return; }
