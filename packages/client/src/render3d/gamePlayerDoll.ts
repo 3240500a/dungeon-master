@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
-import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwist, applyBaseGrip, type GXKnobs } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
 import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel, applyWeaponModels } from './modelSkin.js';
@@ -56,8 +56,8 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       : localStorageContent('__none__');
   // Вес совпадения рендера с манекеном (RB2) — настроенный в редакторе per-персонаж (pe_phys). Монстр → фолбэк.
   const matchWeight = opts.classId ? loadMatch(opts.classId) : opts.gaitId ? loadMatch(opts.gaitId, opts.gaitFallback) : 0;
-  // Профиль скрутки корпуса (torso-lead) per-персонаж: игрок → по classId, монстр → по gaitId с фолбэком.
-  const twist = opts.classId ? loadTwist(opts.classId) : opts.gaitId ? loadTwist(opts.gaitId, opts.gaitFallback) : loadTwist('__none__');
+  // Профили скрутки корпуса (torso-lead) per-персонаж, ПО СОСТОЯНИЮ (стой/ходьба/бег): игрок → по classId, монстр → по gaitId с фолбэком.
+  const twistStates = opts.classId ? loadTwistStates(opts.classId) : opts.gaitId ? loadTwistStates(opts.gaitId, opts.gaitFallback) : loadTwistStates('__none__');
   let weapon = opts.weapon;
   const ch = opts.classId ? charFor(opts.classId) : null;
   const gender = opts.gender ?? ch?.gender ?? 'male';
@@ -90,7 +90,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   ragdoll.group.visible = false; group.add(ragdoll.group);
   ragdoll.setPelvis(new THREE.Vector3(opts.x, PELVIS_Y, opts.z), new THREE.Quaternion());
 
-  const player = new PosePlayer(target, () => weaponGroups, content, weapon, gx, plant, twist);
+  const player = new PosePlayer(target, () => weaponGroups, content, weapon, gx, plant, twistStates);
   const ground = newGhostGround();     // сглаженный прижим низшей стопы к полу (общий с редактором)
 
   // ── C6b: слой скинов (импортные GLB по слотам) поверх процедурного solid — только для игрока (classId).

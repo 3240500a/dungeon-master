@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT, measureStancePlants } from './poseRuntime.js';
+import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT, measureStancePlants, resolveTwistStates, blendTwist } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
 import * as THREE from 'three';
 
@@ -477,5 +477,45 @@ describe('measureStancePlants — __hipsY = standY (авторская высо�
   it('idle=null → GAIT.standY (фолбэк по умолчанию)', () => {
     const h = buildHumanoid({});
     expect(measureStancePlants(h, null).standY).toBe(GAIT.standY);
+  });
+});
+
+// Скрутка корпуса per-state (стой/ходьба/бег): хранилище pe_twist легаси-плоское → на все 3; per-state с пропуском
+// падает бег←ходьба←стой. Эффективный профиль в игре блендится ПЛАВНО по скорости (3 якоря @0/@speedWalk/@speedRun).
+describe('resolveTwistStates / blendTwist — скрутка по состоянию + плавный бленд по скорости', () => {
+  it('легаси плоский профиль → одинаково на все 3 состояния', () => {
+    const s = resolveTwistStates({ threshold: 0.5, maxTwist: 1.0 });
+    expect(s.stand.threshold).toBeCloseTo(0.5, 5);
+    expect(s.walk.threshold).toBeCloseTo(0.5, 5);
+    expect(s.run.threshold).toBeCloseTo(0.5, 5);
+    expect(s.run.maxTwist).toBeCloseTo(1.0, 5);           // явно заданное поле держится
+    expect(s.walk.turnRate).toBeCloseTo(TWIST_DEFAULT().turnRate, 5);   // незаданное — дефолт
+  });
+  it('per-state с пропуском: бег←ходьба←стой (фолбэк неполного конфига)', () => {
+    const s = resolveTwistStates({ stand: { threshold: 0.3 }, run: { threshold: 1.2 } });
+    expect(s.stand.threshold).toBeCloseTo(0.3, 5);
+    expect(s.walk.threshold).toBeCloseTo(0.3, 5);          // walk не задан → падает на stand
+    expect(s.run.threshold).toBeCloseTo(1.2, 5);           // run задан явно
+  });
+  it('blendTwist: якоря @0 = стой, @speedWalk = ходьба, @speedRun = бег; между — интерполяция', () => {
+    const s = resolveTwistStates({ stand: { threshold: 0.2 }, walk: { threshold: 0.6 }, run: { threshold: 1.4 } });
+    expect(blendTwist(s, 0).threshold).toBeCloseTo(0.2, 5);
+    expect(blendTwist(s, GAIT.speedWalk).threshold).toBeCloseTo(0.6, 5);
+    expect(blendTwist(s, GAIT.speedRun).threshold).toBeCloseTo(1.4, 5);
+    const mid = blendTwist(s, GAIT.speedWalk / 2).threshold;   // между стой и ходьба
+    expect(mid).toBeGreaterThan(0.2);
+    expect(mid).toBeLessThan(0.6);
+    const midRun = blendTwist(s, (GAIT.speedWalk + GAIT.speedRun) / 2).threshold;   // между ходьба и бег
+    expect(midRun).toBeGreaterThan(0.6);
+    expect(midRun).toBeLessThan(1.4);
+  });
+  it('blendTwist: веса интерполируются поэлементно', () => {
+    const s = resolveTwistStates({
+      stand: { weights: [0, 0, 1, 0, 0] },
+      run: { weights: [0, 0, 0, 0, 1] },
+    });   // walk←stand (фолбэк)
+    const w = blendTwist(s, GAIT.speedRun).weights;
+    expect(w[4]).toBeCloseTo(1, 5);   // на бегу вес полностью на Head
+    expect(w[2]).toBeCloseTo(0, 5);
   });
 });

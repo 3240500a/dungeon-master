@@ -14,7 +14,7 @@ import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRag
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, applyBaseGrip, TWIST_DEFAULT, DEFAULT_MATCH, type TwistProfile, type PoseContent } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, applyBaseGrip, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -1048,10 +1048,14 @@ function renderGaitTune(): void {
 }
 
 // ── Вкладка «Повороты»: тест torso-lead как в игре (прицел=курсор) + приставные шаги + видимые планты ──
-const TURN_SPD: Record<'stand' | 'walk' | 'run', number> = { stand: 0, walk: 0.34, run: 0.95 };
+// Скорость превью каждой кнопки = РЕАЛЬНЫЙ якорь скорости (стой 0 / ходьба speedWalk / бег speedRun), нормировано на MAXSPD.
+// Тогда blendTwist в этой точке отдаёт РОВНО профиль выбранного состояния → тюнишь кнопку и видишь её чистой (не смешанной).
+function turnNormSpd(m: 'stand' | 'walk' | 'run'): number {
+  return m === 'stand' ? 0 : (m === 'walk' ? GAIT.speedWalk : GAIT.speedRun) / GAIT_MAXSPD;
+}
 function updateTurnTest(_dt: number): void {
   gaitFaceMove = false; gaitYawManual = turnAim;                 // прицел = точка под курсором (голова/верх ведут за ним)
-  const spd = TURN_SPD[turnTestMove];
+  const spd = turnNormSpd(turnTestMove);
   // Идём туда, куда смотрит ТАЗ (как в игре: тело идёт по своему фейсингу, а таз догоняет прицел с мёртвой зоной).
   if (spd > 0) { locoVx = Math.sin(editorRootYaw) * spd; locoVz = Math.cos(editorRootYaw) * spd; } else { locoVx = 0; locoVz = 0; }
 }
@@ -1081,15 +1085,15 @@ function renderTurn(): void {
     row.append(s, v); box.append(row);
   };
   const deg = (v: number): string => `${Math.round(v)}°`;
-  // Скрутка корпуса (pe_twist per-char)
-  grpT('скрутка корпуса (голова ведёт, таз догоняет)');
-  sl('порог таза (°)', () => editorTwist.threshold * R2D, (d) => { editorTwist.threshold = d / R2D; }, 5, 90, 1, saveTwistCfg, deg);
-  sl('скорость доворота (рад/с)', () => editorTwist.turnRate, (v) => { editorTwist.turnRate = v; }, 1, 8, 0.25, saveTwistCfg);
-  sl('макс. скрутка верха (°)', () => editorTwist.maxTwist * R2D, (d) => { editorTwist.maxTwist = d / R2D; }, 20, 120, 5, saveTwistCfg, deg);
-  sl('выравнивание, прицел стабилен (с)', () => editorTwist.relaxTime, (v) => { editorTwist.relaxTime = v; }, 0.2, 3, 0.1, saveTwistCfg);
+  // Скрутка корпуса (pe_twist per-char) — ОТДЕЛЬНО для стой/ходьба/бег (кнопки выше); в игре плавный бленд по скорости.
+  grpT(`скрутка корпуса — ${lblMv[turnTestMove]} (кнопки ↑ переключают режим)`);
+  sl('порог таза (°)', () => editTwist().threshold * R2D, (d) => { editTwist().threshold = d / R2D; }, 5, 90, 1, saveTwistCfg, deg);
+  sl('скорость доворота (рад/с)', () => editTwist().turnRate, (v) => { editTwist().turnRate = v; }, 1, 8, 0.25, saveTwistCfg);
+  sl('макс. скрутка верха (°)', () => editTwist().maxTwist * R2D, (d) => { editTwist().maxTwist = d / R2D; }, 20, 120, 5, saveTwistCfg, deg);
+  sl('выравнивание, прицел стабилен (с)', () => editTwist().relaxTime, (v) => { editTwist().relaxTime = v; }, 0.2, 3, 0.1, saveTwistCfg);
   const WNAMES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'];
-  for (let i = 0; i < 5; i++) sl(`вес: ${WNAMES[i]}`, () => editorTwist.weights[i]!, (v) => { editorTwist.weights[i] = v; }, 0, 1, 0.05, saveTwistCfg);
-  const twHint = el('div', 'color:#7a869e;font-size:10px;margin-top:3px'); twHint.textContent = 'веса — распределение по сегментам (в сумме ~1 → голова доходит до прицела; латы → вес на Head, лёгкая → размазать).'; box.append(twHint);
+  for (let i = 0; i < 5; i++) sl(`вес: ${WNAMES[i]}`, () => editTwist().weights[i]!, (v) => { editTwist().weights[i] = v; }, 0, 1, 0.05, saveTwistCfg);
+  const twHint = el('div', 'color:#7a869e;font-size:10px;margin-top:3px'); twHint.textContent = 'ползунки правят ВЫБРАННЫЙ режим (стой/ходьба/бег); в игре профиль блендится плавно по скорости. веса — распределение по сегментам (сумма ~1 → голова доходит до прицела).'; box.append(twHint);
   // Приставной шаг (GAIT per-char через pe_gait)
   grpT('приставной шаг при повороте (планировщик стоп)');
   const GAITo = GAIT as unknown as NumRec;
@@ -1099,7 +1103,7 @@ function renderTurn(): void {
   else sl('предел: дистанция (u)', () => GAITo['turnStepDist']!, (v) => { GAITo['turnStepDist'] = v; }, 2, 16, 0.5, saveGaitCfg);
   sl('доступить, таз стоит (с)', () => GAITo['turnSettleTime']!, (v) => { GAITo['turnSettleTime'] = v; }, 0.1, 3, 0.1, saveGaitCfg);
   sl('уход в idle, стоя (с)', () => GAITo['turnIdleTime']!, (v) => { GAITo['turnIdleTime'] = v; }, 0, 2, 0.1, saveGaitCfg);
-  box.append(pbtn('сброс скрутки', () => { delete twistCfgs[curCharId]; loadTwistCfg(curCharId); try { localStorage.setItem('pe_twist', JSON.stringify(twistCfgs)); savePoseKey('pe_twist'); } catch { /* */ } renderTurn(); }));
+  box.append(pbtn(`сброс скрутки (${lblMv[turnTestMove]})`, () => { editorTwistStates[turnTestMove] = TWIST_DEFAULT(); saveTwistCfg(); renderTurn(); }));
 }
 
 // ── Таймлайн ──
@@ -1148,13 +1152,12 @@ let gaitReadout: HTMLElement | null = null;                // живой инд�
 let editorRootYaw = 0;                                      // yaw таза в превью (лаг за gaitYaw)
 let editorTurning = false;                                  // защёлка доворота таза (torso-lead) в превью
 let editorAimStable = 0, editorPrevAim = 0;                 // время стабильности прицела (relaxTime)
-let editorTwist: TwistProfile = TWIST_DEFAULT();            // активный профиль скрутки текущего персонажа
-let twistCfgs: Record<string, Partial<TwistProfile>> = (() => { try { return JSON.parse(localStorage.getItem('pe_twist') || '{}') as Record<string, Partial<TwistProfile>>; } catch { return {}; } })();
-function loadTwistCfg(id: string): void {
-  const c = twistCfgs[id]; const d = TWIST_DEFAULT();
-  editorTwist = { ...d, ...c, weights: (c?.weights && c.weights.length === 5 ? [...c.weights] : d.weights) as [number, number, number, number, number] };
-}
-function saveTwistCfg(): void { twistCfgs[curCharId] = editorTwist; try { localStorage.setItem('pe_twist', JSON.stringify(twistCfgs)); savePoseKey('pe_twist'); } catch { /* */ } }
+let editorTwistStates: TwistStates = TWIST_STATES_DEFAULT();   // 3 профиля скрутки (стой/ходьба/бег) текущего персонажа
+const editTwist = (): TwistProfile => editorTwistStates[turnTestMove];   // редактируемый профиль = ВЫБРАННОЕ состояние (кнопка стой/ходьба/бег)
+let twistCfgs: Record<string, TwistCfgStored> = (() => { try { return JSON.parse(localStorage.getItem('pe_twist') || '{}') as Record<string, TwistCfgStored>; } catch { return {}; } })();
+function loadTwistCfg(id: string): void { editorTwistStates = resolveTwistStates(twistCfgs[id]); }   // легаси плоский → на все 3
+// Сохраняем ПО СОСТОЯНИЯМ { stand, walk, run } — в игре эффективный профиль блендится плавно по скорости (blendTwist).
+function saveTwistCfg(): void { twistCfgs[curCharId] = { stand: editorTwistStates.stand, walk: editorTwistStates.walk, run: editorTwistStates.run }; try { localStorage.setItem('pe_twist', JSON.stringify(twistCfgs)); savePoseKey('pe_twist'); } catch { /* */ } }
 // ── Маркеры планта + точки ОБВОДА (via) свинга. Авторские = СТАТИЧЕСКИЕ (не тредмиллят), тянутся гизмо → body-local offset.
 // Левая нога — СИНИЙ, правая — КРАСНЫЙ. via — те же цвета, поменьше. Живой индикатор (жёлтый мелкий) ездит по факту (динамика).
 let editPlant = false;
@@ -1486,7 +1489,8 @@ function stepGait(dt: number): void {
   // Torso-lead: gaitYaw = ПРИЦЕЛ; таз (rYaw) догоняет с задержкой → и планировщик, и Hips ведёт rYaw (голова/плечи впереди).
   editorAimStable = Math.abs(Math.atan2(Math.sin(gaitYaw - editorPrevAim), Math.cos(gaitYaw - editorPrevAim))) < 0.01 ? editorAimStable + dt : 0;
   editorPrevAim = gaitYaw;
-  const tl = stepTorsoLead(editorRootYaw, gaitYaw, editorTwist, dt, editorTurning, editorAimStable > editorTwist.relaxTime);   // таз догоняет прицел (одна система стоя/бег) + relax
+  const effTwist = blendTwist(editorTwistStates, spd);   // ЭФФЕКТИВНЫЙ профиль скрутки по скорости превью (та же blendTwist, что в игре)
+  const tl = stepTorsoLead(editorRootYaw, gaitYaw, effTwist, dt, editorTurning, editorAimStable > effTwist.relaxTime);   // таз догоняет прицел (одна система стоя/бег) + relax
   const rYaw = tl.rootYaw, twRes = tl.residual; editorRootYaw = rYaw; editorTurning = tl.turning;
   gaitPx += vx * dt; gaitPz += vz * dt;
   gaitDriver.setWorld(gaitPx, gaitPz, rYaw, vx, vz);        // yaw ТАЗА кормит планировщик — стопы в правильном body-кадре
@@ -1513,7 +1517,7 @@ function stepGait(dt: number): void {
     gaitDriver.setFeet(fl.x + gaitPx, fl.z + gaitPz, fr.x + gaitPx, fr.z + gaitPz);
   }
   gaitToHumanoid(gaitDriver.update(dt));
-  applyTorsoTwist(human, rYaw, twRes, editorTwist.weights);  // таз на rYaw + скрутка позвоночника к прицелу (голова/плечи ведут)
+  applyTorsoTwist(human, rYaw, twRes, effTwist.weights);  // таз на rYaw + скрутка позвоночника к прицелу (голова/плечи ведут)
   if (gaitReadout && gaitReadout.isConnected) {              // живой индикатор скорости + режим ходьба↔бег
     const mode = spd < 5 ? 'стоит' : spd < GAIT.speedWalk ? 'ходьба' : 'бег';
     gaitReadout.textContent = `скорость: ${spd.toFixed(0)} u/с · ${mode}` + (gaitFaceMove ? '' : ` · страйф ${Math.round(gaitYaw * 180 / Math.PI)}°`);

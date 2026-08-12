@@ -24,6 +24,46 @@ export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: numb
  */
 export interface TwistProfile { threshold: number; turnRate: number; maxTwist: number; relaxTime: number; weights: [number, number, number, number, number] }
 export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, turnRate: 3, maxTwist: 1.4, relaxTime: 1.2, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
+// Скрутка корпуса настраивается ПО СОСТОЯНИЮ ДВИЖЕНИЯ (стой/ходьба/бег) — в игре эффективный профиль блендится ПЛАВНО
+// по скорости (3 якоря), в редакторе каждая кнопка правит свой профиль. Хранилище pe_twist: либо плоский (легаси —
+// применяется на все 3), либо { stand?, walk?, run? } частичных профилей.
+export type TwistState = 'stand' | 'walk' | 'run';
+export interface TwistStates { stand: TwistProfile; walk: TwistProfile; run: TwistProfile }
+export const TWIST_STATES_DEFAULT = (): TwistStates => ({ stand: TWIST_DEFAULT(), walk: TWIST_DEFAULT(), run: TWIST_DEFAULT() });
+type TwistPartial = Partial<TwistProfile>;
+export type TwistCfgStored = TwistPartial & Partial<Record<TwistState, TwistPartial>>;
+const mergeTwist = (c: TwistPartial | undefined): TwistProfile => {
+  const d = TWIST_DEFAULT();
+  return { ...d, ...c, weights: (c?.weights && c.weights.length === 5 ? [...c.weights] as TwistProfile['weights'] : d.weights) };
+};
+const isPerStateTwist = (raw: TwistCfgStored | undefined): boolean => !!raw && ('stand' in raw || 'walk' in raw || 'run' in raw);
+/** Развернуть хранимый конфиг pe_twist в 3 полных профиля. Легаси плоский → на все 3; per-state с пропусками: бег←ходьба←стой. */
+export function resolveTwistStates(raw: TwistCfgStored | undefined): TwistStates {
+  if (isPerStateTwist(raw)) {
+    const r = raw as Partial<Record<TwistState, TwistPartial>>;
+    const stand = mergeTwist(r.stand);
+    const walk = r.walk ? mergeTwist(r.walk) : { ...stand };
+    const run = r.run ? mergeTwist(r.run) : { ...walk };
+    return { stand, walk, run };
+  }
+  const flat = mergeTwist(raw as TwistPartial | undefined);
+  return { stand: flat, walk: { ...flat }, run: { ...flat } };
+}
+const lerpN = (a: number, b: number, t: number): number => a + (b - a) * t;
+/** Линейно смешать два профиля скрутки (числа + веса поэлементно). */
+export function lerpTwist(a: TwistProfile, b: TwistProfile, t: number): TwistProfile {
+  return {
+    threshold: lerpN(a.threshold, b.threshold, t), turnRate: lerpN(a.turnRate, b.turnRate, t),
+    maxTwist: lerpN(a.maxTwist, b.maxTwist, t), relaxTime: lerpN(a.relaxTime, b.relaxTime, t),
+    weights: a.weights.map((w, i) => lerpN(w, b.weights[i]!, t)) as TwistProfile['weights'],
+  };
+}
+/** Эффективный профиль скрутки по скорости: 3 якоря (стой@0, ходьба@speedWalk, бег@speedRun), кусочно-линейно. */
+export function blendTwist(s: TwistStates, speed: number): TwistProfile {
+  const w = GAIT.speedWalk, r = Math.max(w + 1, GAIT.speedRun);
+  if (speed <= w) return lerpTwist(s.stand, s.walk, clamp(speed / Math.max(1, w), 0, 1));
+  return lerpTwist(s.walk, s.run, clamp((speed - w) / (r - w), 0, 1));
+}
 const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
@@ -431,12 +471,11 @@ export function applyBaseGrip(weaponGroups: THREE.Group[], charId: string, weapo
     if (bp) bp.set(b.p[0], b.p[1], b.p[2]);
   });
 }
-/** Профиль скрутки корпуса per-char из pe_twist (мерж поверх дефолта); фолбэк (монстры → Волкодав). */
-export function loadTwist(charId: string, fallbackId?: string): TwistProfile {
-  const cfg = readJSON<Record<string, Partial<TwistProfile>>>('pe_twist', {});
-  const c = cfg[charId] ?? (fallbackId ? cfg[fallbackId] : undefined);
-  const d = TWIST_DEFAULT();
-  return { ...d, ...c, weights: (c?.weights && c.weights.length === 5 ? c.weights : d.weights) };
+/** Профили скрутки корпуса per-state (стой/ходьба/бег) per-char из pe_twist; фолбэк (монстры → Волкодав). */
+export function loadTwistStates(charId: string, fallbackId?: string): TwistStates {
+  const cfg = readJSON<Record<string, TwistCfgStored>>('pe_twist', {});
+  const raw = cfg[charId] ?? (fallbackId ? cfg[fallbackId] : undefined);
+  return resolveTwistStates(raw);
 }
 /** Обёртка угла в (−π, π]. */
 const wrapPi = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
@@ -525,7 +564,7 @@ export class PosePlayer {
     public weapon: string,
     public gx: GXKnobs,
     public plant: PlantGrid,
-    public twist: TwistProfile = TWIST_DEFAULT(),
+    public twistStates: TwistStates = TWIST_STATES_DEFAULT(),
   ) { this.measureStance(); }
   /** Замерить планты стоп из idle-стойки текущего оружия и отдать планировщику (подшаг при повороте идёт в эти точки). */
   measureStance(): void {
@@ -572,13 +611,14 @@ export class PosePlayer {
     this.combat += clamp(this.combatTarget - this.combat, -cstep, cstep);
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
+    const twist = blendTwist(this.twistStates, spd);   // скрутка корпуса по состоянию (стой/ходьба/бег), плавно по скорости
     // Torso-lead: таз (rootYaw) догоняет прицел (aimYaw) с задержкой (голова/плечи ведут). rootYaw кормит и StepPlanner,
     // и Hips → приставной шаг случается ровно когда таз доворачивает. Остаток `tw` размажем по позвоночнику после позинга.
     // Таз догоняет прицел (одна система стоя и на бегу): голова ведёт, таз держится в зоне и плавно доворачивает.
     // relaxTime: прицел стабилен долго и есть скрутка → таз доворачивается к нейтрали (не держим лид вечно).
     this.aimStableFor = Math.abs(wrapPi(this.aimYaw - this.prevAim)) < 0.01 ? this.aimStableFor + dt : 0;
     this.prevAim = this.aimYaw;
-    const tl = stepTorsoLead(this.rootYaw, this.aimYaw, this.twist, dt, this.turning, this.aimStableFor > this.twist.relaxTime);
+    const tl = stepTorsoLead(this.rootYaw, this.aimYaw, twist, dt, this.turning, this.aimStableFor > twist.relaxTime);
     const yaw = tl.rootYaw, tw = tl.residual; this.rootYaw = yaw; this.turning = tl.turning;
     this.px += vx * dt; this.pz += vz * dt;
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
@@ -606,6 +646,6 @@ export class PosePlayer {
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
     gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat);
-    applyTorsoTwist(this.human, yaw, tw, this.twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
+    applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
   }
 }
