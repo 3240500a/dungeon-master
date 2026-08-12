@@ -367,11 +367,13 @@ class StepPlanner {
       maxLz = Math.max(maxLz, Math.abs((l.px - hx) * fx + (l.pz - hz) * fz));
     }
     const reach = LEG * 0.97;
-    // База таза = this.standY (высота таза в idle-стойке). Кинематика может дать выше (нога прямее) — КЛАМПИМ к базе,
-    // чтобы бег/подшаг НЕ поднимали таз выше стойки (тот самый подскок). Ниже базы просесть можно (разъезд ног).
-    const wantY = anyStance
-      ? clamp(FOOT_Y + Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz)), GAIT.pelvisMin, this.standY)
-      : this.standY;
+    // База таза = this.standY (высота стойки idle = где юзер поставил таз). ПРОСАДКА привязана к standY, а НЕ к абсолютной
+    // геометрии ног (было `FOOT_Y + sqrt(reach²−maxLz²)` → потолок ~29 НЕЗАВИСИМО от standY → бег систематически ниже idle).
+    // dip = насколько нога-`reach` просела бы при разножке стоп на maxLz вперёд (0 когда стопы под тазом). bobMult масштабирует
+    // ТОЛЬКО просадку (верх шага всегда = standY = idle). Ниже pelvisMin не проседаем.
+    const dip = reach - Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz));
+    const bobMult = lerp(GAIT.bobWalk, GAIT.bobRun, sb);
+    const wantY = anyStance ? clamp(this.standY - dip * bobMult, GAIT.pelvisMin, this.standY) : this.standY;
     // Сглаживание: на бегу — всегда (вход/выход из полёта). На ШАГЕ асимметрично: ВНИЗ (ноги разъезжаются,
     // wantY плавно падает по геометрии) берём как есть — иначе таз запаздывает и волочит опорную ногу; а ВВЕРХ
     // (смена опорной — wantY скачком растёт) сглаживаем, иначе резкий дёрг таза вверх при ходьбе.
@@ -402,7 +404,7 @@ class StepPlanner {
       } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
       out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz));
     }
-    return { l: out[0]!, r: out[1]!, bobY: (hipY - RIG_PELVIS_Y) * lerp(GAIT.bobWalk, GAIT.bobRun, sb) };   // боб таза × множитель ходьба↔бег
+    return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y };   // gaitToHumanoid: 30 + bobY = hipY (актуальная высота таза; bobMult уже в dip)
   }
 }
 

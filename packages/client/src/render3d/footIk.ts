@@ -18,15 +18,25 @@ const _DOWN = new THREE.Vector3(0, -1, 0), _UP = new THREE.Vector3(0, 1, 0);
 const _iH = new THREE.Vector3(), _iT = new THREE.Vector3(), _iK = new THREE.Vector3(), _iDir = new THREE.Vector3();
 const _iThigh = new THREE.Vector3(), _iShin = new THREE.Vector3(), _iBend = new THREE.Vector3(), _iPole = new THREE.Vector3(), _iFoot = new THREE.Vector3();
 const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion(), _iFace = new THREE.Quaternion(), _iAxis = new THREE.Vector3();
+const _fFwdL = new THREE.Vector3(), _fThirdL = new THREE.Vector3(), _fDir = new THREE.Vector3(), _fFwdW = new THREE.Vector3(), _fThirdW = new THREE.Vector3();
+const _mL = new THREE.Matrix4(), _mW = new THREE.Matrix4(), _FWD_L = new THREE.Vector3(0, 0, 1);
 
-/** Прицелить кость так, чтобы её ось СЕГМЕНТА (направление на ребёнка = смещение child в лок.системе кости) смотрела в
- *  мировое `dir`. У процедурного скелета ось = −Y (backward-compat), у splay-ног атласа (boneOffsets) — наклонена, поэтому
- *  прицеливание фикс. −Y расклинивало ноги при заземлении; ось из ребёнка чинит это. child=null → фолбэк −Y. */
-function aimBone(bone: THREE.Object3D, child: THREE.Object3D | null, dir: THREE.Vector3): void {
-  _iAxis.copy(child ? child.position : _DOWN); if (_iAxis.lengthSq() < 1e-9) _iAxis.copy(_DOWN); else _iAxis.normalize();
+/** Прицелить кость ПОЛНЫМ ФРЕЙМОМ (не кратчайшей дугой): ось сегмента → `dir`, а «перёд» кости (лок. +Z, ортогонал. к сегменту)
+ *  → `fwd` (спроецированный ⊥ dir). Так ТВИСТ вокруг ноги ЗАДАН → колено смотрит вперёд и не разворачивается наружу при
+ *  боковом дотяге (кратчайшая дуга `setFromUnitVectors` твист не задавала → заземление крутило колени). child=null → фолбэк −Y. */
+function aimBoneFrame(bone: THREE.Object3D, child: THREE.Object3D | null, dir: THREE.Vector3, fwd: THREE.Vector3): void {
+  _iAxis.copy(child ? child.position : _DOWN); if (_iAxis.lengthSq() < 1e-9) _iAxis.copy(_DOWN); else _iAxis.normalize();   // сегмент (лок.)
+  _fFwdL.copy(_FWD_L).addScaledVector(_iAxis, -_FWD_L.dot(_iAxis));                       // лок. «перёд» +Z ⊥ сегмента
+  if (_fFwdL.lengthSq() < 1e-6) { _fFwdL.set(1, 0, 0).addScaledVector(_iAxis, -_iAxis.x); }
+  _fFwdL.normalize(); _fThirdL.crossVectors(_iAxis, _fFwdL);
+  _fDir.copy(dir).normalize();
+  _fFwdW.copy(fwd).addScaledVector(_fDir, -fwd.dot(_fDir));                                // мир. «перёд» (pole) ⊥ dir
+  if (_fFwdW.lengthSq() < 1e-6) { _fFwdW.set(1, 0, 0).addScaledVector(_fDir, -_fDir.x); }
+  _fFwdW.normalize(); _fThirdW.crossVectors(_fDir, _fFwdW);
+  _mL.makeBasis(_iAxis, _fFwdL, _fThirdL); _mW.makeBasis(_fDir, _fFwdW, _fThirdW);
+  _mL.transpose(); _mW.multiply(_mL);                                                      // Q_world = worldFrame · localFrame⁻¹
   bone.parent!.getWorldQuaternion(_ipq);
-  _iwq.setFromUnitVectors(_iAxis, dir);                // мировой поворот: ось сегмента → dir
-  bone.quaternion.copy(_ipq).invert().multiply(_iwq);  // локальный = parent⁻¹ · мировой
+  bone.quaternion.setFromRotationMatrix(_mW); bone.quaternion.premultiply(_ipq.invert());  // локальный = parent⁻¹ · Q_world
 }
 
 /** Аналитический 2-костный IK ноги: гнём бедро+колено так, чтобы кость стопы встала в targetWorld.
@@ -41,10 +51,10 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
   _iBend.crossVectors(_iDir, pole);
   if (_iBend.lengthSq() < 1e-6) _iBend.set(1, 0, 0); else _iBend.normalize();
   _iThigh.copy(_iDir).applyAxisAngle(_iBend, a);       // бедро: линия к цели, отклонённая на a → колено вперёд
-  aimBone(upper, lower, _iThigh); upper.updateMatrixWorld(true);   // ось = бедро→колено (у splay-ног не −Y)
+  aimBoneFrame(upper, lower, _iThigh, pole); upper.updateMatrixWorld(true);   // полный фрейм: колено смотрит на pole (не крутится наружу)
   _iK.copy(_iH).addScaledVector(_iThigh, IK_THIGH);    // колено в мире
   _iShin.subVectors(targetWorld, _iK).normalize();
-  aimBone(lower, foot, _iShin); lower.updateMatrixWorld(true);     // ось = колено→лодыжка
+  aimBoneFrame(lower, foot, _iShin, pole); lower.updateMatrixWorld(true);     // голень: тот же pole → без паразитного твиста
   lower.getWorldQuaternion(_ipq);                      // выровнять СТОПУ: мир-ориентация = faceQuat (плоско, носок по телу)
   foot.quaternion.copy(_ipq).invert().multiply(faceQuat);
   foot.updateMatrixWorld(true);

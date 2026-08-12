@@ -42,6 +42,18 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
     expect(minAfter).toBeLessThan(2.5);        // сели на пол (~SOLE=1.5), не улетели
   });
 
+  it('legGroundIK: боковой дотяг НЕ разворачивает колено наружу (перёд голени = pole)', () => {
+    const h = buildHumanoid({ gender: 'male', build: {} });
+    h.root.position.set(0, 30, 0); h.root.updateMatrixWorld(true);
+    const upper = h.bones.get('LeftUpperLeg')!, lower = h.bones.get('LeftLowerLeg')!, foot = h.bones.get('LeftFoot')!;
+    const hip = upper.getWorldPosition(V(0, 0, 0));
+    legGroundIK(upper, lower, foot, V(hip.x + 8, 2, hip.z), V(0, 0, 1), new THREE.Quaternion());   // цель ВБОК+вниз, pole=вперёд
+    h.root.updateMatrixWorld(true);
+    const fwd = V(0, 0, 1).applyQuaternion(lower.getWorldQuaternion(new THREE.Quaternion()));       // «перёд» голени (лок +Z в мире)
+    expect(fwd.z).toBeGreaterThan(0.6);        // смотрит ВПЕРЁД (по pole), а не завёрнут вбок
+    expect(Math.abs(fwd.x)).toBeLessThan(0.5);
+  });
+
   it('groundFeet: footLift поднимает цель заземления (подошва меша атласа на полу, а не тонет)', () => {
     const mk = (): ReturnType<typeof buildHumanoid> => { const h = buildHumanoid({ gender: 'male', build: {} }); h.root.position.set(0, 20, 0); h.root.updateMatrixWorld(true); return h; };
     const footMinY = (h: ReturnType<typeof buildHumanoid>): number => Math.min(h.bones.get('LeftFoot')!.getWorldPosition(V(0, 0, 0)).y, h.bones.get('RightFoot')!.getWorldPosition(V(0, 0, 0)).y);
