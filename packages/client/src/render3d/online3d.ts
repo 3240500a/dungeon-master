@@ -499,6 +499,7 @@ export async function startOnline3d(): Promise<void> {
   const ANIM_MID_R2 = 900 * 900;        // до этого — через кадр (stride 2); дальше — через два (stride 3)
   let animFrame = 0;                    // счётчик кадров рендера — фазирует temporal-LOD по (id % stride) (пачку не апдейтим синхронно)
   const WAKE_BUDGET = 3;                // макс. пробуждений (AddToPhysicsSystem) за кадр — амортизация спайка при подходе к пачке спящих
+  const COLLAPSE_BUDGET = 6;           // макс. трупов, РЕНДЕРЯЩИХ падение за кадр (тяжёлый a.d.update); сверх — падают в pw.step, дорисуем позже (размазка спайка масс-килла)
   // Физ-LOD: физику (pw.step) считаем только БЛИЖНИМ монстрам (кого бьёшь) — дальние кинематические (вон из физики), но
   // всё так же анимируются позой. В бою ms_phys — главный расход (30+ регдоллов). Гистерезис PHYS_NEAR→FAR + бюджет флипов/кадр.
   const PHYS_NEAR2 = 420 * 420, PHYS_FAR2 = 560 * 560, KIN_BUDGET = 3;
@@ -635,15 +636,23 @@ export async function startOnline3d(): Promise<void> {
     }
     // Мёртвые монстры: регдолл падает ~1с (физика активна), потом ЗАМИРАЕТ и лежит на полу (не убираем).
     // Осев (a.dead≤0), тело ВЫНИМАЕТСЯ из физ-мира (setSimEnabled(false)) — труп замерзает в позе и не грузит pw.step.
-    // Трупы чистятся при смене этажа (buildArea сносит всех).
+    // Трупы чистятся при смене этажа (buildArea сносит всех). Тяжёлый a.d.update (чтение регдолла+рендер+скин) считаем
+    // ТОЛЬКО для трупов В ОКНЕ и в пределах бюджета/кадр — иначе мёртвые копили ms_world (юзер: «убитые не вычёркиваются
+    // из расчёта»). Вне окна → вон из физики+рендера («только позиция»). Сверх бюджета → тело падает в pw.step, дорисуем позже.
+    let collapse = COLLAPSE_BUDGET;
     for (const [id, a] of monsters) {
       if (a.dead == null) continue;
       if (a.dead <= 0) {   // осел → запечь в 1 статич. меш и снести тяжёлую куклу (22 меша + физ-риг иначе копятся до смены этажа)
+        if (!a.dormant) a.d.update(1 / 60);   // дорисовать финальную позу падения (кадры могли пропускаться бюджетом) → запекаем упавшего, не «стоячего»
         if (bakeCorpse(a.d)) { disposeActor(a); statusFx.remove(`m${id}`); monsters.delete(id); }
         else if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); }   // фолбэк (не запеклось) → просто заморозить
         continue;
       }
-      a.d.update(dt); a.dead -= dt;
+      a.dead -= dt;   // время идёт ВСЕГДА → осядет и запечётся по расписанию (в т.ч. замороженный вне окна)
+      const inWin = a.lx >= winMinX - WIN_HYST && a.lx <= winMaxX + WIN_HYST && a.lz >= winMinZ - WIN_HYST && a.lz <= winMaxZ + WIN_HYST;
+      if (!inWin) { if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } continue; }   // труп вне окна → заморозить (не грузит ни pw.step, ни ms_world)
+      if (a.dormant) { a.dormant = false; a.d.setSimEnabled?.(true); }                               // вернулся в окно → вернуть в физику (доиграет падение)
+      if (collapse > 0) { collapse--; a.d.update(dt); }                                              // в бюджете → рендерим кадр падения (сверх — pw.step всё равно роняет)
     }
     // Осиротевшие куклы: ЖИВОЙ монстр пропал из снапшота без события смерти (сервер снял) → у пиров/дропов/снарядов
     // чистка есть, у монстров не было → кукла висла призраком (не на миникарте, void=0). Трупы (a.dead≠null) НЕ трогаем — лежат.
