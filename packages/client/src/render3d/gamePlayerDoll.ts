@@ -294,7 +294,10 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     dispose() {
       skin?.dispose();
       ragdoll.dispose();
-      for (const h of [solid, target]) h.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
+      // solid/target — ПРОЦЕДУРНЫЕ меши (материалы создаются per-кукла, buildHumanoid) → освобождаем и геометрию, И
+      // материалы (иначе утечка ~3 MeshStandardMaterial на каждого убитого → рост кучи → GC-разгон ms_world). Скин
+      // (атлас) и оружейные GLB могут делить ОБЩИЕ материалы из assetCache — их материалы НЕ трогаем (skin.dispose сам).
+      for (const h of [solid, target]) h.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); const mm = m.material as THREE.Material | THREE.Material[] | undefined; if (Array.isArray(mm)) mm.forEach((x) => x.dispose()); else mm?.dispose?.(); });
       for (const g of weaponGroups) g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
       group.clear();
     },

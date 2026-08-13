@@ -56,7 +56,7 @@ const TOWN_NPCS: { cx: number; cy: number; label: string; panel: string; tint: n
 
 /** Плавающая полоска HP над монстром (спрайт-биллборд; перерисов только при заметном изменении). */
 /** Табличка над монстром (как 2D drawStatus): имя (цвет по редкости) + HP-бар (чемпион шире/золотой) + стан ✷. */
-function makeNameplate(name: string, champion: boolean, special: boolean): { spr: THREE.Sprite; set: (f: number) => void; setStun: (s: boolean) => void; setDebuffs: (icons: string) => void } {
+function makeNameplate(name: string, champion: boolean, special: boolean): { spr: THREE.Sprite; set: (f: number) => void; setStun: (s: boolean) => void; setDebuffs: (icons: string) => void; dispose: () => void } {
   const W = 140, H = 54;
   const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d')!;
   const t = new THREE.CanvasTexture(c);
@@ -83,6 +83,7 @@ function makeNameplate(name: string, champion: boolean, special: boolean): { spr
     set: (f) => { f = Math.max(0, Math.min(1, f)); if (Math.abs(f - curF) > 0.02) { curF = f; draw(); } },
     setStun: (s) => { if (s !== curStun) { curStun = s; draw(); } },
     setDebuffs: (icons) => { if (icons !== curDeb) { curDeb = icons; draw(); } },
+    dispose: () => { t.dispose(); (spr.material as THREE.SpriteMaterial).dispose(); },   // освободить CanvasTexture + SpriteMaterial (иначе утечка GPU/heap на каждого убитого)
   };
 }
 
@@ -122,7 +123,7 @@ function appearanceFromModels(am?: Record<string, string>): Record<string, { mod
 
 interface Interactable { x: number; y: number; radius: number; label: string; run: () => void; doorId?: number }
 /** Кукла + служебные поля рендера (низкочастотная скорость для походки, hp-бар монстра). */
-interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; akey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean; animAcc?: number }
+interface Actor { d: RagdollHandle; vx: number; vz: number; lx: number; lz: number; hp?: ReturnType<typeof makeNameplate>; dead?: number; maxHp?: number; knock?: { f: number; dx: number; dz: number }; def?: ScaledMonster; wkey?: string; akey?: string; dormant?: boolean; hadFx?: boolean; physKin?: boolean; seen?: boolean; animAcc?: number; bakeFailed?: boolean }
 
 export async function startOnline3d(): Promise<void> {
   // ── Рендерер / сцена / камера ──────────────────────────────────────────────
@@ -305,7 +306,7 @@ export async function startOnline3d(): Promise<void> {
   const npcLabels: { spr: THREE.Sprite }[] = [];
   let hudBars: { action: ActionBar; belt: BeltBar } | undefined;   // пояс + панель биндов (D2), создаём в мире
 
-  const disposeActor = (a: Actor): void => { actorsGroup.remove(a.d.group); a.d.dispose(); if (a.hp) actorsGroup.remove(a.hp.spr); };
+  const disposeActor = (a: Actor): void => { actorsGroup.remove(a.d.group); a.d.dispose(); if (a.hp) { actorsGroup.remove(a.hp.spr); a.hp.dispose(); } };   // hp.dispose освобождает неймплейт-текстуру+материал
   const markDead = (a: Actor): void => { if (a.dead != null) return; a.dormant = false; a.d.setDead(true); a.dead = 1.1; if (a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти (setDead будит уснувшего)
   const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
 
@@ -643,9 +644,10 @@ export async function startOnline3d(): Promise<void> {
     for (const [id, a] of monsters) {
       if (a.dead == null) continue;
       if (a.dead <= 0) {   // осел → запечь в 1 статич. меш и снести тяжёлую куклу (22 меша + физ-риг иначе копятся до смены этажа)
+        if (a.bakeFailed) continue;   // уже пробовали запечь и не вышло → труп заморожен; НЕ ретраим дорогой clone+merge каждый кадр
         if (!a.dormant) a.d.update(1 / 60);   // дорисовать финальную позу падения (кадры могли пропускаться бюджетом) → запекаем упавшего, не «стоячего»
         if (bakeCorpse(a.d)) { disposeActor(a); statusFx.remove(`m${id}`); monsters.delete(id); }
-        else if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); }   // фолбэк (не запеклось) → просто заморозить
+        else { a.bakeFailed = true; if (!a.dormant) { a.dormant = true; a.d.setSimEnabled?.(false); } }   // не вышло → заморозить НАВСЕГДА (без ретрая bake)
         continue;
       }
       a.dead -= dt;   // время идёт ВСЕГДА → осядет и запечётся по расписанию (в т.ч. замороженный вне окна)
