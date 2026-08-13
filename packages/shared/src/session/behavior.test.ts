@@ -67,9 +67,10 @@ describe('патфайндинг (блок B: обход стены)', () => {
     const mAt = cellToWorld(11, 2);        // монстр справа — прямой путь перекрыт
     const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId: 'zombie', depth: 1 }, createRng(3));
     s.enterFloor(1, { grid: g, spawn, monsters: [{ def, x: mAt.x, y: mAt.y }] } as FloorLayout);
+    const m = s.world.monsters[0]!;   // держим ССЫЛКУ: монстр может погибнуть и вычеркнуться из w.monsters (линг трупа) — объект живёт, pos заморожен на месте смерти
     // игрок стоит и машет (шум держит агро); монстр обходит стену через нижний проход
     const swing: PlayerInput = { move: { x: 0, y: 0 }, facing: 0, attack: true, cast: null, interact: false };
     for (let i = 0; i < 400; i++) s.tick(1 / 30, { p1: swing });
-    expect(s.world.monsters[0]!.pos.x).toBeLessThan(cellToWorld(wallX, 2).x); // перешёл на сторону игрока
+    expect(m.pos.x).toBeLessThan(cellToWorld(wallX, 2).x); // перешёл на сторону игрока (жив или уже труп на этой стороне)
   });
 });

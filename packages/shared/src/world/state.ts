@@ -111,6 +111,8 @@ export interface MonsterEntity {
   /** Кэш следующей путевой точки обхода (null — идти напрямую). */
   waypoint: Vec2 | null;
   alive: boolean;
+  /** Время смерти (w.timeMs) — труп держится в снапшоте ещё CORPSE_LINGER_MS, потом удаляется (иначе снапшот растёт весь этаж). */
+  deadAt?: number;
 }
 
 /** Лежащий на полу предмет. */

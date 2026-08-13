@@ -143,6 +143,9 @@ const PROJ_HIT_RADIUS = 16;
 /** Запас к сумме радиусов, в пределах которого ближний удар монстра засчитывается по завершении
  *  замаха. Если игрок за время замаха отошёл дальше — удар вхолостую (замах даёт окно на уклонение). */
 const MONSTER_MELEE_WHIFF_SLACK = 8;
+/** Сколько мс труп монстра держится в w.monsters после смерти, прежде чем удаляется из мира/снапшота. Клиенты снимают
+ *  спрайт/куклу по первому alive=false (+ событию monster-died) и отыгрывают коллапс (~1.1с в 3D) — линга с запасом хватает. */
+const CORPSE_LINGER_MS = 3000;
 
 /** Спецификация активной способности (v2: дискриминирована по `category`). */
 type ActiveAbility = NonNullable<ConfigShapes['skill-tree']['nodes'][number]['effect']['active']>;
@@ -393,6 +396,14 @@ export class GameSession {
     if (!this.floorCleared && this.monstersAlive === 0) {
       this.floorCleared = true;
       this.events.push({ type: 'floor-cleared' });
+    }
+
+    // 6) Чистка трупов: мёртвый монстр держится в w.monsters ещё CORPSE_LINGER_MS (клиенты успевают снять спрайт/куклу
+    //    по alive=false + событию monster-died и отыграть коллапс), потом УДАЛЯЕТСЯ. Иначе снапшот растёт весь этаж →
+    //    клиентский per-frame цикл по latest.monsters не сжимается (ms_world копится; критично для длинных/эндлес-забегов).
+    for (let i = w.monsters.length - 1; i >= 0; i--) {
+      const m = w.monsters[i]!;
+      if (!m.alive && m.deadAt !== undefined && now - m.deadAt > CORPSE_LINGER_MS) w.monsters.splice(i, 1);
     }
 
     return this.events;
@@ -1197,6 +1208,7 @@ export class GameSession {
   private killMonster(m: MonsterEntity, killer: PlayerEntity | undefined): void {
     if (!m.alive) return;
     m.alive = false;
+    m.deadAt = this.world.timeMs;   // отметка времени смерти → труп чистится из w.monsters через CORPSE_LINGER_MS (см. tick)
     this.events.push({ type: 'monster-died', id: m.id, def: m.def, x: m.pos.x, y: m.pos.y, by: killer?.id });
     this.overloadOnDeath(m); // сигнатура конструктов: взрыв при смерти
     const reward = killer ?? this.primaryPlayer();
