@@ -99,6 +99,9 @@ export interface MonsterEntity {
   /** Активный замах (укоренён, готовит удар) или null. */
   windup: MonsterWindup | null;
   stunTimer: number;
+  /** Нокдаун (сбит с ног), сек: >0 — лежит/встаёт, полностью беспомощен (не ходит/не атакует/не регенит) и уязвим.
+   *  Включает фазу лежания (downSec) + подъёма (riseSec); клиент по этому флагу проигрывает рагдолл-коллапс и подъём. */
+  downTimer: number;
   /** Восприятие: покой (сканирует) / погоня (поводок). */
   aiState: 'idle' | 'chase';
   /** Остаток «поводка» преследования, сек. */
@@ -235,6 +238,7 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     attackCd: 0,
     windup: null,
     stunTimer: 0,
+    downTimer: 0,
     aiState: 'idle',
     leash: 0,
     alertTimer: 0,

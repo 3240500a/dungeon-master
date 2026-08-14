@@ -50,7 +50,7 @@ export function serializeWorld(w: WorldState, itemsBase?: ItemBaseLite[]): World
     monsters: w.monsters.map((m) => ({
       id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,
       hp: m.hp, maxHp: m.maxHp, alive: m.alive,
-      stun: m.stunTimer > 0, debuffs: m.debuffs, r: m.radius, aiState: m.aiState,
+      stun: m.stunTimer > 0, downed: m.downTimer > 0, debuffs: m.debuffs, r: m.radius, aiState: m.aiState,
     })),
     projectiles: w.projectiles.map((pr) => ({
       id: pr.id, x: pr.pos.x, y: pr.pos.y, owner: pr.owner, dom: dominantType(pr.packet), r: pr.radius,

@@ -7,6 +7,7 @@ import { newBotSave } from '../sim/playerBot.js';
 import type { Item } from '../types/items.js';
 import type { MonsterFaction } from '../types/world.js';
 import { GameSession, type PlayerInput, type SessionEvent, type FloorLayout } from './session.js';
+import { serializeWorld } from './serialize.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -798,5 +799,67 @@ describe('GameSession — уклонение (dodge-рывок)', () => {
     s.tick(1 / 30, { p1: { ...idle, move: { x: -1, y: 0 }, facing: 0, dodge: true } });
     for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: { ...idle, facing: 0 } });
     expect(p.facing).toBeCloseTo(0, 5);   // прицел удержан (не atan2(0,-1)=π)
+  });
+});
+
+describe('GameSession — нокдаун (сбить с ног)', () => {
+  /** Игрок + один монстр вплотную справа (в радиусе взмаха). hp/weight/vision — по опциям. */
+  function arena(opts?: { hp?: number; weight?: number; vision?: number }): { r: ConfigRegistry; s: GameSession; p: ReturnType<GameSession['addPlayer']>; m: import('../world/state.js').MonsterEntity } {
+    const r = reg();
+    const s = new GameSession(r, 42, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    const baseId = r.get('biomes')[0]!.monsterPool[0]!;
+    const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId, depth: 1 }, createRng(3));
+    def.hp = opts?.hp ?? 800; def.armor = 0;
+    if (opts?.weight != null) def.weight = opts.weight;
+    if (opts?.vision != null) def.vision = opts.vision;
+    const mp = cellToWorld(7, 6);
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mp.x, y: mp.y }] });
+    return { r, s, p, m: s.world.monsters[0]! };
+  }
+  const face = (p: { pos: { x: number; y: number } }, m: { pos: { x: number; y: number } }): number => Math.atan2(m.pos.y - p.pos.y, m.pos.x - p.pos.x);
+
+  it('сбитый с ног монстр беспомощен (рут, без атаки/регена) и восстаёт по таймеру', () => {
+    const { s, p, m } = arena();
+    m.downTimer = 0.5;
+    const x0 = m.pos.x, y0 = m.pos.y;
+    for (let i = 0; i < 6; i++) s.tick(1 / 30, { p1: { ...idle, facing: face(p, m) } });   // ~0.2с — ещё лежит
+    expect(m.downTimer).toBeGreaterThan(0);
+    expect(m.windup).toBeNull();                                        // не замахивается
+    expect(Math.hypot(m.pos.x - x0, m.pos.y - y0)).toBeLessThan(1);     // рутнут (не идёт к игроку)
+    expect(serializeWorld(s.world).monsters[0]!.downed).toBe(true);     // флаг в снапшоте
+    for (let i = 0; i < 25; i++) s.tick(1 / 30, { p1: idle });          // добить таймер
+    expect(m.downTimer).toBe(0);                                        // встал
+    expect(serializeWorld(s.world).monsters[0]!.downed).toBe(false);
+  });
+
+  it('шанс роняет: chanceBase=1 → удар сбивает и поглощает стан (взаимоискл.)', () => {
+    const { r, s, p, m } = arena();
+    const kd = r.get('balance').knockdown;
+    kd.chanceBase = 1; kd.maxChance = 1; kd.targetWeightResist = 0;   // гарантируем ролл
+    const evs: SessionEvent[] = [];
+    for (let i = 0; i < 90 && m.downTimer <= 0; i++) evs.push(...s.tick(1 / 30, { p1: { ...idle, facing: face(p, m), attack: true } }));
+    expect(m.downTimer).toBeGreaterThan(0);                            // сбит первым же попаданием
+    expect(evs.some((e) => e.type === 'knockdown')).toBe(true);        // событие ушло
+    expect(m.stunTimer).toBe(0);                                       // нокдаун вместо стана
+  });
+
+  it('лежачий уязвим: удар по нему бьёт сильнее (+vulnBonusPct)', () => {
+    // Одна сессия (RNG непрерывен, без десинка): собираем урон по монстру не-лежачему и лежачему, сравниваем максимумы.
+    const { s, p, m } = arena({ vision: 0, hp: 9_999_999 });   // слеп (не мешает ИИ-рнг) + бессмертен на время теста
+    const collect = (downed: boolean, ticks: number): number[] => {
+      const out: number[] = [];
+      for (let i = 0; i < ticks; i++) {
+        m.downTimer = downed ? 5 : 0;                          // держим нужное состояние (перед тиком; гейт не даёт встать)
+        for (const e of s.tick(1 / 30, { p1: { ...idle, facing: face(p, m), attack: true } })) {
+          if (e.type === 'hit' && e.target === 'monster' && e.hit && !e.blocked && e.amount > 0) out.push(e.amount);
+        }
+      }
+      return out;
+    };
+    const up = collect(false, 400), down = collect(true, 400);
+    const avg = (a: number[]): number => a.reduce((s, x) => s + x, 0) / a.length;
+    expect(up.length).toBeGreaterThan(5); expect(down.length).toBeGreaterThan(5);   // атака редкая: ~10 ударов за 400 тиков
+    expect(avg(down)).toBeGreaterThan(avg(up) * 1.1);   // средний урон по лежачему выше (~×(1+vuln)=1.25), запас против крит-шума
   });
 });

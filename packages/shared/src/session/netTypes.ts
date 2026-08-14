@@ -54,6 +54,8 @@ export interface MonsterView {
   maxHp: number;
   alive: boolean;
   stun: boolean;
+  /** Сбит с ног (нокдаун): лежит/встаёт, беспомощен. Клиент → рагдолл-падение + подъём. */
+  downed: boolean;
   debuffs: DebuffState;
   /** Радиус коллизии (debug-draw). */
   r: number;

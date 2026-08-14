@@ -164,6 +164,21 @@ export const balanceSchema = z.object({
       staminaCost: z.number().min(0).default(0),     // стоимость выносливости (0 = бесплатно, только КД)
     })
     .default({ distance: 55, speed: 200, cooldownSec: 1.2, weightMult: 3, staminaCost: 0 }),
+  /** Нокдаун (сбить с ног): по шансу удар роняет монстра — он падает рагдоллом, лежит и встаёт, всё это время
+   *  беспомощен и уязвим (+урон). Шанс ГИБКИЙ и аддитивный: база + вес оружия + добавка скилла (+стат гира позже),
+   *  минус сопротивление по весу цели, с потолком (не «каждый удар»). Гарантированный нокдаун — у скилла (knockdownSec). */
+  knockdown: z
+    .object({
+      enabled: z.boolean().default(true),
+      chanceBase: z.number().min(0).max(1).default(0),         // база на ЛЮБОЙ удар (0 = роняет только вес оружия/скилл/стат)
+      weaponWeightMult: z.number().min(0).default(0.004),      // вклад веса оружия в шанс (weaponWeight × это): булава роняет, кинжал ~0
+      targetWeightResist: z.number().min(0).default(0.01),     // сопротивление цели по её весу (mass × это снижает шанс)
+      maxChance: z.number().min(0).max(1).default(0.5),        // потолок шанса от НЕ-гарантированных источников (никогда не «каждый удар»)
+      downSec: z.number().min(0).default(1.1),                 // сколько лежит на земле (рут), сек
+      riseSec: z.number().min(0).default(0.8),                 // сколько встаёт (клиент — анимация подъёма; сервер держит рут весь период), сек
+      vulnBonusPct: z.number().min(0).default(0.25),           // +доля урона по лежачему/встающему (окно для добива/комбо)
+    })
+    .default({ enabled: true, chanceBase: 0, weaponWeightMult: 0.004, targetWeightResist: 0.01, maxChance: 0.5, downSec: 1.1, riseSec: 0.8, vulnBonusPct: 0.25 }),
   /** Освещение (клиент-вид): тьма растёт с глубиной, свет от факелов и игрока. */
   lighting: z
     .object({
@@ -1393,6 +1408,10 @@ const attackAbilitySchema = z.object({
   knockback: z.number().min(0).default(0),
   shoveChance: z.number().min(0).max(1).default(1),
   stunSec: z.number().min(0).default(0),
+  /** Добавка к шансу нокдауна (сбить с ног) поверх базы/веса оружия. 0 = только общие источники. */
+  knockdownChance: z.number().min(0).max(1).default(0),
+  /** Гарантированный нокдаун этим скиллом: >0 = 100% роняет (в обход шанса/сопротивления), задаёт длительность лежания, сек. */
+  knockdownSec: z.number().min(0).default(0),
   /** Стихия конверсии/статуса (сам урон — состав оружия, если convertPct=0). */
   element: damageTypeEnum.optional(),
   /** Доля урона (0..1), сливаемая в `element` (как у каста): 0 = сохранить состав гира (обычный усиленный удар),
@@ -1425,6 +1444,10 @@ const castAbilitySchema = z.object({
   knockback: z.number().min(0).default(0),
   shoveChance: z.number().min(0).max(1).default(1),
   stunSec: z.number().min(0).default(0),
+  /** Добавка к шансу нокдауна (сбить с ног) поверх базы/веса оружия. 0 = только общие источники. */
+  knockdownChance: z.number().min(0).max(1).default(0),
+  /** Гарантированный нокдаун этим скиллом: >0 = 100% роняет (в обход шанса/сопротивления), задаёт длительность лежания, сек. */
+  knockdownSec: z.number().min(0).default(0),
   ailment: ailmentApplySchema.optional(),
   /** Рывок/прыжок (shape dash/leap): дальность перемещения, скорость, добавка к весу для расталкивания. */
   dashDist: z.number().min(0).default(130),

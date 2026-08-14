@@ -105,6 +105,7 @@ export type SessionEvent =
   | { type: 'levelup'; playerId: string; level: number }
   | { type: 'player-died'; playerId: string }
   | { type: 'stun'; id: number }
+  | { type: 'knockdown'; id: number; dx: number; dy: number }   // монстр сбит с ног: клиент валит рагдолл в направлении (dx,dy) и потом поднимает
   // Реальный свинг игрока (принят: мана/КД/оружие прошли) — для клиентского VFX (форма удара) и
   // заливки-отката слота бинда. ability = nodeId скилла или 'attack'. windupMs — замах, cooldownMs — откат
   // использованного действия, lockMs — общий attack-таймер (блокирует ВСЕ удары/attack-cast-скиллы).
@@ -159,7 +160,7 @@ type CurseAbility = Extract<ActiveAbility, { category: 'curse' }>;
 type ToggleAbility = Extract<ActiveAbility, { category: 'aura' | 'stance' }>;
 type OffensiveAbility = AttackAbility | CastAbility;
 /** Опции применения удара (оружие/скилл): к PlayerHitOptions добавлены отброс и гарант. стан. */
-type HitOpts = PlayerHitOptions & { knockback?: number; stunSec?: number; shoveChance?: number };
+type HitOpts = PlayerHitOptions & { knockback?: number; stunSec?: number; shoveChance?: number; knockdownChance?: number; knockdownSec?: number };
 /** Опорный вес для масштаба отброса: knockback (px) калиброван под монстра ~этого веса. */
 const KNOCKBACK_REF_WEIGHT = 100;
 
@@ -342,6 +343,9 @@ export class GameSession {
         m.hp -= dot;
         if (m.hp <= 0) { this.killMonster(m, this.primaryPlayer()); continue; }
       }
+      // Нокдаун (сбит с ног): полностью беспомощен — не ходит/не атакует/не регенит, пока лежит и встаёт. DoT выше
+      // всё равно тикает (лежачий уязвим). Флаг едет в снапшот (клиент проигрывает рагдолл-падение и подъём).
+      if (m.downTimer > 0) { m.downTimer = Math.max(0, m.downTimer - dt); m.vel.x = 0; m.vel.y = 0; m.windup = null; continue; }
       if (m.def.hpRegen > 0 && m.hp < m.maxHp) {
         m.hp = Math.min(m.maxHp, m.hp + m.def.hpRegen * dm.hpRegenMult * dt);
       }
@@ -552,7 +556,16 @@ export class GameSession {
       stunChance: weapon?.stunChance,
       onHit: weapon ? weaponDebuffs(weapon, this.cfg.get('phys-subtypes'), this.cfg.get('debuffs')) : [],
       knockback: weapon?.knockback,
+      knockdownChance: this.weaponKnockdownChance(weapon),   // вклад веса оружия в шанс сбить с ног (тяжёлое роняет чаще)
     };
+  }
+
+  /** Вклад ОРУЖИЯ в шанс нокдауна: вес оружия × weaponWeightMult (кулаки/кинжал ~0, булава/молот — заметно). */
+  private weaponKnockdownChance(weapon?: Item): number {
+    const kd = this.cfg.get('balance').knockdown;
+    if (!kd.enabled || !weapon) return 0;
+    const w = this.weights().find((x) => x.id === weapon.weight)?.weight ?? 0;
+    return w * kd.weaponWeightMult;
   }
 
   /** Форма урона скилла (общий шаг attack/cast) — см. `shapeSkillPacket`: множитель по scope + добавка стихии + конверсия. */
@@ -855,6 +868,9 @@ export class GameSession {
     if (active.knockback) opts.knockback = active.knockback;
     opts.shoveChance = active.shoveChance;
     if (active.stunSec) opts.stunSec = active.stunSec;
+    // Нокдаун: добавка к шансу (поверх веса оружия) + гарант скилла (knockdownSec>0 = 100%).
+    if (active.knockdownChance) opts.knockdownChance = (opts.knockdownChance ?? 0) + active.knockdownChance;
+    if (active.knockdownSec) opts.knockdownSec = active.knockdownSec;
     if (active.ailment) {
       const kind = active.ailment.kind ?? this.cfg.get('magic-subtypes').find((d) => d.id === element)?.ailment;
       if (kind) {
@@ -904,6 +920,32 @@ export class GameSession {
   private monsterMass(m: MonsterEntity): number {
     const mult = m.def.rarity === 'unique' ? this.cfg.get('balance').collision.uniqueWeightMult : 1;
     return m.def.weight * mult;
+  }
+
+  /**
+   * Ролл нокдауна (сбить с ног) при попадании по монстру. Шанс аддитивный: база + вклад оружия/скилла
+   * (`opts.knockdownChance`), под потолком `maxChance`, минус сопротивление по весу цели (тяжёлые устойчивее).
+   * Гарант от скилла (`opts.knockdownSec>0`) — в обход шанса/сопротивления. Роняет: `downTimer` (лежит+встаёт),
+   * снимает стан/замах, шлёт событие с направлением падения (ОТ атакующего). Возвращает true, если сбит.
+   */
+  private tryKnockdown(killer: PlayerEntity, m: MonsterEntity, opts: HitOpts): boolean {
+    const kd = this.cfg.get('balance').knockdown;
+    if (!kd.enabled || m.downTimer > 0) return false;   // выкл. или уже лежит
+    const guaranteed = (opts.knockdownSec ?? 0) > 0;
+    let downSec: number;
+    if (guaranteed) {
+      downSec = opts.knockdownSec!;                      // скилл роняет гарантированно (в обход шанса/сопротивления)
+    } else {
+      const raw = Math.min(kd.maxChance, kd.chanceBase + (opts.knockdownChance ?? 0));   // база + оружие + скилл, под потолком
+      const resist = Math.min(0.95, this.monsterMass(m) * kd.targetWeightResist);        // тяжёлые устойчивее
+      if (!this.rng.chance(raw * (1 - resist))) return false;
+      downSec = kd.downSec;
+    }
+    m.downTimer = downSec + kd.riseSec;   // лежит (downSec) + встаёт (riseSec) — весь период беспомощен
+    m.stunTimer = 0; m.windup = null;     // нокдаун поглощает стан/замах
+    const a = Math.atan2(m.pos.y - killer.pos.y, m.pos.x - killer.pos.x);   // валится ОТ атакующего
+    this.events.push({ type: 'knockdown', id: m.id, dx: Math.cos(a), dy: Math.sin(a) });
+    return true;
   }
 
   /** Расталкивает пересекающиеся сущности по массе (вес). Игрок в рывке тяжелее (weightMult). */
@@ -1012,9 +1054,11 @@ export class GameSession {
 
   private hitMonster(killer: PlayerEntity, m: MonsterEntity, packet: DamagePacket, attacker: CombatStats, opts: HitOpts = {}): void {
     const target: HitTarget = { hp: m.hp, maxHp: m.def.hp, stats: monsterCombatStats(m.def), debuffs: m.debuffs };
-    // Аффинити + реактивные мастерства «hit-dealt» (по горящим/фракции/оглушённым).
+    // Аффинити + реактивные мастерства «hit-dealt» (по горящим/фракции/оглушённым) + уязвимость лежачего (нокдаун).
     const affMult = this.affinityMult(killer.save, m.def.faction);
-    const mult = affMult * (1 + this.hitDealtBonus(killer, m));
+    const kdCfg = this.cfg.get('balance').knockdown;
+    const vulnMult = m.downTimer > 0 && kdCfg.enabled ? 1 + kdCfg.vulnBonusPct : 1;   // сбитый с ног получает +% урона (окно комбо)
+    const mult = affMult * (1 + this.hitDealtBonus(killer, m)) * vulnMult;
     const pk = mult !== 1 ? scalePacket(packet, mult) : packet;
     const res = resolvePlayerHit(target, attacker, pk, { ...opts, debuffTuning: this.cfg.get('debuffs') }, this.rng, this.world.timeMs);
 
@@ -1034,13 +1078,17 @@ export class GameSession {
     // Прок «шанс каста при ударе» (не от ударов самого прок-скилла — иначе рекурсия).
     if (this.sustain && !this.procActive && res.damage > 0) this.rollHitProcs(killer, 'hit');
     if (!res.died) {
-      // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
-      if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }
-      else if (res.stunned) { m.stunTimer = Math.max(m.stunTimer, 1.2); this.events.push({ type: 'stun', id: m.id }); }
-      // Отброс: по шансу (shoveChance) и масштабируем весом цели — тяжёлого толкает слабее.
-      if (opts.knockback && this.rng.float(0, 1) < (opts.shoveChance ?? 1)) {
-        const force = opts.knockback * (KNOCKBACK_REF_WEIGHT / Math.max(1, this.monsterMass(m)));
-        m.pos = moveWithCollision(m.pos, this.awayDir(killer.pos, m.pos, force), m.radius, this.world.grid, 1);
+      // Нокдаун (сбить с ног) приоритетнее стана/отброса — если сработал, монстр падает рагдоллом (взаимоискл.).
+      const knocked = this.tryKnockdown(killer, m, opts);
+      if (!knocked) {
+        // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
+        if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }
+        else if (res.stunned) { m.stunTimer = Math.max(m.stunTimer, 1.2); this.events.push({ type: 'stun', id: m.id }); }
+        // Отброс: по шансу (shoveChance) и масштабируем весом цели — тяжёлого толкает слабее. При нокдауне не нужен (своё падение).
+        if (opts.knockback && this.rng.float(0, 1) < (opts.shoveChance ?? 1)) {
+          const force = opts.knockback * (KNOCKBACK_REF_WEIGHT / Math.max(1, this.monsterMass(m)));
+          m.pos = moveWithCollision(m.pos, this.awayDir(killer.pos, m.pos, force), m.radius, this.world.grid, 1);
+        }
       }
     } else {
       this.killMonster(m, killer);
