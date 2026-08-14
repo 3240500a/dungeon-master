@@ -755,6 +755,15 @@ export async function startOnline3d(): Promise<void> {
         // Уклонение (dodge-рывок): облачко пыли из-под ног в точке отталкивания + вжух своему игроку.
         vfx.burst(e.x, e.y, 0xb9a88a, 14, 130, 0.4, 9, 6);
         if (e.playerId === myId) bus.emit('player:dodge', {});
+      } else if (e.type === 'knockdown') {
+        // Сбит с ног: кукла падает рагдоллом в (dx,dy) и потом встаёт (длительности из конфига). + пыль в точке падения.
+        const a = monsters.get(e.id);
+        if (a && a.dead == null) {   // не роняем уже мёртвого (труп лежит своим коллапсом)
+          const kd = app.config.get('balance').knockdown;
+          a.d.knockdown?.(e.dx, e.dy, kd.downSec, kd.riseSec);
+          const mv = latest?.monsters.find((m) => m.id === e.id);
+          if (mv) vfx.burst(mv.x, mv.y, 0xb9a88a, 18, 150, 0.5, 10, 6);
+        }
       }
     }
   }

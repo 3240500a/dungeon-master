@@ -26,6 +26,7 @@ const ATK_MATCH = 0.92;   // пиковый вес совпадения с ав�
 const HIT_PHYS_DUR = 0.5;   // сек транзиентной физики в kinematic-режиме на хит-реакцию (перекрывает limp ~0.4с), потом назад в кинематику
 const GROUND0 = (): number => 0;   // плоский пол y=0 (как в физ-рендере при groundAt=undefined) для kinematic FOOT-IK
 const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов — восстанавливаем вне удара (PHYS глобальна, шарится дллами: каждая dll ставит своё перед update)
+const DEF_MUSCLE = PHYS.muscle; // дефолт силы моторов — рампим во время подъёма из нокдауна, потом восстанавливаем
 
 export interface HumanoidDollOpts {
   x: number; z: number;
@@ -130,13 +131,18 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   let simEnabled = true, snapNext = false;   // окно-culling: вне экрана усыпляем физику (тела вон из pw.step), меш замерзает
   let kinematic = false, physHold = 0;       // debug-режим «кинематика»: рисуем из позы, физика лишь транзиентно (physHold сек) на удар/смерть
   let poseLod = false;                        // поза-LOD дальних монстров: пропуск FOOT-IK (заземления стоп) — дёшево, детали стоп вдали не видно
-  // Членство тел в pw.step: активны только если кукла не усыплена окном И (мертва | физрежим | идёт транзиентная физика удара).
-  const syncRagdollSim = (): void => ragdoll.setSimEnabled(simEnabled && (dead || !kinematic || physHold > 0));
+  // Нокдаун (сбить с ног): downT>0 — идёт коллапс+подъём (не смерть). downRise — длительность фазы подъёма; riseInit —
+  // однократный переход коллапс→подъём (записываем упавшую позицию таза + возвращаем моторы). risePos — таз на полу.
+  let downT = 0, downRise = 0.8, riseInit = false;
+  const risePos = new THREE.Vector3();
+  // Членство тел в pw.step: активны только если кукла не усыплена окном И (мертва | нокдаун | физрежим | транзиентная физика удара).
+  const syncRagdollSim = (): void => ragdoll.setSimEnabled(simEnabled && (dead || downT > 0 || !kinematic || physHold > 0));
   let atkClipIdx = 0;   // индекс чередования poseClips скила (замах справа→слева→…)
   let wvx = 0, wvz = 0, hasWvel = false, vxS = 0, vzS = 0;
   let rx = opts.x, rz = opts.z;            // сглаженная мир-позиция (сим 30Гц телепортит tx/tz)
   const off = new THREE.Vector3(), pelWorld = new THREE.Vector3(), hipsQ = new THREE.Quaternion();
   const pinVecs = RAG_NAMES.map(() => new THREE.Vector3());
+  const NO_PINS: (THREE.Vector3 | null)[] = RAG_NAMES.map(() => null);   // подъём из нокдауна: без мир-пинов (иначе тянут конечности к стоячим позициям при низком тазе)
   const pinArr: (THREE.Vector3 | null)[] = RAG_NAMES.map(() => null);
 
   function applyWeaponLoad(): void {   // вес оружия оттягивает держащую кисть (для физ-реакций/маха)
@@ -209,6 +215,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     },
     setDead(d) {
       if (d && !simEnabled) { simEnabled = true; snapNext = true; }   // умер спящим (вне окна) → будим, чтоб коллапс отыгрался
+      if (d) { downT = 0; riseInit = false; }   // смерть главнее нокдауна: обрываем подъём, дальше свободный коллапс
       if (d === dead) return; dead = d;
       syncRagdollSim();          // dead → тела в pw.step (коллапс) в ЛЮБОМ режиме (в т.ч. kinematic)
       ragdoll.setDead(d);
@@ -235,6 +242,16 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       const p = Math.max(0, Math.min(1, frac)) * KNOCK;
       ragdoll.hit('Hips', dx, 0.1, dz, p); ragdoll.hit('Torso', dx, 0.18, dz, p * 0.5);
     },
+    knockdown(dx, dz, downSec, riseSec) {   // сбит с ног: коллапс рагдоллом в (dx,dz), лежит, потом ВСТАЁТ (см. ветку downT в update)
+      if (dead) return;
+      if (!simEnabled) { simEnabled = true; snapNext = true; }   // сбит спящим (вне окна) → будим
+      downRise = Math.max(0.05, riseSec);
+      downT = Math.max(0.1, downSec) + downRise;
+      riseInit = false;
+      syncRagdollSim();          // тела в pw.step на весь нокдаун
+      ragdoll.setDead(true);     // моторы off + таз dynamic → падение
+      ragdoll.hit('Hips', dx, 0.05, dz, 1); ragdoll.hit('Torso', dx, 0.12, dz, 0.6);   // толчок таза+верха → валится в направлении
+    },
     setWeapon(key, models) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
       if (key === weapon) return;
       if (models !== undefined) weaponModels = models;   // Ф3: новые id GLB-моделей оружия (self); пиры — undefined (нужна сеть)
@@ -251,6 +268,35 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
         ragdoll.update(dt);
         renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
         skin?.update(); syncWeaponHost();                                      // GLB-слои ведутся solid (после позирования физрезультатом)
+        return;
+      }
+      if (downT > 0) {                                       // НОКДАУН: лежит (свободный коллапс) → встаёт (таз лерпит к стойке). dead отсечён выше.
+        downT -= dt;
+        if (snapNext) { rx = tx; rz = tz; snapNext = false; }
+        rx += (tx - rx) * 0.12; rz += (tz - rz) * 0.12;      // мир-позиция плавно к цели (сервер держит монстра на месте, пока лежит)
+        player.setVel(0, 0); player.setYaw(tyaw); if (first) { player.snapYaw(); first = false; } player.step(dt);   // манекен в idle-стойку — цель подъёма
+        if (downT > downRise) {                              // ЛЕЖИТ: свободный коллапс (как смерть), без прижима/бленда
+          ragdoll.update(dt);
+          renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
+        } else {                                             // ВСТАЁТ: таз обратно kinematic и лерпит с пола к стойке, верх блендит физику→позу
+          if (!riseInit) { const hp = ragdoll.bodyPos('Hips'); risePos.set(hp[0], hp[1], hp[2]); ragdoll.setDead(false); riseInit = true; }   // записать упавший таз + вернуть моторы
+          const t = 1 - Math.max(0, downT) / downRise;       // прогресс подъёма 0→1
+          const e = t * t * (3 - 2 * t);                     // smoothstep — мягкий старт/финиш
+          // Кормим рагдолл ТОЛЬКО углами позы (моторы распрямляют тело) + kinematic-таз, БЕЗ мир-пинов (пины на стоячих
+          // позициях при низком тазе растянули бы конечности). Таз лерпит с пола к стойке — тело физически поднимается.
+          ragdoll.setPoseTarget(target.readPose());
+          ragdoll.setPinTargets(NO_PINS);
+          target.root.updateMatrixWorld(true);
+          const hb = target.bones.get('Hips')!; hb.getWorldPosition(pelWorld); pelWorld.x += rx; pelWorld.z += rz; hb.getWorldQuaternion(hipsQ);
+          pelWorld.lerp(risePos, 1 - e);                     // стойка→пол на долю (1−e): e=1 стойка, e=0 пол
+          ragdoll.setPelvis(pelWorld, hipsQ);
+          PHYS.muscle = DEF_MUSCLE * (0.15 + 0.85 * e);      // рампа силы моторов (слабо→сильно): тело подбирается, а не дёргается
+          ragdoll.update(dt);
+          PHYS.muscle = DEF_MUSCLE;                           // PHYS глобальна — вернуть дефолт для других кукол
+          renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, target.readPose(), e * matchWeight, undefined, undefined, !poseLod);
+        }
+        skin?.update(); syncWeaponHost();
+        if (downT <= 0) { downT = 0; if (!riseInit) ragdoll.setDead(false); riseInit = false; snapNext = true; }   // встал → обычный режим (гарантируем оживление физики)
         return;
       }
       const yawSnap = snapNext || first;                     // телепорт/спавн/пробуждение → таз мгновенно к прицелу (без «юлы»)

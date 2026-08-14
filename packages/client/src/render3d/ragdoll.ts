@@ -132,6 +132,9 @@ export interface RagdollHandle {
   hitReact(dx: number, dz: number, power?: number): void;
   /** Отброс трупа на смерти: сильный горизонтальный импульс в таз/торс (frac 0..1 — доля урона от HP → дальность). */
   knockback?(dx: number, dz: number, frac: number): void;
+  /** Нокдаун (сбить с ног): падение рагдоллом в направлении (dx,dz), лежит downSec, потом ВСТАЁТ за riseSec
+   *  (таз kinematic лерпит с пола к стойке + рампа моторов/бленда). Не смерть — по завершении обычный режим. */
+  knockdown?(dx: number, dz: number, downSec: number, riseSec: number): void;
   /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…). */
   setWeapon?(key: string, models?: { main?: string; off?: string }): void;
   /** Свап внешности брони по слотам (C6c): slot→{modelId} надетых предметов → пересобрать скин-слой (GLB по слотам). */
