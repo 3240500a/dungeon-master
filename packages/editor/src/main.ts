@@ -15,6 +15,7 @@ import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
 import { renderColorField, renderUploadField } from './assetFields.js';
+import { renderDocs } from './docs.js';
 
 /**
  * HTML-редактор конфигов. Страницы по механикам (по одному конфигу на страницу),
@@ -135,7 +136,11 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'sweep' | 'poses' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'sweep' = 'config';
+// Верхняя секция редактора: Игра (конфиги+инструменты) / 3D-эдитор (поз-редактор) / Документация (описания механик).
+type Section = 'game' | 'pose' | 'docs';
+let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' ? s : 'game'; } catch { return 'game'; } })();
+const setSection = (s: Section): void => { section = s; try { localStorage.setItem('editor_section', s); } catch { /* */ } render(); };
 /** Активная подветка balance (её страница-срез). */
 let balanceGroup: string = balanceGroupsFull[0]!.title;
 
@@ -276,7 +281,7 @@ fetch('/api/pose')
   .catch(() => { /* сервер недоступен — без источника поз */ });
 
 const app = document.getElementById('app')!;
-setEditorNav((v) => { view = v; render(); }); // мостик: «Симулятор» может открыть «Калькулятор» с билдом бота
+setEditorNav((v) => { section = 'game'; view = v; render(); }); // мостик: «Симулятор» может открыть «Калькулятор» с билдом бота
 render();
 loadFromServer(); // подтянуть актуальный конфиг с сервера — показать реальные значения
 
@@ -495,8 +500,37 @@ function renderAffixTree(list: HTMLElement, arr: unknown[]): void {
   }
 }
 
+/** Оболочка: верхний таб-бар из 3 секций + тело активной секции (Игра / 3D-эдитор / Документация). */
 function render(): void {
   app.innerHTML = '';
+  const tabs = document.createElement('div');
+  tabs.style.cssText = 'flex:0 0 auto;display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid #2c2c3a;padding-bottom:8px';
+  const SECTIONS: { id: Section; label: string }[] = [
+    { id: 'game', label: '🎮 Игра' },
+    { id: 'pose', label: '🧍 3D-эдитор' },
+    { id: 'docs', label: '📖 Документация' },
+  ];
+  for (const s of SECTIONS) {
+    const b = document.createElement('button');
+    b.textContent = s.label;
+    const active = section === s.id;
+    b.style.cssText = `padding:8px 16px;cursor:pointer;border-radius:8px 8px 0 0;border:1px solid #2c2c3a;border-bottom:none;background:${active ? '#3a3a4c' : '#1c1c26'};color:${active ? '#fff' : '#b8b8c8'};font-weight:600;font-size:14px`;
+    b.addEventListener('click', () => setSection(s.id));
+    tabs.appendChild(b);
+  }
+  app.appendChild(tabs);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column';
+  app.appendChild(body);
+  if (section === 'pose') renderPose(body);
+  else if (section === 'docs') renderDocs(body, { gotoConfig });
+  else renderGame(body);
+}
+
+/** Секция «Игра» — левый nav (конфиги+инструменты) + страница. */
+function renderGame(host: HTMLElement): void {
+  host.innerHTML = '';
   const layout = document.createElement('div');
   layout.style.cssText = 'display:flex;gap:16px;flex:1;min-height:0';
 
@@ -546,12 +580,7 @@ function render(): void {
   sweepBtn.addEventListener('click', () => { view = 'sweep'; render(); });
   nav.appendChild(sweepBtn);
 
-  // Отдельная вкладка-инструмент: поз-редактор (iframe клиента 5173) — авторинг поз/моделей рядом с конфигом.
-  const posesBtn = document.createElement('button');
-  posesBtn.textContent = '🧍 Поз-редактор';
-  posesBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'poses' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
-  posesBtn.addEventListener('click', () => { view = 'poses'; render(); });
-  nav.appendChild(posesBtn);
+  // (Поз-редактор переехал в верхнюю секцию «3D-эдитор».)
 
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
   const covered = new Set(NAV_GROUPS.flatMap(groupKeys));
@@ -617,11 +646,10 @@ function render(): void {
   else if (view === 'monstergen') renderMonsterGenPage(page, data);
   else if (view === 'calc') renderCalcPage(page, data);
   else if (view === 'sweep') renderSweepPage(page, data);
-  else if (view === 'poses') renderPosesPage(page);
   else renderPage(page);
 
   layout.append(nav, page);
-  app.appendChild(layout);
+  host.appendChild(layout);
 }
 
 /**
@@ -631,15 +659,23 @@ function render(): void {
  * DEV: editor на своём порту (напр. 5174), клиент на 5173 — src на кросс-ориджин 5173.
  * PROD: собранный клиент и редактор на одном origin — относительный `/pose-editor.html`.
  */
-function renderPosesPage(page: HTMLElement): void {
+function renderPose(host: HTMLElement): void {
   const crossOrigin = location.port && location.port !== '5173';
   const src = crossOrigin ? 'http://localhost:5173/pose-editor.html' : '/pose-editor.html';
   const frame = document.createElement('iframe');
   frame.src = src;
   frame.style.cssText = 'width:100%;height:100%;border:0;border-radius:8px;background:#0f0f16';
   frame.allow = 'fullscreen';
-  page.style.padding = '0';
-  page.appendChild(frame);
+  host.appendChild(frame);
+}
+
+/** Deep-link из документации: перейти в секцию «Игра» на конфиг-страницу (опц. подветку balance). */
+function gotoConfig(key: string, group?: string): void {
+  if (!(key in configSchemas)) return;   // неизвестный ключ в ссылке дока — игнор
+  section = 'game'; try { localStorage.setItem('editor_section', 'game'); } catch { /* */ }
+  view = 'config'; current = key as ConfigKey; selectedIndex = 0;
+  if (key === 'balance' && group) balanceGroup = group;
+  render();
 }
 
 function renderPage(page: HTMLElement): void {
