@@ -157,13 +157,13 @@ export const balanceSchema = z.object({
    *  (без i-frames) — уход из зоны удара; в рывке игрок «тяжёлый» (weightMult), расталкивает монстров. */
   dodge: z
     .object({
-      distance: z.number().min(0).default(150),      // на сколько юнитов бросает
-      speed: z.number().min(1).default(520),         // скорость рывка (юн/с) — длительность = distance/speed
+      distance: z.number().min(0).default(55),       // на сколько юнитов бросает (короткий шаг-уклон)
+      speed: z.number().min(1).default(200),         // скорость рывка (юн/с) — длительность = distance/speed
       cooldownSec: z.number().min(0).default(1.2),   // кулдаун между уклонениями
       weightMult: z.number().min(1).default(3),      // масса игрока в рывке (расталкивание монстров)
       staminaCost: z.number().min(0).default(0),     // стоимость выносливости (0 = бесплатно, только КД)
     })
-    .default({ distance: 150, speed: 520, cooldownSec: 1.2, weightMult: 3, staminaCost: 0 }),
+    .default({ distance: 55, speed: 200, cooldownSec: 1.2, weightMult: 3, staminaCost: 0 }),
   /** Освещение (клиент-вид): тьма растёт с глубиной, свет от факелов и игрока. */
   lighting: z
     .object({

@@ -755,16 +755,18 @@ describe('GameSession — уклонение (dodge-рывок)', () => {
   });
 
   it('стоя (без WASD) рывок идёт к прицелу (facing)', () => {
-    const { s, p } = loneField();
+    const { s, p, r } = loneField();
+    const dist = r.get('balance').dodge.distance;
     const startY = p.pos.y;
     s.tick(1 / 30, { p1: { ...idle, move: { x: 0, y: 0 }, facing: Math.PI / 2, dodge: true } });   // прицел вниз (+Y)
     for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: idle });
-    expect(p.pos.y - startY).toBeGreaterThan(50);   // уехал вниз
+    expect(p.pos.y - startY).toBeGreaterThan(dist * 0.7);   // уехал вниз ~на дистанцию
   });
 
   it('кулдаун гейтит спам: второй рывок в окне КД не срабатывает, после КД — снова', () => {
     const { s, p, r } = loneField();
     const cd = r.get('balance').dodge.cooldownSec;
+    const dist = r.get('balance').dodge.distance;
     s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 }, dodge: true } });
     for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: idle });   // домчали
     expect(p.dodgeCd).toBeGreaterThan(0);
@@ -778,7 +780,7 @@ describe('GameSession — уклонение (dodge-рывок)', () => {
     const ev3 = s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 }, dodge: true } });
     expect(ev3.some((e) => e.type === 'dodge')).toBe(true);
     for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: idle });
-    expect(p.pos.x).toBeGreaterThan(xAfter1 + 50);   // второй рывок реально сдвинул
+    expect(p.pos.x).toBeGreaterThan(xAfter1 + dist * 0.7);   // второй рывок реально сдвинул
   });
 
   it('стан блокирует уклонение', () => {
