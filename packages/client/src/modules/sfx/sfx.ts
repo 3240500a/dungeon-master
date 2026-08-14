@@ -22,6 +22,23 @@ export class SfxController {
     app.bus.on('item:picked', () => this.beep(880, 0.06, 'triangle'));
     app.bus.on('gold:changed', () => this.beep(660, 0.03, 'sine', 0.02));
     app.bus.on('player:levelup', () => this.chime([523, 659, 784]));
+    app.bus.on('player:dodge', () => this.whoosh());
+  }
+
+  /** Короткий «вжух» уклонения: нисходящий свип. */
+  private whoosh(): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(520, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(180, ctx.currentTime + 0.16);
+    gain.gain.setValueAtTime(0.05, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.18);
   }
 
   private beep(freq: number, dur: number, type: OscillatorType, gainMax = 0.05): void {

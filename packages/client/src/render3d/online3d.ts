@@ -751,6 +751,10 @@ export async function startOnline3d(): Promise<void> {
         }
       } else if (e.type === 'monster-swing') {
         monsters.get(e.id)?.d.attack();   // монстр машет своим оружием (авторский удар фракции / фолбэк)
+      } else if (e.type === 'dodge') {
+        // Уклонение (dodge-рывок): облачко пыли из-под ног в точке отталкивания + вжух своему игроку.
+        vfx.burst(e.x, e.y, 0xb9a88a, 14, 130, 0.4, 9, 6);
+        if (e.playerId === myId) bus.emit('player:dodge', {});
       }
     }
   }
@@ -867,9 +871,13 @@ export async function startOnline3d(): Promise<void> {
     consider(s.mouseLeft, holding ? false : lmb, 'L');
     consider(s.mouseRight, holding ? false : rmb, 'R');
     consider(s.hotbar[0], keys.has('ShiftLeft') || keys.has('ShiftRight'), 'S');
-    consider(s.hotbar[1], keys.has('Space'), 'Sp');
+    consider(s.hotbar[1], keys.has('KeyQ'), 'Q');   // бывший Space-слот перевешен на Q (Space → уклонение)
     consider(s.hotbar[2], keys.has('AltLeft') || keys.has('AltRight'), 'A');
-    const input: PlayerInput = { move: { x: mx, y: my }, facing, attack, cast, interact: keys.has('KeyE') };
+    // Пробел = УКЛОНЕНИЕ (dodge-рывок), эджево (только в кадр нажатия): рывок в направлении WASD (стоя — к прицелу).
+    const spaceDown = keys.has('Space');
+    const dodge = spaceDown && !(wasHeld['dodge'] ?? false);
+    wasHeld['dodge'] = spaceDown;
+    const input: PlayerInput = { move: { x: mx, y: my }, facing, attack, cast, interact: keys.has('KeyE'), dodge };
     app.net.send({ t: 'input', seq: seq++, input });
   }
 

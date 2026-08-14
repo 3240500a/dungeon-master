@@ -2,7 +2,7 @@ import type { SkillNode } from '@dm/shared';
 import { dmgColor, dmgName } from '../../core/damageTypes.js';
 
 /** Подписи клавиш слотов хотбара (слоты 0..3). */
-export const HOTBAR_KEYS = ['ПКМ', 'Shift', 'Space', 'Alt'];
+export const HOTBAR_KEYS = ['ПКМ', 'Shift', 'Q', 'Alt'];
 
 /** Псевдо-стихия «мастерство» — не тип урона, отдельный нейтральный цвет. */
 const MASTERY_COLOR = '#6a6a7a';

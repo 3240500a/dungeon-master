@@ -467,8 +467,8 @@ export const characterPanel: PanelFactory = (app, ui) => {
       };
       off.append(dmgRowFor('Урон (ЛКМ)', state.save.mouseLeft));
       off.append(dmgRowFor('Урон (ПКМ)', state.save.mouseRight));
-      // Хотбар (Shift/Space/Alt) — показываем назначенные.
-      const HOTKEYS = ['Shift', 'Space', 'Alt'];
+      // Хотбар (Shift/Q/Alt) — показываем назначенные (Space освобождён под уклонение).
+      const HOTKEYS = ['Shift', 'Q', 'Alt'];
       state.save.hotbar.forEach((b, i) => { if (b) off.append(dmgRowFor(`Урон (${HOTKEYS[i]})`, b)); });
 
       off.append(statRow('Скор. атаки', `${d.attackSpeed.toFixed(2)} /с`, 'Число базовых атак в секунду.'));

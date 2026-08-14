@@ -21,6 +21,8 @@ export interface GameEvents {
   };
   'player:damaged': { current: number; max: number };
   'player:died': { depth: number };
+  /** Свой игрок выполнил уклонение (dodge-рывок) — для SFX «вжух». */
+  'player:dodge': Record<string, never>;
   'config:reloaded': { keys: string[] };
   'gold:changed': { gold: number };
   /** Запрос открыть модальную DOM-панель (инвентарь/скиллы/магазин/…). */

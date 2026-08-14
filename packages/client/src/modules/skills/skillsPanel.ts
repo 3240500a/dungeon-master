@@ -9,7 +9,7 @@ function renderBinds(app: App, body: HTMLElement): void {
   body.append(mk('h4', 'margin:12px 0 8px', 'Бинды действий'));
   body.append(buildBindBar(app).el);
   body.append(mk('div', 'font-size:11px;color:#666;margin-top:6px',
-    'Клик по слоту → назначить скилл или «Атаку». ЛКМ/ПКМ + доп. слоты Shift/Space/Alt.'));
+    'Клик по слоту → назначить скилл или «Атаку». ЛКМ/ПКМ + доп. слоты Shift/Q/Alt. Пробел — уклонение.'));
 }
 
 /**

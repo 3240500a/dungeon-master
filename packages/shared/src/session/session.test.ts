@@ -729,3 +729,63 @@ describe('GameSession — боевой айдл (combatTimer)', () => {
     expect(p.combatTimer).toBeGreaterThan(0);
   });
 });
+
+describe('GameSession — уклонение (dodge-рывок)', () => {
+  /** Игрок в большом открытом поле по центру. */
+  function loneField(): { s: GameSession; p: ReturnType<GameSession['addPlayer']>; r: ConfigRegistry } {
+    const r = reg();
+    const s = new GameSession(r, 555, 'normal');
+    const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
+    s.enterFloor(1, { grid: openField(40, 40), spawn: cellToWorld(20, 20), monsters: [] });
+    return { s, p, r };
+  }
+
+  it('пробел рвёт в направлении WASD на дистанцию из конфига', () => {
+    const { s, p, r } = loneField();
+    const dist = r.get('balance').dodge.distance;
+    const startX = p.pos.x;
+    const startY = p.pos.y;
+    const ev = s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 }, dodge: true } });   // фронт нажатия
+    expect(ev.some((e) => e.type === 'dodge')).toBe(true);
+    expect(p.dash).not.toBeNull();
+    for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: idle });   // рывок доезжает
+    expect(p.dash).toBeNull();
+    expect(p.pos.x - startX).toBeGreaterThan(dist * 0.7);   // уехал вправо близко к дистанции
+    expect(Math.abs(p.pos.y - startY)).toBeLessThan(1);     // строго по X
+  });
+
+  it('стоя (без WASD) рывок идёт к прицелу (facing)', () => {
+    const { s, p } = loneField();
+    const startY = p.pos.y;
+    s.tick(1 / 30, { p1: { ...idle, move: { x: 0, y: 0 }, facing: Math.PI / 2, dodge: true } });   // прицел вниз (+Y)
+    for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: idle });
+    expect(p.pos.y - startY).toBeGreaterThan(50);   // уехал вниз
+  });
+
+  it('кулдаун гейтит спам: второй рывок в окне КД не срабатывает, после КД — снова', () => {
+    const { s, p, r } = loneField();
+    const cd = r.get('balance').dodge.cooldownSec;
+    s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 }, dodge: true } });
+    for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: idle });   // домчали
+    expect(p.dodgeCd).toBeGreaterThan(0);
+    const xAfter1 = p.pos.x;
+    const ev2 = s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 }, dodge: true } });   // ещё в КД
+    expect(ev2.some((e) => e.type === 'dodge')).toBe(false);
+    expect(p.dash).toBeNull();
+    // Ждём истечения КД (стоим смирно), затем рвём снова.
+    for (let i = 0; i < Math.ceil(cd * 30) + 2; i++) s.tick(1 / 30, { p1: idle });
+    expect(p.dodgeCd).toBe(0);
+    const ev3 = s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 }, dodge: true } });
+    expect(ev3.some((e) => e.type === 'dodge')).toBe(true);
+    for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: idle });
+    expect(p.pos.x).toBeGreaterThan(xAfter1 + 50);   // второй рывок реально сдвинул
+  });
+
+  it('стан блокирует уклонение', () => {
+    const { s, p } = loneField();
+    p.stunTimer = 1;
+    const ev = s.tick(1 / 30, { p1: { ...idle, move: { x: 1, y: 0 }, dodge: true } });
+    expect(ev.some((e) => e.type === 'dodge')).toBe(false);
+    expect(p.dash).toBeNull();
+  });
+});

@@ -16,7 +16,7 @@ const SLOTS: SlotDef[] = [
   { label: 'ЛКМ', big: true, get: (s) => s.mouseLeft, set: (s, v) => { s.mouseLeft = v; } },
   { label: 'ПКМ', big: true, get: (s) => s.mouseRight, set: (s, v) => { s.mouseRight = v; } },
   { label: 'Shift', big: false, get: (s) => s.hotbar[0] ?? null, set: (s, v) => { s.hotbar[0] = v; } },
-  { label: 'Space', big: false, get: (s) => s.hotbar[1] ?? null, set: (s, v) => { s.hotbar[1] = v; } },
+  { label: 'Q', big: false, get: (s) => s.hotbar[1] ?? null, set: (s, v) => { s.hotbar[1] = v; } },   // Space освобождён под уклонение
   { label: 'Alt', big: false, get: (s) => s.hotbar[2] ?? null, set: (s, v) => { s.hotbar[2] = v; } },
 ];
 

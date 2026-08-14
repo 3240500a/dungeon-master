@@ -61,6 +61,8 @@ export interface PlayerInput {
   cast: string | null;
   /** Действие/подбор (E). */
   interact: boolean;
+  /** Уклонение (dodge-рывок) в этот тик — эджевый (клиент шлёт только в кадр нажатия пробела). */
+  dodge?: boolean;
   /** Слот пояса для расходника в этот тик (индекс в save.belt), или undefined. */
   useBelt?: number;
 }
@@ -109,6 +111,8 @@ export type SessionEvent =
   | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; lockMs: number; x: number; y: number; facing: number }
   // Старт замаха монстра — клиент рисует телеграф-вспышку на время windupMs в сторону facing.
   | { type: 'monster-swing'; id: number; windupMs: number; x: number; y: number; facing: number }
+  // Уклонение игрока (dodge-рывок) — клиент проигрывает VFX/SFX рывка в сторону dir.
+  | { type: 'dodge'; playerId: string; x: number; y: number; dir: number }
   | { type: 'floor-cleared' };
 
 /** AoE-способность (бьёт по площади вокруг игрока), по abilityId — как в боевом контроллере. */
@@ -310,6 +314,7 @@ export class GameSession {
         else if (p.stamina < effStam) p.stamina = Math.min(effStam, p.stamina + d.staminaRegen * dt);
       }
       p.attackCd = Math.max(0, p.attackCd - dt);
+      p.dodgeCd = Math.max(0, p.dodgeCd - dt);   // кулдаун уклонения
       // «В бою»: своя атака/скилл (windup) освежает линга-таймер; иначе он тает. Монстр-таргетинг стамп ниже.
       p.combatTimer = p.windup ? this.cfg.get('balance').melee.combatLingerSec : Math.max(0, p.combatTimer - dt);
       for (const k of Object.keys(p.skillCd)) {
@@ -418,6 +423,9 @@ export class GameSession {
     }
     const pm = this.dmods(p.debuffs);
     const stunned = p.stunTimer > 0;
+    // Уклонение (dodge-рывок на пробел): универсальный рывок в направлении WASD (стоя — к прицелу), гейт
+    // кулдауном/станом/ресурсом. Отменяет замах (выход из лока). Дальше — обычный stepDash (движение рывка).
+    if (input?.dodge && !stunned && p.dodgeCd <= 0 && this.tryDodge(p, input)) { this.stepDash(p, dt); return; }
     // Стан полностью укореняет; во время удара/замаха/восстановления — идём МЕДЛЕННО (attackMoveMult),
     // а не колом («идти медленно и бить»). Facing обновляется в любом случае (целишься на ходу).
     const attacking = !!p.windup || p.attackCd > 0;
@@ -804,6 +812,25 @@ export class GameSession {
     }
     this.hitEnemyPlayers(p, packet, attacker, opts, (t) => Math.hypot(t.pos.x - to.x, t.pos.y - to.y) <= r);
     this.launchDash(p, dir, from, to, active, rank);
+  }
+
+  /**
+   * Уклонение: универсальный dodge-рывок (пробел). Направление = WASD (`input.move`), стоя — прицел (`input.facing`).
+   * Позиционное (без i-frames): уход из зоны удара + whiff-окно монстров. В рывке игрок «тяжёлый» (расталкивает).
+   * Гейт кулдауном + опц. выносливостью. Отменяет замах. Возвращает true, если рывок запущен.
+   */
+  private tryDodge(p: PlayerEntity, input: PlayerInput): boolean {
+    const cfg = this.cfg.get('balance').dodge;
+    if (cfg.staminaCost > 0 && p.stamina < cfg.staminaCost) return false;   // не хватает выносливости
+    const len = Math.hypot(input.move.x, input.move.y);
+    const dir = len > 1e-4 ? Math.atan2(input.move.y, input.move.x) : input.facing;   // WASD или прицел (стоя)
+    if (cfg.staminaCost > 0) p.stamina -= cfg.staminaCost;
+    p.dodgeCd = cfg.cooldownSec;
+    p.windup = null;   // отмена замаха — выход из анимационного лока
+    const speed = Math.max(1, cfg.speed);
+    p.dash = { dx: Math.cos(dir), dy: Math.sin(dir), speed, remaining: cfg.distance / speed, weightMult: cfg.weightMult, hitIds: [] };
+    this.events.push({ type: 'dodge', playerId: p.id, x: p.pos.x, y: p.pos.y, dir });
+    return true;
   }
 
   /** Запуск движения рывка/прыжка к точке `to` (расталкивание весом, `weightMult`). */

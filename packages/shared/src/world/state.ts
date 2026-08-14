@@ -61,6 +61,8 @@ export interface PlayerEntity {
   windup: ({ kind: 'attack' } | { kind: 'skill'; nodeId: string; rank: number }) & { remaining: number } | null;
   /** Активный рывок (движение) — пока не null, ввод игнорируется, масса ×weightMult. */
   dash: DashState | null;
+  /** Кулдаун уклонения (dodge-рывок на пробел), сек; >0 — рывок недоступен. */
+  dodgeCd: number;
   /** Остаток стана (сек); >0 — управление/атака заблокированы. */
   stunTimer: number;
   alive: boolean;
@@ -263,6 +265,7 @@ export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: num
     skillBuffs: {},
     windup: null,
     dash: null,
+    dodgeCd: 0,
     stunTimer: 0,
     alive: true,
     spawnImmuneUntil: 0,

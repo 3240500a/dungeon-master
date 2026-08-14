@@ -51,7 +51,7 @@ export class NetDriver {
   private projs = new Map<number, Projectile>();
   private remotes = new Map<string, { sprite: Phaser.GameObjects.Image; nose: Phaser.GameObjects.Graphics }>();
   private drops = new Map<number, DroppedItem>();
-  private keys: Record<'w' | 'a' | 's' | 'd' | 'shift' | 'space' | 'alt' | 'e', Phaser.Input.Keyboard.Key>;
+  private keys: Record<'w' | 'a' | 's' | 'd' | 'shift' | 'space' | 'alt' | 'e' | 'q', Phaser.Input.Keyboard.Key>;
   private leftHeld = false;
   private rightHeld = false;
   /** Предыдущее удержание по источнику ввода — для фронт-детекции нажатия тоглов. */
@@ -76,7 +76,7 @@ export class NetDriver {
     const K = Phaser.Input.Keyboard.KeyCodes;
     this.keys = {
       w: kb.addKey(K.W), a: kb.addKey(K.A), s: kb.addKey(K.S), d: kb.addKey(K.D),
-      shift: kb.addKey(K.SHIFT), space: kb.addKey(K.SPACE), alt: kb.addKey(K.ALT), e: kb.addKey(K.E),
+      shift: kb.addKey(K.SHIFT), space: kb.addKey(K.SPACE), alt: kb.addKey(K.ALT), e: kb.addKey(K.E), q: kb.addKey(K.Q),
     };
     kb.addCapture(['SPACE', 'SHIFT', 'ALT']);
     scene.input.mouse?.disableContextMenu();
@@ -140,15 +140,19 @@ export class NetDriver {
     consider(save.mouseLeft, this.leftHeld, 'L');
     consider(save.mouseRight, this.rightHeld, 'R');
     consider(save.hotbar[0], this.keys.shift.isDown, 'S');
-    consider(save.hotbar[1], this.keys.space.isDown, 'Sp');
+    consider(save.hotbar[1], this.keys.q.isDown, 'Q');   // бывший Space-слот перевешен на Q (Space → уклонение)
     consider(save.hotbar[2], this.keys.alt.isDown, 'A');
+    // Пробел = УКЛОНЕНИЕ (dodge-рывок), эджево (только в кадр нажатия): рывок в направлении WASD (стоя — к прицелу).
+    const spaceDown = this.keys.space.isDown;
+    const dodge = spaceDown && !(this.wasHeld['dodge'] ?? false);
+    this.wasHeld['dodge'] = spaceDown;
 
     const move = {
       x: (this.keys.d.isDown ? 1 : 0) - (this.keys.a.isDown ? 1 : 0),
       y: (this.keys.s.isDown ? 1 : 0) - (this.keys.w.isDown ? 1 : 0),
     };
     // Клавиша E — подбор ближайшего дропа (удержание надёжно: сервер сэмплит каждый тик). Клик по предмету — точечно (onDown).
-    this.app.net.send({ t: 'input', seq: this.seq++, input: { move, facing: this.player.facing, attack, cast, interact: this.keys.e.isDown } });
+    this.app.net.send({ t: 'input', seq: this.seq++, input: { move, facing: this.player.facing, attack, cast, interact: this.keys.e.isDown, dodge } });
 
     // VFX: форма удара рисуется по СОБЫТИЮ `swing` с сервера (реальный удар, мана/КД учтены) — см.
     // onEvents; здесь только кольца аур + телеграф текущих свингов (позиция/поворот live).
