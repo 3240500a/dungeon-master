@@ -817,7 +817,8 @@ export class GameSession {
   /**
    * Уклонение: универсальный dodge-рывок (пробел). Направление = WASD (`input.move`), стоя — прицел (`input.facing`).
    * Позиционное (без i-frames): уход из зоны удара + whiff-окно монстров. В рывке игрок «тяжёлый» (расталкивает).
-   * Гейт кулдауном + опц. выносливостью. Отменяет замах. Возвращает true, если рывок запущен.
+   * `lockFacing`: НЕ разворачивает игрока по движению (в отличие от скилл-рывков) — держит прицел, чтобы кайтить
+   * лицом к цели (прыжок назад = отскок, а не разворот спиной). Гейт КД + опц. выносливостью. Отменяет замах.
    */
   private tryDodge(p: PlayerEntity, input: PlayerInput): boolean {
     const cfg = this.cfg.get('balance').dodge;
@@ -828,7 +829,7 @@ export class GameSession {
     p.dodgeCd = cfg.cooldownSec;
     p.windup = null;   // отмена замаха — выход из анимационного лока
     const speed = Math.max(1, cfg.speed);
-    p.dash = { dx: Math.cos(dir), dy: Math.sin(dir), speed, remaining: cfg.distance / speed, weightMult: cfg.weightMult, hitIds: [] };
+    p.dash = { dx: Math.cos(dir), dy: Math.sin(dir), speed, remaining: cfg.distance / speed, weightMult: cfg.weightMult, hitIds: [], lockFacing: true };
     this.events.push({ type: 'dodge', playerId: p.id, x: p.pos.x, y: p.pos.y, dir });
     return true;
   }
@@ -891,7 +892,7 @@ export class GameSession {
   /** Шаг рывка: быстрое движение в направлении рывка; стены останавливают, урон уже нанесён в doDashAttack. */
   private stepDash(p: PlayerEntity, dt: number): void {
     const d = p.dash!;
-    p.facing = Math.atan2(d.dy, d.dx);
+    if (!d.lockFacing) p.facing = Math.atan2(d.dy, d.dx);   // скилл-рывок разворачивает по движению; уклонение (lockFacing) держит прицел
     const bx = p.pos.x, by = p.pos.y;
     p.vel = { x: d.dx * d.speed, y: d.dy * d.speed };
     p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt);

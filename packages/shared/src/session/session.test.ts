@@ -790,4 +790,13 @@ describe('GameSession — уклонение (dodge-рывок)', () => {
     expect(ev.some((e) => e.type === 'dodge')).toBe(false);
     expect(p.dash).toBeNull();
   });
+
+  it('рывок НЕ разворачивает игрока: прыжок назад держит прицел (facing)', () => {
+    const { s, p } = loneField();
+    p.facing = 0;   // смотрит вправо (+X, к «врагу»)
+    // Прыжок ВЛЕВО (от врага) с прицелом вправо: кайт-отскок, лицо не должно развернуться назад.
+    s.tick(1 / 30, { p1: { ...idle, move: { x: -1, y: 0 }, facing: 0, dodge: true } });
+    for (let i = 0; i < 30 && p.dash; i++) s.tick(1 / 30, { p1: { ...idle, facing: 0 } });
+    expect(p.facing).toBeCloseTo(0, 5);   // прицел удержан (не atan2(0,-1)=π)
+  });
 });
