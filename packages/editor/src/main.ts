@@ -405,21 +405,14 @@ function variantForKind(unionSchema: z.ZodTypeAny, kind: string): z.ZodObject<z.
   return opts.find((o) => String((o.shape.kind as z.ZodTypeAny)._def.value) === kind);
 }
 
-/** Рисует свёртываемое дерево категорий вместо плоского списка. */
-function renderItemTree(list: HTMLElement, arr: unknown[]): void {
-  const root = buildItemTree(arr);
-  // Держим ветку выбранного открытой.
-  const sel = arr[selectedIndex] as Record<string, unknown> | undefined;
-  if (sel) {
-    let key = '';
-    for (const seg of treePathOf(sel)) { key = key ? `${key}/${seg}` : seg; expandedTree.add(key); }
-  }
+/** Рендер свёртываемого дерева (общий для item/model). labelOf(seg) — подпись узла; enabled-тумблер — только если у записи есть поле enabled. */
+function renderTreeNodes(list: HTMLElement, root: TreeNode, arr: unknown[], labelOf: (seg: string) => string): void {
   const walk = (node: TreeNode, prefix: string, depth: number): void => {
     for (const [seg, child] of node.children) {
       const key = prefix ? `${prefix}/${seg}` : seg;
       const open = expandedTree.has(key);
       const row = document.createElement('div');
-      row.textContent = `${open ? '▾' : '▸'} ${treeLabel(seg)} (${countLeaves(child)})`;
+      row.textContent = `${open ? '▾' : '▸'} ${labelOf(seg)} (${countLeaves(child)})`;
       row.style.cssText = `padding:4px 6px;padding-left:${6 + depth * 14}px;cursor:pointer;font-size:13px;color:#cfd0da;border-radius:4px;font-weight:${depth === 0 ? 600 : 400}`;
       row.addEventListener('click', () => { if (open) expandedTree.delete(key); else expandedTree.add(key); render(); });
       list.appendChild(row);
@@ -431,7 +424,7 @@ function renderItemTree(list: HTMLElement, arr: unknown[]): void {
       const off = e?.enabled === false;
       const item = document.createElement('div');
       item.style.cssText = `display:flex;align-items:center;gap:6px;padding:4px 6px;padding-left:${6 + depth * 14}px;cursor:pointer;font-size:13px;border-radius:4px;margin:1px 0;background:${active ? '#2f2f40' : 'transparent'};color:${active ? '#fff' : '#aab4c4'};${off ? 'opacity:0.5' : ''}`;
-      item.appendChild(enabledToggle(e));
+      if (e && 'enabled' in e) item.appendChild(enabledToggle(e));   // у мешей нет enabled — тумблер только где есть
       const lbl = document.createElement('span');
       lbl.textContent = entryLabel(arr[i], i);
       lbl.style.cssText = `flex:1;${off ? 'text-decoration:line-through' : ''}`;
@@ -441,6 +434,60 @@ function renderItemTree(list: HTMLElement, arr: unknown[]): void {
     }
   };
   walk(root, '', 0);
+}
+
+/** Дерево категорий предметов (items.base) вместо плоского списка. */
+function renderItemTree(list: HTMLElement, arr: unknown[]): void {
+  const root = buildItemTree(arr);
+  const sel = arr[selectedIndex] as Record<string, unknown> | undefined;
+  if (sel) { let key = ''; for (const seg of treePathOf(sel)) { key = key ? `${key}/${seg}` : seg; expandedTree.add(key); } }
+  renderTreeNodes(list, root, arr, treeLabel);
+}
+
+/** Общий билдер дерева по функции пути (сегменты → вложенные узлы, лист = индекс записи). */
+function buildTreeFrom(arr: unknown[], pathOf: (e: Record<string, unknown>, i: number) => string[]): TreeNode {
+  const root: TreeNode = { children: new Map(), leaves: [] };
+  arr.forEach((entry, i) => {
+    let node = root;
+    for (const seg of pathOf(entry as Record<string, unknown>, i)) {
+      let child = node.children.get(seg);
+      if (!child) { child = { children: new Map(), leaves: [] }; node.children.set(seg, child); }
+      node = child;
+    }
+    node.leaves.push(i);
+  });
+  return root;
+}
+
+// ── Дерево мешей: Персонажи / Монстры / Оружие / Окружение (биом → тайлсет|наполнение) / Прочее ─────────
+const MODEL_CAT_LABEL: Record<string, string> = { characters: '🧍 Персонажи', monsters: '👹 Монстры', weapons: '⚔ Оружие', environment: '🧱 Окружение', misc: '📦 Прочее', tileset: 'Тайлсет', filling: 'Наполнение', '(общий)': '(общий атлас)' };
+/** Путь меша в дереве. character: Персонажи (classId∈классы / пусто=общий) vs Монстры (иначе). weapon: Оружие→тип.
+ *  Окружение — если модель используется объектом (objects): биом первого объекта → тайлсет(floor/wall)|наполнение. Иначе Прочее. */
+function modelPathOf(m: Record<string, unknown>, _i: number): string[] {
+  const kind = String(m.kind ?? ''), id = String(m.id ?? '');
+  if (kind === 'character') {
+    const cid = String(m.classId ?? '');
+    if (!cid) return ['characters', '(общий)'];
+    const isClass = ((data['classes'] as { id: string }[]) ?? []).some((c) => c.id === cid);
+    return [isClass ? 'characters' : 'monsters', cid];
+  }
+  if (kind === 'weapon') return ['weapons', String(m.weaponType ?? '—')];
+  const used = ((data['objects'] as { modelId?: string; role?: string; biomes?: string[] }[]) ?? []).filter((o) => o.modelId === id);
+  if (used.length) { const o = used[0]!; const biome = o.biomes?.[0] || 'все'; return ['environment', biome, ['floor', 'wall'].includes(String(o.role)) ? 'tileset' : 'filling']; }
+  return ['misc'];
+}
+function modelTreeLabel(seg: string): string {
+  if (MODEL_CAT_LABEL[seg]) return MODEL_CAT_LABEL[seg]!;
+  const b = (data['biomes'] as { id: string; name: string }[] | undefined)?.find((x) => x.id === seg); if (b) return b.name;
+  const c = (data['classes'] as { id: string; name?: string }[] | undefined)?.find((x) => x.id === seg); if (c) return c.name ?? c.id;
+  return seg;
+}
+/** Дерево мешей по типам вместо плоского списка. */
+function renderModelTree(list: HTMLElement, arr: unknown[]): void {
+  const root = buildTreeFrom(arr, modelPathOf);
+  const sel = arr[selectedIndex] as Record<string, unknown> | undefined;
+  if (sel !== undefined) { let key = ''; for (const seg of modelPathOf(sel, selectedIndex)) { key = key ? `${key}/${seg}` : seg; expandedTree.add(key); } }
+  renderTreeNodes(list, root, arr, modelTreeLabel);
 }
 
 // ── Дерево аффиксов: Префиксы/Суффиксы → тема (по group) → аффиксы ─────────────
@@ -795,6 +842,8 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
     renderItemTree(list, arr);
   } else if (current === 'affixes' || current === 'monster-item-affixes') {
     renderAffixTree(list, arr);
+  } else if (current === 'models') {
+    renderModelTree(list, arr);   // группировка мешей: Персонажи/Монстры/Оружие/Окружение/Прочее
   } else {
     arr.forEach((entry, i) => {
       const e = entry as Record<string, unknown>;
