@@ -785,6 +785,32 @@ function renderBalanceGroup(page: HTMLElement): void {
   page.appendChild(renderField(picked, bal, () => { /* мутация in-place */ }));
 }
 
+// ── Форма меша по КАТЕГОРИИ: разные наборы полей у персонажа/оружия/части/окружения (скрытые поля данные СОХРАНЯЮТ) ──
+const MODEL_COMMON_FIELDS = ['id', 'name', 'url', 'kind', 'scale'];   // общие для всех категорий
+const MODEL_CAT_FIELDS: Record<string, string[]> = {
+  character: ['classId', 'slots', 'body', 'boneScale', 'boneOffsets', 'base', 'hideHair', 'boneMap', 'submeshMaterials'],
+  weapon: ['weaponType', 'grip', 'submeshMaterials'],
+  part: ['slot', 'base', 'hideHair', 'submeshMaterials'],
+  env: [],   // окружение (пол/стена/декор): только общие поля — материал берётся из «Объекта», не из меша
+};
+/** Категория меша для формы: character/weapon/env — по kind; env также если меш используется «Объектом»; иначе part. */
+function modelFormCat(m: Record<string, unknown>): keyof typeof MODEL_CAT_FIELDS {
+  const kind = String(m.kind ?? '');
+  if (kind === 'character' || kind === 'weapon' || kind === 'env') return kind;
+  return ((data['objects'] as { modelId?: string }[]) ?? []).some((o) => o.modelId === m.id) ? 'env' : 'part';
+}
+/** Рендер формы меша с полями только своей категории (окружение — минимум, без персонажных полей).
+ *  entry мутируется на месте (renderField), перерисовка ТОЛЬКО при смене kind → перефильтровать поля
+ *  (иначе текст-поля теряли бы фокус на каждый ввод). onKindChange — полная перерисовка страницы. */
+function renderModelForm(elemSchema: z.ZodObject<z.ZodRawShape>, entry: Record<string, unknown>, onKindChange: () => void): HTMLElement {
+  const prevKind = String(entry.kind ?? '');
+  const keys = [...MODEL_COMMON_FIELDS, ...MODEL_CAT_FIELDS[modelFormCat(entry)]!].filter((k) => k in elemSchema.shape);
+  const mask = Object.fromEntries(keys.map((k) => [k, true]));
+  return renderField(elemSchema.pick(mask as Parameters<typeof elemSchema.pick>[0]), entry, (v) => {
+    if (String((v as Record<string, unknown>).kind ?? '') !== prevKind) onKindChange();
+  });
+}
+
 function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   const arr = (data[current] as unknown[]) ?? [];
   data[current] = arr;
@@ -881,6 +907,9 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   } else if (current === 'materials') {
     // Материалы — Unity-подобная панель (Base/Metallic+Smoothness/Normal/Emission/Occlusion) вместо авто-формы.
     form.appendChild(renderMaterialPanel(arr[selectedIndex] as Record<string, unknown>, textureIds, (v) => { arr[selectedIndex] = v; render(); }));
+  } else if (current === 'models' && elemSchema._def.typeName === 'ZodObject') {
+    // Меши — поля ПО КАТЕГОРИИ модели: окружение не показывает персонажные slot/body/boneScale/boneOffsets/grip/… (только id/name/url/kind/scale).
+    form.appendChild(renderModelForm(elemSchema as z.ZodObject<z.ZodRawShape>, arr[selectedIndex] as Record<string, unknown>, render));
   } else {
     // Предметы: кнопка авто-заполнения требований по схеме веса/класса (дальше правится вручную в форме ниже).
     if (current === 'items.base') {
