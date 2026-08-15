@@ -1,0 +1,20 @@
+[
+  {
+    "id": "crypt_floor",
+    "name": "Крипта — пол",
+    "enabled": true,
+    "role": "floor",
+    "modelId": "crypt_floor_01",
+    "materialId": "",
+    "biomes": ["crypt"]
+  },
+  {
+    "id": "crypt_wall",
+    "name": "Крипта — стена",
+    "enabled": true,
+    "role": "wall",
+    "modelId": "crypt_wall_01",
+    "materialId": "",
+    "biomes": ["crypt"]
+  }
+]

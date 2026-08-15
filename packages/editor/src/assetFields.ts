@@ -97,3 +97,103 @@ export function renderUploadField(value: unknown, onChange: (v: unknown) => void
   wrap.append(txt, btn, file, status);
   return wrap;
 }
+
+/** Кнопка ПАКЕТНОЙ загрузки: мультивыбор файлов → upload каждого → `makeEntry(id,url,filename)` пушится в `arr` → `onDone`.
+ *  id ассета = имя файла без расширения (уникальность между несколькими файлами). Для вкладок Текстуры/3D. */
+export function renderBatchUpload(accept: string, arr: Record<string, unknown>[], makeEntry: (id: string, url: string, filename: string) => Record<string, unknown>, onDone: () => void): HTMLElement {
+  const wrap = document.createElement('span');
+  wrap.style.cssText = 'display:inline-flex;gap:6px;align-items:center';
+  const file = document.createElement('input');
+  file.type = 'file'; file.accept = accept; file.multiple = true; file.style.display = 'none';
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.textContent = '⬆ Загрузить несколько';
+  btn.style.cssText = 'padding:5px 8px;cursor:pointer;background:#26406a;color:#e8e8f0;border:1px solid #3c5a8a;border-radius:4px;font-size:12px;white-space:nowrap';
+  const status = document.createElement('span'); status.style.cssText = 'font-size:11px;color:#9aa';
+  btn.addEventListener('click', () => file.click());
+  file.addEventListener('change', () => {
+    const files = [...(file.files ?? [])];
+    if (!files.length) return;
+    let done = 0, ok = 0;
+    status.textContent = `0/${files.length}…`; status.style.color = '#ffb020';
+    for (const f of files) {
+      const ext = f.name.toLowerCase().split('.').pop() ?? 'bin';
+      const id = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '') || 'asset';
+      f.arrayBuffer()
+        .then((buf) => uploadAsset(id, buf, CONTENT_TYPE[ext] ?? 'application/octet-stream'))
+        .then((res) => { arr.push(makeEntry(id, res.url, f.name.replace(/\.[^.]+$/, ''))); ok++; })
+        .catch(() => { /* пропускаем битый файл */ })
+        .finally(() => { done++; status.textContent = `${done}/${files.length}`; if (done === files.length) { status.textContent = `готово: ${ok}/${files.length}`; status.style.color = '#7fd67f'; onDone(); } });
+    }
+    file.value = '';
+  });
+  wrap.append(btn, file, status);
+  return wrap;
+}
+
+// ── Unity-подобная панель материала (Base/Metallic+Smoothness/Normal/Emission/Occlusion) ────────────────
+const matSecCss = 'border:1px solid #2c2c3a;border-radius:6px;padding:8px 10px;margin:8px 0;background:#12121a';
+const matRowCss = 'display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin:4px 0';
+function matSection(title: string): HTMLElement { const d = document.createElement('div'); d.style.cssText = matSecCss; const t = document.createElement('div'); t.textContent = title; t.style.cssText = 'font-size:12px;font-weight:600;color:#c8cbe0;margin-bottom:4px'; d.appendChild(t); return d; }
+function matRow(parent: HTMLElement, label: string, control: HTMLElement): void { const d = document.createElement('div'); d.style.cssText = matRowCss; const l = document.createElement('span'); l.textContent = label; l.style.cssText = 'color:#9aa;font-size:12px'; d.append(l, control); parent.appendChild(d); }
+/** Выпадашка текстуры (id из вкладки «Текстуры»; '' = без карты). */
+function texSelect(ids: string[], value: string, onChange: (v: string) => void): HTMLElement {
+  const sel = document.createElement('select'); sel.style.cssText = inputCss + ';width:100%';
+  for (const id of (ids.includes('') ? ids : ['', ...ids])) { const o = document.createElement('option'); o.value = id; o.textContent = id || '— нет —'; sel.appendChild(o); }
+  sel.value = value; sel.addEventListener('change', () => onChange(sel.value));
+  return sel;
+}
+/** Ползунок 0..max + числовое поле (синхронны). */
+function matSlider(value: number, min: number, max: number, step: number, onChange: (v: number) => void): HTMLElement {
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:8px;align-items:center';
+  const r = document.createElement('input'); r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.value = String(value); r.style.flex = '1';
+  const n = document.createElement('input'); n.type = 'number'; n.min = String(min); n.max = String(max); n.step = String(step); n.value = String(value); n.style.cssText = inputCss + ';width:64px';
+  r.addEventListener('input', () => { n.value = r.value; onChange(parseFloat(r.value)); });
+  n.addEventListener('change', () => { r.value = n.value; onChange(parseFloat(n.value)); });
+  wrap.append(r, n); return wrap;
+}
+/** Панель материала (аналог Surface Inputs в Unity URP). Smoothness = 1 − roughness. Мутирует `mat` на месте + onChange. */
+export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: () => string[], onChange: (v: Record<string, unknown>) => void): HTMLElement {
+  const m = mat; const emit = (): void => onChange(m);
+  const num = (v: unknown, d = 0): number => (typeof v === 'number' ? v : d);
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const setTex = (key: string, v: string): void => { if (v) m[key] = v; else delete m[key]; emit(); };
+  const box = document.createElement('div');
+
+  const head = document.createElement('div'); head.style.cssText = 'display:flex;gap:8px;margin-bottom:6px';
+  for (const [key, ph] of [['id', 'id'], ['name', 'имя']] as [string, string][]) {
+    const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = ph; inp.value = str(m[key]); inp.style.cssText = inputCss + ';flex:1';
+    inp.addEventListener('input', () => { m[key] = inp.value; emit(); });
+    head.appendChild(inp);
+  }
+  box.appendChild(head);
+
+  const base = matSection('Base Map');
+  matRow(base, 'Текстура', texSelect(textureIds(), str(m.map), (v) => setTex('map', v)));
+  matRow(base, 'Цвет (tint)', renderColorField(m.baseColor ?? [1, 1, 1], (v) => { m.baseColor = v; emit(); }));
+  matRow(base, 'Прозрачность', matSlider(num(m.opacity, 1), 0, 1, 0.01, (v) => { m.opacity = v; emit(); }));
+  box.appendChild(base);
+
+  const met = matSection('Metallic Map');
+  matRow(met, 'Текстура', texSelect(textureIds(), str(m.metalnessMap), (v) => setTex('metalnessMap', v)));
+  matRow(met, 'Metallic', matSlider(num(m.metalness, 0), 0, 1, 0.01, (v) => { m.metalness = v; emit(); }));
+  matRow(met, 'Smoothness', matSlider(1 - num(m.roughness, 0.8), 0, 1, 0.01, (v) => { m.roughness = +(1 - v).toFixed(3); emit(); }));   // Unity: 1 − roughness
+  matRow(met, 'Roughness Map', texSelect(textureIds(), str(m.roughnessMap), (v) => setTex('roughnessMap', v)));
+  box.appendChild(met);
+
+  const nrm = matSection('Normal Map');
+  matRow(nrm, 'Текстура', texSelect(textureIds(), str(m.normalMap), (v) => setTex('normalMap', v)));
+  matRow(nrm, 'Сила', matSlider(num(m.normalScale, 1), 0, 2, 0.05, (v) => { m.normalScale = v; emit(); }));
+  box.appendChild(nrm);
+
+  const emi = matSection('Emission');
+  matRow(emi, 'Цвет', renderColorField(m.emissive ?? [0, 0, 0], (v) => { m.emissive = v; emit(); }));
+  matRow(emi, 'Интенсивность', matSlider(num(m.emissiveIntensity, 1), 0, 8, 0.1, (v) => { m.emissiveIntensity = v; emit(); }));
+  matRow(emi, 'Текстура', texSelect(textureIds(), str(m.emissiveMap), (v) => setTex('emissiveMap', v)));
+  box.appendChild(emi);
+
+  const occ = matSection('Occlusion');
+  matRow(occ, 'AO Map', texSelect(textureIds(), str(m.aoMap), (v) => setTex('aoMap', v)));
+  box.appendChild(occ);
+
+  return box;
+}

@@ -14,7 +14,7 @@ import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
-import { renderColorField, renderUploadField } from './assetFields.js';
+import { renderColorField, renderUploadField, renderBatchUpload, renderMaterialPanel } from './assetFields.js';
 import { renderDocs } from './docs.js';
 
 /**
@@ -63,7 +63,8 @@ const LABELS: Record<ConfigKey, string> = {
   textures: '3D: текстуры',
   materials: '3D: материалы',
   models: '3D: меши',
-  environment: '3D: окружение',
+  environment: 'Окружение (фейд)',
+  objects: 'Объекты',
 };
 
 /**
@@ -85,10 +86,10 @@ const NAV_GROUPS: NavGroup[] = [
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques', 'rare-names'] },
   { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-item-affixes', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
-  { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
+  { title: 'Мир', keys: ['biomes', 'objects', 'environment', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
-  { title: '🧊 3D-ассеты', keys: ['environment', 'models', 'materials', 'textures'] },
+  { title: '🧊 3D-ассеты', keys: ['models', 'materials', 'textures'] },
 ];
 /** Все ключи группы (из плоского `keys` или из подсекций `subs`). */
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
@@ -218,13 +219,11 @@ for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMa
 fieldCustomRenderers.baseColor = (value, onChange) => renderColorField(value, onChange);
 fieldCustomRenderers.emissive = (value, onChange) => renderColorField(value, onChange);
 fieldCustomRenderers.url = (value, onChange, parent) => renderUploadField(value, onChange, parent);
-// Окружение (env): floorUrl/wallUrl → аплоад GLB (имя ассета = имя файла, чтобы пол и стена не перезаписывали друг друга);
-// floorMaterialId/wallMaterialId → выпадашка материала-override ('' = материал из GLB).
+// Объекты мира (objects): role — авто (enum); modelId — выпадашка всех моделей (фолбэк modelIdOptions); materialId —
+// материал-override ('' = из GLB); biomes — мультиселект биомов, к которым относится объект.
 const materialIds = (): string[] => ['', ...((data['materials'] as { id: string }[]) ?? []).map((m) => m.id)];
-fieldCustomRenderers.floorUrl = (value, onChange, parent) => renderUploadField(value, onChange, parent, true);
-fieldCustomRenderers.wallUrl = (value, onChange, parent) => renderUploadField(value, onChange, parent, true);
-fieldEnumSources.floorMaterialId = materialIds;
-fieldEnumSources.wallMaterialId = materialIds;
+fieldEnumSources.materialId = materialIds;
+fieldArrayEnumSources.biomes = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // armorClass / requireArmorClass — выпадашки из конфига классов брони.
 const armorClassIds = (): string[] => ((data['armor-classes'] as { id: string }[]) ?? []).map((c) => c.id);
 fieldEnumSources.armorClass = armorClassIds;
@@ -785,6 +784,9 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
       }
     }, '#4a2a2a'),
   );
+  // Пакетная загрузка: Текстуры/3D — мультивыбор файлов сразу (по записи на файл).
+  if (current === 'textures') crud.appendChild(renderBatchUpload('.png,.jpg,.jpeg,.webp', arr as Record<string, unknown>[], (id, url, fn) => ({ id, name: fn, url, colorSpace: /(normal|_nrm|_norm)/i.test(fn) ? 'linear' : 'srgb', wrapS: 'repeat', wrapT: 'repeat', flipY: false }), render));
+  if (current === 'models') crud.appendChild(renderBatchUpload('.glb,.gltf', arr as Record<string, unknown>[], (id, url, fn) => ({ id, name: fn, url, kind: 'part' }), render));
   list.appendChild(crud);
 
   const supportsEnabled = schemaHasField(elemSchema, 'enabled');
@@ -827,6 +829,9 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
     // Префабы комнат — рисуем ПО КЛЕТКАМ (свой редактор вместо авто-формы).
     const biomeOpts = ((data['biomes'] as { id: string; name: string }[]) ?? []).map((b) => ({ id: b.id, name: b.name }));
     form.appendChild(renderRoomEditor(arr[selectedIndex] as RoomPrefab, biomeOpts, render));
+  } else if (current === 'materials') {
+    // Материалы — Unity-подобная панель (Base/Metallic+Smoothness/Normal/Emission/Occlusion) вместо авто-формы.
+    form.appendChild(renderMaterialPanel(arr[selectedIndex] as Record<string, unknown>, textureIds, (v) => { arr[selectedIndex] = v; render(); }));
   } else {
     // Предметы: кнопка авто-заполнения требований по схеме веса/класса (дальше правится вручную в форме ниже).
     if (current === 'items.base') {

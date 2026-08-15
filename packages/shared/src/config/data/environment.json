@@ -4,43 +4,27 @@
     "name": "Крипта",
     "biomeId": "crypt",
     "enabled": true,
-    "floorUrl": "/assets/crypt_tile_set/crypt_floor_01.glb",
-    "wallUrl": "/assets/crypt_tile_set/crypt_wall_01.glb",
-    "floorMaterialId": "",
-    "wallMaterialId": "",
     "fade": { "start": 190, "end": 460, "kneeLow": 20, "kneeHigh": 46, "faceYaw": 0 }
   },
   {
     "id": "caves",
     "name": "Пещеры",
     "biomeId": "caves",
-    "enabled": false,
-    "floorUrl": "",
-    "wallUrl": "",
-    "floorMaterialId": "",
-    "wallMaterialId": "",
+    "enabled": true,
     "fade": { "start": 190, "end": 460, "kneeLow": 20, "kneeHigh": 46, "faceYaw": 0 }
   },
   {
     "id": "dungeon",
     "name": "Подземелье",
     "biomeId": "dungeon",
-    "enabled": false,
-    "floorUrl": "",
-    "wallUrl": "",
-    "floorMaterialId": "",
-    "wallMaterialId": "",
+    "enabled": true,
     "fade": { "start": 190, "end": 460, "kneeLow": 20, "kneeHigh": 46, "faceYaw": 0 }
   },
   {
     "id": "labyrinth",
     "name": "Лабиринт",
     "biomeId": "labyrinth",
-    "enabled": false,
-    "floorUrl": "",
-    "wallUrl": "",
-    "floorMaterialId": "",
-    "wallMaterialId": "",
+    "enabled": true,
     "fade": { "start": 190, "end": 460, "kneeLow": 20, "kneeHigh": 46, "faceYaw": 0 }
   }
 ]

@@ -38,6 +38,7 @@ import textures from './data/textures.json' with { type: 'json' };
 import materials from './data/materials.json' with { type: 'json' };
 import models from './data/models.json' with { type: 'json' };
 import environment from './data/environment.json' with { type: 'json' };
+import objects from './data/objects.json' with { type: 'json' };
 
 /** Сырые данные конфигов по умолчанию (до валидации). */
 export const defaultConfigData: Record<string, unknown> = {
@@ -81,4 +82,5 @@ export const defaultConfigData: Record<string, unknown> = {
   materials,
   models,
   environment,
+  objects,
 };

@@ -1750,20 +1750,14 @@ export const modelsSchema = z.array(z.object({
   submeshMaterials: z.record(z.string(), z.string()).default({}),   // имя сабмеша → materialId
 }));
 
-/** ОКРУЖЕНИЕ подземелья (пол/стены 3D) — набор GLB-тайлов НА БИОМ. Клиент по `FloorInit.biomeId` выбирает enabled-запись
- *  и строит этаж из неё; иначе (нет записи / disabled / нет url) — процедурные боксы. GLB многомешевые: пол — тайлы-варианты
- *  (рандом по клетке + поворот); стена — пара мешей `lo`+`hi` на вариант (низ не фейдится, верх тает по «лицу»).
- *  Материал по умолчанию берётся ИЗ GLB (там вшиты текстуры). *MaterialId — опц. override (общий инстанс на роль — дешевле
- *  для слабых ПК). Грузится/тюнится через вкладку «3D: окружение» конфиг-редактора (upload GLB + ползунки фейда). */
+/** ОКРУЖЕНИЕ подземелья — per-biome НАСТРОЙКИ рендера (фейд стен-окклюдеров). Сами меши пола/стен задаются секцией
+ *  `objects` (role floor/wall + biomes). Клиент по `FloorInit.biomeId` берёт enabled-запись → параметры фейда; нет
+ *  записи → дефолты фейда. Тюнится во вкладке «Мир → Окружение (фейд)». */
 export const environmentSchema = z.array(z.object({
   id: z.string(),
   name: z.string().default(''),
   biomeId: z.string(),                                  // к какому биому применяется (см. biomes[].id)
-  enabled: z.boolean().default(true),                   // выключено → биом рендерится процедурными боксами
-  floorUrl: z.string().default(''),                     // /assets/<..>.glb — тайлсет пола (меши = варианты)
-  wallUrl: z.string().default(''),                      // /assets/<..>.glb — стена (пара lo+hi на вариант)
-  floorMaterialId: z.string().default(''),              // '' = материал из GLB; иначе materials[id] (override, общий инстанс)
-  wallMaterialId: z.string().default(''),
+  enabled: z.boolean().default(true),
   fade: z.object({
     start: z.number().default(190),                     // радиус у игрока, где стены начинают таять
     end: z.number().default(460),                       // радиус, где снова целые
@@ -1771,6 +1765,20 @@ export const environmentSchema = z.array(z.object({
     kneeHigh: z.number().default(46),                   // выше — полный фейд верха
     faceYaw: z.number().default(0),                     // доп. разворот GLB-стены (рад) — выставить лицо в комнату
   }).default({}),
+}));
+
+/** ОБЪЕКТЫ мира — библиотека размещаемых сущностей (пол/стена/колонна/декор). Каждый = роль + GLB-модель (из `models`,
+ *  может содержать варианты-меши) + опц. материал-override (из `materials`) + к каким биомам относится (мультиселект).
+ *  Клиент строит этаж: floor-объекты биома → тайлы пола (варианты мёржатся), wall-объекты → стены. pillar/decor — задел
+ *  под размещение (колонны на углах и т.п.). Материал '' = из GLB. Пусто для биома → процедурные боксы (фолбэк). */
+export const objectsSchema = z.array(z.object({
+  id: z.string(),
+  name: z.string().default(''),
+  enabled: z.boolean().default(true),
+  role: z.enum(['floor', 'wall', 'pillar', 'decor', 'prop']).default('decor'),
+  modelId: z.string().default(''),                      // id модели из секции models (GLB)
+  materialId: z.string().default(''),                   // '' = материал из GLB; иначе materials[id] (override, общий инстанс)
+  biomes: z.array(z.string()).default([]),              // к каким биомам относится (biomes[].id; мультиселект)
 }));
 
 /** Реестр всех схем: ключ конфига → схема. */
@@ -1817,6 +1825,7 @@ export const configSchemas = {
   materials: materialsSchema,
   models: modelsSchema,
   environment: environmentSchema,
+  objects: objectsSchema,
 } as const;
 
 export type ConfigKey = keyof typeof configSchemas;

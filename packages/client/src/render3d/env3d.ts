@@ -166,49 +166,56 @@ function normalizeWallVariant(geos: THREE.BufferGeometry[], unitScale: number): 
   for (const g of geos) g.translate(0, -comb2.min.y, 0);        // общий низ пары на y=0
 }
 
-/** Опции загрузки тайлсета: material-override (общий инстанс на роль — дешевле для слабых ПК). null/пропуск = материал из GLB. */
-export interface EnvKitOpts { floorMat?: THREE.Material | null; wallMat?: THREE.Material | null }
+/** Спека объекта окружения: url GLB + опц. материал-override (общий инстанс на роль — дешевле для слабых ПК; null = из GLB). */
+export interface EnvSpec { url: string; mat?: THREE.Material | null }
 
-/** Загрузить тайлсет окружения (пол — варианты; стена — варианты по паре низ+верх) из /assets. Масштаб — из первого тайла ПОЛА.
- *  opts.floorMat/wallMat — принудительный общий материал (override): один инстанс на все тайлы пола / все части стены. */
-export async function loadEnvKit(floorUrl: string, wallUrl: string, opts?: EnvKitOpts): Promise<EnvKit> {
+/** Footprint-масштаб из первого тайла пола (плоский тайл → наибольшая сторона = 1 м → TILE). */
+function floorUnitScale(tile: THREE.BufferGeometry): number {
+  tile.computeBoundingBox(); const e = new THREE.Vector3(); tile.boundingBox!.getSize(e);
+  const foot = Math.max(e.x, e.y, e.z);
+  return foot > 1e-4 ? TILE / foot : 1;
+}
+
+/** Меши одного стен-GLB → варианты (пара lo+hi). baseMat≠null → общий материал (низ + клон-с-фейдом на верх), иначе из GLB. */
+function buildWallVariants(rawWalls: RawTile[], unitScale: number, baseMat: THREE.Material | null): WallVariant[] {
+  const fadeMat = baseMat ? baseMat.clone() : null;   // override: один общий верх-с-фейдом на все варианты этого GLB
+  if (fadeMat) applyWallFade(fadeMat);
+  const hasParts = rawWalls.some((t) => wallPart(t.name) !== null);
+  const groups = new Map<string, RawTile[]>();
+  rawWalls.forEach((t, i) => {
+    const key = hasParts ? (wallBase(t.name) || `__v${i}`) : `__v${i}`;   // пара lo+hi по базе имени; нет токенов → каждый меш вариант
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(t);
+  });
+  return [...groups.values()].map((tiles) => {
+    normalizeWallVariant(tiles.map((t) => t.geo), unitScale);
+    const parts: WallPart[] = tiles.map((t) => {
+      const fade = wallPart(t.name) !== 'lo';   // низ (lo) не фейдится, всё прочее (hi/одиночный меш) — тает
+      let mat: THREE.Material;
+      if (baseMat) { mat = fade ? fadeMat! : baseMat; }        // override: общий инстанс на роль
+      else { mat = t.mat; if (fade) applyWallFade(mat); }      // из GLB: фейд навешиваем на верх
+      return { geo: t.geo, mat, fade };
+    });
+    return { parts };
+  });
+}
+
+/** Загрузить тайлсет окружения из СПИСКОВ объектов (по ролям пол/стена). Каждый спек = ОДИН GLB (может нести варианты-меши):
+ *  варианты всех floor-GLB мёржатся в общий пул пола, всех wall-GLB — в пул стен (больше объектов = больше разнообразия).
+ *  Масштаб — из первого тайла первого пола. Материал per-объект (null = из GLB). Нет пола → пустой кит → клиент на боксах. */
+export async function loadEnvKitFromObjects(floorSpecs: EnvSpec[], wallSpecs: EnvSpec[]): Promise<EnvKit> {
   const loader = new GLTFLoader();
   const kit: EnvKit = { floors: [], walls: [] };
-  try {
-    const [fg, wg] = await Promise.all([loader.loadAsync(floorUrl), loader.loadAsync(wallUrl)]);
-    const floors = collectTiles(fg.scene), rawWalls = collectTiles(wg.scene);
-    if (!floors.length) return kit;
-    floors[0]!.geo.computeBoundingBox(); const e = new THREE.Vector3(); floors[0]!.geo.boundingBox!.getSize(e);
-    const foot = Math.max(e.x, e.y, e.z);   // плоский тайл → footprint = наибольшая сторона (Z-up/Y-up без разницы)
-    const unitScale = foot > 1e-4 ? TILE / foot : 1;
-    for (const t of floors) normalizeFloorGeo(t.geo, unitScale);
-    const floorMat = opts?.floorMat ?? null;                       // override → один материал на весь пол
-    kit.floors = floors.map((t) => ({ geo: t.geo, mat: floorMat ?? t.mat }));
-
-    // Материал стены: override → ОДИН общий низ (wallBaseMat) + ОДИН общий верх с фейдом (клон) — минимум шейдер-программ.
-    const wallBaseMat = opts?.wallMat ?? null;
-    const wallFadeMat = wallBaseMat ? wallBaseMat.clone() : null;
-    if (wallFadeMat) applyWallFade(wallFadeMat);
-
-    // Стена: группируем меши в варианты по базе имени (пара lo+hi). Если токенов lo/hi нет вовсе — каждый меш = свой вариант.
-    const hasParts = rawWalls.some((t) => wallPart(t.name) !== null);
-    const groups = new Map<string, RawTile[]>();
-    rawWalls.forEach((t, i) => {
-      const key = hasParts ? (wallBase(t.name) || `__v${i}`) : `__v${i}`;
-      (groups.get(key) ?? groups.set(key, []).get(key)!).push(t);
-    });
-    kit.walls = [...groups.values()].map((tiles) => {
-      normalizeWallVariant(tiles.map((t) => t.geo), unitScale);
-      const parts: WallPart[] = tiles.map((t) => {
-        const fade = wallPart(t.name) !== 'lo';   // низ (lo) не фейдится, всё прочее (hi/одиночный меш) — тает
-        let mat: THREE.Material;
-        if (wallBaseMat) { mat = fade ? wallFadeMat! : wallBaseMat; }   // override: общий инстанс на роль
-        else { mat = t.mat; if (fade) applyWallFade(mat); }             // из GLB: фейд навешиваем на верх
-        return { geo: t.geo, mat, fade };
-      });
-      return { parts };
-    });
-  } catch (e) { console.warn('[env] загрузка тайлсета не удалась, падаю на процедурку', e); }
+  const load = (specs: EnvSpec[]): Promise<({ tiles: RawTile[]; mat: THREE.Material | null } | null)[]> =>
+    Promise.all(specs.map((s) => loader.loadAsync(s.url).then((g) => ({ tiles: collectTiles(g.scene), mat: s.mat ?? null })).catch((e) => { console.warn('[env] не загрузился', s.url, e); return null; })));
+  const [floorLoaded, wallLoaded] = await Promise.all([load(floorSpecs), load(wallSpecs)]);
+  const firstFloor = floorLoaded.find((f) => f && f.tiles.length);
+  if (!firstFloor) return kit;   // без пола нет масштаба → фолбэк боксы
+  const unitScale = floorUnitScale(firstFloor.tiles[0]!.geo);
+  for (const f of floorLoaded) {
+    if (!f) continue;
+    for (const t of f.tiles) { normalizeFloorGeo(t.geo, unitScale); kit.floors.push({ geo: t.geo, mat: f.mat ?? t.mat }); }
+  }
+  for (const w of wallLoaded) { if (w) kit.walls.push(...buildWallVariants(w.tiles, unitScale, w.mat)); }
   return kit;
 }
 
