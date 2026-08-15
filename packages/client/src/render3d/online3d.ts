@@ -203,7 +203,7 @@ export async function startOnline3d(): Promise<void> {
   const mouse = { x: 0, y: 0, set: false };
   // Камера: азимут ФИКСИРОВАН (вращения по ПКМ нет), наклон меняется с зумом — близко угол ниже
   // (камера опускается), далеко топ-даун как на скрине. Зум-аут ограничен ракурсом скрина.
-  const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: -0.6 };
+  const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: -Math.PI / 4 };   // ровно 45° по азимуту (изометрия)
   const orbit = { target: new THREE.Vector3(), dist: 460 };
   addEventListener('keydown', (e) => {
     const t = document.activeElement;
