@@ -151,7 +151,12 @@ app.delete('/api/dev/pose/:key', (req, res) => {
 // — в pose_store (pe_models). Раздача статикой /assets/<id>.glb; в проде запись отключена (DEV_CONFIG_APPLY).
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
 if (!existsSync(ASSETS_DIR)) mkdirSync(ASSETS_DIR, { recursive: true });
-app.use('/assets', express.static(ASSETS_DIR, { maxAge: '1h' }));
+// DEV: no-cache → браузер каждый раз ревалидирует (etag/mtime); файл не менялся = 304 (даром), перезалил под тем же
+// именем = свежие байты СРАЗУ (без Ctrl+Shift+R и без часового залипания). ПРОД: часовой кэш (GLB крупные).
+app.use('/assets', express.static(ASSETS_DIR, {
+  maxAge: DEV_CONFIG_APPLY ? 0 : '1h',
+  setHeaders: DEV_CONFIG_APPLY ? (res): void => { res.setHeader('Cache-Control', 'no-cache'); } : undefined,
+}));
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
 const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), (req, res) => {
