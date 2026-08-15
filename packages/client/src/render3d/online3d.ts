@@ -984,7 +984,9 @@ export async function startOnline3d(): Promise<void> {
     msRender += (performance.now() - _tr - msRender) * 0.1;   // «рендер»: submit дроуколов + куллинг (CPU-часть; GPU асинхронно)
   }
 
-  if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents };
+  // rebuildEnv: пересобрать окружение с текущими wallFade (faceYaw/knee/fade) — для живого тюна GLB-стены без релога.
+  const rebuildEnv = (): void => { if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, envKit); } };
+  if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents, wallFade, rebuildEnv };
 
   let last = performance.now();
   function loop(): void { const now = performance.now(); const dt = Math.min(0.05, (now - last) / 1000); last = now; frame(dt); requestAnimationFrame(loop); }
