@@ -5,7 +5,6 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TILE, Cell, type DungeonLayout } from '@dm/shared';
 
 export const WALL_H = 96;
@@ -104,56 +103,99 @@ export function applyWallFade(mat: THREE.Material): void {
 applyWallFade(matWall);
 
 // ── Тайлсет окружения из GLB (пол/стена вместо процедурных боксов) ───────────────────────────────
-// КАЖДЫЙ меш GLB = отдельный ВАРИАНТ (пол: 9 тайлов, стена: 3 — рандом по клетке против тайлинга; пол ещё крутим
-// 0/90/180/270). Экспорт из Max: Z-up (детект по геометрии) + любой масштаб (нормируем полом к TILE). Пусто → процедурка.
+// ПОЛ: каждый меш GLB = отдельный ВАРИАНТ (9 тайлов — рандом по клетке + поворот 0/90/180/270 против тайлинга).
+// СТЕНА: варианты по 2 меша (низ `lo` не фейдится + верх `hi` тает) — группируем по имени, ставим ОБЕ части вместе.
+// Экспорт из Max: Z-up (детект по геометрии) + любой масштаб (нормируем полом к TILE). Пусто → процедурка.
 export interface EnvTile { geo: THREE.BufferGeometry; mat: THREE.Material }
-export interface EnvKit { floors: EnvTile[]; walls: EnvTile[] }
+export interface WallPart { geo: THREE.BufferGeometry; mat: THREE.Material; fade: boolean }   // fade: верх (true) / низ-база (false)
+export interface WallVariant { parts: WallPart[] }
+export interface EnvKit { floors: EnvTile[]; walls: WallVariant[] }
+
+interface RawTile { geo: THREE.BufferGeometry; mat: THREE.Material; name: string }
 
 /** Детерминированный хэш клетки → неотрицательное 32-бит (для выбора варианта/поворота, стабилен между пересборками). */
 function cellHash(x: number, y: number, seed: number): number { return (((x * 73856093) ^ (y * 19349663) ^ (seed * 83492791)) >>> 0); }
 
-/** Все меши GLTF-сцены как отдельные тайлы (мир-трансформы применены, атрибуты почищены под инстансинг). */
-function collectTiles(scene: THREE.Object3D): EnvTile[] {
+// Токены имени меша, помечающие часть стены «низ»/«верх» (регистронезависимо, по «словам» имени).
+const LO_TOK = ['lo', 'low', 'bottom', 'base', 'btm', 'bot', 'down'];
+const HI_TOK = ['hi', 'high', 'top', 'upper', 'up'];
+function wallPart(name: string): 'lo' | 'hi' | null {
+  const toks = name.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  if (toks.some((t) => LO_TOK.includes(t))) return 'lo';
+  if (toks.some((t) => HI_TOK.includes(t))) return 'hi';
+  return null;
+}
+/** База имени без токенов lo/hi → ключ группировки пары (напр. `wall_01_lo`+`wall_01_hi` → `wall_01`). */
+function wallBase(name: string): string {
+  return name.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t && !LO_TOK.includes(t) && !HI_TOK.includes(t)).join('_');
+}
+
+/** Все меши GLTF-сцены как отдельные тайлы (мир-трансформы применены, атрибуты почищены под инстансинг, имя сохранено). */
+function collectTiles(scene: THREE.Object3D): RawTile[] {
   scene.updateMatrixWorld(true);
-  const out: EnvTile[] = [];
+  const out: RawTile[] = [];
   scene.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!(m as { isMesh?: boolean }).isMesh || !m.geometry) return;
     let g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld);
     for (const a of ['tangent', 'color']) g.deleteAttribute(a);
     if (g.index) g = g.toNonIndexed();
-    out.push({ geo: g, mat: (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.Material });
+    out.push({ geo: g, mat: (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.Material, name: m.name || '' });
   });
   return out;
 }
 
-/** Привести GLB-геометрию к игровым осям/масштабу/пивоту. role: 'wall' (низ→y0, XZ-пивот модели) | 'floor' (центр XZ, верх→y0). */
-function normalizeEnvGeo(geo: THREE.BufferGeometry, role: 'wall' | 'floor', unitScale: number): void {
-  geo.computeBoundingBox(); const bb0 = geo.boundingBox!; const ext = new THREE.Vector3(); bb0.getSize(ext);
-  const zUp = role === 'wall' ? ext.z > ext.y : ext.z < ext.y;   // стена: выше по Z = Z-up; пол: тоньше по Z = Z-up
-  if (zUp) geo.rotateX(-Math.PI / 2);                            // Max Z-up → Y-up
+/** Пол: центр XZ, верх на y=0 (поворот вокруг центра). */
+function normalizeFloorGeo(geo: THREE.BufferGeometry, unitScale: number): void {
+  geo.computeBoundingBox(); const ext = new THREE.Vector3(); geo.boundingBox!.getSize(ext);
+  if (ext.z < ext.y) geo.rotateX(-Math.PI / 2);                 // пол: тоньше по Z = Z-up → в Y-up
   geo.scale(unitScale, unitScale, unitScale);
   geo.computeBoundingBox(); const bb = geo.boundingBox!;
-  const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
-  if (role === 'wall') geo.translate(0, -bb.min.y, 0);           // низ на y=0, XZ-пивот модели (край лицевой стороны) сохраняем
-  else geo.translate(-cx, -bb.max.y, -cz);                       // пол: центр XZ + верх на y=0 (для поворота вокруг центра)
+  geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.max.y, -(bb.min.z + bb.max.z) / 2);
+}
+/** Вариант стены (1-2 меша) нормируем как ЦЕЛОЕ: общий Z-up-детект и общий сдвиг низа на y=0 — чтобы низ/верх остались
+ * состыкованными по высоте. XZ-пивот модели (центр лицевой стороны) сохраняем — стену ставим на край тайла к комнате. */
+function normalizeWallVariant(geos: THREE.BufferGeometry[], unitScale: number): void {
+  const comb = new THREE.Box3();
+  for (const g of geos) { g.computeBoundingBox(); comb.union(g.boundingBox!); }
+  const ext = new THREE.Vector3(); comb.getSize(ext);
+  const zUp = ext.z > ext.y;                                    // стена: выше по Z = Z-up
+  for (const g of geos) { if (zUp) g.rotateX(-Math.PI / 2); g.scale(unitScale, unitScale, unitScale); }
+  const comb2 = new THREE.Box3();
+  for (const g of geos) { g.computeBoundingBox(); comb2.union(g.boundingBox!); }
+  for (const g of geos) g.translate(0, -comb2.min.y, 0);        // общий низ пары на y=0
 }
 
-/** Загрузить тайлсет окружения (пол+стена, каждый — набор вариантов) из /assets. Масштаб выводим из первого тайла ПОЛА. */
+/** Загрузить тайлсет окружения (пол — варианты; стена — варианты по паре низ+верх) из /assets. Масштаб — из первого тайла ПОЛА. */
 export async function loadEnvKit(floorUrl: string, wallUrl: string): Promise<EnvKit> {
   const loader = new GLTFLoader();
   const kit: EnvKit = { floors: [], walls: [] };
   try {
     const [fg, wg] = await Promise.all([loader.loadAsync(floorUrl), loader.loadAsync(wallUrl)]);
-    const floors = collectTiles(fg.scene), walls = collectTiles(wg.scene);
-    if (floors.length) {
-      floors[0]!.geo.computeBoundingBox(); const e = new THREE.Vector3(); floors[0]!.geo.boundingBox!.getSize(e);
-      const foot = Math.max(e.x, e.y, e.z);   // плоский тайл → footprint = наибольшая сторона (Z-up/Y-up без разницы)
-      const unitScale = foot > 1e-4 ? TILE / foot : 1;
-      for (const t of floors) normalizeEnvGeo(t.geo, 'floor', unitScale);
-      for (const t of walls) { normalizeEnvGeo(t.geo, 'wall', unitScale); applyWallFade(t.mat); }
-      kit.floors = floors; kit.walls = walls;
-    }
+    const floors = collectTiles(fg.scene), rawWalls = collectTiles(wg.scene);
+    if (!floors.length) return kit;
+    floors[0]!.geo.computeBoundingBox(); const e = new THREE.Vector3(); floors[0]!.geo.boundingBox!.getSize(e);
+    const foot = Math.max(e.x, e.y, e.z);   // плоский тайл → footprint = наибольшая сторона (Z-up/Y-up без разницы)
+    const unitScale = foot > 1e-4 ? TILE / foot : 1;
+    for (const t of floors) normalizeFloorGeo(t.geo, unitScale);
+    kit.floors = floors.map((t) => ({ geo: t.geo, mat: t.mat }));
+
+    // Стена: группируем меши в варианты по базе имени (пара lo+hi). Если токенов lo/hi нет вовсе — каждый меш = свой вариант.
+    const hasParts = rawWalls.some((t) => wallPart(t.name) !== null);
+    const groups = new Map<string, RawTile[]>();
+    rawWalls.forEach((t, i) => {
+      const key = hasParts ? (wallBase(t.name) || `__v${i}`) : `__v${i}`;
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(t);
+    });
+    kit.walls = [...groups.values()].map((tiles) => {
+      normalizeWallVariant(tiles.map((t) => t.geo), unitScale);
+      const parts: WallPart[] = tiles.map((t) => {
+        const fade = wallPart(t.name) !== 'lo';   // низ (lo) не фейдится, всё прочее (hi/одиночный меш) — тает
+        if (fade) applyWallFade(t.mat);
+        return { geo: t.geo, mat: t.mat, fade };
+      });
+      return { parts };
+    });
   } catch (e) { console.warn('[env] загрузка тайлсета не удалась, падаю на процедурку', e); }
   return kit;
 }
@@ -237,20 +279,33 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
     const len = Math.hypot(fx, fz) || 1; return [fx / len, fz / len];
   };
   if (kit?.walls.length) {
-    // GLB-варианты стены: вариант по клетке; пивот (край лицевой стороны) на КРАЙ тайла к комнате (+facing·½); разворот лицом в комнату.
-    const nV = kit.walls.length, byVar: [number, number][][] = kit.walls.map(() => []);
-    for (const c of wallCells) byVar[cellHash(c[0], c[1], 303) % nV]!.push(c);
-    byVar.forEach((cells, v) => {
-      if (!cells.length) return;
-      const geo = kit.walls[v]!.geo.clone(), facing = new Float32Array(cells.length * 2);
-      const im = new THREE.InstancedMesh(geo, kit.walls[v]!.mat, cells.length); im.castShadow = im.receiveShadow = true;
-      cells.forEach(([x, y], i) => {
-        const [fx, fz] = facingOf(x, y); facing[i * 2] = fx; facing[i * 2 + 1] = fz;
-        dummy.position.set(cw(x) + fx * TILE / 2, 0, cw(y) + fz * TILE / 2); dummy.rotation.set(0, Math.atan2(fx, fz) + wallFade.faceYaw, 0); dummy.updateMatrix();
-        im.setMatrixAt(i, dummy.matrix);
+    // GLB-варианты стены. Диагональные клетки (лицо и по X, и по Z — внутр./внеш. углы) ПРОПУСКАЕМ: там будет колонна.
+    // Прямые клетки: вариант по клетке; пивот (край лицевой стороны) на КРАЙ тайла к комнате (+facing·½); разворот лицом в комнату.
+    const nV = kit.walls.length;
+    const place: { x: number; y: number; fx: number; fz: number; v: number }[] = [];
+    for (const [x, y] of wallCells) {
+      const [fx, fz] = facingOf(x, y);
+      if (fx !== 0 && fz !== 0) continue;   // диагональ = угол → колонна позже, стену не ставим
+      place.push({ x, y, fx, fz, v: cellHash(x, y, 303) % nV });
+    }
+    for (let v = 0; v < nV; v++) {
+      const cells = place.filter((p) => p.v === v);
+      if (!cells.length) continue;
+      const facing = new Float32Array(cells.length * 2), mats: THREE.Matrix4[] = [];
+      cells.forEach((p, i) => {
+        facing[i * 2] = p.fx; facing[i * 2 + 1] = p.fz;
+        dummy.position.set(cw(p.x) + p.fx * TILE / 2, 0, cw(p.y) + p.fz * TILE / 2);
+        dummy.rotation.set(0, Math.atan2(p.fx, p.fz) + wallFade.faceYaw, 0); dummy.updateMatrix();
+        mats.push(dummy.matrix.clone());
       });
-      geo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facing, 2)); parent.add(im);
-    });
+      for (const part of kit.walls[v]!.parts) {   // ставим ВСЕ части варианта (низ+верх) на общие трансформы
+        const geo = part.geo.clone();
+        const im = new THREE.InstancedMesh(geo, part.mat, cells.length); im.castShadow = im.receiveShadow = true;
+        mats.forEach((mtx, i) => im.setMatrixAt(i, mtx));
+        if (part.fade) geo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facing.slice(), 2));   // aFacing нужен лишь фейд-шейдеру верха
+        parent.add(im);
+      }
+    }
     dummy.rotation.set(0, 0, 0);
   } else {
     const wallGeo = new THREE.BoxGeometry(TILE, WALL_H, TILE), facing = new Float32Array(wallCells.length * 2);
