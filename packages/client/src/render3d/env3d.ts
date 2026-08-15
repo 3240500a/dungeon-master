@@ -166,13 +166,18 @@ function normalizeWallVariant(geos: THREE.BufferGeometry[], unitScale: number): 
   for (const g of geos) g.translate(0, -comb2.min.y, 0);        // общий низ пары на y=0
 }
 
-/** Нормализация запечённого GLB-материала окружения к МАТОВОМУ ДИЭЛЕКТРИКУ (камень/дерево подземелья — не металл):
- *  metalness=0 (убирает ложный металл-глянец: GLB часто экспортит metallicFactor=1 по дефолту glTF + ненулевой B-канал
- *  metalRough-карты → блики от факелов по швам) + подъём roughness к матовому. Металлические объекты — через materialId
- *  в конфиге (override минует эту нормализацию). Мутирует материал на месте (инстанс общий на вариант). */
+/** ПОЛНОСТЬЮ ИГНОРИРУЕМ запечённый PBR из GLB-материала окружения (он ненадёжен: metallicFactor по дефолту glTF=1.0 +
+ *  ненулевой B-канал metalRough-карты + roughnessFactor резал шероховатость → ложный металл-глянец по швам, в Unity камень
+ *  матовый). Оставляем только «вид»: albedo (`map`) + рельеф (`normalMap`); metal/rough/AO/emissive-карты и факторы —
+ *  выкидываем, задаём МАТОВЫЙ ДИЭЛЕКТРИК (metalness=0, roughness=0.9). Металл/блеск объекта — через materialId в конфиге
+ *  (override минует эту нормализацию). Мутирует материал на месте (инстанс общий на вариант). */
 function normEnvMat(mat: THREE.Material): THREE.Material {
   const m = mat as THREE.MeshStandardMaterial;
-  if ('metalness' in m) { m.metalness = 0; m.roughness = Math.max(typeof m.roughness === 'number' ? m.roughness : 0.8, 0.85); m.needsUpdate = true; }
+  if (!('metalness' in m)) return m;   // не Standard/Physical — не трогаем
+  m.metalness = 0; m.roughness = 0.9;                                   // матовый диэлектрик
+  m.metalnessMap = null; m.roughnessMap = null; m.aoMap = null;         // выкинуть ненадёжные PBR-карты
+  m.emissive = new THREE.Color(0, 0, 0); m.emissiveMap = null;          // без эмиссии
+  m.needsUpdate = true;
   return m;
 }
 
