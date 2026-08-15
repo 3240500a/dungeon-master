@@ -967,7 +967,7 @@ export async function startOnline3d(): Promise<void> {
     const _tp = performance.now();
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
     msPhys += (performance.now() - _tp - msPhys) * 0.1;   // «физ»: pw.step (Jolt) над активными телами
-    wallFade.playerPos.set(smoothX, 20, smoothZ); wallFade.camDir.set(Math.sin(CAM.az), Math.cos(CAM.az));   // фейд стен-окклюдеров: центр = игрок, сторона = камера
+    wallFade.playerPos.set(smoothX, 20, smoothZ); wallFade.camPos.set(camera.position.x, camera.position.z);   // фейд стен: коридор камера→игрок (реальные окклюдеры)
     updateTorches(torches, torchPool, smoothX, smoothZ, tsec); vfx.update(dt); statusFx.update(dt); applyCam();
     const _tr = performance.now();
     renderer.render(scene, camera);

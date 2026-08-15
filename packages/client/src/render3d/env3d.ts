@@ -61,20 +61,20 @@ const matDark = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 1 }
 // Стены между камерой и героем тают: плавный дизер (screen-door discard, без alpha-сортировки),
 // гейт «только со стороны камеры» (dot(стена→игрок с направлением на камеру)). online3d обновляет
 // поля каждый кадр (позиция игрока + направление на камеру из CAM.az) + радиусы из конфига.
-const CONE_DEG = 44, CONE_SOFT = 8;   // конус фейда: полупровал 44° от направления на камеру (вниз от персонажа), мягкий край +8°
+// Фейд по КОРИДОРУ камера→игрок: тают только стены, реально перекрывающие обзор (в коридоре вдоль луча),
+// боковые стены (далеко от луча) целы. Длина авто-подстраивается под зум (фактич. дистанция до камеры).
 export const wallFade = {
   playerPos: new THREE.Vector3(0, 0, 0),                        // мир-позиция игрока (XZ важен)
-  camDir: new THREE.Vector2(Math.sin(-0.6), Math.cos(-0.6)),   // XZ-направление игрок→камера (= офсет камеры), из CAM.az
-  fade: new THREE.Vector2(150, 380),                           // радиусы: x = полная прозрачность у игрока (крупное ядро → вся толща стены тает), y = снова видимо
-  // Конус (косинусы): фейдим стену, только если угол её направления к направлению-на-камеру < CONE_DEG (боковые стены вне конуса НЕ тают).
-  cone: new THREE.Vector2(Math.cos((CONE_DEG + CONE_SOFT) * Math.PI / 180), Math.cos(CONE_DEG * Math.PI / 180)),
+  camPos: new THREE.Vector2(0, 300),                           // наземная проекция камеры (x,z) — online3d обновляет из camera.position
+  corr: new THREE.Vector2(58, 104),                            // ширина коридора: x = полная прозрачность, y = снова видимо (перпендикуляр к лучу)
+  back: 44,                                                    // запас коридора ЗА спину игрока (px) — стены впритык за героем тоже открыть
   on: 1,                                                       // 1 вкл / 0 выкл (для отладки)
 };
 const wallFadeU = {
   uPlayerPos: { value: wallFade.playerPos },
-  uCamDir: { value: wallFade.camDir },
-  uFade: { value: wallFade.fade },
-  uCone: { value: wallFade.cone },
+  uCamPos: { value: wallFade.camPos },
+  uCorr: { value: wallFade.corr },
+  uBack: { value: wallFade.back },
   uFadeOn: { value: wallFade.on },
 };
 matWall.onBeforeCompile = (shader): void => {
@@ -83,15 +83,19 @@ matWall.onBeforeCompile = (shader): void => {
     .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 wpW = vec4(transformed,1.0);\n#ifdef USE_INSTANCING\n wpW = instanceMatrix * wpW;\n#endif\n vWorldW = (modelMatrix * wpW).xyz; }');
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nuniform vec3 uPlayerPos;\nuniform vec2 uCamDir;\nuniform vec2 uFade;\nuniform vec2 uCone;\nuniform float uFadeOn;')
+    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nuniform vec3 uPlayerPos;\nuniform vec2 uCamPos;\nuniform vec2 uCorr;\nuniform float uBack;\nuniform float uFadeOn;')
     .replace('#include <dithering_fragment>', `#include <dithering_fragment>
       if (uFadeOn > 0.5) {
-        vec2 rel = vWorldW.xz - uPlayerPos.xz;
-        float dPl = length(rel);
-        float radial = 1.0 - smoothstep(uFade.x, uFade.y, dPl);          // 1 у игрока → 0 далеко
-        float side = dPl > 0.001 ? dot(rel / dPl, uCamDir) : 0.0;        // cos угла между стеной и направлением на камеру
-        float cone = smoothstep(uCone.x, uCone.y, side);                 // 1 внутри конуса 44° (к камере), 0 вне (боковые стены целы)
-        float fadeAmt = radial * cone;                                   // 1 = полностью прозрачно
+        vec2 P = uPlayerPos.xz;
+        vec2 axis = uCamPos - P;                                          // игрок → камера (наземно)
+        float L = max(length(axis), 1.0);
+        vec2 dir = axis / L;
+        vec2 rel = vWorldW.xz - P;
+        float t = dot(rel, dir);                                          // вдоль луча: 0 = игрок, +L = камера
+        float perp = length(rel - dir * t);                              // перпендикуляр к лучу обзора
+        float along = smoothstep(-uBack, -uBack + 20.0, t) * (1.0 - smoothstep(L * 0.72, L, t));   // от (−запас) до камеры, мягкие концы
+        float across = 1.0 - smoothstep(uCorr.x, uCorr.y, perp);          // 1 в центре коридора → 0 по краям
+        float fadeAmt = along * across;                                   // 1 = полностью прозрачно (только реальные окклюдеры)
         float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));   // интерлив-градиент-шум (плавный дизер)
         if (fadeAmt > ign) discard;
       }`);
