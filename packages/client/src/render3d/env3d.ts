@@ -61,41 +61,36 @@ const matDark = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 1 }
 // Стены между камерой и героем тают: плавный дизер (screen-door discard, без alpha-сортировки),
 // гейт «только со стороны камеры» (dot(стена→игрок с направлением на камеру)). online3d обновляет
 // поля каждый кадр (позиция игрока + направление на камеру из CAM.az) + радиусы из конфига.
-// Фейд по КОРИДОРУ камера→игрок: тают только стены, реально перекрывающие обзор (в коридоре вдоль луча),
-// боковые стены (далеко от луча) целы. Длина авто-подстраивается под зум (фактич. дистанция до камеры).
+// Фейд ближних стен по «ЛИЦУ» (как в D2): у каждой стены есть направление В КОМНАТУ (aFacing, per-instance).
+// Ближняя к камере стена смотрит лицом ОТ камеры (в сцену) → её ВЕРХ дизер-тает (видно комнату); дальние стены
+// (лицом К камере, задник) целы. Низ «по колено» не фейдится (граница читается). Ограничено мягким радиусом у игрока.
 export const wallFade = {
   playerPos: new THREE.Vector3(0, 0, 0),                        // мир-позиция игрока (XZ важен)
-  camPos: new THREE.Vector2(0, 300),                           // наземная проекция камеры (x,z) — online3d обновляет из camera.position
-  corr: new THREE.Vector2(58, 104),                            // ширина коридора: x = полная прозрачность, y = снова видимо (перпендикуляр к лучу)
-  back: 44,                                                    // запас коридора ЗА спину игрока (px) — стены впритык за героем тоже открыть
+  viewDir: new THREE.Vector2(0, -1),                           // горизонт. взгляд камеры (target−camPos, норм.) — online3d обновляет
+  fade: new THREE.Vector2(190, 460),                           // радиус: x = зона фейда у игрока, y = снова видимо
+  knee: new THREE.Vector2(20, 46),                             // высота: ниже x (по колено) НЕ фейдится, выше y — полный фейд верха
   on: 1,                                                       // 1 вкл / 0 выкл (для отладки)
 };
 const wallFadeU = {
   uPlayerPos: { value: wallFade.playerPos },
-  uCamPos: { value: wallFade.camPos },
-  uCorr: { value: wallFade.corr },
-  uBack: { value: wallFade.back },
+  uViewDir: { value: wallFade.viewDir },
+  uFade: { value: wallFade.fade },
+  uKnee: { value: wallFade.knee },
   uFadeOn: { value: wallFade.on },
 };
 matWall.onBeforeCompile = (shader): void => {
   Object.assign(shader.uniforms, wallFadeU);
   shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 wpW = vec4(transformed,1.0);\n#ifdef USE_INSTANCING\n wpW = instanceMatrix * wpW;\n#endif\n vWorldW = (modelMatrix * wpW).xyz; }');
+    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nattribute vec2 aFacing;\nuniform vec2 uViewDir;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 wpW = vec4(transformed,1.0);\n#ifdef USE_INSTANCING\n wpW = instanceMatrix * wpW;\n#endif\n vWorldW = (modelMatrix * wpW).xyz; }\n vFaceDot = dot(aFacing, uViewDir);   // >0 = лицо стены смотрит от камеры (ближняя, загораживает)');
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nuniform vec3 uPlayerPos;\nuniform vec2 uCamPos;\nuniform vec2 uCorr;\nuniform float uBack;\nuniform float uFadeOn;')
+    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nuniform vec3 uPlayerPos;\nuniform vec2 uFade;\nuniform vec2 uKnee;\nuniform float uFadeOn;')
     .replace('#include <dithering_fragment>', `#include <dithering_fragment>
       if (uFadeOn > 0.5) {
-        vec2 P = uPlayerPos.xz;
-        vec2 axis = uCamPos - P;                                          // игрок → камера (наземно)
-        float L = max(length(axis), 1.0);
-        vec2 dir = axis / L;
-        vec2 rel = vWorldW.xz - P;
-        float t = dot(rel, dir);                                          // вдоль луча: 0 = игрок, +L = камера
-        float perp = length(rel - dir * t);                              // перпендикуляр к лучу обзора
-        float along = smoothstep(-uBack, -uBack + 20.0, t) * (1.0 - smoothstep(L * 0.72, L, t));   // от (−запас) до камеры, мягкие концы
-        float across = 1.0 - smoothstep(uCorr.x, uCorr.y, perp);          // 1 в центре коридора → 0 по краям
-        float fadeAmt = along * across;                                   // 1 = полностью прозрачно (только реальные окклюдеры)
+        float near = smoothstep(0.0, 0.35, vFaceDot);                     // 1 = ближняя стена (лицо от камеры), 0 = задник (лицом к камере)
+        float top = smoothstep(uKnee.x, uKnee.y, vWorldW.y);              // 0 ниже «колена» (не фейдим), 1 выше (фейдим верх)
+        float radial = 1.0 - smoothstep(uFade.x, uFade.y, distance(vWorldW.xz, uPlayerPos.xz));   // только у игрока
+        float fadeAmt = near * top * radial;                             // 1 = полностью прозрачно
         float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));   // интерлив-градиент-шум (плавный дизер)
         if (fadeAmt > ign) discard;
       }`);
@@ -157,9 +152,21 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
     let near = false; for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (walk(x + dx, y + dy)) { near = true; break; }
     if (near) wallCells.push([x, y]);
   }
-  const wm = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, WALL_H, TILE), matWall, wallCells.length);
+  const wallGeo = new THREE.BoxGeometry(TILE, WALL_H, TILE);
+  const wm = new THREE.InstancedMesh(wallGeo, matWall, wallCells.length);
   wm.castShadow = true; wm.receiveShadow = true;
-  wallCells.forEach(([x, y], i) => { dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); wm.setMatrixAt(i, dummy.matrix); });
+  // «Лицо» стены (per-instance, для фейд-шейдера) = направление в комнату = сумма к смежным проходимым клеткам (4-соседа;
+  // если нет — 8-соседи). Ближняя к камере стена смотрит лицом ОТ камеры → её верх тает (см. matWall.onBeforeCompile).
+  const facing = new Float32Array(wallCells.length * 2);
+  const N4: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const N8: [number, number][] = [...N4, [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  wallCells.forEach(([x, y], i) => {
+    dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); wm.setMatrixAt(i, dummy.matrix);
+    let fx = 0, fz = 0; for (const [dx, dy] of N4) if (walk(x + dx, y + dy)) { fx += dx; fz += dy; }
+    if (fx === 0 && fz === 0) for (const [dx, dy] of N8) if (walk(x + dx, y + dy)) { fx += dx; fz += dy; }   // фолбэк на диагонали
+    const len = Math.hypot(fx, fz) || 1; facing[i * 2] = fx / len; facing[i * 2 + 1] = fz / len;   // XZ, нормализовано (мир z = сетка y)
+  });
+  wallGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facing, 2));
   parent.add(wm);
 
   // Колонны — из ГРИДА (Cell.Pillar непроходим на сервере: blocked()). Рисуем ВСЕ такие клетки (и декоративные из
@@ -167,9 +174,11 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
   const pillarCells: [number, number][] = [];
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (grid[y]![x] === Cell.Pillar) pillarCells.push([x, y]);
   if (pillarCells.length) {
-    const pm = new THREE.InstancedMesh(new THREE.CylinderGeometry(9, 10, WALL_H, 12), matWall, pillarCells.length);
+    const pillarGeo = new THREE.CylinderGeometry(9, 10, WALL_H, 12);
+    const pm = new THREE.InstancedMesh(pillarGeo, matWall, pillarCells.length);
     pm.castShadow = true; pm.receiveShadow = true;
     pillarCells.forEach(([x, y], i) => { dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); pm.setMatrixAt(i, dummy.matrix); });
+    pillarGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(new Float32Array(pillarCells.length * 2), 2));   // нулевое лицо → колонны не фейдятся (matWall шейдер читает aFacing)
     parent.add(pm);
   }
 
