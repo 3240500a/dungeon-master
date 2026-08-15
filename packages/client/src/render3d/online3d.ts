@@ -19,7 +19,7 @@ import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
-import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, type Torch } from './env3d.js';
+import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, type Torch } from './env3d.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
@@ -858,11 +858,15 @@ export async function startOnline3d(): Promise<void> {
   function sendInput(): void {
     const s = app.state!.save;
     const mine = latest?.players.find((p) => p.id === myId);
-    let mx = 0, my = 0;
-    if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
-    if (keys.has('KeyA') || keys.has('ArrowLeft')) mx -= 1;
-    if (keys.has('KeyS') || keys.has('ArrowDown')) my += 1;
-    if (keys.has('KeyW') || keys.has('ArrowUp')) my -= 1;
+    let kx = 0, ky = 0;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) kx += 1;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) kx -= 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) ky += 1;
+    if (keys.has('KeyW') || keys.has('ArrowUp')) ky -= 1;
+    // Camera-relative: экран повёрнут на CAM.az, поэтому крутим WASD на −az → W = ровно «вверх по экрану»,
+    // A/D строго вбок, при любом угле/будущем вращении камеры. Мир-вектор шлём серверу (авторитетность не трогаем).
+    const ca = Math.cos(-CAM.az), sa = Math.sin(-CAM.az);
+    const mx = kx * ca - ky * sa, my = kx * sa + ky * ca;
     let facing = mine?.facing ?? 0;
     const a = aimWorld();
     if (mine && a && Math.hypot(a.x - smoothX, a.y - smoothZ) > 10) facing = Math.atan2(a.y - smoothZ, a.x - smoothX);
@@ -963,6 +967,7 @@ export async function startOnline3d(): Promise<void> {
     const _tp = performance.now();
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
     msPhys += (performance.now() - _tp - msPhys) * 0.1;   // «физ»: pw.step (Jolt) над активными телами
+    wallFade.playerPos.set(smoothX, 20, smoothZ); wallFade.camDir.set(Math.sin(CAM.az), Math.cos(CAM.az));   // фейд стен-окклюдеров: центр = игрок, сторона = камера
     updateTorches(torches, torchPool, smoothX, smoothZ, tsec); vfx.update(dt); statusFx.update(dt); applyCam();
     const _tr = performance.now();
     renderer.render(scene, camera);

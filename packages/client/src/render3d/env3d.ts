@@ -57,6 +57,42 @@ const matWood = new THREE.MeshStandardMaterial({ color: 0x5a3d24, roughness: 0.8
 const matMetal = new THREE.MeshStandardMaterial({ color: 0x8892a0, roughness: 0.5, metalness: 0.6 });
 const matDark = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 1 });
 
+// ── Фейд стен-окклюдеров вокруг игрока (дизер) ──────────────────────────────────
+// Стены между камерой и героем тают: плавный дизер (screen-door discard, без alpha-сортировки),
+// гейт «только со стороны камеры» (dot(стена→игрок с направлением на камеру)). online3d обновляет
+// поля каждый кадр (позиция игрока + направление на камеру из CAM.az) + радиусы из конфига.
+export const wallFade = {
+  playerPos: new THREE.Vector3(0, 0, 0),                        // мир-позиция игрока (XZ важен)
+  camDir: new THREE.Vector2(Math.sin(-0.6), Math.cos(-0.6)),   // XZ-направление игрок→камера (= офсет камеры), из CAM.az
+  fade: new THREE.Vector2(70, 190),                            // радиусы: x = полная прозрачность у игрока, y = снова видимо
+  on: 1,                                                       // 1 вкл / 0 выкл (для отладки)
+};
+const wallFadeU = {
+  uPlayerPos: { value: wallFade.playerPos },
+  uCamDir: { value: wallFade.camDir },
+  uFade: { value: wallFade.fade },
+  uFadeOn: { value: wallFade.on },
+};
+matWall.onBeforeCompile = (shader): void => {
+  Object.assign(shader.uniforms, wallFadeU);
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 wpW = vec4(transformed,1.0);\n#ifdef USE_INSTANCING\n wpW = instanceMatrix * wpW;\n#endif\n vWorldW = (modelMatrix * wpW).xyz; }');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nuniform vec3 uPlayerPos;\nuniform vec2 uCamDir;\nuniform vec2 uFade;\nuniform float uFadeOn;')
+    .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+      if (uFadeOn > 0.5) {
+        vec2 rel = vWorldW.xz - uPlayerPos.xz;
+        float dPl = length(rel);
+        float radial = 1.0 - smoothstep(uFade.x, uFade.y, dPl);          // 1 у игрока → 0 далеко
+        float side = dPl > 0.001 ? dot(rel / dPl, uCamDir) : 0.0;        // >0 = стена со стороны камеры (загораживает)
+        float camGate = smoothstep(0.0, 0.4, side);
+        float fadeAmt = radial * camGate;                                // 1 = полностью прозрачно
+        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));   // интерлив-градиент-шум (плавный дизер)
+        if (fadeAmt > ign) discard;
+      }`);
+};
+
 // Факел: мир-позиция + данные пламени. Света СВОЕГО нет — светят лишь TORCH_POOL_N ближайших через общий пул
 // (перф: 20-50 факелов на этаж = столько же PointLight → PBR считал КАЖДЫЙ на каждый фрагмент = дикая фрагментная цена;
 //  пул фиксированного размера → фрагментная цена ограничена И число света постоянно = нет перекомпиляции материалов).
