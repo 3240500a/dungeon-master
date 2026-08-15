@@ -1750,6 +1750,29 @@ export const modelsSchema = z.array(z.object({
   submeshMaterials: z.record(z.string(), z.string()).default({}),   // имя сабмеша → materialId
 }));
 
+/** ОКРУЖЕНИЕ подземелья (пол/стены 3D) — набор GLB-тайлов НА БИОМ. Клиент по `FloorInit.biomeId` выбирает enabled-запись
+ *  и строит этаж из неё; иначе (нет записи / disabled / нет url) — процедурные боксы. GLB многомешевые: пол — тайлы-варианты
+ *  (рандом по клетке + поворот); стена — пара мешей `lo`+`hi` на вариант (низ не фейдится, верх тает по «лицу»).
+ *  Материал по умолчанию берётся ИЗ GLB (там вшиты текстуры). *MaterialId — опц. override (общий инстанс на роль — дешевле
+ *  для слабых ПК). Грузится/тюнится через вкладку «3D: окружение» конфиг-редактора (upload GLB + ползунки фейда). */
+export const environmentSchema = z.array(z.object({
+  id: z.string(),
+  name: z.string().default(''),
+  biomeId: z.string(),                                  // к какому биому применяется (см. biomes[].id)
+  enabled: z.boolean().default(true),                   // выключено → биом рендерится процедурными боксами
+  floorUrl: z.string().default(''),                     // /assets/<..>.glb — тайлсет пола (меши = варианты)
+  wallUrl: z.string().default(''),                      // /assets/<..>.glb — стена (пара lo+hi на вариант)
+  floorMaterialId: z.string().default(''),              // '' = материал из GLB; иначе materials[id] (override, общий инстанс)
+  wallMaterialId: z.string().default(''),
+  fade: z.object({
+    start: z.number().default(190),                     // радиус у игрока, где стены начинают таять
+    end: z.number().default(460),                       // радиус, где снова целые
+    kneeLow: z.number().default(20),                    // ниже (по колено) НЕ фейдим
+    kneeHigh: z.number().default(46),                   // выше — полный фейд верха
+    faceYaw: z.number().default(0),                     // доп. разворот GLB-стены (рад) — выставить лицо в комнату
+  }).default({}),
+}));
+
 /** Реестр всех схем: ключ конфига → схема. */
 export const configSchemas = {
   balance: balanceSchema,
@@ -1793,6 +1816,7 @@ export const configSchemas = {
   textures: texturesSchema,
   materials: materialsSchema,
   models: modelsSchema,
+  environment: environmentSchema,
 } as const;
 
 export type ConfigKey = keyof typeof configSchemas;

@@ -181,7 +181,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     session.enterFloor(node.depth, {
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters,
-      runNodeId: node.id, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers,
+      runNodeId: node.id, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: node.biomeId,
     });
     bot.syncHotbar(save);
     deepest = Math.max(deepest, node.depth);

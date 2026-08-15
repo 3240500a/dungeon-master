@@ -20,6 +20,7 @@ import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
 import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, loadEnvKit, type Torch, type EnvKit } from './env3d.js';
+import { getMaterial } from './assetCache.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
@@ -300,15 +301,38 @@ export async function startOnline3d(): Promise<void> {
   let seq = 0;
   let playerLight: THREE.PointLight | undefined;
   let torches: Torch[] = [];
-  // GLB-тайлсет окружения (пол/стена вместо процедурных боксов). Грузим на буте (37 МБ) — пока не готов, области строятся
-  // боксами; как догрузится, пересобираем текущее окружение. lastEnvLayout — последний layout для пересборки.
-  let envKit: EnvKit | undefined;
+  // GLB-тайлсет окружения ПО БИОМУ (config `environment`) — пол/стена вместо процедурных боксов. Грузим ЛЕНИВО при первом
+  // входе в биом (крупные GLB); пока не готов, область строится боксами, по готовности пересобираем. Кэш кита по id окружения.
+  const envKits = new Map<string, EnvKit>();       // id окружения → готовый кит
+  const envLoading = new Set<string>();            // id, что грузятся сейчас (антидубль)
   let lastEnvLayout: Parameters<typeof buildEnvironment>[1] | undefined;
-  loadEnvKit('/assets/crypt_tile_set/crypt_floor_01.glb', '/assets/crypt_tile_set/crypt_wall_01.glb').then((k) => {
-    if (!k.floors.length && !k.walls.length) return;   // ничего не загрузилось — остаёмся на боксах
-    envKit = k;
-    if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, envKit); }   // пересобрать текущее окружение моделями
-  }).catch(() => {});
+  let lastEnvId: string | undefined;               // id окружения текущей области (гейт пересборки)
+  type EnvCfg = { id: string; enabled: boolean; biomeId: string; floorUrl: string; wallUrl: string; floorMaterialId: string; wallMaterialId: string; fade: { start: number; end: number; kneeLow: number; kneeHigh: number; faceYaw: number } };
+  /** enabled-запись окружения для биома этажа (иначе undefined → процедурные боксы). */
+  function resolveEnvCfg(biomeId?: string): EnvCfg | undefined {
+    if (!biomeId) return undefined;
+    return (app.config.get('environment') as EnvCfg[] | undefined)?.find((e) => e.enabled && e.biomeId === biomeId && (e.floorUrl || e.wallUrl));
+  }
+  /** Параметры фейда стен из конфига окружения (в uniform-объект wallFade). */
+  function applyEnvFade(cfg: EnvCfg | undefined): void {
+    const f = cfg?.fade; if (!f) return;
+    wallFade.fade.set(f.start, f.end); wallFade.knee.set(f.kneeLow, f.kneeHigh); wallFade.faceYaw = f.faceYaw;
+  }
+  /** Материал-override по id из config materials (общий инстанс) или null. */
+  function envMat(id: string): THREE.Material | null {
+    return id ? getMaterial({ materials: app.config.get('materials'), textures: app.config.get('textures') } as Parameters<typeof getMaterial>[0], id) : null;
+  }
+  /** Лениво загрузить кит окружения; по готовности пересобрать текущую область, если она всё ещё на этом окружении. */
+  function loadEnvFor(cfg: EnvCfg): void {
+    if (envKits.has(cfg.id) || envLoading.has(cfg.id)) return;
+    envLoading.add(cfg.id);
+    loadEnvKit(cfg.floorUrl, cfg.wallUrl, { floorMat: envMat(cfg.floorMaterialId), wallMat: envMat(cfg.wallMaterialId) }).then((k) => {
+      envLoading.delete(cfg.id);
+      if (!k.floors.length && !k.walls.length) return;   // не загрузилось — остаёмся на боксах
+      envKits.set(cfg.id, k);
+      if (lastEnvId === cfg.id && lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, k); }   // пересобрать текущее моделями
+    }).catch(() => { envLoading.delete(cfg.id); });
+  }
   applySavedSettings();   // применить сохранённые галки ⚙ ПОСЛЕ инициализации self/playerLight (иначе TDZ)
   let areaGrid: Grid | undefined;   // грид текущей области (для DBG-счётчика монстров вне пола)
   let interactables: Interactable[] = [];
@@ -352,8 +376,11 @@ export async function startOnline3d(): Promise<void> {
     if (app.state) app.state.area = floor.area;   // HUD/отчёт различают город/этаж по area (depth=0 у старта забега = как город)
 
     const layout = { grid: floor.grid, doors: [], decor: floor.decor, stairsDown: floor.stairs } as unknown as Parameters<typeof buildEnvironment>[1];
-    lastEnvLayout = layout;   // запомним для пересборки, когда догрузится GLB-тайлсет
-    torches = buildEnvironment(floorGroup, layout, envKit);
+    const envCfg = resolveEnvCfg(floor.biomeId);   // набор окружения биома (config `environment`) — иначе процедурка
+    applyEnvFade(envCfg);                           // параметры фейда стен из конфига
+    lastEnvLayout = layout; lastEnvId = envCfg?.id;   // запомним для пересборки, когда догрузится GLB-тайлсет
+    torches = buildEnvironment(floorGroup, layout, envCfg ? envKits.get(envCfg.id) : undefined);
+    if (envCfg) loadEnvFor(envCfg);                 // лениво подгрузить кит (если ещё нет) → пересоберём по готовности
     pw.buildStatic(layout);
 
     // Игрок-кукла (создаём один раз, дальше перемещаем в spawn). Оружие/щит — из ЭКИПИРОВКИ.
@@ -985,7 +1012,7 @@ export async function startOnline3d(): Promise<void> {
   }
 
   // rebuildEnv: пересобрать окружение с текущими wallFade (faceYaw/knee/fade) — для живого тюна GLB-стены без релога.
-  const rebuildEnv = (): void => { if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, envKit); } };
+  const rebuildEnv = (): void => { if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, lastEnvId ? envKits.get(lastEnvId) : undefined); } };
   if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents, wallFade, rebuildEnv };
 
   let last = performance.now();

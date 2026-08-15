@@ -63,6 +63,7 @@ const LABELS: Record<ConfigKey, string> = {
   textures: '3D: текстуры',
   materials: '3D: материалы',
   models: '3D: меши',
+  environment: '3D: окружение',
 };
 
 /**
@@ -87,7 +88,7 @@ const NAV_GROUPS: NavGroup[] = [
   { title: 'Мир', keys: ['biomes', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
-  { title: '🧊 3D-ассеты', keys: ['models', 'materials', 'textures'] },
+  { title: '🧊 3D-ассеты', keys: ['environment', 'models', 'materials', 'textures'] },
 ];
 /** Все ключи группы (из плоского `keys` или из подсекций `subs`). */
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
@@ -217,6 +218,13 @@ for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMa
 fieldCustomRenderers.baseColor = (value, onChange) => renderColorField(value, onChange);
 fieldCustomRenderers.emissive = (value, onChange) => renderColorField(value, onChange);
 fieldCustomRenderers.url = (value, onChange, parent) => renderUploadField(value, onChange, parent);
+// Окружение (env): floorUrl/wallUrl → аплоад GLB (имя ассета = имя файла, чтобы пол и стена не перезаписывали друг друга);
+// floorMaterialId/wallMaterialId → выпадашка материала-override ('' = материал из GLB).
+const materialIds = (): string[] => ['', ...((data['materials'] as { id: string }[]) ?? []).map((m) => m.id)];
+fieldCustomRenderers.floorUrl = (value, onChange, parent) => renderUploadField(value, onChange, parent, true);
+fieldCustomRenderers.wallUrl = (value, onChange, parent) => renderUploadField(value, onChange, parent, true);
+fieldEnumSources.floorMaterialId = materialIds;
+fieldEnumSources.wallMaterialId = materialIds;
 // armorClass / requireArmorClass — выпадашки из конфига классов брони.
 const armorClassIds = (): string[] => ((data['armor-classes'] as { id: string }[]) ?? []).map((c) => c.id);
 fieldEnumSources.armorClass = armorClassIds;

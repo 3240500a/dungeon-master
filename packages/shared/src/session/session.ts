@@ -85,6 +85,8 @@ export interface FloorLayout {
   runNodeId?: string;
   runNodeType?: string;
   floorModifiers?: string[];
+  /** id биома этажа (v2) — клиент выбирает по нему набор окружения. */
+  biomeId?: string;
   monsters: MonsterSpawn[];
   /** Запертые ворота + рычаги (по модели «дверь ↔ рычаг»). */
   doors?: { id: number; cells: { cx: number; cy: number }[] }[];
@@ -233,6 +235,7 @@ export class GameSession {
     w.runNodeId = layout.runNodeId;
     w.runNodeType = layout.runNodeType;
     w.floorModifiers = layout.floorModifiers;
+    w.biomeId = layout.biomeId;
     w.doors = (layout.doors ?? []).map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) }));
     w.levers = (layout.levers ?? []).map((l) => ({ id: l.id, pos: { x: l.x, y: l.y }, doorId: l.doorId, used: false }));
     w.pvp = layout.pvp ?? false;   // арена включает урон игрок↔игрок; обычный этаж/город — сбрасывает

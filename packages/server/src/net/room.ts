@@ -484,7 +484,7 @@ export class Room {
     this.session.enterFloor(node.depth, {
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters,
       doors: layout.doors, levers: layout.levers,
-      runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers,
+      runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: biome.id,
     });
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
     this.broadcast({ t: 'runPlan', plan: this.runPlan, currentNodeId: nodeId });

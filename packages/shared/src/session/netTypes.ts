@@ -88,6 +88,8 @@ export interface PeerLite {
 export interface FloorInit {
   area: 'town' | 'dungeon';
   depth: number;
+  /** id биома этажа (v2 забег) — клиент выбирает по нему набор окружения (config `environment`). Город — не задан. */
+  biomeId?: string;
   grid: Grid;
   spawn: { x: number; y: number };
   stairs?: { x: number; y: number };

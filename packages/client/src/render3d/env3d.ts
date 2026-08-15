@@ -166,8 +166,12 @@ function normalizeWallVariant(geos: THREE.BufferGeometry[], unitScale: number): 
   for (const g of geos) g.translate(0, -comb2.min.y, 0);        // общий низ пары на y=0
 }
 
-/** Загрузить тайлсет окружения (пол — варианты; стена — варианты по паре низ+верх) из /assets. Масштаб — из первого тайла ПОЛА. */
-export async function loadEnvKit(floorUrl: string, wallUrl: string): Promise<EnvKit> {
+/** Опции загрузки тайлсета: material-override (общий инстанс на роль — дешевле для слабых ПК). null/пропуск = материал из GLB. */
+export interface EnvKitOpts { floorMat?: THREE.Material | null; wallMat?: THREE.Material | null }
+
+/** Загрузить тайлсет окружения (пол — варианты; стена — варианты по паре низ+верх) из /assets. Масштаб — из первого тайла ПОЛА.
+ *  opts.floorMat/wallMat — принудительный общий материал (override): один инстанс на все тайлы пола / все части стены. */
+export async function loadEnvKit(floorUrl: string, wallUrl: string, opts?: EnvKitOpts): Promise<EnvKit> {
   const loader = new GLTFLoader();
   const kit: EnvKit = { floors: [], walls: [] };
   try {
@@ -178,7 +182,13 @@ export async function loadEnvKit(floorUrl: string, wallUrl: string): Promise<Env
     const foot = Math.max(e.x, e.y, e.z);   // плоский тайл → footprint = наибольшая сторона (Z-up/Y-up без разницы)
     const unitScale = foot > 1e-4 ? TILE / foot : 1;
     for (const t of floors) normalizeFloorGeo(t.geo, unitScale);
-    kit.floors = floors.map((t) => ({ geo: t.geo, mat: t.mat }));
+    const floorMat = opts?.floorMat ?? null;                       // override → один материал на весь пол
+    kit.floors = floors.map((t) => ({ geo: t.geo, mat: floorMat ?? t.mat }));
+
+    // Материал стены: override → ОДИН общий низ (wallBaseMat) + ОДИН общий верх с фейдом (клон) — минимум шейдер-программ.
+    const wallBaseMat = opts?.wallMat ?? null;
+    const wallFadeMat = wallBaseMat ? wallBaseMat.clone() : null;
+    if (wallFadeMat) applyWallFade(wallFadeMat);
 
     // Стена: группируем меши в варианты по базе имени (пара lo+hi). Если токенов lo/hi нет вовсе — каждый меш = свой вариант.
     const hasParts = rawWalls.some((t) => wallPart(t.name) !== null);
@@ -191,8 +201,10 @@ export async function loadEnvKit(floorUrl: string, wallUrl: string): Promise<Env
       normalizeWallVariant(tiles.map((t) => t.geo), unitScale);
       const parts: WallPart[] = tiles.map((t) => {
         const fade = wallPart(t.name) !== 'lo';   // низ (lo) не фейдится, всё прочее (hi/одиночный меш) — тает
-        if (fade) applyWallFade(t.mat);
-        return { geo: t.geo, mat: t.mat, fade };
+        let mat: THREE.Material;
+        if (wallBaseMat) { mat = fade ? wallFadeMat! : wallBaseMat; }   // override: общий инстанс на роль
+        else { mat = t.mat; if (fade) applyWallFade(mat); }             // из GLB: фейд навешиваем на верх
+        return { geo: t.geo, mat, fade };
       });
       return { parts };
     });

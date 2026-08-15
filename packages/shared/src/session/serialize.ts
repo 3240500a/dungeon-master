@@ -64,6 +64,7 @@ export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorO
   return {
     area,
     depth: w.depth,
+    biomeId: w.biomeId,
     grid: w.grid,
     spawn: { ...w.spawn },
     stairs: w.stairs ? { ...w.stairs } : undefined,

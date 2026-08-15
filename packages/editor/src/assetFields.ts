@@ -59,8 +59,10 @@ async function uploadAsset(id: string, data: ArrayBuffer, contentType: string): 
   return r.json() as Promise<{ url: string }>;
 }
 
-/** Текст-поле url + кнопка загрузки файла (PNG/JPG/WEBP/GLB) на сервер → url ассета. `parent.id` → имя файла. */
-export function renderUploadField(value: unknown, onChange: (v: unknown) => void, parent: Record<string, unknown> | undefined): HTMLElement {
+/** Текст-поле url + кнопка загрузки файла (PNG/JPG/WEBP/GLB) на сервер → url ассета. Имя ассета на диске = `parent.id`
+ *  (по умолчанию), либо имя выбранного файла при `idFromFilename` (нужно, когда у записи НЕСКОЛЬКО url-полей — пол+стена
+ *  окружения — чтобы они не перезаписывали друг друга под одним parent.id). */
+export function renderUploadField(value: unknown, onChange: (v: unknown) => void, parent: Record<string, unknown> | undefined, idFromFilename = false): HTMLElement {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap';
   const txt = document.createElement('input');
@@ -84,7 +86,8 @@ export function renderUploadField(value: unknown, onChange: (v: unknown) => void
     const f = file.files?.[0];
     if (!f) return;
     const ext = f.name.toLowerCase().split('.').pop() ?? 'bin';
-    const id = String((parent?.id as string) || f.name.replace(/\.[^.]+$/, '')).replace(/[^a-zA-Z0-9_-]/g, '') || 'asset';
+    const nameId = f.name.replace(/\.[^.]+$/, '');   // имя файла без расширения
+    const id = String((idFromFilename ? nameId : (parent?.id as string) || nameId)).replace(/[^a-zA-Z0-9_-]/g, '') || 'asset';
     status.textContent = 'загрузка…'; status.style.color = '#ffb020';
     f.arrayBuffer()
       .then((buf) => uploadAsset(id, buf, CONTENT_TYPE[ext] ?? 'application/octet-stream'))

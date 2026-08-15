@@ -189,6 +189,8 @@ export interface WorldState {
   runNodeId?: string;
   runNodeType?: string;
   floorModifiers?: string[];
+  /** id биома текущего этажа (v2) — для выбора набора окружения на клиенте. */
+  biomeId?: string;
   /** Запертые ворота этажа (группы клеток `Cell.Door`); открываются своим рычагом. */
   doors: WorldDoor[];
   /** Рычаги этажа — каждый открывает свою дверь (по `doorId`), `used` после нажатия. */
