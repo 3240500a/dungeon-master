@@ -214,7 +214,7 @@ export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: ()
   matRow(met, 'Smoothness', matSlider(1 - num(m.roughness, 0.8), 0, 1, 0.01, (v) => { m.roughness = +(1 - v).toFixed(3); live(); }));   // Unity: 1 − roughness (множитель карты)
   matRow(met, 'Roughness ±сдвиг', matSlider(num(m.roughnessOffset, 0), -1, 1, 0.02, (v) => { m.roughnessOffset = v; live(); }));   // ПОВЕРХ карты: + матовее (гасит глянец швов), − глянцевее
   matRow(met, 'Roughness Map', texSelect(textureIds(), str(m.roughnessMap), (v) => setTex('roughnessMap', v)));
-  matRow(met, 'Карта = Smoothness', matCheck(!!m.roughnessIsSmoothness, (v) => { m.roughnessIsSmoothness = v; live(); }, 'Карта на деле SMOOTHNESS (Unity: ярче=глаже) — инвертировать 1−value. Включи, если карта читается наоборот (глянец/матовость перепутаны).'));
+  matRow(met, '🔄 Инверт. карту', matCheck(!!m.roughnessIsSmoothness, (v) => { m.roughnessIsSmoothness = v; live(); }, 'ИНВЕРТИРОВАТЬ карту шероховатости (1−value). Включи, если глянец и матовость перепутаны местами (карта — Smoothness из Unity: ярче=глаже).'));
   right.appendChild(met);
 
   const nrm = matSection('Normal Map');
