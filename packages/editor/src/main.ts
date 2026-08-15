@@ -906,7 +906,7 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
     form.appendChild(renderRoomEditor(arr[selectedIndex] as RoomPrefab, biomeOpts, render));
   } else if (current === 'materials') {
     // Материалы — Unity-подобная панель (Base/Metallic+Smoothness/Normal/Emission/Occlusion) вместо авто-формы.
-    form.appendChild(renderMaterialPanel(arr[selectedIndex] as Record<string, unknown>, textureIds, (v) => { arr[selectedIndex] = v; render(); }));
+    form.appendChild(renderMaterialPanel(arr[selectedIndex] as Record<string, unknown>, textureIds, () => (data['textures'] as Record<string, unknown>[]) ?? [], (v) => { arr[selectedIndex] = v; render(); }));
   } else if (current === 'models' && elemSchema._def.typeName === 'ZodObject') {
     // Меши — поля ПО КАТЕГОРИИ модели: окружение не показывает персонажные slot/body/boneScale/boneOffsets/grip/… (только id/name/url/kind/scale).
     form.appendChild(renderModelForm(elemSchema as z.ZodObject<z.ZodRawShape>, arr[selectedIndex] as Record<string, unknown>, render));

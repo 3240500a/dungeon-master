@@ -6,6 +6,10 @@
  * Регистрируются в `main.ts` через `fieldCustomRenderers` по имени поля. Аплоад — DEV-only (в проде 403).
  */
 
+import { createMaterialPreview, type MaterialPreview, type MatCfg, type TexCfg } from './materialPreview.js';
+
+let activeMatPreview: MaterialPreview | undefined;   // одна превью-сфера за раз (гасим прошлый WebGL-контекст при пересборке панели)
+
 const clamp01 = (n: number): number => Math.max(0, Math.min(1, n));
 const to255 = (n: number): number => Math.round(clamp01(n) * 255);
 const hex2 = (n: number): string => n.toString(16).padStart(2, '0');
@@ -151,49 +155,92 @@ function matSlider(value: number, min: number, max: number, step: number, onChan
   n.addEventListener('change', () => { r.value = n.value; onChange(parseFloat(n.value)); });
   wrap.append(r, n); return wrap;
 }
-/** Панель материала (аналог Surface Inputs в Unity URP). Smoothness = 1 − roughness. Мутирует `mat` на месте + onChange. */
-export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: () => string[], onChange: (v: Record<string, unknown>) => void): HTMLElement {
-  const m = mat; const emit = (): void => onChange(m);
+/** Чекбокс + подпись «вкл» (булевы поля материала). */
+function matCheck(value: boolean, onChange: (v: boolean) => void, title?: string): HTMLElement {
+  const wrap = document.createElement('label'); wrap.style.cssText = 'display:inline-flex;gap:6px;align-items:center;cursor:pointer'; if (title) wrap.title = title;
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = value;
+  const t = document.createElement('span'); t.textContent = value ? 'вкл' : ''; t.style.cssText = 'font-size:11px;color:#9aa';
+  cb.addEventListener('change', () => { t.textContent = cb.checked ? 'вкл' : ''; onChange(cb.checked); });
+  wrap.append(cb, t); return wrap;
+}
+
+/** Панель материала (аналог Surface Inputs в Unity URP) + живая ПРЕВЬЮ-СФЕРА нашим рендером (Three.js). Smoothness =
+ *  1 − roughness. Мутирует `mat` на месте; параметры видны на сфере в реальном времени (без ре-рендера страницы).
+ *  onChange зовём лишь на смену id/name (обновить подпись в списке). texData — все текстуры (для превью и «Fix»). */
+export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: () => string[], texData: () => Record<string, unknown>[], onChange: (v: Record<string, unknown>) => void): HTMLElement {
+  const m = mat;
   const num = (v: unknown, d = 0): number => (typeof v === 'number' ? v : d);
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
-  const setTex = (key: string, v: string): void => { if (v) m[key] = v; else delete m[key]; emit(); };
+
+  activeMatPreview?.dispose();
+  const preview = createMaterialPreview(240);
+  activeMatPreview = preview;
+  const live = (): void => preview.update(m as MatCfg, texData() as unknown as TexCfg[]);   // применить материал на сфере (реалтайм)
+  const setTex = (key: string, v: string): void => { if (v) m[key] = v; else delete m[key]; live(); };
+
   const box = document.createElement('div');
+  const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap';
+  const left = document.createElement('div'); left.style.cssText = 'flex:0 0 auto';
+  left.appendChild(preview.el);
+  const hint = document.createElement('div'); hint.textContent = 'тащи мышью — вращать · параметры видны на сфере сразу'; hint.style.cssText = 'font-size:10px;color:#667;margin-top:5px;max-width:240px';
+  left.appendChild(hint);
+  const right = document.createElement('div'); right.style.cssText = 'flex:1;min-width:300px';
+  row.append(left, right); box.appendChild(row);
 
   const head = document.createElement('div'); head.style.cssText = 'display:flex;gap:8px;margin-bottom:6px';
   for (const [key, ph] of [['id', 'id'], ['name', 'имя']] as [string, string][]) {
     const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = ph; inp.value = str(m[key]); inp.style.cssText = inputCss + ';flex:1';
-    inp.addEventListener('input', () => { m[key] = inp.value; emit(); });
+    inp.addEventListener('input', () => { m[key] = inp.value; });               // мутация на месте (фокус не теряем)
+    inp.addEventListener('change', () => onChange(m));                          // на blur — обновить подпись в списке
     head.appendChild(inp);
   }
-  box.appendChild(head);
+  right.appendChild(head);
 
   const base = matSection('Base Map');
   matRow(base, 'Текстура', texSelect(textureIds(), str(m.map), (v) => setTex('map', v)));
-  matRow(base, 'Цвет (tint)', renderColorField(m.baseColor ?? [1, 1, 1], (v) => { m.baseColor = v; emit(); }));
-  matRow(base, 'Прозрачность', matSlider(num(m.opacity, 1), 0, 1, 0.01, (v) => { m.opacity = v; emit(); }));
-  box.appendChild(base);
+  matRow(base, 'Цвет (tint)', renderColorField(m.baseColor ?? [1, 1, 1], (v) => { m.baseColor = v; live(); }));
+  matRow(base, 'Прозрачность', matSlider(num(m.opacity, 1), 0, 1, 0.01, (v) => { m.opacity = v; live(); }));
+  right.appendChild(base);
 
   const met = matSection('Metallic Map');
   matRow(met, 'Текстура', texSelect(textureIds(), str(m.metalnessMap), (v) => setTex('metalnessMap', v)));
-  matRow(met, 'Metallic', matSlider(num(m.metalness, 0), 0, 1, 0.01, (v) => { m.metalness = v; emit(); }));
-  matRow(met, 'Smoothness', matSlider(1 - num(m.roughness, 0.8), 0, 1, 0.01, (v) => { m.roughness = +(1 - v).toFixed(3); emit(); }));   // Unity: 1 − roughness
+  matRow(met, 'Metallic', matSlider(num(m.metalness, 0), 0, 1, 0.01, (v) => { m.metalness = v; live(); }));
+  matRow(met, 'Smoothness', matSlider(1 - num(m.roughness, 0.8), 0, 1, 0.01, (v) => { m.roughness = +(1 - v).toFixed(3); live(); }));   // Unity: 1 − roughness
   matRow(met, 'Roughness Map', texSelect(textureIds(), str(m.roughnessMap), (v) => setTex('roughnessMap', v)));
-  box.appendChild(met);
+  right.appendChild(met);
 
   const nrm = matSection('Normal Map');
   matRow(nrm, 'Текстура', texSelect(textureIds(), str(m.normalMap), (v) => setTex('normalMap', v)));
-  matRow(nrm, 'Сила', matSlider(num(m.normalScale, 1), 0, 2, 0.05, (v) => { m.normalScale = v; emit(); }));
-  box.appendChild(nrm);
+  matRow(nrm, 'Сила', matSlider(num(m.normalScale, 1), 0, 2, 0.05, (v) => { m.normalScale = v; live(); }));
+  matRow(nrm, 'Flip Green', matCheck(!!m.normalFlipY, (v) => { m.normalFlipY = v; live(); }, 'Инвертировать зелёный канал: 3ds Max/DirectX (Y−) → OpenGL/glTF (Y+). Если выпуклости выглядят как вмятины — включи.'));
+  // «Fix» = пометить нормал-текстуру linear (наклон — данные, не цвет). Аналог кнопки «Fix Now» у нормалмапы в Unity.
+  const fix = document.createElement('button'); fix.type = 'button'; fix.textContent = '🛠 Fix нормалмап';
+  fix.title = 'Пометить нормал-текстуру как linear (данные наклона, не sRGB-цвет). Аналог «Fix Now» в Unity.';
+  fix.style.cssText = 'padding:4px 8px;cursor:pointer;background:#2c2c3a;color:#e8e8f0;border:1px solid #3c3c4a;border-radius:4px;font-size:12px';
+  const fixNote = document.createElement('span'); fixNote.style.cssText = 'font-size:11px;color:#9aa;margin-left:8px';
+  fix.addEventListener('click', () => {
+    const id = str(m.normalMap);
+    if (!id) { fixNote.textContent = 'нет нормал-текстуры'; fixNote.style.color = '#ff9b9b'; return; }
+    const t = texData().find((x) => x.id === id);
+    if (t) { t.colorSpace = 'linear'; live(); fixNote.textContent = `ок: ${id} → linear`; fixNote.style.color = '#7fd67f'; }
+    else { fixNote.textContent = 'текстура не найдена в конфиге'; fixNote.style.color = '#ff9b9b'; }
+  });
+  const fixRow = document.createElement('div'); fixRow.style.cssText = matRowCss;
+  const fixLbl = document.createElement('span'); fixLbl.style.cssText = 'color:#9aa;font-size:12px';
+  const fixWrap = document.createElement('div'); fixWrap.append(fix, fixNote);
+  fixRow.append(fixLbl, fixWrap); nrm.appendChild(fixRow);
+  right.appendChild(nrm);
 
   const emi = matSection('Emission');
-  matRow(emi, 'Цвет', renderColorField(m.emissive ?? [0, 0, 0], (v) => { m.emissive = v; emit(); }));
-  matRow(emi, 'Интенсивность', matSlider(num(m.emissiveIntensity, 1), 0, 8, 0.1, (v) => { m.emissiveIntensity = v; emit(); }));
+  matRow(emi, 'Цвет', renderColorField(m.emissive ?? [0, 0, 0], (v) => { m.emissive = v; live(); }));
+  matRow(emi, 'Интенсивность', matSlider(num(m.emissiveIntensity, 1), 0, 8, 0.1, (v) => { m.emissiveIntensity = v; live(); }));
   matRow(emi, 'Текстура', texSelect(textureIds(), str(m.emissiveMap), (v) => setTex('emissiveMap', v)));
-  box.appendChild(emi);
+  right.appendChild(emi);
 
   const occ = matSection('Occlusion');
   matRow(occ, 'AO Map', texSelect(textureIds(), str(m.aoMap), (v) => setTex('aoMap', v)));
-  box.appendChild(occ);
+  right.appendChild(occ);
 
+  live();   // первичная отрисовка материала на сфере
   return box;
 }

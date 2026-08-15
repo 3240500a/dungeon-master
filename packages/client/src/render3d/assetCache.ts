@@ -10,7 +10,7 @@ import * as THREE from 'three';
 export interface TextureCfg { id: string; url: string; colorSpace: 'srgb' | 'linear'; wrapS: 'repeat' | 'clamp'; wrapT: 'repeat' | 'clamp'; flipY: boolean }
 export interface MaterialCfg {
   id: string; baseColor: [number, number, number]; opacity: number; metalness: number; roughness: number;
-  emissive: [number, number, number]; emissiveIntensity: number; normalScale: number;
+  emissive: [number, number, number]; emissiveIntensity: number; normalScale: number; normalFlipY?: boolean;
   map?: string; normalMap?: string; roughnessMap?: string; metalnessMap?: string; emissiveMap?: string; aoMap?: string;
 }
 
@@ -43,7 +43,7 @@ export function getMaterial(cfg: { materials: MaterialCfg[]; textures: TextureCf
   });
   const tex = (tid?: string): THREE.Texture | null => (tid ? getTexture(cfg.textures, tid) : null);
   if (m.map) mat.map = tex(m.map);
-  if (m.normalMap) { mat.normalMap = tex(m.normalMap); mat.normalScale.set(m.normalScale, m.normalScale); }
+  if (m.normalMap) { mat.normalMap = tex(m.normalMap); mat.normalScale.set(m.normalScale, m.normalFlipY ? -m.normalScale : m.normalScale); }   // flip Y = зелёный DirectX(3ds Max)→OpenGL
   if (m.roughnessMap) mat.roughnessMap = tex(m.roughnessMap);
   if (m.metalnessMap) mat.metalnessMap = tex(m.metalnessMap);
   if (m.emissiveMap) mat.emissiveMap = tex(m.emissiveMap);

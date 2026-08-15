@@ -1716,6 +1716,7 @@ export const materialsSchema = z.array(z.object({
   emissive: rgb.default([0, 0, 0]),
   emissiveIntensity: z.number().min(0).default(1),
   normalScale: z.number().default(1),
+  normalFlipY: z.boolean().default(false),              // инверсия зелёного канала нормалмапы (DirectX/3ds Max → OpenGL/glTF): normalScale.y *= -1
   map: z.string().optional(),                           // textureId (albedo)
   normalMap: z.string().optional(), roughnessMap: z.string().optional(), metalnessMap: z.string().optional(),
   emissiveMap: z.string().optional(), aoMap: z.string().optional(),
