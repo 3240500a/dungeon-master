@@ -46,7 +46,7 @@ export function createMaterialPreview(size = 240): MaterialPreview {
   const mat = new THREE.MeshStandardMaterial({ color: 0xbfbfbf, roughness: 0.8, metalness: 0 });
   const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), mat);
   scene.add(sphere);
-  let envIntensity = 1.0;    // сила вклада IBL (0 = тусклый вид игры; выше — виднее шероховатость/металл). Слайдер в панели.
+  let envIntensity = 0;      // ВЫКЛ по умолчанию = вид игры (в игре envMap нет). IBL даёт ложный блик швов (Fresnel по канавкам) — глушим. Слайдер поднимает для авторинга металла.
   let roughOff = 0, metalOff = 0;   // смещения (offset-ползунки), уходят в шейдер каждый кадр
   // Смещение roughness/metalness поверх карты — тот же приём, что assetCache.applyPbrOffset; юниформы обновляем в loop.
   let matShader: { uniforms: Record<string, { value: number }> } | null = null;
