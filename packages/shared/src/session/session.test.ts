@@ -844,9 +844,23 @@ describe('GameSession — нокдаун (сбить с ног)', () => {
     expect(m.stunTimer).toBe(0);                                       // нокдаун вместо стана
   });
 
+  it('нокдаун отталкивает монстра ОТ атакующего (авторитетный глайд позиции)', () => {
+    const { r, s, p, m } = arena();
+    const kd = r.get('balance').knockdown;
+    kd.chanceBase = 1; kd.maxChance = 1; kd.targetWeightResist = 0;   // гарантируем ролл
+    let xKnock = NaN;
+    for (let i = 0; i < 90 && Number.isNaN(xKnock); i++) { s.tick(1 / 30, { p1: { ...idle, facing: face(p, m), attack: true } }); if (m.downTimer > 0) xKnock = m.pos.x; }
+    expect(m.downTimer).toBeGreaterThan(0);
+    expect(m.pos.x - p.pos.x).toBeGreaterThan(0);                     // санити: монстр справа от игрока → толкать вправо (+x)
+    for (let i = 0; i < Math.ceil(kd.knockbackSec * 30) + 3; i++) s.tick(1 / 30, { p1: idle });   // прогон окна отлёта
+    expect(m.pos.x).toBeGreaterThan(xKnock + 5);                      // сместился ДАЛЬШЕ вправо = ОТ игрока (сервер сам двигает pos)
+    expect(m.knock).toBeNull();                                      // глайд отлёта завершился
+  });
+
   it('лежачий уязвим: удар по нему бьёт сильнее (+vulnBonusPct)', () => {
     // Одна сессия (RNG непрерывен, без десинка): собираем урон по монстру не-лежачему и лежачему, сравниваем максимумы.
-    const { s, p, m } = arena({ vision: 0, hp: 9_999_999 });   // слеп (не мешает ИИ-рнг) + бессмертен на время теста
+    const { r, s, p, m } = arena({ vision: 0, hp: 9_999_999 });   // слеп (не мешает ИИ-рнг) + бессмертен на время теста
+    r.get('balance').knockdown.chanceBase = 0;   // изолируем: случайный нокдаун не должен вмешиваться (мы держим downed вручную)
     const collect = (downed: boolean, ticks: number): number[] => {
       const out: number[] = [];
       for (let i = 0; i < ticks; i++) {

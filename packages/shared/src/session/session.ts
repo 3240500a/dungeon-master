@@ -345,7 +345,16 @@ export class GameSession {
       }
       // Нокдаун (сбит с ног): полностью беспомощен — не ходит/не атакует/не регенит, пока лежит и встаёт. DoT выше
       // всё равно тикает (лежачий уязвим). Флаг едет в снапшот (клиент проигрывает рагдолл-падение и подъём).
-      if (m.downTimer > 0) { m.downTimer = Math.max(0, m.downTimer - dt); m.vel.x = 0; m.vel.y = 0; m.windup = null; continue; }
+      if (m.downTimer > 0) {
+        m.downTimer = Math.max(0, m.downTimer - dt); m.vel.x = 0; m.vel.y = 0; m.windup = null;
+        if (m.knock) {   // авторитетный отлёт: сервер глайдит позицию ОТ атакующего (стены гасят); клиент ведёт рагдолл по ней же → без рассинхрона
+          m.pos = moveWithCollision(m.pos, { x: m.knock.dx * m.knock.speed, y: m.knock.dy * m.knock.speed }, m.radius, this.world.grid, dt);
+          m.knock.remaining -= dt;
+          if (m.knock.remaining <= 0) m.knock = null;
+        }
+        if (m.downTimer <= 0) m.knock = null;   // встал — снять отлёт (страховка при misconfig knockbackSec>downTimer)
+        continue;
+      }
       if (m.def.hpRegen > 0 && m.hp < m.maxHp) {
         m.hp = Math.min(m.maxHp, m.hp + m.def.hpRegen * dm.hpRegenMult * dt);
       }
@@ -928,7 +937,7 @@ export class GameSession {
    * Гарант от скилла (`opts.knockdownSec>0`) — в обход шанса/сопротивления. Роняет: `downTimer` (лежит+встаёт),
    * снимает стан/замах, шлёт событие с направлением падения (ОТ атакующего). Возвращает true, если сбит.
    */
-  private tryKnockdown(killer: PlayerEntity, m: MonsterEntity, opts: HitOpts): boolean {
+  private tryKnockdown(killer: PlayerEntity, m: MonsterEntity, opts: HitOpts, damage: number): boolean {
     const kd = this.cfg.get('balance').knockdown;
     if (!kd.enabled || m.downTimer > 0) return false;   // выкл. или уже лежит
     const guaranteed = (opts.knockdownSec ?? 0) > 0;
@@ -944,6 +953,11 @@ export class GameSession {
     m.downTimer = downSec + kd.riseSec;   // лежит (downSec) + встаёт (riseSec) — весь период беспомощен
     m.stunTimer = 0; m.windup = null;     // нокдаун поглощает стан/замах
     const a = Math.atan2(m.pos.y - killer.pos.y, m.pos.x - killer.pos.x);   // валится ОТ атакующего
+    // Отлёт от силы удара (как смерть): дистанция ×= масштаб урона (доля от maxHP × dmgScale), в клампе [0.4, 2].
+    const frac = m.def.hp > 0 ? damage / m.def.hp : 0;
+    const dist = kd.knockbackDist * Math.max(0.4, Math.min(2, 0.4 + frac * kd.knockbackDmgScale));
+    const sec = Math.max(0.01, kd.knockbackSec);
+    m.knock = dist > 0.5 ? { dx: Math.cos(a), dy: Math.sin(a), remaining: sec, speed: dist / sec } : null;   // авторитетный глайд (сервер двигает pos)
     this.events.push({ type: 'knockdown', id: m.id, dx: Math.cos(a), dy: Math.sin(a) });
     return true;
   }
@@ -1079,7 +1093,7 @@ export class GameSession {
     if (this.sustain && !this.procActive && res.damage > 0) this.rollHitProcs(killer, 'hit');
     if (!res.died) {
       // Нокдаун (сбить с ног) приоритетнее стана/отброса — если сработал, монстр падает рагдоллом (взаимоискл.).
-      const knocked = this.tryKnockdown(killer, m, opts);
+      const knocked = this.tryKnockdown(killer, m, opts, res.damage);
       if (!knocked) {
         // Гарантированный стан скилла приоритетнее случайного от оружия/ошеломления.
         if (opts.stunSec && opts.stunSec > 0) { m.stunTimer = Math.max(m.stunTimer, opts.stunSec); this.events.push({ type: 'stun', id: m.id }); }

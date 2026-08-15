@@ -249,8 +249,8 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       downT = Math.max(0.1, downSec) + downRise;
       riseInit = false;
       syncRagdollSim();          // тела в pw.step на весь нокдаун
-      ragdoll.setDead(true);     // моторы off + таз dynamic → падение
-      ragdoll.hit('Hips', dx, 0.05, dz, 1); ragdoll.hit('Torso', dx, 0.12, dz, 0.6);   // толчок таза+верха → валится в направлении
+      ragdoll.setDead(true);     // моторы off + таз dynamic → падение. Горизонт. отлёт даёт СЕРВЕР (глайд позиции); тут только опрокидывание.
+      ragdoll.hit('Torso', dx, 0.12, dz, 0.5);   // мягкий толчок верха назад → валится ОТ атакующего (не «взрыв»)
     },
     setWeapon(key, models) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
       if (key === weapon) return;
@@ -275,11 +275,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
         if (snapNext) { rx = tx; rz = tz; snapNext = false; }
         rx += (tx - rx) * 0.12; rz += (tz - rz) * 0.12;      // мир-позиция плавно к цели (сервер держит монстра на месте, пока лежит)
         player.setVel(0, 0); player.setYaw(tyaw); if (first) { player.snapYaw(); first = false; } player.step(dt);   // манекен в idle-стойку — цель подъёма
-        if (downT > downRise) {                              // ЛЕЖИТ: свободный коллапс (как смерть), без прижима/бленда
+        if (downT > downRise) {                              // ЛЕЖИТ: свободный коллапс (поза/падение — физика), но КОРЕНЬ по серверной позиции
           ragdoll.update(dt);
           renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
+          solid.root.position.x = rx; solid.root.position.z = rz; solid.root.updateMatrixWorld(true);   // XZ = серверная позиция (авторитетный отлёт), Y от физики (падение) → без рассинхрона
         } else {                                             // ВСТАЁТ: таз обратно kinematic и лерпит с пола к стойке, верх блендит физику→позу
-          if (!riseInit) { const hp = ragdoll.bodyPos('Hips'); risePos.set(hp[0], hp[1], hp[2]); ragdoll.setDead(false); riseInit = true; }   // записать упавший таз + вернуть моторы
+          if (!riseInit) { const hp = ragdoll.bodyPos('Hips'); risePos.set(rx, hp[1], rz); ragdoll.setDead(false); riseInit = true; }   // подъём из СЕРВЕРНОЙ позиции (XZ=rx/rz), Y с пола → без «прыжка»
           const t = 1 - Math.max(0, downT) / downRise;       // прогресс подъёма 0→1
           const e = t * t * (3 - 2 * t);                     // smoothstep — мягкий старт/финиш
           // Кормим рагдолл ТОЛЬКО углами позы (моторы распрямляют тело) + kinematic-таз, БЕЗ мир-пинов (пины на стоячих

@@ -244,9 +244,11 @@ export async function startOnline3d(): Promise<void> {
     solid.root.traverse((o) => {
       const m = o as THREE.Mesh;
       if (!(m as { isMesh?: boolean }).isMesh || !m.geometry) return;
-      const g = m.geometry.clone();
+      let g = m.geometry.clone();
+      if (g.index) g = g.toNonIndexed();   // единый режим: все НЕ-индексированные (GLB-оружие индексировано, процедурка — нет → mergeGeometries падал)
+      // Единый набор атрибутов {position, normal, color} для merge: срезаем всё лишнее (uv/tangent/skin у GLB-мешей).
+      for (const a of ['uv', 'uv1', 'uv2', 'tangent', 'skinIndex', 'skinWeight']) g.deleteAttribute(a);
       if (!g.getAttribute('normal')) g.computeVertexNormals();
-      g.deleteAttribute('uv'); g.deleteAttribute('uv1'); g.deleteAttribute('uv2');   // единый набор атрибутов для merge
       const mat = m.material as THREE.MeshStandardMaterial;
       _bkC.copy(mat.color ?? _bkC.setHex(0x888888));
       const n = g.getAttribute('position').count, col = new Float32Array(n * 3);

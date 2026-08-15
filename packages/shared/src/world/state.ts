@@ -102,6 +102,9 @@ export interface MonsterEntity {
   /** Нокдаун (сбит с ног), сек: >0 — лежит/встаёт, полностью беспомощен (не ходит/не атакует/не регенит) и уязвим.
    *  Включает фазу лежания (downSec) + подъёма (riseSec); клиент по этому флагу проигрывает рагдолл-коллапс и подъём. */
   downTimer: number;
+  /** Авторитетный отлёт при нокдауне: глайд позиции ОТ атакующего (единичный вектор + остаток сек + скорость px/с).
+   *  Сервер двигает pos, клиент рагдоллом ведёт корень по ней же — без рассинхрона. null — нет отлёта. */
+  knock: { dx: number; dy: number; remaining: number; speed: number } | null;
   /** Восприятие: покой (сканирует) / погоня (поводок). */
   aiState: 'idle' | 'chase';
   /** Остаток «поводка» преследования, сек. */
@@ -239,6 +242,7 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     windup: null,
     stunTimer: 0,
     downTimer: 0,
+    knock: null,
     aiState: 'idle',
     leash: 0,
     alertTimer: 0,
