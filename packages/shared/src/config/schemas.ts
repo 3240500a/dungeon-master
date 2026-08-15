@@ -1718,6 +1718,8 @@ export const materialsSchema = z.array(z.object({
   normalScale: z.number().default(1),
   normalFlipY: z.boolean().default(false),              // инверсия зелёного канала нормалмапы (DirectX/3ds Max → OpenGL/glTF): normalScale.y *= -1
   roughnessIsSmoothness: z.boolean().default(false),    // roughness-карта на деле SMOOTHNESS (Unity: ярче=глаже) → инвертируем 1−value
+  roughnessOffset: z.number().default(0),               // смещение −1…+1 ПОВЕРХ карты/скаляра: clamp(rough + off, 0, 1). + матовее, − глянцевее
+  metalnessOffset: z.number().default(0),               // смещение −1…+1 ПОВЕРХ карты/скаляра металличности
   map: z.string().optional(),                           // textureId (albedo)
   normalMap: z.string().optional(), roughnessMap: z.string().optional(), metalnessMap: z.string().optional(),
   emissiveMap: z.string().optional(), aoMap: z.string().optional(),

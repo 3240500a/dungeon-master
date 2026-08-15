@@ -187,7 +187,7 @@ export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: ()
   // Слайдер силы окружения (IBL): 0 = как в игре (только факел, тускло); выше — подсветить металл для авторинга.
   const envRow = document.createElement('div'); envRow.style.cssText = 'margin-top:6px;display:flex;gap:6px;align-items:center';
   const envLbl = document.createElement('span'); envLbl.textContent = 'Окружение'; envLbl.title = 'Вклад отражений окружения (IBL). 0 = как в игре (тускло); выше — подсветить металл при авторинге.'; envLbl.style.cssText = 'font-size:11px;color:#9aa;min-width:72px';
-  envRow.append(envLbl, matSlider(0.35, 0, 1, 0.05, (v) => preview.setEnv(v)));
+  envRow.append(envLbl, matSlider(1, 0, 2, 0.05, (v) => preview.setEnv(v)));
   left.appendChild(envRow);
   const right = document.createElement('div'); right.style.cssText = 'flex:1;min-width:300px';
   row.append(left, right); box.appendChild(row);
@@ -210,7 +210,9 @@ export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: ()
   const met = matSection('Metallic Map');
   matRow(met, 'Текстура', texSelect(textureIds(), str(m.metalnessMap), (v) => setTex('metalnessMap', v)));
   matRow(met, 'Metallic', matSlider(num(m.metalness, 0), 0, 1, 0.01, (v) => { m.metalness = v; live(); }));
-  matRow(met, 'Smoothness', matSlider(1 - num(m.roughness, 0.8), 0, 1, 0.01, (v) => { m.roughness = +(1 - v).toFixed(3); live(); }));   // Unity: 1 − roughness
+  matRow(met, 'Metallic ±сдвиг', matSlider(num(m.metalnessOffset, 0), -1, 1, 0.02, (v) => { m.metalnessOffset = v; live(); }));   // поверх карты: + металличнее, − нет
+  matRow(met, 'Smoothness', matSlider(1 - num(m.roughness, 0.8), 0, 1, 0.01, (v) => { m.roughness = +(1 - v).toFixed(3); live(); }));   // Unity: 1 − roughness (множитель карты)
+  matRow(met, 'Roughness ±сдвиг', matSlider(num(m.roughnessOffset, 0), -1, 1, 0.02, (v) => { m.roughnessOffset = v; live(); }));   // ПОВЕРХ карты: + матовее (гасит глянец швов), − глянцевее
   matRow(met, 'Roughness Map', texSelect(textureIds(), str(m.roughnessMap), (v) => setTex('roughnessMap', v)));
   matRow(met, 'Карта = Smoothness', matCheck(!!m.roughnessIsSmoothness, (v) => { m.roughnessIsSmoothness = v; live(); }, 'Карта на деле SMOOTHNESS (Unity: ярче=глаже) — инвертировать 1−value. Включи, если карта читается наоборот (глянец/матовость перепутаны).'));
   right.appendChild(met);

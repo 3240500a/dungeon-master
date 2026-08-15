@@ -11,7 +11,24 @@ export interface TextureCfg { id: string; url: string; colorSpace: 'srgb' | 'lin
 export interface MaterialCfg {
   id: string; baseColor: [number, number, number]; opacity: number; metalness: number; roughness: number;
   emissive: [number, number, number]; emissiveIntensity: number; normalScale: number; normalFlipY?: boolean; roughnessIsSmoothness?: boolean;
+  roughnessOffset?: number; metalnessOffset?: number;
   map?: string; normalMap?: string; roughnessMap?: string; metalnessMap?: string; emissiveMap?: string; aoMap?: string;
+}
+
+/** Смещение roughness/metalness ПОВЕРХ карты через шейдер: `factor = clamp(factor + offset, 0, 1)`. Ноль → не трогаем.
+ *  Цепляется к существующему onBeforeCompile (напр. фейд стен), чтобы не затирать его. */
+export function applyPbrOffset(mat: THREE.Material, roughOff: number, metalOff: number): void {
+  if (!roughOff && !metalOff) return;
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (shader): void => {
+    prev?.(shader, undefined as never);
+    shader.fragmentShader = 'uniform float uRoughOff;\nuniform float uMetalOff;\n' + shader.fragmentShader
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + uRoughOff, 0.0, 1.0);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = clamp(metalnessFactor + uMetalOff, 0.0, 1.0);');
+    shader.uniforms.uRoughOff = { value: roughOff };
+    shader.uniforms.uMetalOff = { value: metalOff };
+  };
+  mat.needsUpdate = true;
 }
 
 const textureCache = new Map<string, THREE.Texture>();
@@ -67,6 +84,7 @@ export function getMaterial(cfg: { materials: MaterialCfg[]; textures: TextureCf
   if (m.metalnessMap) mat.metalnessMap = tex(m.metalnessMap);
   if (m.emissiveMap) mat.emissiveMap = tex(m.emissiveMap);
   if (m.aoMap) mat.aoMap = tex(m.aoMap);
+  applyPbrOffset(mat, m.roughnessOffset ?? 0, m.metalnessOffset ?? 0);   // смещение roughness/metalness поверх карты
   materialCache.set(id, mat);
   return mat;
 }

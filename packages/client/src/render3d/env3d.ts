@@ -82,7 +82,9 @@ const wallFadeU = {
 };
 /** Навесить дизер-фейд по «лицу» на материал стены (процедурный matWall ИЛИ материал GLB-стены). */
 export function applyWallFade(mat: THREE.Material): void {
+  const prev = mat.onBeforeCompile;   // цепляемся (не затираем) — сохраняем возможный offset roughness/metalness из getMaterial
   mat.onBeforeCompile = (shader): void => {
+    prev?.(shader, undefined as never);
     Object.assign(shader.uniforms, wallFadeU);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nattribute vec2 aFacing;\nuniform vec2 uViewDir;')

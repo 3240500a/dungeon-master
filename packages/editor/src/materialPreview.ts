@@ -12,7 +12,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 export interface TexCfg { id: string; url?: string; colorSpace?: string; wrapS?: string; wrapT?: string; flipY?: boolean }
 export interface MatCfg {
   baseColor?: unknown; opacity?: unknown; metalness?: unknown; roughness?: unknown; emissive?: unknown;
-  emissiveIntensity?: unknown; normalScale?: unknown; normalFlipY?: unknown; roughnessIsSmoothness?: unknown;
+  emissiveIntensity?: unknown; normalScale?: unknown; normalFlipY?: unknown; roughnessIsSmoothness?: unknown; roughnessOffset?: unknown; metalnessOffset?: unknown;
   map?: unknown; normalMap?: unknown; roughnessMap?: unknown; metalnessMap?: unknown; emissiveMap?: unknown; aoMap?: unknown;
 }
 export interface MaterialPreview { el: HTMLElement; update(mat: MatCfg, textures: TexCfg[]): void; setEnv(intensity: number): void; dispose(): void }
@@ -36,15 +36,27 @@ export function createMaterialPreview(size = 240): MaterialPreview {
 
   // Свет КАК В ИГРЕ (env3d makeSceneLighting + факел): тусклый ambient/hemisphere/directional, основной вклад — тёплый
   // факел-point-light рядом. Так материал на сфере выглядит как в подземелье (roughness/metalness читаются честно).
-  scene.add(new THREE.AmbientLight(0x20222e, 0.5));
-  scene.add(new THREE.HemisphereLight(0x34384e, 0x141014, 0.35));
-  const dir = new THREE.DirectionalLight(0xb8c2dc, 0.2); dir.position.set(0.5, 1, 0.35); scene.add(dir);
-  const torch = new THREE.PointLight(0xffd0a0, 11, 14, 2); torch.position.set(2.2, 1.6, 2.4); scene.add(torch);   // факел (тёплый) — основной блик (сильнее, чтобы шероховатость читалась)
+  // Авторинг-свет (ярко, чтобы roughness/metalness ЧИТАЛИСЬ): key-directional + холодный fill + тёплый факел-ободок +
+  // окружение (envMapIntensity — слайдер). Тусклый «вид игры» = слайдер «Окружение» в 0. Материал тот же, что в игре.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 4, 5); scene.add(key);
+  const fill = new THREE.DirectionalLight(0x9fb4ff, 0.6); fill.position.set(-4, -1, 2); scene.add(fill);
+  const torch = new THREE.PointLight(0xff9a4a, 5, 16, 2); torch.position.set(-2.4, 1.8, -2.2); scene.add(torch);   // тёплый ободок-факел
 
   const mat = new THREE.MeshStandardMaterial({ color: 0xbfbfbf, roughness: 0.8, metalness: 0 });
   const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), mat);
   scene.add(sphere);
-  let envIntensity = 0.35;   // сила вклада IBL (0 = как в игре без окружения; выше — виднее шероховатость/металл). Слайдер в панели.
+  let envIntensity = 1.0;    // сила вклада IBL (0 = тусклый вид игры; выше — виднее шероховатость/металл). Слайдер в панели.
+  let roughOff = 0, metalOff = 0;   // смещения (offset-ползунки), уходят в шейдер каждый кадр
+  // Смещение roughness/metalness поверх карты — тот же приём, что assetCache.applyPbrOffset; юниформы обновляем в loop.
+  let matShader: { uniforms: Record<string, { value: number }> } | null = null;
+  mat.onBeforeCompile = (shader): void => {
+    shader.fragmentShader = 'uniform float uRoughOff;\nuniform float uMetalOff;\n' + shader.fragmentShader
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + uRoughOff, 0.0, 1.0);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = clamp(metalnessFactor + uMetalOff, 0.0, 1.0);');
+    shader.uniforms.uRoughOff = { value: roughOff }; shader.uniforms.uMetalOff = { value: metalOff };
+    matShader = shader as unknown as { uniforms: Record<string, { value: number }> };
+  };
 
   const loader = new THREE.TextureLoader();
   const texCache = new Map<string, THREE.Texture>();
@@ -65,6 +77,7 @@ export function createMaterialPreview(size = 240): MaterialPreview {
     if (el.isConnected) wasConnected = true;
     else if (wasConnected) { dispose(); return; }   // канвас убрали из DOM (сменили секцию/запись) → освободить WebGL-контекст
     if (auto) yaw += 0.005;
+    if (matShader) { matShader.uniforms.uRoughOff!.value = roughOff; matShader.uniforms.uMetalOff!.value = metalOff; }   // offset-ползунки живьём
     camera.position.set(Math.sin(yaw) * Math.cos(pitch) * R, Math.sin(pitch) * R, Math.cos(yaw) * Math.cos(pitch) * R);
     camera.lookAt(0, 0, 0);
     renderer.render(scene, camera);
@@ -101,6 +114,7 @@ export function createMaterialPreview(size = 240): MaterialPreview {
     mat.opacity = num(m.opacity, 1); mat.transparent = mat.opacity < 0.999;
     mat.metalness = num(m.metalness, 0);
     mat.roughness = num(m.roughness, 0.8);
+    roughOff = num(m.roughnessOffset, 0); metalOff = num(m.metalnessOffset, 0);   // offset-ползунки → в шейдер (loop)
     mat.emissive = col(m.emissive, 0x000000);
     mat.emissiveIntensity = num(m.emissiveIntensity, 1);
     mat.envMapIntensity = envIntensity;                  // вклад IBL (регулируется слайдером «Окружение»)
