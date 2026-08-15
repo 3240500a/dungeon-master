@@ -182,8 +182,13 @@ export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: ()
   const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap';
   const left = document.createElement('div'); left.style.cssText = 'flex:0 0 auto';
   left.appendChild(preview.el);
-  const hint = document.createElement('div'); hint.textContent = 'тащи мышью — вращать · параметры видны на сфере сразу'; hint.style.cssText = 'font-size:10px;color:#667;margin-top:5px;max-width:240px';
+  const hint = document.createElement('div'); hint.textContent = 'тащи мышью — вращать · свет как в подземелье · параметры видны сразу'; hint.style.cssText = 'font-size:10px;color:#667;margin-top:5px;max-width:240px';
   left.appendChild(hint);
+  // Слайдер силы окружения (IBL): 0 = как в игре (только факел, тускло); выше — подсветить металл для авторинга.
+  const envRow = document.createElement('div'); envRow.style.cssText = 'margin-top:6px;display:flex;gap:6px;align-items:center';
+  const envLbl = document.createElement('span'); envLbl.textContent = 'Окружение'; envLbl.title = 'Вклад отражений окружения (IBL). 0 = как в игре (тускло); выше — подсветить металл при авторинге.'; envLbl.style.cssText = 'font-size:11px;color:#9aa;min-width:72px';
+  envRow.append(envLbl, matSlider(0.2, 0, 1, 0.05, (v) => preview.setEnv(v)));
+  left.appendChild(envRow);
   const right = document.createElement('div'); right.style.cssText = 'flex:1;min-width:300px';
   row.append(left, right); box.appendChild(row);
 

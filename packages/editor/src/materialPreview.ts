@@ -15,7 +15,7 @@ export interface MatCfg {
   emissiveIntensity?: unknown; normalScale?: unknown; normalFlipY?: unknown;
   map?: unknown; normalMap?: unknown; roughnessMap?: unknown; metalnessMap?: unknown; emissiveMap?: unknown; aoMap?: unknown;
 }
-export interface MaterialPreview { el: HTMLElement; update(mat: MatCfg, textures: TexCfg[]): void; dispose(): void }
+export interface MaterialPreview { el: HTMLElement; update(mat: MatCfg, textures: TexCfg[]): void; setEnv(intensity: number): void; dispose(): void }
 
 const num = (v: unknown, d: number): number => (typeof v === 'number' ? v : d);
 const col = (v: unknown, d: number): THREE.Color => (Array.isArray(v) ? new THREE.Color(v[0] as number, v[1] as number, v[2] as number) : new THREE.Color(d));
@@ -28,20 +28,23 @@ export function createMaterialPreview(size = 240): MaterialPreview {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x14141c);
+  scene.background = new THREE.Color(0x0a0b10);   // тёмный фон как подземелье
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;   // мягкое окружение → корректный металл/блики
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;   // IBL есть, но его вклад регулируется envMapIntensity (по умолч. слабо)
 
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
 
-  // Пара источников света (ключевой тёплый + холодный заполняющий) + лёгкий эмбиент — как «шар материала» в DCC.
-  const key = new THREE.DirectionalLight(0xfff2e0, 2.4); key.position.set(3, 4, 5); scene.add(key);
-  const fill = new THREE.DirectionalLight(0x8fb4ff, 0.9); fill.position.set(-4, -1, 2); scene.add(fill);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+  // Свет КАК В ИГРЕ (env3d makeSceneLighting + факел): тусклый ambient/hemisphere/directional, основной вклад — тёплый
+  // факел-point-light рядом. Так материал на сфере выглядит как в подземелье (roughness/metalness читаются честно).
+  scene.add(new THREE.AmbientLight(0x20222e, 0.5));
+  scene.add(new THREE.HemisphereLight(0x34384e, 0x141014, 0.35));
+  const dir = new THREE.DirectionalLight(0xb8c2dc, 0.2); dir.position.set(0.5, 1, 0.35); scene.add(dir);
+  const torch = new THREE.PointLight(0xff7a2a, 7, 12, 2); torch.position.set(2.2, 1.6, 2.2); scene.add(torch);   // факел (тёплый) — даёт основной блик
 
   const mat = new THREE.MeshStandardMaterial({ color: 0xbfbfbf, roughness: 0.8, metalness: 0 });
   const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), mat);
   scene.add(sphere);
+  let envIntensity = 0.2;   // сила вклада IBL (0 = как в игре без окружения; выше — подсветить металл). Слайдер в панели.
 
   const loader = new THREE.TextureLoader();
   const texCache = new Map<string, THREE.Texture>();
@@ -91,6 +94,7 @@ export function createMaterialPreview(size = 240): MaterialPreview {
     mat.roughness = num(m.roughness, 0.8);
     mat.emissive = col(m.emissive, 0x000000);
     mat.emissiveIntensity = num(m.emissiveIntensity, 1);
+    mat.envMapIntensity = envIntensity;                  // вклад IBL (регулируется слайдером «Окружение»)
     const ns = num(m.normalScale, 1);
     mat.normalScale.set(ns, m.normalFlipY ? -ns : ns);   // flip green: DirectX(Y−)→OpenGL(Y+) без пересжатия текстуры
     mat.map = tex(textures, m.map, true);
@@ -112,5 +116,7 @@ export function createMaterialPreview(size = 240): MaterialPreview {
     renderer.dispose();
   }
 
-  return { el, update, dispose };
+  function setEnv(v: number): void { envIntensity = v; mat.envMapIntensity = v; }
+
+  return { el, update, setEnv, dispose };
 }

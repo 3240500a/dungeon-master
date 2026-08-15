@@ -166,6 +166,16 @@ function normalizeWallVariant(geos: THREE.BufferGeometry[], unitScale: number): 
   for (const g of geos) g.translate(0, -comb2.min.y, 0);        // общий низ пары на y=0
 }
 
+/** Нормализация запечённого GLB-материала окружения к МАТОВОМУ ДИЭЛЕКТРИКУ (камень/дерево подземелья — не металл):
+ *  metalness=0 (убирает ложный металл-глянец: GLB часто экспортит metallicFactor=1 по дефолту glTF + ненулевой B-канал
+ *  metalRough-карты → блики от факелов по швам) + подъём roughness к матовому. Металлические объекты — через materialId
+ *  в конфиге (override минует эту нормализацию). Мутирует материал на месте (инстанс общий на вариант). */
+function normEnvMat(mat: THREE.Material): THREE.Material {
+  const m = mat as THREE.MeshStandardMaterial;
+  if ('metalness' in m) { m.metalness = 0; m.roughness = Math.max(typeof m.roughness === 'number' ? m.roughness : 0.8, 0.85); m.needsUpdate = true; }
+  return m;
+}
+
 /** Спека объекта окружения: url GLB + опц. материал-override (общий инстанс на роль — дешевле для слабых ПК; null = из GLB). */
 export interface EnvSpec { url: string; mat?: THREE.Material | null }
 
@@ -192,7 +202,7 @@ function buildWallVariants(rawWalls: RawTile[], unitScale: number, baseMat: THRE
       const fade = wallPart(t.name) !== 'lo';   // низ (lo) не фейдится, всё прочее (hi/одиночный меш) — тает
       let mat: THREE.Material;
       if (baseMat) { mat = fade ? fadeMat! : baseMat; }        // override: общий инстанс на роль
-      else { mat = t.mat; if (fade) applyWallFade(mat); }      // из GLB: фейд навешиваем на верх
+      else { mat = normEnvMat(t.mat); if (fade) applyWallFade(mat); }   // из GLB: диэлектрик-нормализация + фейд на верх
       return { geo: t.geo, mat, fade };
     });
     return { parts };
@@ -213,7 +223,7 @@ export async function loadEnvKitFromObjects(floorSpecs: EnvSpec[], wallSpecs: En
   const unitScale = floorUnitScale(firstFloor.tiles[0]!.geo);
   for (const f of floorLoaded) {
     if (!f) continue;
-    for (const t of f.tiles) { normalizeFloorGeo(t.geo, unitScale); kit.floors.push({ geo: t.geo, mat: f.mat ?? t.mat }); }
+    for (const t of f.tiles) { normalizeFloorGeo(t.geo, unitScale); kit.floors.push({ geo: t.geo, mat: f.mat ?? normEnvMat(t.mat) }); }
   }
   for (const w of wallLoaded) { if (w) kit.walls.push(...buildWallVariants(w.tiles, unitScale, w.mat)); }
   return kit;
