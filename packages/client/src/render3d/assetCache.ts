@@ -10,7 +10,7 @@ import * as THREE from 'three';
 export interface TextureCfg { id: string; url: string; colorSpace: 'srgb' | 'linear'; wrapS: 'repeat' | 'clamp'; wrapT: 'repeat' | 'clamp'; flipY: boolean }
 export interface MaterialCfg {
   id: string; baseColor: [number, number, number]; opacity: number; metalness: number; roughness: number;
-  emissive: [number, number, number]; emissiveIntensity: number; normalScale: number; normalFlipY?: boolean;
+  emissive: [number, number, number]; emissiveIntensity: number; normalScale: number; normalFlipY?: boolean; roughnessIsSmoothness?: boolean;
   map?: string; normalMap?: string; roughnessMap?: string; metalnessMap?: string; emissiveMap?: string; aoMap?: string;
 }
 
@@ -18,16 +18,35 @@ const textureCache = new Map<string, THREE.Texture>();
 const materialCache = new Map<string, THREE.Material>();
 const loader = new THREE.TextureLoader();
 
-/** Текстура по id (из config) — из кэша или грузится (TextureLoader по url + colorSpace/wrap/flipY). null — нет в конфиге. */
-export function getTexture(textures: TextureCfg[], id: string): THREE.Texture | null {
-  const hit = textureCache.get(id); if (hit) return hit;
+/** Текстура-инверсия (RGB → 1−value) через canvas — для Smoothness-карты (Unity), читаемой как Roughness (glTF). */
+function loadInvertedTexture(url: string): THREE.Texture {
+  const canvas = document.createElement('canvas');
+  const tex = new THREE.CanvasTexture(canvas);
+  const img = new Image(); img.crossOrigin = 'anonymous';
+  img.onload = (): void => {
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+    const g = canvas.getContext('2d'); if (!g) return;
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, canvas.width, canvas.height), px = d.data;
+    for (let i = 0; i < px.length; i += 4) { px[i] = 255 - px[i]!; px[i + 1] = 255 - px[i + 1]!; px[i + 2] = 255 - px[i + 2]!; }
+    g.putImageData(d, 0, 0); tex.needsUpdate = true;
+  };
+  img.src = url;
+  return tex;
+}
+
+/** Текстура по id (из config) — из кэша или грузится (TextureLoader по url + colorSpace/wrap/flipY). `invert` → инверсия
+ *  значения (Smoothness→Roughness). null — нет в конфиге. */
+export function getTexture(textures: TextureCfg[], id: string, invert = false): THREE.Texture | null {
+  const key = invert ? id + '|inv' : id;
+  const hit = textureCache.get(key); if (hit) return hit;
   const c = textures.find((t) => t.id === id); if (!c) return null;
-  const tex = loader.load(c.url);
+  const tex = invert ? loadInvertedTexture(c.url) : loader.load(c.url);
   tex.colorSpace = c.colorSpace === 'srgb' ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
   tex.wrapS = c.wrapS === 'repeat' ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
   tex.wrapT = c.wrapT === 'repeat' ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
   tex.flipY = c.flipY;
-  textureCache.set(id, tex);
+  textureCache.set(key, tex);
   return tex;
 }
 
@@ -44,7 +63,7 @@ export function getMaterial(cfg: { materials: MaterialCfg[]; textures: TextureCf
   const tex = (tid?: string): THREE.Texture | null => (tid ? getTexture(cfg.textures, tid) : null);
   if (m.map) mat.map = tex(m.map);
   if (m.normalMap) { mat.normalMap = tex(m.normalMap); mat.normalScale.set(m.normalScale, m.normalFlipY ? -m.normalScale : m.normalScale); }   // flip Y = зелёный DirectX(3ds Max)→OpenGL
-  if (m.roughnessMap) mat.roughnessMap = tex(m.roughnessMap);
+  if (m.roughnessMap) mat.roughnessMap = m.roughnessIsSmoothness ? getTexture(cfg.textures, m.roughnessMap, true) : tex(m.roughnessMap);   // Smoothness-карта → инверсия в Roughness
   if (m.metalnessMap) mat.metalnessMap = tex(m.metalnessMap);
   if (m.emissiveMap) mat.emissiveMap = tex(m.emissiveMap);
   if (m.aoMap) mat.aoMap = tex(m.aoMap);

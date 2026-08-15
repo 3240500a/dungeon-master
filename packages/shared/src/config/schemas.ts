@@ -181,7 +181,7 @@ export const balanceSchema = z.object({
       knockbackDmgScale: z.number().min(0).default(2),         // масштаб отлёта от силы удара: dist ×= clamp(0.4 + урон/maxHP × это, 0.4, 1.5) — сильнее бьёшь дальше летит
       knockbackSec: z.number().min(0.01).default(0.18),        // за сколько сек проезжает отлёт (глайд позиции сервером; клиент ведёт рагдолл по ней)
     })
-    .default({ enabled: true, chanceBase: 0, weaponWeightMult: 0.004, targetWeightResist: 0.01, maxChance: 0.5, downSec: 1.1, riseSec: 0.8, vulnBonusPct: 0.25, knockbackDist: 45, knockbackDmgScale: 2, knockbackSec: 0.18 }),   // объектный дефолт (применяется, когда блока knockdown нет в balance.json)
+    .default({ enabled: true, chanceBase: 0, weaponWeightMult: 0.004, targetWeightResist: 0.01, maxChance: 0.5, downSec: 1.1, riseSec: 0.8, vulnBonusPct: 0.25, knockbackDist: 45, knockbackDmgScale: 2, knockbackSec: 0.18 }),   // объектный дефолт (применяется, когда блока knockdown нет в balance.json
   /** Освещение (клиент-вид): тьма растёт с глубиной, свет от факелов и игрока. */
   lighting: z
     .object({
@@ -1717,6 +1717,7 @@ export const materialsSchema = z.array(z.object({
   emissiveIntensity: z.number().min(0).default(1),
   normalScale: z.number().default(1),
   normalFlipY: z.boolean().default(false),              // инверсия зелёного канала нормалмапы (DirectX/3ds Max → OpenGL/glTF): normalScale.y *= -1
+  roughnessIsSmoothness: z.boolean().default(false),    // roughness-карта на деле SMOOTHNESS (Unity: ярче=глаже) → инвертируем 1−value
   map: z.string().optional(),                           // textureId (albedo)
   normalMap: z.string().optional(), roughnessMap: z.string().optional(), metalnessMap: z.string().optional(),
   emissiveMap: z.string().optional(), aoMap: z.string().optional(),
