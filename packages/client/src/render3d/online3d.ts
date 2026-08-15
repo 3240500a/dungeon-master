@@ -759,8 +759,8 @@ export async function startOnline3d(): Promise<void> {
         // Сбит с ног: кукла падает рагдоллом в (dx,dy) и потом встаёт (длительности из конфига). + пыль в точке падения.
         const a = monsters.get(e.id);
         if (a && a.dead == null) {   // не роняем уже мёртвого (труп лежит своим коллапсом)
-          const kd = app.config.get('balance').knockdown;
-          a.d.knockdown?.(e.dx, e.dy, kd.downSec, kd.riseSec);
+          const kd = app.config.get('balance').knockdown;   // может отсутствовать у устаревшего конфига (клиент не жал F5) → фолбэк
+          a.d.knockdown?.(e.dx, e.dy, kd?.downSec ?? 1.1, kd?.riseSec ?? 0.8);
           const mv = latest?.monsters.find((m) => m.id === e.id);
           if (mv) vfx.burst(mv.x, mv.y, 0xb9a88a, 18, 150, 0.5, 10, 6);
         }
