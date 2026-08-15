@@ -955,7 +955,7 @@ export class GameSession {
     const a = Math.atan2(m.pos.y - killer.pos.y, m.pos.x - killer.pos.x);   // валится ОТ атакующего
     // Отлёт от силы удара (как смерть): дистанция ×= масштаб урона (доля от maxHP × dmgScale), в клампе [0.4, 2].
     const frac = m.def.hp > 0 ? damage / m.def.hp : 0;
-    const dist = kd.knockbackDist * Math.max(0.4, Math.min(2, 0.4 + frac * kd.knockbackDmgScale));
+    const dist = kd.knockbackDist * Math.max(0.4, Math.min(1.5, 0.4 + frac * kd.knockbackDmgScale));   // множитель урона в клампе [0.4, 1.5] (не улетает за горизонт от сильного удара)
     const sec = Math.max(0.01, kd.knockbackSec);
     m.knock = dist > 0.5 ? { dx: Math.cos(a), dy: Math.sin(a), remaining: sec, speed: dist / sec } : null;   // авторитетный глайд (сервер двигает pos)
     this.events.push({ type: 'knockdown', id: m.id, dx: Math.cos(a), dy: Math.sin(a) });

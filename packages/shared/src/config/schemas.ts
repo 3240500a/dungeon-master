@@ -177,11 +177,11 @@ export const balanceSchema = z.object({
       downSec: z.number().min(0).default(1.1),                 // сколько лежит на земле (рут), сек
       riseSec: z.number().min(0).default(0.8),                 // сколько встаёт (клиент — анимация подъёма; сервер держит рут весь период), сек
       vulnBonusPct: z.number().min(0).default(0.25),           // +доля урона по лежачему/встающему (окно для добива/комбо)
-      knockbackDist: z.number().min(0).default(70),            // база отлёта ОТ атакующего (px) при типовом ударе; авторитетный глайд позиции
-      knockbackDmgScale: z.number().min(0).default(2),         // масштаб отлёта от силы удара: dist ×= clamp(0.4 + урон/maxHP × это, 0.4, 2) — сильнее бьёшь дальше летит
+      knockbackDist: z.number().min(0).default(45),            // база отлёта ОТ атакующего (px) при типовом ударе (~1.5 м); авторитетный глайд позиции
+      knockbackDmgScale: z.number().min(0).default(2),         // масштаб отлёта от силы удара: dist ×= clamp(0.4 + урон/maxHP × это, 0.4, 1.5) — сильнее бьёшь дальше летит
       knockbackSec: z.number().min(0.01).default(0.18),        // за сколько сек проезжает отлёт (глайд позиции сервером; клиент ведёт рагдолл по ней)
     })
-    .default({ enabled: true, chanceBase: 0, weaponWeightMult: 0.004, targetWeightResist: 0.01, maxChance: 0.5, downSec: 1.1, riseSec: 0.8, vulnBonusPct: 0.25, knockbackDist: 70, knockbackDmgScale: 2, knockbackSec: 0.18 }),   // объектный дефолт (применяется, когда блока knockdown нет в balance.json)
+    .default({ enabled: true, chanceBase: 0, weaponWeightMult: 0.004, targetWeightResist: 0.01, maxChance: 0.5, downSec: 1.1, riseSec: 0.8, vulnBonusPct: 0.25, knockbackDist: 45, knockbackDmgScale: 2, knockbackSec: 0.18 }),   // объектный дефолт (применяется, когда блока knockdown нет в balance.json)
   /** Освещение (клиент-вид): тьма растёт с глубиной, свет от факелов и игрока. */
   lighting: z
     .object({
