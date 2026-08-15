@@ -19,7 +19,7 @@ import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
-import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, type Torch } from './env3d.js';
+import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, loadEnvKit, type Torch, type EnvKit } from './env3d.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
 import { mountMinimap, type MiniMark } from './minimap3d.js';
@@ -300,6 +300,15 @@ export async function startOnline3d(): Promise<void> {
   let seq = 0;
   let playerLight: THREE.PointLight | undefined;
   let torches: Torch[] = [];
+  // GLB-тайлсет окружения (пол/стена вместо процедурных боксов). Грузим на буте (37 МБ) — пока не готов, области строятся
+  // боксами; как догрузится, пересобираем текущее окружение. lastEnvLayout — последний layout для пересборки.
+  let envKit: EnvKit | undefined;
+  let lastEnvLayout: Parameters<typeof buildEnvironment>[1] | undefined;
+  loadEnvKit('/assets/crypt_tile_set/crypt_floor_01.glb', '/assets/crypt_tile_set/crypt_wall_01.glb').then((k) => {
+    if (!k.floor && !k.wall) return;   // ничего не загрузилось — остаёмся на боксах
+    envKit = k;
+    if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, envKit); }   // пересобрать текущее окружение моделями
+  }).catch(() => {});
   applySavedSettings();   // применить сохранённые галки ⚙ ПОСЛЕ инициализации self/playerLight (иначе TDZ)
   let areaGrid: Grid | undefined;   // грид текущей области (для DBG-счётчика монстров вне пола)
   let interactables: Interactable[] = [];
@@ -343,7 +352,8 @@ export async function startOnline3d(): Promise<void> {
     if (app.state) app.state.area = floor.area;   // HUD/отчёт различают город/этаж по area (depth=0 у старта забега = как город)
 
     const layout = { grid: floor.grid, doors: [], decor: floor.decor, stairsDown: floor.stairs } as unknown as Parameters<typeof buildEnvironment>[1];
-    torches = buildEnvironment(floorGroup, layout);
+    lastEnvLayout = layout;   // запомним для пересборки, когда догрузится GLB-тайлсет
+    torches = buildEnvironment(floorGroup, layout, envKit);
     pw.buildStatic(layout);
 
     // Игрок-кукла (создаём один раз, дальше перемещаем в spawn). Оружие/щит — из ЭКИПИРОВКИ.

@@ -4,6 +4,8 @@
  * освещение «карманный свет». Мир (x,y) → 3D (x, h, z=y). TILE=32u=1 м, стена 3 м.
  */
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TILE, Cell, type DungeonLayout } from '@dm/shared';
 
 export const WALL_H = 96;
@@ -70,6 +72,7 @@ export const wallFade = {
   fade: new THREE.Vector2(190, 460),                           // радиус: x = зона фейда у игрока, y = снова видимо
   knee: new THREE.Vector2(20, 46),                             // высота: ниже x (по колено) НЕ фейдится, выше y — полный фейд верха
   on: 1,                                                       // 1 вкл / 0 выкл (для отладки)
+  faceYaw: 0,                                                 // доп. разворот GLB-стены (рад): выставить лицевую сторону модели по «лицу в комнату» (тюн на глаз)
 };
 const wallFadeU = {
   uPlayerPos: { value: wallFade.playerPos },
@@ -78,23 +81,78 @@ const wallFadeU = {
   uKnee: { value: wallFade.knee },
   uFadeOn: { value: wallFade.on },
 };
-matWall.onBeforeCompile = (shader): void => {
-  Object.assign(shader.uniforms, wallFadeU);
-  shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nattribute vec2 aFacing;\nuniform vec2 uViewDir;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 wpW = vec4(transformed,1.0);\n#ifdef USE_INSTANCING\n wpW = instanceMatrix * wpW;\n#endif\n vWorldW = (modelMatrix * wpW).xyz; }\n vFaceDot = dot(aFacing, uViewDir);   // >0 = лицо стены смотрит от камеры (ближняя, загораживает)');
-  shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nuniform vec3 uPlayerPos;\nuniform vec2 uFade;\nuniform vec2 uKnee;\nuniform float uFadeOn;')
-    .replace('#include <dithering_fragment>', `#include <dithering_fragment>
-      if (uFadeOn > 0.5) {
-        float near = smoothstep(0.0, 0.35, vFaceDot);                     // 1 = ближняя стена (лицо от камеры), 0 = задник (лицом к камере)
-        float top = smoothstep(uKnee.x, uKnee.y, vWorldW.y);              // 0 ниже «колена» (не фейдим), 1 выше (фейдим верх)
-        float radial = 1.0 - smoothstep(uFade.x, uFade.y, distance(vWorldW.xz, uPlayerPos.xz));   // только у игрока
-        float fadeAmt = near * top * radial;                             // 1 = полностью прозрачно
-        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));   // интерлив-градиент-шум (плавный дизер)
-        if (fadeAmt > ign) discard;
-      }`);
-};
+/** Навесить дизер-фейд по «лицу» на материал стены (процедурный matWall ИЛИ материал GLB-стены). */
+export function applyWallFade(mat: THREE.Material): void {
+  mat.onBeforeCompile = (shader): void => {
+    Object.assign(shader.uniforms, wallFadeU);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nattribute vec2 aFacing;\nuniform vec2 uViewDir;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ vec4 wpW = vec4(transformed,1.0);\n#ifdef USE_INSTANCING\n wpW = instanceMatrix * wpW;\n#endif\n vWorldW = (modelMatrix * wpW).xyz; }\n vFaceDot = dot(aFacing, uViewDir);   // >0 = лицо стены смотрит от камеры (ближняя, загораживает)');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nuniform vec3 uPlayerPos;\nuniform vec2 uFade;\nuniform vec2 uKnee;\nuniform float uFadeOn;')
+      .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+        if (uFadeOn > 0.5) {
+          float near = smoothstep(0.0, 0.35, vFaceDot);                     // 1 = ближняя стена (лицо от камеры), 0 = задник (лицом к камере)
+          float top = smoothstep(uKnee.x, uKnee.y, vWorldW.y);              // 0 ниже «колена» (не фейдим), 1 выше (фейдим верх)
+          float radial = 1.0 - smoothstep(uFade.x, uFade.y, distance(vWorldW.xz, uPlayerPos.xz));   // только у игрока
+          float fadeAmt = near * top * radial;                             // 1 = полностью прозрачно
+          float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));   // интерлив-градиент-шум (плавный дизер)
+          if (fadeAmt > ign) discard;
+        }`);
+  };
+}
+applyWallFade(matWall);
+
+// ── Тайлсет окружения из GLB (пол/стена вместо процедурных боксов) ───────────────────────────────
+// Экспорт из Max: Z-up (по геометрии) + любой масштаб (нормируем полом к TILE). Пивот геометрии приводим к
+// «низ на y=0, центр по XZ» (стена) / «верх на y=0» (пол). null-поля → падаем на процедурку.
+export interface EnvKit { floor: THREE.BufferGeometry | null; wall: THREE.BufferGeometry | null; wallMat: THREE.Material | null; floorMat: THREE.Material | null }
+
+/** Слить меши GLTF-сцены в одну BufferGeometry (мир-трансформы применены) + первый материал. */
+function mergeSceneGeo(scene: THREE.Object3D): { geo: THREE.BufferGeometry; mat: THREE.Material } | null {
+  scene.updateMatrixWorld(true);
+  const geos: THREE.BufferGeometry[] = []; let mat: THREE.Material | null = null;
+  scene.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!(m as { isMesh?: boolean }).isMesh || !m.geometry) return;
+    let g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld);
+    for (const a of ['tangent', 'color']) g.deleteAttribute(a);   // единый набор атрибутов для merge (оставляем position/normal/uv)
+    if (g.index) g = g.toNonIndexed();
+    geos.push(g); if (!mat) mat = (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.Material;
+  });
+  if (!geos.length || !mat) return null;
+  const geo = geos.length === 1 ? geos[0]! : (mergeGeometries(geos, false) ?? geos[0]!);
+  return { geo, mat };
+}
+
+/** Привести GLB-геометрию к игровым осям/масштабу/пивоту. role: 'wall' (низ→y0) | 'floor' (верх→y0). unitScale — общий масштаб. */
+function normalizeEnvGeo(geo: THREE.BufferGeometry, role: 'wall' | 'floor', unitScale: number): void {
+  geo.computeBoundingBox(); const bb0 = geo.boundingBox!; const ext = new THREE.Vector3(); bb0.getSize(ext);
+  const zUp = role === 'wall' ? ext.z > ext.y : ext.z < ext.y;   // стена: выше по Z = Z-up; пол: тоньше по Z = Z-up
+  if (zUp) geo.rotateX(-Math.PI / 2);                            // Max Z-up → Y-up
+  geo.scale(unitScale, unitScale, unitScale);
+  geo.computeBoundingBox(); const bb = geo.boundingBox!;
+  const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
+  geo.translate(-cx, role === 'wall' ? -bb.min.y : -bb.max.y, -cz);   // XZ в центр; стена низом на y=0, пол верхом на y=0
+}
+
+/** Загрузить тайлсет окружения (пол+стена) из /assets. Масштаб выводим из ПОЛА (чистый 1×1 квадрат → footprint=TILE). */
+export async function loadEnvKit(floorUrl: string, wallUrl: string): Promise<EnvKit> {
+  const loader = new GLTFLoader();
+  const kit: EnvKit = { floor: null, wall: null, wallMat: null, floorMat: null };
+  try {
+    const [fg, wg] = await Promise.all([loader.loadAsync(floorUrl), loader.loadAsync(wallUrl)]);
+    const fParsed = mergeSceneGeo(fg.scene), wParsed = mergeSceneGeo(wg.scene);
+    if (fParsed) {
+      fParsed.geo.computeBoundingBox(); const e = new THREE.Vector3(); fParsed.geo.boundingBox!.getSize(e);
+      const foot = Math.max(e.x, e.y, e.z);   // пол плоский → footprint = наибольшая сторона (Z-up ли, Y-up ли)
+      const unitScale = foot > 1e-4 ? TILE / foot : 1;
+      normalizeEnvGeo(fParsed.geo, 'floor', unitScale); kit.floor = fParsed.geo; kit.floorMat = fParsed.mat;
+      if (wParsed) { normalizeEnvGeo(wParsed.geo, 'wall', unitScale); kit.wall = wParsed.geo; kit.wallMat = wParsed.mat; applyWallFade(wParsed.mat); }
+    }
+  } catch (e) { console.warn('[env] загрузка тайлсета не удалась, падаю на процедурку', e); }
+  return kit;
+}
 
 // Факел: мир-позиция + данные пламени. Света СВОЕГО нет — светят лишь TORCH_POOL_N ближайших через общий пул
 // (перф: 20-50 факелов на этаж = столько же PointLight → PBR считал КАЖДЫЙ на каждый фрагмент = дикая фрагментная цена;
@@ -129,8 +187,8 @@ export function makeSceneLighting(scene: THREE.Scene): void {
 
 const cw = (c: number): number => c * TILE + TILE / 2;
 
-/** Строит этаж из layout в `parent`; возвращает факелы для анимации в цикле. */
-export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout): Torch[] {
+/** Строит этаж из layout в `parent`; возвращает факелы для анимации в цикле. `kit` — GLB-тайлсет (пол/стена) вместо боксов. */
+export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, kit?: EnvKit): Torch[] {
   const grid = layout.grid, rows = grid.length, cols = grid[0]!.length;
   const walk = (x: number, y: number): boolean => grid[y]?.[x] !== undefined && grid[y]![x] !== Cell.Wall;
   const dummy = new THREE.Object3D();
@@ -141,9 +199,10 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
 
   const floorCells: [number, number][] = [];
   for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (walk(x, y)) floorCells.push([x, y]);
-  const fm = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 4, TILE), matStone, floorCells.length);
+  const floorY = kit?.floor ? 0 : -2;   // GLB-плитка нормирована верхом на y=0; бокс — центр на y=-2 (верх на 0)
+  const fm = new THREE.InstancedMesh(kit?.floor ?? new THREE.BoxGeometry(TILE, 4, TILE), kit?.floorMat ?? matStone, floorCells.length);
   fm.receiveShadow = true;   // тени от факелов (вкл. по тумблеру) — пол принимает
-  floorCells.forEach(([x, y], i) => { dummy.position.set(cw(x), -2, cw(y)); dummy.updateMatrix(); fm.setMatrixAt(i, dummy.matrix); });
+  floorCells.forEach(([x, y], i) => { dummy.position.set(cw(x), floorY, cw(y)); dummy.updateMatrix(); fm.setMatrixAt(i, dummy.matrix); });
   parent.add(fm);
 
   const wallCells: [number, number][] = [];
@@ -152,20 +211,27 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout):
     let near = false; for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (walk(x + dx, y + dy)) { near = true; break; }
     if (near) wallCells.push([x, y]);
   }
-  const wallGeo = new THREE.BoxGeometry(TILE, WALL_H, TILE);
-  const wm = new THREE.InstancedMesh(wallGeo, matWall, wallCells.length);
+  // GLB-стена (низ на y=0) → своя геометрия (клон под per-floor aFacing) + поворот лицом в комнату; иначе процедурный бокс (центр y=WALL_H/2).
+  const useModelWall = !!kit?.wall;
+  const wallGeo = useModelWall ? kit!.wall!.clone() : new THREE.BoxGeometry(TILE, WALL_H, TILE);
+  const wallMat = kit?.wallMat ?? matWall;
+  const wm = new THREE.InstancedMesh(wallGeo, wallMat, wallCells.length);
   wm.castShadow = true; wm.receiveShadow = true;
   // «Лицо» стены (per-instance, для фейд-шейдера) = направление в комнату = сумма к смежным проходимым клеткам (4-соседа;
-  // если нет — 8-соседи). Ближняя к камере стена смотрит лицом ОТ камеры → её верх тает (см. matWall.onBeforeCompile).
+  // если нет — 8-соседи). Ближняя к камере стена смотрит лицом ОТ камеры → её верх тает (см. applyWallFade).
   const facing = new Float32Array(wallCells.length * 2);
   const N4: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   const N8: [number, number][] = [...N4, [1, 1], [1, -1], [-1, 1], [-1, -1]];
   wallCells.forEach(([x, y], i) => {
-    dummy.position.set(cw(x), WALL_H / 2, cw(y)); dummy.updateMatrix(); wm.setMatrixAt(i, dummy.matrix);
     let fx = 0, fz = 0; for (const [dx, dy] of N4) if (walk(x + dx, y + dy)) { fx += dx; fz += dy; }
     if (fx === 0 && fz === 0) for (const [dx, dy] of N8) if (walk(x + dx, y + dy)) { fx += dx; fz += dy; }   // фолбэк на диагонали
-    const len = Math.hypot(fx, fz) || 1; facing[i * 2] = fx / len; facing[i * 2 + 1] = fz / len;   // XZ, нормализовано (мир z = сетка y)
+    const len = Math.hypot(fx, fz) || 1; fx /= len; fz /= len;
+    facing[i * 2] = fx; facing[i * 2 + 1] = fz;   // XZ, нормализовано (мир z = сетка y)
+    const yaw = useModelWall ? Math.atan2(fx, fz) + wallFade.faceYaw : 0;   // GLB-стену разворачиваем лицом в комнату
+    dummy.position.set(cw(x), useModelWall ? 0 : WALL_H / 2, cw(y)); dummy.rotation.set(0, yaw, 0);
+    dummy.updateMatrix(); wm.setMatrixAt(i, dummy.matrix);
   });
+  dummy.rotation.set(0, 0, 0);   // сброс — колонны/пропсы не поворачиваем
   wallGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facing, 2));
   parent.add(wm);
 
