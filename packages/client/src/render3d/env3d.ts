@@ -133,7 +133,10 @@ function normalizeEnvGeo(geo: THREE.BufferGeometry, role: 'wall' | 'floor', unit
   geo.scale(unitScale, unitScale, unitScale);
   geo.computeBoundingBox(); const bb = geo.boundingBox!;
   const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
-  geo.translate(-cx, role === 'wall' ? -bb.min.y : -bb.max.y, -cz);   // XZ в центр; стена низом на y=0, пол верхом на y=0
+  // Пол: центр XZ + верх на y=0. Стена: XZ-ПИВОТ МОДЕЛИ СОХРАНЯЕМ (у юзера он на крае лицевой стороны → ставим на край
+  // тайла в buildEnvironment), только низ на y=0.
+  if (role === 'wall') geo.translate(0, -bb.min.y, 0);
+  else geo.translate(-cx, -bb.max.y, -cz);
 }
 
 /** Загрузить тайлсет окружения (пол+стена) из /assets. Масштаб выводим из ПОЛА (чистый 1×1 квадрат → footprint=TILE). */
@@ -228,7 +231,9 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
     const len = Math.hypot(fx, fz) || 1; fx /= len; fz /= len;
     facing[i * 2] = fx; facing[i * 2 + 1] = fz;   // XZ, нормализовано (мир z = сетка y)
     const yaw = useModelWall ? Math.atan2(fx, fz) + wallFade.faceYaw : 0;   // GLB-стену разворачиваем лицом в комнату
-    dummy.position.set(cw(x), useModelWall ? 0 : WALL_H / 2, cw(y)); dummy.rotation.set(0, yaw, 0);
+    // GLB: пивот (край лицевой стороны) ставим на КРАЙ тайла к комнате (+facing·½тайла), чтобы стена примыкала к полу без отступа.
+    dummy.position.set(cw(x) + (useModelWall ? fx * TILE / 2 : 0), useModelWall ? 0 : WALL_H / 2, cw(y) + (useModelWall ? fz * TILE / 2 : 0));
+    dummy.rotation.set(0, yaw, 0);
     dummy.updateMatrix(); wm.setMatrixAt(i, dummy.matrix);
   });
   dummy.rotation.set(0, 0, 0);   // сброс — колонны/пропсы не поворачиваем
