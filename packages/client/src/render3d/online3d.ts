@@ -305,7 +305,7 @@ export async function startOnline3d(): Promise<void> {
   let envKit: EnvKit | undefined;
   let lastEnvLayout: Parameters<typeof buildEnvironment>[1] | undefined;
   loadEnvKit('/assets/crypt_tile_set/crypt_floor_01.glb', '/assets/crypt_tile_set/crypt_wall_01.glb').then((k) => {
-    if (!k.floor && !k.wall) return;   // ничего не загрузилось — остаёмся на боксах
+    if (!k.floors.length && !k.walls.length) return;   // ничего не загрузилось — остаёмся на боксах
     envKit = k;
     if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, envKit); }   // пересобрать текущее окружение моделями
   }).catch(() => {});
