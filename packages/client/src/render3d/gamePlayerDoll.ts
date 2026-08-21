@@ -101,7 +101,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const atlasStrict = !opts.classId && !!opts.atlasKey;   // монстр: без своего атласа не подмешиваем глобальный/легаси
   const skin = atlasKey ? createModelSkin(group, solid) : null;
   const baseApp = opts.baseAppearance;   // submesh пустых слотов (нет экипа)
-  let equipModels: Record<string, { modelId?: string } | undefined> | undefined;
+  let equipModels: Record<string, { modelId?: string; materialId?: string } | undefined> | undefined;
   // Экипировка → выбор сабмеш-варианта по слоту атласа (modelId = имя сабмеша-варианта). Незнакомый id безопасен
   // (setAtlas variant-safe: покажет все сабмеши слота). Волосы прячет ТОЛЬКО показ реальной модели шлема (=выбор
   // helm-варианта в атласе), а НЕ сам факт надетого шлема-предмета — иначе стат-шлем без модели балдил бы голову
@@ -114,12 +114,18 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) { const id = equipModels?.[slot]?.modelId ?? baseBySlot[slot]; if (id) visible[slot] = id; }
     return visible;
   }
+  // Пер-предметный материал по слоту (materialByClass надетого предмета) → override материала сабмеша атласа.
+  function atlasMaterials(): Record<string, string> {
+    const mats: Record<string, string> = {};
+    for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) { const mid = equipModels?.[slot]?.materialId; if (mid) mats[slot] = mid; }
+    return mats;
+  }
   function refreshSkin(): void {
     if (!skin) return;
     void loadAssetConfig().then((cfg) => {
       const assets = { materials: cfg.materials, textures: cfg.textures };
       const char = resolveCharacterModel(cfg, atlasKey, !atlasStrict);   // E3: атлас по ключу (класс/семья); монстр строго (нет→процедурка)
-      if (char) { void skin.setAtlas(char, atlasVisible(), assets); return; }   // = превью редактора (без hideHair)
+      if (char) { void skin.setAtlas(char, atlasVisible(), assets, { matBySlot: atlasMaterials() }); return; }   // = превью редактора (без hideHair) + пер-предметный материал
       if (atlasStrict) return;   // монстр без своего атласа → процедурный меш (не подмешивать легаси base-парты)
       void skin.set(resolveSlotModels(cfg, equipModels), assets);   // легаси: послотные GLB
     });

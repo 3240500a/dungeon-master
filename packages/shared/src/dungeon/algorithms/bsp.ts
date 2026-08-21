@@ -11,6 +11,8 @@ import type { FloorAlgoOpts } from './types.js';
 interface Rect { x: number; y: number; w: number; h: number }
 interface BspNode { rect: Rect; left?: BspNode; right?: BspNode; room?: Room }
 
+const ROOM_MIN = 6;   // минимальная сторона комнаты (клеток) — «просторнее», не тесные каморки
+
 /** Рекурсивно делит прямоугольник ПО ДЛИННОЙ оси, РЕЗ ближе к центру (0.4–0.6) — против «слайверов». */
 function split(rect: Rect, depth: number, minLeaf: number, rng: Rng): BspNode {
   const node: BspNode = { rect };
@@ -63,10 +65,10 @@ export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgo
   for (const leaf of leafNodes) {
     const r = leaf.rect;
     const maxW = r.w - roomPad * 2, maxH = r.h - roomPad * 2;
-    if (maxW < 4 || maxH < 4) continue; // лист слишком мал под комнату
-    // Комнаты заполняют 0.5–0.85 листа → зазоры между комнатами (более «рукотворно»).
-    const w = rng.int(Math.max(4, Math.floor(maxW * 0.5)), Math.max(4, Math.floor(maxW * 0.85)));
-    const h = rng.int(Math.max(4, Math.floor(maxH * 0.5)), Math.max(4, Math.floor(maxH * 0.85)));
+    if (maxW < ROOM_MIN || maxH < ROOM_MIN) continue; // лист мал под комнату 6×6+
+    // Комнаты заполняют 0.6–0.9 листа → просторнее, но с зазорами между комнатами.
+    const w = rng.int(Math.max(ROOM_MIN, Math.floor(maxW * 0.6)), Math.max(ROOM_MIN, Math.floor(maxW * 0.9)));
+    const h = rng.int(Math.max(ROOM_MIN, Math.floor(maxH * 0.6)), Math.max(ROOM_MIN, Math.floor(maxH * 0.9)));
     const x = r.x + roomPad + rng.int(0, Math.max(0, maxW - w));
     const y = r.y + roomPad + rng.int(0, Math.max(0, maxH - h));
     const room: Room = { x, y, w, h, type: 'small' };
@@ -105,6 +107,7 @@ export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgo
     loops: params.loops,
     excludeIdx: lock ? exitIdx : -1,
     branch: lock ? [spawnIdx] : [spawnIdx, exitIdx],
+    width: params.corridorWidth ?? 4,
   }, rng);
 
   const doors: DungeonLayout['doors'] = [];

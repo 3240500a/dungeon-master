@@ -24,7 +24,7 @@
         "hall": 3
       },
       "prefabChance": 1,
-      "largeRoomArea": 40
+      "largeRoomArea": 60
     },
     "features": {
       "portal": false,

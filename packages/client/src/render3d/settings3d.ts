@@ -1,7 +1,8 @@
 /**
  * Панель настроек 3D-клиента (кнопка-шестерёнка ⚙): графика/производительность.
  * Чекбоксы применяет `online3d` через колбэки. Состояние ПЕРСИСТИТСЯ в localStorage (по стабильному ключу строки)
- * и применяется при монтировании (вызываем колбэки для включённых). Параметры теней — в конфиг-редакторе (balance.lighting.shadow3d).
+ * и применяется при монтировании (вызываем колбэки для включённых). РАЗРЕШЕНИЕ теней (mapSize) — здесь (перф ПК);
+ * контент-параметры теней (bias/кастеры/яркость+дальность света) — в конфиг-редакторе (balance.lighting.shadow3d).
  */
 export interface SettingsOpts {
   onMonKinematic?: (on: boolean) => void;
@@ -14,6 +15,7 @@ export interface SettingsOpts {
   onPlayerShadow?: (on: boolean) => void;
   onAdaptiveRes?: (on: boolean) => void;   // авто-разрешение по FPS вкл/выкл
   onResScale?: (v: number) => void;        // ручное разрешение (pixelRatio) 0.5–2×
+  onShadowRes?: (px: number) => void;      // разрешение теневой карты (px) — клиентская настройка качества/перфа
 }
 
 const LS_KEY = 'dm3d_settings';   // сохранённые галки настроек 3D
@@ -77,6 +79,17 @@ export function mountSettings(root: HTMLElement, opts: SettingsOpts): () => void
     state['resScale'] = v; save(); opts.onResScale?.(v);
   });
 
+  // ── Разрешение теней (теневая карта, px) — клиентская настройка качества/перфа (НЕ в редакторе) ──
+  const SHADOW_RES = [256, 512, 1024, 2048];
+  const shRes0 = typeof saved['shadowRes'] === 'number' && SHADOW_RES.includes(saved['shadowRes'] as number) ? (saved['shadowRes'] as number) : 1024;
+  state['shadowRes'] = shRes0;
+  const shBlock = document.createElement('div'); shBlock.style.cssText = 'margin-top:8px;padding-top:8px;border-top:1px solid #2a3340;display:flex;align-items:center;gap:8px';
+  const shSel = document.createElement('select'); shSel.style.cssText = 'flex:1;background:#12121a;color:#cfe0d6;border:1px solid #39415a;border-radius:4px;padding:2px 4px';
+  for (const px of SHADOW_RES) { const o = document.createElement('option'); o.value = String(px); o.textContent = `${px}×${px}`; shSel.appendChild(o); }
+  shSel.value = String(shRes0);
+  shSel.addEventListener('change', () => { const v = Number(shSel.value); state['shadowRes'] = v; save(); opts.onShadowRes?.(v); });
+  shBlock.append(document.createTextNode('Разрешение теней'), shSel); panel.appendChild(shBlock);
+
   root.appendChild(panel);
 
   const btn = document.createElement('button'); btn.textContent = '⚙'; btn.title = 'Настройки';
@@ -90,6 +103,7 @@ export function mountSettings(root: HTMLElement, opts: SettingsOpts): () => void
 
   // НЕ применяем синхронно (TDZ на self/playerLight) — возвращаем функцию, online3d зовёт после своих let'ов.
   return () => {
+    opts.onShadowRes?.(shRes0);          // разрешение теней ДО applyShadows (его дёрнут колбэки теней ниже)
     for (const r of ROWS) if (state[r.key]) r.cb?.(true);
     opts.onResScale?.(resScale0);        // сначала ручное значение (manualPR)
     opts.onAdaptiveRes?.(resAuto0);      // затем режим: авто (контроллер) или ручной (применит manualPR)

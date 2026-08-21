@@ -1,1 +1,128 @@
-[]
+[
+  {
+    "id": "crypt_column_01_m",
+    "name": "crypt_column_01_m",
+    "url": "/assets/tiles/crypt/textures/crypt_column_01_m.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_column_01_n",
+    "name": "crypt_column_01_n",
+    "url": "/assets/tiles/crypt/textures/crypt_column_01_n.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_floor_01_a",
+    "name": "crypt_floor_01_a",
+    "url": "/assets/tiles/crypt/textures/crypt_floor_01_a.png",
+    "colorSpace": "srgb",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_wall_01_a",
+    "name": "crypt_wall_01_a",
+    "url": "/assets/tiles/crypt/textures/crypt_wall_01_a.png",
+    "colorSpace": "srgb",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_wall_01_m",
+    "name": "crypt_wall_01_m",
+    "url": "/assets/tiles/crypt/textures/crypt_wall_01_m.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_wall_01_n",
+    "name": "crypt_wall_01_n",
+    "url": "/assets/tiles/crypt/textures/crypt_wall_01_n.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_floor_01_n",
+    "name": "crypt_floor_01_n",
+    "url": "/assets/tiles/crypt/textures/crypt_floor_01_n.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_column_01_a",
+    "name": "crypt_column_01_a",
+    "url": "/assets/tiles/crypt/textures/crypt_column_01_a.png",
+    "colorSpace": "srgb",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_floor_01_m",
+    "name": "crypt_floor_01_m",
+    "url": "/assets/tiles/crypt/textures/crypt_floor_01_m.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_floor_grille_01_m",
+    "name": "crypt_floor_grille_01_m",
+    "url": "/assets/tiles/crypt/textures/crypt_floor_grille_01_m.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_floor_grille_01_n",
+    "name": "crypt_floor_grille_01_n",
+    "url": "/assets/tiles/crypt/textures/crypt_floor_grille_01_n.png",
+    "colorSpace": "linear",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "crypt_floor_grille_01_a",
+    "name": "crypt_floor_grille_01_a",
+    "url": "/assets/tiles/crypt/textures/crypt_floor_grille_01_a.png",
+    "colorSpace": "srgb",
+    "wrapS": "repeat",
+    "wrapT": "repeat",
+    "flipY": false
+  },
+  {
+    "id": "plate_armor_01_a",
+    "name": "plate_armor_01_a",
+    "url": "/assets/tiles/crypt/textures/plate_armor_01_a.png",
+    "colorSpace": "srgb",
+    "wrapS": "clamp",
+    "wrapT": "clamp",
+    "flipY": true
+  },
+  {
+    "id": "plate_armor_01_n",
+    "name": "plate_armor_01_n",
+    "url": "/assets/tiles/crypt/textures/plate_armor_01_n.png",
+    "colorSpace": "linear",
+    "wrapS": "clamp",
+    "wrapT": "clamp",
+    "flipY": true
+  }
+]

@@ -59,16 +59,22 @@ function skeletonBox(obj: THREE.Object3D): THREE.Box3 {
   obj.traverse((o) => { if ((o as THREE.Bone).isBone) box.expandByPoint(o.getWorldPosition(v)); });
   return box;
 }
-/** Ось «вверх» по СКЕЛЕТУ: вектор Hips→Head (позвоночник). Z-доминанта → модель Z-up («лежит»). Надёжно для любого сабмеша. */
-function detectUpZ(obj: THREE.Object3D, boneMap: Record<string, string>): boolean {
+/** Доворот X для приведения оси «вверх» к +Y по вектору Hips→Head (позвоночник). ЗНАКО-ЗАВИСИМО: Z-up бывает +Z (голова к +Z)
+ *  → −90°X, и −Z (голова к −Z, Character Creator/AccuRIG) → +90°X (иначе модель ВВЕРХ НОГАМИ). Перевёрнутый Y (голова вниз) → 180°X.
+ *  Y-up → 0. Возвращает угол (рад) для obj.rotation.x. Надёжно для любого сабмеша. */
+function detectUpFixX(obj: THREE.Object3D, boneMap: Record<string, string>): number {
   const r = obj.rotation.clone(); obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
   const byName = new Map<string, THREE.Bone>(); obj.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
   const hips = byName.get(boneMap.Hips ?? ''); const top = byName.get(boneMap.Head ?? '') ?? byName.get(boneMap.Neck ?? '') ?? byName.get(boneMap.Chest ?? '');
-  let up = false;
-  if (hips && top) { const a = hips.getWorldPosition(new THREE.Vector3()), b = top.getWorldPosition(new THREE.Vector3()); up = Math.abs(b.z - a.z) > Math.abs(b.y - a.y); }
-  else { const bb = skeletonBox(obj); up = (bb.max.z - bb.min.z) > (bb.max.y - bb.min.y); }
+  let ax = 0;
+  if (hips && top) {
+    const a = hips.getWorldPosition(new THREE.Vector3()), b = top.getWorldPosition(new THREE.Vector3());
+    const dy = b.y - a.y, dz = b.z - a.z;
+    if (Math.abs(dz) > Math.abs(dy)) ax = dz > 0 ? -Math.PI / 2 : Math.PI / 2;   // Z-up: +Z→−90°X, −Z→+90°X (CC/AccuRIG обычно −Z)
+    else if (dy < 0) ax = Math.PI;                                              // перевёрнутый Y-up (голова вниз) → 180°X
+  } else { const bb = skeletonBox(obj); if ((bb.max.z - bb.min.z) > (bb.max.y - bb.min.y)) ax = -Math.PI / 2; }   // без костей — знак не определить, дефолт +Z
   obj.rotation.copy(r); obj.updateMatrixWorld(true);
-  return up;
+  return ax;
 }
 /** Высота источника (наш Humanoid): его «кости» — THREE.Group (не Bone), меряем по карте bones. */
 function humanoidHeight(h: Humanoid): number {
@@ -186,7 +192,7 @@ export async function applyWeaponModels(weaponGroups: THREE.Group[], cfg: AssetC
  *  GLB-атлас персонажа (submesh-тумблер по слоту). update() ведёт риги. */
 export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
   set(specs: SlotModel[], assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<void>;
-  setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean }): Promise<string[]>;
+  setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean; matBySlot?: Record<string, string> }): Promise<string[]>;
   update(): void; count(): number; atlasBone(our: string): THREE.Object3D | null; dispose(): void;
 } {
   const worn: Worn[] = [];
@@ -216,7 +222,7 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
         // D0: карту костей ВЫВОДИМ из ФАКТИЧЕСКИ загруженного скелета (экспорт-GLB суффиксит имена → сохранённый
         // boneMap с исходными именами не матчится). autoBoneMap нормализует (CC_Base_Hip_4→Hips); сохранённый — override.
         const map = resolveBoneMap(g, spec.boneMap);
-        g.rotation.set(detectUpZ(g, map) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);
+        g.rotation.set(detectUpFixX(g, map), 0, 0); g.updateMatrixWorld(true);
         // конформ длин звеньев к source (наш риг с профилем) → повороты 1:1, меш морфится, стопы/кисти совпадают
         const rig = makeRetargetRig(g, map, scaleToSource(g, source), source);
         g.traverse((o) => {
@@ -238,9 +244,10 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
   // `opt.hideHair` = спрятать волосы (сабмеш helm-слота с /hair/ в имени) — надет шлем. Variant-safe: если запрошенный
   // вариант не найден среди сабмешей слота, показываем ВСЕ сабмеши слота (не прячем весь слот из-за незнакомого modelId).
   // Всё авто-садится (общий скелет, засканы на месте). Возвращает список имён сабмешей (для UI редактора).
-  async function setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean }): Promise<string[]> {
+  async function setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean; matBySlot?: Record<string, string> }): Promise<string[]> {
     const hideHair = !!opt?.hideHair;
-    const key = 'atlas:' + model.url + '|' + JSON.stringify(visible) + '|' + (hideHair ? 'H' : '') + '|' + JSON.stringify(model.slots ?? {}) + '|' + JSON.stringify(model.submeshMaterials ?? {});
+    const matBySlot = opt?.matBySlot;   // слот → materialId: пер-предметный материал экипа (перекрывает материал сабмеша атласа)
+    const key = 'atlas:' + model.url + '|' + JSON.stringify(visible) + '|' + (hideHair ? 'H' : '') + '|' + JSON.stringify(model.slots ?? {}) + '|' + JSON.stringify(model.submeshMaterials ?? {}) + '|' + JSON.stringify(matBySlot ?? {});
     if (key === curKey) return worn.length ? lastAtlasMeshes : [];
     curKey = key;
     const my = ++gen;
@@ -250,7 +257,7 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
       const g = await loadModelUrl(model.url);
       if (my !== gen) { g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); return []; }
       const map = resolveBoneMap(g, model.boneMap ?? {});
-      g.rotation.set(detectUpZ(g, map) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);
+      g.rotation.set(detectUpFixX(g, map), 0, 0); g.updateMatrixWorld(true);
       const rig = makeRetargetRig(g, map, scaleToSource(g, source), source);
       // Проход 1: собрать сабмеши со слотами. Variant-safe требует знать, ЕСТЬ ли в слоте запрошенный вариант.
       const subs: { mesh: THREE.Mesh; slot: string }[] = [];
@@ -273,7 +280,8 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
           if (show && hideHair && /hair/i.test(mesh.name)) show = false;   // шлем надет → волосы прочь
         }
         mesh.visible = show; if (show) mesh.castShadow = true;
-        const mid = model.submeshMaterials?.[mesh.name]; if (mid) { const mat = getMaterial(assets, mid); if (mat) mesh.material = mat; }
+        const mid = (slot && matBySlot?.[slot]) || model.submeshMaterials?.[mesh.name];   // пер-предметный (по слоту) > пер-сабмеш атласа
+        if (mid) { const mat = getMaterial(assets, mid); if (mat) mesh.material = mat; }
       }
       parent.add(rig.root); worn.push({ slot: 'atlas', rig });
       showAllProcedural(false);   // атлас = всё тело → процедурный риг прячем целиком

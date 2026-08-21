@@ -170,10 +170,10 @@ export const balanceSchema = z.object({
   knockdown: z
     .object({
       enabled: z.boolean().default(true),
-      chanceBase: z.number().min(0).max(1).default(0),         // база на ЛЮБОЙ удар (0 = роняет только вес оружия/скилл/стат)
+      chanceBase: z.number().min(0).max(1).default(0.85),      // ⚠ ВРЕМЕННО ДЛЯ ТЕСТА (боевой 0) (0 = роняет только вес оружия/скилл/стат)
       weaponWeightMult: z.number().min(0).default(0.004),      // вклад веса оружия в шанс (weaponWeight × это): булава роняет, кинжал ~0
       targetWeightResist: z.number().min(0).default(0.01),     // сопротивление цели по её весу (mass × это снижает шанс)
-      maxChance: z.number().min(0).max(1).default(0.5),        // потолок шанса от НЕ-гарантированных источников (никогда не «каждый удар»)
+      maxChance: z.number().min(0).max(1).default(1),          // ⚠ ВРЕМЕННО ДЛЯ ТЕСТА (боевой 0.5) потолок шанса от НЕ-гарантированных источников (никогда не «каждый удар»)
       downSec: z.number().min(0).default(1.1),                 // сколько лежит на земле (рут), сек
       riseSec: z.number().min(0).default(0.8),                 // сколько встаёт (клиент — анимация подъёма; сервер держит рут весь период), сек
       vulnBonusPct: z.number().min(0).default(0.25),           // +доля урона по лежачему/встающему (окно для добива/комбо)
@@ -181,7 +181,7 @@ export const balanceSchema = z.object({
       knockbackDmgScale: z.number().min(0).default(2),         // масштаб отлёта от силы удара: dist ×= clamp(0.4 + урон/maxHP × это, 0.4, 1.5) — сильнее бьёшь дальше летит
       knockbackSec: z.number().min(0.01).default(0.18),        // за сколько сек проезжает отлёт (глайд позиции сервером; клиент ведёт рагдолл по ней)
     })
-    .default({ enabled: true, chanceBase: 0, weaponWeightMult: 0.004, targetWeightResist: 0.01, maxChance: 0.5, downSec: 1.1, riseSec: 0.8, vulnBonusPct: 0.25, knockbackDist: 45, knockbackDmgScale: 2, knockbackSec: 0.18 }),   // объектный дефолт (применяется, когда блока knockdown нет в balance.json
+    .default({ enabled: true, chanceBase: 0.85, weaponWeightMult: 0.004, targetWeightResist: 0.01, maxChance: 1, downSec: 1.1, riseSec: 0.8, vulnBonusPct: 0.25, knockbackDist: 45, knockbackDmgScale: 2, knockbackSec: 0.18 }),   // ⚠ ВРЕМЕННО chanceBase/maxChance (боевые 0/0.5) — объектный дефолт применяется, т.к. блока нет в balance.json
   /** Освещение (клиент-вид): тьма растёт с глубиной, свет от факелов и игрока. */
   lighting: z
     .object({
@@ -198,20 +198,23 @@ export const balanceSchema = z.object({
       /** 3D-клиент: тени и свет героя (регулируется тут; вкл/выкл — в настройках игры). */
       shadow3d: z
         .object({
-          /** Разрешение теневой карты (px, степень 2). Больше — чётче/дороже. */
-          mapSize: z.number().int().min(128).max(2048).default(1024),
+          // РАЗРЕШЕНИЕ теней (mapSize) вынесено в КЛИЕНТСКИЕ настройки (⚙, localStorage) — это перф-настройка ПК, не контент.
           /** Сдвиг тени (борьба с «акне»). Обычно небольшой минус. */
           bias: z.number().min(-0.02).max(0).default(-0.004),
           /** Сколько БЛИЖАЙШИХ факелов отбрасывают тень (point-light shadow дорогой — 6 граней). */
           torchCasters: z.number().int().min(0).max(8).default(2),
+          /** Яркость точечного света факела (3D; вокруг неё мерцание). */
+          torchIntensity: z.number().min(0).default(1500),
+          /** Радиус/дальность света факела (3D, ед. мира; = дальность теневой камеры факела). */
+          torchDist: z.number().min(0).default(380),
           /** Яркость точечного света героя (3D). */
           playerLightIntensity: z.number().min(0).default(6000),
           /** Радиус/дальность света героя (3D, ед. мира). */
           playerLightDist: z.number().min(0).default(620),
         })
-        .default({ mapSize: 1024, bias: -0.004, torchCasters: 2, playerLightIntensity: 6000, playerLightDist: 620 }),
+        .default({ bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 }),
     })
-    .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140, shadow3d: { mapSize: 1024, bias: -0.004, torchCasters: 2, playerLightIntensity: 6000, playerLightDist: 620 } }),
+    .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140, shadow3d: { bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 } }),
   /** Редкости, которые поднимаются автоматически при проходе рядом. Остальное — по клику. */
   autoPickup: z
     .array(z.enum(['normal', 'magic', 'rare', 'unique']))
@@ -389,6 +392,9 @@ const armorBaseSchema = z.object({
   /** 3D-модель брони ПО КЛАССУ (id класса → modelId submesh-варианта). Перекрывает общий modelId для этого класса —
    *  так у каждого класса СВОЯ 3D-броня для этого предмета. Класса нет в карте → берётся общий modelId. */
   modelByClass: z.record(z.string(), z.string()).optional(),
+  /** Материал брони ПО КЛАССУ (id класса → materialId из конфига materials). Накладывается на меш этого предмета у
+   *  данного класса при экипировке (перекрывает материал сабмеша атласа). Класса нет в карте → материал сабмеша/дефолт. */
+  materialByClass: z.record(z.string(), z.string()).optional(),
 });
 
 /** Эффект применения расходника (зелья/колбы). */
@@ -1053,6 +1059,8 @@ export const difficultiesSchema = z.array(
 const floorSizeCommon = {
   cols: z.number().int().min(20).max(200).default(56),
   rows: z.number().int().min(20).max(200).default(42),
+  /** Ширина коридоров в клетках (для rooms/bsp — проёмы/связки между комнатами). Пусто = 4 (просторно). */
+  corridorWidth: z.number().int().min(1).max(8).optional(),
 };
 const roomsParamsSchema = z.object({
   algorithm: z.literal('rooms'),
@@ -1730,6 +1738,11 @@ export const modelsSchema = z.array(z.object({
   id: z.string(),
   name: z.string().default(''),
   url: z.string(),                                      // /assets/<id>.glb
+  // ЯВНАЯ категория (задаётся при загрузке) — организация в редакторе: группа дерева, набор полей формы, подпапка
+  //   аплоада. Отделяет тайл пола от персонажа, чтобы у тайла не было персонажных полей. Легаси без category —
+  //   категория угадывается по kind/objectRef. character/monster → атлас (kind='character'); tile/decor → kind='part'
+  //   (материал из «Объекта»); weapon → kind='weapon'.
+  category: z.enum(['character', 'monster', 'tile', 'decor', 'weapon', 'misc']).optional(),
   kind: z.enum(['character', 'part', 'weapon']).default('part'),
   slot: z.enum(['helm', 'chest', 'gloves', 'boots', 'head']).optional(),   // kind='part': область тела
   weaponType: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff', 'shield']).optional(),   // kind='weapon'
@@ -1739,6 +1752,10 @@ export const modelsSchema = z.array(z.object({
   //   атласа = процедурка). Оружие (kind='weapon') ОБЩЕЕ на всех — classId не задаётся.
   classId: z.string().optional(),
   slots: z.record(z.string(), z.string()).default({}),  // kind='character': имя сабмеша → слот (helm/head/chest/gloves/boots; '' = скрыт). Авто-классификация при импорте, правится.
+  // kind='character': БАЗОВЫЙ вид ПУСТЫХ слотов этого атласа (submesh-вариант по умолчанию, когда ничего не надето) —
+  //   аналог classes.baseAppearance, но НА АТЛАСЕ. Для МОНСТРА: атлас семьи несёт свой дефолт-вид (клиент берёт по atlasKey).
+  //   hair→helm(причёска без шлема)/head→head/hands→gloves/body→chest/feet→boots. Пусто → показать все submesh слота.
+  baseAppearance: z.object({ hair: z.string().optional(), head: z.string().optional(), hands: z.string().optional(), body: z.string().optional(), feet: z.string().optional() }).optional(),
   // kind='character': модульные пропорции тела (слайдеры конструктора). Игра строит solid/target с ним, атлас конформится.
   body: z.object({ height: z.number(), arm: z.number(), leg: z.number(), torso: z.number(), girth: z.number() }).partial().optional(),
   // kind='character': пер-костные множители длины, снятые с ФБХ (measureBoneScales) → наш физ-скелет 1:1 повторяет модель.
@@ -1752,6 +1769,9 @@ export const modelsSchema = z.array(z.object({
   boneMap: z.record(z.string(), z.string()).default({}),   // наша кость → имя кости импорт-скелета (ретаргет)
   grip: z.object({ pos: rgb.default([0, 0, 0]), rot: rgb.default([0, 0, 0]) }).optional(),   // хват оружия на кисти
   submeshMaterials: z.record(z.string(), z.string()).default({}),   // имя сабмеша → materialId
+  // decor/tile: коллайдер, ИЗВЛЕЧЁННЫЙ из невидимого меша `collider*` GLB (в ДОЛЯХ тайла, 100 ед=1 тайл) — источник
+  //   для objects.collider (Ф3). Круг: r; бокс: полные w×h. Пусто → у меша нет collider* (объект задаёт коллайдер вручную).
+  collider: z.object({ shape: z.enum(['circle', 'box']), r: z.number().optional(), w: z.number().optional(), h: z.number().optional() }).optional(),
 }));
 
 /** ОКРУЖЕНИЕ подземелья — per-biome НАСТРОЙКИ рендера (фейд стен-окклюдеров). Сами меши пола/стен задаются секцией
@@ -1779,10 +1799,24 @@ export const objectsSchema = z.array(z.object({
   id: z.string(),
   name: z.string().default(''),
   enabled: z.boolean().default(true),
+  //   floor = тайл пола (1×1 тайлится по всем клеткам cellHash; footprint>1 = сервер расставляет «россыпью» ВМЕСТО базовых
+  //   тайлов с частотой spawnChance). wall = тайл стены. pillar = стеновая колонна (клиент, без коллизии). prop = кладётся
+  //   ПОВЕРХ готового пола/стены (см. surface), сервер расставляет. decor = отложено (отдельная история).
   role: z.enum(['floor', 'wall', 'pillar', 'decor', 'prop']).default('decor'),
+  surface: z.enum(['floor', 'wall']).default('floor'),   // prop: на пол или на стену ставится
   modelId: z.string().default(''),                      // id модели из секции models (GLB)
   materialId: z.string().default(''),                   // '' = материал из GLB; иначе materials[id] (override, общий инстанс)
   biomes: z.array(z.string()).default([]),              // к каким биомам относится (biomes[].id; мультиселект)
+  // ── Напольный декор (role decor/prop): расстановка + коллизия сервером ──
+  blocks: z.boolean().default(false),                   // блокирует ли проход (суб-тайл-препятствие из коллайдера)
+  blocksSight: z.boolean().default(false),              // перекрывает ли обзор монстров (LoS) — высокий декор прячет цель
+  // Коллайдер препятствия в ДОЛЯХ тайла (круг r / бокс w×h). Пусто → берётся из меша collider* модели (Ф3),
+  //   иначе дефолт-круг. Форму (круг/бокс) задаёт объект: круглый очаг → circle, длинный сундук → box.
+  collider: z.object({ shape: z.enum(['circle', 'box']).default('circle'), r: z.number().optional(), w: z.number().optional(), h: z.number().optional() }).optional(),
+  footprint: z.object({ w: z.number().int().min(1).max(8).default(1), h: z.number().int().min(1).max(8).default(1) }).default({}),   // занимаемые клетки (мульти-тайл), дефолт 1×1
+  spawnChance: z.number().min(0).max(1).default(0.35),   // частота спавна: шанс поставить объект в клетку-кандидат (0=никогда, 1=часто)
+  // Источник(и) света из меша(ей) light* модели (Ф4): параметры PointLight, ставится в позицию маркера.
+  light: z.object({ color: z.string().default('#ffa860'), intensity: z.number().default(1500), distance: z.number().default(380), flicker: z.boolean().default(true) }).optional(),
 }));
 
 /** Реестр всех схем: ключ конфига → схема. */

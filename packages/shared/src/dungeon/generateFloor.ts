@@ -5,6 +5,7 @@ import { type DungeonLayout, type Room, validate, roomCenter } from './floorComm
 import { ALGORITHMS, roomsAlgorithm } from './algorithms/index.js';
 import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
+import { placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
 import type { FloorSpec } from './run/types.js';
 
 /** Опции сборки этажа поверх «сырого» алгоритма. */
@@ -21,6 +22,10 @@ export interface GenFloorOpts {
   prefabs?: RoomPrefab[];
   /** Биом этажа — для отбора префабов по их полю `biomes` (пусто у префаба = любой биом). */
   biomeId?: string;
+  /** Спеки напольного декора биома (role decor/prop) — сервер расставляет их по комнатам. */
+  decorSpecs?: DecorSpec[];
+  /** Плотность расстановки декора (тюн «пачек»). */
+  decorPlace?: PlaceDecorOpts;
 }
 
 /**
@@ -138,11 +143,16 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
     result.levers = [];
   }
   applyFeatures(result, opts.features, createRng(((seed ^ 0xfea7) >>> 0) || 1));
+  // Расставляемые объекты (пол-россыпь + props на пол/стену) — детерминированно от сида (независимые потоки rng).
+  if (opts.decorSpecs && opts.decorSpecs.length) {
+    placeFloorDecor(result, opts.decorSpecs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace);
+    placeWallProps(result, opts.decorSpecs, createRng(((seed ^ 0x3a11) >>> 0) || 1));
+  }
   return result;
 }
 
-/** Гарантированно проходимый этаж по FloorSpec (биом/алгоритм/сид/выходы/замок/фичи + библиотека префабов). */
-export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[]): DungeonLayout {
+/** Гарантированно проходимый этаж по FloorSpec (биом/алгоритм/сид/выходы/замок/фичи + библиотека префабов + декор). */
+export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpecs?: DecorSpec[], decorPlace?: PlaceDecorOpts): DungeonLayout {
   return generateFloorParams(spec.algoParams, spec.seed, {
     lock: spec.locked,
     exitCount: spec.exitCount,
@@ -150,5 +160,7 @@ export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[]): DungeonL
     features: spec.features,
     prefabs,
     biomeId: spec.biomeId,
+    decorSpecs,
+    decorPlace,
   });
 }

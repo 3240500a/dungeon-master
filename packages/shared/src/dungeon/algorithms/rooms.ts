@@ -24,8 +24,8 @@ export function roomsAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAl
   while (rooms.length < roomCount && attempts < 400) {
     attempts++;
     const big = rng.chance(bigChance);
-    const w = big ? rng.int(10, 14) : rng.int(5, 8);
-    const h = big ? rng.int(8, 11) : rng.int(4, 7);
+    const w = big ? rng.int(10, 14) : rng.int(6, 9);   // мин. сторона 6 — просторнее, не тесные каморки
+    const h = big ? rng.int(8, 11) : rng.int(6, 9);
     const x = rng.int(1, cols - w - 1);
     const y = rng.int(1, rows - h - 1);
     if (rooms.some((r) => x < r.x + r.w + 2 && x + w + 2 > r.x && y < r.y + r.h + 2 && y + h + 2 > r.y)) continue;
@@ -58,6 +58,7 @@ export function roomsAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAl
       loops: params.loops,
       excludeIdx: lock ? exitIdx : -1,
       branch: lock ? [spawnIdx] : [spawnIdx, exitIdx],
+      width: params.corridorWidth ?? 4,
     }, rng);
   }
 

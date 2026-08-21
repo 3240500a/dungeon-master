@@ -27,7 +27,15 @@ export interface Room {
 export interface DecorObject {
   x: number;
   y: number;
-  kind: 'pillar' | 'torch' | 'chest' | 'arena' | 'portal' | 'stash' | 'shop';
+  kind: 'pillar' | 'torch' | 'chest' | 'arena' | 'portal' | 'stash' | 'shop' | 'obj';
+  /** kind:'obj' — id объекта из config `objects` (какую GLB рисовать + коллайдер/свет/footprint). */
+  objectId?: string;
+  /** Поворот вокруг вертикали (рад) — ориентация меша и коллайдера-бокса. */
+  rot?: number;
+  /** Занимаемые клетки (мульти-тайл декор); дефолт 1×1. */
+  footprint?: { w: number; h: number };
+  /** Индекс визуального варианта (если у объекта несколько мешей). */
+  variant?: number;
 }
 
 /** Запертые ворота: группа смежных клеток `Cell.Door` одного проёма. */

@@ -1,20 +1,90 @@
 [
   {
-    "id": "crypt_floor",
-    "name": "Крипта — пол",
-    "enabled": true,
-    "role": "floor",
-    "modelId": "crypt_floor_01",
-    "materialId": "",
-    "biomes": ["crypt"]
-  },
-  {
-    "id": "crypt_wall",
-    "name": "Крипта — стена",
+    "id": "crypt_wall_base_01",
+    "name": "",
     "enabled": true,
     "role": "wall",
-    "modelId": "crypt_wall_01",
-    "materialId": "",
-    "biomes": ["crypt"]
+    "surface": "floor",
+    "modelId": "crypt_wall_base_01",
+    "materialId": "crypt_wall_base_01",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": false,
+    "blocksSight": false,
+    "footprint": {
+      "w": 1,
+      "h": 1
+    },
+    "spawnChance": 0.35
+  },
+  {
+    "id": "crypt_floor_base_01",
+    "name": "crypt_floor_base_01",
+    "enabled": true,
+    "role": "floor",
+    "surface": "floor",
+    "modelId": "crypt_floor_base_01",
+    "materialId": "crypt_floor_base_01",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": false,
+    "blocksSight": false,
+    "footprint": {
+      "w": 1,
+      "h": 1
+    },
+    "spawnChance": 0.35
+  },
+  {
+    "id": "crypt_column_01",
+    "name": "crypt_column_01",
+    "enabled": true,
+    "role": "pillar",
+    "surface": "floor",
+    "modelId": "crypt_column_01",
+    "materialId": "crypt_column_01",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": false,
+    "blocksSight": false,
+    "footprint": {
+      "w": 1,
+      "h": 1
+    },
+    "spawnChance": 0.35
+  },
+  {
+    "id": "crypt_floor_grille_01",
+    "name": "crypt_floor_grille_01",
+    "enabled": true,
+    "role": "floor",
+    "surface": "floor",
+    "modelId": "crypt_floor_grille_01",
+    "materialId": "crypt_floor_grille_01",
+    "biomes": [
+      "crypt"
+    ],
+    "blocks": false,
+    "blocksSight": false,
+    "collider": {
+      "shape": "circle",
+      "r": 0,
+      "w": 0,
+      "h": 0
+    },
+    "footprint": {
+      "w": 2,
+      "h": 2
+    },
+    "spawnChance": 0.35,
+    "light": {
+      "color": "#90FFF3",
+      "intensity": 500,
+      "distance": 400,
+      "flicker": false
+    }
   }
 ]

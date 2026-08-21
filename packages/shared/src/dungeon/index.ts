@@ -1,5 +1,6 @@
 export * from './floorCommon.js';
 export * from './prefab.js';
+export * from './decor.js';
 export * from './generate.js';
 export * from './generateFloor.js';
 export * from './townFloor.js';

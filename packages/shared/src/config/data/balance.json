@@ -99,8 +99,8 @@
   "monsterXpGrowth": 0.2,
   "uniqueXpMult": 3,
   "monsterScaling": {
-    "hpPerLevel": 0.8,
-    "damagePerLevel": 0.3,
+    "hpPerLevel": 10,
+    "damagePerLevel": 1,
     "armorPerLevel": 1,
     "accuracyPerLevel": 3,
     "evadePerLevel": 2,
@@ -162,7 +162,28 @@
     "baseArc": 0.8,
     "baseWindupFrac": 0.35,
     "basicManaCost": 0,
-    "attackMoveMult": 0.2
+    "attackMoveMult": 0.2,
+    "combatLingerSec": 3
+  },
+  "dodge": {
+    "distance": 70,
+    "speed": 200,
+    "cooldownSec": 1.2,
+    "weightMult": 3,
+    "staminaCost": 0
+  },
+  "knockdown": {
+    "enabled": true,
+    "chanceBase": 0.85,
+    "weaponWeightMult": 0.004,
+    "targetWeightResist": 0.01,
+    "maxChance": 1,
+    "downSec": 1.1,
+    "riseSec": 0.8,
+    "vulnBonusPct": 0.25,
+    "knockbackDist": 45,
+    "knockbackDmgScale": 2,
+    "knockbackSec": 0.18
   },
   "lighting": {
     "ambient": 0.8,
@@ -171,11 +192,12 @@
     "playerRadius": 160,
     "torchRadius": 140,
     "shadow3d": {
-      "mapSize": 256,
-      "bias": -0.004,
-      "torchCasters": 2,
-      "playerLightIntensity": 4000,
-      "playerLightDist": 400
+      "bias": -0.001,
+      "torchCasters": 4,
+      "torchIntensity": 4000,
+      "torchDist": 400,
+      "playerLightIntensity": 3500,
+      "playerLightDist": 350
     }
   },
   "autoPickup": [

@@ -72,7 +72,12 @@ export const wallFade = {
   knee: new THREE.Vector2(20, 46),                             // высота: ниже x (по колено) НЕ фейдится, выше y — полный фейд верха
   on: 1,                                                       // 1 вкл / 0 выкл (для отладки)
   faceYaw: 0,                                                 // доп. разворот GLB-стены (рад): выставить лицевую сторону модели по «лицу в комнату» (тюн на глаз)
+  colYaw: Math.PI / 2,                                       // доп. разворот КОЛОННЫ (рад) поверх поквадрантного 0/90/180/270: +90° против часовой (вид сверху). Тюн на глаз (±Math.PI/2).
 };
+// ЖИВОЙ ТЮН напольного декора/пропов (одинаково на ВСЕ модели, без авто-детекта): rotX — общий доворот вокруг X (Z-up→Y-up,
+// если экспорт Z-up → −Math.PI/2), offY — подъём/опускание. Меняй `__o.propTune.rotX/offY` + `__o.rebuildEnv()` (без релога),
+// потом скажи значения — впишу дефолт. Пивот модели НЕ трогаем (как в Максе).
+export const propTune = { rotX: 0, offY: 0 };
 const wallFadeU = {
   uPlayerPos: { value: wallFade.playerPos },
   uViewDir: { value: wallFade.viewDir },
@@ -80,8 +85,9 @@ const wallFadeU = {
   uKnee: { value: wallFade.knee },
   uFadeOn: { value: wallFade.on },
 };
-/** Навесить дизер-фейд по «лицу» на материал стены (процедурный matWall ИЛИ материал GLB-стены). */
-export function applyWallFade(mat: THREE.Material): void {
+/** Навесить дизер-фейд по «лицу» на материал стены (процедурный matWall ИЛИ материал GLB-стены). `facingGate=false`
+ *  (для КОЛОНН — они симметричны, «лица» нет) → фейдим радиально+по высоте у игрока БЕЗ гейта «стена смотрит от камеры». */
+export function applyWallFade(mat: THREE.Material, facingGate = true): void {
   const prev = mat.onBeforeCompile;   // цепляемся (не затираем) — сохраняем возможный offset roughness/metalness из getMaterial
   mat.onBeforeCompile = (shader): void => {
     prev?.(shader, undefined as never);
@@ -93,7 +99,7 @@ export function applyWallFade(mat: THREE.Material): void {
       .replace('#include <common>', '#include <common>\nvarying vec3 vWorldW;\nvarying float vFaceDot;\nuniform vec3 uPlayerPos;\nuniform vec2 uFade;\nuniform vec2 uKnee;\nuniform float uFadeOn;')
       .replace('#include <dithering_fragment>', `#include <dithering_fragment>
         if (uFadeOn > 0.5) {
-          float near = smoothstep(0.0, 0.35, vFaceDot);                     // 1 = ближняя стена (лицо от камеры), 0 = задник (лицом к камере)
+          float near = ${facingGate ? 'smoothstep(0.0, 0.35, vFaceDot)' : '1.0'};                     // 1 = ближняя стена (лицо от камеры), 0 = задник (лицом к камере); колонна — всегда 1
           float top = smoothstep(uKnee.x, uKnee.y, vWorldW.y);              // 0 ниже «колена» (не фейдим), 1 выше (фейдим верх)
           float radial = 1.0 - smoothstep(uFade.x, uFade.y, distance(vWorldW.xz, uPlayerPos.xz));   // только у игрока
           float fadeAmt = near * top * radial;                             // 1 = полностью прозрачно
@@ -111,9 +117,18 @@ applyWallFade(matWall);
 export interface EnvTile { geo: THREE.BufferGeometry; mat: THREE.Material }
 export interface WallPart { geo: THREE.BufferGeometry; mat: THREE.Material; fade: boolean }   // fade: верх (true) / низ-база (false)
 export interface WallVariant { parts: WallPart[] }
-export interface EnvKit { floors: EnvTile[]; walls: WallVariant[] }
+/** Параметры точечного света из маркера `light*` (config objects[].light). */
+export interface LightCfg { color: string; intensity: number; distance: number; flicker: boolean }
+/** Напольный декор-объект: набор мешей (низ на y=0, центр XZ в точке размещения) + локальные точки света из `light*` + их параметры.
+ *  `coversFloor` (role floor россыпь) — базовый пол пропускается в занятых клетках (модель = плитки+декор запечены). */
+export interface PropVariant { parts: EnvTile[]; lights: THREE.Vector3[]; light?: LightCfg; coversFloor?: boolean }
+export interface EnvKit { floors: EnvTile[]; walls: WallVariant[]; columns: WallVariant[]; props: Map<string, PropVariant> }
 
 interface RawTile { geo: THREE.BufferGeometry; mat: THREE.Material; name: string }
+
+/** Вспом-меши по конвенции имён (невидимы в игре): `collider*` = форма коллизии (сервер), `light*` = точка света. */
+function isColliderName(n: string): boolean { return /^collider/i.test(n); }
+function isLightName(n: string): boolean { return /^light/i.test(n); }
 
 /** Детерминированный хэш клетки → неотрицательное 32-бит (для выбора варианта/поворота, стабилен между пересборками). */
 function cellHash(x: number, y: number, seed: number): number { return (((x * 73856093) ^ (y * 19349663) ^ (seed * 83492791)) >>> 0); }
@@ -132,13 +147,15 @@ function wallBase(name: string): string {
   return name.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t && !LO_TOK.includes(t) && !HI_TOK.includes(t)).join('_');
 }
 
-/** Все меши GLTF-сцены как отдельные тайлы (мир-трансформы применены, атрибуты почищены под инстансинг, имя сохранено). */
+/** Все ВИДИМЫЕ меши GLTF-сцены как тайлы (мир-трансформы применены, атрибуты почищены под инстансинг, имя сохранено).
+ *  Вспом-меши `collider*` (форма коллизии, считает сервер) и `light*` (точка света) — пропускаем (не рисуем). */
 function collectTiles(scene: THREE.Object3D): RawTile[] {
   scene.updateMatrixWorld(true);
   const out: RawTile[] = [];
   scene.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!(m as { isMesh?: boolean }).isMesh || !m.geometry) return;
+    if (isColliderName(m.name) || isLightName(m.name)) return;   // невидимые маркеры — не в рендер
     let g = m.geometry.clone(); g.applyMatrix4(m.matrixWorld);
     for (const a of ['tangent', 'color']) g.deleteAttribute(a);
     if (g.index) g = g.toNonIndexed();
@@ -147,13 +164,24 @@ function collectTiles(scene: THREE.Object3D): RawTile[] {
   return out;
 }
 
-/** Пол: центр XZ, верх на y=0 (поворот вокруг центра). */
+/** Мировые (модель-пространство) позиции маркеров `light*` GLTF-сцены — точки, где ставить источник света. */
+function collectLightMarkers(scene: THREE.Object3D): THREE.Vector3[] {
+  scene.updateMatrixWorld(true);
+  const out: THREE.Vector3[] = [];
+  scene.traverse((o) => { if (isLightName(o.name)) out.push(o.getWorldPosition(new THREE.Vector3())); });
+  return out;
+}
+
+/** Пол: центр XZ, НИЗ/КРОМКА (= пивот Z=0 из Макса) на y=0. ВАЖНО: заземляем по bb.MIN.y, а не max.y. У тайлов
+ *  кромки опущены к Z=0, центр вспучен вверх (рельеф-«подушка», у разных тайлов 2.1..3.6). Если ставить верх на 0
+ *  (max.y), кромки проваливаются на РАЗНУЮ глубину → канавы-щели + ступеньки на стыках + зазор у стен. По min.y
+ *  (пивот) кромки ВСЕХ тайлов ложатся на y=0 → швы вровень, а вспучивание уходит вверх (декор). */
 function normalizeFloorGeo(geo: THREE.BufferGeometry, unitScale: number): void {
   geo.computeBoundingBox(); const ext = new THREE.Vector3(); geo.boundingBox!.getSize(ext);
   if (ext.z < ext.y) geo.rotateX(-Math.PI / 2);                 // пол: тоньше по Z = Z-up → в Y-up
   geo.scale(unitScale, unitScale, unitScale);
   geo.computeBoundingBox(); const bb = geo.boundingBox!;
-  geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.max.y, -(bb.min.z + bb.max.z) / 2);
+  geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);   // кромка/пивот на y=0
 }
 /** Вариант стены (1-2 меша) нормируем как ЦЕЛОЕ: общий Z-up-детект и общий сдвиг низа на y=0 — чтобы низ/верх остались
  * состыкованными по высоте. XZ-пивот модели (центр лицевой стороны) сохраняем — стену ставим на край тайла к комнате. */
@@ -185,6 +213,8 @@ function normEnvMat(mat: THREE.Material): THREE.Material {
 
 /** Спека объекта окружения: url GLB + опц. материал-override (общий инстанс на роль — дешевле для слабых ПК; null = из GLB). */
 export interface EnvSpec { url: string; mat?: THREE.Material | null }
+/** Спека расставляемого объекта: как EnvSpec + `objectId` (ключ серверного `DecorObject`) + свет (`light*`) + `coversFloor` (россыпь пола). */
+export interface PropSpec { objectId: string; url: string; mat?: THREE.Material | null; light?: LightCfg; coversFloor?: boolean }
 
 /** Footprint-масштаб из первого тайла пола (плоский тайл → наибольшая сторона = 1 м → TILE). */
 function floorUnitScale(tile: THREE.BufferGeometry): number {
@@ -216,15 +246,49 @@ function buildWallVariants(rawWalls: RawTile[], unitScale: number, baseMat: THRE
   });
 }
 
-/** Загрузить тайлсет окружения из СПИСКОВ объектов (по ролям пол/стена). Каждый спек = ОДИН GLB (может нести варианты-меши):
- *  варианты всех floor-GLB мёржатся в общий пул пола, всех wall-GLB — в пул стен (больше объектов = больше разнообразия).
- *  Масштаб — из первого тайла первого пола. Материал per-объект (null = из GLB). Нет пола → пустой кит → клиент на боксах. */
-export async function loadEnvKitFromObjects(floorSpecs: EnvSpec[], wallSpecs: EnvSpec[]): Promise<EnvKit> {
+/** Меши колонны-GLB → варианты (пара lo+hi, как стена, но БЕЗ фейда — колонна не окклюдер). XZ-пивот сохраняется
+ *  (normalizeWallVariant не центрирует XZ), у колонны он смещён в угол-стык стен — ставим колонну по этому пивоту. */
+function buildColumnVariants(rawCols: RawTile[], unitScale: number, baseMat: THREE.Material | null): WallVariant[] {
+  const fadeMat = baseMat ? baseMat.clone() : null;   // общий верх-с-фейдом на все варианты (override)
+  if (fadeMat) applyWallFade(fadeMat);                // верх колонны тает как стена (по «лицу»=диагональ угла, aFacing задаём при расстановке)
+  const hasParts = rawCols.some((t) => wallPart(t.name) !== null);
+  const groups = new Map<string, RawTile[]>();
+  rawCols.forEach((t, i) => { const key = hasParts ? (wallBase(t.name) || `__c${i}`) : `__c${i}`; (groups.get(key) ?? groups.set(key, []).get(key)!).push(t); });
+  return [...groups.values()].map((tiles) => {
+    normalizeWallVariant(tiles.map((t) => t.geo), unitScale);   // Z-up + масштаб + низ на y=0, XZ-пивот (стык) сохранён
+    const parts: WallPart[] = tiles.map((t) => {
+      const fade = wallPart(t.name) !== 'lo';                   // низ (lo) не тает, верх (hi/одиночный) — тает у игрока
+      let mat: THREE.Material;
+      if (baseMat) { mat = fade ? fadeMat! : baseMat; }
+      else { mat = normEnvMat(t.mat); if (fade) applyWallFade(mat); }
+      return { geo: t.geo, mat, fade };
+    });
+    return { parts };
+  });
+}
+
+/** Меши декор-GLB → PropVariant. БЕЗ ДЕТЕКТОВ/центровок/заземлений: геометрия СЫРАЯ как из Макса (collectTiles уже
+ *  запёк matrixWorld) + ТОЛЬКО масштаб под тайл. Пивот модели сохранён (origin). Общий доворот `propTune.rotX` и подъём
+ *  `propTune.offY` применяются пер-инстанс в `buildEnvironment` (живой тюн, одинаково на все модели). `lightsModel` —
+ *  маркеры `light*` в локаль пропа (масштаб; доворот применится вместе с инстансом). */
+function buildPropVariant(render: RawTile[], lightsModel: THREE.Vector3[], unitScale: number, baseMat: THREE.Material | null): PropVariant {
+  for (const r of render) r.geo.scale(unitScale, unitScale, unitScale);   // только размер под тайл; ориентация/пивот — как в Максе
+  const lights = lightsModel.map((v) => v.clone().multiplyScalar(unitScale));
+  const parts: EnvTile[] = render.map((r) => ({ geo: r.geo, mat: baseMat ?? normEnvMat(r.mat) }));
+  return { parts, lights };
+}
+
+/** Загрузить тайлсет окружения из СПИСКОВ объектов (пол/стена/колонна + напольный декор). Каждый спек = ОДИН GLB (может
+ *  нести варианты-меши): floor-GLB → пул пола, wall-GLB → стены, pillar-GLB → колонны (углы), decor/prop-GLB → пропы
+ *  (по objectId). Масштаб — из первого тайла первого пола. Материал per-объект (null = из GLB). Нет пола → пустой кит → боксы. */
+export async function loadEnvKitFromObjects(floorSpecs: EnvSpec[], wallSpecs: EnvSpec[], columnSpecs: EnvSpec[] = [], propSpecs: PropSpec[] = []): Promise<EnvKit> {
   const loader = new GLTFLoader();
-  const kit: EnvKit = { floors: [], walls: [] };
+  const kit: EnvKit = { floors: [], walls: [], columns: [], props: new Map() };
   const load = (specs: EnvSpec[]): Promise<({ tiles: RawTile[]; mat: THREE.Material | null } | null)[]> =>
     Promise.all(specs.map((s) => loader.loadAsync(s.url).then((g) => ({ tiles: collectTiles(g.scene), mat: s.mat ?? null })).catch((e) => { console.warn('[env] не загрузился', s.url, e); return null; })));
-  const [floorLoaded, wallLoaded] = await Promise.all([load(floorSpecs), load(wallSpecs)]);
+  const loadProps = (specs: PropSpec[]): Promise<({ objectId: string; tiles: RawTile[]; lights: THREE.Vector3[]; mat: THREE.Material | null; light?: LightCfg; coversFloor?: boolean } | null)[]> =>
+    Promise.all(specs.map((s) => loader.loadAsync(s.url).then((g) => ({ objectId: s.objectId, tiles: collectTiles(g.scene), lights: collectLightMarkers(g.scene), mat: s.mat ?? null, light: s.light, coversFloor: s.coversFloor })).catch((e) => { console.warn('[env] проп не загрузился', s.url, e); return null; })));
+  const [floorLoaded, wallLoaded, columnLoaded, propLoaded] = await Promise.all([load(floorSpecs), load(wallSpecs), load(columnSpecs), loadProps(propSpecs)]);
   const firstFloor = floorLoaded.find((f) => f && f.tiles.length);
   if (!firstFloor) return kit;   // без пола нет масштаба → фолбэк боксы
   const unitScale = floorUnitScale(firstFloor.tiles[0]!.geo);
@@ -233,13 +297,17 @@ export async function loadEnvKitFromObjects(floorSpecs: EnvSpec[], wallSpecs: En
     for (const t of f.tiles) { normalizeFloorGeo(t.geo, unitScale); kit.floors.push({ geo: t.geo, mat: f.mat ?? normEnvMat(t.mat) }); }
   }
   for (const w of wallLoaded) { if (w) kit.walls.push(...buildWallVariants(w.tiles, unitScale, w.mat)); }
+  for (const c of columnLoaded) { if (c) kit.columns.push(...buildColumnVariants(c.tiles, unitScale, c.mat)); }
+  for (const p of propLoaded) { if (p && p.tiles.length) { const pv = buildPropVariant(p.tiles, p.lights, unitScale, p.mat); pv.light = p.light; pv.coversFloor = p.coversFloor; kit.props.set(p.objectId, pv); } }
   return kit;
 }
 
 // Факел: мир-позиция + данные пламени. Света СВОЕГО нет — светят лишь TORCH_POOL_N ближайших через общий пул
 // (перф: 20-50 факелов на этаж = столько же PointLight → PBR считал КАЖДЫЙ на каждый фрагмент = дикая фрагментная цена;
 //  пул фиксированного размера → фрагментная цена ограничена И число света постоянно = нет перекомпиляции материалов).
-export interface Torch { x: number; z: number; base: number; attr: THREE.BufferAttribute; pos: Float32Array; life: Float32Array; seed: Float32Array; d2: number; on: boolean; group: THREE.Object3D; flame: THREE.Points }
+// Источник света этажа. Факел (kind:'torch') несёт пламя-Points (attr/pos/life/seed/group/flame); свет-маркер `light*`
+// декора — только точечный свет (y/color/dist), поля пламени пусты. Общий пул PointLight светит ближайшим к игроку.
+export interface Torch { x: number; z: number; base: number; d2: number; on: boolean; y?: number; color?: number; dist?: number; intensity?: number; flicker?: boolean; attr?: THREE.BufferAttribute; pos?: Float32Array; life?: Float32Array; seed?: Float32Array; group?: THREE.Object3D; flame?: THREE.Points }
 const FLAME_N = 20;
 export const TORCH_POOL_N = 10;   // сколько факелов светят одновременно (ближайшие к игроку); пламя-спрайт есть у всех
 // Дальше этой дистанции факел ПОЛНОСТЬЮ в тумане (FogExp2 0.0012 → почти сплошной цвет к ~2000u) → прячем группу
@@ -279,8 +347,16 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
   const postGeo = new THREE.CylinderGeometry(1.4, 2, 48, 6);
   const chestBodyGeo = new THREE.BoxGeometry(20, 12, 14), chestLidGeo = new THREE.BoxGeometry(21, 6, 15);
 
+  // Клетки, накрытые floor-россыпью (модель = плитки+декор запечены) → базовый пол там НЕ тайлим (без двойного пола/z-fight).
+  const coveredFloor = new Set<string>();
+  if (kit?.props?.size) for (const d of layout.decor) {
+    if (d.kind !== 'obj' || !d.objectId || !kit.props.get(d.objectId)?.coversFloor) continue;
+    const fw = Math.max(1, d.footprint?.w ?? 1), fh = Math.max(1, d.footprint?.h ?? 1);
+    const cx0 = Math.round((d.x - (fw * TILE) / 2) / TILE), cy0 = Math.round((d.y - (fh * TILE) / 2) / TILE);
+    for (let yy = cy0; yy < cy0 + fh; yy++) for (let xx = cx0; xx < cx0 + fw; xx++) coveredFloor.add(`${xx},${yy}`);
+  }
   const floorCells: [number, number][] = [];
-  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (walk(x, y)) floorCells.push([x, y]);
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (walk(x, y) && !coveredFloor.has(`${x},${y}`)) floorCells.push([x, y]);
   if (kit?.floors.length) {
     // GLB-варианты пола: вариант + поворот 0/90/180/270 по клетке (детерминированный хэш) → минимум тайлинга.
     const nV = kit.floors.length, cnt = new Array<number>(nV).fill(0), ks = new Array<number>(nV).fill(0);
@@ -315,14 +391,14 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
     const len = Math.hypot(fx, fz) || 1; return [fx / len, fz / len];
   };
   if (kit?.walls.length) {
-    // GLB-варианты стены. Диагональные клетки (лицо и по X, и по Z — внутр./внеш. углы) ПРОПУСКАЕМ: там будет колонна.
-    // Прямые клетки: вариант по клетке; пивот (край лицевой стороны) на КРАЙ тайла к комнате (+facing·½); разворот лицом в комнату.
+    // GLB-варианты стены. Сегмент на КАЖДУЮ открытую грань стен-клетки (сосед по 4-направлениям проходим). Прямая
+    // стена → 1 грань; ВНУТРЕННИЙ УГОЛ → 2 грани (буквой «Г», угол заполнен); полуостров → 3. Так стены доходят до
+    // конца и углы не зияют. Пивот (край лицевой стороны) ставим на КРАЙ тайла к комнате (+dir·½), разворот лицом в комнату.
     const nV = kit.walls.length;
     const place: { x: number; y: number; fx: number; fz: number; v: number }[] = [];
     for (const [x, y] of wallCells) {
-      const [fx, fz] = facingOf(x, y);
-      if (fx !== 0 && fz !== 0) continue;   // диагональ = угол → колонна позже, стену не ставим
-      place.push({ x, y, fx, fz, v: cellHash(x, y, 303) % nV });
+      const v = cellHash(x, y, 303) % nV;   // вариант — по клетке (обе грани угла из одного набора)
+      for (const [dx, dy] of N4) if (walk(x + dx, y + dy)) place.push({ x, y, fx: dx, fz: dy, v });
     }
     for (let v = 0; v < nV; v++) {
       const cells = place.filter((p) => p.v === v);
@@ -350,6 +426,49 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
     wallGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facing, 2)); parent.add(wm);
   }
 
+  // КОЛОННЫ НА ВНУТРЕННИХ УГЛАХ (стен-клетка с 2 ПЕРПЕНДИКУЛЯРНЫМИ открытыми гранями — там стыкуются 2 стены). Пивот
+  // колонны смещён в стык → ставим её в точку угла (центр клетки + диагональ·½TILE), крутим ПОКВАДРАНТНО 0/90/180/270
+  // (по диагонали к комнате) + доп. тюн `wallFade.colYaw` (юзер довернёт на глаз). Противоположные грани (сквозная
+  // тонкая стена) — не угол, пропускаем.
+  if (kit?.columns?.length) {
+    const nV = kit.columns.length;
+    const place: { x: number; y: number; dx: number; dz: number; v: number }[] = [];
+    const DIAG: [number, number][] = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+    for (const [x, y] of wallCells) {
+      const v = cellHash(x, y, 404) % nV;
+      for (const [dx, dz] of DIAG) {
+        const eA = walk(x + dx, y), eB = walk(x, y + dz), diag = walk(x + dx, y + dz);
+        const convex = diag && !eA && !eB;   // выпуклый угол комнаты: комната по диагонали, обе прилегающие грани — стены (две прямые стены сходятся тут)
+        const concave = eA && eB;            // вогнутый локоть (L): обе перпендикулярные грани этой клетки открыты в комнату
+        if (convex || concave) place.push({ x, y, dx, dz, v });   // столб в точке угла (cellCenter+диагональ·½), поворот по квадранту
+      }
+    }
+    // Квадрант угла → индекс поворота ×90°. Анти-диагонали (СВ diag(−1,+1) / ЮЗ diag(+1,−1)) развёрнуты на 180°
+    // относительно диагоналей (СЗ/ЮВ) — по правке юзера (модель садится верно только так). Итог с colYaw +90°:
+    // СЗ(+,+)=90°, СВ(−,+)=0°, ЮВ(−,−)=270°, ЮЗ(+,−)=180°.
+    const quad = (dx: number, dz: number): number => (dx < 0 ? (dz < 0 ? 2 : 3) : (dz < 0 ? 1 : 0)) * (Math.PI / 2);
+    for (let v = 0; v < nV; v++) {
+      const cells = place.filter((p) => p.v === v);
+      if (!cells.length) continue;
+      const mats: THREE.Matrix4[] = [];
+      const facing = new Float32Array(cells.length * 2);
+      cells.forEach((p, i) => {
+        const fl = Math.hypot(p.dx, p.dz) || 1; facing[i * 2] = p.dx / fl; facing[i * 2 + 1] = p.dz / fl;   // «лицо» колонны = диагональ к комнате (для фейд-шейдера верха)
+        dummy.position.set(cw(p.x) + p.dx * TILE / 2, 0, cw(p.y) + p.dz * TILE / 2);
+        dummy.rotation.set(0, quad(p.dx, p.dz) + wallFade.colYaw, 0); dummy.updateMatrix();
+        mats.push(dummy.matrix.clone());
+      });
+      for (const part of kit.columns[v]!.parts) {   // все части (низ+верх) на общие трансформы
+        const geo = part.geo.clone();
+        const im = new THREE.InstancedMesh(geo, part.mat, cells.length); im.castShadow = im.receiveShadow = true;
+        mats.forEach((mtx, i) => im.setMatrixAt(i, mtx));
+        if (part.fade) geo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facing.slice(), 2));   // aFacing нужен фейд-шейдеру верха (иначе не тает)
+        parent.add(im);
+      }
+    }
+    dummy.rotation.set(0, 0, 0);
+  }
+
   // Колонны — из ГРИДА (Cell.Pillar непроходим на сервере: blocked()). Рисуем ВСЕ такие клетки (и декоративные из
   // decorate, и «зал» из carveRoomShaped) — иначе они были невидимыми стенами (рендерились как пол → «непроходимые тайлы»).
   const pillarCells: [number, number][] = [];
@@ -370,6 +489,38 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
   }
 
   const torches: Torch[] = [];
+
+  // НАПОЛЬНЫЙ ДЕКОР (kind:'obj') — сервер разместил и посчитал коллизию; клиент лишь рисует GLB по objectId (x,y,rot).
+  // Группируем по objectId → один InstancedMesh на (объект, часть-меш). Свет из light*-маркеров ставится ниже (updateTorches/Ф4).
+  if (kit?.props?.size) {
+    const byId = new Map<string, typeof layout.decor>();
+    for (const d of layout.decor) if (d.kind === 'obj' && d.objectId && kit.props.has(d.objectId)) (byId.get(d.objectId) ?? byId.set(d.objectId, []).get(d.objectId)!).push(d);
+    for (const [oid, list] of byId) {
+      const pv = kit.props.get(oid)!;
+      // Инстанс = ОБЩИЙ доворот propTune.rotX (одинаково на все) + yaw объекта d.rot + подъём propTune.offY. Пивот в origin.
+      const mats = list.map((d) => { dummy.position.set(d.x, propTune.offY, d.y); dummy.rotation.set(propTune.rotX, d.rot ?? 0, 0); dummy.updateMatrix(); return dummy.matrix.clone(); });
+      for (const part of pv.parts) {
+        const im = new THREE.InstancedMesh(part.geo, part.mat, list.length); im.castShadow = im.receiveShadow = true;
+        mats.forEach((m, i) => im.setMatrixAt(i, m));
+        parent.add(im);
+      }
+      // Свет из `light*`-маркеров: PointLight в мир (полный поворот инстанса на локаль маркера + позиция). Кормит общий пул.
+      if (pv.lights.length) {
+        const lc = pv.light;
+        const col = lc ? new THREE.Color(lc.color).getHex() : 0xffa860;
+        for (let i = 0; i < list.length; i++) {
+          const d = list[i]!;
+          const rm = new THREE.Matrix4().extractRotation(mats[i]!);
+          for (const lp of pv.lights) {
+            const wp = lp.clone().applyMatrix4(rm);
+            const wx = d.x + wp.x, wz = d.y + wp.z, wy = propTune.offY + wp.y;
+            torches.push({ x: wx, z: wz, y: wy, base: (wx * 0.017 + wz * 0.013) % 6.283, color: col, intensity: lc?.intensity ?? 1500, dist: lc?.distance ?? 380, flicker: lc?.flicker ?? true, d2: 0, on: false });
+          }
+        }
+      }
+    }
+    dummy.rotation.set(0, 0, 0);
+  }
   for (const o of layout.decor) {
     if (o.kind === 'pillar') {
       // Колонны уже отрисованы из грида (Cell.Pillar) выше — пропускаем, иначе двойной меш.
@@ -424,19 +575,23 @@ export function buildEnvironment(parent: THREE.Object3D, layout: DungeonLayout, 
  * Пламя анимируем только у СВЕТЯЩИХ (ближних) — дальние в тумане/за кадром замирают (экономим буфер-аплоады).
  * Выбор ближайших — O(pool·torches) без аллокаций (транзиентные d2/on на факеле).
  */
-export function updateTorches(torches: Torch[], pool: THREE.PointLight[], px: number, pz: number, t: number): void {
-  for (const tr of torches) { const dx = tr.x - px, dz = tr.z - pz; tr.d2 = dx * dx + dz * dz; tr.on = false; tr.group.visible = tr.d2 < FLAME_CULL2; }   // туман-кулинг: дальние (в сплошном тумане) не рисуем
+export function updateTorches(torches: Torch[], pool: THREE.PointLight[], px: number, pz: number, t: number, intensity = 1500): void {
+  for (const tr of torches) { const dx = tr.x - px, dz = tr.z - pz; tr.d2 = dx * dx + dz * dz; tr.on = false; if (tr.group) tr.group.visible = tr.d2 < FLAME_CULL2; }   // туман-кулинг пламени; свет-маркеры без группы
   for (let k = 0; k < pool.length; k++) {
     let best = -1, bd = Infinity;
     for (let i = 0; i < torches.length; i++) { const tr = torches[i]!; if (!tr.on && tr.d2 < bd) { bd = tr.d2; best = i; } }
     const l = pool[k]!;
-    if (best < 0) { l.intensity = 0; continue; }   // факелов меньше, чем ламп в пуле
+    if (best < 0) { l.intensity = 0; continue; }   // источников меньше, чем ламп в пуле
     const tr = torches[best]!; tr.on = true;
-    l.position.set(tr.x, 58, tr.z);
-    l.intensity = tr.base * (0.78 + Math.sin(t * 11 + tr.base) * 0.12 + Math.random() * 0.12);   // мерцание
+    l.position.set(tr.x, tr.y ?? 58, tr.z);
+    l.color.setHex(tr.color ?? 0xff7a2a);          // факел — оранжевый по умолчанию; декор-свет — свой цвет из конфига
+    l.distance = tr.dist ?? 380;
+    const base = tr.intensity ?? intensity;
+    const flick = tr.flicker === false ? 1 : (0.78 + Math.sin(t * 11 + tr.base) * 0.12 + Math.random() * 0.12);   // мерцание (tr.base — сид фазы); ровный свет при flicker:false
+    l.intensity = base * flick;
   }
   for (const tr of torches) {
-    if (!tr.on) continue;   // дальний факел — пламя заморожено (в тумане/за кадром не видно)
+    if (!tr.on || !tr.attr || !tr.pos || !tr.life || !tr.seed) continue;   // пламя есть только у факелов; дальние заморожены
     for (let i = 0; i < FLAME_N; i++) {
       let lf = (tr.life[i] ?? 0) + 0.02 + (i % 3) * 0.004; if (lf > 1) lf -= 1; tr.life[i] = lf;
       const spread = lf * 7, b = i * 3, sd = tr.seed[i] ?? 0;

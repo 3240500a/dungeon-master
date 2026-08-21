@@ -1,5 +1,6 @@
 import { moveWithCollision, type Vec2 } from './movement.js';
 import type { Grid } from './grid.js';
+import type { Obstacle } from './state.js';
 
 /**
  * Пост-проходное расталкивание сущностей (soft-body, headless): пересекающиеся круги
@@ -15,17 +16,17 @@ export interface CollisionBody {
   mass: number;
 }
 
-export function resolveEntityCollisions(bodies: CollisionBody[], grid: Grid, iterations: number): void {
+export function resolveEntityCollisions(bodies: CollisionBody[], grid: Grid, iterations: number, obstacles?: readonly Obstacle[]): void {
   for (let it = 0; it < iterations; it++) {
     for (let i = 0; i < bodies.length; i++) {
       for (let j = i + 1; j < bodies.length; j++) {
-        separatePair(bodies[i]!, bodies[j]!, grid);
+        separatePair(bodies[i]!, bodies[j]!, grid, obstacles);
       }
     }
   }
 }
 
-function separatePair(a: CollisionBody, b: CollisionBody, grid: Grid): void {
+function separatePair(a: CollisionBody, b: CollisionBody, grid: Grid, obstacles?: readonly Obstacle[]): void {
   let dx = b.pos.x - a.pos.x;
   let dy = b.pos.y - a.pos.y;
   const minDist = a.radius + b.radius;
@@ -40,15 +41,15 @@ function separatePair(a: CollisionBody, b: CollisionBody, grid: Grid): void {
   // Доля сдвига обратно пропорц. массе: лёгкого двигаем больше, тяжёлого — меньше.
   const shareA = total > 0 ? b.mass / total : 0.5;
   const shareB = total > 0 ? a.mass / total : 0.5;
-  push(a, -nx * overlap * shareA, -ny * overlap * shareA, grid);
-  push(b, nx * overlap * shareB, ny * overlap * shareB, grid);
+  push(a, -nx * overlap * shareA, -ny * overlap * shareA, grid, obstacles);
+  push(b, nx * overlap * shareB, ny * overlap * shareB, grid, obstacles);
 }
 
-function push(body: CollisionBody, dx: number, dy: number, grid: Grid): void {
+function push(body: CollisionBody, dx: number, dy: number, grid: Grid, obstacles?: readonly Obstacle[]): void {
   if (dx === 0 && dy === 0) return;
   // Мутируем pos ВНУТРИ объекта (а не переприсваиваем): `pos` — это ссылка на Vec2 сущности,
-  // так сдвиг доходит до самого игрока/монстра. moveWithCollision клампит о стены.
-  const np = moveWithCollision(body.pos, { x: dx, y: dy }, body.radius, grid, 1);
+  // так сдвиг доходит до самого игрока/монстра. moveWithCollision клампит о стены и декор-препятствия.
+  const np = moveWithCollision(body.pos, { x: dx, y: dy }, body.radius, grid, 1, obstacles);
   body.pos.x = np.x;
   body.pos.y = np.y;
 }

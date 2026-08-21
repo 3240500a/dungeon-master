@@ -1,1 +1,436 @@
-[]
+[
+  {
+    "id": "crypt_floor_base_01",
+    "name": "crypt_floor_base_01",
+    "url": "/assets/tiles/crypt/crypt_floor_base_01.glb",
+    "category": "tile",
+    "kind": "part",
+    "slot": "helm",
+    "weaponType": "sword",
+    "classId": "",
+    "slots": {},
+    "body": {
+      "height": 0,
+      "arm": 0,
+      "leg": 0,
+      "torso": 0,
+      "girth": 0
+    },
+    "boneScale": {},
+    "boneOffsets": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "grip": {
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    "submeshMaterials": {}
+  },
+  {
+    "id": "crypt_wall_base_01",
+    "name": "crypt_wall_base_01",
+    "url": "/assets/tiles/crypt/crypt_wall_base_01.glb",
+    "category": "tile",
+    "kind": "part",
+    "slot": "helm",
+    "weaponType": "sword",
+    "classId": "",
+    "slots": {},
+    "body": {
+      "height": 0,
+      "arm": 0,
+      "leg": 0,
+      "torso": 0,
+      "girth": 0
+    },
+    "boneScale": {},
+    "boneOffsets": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "grip": {
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    "submeshMaterials": {}
+  },
+  {
+    "id": "crypt_column_01",
+    "name": "Крипта — колонна (угол)",
+    "url": "/assets/tiles/crypt/crypt_column_01.glb",
+    "category": "decor",
+    "kind": "part",
+    "slots": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "submeshMaterials": {}
+  },
+  {
+    "id": "crypt_floor_grille_01",
+    "name": "crypt_floor_grille_01",
+    "url": "/assets/tiles/crypt/crypt_floor_grille_01.glb",
+    "category": "tile",
+    "kind": "part",
+    "slot": "helm",
+    "weaponType": "sword",
+    "classId": "",
+    "slots": {},
+    "body": {
+      "height": 0,
+      "arm": 0,
+      "leg": 0,
+      "torso": 0,
+      "girth": 0
+    },
+    "boneScale": {},
+    "boneOffsets": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "grip": {
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    "submeshMaterials": {},
+    "collider": {
+      "shape": "circle",
+      "r": 0,
+      "w": 0,
+      "h": 0
+    }
+  },
+  {
+    "id": "knight_05_modular_rig",
+    "name": "knight_05_modular_rig.fbx",
+    "url": "/assets/knight_05_modular_rig.glb",
+    "kind": "character",
+    "classId": "warrior",
+    "slots": {
+      "barbute_01": "helm",
+      "barbute_02": "helm",
+      "bascinet_01": "helm",
+      "bascinet_02": "helm",
+      "bascinet_03": "helm",
+      "behterets_01": "helm",
+      "body_01": "chest",
+      "body_02": "chest",
+      "briga_01": "chest",
+      "briga_02": "chest",
+      "brigant_legs_01": "boots",
+      "chain_mail_01": "chest",
+      "chainmail_legs_01": "boots",
+      "chainmail_legs_02": "boots",
+      "chainmail_legs_03": "boots",
+      "cuman_helmet_01": "helm",
+      "djawshan_01": "chest",
+      "hair_01": "helm",
+      "hair_02": "helm",
+      "hauberk_01": "chest",
+      "head_01": "head",
+      "heand_01": "gloves",
+      "laminae_armor_01": "chest",
+      "leather_jacket_01": "chest",
+      "legs_01": "boots",
+      "legs_02": "boots",
+      "norman_helmet_01": "helm",
+      "norman_helmet_02": "helm",
+      "norman_helmet_03": "helm",
+      "plate_armor_01": "chest",
+      "plate_gloves_01": "gloves",
+      "plate_legs_01": "boots",
+      "salade_01": "helm",
+      "salade_02": "helm",
+      "scale_mail_01": "chest",
+      "sugarloaf_01": "helm",
+      "tophelm_01": "helm",
+      "tophelm_02": "helm"
+    },
+    "body": {
+      "height": 1,
+      "arm": 1,
+      "leg": 1,
+      "torso": 1,
+      "girth": 1
+    },
+    "boneScale": {
+      "Spine": 1.381,
+      "Chest": 0.959,
+      "Head": 1.209,
+      "LeftUpperArm": 1.558,
+      "LeftLowerArm": 0.822,
+      "LeftHand": 1.137,
+      "RightUpperArm": 1.558,
+      "RightLowerArm": 0.822,
+      "RightHand": 1.137,
+      "LeftUpperLeg": 1.444,
+      "LeftLowerLeg": 1.137,
+      "LeftFoot": 1.247,
+      "LeftToes": 1.098,
+      "RightUpperLeg": 1.444,
+      "RightLowerLeg": 1.137,
+      "RightFoot": 1.247,
+      "RightToes": 1.098
+    },
+    "boneOffsets": {
+      "Hips": [
+        0,
+        33.57,
+        0
+      ],
+      "Spine": [
+        0,
+        5.81,
+        0.6
+      ],
+      "Chest": [
+        0,
+        4.86,
+        0.35
+      ],
+      "Head": [
+        0,
+        3.92,
+        1.17
+      ],
+      "LeftUpperArm": [
+        5.23,
+        -0.5,
+        -0.52
+      ],
+      "LeftLowerArm": [
+        9,
+        -0.95,
+        -0.02
+      ],
+      "LeftHand": [
+        10.46,
+        -0.02,
+        1.64
+      ],
+      "RightUpperArm": [
+        -5.23,
+        -0.5,
+        -0.52
+      ],
+      "RightLowerArm": [
+        -9,
+        -0.95,
+        -0.02
+      ],
+      "RightHand": [
+        -10.46,
+        -0.02,
+        1.64
+      ],
+      "LeftUpperLeg": [
+        3.96,
+        -3.76,
+        -0.15
+      ],
+      "LeftLowerLeg": [
+        2.61,
+        -14.2,
+        -0.13
+      ],
+      "LeftFoot": [
+        2.04,
+        -14.61,
+        -0.88
+      ],
+      "LeftToes": [
+        2.14,
+        -1.84,
+        4.9
+      ],
+      "RightUpperLeg": [
+        -3.96,
+        -3.76,
+        -0.15
+      ],
+      "RightLowerLeg": [
+        -2.61,
+        -14.2,
+        -0.13
+      ],
+      "RightFoot": [
+        -2.04,
+        -14.61,
+        -0.88
+      ],
+      "RightToes": [
+        -2.14,
+        -1.84,
+        4.9
+      ]
+    },
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "submeshMaterials": {}
+  },
+  {
+    "id": "zombie_01_rig",
+    "name": "zombie_01_rig.fbx",
+    "url": "/assets/zombie_01_rig.glb",
+    "kind": "character",
+    "classId": "undead",
+    "slots": {
+      "body_01": "chest",
+      "head_01": "head"
+    },
+    "body": {
+      "height": 1,
+      "arm": 1,
+      "leg": 1,
+      "torso": 1,
+      "girth": 1
+    },
+    "boneScale": {
+      "Spine": 1.324,
+      "Chest": 0.914,
+      "Head": 0.933,
+      "LeftUpperArm": 1.374,
+      "LeftLowerArm": 0.882,
+      "LeftHand": 0.971,
+      "RightUpperArm": 1.374,
+      "RightLowerArm": 0.882,
+      "RightHand": 0.887,
+      "LeftUpperLeg": 1.407,
+      "LeftLowerLeg": 1.314,
+      "LeftFoot": 1.188,
+      "LeftToes": 1.241,
+      "RightUpperLeg": 1.407,
+      "RightLowerLeg": 1.314,
+      "RightFoot": 1.188,
+      "RightToes": 1.235
+    },
+    "boneOffsets": {
+      "Hips": [
+        0,
+        35.46,
+        0
+      ],
+      "Spine": [
+        0,
+        5.62,
+        0.31
+      ],
+      "Chest": [
+        0,
+        4.66,
+        -0.22
+      ],
+      "Head": [
+        0,
+        2.75,
+        1.58
+      ],
+      "LeftUpperArm": [
+        4.68,
+        0,
+        0
+      ],
+      "LeftLowerArm": [
+        9.76,
+        0,
+        0
+      ],
+      "LeftHand": [
+        9.08,
+        0,
+        0
+      ],
+      "RightUpperArm": [
+        -4.68,
+        0,
+        0
+      ],
+      "RightLowerArm": [
+        -9.76,
+        0,
+        0
+      ],
+      "RightHand": [
+        -8.3,
+        0,
+        0
+      ],
+      "LeftUpperLeg": [
+        3.51,
+        -3.93,
+        -0.94
+      ],
+      "LeftLowerLeg": [
+        2.12,
+        -16.54,
+        -1.64
+      ],
+      "LeftFoot": [
+        1.21,
+        -13.99,
+        -1.75
+      ],
+      "LeftToes": [
+        0.86,
+        -2.54,
+        5.83
+      ],
+      "RightUpperLeg": [
+        -3.51,
+        -3.93,
+        -0.94
+      ],
+      "RightLowerLeg": [
+        -2.12,
+        -16.54,
+        -1.64
+      ],
+      "RightFoot": [
+        -1.24,
+        -13.99,
+        -1.73
+      ],
+      "RightToes": [
+        -0.83,
+        -2.54,
+        5.81
+      ]
+    },
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "submeshMaterials": {}
+  }
+]

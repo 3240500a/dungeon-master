@@ -14,6 +14,8 @@ import {
   getPoseStore, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty,
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
+import { stripGlbTextures } from './glbStrip.js';
+import { extractColliderFromGlb } from './glbMeshBbox.js';
 
 /**
  * Бэкенд игры. Аккаунты по HTTP (`/api/register|login|logout`, `/api/characters` CRUD),
@@ -65,6 +67,7 @@ app.get('/api/health', (_req, res) => {
 // GET отдаёт АКТУАЛЬНЫЙ эффективный конфиг (дефолты + сохранённые правки) — его грузят
 // и клиент (вью/тултипы), и редактор (показывает реальные значения). Одна истина везде.
 app.get('/api/config', (_req, res) => {
+  if (process.env.NODE_ENV !== 'production') res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
   res.json(config.snapshot());
 });
 
@@ -151,23 +154,50 @@ app.delete('/api/dev/pose/:key', (req, res) => {
 // — в pose_store (pe_models). Раздача статикой /assets/<id>.glb; в проде запись отключена (DEV_CONFIG_APPLY).
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets');
 if (!existsSync(ASSETS_DIR)) mkdirSync(ASSETS_DIR, { recursive: true });
-// DEV: no-cache → браузер каждый раз ревалидирует (etag/mtime); файл не менялся = 304 (даром), перезалил под тем же
-// именем = свежие байты СРАЗУ (без Ctrl+Shift+R и без часового залипания). ПРОД: часовой кэш (GLB крупные).
+// DEV: ЖЁСТКО без кэша — `no-store` + БЕЗ etag/last-modified (никаких 304). Браузер НИКОГДА не хранит и не
+// ревалидирует: перезалил модель/текстуру под тем же именем → свежие байты сразу (без Ctrl+Shift+R, без залипания).
+// ПРОД: часовой кэш (GLB крупные). Вернуть кэш = запустить с NODE_ENV=production.
 app.use('/assets', express.static(ASSETS_DIR, {
   maxAge: DEV_CONFIG_APPLY ? 0 : '1h',
-  setHeaders: DEV_CONFIG_APPLY ? (res): void => { res.setHeader('Cache-Control', 'no-cache'); } : undefined,
+  etag: !DEV_CONFIG_APPLY,          // DEV: без ETag → нет условных запросов/304
+  lastModified: !DEV_CONFIG_APPLY,  // DEV: без Last-Modified
+  cacheControl: !DEV_CONFIG_APPLY,  // DEV: заголовок ставим сами (ниже)
+  setHeaders: DEV_CONFIG_APPLY
+    ? (res): void => { res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); res.setHeader('Pragma', 'no-cache'); res.setHeader('Expires', '0'); }
+    : undefined,
 }));
+// Нет такого файла → честный 404 (перехват ДО общего catch-all, иначе отсутствующий ассет отдавал HTML-заглушку со
+// статусом 200, и игра парсила её как GLB/PNG). Заодно чистка битых ссылок в редакторе может достоверно определить «нет файла».
+app.use('/assets', (_req, res) => { res.status(404).json({ error: 'asset not found' }); });
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
 const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), (req, res) => {
   if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
   const id = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, '');   // sanitize → без path-traversal
   if (!id) return res.status(400).json({ error: 'bad id' });
-  const buf = req.body as Buffer;
+  let buf = req.body as Buffer;
   if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'empty body' });
   const ext = ASSET_EXT[(req.headers['content-type'] ?? '').split(';')[0]!.trim()] ?? 'bin';
-  writeFileSync(join(ASSETS_DIR, id + '.' + ext), buf);
-  res.json({ ok: true, id, url: '/assets/' + id + '.' + ext, bytes: buf.length });
+  // ?strip=1 (GLB) — вырезать вшитые текстуры, оставив геометрию+развёртку. Пайплайн: экспорт «с текстурами» держит UV,
+  // но весит мегабайты; тут срезаем картинки (материал в игре всё равно из конфига). Только окружение/объекты (см. glbStrip).
+  let stripNote = '';
+  if (ext === 'glb' && /^(1|true|yes)$/i.test(String(req.query.strip ?? ''))) {
+    const before = buf.length;
+    const r = stripGlbTextures(buf);
+    buf = r.out; stripNote = r.note;
+    if (r.changed) console.log(`[assets] strip ${id}: ${before}→${buf.length} — ${r.note}`);
+  }
+  // ?dir=<подпапка> — раскладка ассетов по папкам (напр. "crypt_tile_set" или "crypt_tile_set/textures"). Санитайз:
+  // сегменты из латинских букв/цифр/_/-, без ".." и абсолютных путей → защита от path-traversal (только ASCII-имена).
+  const dirSegs = String(req.query.dir ?? '').split(/[\\/]+/).map((s) => s.trim().replace(/[^a-zA-Z0-9_-]/g, '')).filter(Boolean);
+  const relPath = [...dirSegs, id + '.' + ext].join('/');
+  const absPath = join(ASSETS_DIR, ...dirSegs, id + '.' + ext);
+  mkdirSync(dirname(absPath), { recursive: true });
+  writeFileSync(absPath, buf);
+  // Коллайдер из невидимого меша `collider*` (GLB): габариты → форма коллизии (в долях тайла). Редактор пишет в models[].collider.
+  const collider = ext === 'glb' ? extractColliderFromGlb(buf) : null;
+  if (collider) console.log(`[assets] коллайдер ${id}: ${JSON.stringify(collider)}`);
+  res.json({ ok: true, id, url: '/assets/' + relPath, bytes: buf.length, stripped: !!stripNote, note: stripNote || undefined, collider: collider ?? undefined });
 });
 
 // ── Dev: загрузка РЕАЛЬНЫХ сейвов в калькулятор/сим баланса (без auth, только не в проде) ──
@@ -279,6 +309,20 @@ const server = createServer(app);
 // иначе мелкие реалтайм-пакеты (ввод/снапшоты) склеиваются и ждут до ~40мс, что складывается с пингом.
 server.on('connection', (socket) => socket.setNoDelay(true));
 attachWsServer(server, config); // авторитетный кооп на /ws (комнаты = GameSession)
+// EADDRINUSE устойчиво: при dev-рестарте старый инстанс может ещё держать порт — НЕ роняем процесс необработанной
+// ошибкой (иначе сервер умирает и редактор/клиент ловят ECONNREFUSED), а ждём освобождения и повторяем listen.
+let listenTries = 0;
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE' && listenTries < 10) {
+    listenTries++;
+    console.warn(`[dm-server] порт ${PORT} занят (рестарт dev?) — повтор #${listenTries} через 500мс…`);
+    setTimeout(() => server.listen(PORT), 500);
+  } else {
+    console.error('[dm-server] фатальная ошибка сервера:', err);
+    process.exit(1);
+  }
+});
 server.listen(PORT, () => {
+  listenTries = 0;
   console.log(`[dm-server] слушает http://localhost:${PORT}`);
 });

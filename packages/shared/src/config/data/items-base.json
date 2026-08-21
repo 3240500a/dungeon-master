@@ -30,8 +30,8 @@
       }
     ],
     "requirements": {
-      "strength": 9,
-      "dexterity": 16
+      "strength": 10,
+      "dexterity": 15
     },
     "gridW": 1,
     "gridH": 3,
@@ -76,8 +76,8 @@
       }
     ],
     "requirements": {
-      "strength": 9,
-      "dexterity": 16
+      "strength": 10,
+      "dexterity": 15
     },
     "gridW": 1,
     "gridH": 2,
@@ -122,8 +122,8 @@
       }
     ],
     "requirements": {
-      "strength": 16,
-      "dexterity": 9
+      "strength": 15,
+      "dexterity": 10
     },
     "gridW": 1,
     "gridH": 3,
@@ -248,8 +248,8 @@
       }
     ],
     "requirements": {
-      "strength": 9,
-      "dexterity": 16
+      "strength": 10,
+      "dexterity": 15
     },
     "gridW": 1,
     "gridH": 2,
@@ -285,8 +285,8 @@
       }
     ],
     "requirements": {
-      "strength": 16,
-      "dexterity": 9
+      "strength": 15,
+      "dexterity": 10
     },
     "gridW": 1,
     "gridH": 3,
@@ -327,7 +327,7 @@
       }
     ],
     "requirements": {
-      "strength": 18
+      "strength": 20
     },
     "gridW": 1,
     "gridH": 3,
@@ -446,8 +446,8 @@
       }
     ],
     "requirements": {
-      "strength": 9,
-      "dexterity": 16
+      "strength": 15,
+      "dexterity": 10
     },
     "gridW": 1,
     "gridH": 2,
@@ -456,7 +456,7 @@
     "attackType": "melee",
     "damageKind": "physical",
     "weaponClass": "mace",
-    "weight": "light",
+    "weight": "medium",
     "physSub": "crushing",
     "damageType": "physical",
     "hands": 1,
@@ -493,7 +493,7 @@
       }
     ],
     "requirements": {
-      "strength": 18
+      "strength": 20
     },
     "gridW": 1,
     "gridH": 3,
@@ -530,8 +530,8 @@
       }
     ],
     "requirements": {
-      "strength": 16,
-      "dexterity": 9
+      "strength": 15,
+      "dexterity": 10
     },
     "gridW": 1,
     "gridH": 3,
@@ -882,8 +882,8 @@
       }
     ],
     "requirements": {
-      "strength": 9,
-      "dexterity": 16
+      "strength": 10,
+      "dexterity": 15
     },
     "gridW": 1,
     "gridH": 3,
@@ -919,8 +919,8 @@
       }
     ],
     "requirements": {
-      "strength": 16,
-      "dexterity": 9
+      "strength": 15,
+      "dexterity": 10
     },
     "gridW": 1,
     "gridH": 3,
@@ -2087,7 +2087,8 @@
     "dropWeight": 1,
     "slot": "helm",
     "armorClass": "quilted",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "norman_helmet_01"
   },
   {
     "kind": "armor",
@@ -2110,7 +2111,8 @@
     "dropWeight": 1,
     "slot": "helm",
     "armorClass": "leather",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "norman_helmet_02"
   },
   {
     "kind": "armor",
@@ -2135,7 +2137,8 @@
     "dropWeight": 1,
     "slot": "helm",
     "armorClass": "chain",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "tophelm_02"
   },
   {
     "kind": "armor",
@@ -2160,7 +2163,8 @@
     "dropWeight": 1,
     "slot": "helm",
     "armorClass": "segmented",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "bascinet_02"
   },
   {
     "kind": "armor",
@@ -2185,7 +2189,8 @@
     "dropWeight": 1,
     "slot": "helm",
     "armorClass": "plate",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "salade_01"
   },
   {
     "kind": "armor",
@@ -2231,7 +2236,8 @@
     "dropWeight": 1,
     "slot": "chest",
     "armorClass": "leather",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "leather_jacket_01"
   },
   {
     "kind": "armor",
@@ -2256,7 +2262,8 @@
     "dropWeight": 1,
     "slot": "chest",
     "armorClass": "chain",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "chain_mail_01"
   },
   {
     "kind": "armor",
@@ -2281,7 +2288,8 @@
     "dropWeight": 1,
     "slot": "chest",
     "armorClass": "segmented",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "laminae_armor_01"
   },
   {
     "kind": "armor",
@@ -2306,7 +2314,14 @@
     "dropWeight": 1,
     "slot": "chest",
     "armorClass": "plate",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "plate_armor_01",
+    "modelByClass": {
+      "warrior": "plate_armor_01"
+    },
+    "materialByClass": {
+      "warrior": "plate_armor_01_w"
+    }
   },
   {
     "kind": "armor",
@@ -2483,7 +2498,8 @@
     "dropWeight": 1,
     "slot": "boots",
     "armorClass": "leather",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "legs_02"
   },
   {
     "kind": "armor",
@@ -2513,7 +2529,8 @@
     "dropWeight": 1,
     "slot": "boots",
     "armorClass": "chain",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "chainmail_legs_01"
   },
   {
     "kind": "armor",
@@ -2543,7 +2560,8 @@
     "dropWeight": 1,
     "slot": "boots",
     "armorClass": "segmented",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "brigant_legs_01"
   },
   {
     "kind": "armor",
@@ -2568,7 +2586,11 @@
     "dropWeight": 1,
     "slot": "boots",
     "armorClass": "plate",
-    "beltSlots": 0
+    "beltSlots": 0,
+    "modelId": "plate_legs_01",
+    "modelByClass": {
+      "warrior": "plate_legs_01"
+    }
   },
   {
     "kind": "armor",

@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, OUR_BONES, type RetargetRig } from './retarget3d.js';
+import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, OUR_BONES, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
 import { DEFAULT_PROFILE, type BodyProfile, type BoneScale } from './bodyProfile.js';
@@ -17,6 +17,7 @@ import { DEFAULT_PROFILE, type BodyProfile, type BoneScale } from './bodyProfile
 /** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). character = атлас (один GLB + slots). */
 interface ModelEntry {
   id: string; name: string; url: string; kind: 'character' | 'part' | 'weapon';
+  classId?: string;                  // character: ключ атласа (класс игрока / фракция монстра, напр. 'undead'); пусто = глоб. игрок
   slot?: 'helm' | 'chest' | 'gloves' | 'boots' | 'head'; weaponType?: string;
   slots?: Record<string, string>;   // character: сабмеш → слот
   body?: BodyProfile;                // character: модульные пропорции (слайдеры конструктора)
@@ -71,7 +72,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   let exporting = false;                       // на время экспорта не ведём (bind-поза)
   let status = '';                             // строка статуса под кнопками
   let bodyRef: HTMLElement | null = null;
-  let upZ = false;                             // импорт Z-up (CC/AccuRIG FBX «лежит») → доворот −90°X в стойку Y-up
+  let upFixX = 0;                              // импорт: доворот X к Y-up (знако-зависимо по костям: +Z→−90°, −Z→+90°)
 
   // ── КОНСТРУКТОР ПЕРСОНАЖА (атлас: ОДИН GLB, submesh-тумблер по слоту + профиль тела) — превью через modelSkin ──
   const asmProfile: BodyProfile = { ...DEFAULT_PROFILE };
@@ -82,6 +83,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   let asmMeshes: string[] = [];                  // имена сабмешей атласа (для UI)
   const asmVisible: Record<string, string> = {}; // слот → выбранный сабмеш ('' = скрыть; НЕТ ключа = показать все)
   let asmStatus = '';
+  let asmKey = '';                               // ключ атласа при импорте: пусто=игрок, для монстра=фракция ('undead' и т.п.)
   let wpnStatus = '';                            // статус импорта оружия (один FBX → GLB на каждое)
 
   /** Текущий атлас: свежий импорт → character из конфига. */
@@ -105,28 +107,31 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     if (atlas) asmMeshes = await asmSkin.setAtlas(atlas, asmVisible, { materials: cfg.materials, textures: cfg.textures });
   }
   /** Импорт АТЛАСА: FBX/GLB (скелет + все части) → авто-классификация сабмешей → ОДИН GLB → конфиг character → превью. */
-  async function importAtlas(get: () => Promise<THREE.Group>, name: string): Promise<void> {
+  async function importAtlas(get: () => Promise<THREE.Group>, name: string, atlasKey = ''): Promise<void> {
     asmStatus = 'импорт атласа…'; renderBody();
     try {
       const g = await get();
       const meshNames: string[] = []; g.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshNames.push(o.name); });
       const slots = classifyAtlas(meshNames);
       const _map = autoBoneMap(skeletonBoneNames(g));
-      const boneScale = measureBoneScales(g, _map);   // пер-костные пропорции ФБХ → физ-скелет 1:1
-      const boneOffsets = measureBoneOffsets(g, _map);   // ПОЛНЫЕ rest-офсеты ФБХ (приоритет; чинит «раскоряку» ног)
+      g.traverse((o) => { const s = (o as THREE.SkinnedMesh).skeleton; if (s) s.pose(); });   // → чистая bind-поза ДО правки
+      enforceTPose(g, _map);   // «Enforce T-pose» (как Unity): доворот рук в канон-T, из ЛЮБОЙ позы источника (A/T/гуляющий скелет AccuRIG) → как рыцарь
+      const boneScale = measureBoneScales(g, _map);   // ДЛИНЫ костей ФБХ (пропорции) → скелет масштабируется ими
+      const boneOffsets = measureBoneOffsets(g, _map);   // rest-офсеты (Y-up) уже в T-позе (руки горизонт) → скелет и клипы совпадают, без A-косяка
       const id = (name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '') || 'character');
-      g.traverse((o) => { const s = (o as THREE.SkinnedMesh).skeleton; if (s) s.pose(); });   // bind-поза для чистого GLB
-      const glb = await exportGLB(g);
+      const glb = await exportGLB(g);   // экспортим T-позную модель (T-поза в нодах) → рантайм грузит уже канон-T
       g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });   // g больше не нужен (превью грузит из url)
       const up = await uploadAsset(id, glb, 'model/gltf-binary');
-      const e: ModelEntry = { id, name, url: up.url, kind: 'character', slots, body: { ...asmProfile }, boneScale, boneOffsets, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
-      const models = (cfg.models as ModelEntry[]).filter((m) => m.kind !== 'character').concat(e);   // один персонаж-атлас
+      const key = atlasKey.trim() || undefined;   // пусто = глоб. игрок; для монстра = фракция (напр. 'undead')
+      const e: ModelEntry = { id, name, url: up.url, kind: 'character', classId: key, slots, body: { ...asmProfile }, boneScale, boneOffsets, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
+      // КОПИЛКА: атласы копятся по ИМЕНИ (id). Заменяем лишь одноимённый (переимпорт того же файла) — все прочие целы.
+      const models = (cfg.models as ModelEntry[]).filter((m) => m.id !== id).concat(e);
       const bodyJson = JSON.stringify({ models });
       await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
       await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
       cfg.models = models; asmAtlas = e;
-      if (!asmSkin) rebuildAsm(); else await applyAsm();   // гарантируем построенный превью-скин
-      asmStatus = `атлас «${id}»: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`;
+      rebuildAsm();   // ВСЕГДА пересобираем скин: setAtlas дедуплицирует по URL, а переимпорт того же файла URL не меняет → иначе превью зависло бы на старом GLB
+      asmStatus = `атлас «${id}» [${key ?? 'игрок'}]: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`;
     } catch (err) { asmStatus = 'ошибка: ' + (err as Error).message; }
     renderBody();
   }
@@ -138,6 +143,38 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
     await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
     cfg.models = models;
+  }
+  /** ЯВНЫЙ ЭКСПОРТ: записать ВСЕ атласы/модели (как есть в cfg.models) в конфиг. Ничего не стирает — просто флаш. */
+  async function exportAllAtlases(): Promise<void> {
+    const models = cfg.models as ModelEntry[];
+    const bodyJson = JSON.stringify({ models });
+    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    const chars = models.filter((m) => m.kind === 'character');
+    asmStatus = `📤 экспортировано атласов: ${chars.length} — ${chars.map((m) => `${m.id}[${m.classId ?? 'игрок'}]`).join(', ')}`;
+    renderBody();
+  }
+  /** Сменить ключ (classId) атласа в списке — не переимпортируя файл (пусто = игрок, иначе фракция монстра). */
+  async function setAtlasKey(id: string, key: string): Promise<void> {
+    const k = key.trim() || undefined;
+    const models = (cfg.models as ModelEntry[]).map((m) => (m.id === id ? { ...m, classId: k } : m));
+    if (asmAtlas?.id === id) asmAtlas = { ...asmAtlas, classId: k };
+    const bodyJson = JSON.stringify({ models });
+    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    cfg.models = models; renderBody();
+  }
+  /** Выбрать атлас из списка для ПРЕВЬЮ: делаем активным → пересобираем источник+скин под его пропорции, грузим его GLB. */
+  function selectAtlas(id: string): void {
+    const m = (cfg.models as ModelEntry[]).find((x) => x.id === id && x.kind === 'character');
+    if (!m) return;
+    asmAtlas = m;
+    for (const k of Object.keys(asmVisible)) delete asmVisible[k];   // сброс submesh-тумблеров под новый атлас
+    syncProfileFromAtlas();   // слайдеры тела = профиль выбранного (curAtlas теперь = m)
+    asmKey = m.classId ?? '';   // поле «Ключ атласа» = ключ выбранного (переимпорт того же файла обновит его)
+    asmStatus = `показан атлас «${m.id}» [${m.classId ?? 'игрок'}]`;
+    rebuildAsm();             // источник+скин под boneScale/boneOffsets выбранного + загрузка его GLB
+    renderBody();
   }
   /** Сохранить профиль тела (F2) в character-запись → игра строит solid/target с ним (превью = игра). */
   async function saveProfile(): Promise<void> {
@@ -165,11 +202,21 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     } catch { /* сервер недоступен — пустой конфиг */ }
   }
 
-  // ── Ось «вверх»: Z-up (глубина ≫ высоты у стоящего гуманоида) → модель лежит, доворачиваем в стойку ──
-  function detectUpZ(obj: THREE.Object3D): boolean {
+  // ── Ось «вверх» → доворот X к +Y. ЗНАКО-ЗАВИСИМО по костям (Hips→Head): +Z→−90°, −Z→+90° (CC/AccuRIG обычно −Z, иначе вверх
+  //    ногами), перевёрнутый Y→180°. Без костей — bbox-эвристика «лежит» с дефолтом +Z. Возвращает угол (рад). ──
+  function detectUpFixX(obj: THREE.Object3D, boneMap?: Record<string, string>): number {
     obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
+    const byName = new Map<string, THREE.Object3D>(); obj.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o); });
+    const hips = boneMap ? byName.get(boneMap.Hips ?? '') : undefined;
+    const top = boneMap ? (byName.get(boneMap.Head ?? '') ?? byName.get(boneMap.Neck ?? '') ?? byName.get(boneMap.Chest ?? '')) : undefined;
+    if (hips && top) {
+      const a = hips.getWorldPosition(new THREE.Vector3()), b = top.getWorldPosition(new THREE.Vector3());
+      const dy = b.y - a.y, dz = b.z - a.z;
+      if (Math.abs(dz) > Math.abs(dy)) return dz > 0 ? -Math.PI / 2 : Math.PI / 2;
+      return dy < 0 ? Math.PI : 0;
+    }
     const box = new THREE.Box3().setFromObject(obj);
-    return (box.max.z - box.min.z) > 1.4 * (box.max.y - box.min.y);
+    return (box.max.z - box.min.z) > 1.4 * (box.max.y - box.min.y) ? -Math.PI / 2 : 0;
   }
   // ── Оценка масштаба: высота bbox (при текущем довороте) → к высоте манекена (TILE=32u=1м, гуманоид ~58u) ──
   function autoScale(obj: THREE.Object3D): number {
@@ -183,7 +230,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   function buildRig(boneMap: Record<string, string>, scale: number): void {
     if (rig) { scene.remove(rig.root); rig.dispose(); rig = null; }
     if (!loaded) return;
-    loaded.rotation.set(upZ ? -Math.PI / 2 : 0, 0, 0);
+    loaded.rotation.set(upFixX, 0, 0);
     rig = makeRetargetRig(loaded, { ...boneMap }, scale);
     scene.add(rig.root);
     submeshes = [];
@@ -198,8 +245,8 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       loaded = await get();
       const boneNames = skeletonBoneNames(loaded);
       const auto = autoBoneMap(boneNames);
-      upZ = detectUpZ(loaded);
-      loaded.rotation.set(upZ ? -Math.PI / 2 : 0, 0, 0); loaded.updateMatrixWorld(true);   // измерять масштаб в стоящей позе
+      upFixX = detectUpFixX(loaded, auto);
+      loaded.rotation.set(upFixX, 0, 0); loaded.updateMatrixWorld(true);   // измерять масштаб в стоящей позе
       if (preset) {
         entry = { ...preset, boneMap: { ...preset.boneMap }, submeshMaterials: { ...preset.submeshMaterials } };
         if (!Object.keys(entry.boneMap).length) entry.boneMap = auto;
@@ -320,7 +367,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     void srcName; wpnStatus = 'импорт оружия…'; renderBody();
     try {
       const g = await get();
-      g.rotation.set(detectUpZ(g) ? -Math.PI / 2 : 0, 0, 0); g.updateMatrixWorld(true);   // Z-up FBX → Y-up
+      g.rotation.set(detectUpFixX(g), 0, 0); g.updateMatrixWorld(true);   // Z-up FBX → Y-up (weapon: без костей, bbox-эвристика)
       const meshes: THREE.Mesh[] = [];
       g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
       if (!meshes.length) { wpnStatus = 'в файле нет мешей'; renderBody(); return; }
@@ -386,13 +433,40 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     // Импорт АТЛАСА (скелет + все части одним файлом)
     const imp = el('div', boxCss);
     imp.append(el('div', headCss, 'Персонаж-атлас (FBX/GLB: скелет + все части в одном файле)'));
+    // Ключ атласа: ПУСТО = глобальный игрок; для МОНСТРА = его фракция (напр. 'undead' — все зомби).
+    // Так игрок и семьи монстров сосуществуют: импорт заменяет лишь атлас с тем же ключом.
+    const keyIn = document.createElement('input'); keyIn.type = 'text'; keyIn.value = asmKey;
+    keyIn.placeholder = 'ключ: пусто=игрок, монстр=фракция (undead)'; keyIn.style.cssText = css.input + ';width:100%;margin:3px 0';
+    keyIn.oninput = () => { asmKey = keyIn.value; };
+    imp.append(el('div', lblCss, 'Ключ атласа (класс/фракция)'), keyIn);
+    // Поза источника (A/T) обрабатывается САМА: скелет строится канонически, поза бинда живёт в R_restTarget меш-ретаргета
+    // (как Unity Humanoid). Никакого поля угла/выпрямления при импорте не нужно — любой скелет отображается правильно.
     const file = document.createElement('input'); file.type = 'file'; file.accept = '.fbx,.glb,.gltf'; file.style.display = 'none';
-    file.onchange = () => { const f = file.files?.[0]; if (f) void importAtlas(() => loadModelFile(f), f.name); };
+    file.onchange = () => { const f = file.files?.[0]; if (f) void importAtlas(() => loadModelFile(f), f.name, keyIn.value); };
     const urlIn = document.createElement('input'); urlIn.type = 'text'; urlIn.value = '/assets/knight_02_modular_rig.fbx'; urlIn.style.cssText = css.input + ';width:100%;margin:3px 0';
     imp.append(btn('📁 Импорт из файла', () => file.click()), file);
-    imp.append(urlIn, btn('🌐 Импорт из URL', () => { const u = urlIn.value.trim(); if (u) void importAtlas(() => loadModelUrl(u), u.split('/').pop() ?? 'character'); }));
+    imp.append(urlIn, btn('🌐 Импорт из URL', () => { const u = urlIn.value.trim(); if (u) void importAtlas(() => loadModelUrl(u), u.split('/').pop() ?? 'character', keyIn.value); }));
     body.append(imp);
     if (asmStatus) body.append(el('div', 'color:#c8b06a;font-size:10px;margin:2px 0 6px', asmStatus));
+
+    // КОПИЛКА атласов: ВСЕ сохранённые character-атласы (игрок + семьи монстров) — правка ключа, удаление, явный экспорт.
+    const charModels = (cfg.models as ModelEntry[]).filter((m) => m.kind === 'character');
+    const curId = curAtlas()?.id;   // активный атлас превью (подсветим ▶)
+    const abox = el('div', boxCss);
+    abox.append(el('div', headCss, `Атласы-персонажи (${charModels.length}) — 👁 показать · ключ (пусто=игрок) · ✕`));
+    if (!charModels.length) abox.append(el('div', 'color:#6b7180;font-size:10px', 'пока пусто — импортни атлас выше'));
+    for (const m of charModels) {
+      const r = el('div', rowFlex);
+      const cur = m.id === curId;
+      r.append(el('span', `color:${cur ? '#8fd18f' : '#c0c6d4'};font-size:10px;min-width:100px;overflow:hidden;text-overflow:ellipsis`, (cur ? '▶ ' : '') + m.id));
+      const kin = document.createElement('input'); kin.type = 'text'; kin.value = m.classId ?? '';
+      kin.placeholder = 'игрок'; kin.style.cssText = css.input + ';flex:1';
+      kin.onchange = () => { void setAtlasKey(m.id, kin.value); };
+      r.append(btn('👁', () => selectAtlas(m.id)), el('span', lblCss, 'ключ'), kin, btn('✕', () => void deleteModel(m.id)));
+      abox.append(r);
+    }
+    abox.append(btn('📤 Экспорт всех атласов', () => void exportAllAtlases()));
+    body.append(abox);
 
     // Импорт ОРУЖИЯ (один FBX со всеми оружиями → GLB на каждый меш). Доступен всегда (не зависит от атласа).
     const wimp = el('div', boxCss);

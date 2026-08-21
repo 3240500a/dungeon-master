@@ -34,6 +34,7 @@ import {
   type PlayerEntity,
   type MonsterEntity,
   type ProjectileEntity,
+  type Obstacle,
 } from '../world/state.js';
 import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js';
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
@@ -91,6 +92,8 @@ export interface FloorLayout {
   /** Запертые ворота + рычаги (по модели «дверь ↔ рычаг»). */
   doors?: { id: number; cells: { cx: number; cy: number }[] }[];
   levers?: { id: number; x: number; y: number; doorId: number }[];
+  /** Суб-тайловые препятствия напольного декора (круг/бокс) — коллизия по форме меша. */
+  obstacles?: Obstacle[];
   /** PvP-арена: атаки игроков бьют друг друга (иначе — обычный этаж/город). */
   pvp?: boolean;
 }
@@ -238,6 +241,7 @@ export class GameSession {
     w.biomeId = layout.biomeId;
     w.doors = (layout.doors ?? []).map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) }));
     w.levers = (layout.levers ?? []).map((l) => ({ id: l.id, pos: { x: l.x, y: l.y }, doorId: l.doorId, used: false }));
+    w.obstacles = (layout.obstacles ?? []).map((o) => ({ ...o }));   // суб-тайл-препятствия декора (коллизия/LoS)
     w.pvp = layout.pvp ?? false;   // арена включает урон игрок↔игрок; обычный этаж/город — сбрасывает
     w.monsters = [];
     w.drops = [];
@@ -351,7 +355,7 @@ export class GameSession {
       if (m.downTimer > 0) {
         m.downTimer = Math.max(0, m.downTimer - dt); m.vel.x = 0; m.vel.y = 0; m.windup = null;
         if (m.knock) {   // авторитетный отлёт: сервер глайдит позицию ОТ атакующего (стены гасят); клиент ведёт рагдолл по ней же → без рассинхрона
-          m.pos = moveWithCollision(m.pos, { x: m.knock.dx * m.knock.speed, y: m.knock.dy * m.knock.speed }, m.radius, this.world.grid, dt);
+          m.pos = moveWithCollision(m.pos, { x: m.knock.dx * m.knock.speed, y: m.knock.dy * m.knock.speed }, m.radius, this.world.grid, dt, this.world.obstacles);
           m.knock.remaining -= dt;
           if (m.knock.remaining <= 0) m.knock = null;
         }
@@ -394,7 +398,7 @@ export class GameSession {
       const action = stepMonsterAi(m, target.pos, behavior, losClear, noiseMult, dt);
       if (behavior.repositionMode === 'blink') this.tryBlink(m, target.pos, behavior, dt); // джинн-уклонение
       this.navChase(m, target.pos, w.grid, losClear, dt); // обход стен по BFS, когда не видит цель
-      m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt);
+      m.pos = moveWithCollision(m.pos, m.vel, m.radius, w.grid, dt, w.obstacles);
       if (action === 'attack' || action === 'shoot') {
         // attackCd только что выставлен ИИ = полный цикл атаки; замах — его доля (тот же baseWindupFrac, что у игрока).
         // windupMult >1 у конструктов — тяжёлый «телеграф» удара.
@@ -454,7 +458,7 @@ export class GameSession {
     } else {
       p.vel = { x: 0, y: 0 };
     }
-    p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt);
+    p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt, this.world.obstacles);
 
     if (stunned) return; // оглушён — ни атаки, ни каста, ни зелий
     if (input?.useBelt != null) this.useBeltSlot(p, snap, input.useBelt);
@@ -815,7 +819,7 @@ export class GameSession {
     const weapon = p.save.equipment.weapon;
     const halfW = swingHalfWidth(mel.baseRange * (weapon?.reachMult ?? 1), mel.baseArc * (weapon?.arcMult ?? 1));
     const from = { ...p.pos };
-    const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1);
+    const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1, this.world.obstacles);
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
       if (this.distToSegment(m.pos, from, to) <= halfW) this.hitMonster(p, m, packet, attacker, opts);
@@ -829,7 +833,7 @@ export class GameSession {
     const dir = p.facing;
     const dist = active.dashDist > 0 ? active.dashDist : 150;
     const from = { ...p.pos };
-    const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1);
+    const to = moveWithCollision(p.pos, { x: Math.cos(dir) * dist, y: Math.sin(dir) * dist }, p.radius, this.world.grid, 1, this.world.obstacles);
     const r = active.radius > 0 ? active.radius : 60;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
@@ -923,7 +927,7 @@ export class GameSession {
     if (!d.lockFacing) p.facing = Math.atan2(d.dy, d.dx);   // скилл-рывок разворачивает по движению; уклонение (lockFacing) держит прицел
     const bx = p.pos.x, by = p.pos.y;
     p.vel = { x: d.dx * d.speed, y: d.dy * d.speed };
-    p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt);
+    p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt, this.world.obstacles);
     d.remaining -= dt;
     if (d.remaining <= 0 || Math.hypot(p.pos.x - bx, p.pos.y - by) < 0.5) p.dash = null; // конец или упор в стену
   }
@@ -986,7 +990,7 @@ export class GameSession {
       if (!m.alive) continue;
       bodies.push({ pos: m.pos, radius: m.radius, mass: this.monsterMass(m) });
     }
-    resolveEntityCollisions(bodies, this.world.grid, bal.collision.iterations);
+    resolveEntityCollisions(bodies, this.world.grid, bal.collision.iterations, this.world.obstacles);
   }
 
   /** Проклятие (curse): врагам в радиусе — статус-дебаф (по стихии) и/или притягивание агро (taunt). */
@@ -1104,7 +1108,7 @@ export class GameSession {
         // Отброс: по шансу (shoveChance) и масштабируем весом цели — тяжёлого толкает слабее. При нокдауне не нужен (своё падение).
         if (opts.knockback && this.rng.float(0, 1) < (opts.shoveChance ?? 1)) {
           const force = opts.knockback * (KNOCKBACK_REF_WEIGHT / Math.max(1, this.monsterMass(m)));
-          m.pos = moveWithCollision(m.pos, this.awayDir(killer.pos, m.pos, force), m.radius, this.world.grid, 1);
+          m.pos = moveWithCollision(m.pos, this.awayDir(killer.pos, m.pos, force), m.radius, this.world.grid, 1, this.world.obstacles);
         }
       }
     } else {
@@ -1483,7 +1487,7 @@ export class GameSession {
   }
 
   private hasLos(a: Vec2, b: Vec2): boolean {
-    return hasLineOfSight(this.world.grid, a.x, a.y, b.x, b.y);
+    return hasLineOfSight(this.world.grid, a.x, a.y, b.x, b.y, this.world.obstacles);
   }
 
   /**

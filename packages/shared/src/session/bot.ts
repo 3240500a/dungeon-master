@@ -147,7 +147,7 @@ export class BotController {
       facing = Math.atan2(dy, dx);
       const engage = at === 'melee' ? 46 : 300;
       const kite = useKite && at !== 'melee' && nd < 70;
-      const los = hasLineOfSight(world.grid, p.pos.x, p.pos.y, target.pos.x, target.pos.y);
+      const los = hasLineOfSight(world.grid, p.pos.x, p.pos.y, target.pos.x, target.pos.y, world.obstacles);
 
       if (lowHp || kite) {
         // Отходим от центроида пачки (не пятимся в другой пак), иначе — от цели.

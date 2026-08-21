@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --ignore \"**/data/**\" src/index.ts",
+    "dev": "tsx watch --ignore \"**/data/**\" --ignore \"**/config/data/**\" --ignore \"../shared/src/config/data/**\" src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },

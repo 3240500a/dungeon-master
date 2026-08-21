@@ -96,14 +96,28 @@ const _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _sw = new THREE
 const _wp = new THREE.Vector3(), _m = new THREE.Matrix4();   // для позиц-ведения костей (точное совпадение суставов)
 const IDENT = new THREE.Quaternion();
 
+/** Кости ЗАГРУЖЕННОЙ модели имя→кость. CC/AccuRIG glTF часто дублирует имена: реальная ДРАЙВ-иерархия
+ *  (RL_BoneRoot→…→Upperarm→Forearm→…, вращаешь её — двигается меш) плюс отдельные ЛИСТЬЯ-референсы skin.joints, висящие под
+ *  ней (напр. 204 нода при 100 skin.joints). Обычный traverse-byName (last-wins) может резолвить лист (нет детей → вращение
+ *  впустую) → замеры/аим/ретаргет бьют мимо. Берём кость С КОСТЯМИ-ДЕТЬМИ (узел реальной иерархии), иначе — последнюю. */
+export function boneIndex(loaded: THREE.Object3D): Map<string, THREE.Bone> {
+  const cand = new Map<string, THREE.Bone[]>();
+  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) { const a = cand.get(o.name) ?? []; a.push(o as THREE.Bone); cand.set(o.name, a); } });
+  const m = new Map<string, THREE.Bone>();
+  for (const [name, arr] of cand) {
+    const withKids = arr.find((b) => b.children.some((c) => (c as THREE.Bone).isBone));   // узел реальной иерархии (не лист-референс)
+    m.set(name, withKids ?? arr[arr.length - 1]!);
+  }
+  return m;
+}
+
 /** Снять ПЕР-КОСТНЫЕ множители длины с импорт-ФБХ (относительно ДЕФОЛТНОГО скелета, нормируя на осевую длину тела).
  *  Наш процедурный скелет, построенный с этими scale (buildHumanoid.boneScale), ПОВТОРЯЕТ пропорции модели 1:1 →
  *  физ-аватар совпадает с мешем. Ось-инвариантно (мировые расстояния сегментов, поза/ось не важны). Правую сторону
  *  buildHumanoid зеркалит с левой (boneScaleOf), поэтому меряем по нашим 22 костям как есть. */
 export function measureBoneScales(loaded: THREE.Object3D, boneMap: Record<string, string>): Record<string, number> {
   loaded.updateMatrixWorld(true);
-  const byName = new Map<string, THREE.Bone>();
-  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
+  const byName = boneIndex(loaded);
   const base = baseHumanoid();
   const a = new THREE.Vector3(), b = new THREE.Vector3();
   const segF: Record<string, number> = {}, segB: Record<string, number> = {};
@@ -128,11 +142,11 @@ export function measureBoneScales(loaded: THREE.Object3D, boneMap: Record<string
 export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<string, string>): Record<string, [number, number, number]> {
   const r0 = loaded.rotation.clone();
   loaded.rotation.set(0, 0, 0); loaded.updateMatrixWorld(true);
-  const byName = new Map<string, THREE.Bone>();
-  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
+  const byName = boneIndex(loaded);
   const w = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
   const hip0 = w('Hips'), head0 = w('Head');
-  if (hip0 && head0 && Math.abs(head0.z - hip0.z) > Math.abs(head0.y - hip0.y)) { loaded.rotation.set(-Math.PI / 2, 0, 0); loaded.updateMatrixWorld(true); }   // Z-up → Y-up
+  // ЗНАКО-ЗАВИСИМЫЙ доворот к Y-up: +Z-up→−90°X, −Z-up→+90°X (CC/AccuRIG обычно −Z, иначе замер вверх ногами), перевёрнутый Y→180°X.
+  if (hip0 && head0) { const dy = head0.y - hip0.y, dz = head0.z - hip0.z; const ax = Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }
   const hip = w('Hips'), head = w('Head'), foot = w('LeftFoot');
   const fbxH = (head && foot) ? (head.y - foot.y) : 0;
   const scale = fbxH > 1e-3 ? 57 / fbxH : 1;   // нормировка к нашему росту ~57u
@@ -148,14 +162,54 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   return out;
 }
 
+// «Enforce T-pose» — какую кость к какому ребёнку прицеливаем (цепочка руки). Правим ТОЛЬКО руки: главный (и обычно
+// единственный) источник A-позы в AccuRIG/CC. Ноги/спину не трогаем — они и так в канон-направлении (вниз/вверх).
+const AIM_CHILD: Partial<Record<OurBone, OurBone>> = {
+  LeftShoulder: 'LeftUpperArm', LeftUpperArm: 'LeftLowerArm', LeftLowerArm: 'LeftHand',
+  RightShoulder: 'RightUpperArm', RightUpperArm: 'RightLowerArm', RightLowerArm: 'RightHand',
+};
+
+/** «Enforce T-pose» (как кнопка в настройке аватара Unity): доворачивает кости ЗАГРУЖЕННОГО скелета в нашу КАНОНИЧЕСКУЮ позу,
+ *  независимо от того, в какой позе модель отдал AccuRIG/CC (A/T, скелет чуть гуляет от модели к модели — идеала не бывает).
+ *  Прицеливаем НАПРАВЛЕНИЕ каждой кости (сустав→ребёнок) к канон-направлению (baseHumanoid), сверху вниз. Меняем ТОЛЬКО
+ *  локальные повороты костей — up-axis/меш/скин не трогаем. Зовётся при импорте (poseModelsTab) ПОСЛЕ skeleton.pose() и ДО
+ *  measureBoneOffsets/exportGLB → экспортный GLB несёт T-позу в нодах, замеры читают T, рантайм грузит уже T (как рыцарь).
+ *  По умолчанию правим руки (AIM_CHILD). Локальные повороты инвариантны к ориентации корня → up-axis остаётся как был. */
+export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, string>, bones: OurBone[] = Object.keys(AIM_CHILD) as OurBone[]): void {
+  const r0 = loaded.rotation.clone();
+  loaded.rotation.set(0, 0, 0); loaded.updateMatrixWorld(true);
+  const byName = boneIndex(loaded);
+  const wp = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
+  // Временный up-fix к Y-up (та же логика, что в measureBoneOffsets) — чтобы канон-направления совпали по осям. Восстановим в конце.
+  const hip0 = wp('Hips'), head0 = wp('Head');
+  if (hip0 && head0) { const dy = head0.y - hip0.y, dz = head0.z - hip0.z; const ax = Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }
+  const base = baseHumanoid();
+  const cur = new THREE.Vector3(), can = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
+  const qw = new THREE.Quaternion(), curW = new THREE.Quaternion(), pw = new THREE.Quaternion();
+  for (const our of bones) {
+    const child = AIM_CHILD[our]; if (!child) continue;
+    const ob = byName.get(boneMap[our] ?? ''), cb = byName.get(boneMap[child] ?? '');
+    const sb = base.bones.get(our), scb = base.bones.get(child);
+    if (!ob || !cb || !sb || !scb) continue;
+    loaded.updateMatrixWorld(true);
+    cur.copy(cb.getWorldPosition(b)).sub(ob.getWorldPosition(a)); if (cur.lengthSq() < 1e-9) continue; cur.normalize();   // текущее мир-направление кости
+    can.copy(scb.getWorldPosition(b)).sub(sb.getWorldPosition(a)).normalize();                                          // канон-направление (эталон)
+    qw.setFromUnitVectors(cur, can);                       // мир-доворот cur→can
+    ob.getWorldQuaternion(curW); qw.multiply(curW);        // qw = новый мировой кватернион кости
+    (ob.parent ? ob.parent.getWorldQuaternion(pw) : pw.identity());
+    ob.quaternion.copy(pw.invert().multiply(qw));          // → в локаль родителя
+    ob.updateMatrixWorld(true);
+  }
+  loaded.rotation.copy(r0); loaded.updateMatrixWorld(true);
+}
+
 /** Собрать ретаргет-риг из загруженной сцены (glTF/FBX) + карты костей. `scale` нормализует размер (наш TILE=32u=1м).
  *  `source` (опц.) — КОНФОРМ: длины звеньев импорта подгоняются под длины скелета source (наш риг с профилем) →
  *  повороты ложатся 1:1, меш морфится под пропорции source, контакты (стопы/кисти) совпадают. */
 export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, string>, scale = 1, source?: Humanoid): RetargetRig {
   loaded.scale.setScalar(scale);
   loaded.updateMatrixWorld(true);
-  const byName = new Map<string, THREE.Bone>();
-  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
+  const byName = boneIndex(loaded);
   // КОНФОРМ ДЛИН к source (наш скелет). source строится с boneScale, снятым с ЭТОГО ЖЕ ФБХ (measureBoneScales) →
   // source ПОВТОРЯЕТ пропорции ФБХ → конформ = почти идентичность, но добивает ФБХ ТОЧНО на кости source (устраняет
   // остаток нормировки/масштаба) → меш ложится на физ-аватар 1:1. Множитель = srcLen/impLen. Порядок родитель→ребёнок.
@@ -184,7 +238,8 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   const bake = (targetName: string): void => { const b = byName.get(targetName); if (b) restW.set(targetName, b.getWorldQuaternion(new THREE.Quaternion())); };
   for (const t of Object.values(boneMap)) bake(t);
   let hipRestY = 0; { const h = boneMap['Hips'] && byName.get(boneMap['Hips']); if (h) hipRestY = h.getWorldPosition(new THREE.Vector3()).y; }
-  const posDrive = !!source;   // conform-режим (атлас/игра) → ведём и ПОЗИЦИИ костей (точное совпадение с физ-аватаром)
+  const posDrive = !!source;   // conform (атлас/игра): ведём и ПОЗИЦИИ костей → меш подтягивается к КАНОН-скелету (руки горизонт,
+  //   ноги вертикально) через плавную деформацию скина, независимо от бинда (A/T) модели. Длины уже сконформлены (блок выше).
 
   function drive(driver: Humanoid): void {
     driver.root.updateMatrixWorld(true);
@@ -200,15 +255,10 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
       _q.multiply(rt);                                 // targetWorld = W_src · R_restTarget
       const pw = tb.parent ? tb.parent.getWorldQuaternion(_pq) : _pq.copy(IDENT);
       tb.quaternion.copy(pw.invert().multiply(_q));    // ориентация → локаль цели
-      // ПОЗИЦ-ВЕДЕНИЕ (только при conform=source, т.е. атлас/игра): мир-позиция кости цели = мир-позиция кости
-      // нашего скелета → суставы СОВПАДАЮТ ТОЧНО, меш ложится на физ-аватар 1:1 (устраняет остаток промежут.костей
-      // и бинд-поворотов ретаргета). Непривязанные кости (twist) остаются на иерархии. Наш скелет с boneScale ≈ бинд
-      // ФБХ → кости не улетают далеко от бинда, LBS-стретч минимален.
-      if (posDrive && tb.parent) {
-        sb.getWorldPosition(_wp);
-        _m.copy(tb.parent.matrixWorld).invert();
-        tb.position.copy(_wp).applyMatrix4(_m);
-      }
+      // ПОЗИЦ-ВЕДЕНИЕ (conform): мир-позиция кости меша = мир-позиция кости КАНОН-скелета → суставы совпадают, меш ложится на
+      // канон-аватар 1:1 (руки/ноги из бинд-позы A подтягиваются к канон-T плавной деформацией скина, БЕЗ спайка — длины уже
+      // сконформлены). Непривязанные кости (twist/пальцы) остаются на иерархии.
+      if (posDrive && tb.parent) { sb.getWorldPosition(_wp); _m.copy(tb.parent.matrixWorld).invert(); tb.position.copy(_wp).applyMatrix4(_m); }
       tb.updateMatrixWorld(false);                     // дети прочитают верный parentWorld
     }
   }
@@ -220,4 +270,51 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
     setBone(our, targetName) { boneMap[our] = targetName; bake(targetName); },
     dispose() { loaded.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); },
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ОБРАТНЫЙ РЕТАРГЕТ (запекатель клипов): анимированный ИМПОРТ-скелет → повороты НАШИХ костей.
+// Инверсия makeRetargetRig: там targetLocal = pwᵀ⁻¹·(W_src·R_restTarget); решаем относительно W_src.
+//   W_target = pwᵀ·targetLocal (мировой кватернион кости цели после кадра анимации)
+//   W_our    = W_target · R_restTarget⁻¹        (наш риг rest-world = I → это и есть мировое вращение нашей кости)
+//   localOur = parentOurWorld⁻¹ · W_our         (в локаль; parentOurWorld берём из УЖЕ посчитанных костей — сверху вниз)
+// R_restTarget = бинд-мировой кватернион цели (captured ОДИН РАЗ на bind-позе, ДО проигрывания анимации).
+// Точный обратный ход к drive → round-trip forward∘inverse ≈ identity (см. retarget3d.test.ts). Наследует
+// систему координат makeRetargetRig: источник (наш риг) — канон Y-up/+Z, поэтому импорт нормализуй в Y-up ДО запекания.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface BakeRig {
+  boneMap: Record<string, string>;
+  restW: Map<string, THREE.Quaternion>;               // бинд-мировые кватернионы цели (оффсет T-поз)
+  /** Снять ТЕКУЩУЮ позу импорт-скелета (после кадра анимации) в наши кости (пишет dst.bones[*].quaternion). */
+  sampleInto(dst: Humanoid): void;
+}
+
+/** Собрать запекатель из импорт-скелета + карты костей. `restW` снимается ЗДЕСЬ (loaded должен быть в bind-позе:
+ *  вызови `skeleton.pose()` перед конструированием, если модель приходит уже на кадре 0). */
+export function makeBakeRig(loaded: THREE.Object3D, boneMap: Record<string, string>): BakeRig {
+  const byName = new Map<string, THREE.Object3D>();
+  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o); });
+  if (byName.size === 0) loaded.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });   // BVH/Group-риги без isBone
+  loaded.updateMatrixWorld(true);
+  const restW = new Map<string, THREE.Quaternion>();
+  for (const t of Object.values(boneMap)) { const b = byName.get(t); if (b) restW.set(t, b.getWorldQuaternion(new THREE.Quaternion())); }
+
+  const _Wt = new THREE.Quaternion(), _rtI = new THREE.Quaternion(), _pwI = new THREE.Quaternion();
+  const Wmap = new Map<OurBone, THREE.Quaternion>();
+  function sampleInto(dst: Humanoid): void {
+    Wmap.clear();
+    loaded.updateMatrixWorld(true);
+    for (const our of OUR_BONES) {                      // порядок родитель→ребёнок (parentOurWorld уже в Wmap)
+      const tName = boneMap[our]; if (!tName) continue;
+      const tb = byName.get(tName), rt = restW.get(tName), db = dst.bones.get(our);
+      if (!tb || !rt || !db) continue;
+      tb.getWorldQuaternion(_Wt);                        // W_target
+      const Wour = new THREE.Quaternion().copy(_Wt).multiply(_rtI.copy(rt).invert());   // W_our = W_target·R_restTarget⁻¹
+      Wmap.set(our, Wour);
+      const pName = OUR_PARENT[our];
+      const pw = pName ? Wmap.get(pName) : undefined;   // мировой нашей родит-кости (или identity для Hips/непривязанных)
+      db.quaternion.copy(pw ? _pwI.copy(pw).invert().multiply(Wour) : Wour);            // → локаль (rotation синхронизируется)
+    }
+  }
+  return { boneMap, restW, sampleInto };
 }

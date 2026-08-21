@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
   GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit,
-  generateRunPlan, generateFloor, resolveMonsterPool, effectiveLevel,
+  generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
   buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
   stashMove, stashDims, stashTabCount,
@@ -472,17 +472,19 @@ export class Room {
     this.wipeAt = 0;
     this.area = 'dungeon'; this.runNodeId = nodeId; this.depth = node.depth;
     this.session.world.difficultyId = this.difficultyId;
-    const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'));
-    this.decor = layout.decor;
     const biomes = this.cfg.get('biomes');
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
+    const decorSpecs = decorSpecsFor(this.cfg.get('objects'), this.cfg.get('models'), biome.id);   // напольный декор биома (role decor/prop)
+    const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'), decorSpecs);
+    this.decor = layout.decor;
+    const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));   // суб-тайл-коллизия
     const pool = resolveMonsterPool(biome, node.depth);
     const hostSave = this.firstSave();
     const el = hostSave ? effectiveLevel(hostSave, this.cfg.get('balance').power).total : 1;
     const rng = createRng((node.floorSpec.seed >>> 0) || 1);
     const monsters = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     this.session.enterFloor(node.depth, {
-      grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters,
+      grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, obstacles,
       doors: layout.doors, levers: layout.levers,
       runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: biome.id,
     });

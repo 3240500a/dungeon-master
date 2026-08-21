@@ -14,7 +14,7 @@ import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
 import { renderSkillGraphPage } from './skillGraph.js';
-import { renderColorField, renderUploadField, renderBatchUpload, renderMaterialPanel } from './assetFields.js';
+import { renderColorField, renderUploadField, renderBatchUpload, renderMaterialPanel, currentAssetCategory } from './assetFields.js';
 import { renderDocs } from './docs.js';
 
 /**
@@ -155,14 +155,17 @@ fieldEnumSources.maxTier = tierIds;
 //    (item.modelId = имя submesh; вариант-по-имени в setAtlas). Плюс легаси per-slot part-меши того же слота.
 //  • weapon → models kind='weapon' с weaponType===parent.weaponClass (оружие ОБЩЕЕ на всех, per-char только хват).
 //  • shield → models kind='weapon' с weaponType==='shield'.
-type ModelRow = { id: string; kind?: string; slot?: string; weaponType?: string; slots?: Record<string, string> };
+type ModelRow = { id: string; kind?: string; slot?: string; weaponType?: string; slots?: Record<string, string>; classId?: string };
 // Имена submesh-ВАРИАНТОВ персонаж-атласов (kind='character'), классифицированные в этот слот атласа, + легаси per-slot part.
-const atlasVariantsForSlot = (slot: string): string[] => {
+// classId (опц.): СКОУП по атласу конкретного персонажа — вернуть сабмеши ТОЛЬКО из атласа с этим classId (для modelByClass:
+// у каждого класса выбор мешей из СВОЕГО атласа, не из всех 7×100). Без classId — все атласы (для общего modelId/baseAppearance).
+const atlasVariantsForSlot = (slot: string, classId?: string): string[] => {
   const ms = (data['models'] as ModelRow[]) ?? [];
   const variants = new Set<string>();
   for (const m of ms) {
-    if (m.kind === 'character' && m.slots) for (const [mesh, sl] of Object.entries(m.slots)) { if (sl === slot) variants.add(mesh); }
-    if (m.kind === 'part' && m.slot === slot) variants.add(m.id);
+    if (m.kind === 'character' && m.slots && (classId === undefined || m.classId === classId))
+      for (const [mesh, sl] of Object.entries(m.slots)) { if (sl === slot) variants.add(mesh); }
+    if (classId === undefined && m.kind === 'part' && m.slot === slot) variants.add(m.id);   // легаси per-slot part — только в общем списке
   }
   return [...variants].sort();
 };
@@ -201,7 +204,24 @@ fieldCustomRenderers.modelByClass = (value, onChange, parent) => {
   const slot = String(parent?.['slot'] ?? '');
   const v: Record<string, string> = (value && typeof value === 'object') ? { ...(value as Record<string, string>) } : {};
   const classes = (data['classes'] as { id: string; name?: string }[]) ?? [];
-  const opts = ['', ...atlasVariantsForSlot(slot)];
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  if (!classes.length) { wrap.textContent = 'нет классов в конфиге'; return wrap; }
+  for (const c of classes) {
+    const opts = ['', ...atlasVariantsForSlot(slot, c.id)];   // СКОУП: меши ТОЛЬКО из атласа этого класса (classId === c.id)
+    const row = document.createElement('label'); row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
+    const noAtlas = opts.length <= 1;   // у класса нет атласа с этим classId → подсказать
+    const lbl = document.createElement('span'); lbl.textContent = (c.name ?? c.id) + (noAtlas ? ' ⚠' : ''); lbl.title = noAtlas ? `Нет атласа с classId='${c.id}'. Загрузи атлас в 3D-эдиторе и поставь ему этот ключ.` : ''; lbl.style.cssText = `min-width:110px;color:${noAtlas ? '#c9a24a' : '#aab'}`;
+    const sel = renderEnum(opts, v[c.id] ?? '', (nv) => { const s = String(nv ?? ''); if (s) v[c.id] = s; else delete v[c.id]; onChange({ ...v }); });
+    row.append(lbl, sel); wrap.append(row);
+  }
+  return wrap;
+};
+// Материал брони ПО КЛАССУ (materialByClass): выпадашка материала на КАЖДЫЙ класс. '' = материал сабмеша атласа/дефолт.
+//  Материалы глобальны (не скоупятся по атласу) — список из вкладки «Материалы». Накладывается на меш предмета при экипе.
+fieldCustomRenderers.materialByClass = (value, onChange) => {
+  const v: Record<string, string> = (value && typeof value === 'object') ? { ...(value as Record<string, string>) } : {};
+  const classes = (data['classes'] as { id: string; name?: string }[]) ?? [];
+  const opts = ['', ...((data['materials'] as { id: string }[]) ?? []).map((m) => m.id)];
   const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px';
   if (!classes.length) { wrap.textContent = 'нет классов в конфиге'; return wrap; }
   for (const c of classes) {
@@ -460,11 +480,21 @@ function buildTreeFrom(arr: unknown[], pathOf: (e: Record<string, unknown>, i: n
 }
 
 // ── Дерево мешей: Персонажи / Монстры / Оружие / Окружение (биом → тайлсет|наполнение) / Прочее ─────────
-const MODEL_CAT_LABEL: Record<string, string> = { characters: '🧍 Персонажи', monsters: '👹 Монстры', weapons: '⚔ Оружие', environment: '🧱 Окружение', misc: '📦 Прочее', tileset: 'Тайлсет', filling: 'Наполнение', '(общий)': '(общий атлас)' };
-/** Путь меша в дереве. character: Персонажи (classId∈классы / пусто=общий) vs Монстры (иначе). weapon: Оружие→тип.
- *  Окружение — если модель используется объектом (objects): биом первого объекта → тайлсет(floor/wall)|наполнение. Иначе Прочее. */
+const MODEL_CAT_LABEL: Record<string, string> = { characters: '🧍 Персонажи', monsters: '👹 Монстры', weapons: '⚔ Оружие', tiles: '🧱 Тайлы', decor: '🏺 Декор', environment: '🧱 Окружение', misc: '📦 Прочее', tileset: 'Тайлсет', filling: 'Наполнение', '(общий)': '(общий атлас)' };
+/** Набор тайла/декора из url (/assets/tiles/<набор>/… → «<набор>»), иначе пусто. */
+function modelSetFromUrl(url: unknown): string { return (/\/assets\/(?:tiles|decor)\/([^/]+)\//i.exec(String(url ?? ''))?.[1]) ?? ''; }
+/** Путь меша в дереве. Приоритет — ЯВНАЯ category (character/monster/tile/decor/weapon/misc). Легаси без category —
+ *  прежняя эвристика по kind + использованию в объектах. */
 function modelPathOf(m: Record<string, unknown>, _i: number): string[] {
-  const kind = String(m.kind ?? ''), id = String(m.id ?? '');
+  const cat = String(m.category ?? ''), id = String(m.id ?? '');
+  if (cat === 'character') return ['characters', String(m.classId ?? '') || '(общий)'];
+  if (cat === 'monster') return ['monsters', String(m.classId ?? '') || '(общий)'];
+  if (cat === 'weapon') return ['weapons', String(m.weaponType ?? '—')];
+  if (cat === 'tile') { const s = modelSetFromUrl(m.url); return s ? ['tiles', s] : ['tiles']; }
+  if (cat === 'decor') { const s = modelSetFromUrl(m.url); return s ? ['decor', s] : ['decor']; }
+  if (cat === 'misc') return ['misc'];
+  // ── легаси (category не задан): угадываем ──
+  const kind = String(m.kind ?? '');
   if (kind === 'character') {
     const cid = String(m.classId ?? '');
     if (!cid) return ['characters', '(общий)'];
@@ -741,6 +771,7 @@ function renderPage(page: HTMLElement): void {
   toolbar.append(
     btn('✔ Применить (тест, локально)', apply, '#2a4a2a'),
     btn('💾 Применить везде (в файл)', applyToFile, '#26406a'),
+    btn('🔎 Проверить конфиг', () => { void runValidation(); }, '#3a2f18'),
     btn('⭳ Экспорт', exportJson),
     btn('⭱ Импорт', importJson),
     btn('↺ Сбросить конфиг', resetConfig, '#4a2a2a'),
@@ -785,29 +816,42 @@ function renderBalanceGroup(page: HTMLElement): void {
   page.appendChild(renderField(picked, bal, () => { /* мутация in-place */ }));
 }
 
-// ── Форма меша по КАТЕГОРИИ: разные наборы полей у персонажа/оружия/части/окружения (скрытые поля данные СОХРАНЯЮТ) ──
-const MODEL_COMMON_FIELDS = ['id', 'name', 'url', 'kind', 'scale'];   // общие для всех категорий
+// ── Форма меша по КАТЕГОРИИ: разные наборы полей (тайл ≠ персонаж). Скрытые поля данные СОХРАНЯЮТ (маска pick). ──
+const MODEL_COMMON_FIELDS = ['id', 'name', 'url', 'category', 'scale'];   // общие (kind скрыт — задаётся категорией)
 const MODEL_CAT_FIELDS: Record<string, string[]> = {
-  character: ['classId', 'slots', 'body', 'boneScale', 'boneOffsets', 'base', 'hideHair', 'boneMap', 'submeshMaterials'],
+  character: ['classId', 'slots', 'baseAppearance', 'body', 'boneScale', 'boneOffsets', 'base', 'hideHair', 'boneMap', 'submeshMaterials'],
+  monster: ['classId', 'slots', 'baseAppearance', 'body', 'boneScale', 'boneOffsets', 'submeshMaterials'],
   weapon: ['weaponType', 'grip', 'submeshMaterials'],
-  part: ['slot', 'base', 'hideHair', 'submeshMaterials'],
-  env: [],   // окружение (пол/стена/декор): только общие поля — материал берётся из «Объекта», не из меша
+  tile: [],    // пол/стена: только общие — материал из «Объекта», не из меша
+  decor: [],   // декор: то же
+  misc: ['kind', 'slot', 'base', 'hideHair', 'submeshMaterials'],   // легаси/прочее — полный набор
 };
-/** Категория меша для формы: character/weapon/env — по kind; env также если меш используется «Объектом»; иначе part. */
+/** Категория меша для формы: ЯВНАЯ category (если валидна), иначе угадываем по kind/использованию в объектах. */
 function modelFormCat(m: Record<string, unknown>): keyof typeof MODEL_CAT_FIELDS {
+  const cat = String(m.category ?? '');
+  if (cat in MODEL_CAT_FIELDS) return cat;
   const kind = String(m.kind ?? '');
-  if (kind === 'character' || kind === 'weapon' || kind === 'env') return kind;
-  return ((data['objects'] as { modelId?: string }[]) ?? []).some((o) => o.modelId === m.id) ? 'env' : 'part';
+  if (kind === 'character') return 'character';
+  if (kind === 'weapon') return 'weapon';
+  if (((data['objects'] as { modelId?: string }[]) ?? []).some((o) => o.modelId === m.id)) return 'tile';   // используется объектом → окружение
+  return 'misc';
 }
-/** Рендер формы меша с полями только своей категории (окружение — минимум, без персонажных полей).
- *  entry мутируется на месте (renderField), перерисовка ТОЛЬКО при смене kind → перефильтровать поля
- *  (иначе текст-поля теряли бы фокус на каждый ввод). onKindChange — полная перерисовка страницы. */
+/** Движковый kind по категории (тайл/декор — part; персонаж/монстр — character; оружие — weapon). */
+function kindForCategory(cat: string): string {
+  if (cat === 'character' || cat === 'monster') return 'character';
+  if (cat === 'weapon') return 'weapon';
+  if (cat === 'tile' || cat === 'decor') return 'part';
+  return 'part';
+}
+/** Рендер формы меша с полями только своей категории (тайл — минимум, без персонажных полей). entry мутируется на
+ *  месте; перерисовка при смене category → перефильтровать поля + синхронизировать движковый kind. */
 function renderModelForm(elemSchema: z.ZodObject<z.ZodRawShape>, entry: Record<string, unknown>, onKindChange: () => void): HTMLElement {
-  const prevKind = String(entry.kind ?? '');
+  const prevCat = String(entry.category ?? '');
   const keys = [...MODEL_COMMON_FIELDS, ...MODEL_CAT_FIELDS[modelFormCat(entry)]!].filter((k) => k in elemSchema.shape);
   const mask = Object.fromEntries(keys.map((k) => [k, true]));
   return renderField(elemSchema.pick(mask as Parameters<typeof elemSchema.pick>[0]), entry, (v) => {
-    if (String((v as Record<string, unknown>).kind ?? '') !== prevKind) onKindChange();
+    const cat = String((v as Record<string, unknown>).category ?? '');
+    if (cat !== prevCat) { if (cat) (v as Record<string, unknown>).kind = kindForCategory(cat); onKindChange(); }   // смена категории → синк kind + перефильтровать поля
   });
 }
 
@@ -821,7 +865,7 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   // Список записей + CRUD.
   const list = document.createElement('div');
   const crud = document.createElement('div');
-  crud.style.cssText = 'display:flex;gap:6px;margin-bottom:8px';
+  crud.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px';
   const isUnion = elemSchema._def.typeName === 'ZodDiscriminatedUnion';
   crud.append(
     btn('+ Новая', () => {
@@ -854,12 +898,22 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
         arr.splice(selectedIndex, 1);
         selectedIndex = Math.max(0, selectedIndex - 1);
         render();
+        apply();   // ПЕРСИСТ удаления на сервер (БД-оверрайд) — иначе на перезагрузке вернётся (редактор грузит /api/config). Для файла/деплоя — «Применить везде».
       }
     }, '#4a2a2a'),
   );
   // Пакетная загрузка: Текстуры/3D — мультивыбор файлов сразу (по записи на файл).
-  if (current === 'textures') crud.appendChild(renderBatchUpload('.png,.jpg,.jpeg,.webp', arr as Record<string, unknown>[], (id, url, fn) => ({ id, name: fn, url, colorSpace: /(normal|_nrm|_norm)/i.test(fn) ? 'linear' : 'srgb', wrapS: 'repeat', wrapT: 'repeat', flipY: false }), render));
-  if (current === 'models') crud.appendChild(renderBatchUpload('.glb,.gltf', arr as Record<string, unknown>[], (id, url, fn) => ({ id, name: fn, url, kind: 'part' }), render));
+  // onDone = render + apply(): пакетно-загруженные текстуры/модели СРАЗУ персистят на сервер (иначе на перезагрузке пропадут,
+  // а материал, что на них ссылается, покажется без карты — «не применился»). Записи валидны (id+url) → apply не отвалит.
+  const uploadDone = (): void => { render(); apply(); };
+  if (current === 'textures') crud.appendChild(renderBatchUpload('.png,.jpg,.jpeg,.webp', arr as Record<string, unknown>[], (id, url, fn, flipY) => ({ id, name: fn, url, colorSpace: /(normal|_nrm|_norm)/i.test(fn) ? 'linear' : 'srgb', wrapS: 'repeat', wrapT: 'repeat', flipY: flipY ?? false }), uploadDone));
+  if (current === 'models') crud.appendChild(renderBatchUpload('.glb,.gltf', arr as Record<string, unknown>[], (id, url, fn) => { const cat = currentAssetCategory(); return { id, name: fn, url, category: cat, kind: kindForCategory(cat) }; }, uploadDone));
+  // Чистка «хвостов»: убрать записи, у которых нет файла на сервере (+ каскад материалы/объекты). Для 3D-ассетов.
+  if (['textures', 'models', 'materials', 'objects'].includes(current)) {
+    const clean = btn('🧹 Убрать битые', () => { void pruneDeadAssets(); }, '#3a2f18');
+    clean.title = 'Просканировать textures/models: удалить записи без файла на сервере (и каскадно материалы/объекты, что на них ссылаются). Для случая «удалил файлы с диска — почистить ссылки».';
+    crud.appendChild(clean);
+  }
   list.appendChild(crud);
 
   const supportsEnabled = schemaHasField(elemSchema, 'enabled');
@@ -974,12 +1028,24 @@ function applyToFile(): void {
     setStatus('Ошибка валидации: ' + result.error.issues[0]?.message + ' @ ' + result.error.issues[0]?.path.join('.'), '#ff8080');
     return;
   }
-  bc?.postMessage({ key: current, value: result.data });
-  sendConfig(
-    () => fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [current]: result.data }) }),
-    'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
-  );
-  setStatus('Запись в файл…', '#9fb0c0');
+  const publish = (): void => {
+    bc?.postMessage({ key: current, value: result.data });
+    sendConfig(
+      () => fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [current]: result.data }) }),
+      'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
+    );
+    setStatus('Запись в файл…', '#9fb0c0');
+  };
+  // Гейт публикации 3D-ассетов: не пускать в файл/деплой битые ссылки без подтверждения (форма проходит zod, а граф
+  // ссылок — нет). Прочие секции публикуются как раньше (без сетевой проверки файлов).
+  if (['textures', 'models', 'materials', 'objects'].includes(current)) {
+    setStatus('Проверка ссылок перед публикацией…', '#9fb0c0');
+    void validateConfig().then((issues) => {
+      const errs = issues.filter((i) => i.severity === 'error').length;
+      if (errs) { setStatus(`Публикация остановлена: ${errs} ошибок ссылок.`, '#ff8080'); showValidationModal(issues, publish); }   // блок только на ошибках; предупреждения не мешают
+      else publish();
+    });
+  } else publish();
 }
 
 /**
@@ -1020,6 +1086,139 @@ function pushToServer(overrides: Record<string, unknown>): void {
     () => fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(overrides) }),
     'Сохранено на сервере (переживёт рестарт) и применено к игре. Balance — сразу; статы монстров/лут — со следующего этажа.',
   );
+}
+
+/** Есть ли файл ассета по url. ТОЛЬКО достоверное отсутствие → false: 404 или HTML-заглушка. Транзиентную ошибку
+ *  (сеть/5xx, напр. рестарт dev-сервера) повторяем; если так и не установили отсутствие — считаем «есть» (не даём
+ *  ложному негативу заблокировать публикацию / снести живую запись). */
+async function assetExists(url: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      // HEAD (не GET!): только заголовки, БЕЗ тела. GET тянул бы весь GLB (15+ МБ); тело мы не читаем, соединение
+      // висит под стрим → после 6 таких проверок пул соединений исчерпан и весь чекер зависает. HEAD освобождает сразу.
+      const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+      if (r.status === 404) return false;                                       // точно нет файла
+      if (r.ok) return !/text\/html/i.test(r.headers.get('content-type') ?? ''); // 200: не-HTML = есть; HTML-заглушка = нет
+      // прочие статусы (5xx…) — неопределённо, ещё попытка
+    } catch { /* сеть — ещё попытка */ }
+  }
+  return true;   // достоверно не опровергли → не помечаем битой
+}
+
+/**
+ * Убрать «хвосты» удалённых ассетов: сканирует textures/models (файл на сервере), помечает те, у кого файла нет, и
+ * КАСКАДНО — материалы (карта → мёртвая текстура) и объекты (modelId/materialId → мёртвые). Показывает список, по
+ * подтверждению удаляет из конфига и сохраняет. Решает «удалил файлы с диска, а в редакторе записи остались».
+ */
+async function pruneDeadAssets(): Promise<void> {
+  const textures = (data.textures as Record<string, unknown>[]) ?? [];
+  const models = (data.models as Record<string, unknown>[]) ?? [];
+  const materials = (data.materials as Record<string, unknown>[]) ?? [];
+  const objects = (data.objects as Record<string, unknown>[]) ?? [];
+  setStatus('Проверяю файлы ассетов на сервере…', '#9fb0c0');
+  const deadTex = new Set<string>();
+  for (const t of textures) if (typeof t.url === 'string' && t.url && !(await assetExists(t.url))) deadTex.add(String(t.id));
+  const deadModel = new Set<string>();
+  for (const m of models) if (typeof m.url === 'string' && m.url && !(await assetExists(m.url))) deadModel.add(String(m.id));
+  const MAPS = ['map', 'roughnessMap', 'normalMap', 'metalnessMap', 'emissiveMap', 'aoMap'];
+  const deadMat = new Set<string>();
+  for (const mm of materials) if (MAPS.some((k) => typeof mm[k] === 'string' && mm[k] && deadTex.has(mm[k] as string))) deadMat.add(String(mm.id));
+  const deadObj = new Set<string>();
+  for (const o of objects) if ((typeof o.modelId === 'string' && deadModel.has(o.modelId)) || (typeof o.materialId === 'string' && deadMat.has(o.materialId))) deadObj.add(String(o.id));
+  const total = deadTex.size + deadModel.size + deadMat.size + deadObj.size;
+  if (!total) { setStatus('Битых ссылок нет — все файлы на месте.', '#7fd67f'); return; }
+  const lines = [
+    deadModel.size ? `Модели (${deadModel.size}): ${[...deadModel].join(', ')}` : '',
+    deadTex.size ? `Текстуры (${deadTex.size}): ${[...deadTex].join(', ')}` : '',
+    deadMat.size ? `Материалы (${deadMat.size}, каскад): ${[...deadMat].join(', ')}` : '',
+    deadObj.size ? `Объекты (${deadObj.size}, каскад): ${[...deadObj].join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+  if (!confirm(`Удалить записи, у которых нет файла на сервере?\n\n${lines}\n\nМатериалы/объекты убираются каскадно (ссылаются на удалённое).`)) { setStatus('Отменено.', '#9aa'); return; }
+  const changed: Record<string, unknown> = {};
+  if (deadTex.size) { data.textures = textures.filter((t) => !deadTex.has(String(t.id))); changed.textures = data.textures; }
+  if (deadModel.size) { data.models = models.filter((m) => !deadModel.has(String(m.id))); changed.models = data.models; }
+  if (deadMat.size) { data.materials = materials.filter((m) => !deadMat.has(String(m.id))); changed.materials = data.materials; }
+  if (deadObj.size) { data.objects = objects.filter((o) => !deadObj.has(String(o.id))); changed.objects = data.objects; }
+  pushToServer(changed);
+  selectedIndex = 0;
+  render();
+  setStatus(`Убрано битых: ${total} (модели ${deadModel.size}, текстуры ${deadTex.size}, материалы ${deadMat.size}, объекты ${deadObj.size}).`, '#7fd67f');
+}
+
+// ── Проверка конфига перед публикацией: перекрёстные ссылки + наличие файлов ассетов ────────────────────
+interface ConfigIssue { section: string; id: string; msg: string; severity: 'error' | 'warn' }
+
+/**
+ * Валидатор конфига: проверяет, что все перекрёстные ссылки РАЗРЕШАЮТСЯ и файлы ассетов существуют на сервере.
+ * Ловит класс багов «ссылка на то, чего нет». Схема (zod) проверяет форму полей, а это — целостность графа ссылок.
+ *  - error (жёстко, ломает рендер, блокирует публикацию): url→файл, objects→models/materials, materials→textures,
+ *    submeshMaterials→materials.
+ *  - warn (мягко, есть грациозный фолбэк): items.base/monster-gear .modelId → нет модели (незалитая шмотка/гир).
+ */
+async function validateConfig(): Promise<ConfigIssue[]> {
+  const issues: ConfigIssue[] = [];
+  const arr = (s: string): Record<string, unknown>[] => (Array.isArray(data[s]) ? (data[s] as Record<string, unknown>[]) : []);
+  const ids = (s: string): Set<string> => new Set(arr(s).map((x) => String(x.id)));
+  const models = ids('models'), materials = ids('materials'), textures = ids('textures');
+
+  // 1) файлы на сервере (textures/models .url) — честный 404 или HTML-заглушка → нет файла [error]
+  for (const t of arr('textures')) if (typeof t.url === 'string' && t.url && !(await assetExists(t.url))) issues.push({ section: 'textures', id: String(t.id), msg: `нет файла на сервере: ${t.url}`, severity: 'error' });
+  for (const m of arr('models')) if (typeof m.url === 'string' && m.url && !(await assetExists(m.url))) issues.push({ section: 'models', id: String(m.id), msg: `нет файла на сервере: ${m.url}`, severity: 'error' });
+
+  // 2) перекрёстные ссылки id→секция (только если поле задано)
+  const ref = (section: string, field: string, target: Set<string>, targetName: string, severity: 'error' | 'warn'): void => {
+    for (const e of arr(section)) { const v = e[field]; if (typeof v === 'string' && v && !target.has(v)) issues.push({ section, id: String(e.id), msg: `${field}="${v}" — нет такого id в ${targetName}`, severity }); }
+  };
+  ref('objects', 'modelId', models, 'models', 'error');
+  ref('objects', 'materialId', materials, 'materials', 'error');
+  for (const f of ['map', 'roughnessMap', 'normalMap', 'metalnessMap', 'emissiveMap', 'aoMap']) ref('materials', f, textures, 'textures', 'error');
+  ref('items.base', 'modelId', models, 'models', 'warn');       // шмотка ссылается на незалитую 3D-модель — фолбэк на процедурку
+  ref('monster-gear', 'modelId', models, 'models', 'warn');
+
+  // 3) submeshMaterials{} на моделях → materials [error]
+  for (const m of arr('models')) { const sm = m.submeshMaterials; if (sm && typeof sm === 'object') for (const [k, v] of Object.entries(sm as Record<string, unknown>)) if (typeof v === 'string' && v && !materials.has(v)) issues.push({ section: 'models', id: String(m.id), msg: `submeshMaterials["${k}"]="${v}" — нет в materials`, severity: 'error' }); }
+
+  // ошибки — вперёд, потом предупреждения
+  return issues.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
+}
+
+/** Модалка-отчёт валидации: ошибки (красным) + предупреждения (жёлтым) по секциям, либо «чисто». `onForce` — публикация вопреки. */
+function showValidationModal(issues: ConfigIssue[], onForce?: () => void): void {
+  const errors = issues.filter((i) => i.severity === 'error'), warns = issues.filter((i) => i.severity === 'warn');
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#16161f;border:1px solid #2c2c3a;border-radius:10px;max-width:680px;max-height:80vh;overflow:auto;padding:18px 20px;color:#e8e8f0;font-size:13px;box-shadow:0 12px 40px rgba(0,0,0,0.5)';
+  const title = document.createElement('div');
+  if (!issues.length) { title.textContent = '✓ Конфиг чист — битых ссылок не найдено'; title.style.cssText = 'font-size:15px;font-weight:600;color:#7fd67f'; }
+  else { title.textContent = `${errors.length ? '⛔ Ошибок: ' + errors.length : '✓ Ошибок нет'}${warns.length ? ' · ⚠ предупреждений: ' + warns.length : ''}`; title.style.cssText = `font-size:15px;font-weight:600;color:${errors.length ? '#ff8080' : '#ffb020'};margin-bottom:8px`; }
+  box.appendChild(title);
+  const renderGroup = (list: ConfigIssue[], color: string): void => {
+    const bySec: Record<string, ConfigIssue[]> = {};
+    for (const i of list) (bySec[i.section] ??= []).push(i);
+    for (const [sec, items] of Object.entries(bySec)) {
+      const h = document.createElement('div'); h.textContent = `${sec} (${items.length})`; h.style.cssText = 'font-weight:600;color:#c8cbe0;margin:10px 0 4px'; box.appendChild(h);
+      for (const i of items) { const row = document.createElement('div'); row.textContent = `• ${i.id}: ${i.msg}`; row.style.cssText = `color:${color};margin:2px 0 2px 10px`; box.appendChild(row); }
+    }
+  };
+  if (errors.length) { const h = document.createElement('div'); h.textContent = '⛔ Ошибки (ломают рендер):'; h.style.cssText = 'color:#ff8080;font-weight:600;margin-top:10px'; box.appendChild(h); renderGroup(errors, '#e0a0a0'); }
+  if (warns.length) { const h = document.createElement('div'); h.textContent = '⚠ Предупреждения (есть фолбэк):'; h.style.cssText = 'color:#ffb020;font-weight:600;margin-top:12px'; box.appendChild(h); renderGroup(warns, '#d0c090'); }
+  const btnRow = document.createElement('div'); btnRow.style.cssText = 'display:flex;gap:8px;margin-top:16px;justify-content:flex-end';
+  if (onForce) btnRow.append(btn(errors.length ? 'Всё равно опубликовать' : 'Опубликовать', () => { overlay.remove(); onForce(); }, errors.length ? '#4a2a2a' : '#26406a'));
+  btnRow.append(btn('Закрыть', () => overlay.remove()));
+  box.appendChild(btnRow);
+  overlay.appendChild(box);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+/** Кнопка «🔎 Проверить конфиг»: прогнать валидатор и показать отчёт. */
+async function runValidation(): Promise<void> {
+  setStatus('Проверка ссылок и файлов ассетов…', '#9fb0c0');
+  const issues = await validateConfig();
+  const errs = issues.filter((i) => i.severity === 'error').length, warns = issues.length - errs;
+  setStatus(issues.length ? `Ошибок: ${errs}, предупреждений: ${warns} (см. отчёт)` : 'Конфиг чист — битых ссылок нет.', errs ? '#ff8080' : issues.length ? '#ffb020' : '#7fd67f');
+  showValidationModal(issues);
 }
 
 /** Просит сервер удалить оверрайд ключа (сброс к встроенному дефолту, персистентно). */

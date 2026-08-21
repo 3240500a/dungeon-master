@@ -19,7 +19,7 @@ import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
 import { Vfx } from './vfx.js';
 import { StatusFx } from './statusFx.js';
-import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, loadEnvKitFromObjects, type Torch, type EnvKit, type EnvSpec } from './env3d.js';
+import { setFog, makeSceneLighting, buildEnvironment, updateTorches, createTorchPool, WALL_H, wallFade, propTune, loadEnvKitFromObjects, type Torch, type EnvKit, type EnvSpec, type PropSpec } from './env3d.js';
 import { getMaterial } from './assetCache.js';
 import { runAuthFlow } from './screens3d.js';
 import { mountHud3d } from './hud3d.js';
@@ -103,15 +103,16 @@ function weaponModelsFromSave(save: SaveState, itemsBase: { id: string; modelId?
   const of = (it?: { modelId?: string; baseId?: string }): string | undefined => it && (it.modelId ?? itemsBase.find((b) => b.id === it.baseId)?.modelId);
   return { main: of(eq?.weapon), off: of(eq?.offhand) };
 }
-/** C6c: внешность брони по слотам из сейва — slot→{modelId} надетых предметов (голову/волосы даёт база слота). */
-function appearanceFromSave(save: SaveState, itemsBase: { id: string; modelId?: string; modelByClass?: Record<string, string> }[]): Record<string, { modelId?: string } | undefined> {
+/** C6c: внешность брони по слотам из сейва — slot→{modelId, materialId} надетых предметов (голову/волосы даёт база слота). */
+function appearanceFromSave(save: SaveState, itemsBase: { id: string; modelId?: string; modelByClass?: Record<string, string>; materialByClass?: Record<string, string> }[]): Record<string, { modelId?: string; materialId?: string } | undefined> {
   const eq = save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined> | undefined;
   const cls = save.classId;
-  const out: Record<string, { modelId?: string } | undefined> = {};
+  const out: Record<string, { modelId?: string; materialId?: string } | undefined> = {};
   // Приоритет: per-class модель базы (modelByClass[класс]) → modelId инстанса (gearFields стампит с базы) → modelId базы.
+  // Материал: per-class материал базы (materialByClass[класс]) — override материала сабмеша атласа при экипе.
   for (const slot of ['helm', 'chest', 'gloves', 'boots'] as const) {
     const it = eq?.[slot];
-    if (it) { const b = itemsBase.find((x) => x.id === it.baseId); out[slot] = { modelId: b?.modelByClass?.[cls] ?? it.modelId ?? b?.modelId }; }
+    if (it) { const b = itemsBase.find((x) => x.id === it.baseId); out[slot] = { modelId: b?.modelByClass?.[cls] ?? it.modelId ?? b?.modelId, materialId: b?.materialByClass?.[cls] }; }
   }
   return out;
 }
@@ -170,15 +171,16 @@ export async function startOnline3d(): Promise<void> {
   let monKinematic = false;   // Настройки: монстры кинематические, физика лишь на удар/смерть
   let monNoIk = false;        // Настройки: монстры БЕЗ вспом. IK (foot/off-hand) у ВСЕХ — форсит поза-LOD в цикле ниже
   let playerKinematic = false, playerNoIk = false;   // Настройки: те же тумблеры для игрока (self); применяются при создании куклы
-  // Тени 3D: факелы и/или свет героя. renderer.shadowMap.enabled = включён хоть один. Параметры (mapSize/bias/кол-во
-  // факелов-кастеров/яркость+радиус света героя) — из конфига balance.lighting.shadow3d (редактор). Point-light shadow дорогой.
-  let torchShadows = false, playerShadows = false;
+  // Тени 3D: факелы и/или свет героя. renderer.shadowMap.enabled = включён хоть один. Параметры контента (bias/кол-во
+  // факелов-кастеров/яркость+дальность света) — из конфига balance.lighting.shadow3d (редактор). РАЗРЕШЕНИЕ ТЕНЕЙ
+  // (shadowRes) — КЛИЕНТСКАЯ настройка качества/перфа (⚙, localStorage), одинаковая на все источники. Point-light shadow дорогой.
+  let torchShadows = false, playerShadows = false, shadowRes = 1024;
   const applyShadows = (): void => {
     const sh = app.config.get('balance').lighting.shadow3d;
     renderer.shadowMap.enabled = torchShadows || playerShadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    for (let i = 0; i < torchPool.length; i++) { const l = torchPool[i]!; l.shadow.mapSize.set(sh.mapSize, sh.mapSize); l.shadow.bias = sh.bias; l.castShadow = torchShadows && i < sh.torchCasters; }
-    if (playerLight) { playerLight.shadow.mapSize.set(sh.mapSize, sh.mapSize); playerLight.shadow.bias = sh.bias; playerLight.castShadow = playerShadows; }
+    for (let i = 0; i < torchPool.length; i++) { const l = torchPool[i]!; l.distance = sh.torchDist; l.shadow.camera.far = sh.torchDist; l.shadow.mapSize.set(shadowRes, shadowRes); l.shadow.bias = sh.bias; l.castShadow = torchShadows && i < sh.torchCasters; }
+    if (playerLight) { playerLight.shadow.mapSize.set(shadowRes, shadowRes); playerLight.shadow.bias = sh.bias; playerLight.castShadow = playerShadows; }
     renderer.shadowMap.needsUpdate = true;
   };
   const debug = mountDebug(scene, camera, canvas, root);   // DBG-панель: только debug-слои + инфо (перф-тумблеры → «Настройки»)
@@ -191,6 +193,12 @@ export async function startOnline3d(): Promise<void> {
     onStatusFx: (on) => statusFx.setDisabled(on),        // без партикл-статусов
     onTorchShadows: (on) => { torchShadows = on; applyShadows(); },   // тени от факелов (тяжело: N ближних кастят)
     onPlayerShadow: (on) => { playerShadows = on; applyShadows(); },   // тень от света героя
+    onShadowRes: (px) => {   // разрешение теней (клиентская настройка): сбросить теневые карты → three пересоздаст в новом размере
+      shadowRes = px;
+      for (const l of torchPool) { l.shadow.map?.dispose(); l.shadow.map = null; }
+      if (playerLight) { playerLight.shadow.map?.dispose(); playerLight.shadow.map = null; }
+      applyShadows();
+    },
     onAdaptiveRes: (on) => { adaptiveRes = on; if (on) prIdx = 0; else applyPR(manualPR); },   // авто (контроллер по FPS) ↔ ручной (значение ползунка)
     onResScale: (v) => { manualPR = Math.max(0.5, Math.min(2, v)); if (!adaptiveRes) applyPR(manualPR); },   // ползунок 0.5–2× (>native = суперсэмплинг); применяется в ручном режиме
   });
@@ -238,24 +246,34 @@ export async function startOnline3d(): Promise<void> {
   // Трупы копятся до смены этажа; так каждый = 1 дроукол вместо 22, а тяжёлую куклу (физ-риг+PosePlayer) сносим.
   const _bkC = new THREE.Color();
   function bakeCorpse(d: RagdollHandle): boolean {
-    const solid = (d._dbg as { solid?: { root: THREE.Object3D } } | undefined)?.solid;
-    if (!solid) return false;
-    solid.root.updateMatrixWorld(true);
+    const rootG = d.group;   // ВСЯ кукла: печём ВИДИМЫЕ меши — атлас-скин (если активен) ИЛИ процедурный манекен (без атласа).
+    if (!rootG) return false;
+    rootG.updateMatrixWorld(true);
+    // Видим ли меш по цепочке предков ДО группы куклы (target/ragdoll.group скрыты; процедурка скрыта при активном атласе).
+    const rendered = (o: THREE.Object3D): boolean => { let p: THREE.Object3D | null = o; while (p && p !== rootG) { if (!p.visible) return false; p = p.parent; } return true; };
     const geoms: THREE.BufferGeometry[] = [];
-    solid.root.traverse((o) => {
+    const _v = new THREE.Vector3();
+    rootG.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (!(m as { isMesh?: boolean }).isMesh || !m.geometry) return;
+      if (!(m as { isMesh?: boolean }).isMesh || !m.geometry || !rendered(m)) return;
+      // Скин атласа = SkinnedMesh → печём в ПОЗЕ КОЛЛАПСА (иначе бинд-поза = «раскоряка»). Процедурка/оружие — обычный меш.
+      const skinned = !!(m as { isSkinnedMesh?: boolean }).isSkinnedMesh && !!m.geometry.getAttribute('skinWeight');
       let g = m.geometry.clone();
-      if (g.index) g = g.toNonIndexed();   // единый режим: все НЕ-индексированные (GLB-оружие индексировано, процедурка — нет → mergeGeometries падал)
+      if (skinned) {   // CPU-скиннинг: каждую вершину гоним по текущим костям → в мир (как делает three в SkinnedMesh.raycast).
+        const pos = g.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) { _v.fromBufferAttribute(pos, i); (m as THREE.SkinnedMesh).applyBoneTransform(i, _v); _v.applyMatrix4(m.matrixWorld); pos.setXYZ(i, _v.x, _v.y, _v.z); }
+        pos.needsUpdate = true;
+      }
+      if (g.index) g = g.toNonIndexed();   // единый режим: все НЕ-индексированные (GLB индексировано, процедурка — нет → mergeGeometries падал)
       // Единый набор атрибутов {position, normal, color} для merge: срезаем всё лишнее (uv/tangent/skin у GLB-мешей).
       for (const a of ['uv', 'uv1', 'uv2', 'tangent', 'skinIndex', 'skinWeight']) g.deleteAttribute(a);
-      if (!g.getAttribute('normal')) g.computeVertexNormals();
+      if (skinned || !g.getAttribute('normal')) g.computeVertexNormals();   // после деформации нормали пересчитываем
       const mat = m.material as THREE.MeshStandardMaterial;
       _bkC.copy(mat.color ?? _bkC.setHex(0x888888));
       const n = g.getAttribute('position').count, col = new Float32Array(n * 3);
       for (let i = 0; i < n; i++) { col[i * 3] = _bkC.r; col[i * 3 + 1] = _bkC.g; col[i * 3 + 2] = _bkC.b; }
       g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-      g.applyMatrix4(m.matrixWorld);   // в мир-координаты (труп статичен)
+      if (!skinned) g.applyMatrix4(m.matrixWorld);   // процедурка/оружие: локаль→мир (у скина позиции уже мировые)
       geoms.push(g);
     });
     if (!geoms.length) return false;
@@ -308,7 +326,8 @@ export async function startOnline3d(): Promise<void> {
   let lastEnvLayout: Parameters<typeof buildEnvironment>[1] | undefined;
   let lastEnvBiome: string | undefined;            // биом текущей области (гейт пересборки)
   type EnvFade = { enabled: boolean; biomeId: string; fade: { start: number; end: number; kneeLow: number; kneeHigh: number; faceYaw: number } };
-  type ObjCfg = { enabled: boolean; role: string; modelId: string; materialId: string; biomes: string[] };
+  type ObjCfg = { id: string; enabled: boolean; role: string; surface?: 'floor' | 'wall'; modelId: string; materialId: string; biomes: string[]; footprint?: { w: number; h: number }; light?: { color: string; intensity: number; distance: number; flicker: boolean } };
+  const isScatterFloor = (o: ObjCfg): boolean => o.role === 'floor' && !!o.footprint && (o.footprint.w > 1 || o.footprint.h > 1);   // floor-россыпь (сервер), не базовый тайл
   /** Параметры фейда стен для биома (config environment) → в uniform wallFade. */
   function applyEnvFade(biomeId?: string): void {
     const cfg = biomeId ? (app.config.get('environment') as EnvFade[] | undefined)?.find((e) => e.enabled && e.biomeId === biomeId) : undefined;
@@ -326,17 +345,25 @@ export async function startOnline3d(): Promise<void> {
   /** Спеки объектов роли для биома (url модели + материал-override) для loadEnvKitFromObjects. */
   function objSpecs(biomeId: string, role: string): EnvSpec[] {
     return ((app.config.get('objects') as ObjCfg[] | undefined) ?? [])
-      .filter((o) => o.enabled && o.role === role && o.biomes.includes(biomeId))
+      .filter((o) => o.enabled && o.role === role && o.biomes.includes(biomeId) && !(role === 'floor' && isScatterFloor(o)))   // базовый пол (тайлится) — без floor-россыпи
       .map((o) => ({ url: modelUrl(o.modelId), mat: envMat(o.materialId) }))
+      .filter((s) => s.url);
+  }
+  /** Спеки расставляемых объектов (floor-россыпь + prop) для биома — с objectId; `coversFloor` = заменяет тайл пола. */
+  function propSpecs(biomeId: string): PropSpec[] {
+    return ((app.config.get('objects') as ObjCfg[] | undefined) ?? [])
+      .filter((o) => o.enabled && (isScatterFloor(o) || o.role === 'prop') && o.biomes.includes(biomeId))
+      .map((o) => ({ objectId: o.id, url: modelUrl(o.modelId), mat: envMat(o.materialId), light: o.light, coversFloor: o.role === 'floor' }))
       .filter((s) => s.url);
   }
   /** Лениво загрузить кит окружения биома из его объектов; по готовности пересобрать текущую область, если она на этом биоме. */
   function loadEnvForBiome(biomeId: string): void {
     if (envKits.has(biomeId) || envLoading.has(biomeId)) return;
-    const floorSpecs = objSpecs(biomeId, 'floor'), wallSpecs = objSpecs(biomeId, 'wall');
+    const floorSpecs = objSpecs(biomeId, 'floor'), wallSpecs = objSpecs(biomeId, 'wall'), columnSpecs = objSpecs(biomeId, 'pillar');
+    const props = propSpecs(biomeId);
     if (!floorSpecs.length && !wallSpecs.length) return;   // нет объектов для биома — остаёмся на боксах
     envLoading.add(biomeId);
-    loadEnvKitFromObjects(floorSpecs, wallSpecs).then((k) => {
+    loadEnvKitFromObjects(floorSpecs, wallSpecs, columnSpecs, props).then((k) => {
       envLoading.delete(biomeId);
       if (!k.floors.length && !k.walls.length) return;
       envKits.set(biomeId, k);
@@ -364,6 +391,21 @@ export async function startOnline3d(): Promise<void> {
   // Базовый 3D-вид класса (submesh пустых слотов: причёска/голова/руки/броня/сапоги) из конфига классов.
   function baseAppearanceOf(classId: string): { hair?: string; head?: string; hands?: string; body?: string; feet?: string } | undefined {
     return (app.config.get('classes') as { id: string; baseAppearance?: { hair?: string; head?: string; hands?: string; body?: string; feet?: string } }[]).find((c) => c.id === classId)?.baseAppearance;
+  }
+  // Базовый вид МОНСТРА (пустые слоты) — из его АТЛАСА семьи (models kind='character', classId===atlasKey). Аналог классового,
+  // но на атласе: у игрока base в classes, у монстра — на модели семьи. Нет атласа/поля → undefined (все submesh слота).
+  function atlasBaseAppearanceOf(atlasKey?: string): { hair?: string; head?: string; hands?: string; body?: string; feet?: string } | undefined {
+    if (!atlasKey) return undefined;
+    return (app.config.get('models') as { classId?: string; kind?: string; baseAppearance?: { hair?: string; head?: string; hands?: string; body?: string; feet?: string } }[])
+      .find((m) => m.kind === 'character' && m.classId === atlasKey)?.baseAppearance;
+  }
+  // Тело/скелет монстра ТОЛЬКО из его СОБСТВЕННОГО атласа (strict classId===atlasKey). Как у игрока: физ-скелет строится
+  // с boneScale/boneOffsets атласа → повторяет модель 1:1 (иначе руки/ноги ретаргетятся криво). БЕЗ фолбэка на knight:
+  // у монстра без атласа — процедурка, чужие пропорции исказили бы её.
+  function monsterAtlasBody(atlasKey?: string): { body?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> } | undefined {
+    if (!atlasKey) return undefined;
+    return (app.config.get('models') as { kind?: string; classId?: string; body?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> }[])
+      .find((m) => m.kind === 'character' && m.classId === atlasKey);
   }
 
   // ── Постройка области (город/этаж) из FloorInit ──────────────────────────────
@@ -423,10 +465,14 @@ export async function startOnline3d(): Promise<void> {
       const col = FACTION[faction] ?? 0x8a6f4a;
       // atlasKey (семья subfaction||faction) → атлас монстра со своими submesh (нет → процедурка). weaponKey/weaponModels/
       // armorModels — надетый гир как процедур.форма/GLB/submesh. gaitId (по фракции) — тюн походки/ударов (как раньше).
+      const atl = monsterAtlasBody(def.atlasKey);   // пропорции/скелет из собственного атласа монстра (физ-скелет 1:1 под меш)
       const d = makeHumanoidDoll(pw, {
         x: m.x, z: m.y, weapon: def.weaponKey ?? mc.weapon, weaponModels: { main: def.weaponModelId, off: def.shieldModelId },
-        atlasKey: def.atlasKey, gaitId: monsterCharId(faction), gaitFallback: 'warrior',
+        atlasKey: def.atlasKey, baseAppearance: atlasBaseAppearanceOf(def.atlasKey), gaitId: monsterCharId(faction), gaitFallback: 'warrior',
         gender: mc.gender, build: mc.build, colors: { body: col, limb: 0x5a5a64, head: col },
+        profile: atl?.body && Object.keys(atl.body).length ? atl.body : undefined,
+        boneScale: atl?.boneScale && Object.keys(atl.boneScale).length ? atl.boneScale : undefined,
+        boneOffsets: atl?.boneOffsets && Object.keys(atl.boneOffsets).length ? atl.boneOffsets : undefined,
       });
       if (def.armorModels) {   // броня монстра (chest/helm) → submesh-вариант атласа
         const app: Record<string, { modelId?: string }> = {};
@@ -1014,7 +1060,7 @@ export async function startOnline3d(): Promise<void> {
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
     msPhys += (performance.now() - _tp - msPhys) * 0.1;   // «физ»: pw.step (Jolt) над активными телами
     wallFade.playerPos.set(smoothX, 20, smoothZ); wallFade.viewDir.set(smoothX - camera.position.x, smoothZ - camera.position.z).normalize();   // фейд стен: взгляд камеры → ближние стены по «лицу»
-    updateTorches(torches, torchPool, smoothX, smoothZ, tsec); vfx.update(dt); statusFx.update(dt); applyCam();
+    updateTorches(torches, torchPool, smoothX, smoothZ, tsec, app.config.get('balance').lighting.shadow3d.torchIntensity); vfx.update(dt); statusFx.update(dt); applyCam();
     const _tr = performance.now();
     renderer.render(scene, camera);
     msRender += (performance.now() - _tr - msRender) * 0.1;   // «рендер»: submit дроуколов + куллинг (CPU-часть; GPU асинхронно)
@@ -1022,7 +1068,7 @@ export async function startOnline3d(): Promise<void> {
 
   // rebuildEnv: пересобрать окружение с текущими wallFade (faceYaw/knee/fade) — для живого тюна GLB-стены без релога.
   const rebuildEnv = (): void => { if (lastEnvLayout) { clearGroup(floorGroup); torches = buildEnvironment(floorGroup, lastEnvLayout, lastEnvBiome ? envKits.get(lastEnvBiome) : undefined); } };
-  if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents, wallFade, rebuildEnv };
+  if (import.meta.env.DEV) (window as unknown as { __o: unknown }).__o = { app, ui, scene, camera, renderer, frame, render: () => renderer.render(scene, camera), state: () => app.state, myId: () => myId, snap: () => latest, monsters, peers, self: () => self, onEvents, wallFade, propTune, rebuildEnv };
 
   let last = performance.now();
   function loop(): void { const now = performance.now(); const dt = Math.min(0.05, (now - last) / 1000); last = now; frame(dt); requestAnimationFrame(loop); }

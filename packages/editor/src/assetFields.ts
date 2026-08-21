@@ -54,13 +54,91 @@ const CONTENT_TYPE: Record<string, string> = {
   glb: 'model/gltf-binary', gltf: 'model/gltf-binary',
 };
 
-/** Залить бинарь на сервер под `id` → `{ url }`. contentType задаёт расширение файла на диске. */
-async function uploadAsset(id: string, data: ArrayBuffer, contentType: string): Promise<{ url: string }> {
-  const r = await fetch('/api/dev/assets/' + encodeURIComponent(id), {
+/** Залить бинарь на сервер под `id` → `{ url }`. contentType задаёт расширение файла на диске. `strip` (GLB) — сервер
+ *  вырежет вшитые текстуры, оставив геометрию+развёртку. `dir` — подпапка в /assets (раскладка по тайл-сетам). */
+export interface MeshColliderCfg { shape: 'circle' | 'box'; r?: number; w?: number; h?: number }
+async function uploadAsset(id: string, data: ArrayBuffer, contentType: string, strip = false, dir = ''): Promise<{ url: string; bytes?: number; note?: string; collider?: MeshColliderCfg }> {
+  const q = new URLSearchParams();
+  if (strip) q.set('strip', '1');
+  if (dir) q.set('dir', dir);
+  const qs = q.toString();
+  const r = await fetch('/api/dev/assets/' + encodeURIComponent(id) + (qs ? '?' + qs : ''), {
     method: 'POST', headers: { 'content-type': contentType }, body: data,
   });
   if (!r.ok) throw new Error('upload ' + r.status);
-  return r.json() as Promise<{ url: string }>;
+  return r.json() as Promise<{ url: string; bytes?: number; note?: string; collider?: MeshColliderCfg }>;
+}
+
+// ── Раскладка ассетов по папкам ПО КАТЕГОРИИ (персонаж/монстр/тайл/декор/оружие) + набор (для тайлов/декора).
+//    Общее состояние (категория + набор), помнится в localStorage. Определяет подпапку аплоада (см. folderForCategory).
+export type AssetCategory = 'character' | 'monster' | 'tile' | 'decor' | 'weapon' | 'misc';
+const CAT_LABEL: Record<AssetCategory, string> = { character: '🧍 Персонаж', monster: '👹 Монстр', tile: '🧱 Тайл', decor: '🏺 Декор', weapon: '⚔ Оружие', misc: '📦 Прочее' };
+const CAT_ORDER: AssetCategory[] = ['tile', 'decor', 'character', 'monster', 'weapon', 'misc'];
+let assetCategory: AssetCategory = (() => { try { return (localStorage.getItem('dm_asset_cat') as AssetCategory) || 'tile'; } catch { return 'tile'; } })();
+let assetBaseDir = (() => { try { return localStorage.getItem('dm_asset_dir') ?? 'crypt'; } catch { return 'crypt'; } })();
+const IMG_EXT = /^(png|jpe?g|webp)$/i;
+
+/** Текущая выбранная категория (для makeEntry моделей — проставить model.category + kind). */
+export function currentAssetCategory(): AssetCategory { return assetCategory; }
+
+/** Папка категории. Тайл/декор группируются по набору (<кат>/<набор>); персонаж/монстр/оружие — просто по категории. */
+function folderForCategory(cat: AssetCategory): string {
+  const set = assetBaseDir.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  switch (cat) {
+    case 'character': return 'characters';
+    case 'monster': return 'monsters';
+    case 'weapon': return 'weapons';
+    case 'tile': return set ? `tiles/${set}` : 'tiles';
+    case 'decor': return set ? `decor/${set}` : 'decor';
+    default: return set || 'misc';
+  }
+}
+/** Подпапка для файла: картинки → <папка категории>/textures, меши → <папка категории>. */
+function assetDirFor(ext: string): string {
+  const base = folderForCategory(assetCategory);
+  return IMG_EXT.test(ext) ? base + '/textures' : base;
+}
+/** Контрол «категория + набор» — общий для виджетов загрузки: задаёт подпапку, категорию модели и (для тайлов) набор. */
+function renderFolderField(): HTMLElement {
+  const wrap = document.createElement('span');
+  wrap.style.cssText = 'display:inline-flex;gap:5px;align-items:center;font-size:11px;color:#9aa;white-space:nowrap';
+  const sel = document.createElement('select'); sel.style.cssText = inputCss + ';width:112px';
+  for (const c of CAT_ORDER) { const o = document.createElement('option'); o.value = c; o.textContent = CAT_LABEL[c]; sel.appendChild(o); }
+  sel.value = assetCategory; sel.title = 'Категория загружаемых моделей: задаёт папку, группу в дереве и набор полей (тайл ≠ персонаж).';
+  const setWrap = document.createElement('label'); setWrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center'; setWrap.title = 'Набор (для тайлов/декора): подпапка tiles/<набор>. Для персонажа/монстра/оружия не нужен.';
+  const setLbl = document.createElement('span'); setLbl.textContent = '📁';
+  const inp = document.createElement('input'); inp.type = 'text'; inp.value = assetBaseDir; inp.placeholder = 'crypt'; inp.style.cssText = inputCss + ';width:80px;min-width:56px';
+  const hint = document.createElement('span'); hint.style.cssText = 'color:#667';
+  const updateHint = (): void => { hint.textContent = '→ ' + folderForCategory(assetCategory) + '/'; setWrap.style.display = (assetCategory === 'tile' || assetCategory === 'decor') ? 'inline-flex' : 'none'; };
+  sel.addEventListener('change', () => { assetCategory = sel.value as AssetCategory; try { localStorage.setItem('dm_asset_cat', assetCategory); } catch { /* ignore */ } updateHint(); });
+  inp.addEventListener('input', () => { assetBaseDir = inp.value; try { localStorage.setItem('dm_asset_dir', inp.value); } catch { /* ignore */ } updateHint(); });
+  setWrap.append(setLbl, inp);
+  wrap.append(sel, setWrap, hint); updateHint();
+  return wrap;
+}
+
+/** Чекбокс «🪶 срезать вшитые текстуры (GLB → только геометрия)» — общий для полей загрузки. Дефолт ВКЛ: экспортируй с
+ *  текстурами (UV не слетает), сервер срежет картинки, материал в игре — из конфига. Сними для атласа персонажа, если
+ *  его сабмешам не назначены материалы конфига (тогда нужен вшитый). PNG/текстуры игнорируют (стрип только для .glb). */
+function stripCheckbox(): { el: HTMLElement; on: () => boolean } {
+  const wrap = document.createElement('label');
+  wrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center;cursor:pointer;font-size:11px;color:#9aa;white-space:nowrap';
+  wrap.title = 'Только для GLB: вырезать вшитые текстуры, оставив геометрию+развёртку. Экспортируй модель С текстурами (иначе экспортёр роняет UV) — сервер срежет картинки сам. Материал в игре берётся из конфига. Сними, если это атлас персонажа без назначенных материалов конфига.';
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
+  const t = document.createElement('span'); t.textContent = '🪶 срезать текстуры GLB';
+  wrap.append(cb, t);
+  return { el: wrap, on: () => cb.checked };
+}
+/** Чекбокс flipY для загрузки текстур. Персонаж-атласы (Max/FBX) несут UV в конвенции V-вверх → их текстурам нужен flipY=true
+ *  (иначе кладутся кверх ногами). Окружение (тайлы/стриппер) — glTF V-вниз, flipY=false. Дефолт ВКЛ (грузим персонажей); сними для окружения. */
+function flipYCheckbox(): { el: HTMLElement; on: () => boolean } {
+  const wrap = document.createElement('label');
+  wrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center;cursor:pointer;font-size:11px;color:#9aa;white-space:nowrap';
+  wrap.title = 'flipY: перевернуть текстуру по вертикали. ВКЛ для текстур ПЕРСОНАЖЕЙ (Max/FBX — их UV V-вверх, иначе кверх ногами). Сними для ОКРУЖЕНИЯ (тайлы/стриппер — glTF V-вниз).';
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
+  const t = document.createElement('span'); t.textContent = '🔄 flipY (перс.)';
+  wrap.append(cb, t);
+  return { el: wrap, on: () => cb.checked };
 }
 
 /** Текст-поле url + кнопка загрузки файла (PNG/JPG/WEBP/GLB) на сервер → url ассета. Имя ассета на диске = `parent.id`
@@ -85,6 +163,7 @@ export function renderUploadField(value: unknown, onChange: (v: unknown) => void
   btn.style.cssText = 'padding:5px 8px;cursor:pointer;background:#2c2c3a;color:#e8e8f0;border:1px solid #3c3c4a;border-radius:4px;font-size:12px;white-space:nowrap';
   const status = document.createElement('span');
   status.style.cssText = 'font-size:11px;color:#9aa';
+  const strip = stripCheckbox();
   btn.addEventListener('click', () => file.click());
   file.addEventListener('change', () => {
     const f = file.files?.[0];
@@ -92,27 +171,39 @@ export function renderUploadField(value: unknown, onChange: (v: unknown) => void
     const ext = f.name.toLowerCase().split('.').pop() ?? 'bin';
     const nameId = f.name.replace(/\.[^.]+$/, '');   // имя файла без расширения
     const id = String((idFromFilename ? nameId : (parent?.id as string) || nameId)).replace(/[^a-zA-Z0-9_-]/g, '') || 'asset';
+    const doStrip = ext === 'glb' && strip.on();
+    const dir = assetDirFor(ext);
     status.textContent = 'загрузка…'; status.style.color = '#ffb020';
     f.arrayBuffer()
-      .then((buf) => uploadAsset(id, buf, CONTENT_TYPE[ext] ?? 'application/octet-stream'))
-      .then((res) => { txt.value = res.url; onChange(res.url); status.textContent = 'ок · ' + id + '.' + ext; status.style.color = '#7fd67f'; })
+      .then((buf) => uploadAsset(id, buf, CONTENT_TYPE[ext] ?? 'application/octet-stream', doStrip, dir))
+      .then((res) => {
+        // Коллайдер из меша `collider*` GLB → сохраняем в модель (источник для objects.collider). Только если сервер извлёк.
+        if (res.collider && parent) (parent as Record<string, unknown>).collider = res.collider;
+        txt.value = res.url; onChange(res.url);
+        const cn = res.collider ? ' · коллайдер ' + (res.collider.shape === 'circle' ? `⌀${(res.collider.r ?? 0).toFixed(2)}` : `▭${(res.collider.w ?? 0).toFixed(2)}×${(res.collider.h ?? 0).toFixed(2)}`) : '';
+        status.textContent = 'ок · ' + res.url.replace('/assets/', '') + (res.note ? ' · ' + res.note : '') + cn; status.style.color = '#7fd67f';
+      })
       .catch((e: Error) => { status.textContent = 'ошибка: ' + e.message; status.style.color = '#ff6b6b'; });
   });
-  wrap.append(txt, btn, file, status);
+  wrap.append(txt, btn, file, strip.el, status);   // папку задаём в пакетной загрузке (общая), тут — только стрип
   return wrap;
 }
 
 /** Кнопка ПАКЕТНОЙ загрузки: мультивыбор файлов → upload каждого → `makeEntry(id,url,filename)` пушится в `arr` → `onDone`.
  *  id ассета = имя файла без расширения (уникальность между несколькими файлами). Для вкладок Текстуры/3D. */
-export function renderBatchUpload(accept: string, arr: Record<string, unknown>[], makeEntry: (id: string, url: string, filename: string) => Record<string, unknown>, onDone: () => void): HTMLElement {
-  const wrap = document.createElement('span');
-  wrap.style.cssText = 'display:inline-flex;gap:6px;align-items:center';
+export function renderBatchUpload(accept: string, arr: Record<string, unknown>[], makeEntry: (id: string, url: string, filename: string, flipY?: boolean) => Record<string, unknown>, onDone: () => void): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;max-width:100%';
   const file = document.createElement('input');
   file.type = 'file'; file.accept = accept; file.multiple = true; file.style.display = 'none';
   const btn = document.createElement('button');
   btn.type = 'button'; btn.textContent = '⬆ Загрузить несколько';
   btn.style.cssText = 'padding:5px 8px;cursor:pointer;background:#26406a;color:#e8e8f0;border:1px solid #3c5a8a;border-radius:4px;font-size:12px;white-space:nowrap';
   const status = document.createElement('span'); status.style.cssText = 'font-size:11px;color:#9aa';
+  const strip = stripCheckbox();
+  const showStrip = /glb|gltf/i.test(accept);   // чекбокс стрипа только там, где грузят меши
+  const flip = flipYCheckbox();
+  const showFlip = /png|jpe?g|webp/i.test(accept);   // чекбокс flipY только для картинок
   btn.addEventListener('click', () => file.click());
   file.addEventListener('change', () => {
     const files = [...(file.files ?? [])];
@@ -122,15 +213,17 @@ export function renderBatchUpload(accept: string, arr: Record<string, unknown>[]
     for (const f of files) {
       const ext = f.name.toLowerCase().split('.').pop() ?? 'bin';
       const id = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '') || 'asset';
+      const doStrip = ext === 'glb' && showStrip && strip.on();
+      const dir = assetDirFor(ext);
       f.arrayBuffer()
-        .then((buf) => uploadAsset(id, buf, CONTENT_TYPE[ext] ?? 'application/octet-stream'))
-        .then((res) => { arr.push(makeEntry(id, res.url, f.name.replace(/\.[^.]+$/, ''))); ok++; })
+        .then((buf) => uploadAsset(id, buf, CONTENT_TYPE[ext] ?? 'application/octet-stream', doStrip, dir))
+        .then((res) => { arr.push(makeEntry(id, res.url, f.name.replace(/\.[^.]+$/, ''), flip.on())); ok++; })
         .catch(() => { /* пропускаем битый файл */ })
         .finally(() => { done++; status.textContent = `${done}/${files.length}`; if (done === files.length) { status.textContent = `готово: ${ok}/${files.length}`; status.style.color = '#7fd67f'; onDone(); } });
     }
     file.value = '';
   });
-  wrap.append(btn, file, status);
+  wrap.append(btn, file, renderFolderField(), ...(showStrip ? [strip.el] : []), ...(showFlip ? [flip.el] : []), status);
   return wrap;
 }
 

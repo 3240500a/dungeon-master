@@ -111,8 +111,12 @@ export function defaultValue(schema: AnySchema): unknown {
       return s._def.values[0];
     case 'ZodLiteral':
       return s._def.value;
-    case 'ZodNumber':
-      return 0;
+    case 'ZodNumber': {
+      // Уважаем min: optional-число без .default с min>0 (напр. corridorWidth min(1)) не должно давать 0 → падение parse.
+      const checks = (s._def.checks ?? []) as { kind: string; value: number }[];
+      const min = checks.find((c) => c.kind === 'min')?.value;
+      return typeof min === 'number' && min > 0 ? min : 0;
+    }
     case 'ZodBoolean':
       return false;
     case 'ZodString':

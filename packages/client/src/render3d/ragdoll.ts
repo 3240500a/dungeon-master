@@ -137,8 +137,8 @@ export interface RagdollHandle {
   knockdown?(dx: number, dz: number, downSec: number, riseSec: number): void;
   /** Сменить оружие/щит куклы (пересобрать меши). Ключ weapon3d ('axe','sword+shield',…). */
   setWeapon?(key: string, models?: { main?: string; off?: string }): void;
-  /** Свап внешности брони по слотам (C6c): slot→{modelId} надетых предметов → пересобрать скин-слой (GLB по слотам). */
-  setAppearance?(equip: Record<string, { modelId?: string } | undefined>): void;
+  /** Свап внешности брони по слотам (C6c): slot→{modelId, materialId} надетых предметов → пересобрать скин-слой (сабмеш + материал). */
+  setAppearance?(equip: Record<string, { modelId?: string; materialId?: string } | undefined>): void;
   /** Боевой айдл: on=true → боевая стойка (combat_idle), off → обычная. Кроссфейд плавный (GAIT.combatBlend). */
   setCombat?(on: boolean): void;
   /** Окно-culling: on=false → тела куклы вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап. */

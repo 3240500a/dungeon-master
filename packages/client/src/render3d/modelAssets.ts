@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { BVHLoader } from 'three/addons/loaders/BVHLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 /** Разобрать буфер по расширению → корневой Object3D (FBX через FBXLoader, GLB/GLTF через GLTFLoader). */
@@ -18,6 +19,28 @@ async function parseModel(buf: ArrayBuffer, ext: string): Promise<THREE.Group> {
 /** Загрузить модель из выбранного файла (.fbx / .glb / .gltf) → корневой Object3D (со скелетом/скиннед-мешами). */
 export async function loadModelFile(file: File): Promise<THREE.Group> {
   return parseModel(await file.arrayBuffer(), file.name.toLowerCase().split('.').pop() ?? '');
+}
+
+/** Модель + её анимационные клипы (для запекателя поз). Общий парс FBX/GLB/BVH → скелет-корень + `AnimationClip[]`.
+ *  FBX несёт `.animations` на Group; GLTFLoader кладёт их в `g.animations` (НЕ в scene — loadModelFile их терял);
+ *  BVH даёт `{ skeleton, clip }` — корень = корневая кость скелета. */
+export interface AnimatedModel { root: THREE.Group; animations: THREE.AnimationClip[] }
+export async function loadAnimatedModelFile(file: File): Promise<AnimatedModel> {
+  const buf = await file.arrayBuffer();
+  const ext = file.name.toLowerCase().split('.').pop() ?? '';
+  if (ext === 'fbx') {
+    const g = new FBXLoader().parse(buf, '') as unknown as THREE.Group;
+    return { root: g, animations: ((g as unknown as { animations?: THREE.AnimationClip[] }).animations) ?? [] };
+  }
+  if (ext === 'bvh') {
+    const txt = new TextDecoder().decode(buf);
+    const res = new BVHLoader().parse(txt);   // { skeleton, clip }
+    const root = new THREE.Group();
+    root.add(res.skeleton.bones[0]!);         // корневая кость (Hips) со всей иерархией
+    return { root, animations: [res.clip] };
+  }
+  return await new Promise<AnimatedModel>((resolve, reject) =>
+    new GLTFLoader().parse(buf, '', (g) => resolve({ root: g.scene as unknown as THREE.Group, animations: g.animations ?? [] }), reject));
 }
 
 /** Загрузить модель по URL (FBX/GLB/GLTF — расширение из URL). Для игры/редактора из /assets/<id>.<ext>. */

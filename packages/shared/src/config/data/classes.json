@@ -4,10 +4,10 @@
     "name": "Волкодав",
     "enabled": true,
     "startAttributes": {
-      "strength": 13,
-      "dexterity": 12,
+      "strength": 20,
+      "dexterity": 15,
       "intelligence": 10,
-      "vitality": 15
+      "vitality": 20
     },
     "startWeaponId": "hand-axe",
     "sprite": "player-volkodav",
@@ -37,7 +37,14 @@
       "staminaRegenPerDexterity": 0.01,
       "accuracyPerLevel": 2,
       "moveSpeedMult": 1,
-      "attackMoveMult": 0.2
+      "attackMoveMult": 0.4
+    },
+    "baseAppearance": {
+      "hair": "hair_01",
+      "head": "head_01",
+      "hands": "heand_01",
+      "body": "body_01",
+      "feet": "legs_01"
     }
   },
   {

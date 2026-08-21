@@ -19,6 +19,7 @@ import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
 import { createModelsTab } from './poseModelsTab.js';
+import { bakeAnimationToClip, listAnimations } from './clipBaker.js';
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 const V = (): THREE.Vector3 => new THREE.Vector3();
@@ -775,6 +776,70 @@ function delClip(cl: Clip): void {   // удалить позу/анимацию
   const am = atkCfgs[cl.character]?.[cl.weapon]; if (am) { const j = am.indexOf(cl.name); if (j >= 0) { am.splice(j, 1); saveAtk(); } }
   clipIdx = 0; frameIdx = 0; saveLib(); refreshAll();
 }
+// ── ИМПОРТ АНИМАЦИИ (FBX/GLB/BVH → наш Clip): запекатель clipBaker (обратный ретаргет + прореживание). Клип
+//    ложится в library для ТЕКУЩИХ персонажа+оружия, дальше правится штатным таймлайном. Физика не трогается —
+//    клип это поза-цель, рэгдолл догоняет её (как сейчас). См. docs/ANIM_AI_RESEARCH.md ЧАСТЬ II. ──
+function openImportAnimModal(): void {
+  const file = document.createElement('input'); file.type = 'file'; file.accept = '.fbx,.glb,.gltf,.bvh';
+  file.onchange = () => { const f = file.files?.[0]; if (f) void showImportPanel(f); };
+  file.click();
+}
+const impInput = 'background:#0f1119;color:#dfe3ee;border:1px solid #39415a;border-radius:4px;padding:2px 5px;font:11px monospace';
+async function showImportPanel(file: File): Promise<void> {
+  const ov = el('div', 'position:fixed;inset:0;background:rgba(6,8,14,.6);z-index:99999;display:flex;align-items:center;justify-content:center');
+  const box = el('div', 'background:#141824;border:1px solid #39415a;border-radius:8px;padding:14px;width:380px;font:12px monospace;color:#dfe3ee;box-shadow:0 8px 32px rgba(0,0,0,.5)');
+  ov.append(box); document.body.append(ov);
+  const title = el('div', 'color:#8fb7ff;font-weight:bold;margin-bottom:8px'); title.textContent = '📥 Импорт анимации: ' + file.name; box.append(title);
+  const row = (label: string): HTMLElement => { const r = el('label', 'display:flex;align-items:center;gap:8px;margin:6px 0'); const s = el('span', 'flex:1;color:#9aa3b8'); s.textContent = label; r.append(s); return r; };
+
+  const animSel = document.createElement('select'); animSel.style.cssText = impInput + ';flex:2';
+  const animRow = row('анимация'); animRow.append(animSel); box.append(animRow);
+
+  const fpsIn = document.createElement('input'); fpsIn.type = 'number'; fpsIn.min = '5'; fpsIn.max = '120'; fpsIn.value = '30'; fpsIn.style.cssText = impInput + ';width:70px';
+  const fpsRow = row('семпл fps'); fpsRow.append(fpsIn); box.append(fpsRow);
+
+  const epsIn = document.createElement('input'); epsIn.type = 'range'; epsIn.min = '0'; epsIn.max = '15'; epsIn.step = '0.5'; epsIn.value = '3'; epsIn.style.flex = '2';
+  const epsVal = el('span', 'color:#c8b06a;min-width:64px;text-align:right'); const setEps = (): void => { const e = parseFloat(epsIn.value); epsVal.textContent = e === 0 ? 'все кадры' : e.toFixed(1) + '°'; }; epsIn.oninput = setEps; setEps();
+  const epsRow = row('детализация'); epsRow.append(epsIn, epsVal); box.append(epsRow);
+
+  const loopChk = document.createElement('input'); loopChk.type = 'checkbox';
+  const loopRow = row('зациклить (walk/run/idle)'); loopRow.append(loopChk); box.append(loopRow);
+
+  const status = el('div', 'color:#c8b06a;font-size:11px;margin:8px 0 4px;min-height:14px'); box.append(status);
+  const btns = el('div', 'display:flex;gap:6px;margin-top:6px;justify-content:flex-end');
+  const bakeBtn = pbtn('Запечь', () => void doBake());
+  btns.append(pbtn('Отмена', () => ov.remove()), bakeBtn); box.append(btns);
+
+  status.textContent = 'чтение анимаций…';
+  try {
+    const anims = await listAnimations(file);
+    animSel.innerHTML = '';
+    anims.forEach((n, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = n; animSel.append(o); });
+    const first = anims[0] ?? ''; if (/walk|run|idle|ход|бег|цикл|loop/i.test(first)) loopChk.checked = true;
+    status.textContent = anims.length ? `${curChar().name} · ${weapon} · анимаций: ${anims.length}` : 'в файле нет анимаций';
+  } catch (e) { status.textContent = 'ошибка чтения: ' + (e as Error).message; }
+
+  async function doBake(): Promise<void> {
+    bakeBtn.disabled = true; status.textContent = 'запекаю…';
+    try {
+      const res = await bakeAnimationToClip(file, {
+        character: curCharId, weapon,
+        animationIndex: parseInt(animSel.value, 10) || 0,
+        fps: parseFloat(fpsIn.value) || 30,
+        epsDeg: parseFloat(epsIn.value) || 0,
+        loop: loopChk.checked,
+      });
+      let nm = (res.clip.name || 'anim').replace(/[^\wа-яА-Я0-9:+._-]/g, '_'); const base = nm;
+      for (let i = 2; library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon); i++) nm = base + '_' + i;
+      res.clip.name = nm; res.clip.character = curCharId; res.clip.weapon = weapon;
+      library.push(res.clip); saveLib();
+      clipIdx = clipsHere().findIndex((x) => x.name === nm); frameIdx = 0; refreshAll();
+      status.textContent = `готово: «${nm}» — ${res.frames} кадров → ${res.keys} ключей`;
+      setTimeout(() => ov.remove(), 1100);
+    } catch (e) { status.textContent = 'ошибка: ' + (e as Error).message; bakeBtn.disabled = false; }
+  }
+}
+
 function renderAnim(): void { body.innerHTML = ''; clipSection(); poseTools(); }
 function clipSection(): void {
   const list = clipsHere();
@@ -795,6 +860,7 @@ function clipSection(): void {
     saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === name)); frameIdx = 0; refreshAll();
   };
   row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; library.push({ name: nameFree(nm), character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }));
+  row1.append(pbtn('📥 из FBX/BVH', () => openImportAnimModal()));   // импорт мокап/AI-анимации → наш клип (запекатель)
   if (clipBuf) row1.append(pbtn('⎘ вставить: ' + retargetClipName(clipBuf.name, clipBuf.weapon, weapon), pasteHere));   // буфер переживает смену оружия/персонажа
   const c = curClip();
   if (c) {

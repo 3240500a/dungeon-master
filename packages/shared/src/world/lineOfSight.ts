@@ -1,10 +1,15 @@
 import { isBlockedCell, TILE, type Grid } from './grid.js';
+import type { Obstacle } from './state.js';
 
 /**
  * Прямая видимость по сетке стен (Bresenham между клетками). Возвращает false,
  * если между точками есть хотя бы одна непроходимая клетка. Клетки самих точек не
  * учитываются (там стоят монстр/игрок на полу). Координаты — пиксельные.
  * Headless-версия клиентского `hasLineOfSight` (переезжает на неё на Этапе 3).
+ *
+ * `obstacles` (опц.) — суб-тайловые препятствия декора: если у препятствия
+ * `blocksSight`, и отрезок пересекает его форму (круг/бокс), обзор перекрыт
+ * (высокая колонна прячет цель). Низкий декор (`blocksSight:false`) обзор не трогает.
  */
 export function hasLineOfSight(
   grid: Grid,
@@ -12,6 +17,7 @@ export function hasLineOfSight(
   y1: number,
   x2: number,
   y2: number,
+  obstacles?: readonly Obstacle[],
 ): boolean {
   const cx1 = Math.floor(x1 / TILE);
   const cy1 = Math.floor(y1 / TILE);
@@ -41,5 +47,57 @@ export function hasLineOfSight(
       y += sy;
     }
   }
+
+  // Суб-тайловые препятствия, перекрывающие обзор (после чистого грида).
+  if (obstacles) {
+    for (const o of obstacles) {
+      if (o.blocksSight && segHitsObstacle(o, x1, y1, x2, y2)) return false;
+    }
+  }
   return true;
+}
+
+/** Пересекает ли отрезок (x1,y1)-(x2,y2) форму препятствия (круг/ориент.-бокс). */
+function segHitsObstacle(o: Obstacle, x1: number, y1: number, x2: number, y2: number): boolean {
+  if (o.shape === 'circle') {
+    const r = o.r ?? 0;
+    return pointSegDist2(o.x, o.y, x1, y1, x2, y2) <= r * r;
+  }
+  // Бокс: перевести отрезок в локаль (поворот на −yaw), затем отрезок-vs-AABB.
+  const yaw = o.yaw ?? 0;
+  const cs = Math.cos(yaw);
+  const sn = Math.sin(yaw);
+  const lx1 = (x1 - o.x) * cs + (y1 - o.y) * sn;
+  const ly1 = -(x1 - o.x) * sn + (y1 - o.y) * cs;
+  const lx2 = (x2 - o.x) * cs + (y2 - o.y) * sn;
+  const ly2 = -(x2 - o.x) * sn + (y2 - o.y) * cs;
+  return segAabb(lx1, ly1, lx2, ly2, o.hw ?? 0, o.hh ?? 0);
+}
+
+/** Квадрат расстояния от точки до отрезка. */
+function pointSegDist2(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const ex = px - (ax + t * dx);
+  const ey = py - (ay + t * dy);
+  return ex * ex + ey * ey;
+}
+
+/** Пересечение отрезка с AABB [−hw..hw]×[−hh..hh] (Лианг-Барски). */
+function segAabb(x1: number, y1: number, x2: number, y2: number, hw: number, hh: number): boolean {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: [number, number][] = [[-dx, x1 + hw], [dx, hw - x1], [-dy, y1 + hh], [dy, hh - y1]];
+  for (const [p, q] of edges) {
+    if (p === 0) { if (q < 0) return false; continue; } // параллельно грани и вне слэба
+    const r = q / p;
+    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+    else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return t0 <= t1;
 }

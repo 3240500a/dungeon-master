@@ -229,6 +229,8 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
     if (ll) { const y = -(ll[1] ?? 0); if (y > 1e-3) legAdduct = Math.atan2(ll[0] ?? 0, y); }        // splay бедра (hip→колено)
     if (lf) { const y = -(lf[1] ?? 0); if (y > 1e-3) legAdductKnee = Math.atan2(lf[0] ?? 0, y); }     // splay голени (колено→лодыжка)
   }
+  // Приведение РУК НЕ компенсируем в рантайме: модели биндятся в T-позе (руки горизонт, как ожидают клипы). A-позный бинд
+  // недопустим — 46° доворота от бинда скин не тянет чисто (корёжит). Требование: экспортить скелет в T-позе (см. README ретаргета).
 
   return {
     root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0,

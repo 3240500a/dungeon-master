@@ -17,6 +17,10 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
     path: '/ws',
     perMessageDeflate: { threshold: 1024, zlibDeflateOptions: { level: 6 } },
   });
+  // WSS привязан к http-серверу и переизлучает его ошибки (напр. EADDRINUSE при dev-рестарте). БЕЗ обработчика
+  // 'error' здесь Node роняет процесс (unhandled 'error') → сервер умирает и редактор/клиент ловят ECONNREFUSED.
+  // Логируем; освобождение порта/повтор listen обрабатывает server.on('error') в index.ts.
+  wss.on('error', (e) => console.warn('[ws] WebSocketServer error:', (e as Error).message));
   const rooms = new RoomManager(cfg);
   wss.on('connection', (ws) => {
     // Heartbeat: помечаем «живым» на любой pong/сообщение; мёртвые (обрыв интернета, TCP ещё висит)
