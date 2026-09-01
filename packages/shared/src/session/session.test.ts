@@ -496,17 +496,19 @@ function tankMon(r: ConfigRegistry, x: number, y: number, faction: MonsterFactio
 
 describe('GameSession — аффинити фракций (фаза C)', () => {
   it('класс наносит больше урона монстрам своей аффинити-фракции', () => {
-    // Два одинаковых прогона (один сид → один RNG-поток): разница только во фракции.
-    function totalDamage(faction: MonsterFaction): number {
+    // Изолируем БОНУС аффинити: монстр ВСЕГДА undead → одинаковый профиль ИИ/позиционирование и RNG-поток в обоих прогонах,
+    // меняем ЛИШЬ аффинити класса. (Раньше меняли фракцию монстра undead↔beast, но фракция задаёт ещё и профиль ИИ (behaviorFor)
+    // → монстр двигался иначе → разное число попаданий гасило чистый ×2 до ~1.55, и тест краснел без реального бага.)
+    function totalDamage(hasAffinity: boolean): number {
       const r = reg();
-      r.get('balance').affinityDamageBonus = 1; // ×2 по нежити — явный сигнал
+      r.get('balance').affinityDamageBonus = 1; // ×2 по аффинити-фракции — явный сигнал
       const s = new GameSession(r, 30, 'normal');
       const p = s.addPlayer('p1', newBotSave(r, 'warrior'));
-      r.get('classes').find((c) => c.id === p.save.classId)!.affinity = ['undead'];
+      r.get('classes').find((c) => c.id === p.save.classId)!.affinity = hasAffinity ? ['undead'] : [];
       const grid = openField(20, 12);
       const spawn = cellToWorld(6, 6);
       const mp = cellToWorld(7, 6);
-      s.enterFloor(1, { grid, spawn, monsters: [tankMon(r, mp.x, mp.y, faction)] });
+      s.enterFloor(1, { grid, spawn, monsters: [tankMon(r, mp.x, mp.y, 'undead')] });
       let sum = 0;
       for (let i = 0; i < 200; i++) {
         const m = s.world.monsters[0]!;
@@ -517,8 +519,8 @@ describe('GameSession — аффинити фракций (фаза C)', () => {
       }
       return sum;
     }
-    const withAff = totalDamage('undead'); // аффинити
-    const noAff = totalDamage('beast');    // не аффинити
+    const withAff = totalDamage(true);  // аффинити (класс бьёт свою фракцию)
+    const noAff = totalDamage(false);   // без аффинити (та же фракция, тот же ИИ) → разница только в бонусе
     expect(withAff).toBeGreaterThan(noAff * 1.8); // ~×2 (бонус 1.0)
     expect(withAff).toBeLessThan(noAff * 2.2);
   });
