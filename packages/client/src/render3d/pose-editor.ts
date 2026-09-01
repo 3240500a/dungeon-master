@@ -14,7 +14,7 @@ import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRag
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, applyBaseGrip, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -334,12 +334,12 @@ gizmo.addEventListener('objectChange', () => {
 // ── Позы / клипы / undo ──
 type Pose = Record<string, [number, number, number]>;
 interface Keyframe { pose: Pose; t: number }                 // t = сек от начала клипа (кадры отсортированы по t)
-interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[] }
+interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[]; idleEnds?: boolean }
 const DEF_GAP = 0.3;                                          // дефолт-шаг между кадрами (сек)
 function migrateClip(c0: unknown): Clip {                     // старый формат (keys: Pose[]) → кадры с временем
   const c = c0 as Clip & { keys: (Keyframe | Pose)[] };
   const keys: Keyframe[] = (c.keys ?? []).map((k, i) => (k && typeof (k as Keyframe).t === 'number' && (k as Keyframe).pose) ? (k as Keyframe) : ({ pose: k as unknown as Pose, t: i * DEF_GAP }));
-  return { name: c.name, character: c.character, weapon: c.weapon, loop: c.loop ?? false, keys };
+  return { name: c.name, character: c.character, weapon: c.weapon, loop: c.loop ?? false, keys, idleEnds: c.idleEnds };
 }
 function loadLib(): Clip[] { try { const s = localStorage.getItem('pe_clips'); if (!s) return []; return (JSON.parse(s) as unknown[]).map(migrateClip); } catch { return []; } }
 function saveLib(): void { try { localStorage.setItem('pe_clips', JSON.stringify(library)); savePoseKey('pe_clips'); } catch { /* */ } }
@@ -798,12 +798,19 @@ async function showImportPanel(file: File): Promise<void> {
   const fpsIn = document.createElement('input'); fpsIn.type = 'number'; fpsIn.min = '5'; fpsIn.max = '120'; fpsIn.value = '30'; fpsIn.style.cssText = impInput + ';width:70px';
   const fpsRow = row('семпл fps'); fpsRow.append(fpsIn); box.append(fpsRow);
 
-  const epsIn = document.createElement('input'); epsIn.type = 'range'; epsIn.min = '0'; epsIn.max = '15'; epsIn.step = '0.5'; epsIn.value = '3'; epsIn.style.flex = '2';
+  const epsIn = document.createElement('input'); epsIn.type = 'range'; epsIn.min = '0'; epsIn.max = '50'; epsIn.step = '0.5'; epsIn.value = '3'; epsIn.style.flex = '2';
   const epsVal = el('span', 'color:#c8b06a;min-width:64px;text-align:right'); const setEps = (): void => { const e = parseFloat(epsIn.value); epsVal.textContent = e === 0 ? 'все кадры' : e.toFixed(1) + '°'; }; epsIn.oninput = setEps; setEps();
   const epsRow = row('детализация'); epsRow.append(epsIn, epsVal); box.append(epsRow);
 
   const loopChk = document.createElement('input'); loopChk.type = 'checkbox';
   const loopRow = row('зациклить (walk/run/idle)'); loopRow.append(loopChk); box.append(loopRow);
+
+  const bodySel = document.createElement('select'); bodySel.style.cssText = impInput + ';flex:2';
+  for (const [v, t] of [['full', 'всё тело'], ['upper', 'только ВЕРХ (торс+руки)'], ['lower', 'только НИЗ (таз+ноги)']] as [string, string][]) { const o = document.createElement('option'); o.value = v; o.textContent = t; bodySel.append(o); }
+  const bodyRow = row('тело (маска)'); bodyRow.append(bodySel); box.append(bodyRow);
+
+  const idleChk = document.createElement('input'); idleChk.type = 'checkbox'; idleChk.checked = true;
+  const idleRow = row('встроить idle (ноги + старт/финиш)'); idleRow.title = 'Не-двигаемые кости (напр. ноги при маске «верх») берутся из нашей idle-стойки; idle идёт первым и последним ключом → клип idle→движение→idle.'; idleRow.append(idleChk); box.append(idleRow);
 
   const status = el('div', 'color:#c8b06a;font-size:11px;margin:8px 0 4px;min-height:14px'); box.append(status);
   const btns = el('div', 'display:flex;gap:6px;margin-top:6px;justify-content:flex-end');
@@ -828,10 +835,14 @@ async function showImportPanel(file: File): Promise<void> {
         fps: parseFloat(fpsIn.value) || 30,
         epsDeg: parseFloat(epsIn.value) || 0,
         loop: loopChk.checked,
+        body: bodySel.value as 'full' | 'upper' | 'lower',
+        idlePose: idleChk.checked ? (editorContent.resolveUpper(weapon)?.pose ?? undefined) : undefined,
+        anchorIdle: idleChk.checked,
       });
       let nm = (res.clip.name || 'anim').replace(/[^\wа-яА-Я0-9:+._-]/g, '_'); const base = nm;
       for (let i = 2; library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon); i++) nm = base + '_' + i;
       res.clip.name = nm; res.clip.character = curCharId; res.clip.weapon = weapon;
+      if (res.clip.idleEnds) syncAttackEnds(res.clip as Clip);   // концы = актуальная стойка (единый источник), дальше синкаются при правке стойки
       library.push(res.clip); saveLib();
       clipIdx = clipsHere().findIndex((x) => x.name === nm); frameIdx = 0; refreshAll();
       status.textContent = `готово: «${nm}» — ${res.frames} кадров → ${res.keys} ключей`;
@@ -889,9 +900,9 @@ function clipSection(): void {
   });
   if (!list.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = 'Нет клипов для этого оружия. «+ новый» создаёт из текущей позы.'; body.append(e); }
   if (c) {
-    const isAtk = isAttackClip(c); const lastI = c.keys.length - 1;
-    const isEnd = (i: number): boolean => isAtk && (i === 0 || i === lastI);
-    const fh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); fh.textContent = `КАДРЫ (${c.keys.length}) · длит. ${clipDur(c).toFixed(2)}с` + (isAtk ? ' · удар: 🔒кадры 1/' + (lastI + 1) + ' из стойки' : ''); body.append(fh);
+    const isAtk = isAttackClip(c); const lockEnds = isAtk || !!c.idleEnds; const lastI = c.keys.length - 1;   // концы = стойка (удар hit_ ИЛИ импорт с idleEnds)
+    const isEnd = (i: number): boolean => lockEnds && (i === 0 || i === lastI);
+    const fh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); fh.textContent = `КАДРЫ (${c.keys.length}) · длит. ${clipDur(c).toFixed(2)}с` + (lockEnds ? ' · 🔒кадры 1/' + (lastI + 1) + ' из стойки' : ''); body.append(fh);
     const fr = el('div', 'display:flex;flex-wrap:wrap;gap:2px'); body.append(fr);
     c.keys.forEach((kf, i) => fr.append(pbtn(`${isEnd(i) ? '🔒' : ''}${i + 1}·${kf.t.toFixed(2)}`, () => goFrame(i), i === frameIdx)));
     const kf = c.keys[frameIdx];
@@ -905,10 +916,10 @@ function clipSection(): void {
     const atEnd = isEnd(frameIdx);
     act.append(
       atEnd
-        ? pbtn('🔒 кадр из стойки', () => { alert('Крайние кадры удара — это idle-стойка, они не редактируются тут. Правь стойку: таб «Бег» → «захватить стойку», концы удара подхватят.'); })
+        ? pbtn('🔒 кадр из стойки', () => { alert('Крайние кадры — это idle-стойка, тут не редактируются. Правь стойку: таб «Бег» → «захватить стойку», концы всех клипов (удары + импорт) подхватят.'); })
         : pbtn('◉ записать кадр', () => { pushUndo(); if (c.keys[frameIdx]) c.keys[frameIdx]!.pose = readPoseFull(); saveLib(); }),
-      pbtn('+ кадр', () => { const insAt = isAtk ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; const nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); c.keys.splice(insAt, 0, { pose: readPoseFull(), t: nt }); frameIdx = insAt; saveLib(); refreshAll(); }),   // у удара — только в середину
-      pbtn('− кадр', () => { if (!atEnd && c.keys.length > (isAtk ? 3 : 1)) { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } }),   // концы удара не удалить
+      pbtn('+ кадр', () => { const insAt = lockEnds ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; const nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); c.keys.splice(insAt, 0, { pose: readPoseFull(), t: nt }); frameIdx = insAt; saveLib(); refreshAll(); }),   // концы-стойка неприкосновенны → вставка в середину
+      pbtn('− кадр', () => { if (!atEnd && c.keys.length > (lockEnds ? 3 : 1)) { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } }),   // концы не удалить
     );
     // подтянуть позу в текущий кадр из соседнего (строить замах/удар от концов-idle, потом править)
     if (!atEnd) {
@@ -1006,7 +1017,7 @@ function renderLoco(): void {
   const cv = document.createElement('canvas'); cv.width = PAD; cv.height = PAD; cv.style.cssText = 'width:100%;max-width:250px;display:block;border:1px solid #39415a;border-radius:6px;touch-action:none;cursor:crosshair'; body.append(cv);
   const redraw = (): void => drawPad(cv); redraw();
   // Выбор ЯЧЕЙКИ планта = клик по одной из 16 точек на квадрате (8 внешних = бег, 8 внутренних = ходьба).
-  const goDir = (i: number, run: boolean): void => { gaitFaceMove = false; gaitYawManual = 0; const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; locoVz = Math.cos(th) * mag; locoVx = Math.sin(th) * mag; plantDirSel = i; plantSpeedRun = run; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; void ensurePhysics(); } renderLoco(); };
+  const goDir = (i: number, run: boolean): void => { gaitFaceMove = false; gaitYawManual = 0; const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; locoVz = Math.cos(th) * mag; locoVx = Math.sin(th) * mag; plantDirSel = i; plantSpeedRun = run; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); } renderLoco(); };
   const hitPlantPoint = (ev: PointerEvent): boolean => {
     const r = cv.getBoundingClientRect(); const mx = (ev.clientX - r.left) / r.width * PAD, my = (ev.clientY - r.top) / r.height * PAD;
     let best = -1, bestRun = true, bestD = 15;   // порог попадания в точку, px
@@ -1019,7 +1030,7 @@ function renderLoco(): void {
   cv.addEventListener('pointerdown', (ev) => { if (editPlant && hitPlantPoint(ev)) return; drag = true; cv.setPointerCapture(ev.pointerId); setFrom(ev); });   // в режиме плантов клик по точке = выбор ячейки
   cv.addEventListener('pointermove', (ev) => { if (drag) setFrom(ev); });
   cv.addEventListener('pointerup', () => { drag = false; });
-  body.append(pbtn(locoOn ? '⏸ стоп' : '▶ превью бега', () => { locoOn = !locoOn; if (locoOn) { gaitPx = 0; gaitPz = 0; void ensurePhysics(); } else goFrame(frameIdx); renderLoco(); }, locoOn));   // стоп → вернуть манекен к авторскому кадру (не застывать на шаге)
+  body.append(pbtn(locoOn ? '⏸ стоп' : '▶ превью бега', () => { locoOn = !locoOn; if (locoOn) { gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); } else goFrame(frameIdx); renderLoco(); }, locoOn));   // стоп → вернуть манекен к авторскому кадру (не застывать на шаге)
   const tr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:6px'); tr.innerHTML = '<span style="flex:1">скорость просмотра (замедл./×)</span>';
   const ts = el('input', 'flex:2') as HTMLInputElement; ts.type = 'range'; ts.min = '0.1'; ts.max = '2'; ts.step = '0.05'; ts.value = String(locoTempo);
   const tv = el('span', 'width:34px;text-align:right;color:#9ae6a0'); tv.textContent = locoTempo.toFixed(2);
@@ -1127,13 +1138,21 @@ function updateTurnTest(_dt: number): void {
 }
 function updateTurnPlants(): void {
   const show = tab === 'turn' && showTurnPlants && locoOn;
-  for (let i = 0; i < 2; i++) { const m = turnPlantMarks[i]!; m.visible = show; if (show) { const [tx, tz] = gaitDriver.plantTarget(i as 0 | 1); setXZ(m, tx - gaitPx, tz - gaitPz); } }
+  for (let i = 0; i < 2; i++) {
+    const cur = turnPlantMarks[i]!, goal = goalStanceMarks[i]!;
+    cur.visible = show; goal.visible = show;
+    if (!show) continue;
+    const fb = human.bones.get(i === 0 ? 'LeftFoot' : 'RightFoot');   // ТЕКУЩАЯ позиция стопы (где нога сейчас) — сфера
+    if (fb) { const fp = fb.getWorldPosition(V()); setXZ(cur, fp.x, fp.z); }
+    const [gx, gz] = lp().driver.stanceAtGoal(i as 0 | 1);           // ЦЕЛЬ: идл-стойка на ПРИЦЕЛЕ (куда шагнёт после доворота) — кольцо
+    setXZ(goal, gx - gaitPx, gz - gaitPz);
+  }
 }
 function renderTurn(): void {
   body.innerHTML = '';
-  if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; void ensurePhysics(); }   // включаем превью
+  if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); }   // включаем превью
   const box = body;
-  const info = el('div', 'color:#9ae6a0;margin-bottom:6px;font-size:12px'); info.innerHTML = 'Веди <b>курсором над сценой</b> — персонаж целится за ним (как в игре). Стоя: голова/плечи ведут, таз догоняет поочерёдными шагами. На ходу: таз идёт по движению, верх скручен к прицелу. <b>Планты</b> (синий Л / красный П) — куда стремятся стопы.';
+  const info = el('div', 'color:#9ae6a0;margin-bottom:6px;font-size:12px'); info.innerHTML = 'Веди <b>курсором над сценой</b> — персонаж целится за ним (как в игре). Стоя: голова/плечи ведут, таз догоняет поочерёдными шагами. На ходу: таз идёт по движению, верх скручен к прицелу. Маркеры (синий Л / красный П): <b>сфера</b> = где стопа сейчас, <b>кольцо</b> = идл-стойка на прицеле (куда подшаг приземлится ПОСЛЕ доворота).';
   box.append(info);
   const mv = el('div', 'display:flex;gap:4px;margin:2px 0 6px;align-items:center'); box.append(mv);
   const lblMv: Record<'stand' | 'walk' | 'run', string> = { stand: 'стой', walk: 'ходьба', run: 'бег' };
@@ -1157,6 +1176,8 @@ function renderTurn(): void {
   sl('скорость доворота (рад/с)', () => editTwist().turnRate, (v) => { editTwist().turnRate = v; }, 1, 8, 0.25, saveTwistCfg);
   sl('макс. скрутка верха (°)', () => editTwist().maxTwist * R2D, (d) => { editTwist().maxTwist = d / R2D; }, 20, 120, 5, saveTwistCfg, deg);
   sl('выравнивание, прицел стабилен (с)', () => editTwist().relaxTime, (v) => { editTwist().relaxTime = v; }, 0.2, 3, 0.1, saveTwistCfg);
+  sl('голова: смотреть на прицел (0=с телом, 1=на курсор)', () => editTwist().headLook, (v) => { editTwist().headLook = v; }, 0, 1, 0.05, saveTwistCfg);
+  sl('голова: кивок (°, − вниз, 0 ровно)', () => editTwist().headPitch * R2D, (d) => { editTwist().headPitch = d / R2D; }, -30, 15, 1, saveTwistCfg, deg);
   const WNAMES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'];
   for (let i = 0; i < 5; i++) sl(`вес: ${WNAMES[i]}`, () => editTwist().weights[i]!, (v) => { editTwist().weights[i] = v; }, 0, 1, 0.05, saveTwistCfg);
   const twHint = el('div', 'color:#7a869e;font-size:10px;margin-top:3px'); twHint.textContent = 'ползунки правят ВЫБРАННЫЙ режим (стой/ходьба/бег); в игре профиль блендится плавно по скорости. веса — распределение по сегментам (сумма ~1 → голова доходит до прицела).'; box.append(twHint);
@@ -1204,20 +1225,21 @@ let footGround = true;   // заземление стоп (foot-IK) на физ-
 let ragdoll: HumanoidRagdoll | null = null;
 let reviveT = -1; const reviveFrom = new THREE.Vector3(); const reviveDur = 0.9;   // плавное вставание с пола
 let locoOn = false, locoPhase = 0, locoVx = 0, locoVz = 0.7, locoTempo = 1, locoGait = true;   // превью локомоции (движок: gait/бленд)
-// ── Процедурный бег из 3д-клиента (pose.ts) → ретаргет на humanoid ──
-const gaitDriver = new PoseDriver();
-let gaitPx = 0, gaitPz = 0; const GAIT_MAXSPD = 120;
-let gaitMoveMag = 0;   // 0 стоишь … 1 бежишь: по нему ноги/торс блендятся idle-стойка ↔ физ-гейт
-// legMag/stepHold — ТОЧНО как в игре (PosePlayer): держим ноги на гейте ещё STEP_HOLD после подшага (settled мерцает),
-// иначе стоя поворот идёт без приставных шагов. Один код с игрой (не две системы).
-const STEP_HOLD_ED = 0.35;
-let gaitStepHold = 0, gaitLegMag = 0;
-let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing: по движению (поворот) / ручной угол (страйф)
+// ── Превью бега/поворотов: ТОТ ЖЕ PosePlayer, что и игра (единый пайплайн, Ф2) — редактор ≡ игра 1:1, без второй реализации.
+//    lp() лениво (пере)создаёт плеер, когда меняется `human` (смена персонажа/стиля/пропорций пересобирает манекен).
+let locoPlayer: PosePlayer | null = null; let locoPlayerHuman: Humanoid | null = null;
+function lp(): PosePlayer {
+  if (!locoPlayer || locoPlayerHuman !== human) {
+    locoPlayer = new PosePlayer(human, () => weaponGroups, editorContent, weapon, GX, gaitPlant, editorTwistStates);
+    locoPlayerHuman = human;
+  }
+  return locoPlayer;
+}
+let gaitPx = 0, gaitPz = 0; const GAIT_MAXSPD = 120;   // зеркало тредмила плеера (posX/posZ) — для скролла пола/оффсета маркеров
+let gaitMoveMag = 0, gaitLegMag = 0;   // зеркало moveMag/legMag плеера (ридаут/маркеры)
+let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing (прицел): по движению (поворот) / ручной угол (страйф) → в setYaw
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
-// Скрутка корпуса (torso-lead): голова/плечи ведут за прицелом (gaitYaw), таз (editorRootYaw) догоняет. Превью в редакторе.
-let editorRootYaw = 0;                                      // yaw таза в превью (лаг за gaitYaw)
-let editorTurning = false;                                  // защёлка доворота таза (torso-lead) в превью
-let editorAimStable = 0, editorPrevAim = 0;                 // время стабильности прицела (relaxTime)
+let editorRootYaw = 0;                                      // зеркало pelvisYaw плеера (updateTurnTest идёт по тазу)
 let editorTwistStates: TwistStates = TWIST_STATES_DEFAULT();   // 3 профиля скрутки (стой/ходьба/бег) текущего персонажа
 const editTwist = (): TwistProfile => editorTwistStates[turnTestMove];   // редактируемый профиль = ВЫБРАННОЕ состояние (кнопка стой/ходьба/бег)
 let twistCfgs: Record<string, TwistCfgStored> = (() => { try { return JSON.parse(localStorage.getItem('pe_twist') || '{}') as Record<string, TwistCfgStored>; } catch { return {}; } })();
@@ -1233,8 +1255,11 @@ const plantMarks = [mkHandle(PLANT_BLUE, 3, true), mkHandle(PLANT_RED, 3, true)]
 const viaMarks: THREE.Mesh[][] = [[], []];
 for (let i = 0; i < 2; i++) for (let k = 0; k < MAX_VIA; k++) viaMarks[i]!.push(mkHandle(i === 0 ? PLANT_BLUE : PLANT_RED, 2, false));
 const liveMarks = [mkHandle(0xffe04a, 1.4, false), mkHandle(0xffe04a, 1.4, false)];   // живые точки (динамика): куда реально идёт стопа
-const turnPlantMarks = [mkHandle(PLANT_BLUE, 3, false), mkHandle(PLANT_RED, 3, false)];   // вкладка «Повороты»: куда стремятся стопы (Л синий, П красный)
-[plantMarks[0]!, plantMarks[1]!, ...viaMarks.flat(), liveMarks[0]!, liveMarks[1]!, turnPlantMarks[0]!, turnPlantMarks[1]!].forEach((m) => { m.visible = false; });
+const turnPlantMarks = [mkHandle(PLANT_BLUE, 3, false), mkHandle(PLANT_RED, 3, false)];   // «Повороты»: ТЕКУЩИЕ позиции стоп (где ноги сейчас; Л синий/П красный)
+// «Повороты»: КОЛЬЦА = идл-стойка на прицеле (куда приземлится подшаг ПОСЛЕ доворота) — «те, куда стопы стремятся».
+const mkRing = (color: number): THREE.Mesh => { const m = new THREE.Mesh(new THREE.RingGeometry(2.3, 3.5, 24), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9, side: THREE.DoubleSide })); m.rotation.x = -Math.PI / 2; m.renderOrder = 999; scene.add(m); return m; };
+const goalStanceMarks = [mkRing(PLANT_BLUE), mkRing(PLANT_RED)];
+[plantMarks[0]!, plantMarks[1]!, ...viaMarks.flat(), liveMarks[0]!, liveMarks[1]!, turnPlantMarks[0]!, turnPlantMarks[1]!, goalStanceMarks[0]!, goalStanceMarks[1]!].forEach((m) => { m.visible = false; });
 // ── Тест поворотов (вкладка «Повороты»): прицел = курсор над сценой; движение = стой/ходьба/бег ──
 let turnTestMove: 'stand' | 'walk' | 'run' = 'stand';
 let turnAim = 0;         // прицел (угол к точке под курсором)
@@ -1280,7 +1305,7 @@ function updatePlantMarks(): void {
         if (dragMark?.mesh !== vm) { const p = refPos(foot, via[k]![0], via[k]![1]); setXZ(vm, p[0], p[1]); } }
     }
     const lm = liveMarks[i]!; lm.visible = show;                 // живой: реальная цель, тредмилл-ремап
-    if (show) { const [tx, tz] = gaitDriver.plantTarget(foot); setXZ(lm, tx - gaitPx, tz - gaitPz); }
+    if (show) { const [tx, tz] = lp().driver.plantTarget(foot); setXZ(lm, tx - gaitPx, tz - gaitPz); }
   }
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
@@ -1291,9 +1316,6 @@ const editorContent: PoseContent = {
   resolveUpper: (w, combat) => resolveUpper(w, combat),
   shieldOverlay: (wk) => { const c = stanceClip(wk) ?? stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMixFor(wk) } : null; },
 };
-function gaitToHumanoid(t: PoseTargets): void {   // тонкая обёртка над ОБЩИМ пайплайном (Ф5) — редактор и игра одним кодом
-  rtGaitToHumanoid(human, weaponGroups, GX, gaitLegMag, t, editorContent, weapon, { clip: attackClip, t: attackT }, gaitMoveMag, false, editorCombat);   // combat=editorCombat (превью боевой стойки)
-}
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
 interface UpperPose { pose: Pose; swing: number }
 const stanceName = (w: string): string => 'idle_' + w;
@@ -1321,7 +1343,7 @@ function syncAttackEnds(c: Clip): void {
   const pose = JSON.parse(JSON.stringify(st.keys[0].pose)) as Pose;
   c.keys[0]!.pose = pose; c.keys[c.keys.length - 1]!.pose = JSON.parse(JSON.stringify(st.keys[0].pose)) as Pose;
 }
-function syncAllAttackEnds(): void { for (const c of library) if (c.character === curCharId && isAttackClip(c)) syncAttackEnds(c); }
+function syncAllAttackEnds(): void { for (const c of library) if (c.character === curCharId && (isAttackClip(c) || c.idleEnds)) syncAttackEnds(c); }
 function captureUpper(nm: string = stanceName(weapon)): void {   // снять ВСЮ позу манекена (ноги+торс+верх+оружие) → клип-стойка (idle_ или combat_idle_)
   if (locoOn || playing) { alert('Идёт превью/воспроизведение — сначала останови (⏸), иначе схватишь кадр бега, а не стойку.'); return; }
   const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon);
@@ -1334,10 +1356,10 @@ function captureUpper(nm: string = stanceName(weapon)): void {   // снять �
   saveLib();
 }
 // ── Удары на бегу (Феча 3): авторский клип-удар поверх бегущих ног, физически ведомый (моторы гонят рэгдолл к цели) ──
-let attackClip: Clip | null = null; let attackT = -1; let attackSpeed = 1;
-function triggerAttack(c: Clip): void {   // запустить удар; включить физику → физ-призрак = физически верный замах
+let attackSpeed = 1;   // множитель темпа удара (ползунок) → player.atkSpeed
+function triggerAttack(c: Clip): void {   // запустить удар через ТОТ ЖЕ PosePlayer, что игра; включить физику → физ-призрак = верный замах
   syncAttackEnds(c);   // концы = актуальная стойка (на случай если стойку поправили)
-  attackClip = c; attackT = 0;
+  lp().triggerAttack(c); lp().atkSpeed = attackSpeed;
   void ensurePhysics().then(() => { physOn = true; setPhysVis(true); });
 }
 // Пометка клипов как ударов (per char×weapon) — их кнопки появляются в превью бега.
@@ -1482,7 +1504,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
     const r = el('div', 'display:flex;gap:2px;margin-top:2px;align-items:center'); box.append(r);
     r.append(pbtn(isAtk ? '⚔' : '—', () => { toggleAtk(c.name); renderLoco(); }, isAtk));
     const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = c.name; r.append(nm);
-    if (isAtk) r.append(pbtn('▶ удар', () => { if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; } triggerAttack(c); }));
+    if (isAtk) r.append(pbtn('▶ удар', () => { if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); } triggerAttack(c); }));
   });
   if (marks.length) {
     const tr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:4px'); tr.innerHTML = '<span style="flex:1;font-size:11px">скорость удара</span>';
@@ -1541,49 +1563,25 @@ function saveGaitCfg(): void {
 }
 let stanceMeasuredFor = '';   // замеряем ширину стойки один раз на текущее оружие (мутирует human → только на смене)
 function stepGait(dt: number): void {
-  if (attackClip) { attackT += dt * attackSpeed; if (attackT > clipDur(attackClip)) { attackClip = null; attackT = -1; } }   // проигрывание удара
-  if (stanceMeasuredFor !== weapon) {   // приставной шаг при повороте на месте держит РАССТАВЛЕННУЮ стойку — её ширину замеряем
-    const p = measureStancePlants(human, editorContent.resolveUpper(weapon)?.pose ?? null);
-    gaitDriver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY); stanceMeasuredFor = weapon;
-  }
-  const vx = locoVx * GAIT_MAXSPD, vz = locoVz * GAIT_MAXSPD;   // квадрат = скорость движения (центр→ходьба, край→бег); темп ушёл в скорость ПРОСМОТРА
+  const player = lp();
+  // Живые правки редактора → в плеер (ТЕ ЖЕ ссылки, что читает игра): gx/plant/twist/скорость удара/боевая — ползунки между кадрами.
+  player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates; player.atkSpeed = attackSpeed;
+  player.setCombat(!!editorCombat);
+  if (player.weapon !== weapon) { player.setWeapon(weapon); stanceMeasuredFor = weapon; }   // смена оружия → пере-замер стойки внутри
+  else if (stanceMeasuredFor !== weapon) { player.measureStance(); stanceMeasuredFor = weapon; }   // idle-поза правится живьём → пере-замер
+  const vx = locoVx * GAIT_MAXSPD, vz = locoVz * GAIT_MAXSPD;   // квадрат = скорость движения (центр→ходьба, край→бег)
   const spd = Math.hypot(vx, vz); gaitSpd = spd;   // gaitSpd → точный референс плант-маркера
-  gaitMoveMag = clamp(spd / GAIT.speedWalk, 0, 1);   // 0 стоишь → idle-ноги; ≥speedWalk бежишь → физ-шаг
-  // Facing (yaw): «лицом по движению» → тело поворачивается к скорости (всегда бег вперёд, виден поворот);
-  // иначе — фикс. угол `gaitYawManual` (страйф: тело смотрит в одну сторону, шаги идут в другую).
+  // Facing (прицел): «лицом по движению» (тело поворачивается к скорости) / фикс. угол `gaitYawManual` (страйф).
   if (gaitFaceMove) { if (spd > 1) gaitYaw = Math.atan2(vx, vz); } else gaitYaw = gaitYawManual;
-  // Torso-lead: gaitYaw = ПРИЦЕЛ; таз (rYaw) догоняет с задержкой → и планировщик, и Hips ведёт rYaw (голова/плечи впереди).
-  editorAimStable = Math.abs(Math.atan2(Math.sin(gaitYaw - editorPrevAim), Math.cos(gaitYaw - editorPrevAim))) < 0.01 ? editorAimStable + dt : 0;
-  editorPrevAim = gaitYaw;
-  const effTwist = blendTwist(editorTwistStates, spd);   // ЭФФЕКТИВНЫЙ профиль скрутки по скорости превью (та же blendTwist, что в игре)
-  const tl = stepTorsoLead(editorRootYaw, gaitYaw, effTwist, dt, editorTurning, editorAimStable > effTwist.relaxTime);   // таз догоняет прицел (одна система стоя/бег) + relax
-  const rYaw = tl.rootYaw, twRes = tl.residual; editorRootYaw = rYaw; editorTurning = tl.turning;
-  gaitPx += vx * dt; gaitPz += vz * dt;
-  gaitDriver.setWorld(gaitPx, gaitPz, rYaw, vx, vz);        // yaw ТАЗА кормит планировщик — стопы в правильном body-кадре
-  // Планты по 8 направлениям × 2 скорости: body-local угол движения + скорость → билинейная интерп 4 ячеек.
-  const fwdC = vx * Math.sin(rYaw) + vz * Math.cos(rYaw), latC = vx * Math.cos(rYaw) - vz * Math.sin(rYaw);
-  let a = Math.atan2(latC, fwdC) / DIR_STEP; a = ((a % 8) + 8) % 8;
-  const i0 = Math.floor(a) % 8, i1 = (i0 + 1) % 8, ft = a - Math.floor(a);
-  const spB = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
-  const bl = (leg: 'l' | 'r', k: 0 | 1): number => {
-    const w = gaitPlant.walk[i0]![leg][k] + (gaitPlant.walk[i1]![leg][k] - gaitPlant.walk[i0]![leg][k]) * ft;
-    const r = gaitPlant.run[i0]![leg][k] + (gaitPlant.run[i1]![leg][k] - gaitPlant.run[i0]![leg][k]) * ft;
-    return w + (r - w) * spB;
-  };
-  gaitDriver.setPlantOffset(bl('l', 0), bl('l', 1), bl('r', 0), bl('r', 1));
-  gaitDriver.setPlantVia(blendVia(gaitPlant, 'lVia', i0, i1, ft, spB), blendVia(gaitPlant, 'rVia', i0, i1, ft, spB));
-  if (plantDrag < 0 && spd > 1) { plantDirSel = (Math.round(a) % 8 + 8) % 8; plantSpeedRun = spB >= 0.5; }   // активная ячейка следит за падом
-  // legMag: держим 1 ещё STEP_HOLD после подшага (settled мерцает) — иначе стоя поворот без приставных шагов. ТОЧНО как игра.
-  if (gaitDriver.stepping) gaitStepHold = STEP_HOLD_ED; else gaitStepHold = Math.max(0, gaitStepHold - dt);
-  const want = gaitStepHold > 0 ? 1 : gaitMoveMag;
-  gaitLegMag += (want - gaitLegMag) * Math.min(1, dt * 6);
-  human.root.updateMatrixWorld(true);
-  if (gaitLegMag > 0.5) {                                     // фидбэк фактических стоп — ТОЛЬКО когда ноги ведёт гейт (иначе шпагат)
-    const fl = human.bones.get('LeftFoot')!.getWorldPosition(V()), fr = human.bones.get('RightFoot')!.getWorldPosition(V());
-    gaitDriver.setFeet(fl.x + gaitPx, fl.z + gaitPz, fr.x + gaitPx, fr.z + gaitPz);
+  player.setVel(vx, vz); player.setYaw(gaitYaw); player.step(dt);   // ЕДИНЫЙ пайплайн (Ф2): гейт+idle+удар+torso-lead+голова — как в игре
+  // Зеркалим состояние плеера для маркеров/скролла пола/ридаута.
+  gaitMoveMag = player.moveMag; gaitLegMag = player.legMag;
+  gaitPx = player.posX; gaitPz = player.posZ; editorRootYaw = player.pelvisYaw;
+  if (plantDrag < 0 && spd > 1) {   // активная ячейка плант-сетки следит за падом (body-локальное направление движения)
+    const fwdC = vx * Math.sin(editorRootYaw) + vz * Math.cos(editorRootYaw), latC = vx * Math.cos(editorRootYaw) - vz * Math.sin(editorRootYaw);
+    let a = Math.atan2(latC, fwdC) / DIR_STEP; a = ((a % 8) + 8) % 8;
+    plantDirSel = (Math.round(a) % 8 + 8) % 8; plantSpeedRun = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1) >= 0.5;
   }
-  gaitToHumanoid(gaitDriver.update(dt));
-  applyTorsoTwist(human, rYaw, twRes, effTwist.weights);  // таз на rYaw + скрутка позвоночника к прицелу (голова/плечи ведут)
   if (gaitReadout && gaitReadout.isConnected) {              // живой индикатор скорости + режим ходьба↔бег
     const mode = spd < 5 ? 'стоит' : spd < GAIT.speedWalk ? 'ходьба' : 'бег';
     gaitReadout.textContent = `скорость: ${spd.toFixed(0)} u/с · ${mode}` + (gaitFaceMove ? '' : ` · страйф ${Math.round(gaitYaw * 180 / Math.PI)}°`);
@@ -1671,14 +1669,17 @@ function stepPhysics(dt: number): void {
   ragdoll.setPinTargets(pinArr);
   const [mHR, mHL] = weaponHandMasses(weapon);   // масса рук по main+off (щит/второе оружие → левая)
   ragdoll.setLoad('HandR', mHR); ragdoll.setLoad('HandL', mHL);
+  if (locoOn) PHYS.pinKp = lp().attackPinKp ?? DEF_PINKP;   // удар в локо ужесточает пины per-кадр (авторский __pinKp) — ТОЧНО как игра
   ragdoll.update(dt);   // моторы ведут к позе + пины + вес оружия + kinematic-таз
   pw.step(Math.min(dt, 1 / 60));
-  // призрак-гуманоид = физ-результат + заземление стопы (ОБЩИЙ код с игрой). На «упал» прижим off — пусть коллапсит.
-  // + БЛЕНД к манекену по PHYS.match (0 физика … 1 ровно поза): цель — human.readPose() (только пока жив и match>0).
+  // призрак-гуманоид = физ-результат + заземление стопы (ОБЩИЙ код с игрой) + БЛЕНД к позе-цели. В ЛОКО — ЕДИНЫЙ с игрой effMatch
+  // (per-кадр __match удара + ATK_MATCH-рамп поверх базы); в Позы/Анимации — PHYS.match (applyFramePhys). «Упал» → 0 (свободный коллапс).
   if (ghostHuman) {
-    const sw = gaitDriver.swingLegs;   // при loco: опора = !swing → заземляем только опорную стопу (маховую ведёт поза)
+    // lp() ТОЛЬКО в локо: его конструктор зовёт measureStance→human.reset() (мутирует манекен) — в Позы/Анимации это сбило бы позу.
+    const sw = locoOn ? lp().driver.swingLegs : ([false, false] as [boolean, boolean]);
+    const rMatch = physDead ? 0 : (locoOn ? renderMatchWeight(physMatchBase, lp().attackWeight, lp().attackMatch) : PHYS.match);
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
-      !physDead && PHYS.match > 0.001 ? human.readPose() : null, physDead ? 0 : PHYS.match, undefined, locoOn ? [!sw[0], !sw[1]] : undefined, footGround);
+      rMatch > 0.001 ? human.readPose() : null, rMatch, undefined, locoOn ? [!sw[0], !sw[1]] : undefined, footGround);
   }
 }
 const ghostGround = newGhostGround();
@@ -1776,6 +1777,6 @@ loop();
   captureUpper, get sway() { return swayCfg; }, resolveUpper: (w: string): unknown => resolveUpper(w), get stances() { return library.filter((c) => c.name.startsWith('idle_')); },
   get lgrip() { return lgripMark; }, lgripEnsure: (): unknown => ensureLgripMark(), lgripPreview: (): void => applyLgripPreview(),   // двуручный хват: маркер + off-hand IK превью (дебаг)
   goFrame, writeFramePhys, get frameIdx() { return frameIdx; },   // per-кадр физ (match/pinKp) — дебаг: goFrame читает, writeFramePhys фиксирует
-  gaitAttack: (name: string): void => { const c = clipsHere().find((x) => x.name === name) ?? library.find((x) => x.name === name); if (c) triggerAttack(c); }, get attackT() { return attackT; }, markAttack: (name: string): void => toggleAtk(name),
+  gaitAttack: (name: string): void => { const c = clipsHere().find((x) => x.name === name) ?? library.find((x) => x.name === name); if (c) triggerAttack(c); }, get attackT() { return lp().atk.t; }, markAttack: (name: string): void => toggleAtk(name),
   physStep: (dt: number, n: number): unknown => { if (!pw || !ragdoll) return null; physOn = true; for (let i = 0; i < n; i++) { stepPhysics(dt); } return { Hips: ragdoll.bodyPos('Hips'), Head: ragdoll.bodyPos('Head'), HandL: ragdoll.bodyPos('HandL'), HandR: ragdoll.bodyPos('HandR'), FootL: ragdoll.bodyPos('FootL'), Torso: ragdoll.bodyPos('Torso') }; },
   modelsTab, modelsImport: (url: string): Promise<void> => modelsTab.importUrl(url), modelsDebug: (): unknown => modelsTab.debug() };   // E: импорт атласа персонажа (дебаг-хуки)

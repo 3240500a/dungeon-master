@@ -35,7 +35,7 @@ const OUR_PARENT: Partial<Record<OurBone, OurBone>> = {
 };
 
 // Синонимы имён костей у разных ригов. Сторона детектится ДО стрипа разделителей (иначе _l/_r слипаются с ядром).
-const stripPrefix = (s: string): string => s.toLowerCase().replace(/^(cc_base_|mixamorig:?|bip01_?|bip_?|armature\|)/, '');
+const stripPrefix = (s: string): string => s.toLowerCase().replace(/^(cc_base_|mixamorig:?|bip01_?|bip_?|b_|armature\|)/, '');   // b_ = Explosive (B_Pelvis/B_L_UpperArm…)
 const SEP = '[_.:| -]';   // разделители сегментов имени кости
 // Сторона: явный сегмент l/r (в разделителях или на краях) ЛИБО слово left/right.
 const sideOf = (raw: string): '' | 'l' | 'r' => {
@@ -52,9 +52,11 @@ const coreOf = (raw: string): string => stripPrefix(raw)
 // Ядро-имена (без стороны) → наши кости [центр, левая, правая].
 const CORE: Record<string, [OurBone] | [null, OurBone, OurBone]> = {
   hips: ['Hips'], hip: ['Hips'], pelvis: ['Hips'],   // НЕ мапим 'root' на Hips: арм底-рут (RL_BoneRoot/Bip01) стоит у стоп, не таз → ретаргет пинил бы не ту кость (парение)
-  spine: ['Spine'], spine01: ['Spine'], spine1: ['Spine'],
-  chest: ['Chest'], spine02: ['Chest'], spine2: ['Chest'],
-  upperchest: ['UpperChest'], spine03: ['UpperChest'], spine3: ['UpperChest'],
+  // Спина: конвенция Spine/Spine1/Spine2 (Mixamo/Explosive: бара «spine» первая, 1/2 ниже) → Spine/Chest/UpperChest.
+  //  Конвенция spine_01/02/03 (Unreal/CC: нумерация с 01) отдельными ключами. Длиннейшее совпадение выигрывает (spine2>spine).
+  spine: ['Spine'], spine01: ['Spine'],
+  chest: ['Chest'], spine02: ['Chest'], spine1: ['Chest'],
+  upperchest: ['UpperChest'], spine03: ['UpperChest'], spine2: ['UpperChest'], spine3: ['UpperChest'],
   neck: ['Neck'], necktwist01: ['Neck'], head: ['Head'],
   shoulder: [null, 'LeftShoulder', 'RightShoulder'], clavicle: [null, 'LeftShoulder', 'RightShoulder'],
   upperarm: [null, 'LeftUpperArm', 'RightUpperArm'], arm: [null, 'LeftUpperArm', 'RightUpperArm'],
@@ -103,9 +105,12 @@ const IDENT = new THREE.Quaternion();
 export function boneIndex(loaded: THREE.Object3D): Map<string, THREE.Bone> {
   const cand = new Map<string, THREE.Bone[]>();
   loaded.traverse((o) => { if ((o as THREE.Bone).isBone) { const a = cand.get(o.name) ?? []; a.push(o as THREE.Bone); cand.set(o.name, a); } });
+  // Анимация-ФБХ без скина (Explosive и т.п.): нет isBone → «кости» = именованные Object3D-узлы. Собираем не-меш узлы как
+  // кандидатов (Bone структурно = Object3D; используются только getWorld*/quaternion/parent/children). Дубль-логика ниже целится.
+  if (cand.size === 0) loaded.traverse((o) => { if (o.name && !(o as THREE.Mesh).isMesh) { const a = cand.get(o.name) ?? []; a.push(o as unknown as THREE.Bone); cand.set(o.name, a); } });   // isMesh покрывает и SkinnedMesh
   const m = new Map<string, THREE.Bone>();
   for (const [name, arr] of cand) {
-    const withKids = arr.find((b) => b.children.some((c) => (c as THREE.Bone).isBone));   // узел реальной иерархии (не лист-референс)
+    const withKids = arr.find((b) => b.children.some((c) => (c as THREE.Bone).isBone || !!(c as THREE.Object3D).name));   // узел реальной иерархии (кость ИЛИ именованный узел)
     m.set(name, withKids ?? arr[arr.length - 1]!);
   }
   return m;
@@ -162,11 +167,21 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   return out;
 }
 
-// «Enforce T-pose» — какую кость к какому ребёнку прицеливаем (цепочка руки). Правим ТОЛЬКО руки: главный (и обычно
-// единственный) источник A-позы в AccuRIG/CC. Ноги/спину не трогаем — они и так в канон-направлении (вниз/вверх).
+// «Enforce T-pose» — какую кость к какому ребёнку прицеливаем. По умолчанию ТОЛЬКО руки (главный источник A-позы в
+// AccuRIG/CC; ноги/спину атласа не трогаем — там точная геометрия под конформ, канонизация коленей их бы поехала).
 const AIM_CHILD: Partial<Record<OurBone, OurBone>> = {
   LeftShoulder: 'LeftUpperArm', LeftUpperArm: 'LeftLowerArm', LeftLowerArm: 'LeftHand',
   RightShoulder: 'RightUpperArm', RightUpperArm: 'RightLowerArm', RightLowerArm: 'RightHand',
+};
+/** Полная цепочка (руки+ноги+спина) — для ЗАПЕКАТЕЛЯ КЛИПОВ: приводим ЛЮБУЮ начальную позу источника анимации к канон-T
+ *  перед снятием rest (иначе обратный ретаргет считает дельты от кадра-0/A-позы → «тело в T, руки/ноги мельницей»). Hips
+ *  (корень) не целим. НЕ для атласа — там нужна точная геометрия ног/спины. */
+export const FULL_AIM_CHILD: Partial<Record<OurBone, OurBone>> = {
+  Spine: 'Chest', Chest: 'UpperChest', UpperChest: 'Neck', Neck: 'Head',
+  LeftShoulder: 'LeftUpperArm', LeftUpperArm: 'LeftLowerArm', LeftLowerArm: 'LeftHand',
+  RightShoulder: 'RightUpperArm', RightUpperArm: 'RightLowerArm', RightLowerArm: 'RightHand',
+  LeftUpperLeg: 'LeftLowerLeg', LeftLowerLeg: 'LeftFoot', LeftFoot: 'LeftToes',
+  RightUpperLeg: 'RightLowerLeg', RightLowerLeg: 'RightFoot', RightFoot: 'RightToes',
 };
 
 /** «Enforce T-pose» (как кнопка в настройке аватара Unity): доворачивает кости ЗАГРУЖЕННОГО скелета в нашу КАНОНИЧЕСКУЮ позу,
@@ -175,7 +190,7 @@ const AIM_CHILD: Partial<Record<OurBone, OurBone>> = {
  *  локальные повороты костей — up-axis/меш/скин не трогаем. Зовётся при импорте (poseModelsTab) ПОСЛЕ skeleton.pose() и ДО
  *  measureBoneOffsets/exportGLB → экспортный GLB несёт T-позу в нодах, замеры читают T, рантайм грузит уже T (как рыцарь).
  *  По умолчанию правим руки (AIM_CHILD). Локальные повороты инвариантны к ориентации корня → up-axis остаётся как был. */
-export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, string>, bones: OurBone[] = Object.keys(AIM_CHILD) as OurBone[]): void {
+export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, string>, aimChild: Partial<Record<OurBone, OurBone>> = AIM_CHILD): void {
   const r0 = loaded.rotation.clone();
   loaded.rotation.set(0, 0, 0); loaded.updateMatrixWorld(true);
   const byName = boneIndex(loaded);
@@ -186,8 +201,8 @@ export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, str
   const base = baseHumanoid();
   const cur = new THREE.Vector3(), can = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
   const qw = new THREE.Quaternion(), curW = new THREE.Quaternion(), pw = new THREE.Quaternion();
-  for (const our of bones) {
-    const child = AIM_CHILD[our]; if (!child) continue;
+  for (const our of Object.keys(aimChild) as OurBone[]) {
+    const child = aimChild[our]; if (!child) continue;
     const ob = byName.get(boneMap[our] ?? ''), cb = byName.get(boneMap[child] ?? '');
     const sb = base.bones.get(our), scb = base.bones.get(child);
     if (!ob || !cb || !sb || !scb) continue;
@@ -292,8 +307,9 @@ export interface BakeRig {
 /** Собрать запекатель из импорт-скелета + карты костей. `restW` снимается ЗДЕСЬ (loaded должен быть в bind-позе:
  *  вызови `skeleton.pose()` перед конструированием, если модель приходит уже на кадре 0). */
 export function makeBakeRig(loaded: THREE.Object3D, boneMap: Record<string, string>): BakeRig {
-  const byName = new Map<string, THREE.Object3D>();
-  loaded.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o); });
+  // boneIndex: берёт кость-с-детьми (реальная драйв-иерархия) — CC/AccuRIG glTF дублирует скелет, traverse-last-wins попадал
+  // в лист-референс (не анимируется микшером) → семпл читал статику → клип схлопывался в бинд/idle. Fallback — traverse (BVH/Group).
+  const byName = new Map<string, THREE.Object3D>(boneIndex(loaded));
   if (byName.size === 0) loaded.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });   // BVH/Group-риги без isBone
   loaded.updateMatrixWorld(true);
   const restW = new Map<string, THREE.Quaternion>();

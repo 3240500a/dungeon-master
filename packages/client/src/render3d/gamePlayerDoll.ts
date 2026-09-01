@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
-import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, type GXKnobs } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, renderMatchWeight, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons } from './weapon3d.js';
 import { charFor } from './chars3d.js';
 import { createModelSkin, loadAssetConfig, resolveSlotModels, resolveCharacterModel, applyWeaponModels } from './modelSkin.js';
@@ -22,7 +22,6 @@ import type { BodyProfile, BoneScale } from './bodyProfile.js';
 const GX_DEFAULT = (): GXKnobs => ({ armDown: 1.35, elbowBend: 0.25 });   // legWidth/bob убраны (дубль stanceWidth / боб в GAIT)
 const PELVIS_Y = 32;
 const KNOCK = 3.5;   // сила отброса трупа при frac=1 — ~1.5 м макс (32 ед = 1 м) при 100% урона от HP; меньше урон — ближе
-const ATK_MATCH = 0.92;   // пиковый вес совпадения с авторской позой во время удара (фолбэк, если у кадра нет авторского __match)
 const HIT_PHYS_DUR = 0.5;   // сек транзиентной физики в kinematic-режиме на хит-реакцию (перекрывает limp ~0.4с), потом назад в кинематику
 const GROUND0 = (): number => 0;   // плоский пол y=0 (как в физ-рендере при groundAt=undefined) для kinematic FOOT-IK
 const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов — восстанавливаем вне удара (PHYS глобальна, шарится дллами: каждая dll ставит своё перед update)
@@ -338,8 +337,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       // солид = физрезультат + заземление ОПОРНЫХ стоп (маховую ведёт поза) + БЛЕНД к позе-цели по matchWeight.
       // Во время удара вес совпадения = АВТОРСКИЙ per-кадр __match (задан в редакторе покадрово), иначе фолбэк — огибающая
       // ATK_MATCH·attackWeight (physics один не доводит замах до конца). В покое/беге — базовый matchWeight (физ-ведомая походка).
-      const am = player.attackMatch;
-      const effMatch = am != null ? am : Math.max(matchWeight, ATK_MATCH * player.attackWeight);
+      const effMatch = renderMatchWeight(matchWeight, player.attackWeight, player.attackMatch);   // ЕДИНО с редактором-локо
       renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]], !poseLod);
       skin?.update(); syncWeaponHost();                                        // GLB-слои ведутся solid (после физрезультата + бленда к позе)
       if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику

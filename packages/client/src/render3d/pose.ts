@@ -153,6 +153,7 @@ function crAt(pts: [number, number][], u: number): [number, number] {
 
 const SIDESTEP_DUR = 0.18;   // сек: длительность приставного шага (перенос стопы дугой к слоту стойки при повороте на месте)
 const SETTLE_EPS = 2;        // u: стопы ближе этого к своим плантам → замираем (idle-поза); иначе footlock (стопа прибита к миру)
+const MAX_GOAL_LEAD = Math.PI * 0.4;   // рад (~72°): максимум, на сколько подшаг целит ВПЕРЁД таза к прицелу — флик курсора не даёт стопе скачок-прыжок
 
 class StepPlanner {
   private legs: [Leg, Leg] = [
@@ -206,8 +207,24 @@ class StepPlanner {
   /** Фаза приставного шага КАЖДОЙ ноги (0 = стоит, 0..1 = переносится к планту). */
   private sideT: [number, number] = [0, 0];
   private yawSigned = 0;                          // сглаженная скорость поворота СО ЗНАКОМ (>0 вправо/по часовой, <0 влево)
+  private goalYaw: number | null = null;          // фейсинг ПРИЦЕЛА (куда доворачивает таз): подшаг целит стопу в идл-стойку НА НЁМ, не в промежуточный таз. null → текущий yaw
+  private bodyX = 0; private bodyZ = 0; private curYaw = 0;   // последняя позиция/поворот таза — для stanceAtGoal (целевые маркеры редактора)
+  setGoalYaw(y: number | null): void { this.goalYaw = y; }
   /** Текущая плант-цель ноги i в мире (свинг-цель tx/tz или опорная px/pz) — для наземных маркеров редактора. */
   getTarget(i: number): [number, number] { const l = this.legs[i]!; return l.sw > 0 ? [l.tx, l.tz] : [l.px, l.pz]; }
+  /** Гол = прицел, но не дальше MAX_GOAL_LEAD впереди таза (флик курсора не даёт стопе скачок). null goalYaw → текущий yaw. */
+  private clampedGoal(yaw: number): number {
+    if (this.goalYaw === null) return yaw;
+    const d = Math.atan2(Math.sin(this.goalYaw - yaw), Math.cos(this.goalYaw - yaw));
+    return yaw + clamp(d, -MAX_GOAL_LEAD, MAX_GOAL_LEAD);
+  }
+  /** Идл-стойка ноги i в мире НА ГОЛ-ФЕЙСИНГЕ (прицел) — куда приземлится подшаг. Для целевых маркеров редактора «Повороты». */
+  stanceAtGoal(i: number): [number, number] {
+    const gy = this.clampedGoal(this.curYaw);
+    const gfx = Math.sin(gy), gfz = Math.cos(gy), grx = Math.cos(gy), grz = -Math.sin(gy);
+    const lat = i === 0 ? this.stanceLatL : this.stanceLatR, fwd = i === 0 ? this.stanceFwdL : this.stanceFwdR;
+    return [this.bodyX + grx * lat + gfx * fwd, this.bodyZ + grz * lat + gfz * fwd];
+  }
 
   private reset(px: number, pz: number, fx: number, fz: number, rx: number, rz: number, yaw: number): void {
     for (let i = 0; i < 2; i++) {
@@ -224,6 +241,7 @@ class StepPlanner {
     // Оси тела в мире: вперёд = локальный +Z, вправо = локальный +X.
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
     const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    this.bodyX = px; this.bodyZ = pz; this.curYaw = yaw;   // для stanceAtGoal (целевые маркеры редактора)
     if (!this.placed || Math.hypot(this.legs[0].px - px, this.legs[0].pz - pz) > 100) this.reset(px, pz, fx, fz, rx, rz, yaw);
 
     // Сглаженная скорость поворота (рад/с). Сырая мигает [0.1,0,0.1,0] из-за сим 30Гц / физика 60Гц.
@@ -262,8 +280,12 @@ class StepPlanner {
       // (по ДИСТАНЦИИ turnStepDist ИЛИ по УГЛУ turnLimitDeg — тумблер turnLimitByAngle). Внутренняя нога (в сторону
       // вращения) ВСЕГДА первой, строгое чередование (turnLead), без одновременного двойного свинга. Плюс «доступить»
       // когда таз перестал крутиться (turnSettleTime) и уход в idle-позу по времени (turnIdleTime).
-      const stanceX = (i: number): number => px + rx * (i === 0 ? this.stanceLatL : this.stanceLatR) + fx * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
-      const stanceZ = (i: number): number => pz + rz * (i === 0 ? this.stanceLatL : this.stanceLatR) + fz * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
+      // ПЛАНТ стойки — на фейсинге ПРИЦЕЛА (gy = гол, кламп лида), а НЕ текущего таза: подшаг ведёт стопу туда, где встанет
+      // идл-стойка ПОСЛЕ доворота (таз догонит), а не в промежуточную точку. goalYaw=null (тесты/чистое движение) → gy=yaw → как было.
+      const gy = this.clampedGoal(yaw);
+      const gfx = Math.sin(gy), gfz = Math.cos(gy), grx = Math.cos(gy), grz = -Math.sin(gy);
+      const stanceX = (i: number): number => px + grx * (i === 0 ? this.stanceLatL : this.stanceLatR) + gfx * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
+      const stanceZ = (i: number): number => pz + grz * (i === 0 ? this.stanceLatL : this.stanceLatR) + gfz * (i === 0 ? this.stanceFwdL : this.stanceFwdR);
       const turning = this.yawRate > GAIT.turnStep;
       const inside = this.yawSigned >= 0 ? 0 : 1;               // нога в сторону вращения (ведущая)
       this.stableFor = this.yawRate < 0.02 ? this.stableFor + dt : 0;   // таз ПРАКТИЧЕСКИ стоит (~1°/с) → плант стабилен (медленный поворот НЕ считается стоянием)
@@ -271,17 +293,20 @@ class StepPlanner {
         const l = this.legs[i]!;
         if (l.sw <= 0) continue;
         let st = this.sideT[i]! + dt / SIDESTEP_DUR;
-        if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; this.plantYaw[i] = yaw; } else l.sw = clamp(st, 0.001, 1);
+        if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; this.plantYaw[i] = gy; } else l.sw = clamp(st, 0.001, 1);   // приземлилась на гол-фейсинге → угловой предел мерит от него
         this.sideT[i] = st;
       }
       const startStep = (i: number): void => { const l = this.legs[i]!; l.fx = l.px; l.fz = l.pz; l.tx = stanceX(i); l.tz = stanceZ(i); this.sideT[i] = 0; l.sw = 0.001; };
       const homeDist = (i: number): number => Math.hypot(this.legs[i]!.px - stanceX(i), this.legs[i]!.pz - stanceZ(i));
-      const beyondLimit = (i: number): boolean => GAIT.turnLimitByAngle   // ПРЕДЕЛ: по углу поворота таза отн. прибитой стопы, либо по дистанции отъезда
-        ? Math.abs(Math.atan2(Math.sin(yaw - this.plantYaw[i]!), Math.cos(yaw - this.plantYaw[i]!))) > GAIT.turnLimitDeg * Math.PI / 180
-        : homeDist(i) > GAIT.turnStepDist;
+      const angleOver = (i: number): boolean => Math.abs(Math.atan2(Math.sin(gy - this.plantYaw[i]!), Math.cos(gy - this.plantYaw[i]!))) > GAIT.turnLimitDeg * Math.PI / 180;   // разворот ПРИЦЕЛА отн. приземления стопы
+      // ПРЕДЕЛ переступа: по УГЛУ разворота таза отн. прибитой стопы ИЛИ по ДИСТАНЦИИ отъезда — берём ОБА (что раньше сработает).
+      // Для УЗКОЙ стойки (меч: планты близко к центру тела) homeDist почти не растёт → одна дистанция НЕ переступает, и нога
+      // сметается к центру до срабатывания `crossed` (стойка схлопывается). Угловой предел переступает вовремя → ширина держится.
+      // turnLimitByAngle=1 оставлен как «ТОЛЬКО угол» для сравнения фила в редакторе.
+      const beyondLimit = (i: number): boolean => GAIT.turnLimitByAngle ? angleOver(i) : (angleOver(i) || homeDist(i) > GAIT.turnStepDist);
       const crossed = (i: number): boolean => {                // страховка от X: опорная перешла среднюю линию
         const l = this.legs[i]!; const plantLat = i === 0 ? this.stanceLatL : this.stanceLatR;
-        const footLat = (l.px - px) * rx + (l.pz - pz) * rz;
+        const footLat = (l.px - px) * grx + (l.pz - pz) * grz;   // средняя линия — по гол-фейсингу (куда встаём)
         return Math.abs(plantLat) > 0.1 && Math.sign(footLat) !== Math.sign(plantLat) && Math.abs(footLat) > 1;
       };
       const settleReady = this.stableFor > GAIT.turnSettleTime;   // таз стоит → доступить не дожидаясь предела
@@ -452,6 +477,10 @@ export class PoseDriver {
   }
   /** Текущая плант-цель ноги i в мире (для наземных маркеров редактора). */
   plantTarget(i: number): [number, number] { return this.planner ? this.planner.getTarget(i) : [0, 0]; }
+  /** Фейсинг ПРИЦЕЛА (куда доворачивает таз) — подшаг целит стопу в идл-стойку НА НЁМ. null → текущий yaw (как было). */
+  setGoalYaw(y: number | null): void { this.planner?.setGoalYaw(y); }
+  /** Идл-стойка ноги i на гол-фейсинге (прицел) — куда приземлится подшаг. Целевые маркеры редактора «Повороты». */
+  stanceAtGoal(i: number): [number, number] { return this.planner ? this.planner.stanceAtGoal(i) : [0, 0]; }
   /** Планировщик активно переступает (ход / подшаг при развороте на месте). */
   get stepping(): boolean { return this.planner ? this.planner.stepping : false; }
   /** Какие ноги в переносе [левая, правая] — для тестов/отладки порядка приставных шагов. */

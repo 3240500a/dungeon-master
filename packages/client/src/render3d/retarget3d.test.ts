@@ -31,6 +31,21 @@ describe('retarget3d — авто-карта костей', () => {
     expect(m.LeftUpperArm).toBe('upperarm_l');
     expect(m.RightUpperArm).toBe('upperarm_r');
     expect(m.LeftUpperLeg).toBe('thigh_l');
+    expect(m.Spine).toBe('spine_01');   // spine_01 = первая (не 1/2/3-конвенция)
+  });
+
+  it('Explosive (B_* префикс, Spine/Spine1/Spine2)', () => {
+    const m = autoBoneMap(['Motion', 'B_Pelvis', 'B_Spine', 'B_Spine1', 'B_Spine2', 'B_Neck', 'B_Head',
+      'B_L_Clavicle', 'B_L_UpperArm', 'B_L_Forearm', 'B_L_Hand', 'B_R_Clavicle', 'B_R_UpperArm', 'B_R_Forearm', 'B_R_Hand',
+      'B_L_Thigh', 'B_L_Calf', 'B_L_Foot', 'B_L_Toe0', 'B_R_Thigh', 'B_R_Calf', 'B_R_Foot']);
+    expect(m.Hips).toBe('B_Pelvis');
+    expect(m.Spine).toBe('B_Spine'); expect(m.Chest).toBe('B_Spine1'); expect(m.UpperChest).toBe('B_Spine2');   // Spine/1/2 → Spine/Chest/UpperChest
+    expect(m.Neck).toBe('B_Neck'); expect(m.Head).toBe('B_Head');
+    expect(m.LeftShoulder).toBe('B_L_Clavicle'); expect(m.LeftUpperArm).toBe('B_L_UpperArm');
+    expect(m.LeftLowerArm).toBe('B_L_Forearm'); expect(m.LeftHand).toBe('B_L_Hand');
+    expect(m.RightUpperArm).toBe('B_R_UpperArm');
+    expect(m.LeftUpperLeg).toBe('B_L_Thigh'); expect(m.LeftLowerLeg).toBe('B_L_Calf');
+    expect(m.LeftFoot).toBe('B_L_Foot'); expect(m.LeftToes).toBe('B_L_Toe0');
   });
 });
 

@@ -110,6 +110,45 @@ describe('StepPlanner — поворот на месте держит стойк
     expect(r.crossed).toBe(false);
   });
 
+  // Регресс: УЗКАЯ стойка (планты у таза, как idle меча) в дефолтном режиме ДИСТАНЦИИ. homeDist почти не растёт (макс ~2×lat
+  // за пол-оборота) → предел turnStepDist(6) НЕ срабатывает, и до фикса нога сметалась к центру, переступая лишь по `crossed`
+  // (≈90°) → стойка схлопывалась. Комбинированный предел (угол ИЛИ дистанция) переступает по углу и держит ширину.
+  it('УЗКАЯ стойка при повороте держит ширину: переступает ПО УГЛУ, не сметается к центру (не скрещивает)', () => {
+    const d = new PoseDriver(); d.setStance(2.5, 0, -2.5, 0);   // узкая, планты почти под тазом
+    for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.update(1 / 60); }   // устаканиться (plantYaw=0)
+    let yaw = 0, stepped = false, crossed = false;
+    for (let i = 0; i < 200; i++) {
+      yaw += 0.05; d.setWorld(0, 0, yaw, 0, 0);
+      const t = d.update(1 / 60);
+      if (d.stepping) stepped = true;
+      if (t.hipLatL < -0.2 || t.hipLatR > 0.2) crossed = true;
+    }
+    expect(stepped).toBe(true);    // переступает по углу, хотя дистанция (узкая стойка) до предела не доезжает
+    expect(crossed).toBe(false);   // держит ширину — не сметает ногу за среднюю линию (регресс до фикса: сметало → crossed)
+  });
+
+  // Гол-фейсинг: подшаг целит стопу в идл-стойку на ПРИЦЕЛЕ (куда доворачивает таз), а не на промежуточном текущем тазе —
+  // иначе стопа приземляется в устаревшую точку и стойка не собирается. setGoalYaw(прицел); при null (движение/старые тесты) — как было.
+  it('гол-фейсинг: подшаг целит стопу в идл-стойку на ПРИЦЕЛЕ, не на текущем тазе', () => {
+    const d = new PoseDriver(); d.setStance(9, 0, -9, 0);
+    for (let i = 0; i < 40; i++) { d.setWorld(0, 0, 0, 0, 0); d.setGoalYaw(0); d.update(1 / 60); }   // устаканиться, прицел=таз=0
+    const goal = 0.9;                                   // прицел прыгнул вбок; таз догоняет медленно → есть лид
+    let capTgt: [number, number] | null = null, capGoal: [number, number] = [0, 0], capYaw = 0, capLi = 0;
+    let yaw = 0;
+    for (let i = 0; i < 60 && !capTgt; i++) {
+      yaw = Math.min(goal, yaw + 0.015);
+      d.setWorld(0, 0, yaw, 0, 0); d.setGoalYaw(goal); d.update(1 / 60);
+      const [sl, sr] = d.swingLegs;
+      if (sl || sr) { capLi = sl ? 0 : 1; capTgt = d.plantTarget(capLi); capGoal = d.stanceAtGoal(capLi); capYaw = yaw; }
+    }
+    expect(capTgt).not.toBeNull();
+    // цель подшага = идл-стойка на ГОЛ-фейсинге (кольцо редактора), НЕ на текущем тазе
+    expect(Math.hypot(capTgt![0] - capGoal[0], capTgt![1] - capGoal[1])).toBeLessThan(1.5);
+    const lat = capLi === 0 ? 9 : -9;                  // стойка на ТЕКУЩЕМ тазе (px=pz=0): fwd=0 → просто lat вбок
+    const curX = Math.cos(capYaw) * lat, curZ = -Math.sin(capYaw) * lat;
+    expect(Math.hypot(capTgt![0] - curX, capTgt![1] - curZ)).toBeGreaterThan(2);   // цель ВПЕРЕДИ таза (лид к прицелу), не под ним
+  });
+
   it('предел ПО УГЛУ: шаг при повороте таза примерно на turnLimitDeg (тумблер режима)', () => {
     const saved = { by: GAIT.turnLimitByAngle, deg: GAIT.turnLimitDeg, idle: GAIT.turnIdleTime };
     GAIT.turnLimitByAngle = 1; GAIT.turnLimitDeg = 30; GAIT.turnIdleTime = 0;

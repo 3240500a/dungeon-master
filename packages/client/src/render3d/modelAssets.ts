@@ -70,5 +70,8 @@ export async function uploadAsset(id: string, data: ArrayBuffer, contentType = '
 export function skeletonBoneNames(root: THREE.Object3D): string[] {
   const names: string[] = [];
   root.traverse((o) => { if ((o as THREE.Bone).isBone) names.push(o.name); });
+  // Анимация-ФБХ БЕЗ скина (Explosive и т.п.): «кости» = обычные Object3D-узлы (B_Pelvis…), isBone нет → берём все именованные
+  // не-меш узлы, чтобы autoBoneMap имел что мапить. Скинутые модели (атлас) сюда не попадают — там isBone есть.
+  if (names.length === 0) root.traverse((o) => { const m = o as THREE.Mesh; if (o.name && !m.isMesh) names.push(o.name); });
   return names;
 }

@@ -7,7 +7,7 @@ import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, type PoseTargets } from './pose
 
 export type Pose = Record<string, [number, number, number]>;
 export interface Keyframe { pose: Pose; t: number }
-export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[] }
+export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[]; idleEnds?: boolean }   // idleEnds: первый/последний кадр = idle-стойка (заблокированы в редакторе, синкаются из стойки — как у ударов hit_)
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
 export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: number; elbowBendRun?: number }   // *Run — раздельно для бега (интерп по sb); нет → = ходьба. legWidth убран (дубль stanceWidth)
 /**
@@ -22,8 +22,12 @@ export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: numb
  * `weights` — распределение скрутки по цепочке [Spine, Chest, UpperChest, Neck, Head] (в сумме ~1 → голова доходит до прицела).
  * ПОД БУДУЩЕЕ: профиль умножается на модификатор класса брони (латы → меньше сегментов/порог, лёгкая → свободнее).
  */
-export interface TwistProfile { threshold: number; turnRate: number; maxTwist: number; relaxTime: number; weights: [number, number, number, number, number] }
-export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, turnRate: 3, maxTwist: 1.4, relaxTime: 1.2, weights: [0.15, 0.25, 0.30, 0.15, 0.15] });
+export interface TwistProfile { threshold: number; turnRate: number; maxTwist: number; relaxTime: number; weights: [number, number, number, number, number]; headLook: number; headPitch: number }
+// headLook 0..1: стабилизация ГОЛОВЫ на прицел в МИР-yaw (компенсирует свинг корпуса от удара). 1 = строго на курсор, 0 = голова
+// целиком едет с телом (старое поведение). ~0.85 = смотрит на курсор + чуть гуляет (подмес движения). Зовётся ПОСЛЕ applyTorsoTwist.
+// headPitch (рад): ЦЕЛЕВОЙ кивок головы (0 = ровно/горизонт, <0 = смотрит вниз). Убирает НАСЛЕДОВАННЫЙ кивок от свинга корпуса
+// (удар качает грудь/спину → голова-ребёнок ныряет). Тем же весом headLook голова уводится к этому кивку, а не к свинг-нырку.
+export const TWIST_DEFAULT = (): TwistProfile => ({ threshold: 0.70, turnRate: 3, maxTwist: 1.4, relaxTime: 1.2, weights: [0.15, 0.25, 0.30, 0.15, 0.15], headLook: 0.85, headPitch: 0 });
 // Скрутка корпуса настраивается ПО СОСТОЯНИЮ ДВИЖЕНИЯ (стой/ходьба/бег) — в игре эффективный профиль блендится ПЛАВНО
 // по скорости (3 якоря), в редакторе каждая кнопка правит свой профиль. Хранилище pe_twist: либо плоский (легаси —
 // применяется на все 3), либо { stand?, walk?, run? } частичных профилей.
@@ -54,6 +58,7 @@ const lerpN = (a: number, b: number, t: number): number => a + (b - a) * t;
 function lerpTwistInto(out: TwistProfile, a: TwistProfile, b: TwistProfile, t: number): TwistProfile {
   out.threshold = lerpN(a.threshold, b.threshold, t); out.turnRate = lerpN(a.turnRate, b.turnRate, t);
   out.maxTwist = lerpN(a.maxTwist, b.maxTwist, t); out.relaxTime = lerpN(a.relaxTime, b.relaxTime, t);
+  out.headLook = lerpN(a.headLook, b.headLook, t); out.headPitch = lerpN(a.headPitch, b.headPitch, t);
   for (let i = 0; i < 5; i++) out.weights[i] = lerpN(a.weights[i]!, b.weights[i]!, t);
   return out;
 }
@@ -239,13 +244,14 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
 }
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
  *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
-/** Компенсация A-стойки бинда ФБХ: нога splay-ит наружу (стопа сбоку от таза), а поза-система (PoseDriver, стойка)
- *  считает «поворот бедра 0 = нога прямо вниз». Доворачиваем БЕДРО внутрь на human.legAdduct (замер наклона бинда) →
- *  нога вертикальна, стопы попадают в планты. Компонентно к Z бедра (боковая ось = приведение). Процедурным legAdduct=0 → no-op.
- *  Зовётся ПОСЛЕ поз ног (в gaitToHumanoid и measureStancePlants), чтобы бег и стойка компенсировались одинаково. */
-export function applyLegAdduct(human: Humanoid): void {
-  const at = human.legAdduct ?? 0;                            // splay бедра (hip→колено)
-  const kc = at - (human.legAdductKnee ?? 0);                 // коррекция колена = splayБедра − splayГолени: доворот бедра УЖЕ
+/** Компенсация A-стойки бинда ФБХ для ПРОЦЕДУРНОЙ реконструкции: её ik() считает «поворот бедра 0 = нога прямо вниз», а бинд
+ *  splay-ит наружу → доворачиваем БЕДРО внутрь на human.legAdduct, нога вертикальна, стопы в планты. Компонентно к Z бедра.
+ *  ⚠ `scale`=вес гейта (legMag): АВТОРСКАЯ idle-поза сделана НА бинде (Позы-таб рисует её БЕЗ аддукта) — ей компенсация НЕ нужна,
+ *  иначе её сводит ýже, чем автор видел (баг «узкая стойка в игре/локо»). Поэтому аддукт масштабируем: idle(m=0)=0 (ширина автора),
+ *  гейт(m=1)=полный (реконструкция компенсирована). measureStancePlants аддукт НЕ зовёт → планты = авторская ширина. */
+export function applyLegAdduct(human: Humanoid, scale = 1): void {
+  const at = (human.legAdduct ?? 0) * scale;                  // splay бедра (hip→колено) × вес гейта
+  const kc = at - (human.legAdductKnee ?? 0) * scale;         // коррекция колена = splayБедра − splayГолени: доворот бедра УЖЕ
   if (Math.abs(at) < 1e-4 && Math.abs(kc) < 1e-4) return;     // повернул голень (она ребёнок) → на колене добираем только разницу,
   const lu = human.bones.get('LeftUpperLeg'), ru = human.bones.get('RightUpperLeg');   // чтобы голень стала ПАРАЛЛЕЛЬНА бедру (как у базового = прямая нога).
   const ll = human.bones.get('LeftLowerLeg'), rl = human.bones.get('RightLowerLeg');
@@ -266,10 +272,15 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'RightLowerLeg', [t.knR, 0, 0], idle, m);
   blendBone(human, 'LeftFoot', [0, 0, 0], idle, m); blendBone(human, 'RightFoot', [0, 0, 0], idle, m);
   blendBone(human, 'LeftToes', [0, 0, 0], idle, m); blendBone(human, 'RightToes', [0, 0, 0], idle, m);
-  applyLegAdduct(human);   // сведение ног под таз (компенсация splay-бинда ФБХ) — стопы в планты, меш без искажения (поворот)
-  blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, m);
-  blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, m);
-  blendBone(human, 'Head', [0, 0, 0], idle, m);
+  // Аддукт масштабируем ТОЛЬКО когда idle АВТОРИТ ноги (тогда idle m=0 = авторская ширина, гейт m=1 = компенсирован). Без
+  // авторских ног (монстры/процедурка, idle не задаёт LeftUpperLeg) ноги ВСЕГДА реконструкция → аддукт полный (иначе splay бинда).
+  applyLegAdduct(human, (idle && idle['LeftUpperLeg']) ? m : 1);
+  // ТОРС/ШЕЯ держат idle-стойку при ПОВОРОТЕ НА МЕСТЕ: блендим к гейту по МГНОВЕННОЙ скорости (armMag=0 стоя/крутясь), а не по
+  // legMag (=1 на подшаге) — иначе спина разгибалась/клонило назад при развороте. При движении (armMag→1) — гейт-наклон. Скрутка
+  // к прицелу (applyTorsoTwist) и head-look-at идут ОТДЕЛЬНО поверх этого.
+  blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, armMag);
+  blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, armMag);
+  blendBone(human, 'Head', [0, 0, 0], idle, armMag);
   applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
@@ -444,6 +455,12 @@ export function loadGaitLocal(charId: string, gx: GXKnobs, fallbackId?: string):
  *  игра при нетюненом персонаже. 0.85 (не 0): без тюна рендер вёлся ЧИСТОЙ физикой — быстрый бег моторы не догоняют +
  *  реконструкция 21-кости из 15-тел укорачивает ноги (стопы вниз/провал). Высокий match → рендер ведёт аналит-поза. */
 export const DEFAULT_MATCH = 0.85;
+export const ATK_MATCH = 0.92;   // пиковый вес совпадения с авторской позой во время удара (физика одна не доводит быстрый замах до конечных кадров)
+/** ЕДИНЫЙ вес совпадения РЕНДЕРА с позой-целью (физика→поза-бленд) для игры И редактора-локо → атлас-скин 1:1. Авторский
+ *  per-кадр __match (если задан в кадре удара), иначе max(база персонажа, ATK_MATCH·огибающая удара). */
+export function renderMatchWeight(base: number, attackWeight: number, attackMatch: number | null): number {
+  return attackMatch != null ? attackMatch : Math.max(base, ATK_MATCH * attackWeight);
+}
 /** Вес совпадения РЕНДЕРА с манекеном (RB2, 0..1) per-char из pe_phys; фолбэк (монстры → Волкодав). Для ИГРЫ. */
 export function loadMatch(charId: string, fallbackId?: string): number {
   const cfg = readJSON<Record<string, { match?: number }>>('pe_phys', {});
@@ -514,6 +531,28 @@ export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: numb
   // rotateY аддитивен поверх авторской позы; цепочка Spine→…→Head накапливает → плечи/голова ведут, оружие (на UpperChest) следом.
   for (let i = 0; i < TWIST_BONES.length; i++) { const b = H.get(TWIST_BONES[i]!); if (b && weights[i]) b.rotateY(residual * weights[i]!); }
 }
+const _UP_Y = new THREE.Vector3(0, 1, 0);
+const _hlCur = new THREE.Quaternion(), _hlDes = new THREE.Quaternion(), _hlP = new THREE.Quaternion();
+const _hlFwd = new THREE.Vector3(), _hlR = new THREE.Vector3(), _hlU = new THREE.Vector3();
+const _hlM = new THREE.Matrix4();
+/** Head look-at + ВЕРТИКАЛЬ: стабилизация головы на ПРИЦЕЛ (мир-yaw), вертикально (up=мир-вверх → нет бокового наклона/ролла) И
+ *  на ЗАДАННЫЙ кивок `pitch` (не наследованный свинг-нырок от удара). weight 0..1: 1 = строго на курсор+вертикаль+кивок, 0 = как
+ *  есть (голова с телом), ~0.85 = держит + чуть гуляет (подмес). pitch (рад): 0 = ровно, <0 = вниз. Зови ПОСЛЕ applyTorsoTwist/overlayAttack. */
+export function applyHeadLookAt(human: Humanoid, aimYaw: number, weight: number, pitch = 0): void {
+  if (weight <= 0.001) return;
+  const head = human.bones.get('Head'); if (!head) return;
+  head.updateWorldMatrix(true, false);                         // мир головы = итог цепочки (после твиста/удара)
+  head.getWorldQuaternion(_hlCur);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);            // ЦЕЛЕВОЙ кивок: forward.y = sin(pitch) (<0 = вниз), горизонт = cos(pitch)
+  _hlFwd.set(Math.sin(aimYaw) * cp, sp, Math.cos(aimYaw) * cp).normalize();   // yaw→прицел, pitch→ЗАДАННЫЙ (убирает свинг-нырок корпуса)
+  _hlR.crossVectors(_UP_Y, _hlFwd);                            // right = up × fwd (горизонт, без ролла)
+  if (_hlR.lengthSq() < 1e-6) _hlR.set(1, 0, 0);              // смотрит строго вверх/вниз → произвольный right
+  _hlR.normalize(); _hlU.crossVectors(_hlFwd, _hlR).normalize();   // up = fwd × right (в плоскости fwd–мирВверх → нет наклона вбок)
+  _hlM.makeBasis(_hlR, _hlU, _hlFwd); _hlDes.setFromRotationMatrix(_hlM);   // целевая: смотрит на прицел, ВЕРТИКАЛЬНА
+  _hlCur.slerp(_hlDes, weight);                                // бленд итог→цель по весу (0.85 = держит + чуть гуляет)
+  const par = head.parent;
+  head.quaternion.copy(par ? par.getWorldQuaternion(_hlP).invert().multiply(_hlCur) : _hlCur);   // → локаль родителя
+}
 
 // ── Замер ТОЧНЫХ плантов стоп из авторской idle-позы (для приставного шага при повороте на месте) ──
 const STANCE_LEG_BONES = ['LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg', 'LeftFoot', 'RightFoot'];
@@ -529,7 +568,8 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
   for (const nm of STANCE_LEG_BONES) { const e = idle[nm]; if (e) { const b = human.bones.get(nm); if (b) b.rotation.set(e[0], e[1], e[2]); } }
-  applyLegAdduct(human);   // компенсация A-стойки бинда (стопа под таз) — ТОЧНО как в gaitToHumanoid, чтобы стойка ≡ бегу (иначе поворот дёргает ногу)
+  // Аддукт НЕ применяем: планты = АВТОРСКАЯ ширина стойки (как Позы-таб рисует idle, БЕЗ аддукта). idle в gaitToHumanoid тоже без
+  // аддукта (legMag=0), так что стойка ≡ планты. Реконструкция при подшаге (legMag→1) добирает аддукт и всё равно попадает в план.
   human.root.updateMatrixWorld(true);
   const h = hips.getWorldPosition(_ms0);
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
@@ -607,6 +647,13 @@ export class PosePlayer {
   get facing(): number { return this.aimYaw; }
   /** Текущий yaw таза (лаг) — для отладки/редактора. */
   get pelvisYaw(): number { return this.rootYaw; }
+  /** Пройденный путь тредмила (интеграл скорости) — редактору для скролла пола/оффсета маркеров. */
+  get posX(): number { return this.px; }
+  get posZ(): number { return this.pz; }
+  /** Сбросить путь тредмила в 0 (редактор: рестарт превью). */
+  resetPos(): void { this.px = 0; this.pz = 0; }
+  /** Вес совпадения рендера с позой на этом кадре (для физ-бленда атласа) — ЕДИНО с игрой. base = match персонажа. */
+  matchWeight(base: number): number { return renderMatchWeight(base, this.attackWeight, this.attackMatch); }
   /** Позировать this.human: тредмил-ноги (idle↔гейт по скорости) + верх (idle-стойка + мах + удар).
    *  Кормим гейт РЕАЛЬНЫМ yaw — StepPlanner видит смену facing и делает подшаг при повороте на месте; узость ног
    *  держит ЧИСТАЯ скорость (p.vel), а не дёрганая Δpos (её джиттер в vLat = ложный страйф разводил ноги). */
@@ -627,6 +674,7 @@ export class PosePlayer {
     const yaw = tl.rootYaw, tw = tl.residual; this.rootYaw = yaw; this.turning = tl.turning;
     this.px += vx * dt; this.pz += vz * dt;
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
+    this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
     const fwdC = vx * Math.sin(yaw) + vz * Math.cos(yaw), latC = vx * Math.cos(yaw) - vz * Math.sin(yaw);
     let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
     const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
@@ -644,7 +692,9 @@ export class PosePlayer {
     // мигают idle↔гейт = тик при развороте на месте.
     if (this.driver.stepping) this.stepHold = STEP_HOLD; else this.stepHold = Math.max(0, this.stepHold - dt);
     const want = this.stepHold > 0 ? 1 : this.moveMag;
-    this.legMag += (want - this.legMag) * Math.min(1, dt * 6);    // сглаживание — резкое переключение idle↔гейт дребезжит
+    // Асимметрия скорости: ВХОД в гейт (шаг) — резво (отзывчивый подшаг); ВЫХОД в idle (конец поворота) — мягче, иначе поза
+    // «оседает» рывком при остановке (ноги морфятся гейт→idle-стойка плавно). Резкое переключение idle↔гейт дребезжит.
+    this.legMag += (want - this.legMag) * Math.min(1, dt * (want >= this.legMag ? 6 : 3.5));
     this.human.root.updateMatrixWorld(true);
     if (this.legMag > 0.5) {                                      // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
@@ -652,5 +702,6 @@ export class PosePlayer {
     }
     gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat);
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
+    applyHeadLookAt(this.human, this.aimYaw, twist.headLook, twist.headPitch);   // голова на ПРИЦЕЛ + ЗАДАННЫЙ кивок (убирает свинг-нырок от удара)
   }
 }

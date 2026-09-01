@@ -11,13 +11,22 @@
  */
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { makeBakeRig, autoBoneMap, OUR_BONES } from './retarget3d.js';
+import { makeBakeRig, autoBoneMap, enforceTPose, FULL_AIM_CHILD, OUR_BONES } from './retarget3d.js';
 import type { Clip, Keyframe, Pose } from './poseRuntime.js';
 
 const RAD2DEG = 180 / Math.PI;
 const clonePose = (p: Pose): Pose => { const o: Pose = {}; for (const k in p) { const v = p[k]!; o[k] = [v[0], v[1], v[2]]; } return o; };
 const cloneKey = (k: Keyframe): Keyframe => ({ t: k.t, pose: clonePose(k.pose) });
-const readOurPose = (H: Humanoid): Pose => { const f = H.readPose(); const o: Pose = {}; for (const b of OUR_BONES) if (f[b]) o[b] = f[b]!; return o; };
+// Маска тела: НИЗ = таз+ноги, ВЕРХ = всё остальное (спина/шея/голова/плечи/руки/кисти). Для компоновки клипов (верх атаки + свои ноги).
+const LOWER_BONES = new Set<string>(['Hips', 'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes']);
+const readOurPose = (H: Humanoid, keep?: Set<string>, idle?: Pose): Pose => {
+  const f = H.readPose(); const o: Pose = {};
+  for (const b of OUR_BONES) {
+    if (!keep || keep.has(b)) { if (f[b]) o[b] = f[b]!; }                                   // маскированная кость → импортное движение
+    else if (idle && idle[b]) { const v = idle[b]!; o[b] = [v[0], v[1], v[2]]; }            // не-маскированная (напр. ноги при маске «верх») → из НАШЕЙ idle-стойки
+  }
+  return o;
+};
 
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _qc = new THREE.Quaternion();
 const _ea = new THREE.Euler(), _eb = new THREE.Euler(), _ec = new THREE.Euler();
@@ -70,6 +79,9 @@ export interface BakeOptions {
   loop?: boolean;                                // цикл; не задан → эвристика по имени (walk/run/idle)
   boneMap?: Record<string, string>;              // ручная карта костей; не задана → autoBoneMap
   name?: string;                                 // имя клипа; не задано → имя анимации/файла
+  body?: 'full' | 'upper' | 'lower';             // маска тела: всё / только верх (торс+руки) / только низ (таз+ноги) — для компоновки клипов
+  idlePose?: Pose;                               // наша idle-стойка: заполняет НЕ-маскированные кости (ноги при маске «верх») + идёт первым/последним кадром (если anchorIdle)
+  anchorIdle?: boolean;                          // клип idle→движение→idle: добавить idle-стойку первым и последним ключом (бесшовный вход/выход)
 }
 export interface BakeResult {
   clip: Clip;
@@ -102,10 +114,31 @@ export async function bakeAnimationToClip(file: File, opts: BakeOptions): Promis
 
   const boneMap = opts.boneMap ?? autoBoneMap(skeletonBoneNames(root));
 
+  // ── ДИАГНОСТИКА (консоль браузера, F12) — почему клип может выйти статичным (2 ключа = idle) ──
+  {
+    const allBones: string[] = []; root.traverse((o) => { if ((o as THREE.Bone).isBone) allBones.push(o.name); });
+    const dup = [...new Set(allBones.filter((n, i) => allBones.indexOf(n) !== i))];
+    const mapped = OUR_BONES.filter((b) => boneMap[b]), unmapped = OUR_BONES.filter((b) => !boneMap[b]);
+    console.log(`[clipBaker] «${anim.name}» dur=${anim.duration.toFixed(2)}s треков=${anim.tracks.length} | костей=${allBones.length}${dup.length ? ` ⚠ДУБЛЬ-ИМЁН=${dup.length}` : ''}`);
+    console.log('[clipBaker] autoBoneMap:', mapped.length + '/' + OUR_BONES.length, unmapped.length ? '⚠ НЕ смаплено: ' + unmapped.join(',') : '(все смаплены)');
+    console.log('[clipBaker] кости FBX:', allBones.join(', '));
+    console.log('[clipBaker] треки анимации (кости, что она реально крутит):', anim.tracks.map((t) => t.name).slice(0, 24).join(' | ') + (anim.tracks.length > 24 ? ' …' : ''));
+  }
+
   // Нормализация Z-up→Y-up (CC/AccuRIG): обратный ретаргет наследует канон-фрейм нашего рига (Y-up/+Z).
   const byName = new Map<string, THREE.Object3D>();
   root.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o); });
   if (byName.size === 0) root.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });
+
+  // Ставим ИСТОЧНИК в канон-T (руки ±X) ПЕРЕД снятием rest: обратный ретаргет считает дельты ОТ rest-позы. Если rest =
+  // кадр-0/A-поза (частый случай анимационных ФБХ) → дельты рук огромные от нашей T → «тело в T, руки мельницей». enforceTPose
+  // сам делает up-fix и восстанавливает корень; меняет только локальные повороты рук → mixer их перезапишет при проигрывании.
+  const bm = boneMap as Record<string, string>;
+  const rdir = (a: string, b: string): string => { const ba = byName.get(bm[a] ?? ''), bb = byName.get(bm[b] ?? ''); if (!ba || !bb) return '—'; root.updateMatrixWorld(true); const v = bb.getWorldPosition(new THREE.Vector3()).sub(ba.getWorldPosition(new THREE.Vector3())).normalize(); return `[${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)}]`; };
+  console.log('[clipBaker] rest ДО enforce: рука L', rdir('LeftUpperArm', 'LeftLowerArm'), 'нога L', rdir('LeftUpperLeg', 'LeftLowerLeg'), '(T-поза: рука [±1,0,0], нога [0,-1,0])');
+  enforceTPose(root, boneMap, FULL_AIM_CHILD);   // ВСЁ тело в канон-T (руки±X, ноги вниз, спина вверх) → dельты аним от настоящей T, любая начальная поза источника
+  console.log('[clipBaker] rest ПОСЛЕ enforce: рука L', rdir('LeftUpperArm', 'LeftLowerArm'), 'нога L', rdir('LeftUpperLeg', 'LeftLowerLeg'));
+
   let loaded: THREE.Object3D = root;
   const hip = byName.get(boneMap['Hips'] ?? ''), head = byName.get(boneMap['Head'] ?? '');
   if (hip && head) {
@@ -120,23 +153,46 @@ export async function bakeAnimationToClip(file: File, opts: BakeOptions): Promis
   const action = mixer.clipAction(anim); action.play();
 
   const fps = Math.max(1, opts.fps ?? 30), dt = 1 / fps, dur = anim.duration;
+  // Маска тела: какие кости оставить в клипе (верх/низ/всё). Клип с частью костей — остальные ведёт другой клип/гейт.
+  const keep = opts.body === 'upper' ? new Set(OUR_BONES.filter((b) => !LOWER_BONES.has(b)))
+    : opts.body === 'lower' ? LOWER_BONES : undefined;
   const dense: Keyframe[] = [];
   for (let t = 0; t < dur + dt * 0.5; t += dt) {
     const tt = Math.min(t, dur);
     mixer.setTime(tt);
     loaded.updateMatrixWorld(true);
     bake.sampleInto(H);
-    dense.push({ t: tt, pose: readOurPose(H) });
+    dense.push({ t: tt, pose: readOurPose(H, keep, opts.idlePose) });
   }
   mixer.stopAllAction();
 
+  // Вариативность семпла: макс. движение позы по кадрам. ≈0 → анимация НЕ дошла до снимаемых костей (карта/дубль-скелет/
+  // применение микшера) → клип схлопнется в бинд/idle (первый=последний). Прямой сигнал корня проблемы «2 кадра».
+  { let maxVar = 0, worst = ''; const p0 = dense[0]?.pose ?? {};
+    for (const k of dense) for (const b in k.pose) { const a0 = p0[b]; if (!a0) continue; const c = k.pose[b]!;
+      _qa.setFromEuler(_ea.set(a0[0], a0[1], a0[2])); _qc.setFromEuler(_ec.set(c[0], c[1], c[2]));
+      const d = _qa.angleTo(_qc) * RAD2DEG; if (d > maxVar) { maxVar = d; worst = b; } }
+    console.log(`[clipBaker] семпл: ${dense.length} кадров | макс.движение позы = ${maxVar.toFixed(1)}° (${worst || '—'})`,
+      maxVar < 2 ? '← ⚠ СТАТИЧНО: анимация не дошла до костей (см. карту/дубль/треки выше)' : '✓ движение есть → прореживание в ключи');
+  }
+
   const reduced = reduceKeyframes(dense, opts.epsDeg ?? 3);
   const t0 = reduced.length ? reduced[0]!.t : 0;
-  const keys: Keyframe[] = reduced.map((k) => ({ t: +(k.t - t0).toFixed(4), pose: k.pose }));
+  let keys: Keyframe[] = reduced.map((k) => ({ t: +(k.t - t0).toFixed(4), pose: k.pose }));
+  // ЯКОРЬ IDLE: клип idle→движение→idle. Первый и последний ключ = наша idle-стойка (по костям, что есть в клипе) → атака
+  // бесшовно входит из стойки и возвращается в неё. Импортные ключи сдвигаем на переход. Середину юзер докручивает.
+  if (opts.anchorIdle && opts.idlePose && keys.length) {
+    const idle = opts.idlePose, trans = 0.12, lastT = keys[keys.length - 1]!.t;
+    const idleKey = (): Pose => { const o: Pose = {}; for (const b of Object.keys(keys[0]!.pose)) { const v = idle[b]; if (v) o[b] = [v[0], v[1], v[2]]; } return o; };
+    keys = [{ t: 0, pose: idleKey() },
+      ...keys.map((k) => ({ t: +(k.t + trans).toFixed(4), pose: k.pose })),
+      { t: +(lastT + 2 * trans).toFixed(4), pose: idleKey() }];
+  }
   const loop = opts.loop ?? /walk|run|idle|цикл|loop|ход|бег/i.test(anim.name || '');
   const clip: Clip = {
     name: opts.name ?? (anim.name || file.name.replace(/\.[^.]+$/, '')),
     character: opts.character, weapon: opts.weapon, loop, keys,
+    idleEnds: !!(opts.anchorIdle && opts.idlePose),   // концы = idle → редактор блокирует их и синкает из стойки (как удары)
   };
   return { clip, boneMap, frames: dense.length, keys: keys.length, animations: animations.map((a, i) => a.name || `anim ${i}`) };
 }
