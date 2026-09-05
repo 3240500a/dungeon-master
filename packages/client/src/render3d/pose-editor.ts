@@ -18,6 +18,8 @@ import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRag
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';
+import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
+import { trajectorySamples, polylineLength, arcRatio, excursion } from './trajectory.js';                                          // Ф10: траектория кости
 import { requestGeneration, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
 import { capturePose, pastePose, pasteIntoInterval, mirrorPoseSide, flipPoseSides, flipClip, mirrorClip,
   rotateClipPhase, comparePoses, EMPTY_POSE_LIBRARY, type PoseLibrary } from './poseLibrary.js';   // Ф7: библиотека поз и copy-tools   // Ф6: тайм-лайн с дорожками
@@ -796,7 +798,7 @@ for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn
 const modelsTab = createModelsTab(scene);
 let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateLimitGizmo(); }
+function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 function refreshLimbs(): void { if (tab === 'anim') renderAnim(); }
 
@@ -1358,7 +1360,12 @@ function clipSection(): void {
       if (frameIdx < lastI) pr2.append(pbtn('из след. ▶', () => pull(() => clonePose(c.keys[frameIdx + 1]!.pose))));
       if (frameIdx > 0 && frameIdx < lastI) pr2.append(pbtn('⇄ середина (пред+след)', () => pull(() => blendTwo(c.keys[frameIdx - 1]!.pose, c.keys[frameIdx + 1]!.pose, 0.5))));
     }
-    body.append(pbtn('🧅 призраки соседних кадров', () => { onionOn = !onionOn; refreshAll(); }, onionOn));
+    { const vr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(vr);
+    vr.append(pbtn('🧅 призраки соседних кадров', () => { onionOn = !onionOn; refreshAll(); }, onionOn));
+    trajBtn = pbtn(trajLabel(), () => { trajOn = !trajOn; refreshAll(); }, trajOn);
+    trajBtn.title = 'Путь выбранной кости за весь клип. Расстояние между точками = скорость (сетка времени равномерная).';
+    vr.append(trajBtn); }
+  curveSection(c);
   }
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); eh.textContent = 'ЭКСПОРТ / ИМПОРТ'; body.append(eh);
   const ta = el('textarea', 'width:100%;height:70px;background:#0e1016;color:#9ae6a0;border:1px solid #39415a;border-radius:4px;font:10px monospace') as HTMLTextAreaElement; body.append(ta);
@@ -2273,6 +2280,96 @@ function applyPoseTo(h: Humanoid, p: Pose): void {   // применить по�
   h.reset();
   for (const nm in p) { if (nm[0] === '_') continue; const b = h.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); }
   h.bones.get('Hips')!.position.copy(human.bones.get('Hips')!.position);
+}
+
+// Ф10: ГРАФ КРИВОЙ — ручки безье вместо трёх кнопок-пресетов. Редактируется РЕМАП ФАЗЫ интервала
+// (общий на все кости): клип хранит ПОЗУ ЦЕЛИКОМ на ключ, а не дорожки на кость — см. шапку curveEditor.ts.
+let curvePanel: CurvePanel | null = null;
+let curveUndo: LibState | null = null;   // снимок на НАЧАЛЕ таскания ручки (та же грабля, что у гизмо: писать после = откат отстаёт на шаг)
+function curveSection(c: Clip): void {
+  if (!uiPro || !c.keys.length) return;
+  const hh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); hh.textContent = 'КРИВАЯ ПЕРЕХОДА'; body.append(hh);
+  if (frameIdx >= c.keys.length - 1) {
+    const t = el('div', 'color:#6b7180;font-size:10px'); t.textContent = 'Последний кадр — исходящего интервала нет. Кривая живёт на НАЧАЛЕ перехода.';
+    body.append(t); return;
+  }
+  const host = el('div', 'height:132px;background:#0e1016;border:1px solid #39415a;border-radius:4px;margin-bottom:3px'); body.append(host);
+  curvePanel?.dispose();
+  const keyAt = (): Keyframe | null => curClip()?.keys[frameIdx] ?? null;
+  curvePanel = makeCurvePanel(host, {
+    key: keyAt,
+    onChange: (ease: Ease, live: boolean) => {
+      const cc = curClip(); const kk = cc?.keys[frameIdx]; if (!cc || !kk) return;
+      if (live && !curveUndo) curveUndo = libSnap();      // снимок ДО первой правки драга
+      kk.interp = 'ease'; kk.ease = ease;
+      if (!live) {
+        saveLib();
+        if (curveUndo) { const before = curveUndo, after = libSnap(); history.push('кривая перехода', () => libRestore(before), () => libRestore(after)); curveUndo = null; }
+      }
+      refreshTimeline();
+    },
+    onPreview: (u: number) => { const cc = curClip(); const a = cc?.keys[frameIdx], b = cc?.keys[frameIdx + 1]; if (a && b) preview(a.t + (b.t - a.t) * u); },
+  });
+  const row = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(row);
+  const cur = keyAt();
+  const active = cur && cur.interp === 'ease' ? matchPreset(easeOfKey(cur)) : null;
+  for (const pr of CURVE_PRESETS) {
+    const b = pbtn(pr.label, () => histLib('кривая: ' + pr.label, () => {
+      const cc = curClip(); if (!cc) return;
+      const sl = tl.selection(); const idx = sl.length ? sl : [frameIdx];
+      setInterp(cc.keys, idx, 'ease', [...pr.ease] as Ease);
+      saveLib(); refreshAll();
+    }), active === pr.id);
+    b.title = pr.hint; row.append(b);
+  }
+  const note = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
+  note.textContent = 'Форма общая на весь интервал: ключ хранит позу целиком, а не дорожки на кость.';
+  body.append(note);
+}
+
+// Ф10: ТРАЕКТОРИЯ выбранной кости во вьюпорте (Cascadeur Trajectories).
+// Сэмплим тем же clipSegmentAt, что и проигрыватель — линия показывает РЕАЛЬНЫЙ путь, вместе с кривыми.
+let trajOn = false; let trajBtn: HTMLButtonElement | null = null;
+let trajLine: THREE.Line | null = null, trajDots: THREE.Points | null = null, trajKeys: THREE.Points | null = null;
+let trajArc = 0, trajLen = 0, trajSpan = 0;
+function trajLabel(): string { return trajOn && trajLen > 0 ? `↷ дуга ×${trajArc.toFixed(2)} · размах ${trajSpan.toFixed(0)} · путь ${trajLen.toFixed(0)}` : '↷ траектория кости'; }
+function trajVisible(v: boolean): void { for (const o of [trajLine, trajDots, trajKeys]) if (o) o.visible = v; }
+function updateTrajectory(): void {
+  const c = trajOn && tab === 'anim' ? curClip() : null;
+  const boneName = selected && human.bones.get(selected) ? selected : 'LeftHand';
+  const bone = human.bones.get(boneName);
+  if (!c || c.keys.length < 2 || !bone) { trajVisible(false); trajLen = 0; if (trajBtn) trajBtn.textContent = trajLabel(); return; }
+  // СНИМОК позы манекена: сэмплить будем на НЁМ (второй гуманоид = ещё 30-60 групп на каждый рефреш)
+  const snapQ = human.boneNames.map((n) => human.bones.get(n)!.quaternion.clone());
+  const snapHip = human.hips.position.clone();
+  const pts: THREE.Vector3[] = [], kpts: THREE.Vector3[] = [];
+  const v = new THREE.Vector3();
+  for (const smp of trajectorySamples(c, 5)) {
+    const seg = clipSegmentAt(c, smp.t); if (!seg) continue;
+    const pose = seg.a === seg.b ? seg.a.pose : blendTwo(seg.a.pose, seg.b.pose, seg.u);
+    human.reset();
+    for (const nm in pose) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(pose[nm]![0], pose[nm]![1], pose[nm]![2]); }
+    { const hp = pose['__hipsP']; if (hp) human.hips.position.set(hp[0], hp[1], hp[2]); }
+    human.root.updateMatrixWorld(true);
+    bone.getWorldPosition(v);
+    pts.push(v.clone()); if (smp.key >= 0) kpts.push(v.clone());
+  }
+  human.boneNames.forEach((n, i) => human.bones.get(n)!.quaternion.copy(snapQ[i]!));
+  human.hips.position.copy(snapHip); human.root.updateMatrixWorld(true);
+
+  const arr = pts.map((q) => [q.x, q.y, q.z] as [number, number, number]);
+  trajLen = polylineLength(arr); trajArc = arcRatio(arr); trajSpan = excursion(arr);
+  if (!trajLine) {
+    trajLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x9ae6a0, depthTest: false, transparent: true, opacity: 0.9 }));
+    trajDots = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0x9ae6a0, size: 1.1, depthTest: false, transparent: true, opacity: 0.75 }));
+    trajKeys = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0xffcf66, size: 2.6, depthTest: false }));
+    for (const o of [trajLine, trajDots, trajKeys]) { o.renderOrder = 6; o.frustumCulled = false; scene.add(o); }
+  }
+  trajLine.geometry.dispose(); trajLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+  trajDots!.geometry.dispose(); trajDots!.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+  trajKeys!.geometry.dispose(); trajKeys!.geometry = new THREE.BufferGeometry().setFromPoints(kpts);
+  trajVisible(true);
+  if (trajBtn) trajBtn.textContent = trajLabel();
 }
 function updateOnion(): void {
   if (atlasBS()) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; return; }   // атлас → только скелет+модель
