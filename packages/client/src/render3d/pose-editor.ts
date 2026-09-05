@@ -28,9 +28,9 @@ import { capturePose, pastePose, pasteIntoInterval, mirrorPoseSide, flipPoseSide
   rotateClipPhase, comparePoses, EMPTY_POSE_LIBRARY, type PoseLibrary } from './poseLibrary.js';   // Ф7: библиотека поз и copy-tools   // Ф6: тайм-лайн с дорожками
 import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
   mergeBoneScale, applyMorphChange, sampleMorph, rangeWarnings, type BodyMorph, type MorphKey, type MorphRange } from './bodyMorph.js';   // Ф8: морфинг тела   // Ф4: пины + full-body IK
-import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
+import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, mirrorHandPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits((b) => extraLimitView(b, fingerAxes()));   // до первого limitViewForBone; Ф14.4 — оси из ЭТОГО рига
-import { deriveFingerAxes, type FingerAxes } from './fingerAxes.js';   // Ф14.4: оси сгиба пальцев из геометрии рига
+import { deriveFingerAxes, bindCurlReport, type FingerAxes } from './fingerAxes.js';   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
@@ -1185,15 +1185,54 @@ function gripSection(): void {
     sel.value = (side === 'L' ? bind.L : bind.R) ?? 'open';
     sel.onchange = () => { if (side === 'L') bind.L = sel.value; else bind.R = sel.value; saveGrips(); goFrame(frameIdx); };
     row.append(sel);
-    const sl = el('input', 'width:70px') as HTMLInputElement;
+    // Ф16: слайдер «раскрытая ладонь ↔ хват» — своя строка с подписями концов и числом.
+    // Раньше это был безымянный ползунок в 70px, и его смысл (а на нуле теперь ВЫПРЯМЛЕНИЕ, а не
+    // бинд модели) прочитать было неоткуда.
+    const row2 = el('div', 'display:flex;align-items:center;gap:5px;margin:1px 0 4px 56px'); body.append(row2);
+    const cap = (t: string): HTMLElement => { const e = el('span', 'font-size:10px;color:#8a90a0;white-space:nowrap'); e.textContent = t; return e; };
+    const num = el('span', 'font-size:10px;color:#cfd6e6;width:26px;text-align:right;font-variant-numeric:tabular-nums');
+    const sl = el('input', 'flex:1;min-width:60px') as HTMLInputElement;
     sl.type = 'range'; sl.min = '0'; sl.max = '1'; sl.step = '0.05';
     sl.value = String((side === 'L' ? bind.closeL : bind.closeR) ?? 1);
-    sl.title = 'сжатие: 0 = раскрытая кисть, 1 = пресет как есть';
-    sl.oninput = () => { const v = parseFloat(sl.value); if (side === 'L') bind.closeL = v; else bind.closeR = v; applyGripOver(curClip()?.keys[frameIdx]?.pose); };
+    sl.title = '0 = ладонь принудительно выпрямлена (бинд-сгиб модели вычтен), 1 = хват как в пресете';
+    const show = (): void => { num.textContent = Math.round(parseFloat(sl.value) * 100) + '%'; };
+    show();
+    sl.oninput = () => { const v = parseFloat(sl.value); if (side === 'L') bind.closeL = v; else bind.closeR = v; show(); applyGripOver(curClip()?.keys[frameIdx]?.pose); };
     sl.onchange = () => saveGrips();
-    row.append(sl);
+    row2.append(cap('ладонь'), sl, cap('хват'), num);
   };
   hand('R', 'правая'); hand('L', 'левая');
+  // Насколько кисти пришли поджатыми. Хват это выпрямляет молча, но цифра объясняет, почему кисть
+  // в модели и кисть в редакторе выглядят по-разному — и что Л с П в модели РАЗНЫЕ (у CC так всегда).
+  {
+    const ax = fingerAxes();
+    const l = bindCurlReport('Left', ax), r = bindCurlReport('Right', ax);
+    const d = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
+    d.textContent = (l.max < 1 && r.max < 1)
+      ? 'бинд-кисть модели прямая — выпрямлять нечего'
+      : `бинд модели поджат: Л ${l.avg.toFixed(0)}° (макс ${l.max.toFixed(0)}°), П ${r.avg.toFixed(0)}° (макс ${r.max.toFixed(0)}°) — вычитается из хвата`;
+    body.append(d);
+  }
+  // ЗАПЕЧЁННЫЕ ФАЛАНГИ В КЛИПАХ ГЛУШАТ ХВАТ — и это невидимо.
+  // Кадр с явно записанными фалангами хват не перебивает (это дизайн: Про-режим правит пальцы
+  // руками). Но старые клипы держат фаланги, записанные ПРОШЛОЙ формулой хвата — замерено на
+  // knight_05: все 15 фаланг правой кисти забиты почти-нулями, то есть рука намертво стояла в бинде
+  // (MCP 78°, полукулак), а слайдер на неё НЕ ДЕЙСТВОВАЛ и выглядел сломанным.
+  // Показываем это числом и даём вернуть канал хвату одной кнопкой.
+  {
+    const clips = library.filter((c) => c.character === curCharId);
+    let frames = 0;
+    for (const c of clips) for (const k of c.keys) if (Object.keys(k.pose).some(isHandBone)) frames++;
+    if (frames) {
+      const w = el('div', 'color:#c8b06a;font-size:10px;margin-top:3px');
+      w.textContent = `⚠ фаланги записаны в кадрах: ${frames} — там хват и слайдер не действуют`;
+      body.append(w, pbtn('✕ отдать пальцы хвату', () => {
+        if (!confirm(`Убрать записанные фаланги из ${frames} кадров «${curCharId}»?\nПальцами снова будет управлять хват.`)) return;
+        for (const c of clips) for (const k of c.keys) for (const nm of Object.keys(k.pose)) if (isHandBone(nm)) delete k.pose[nm];
+        saveLib(); goFrame(frameIdx); refreshAll();
+      }));
+    }
+  }
   if (uiPro) {
     const row = el('div', 'margin-top:3px'); body.append(row);
     row.append(
@@ -1205,12 +1244,12 @@ function gripSection(): void {
         bind.L = id; bind.R = id; saveGrips(); refreshAll();
       }),
       pbtn('⇄ зеркало П→Л', () => histPose('зеркало хвата', () => {
-        for (const nmb of human.boneNames) { if (!isHandBone(nmb) || !nmb.startsWith('Right')) continue;
-          const dst = human.bones.get('Left' + nmb.slice(5)); const src = human.bones.get(nmb)!.rotation;
-          // Ф14.4: канон-зеркало нашего рига — `[x, −y, −z]` (`clipModel.mirrorSide`), а не самодельное
-          // `[−x, −y, z]`. Раньше оно случайно совпадало со знаками старого хвата; после переноса сгиба
-          // на выведенную ось совпадение бы кончилось и зеркалило бы палец не туда.
-          if (dst) dst.rotation.set(src.x, -src.y, -src.z); }
+        // Ф16: зеркало живёт в `gripPoses.mirrorHandPose` — кроме канон-знаков `[x, −y, −z]` оно добавляет
+        // разницу бинд-избытков: у модели кисти поджаты ПО-РАЗНОМУ, и голое зеркало углов давало бы
+        // левую кисть с другим абсолютным сгибом (на knight_05 — на 8° в MCP указательного).
+        const src: Pose = {};
+        for (const nmb of human.boneNames) if (isHandBone(nmb) && nmb.startsWith('Right')) { const r = human.bones.get(nmb)!.rotation; src[nmb] = [r.x, r.y, r.z]; }
+        applyGripPose(human.bones, mirrorHandPose(src, 'Right', fingerAxes()));
       })),
       pbtn('✕ сброс привязки', () => { delete (gripCfg.byWeapon[curCharId] ?? {})[weapon]; saveGrips(); goFrame(frameIdx); refreshAll(); }),
     );
@@ -2710,7 +2749,10 @@ function loop(): void {
   // РАНЬШЕ, чем догрузится GLB — манекен пересобирался с `fingers:false`, и пальцы не появлялись, пока
   // не нажмёшь ✋. Со стороны это выглядело как «пальцы не работают».
   { const bs = modelsTab.boneScale(), hf = modelsTab.hasFingers(), bo = modelsTab.boneOffsets();
-    if (bs !== lastBS || hf !== lastHasFingers || bo !== lastBO) { lastBS = bs; lastHasFingers = hf; lastBO = bo; rebuildManikin(); if (pw) buildGhost(); disposeOnion(); } }
+    if (bs !== lastBS || hf !== lastHasFingers || bo !== lastBO) { lastBS = bs; lastHasFingers = hf; lastBO = bo; rebuildManikin(); if (pw) buildGhost(); disposeOnion();
+      // Ф16: панель тоже читает геометрию манекена (отчёт о поджатости бинда, состояние кнопки ⪼пальцы).
+      // Атлас догружается ПОСЛЕ отрисовки панели, и без этого она врала: «бинд прямой» на кисти, согнутой на 22°.
+      refreshAll(); } }
   // Атлас-скин ведём ФИЗ-телом (ghostHuman) — как игра (скин на solid) → превью атласа = игра. Физ off → манекеном.
   // ghostHuman позирован stepPhysics выше (физ-бленд по PHYS.match), у него та же геометрия атласа (buildGhost).
   modelsTab.drive(physOn && ghostHuman ? ghostHuman : human);   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена

@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  BUILTIN_GRIPS, findGrip, gripToPose, gripToPoseBoth, handBones, isHandBone,
-  resolveGripPose, defaultWeaponGrip, applyGripPose, EMPTY_GRIP_CONFIG, type GripConfig,
+  BUILTIN_GRIPS, findGrip, gripToPose, gripToPoseBoth, handBones, isHandBone, straightHandPose,
+  resolveGripPose, defaultWeaponGrip, applyGripPose, mirrorHandPose, EMPTY_GRIP_CONFIG, type GripConfig,
 } from './gripPoses.js';
 import { buildHumanoid } from './humanoid.js';
 import { allFingerBones } from './boneNames.js';
 import { extraLimitView } from './jointLimits.js';
 import { decomposeToLimit } from './jointClamp.js';
 import { mirrorSide, type Pose } from './clipModel.js';
-import { canonicalFingerAxes } from './fingerAxes.js';
+import { canonicalFingerAxes, type FingerAxes } from './fingerAxes.js';
 
 /**
  * Ф14.4: сгиб живёт на ВЫВЕДЕННОЙ оси, а не в фиксированной компоненте эйлера, поэтому проверяем
@@ -179,25 +179,93 @@ describe('gripPoses — наложение на скелет', () => {
   });
 });
 
-describe('gripPoses — хват не складывается с бинд-сгибом (Ф15.4)', () => {
-  it('ГЛАВНОЕ: на полусогнутой бинд-кисти «кулак» не переизгибает палец', () => {
+describe('gripPoses — пальцы выпрямляются принудительно (Ф16)', () => {
+  /** Кисть с бинд-сгибом: геометрия (оси) каноническая, сдвинут только избыток — тогда
+   *  `curl()` можно раскладывать канон-осями и читать его как чистый локальный доворот. */
+  const bindBent = (over: number): Record<string, FingerAxes> => {
+    const c = canonicalFingerAxes(); const out: Record<string, FingerAxes> = {};
+    for (const k in c) out[k] = { ...c[k]!, bindCurl: c[k]!.bindCurl + over };
+    return out;
+  };
+
+  it('ГЛАВНОЕ: на нуле слайдера палец ВЫПРЯМЛЯЕТСЯ, а не остаётся в бинде', () => {
+    // Раньше «открытая» значила «бинд как есть» — и две кисти одной модели с разным биндом
+    // на нуле выглядели по-разному. Теперь нуль — это отрицательный доворот на весь избыток.
+    const p = gripToPose(findGrip('fist')!, 'Left', 0, bindBent(0.5));
+    for (const nm of ['LeftIndexProximal', 'LeftMiddleIntermediate', 'LeftLittleDistal']) {
+      expect(curl(p, nm), nm).toBeCloseTo(-0.5, 2);
+    }
+  });
+
+  it('ЛЕВАЯ И ПРАВАЯ с РАЗНЫМ биндом приходят в ОДИН абсолютный угол на ОБОИХ концах', () => {
+    // Ровно то, что замерено на knight_05: MCP указательного 13.2° слева и 21.7° справа.
+    const c = canonicalFingerAxes(); const mixed: Record<string, FingerAxes> = {};
+    for (const k in c) mixed[k] = { ...c[k]!, bindCurl: c[k]!.bindCurl + (k.startsWith('Left') ? 0.23 : 0.38) };
+    for (const close of [0, 0.5, 1]) {
+      const p = gripToPoseBoth(findGrip('fist')!, findGrip('fist')!, close, close, mixed);
+      // Абсолютный сгиб = бинд-избыток + локальный доворот; у обеих кистей он обязан совпасть.
+      const absL = 0.23 + curl(p, 'LeftIndexProximal'), absR = 0.38 + curl(p, 'RightIndexProximal');
+      expect(absR, `close=${close}`).toBeCloseTo(absL, 4);
+      expect(absL, `close=${close}`).toBeCloseTo(1.45 * close, 4);   // и ровно в угол пресета
+    }
+  });
+
+  it('на полусогнутой бинд-кисти «кулак» не переизгибает палец', () => {
     const straight = canonicalFingerAxes();
-    const bent: Record<string, typeof straight[string]> = {};
-    // Избыток над каноном = ровно 0.5 в каждом суставе (структурный угол кисти при этом сохраняется).
-    for (const k in straight) bent[k] = { ...straight[k]!, bindCurl: straight[k]!.bindCurl + 0.5 };
     const pStraight = gripToPose(findGrip('fist')!, 'Left', 1, straight);
-    const pBent = gripToPose(findGrip('fist')!, 'Left', 1, bent);
-    // Локальный доворот на согнутой кисти МЕНЬШЕ ровно на то, что уже согнуто — в КАЖДОМ суставе.
+    const pBent = gripToPose(findGrip('fist')!, 'Left', 1, bindBent(0.5));
     for (const nm of ['LeftIndexProximal', 'LeftIndexIntermediate', 'LeftIndexDistal']) {
       expect(curl(pBent, nm), nm).toBeCloseTo(curl(pStraight, nm) - 0.5, 2);
     }
   });
 
-  it('«открытая» на любой кисти — это бинд модели, а не принудительное выпрямление', () => {
-    const straight = canonicalFingerAxes();
-    const bent: Record<string, typeof straight[string]> = {};
-    for (const k in straight) bent[k] = { ...straight[k]!, bindCurl: straight[k]!.bindCurl + 0.5 };
-    const p = gripToPose(findGrip('open')!, 'Left', 1, bent);
+  it('кисть, поджатая СИЛЬНЕЕ пресета, РАЗГИБАЕТСЯ до его угла, а не замирает на нуле', () => {
+    // Старый клэмп `Math.max(0, …)` оставлял такую кисть пережатой — и снова расходил Л с П.
+    const p = gripToPose(findGrip('relaxed')!, 'Left', 1, bindBent(1.2));
+    expect(curl(p, 'LeftIndexProximal')).toBeLessThan(0);
+    expect(1.2 + curl(p, 'LeftIndexProximal')).toBeCloseTo(1.45 * 0.3, 4);   // relaxed.Index = 0.3
+  });
+
+  it('ЗЕРКАЛО кисти учитывает, что Л и П поджаты ПО-РАЗНОМУ', () => {
+    // Модель с асимметричным биндом (как knight_05). Голое зеркало углов дало бы кисти с разным
+    // АБСОЛЮТНЫМ сгибом — визуально кисти были бы разные, хотя числа «зеркальные».
+    const c = canonicalFingerAxes(); const mixed: Record<string, FingerAxes> = {};
+    for (const k in c) mixed[k] = { ...c[k]!, bindCurl: c[k]!.bindCurl + (k.startsWith('Left') ? 0.23 : 0.38) };
+    const right = gripToPose(findGrip('fist')!, 'Right', 1, mixed);
+    const left = mirrorHandPose(right, 'Right', mixed);
+    expect(Object.keys(left).length).toBe(15);
+    for (const f of ['Index', 'Middle', 'Little'] as const) {
+      const nm = f + 'Proximal';
+      expect(0.38 + curl(right, 'Right' + nm), nm).toBeCloseTo(0.23 + curl(left, 'Left' + nm), 4);
+    }
+  });
+
+  it('зеркало на СИММЕТРИЧНОМ бинде — ровно канон-зеркало `[x, −y, −z]`', () => {
+    const right = gripToPose(findGrip('sword')!, 'Right');
+    const left = mirrorHandPose(right, 'Right');
+    const want = mirrorSide(right, 'Right');
+    for (const k in left) for (let i = 0; i < 3; i++) expect(left[k]![i]!, `${k}[${i}]`).toBeCloseTo(want[k]![i]!, 5);
+  });
+
+  it('straightHandPose на своём риге — чистые нули (выпрямлять нечего)', () => {
+    const p = straightHandPose('Left');
+    expect(Object.keys(p).length).toBe(15);
     for (const k in p) for (const c of p[k]!) expect(Math.abs(c), k).toBeLessThan(1e-9);
+  });
+
+  it('СВОЙ хват (готовые углы) тоже слушается слайдера', () => {
+    // Раньше слайдер на своём хвате молча не делал ничего.
+    const cfg: GripConfig = EMPTY_GRIP_CONFIG();
+    cfg.custom['my'] = { id: 'my', label: 'мой', pose: gripToPose(findGrip('fist')!, 'Right') };
+    cfg.byWeapon['w'] = { sword: { R: 'my', closeR: 1 } };
+    const full = curl(resolveGripPose(cfg, 'w', 'sword'), 'RightIndexProximal');
+    cfg.byWeapon['w']!['sword']!.closeR = 0;
+    const none = curl(resolveGripPose(cfg, 'w', 'sword'), 'RightIndexProximal');
+    cfg.byWeapon['w']!['sword']!.closeR = 0.5;
+    const half = curl(resolveGripPose(cfg, 'w', 'sword'), 'RightIndexProximal');
+    expect(full).toBeGreaterThan(1);
+    expect(Math.abs(none)).toBeLessThan(1e-4);        // на своём риге выпрямленная кисть = нули
+    expect(half).toBeGreaterThan(full * 0.4);
+    expect(half).toBeLessThan(full * 0.6);
   });
 });

@@ -130,6 +130,23 @@ export function bindCurlOver(bone: string, derived?: Record<string, FingerAxes> 
   return (derived?.[bone]?.bindCurl ?? c.bindCurl) - c.bindCurl;
 }
 
+/**
+ * НАСКОЛЬКО ЭТА КИСТЬ ПРИШЛА ПОДЖАТОЙ (градусы) — диагностика для редактора.
+ * Показывает то, что хват теперь выпрямляет молча: у CC/AccuRIG левая и правая кисти согнуты
+ * по-разному, и пока это не видно числом, «пальцы гнутся не так» выглядит как баг хвата.
+ */
+export function bindCurlReport(side: 'Left' | 'Right', derived?: Record<string, FingerAxes> | null): { avg: number; max: number } {
+  const DEG = 180 / Math.PI;
+  let sum = 0, n = 0, mx = 0;
+  for (const chain of FINGER_CHAINS) {
+    for (let seg = 0 as 0 | 1 | 2; seg <= 2; seg = (seg + 1) as 0 | 1 | 2) {
+      const v = bindCurlOver(boneName(side, chain, seg), derived);
+      sum += v; n++; mx = Math.max(mx, Math.abs(v));
+    }
+  }
+  return n ? { avg: (sum / n) * DEG, max: mx * DEG } : { avg: 0, max: 0 };
+}
+
 /** Оси кости с фолбэком на канон. Один вход для пределов, хватов и гизмо. */
 export function fingerAxesOf(bone: string, derived?: Record<string, FingerAxes> | null): FingerAxes | null {
   return derived?.[bone] ?? canonicalFingerAxes()[bone] ?? null;
