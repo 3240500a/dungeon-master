@@ -575,6 +575,156 @@
         -0.83,
         -2.54,
         5.81
+      ],
+      "LeftThumbProximal": [
+        -0.02,
+        -0.8,
+        1.71
+      ],
+      "LeftThumbIntermediate": [
+        -0.03,
+        -1.19,
+        2.56
+      ],
+      "LeftThumbDistal": [
+        0.11,
+        -0.55,
+        0.49
+      ],
+      "LeftIndexProximal": [
+        2.2,
+        -2.14,
+        3.73
+      ],
+      "LeftIndexIntermediate": [
+        0.3,
+        -1.02,
+        0.5
+      ],
+      "LeftIndexDistal": [
+        -0.01,
+        -1.07,
+        0.54
+      ],
+      "LeftMiddleProximal": [
+        2.6,
+        -2.41,
+        3.08
+      ],
+      "LeftMiddleIntermediate": [
+        0.53,
+        -1.16,
+        0.66
+      ],
+      "LeftMiddleDistal": [
+        -0.17,
+        -1.05,
+        0.43
+      ],
+      "LeftRingProximal": [
+        2.62,
+        -2.77,
+        2.52
+      ],
+      "LeftRingIntermediate": [
+        0.5,
+        -1.12,
+        0.34
+      ],
+      "LeftRingDistal": [
+        -0.3,
+        -0.89,
+        0.37
+      ],
+      "LeftLittleProximal": [
+        2.69,
+        -3.17,
+        2
+      ],
+      "LeftLittleIntermediate": [
+        0.15,
+        -0.83,
+        0.09
+      ],
+      "LeftLittleDistal": [
+        -0.21,
+        -0.63,
+        0.26
+      ],
+      "RightThumbProximal": [
+        -0.26,
+        -0.82,
+        1.85
+      ],
+      "RightThumbIntermediate": [
+        -0.38,
+        -1.23,
+        2.78
+      ],
+      "RightThumbDistal": [
+        0.06,
+        -0.52,
+        0.75
+      ],
+      "RightIndexProximal": [
+        -2.55,
+        -2.36,
+        4.35
+      ],
+      "RightIndexIntermediate": [
+        -0.34,
+        -0.85,
+        0.63
+      ],
+      "RightIndexDistal": [
+        -0.04,
+        -1.18,
+        0.58
+      ],
+      "RightMiddleProximal": [
+        -3,
+        -2.63,
+        3.68
+      ],
+      "RightMiddleIntermediate": [
+        -0.45,
+        -1.17,
+        0.67
+      ],
+      "RightMiddleDistal": [
+        0.14,
+        -1.2,
+        0.49
+      ],
+      "RightRingProximal": [
+        -3.03,
+        -3.05,
+        3.13
+      ],
+      "RightRingIntermediate": [
+        -0.34,
+        -1.08,
+        0.4
+      ],
+      "RightRingDistal": [
+        0.28,
+        -0.91,
+        0.37
+      ],
+      "RightLittleProximal": [
+        -3.09,
+        -3.42,
+        2.64
+      ],
+      "RightLittleIntermediate": [
+        0.03,
+        -0.85,
+        0.17
+      ],
+      "RightLittleDistal": [
+        0.11,
+        -0.66,
+        0.1
       ]
     },
     "base": false,

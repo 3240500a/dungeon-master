@@ -765,6 +765,7 @@ function applyChar(id: string): void {
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
   human = buildHumanoid({ gender: c.gender, build: morphBuild(c), style: manStyle(), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
   normalizeHipsOfChar(id);   // Ф12: rest-высота ЭТОГО тела только что стала известна — переводим его клипы в дельту
+  modelsTab.refreshProfile();   // Ф15.1: морф этого персонажа обязан уехать И в риг-источник, иначе меш не поедет за скелетом
   human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
@@ -918,7 +919,7 @@ const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => {
 const tabSwitch = (k: typeof tab): void => { if (k !== 'turn' && k !== 'loco' && locoOn) { locoOn = false; goFrame(frameIdx); } tab = k; refreshAll(); };
 for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
-const modelsTab = createModelsTab(scene);
+const modelsTab = createModelsTab(scene, () => atlasProfile());   // Ф15.1: риг-источник строится ТЕМ ЖЕ профилем, что манекен
 let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
 let lastHasFingers = false;          // Ф14.1: пальцы атласа появляются ПОЗЖЕ boneScale (после загрузки GLB)
 let lastBO: unknown;                 // Ф14.2: само-лечение дописывает офсеты пальцев уже ПОСЛЕ загрузки — следим за сменой ССЫЛКИ

@@ -42,6 +42,8 @@ export interface ModelsTabHandle {
   exportTarget(): { root: THREE.Object3D; boneMap: Record<string, string> } | null;
   /** Есть ли у ЗАГРУЖЕННОГО атласа кости пальцев — строить ли их в манекене (Ф3.1). */
   hasFingers(): boolean;
+  /** Ф15.1: пересобрать риг-источник под новый морф персонажа (скелет и меш обязаны ехать вместе). */
+  refreshProfile(): void;
   debug(): Record<string, unknown>;         // состояние (тесты/дебаг): атлас, сабмеши, видимость слотов, профиль
   dispose(): void;
 }
@@ -67,7 +69,14 @@ function slotOfSubmesh(name: string): ModelEntry['slot'] | undefined {
   return undefined;
 }
 
-export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
+/**
+ * Ф15.1: МОРФ ДВИГАЕТ И КОСТИ, И МЕШ (как параметры тела в MetaHuman).
+ * `charProfile` — телосложение атласа × морф ПЕРСОНАЖА, тот же, которым редактор строит манекен.
+ * Раньше риг-источник строился только профилем атласа, поэтому морф ехал на скелет и не ехал на меш —
+ * замерено: все кости манекена были ×1.08 от модели. Теперь конформ длин тянет кости модели тем же
+ * профилем, и скин едет следом.
+ */
+export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProfile | undefined): ModelsTabHandle {
   let cfg: AssetCfg = { models: [], materials: [], textures: [] };
   let loaded: THREE.Group | null = null;
   let rig: RetargetRig | null = null;
@@ -103,7 +112,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     // `fingers: true` ОБЯЗАТЕЛЕН (Ф14.1): без него `asmSrc.boneNames` не содержит фаланг, поэтому
     // driveAsm ниже не копирует их повороты, а `RetargetRig.drive` молча делает `continue`
     // (`driver.bones.get('LeftIndexProximal') === undefined`) — пальцы модели не шевелятся вообще.
-    asmSrc = buildHumanoid({ profile: asmProfile, boneScale: curAtlas()?.boneScale, boneOffsets: curAtlas()?.boneOffsets, fingers: true });   // геометрия ФБХ → source=физ-скелет 1:1
+    asmSrc = buildHumanoid({ profile: charProfile?.() ?? asmProfile, boneScale: curAtlas()?.boneScale, boneOffsets: curAtlas()?.boneOffsets, fingers: true });   // геометрия ФБХ → source=физ-скелет 1:1
     asmSrc.root.visible = false;                  // источник невидим — видим меши атласа поверх
     scene.add(asmSrc.root);
     asmSkin = createModelSkin(scene, asmSrc);     // новый скин на НОВЫЙ источник (конформ к профилю с нуля)
@@ -617,6 +626,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     boneScale: () => curAtlas()?.boneScale,   // пропорции ФБХ текущего атласа для манекена/призрака редактора
     boneOffsets: () => curAtlas()?.boneOffsets,   // полные rest-офсеты ФБХ для манекена/призрака (приоритет)
     profile: () => curAtlas()?.body,          // профиль тела атласа (как игра: solid/target с profile) → редактор строит тело им
+    refreshProfile: () => { if (asmSkin || asmSrc) rebuildAsm(); },
     hasFingers: () => { const t = asmSkin?.atlasExport(); return !!t && Object.keys(t.boneMap).some((b) => /(Thumb|Index|Middle|Ring|Little)(Proximal|Intermediate|Distal)$/.test(b)); },
     exportTarget: () => asmSkin?.atlasExport() ?? null,   // Ф2.3: экспорт со скином, если атлас загружен
     handBone: (our) => asmSkin?.atlasBone(our) ?? null,   // кисть ВИДИМОГО атласа (asmSkin) → оружие крепим к мешу, не к манекену

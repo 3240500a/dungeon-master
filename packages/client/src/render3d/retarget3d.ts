@@ -200,18 +200,66 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   if (hip0 && head0) { const dy = head0.y - hip0.y, dz = head0.z - hip0.z; const ax = Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }
   const hip = w('Hips'), head = w('Head'), foot = w('LeftFoot');
   const fbxH = (head && foot) ? (head.y - foot.y) : 0;
-  const scale = fbxH > 1e-3 ? 57 / fbxH : 1;   // нормировка к нашему росту ~57u
+  // Нормировка к РАЗМАХУ БАЗОВОГО РИГА (голова→лодыжка), а не к литералу 57: 57 — это Y головы, а размах
+  // базы = 56, и любой импорт получался на 1.8% крупнее базы. Пропорции модели нормировка сохраняет
+  // (один множитель на всё), абсолютный размер всё равно задаёт `scaleToSource` при сборке рига.
+  const scale = fbxH > 1e-3 ? baseSpanY() / fbxH : 1;
   const out: Record<string, [number, number, number]> = {};
   const legDrop = (hip && foot) ? (hip.y - foot.y) * scale : 32;
+  const chain = [...OUR_BONES, ...OUR_FINGERS] as string[];
+
+  // ── ШАГ 1: мировые позиции СМАПЛЕННЫХ костей в нормированном масштабе ────────────────────────────
+  const pos = new Map<string, THREE.Vector3>();
+  for (const our of chain) { const p = w(our); if (p) pos.set(our, p.multiplyScalar(scale)); }
+
+  // ── ШАГ 2: НЕСМАПЛЕННЫЕ ПРОМЕЖУТОЧНЫЕ — интерполяция по долям базового рига ─────────────────────
+  // Зачем: у CC/AccuRIG всего два спайна, `UpperChest` не мапится — и раньше это молча убивало офсеты
+  // ВСЕХ его детей (`Neck`, обе ключицы), потому что цикл делал `continue` при несмапленном родителе.
+  // Замерено на knight_05: 4 кости из 22 падали на хардкод-таблицу ровно посреди торса.
+  // Делаем как FK-цепи в UE: недостающее звено ставится по ДОЛЕ ДЛИНЫ вдоль отрезка «ближайший
+  // смапленный предок → ближайший смапленный потомок», доля берётся из базового рига.
+  const kids = new Map<string, string[]>();
+  for (const our of chain) { const p = parentOfOur(our); if (p) (kids.get(p) ?? kids.set(p, []).get(p)!).push(our); }
+  for (const our of chain) {
+    if (pos.has(our) || our === 'Hips') continue;
+    let anc = parentOfOur(our); while (anc && !pos.has(anc)) anc = parentOfOur(anc);
+    if (!anc) continue;
+    let dsc: string | undefined;                          // первый смапленный потомок вниз по цепи
+    for (let q: string[] = kids.get(our) ?? [], guard = 0; q.length && guard < 8; guard++) {
+      const hit = q.find((n) => pos.has(n)); if (hit) { dsc = hit; break; }
+      q = q.flatMap((n) => kids.get(n) ?? []);
+    }
+    if (!dsc) continue;
+    const full = baseDist(anc, dsc), part = baseDist(anc, our);
+    if (!(full > 1e-6)) continue;
+    pos.set(our, pos.get(anc)!.clone().lerp(pos.get(dsc)!, Math.min(1, part / full)));
+  }
+
+  // ── ШАГ 3: офсеты = разница с родителем ─────────────────────────────────────────────────────────
   // Ф14.2: пальцы ЗАМЕРЯЕМ (позиции и длины — из модели), но НЕ выпрямляем и не конформим.
-  for (const our of [...OUR_BONES, ...OUR_FINGERS] as string[]) {
-    if (our === 'Hips') { out['Hips'] = [0, +(legDrop + 1).toFixed(2), 0]; continue; }   // высота таза = дроп ноги + зазор подошвы
+  const baseAnkle = baseAnkleY();
+  for (const our of chain) {
+    if (our === 'Hips') { out['Hips'] = [0, +(legDrop + baseAnkle).toFixed(2), 0]; continue; }   // высота таза = дроп ноги + высота лодыжки базы
     const p = parentOfOur(our); if (!p) continue;
-    const c = w(our), pp = w(p);
-    if (c && pp) out[our] = [+((c.x - pp.x) * scale).toFixed(2), +((c.y - pp.y) * scale).toFixed(2), +((c.z - pp.z) * scale).toFixed(2)];
+    const c = pos.get(our), pp = pos.get(p);
+    if (c && pp) out[our] = [+((c.x - pp.x)).toFixed(2), +((c.y - pp.y)).toFixed(2), +((c.z - pp.z)).toFixed(2)].map(Number) as [number, number, number];
   }
   loaded.rotation.copy(r0); loaded.updateMatrixWorld(true);
   return out;
+}
+
+/** Размах базового рига голова→лодыжка (эталон нормировки) и высота лодыжки над корнем. */
+const _bw = new THREE.Vector3(), _bw2 = new THREE.Vector3();
+function baseSpanY(): number {
+  const b = baseHumanoid();
+  const h = b.bones.get('Head')!.getWorldPosition(_bw).y, f = b.bones.get('LeftFoot')!.getWorldPosition(_bw2).y;
+  return h - f;
+}
+function baseAnkleY(): number { return baseHumanoid().bones.get('LeftFoot')!.getWorldPosition(_bw).y; }
+/** Расстояние между костями в БАЗОВОМ риге (доли для интерполяции недостающих звеньев). */
+function baseDist(a: string, b: string): number {
+  const h = baseHumanoid(); const ba = h.bones.get(a), bb = h.bones.get(b);
+  return ba && bb ? ba.getWorldPosition(_bw).distanceTo(bb.getWorldPosition(_bw2)) : 0;
 }
 
 // «Enforce T-pose» — какую кость к какому ребёнку прицеливаем. По умолчанию ТОЛЬКО руки (главный источник A-позы в
@@ -277,8 +325,11 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   // остаток нормировки/масштаба) → меш ложится на физ-аватар 1:1. Множитель = srcLen/impLen. Порядок родитель→ребёнок.
   if (source) {
     const a = new THREE.Vector3(), b = new THREE.Vector3();
-    for (const our of OUR_BONES) {
-      const p = OUR_PARENT[our]; if (!p) continue;
+    // Ф15.1: ФАЛАНГИ ТОЖЕ. Раньше цикл шёл только по телу, и морф ехал на наши пальцы, но не на пальцы
+    // модели — замерено: тело сходилось ×1.000, а пальцы оставались ×1.06. Наша геометрия фаланг больше
+    // не «прикидка» (Ф14.2 замеряет её с модели), поэтому конформить их безопасно и нужно.
+    for (const our of [...OUR_BONES, ...OUR_FINGERS] as string[]) {
+      const p = parentOfOur(our); if (!p) continue;
       const cb = byName.get(boneMap[our] ?? ''), pb = byName.get(boneMap[p] ?? '');
       const sc2 = source.bones.get(our), sp = source.bones.get(p);
       if (!cb || !pb || !sc2 || !sp) continue;

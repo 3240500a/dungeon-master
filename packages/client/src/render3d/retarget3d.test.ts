@@ -130,3 +130,70 @@ describe('retarget3d — офсеты ПАЛЬЦЕВ снимаются с мо�
     expect(off['LeftHand']).toBeDefined();
   });
 });
+
+describe('retarget3d — замер не искажает геометрию модели (Ф15.2)', () => {
+  /** Скелет с ЗАВАЛЕННОЙ ВПЕРЁД шеей (как бинд CC) и БЕЗ UpperChest — ровно случай knight_05. */
+  const mkRig = (): THREE.Object3D => {
+    const root = new THREE.Object3D();
+    const mk = (name: string, parent: THREE.Object3D, p: [number, number, number]): THREE.Bone => {
+      const b = new THREE.Bone(); b.name = name; b.position.set(...p); parent.add(b); return b;
+    };
+    const hips = mk('Hips', root, [0, 32, 0]);
+    const spine = mk('Spine', hips, [0, 5, 0]);
+    const chest = mk('Chest', spine, [0, 6, 0]);
+    // UpperChest в скелете НЕТ — шея и ключицы висят прямо на груди (два спайна, как у CC)
+    const neck = mk('Neck', chest, [0, 10, 4]);          // ← ненулевой Z: голова завалена вперёд
+    mk('Head', neck, [0, 4, 1.5]);
+    mk('LeftShoulder', chest, [3, 8, 0]);
+    const thigh = mk('LeftUpperLeg', hips, [4, -2, 0]);
+    const shin = mk('LeftLowerLeg', thigh, [0, -15, 0]);
+    mk('LeftFoot', shin, [0, -14, 0]);
+    root.updateMatrixWorld(true);
+    return root;
+  };
+  const MAP: Record<string, string> = {
+    Hips: 'Hips', Spine: 'Spine', Chest: 'Chest', Neck: 'Neck', Head: 'Head',
+    LeftShoulder: 'LeftShoulder', LeftUpperLeg: 'LeftUpperLeg', LeftLowerLeg: 'LeftLowerLeg', LeftFoot: 'LeftFoot',
+  };   // UpperChest НЕ смаплен — его в модели нет
+
+  it('ГЛАВНОЕ: несмапленная кость больше не убивает офсеты СВОИХ ДЕТЕЙ', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    for (const nm of ['UpperChest', 'Neck', 'LeftShoulder']) expect(off[nm], nm).toBeDefined();
+  });
+
+  it('цепь телескопируется: Chest→UpperChest→Neck складывается в реальный Chest→Neck модели', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    const sum = [0, 1, 2].map((i) => off['UpperChest']![i]! + off['Neck']![i]!);
+    const k = sum[1]! / 10;                                        // масштаб нормировки (модельный Y = 10)
+    expect(sum[0]!).toBeCloseTo(0, 2);
+    expect(sum[2]! / k).toBeCloseTo(4, 1);                         // Z дошёл целиком
+  });
+
+  it('несмапленное звено встаёт ПО ДОЛЕ базового рига, а не в хардкод-точку', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    // В базе Chest→UpperChest = 5 и UpperChest→Neck = 5, значит ровно половина отрезка.
+    const uc = off['UpperChest']!, nk = off['Neck']!;
+    for (let i = 0; i < 3; i++) expect(uc[i]!).toBeCloseTo(nk[i]!, 1);
+  });
+
+  it('ГЛАВНОЕ: forward-Z осевой цепи больше не режется — длина сегмента сохраняется', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    const h = buildHumanoid({ boneOffsets: off });
+    const neck = h.bones.get('Neck')!.getWorldPosition(new THREE.Vector3());
+    const head = h.bones.get('Head')!.getWorldPosition(new THREE.Vector3());
+    const segLen = neck.distanceTo(head);
+    const modelLen = Math.hypot(0, 4, 1.5);                        // 4.27 в единицах модели
+    const k = segLen / modelLen;
+    expect(k).toBeGreaterThan(0.5);                                // нормировка, но НЕ обрезка
+    expect(head.z - neck.z).toBeGreaterThan(0.5);                  // Z дожил до скелета (раньше был 0)
+  });
+
+  it('высота лодыжки собранного рига совпадает с базовой (заземление не подпрыгивает)', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    const h = buildHumanoid({ boneOffsets: off });
+    const base = buildHumanoid({});
+    const ankle = h.bones.get('LeftFoot')!.getWorldPosition(new THREE.Vector3()).y;
+    const baseAnkle = base.bones.get('LeftFoot')!.getWorldPosition(new THREE.Vector3()).y;
+    expect(ankle).toBeCloseTo(baseAnkle, 1);
+  });
+});
