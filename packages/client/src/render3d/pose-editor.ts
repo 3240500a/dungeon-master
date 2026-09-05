@@ -715,8 +715,10 @@ let fingersForced = false;
 // открываешь редактор с камерой в ладони и не понимаешь, почему не выбирается ни одна кость тела.
 let gripMode = false;
 let gripSide: 'Left' | 'Right' = 'Right';
-const JOINT_PX = 7;                       // при дефолтном кадре это ровно сегодняшние ~1.6 юнита — тело выглядит как раньше
-const jointPxGrip = (bone: string): number => (isHandBone(bone) ? 10 : 4);
+// ОДИН размер шара на все кости и все режимы. Было `10px пальцам / 4px остальному` в режиме хвата —
+// разница в 2.5 раза читалась как «на пальцах шары намного больше», а не как подсказка.
+// 7px при дефолтном кадре = ровно прежние ~1.6 юнита, то есть тело выглядит как раньше.
+const JOINT_PX = 7;
 let gripCamBack: { pos: THREE.Vector3; tgt: THREE.Vector3 } | null = null;   // куда вернуть камеру на выходе
 let limitPresetId = 'human';
 // ── Ф7: БИБЛИОТЕКА ПОЗ И COPY-TOOLS ──
@@ -2723,7 +2725,7 @@ function loop(): void {
   // Ф13.1: шары-суставы — постоянного экранного размера. СТРОГО ПОСЛЕ orbit.update(): у контролов
   // включён демпфинг, и до него камера ещё не на месте — шары отставали бы на кадр и «дышали» при вращении.
   // В режиме хвата фаланги поднимаются, а остальной скелет приглушается — без возни с материалами.
-  if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, gripMode ? jointPxGrip : JOINT_PX);
+  if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, JOINT_PX);
   outline.selectedObjects = selMesh ? [selMesh] : [];   // Ф5: обводка выбранной кости
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   requestAnimationFrame(loop);

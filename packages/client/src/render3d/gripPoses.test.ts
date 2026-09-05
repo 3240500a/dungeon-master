@@ -183,19 +183,20 @@ describe('gripPoses — хват не складывается с бинд-сг�
   it('ГЛАВНОЕ: на полусогнутой бинд-кисти «кулак» не переизгибает палец', () => {
     const straight = canonicalFingerAxes();
     const bent: Record<string, typeof straight[string]> = {};
-    for (const k in straight) bent[k] = { ...straight[k]!, bindCurl: /Intermediate|Distal/.test(k) ? 0.5 : 0 };
+    // Избыток над каноном = ровно 0.5 в каждом суставе (структурный угол кисти при этом сохраняется).
+    for (const k in straight) bent[k] = { ...straight[k]!, bindCurl: straight[k]!.bindCurl + 0.5 };
     const pStraight = gripToPose(findGrip('fist')!, 'Left', 1, straight);
     const pBent = gripToPose(findGrip('fist')!, 'Left', 1, bent);
-    // Локальный доворот на согнутой кисти МЕНЬШЕ ровно на то, что уже согнуто…
-    expect(curl(pBent, 'LeftIndexIntermediate')).toBeCloseTo(curl(pStraight, 'LeftIndexIntermediate') - 0.5, 2);
-    // …а проксимальная (у неё бинд-сгиб = 0) не меняется.
-    expect(curl(pBent, 'LeftIndexProximal')).toBeCloseTo(curl(pStraight, 'LeftIndexProximal'), 3);
+    // Локальный доворот на согнутой кисти МЕНЬШЕ ровно на то, что уже согнуто — в КАЖДОМ суставе.
+    for (const nm of ['LeftIndexProximal', 'LeftIndexIntermediate', 'LeftIndexDistal']) {
+      expect(curl(pBent, nm), nm).toBeCloseTo(curl(pStraight, nm) - 0.5, 2);
+    }
   });
 
   it('«открытая» на любой кисти — это бинд модели, а не принудительное выпрямление', () => {
     const straight = canonicalFingerAxes();
     const bent: Record<string, typeof straight[string]> = {};
-    for (const k in straight) bent[k] = { ...straight[k]!, bindCurl: 0.5 };
+    for (const k in straight) bent[k] = { ...straight[k]!, bindCurl: straight[k]!.bindCurl + 0.5 };
     const p = gripToPose(findGrip('open')!, 'Left', 1, bent);
     for (const k in p) for (const c of p[k]!) expect(Math.abs(c), k).toBeLessThan(1e-9);
   });

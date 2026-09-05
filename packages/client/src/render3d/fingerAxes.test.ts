@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveFingerAxes, canonicalFingerOffsets, canonicalFingerAxes, fingerAxesOf, type Vec3 } from './fingerAxes.js';
+import { deriveFingerAxes, canonicalFingerOffsets, canonicalFingerAxes, fingerAxesOf, bindCurlOver, type Vec3 } from './fingerAxes.js';
 
 const dot = (a: readonly number[], b: readonly number[]): number => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
 const len = (a: readonly number[]): number => Math.hypot(a[0]!, a[1]!, a[2]!);
@@ -98,9 +98,22 @@ describe('fingerAxes — вырождения и фолбэк', () => {
 });
 
 describe('fingerAxes — бинд-сгиб (Ф15.4)', () => {
-  it('у прямой канон-кисти фаланги не считаются согнутыми', () => {
-    const ax = canonicalFingerAxes();
-    for (const nm in ax) expect(Math.abs(ax[nm]!.bindCurl), nm).toBeLessThan(0.02);
+  it('на СВОЕЙ же кисти избыток сгиба ровно нулевой (структура не считается согнутостью)', () => {
+    // Важно мерить ИЗБЫТОК: у большого пальца пясть идёт под углом к фаланге, и абсолютный угол
+    // на нашей прямой кисти = 23°. Вычти его — и хват недобрал бы 23° на любой модели.
+    expect(Math.abs(canonicalFingerAxes()['LeftThumbProximal']!.bindCurl)).toBeGreaterThan(0.3);   // структурный угол ЕСТЬ (23°)
+    for (const nm in canonicalFingerAxes()) expect(bindCurlOver(nm), nm).toBe(0);        // …но избытка нет
+  });
+
+  it('сгиб В ПЯСТНО-ФАЛАНГОВОМ суставе (MCP) тоже ловится — он самый большой', () => {
+    // Раньше проксимальная считалась «точкой отсчёта» и её бинд-сгиб вообще не измерялся,
+    // хотя именно у неё самый большой ход (CURL_MAX[0] = 1.45).
+    const base = canonicalFingerOffsets();
+    const bent: Record<string, Vec3> = { ...base };
+    const rotZ = (v: Vec3, a: number): Vec3 => [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a), v[2]];
+    bent['LeftIndexIntermediate'] = rotZ(base['LeftIndexIntermediate']!, -0.5);   // повернули ПЕРВУЮ фалангу
+    const ax = deriveFingerAxes((b) => bent[b] ?? null);
+    expect(bindCurlOver('LeftIndexProximal', ax)).toBeGreaterThan(0.4);
   });
 
   it('ГЛАВНОЕ: полусогнутый бинд (как у CC) измеряется, а не игнорируется', () => {
@@ -111,8 +124,8 @@ describe('fingerAxes — бинд-сгиб (Ф15.4)', () => {
     bent['LeftIndexIntermediate'] = rotZ(base['LeftIndexIntermediate']!, -0.4);
     bent['LeftIndexDistal'] = rotZ(base['LeftIndexDistal']!, -0.8);
     const ax = deriveFingerAxes((b) => bent[b] ?? null);
-    expect(ax['LeftIndexIntermediate']!.bindCurl).toBeGreaterThan(0.3);
-    expect(ax['LeftIndexProximal']!.bindCurl).toBe(0);          // проксимальная — точка отсчёта цепи
-    expect(Math.abs(ax['LeftMiddleIntermediate']!.bindCurl)).toBeLessThan(0.02);   // соседний палец не тронут
+    expect(bindCurlOver('LeftIndexIntermediate', ax)).toBeGreaterThan(0.3);
+    expect(bindCurlOver('LeftIndexDistal', ax)).toBeGreaterThan(0.3);              // дистальная — оценка по средней
+    expect(Math.abs(bindCurlOver('LeftMiddleIntermediate', ax))).toBeLessThan(0.02);   // соседний палец не тронут
   });
 });

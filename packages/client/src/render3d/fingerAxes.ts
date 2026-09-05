@@ -29,11 +29,18 @@ export type Vec3 = [number, number, number];
 export interface FingerAxes {
   twist: Vec3; plane: Vec3; normal: Vec3;
   /**
-   * Ф15.4: НАСКОЛЬКО ФАЛАНГА УЖЕ СОГНУТА В БИНДЕ (рад, вокруг оси сгиба, положительное = к ладони).
-   * У CC/AccuRIG кисть в бинде расслаблена, то есть полусогнута, и это наша rest-поза. Хват задаёт
-   * АБСОЛЮТНЫЙ сгиб «от прямого пальца», а ложится он поверх бинда — получался кулак поверх полукулака.
-   * Вычитая `bindCurl`, «открытая» = ровно бинд модели, а «кулак» = кулак, а не переизгиб.
-   * У проксимальной всегда 0: она сама и есть точка отсчёта цепи.
+   * НАСКОЛЬКО ФАЛАНГА УЖЕ СОГНУТА В БИНДЕ (рад, вокруг оси сгиба, положительное = к ладони).
+   * У моделей бинд-кисть бывает какой угодно — от прямой до заметно сжатой, и это наша rest-поза.
+   * Хват же задаёт сгиб «ОТ ПРЯМОГО ПАЛЬЦА» и ложился поверх бинда → кулак поверх полукулака.
+   * Вычитая `bindCurl`, получаем: «открытая» = ровно бинд модели, «кулак» = кулак на любой модели.
+   *
+   * Отсчёт у каждого сустава свой, от направления ПРЕДЫДУЩЕГО звена:
+   *   Proximal     — от ПЯСТНОЙ кости (запястье→корень пальца). Это главный сустав сгиба (MCP) и самый
+   *                  большой ход; раньше он считался нулевым «точкой отсчёта» и потому не корректировался.
+   *   Intermediate — от проксимальной фаланги. Замеряется точно.
+   *   Distal       — ОЦЕНКА: берём угол средней. У кисти нет кости-кончика (проверено на CC: `L_Index3`
+   *                  без детей), направление последнего звена измерить не из чего. В расслабленной кисти
+   *                  DIP согнут примерно как PIP, а ошибка в меньшую сторону безопаснее переизгиба.
    */
   bindCurl: number;
 }
@@ -94,9 +101,11 @@ export function deriveFingerAxes(offsetOf: OffsetOf): Record<string, FingerAxes>
         const t = along(chain, seg); if (!t) continue;
         const plane = norm(cross(t, palmInward)); if (!plane) continue;   // палец вдоль нормали ладони — вырождение
         const normal = norm(cross(t, plane)); if (!normal) continue;
-        // Бинд-сгиб = знаковый угол от направления ПРЕДЫДУЩЕЙ фаланги к этой, вокруг оси сгиба.
-        const prev = seg > 0 ? along(chain, (seg - 1) as 0 | 1 | 2) : null;
-        const bindCurl = prev ? Math.atan2(dot(cross(prev, t), plane), dot(prev, t)) : 0;
+        // Бинд-сгиб = знаковый угол от направления ПРЕДЫДУЩЕГО звена к этому, вокруг оси сгиба.
+        // Для проксимальной предыдущее звено — пястная кость (запястье→корень пальца).
+        const prev = seg === 0 ? norm(rootOf(chain) ?? [0, 0, 0]) : along(chain, (seg - 1) as 0 | 1 | 2);
+        const measured = prev ? Math.atan2(dot(cross(prev, t), plane), dot(prev, t)) : 0;
+        const bindCurl = seg === 2 ? (out[boneName(side, chain, 1)]?.bindCurl ?? 0) : measured;   // у дистальной — оценка по средней
         out[boneName(side, chain, seg)] = { twist: t, plane, normal, bindCurl };
       }
     }
@@ -107,6 +116,19 @@ export function deriveFingerAxes(offsetOf: OffsetOf): Record<string, FingerAxes>
 /** Канонические оси (наш процедурный манекен) — считаются один раз. */
 let _canon: Record<string, FingerAxes> | null = null;
 export const canonicalFingerAxes = (): Record<string, FingerAxes> => (_canon ??= deriveFingerAxes((b) => canonicalFingerOffsets()[b] ?? null));
+
+/**
+ * НА СКОЛЬКО эта кисть согнута СИЛЬНЕЕ нашей канонической — то, что надо вычесть из хвата.
+ *
+ * Считаем ИЗБЫТОК, а не абсолютный угол: у большого пальца пястная кость идёт под углом к фаланге,
+ * и на нашей СОБСТВЕННОЙ прямой кисти «угол пясть→проксимальная» = 23°. Вычитать его нельзя — это
+ * структура кисти, а не согнутость, и хват недобирал бы 23° на любой модели, включая процедурную.
+ * Разность с каноном обнуляет всё структурное и оставляет ровно «насколько эта модель поджата».
+ */
+export function bindCurlOver(bone: string, derived?: Record<string, FingerAxes> | null): number {
+  const c = canonicalFingerAxes()[bone]; if (!c) return 0;
+  return (derived?.[bone]?.bindCurl ?? c.bindCurl) - c.bindCurl;
+}
 
 /** Оси кости с фолбэком на канон. Один вход для пределов, хватов и гизмо. */
 export function fingerAxesOf(bone: string, derived?: Record<string, FingerAxes> | null): FingerAxes | null {

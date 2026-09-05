@@ -21,7 +21,7 @@
  */
 import * as THREE from 'three';
 import { FINGER_CHAINS, FINGER_SEGMENTS, type FingerChain } from './boneNames.js';
-import { fingerAxesOf, type FingerAxes } from './fingerAxes.js';
+import { fingerAxesOf, bindCurlOver, type FingerAxes } from './fingerAxes.js';
 import type { Pose } from './clipModel.js';
 
 const _qb = new THREE.Quaternion(), _qt = new THREE.Quaternion(), _v = new THREE.Vector3(), _e = new THREE.Euler();
@@ -90,10 +90,10 @@ export function gripToPose(spec: GripSpec, side: 'Left' | 'Right', close = 1, ax
     const max = ch === 'Thumb' ? THUMB_CURL_MAX : CURL_MAX;
     for (let i = 0; i < 3; i++) {
       const nm = side + ch + FINGER_SEGMENTS[i];
-      // Ф15.4: сгиб задан «от ПРЯМОГО пальца», а наша rest-поза — бинд модели, который уже полусогнут.
-      // Вычитаем то, что уже согнуто, иначе кулак кладётся поверх полукулака (переизгиб на CC-кистях).
-      const already = fingerAxesOf(nm, axes)?.bindCurl ?? 0;
-      const bend = Math.max(0, max[i]! - already) * c;
+      // Сгиб задан «от ПРЯМОГО пальца», а наша rest-поза — бинд модели, который может быть уже поджат.
+      // Вычитаем ИЗБЫТОК над канонической кистью, иначе кулак кладётся поверх полукулака.
+      // Именно избыток, а не абсолютный угол: структурный изгиб (пясть большого пальца) вычитать нельзя.
+      const bend = Math.max(0, max[i]! - bindCurlOver(nm, axes)) * c;
       const opp = ch === 'Thumb' && i === 0 ? (spec.oppose ?? 0) * close * THUMB_OPPOSE * oppSign : 0;
       const a = fingerAxesOf(nm, axes);
       if (!a) { out[nm] = [0, 0, 0]; continue; }
