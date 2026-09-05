@@ -19,7 +19,7 @@
  * Файл ЧИСТЫЙ (THREE + наша математика, без DOM/загрузчиков) — тестируется в node.
  */
 import * as THREE from 'three';
-import { clipPoseAt, clipDur, type Clip, type Keyframe, type Pose } from './clipModel.js';
+import { clipPoseAt, clipDur, hipsOffset, setHipsOffset, HIPS_REST_Y, type Clip, type Keyframe, type Pose } from './clipModel.js';
 import { reduceKeyframes } from './clipBaker.js';
 
 /** Имена дорожек для наших спец-каналов (всё остальное — `<кость>.quaternion`). */
@@ -36,6 +36,9 @@ export interface ToAnimationOptions {
   renameBone?: (our: string) => string;
   /** Имя клипа (по умолч. `clip.name`). */
   name?: string;
+  /** REST-позиция таза целевого скелета. В клипе офсет таза хранится ДЕЛЬТОЙ (переносимость между телами),
+   *  а в glTF `Hips.position` — АБСОЛЮТНАЯ локальная позиция, поэтому на выгрузке дельта складывается с rest. */
+  hipsRest?: readonly [number, number, number];
 }
 
 const _e = new THREE.Euler(), _q = new THREE.Quaternion();
@@ -98,10 +101,15 @@ export function poseClipToAnimationClip(c: Clip, opts: ToAnimationOptions = {}):
     tracks.push(new THREE.QuaternionKeyframeTrack(rename(nm) + '.quaternion', times, Array.from(vals), interp));
   }
 
-  // Офсет таза (наш `__hipsP`) → обычная позиционная дорожка. Кадры без ключа берут значение предыдущего.
-  if (keys.some((k) => k.pose['__hipsP'])) {
-    const pos: number[] = []; let last: [number, number, number] = [0, 0, 0];
-    for (const k of keys) { const v = k.pose['__hipsP']; if (v) last = [v[0], v[1], v[2]]; pos.push(last[0], last[1], last[2]); }
+  // Офсет таза → обычная позиционная дорожка, в АБСОЛЮТНЫХ локальных координатах (так его понимает любой движок).
+  // Кадры без ключа берут значение предыдущего.
+  const hr = opts.hipsRest ?? [0, HIPS_REST_Y, 0];
+  if (keys.some((k) => hipsOffset(k.pose, hr[1]))) {
+    const pos: number[] = []; let last: [number, number, number] = [hr[0], hr[1], hr[2]];
+    for (const k of keys) {
+      const d = hipsOffset(k.pose, hr[1]); if (d) last = [hr[0] + d[0], hr[1] + d[1], hr[2] + d[2]];
+      pos.push(last[0], last[1], last[2]);
+    }
     tracks.push(new THREE.VectorKeyframeTrack(rename('Hips') + '.position', times, pos, interp));
   }
 
@@ -115,6 +123,8 @@ export interface FromAnimationOptions {
   loop?: boolean;
   /** Обратное переименование (имя дорожки → наша кость). */
   renameBone?: (target: string) => string;
+  /** REST-позиция таза, от которой считать дельту (симметрично экспорту). */
+  hipsRest?: readonly [number, number, number];
 }
 
 /** Разобрать `THREE.AnimationClip` обратно в наш `Clip` (для round-trip-проверки экспорта). */
@@ -133,8 +143,9 @@ export function animationClipToPoseClip(anim: THREE.AnimationClip, opts: FromAni
         at(tr.times[i]!)[target] = [_e.x, _e.y, _e.z];
       }
     } else if (prop === 'position' && target === 'Hips') {
+      const hr = opts.hipsRest ?? [0, HIPS_REST_Y, 0];
       for (let i = 0; i < tr.times.length; i++) {
-        at(tr.times[i]!)['__hipsP'] = [tr.values[i * 3]!, tr.values[i * 3 + 1]!, tr.values[i * 3 + 2]!];
+        setHipsOffset(at(tr.times[i]!), [tr.values[i * 3]! - hr[0], tr.values[i * 3 + 1]! - hr[1], tr.values[i * 3 + 2]! - hr[2]]);
       }
     }
   }

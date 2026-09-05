@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import {
   blendTwo, clipPoseAt, clipSegmentAt, clipDur, isAngleKey, easeU, cubicBezier,
   slerpEuler, shortDelta, mirrorSide, flipPose, migrateClip, migratePose,
-  EASE_INOUT, type Clip, type Pose, type Keyframe,
+  EASE_INOUT, hipsOffset, setHipsOffset, normalizeClipHips, type Clip, type Pose, type Keyframe,
 } from './clipModel.js';
 
 const P = (o: Record<string, [number, number, number]>): Pose => o;
@@ -194,5 +194,46 @@ describe('clipModel — углы', () => {
   it('shortDelta берёт короткую дугу через ±π', () => {
     near(shortDelta(3.0, -3.0), -3.0 - 3.0 + Math.PI * 2);
     near(shortDelta(0, Math.PI / 2), Math.PI / 2);
+  });
+});
+
+describe('clipModel — офсет таза как ДЕЛЬТА (Ф12)', () => {
+  it('дельта читается как есть, легаси-абсолют приводится к дельте по rest тела', () => {
+    expect(hipsOffset({ __hipsD: [0, -1.5, 0] })).toEqual([0, -1.5, 0]);
+    expect(hipsOffset({ __hipsP: [0, 30.5, 0] }, 32)).toEqual([0, -1.5, 0]);   // тот же присед
+    expect(hipsOffset({ __hipsP: [0, 34.5, 0] }, 36)).toEqual([0, -1.5, 0]);   // …на высоком теле — тоже
+  });
+
+  it('ГЛАВНОЕ: один и тот же абсолют на разных телах — РАЗНАЯ поза, дельта — одна и та же', () => {
+    const abs = { __hipsP: [0, 32, 0] } as Pose;
+    expect(hipsOffset(abs, 32)![1]).toBe(0);      // на среднем это ровно стойка
+    expect(hipsOffset(abs, 36)![1]).toBe(-4);     // а на высоком — глубокий присед (это и был баг)
+  });
+
+  it('кадр без офсета — null, а не нули (иначе таз молча уезжал бы в rest)', () => {
+    expect(hipsOffset({ Spine: [0, 0, 0] })).toBeNull();
+  });
+
+  it('запись всегда в новом ключе и убирает легаси с этого кадра', () => {
+    const p: Pose = { __hipsP: [0, 31, 0] };
+    setHipsOffset(p, [1, -2, 3]);
+    expect(p['__hipsD']).toEqual([1, -2, 3]);
+    expect(p['__hipsP']).toBeUndefined();
+  });
+
+  it('нормализация клипа идемпотентна и сообщает, надо ли сохранять', () => {
+    const c: Clip = { name: 'c', character: 'a', weapon: 'sword', loop: false, keys: [
+      { pose: { __hipsP: [0, 30, 0] }, t: 0 }, { pose: { __hipsD: [0, 1, 0] }, t: 0.3 }, { pose: {}, t: 0.6 },
+    ] };
+    expect(normalizeClipHips(c, 32)).toBe(true);
+    expect(c.keys[0]!.pose['__hipsD']).toEqual([0, -2, 0]);
+    expect(c.keys[1]!.pose['__hipsD']).toEqual([0, 1, 0]);    // уже в новой форме — не трогаем
+    expect(c.keys[2]!.pose['__hipsD']).toBeUndefined();       // офсета не было — не выдумываем
+    expect(normalizeClipHips(c, 32)).toBe(false);             // второй проход ничего не меняет
+  });
+
+  it('переворот отражает X у обеих форм ключа', () => {
+    expect(flipPose({ __hipsD: [2, 1, 3] })['__hipsD']).toEqual([-2, 1, 3]);
+    expect(flipPose({ __hipsP: [2, 32, 3] })['__hipsP']).toEqual([-2, 32, 3]);
   });
 });

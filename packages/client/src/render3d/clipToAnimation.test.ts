@@ -4,7 +4,7 @@ import {
   poseClipToAnimationClip, animationClipToPoseClip, clipBoneNames,
   boneRenamer, boneUnrenamer, clipManifest,
 } from './clipToAnimation.js';
-import { clipPoseAt, clipDur, EASE_INOUT, type Clip, type Pose } from './clipModel.js';
+import { clipPoseAt, clipDur, hipsOffset, EASE_INOUT, type Clip, type Pose } from './clipModel.js';
 import { buildHumanoid } from './humanoid.js';
 
 const P = (o: Record<string, [number, number, number]>): Pose => o;
@@ -76,12 +76,37 @@ describe('clipToAnimation — round-trip Clip → AnimationClip → Clip', () =>
     }
   });
 
-  it('офсет таза переживает round-trip', () => {
+  it('офсет таза переживает round-trip (легаси-абсолют → glTF → дельта)', () => {
+    // В glTF `Hips.position` абсолютна, у нас в клипе — дельта от rest. Сверяем в ОДНОМ пространстве.
     const back = animationClipToPoseClip(poseClipToAnimationClip(SWING), { character: 'warrior', weapon: 'sword' });
     for (let i = 0; i < SWING.keys.length; i++) {
-      const want = SWING.keys[i]!.pose['__hipsP']!, got = back.keys[i]!.pose['__hipsP']!;
+      const want = hipsOffset(SWING.keys[i]!.pose)!, got = hipsOffset(back.keys[i]!.pose)!;
       for (let k = 0; k < 3; k++) expect(got[k]!).toBeCloseTo(want[k]!, 3);
     }
+    expect(back.keys[0]!.pose['__hipsD']).toBeDefined();      // на выходе — новый ключ
+    expect(back.keys[0]!.pose['__hipsP']).toBeUndefined();
+  });
+
+  it('rest-высота таза учитывается: ОДИН клип на двух телах = один и тот же присед', () => {
+    // Смысл дельты: «таз на 1 юнит ниже стойки» остаётся тем же приседом и на высоком персонаже,
+    // тогда как раньше абсолютные 31 на теле с rest 36 были бы приседом на пять юнитов.
+    const crouch: Clip = mk([
+      { pose: P({ Spine: [0, 0, 0], __hipsD: [0, 0, 0] }), t: 0 },
+      { pose: P({ Spine: [0, 0, 0], __hipsD: [0, -1, 0] }), t: 0.5 },
+    ]);
+    const mid = poseClipToAnimationClip(crouch, { hipsRest: [0, 32, 0] }).tracks.find((t) => t.name === 'Hips.position')!;
+    const tall = poseClipToAnimationClip(crouch, { hipsRest: [0, 36, 0] }).tracks.find((t) => t.name === 'Hips.position')!;
+    expect(mid.values[1]!).toBeCloseTo(32, 3); expect(mid.values[4]!).toBeCloseTo(31, 3);     // стойка своя
+    expect(tall.values[1]!).toBeCloseTo(36, 3); expect(tall.values[4]!).toBeCloseTo(35, 3);   // а присед — тот же
+    const back = animationClipToPoseClip(poseClipToAnimationClip(crouch, { hipsRest: [0, 36, 0] }),
+      { character: 'warrior', weapon: 'sword', hipsRest: [0, 36, 0] });
+    expect(hipsOffset(back.keys[1]!.pose)![1]).toBeCloseTo(-1, 3);
+  });
+
+  it('легаси-абсолют читается ОТНОСИТЕЛЬНО того же rest — старые клипы не съезжают', () => {
+    const anim = poseClipToAnimationClip(SWING, { hipsRest: [0, 36, 0] });
+    const tr = anim.tracks.find((t) => t.name === 'Hips.position')!;
+    expect(tr.values[1]!).toBeCloseTo(32, 3);                 // как было записано, ровно так и уехало
   });
 
   it('клип С КРИВЫМИ (ease) переносится по ФОРМЕ: расхождение по времени < 1°', () => {

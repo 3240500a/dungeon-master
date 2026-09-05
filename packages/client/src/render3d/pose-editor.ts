@@ -39,6 +39,7 @@ import { makeHistory } from './history.js';
 import { bakeGaitSet, defaultReadPose, GAIT_PRESETS } from './clipBake.js';                    // Ф2.1: процедурка → клипы
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
 import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
+import { hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';   // Ф12: офсет таза — ДЕЛЬТА от rest, а не абсолют
 import { blendTwo, clipPoseAt, clipSegmentAt, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
   type Pose, type Keyframe, type Clip } from './clipModel.js';   // Ф1.1: одна модель клипа на редактор и игру
 import { createModelsTab } from './poseModelsTab.js';
@@ -472,7 +473,8 @@ function readPoseFull(): Pose {
   { const g = curGripPose();
     for (const nm in p) if (isHandBone(nm)) { const gv = g[nm]; const v = p[nm]!;
       if (gv && Math.abs(gv[0] - v[0]) < 1e-3 && Math.abs(gv[1] - v[1]) < 1e-3 && Math.abs(gv[2] - v[2]) < 1e-3) delete p[nm]; } }
-  { const hp = human.hips.position; p['__hipsP'] = [+hp.x.toFixed(2), +hp.y.toFixed(2), +hp.z.toFixed(2)]; }   // ПОЛНЫЙ авторский офсет таза (Root ≠ таз): Y = база стойки (standY), X/Z = мах/сдвиг таза В МЕСТЕ. Раньше писали только Y — X/Z молча терялись
+  // Офсет таза — ДЕЛЬТА от rest тела (Ф12): абсолют зависел от телосложения — «присед» среднего был бы «цыпочками» высокого.
+  { const hp = human.hips.position, hr = human.hipsRest; setHipsOffset(p, [+(hp.x - hr.x).toFixed(2), +(hp.y - hr.y).toFixed(2), +(hp.z - hr.z).toFixed(2)]); }
   return p;
 }
 let wpnOverride = false;   // галка «хват: своя правка (кадр)» текущего кадра (иначе — БАЗА pe_grip, единый хват во всех позах)
@@ -487,7 +489,7 @@ function applyWeaponPose(p: Pose): void {
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
-function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hp = p['__hipsP']; if (hp) human.hips.position.set(hp[0], hp[1], hp[2]); } applyGripOver(p); applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
+function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hd = hipsOffset(p, human.hipsRest.y); if (hd) human.hips.position.set(human.hipsRest.x + hd[0], human.hipsRest.y + hd[1], human.hipsRest.z + hd[2]); } applyGripOver(p); applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
 // Интерп ПОВОРОТОВ кадров — КВАТЕРНИОННЫЙ SLERP (истинная кратчайшая дуга, без gimbal). Покомпонентный лерп эйлеров
 // (даже с обёрткой углов в [-π,π]) на многоосевых кадрах даёт «прокрутку» руки (эйлеры далеки, хотя поворот близок).
 // slerp учитывает двойное покрытие (q и −q = один поворот) → всегда короткий путь. lerpAng оставлен для скаляров/маркера.
@@ -501,9 +503,14 @@ function lerpPose(a: Pose, b: Pose, t: number): void {
   });
   const ip = (k: string, d: number): number => { const va = a[k]?.[0] ?? d, vb = b[k]?.[0] ?? va; return va + (vb - va) * t; };
   PHYS.match = ip('__match', physMatchBase); PHYS.pinKp = ip('__pinKp', DEF_PINKP);   // per-кадр физ скользит в проигрывании
-  if (a['__hipsP'] || b['__hipsP']) {   // офсет таза скользит по кадрам (иначе провал/рывок при скрабе клипа)
-    const hp = human.hips.position, ipn = (k: string, i: number, d: number): number => { const va = a[k]?.[i] ?? d, vb = b[k]?.[i] ?? va; return va + (vb - va) * t; };
-    hp.set(ipn('__hipsP', 0, hp.x), ipn('__hipsP', 1, hp.y), ipn('__hipsP', 2, hp.z));
+  { // Офсет таза скользит по кадрам (иначе провал/рывок при скрабе). Обе формы ключа приводятся к дельте ДО лерпа
+    // — иначе клип со смешанными кадрами (часть перезаписана) дал бы скачок на границе.
+    const hr = human.hipsRest;
+    const da = hipsOffset(a, hr.y), db = hipsOffset(b, hr.y);
+    if (da || db) {
+      const p0 = da ?? db!, p1 = db ?? da!;
+      human.hips.position.set(hr.x + p0[0] + (p1[0] - p0[0]) * t, hr.y + p0[1] + (p1[1] - p0[1]) * t, hr.z + p0[2] + (p1[2] - p0[2]) * t);
+    }
   }
   if (a['__lgripP'] || b['__lgripP']) { const m = ensureLgripMark(); if (m) {   // точка хвата скользит по кадрам (перехват)
     const pa = a['__lgripP'] ?? b['__lgripP']!, pb = b['__lgripP'] ?? pa, ra = a['__lgripR'] ?? [0, 0, 0], rb = b['__lgripR'] ?? ra;
@@ -707,6 +714,15 @@ function manikinOnTop(): void {
   if (curHumanStyle !== 'skeleton') return;
   for (const m of human.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.depthTest = false; m.renderOrder = 998; }
 }
+
+/** Ф12: перевести клипы персонажа в дельта-форму офсета таза. Зовётся тогда, когда rest-высота
+ *  ИМЕННО ЭТОГО тела уже посчитана — именно этого контекста не было у чистой `migratePose`, из-за чего
+ *  миграцию и откладывали. Чтение всё равно терпимое (`hipsOffset`), так что даже немигрированный клип играет верно. */
+function normalizeHipsOfChar(charId: string): void {
+  let changed = false;
+  for (const c of library) if (c.character === charId && normalizeClipHips(c, human.hipsRest.y)) changed = true;
+  if (changed) saveLib();
+}
 function applyChar(id: string): void {
   curCharId = id; const c = curChar(); weapon = c.weapon;
   loadPhys(id);                                               // физ-настройки (match) этого персонажа
@@ -716,6 +732,7 @@ function applyChar(id: string): void {
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
   human = buildHumanoid({ gender: c.gender, build: morphBuild(c), style: manStyle(), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
+  normalizeHipsOfChar(id);   // Ф12: rest-высота ЭТОГО тела только что стала известна — переводим его клипы в дельту
   human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
@@ -2409,7 +2426,7 @@ function updateTrajectory(): void {
     const pose = seg.a === seg.b ? seg.a.pose : blendTwo(seg.a.pose, seg.b.pose, seg.u);
     human.reset();
     for (const nm in pose) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(pose[nm]![0], pose[nm]![1], pose[nm]![2]); }
-    { const hp = pose['__hipsP']; if (hp) human.hips.position.set(hp[0], hp[1], hp[2]); }
+    { const hd = hipsOffset(pose, human.hipsRest.y); if (hd) human.hips.position.set(human.hipsRest.x + hd[0], human.hipsRest.y + hd[1], human.hipsRest.z + hd[2]); }
     human.root.updateMatrixWorld(true);
     bone.getWorldPosition(v);
     pts.push(v.clone()); if (smp.key >= 0) kpts.push(v.clone());

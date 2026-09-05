@@ -101,7 +101,8 @@ describe('clipBake — запекание походки', () => {
     const h = buildHumanoid({ gender: 'female' });
     const r = bakeGaitToClip(mkPlayer(h), h, { name: 'walk_fwd', vx: 0, vz: 0.42 }, { character: 'warrior', weapon: 'sword' });
     const p = r.clip.keys[0]!.pose;
-    expect(p['__hipsP']).toBeDefined();
+    expect(p['__hipsD']).toBeDefined();          // Ф12: дельта от rest, а не абсолютная высота таза
+    expect(p['__hipsP']).toBeUndefined();        // старый абсолютный ключ бейк больше не пишет
     expect(p['LeftBreast']).toBeUndefined();
     expect(p['RightBreast']).toBeUndefined();
   });
@@ -111,7 +112,7 @@ describe('clipBake — запекание походки', () => {
     h.bones.get('Spine')!.rotation.set(0.3, 0, 0);
     const p = defaultReadPose(h)();
     expect(p['Spine']![0]).toBeCloseTo(0.3, 3);
-    expect(p['__hipsP']![1]).toBeCloseTo(h.hips.position.y, 2);
+    expect(p['__hipsD']![1]).toBeCloseTo(h.hips.position.y - h.hipsRest.y, 2);
   });
 });
 

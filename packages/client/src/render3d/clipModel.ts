@@ -35,6 +35,41 @@ export const clipDur = (c: Clip): number => (c.keys.length ? c.keys[c.keys.lengt
 // ── Спец-ключи позы (не кости) ────────────────────────────────────────────────────────────────────
 export const WPN_KEYS = ['__wpnMain', '__wpnOff'];             // поворот оружия
 export const WPN_POS = ['__wpnMainP', '__wpnOffP'];            // позиция оружия
+/** Офсет таза. `__hipsP` — ЛЕГАСИ: абсолютная локальная позиция таза в юнитах рига, а значит ЗАВИСИТ ОТ ТЕЛА
+ *  (32.4 у среднего — присед, у высокого с rest 34.5 — цыпочки). `__hipsD` — ДЕЛЬТА от rest-высоты таза,
+ *  она переносима: один клип ложится на любое телосложение. Читать ВСЕГДА через `hipsOffset` — он приводит
+ *  оба вида к дельте, поэтому клип со смешанными кадрами (часть перезаписана) не даёт скачка. */
+export const HIPS_ABS = '__hipsP';
+export const HIPS_DEL = '__hipsD';
+/** Rest-высота таза базового профиля (`humanoid.BONES`: Hips.pos = [0,32,0]) — фолбэк, когда профиля нет. */
+export const HIPS_REST_Y = 32;
+
+/** Офсет таза кадра как ДЕЛЬТА от rest. `null` — кадр таз не трогает. */
+export function hipsOffset(p: Pose, restY = HIPS_REST_Y): [number, number, number] | null {
+  const d = p[HIPS_DEL];
+  if (d) return [d[0], d[1], d[2]];
+  const a = p[HIPS_ABS];
+  return a ? [a[0], a[1] - restY, a[2]] : null;   // легаси-абсолют → та же дельта
+}
+/** Записать офсет таза (всегда в новом виде; легаси-ключ с этого кадра уходит). */
+export function setHipsOffset(p: Pose, d: readonly [number, number, number]): void {
+  p[HIPS_DEL] = [d[0], d[1], d[2]];
+  delete p[HIPS_ABS];
+}
+/** Привести кадр к дельта-виду. Возвращает true, если что-то поменялось (чтобы знать, надо ли сохранять). */
+export function normalizePoseHips(p: Pose, restY: number): boolean {
+  const a = p[HIPS_ABS]; if (!a) return false;
+  if (!p[HIPS_DEL]) p[HIPS_DEL] = [a[0], a[1] - restY, a[2]];
+  delete p[HIPS_ABS];
+  return true;
+}
+/** То же на весь клип — зовётся, когда rest-высота КОНКРЕТНОГО персонажа уже известна. */
+export function normalizeClipHips(c: Clip, restY: number): boolean {
+  let ch = false;
+  for (const k of c.keys) if (normalizePoseHips(k.pose, restY)) ch = true;
+  return ch;
+}
+
 /** Ключи с `__`-префиксом, значение которых — ЭЙЛЕР (их надо slerp'ить, а не лерпить покомпонентно). */
 const ANGLE_SPECIALS = new Set([...WPN_KEYS, '__lgripR']);
 /** Ключ позы хранит поворот? Кости (без `_`-префикса) — да; из спец-ключей — только перечисленные.
@@ -131,7 +166,7 @@ export function clipPoseAt(c: Clip, t01: number): Pose {
 const otherSide = (nm: string): string | null =>
   nm.startsWith('Left') ? 'Right' + nm.slice(4) : nm.startsWith('Right') ? 'Left' + nm.slice(5) : null;
 /** Позиц-ключи, у которых зеркалится X (мир рига: Left = +X). */
-const MIRROR_POS = new Set([...WPN_POS, '__lgripP', '__hipsP']);
+const MIRROR_POS = new Set([...WPN_POS, '__lgripP', HIPS_ABS, HIPS_DEL]);
 
 /** Отзеркалить ОДНУ сторону на другую: `from='Left'` → правая половина становится отражением левой.
  *  Центральные кости не трогаются (это «подтянуть вторую руку», а не переворот всей позы). */

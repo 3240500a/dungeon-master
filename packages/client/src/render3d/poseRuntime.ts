@@ -8,7 +8,8 @@ import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, type PoseTargets } from './pose
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
 // Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
 export type { Pose, Keyframe, Clip, Interp } from './clipModel.js';
-export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose } from './clipModel.js';
+export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
+import { hipsOffset } from './clipModel.js';   // Ф12: офсет таза читаем только через него (дельта + терпимость к легаси-абсолюту)
 import { blendTwo, clipPoseAt, clipDur } from './clipModel.js';
 import { WPN_KEYS, WPN_POS } from './clipModel.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
@@ -213,7 +214,10 @@ export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: nu
   const ap = clipPoseAt(atk.clip, atk.t / dur);
   const e = ap['Hips'];
   if (e) { _apQ.setFromEuler(_apE.set(e[0], e[1], e[2], 'XYZ')); hips.quaternion.multiply(_apI.set(0, 0, 0, 1).slerp(_apQ, ab)); }   // поворот таза = дельта поверх facing × огибающая
-  const mv = ap['__hipsP'], base = atk.clip.keys[0]?.pose['__hipsP'];   // офсет таза кадра и стойки (body-кадр: X вбок-вправо, Y вверх, Z вперёд)
+  // Офсет таза кадра и стойки (body-кадр: X вбок-вправо, Y вверх, Z вперёд). Оба через hipsOffset:
+  // дельта считается от ОДНОГО нуля, даже если кадры клипа в разных формах (часть перезаписана в редакторе).
+  const restY = human.hipsRest.y;
+  const mv = hipsOffset(ap, restY), basePose = atk.clip.keys[0]?.pose, base = basePose ? hipsOffset(basePose, restY) : null;
   if (mv && base) {
     const dx = (mv[0] - base[0]) * ab, dy = (mv[1] - base[1]) * ab, dz = (mv[2] - base[2]) * ab;
     const s = Math.sin(rootYaw), c = Math.cos(rootYaw);
@@ -581,10 +585,10 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);   // yaw 0 → world X = body-lateral, world Z = forward
   // Высота таза стойки. ПРИОРИТЕТ — авторская `__hipsP[1]` из idle-позы (где юзер поставил таз = ИСТИНА): и стойка, и бег,
   // и восстановление на applyPose берут ОДНУ величину → нет провала после бега и рассинхрона бег↔стойка (редактор ≡ игра).
-  // (Старый ключ `__hipsY` мигрируется в `__hipsP` при чтении клипа — clipModel.migratePose.)
+  // (Старые ключи `__hipsY`/`__hipsP` приводятся к дельте в `hipsOffset` — оттого здесь прибавляется rest-высота.)
   // Фолбэк (позы вообще без офсета таза): расчёт из стоп — таз так, чтобы стопы idle стояли на полу (FOOT_Y + footLift).
-  const authored = idle['__hipsP'];
-  const standY = authored ? authored[1] : (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
+  const authored = hipsOffset(idle, human.hipsRest.y);
+  const standY = authored ? human.hipsRest.y + authored[1] : (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
   return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
 }
 

@@ -22,6 +22,7 @@
  */
 import { reduceKeyframes } from './clipBaker.js';
 import type { Clip, Keyframe, Pose } from './clipModel.js';
+import { setHipsOffset } from './clipModel.js';
 import type { Humanoid } from './humanoid.js';
 import type { PosePlayer } from './poseRuntime.js';
 
@@ -64,7 +65,8 @@ export function defaultReadPose(h: Humanoid): () => Pose {
     const p = h.readPose() as Pose;
     delete p['LeftBreast']; delete p['RightBreast'];          // вторичные jiggle-кости — не часть анимации
     const hp = h.hips.position;
-    p['__hipsP'] = [+hp.x.toFixed(3), +hp.y.toFixed(3), +hp.z.toFixed(3)];
+    const hr = h.hipsRest;
+    setHipsOffset(p, [+(hp.x - hr.x).toFixed(3), +(hp.y - hr.y).toFixed(3), +(hp.z - hr.z).toFixed(3)]);   // Ф12: дельта от rest — запечённая походка переносима
     return p;
   };
 }

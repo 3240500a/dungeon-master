@@ -100,6 +100,9 @@ export interface Humanoid {
   reset(): void;
   /** Кость таза (сахар: `bones.get('Hips')!`). Root ≠ таз, см. таблицу BONES. */
   hips: THREE.Group;
+  /** REST-позиция таза этого тела (`pelvisHeight` профиля). Точка отсчёта офсета таза в позе:
+   *  клип хранит ДЕЛЬТУ от неё, поэтому «присед на 1.5 юнита» остаётся приседом на любом росте. */
+  hipsRest: THREE.Vector3;
   /** Поставить ТАЗ в мировую точку, сдвигая Root (авторский офсет таза и масштаб корня учтены).
    *  Нужна везде, где раньше писали `root.position = <мировая позиция таза>`. */
   setHipsWorld(x: number, y: number, z: number): void;
@@ -286,6 +289,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   const hips = bones.get('Hips')!;
   return {
     root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0, hips,
+    hipsRest: restPos.get('Hips')!.clone(),
     readPose() {
       const out: Record<string, [number, number, number]> = {};
       for (const [nm, g] of bones) { const e = g.rotation; out[nm] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }
