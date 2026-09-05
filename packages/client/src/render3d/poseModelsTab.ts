@@ -37,6 +37,8 @@ export interface ModelsTabHandle {
   boneOffsets(): Record<string, number[]> | undefined;   // ПОЛНЫЕ rest-офсеты ФБХ текущего атласа (приоритет; геометрия 1:1)
   profile(): BodyProfile | undefined;       // профиль тела (модульные пропорции) — редактор/игра строят тело им (единый opts)
   handBone(our: string): THREE.Object3D | null;   // кисть ВИДИМОГО атласа (для крепления оружия к мешу, не к манекену)
+  /** Загруженный атлас как ЦЕЛЬ ЭКСПОРТА (скин + его скелет) и карта наша кость→кость модели; null — атлас не загружен. */
+  exportTarget(): { root: THREE.Object3D; boneMap: Record<string, string> } | null;
   debug(): Record<string, unknown>;         // состояние (тесты/дебаг): атлас, сабмеши, видимость слотов, профиль
   dispose(): void;
 }
@@ -575,6 +577,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
     boneScale: () => curAtlas()?.boneScale,   // пропорции ФБХ текущего атласа для манекена/призрака редактора
     boneOffsets: () => curAtlas()?.boneOffsets,   // полные rest-офсеты ФБХ для манекена/призрака (приоритет)
     profile: () => curAtlas()?.body,          // профиль тела атласа (как игра: solid/target с profile) → редактор строит тело им
+    exportTarget: () => asmSkin?.atlasExport() ?? null,   // Ф2.3: экспорт со скином, если атлас загружен
     handBone: (our) => asmSkin?.atlasBone(our) ?? null,   // кисть ВИДИМОГО атласа (asmSkin) → оружие крепим к мешу, не к манекену
 
     debug: () => ({

@@ -18,7 +18,10 @@ import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWea
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
-import { makeHistory } from './history.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
+import { makeHistory } from './history.js';
+import { bakeGaitSet, defaultReadPose, GAIT_PRESETS } from './clipBake.js';                    // Ф2.1: процедурка → клипы
+import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
+import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
 import { blendTwo, clipPoseAt, clipSegmentAt, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
   type Pose, type Keyframe, type Clip } from './clipModel.js';   // Ф1.1: одна модель клипа на редактор и игру
 import { createModelsTab } from './poseModelsTab.js';
@@ -851,7 +854,55 @@ async function showImportPanel(file: File): Promise<void> {
   }
 }
 
-function renderAnim(): void { body.innerHTML = ''; clipSection(); poseTools(); }
+function renderAnim(): void { body.innerHTML = ''; clipSection(); animExportSection(); poseTools(); }
+
+// ── Ф2.3: ВЫВОЗ КЛИПОВ НАРУЖУ (GLB с анимациями + манифест) ──
+// Цель экспорта — ЗАГРУЖЕННЫЙ атлас (скин + его скелет), если он есть; иначе наш канон-манекен
+// (тогда GLB — эталонный скелет с анимациями, ретаргетится в любом движке).
+let expProfile: NameProfile = 'canon';
+let expStatus = '';
+function animExportSection(): void {
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:10px 0 2px;border-top:1px solid #39415a;padding-top:8px');
+  h.textContent = 'АНИМАЦИИ → GLB'; body.append(h);
+  const tgt = modelsTab.exportTarget();
+  const info = el('div', 'color:#6b7180;font-size:10px;margin-bottom:3px');
+  info.textContent = tgt ? 'цель: загруженная модель (со скином)' : 'цель: канон-манекен (атлас не загружен)';
+  body.append(info);
+  const row = el('div', 'display:flex;flex-wrap:wrap;gap:4px;align-items:center'); body.append(row);
+  const sel = document.createElement('select'); sel.style.cssText = impInput;
+  const opts: [NameProfile, string][] = [['canon', 'имена: канон (Unity)'], ['model', 'имена: как в модели'], ['ue5', 'имена: UE5 Mannequin'], ['mixamo', 'имена: Mixamo']];
+  for (const [v, lb] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = lb; o.selected = v === expProfile; sel.append(o); }
+  sel.onchange = () => { expProfile = sel.value as NameProfile; };
+  row.append(sel);
+
+  const doExport = (clips: Clip[], fname: string): void => {
+    if (!clips.length) { expStatus = 'нечего экспортировать'; renderAnim(); return; }
+    // Манекен отдаём В T-ПОЗЕ: бинд-поза в GLB должна быть канонической, иначе в чужом движке
+    // все клипы приедут со смещением от той случайной позы, в которой был манекен в момент клика.
+    const saved = readPoseFull();
+    const target = tgt ? tgt.root : (human.reset(), human.root);
+    void exportClipsToGLB(target, clips, {
+      profile: tgt ? expProfile : (expProfile === 'model' ? 'canon' : expProfile),
+      nativeProfile: tgt ? 'model' : 'canon',   // атлас уже в своих именах, манекен — в каноне
+      boneMap: tgt?.boneMap,
+    })
+      .then((res) => {
+        downloadFile(fname + '.glb', res.glb, 'model/gltf-binary');
+        downloadFile(fname + '.manifest.json', JSON.stringify(res.manifest, null, 2), 'application/json');
+        expStatus = `✓ ${clips.length} клип(ов), ${(res.glb.byteLength / 1024).toFixed(0)} КБ`
+          + (res.lostTracks.length ? ` ⚠ потеряно дорожек: ${res.lostTracks.length} (имена костей не совпали)` : '');
+      })
+      .catch((e: unknown) => { expStatus = '✗ ' + String(e); })
+      .finally(() => { applyPose(saved); if (mode === 'ik') captureRig(); renderAnim(); });
+  };
+
+  const cur = curClip();
+  row.append(
+    pbtn('⬇ клип', () => { if (cur) doExport([cur], cur.name); }),
+    pbtn('⬇ все клипы персонажа', () => doExport(library.filter((x) => x.character === curCharId), curCharId + '_anims')),
+  );
+  if (expStatus) { const st = el('div', 'font-size:10px;margin-top:3px;color:' + (expStatus[0] === '✗' ? '#e08080' : '#9ae6a0')); st.textContent = expStatus; body.append(st); }
+}
 function clipSection(): void {
   const list = clipsHere();
   const info = el('div', 'color:#9ae6a0;margin-bottom:4px'); info.textContent = `${curChar().name} · ${weapon} · клипов: ${list.length}`; body.append(info);
@@ -1064,11 +1115,40 @@ function renderLoco(): void {
     ys.oninput = () => { gaitYawManual = parseFloat(ys.value) * Math.PI / 180; yv.textContent = ys.value + '°'; }; yr.append(ys, yv); fr.append(yr);
   }
   gaitReadout = el('div', 'color:#8fb7ff;font-size:11px;margin-top:4px'); gaitReadout.textContent = 'скорость: — (пад: центр → шаг, край → бег)'; body.append(gaitReadout);
+  bakeGaitSection();
   if (uiPro) renderGaitTune();   // тюнинг походки (24 ползунка GAIT/POSE/GX) — только Про
   renderUpperPanel();
   renderAttackPanel();
 }
 /** Панель настройки процедурного бега (GX/POSE/GAIT). Меняет живые объекты + пишет per-character в pe_gait. */
+// Ф2.1: запечь процедурную походку в обычные клипы (после этого клиенту StepPlanner не нужен)
+let bakeStatus = '';
+function bakeGaitSection(): void {
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); h.textContent = 'ЗАПЕЧЬ ПОХОДКУ В КЛИПЫ'; body.append(h);
+  const info = el('div', 'color:#6b7180;font-size:10px'); info.textContent = `${GAIT_PRESETS.length} режимов (стойка/шаг/бег/страйф/диагонали) → обычные клипы для текущего оружия`; body.append(info);
+  body.append(pbtn('⚙ запечь набор походки', () => {
+    const wasLoco = locoOn; locoOn = false;                   // бейк сам гоняет плеера — цикл не должен мешать
+    const player = lp();
+    if (player.weapon !== weapon) player.setWeapon(weapon);
+    player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
+    const t0 = performance.now();
+    const out = bakeGaitSet(player, human, { character: curCharId, weapon, readPose: defaultReadPose(human) });
+    const ms = performance.now() - t0;
+    histLib('запечь походку', () => {
+      for (const r of out) {
+        const i = library.findIndex((x) => x.name === r.clip.name && x.character === curCharId && x.weapon === weapon);
+        if (i >= 0) library[i] = r.clip; else library.push(r.clip);
+      }
+      saveLib();
+    });
+    const keys = out.reduce((a, r) => a + r.keys, 0), frames = out.reduce((a, r) => a + r.frames, 0);
+    bakeStatus = `✓ ${out.length} клипов, ${frames} кадров → ${keys} ключей, ${ms.toFixed(0)} мс`;
+    locoOn = wasLoco;
+    refreshAll();
+  }));
+  if (bakeStatus) { const st = el('div', 'font-size:10px;margin-top:2px;color:#9ae6a0'); st.textContent = bakeStatus; body.append(st); }
+}
+
 function renderGaitTune(): void {
   const box = el('div', 'margin-top:8px;border:1px solid #39415a;border-radius:6px;padding:6px');
   const gsl = (label: string, obj: NumRec, key: string, min: number, max: number, step: number): void => {

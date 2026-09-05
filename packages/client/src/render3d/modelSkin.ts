@@ -193,7 +193,10 @@ export async function applyWeaponModels(weaponGroups: THREE.Group[], cfg: AssetC
 export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
   set(specs: SlotModel[], assets: { materials: MaterialCfg[]; textures: TextureCfg[] }): Promise<void>;
   setAtlas(model: ModelCfg, visible: Record<string, string>, assets: { materials: MaterialCfg[]; textures: TextureCfg[] }, opt?: { hideHair?: boolean; matBySlot?: Record<string, string> }): Promise<string[]>;
-  update(): void; count(): number; atlasBone(our: string): THREE.Object3D | null; dispose(): void;
+  update(): void; count(): number; atlasBone(our: string): THREE.Object3D | null;
+  /** Корень и карта костей ЗАГРУЖЕННОГО атласа — цель экспорта GLB со скином (Ф2.3). */
+  atlasExport(): { root: THREE.Object3D; boneMap: Record<string, string> } | null;
+  dispose(): void;
 } {
   const worn: Worn[] = [];
   let curKey = '';
@@ -296,6 +299,7 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
     setAtlas,
     update() { for (const w of worn) w.rig.drive(source); },
     count: () => worn.length,
+    atlasExport: () => { const w = worn.find((x) => x.slot === 'atlas'); return w ? { root: w.rig.root, boneMap: w.rig.boneMap } : null; },
     atlasBone: (our) => worn.find((w) => w.slot === 'atlas')?.rig.targetBone(our) ?? null,   // кисть ВИДИМОГО атласа (для оружия)
     dispose() { gen++; clearWorn(); showAllProcedural(true); },
   };

@@ -51,10 +51,14 @@ export async function loadModelUrl(url: string): Promise<THREE.Group> {
   return parseModel(await r.arrayBuffer(), ext);
 }
 
-/** Экспорт объекта в бинарный GLB (ArrayBuffer). */
-export function exportGLB(obj: THREE.Object3D): Promise<ArrayBuffer> {
+/** Экспорт объекта в бинарный GLB (ArrayBuffer).
+ *  Вторым аргументом — анимации (Ф2.3): GLTFExporter кладёт их в тот же файл, и клип уезжает
+ *  в Unity/Unreal/Blender как обычная анимация — без нашего кода. Имена дорожек должны совпадать
+ *  с именами УЗЛОВ экспортируемого графа, иначе экспортер тихо выбросит дорожку (частая грабля). */
+export function exportGLB(obj: THREE.Object3D, animations?: THREE.AnimationClip[]): Promise<ArrayBuffer> {
   return new Promise<ArrayBuffer>((resolve, reject) =>
-    new GLTFExporter().parse(obj, (res) => resolve(res as ArrayBuffer), (e) => reject(e), { binary: true }));
+    new GLTFExporter().parse(obj, (res) => resolve(res as ArrayBuffer), (e) => reject(e),
+      animations && animations.length ? { binary: true, animations } : { binary: true }));
 }
 
 /** Залить бинарь (GLB/PNG/JPG) на сервер под id → { url }. DEV-only (в проде 403). contentType задаёт расширение. */
