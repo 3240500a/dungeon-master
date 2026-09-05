@@ -18,6 +18,7 @@ import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRag
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';
+import { requestGeneration, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
 import { capturePose, pastePose, pasteIntoInterval, mirrorPoseSide, flipPoseSides, flipClip, mirrorClip,
   rotateClipPhase, comparePoses, EMPTY_POSE_LIBRARY, type PoseLibrary } from './poseLibrary.js';   // Ф7: библиотека поз и copy-tools   // Ф6: тайм-лайн с дорожками
 import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
@@ -781,7 +782,7 @@ bar.append(personaB, document.createTextNode('Персонаж'), charSel, docum
 // настройки ПРОДОЛЖАЮТ действовать со своими значениями — просто не показываются.
 let uiPro: boolean = (() => { try { return (JSON.parse(localStorage.getItem('pe_ui') || '{}') as { pro?: boolean }).pro === true; } catch { return false; } })();
 function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify({ pro: uiPro })); savePoseKey('pe_ui'); } catch { /* */ } }
-let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' = 'anim';
+let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' | 'ai' = 'anim';
 const tabBar = document.createElement('div'); tabBar.style.cssText = 'display:flex;gap:3px;margin-bottom:6px';
 const body = document.createElement('div');
 panel.append(tabBar, body);
@@ -790,12 +791,12 @@ const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => {
 // Вкладка «Повороты» авто-включает превью бега (updateTurnTest: locoOn=true). При уходе на не-локо вкладку его НАДО
 // выключить, иначе гейт продолжает вести манекен и перекрывает воспроизведение клипов («после Поворотов анимации не работают»).
 const tabSwitch = (k: typeof tab): void => { if (k !== 'turn' && k !== 'loco' && locoOn) { locoOn = false; goFrame(frameIdx); } tab = k; refreshAll(); };
-for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
+for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
 const modelsTab = createModelsTab(scene);
 let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateLimitGizmo(); }
+function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateLimitGizmo(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 function refreshLimbs(): void { if (tab === 'anim') renderAnim(); }
 
@@ -1417,6 +1418,75 @@ function renderChar(): void {
   const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'СВОИ ПЕРСОНАЖИ'; body.append(ah);
   body.append(pbtn('+ создать из текущего', () => { const nm = prompt('имя персонажа', 'char' + (customChars.length + 1)); if (!nm) return; const id = 'c' + Date.now(); customChars.push({ id, name: nm, gender: c.gender, build: { ...c.build }, weapon }); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(id); }));
   if (!c.builtin) body.append(pbtn('удалить персонажа', () => { customChars = customChars.filter((x) => x.id !== c.id); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(CLASS_CHARS[0]!.id); }));
+}
+
+// ── Ф9: ВКЛАДКА ИИ ──
+// Никакой новой инфраструктуры: запрос → сервис → BVH → УЖЕ СУЩЕСТВУЮЩИЙ запекатель → клип в библиотеке.
+// Сервиса у нас пока нет, поэтому есть и режим «из файла» — чтобы весь путь проверялся уже сейчас.
+let aiCfg: AiConfig = (() => { try { return { ...DEFAULT_AI_CONFIG(), ...(JSON.parse(localStorage.getItem('pe_ai') || '{}') as AiConfig) }; } catch { return DEFAULT_AI_CONFIG(); } })();
+let aiStatus = '';
+function saveAi(): void { try { localStorage.setItem('pe_ai', JSON.stringify(aiCfg)); savePoseKey('pe_ai'); } catch { /* */ } }
+
+/** Общий хвост: BVH-текст → клип в библиотеке (тем же запекателем, что и ручной импорт FBX/BVH). */
+async function aiBvhToClip(bvh: string, label: string): Promise<void> {
+  if (!looksLikeBvh(bvh)) { aiStatus = '✗ это не похоже на BVH'; refreshAll(); return; }
+  const { bakeAnimationToClip } = await import('./clipBaker.js');
+  const file = new File([bvh], 'ai.bvh', { type: 'text/plain' });
+  const idle = resolveUpper(weapon)?.pose;
+  const name = generatedClipName(label, library.filter((c) => c.character === curCharId && c.weapon === weapon).map((c) => c.name));
+  try {
+    const r = await bakeAnimationToClip(file, { character: curCharId, weapon, name, idlePose: idle, anchorIdle: !!idle });
+    histLib('ИИ: добавить клип', () => { library.push(r.clip); clipIdx = clipsHere().length - 1; frameIdx = 0; saveLib(); });
+    aiStatus = `✓ «${r.clip.name}»: ${r.frames} кадров → ${r.keys} ключей`;
+  } catch (e) { aiStatus = '✗ ' + String(e); }
+  refreshAll();
+}
+
+function renderAi(): void {
+  body.innerHTML = '';
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin-bottom:4px'); h.textContent = 'ГЕНЕРАЦИЯ АНИМАЦИИ'; body.append(h);
+  const hint = el('div', 'color:#6b7180;font-size:10px;margin-bottom:5px');
+  hint.textContent = 'ответ ожидается BVH (его отдают text-to-motion модели) либо JSON с нашим клипом';
+  body.append(hint);
+
+  const urlRow = el('label', 'display:flex;align-items:center;gap:5px;margin-bottom:3px');
+  urlRow.innerHTML = '<span style="width:52px;font-size:11px">сервис</span>';
+  const url = el('input', 'flex:1;' + impInput) as HTMLInputElement;
+  url.placeholder = 'https://…/generate'; url.value = aiCfg.url;
+  url.onchange = () => { aiCfg.url = url.value.trim(); saveAi(); };
+  urlRow.append(url); body.append(urlRow);
+
+  const pr = el('textarea', 'width:100%;height:52px;box-sizing:border-box;' + impInput) as HTMLTextAreaElement;
+  pr.placeholder = 'опиши движение: «широкий замах двуручным топором сверху вниз»';
+  pr.value = aiCfg.prompt; pr.onchange = () => { aiCfg.prompt = pr.value; saveAi(); };
+  body.append(pr);
+
+  const secRow = el('label', 'display:flex;align-items:center;gap:5px;margin:3px 0');
+  secRow.innerHTML = '<span style="flex:1;font-size:11px">длительность, с</span>';
+  const sec = el('input', 'width:56px;' + impInput) as HTMLInputElement;
+  sec.type = 'number'; sec.step = '0.5'; sec.min = '0.5'; sec.value = String(aiCfg.seconds);
+  sec.onchange = () => { aiCfg.seconds = parseFloat(sec.value) || 2; saveAi(); };
+  secRow.append(sec); body.append(secRow);
+
+  const row = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(row);
+  row.append(pbtn('✦ сгенерировать', () => {
+    aiStatus = '… запрос'; refreshAll();
+    void requestGeneration(aiCfg, { prompt: pr.value, seconds: aiCfg.seconds, character: curCharId, weapon }).then(async (r) => {
+      if (r.error) { aiStatus = '✗ ' + r.error; refreshAll(); return; }
+      if (r.clip) { histLib('ИИ: добавить клип', () => { library.push(migrateClip(r.clip)); saveLib(); }); aiStatus = '✓ клип принят'; refreshAll(); return; }
+      await aiBvhToClip(r.bvh ?? '', pr.value);
+    });
+  }));
+  // Путь «из файла» — чтобы вся цепочка проверялась без сервиса.
+  const fi = el('input', 'display:none') as HTMLInputElement;
+  fi.type = 'file'; fi.accept = '.bvh,text/plain';
+  fi.onchange = () => { const f = fi.files?.[0]; if (f) void f.text().then((t) => aiBvhToClip(t, pr.value || f.name)); };
+  body.append(fi);
+  row.append(pbtn('↑ BVH из файла', () => fi.click()));
+  if (aiStatus) { const st = el('div', 'font-size:10px;margin-top:4px;color:' + (aiStatus[0] === '✗' ? '#e08080' : '#9ae6a0')); st.textContent = aiStatus; body.append(st); }
+  const note = el('div', 'color:#6b7180;font-size:10px;margin-top:6px');
+  note.textContent = 'сгенерированный клип — обычный: правь кадры, кривые и позы руками, потом экспортируй как всё остальное';
+  body.append(note);
 }
 
 // ── Ф8: МОРФИНГ ТЕЛА ──
