@@ -18,13 +18,15 @@ import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWea
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
+import { makeHistory } from './history.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
+import { blendTwo, clipPoseAt, clipSegmentAt, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
+  type Pose, type Keyframe, type Clip } from './clipModel.js';   // Ф1.1: одна модель клипа на редактор и игру
 import { createModelsTab } from './poseModelsTab.js';
 import { bakeAnimationToClip, listAnimations } from './clipBaker.js';
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 const V = (): THREE.Vector3 => new THREE.Vector3();
 const Q = (): THREE.Quaternion => new THREE.Quaternion();
-const _eA = new THREE.Euler(), _eB = new THREE.Euler(), _qLA = new THREE.Quaternion(), _qLB = new THREE.Quaternion(), _qLR = new THREE.Quaternion(), _eR = new THREE.Euler();   // темпы для slerp интерп кадров
 
 const canvas = document.getElementById('app') as HTMLCanvasElement;
 const bar = document.getElementById('toolbar')!, panel = document.getElementById('panel')!, timeline = document.getElementById('timeline')!;
@@ -51,6 +53,7 @@ const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); sc
 //    (twist/plane/normal из jointLimitView — те же, что рисует гизмо пределов). Кольцо twist охватывает ось кости → удобно
 //    твистить/сгибать сустав. Дельта прокси (мир) → лок. поворот кости → клэмп. Кость без сустава → оси самой кости. ──
 const boneProxy = new THREE.Object3D(); boneProxy.name = '__boneProxy'; scene.add(boneProxy);
+let dragUndo: State | null = null;   // снимок позы на НАЧАЛЕ драга — иначе откат отставал на шаг (писали уже изменённое состояние)
 let fkProxyBone: string | null = null;                       // кость, редактируемая через прокси (null = прокси не активен)
 const _pBase = new THREE.Quaternion(), _pBaseInv = new THREE.Quaternion(), _bBase = new THREE.Quaternion();
 const _parInv = new THREE.Quaternion(), _rdof = new THREE.Quaternion(), _dq = new THREE.Quaternion(), _nw = new THREE.Quaternion();
@@ -85,7 +88,7 @@ function rebaselineProxy(): void {
 }
 /** Прицепить гизмо вращения к кости ЧЕРЕЗ прокси (кольца по осям сустава). Замена прямого gizmo.attach(bone). */
 function attachBoneGizmo(nm: string): void { fkProxyBone = nm; rebaselineProxy(); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(boneProxy); }
-gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) rebaselineProxy(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else { pushUndo(); if (!wpnOverride && weaponGroups.includes(gizmo.object as THREE.Group)) saveGripBase(); } });   // правка оружия без галки → авто в БАЗУ pe_grip
+gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) rebaselineProxy(); dragUndo = plantDrag >= 0 ? null : snapshot(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else { if (dragUndo) { const before = dragUndo, after = snapshot(); history.push('правка позы', () => restore(before), () => restore(after)); dragUndo = null; } if (!wpnOverride && weaponGroups.includes(gizmo.object as THREE.Group)) saveGripBase(); } });   // правка оружия без галки → авто в БАЗУ pe_grip
 
 const limitGizmo = makeLimitGizmo(); scene.add(limitGizmo.group);   // гизмо предела выбранного сустава (на манекене)
 let showLimits = true;                                              // рисовать пределы выбранного сустава (дефолт вкл)
@@ -331,16 +334,7 @@ gizmo.addEventListener('objectChange', () => {
   else { const e = rig.eff[activeKey!]!; const nt = e.handle.position.clone(); if (!e.isFoot && bodyFollow > 0) moveHips(nt.clone().sub(e.prev).multiplyScalar(bodyFollow), e); e.target.copy(nt); e.prev.copy(nt); }
 });
 
-// ── Позы / клипы / undo ──
-type Pose = Record<string, [number, number, number]>;
-interface Keyframe { pose: Pose; t: number }                 // t = сек от начала клипа (кадры отсортированы по t)
-interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[]; idleEnds?: boolean }
-const DEF_GAP = 0.3;                                          // дефолт-шаг между кадрами (сек)
-function migrateClip(c0: unknown): Clip {                     // старый формат (keys: Pose[]) → кадры с временем
-  const c = c0 as Clip & { keys: (Keyframe | Pose)[] };
-  const keys: Keyframe[] = (c.keys ?? []).map((k, i) => (k && typeof (k as Keyframe).t === 'number' && (k as Keyframe).pose) ? (k as Keyframe) : ({ pose: k as unknown as Pose, t: i * DEF_GAP }));
-  return { name: c.name, character: c.character, weapon: c.weapon, loop: c.loop ?? false, keys, idleEnds: c.idleEnds };
-}
+// ── Позы / клипы / undo ── (типы, blendTwo/clipPoseAt/migrateClip — из clipModel.ts)
 function loadLib(): Clip[] { try { const s = localStorage.getItem('pe_clips'); if (!s) return []; return (JSON.parse(s) as unknown[]).map(migrateClip); } catch { return []; } }
 function saveLib(): void { try { localStorage.setItem('pe_clips', JSON.stringify(library)); savePoseKey('pe_clips'); } catch { /* */ } }
 let library: Clip[] = loadLib();
@@ -349,11 +343,8 @@ let clipBufWasAtk = false;            // был ли исходник в буф�
 let clipIdx = 0, frameIdx = 0;
 const clipsHere = (): Clip[] => library.filter((c) => c.character === curCharId && c.weapon === weapon);
 const curClip = (): Clip | null => clipsHere()[clipIdx] ?? null;
-const clipDur = (c: Clip): number => c.keys.length ? c.keys[c.keys.length - 1]!.t : 0;
 function sortKeys(c: Clip): void { const cur = c.keys[frameIdx]; c.keys.sort((a, b) => a.t - b.t); if (cur) frameIdx = c.keys.indexOf(cur); }
 // Поза оружия относительно хвата пишется спец-ключами (не кости): поворот __wpn{Main|Off}, позиция __wpn{Main|Off}P.
-const WPN_KEYS = ['__wpnMain', '__wpnOff'];
-const WPN_POS = ['__wpnMainP', '__wpnOffP'];
 // ── Двуручный хват: маркер точки, где ЛЕВАЯ кисть держит оружие (ребёнок груп[0]); ключи позы __lgripP/__lgripR (локаль оружия) ──
 let lgripMark: THREE.Mesh | null = null;
 function ensureLgripMark(): THREE.Mesh | null {
@@ -393,7 +384,7 @@ function readPoseFull(): Pose {
     p['__lgripP'] = [+lp.x.toFixed(2), +lp.y.toFixed(2), +lp.z.toFixed(2)];
     p['__lgripR'] = [+lr.x.toFixed(3), +lr.y.toFixed(3), +lr.z.toFixed(3)];
   }
-  p['__hipsY'] = [+human.bones.get('Hips')!.position.y.toFixed(2), 0, 0];   // АВТОРСКАЯ высота таза → база стойки (standY) + восстановление на applyPose (иначе после бега таз оставался на gait-standY → провал)
+  { const hp = human.hips.position; p['__hipsP'] = [+hp.x.toFixed(2), +hp.y.toFixed(2), +hp.z.toFixed(2)]; }   // ПОЛНЫЙ авторский офсет таза (Root ≠ таз): Y = база стойки (standY), X/Z = мах/сдвиг таза В МЕСТЕ. Раньше писали только Y — X/Z молча терялись
   return p;
 }
 let wpnOverride = false;   // галка «хват: своя правка (кадр)» текущего кадра (иначе — БАЗА pe_grip, единый хват во всех позах)
@@ -408,18 +399,10 @@ function applyWeaponPose(p: Pose): void {
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
-function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } if (p['__hipsY']) human.bones.get('Hips')!.position.y = p['__hipsY']![0]; applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторскую высоту таза (иначе после бега остаётся gait-standY → провал скелета)
+function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hp = p['__hipsP']; if (hp) human.hips.position.set(hp[0], hp[1], hp[2]); } applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
 // Интерп ПОВОРОТОВ кадров — КВАТЕРНИОННЫЙ SLERP (истинная кратчайшая дуга, без gimbal). Покомпонентный лерп эйлеров
 // (даже с обёрткой углов в [-π,π]) на многоосевых кадрах даёт «прокрутку» руки (эйлеры далеки, хотя поворот близок).
 // slerp учитывает двойное покрытие (q и −q = один поворот) → всегда короткий путь. lerpAng оставлен для скаляров/маркера.
-const TAU = Math.PI * 2;
-const shortDelta = (from: number, to: number): number => { let d = (to - from) % TAU; if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU; return d; };
-const lerpAng = (from: number, to: number, t: number): number => from + shortDelta(from, to) * t;
-const slerpEuler = (out: THREE.Quaternion, pa: number[], pb: number[], t: number): THREE.Quaternion => {
-  _qLA.setFromEuler(_eA.set(pa[0] ?? 0, pa[1] ?? 0, pa[2] ?? 0));
-  _qLB.setFromEuler(_eB.set(pb[0] ?? 0, pb[1] ?? 0, pb[2] ?? 0));
-  return out.copy(_qLA).slerp(_qLB, t);
-};
 function lerpPose(a: Pose, b: Pose, t: number): void {
   human.reset();
   for (const nm of human.boneNames) { const pa = a[nm] ?? [0, 0, 0], pb = b[nm] ?? [0, 0, 0]; slerpEuler(human.bones.get(nm)!.quaternion, pa, pb, t); }
@@ -430,14 +413,21 @@ function lerpPose(a: Pose, b: Pose, t: number): void {
   });
   const ip = (k: string, d: number): number => { const va = a[k]?.[0] ?? d, vb = b[k]?.[0] ?? va; return va + (vb - va) * t; };
   PHYS.match = ip('__match', physMatchBase); PHYS.pinKp = ip('__pinKp', DEF_PINKP);   // per-кадр физ скользит в проигрывании
-  if (a['__hipsY'] || b['__hipsY']) human.bones.get('Hips')!.position.y = ip('__hipsY', human.bones.get('Hips')!.position.y);   // высота таза скользит по кадрам (иначе провал при скрабе клипа)
+  if (a['__hipsP'] || b['__hipsP']) {   // офсет таза скользит по кадрам (иначе провал/рывок при скрабе клипа)
+    const hp = human.hips.position, ipn = (k: string, i: number, d: number): number => { const va = a[k]?.[i] ?? d, vb = b[k]?.[i] ?? va; return va + (vb - va) * t; };
+    hp.set(ipn('__hipsP', 0, hp.x), ipn('__hipsP', 1, hp.y), ipn('__hipsP', 2, hp.z));
+  }
   if (a['__lgripP'] || b['__lgripP']) { const m = ensureLgripMark(); if (m) {   // точка хвата скользит по кадрам (перехват)
     const pa = a['__lgripP'] ?? b['__lgripP']!, pb = b['__lgripP'] ?? pa, ra = a['__lgripR'] ?? [0, 0, 0], rb = b['__lgripR'] ?? ra;
     m.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t);
     m.rotation.set(lerpAng(ra[0], rb[0], t), lerpAng(ra[1], rb[1], t), lerpAng(ra[2], rb[2], t)); m.visible = true;
   } } else if (lgripMark) lgripMark.visible = false;
 }
-function mirrorLR(): void { const p = human.readPose(); for (const nm of human.boneNames) { if (!nm.startsWith('Left')) continue; const rb = human.bones.get('Right' + nm.slice(4)); const s = p[nm]!; if (rb) rb.rotation.set(s[0], -s[1], -s[2]); } if (mode === 'ik') captureRig(); }
+function mirrorLR(): void {   // «подтянуть правую сторону под левую» (общая чистая mirrorSide из clipModel)
+  const m = mirrorSide(human.readPose(), 'Left');
+  for (const nm of human.boneNames) { if (!nm.startsWith('Right')) continue; const b = human.bones.get(nm); const s = m[nm]; if (b && s) b.rotation.set(s[0], s[1], s[2]); }
+  if (mode === 'ik') captureRig();
+}
 
 // ── Локомоция: 2D бленд-дерево (Unity-стиль VelX/VelZ) ──
 interface LocoNode { character: string; weapon: string; clip: string; vx: number; vz: number }
@@ -445,23 +435,6 @@ function loadLoco(): LocoNode[] { try { const s = localStorage.getItem('pe_loco'
 let locoNodes: LocoNode[] = loadLoco();
 function saveLoco(): void { try { localStorage.setItem('pe_loco', JSON.stringify(locoNodes)); savePoseKey('pe_loco'); } catch { /* */ } }
 const locoHere = (): LocoNode[] => locoNodes.filter((n) => n.character === curCharId && n.weapon === weapon);
-function blendTwo(a: Pose, b: Pose, t: number): Pose {
-  const out: Pose = {};
-  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    const pa = a[k] ?? [0, 0, 0], pb = b[k] ?? [0, 0, 0];
-    const ang = k[0] !== '_' || WPN_KEYS.includes(k) || k === '__lgripR';   // повороты: кости + оружие + грип. Позиции(…P)/скаляры(__match/__pinKp=6000!) — ЛИНЕЙНО.
-    if (ang) { slerpEuler(_qLR, pa, pb, t); _eR.setFromQuaternion(_qLR); out[k] = [+_eR.x, +_eR.y, +_eR.z]; }   // slerp (кратчайшая дуга, без gimbal) → обратно в эйлер
-    else out[k] = [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t];
-  }
-  return out;
-}
-function clipPoseAt(c: Clip, t01: number): Pose {   // поза клипа на нормализованной фазе 0..1
-  const ks = c.keys; if (!ks.length) return {}; if (ks.length < 2) return ks[0]!.pose;
-  const dur = clipDur(c) || 1, time = clamp(t01, 0, 1) * dur;
-  let i = 0; while (i < ks.length - 2 && ks[i + 1]!.t <= time) i++;
-  const a = ks[i]!, b = ks[i + 1]!, span = b.t - a.t;
-  return blendTwo(a.pose, b.pose, span > 1e-6 ? clamp((time - a.t) / span, 0, 1) : 0);
-}
 function locoWeights(nodes: LocoNode[], vx: number, vz: number): number[] {   // веса = обратный квадрат расстояния (норм.)
   const w = nodes.map((n) => 1 / ((n.vx - vx) ** 2 + (n.vz - vz) ** 2 + 0.03));
   const s = w.reduce((a, b) => a + b, 0) || 1; return w.map((x) => x / s);
@@ -499,11 +472,26 @@ function restore(s: State): void {
   for (const k in s.eff) { const e = rig.eff[k]; const d = s.eff[k]!; if (e) { e.target.fromArray(d.t); e.footQuat.fromArray(d.fq); if (d.pl) e.pole.fromArray(d.pl); e.ik = d.ik; e.pin = d.pin; } }
   refreshLimbs();
 }
-let undoStack: State[] = [], redoStack: State[] = [];
-function pushUndo(): void { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; }
-function undo(): void { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()!); }
-function redo(): void { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()!); }
-addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); } if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); } });
+const history = makeHistory(100);
+// Два уровня снимка в ОДНОЙ истории (Ctrl+Z идёт по ним единым порядком):
+//  • поза — дёшево, на каждую правку кости/эффектора;
+//  • библиотека — на структурные операции (кадр добавить/удалить/сдвинуть, клип создать/удалить/вставить,
+//    импорт, бейк), которые раньше были неоткатны ВООБЩЕ. Снимок = JSON библиотеки + позиция курсора клип/кадр.
+interface LibState { lib: string; clipIdx: number; frameIdx: number }
+const libSnap = (): LibState => ({ lib: JSON.stringify(library), clipIdx, frameIdx });
+function libRestore(s: LibState): void {
+  library = (JSON.parse(s.lib) as unknown[]).map(migrateClip);
+  clipIdx = s.clipIdx; frameIdx = s.frameIdx;
+  saveLib();
+  const c = curClip(); const k = c?.keys[frameIdx]; if (k) applyPose(k.pose);
+  if (mode === 'ik') captureRig();
+  refreshAll();
+}
+/** Правка ПОЗЫ (кости/эффекторы/оружие) — записать «до/после» в историю. */
+const histPose = (label: string, act: () => void): void => history.run(label, snapshot, restore, act);
+/** СТРУКТУРНАЯ правка (кадры/клипы/библиотека) — записать «до/после» в историю. */
+const histLib = (label: string, act: () => void): void => history.run(label, libSnap, libRestore, act);
+addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) history.redo(); else history.undo(); } if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); history.redo(); } });
 
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
 const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов (фолбэк для кадров без __pinKp)
@@ -563,7 +551,7 @@ function applyChar(id: string): void {
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
   disposeOnion();                                             // онион-призраки пересоберутся под новые пропорции
-  clipIdx = 0; frameIdx = 0; undoStack = []; redoStack = [];
+  clipIdx = 0; frameIdx = 0; history.clear();
   syncAllAttackEnds();                                        // концы ударов этого персонажа = его стойки
   refreshAll();
 }
@@ -604,6 +592,8 @@ function setMode(m: 'fk' | 'ik'): void { mode = m; gizmo.detach(); fkProxyBone =
 ikB = mkBtn('IK', () => setMode('ik')); fkB = mkBtn('FK', () => setMode('fk'));
 hipsB = mkBtn('таз: двигать', () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); } });
 const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => { physOn = !physOn; physB.textContent = 'физ: ' + (physOn ? 'вкл' : 'выкл'); physB.classList.toggle('on', physOn); setPhysVis(physOn); }); });
+const modeB = mkBtn('', () => { uiPro = !uiPro; saveUi(); syncModeB(); refreshAll(); });
+function syncModeB(): void { modeB.textContent = uiPro ? '⚙ Про' : '○ Простой'; modeB.title = uiPro ? 'Про: все настройки (лимиты, моторы, физика, тюнинг походки)' : 'Простой: только позинг и клипы — инженерные панели скрыты (их значения действуют)'; modeB.classList.toggle('on', uiPro); }
 const manB = mkBtn('манекен: скелет', () => { manView = manView === 'skel' ? 'solid' : manView === 'solid' ? 'hidden' : 'skel'; setManView(); });
 // Тумблер ростера: персонажи (классы) ↔ монстры. Переключает список выбора персонажа и грузит первого из ростера.
 let personaB!: HTMLButtonElement;
@@ -615,10 +605,15 @@ personaB = mkBtn('◧ персонажи', () => {
   if (first) applyChar(first.id); else refreshAll();
 });
 bar.append(personaB, document.createTextNode('Персонаж'), charSel, document.createTextNode('Оружие'), wpnSel, document.createTextNode('офф'), offSel, sep(), ikB, fkB, hipsB, sep(),
-  mkBtn('зеркало L→R', () => { pushUndo(); mirrorLR(); }), mkBtn('T-поза', () => { pushUndo(); human.reset(); if (mode === 'ik') captureRig(); }), sep(),
-  mkBtn('↶ undo', () => undo()), mkBtn('↷ redo', () => redo()), sep(), physB, manB);
+  mkBtn('зеркало L→R', () => histPose('зеркало L→R', mirrorLR)), mkBtn('T-поза', () => histPose('T-поза', () => { human.reset(); if (mode === 'ik') captureRig(); })), sep(),
+  mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, sep(), modeB);
 
 // ── Панель-вкладки (Анимация = клипы+кадры+поза; Бег = 2D бленд локомоции; Персонаж = setup) ──
+// РЕЖИМ ИНТЕРФЕЙСА (Ф1.5). Не два разных UI, а один с прогрессивным раскрытием: «Про» ДОБАВЛЯЕТ инженерные
+// панели (лимиты суставов, моторы, PHYS, тюнинг походки), ничего не переставляя. В Простом все эти
+// настройки ПРОДОЛЖАЮТ действовать со своими значениями — просто не показываются.
+let uiPro: boolean = (() => { try { return (JSON.parse(localStorage.getItem('pe_ui') || '{}') as { pro?: boolean }).pro === true; } catch { return false; } })();
+function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify({ pro: uiPro })); savePoseKey('pe_ui'); } catch { /* */ } }
 let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' = 'anim';
 const tabBar = document.createElement('div'); tabBar.style.cssText = 'display:flex;gap:3px;margin-bottom:6px';
 const body = document.createElement('div');
@@ -684,7 +679,8 @@ function poseTools(): void {
       if (on) { const pickGrip = (m: 'rotate' | 'translate'): void => { const mk = ensureLgripMark(); if (!mk) return; setMode('fk'); fkProxyBone = null; selected = null; highlight(null); mk.visible = true; gizmo.setSpace('local'); gizmo.setMode(m); gizmo.attach(mk); }; gr.append(pbtn('хват ✥', () => pickGrip('translate')), pbtn('хват ⟳', () => pickGrip('rotate'))); }
     }
   }
-  // ── ФИЗИКА (PuppetMaster-стиль: пины/мышцы + дёрг/падение) ──
+  // ── ФИЗИКА (PuppetMaster-стиль: пины/мышцы + дёрг/падение) ── только Про
+  if (uiPro) {
   const phh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); phh.textContent = 'ФИЗИКА (мышцы/пины)'; body.append(phh);
   const phRow = (label: string, key: 'pin' | 'pinKp' | 'muscle' | 'load' | 'match', min: number, max: number, step: number): void => {
     const row = el('label', 'display:flex;align-items:center;gap:6px'); row.innerHTML = `<span style="flex:1">${label}</span>`;
@@ -729,7 +725,7 @@ function poseTools(): void {
     s.oninput = () => {
       physFootLift = parseFloat(s.value); v.textContent = physFootLift.toFixed(1);
       human.footLift = physFootLift; if (ghostHuman) ghostHuman.footLift = physFootLift;
-      stanceMeasuredFor = '';   // пере-замерить стойку под новый офсет (без __hipsY — фолбэк-высота; с __hipsY не трогает стойку)
+      stanceMeasuredFor = '';   // пере-замерить стойку под новый офсет (без __hipsP — фолбэк-высота; с __hipsP не трогает стойку)
       saveFootLift(); renderAnim();
     };
     row.append(s, v); body.append(row);
@@ -756,10 +752,13 @@ function poseTools(): void {
     } else { jRow('сгиб', 'flex', 0, 170); jRow('переразгиб', 'hyperext', 0, 60); }
     body.append(pbtn('сброс сустава', () => { delete jointOv[canon]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); if (ragdoll) rebuildRagdoll(); updateLimitGizmo(); renderAnim(); }));
   } else if (tab === 'anim') { const hint = el('div', 'color:#6b7180;font-size:10px;margin:4px 0'); hint.textContent = 'выбери кость (FK) — покажется предел её сустава'; body.append(hint); }
+  }   // конец блока «только Про»
   updateLimitGizmo();
   const phb = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:4px'); body.append(phb);
   phb.append(
-    pbtn('физ вкл/выкл', () => { void ensurePhysics().then(() => { physOn = !physOn; setPhysVis(physOn); }); }, physOn),
+    pbtn('физика вкл/выкл', () => { void ensurePhysics().then(() => { physOn = !physOn; setPhysVis(physOn); }); }, physOn),
+  );
+  if (uiPro) phb.append(
     pbtn('дёрг (удар)', () => { void ensurePhysics().then(() => { physOn = true; setPhysVis(true); if (ragdoll) { ragdoll.hit('Torso', 0, 0.3, 1, 1.4); ragdoll.hit('Head', 0, 0.3, 1, 0.8); } }); }),
     pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { physOn = true; setPhysVis(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
     pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; if (ragdoll) ragdoll.group.visible = showBoxes; renderAnim(); }); }, showBoxes),
@@ -770,7 +769,8 @@ function poseTools(): void {
 }
 
 // Вкладка АНИМАЦИЯ = клипы + кадры(с временем) + инструменты позы (правишь позу = правишь текущий кадр)
-function delClip(cl: Clip): void {   // удалить позу/анимацию из библиотеки (+ снять пометку удара, если была)
+function delClip(cl: Clip): void { histLib('удалить клип', () => delClipRaw(cl)); }
+function delClipRaw(cl: Clip): void {   // удалить позу/анимацию из библиотеки (+ снять пометку удара, если была)
   const idx = library.indexOf(cl); if (idx < 0) return;
   library.splice(idx, 1);
   const am = atkCfgs[cl.character]?.[cl.weapon]; if (am) { const j = am.indexOf(cl.name); if (j >= 0) { am.splice(j, 1); saveAtk(); } }
@@ -865,29 +865,31 @@ function clipSection(): void {
     if (clipBuf.weapon === weapon) name = nameFree(name);                                   // то же оружие = дубликат → не затирать
     else if (taken(name) && !confirm('Клип «' + name + '» на «' + weapon + '» уже есть — перезаписать?')) return;
     const nc: Clip = { name, character: curCharId, weapon, loop: clipBuf.loop, keys: clipBuf.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) };
-    const i = library.findIndex((x) => x.name === name && x.character === curCharId && x.weapon === weapon);
-    if (i >= 0) library[i] = nc; else library.push(nc);
-    if (clipBufWasAtk) { const arr = ((atkCfgs[curCharId] ??= {})[weapon] ??= []); if (!arr.includes(name)) { arr.push(name); saveAtk(); } }
-    saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === name)); frameIdx = 0; refreshAll();
+    histLib('вставить клип', () => {
+      const i = library.findIndex((x) => x.name === name && x.character === curCharId && x.weapon === weapon);
+      if (i >= 0) library[i] = nc; else library.push(nc);
+      if (clipBufWasAtk) { const arr = ((atkCfgs[curCharId] ??= {})[weapon] ??= []); if (!arr.includes(name)) { arr.push(name); saveAtk(); } }
+      saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === name)); frameIdx = 0; refreshAll();
+    });
   };
-  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; library.push({ name: nameFree(nm), character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }));
+  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; histLib('новый клип', () => { library.push({ name: nameFree(nm), character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }); }));
   row1.append(pbtn('📥 из FBX/BVH', () => openImportAnimModal()));   // импорт мокап/AI-анимации → наш клип (запекатель)
   if (clipBuf) row1.append(pbtn('⎘ вставить: ' + retargetClipName(clipBuf.name, clipBuf.weapon, weapon), pasteHere));   // буфер переживает смену оружия/персонажа
   const c = curClip();
   if (c) {
     row1.append(
       pbtn('⎘ копир', () => { clipBuf = { name: c.name, character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }; clipBufWasAtk = atkList().includes(c.name); refreshAll(); }),
-      pbtn('дубл', () => { library.push({ name: nameFree(c.name + '_copy'), character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }); saveLib(); refreshAll(); }),
+      pbtn('дубл', () => histLib('дублировать клип', () => { library.push({ name: nameFree(c.name + '_copy'), character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }); saveLib(); refreshAll(); })),
       pbtn('переим', () => {
         const nm = prompt('имя клипа', c.name); if (!nm || nm === c.name) return;
         if (library.some((x) => x !== c && x.name === nm && x.character === curCharId && x.weapon === weapon)) { alert('Клип «' + nm + '» на этом оружии уже есть — выберите другое имя.'); return; }
         const wasConv = ['idle_', 'hit_', 's_hit_'].some((p) => c.name === p + weapon), stillConv = ['idle_', 'hit_', 's_hit_'].some((p) => nm === p + weapon);
         if (wasConv && !stillConv && !confirm('«' + c.name + '» — конвенционное имя, игра ищет позу по нему. Переименование отвяжет её от оружия. Продолжить?')) return;
-        const old = c.name; c.name = nm; const arr = atkCfgs[curCharId]?.[weapon]; if (arr) { const j = arr.indexOf(old); if (j >= 0) { arr[j] = nm; saveAtk(); } }
-        saveLib(); refreshAll();
+        histLib('переименовать клип', () => { const old = c.name; c.name = nm; const arr = atkCfgs[curCharId]?.[weapon]; if (arr) { const j = arr.indexOf(old); if (j >= 0) { arr[j] = nm; saveAtk(); } }
+        saveLib(); refreshAll(); });
       }),
       pbtn('удалить', () => { if (confirm('Удалить клип «' + c.name + '»?')) delClip(c); }),
-      pbtn(c.loop ? '↻ луп' : '→ 1 раз', () => { c.loop = !c.loop; saveLib(); refreshAll(); }, c.loop),
+      pbtn(c.loop ? '↻ луп' : '→ 1 раз', () => histLib('луп клипа', () => { c.loop = !c.loop; saveLib(); refreshAll(); }), c.loop),
       pbtn('⚙ запечь физику', () => { void bakeCurrentClip(); }),
     );
   }
@@ -909,7 +911,7 @@ function clipSection(): void {
     if (kf) {
       const tr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:4px'); tr.innerHTML = '<span style="flex:1">время кадра (с)</span>';
       const ti = el('input', 'width:70px') as HTMLInputElement; ti.type = 'number'; ti.min = '0'; ti.step = '0.05'; ti.value = kf.t.toFixed(2);
-      ti.onchange = () => { kf.t = Math.max(0, parseFloat(ti.value) || 0); sortKeys(c); saveLib(); refreshAll(); };
+      ti.onchange = () => histLib('время кадра', () => { kf.t = Math.max(0, parseFloat(ti.value) || 0); sortKeys(c); saveLib(); refreshAll(); });
       tr.append(ti); body.append(tr);
     }
     const act = el('div', 'margin-top:5px'); body.append(act);
@@ -917,14 +919,14 @@ function clipSection(): void {
     act.append(
       atEnd
         ? pbtn('🔒 кадр из стойки', () => { alert('Крайние кадры — это idle-стойка, тут не редактируются. Правь стойку: таб «Бег» → «захватить стойку», концы всех клипов (удары + импорт) подхватят.'); })
-        : pbtn('◉ записать кадр', () => { pushUndo(); if (c.keys[frameIdx]) c.keys[frameIdx]!.pose = readPoseFull(); saveLib(); }),
-      pbtn('+ кадр', () => { const insAt = lockEnds ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; const nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); c.keys.splice(insAt, 0, { pose: readPoseFull(), t: nt }); frameIdx = insAt; saveLib(); refreshAll(); }),   // концы-стойка неприкосновенны → вставка в середину
-      pbtn('− кадр', () => { if (!atEnd && c.keys.length > (lockEnds ? 3 : 1)) { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } }),   // концы не удалить
+        : pbtn('◉ записать кадр', () => histLib('записать кадр', () => { if (c.keys[frameIdx]) c.keys[frameIdx]!.pose = readPoseFull(); saveLib(); })),
+      pbtn('+ кадр', () => histLib('добавить кадр', () => { const insAt = lockEnds ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; const nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); c.keys.splice(insAt, 0, { pose: readPoseFull(), t: nt }); frameIdx = insAt; saveLib(); refreshAll(); })),   // концы-стойка неприкосновенны → вставка в середину
+      pbtn('− кадр', () => histLib('удалить кадр', () => { if (!atEnd && c.keys.length > (lockEnds ? 3 : 1)) { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } })),   // концы не удалить
     );
     // подтянуть позу в текущий кадр из соседнего (строить замах/удар от концов-idle, потом править)
     if (!atEnd) {
       const pr2 = el('div', 'margin-top:3px'); body.append(pr2);
-      const pull = (get: () => Pose): void => { pushUndo(); const kk = c.keys[frameIdx]; if (kk) { kk.pose = get(); saveLib(); goFrame(frameIdx); } };
+      const pull = (get: () => Pose): void => histLib('поза из соседнего кадра', () => { const kk = c.keys[frameIdx]; if (kk) { kk.pose = get(); saveLib(); goFrame(frameIdx); } });
       if (frameIdx > 0) pr2.append(pbtn('◀ из пред.', () => pull(() => clonePose(c.keys[frameIdx - 1]!.pose))));
       if (frameIdx < lastI) pr2.append(pbtn('из след. ▶', () => pull(() => clonePose(c.keys[frameIdx + 1]!.pose))));
       if (frameIdx > 0 && frameIdx < lastI) pr2.append(pbtn('⇄ середина (пред+след)', () => pull(() => blendTwo(c.keys[frameIdx - 1]!.pose, c.keys[frameIdx + 1]!.pose, 0.5))));
@@ -934,7 +936,7 @@ function clipSection(): void {
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); eh.textContent = 'ЭКСПОРТ / ИМПОРТ'; body.append(eh);
   const ta = el('textarea', 'width:100%;height:70px;background:#0e1016;color:#9ae6a0;border:1px solid #39415a;border-radius:4px;font:10px monospace') as HTMLTextAreaElement; body.append(ta);
   const er = el('div', ''); body.append(er);
-  er.append(pbtn('клип', () => { if (c) ta.value = JSON.stringify(c); }), pbtn('всё', () => { ta.value = JSON.stringify(library); }), pbtn('копир', () => navigator.clipboard?.writeText(ta.value)), pbtn('импорт', () => { try { const d = JSON.parse(ta.value); const arr = Array.isArray(d) ? d : [d]; const cl = arr.map(migrateClip); if (Array.isArray(d)) library = cl; else library.push(...cl); saveLib(); refreshAll(); } catch { /* */ } }));
+  er.append(pbtn('клип', () => { if (c) ta.value = JSON.stringify(c); }), pbtn('всё', () => { ta.value = JSON.stringify(library); }), pbtn('копир', () => navigator.clipboard?.writeText(ta.value)), pbtn('импорт', () => histLib('импорт JSON', () => { try { const d = JSON.parse(ta.value); const arr = Array.isArray(d) ? d : [d]; const cl = arr.map(migrateClip); if (Array.isArray(d)) library = cl; else library.push(...cl); saveLib(); refreshAll(); } catch { /* */ } })));
 }
 
 // Сохранение внешности персонажа: конфиг-персонаж/фракция (builtin) → серверный pe_appearance (ростер-СПИСОК остаётся
@@ -1062,7 +1064,7 @@ function renderLoco(): void {
     ys.oninput = () => { gaitYawManual = parseFloat(ys.value) * Math.PI / 180; yv.textContent = ys.value + '°'; }; yr.append(ys, yv); fr.append(yr);
   }
   gaitReadout = el('div', 'color:#8fb7ff;font-size:11px;margin-top:4px'); gaitReadout.textContent = 'скорость: — (пад: центр → шаг, край → бег)'; body.append(gaitReadout);
-  renderGaitTune();
+  if (uiPro) renderGaitTune();   // тюнинг походки (24 ползунка GAIT/POSE/GX) — только Про
   renderUpperPanel();
   renderAttackPanel();
 }
@@ -1208,12 +1210,12 @@ function refreshTimeline(): void {
 }
 function goFrame(i: number): void { const c = curClip(); if (!c) return; frameIdx = i; if (c.keys[i]) applyPose(c.keys[i]!.pose); if (mode === 'ik') captureRig(); refreshAll(); }
 function preview(time: number): void {   // time в секундах
-  const c = curClip(); if (!c || !c.keys.length) return; const ks = c.keys;
-  if (ks.length < 2) { applyPose(ks[0]!.pose); return; }
-  const tt = clamp(time, 0, clipDur(c));
-  let i = 0; while (i < ks.length - 2 && ks[i + 1]!.t <= tt) i++;
-  const a = ks[i]!, b = ks[i + 1]!, span = b.t - a.t;
-  lerpPose(a.pose, b.pose, span > 1e-6 ? clamp((tt - a.t) / span, 0, 1) : 0);
+  // Интервал и фазу (уже отремапленную кривой кадра — linear/ease/step) считает ОБЩИЙ clipSegmentAt,
+  // тот же, что у игрового clipPoseAt → редактор и игра гнут кривые одинаково.
+  const c = curClip(); if (!c) return;
+  const seg = clipSegmentAt(c, time); if (!seg) return;
+  if (seg.a === seg.b) { applyPose(seg.a.pose); return; }
+  lerpPose(seg.a.pose, seg.b.pose, seg.u);
 }
 
 // ── Физика (Ф2b: рэгдолл на гуманоид-скелете — призрак, ведомый моторами к позе) ──
@@ -1348,12 +1350,14 @@ function captureUpper(nm: string = stanceName(weapon)): void {   // снять �
   if (locoOn || playing) { alert('Идёт превью/воспроизведение — сначала останови (⏸), иначе схватишь кадр бега, а не стойку.'); return; }
   const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon);
   if (i >= 0 && !confirm(`Перезаписать «${nm}» текущей позой манекена?`)) return;   // защита от случайной перезаписи idle
-  pushUndo();                       // на случай ошибки — Ctrl+Z вернёт прежнюю стойку
-  const pose = readPoseFull();
-  const clip: Clip = { name: nm, character: curCharId, weapon, loop: false, keys: [{ pose, t: 0 }] };
-  if (i >= 0) library[i] = clip; else library.push(clip);
-  syncAllAttackEnds();   // стойка изменилась → концы всех её ударов подхватывают
-  saveLib();
+  // Структурная правка: перезаписывает клип-стойку И концы ВСЕХ её ударов → откат должен вернуть всю библиотеку.
+  histLib('захватить стойку', () => {
+    const pose = readPoseFull();
+    const clip: Clip = { name: nm, character: curCharId, weapon, loop: false, keys: [{ pose, t: 0 }] };
+    if (i >= 0) library[i] = clip; else library.push(clip);
+    syncAllAttackEnds();   // стойка изменилась → концы всех её ударов подхватывают
+    saveLib();
+  });
 }
 // ── Удары на бегу (Феча 3): авторский клип-удар поверх бегущих ног, физически ведомый (моторы гонят рэгдолл к цели) ──
 let attackSpeed = 1;   // множитель темпа удара (ползунок) → player.atkSpeed
@@ -1698,8 +1702,10 @@ async function bakeCurrentClip(): Promise<void> {
     if (step % sampleEvery === 0) baked.push({ pose: ragdoll.readBakedPose(), t: +simT.toFixed(3) });
     simT += dt; step++;
   }
-  library.push({ name: c.name + '_baked', character: curCharId, weapon, loop: c.loop, keys: baked });
-  clipIdx = clipsHere().length - 1; frameIdx = 0; saveLib(); refreshAll();
+  histLib('запечь физику', () => {
+    library.push({ name: c.name + '_baked', character: curCharId, weapon, loop: c.loop, keys: baked });
+    clipIdx = clipsHere().length - 1; frameIdx = 0; saveLib(); refreshAll();
+  });
 }
 
 // ── Вторичное движение (jiggle груди) — пружина от вертик./бокового ускорения груди (основа под плащ/волосы) ──
@@ -1722,7 +1728,7 @@ function jiggle(dt: number): void {
 
 // ── Цикл ──
 ensureSeed();   // первый запуск: залить примерный контент Волкодава (idle-стойки + удары по оружию)
-applyChar(curCharId); setMode('ik'); tab = 'anim'; refreshAll();
+applyChar(curCharId); setMode('ik'); tab = 'anim'; syncModeB(); refreshAll();
 void ensurePhysics().then(() => { physOn = true; setPhysVis(true); });   // по умолчанию — полупрозрачное физ-тело (силуэт) вокруг скелета
 function resize(): void { const w = canvas.clientWidth || 800, h = canvas.clientHeight || 600; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); new ResizeObserver(resize).observe(canvas); resize();

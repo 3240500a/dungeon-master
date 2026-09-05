@@ -499,15 +499,65 @@ describe('PosePlayer.triggerAttack: клип ужимается в окно ат
   });
 });
 
-// measureStancePlants: авторская высота таза (__hipsY) = ЕДИНАЯ база стойки (standY). Иначе после бега таз оставался
+// applyAttackPelvis: hit_* авторит МАХ/СКРУТКУ таза in-place (Root≠Pelvis). Поверх facing, × огибающая. Аддитивно (нет ключа → no-op).
+describe('applyAttackPelvis — таз в ударе (мах/скрутка) in-place', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null, length: 0,
+    } as Storage;
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
+  const mkPlayer = (h: ReturnType<typeof buildHumanoid>) => new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+  const hipsYaw = (h: ReturnType<typeof buildHumanoid>): number => new THREE.Euler().setFromQuaternion(h.bones.get('Hips')!.quaternion, 'YXZ').y;
+
+  it('поворот таза (ключ Hips) накладывается ПОВЕРХ facing; в покое таз = facing', () => {
+    const h = buildHumanoid({}); const p = mkPlayer(h);
+    p.setYaw(0); p.snapYaw(); p.step(1 / 60);
+    expect(Math.abs(hipsYaw(h))).toBeLessThan(0.05);   // покой: таз = facing(0), авторский Hips НЕ протекает
+    p.triggerAttack({ name: 'hit_t', character: 'warrior', weapon: 'sword', loop: false, keys: [{ pose: { Hips: [0, 0.5, 0] }, t: 0 }, { pose: { Hips: [0, 0.5, 0] }, t: 0.6 }] } as never);
+    for (let i = 0; i < 10; i++) p.step(1 / 60);        // ~0.16с — огибающая на пике
+    expect(hipsYaw(h)).toBeGreaterThan(0.25);           // удар: таз довёрнут (0.5 × envelope)
+  });
+
+  it('смещение таза __hipsP (мах вперёд по facing) двигает ТАЗ; дельта считается от ПЕРВОГО кадра (стойки)', () => {
+    const h = buildHumanoid({}); const p = mkPlayer(h);
+    p.setYaw(0); p.snapYaw(); p.step(1 / 60);
+    const z0 = h.hips.position.z;                       // покой (нет удара) — таз не сдвинут
+    // Первый кадр = стойка (__hipsP как есть), второй — таз ушёл на +8 вперёд. Оверлей берёт РАЗНИЦУ.
+    p.triggerAttack({ name: 'hit_m', character: 'warrior', weapon: 'sword', loop: false, keys: [{ pose: { __hipsP: [0, 32, 0] }, t: 0 }, { pose: { __hipsP: [0, 32, 8] }, t: 0.6 }] } as never);
+    for (let i = 0; i < 20; i++) p.step(1 / 60);
+    expect(h.hips.position.z).toBeGreaterThan(z0 + 2);  // таз ушёл вперёд (+Z по facing=0)
+  });
+
+  it('__hipsP одинаковый во всех кадрах удара → таз НЕ едет (это стойка, а не мах)', () => {
+    const h = buildHumanoid({}); const p = mkPlayer(h);
+    p.setYaw(0); p.snapYaw(); p.step(1 / 60);
+    const z0 = h.hips.position.z;
+    p.triggerAttack({ name: 'hit_s', character: 'warrior', weapon: 'sword', loop: false, keys: [{ pose: { __hipsP: [0, 32, 8] }, t: 0 }, { pose: { __hipsP: [0, 32, 8] }, t: 0.6 }] } as never);
+    for (let i = 0; i < 10; i++) p.step(1 / 60);
+    expect(Math.abs(h.hips.position.z - z0)).toBeLessThan(0.01);
+  });
+
+  it('Root ≠ таз: авторский офсет таза НЕ двигает позицию персонажа (Root стоит)', () => {
+    const h = buildHumanoid({}); const p = mkPlayer(h);
+    p.setYaw(0); p.snapYaw(); p.step(1 / 60);
+    const rootBefore = h.root.position.clone();
+    p.triggerAttack({ name: 'hit_m', character: 'warrior', weapon: 'sword', loop: false, keys: [{ pose: { __hipsP: [0, 32, 0] }, t: 0 }, { pose: { __hipsP: [0, 32, 12] }, t: 0.6 }] } as never);
+    for (let i = 0; i < 20; i++) p.step(1 / 60);
+    expect(h.root.position.distanceTo(rootBefore)).toBeLessThan(1e-6);   // корень (логическая позиция) не шелохнулся
+    expect(h.hips.position.z).toBeGreaterThan(2);                        // а таз — уехал
+  });
+});
+
+// measureStancePlants: авторская высота таза (__hipsP[1]) = ЕДИНАЯ база стойки (standY). Иначе после бега таз оставался
 // на gait-standY и idle проваливался (юзер: «посмотрел бег, нажал стоп — скелет провалился под землю»).
-describe('measureStancePlants — __hipsY = standY (авторская высота таза)', () => {
-  it('__hipsY в позе → standY = __hipsY (истина, не пересчёт из стоп)', () => {
+describe('measureStancePlants — __hipsP[1] = standY (авторская высота таза)', () => {
+  it('__hipsP в позе → standY = его Y (истина, не пересчёт из стоп)', () => {
     const h = buildHumanoid({});
-    const s = measureStancePlants(h, { __hipsY: [35, 0, 0] });
+    const s = measureStancePlants(h, { __hipsP: [0, 35, 0] });
     expect(s.standY).toBeCloseTo(35, 3);
   });
-  it('нет __hipsY (старая поза) → фолбэк-расчёт из стоп (конечный, не 35)', () => {
+  it('нет __hipsP (старая поза) → фолбэк-расчёт из стоп (конечный, не 35)', () => {
     const h = buildHumanoid({});
     const s = measureStancePlants(h, { LeftUpperLeg: [0.1, 0, 0], RightUpperLeg: [0.1, 0, 0] });
     expect(Number.isFinite(s.standY)).toBe(true);

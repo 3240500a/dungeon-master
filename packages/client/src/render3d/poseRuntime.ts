@@ -5,9 +5,13 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, type PoseTargets } from './pose.js';
 
-export type Pose = Record<string, [number, number, number]>;
-export interface Keyframe { pose: Pose; t: number }
-export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[]; idleEnds?: boolean }   // idleEnds: первый/последний кадр = idle-стойка (заблокированы в редакторе, синкаются из стойки — как у ударов hit_)
+// Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
+// Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
+export type { Pose, Keyframe, Clip, Interp } from './clipModel.js';
+export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose } from './clipModel.js';
+import { blendTwo, clipPoseAt, clipDur } from './clipModel.js';
+import { WPN_KEYS, WPN_POS } from './clipModel.js';
+import type { Pose, Keyframe, Clip } from './clipModel.js';
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
 export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: number; elbowBendRun?: number }   // *Run — раздельно для бега (интерп по sb); нет → = ходьба. legWidth убран (дубль stanceWidth)
 /**
@@ -82,8 +86,7 @@ export interface PoseContent {
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
 export interface AttackState { clip: Clip | null; t: number }
 
-export const WPN_KEYS = ['__wpnMain', '__wpnOff'];              // спец-ключи позы: поворот оружия
-export const WPN_POS = ['__wpnMainP', '__wpnOffP'];            // спец-ключи позы: позиция оружия
+export { WPN_KEYS, WPN_POS } from './clipModel.js';          // спец-ключи позы: поворот/позиция оружия (одна копия — clipModel)
 export const UPPER_BONES = ['Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand'];
 const ATK_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand', 'Spine'];
 // Кости, которые перекрывает ЩИТ-оверлей: левая рука (держит щит) + корпус (лёгкий разворот к щиту). Аддитивно, с весом.
@@ -109,28 +112,6 @@ export function retargetClipName(name: string, fromW: string, toW: string): stri
 const AB_IN = 0.1, AB_OUT = 0.14;                              // огибающая входа/выхода удара (сек)
 
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
-export const clipDur = (c: Clip): number => (c.keys.length ? c.keys[c.keys.length - 1]!.t : 0);
-// Интерп ПОВОРОТОВ кадров — кватернионный SLERP (истинная кратчайшая дуга, без gimbal): линейный лерп эйлеров (даже с
-// обёрткой углов) на многоосевых кадрах прокручивает кость на ~360° (полный оборот руки между кадрами удара). slerp учитывает
-// двойное покрытие (q/−q = один поворот) → всегда короткий путь. Позиц-ключи (…P) и скаляры (__match/__pinKp=6000!) — линейно.
-const _btA = new THREE.Quaternion(), _btB = new THREE.Quaternion(), _btEA = new THREE.Euler(), _btEB = new THREE.Euler(), _btER = new THREE.Euler();
-export function blendTwo(a: Pose, b: Pose, t: number): Pose {   // Σ поз по ключам (union), лерп (повороты — slerp'ом)
-  const out: Pose = {};
-  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    const pa = a[k] ?? [0, 0, 0], pb = b[k] ?? [0, 0, 0];
-    const ang = k[0] !== '_' || k === '__wpnMain' || k === '__wpnOff' || k === '__lgripR';   // повороты: кости+оружие+грип
-    if (ang) { _btA.setFromEuler(_btEA.set(pa[0] ?? 0, pa[1] ?? 0, pa[2] ?? 0)); _btB.setFromEuler(_btEB.set(pb[0] ?? 0, pb[1] ?? 0, pb[2] ?? 0)); _btER.setFromQuaternion(_btA.slerp(_btB, t)); out[k] = [_btER.x, _btER.y, _btER.z]; }
-    else out[k] = [pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t];   // позиции(…P)/скаляры — линейно
-  }
-  return out;
-}
-export function clipPoseAt(c: Clip, t01: number): Pose {        // поза клипа на нормализованной фазе 0..1
-  const ks = c.keys; if (!ks.length) return {}; if (ks.length < 2) return ks[0]!.pose;
-  const dur = clipDur(c) || 1, time = clamp(t01, 0, 1) * dur;
-  let i = 0; while (i < ks.length - 2 && ks[i + 1]!.t <= time) i++;
-  const a = ks[i]!, b = ks[i + 1]!, span = b.t - a.t;
-  return blendTwo(a.pose, b.pose, span > 1e-6 ? clamp((time - a.t) / span, 0, 1) : 0);
-}
 
 // ── Общий two-bone IK (закон косинусов) — для off-hand хвата (двуручное) и переиспользования редактором ──
 const _ik0 = new THREE.Vector3(), _ik1 = new THREE.Vector3(), _ik2 = new THREE.Vector3(), _ik3 = new THREE.Vector3(), _ik4 = new THREE.Vector3(), _ik5 = new THREE.Vector3(), _ik6 = new THREE.Vector3();
@@ -214,6 +195,30 @@ function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: Attack
     if (rk && ap[rk]) { const h = ap[rk]!; g.rotation.set(g.rotation.x + (h[0] - g.rotation.x) * ab, g.rotation.y + (h[1] - g.rotation.y) * ab, g.rotation.z + (h[2] - g.rotation.z) * ab); }
     if (pk && ap[pk]) { const h = ap[pk]!; g.position.set(g.position.x + (h[0] - g.position.x) * ab, g.position.y + (h[1] - g.position.y) * ab, g.position.z + (h[2] - g.position.z) * ab); }
   });
+}
+
+const _apE = new THREE.Euler(), _apQ = new THREE.Quaternion(), _apI = new THREE.Quaternion();
+/** ОВЕРЛЕЙ ТАЗА УДАРА (in-place, Root ≠ Pelvis). hit_* может авторить МАХ/СКРУТКУ таза: дельта поворота (ключ 'Hips' euler)
+ *  + смещение таза (ключ '__hipsP') — ПОВЕРХ facing, × огибающая удара. Тело крутится вокруг Root (контейнера),
+ *  логическая позиция НЕ едет: позиция персонажа живёт на Root, а не на тазе.
+ *  Смещение берётся как ДЕЛЬТА `__hipsP` кадра от `__hipsP` ПЕРВОГО кадра клипа — у ударов первый кадр это idle-стойка
+ *  (`idleEnds`), значит дельта = «насколько таз ушёл от стойки». Отдельный ключ для этого не нужен.
+ *  Зовётся ПОСЛЕ applyTorsoTwist (facing уже на тазе) и ДО applyHeadLookAt. Аддитивно: нет ключа → no-op. */
+export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: number): void {
+  if (!atk.clip || atk.t < 0) return;
+  const dur = clipDur(atk.clip) || 0.001;
+  const ab = attackEnv(atk.t, dur);
+  if (ab <= 1e-3) return;
+  const hips = human.bones.get('Hips'); if (!hips) return;
+  const ap = clipPoseAt(atk.clip, atk.t / dur);
+  const e = ap['Hips'];
+  if (e) { _apQ.setFromEuler(_apE.set(e[0], e[1], e[2], 'XYZ')); hips.quaternion.multiply(_apI.set(0, 0, 0, 1).slerp(_apQ, ab)); }   // поворот таза = дельта поверх facing × огибающая
+  const mv = ap['__hipsP'], base = atk.clip.keys[0]?.pose['__hipsP'];   // офсет таза кадра и стойки (body-кадр: X вбок-вправо, Y вверх, Z вперёд)
+  if (mv && base) {
+    const dx = (mv[0] - base[0]) * ab, dy = (mv[1] - base[1]) * ab, dz = (mv[2] - base[2]) * ab;
+    const s = Math.sin(rootYaw), c = Math.cos(rootYaw);
+    hips.position.x += dz * s + dx * c; hips.position.y += dy; hips.position.z += dz * c - dx * s;
+  }
 }
 function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0): void {
   const H = human.bones;
@@ -574,11 +579,12 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   const h = hips.getWorldPosition(_ms0);
   const fl = human.bones.get('LeftFoot')!.getWorldPosition(_ms1);
   const fr = human.bones.get('RightFoot')!.getWorldPosition(_ms2);   // yaw 0 → world X = body-lateral, world Z = forward
-  // Высота таза стойки. ПРИОРИТЕТ — авторская `__hipsY` из idle-позы (где юзер поставил таз = ИСТИНА): и стойка, и бег, и
-  // восстановление на applyPose берут ОДНУ величину → нет провала после бега и рассинхрона бег↔стойка (редактор ≡ игра).
-  // Фолбэк (старые позы без __hipsY): расчёт из стоп — таз так, чтобы стопы idle стояли на полу (FOOT_Y + footLift).
-  const authored = idle['__hipsY'];
-  const standY = authored ? authored[0] : (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
+  // Высота таза стойки. ПРИОРИТЕТ — авторская `__hipsP[1]` из idle-позы (где юзер поставил таз = ИСТИНА): и стойка, и бег,
+  // и восстановление на applyPose берут ОДНУ величину → нет провала после бега и рассинхрона бег↔стойка (редактор ≡ игра).
+  // (Старый ключ `__hipsY` мигрируется в `__hipsP` при чтении клипа — clipModel.migratePose.)
+  // Фолбэк (позы вообще без офсета таза): расчёт из стоп — таз так, чтобы стопы idle стояли на полу (FOOT_Y + footLift).
+  const authored = idle['__hipsP'];
+  const standY = authored ? authored[1] : (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
   return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
 }
 
@@ -702,6 +708,7 @@ export class PosePlayer {
     }
     gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat);
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
+    applyAttackPelvis(this.human, this.atk, yaw);   // мах/скрутка таза удара in-place (поверх facing; Root≠Pelvis) — аддитивно
     applyHeadLookAt(this.human, this.aimYaw, twist.headLook, twist.headPitch);   // голова на ПРИЦЕЛ + ЗАДАННЫЙ кивок (убирает свинг-нырок от удара)
   }
 }

@@ -9,7 +9,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
 
   it('стопа достигает целевой точки под бедром', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
-    h.root.position.set(0, 30, 0); h.root.updateMatrixWorld(true);
+    h.setHipsWorld(0, 30, 0); h.root.updateMatrixWorld(true);
     const upper = h.bones.get('LeftUpperLeg')!, lower = h.bones.get('LeftLowerLeg')!, foot = h.bones.get('LeftFoot')!;
     const hip = upper.getWorldPosition(V(0, 0, 0));
     const target = V(hip.x, hip.y - 25, hip.z + 2);                 // 25 вниз + 2 вперёд (в пределах разгиба 29)
@@ -20,7 +20,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
 
   it('стопа ниже пола → IK поднимает её на пол (не тонет)', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
-    h.root.position.set(0, 20, 0); h.root.updateMatrixWorld(true);   // таз низко → прямая нога, стопа уходит ниже 0
+    h.setHipsWorld(0, 20, 0); h.root.updateMatrixWorld(true);   // таз низко → прямая нога, стопа уходит ниже 0
     const upper = h.bones.get('LeftUpperLeg')!, lower = h.bones.get('LeftLowerLeg')!, foot = h.bones.get('LeftFoot')!;
     const fw0 = foot.getWorldPosition(V(0, 0, 0));
     expect(fw0.y).toBeLessThan(1.5);                                 // до IK — стопа под полом
@@ -33,7 +33,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
 
   it('groundFeet: обе стопы не ниже пола (таз поднимается + IK плантит на пол)', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
-    const baseY = 20; h.root.position.set(0, baseY, 0); h.root.updateMatrixWorld(true);   // таз низко → стопы под полом
+    const baseY = 20; h.setHipsWorld(0, baseY, 0); h.root.updateMatrixWorld(true);   // таз низко → стопы под полом
     const footY = (n: string): number => h.bones.get(n)!.getWorldPosition(V(0, 0, 0)).y;
     expect(Math.min(footY('LeftFoot'), footY('RightFoot'))).toBeLessThan(0);              // до: тонут
     groundFeet(h, baseY, { off: 0 }, 1 / 60, () => 0);                                    // плоский пол y=0
@@ -44,7 +44,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
 
   it('legGroundIK: боковой дотяг НЕ разворачивает колено наружу (перёд голени = pole)', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
-    h.root.position.set(0, 30, 0); h.root.updateMatrixWorld(true);
+    h.setHipsWorld(0, 30, 0); h.root.updateMatrixWorld(true);
     const upper = h.bones.get('LeftUpperLeg')!, lower = h.bones.get('LeftLowerLeg')!, foot = h.bones.get('LeftFoot')!;
     const hip = upper.getWorldPosition(V(0, 0, 0));
     legGroundIK(upper, lower, foot, V(hip.x + 8, 2, hip.z), V(0, 0, 1), new THREE.Quaternion());   // цель ВБОК+вниз, pole=вперёд
@@ -55,7 +55,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
   });
 
   it('groundFeet: footLift поднимает цель заземления (подошва меша атласа на полу, а не тонет)', () => {
-    const mk = (): ReturnType<typeof buildHumanoid> => { const h = buildHumanoid({ gender: 'male', build: {} }); h.root.position.set(0, 20, 0); h.root.updateMatrixWorld(true); return h; };
+    const mk = (): ReturnType<typeof buildHumanoid> => { const h = buildHumanoid({ gender: 'male', build: {} }); h.setHipsWorld(0, 20, 0); h.root.updateMatrixWorld(true); return h; };
     const footMinY = (h: ReturnType<typeof buildHumanoid>): number => Math.min(h.bones.get('LeftFoot')!.getWorldPosition(V(0, 0, 0)).y, h.bones.get('RightFoot')!.getWorldPosition(V(0, 0, 0)).y);
     const h0 = mk(); groundFeet(h0, 20, { off: 0 }, 1 / 60, () => 0); const y0 = footMinY(h0);
     const h1 = mk(); h1.footLift = 3; groundFeet(h1, 20, { off: 0 }, 1 / 60, () => 0); const y1 = footMinY(h1);
@@ -64,7 +64,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
 
   it('groundFeet: рыск стопы следует за ПОЗОЙ бедра (не сбрасывается к фейсингу тела)', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
-    h.root.position.set(0, 20, 0);
+    h.setHipsWorld(0, 20, 0);
     h.bones.get('LeftUpperLeg')!.rotation.set(0, 0.5, 0);              // твист бедра вокруг вертикали (рыск)
     h.root.updateMatrixWorld(true);
     groundFeet(h, 20, { off: 0 }, 1 / 60, () => 0, [true, false]);    // левая ОПОРА
@@ -75,7 +75,7 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
 
   it('groundFeet: МАХОВУЮ (support=false) не выравнивает — её ориентацию ведёт поза (нет «лыжника»)', () => {
     const h = buildHumanoid({ gender: 'male', build: {} });
-    h.root.position.set(0, 20, 0);
+    h.setHipsWorld(0, 20, 0);
     const rf = h.bones.get('RightFoot')!;
     rf.rotation.set(-0.8, 0, 0);                                  // задрать носок (как в переносе маховой)
     h.root.updateMatrixWorld(true);

@@ -83,7 +83,7 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     // Сдвиг корня СГЛАЖЕН в обе стороны (мягкий боб): даже если таз догоняет медленно, per-foot IK ниже плантит опорную
     // стопу коленом → она НЕ проваливается, пока таз плавно едет. Раньше был мгновенный рывок вверх на провале — дёрганый боб.
     gs.off += (worst - 0) * Math.min(1, dt * GROUND_LAG);
-    mesh.root.position.y = baseY + gs.off; mesh.root.updateMatrixWorld(true);
+    mesh.setHipsWorldY(baseY + gs.off); mesh.root.updateMatrixWorld(true);   // Root ≠ таз: целимся в МИРОВУЮ высоту ТАЗА, корень едет под него
   }
   for (let i = 0; i < IK_LEGS.length; i++) {                        // планти+кладём ТОЛЬКО опорные стопы; маховую ведёт поза
     if (!sup[i]) continue;

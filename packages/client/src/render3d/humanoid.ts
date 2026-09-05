@@ -15,12 +15,17 @@ interface HBone {
   r: number;
   shape?: 'pelvis' | 'head' | 'hand' | 'foot' | 'toe' | 'breast';   // спец-формы; иначе цилиндр к первому ребёнку
   female?: boolean;   // только для gender:'female' (breast-кости — вторичные/jiggle, вне гуманоида Unity)
+  noMesh?: boolean;   // служебный узел без геометрии (Root): не рисуем и не берём в рейкаст
 }
 
 /** Таблица в порядке «родитель раньше ребёнка». T-поза: руки вдоль X, ноги вниз, спина вверх.
  *  Торс: Hips→Spine→Chest→UpperChest→Neck→Head (UpperChest — Unity-опция, лучше изгиб; плечи/шея/грудь на ней). */
 const BONES: HBone[] = [
-  { name: 'Hips', parent: null, pos: [0, 32, 0], r: 5, shape: 'pelvis' },
+  // КОРЕНЬ ≠ ТАЗ (индустриальный стандарт: CC_Base_BoneRoot, UE `root`, Mixamo Armature). Root — позиция персонажа
+  // на полу; таз висит под ним и может анимироваться отдельно (мах/скрутка/присед В МЕСТЕ), не сдвигая персонажа.
+  // Раньше `human.root` БЫЛ тазом, поэтому любой авторский офсет таза уезжал бы вместе с персонажем.
+  { name: 'Root', parent: null, pos: [0, 0, 0], r: 0, noMesh: true },
+  { name: 'Hips', parent: 'Root', pos: [0, 32, 0], r: 5, shape: 'pelvis' },
   { name: 'Spine', parent: 'Hips', pos: [0, 5, 0], r: 4.6 },
   { name: 'Chest', parent: 'Spine', pos: [0, 6, 0], r: 5.4 },
   { name: 'UpperChest', parent: 'Chest', pos: [0, 5, 0], r: 5.2 },
@@ -52,7 +57,7 @@ const BONES: HBone[] = [
 ];
 
 export interface Humanoid {
-  root: THREE.Group;                       // корень (Hips) — ставится в сцену
+  root: THREE.Group;                       // КОРЕНЬ (Root, не таз!) — ставится в сцену; его позиция = позиция персонажа
   bones: Map<string, THREE.Group>;         // имя → пивот-группа сустава (крутить .rotation = FK)
   meshes: THREE.Mesh[];                    // сегмент-меши (для рейкаст-выбора; mesh.userData.bone = имя)
   boneNames: string[];
@@ -60,8 +65,17 @@ export interface Humanoid {
   restQuat: Map<string, THREE.Quaternion>;
   /** Прочитать текущую позу: имя → эйлер [x,y,z] (рад). */
   readPose(): Record<string, [number, number, number]>;
-  /** Сбросить в T-позу. */
+  /** Сбросить в T-позу (повороты всех костей + rest-позиции; Root не трогаем — там позиция персонажа). */
   reset(): void;
+  /** Кость таза (сахар: `bones.get('Hips')!`). Root ≠ таз, см. таблицу BONES. */
+  hips: THREE.Group;
+  /** Поставить ТАЗ в мировую точку, сдвигая Root (авторский офсет таза и масштаб корня учтены).
+   *  Нужна везде, где раньше писали `root.position = <мировая позиция таза>`. */
+  setHipsWorld(x: number, y: number, z: number): void;
+  /** То же по одной оси Y (заземление). */
+  setHipsWorldY(y: number): void;
+  /** Мировая высота таза (обратная к setHipsWorldY). */
+  hipsWorldY(): number;
   /** Приведение БЕДРА (рад, splay бедра hip→колено) и КОЛЕНА (legAdductKnee, splay голени колено→лодыжка) для компенсации
    *  A-стойки бинда ФБХ: нога splay-ит наружу посегментно, поза-система считает «поворот 0 = прямо вниз». Гейт/стойка
    *  доворачивают оба сустава → нога вертикальна В ЛЮБОМ сгибе (один hip-доворот не хватает при согнутом колене). 0 у процедурных. */
@@ -181,6 +195,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
     if (b.parent) bones.get(b.parent)!.add(g); else root = g;
     bones.set(b.name, g);
 
+    if (b.noMesh) continue;   // служебный узел (Root): без геометрии и без рейкаста
     // Сегмент-меш кости: спец-форма или цилиндр к ПЕРВОМУ ребёнку (визуально «кость до сустава-ребёнка»).
     const s = sc(b.name);   // масштаб толщины группы
     if (skel) {   // СКЕЛЕТ-вид: шар-сустав (клик-цель) + октаэдр-кость к первому ребёнку (направление). Игнорируем спец-формы.
@@ -218,7 +233,8 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   }
 
   const restQuat = new Map<string, THREE.Quaternion>();
-  for (const [nm, g] of bones) restQuat.set(nm, g.quaternion.clone());
+  const restPos = new Map<string, THREE.Vector3>();
+  for (const [nm, g] of bones) { restQuat.set(nm, g.quaternion.clone()); restPos.set(nm, g.position.clone()); }
 
   // Углы приведения ПОСЕГМЕНТНО: бедро = наклон бедра (hip→колено) от вертикали, колено = наклон голени (колено→лодыжка).
   // ФБХ A-стойка splay-ит оба звена (~10°/7°); один hip-доворот верно верт-т ТОЛЬКО прямую ногу, при сгибе колена звенья
@@ -232,13 +248,27 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   // Приведение РУК НЕ компенсируем в рантайме: модели биндятся в T-позе (руки горизонт, как ожидают клипы). A-позный бинд
   // недопустим — 46° доворота от бинда скин не тянет чисто (корёжит). Требование: экспортить скелет в T-позе (см. README ретаргета).
 
+  const hips = bones.get('Hips')!;
   return {
-    root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0,
+    root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0, hips,
     readPose() {
       const out: Record<string, [number, number, number]> = {};
       for (const [nm, g] of bones) { const e = g.rotation; out[nm] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }
       return out;
     },
-    reset() { for (const [nm, g] of bones) g.quaternion.copy(restQuat.get(nm)!); },
+    // Позиции ТОЖЕ возвращаем в rest — иначе после клипа/бега авторская высота таза оставалась от предыдущей позы
+    // (клип без __hipsP наследовал чужой таз). Root пропускаем: там позиция персонажа, её сбрасывать нельзя.
+    reset() {
+      for (const [nm, g] of bones) {
+        g.quaternion.copy(restQuat.get(nm)!);
+        if (nm !== 'Root') g.position.copy(restPos.get(nm)!);
+      }
+    },
+    setHipsWorld(x: number, y: number, z: number): void {
+      const k = root.scale;   // Root без поворота → достаточно вычесть офсет таза с учётом масштаба корня
+      root.position.set(x - hips.position.x * k.x, y - hips.position.y * k.y, z - hips.position.z * k.z);
+    },
+    setHipsWorldY(y: number): void { root.position.y = y - hips.position.y * root.scale.y; },
+    hipsWorldY(): number { return root.position.y + hips.position.y * root.scale.y; },
   };
 }

@@ -560,7 +560,8 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   // таза → тело «не движется за тазом» + оружие (на кисти манекена) висит мимо меша. Совпадение = обе проблемы решены.
   function driveAsm(source: Humanoid): void {
     if (!asmOn || !asmSrc || !asmSkin) return;
-    asmSrc.root.position.copy(source.root.position);   // таз/корень: меш едет за манекеном (IK-таз, ходьба)
+    asmSrc.root.position.copy(source.root.position);       // корень: позиция персонажа
+    asmSrc.hips.position.copy(source.hips.position);       // таз ОТДЕЛЬНО (Root ≠ таз): боб/присед/авторский мах таза
     for (const nm of asmSrc.boneNames) { const sb = source.bones.get(nm); const tb = asmSrc.bones.get(nm); if (sb && tb) tb.rotation.copy(sb.rotation); }
     asmSrc.root.updateMatrixWorld(true);
     asmSkin.update();

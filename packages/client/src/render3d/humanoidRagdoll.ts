@@ -552,7 +552,7 @@ export function renderRagdollGhost(
   }
   const hp = rag.bodyPos('Hips');
   if (!ground) gs.off += (0 - gs.off) * Math.min(1, dt * 8);         // смерть/полёт: прижим затухает
-  mesh.root.position.set(hp[0], hp[1] + gs.off, hp[2]);
+  mesh.setHipsWorld(hp[0], hp[1] + gs.off, hp[2]);   // Root ≠ таз: физика задаёт положение ТАЗА, корень вычисляется из него
   mesh.root.updateMatrixWorld(true);
   if (ground && footIk) groundFeet(mesh, hp[1], gs, dt, gnd, support);   // FOOT-IK: заземляем ОПОРНЫЕ стопы (poseLod дальних → пропуск)
 }
@@ -569,7 +569,7 @@ export function renderKinematicPose(
 ): void {
   mesh.reset();
   for (const nm in targetPose) { const b = mesh.bones.get(nm); if (b) b.rotation.set(targetPose[nm]![0], targetPose[nm]![1], targetPose[nm]![2]); }
-  mesh.root.position.set(hipWorld.x, hipWorld.y + gs.off, hipWorld.z);
+  mesh.setHipsWorld(hipWorld.x, hipWorld.y + gs.off, hipWorld.z);   // то же для кинематической ветки (без физики)
   mesh.root.updateMatrixWorld(true);
   if (footIk) groundFeet(mesh, hipWorld.y, gs, dt, gnd, support);   // FOOT-IK (poseLod дальних → пропуск: детали стоп не видно)
 }
