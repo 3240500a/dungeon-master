@@ -11,7 +11,8 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, type LimitView } from './humanoidRagdoll.js';
-import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
+import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
+import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits(extraLimitView);   // до первого limitViewForBone
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
@@ -388,6 +389,11 @@ function readPoseFull(): Pose {
     p['__lgripP'] = [+lp.x.toFixed(2), +lp.y.toFixed(2), +lp.z.toFixed(2)];
     p['__lgripR'] = [+lr.x.toFixed(3), +lr.y.toFixed(3), +lr.z.toFixed(3)];
   }
+  // Фаланги попадают в кадр ТОЛЬКО если отличаются от текущего хвата: иначе каждый кадр запомнил бы
+  // дефолтный хват и смена оружия перестала бы на нём работать (весь смысл отдельного канала).
+  { const g = curGripPose();
+    for (const nm in p) if (isHandBone(nm)) { const gv = g[nm]; const v = p[nm]!;
+      if (gv && Math.abs(gv[0] - v[0]) < 1e-3 && Math.abs(gv[1] - v[1]) < 1e-3 && Math.abs(gv[2] - v[2]) < 1e-3) delete p[nm]; } }
   { const hp = human.hips.position; p['__hipsP'] = [+hp.x.toFixed(2), +hp.y.toFixed(2), +hp.z.toFixed(2)]; }   // ПОЛНЫЙ авторский офсет таза (Root ≠ таз): Y = база стойки (standY), X/Z = мах/сдвиг таза В МЕСТЕ. Раньше писали только Y — X/Z молча терялись
   return p;
 }
@@ -403,7 +409,7 @@ function applyWeaponPose(p: Pose): void {
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
-function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hp = p['__hipsP']; if (hp) human.hips.position.set(hp[0], hp[1], hp[2]); } applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
+function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hp = p['__hipsP']; if (hp) human.hips.position.set(hp[0], hp[1], hp[2]); } applyGripOver(p); applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
 // Интерп ПОВОРОТОВ кадров — КВАТЕРНИОННЫЙ SLERP (истинная кратчайшая дуга, без gimbal). Покомпонентный лерп эйлеров
 // (даже с обёрткой углов в [-π,π]) на многоосевых кадрах даёт «прокрутку» руки (эйлеры далеки, хотя поворот близок).
 // slerp учитывает двойное покрытие (q и −q = один поворот) → всегда короткий путь. lerpAng оставлен для скаляров/маркера.
@@ -539,7 +545,22 @@ function atlasProfile(): BodyProfile | undefined { return modelsTab.profile(); }
 // Пальцы строим только когда они есть у ЗАГРУЖЕННОЙ модели либо юзер включил их руками:
 // +30 групп на КАЖДЫЙ гуманоид (манекен + призрак + 2 ониона) без нужды — пустая цена.
 let fingersForced = false;
-let limitPresetId = 'human';   // выбранный пресет пределов скелета (Ф3.3)
+let limitPresetId = 'human';
+// ХВАТ КИСТИ (Ф3.5) — не часть клипа: привязан к ключу оружия, накладывается поверх.
+// Кадр, в котором фаланги ЗАДАНЫ явно (Про-режим крутил их руками), хват не перебивает.
+let gripCfg: GripConfig = (() => { try { return { ...EMPTY_GRIP_CONFIG(), ...(JSON.parse(localStorage.getItem('pe_gripposes') || '{}') as GripConfig) }; } catch { return EMPTY_GRIP_CONFIG(); } })();
+function saveGrips(): void { try { localStorage.setItem('pe_gripposes', JSON.stringify(gripCfg)); savePoseKey('pe_gripposes'); } catch { /* */ } }
+const weaponGripBind = (): { L?: string; R?: string; closeL?: number; closeR?: number } =>
+  (gripCfg.byWeapon[curCharId] ??= {})[weapon] ??= defaultWeaponGrip(weapon);
+/** Поза пальцев для текущего персонажа/оружия. */
+const curGripPose = (): Pose => resolveGripPose(gripCfg, curCharId, weapon);
+/** Наложить хват на те фаланги, которые НЕ заданы позой кадра. */
+function applyGripOver(p?: Pose): void {
+  if (!wantFingers()) return;
+  const g = curGripPose(); const out: Pose = {};
+  for (const nm in g) if (!p || p[nm] === undefined) out[nm] = g[nm]!;
+  applyGripPose(human.bones, out);
+}   // выбранный пресет пределов скелета (Ф3.3)
 function wantFingers(): boolean { return fingersForced || modelsTab.hasFingers(); }   // профиль тела (модульные пропорции) — как игра строит solid/target; редактор строит манекен/призрак им (P3: opts 1:1)
 /** Скелет-манекен ПОВЕРХ импортного меша (depthTest off) — виден и кликается сквозь модель. Только для skeleton-стиля. */
 function manikinOnTop(): void {
@@ -699,7 +720,12 @@ function poseTools(): void {
     row.append(s, v); body.append(row);
   };
   phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('★ пин · жёсткость (кадр)', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
-  phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
+  phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);
+  { // Стоимость набора физ-тел — чтобы решение «добавить тел» было осознанным, а не сюрпризом.
+    const c = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
+    c.textContent = `тел: ${RAG_NAMES.length} · шаг симуляции ~${physMs.toFixed(2)} мс` + (wantFingers() ? ' · пальцы кинематические (без физ-тел)' : '');
+    body.append(c);
+  }   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
   // ── ЛИМИТЫ/МОТОРЫ суставов (RB3): множитель конусов/диапазонов + сила моторов. Применяется ПЕРЕСБОРКОЙ куклы на отпускание. ──
   const rgh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rgh.textContent = 'ЛИМИТЫ/МОТОРЫ (пересборка)'; body.append(rgh);
   const ragRow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
@@ -793,7 +819,60 @@ function poseTools(): void {
     pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { physOn = true; setPhysVis(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
     pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; if (ragdoll) ragdoll.group.visible = showBoxes; renderAnim(); }); }, showBoxes),
   );
+  gripSection();
   boneTreeSection();
+}
+
+// ── Ф3.5: ХВАТ КИСТИ ──
+// Простой режим: выпадашка + один слайдер на кисть — пальцы трогать руками не надо вообще.
+// Про: плюс сохранить текущие фаланги своим пресетом и зеркало на вторую кисть.
+function gripSection(): void {
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); h.textContent = 'ХВАТ КИСТИ'; body.append(h);
+  if (!wantFingers()) {
+    const hint = el('div', 'color:#6b7180;font-size:10px');
+    hint.textContent = 'пальцы выключены — включаются автоматически для модели с пальцами (или кнопкой ✋ в Про)';
+    body.append(hint); return;
+  }
+  const bind = weaponGripBind();
+  const options = (): HTMLOptionElement[] => [
+    ...BUILTIN_GRIPS.map((g) => { const o = document.createElement('option'); o.value = g.id; o.textContent = g.label; return o; }),
+    ...Object.values(gripCfg.custom).map((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = '★ ' + c.label; return o; }),
+  ];
+  const hand = (side: 'L' | 'R', label: string): void => {
+    const row = el('div', 'display:flex;align-items:center;gap:4px;margin-top:2px'); body.append(row);
+    const lb = el('span', 'width:52px;font-size:11px'); lb.textContent = label; row.append(lb);
+    const sel = document.createElement('select'); sel.style.cssText = impInput + ';flex:1';
+    for (const o of options()) sel.append(o);
+    sel.value = (side === 'L' ? bind.L : bind.R) ?? 'open';
+    sel.onchange = () => { if (side === 'L') bind.L = sel.value; else bind.R = sel.value; saveGrips(); goFrame(frameIdx); };
+    row.append(sel);
+    const sl = el('input', 'width:70px') as HTMLInputElement;
+    sl.type = 'range'; sl.min = '0'; sl.max = '1'; sl.step = '0.05';
+    sl.value = String((side === 'L' ? bind.closeL : bind.closeR) ?? 1);
+    sl.title = 'сжатие: 0 = раскрытая кисть, 1 = пресет как есть';
+    sl.oninput = () => { const v = parseFloat(sl.value); if (side === 'L') bind.closeL = v; else bind.closeR = v; applyGripOver(curClip()?.keys[frameIdx]?.pose); };
+    sl.onchange = () => saveGrips();
+    row.append(sl);
+  };
+  hand('R', 'правая'); hand('L', 'левая');
+  if (uiPro) {
+    const row = el('div', 'margin-top:3px'); body.append(row);
+    row.append(
+      pbtn('★ сохранить свой', () => {
+        const nm = prompt('имя хвата', 'хват ' + (Object.keys(gripCfg.custom).length + 1)); if (!nm) return;
+        const id = 'c_' + Date.now().toString(36);
+        const pose: Pose = {}; for (const nmb of human.boneNames) if (isHandBone(nmb)) { const r = human.bones.get(nmb)!.rotation; pose[nmb] = [+r.x.toFixed(4), +r.y.toFixed(4), +r.z.toFixed(4)]; }
+        gripCfg.custom[id] = { id, label: nm, pose };
+        bind.L = id; bind.R = id; saveGrips(); refreshAll();
+      }),
+      pbtn('⇄ зеркало П→Л', () => histPose('зеркало хвата', () => {
+        for (const nmb of human.boneNames) { if (!isHandBone(nmb) || !nmb.startsWith('Right')) continue;
+          const dst = human.bones.get('Left' + nmb.slice(5)); const src = human.bones.get(nmb)!.rotation;
+          if (dst) dst.rotation.set(-src.x, -src.y, src.z); }
+      })),
+      pbtn('✕ сброс привязки', () => { delete (gripCfg.byWeapon[curCharId] ?? {})[weapon]; saveGrips(); goFrame(frameIdx); refreshAll(); }),
+    );
+  }
 }
 
 // ── Ф3.7: ДЕРЕВО КОСТЕЙ ──
@@ -939,6 +1018,7 @@ function renderAnim(): void { body.innerHTML = ''; clipSection(); animExportSect
 // (тогда GLB — эталонный скелет с анимациями, ретаргетится в любом движке).
 let expProfile: NameProfile = 'canon';
 let expStatus = '';
+let expBakeFingers = true;   // по умолчанию впекаем: принимающему движку не должна быть нужна наша система хватов
 function animExportSection(): void {
   const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:10px 0 2px;border-top:1px solid #39415a;padding-top:8px');
   h.textContent = 'АНИМАЦИИ → GLB'; body.append(h);
@@ -953,8 +1033,14 @@ function animExportSection(): void {
   sel.onchange = () => { expProfile = sel.value as NameProfile; };
   row.append(sel);
 
-  const doExport = (clips: Clip[], fname: string): void => {
-    if (!clips.length) { expStatus = 'нечего экспортировать'; renderAnim(); return; }
+  if (wantFingers()) row.append(pbtn(expBakeFingers ? 'пальцы: впечь' : 'пальцы: пресетом', () => { expBakeFingers = !expBakeFingers; renderAnim(); }, expBakeFingers));
+
+  const doExport = (clips0: Clip[], fname: string): void => {
+    if (!clips0.length) { expStatus = 'нечего экспортировать'; renderAnim(); return; }
+    // Хват впекается в КОПИЮ клипов — библиотека остаётся чистой (инвариант Ф1.6: клип = только углы костей).
+    const clips = (expBakeFingers && wantFingers())
+      ? clips0.map((c) => bakeGripIntoClip({ ...c, keys: c.keys.map((k) => ({ ...k, pose: clonePose(k.pose) })) }, curGripPose()))
+      : clips0;
     // Манекен отдаём В T-ПОЗЕ: бинд-поза в GLB должна быть канонической, иначе в чужом движке
     // все клипы приедут со смещением от той случайной позы, в которой был манекен в момент клика.
     const saved = readPoseFull();
@@ -1378,6 +1464,7 @@ function preview(time: number): void {   // time в секундах
 
 // ── Физика (Ф2b: рэгдолл на гуманоид-скелете — призрак, ведомый моторами к позе) ──
 let pw: PhysWorld | null = null; let physOn = false; let physDead = false;
+let physMs = 0;   // среднее время физ-шага, мс (Ф3.4: стоимость набора тел видна, а не угадывается)
 let manView: 'skel' | 'solid' | 'hidden' = 'skel';   // вид манекена: скелет-арматура / солид-тело / скрыт (дефолт — скелет)
 let curHumanStyle: 'solid' | 'skeleton' = 'skeleton';   // с каким стилем реально построен human (чтобы не пересобирать зря)
 let showBoxes = false;   // дебаг: показать сырые физ-боксы рэгдолла (по умолчанию — только силуэт-призрак)
@@ -1832,8 +1919,10 @@ function stepPhysics(dt: number): void {
   const [mHR, mHL] = weaponHandMasses(weapon);   // масса рук по main+off (щит/второе оружие → левая)
   ragdoll.setLoad('HandR', mHR); ragdoll.setLoad('HandL', mHL);
   if (locoOn) PHYS.pinKp = lp().attackPinKp ?? DEF_PINKP;   // удар в локо ужесточает пины per-кадр (авторский __pinKp) — ТОЧНО как игра
+  const _t0 = performance.now();
   ragdoll.update(dt);   // моторы ведут к позе + пины + вес оружия + kinematic-таз
   pw.step(Math.min(dt, 1 / 60));
+  physMs = physMs * 0.9 + (performance.now() - _t0) * 0.1;   // скользящее среднее шага симуляции
   // призрак-гуманоид = физ-результат + заземление стопы (ОБЩИЙ код с игрой) + БЛЕНД к позе-цели. В ЛОКО — ЕДИНЫЙ с игрой effMatch
   // (per-кадр __match удара + ATK_MATCH-рамп поверх базы); в Позы/Анимации — PHYS.match (applyFramePhys). «Упал» → 0 (свободный коллапс).
   if (ghostHuman) {
