@@ -14,6 +14,9 @@ import { TILE } from '@dm/shared';
 import { jolt, type PhysWorld, type JoltNS } from './ragdoll.js';
 import type { Humanoid } from './humanoid.js';   // только тип (без цикла: humanoid не импортирует рэгдолл)
 import { groundFeet, type GroundQuery } from './footIk.js';
+import { resolvePhysSet, presetBodies, matchPhysPreset, physCost, type PhysNode } from './physRig.js';   // Ф11: набор тел = данные
+import { FINGER_GEO, FINGER_SEG } from './humanoid.js';                                                   // геометрия фаланг — ОДНА на меш и физику
+import { EXTRA_JOINTS } from './jointLimits.js';                                                          // пределы пальцев — тоже ОДНИ
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 type Vec3 = [number, number, number];
@@ -25,7 +28,12 @@ type Con =
 type MGroup = 'leg' | 'arm' | 'core' | 'head';
 
 interface HBone {
-  name: string; parent: number;
+  name: string;
+  /** Родитель ПО ИМЕНИ. Индексом он был, пока набор тел был зашит; с редактируемым набором индексы
+   *  сдвигаются на каждое выключенное тело, и адресация по имени — единственная, которая это переживает. */
+  parent: string | null;
+  /** `core` — без этого куклы нет; `extra` — кисти/носки; `opt` — пальцы (по умолчанию выключены). */
+  tier: 'core' | 'extra' | 'opt';
   anchor: Vec3;                 // мировой сустав в T-позе покоя = начало тела
   off: Vec3;                    // смещение формы/меша от сустава (кость свисает/тянется от него)
   shape: { k: 'box'; h: Vec3 } | { k: 'sphere'; r: number };
@@ -33,6 +41,8 @@ interface HBone {
   group: MGroup;
   damp: number;
 }
+/** Тело АКТИВНОГО набора: родитель уже индексом (требование Jolt) и цепь ретаргета с учётом слияний. */
+type ActiveBone = HBone & { parentIdx: number; chain: string[] };
 
 const swing = (planeLim: [number, number], normalLim: [number, number], twistLim: [number, number], twist: Vec3, plane: Vec3): Con =>
   ({ kind: 'swing', twist, plane, planeLim, normalLim, twistLim });
@@ -53,37 +63,106 @@ const hinge = (lim: [number, number], axis: Vec3, normal: Vec3): Con => ({ kind:
 //   → для асимм. дефолтов физика чуть шире клэмпа манекена (<0.1рад, незаметно); полная асимметрия (bias-рамка) отложена —
 //   конфликтует с тюнингом бега + нужна верификация в игре. Пределы правятся живьём в редакторе (RB3, pe_ragdoll → jointOv).
 // Кости в порядке скелета (родитель раньше ребёнка — требование Jolt). Пропорции = гуманоид T-поза.
-const B: HBone[] = [
-  { name: 'Hips', parent: -1, anchor: [0, 32, 0], off: [0, 0, 0], shape: { k: 'box', h: [5, 3, 3] }, con: null, group: 'core', damp: 1 },
-  { name: 'Torso', parent: 0, anchor: [0, 35, 0], off: [0, 8.5, 0], shape: { k: 'box', h: [5, 8.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1 },
-  { name: 'Head', parent: 1, anchor: [0, 53, 0], off: [0, 4, 0], shape: { k: 'sphere', r: 5 }, con: swing([-0.5, 0.5], [-0.4, 0.4], [-0.7, 0.7], [0, 1, 0], [1, 0, 0]), group: 'head', damp: 1 },
+const CATALOG: HBone[] = [
+  { name: 'Hips', parent: null, tier: 'core', anchor: [0, 32, 0], off: [0, 0, 0], shape: { k: 'box', h: [5, 3, 3] }, con: null, group: 'core', damp: 1 },
+  { name: 'Torso', parent: 'Hips', tier: 'core', anchor: [0, 35, 0], off: [0, 8.5, 0], shape: { k: 'box', h: [5, 8.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1 },
+  { name: 'Head', parent: 'Torso', tier: 'core', anchor: [0, 53, 0], off: [0, 4, 0], shape: { k: 'sphere', r: 5 }, con: swing([-0.5, 0.5], [-0.4, 0.4], [-0.7, 0.7], [0, 1, 0], [1, 0, 0]), group: 'head', damp: 1 },
   // Плечо: твист ±1.4≈±80° (внутр/внеш ротация плеча, реально ~±90°; было ±0.8≈±46° — мало). Свинг ±1.7/±1.2 game-широкий.
-  { name: 'ArmL', parent: 1, anchor: [6, 51, 0], off: [7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.2, 1.2], [-1.4, 1.4], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ArmR', parent: 1, anchor: [-6, 51, 0], off: [-7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.2, 1.2], [-1.4, 1.4], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ForeL', parent: 3, anchor: [20, 51, 0], off: [5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-2.4, 0.1], [0, 1, 0], [1, 0, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ForeR', parent: 4, anchor: [-20, 51, 0], off: [-5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-0.1, 2.4], [0, 1, 0], [-1, 0, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ArmL', parent: 'Torso', tier: 'core', anchor: [6, 51, 0], off: [7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.2, 1.2], [-1.4, 1.4], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ArmR', parent: 'Torso', tier: 'core', anchor: [-6, 51, 0], off: [-7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.2, 1.2], [-1.4, 1.4], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ForeL', parent: 'ArmL', tier: 'core', anchor: [20, 51, 0], off: [5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-2.4, 0.1], [0, 1, 0], [1, 0, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ForeR', parent: 'ArmR', tier: 'core', anchor: [-20, 51, 0], off: [-5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-0.1, 2.4], [0, 1, 0], [-1, 0, 0]), group: 'arm', damp: 0.9 },
   // Бедро: твист (внутр/внеш ротация) ±0.7≈±40° — анатомично (было ±0.4≈±23°, вдвое мало). Бокс НЕквадратный (X>Z, колено
   // «смотрит» вперёд) → осевой твист ВИДЕН на призраке (квадрат его прятал). ab/ad ±1.4 оставлено ШИРЕ анатомии — game-tuned
   // (стойка опирается на него; сужать = клипать гейт). Сгиб/разгиб ±0.9 симметрично — асимметрию даёт Ф2 (bias-рамка).
-  { name: 'ThighL', parent: 0, anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.9, 7.5, 2.9] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'ThighR', parent: 0, anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.9, 7.5, 2.9] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'ShinL', parent: 7, anchor: [4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [3.3, 7, 2.5] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  { name: 'ShinR', parent: 8, anchor: [-4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [3.3, 7, 2.5] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  { name: 'ThighL', parent: 'Hips', tier: 'core', anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.9, 7.5, 2.9] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'ThighR', parent: 'Hips', tier: 'core', anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.9, 7.5, 2.9] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'ShinL', parent: 'ThighL', tier: 'core', anchor: [4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [3.3, 7, 2.5] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  { name: 'ShinR', parent: 'ThighR', tier: 'core', anchor: [-4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [3.3, 7, 2.5] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
   // Голеностоп — SWING (малый многоосевой ход): twist вдоль голени = лево-право (рыск), plane=питч (плантар/дорси), normal=крен.
-  { name: 'FootL', parent: 9, anchor: [4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'FootR', parent: 10, anchor: [-4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'FootL', parent: 'ShinL', tier: 'core', anchor: [4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'FootR', parent: 'ShinR', tier: 'core', anchor: [-4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
   // Запястье: twist-ось [±1,0,0] = ось предплечья → его твист = ПРОНАЦИЯ/СУПИНАЦИЯ (реально сустав предплечья, но локоть у нас
   // чистый hinge, а асимм. L/R swing не калиброван — jointLimitView; отд. кость-ролл отложена). ±1.4≈±80° = полная пронация.
-  { name: 'HandL', parent: 5, anchor: [31, 51, 0], off: [2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.4, 1.4], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
-  { name: 'HandR', parent: 6, anchor: [-31, 51, 0], off: [-2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.4, 1.4], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
+  { name: 'HandL', parent: 'ForeL', tier: 'extra', anchor: [31, 51, 0], off: [2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.4, 1.4], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
+  { name: 'HandR', parent: 'ForeR', tier: 'extra', anchor: [-31, 51, 0], off: [-2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.4, 1.4], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
   // Носок — HINGE (сгиб вверх на отталкивании), крошечное тело спереди стопы. Даёт носку физику + предел.
-  { name: 'ToeL', parent: 11, anchor: [4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  { name: 'ToeR', parent: 12, anchor: [-4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  { name: 'ToeL', parent: 'FootL', tier: 'extra', anchor: [4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  { name: 'ToeR', parent: 'FootR', tier: 'extra', anchor: [-4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
 ];
-/** Имя физ-кости → индекс (для ретаргета humanoid-поза → цели, Ф3). */
-export const RAG_INDEX: Record<string, number> = Object.fromEntries(B.map((b, i) => [b.name, i]));
-/** Имена физ-костей по порядку индексов. */
-export const RAG_NAMES: string[] = B.map((b) => b.name);
+
+/**
+ * ФАЛАНГИ КАК ФИЗ-ТЕЛА (Ф11). Строятся из ТОЙ ЖЕ геометрии, что меш (`FINGER_GEO`), и берут пределы из
+ * `EXTRA_JOINTS` — то есть у пальца ОДНИ пределы, есть у него тело или нет. Иначе включение физики кисти
+ * молча меняло бы допустимый сгиб. Имя физ-тела = имя humanoid-кости (ретаргет 1:1, слитых цепей нет).
+ * По умолчанию ВЫКЛЮЧЕНЫ (tier `opt`): +30 тел и +30 констрейнтов — это осознанный выбор, а не дефолт.
+ */
+function fingerPhysBodies(): HBone[] {
+  const out: HBone[] = [];
+  for (const side of ['Left', 'Right'] as const) {
+    const sx = side === 'Left' ? 1 : -1;
+    for (const [chain, base, lens] of FINGER_GEO) {
+      let px = 31 * sx + base[0] * sx, py = 51 + base[1], pz = base[2];   // запястье физ-рига = [±31, 51, 0]
+      for (let i = 0; i < 3; i++) {
+        const name = side + chain + FINGER_SEG[i];
+        const len = lens[i] ?? 1, half = Math.max(0.35, len * 0.5), r = chain === 'Thumb' ? 0.62 : 0.55;
+        const ej = EXTRA_JOINTS[name];
+        out.push({
+          name, tier: 'opt', group: 'arm', damp: 0.7,
+          parent: i === 0 ? (side === 'Left' ? 'HandL' : 'HandR') : side + chain + FINGER_SEG[i - 1],
+          anchor: [px, py, pz], off: [half * sx, 0, 0],
+          shape: { k: 'box', h: [half, r, r] },
+          con: ej ? swing([ej.def.planeMin!, ej.def.planeMax!], [ej.def.normalMin!, ej.def.normalMax!], [ej.def.twistMin!, ej.def.twistMax!], ej.twist, ej.plane) : null,
+        });
+        px += len * sx;
+      }
+    }
+  }
+  return out;
+}
+CATALOG.push(...fingerPhysBodies());
+const _catBone = new Map(CATALOG.map((b) => [b.name, b]));
+
+/** Каталог для UI/пересборки: только то, что нужно чистому ядру (`physRig.ts`). */
+export const PHYS_CATALOG: PhysNode[] = CATALOG.map((b) => ({ name: b.name, parent: b.parent, tier: b.tier, chain: [] }));
+/** Читаемая подпись тела в панели (по-русски, чтобы галки не были загадкой). */
+export const PHYS_LABEL: Record<string, string> = {
+  Hips: 'таз', Torso: 'спина', Head: 'голова', ArmL: 'плечо Л', ArmR: 'плечо П', ForeL: 'предплечье Л', ForeR: 'предплечье П',
+  HandL: 'кисть Л', HandR: 'кисть П', ThighL: 'бедро Л', ThighR: 'бедро П', ShinL: 'голень Л', ShinR: 'голень П',
+  FootL: 'стопа Л', FootR: 'стопа П', ToeL: 'носок Л', ToeR: 'носок П',
+};
+
+// АКТИВНЫЙ набор. Пересобирается `applyPhysProfile`; `makeHumanoidRagdoll` читает его при СОЗДАНИИ,
+// поэтому смена набора — это та же пересборка куклы, что и смена лимитов (`rebuildRagdoll`).
+const B: ActiveBone[] = [];
+/** Текущий профиль: id пресета (или `custom`) и список включённых тел. Персист в `pe_ragdoll.physrig`. */
+export const PHYS_SET: { id: string; bodies: string[] } = { id: 'base', bodies: [] };
+
+/** Имя физ-кости → индекс В АКТИВНОМ НАБОРЕ. Пересобирается вместе с ним (объект тот же — ссылки живы). */
+export const RAG_INDEX: Record<string, number> = {};
+/** Имена физ-костей по порядку индексов (массив тот же — длина меняется на месте). */
+export const RAG_NAMES: string[] = [];
+
+/**
+ * Собрать активный набор. `bodies` — явный список, иначе берётся пресет `id`.
+ * ЗВАТЬ ДО создания рэгдолла (как и `loadRagdollConfig`): Jolt читает дерево при создании.
+ */
+export function applyPhysProfile(bodies?: readonly string[], id?: string): void {
+  const names = bodies ? [...bodies] : presetBodies(PHYS_CATALOG, id ?? PHYS_SET.id);
+  const active = resolvePhysSet(PHYS_CATALOG, names);
+  B.length = 0;
+  for (const a of active) {
+    const src = _catBone.get(a.name); if (!src) continue;
+    B.push({ ...src, parentIdx: a.parent, chain: a.chain });
+  }
+  RAG_NAMES.length = 0;
+  for (const k in RAG_INDEX) delete RAG_INDEX[k];
+  B.forEach((b, i) => { RAG_NAMES.push(b.name); RAG_INDEX[b.name] = i; });
+  PHYS_SET.bodies = names;
+  PHYS_SET.id = matchPhysPreset(PHYS_CATALOG, names);
+}
+/** Стоимость текущего набора — тел и констрейнтов (шаг в мс меряет редактор). */
+export const physSetCost = (): { bodies: number; constraints: number } => physCost(B);
 
 /**
  * Ретаргет: физ-кость ← сумма локальных углов гуманоид-костей под-цепочки. Все rest-фреймы мировые/identity
@@ -100,10 +179,12 @@ const RETARGET: Record<string, string[]> = {
   FootL: ['LeftFoot'], FootR: ['RightFoot'], HandL: ['LeftHand'], HandR: ['RightHand'],
   ToeL: ['LeftToes'], ToeR: ['RightToes'],
 };
+for (const b of CATALOG) if (b.tier === 'opt') RETARGET[b.name] = [b.name];   // фаланги — ретаргет 1:1
+PHYS_CATALOG.forEach((n, i) => { n.chain = RETARGET[CATALOG[i]!.name] ?? []; });
 const _rtQ = new THREE.Quaternion(), _rtQ2 = new THREE.Quaternion(), _rtE = new THREE.Euler();
 export function retargetHumanoidPose(pose: Record<string, [number, number, number]>): (Vec3 | null)[] {
   return B.map((b) => {
-    const src = RETARGET[b.name]; if (!src) return null;
+    const src = b.chain; if (!src.length) return null;   // ЦЕПЬ АКТИВНОГО тела: если предка выключили, его углы уже внутри
     // КОМПОЗИЦИЯ кватернионов под-цепочки (parent→child), а не сумма эйлеров: для КРУПНЫХ углов
     // (занос топора, глубокий присед) сумма промахивалась — физика целилась мимо позы. Кватернионы точны.
     _rtQ.identity();
@@ -125,6 +206,8 @@ export const PIN_SRC: Record<string, string> = {
   ThighL: 'LeftUpperLeg', ThighR: 'RightUpperLeg', ShinL: 'LeftLowerLeg', ShinR: 'RightLowerLeg',
   FootL: 'LeftFoot', FootR: 'RightFoot', HandL: 'LeftHand', HandR: 'RightHand', ToeL: 'LeftToes', ToeR: 'RightToes',
 };
+for (const b of CATALOG) if (b.tier === 'opt') { PRIMARY[b.name] = b.name; PIN_SRC[b.name] = b.name; }
+applyPhysProfile(undefined, 'base');   // дефолт — тот же набор 17 тел, что был зашит
 /** Живые тюн-параметры физики (панель редактора). Пины = пружина к позиции цели; muscle = вес ведения к позе;
  *  match = вес совпадения РЕНДЕРА с манекеном (0 физика … 1 ровно поза-цель) — обрабатывается в renderRagdollGhost. */
 export const PHYS = { pin: 1, pinKp: 4200, pinKd: 260, muscle: 1, load: 1, match: 0 };
@@ -171,7 +254,8 @@ export interface JointLim {
   flex?: number; hyperext?: number;   // hinge: осн. сгиб + малый переразгиб (знак → из базы B[])
 }
 const _cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const _bBone = new Map(B.map((b) => [b.name, b]));
+// Пределы НЕ зависят от того, включено ли тело: это канал АВТОРИНГА (Ф3.3), а набор тел — выбор симуляции.
+const _bBone = _catBone;
 // hinge [min,max] в конвенции КОНКРЕТНОЙ кости из канон-формы {flex,hyperext} (знак = как в базе baseLim).
 function hingeLimits(baseLim: [number, number], e: JointLim | null): [number, number] {
   if (!e || e.flex === undefined) return baseLim;
@@ -181,7 +265,7 @@ function hingeLimits(baseLim: [number, number], e: JointLim | null): [number, nu
 // Дефолты по канон-суставу (из B[], первое вхождение = ЛЕВАЯ кость → канон-конвенция).
 export const JOINT_DEF: Record<string, JointLim> = (() => {
   const out: Record<string, JointLim> = {};
-  for (const b of B) {
+  for (const b of CATALOG) {
     const canon = CANON[b.name]; if (!canon || !b.con || out[canon]) continue;
     const c = b.con;
     if (c.kind === 'swing') out[canon] = { kind: 'swing', group: b.group, planeMin: c.planeLim[0], planeMax: c.planeLim[1], normalMin: c.normalLim[0], normalMax: c.normalLim[1], twistMin: c.twistLim[0], twistMax: c.twistLim[1] };
@@ -233,7 +317,11 @@ export function jointLimitView(ragName: string): LimitView | null {
 /** Загрузить лимиты/моторы (localStorage `pe_ragdoll`, ГЛОБАЛЬНО на всех) в LIMITS/MOTOR — ЗВАТЬ ДО создания рэгдолла. */
 export function loadRagdollConfig(): void {
   try {
-    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>>; joints?: Record<string, Record<string, number>> };
+    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>>; joints?: Record<string, Record<string, number>>; physrig?: { id?: string; bodies?: string[] } };
+    // Набор тел живёт ЗДЕСЬ, а не отдельным ключом: у него тот же жизненный цикл, что у лимитов и моторов
+    // (правка = пересборка куклы), и лишний round-trip на сервер не нужен.
+    if (c.physrig?.bodies?.length) applyPhysProfile(c.physrig.bodies);
+    else applyPhysProfile(undefined, c.physrig?.id ?? 'base');
     const gs: MGroup[] = ['leg', 'arm', 'core', 'head'];
     if (c.limits) for (const g of gs) if (typeof c.limits[g] === 'number') LIMITS[g] = c.limits[g]!;
     if (c.motor) for (const g of gs) if (Array.isArray(c.motor[g])) MOTOR[g] = c.motor[g]!;
@@ -247,7 +335,7 @@ export function loadRagdollConfig(): void {
   } catch { /* */ }
 }
 export function saveRagdollConfig(): void {
-  try { localStorage.setItem('pe_ragdoll', JSON.stringify({ limits: { ...LIMITS }, motor: { ...MOTOR }, joints: { ...jointOv } })); } catch { /* */ }
+  try { localStorage.setItem('pe_ragdoll', JSON.stringify({ limits: { ...LIMITS }, motor: { ...MOTOR }, joints: { ...jointOv }, physrig: { id: PHYS_SET.id, bodies: PHYS_SET.bodies } })); } catch { /* */ }
 }
 
 export interface HumanoidRagdoll {
@@ -299,10 +387,10 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
 
   // ── Скелет ──
   const skeleton = new J.Skeleton();
-  for (const b of B) { const nm = new J.JPHString(b.name, b.name.length); skeleton.AddJoint(nm, b.parent); J.destroy(nm); }
+  for (const b of B) { const nm = new J.JPHString(b.name, b.name.length); skeleton.AddJoint(nm, b.parentIdx); J.destroy(nm); }
 
   // ── Суставы ──
-  const makeCon = (b: HBone): InstanceType<JoltNS['TwoBodyConstraintSettings']> => {
+  const makeCon = (b: ActiveBone): InstanceType<JoltNS['TwoBodyConstraintSettings']> => {
     const [ax, ay, az] = b.anchor;
     const [freq, torque] = MOTOR[b.group]; const L = LIMITS[b.group];   // L = множитель лимитов группы (RB3)
     const c = b.con!;
@@ -373,7 +461,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
   pose.SetSkeleton(skeleton);
   for (let i = 0; i < B.length; i++) {
     const b = B[i]!;
-    const p: Vec3 = b.parent < 0 ? [0, 0, 0] : B[b.parent]!.anchor;
+    const p: Vec3 = b.parentIdx < 0 ? [0, 0, 0] : B[b.parentIdx]!.anchor;
     const js = pose.GetJoint(i);
     js.mTranslation.Set(b.anchor[0] - p[0], b.anchor[1] - p[1], b.anchor[2] - p[2]);
     js.mRotation.Set(0, 0, 0, 1);
@@ -498,9 +586,9 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       for (let i = 0; i < B.length; i++) { const r = pw.bi.GetRotation(ids[i]!); wq[i]!.set(r.GetX(), r.GetY(), r.GetZ(), r.GetW()); }
       eb.setFromQuaternion(wq[0]!); out['Hips'] = [eb.x, eb.y, eb.z];   // таз (мировой = кинематический)
       for (let i = 1; i < B.length; i++) {
-        invQ.copy(wq[B[i]!.parent]!).invert(); locQ.copy(invQ).multiply(wq[i]!);   // локальный поворот = parent⁻¹·world
+        invQ.copy(wq[B[i]!.parentIdx]!).invert(); locQ.copy(invQ).multiply(wq[i]!);   // локальный поворот = parent⁻¹·world
         eb.setFromQuaternion(locQ);
-        out[PRIMARY[B[i]!.name]!] = [+eb.x.toFixed(4), +eb.y.toFixed(4), +eb.z.toFixed(4)];
+        const prim = PRIMARY[B[i]!.name]; if (prim) out[prim] = [+eb.x.toFixed(4), +eb.y.toFixed(4), +eb.z.toFixed(4)];
       }
       return out;
     },

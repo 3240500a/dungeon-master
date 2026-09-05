@@ -14,7 +14,8 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, type LimitView } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, type LimitView } from './humanoidRagdoll.js';
+import { PHYS_PRESETS, presetBodies } from './physRig.js';   // Ф11: набор физ-тел настраивается в редакторе
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';
@@ -863,11 +864,8 @@ function poseTools(): void {
   };
   phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('★ пин · жёсткость (кадр)', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
   phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);
-  { // Стоимость набора физ-тел — чтобы решение «добавить тел» было осознанным, а не сюрпризом.
-    const c = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
-    c.textContent = `тел: ${RAG_NAMES.length} · шаг симуляции ~${physMs.toFixed(2)} мс` + (wantFingers() ? ' · пальцы кинематические (без физ-тел)' : '');
-    body.append(c);
-  }   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
+  physRigSection();
+  // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
   // ── ЛИМИТЫ/МОТОРЫ суставов (RB3): множитель конусов/диапазонов + сила моторов. Применяется ПЕРЕСБОРКОЙ куклы на отпускание. ──
   const rgh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rgh.textContent = 'ЛИМИТЫ/МОТОРЫ (пересборка)'; body.append(rgh);
   const ragRow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
@@ -1225,6 +1223,68 @@ async function showImportPanel(file: File): Promise<void> {
   }
 }
 
+
+/**
+ * Ф11: НАБОР ФИЗ-ТЕЛ — настройка, а не запрет.
+ * В поз-плеере на экране ВСЕГДА один персонаж, а результат всё равно запекается в клип — значит физика
+ * здесь инструмент авторинга, и её объём — выбор автора. Стоимость показываем честно (тела + замер шага).
+ */
+function physRigSection(): void {
+  const on = new Set(PHYS_SET.bodies);
+  const fingerNames = PHYS_CATALOG.filter((n) => n.tier === 'opt').map((n) => n.name);
+  const apply = (names: string[]): void => {
+    applyPhysProfile(names);
+    saveRagdollConfig(); savePoseKey('pe_ragdoll');
+    if (ragdoll) rebuildRagdoll();
+    renderAnim();
+  };
+  const cost = physSetCost();
+  const c = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
+  c.textContent = `тел: ${cost.bodies} · суставов: ${cost.constraints} · шаг симуляции ~${physMs.toFixed(2)} мс`;
+  body.append(c);
+  if (!uiPro) return;                       // в Простом режиме — только читаут, без галок
+
+  const ph = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ph.textContent = 'НАБОР ФИЗ-ТЕЛ (пересборка)'; body.append(ph);
+  const prow = el('div', 'display:flex;align-items:center;gap:4px'); body.append(prow);
+  const lab = el('span', 'flex:1;font-size:11px'); lab.textContent = 'пресет'; prow.append(lab);
+  const sel = document.createElement('select'); sel.style.cssText = impInput;
+  for (const pr of PHYS_PRESETS) { const o = document.createElement('option'); o.value = pr.id; o.textContent = pr.label; o.title = pr.hint; sel.append(o); }
+  { const o = document.createElement('option'); o.value = 'custom'; o.textContent = 'Свой'; sel.append(o); }
+  sel.value = PHYS_SET.id;
+  sel.onchange = () => { if (sel.value !== 'custom') apply(presetBodies(PHYS_CATALOG, sel.value)); };
+  prow.append(sel);
+
+  const grid = el('div', 'display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px'); body.append(grid);
+  for (const n of PHYS_CATALOG) {
+    if (n.tier === 'opt') continue;                            // фаланги — одной галкой ниже (30 штук поштучно нечитаемы)
+    const l = el('label', 'font-size:11px;display:flex;align-items:center;gap:3px');
+    const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox';
+    cb.checked = on.has(n.name); cb.disabled = n.parent === null;   // таз — корень, выключить нельзя
+    cb.onchange = () => { const next = new Set(on); if (cb.checked) next.add(n.name); else next.delete(n.name); apply([...next]); };
+    l.append(cb, document.createTextNode(PHYS_LABEL[n.name] ?? n.name)); grid.append(l);
+  }
+  { // Пальцы — одним тумблером на 30 тел.
+    const fingersOn = fingerNames.every((n) => on.has(n));
+    const l = el('label', 'font-size:11px;display:flex;align-items:center;gap:3px;margin-top:2px');
+    const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox'; cb.checked = fingersOn;
+    cb.onchange = () => {
+      const next = new Set(on);
+      for (const n of fingerNames) { if (cb.checked) next.add(n); else next.delete(n); }
+      apply([...next]);
+    };
+    l.append(cb, document.createTextNode(`пальцы (${fingerNames.length} тел)`));
+    l.title = 'Фаланги с физикой: тяжело, но честный контакт с рукоятью. Пределы у пальца ОДНИ и те же — есть тело или нет.';
+    body.append(l);
+    if (fingersOn && !wantFingers()) {
+      const w = el('div', 'color:#ffcf66;font-size:10px');
+      w.textContent = '⚠ у манекена пальцев нет — включи их в персонаже, иначе физ-фаланги нечем вести';
+      body.append(w);
+    }
+  }
+  const note = el('div', 'color:#6b7180;font-size:10px');
+  note.textContent = 'Выключенное тело не теряется: его угол сливается в ближайшего потомка. Клип это не трогает.';
+  body.append(note);
+}
 function renderAnim(): void { body.innerHTML = ''; clipSection(); animExportSection(); poseTools(); }
 
 // ── Ф2.3: ВЫВОЗ КЛИПОВ НАРУЖУ (GLB с анимациями + манифест) ──
@@ -2387,6 +2447,7 @@ async function ensurePhysics(): Promise<void> {
   pw.addGround(300);                                        // плоский пол (верх на y=0)
   loadRagdollConfig();                                      // RB3: лимиты/моторы из pe_ragdoll ДО создания рэгдолла
   ragdoll = makeHumanoidRagdoll(pw);
+  syncPinArrays();
   scene.add(ragdoll.group); ragdoll.group.visible = false;   // боксы-физтела скрыты — показываем гуманоид-призрак
   buildGhost();
   updateWeapon();   // до физики оружие висело на манекене (fallback) → переносим на свежий физ-призрак
@@ -2396,9 +2457,13 @@ function rebuildRagdoll(): void {
   if (!pw || !ragdoll) return;
   scene.remove(ragdoll.group); ragdoll.dispose();
   ragdoll = makeHumanoidRagdoll(pw);
+  syncPinArrays();   // Ф11: набор тел мог смениться — длина массивов пинов другая
   scene.add(ragdoll.group); ragdoll.group.visible = false;
 }
-const pinVecs = RAG_NAMES.map(() => new THREE.Vector3()); const pinArr: (THREE.Vector3 | null)[] = RAG_NAMES.map(() => null);
+// ДЛИНА зависит от набора тел (Ф11) — пересобираем вместе с куклой, иначе пины уедут на чужие индексы.
+let pinVecs: THREE.Vector3[] = []; let pinArr: (THREE.Vector3 | null)[] = [];
+function syncPinArrays(): void { pinVecs = RAG_NAMES.map(() => new THREE.Vector3()); pinArr = RAG_NAMES.map(() => null); }
+syncPinArrays();
 function stepPhysics(dt: number): void {
   if (!pw || !physOn || !ragdoll) return;
   human.root.updateMatrixWorld(true);                        // манекен = целевая поза (правка или интерполяция клипа)

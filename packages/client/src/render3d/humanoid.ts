@@ -8,14 +8,14 @@ import * as THREE from 'three';
 import { lenMult, pelvisHeight, girthMult, boneScaleOf, boneRegion, type BodyProfile, type BoneScale } from './bodyProfile.js';
 
 /** Геометрия кисти: [отступ пястной кости от запястья, длины трёх фаланг]. Пальцы идут вдоль +X (наружу). */
-const FINGER_GEO: [string, [number, number, number], number[]][] = [
+export const FINGER_GEO: [string, [number, number, number], number[]][] = [
   ['Thumb', [1.3, -0.5, 1.7], [1.5, 1.2, 1.0]],
   ['Index', [3.5, 0.2, 1.5], [1.7, 1.1, 0.9]],
   ['Middle', [3.7, 0.2, 0.5], [1.9, 1.2, 0.9]],
   ['Ring', [3.5, 0.2, -0.5], [1.7, 1.1, 0.9]],
   ['Little', [3.1, 0.1, -1.4], [1.3, 0.9, 0.8]],
 ];
-const FINGER_SEG = ['Proximal', 'Intermediate', 'Distal'];
+export const FINGER_SEG = ['Proximal', 'Intermediate', 'Distal'];
 /** 30 фаланг (2 руки × 5 пальцев × 3). Правая сторона — зеркало по X (как весь риг: Left = +X). */
 function fingerBones(): HBone[] {
   const out: HBone[] = [];
