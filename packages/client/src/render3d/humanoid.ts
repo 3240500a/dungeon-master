@@ -5,7 +5,33 @@
  * Масштаб: TILE=32u=1 м, рост ~1.9 м. Имена костей — Unity (`LeftUpperArm` и т.д.) для карты ретаргета.
  */
 import * as THREE from 'three';
-import { lenMult, pelvisHeight, girthMult, boneScaleOf, type BodyProfile, type BoneScale } from './bodyProfile.js';
+import { lenMult, pelvisHeight, girthMult, boneScaleOf, boneRegion, type BodyProfile, type BoneScale } from './bodyProfile.js';
+
+/** Геометрия кисти: [отступ пястной кости от запястья, длины трёх фаланг]. Пальцы идут вдоль +X (наружу). */
+const FINGER_GEO: [string, [number, number, number], number[]][] = [
+  ['Thumb', [1.3, -0.5, 1.7], [1.5, 1.2, 1.0]],
+  ['Index', [3.5, 0.2, 1.5], [1.7, 1.1, 0.9]],
+  ['Middle', [3.7, 0.2, 0.5], [1.9, 1.2, 0.9]],
+  ['Ring', [3.5, 0.2, -0.5], [1.7, 1.1, 0.9]],
+  ['Little', [3.1, 0.1, -1.4], [1.3, 0.9, 0.8]],
+];
+const FINGER_SEG = ['Proximal', 'Intermediate', 'Distal'];
+/** 30 фаланг (2 руки × 5 пальцев × 3). Правая сторона — зеркало по X (как весь риг: Left = +X). */
+function fingerBones(): HBone[] {
+  const out: HBone[] = [];
+  for (const side of ['Left', 'Right'] as const) {
+    const sx = side === 'Left' ? 1 : -1;
+    for (const [chain, base, lens] of FINGER_GEO) {
+      for (let i = 0; i < 3; i++) {
+        const nm = side + chain + FINGER_SEG[i];
+        const parent = i === 0 ? side + 'Hand' : side + chain + FINGER_SEG[i - 1];
+        const pos: [number, number, number] = i === 0 ? [base[0] * sx, base[1], base[2]] : [lens[i - 1]! * sx, 0, 0];
+        out.push({ name: nm!, parent, pos, r: chain === 'Thumb' ? 0.62 : 0.55, finger: true });
+      }
+    }
+  }
+  return out;
+}
 
 /** Кость: имя, родитель (или null=корень), смещение сустава от родителя (лок.), радиус сегмент-меша, форма. */
 interface HBone {
@@ -16,6 +42,7 @@ interface HBone {
   shape?: 'pelvis' | 'head' | 'hand' | 'foot' | 'toe' | 'breast';   // спец-формы; иначе цилиндр к первому ребёнку
   female?: boolean;   // только для gender:'female' (breast-кости — вторичные/jiggle, вне гуманоида Unity)
   noMesh?: boolean;   // служебный узел без геометрии (Root): не рисуем и не берём в рейкаст
+  finger?: boolean;   // фаланга: строится только при opts.fingers (30 костей на каждого гуманоида — платим только где надо)
 }
 
 /** Таблица в порядке «родитель раньше ребёнка». T-поза: руки вдоль X, ноги вниз, спина вверх.
@@ -51,6 +78,10 @@ const BONES: HBone[] = [
   { name: 'RightLowerLeg', parent: 'RightUpperLeg', pos: [0, -15, 0], r: 2.8 },
   { name: 'RightFoot', parent: 'RightLowerLeg', pos: [0, -14, 0], r: 2.4, shape: 'foot' },
   { name: 'RightToes', parent: 'RightFoot', pos: [0, -1, 6], r: 1.8, shape: 'toe' },
+  // ПАЛЬЦЫ (Ф3.1) — имена Unity Humanoid, по 3 фаланги на палец. Строятся только при opts.fingers:
+  // это +30 групп на КАЖДЫЙ гуманоид (манекен + призрак + 2 ониона + источник атласа), и в игре
+  // они не нужны — там хват уже впечён в клип. От запястья: +X наружу, +Z вперёд (ладонь вниз).
+  ...fingerBones(),
   // Грудь (только female) — ВТОРИЧНЫЕ кости (jiggle), вне humanoid Unity. На UpperChest, вперёд-вбок-вверх.
   { name: 'LeftBreast', parent: 'UpperChest', pos: [2.6, 1, 4], r: 3, shape: 'breast', female: true },
   { name: 'RightBreast', parent: 'UpperChest', pos: [-2.6, 1, 4], r: 3, shape: 'breast', female: true },
@@ -143,7 +174,7 @@ function makeHeadGeometry(R: number): THREE.BufferGeometry {
 }
 
 export interface BuildScale { arm?: number; leg?: number; torso?: number; head?: number }
-export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton'; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]> } = {}): Humanoid {
+export function buildHumanoid(opts: { limb?: number; body?: number; head?: number; gender?: 'male' | 'female'; build?: BuildScale; style?: 'solid' | 'skeleton'; profile?: BodyProfile; boneScale?: BoneScale; boneOffsets?: Record<string, number[]>; fingers?: boolean } = {}): Humanoid {
   const skel = opts.style === 'skeleton';
   const matLimb = new THREE.MeshStandardMaterial({ color: opts.limb ?? 0x8a93ad, roughness: 0.6, metalness: 0.15 });
   const matBody = new THREE.MeshStandardMaterial({ color: opts.body ?? 0x6f7690, roughness: 0.62, metalness: 0.2 });
@@ -155,11 +186,15 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   const bd = opts.build ?? {};
   const prof = opts.profile;
   const gir = girthMult(prof);
+  // Регион берём из ОБЩЕЙ boneRegion (bodyProfile.ts), а не угадываем по подстрокам: иначе каждая
+  // новая кость тихо падает в «торс» (LeftThumbProximal не содержит ни 'Arm', ни 'Leg' → палец толстел бы с животом).
   const sc = (name: string): number => {
-    if (name.includes('Arm') || name === 'LeftHand' || name === 'RightHand' || name.includes('Shoulder')) return (bd.arm ?? 1) * gir;
-    if (name.includes('Leg') || name.includes('Foot') || name.includes('Toes')) return (bd.leg ?? 1) * gir;
-    if (name === 'Head' || name === 'Neck') return bd.head ?? 1;   // голову girth не раздуваем
-    return (bd.torso ?? 1) * gir;   // Spine/Chest/UpperChest/Hips/Breast
+    switch (boneRegion(name)) {
+      case 'arm': return (bd.arm ?? 1) * gir;
+      case 'leg': return (bd.leg ?? 1) * gir;
+      case 'head': return bd.head ?? 1;   // голову girth не раздуваем
+      default: return (bd.torso ?? 1) * gir;   // Spine/Chest/UpperChest/Hips/Breast
+    }
   };
   // ДЛИНА/НАПРАВЛЕНИЕ звеньев. boneOffsets (ВЕКТОР rest-офсета из ФБХ) — приоритет: наш скелет ПОВТОРЯЕТ геометрию
   // модели 1:1 (направление+длина; чинит «раскоряку» — узкий-вниз хип ФБХ, а не широкий как у boneScale-скаляра).
@@ -180,7 +215,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   };
 
   // Female-кости (грудь) — только для gender:'female'. Иначе гуманоид без них (обязательный набор Unity).
-  const table = BONES.filter((b) => !b.female || opts.gender === 'female');
+  const table = BONES.filter((b) => (!b.female || opts.gender === 'female') && (!b.finger || opts.fingers === true));
 
   const bones = new Map<string, THREE.Group>();
   const meshes: THREE.Mesh[] = [];

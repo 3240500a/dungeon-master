@@ -43,5 +43,18 @@ export function pelvisHeight(p?: BodyProfile, bs?: BoneScale): number {
   return 1 + (2 * up + 15 * th + 14 * sh) * leg;   // клиренс 1 + (таз-офсет+бедро+голень)·scale·leg·height
 }
 
+/** Регион кости — ОДНА таблица для толщины (humanoid.sc) и прочих пер-регионных множителей.
+ *  Раньше регион угадывался по подстрокам ('Arm'/'Leg'/…), и любая НОВАЯ кость тихо падала в «торс»:
+ *  `LeftThumbProximal` не содержит ни 'Arm', ни 'Leg' → палец толстел вместе с животом. */
+export type BoneRegion = 'arm' | 'leg' | 'torso' | 'head';
+const FINGER_RE = /(Thumb|Index|Middle|Ring|Little)(Proximal|Intermediate|Distal)$/;
+export function boneRegion(name: string): BoneRegion {
+  if (name === 'Head' || name === 'Neck') return 'head';
+  if (FINGER_RE.test(name)) return 'arm';                                   // пальцы — часть руки
+  if (name.includes('Arm') || name.endsWith('Hand') || name.includes('Shoulder')) return 'arm';
+  if (name.includes('Leg') || name.includes('Foot') || name.includes('Toes')) return 'leg';
+  return 'torso';
+}
+
 /** Множитель ТОЛЩИНЫ (girth) поверх per-регионного build-масштаба. */
 export function girthMult(p?: BodyProfile): number { return p?.girth ?? 1; }

@@ -198,6 +198,16 @@ export const RAG_OF_HUMAN: Record<string, string> = (() => {
   return out;
 })();
 export function canonOfHuman(humanBone: string): string | null { const r = RAG_OF_HUMAN[humanBone]; return r ? (CANON[r] ?? null) : null; }
+/** Предел ЛЮБОЙ кости манекена (Ф3.3): сначала физ-риг (там оси зеркальны и выверены),
+    затем без-физическая таблица (`jointLimits.EXTRA_JOINTS` — пальцы и всё, чего в рэгдолле нет).
+    Заведено ленивым импортом-хуком, чтобы не создавать цикл модулей (jointLimits типы берёт отсюда). */
+let _extraLimit: ((bone: string) => LimitView | null) | null = null;
+export function registerExtraLimits(fn: (bone: string) => LimitView | null): void { _extraLimit = fn; }
+export function limitViewForBone(humanBone: string): LimitView | null {
+  const rag = RAG_OF_HUMAN[humanBone];
+  const phys = rag ? jointLimitView(rag) : null;
+  return phys ?? (_extraLimit ? _extraLimit(humanBone) : null);
+}
 /** Всё для клэмпа/гизмо предела на суставе `ragName`: оси (лок., T-поза) + ЭФФЕКТИВНЫЕ диапазоны (× групповой LIMITS). */
 export interface LimitView {
   kind: 'swing' | 'hinge'; group: MGroup; canon: string;

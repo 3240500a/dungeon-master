@@ -10,7 +10,9 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, jointLimitView, canonOfHuman, jointOv, JOINT_DEF, RAG_OF_HUMAN, type LimitView } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, type LimitView } from './humanoidRagdoll.js';
+import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
+registerExtraLimits(extraLimitView);   // до первого limitViewForBone
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
@@ -63,7 +65,7 @@ const _parInv = new THREE.Quaternion(), _rdof = new THREE.Quaternion(), _dq = ne
 const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bz = new THREE.Vector3(), _m4 = new THREE.Matrix4();
 /** DOF-базис сустава кости nm (правосторонний): X=normal, Y=twist(green), Z=plane. Hinge → ось сгиба на Y. Нет сустава → identity. */
 function dofBasis(nm: string, out: THREE.Quaternion): void {
-  const rag = RAG_OF_HUMAN[nm]; const v = rag ? jointLimitView(rag) : null;
+  const v = limitViewForBone(nm);   // физ-риг, иначе без-физическая таблица (фаланги)
   if (v && v.kind === 'swing' && v.twist && v.plane && v.normal) {   // X=normal,Y=twist,Z=plane → Z=X×Y=plane (правостор.)
     _bx.set(v.normal[0], v.normal[1], v.normal[2]).normalize();
     _by.set(v.twist[0], v.twist[1], v.twist[2]).normalize();
@@ -102,8 +104,7 @@ let mode: 'fk' | 'ik' = 'ik';
 let curLimitView: LimitView | null = null;
 function updateLimitGizmo(): void {
   const nm = tab === 'anim' && showLimits && selected ? selected : null;
-  const rag = nm ? RAG_OF_HUMAN[nm] : undefined;
-  curLimitView = rag ? jointLimitView(rag) : null;
+  curLimitView = nm ? limitViewForBone(nm) : null;
   limitGizmo.set(curLimitView);
 }
 // Поставить гизмо на сустав манекена: позиция сустава (мир) + ориентация РОДИТЕЛЬСКОЙ кости (лимиты заданы от родителя).
@@ -325,7 +326,7 @@ gizmo.addEventListener('objectChange', () => {
         _dq.copy(boneProxy.quaternion).multiply(_pBaseInv);     // deltaWorld = proxyNow · pBase⁻¹
         _nw.copy(_dq).multiply(_bBase);                         // newBoneWorld = deltaWorld · boneWorld0
         b.quaternion.copy(_parInv).multiply(_nw);               // newBoneLocal = parent⁻¹ · newBoneWorld
-        if (clampFk) { const rag = RAG_OF_HUMAN[nm]; const view = rag ? jointLimitView(rag) : null; if (view) b.quaternion.copy(clampLocalToLimit(b.quaternion, view)); }
+        if (clampFk) { const view = limitViewForBone(nm); if (view) b.quaternion.copy(clampLocalToLimit(b.quaternion, view)); }
         const lk = LIMB_OF[nm]; if (lk) { rig.eff[lk]!.ik = false; refreshLimbs(); } if (nm === 'Hips') rig.hipsQuat.copy(b.quaternion); const fk = nm === 'LeftFoot' ? 'LF' : nm === 'RightFoot' ? 'RF' : null; if (fk) rig.eff[fk]!.footQuat.copy(b.getWorldQuaternion(Q()));
       }
     }
@@ -534,7 +535,12 @@ function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.strin
  *  совпадают с мешем 1:1. Нет атласа → undefined (база, как раньше; классы/монстры без атласа не трогаем). */
 function atlasBS(): BoneScale | undefined { return modelsTab.boneScale(); }
 function atlasOff(): Record<string, number[]> | undefined { return modelsTab.boneOffsets(); }   // полные rest-офсеты ФБХ (приоритет над boneScale)
-function atlasProfile(): BodyProfile | undefined { return modelsTab.profile(); }   // профиль тела (модульные пропорции) — как игра строит solid/target; редактор строит манекен/призрак им (P3: opts 1:1)
+function atlasProfile(): BodyProfile | undefined { return modelsTab.profile(); }
+// Пальцы строим только когда они есть у ЗАГРУЖЕННОЙ модели либо юзер включил их руками:
+// +30 групп на КАЖДЫЙ гуманоид (манекен + призрак + 2 ониона) без нужды — пустая цена.
+let fingersForced = false;
+let limitPresetId = 'human';   // выбранный пресет пределов скелета (Ф3.3)
+function wantFingers(): boolean { return fingersForced || modelsTab.hasFingers(); }   // профиль тела (модульные пропорции) — как игра строит solid/target; редактор строит манекен/призрак им (P3: opts 1:1)
 /** Скелет-манекен ПОВЕРХ импортного меша (depthTest off) — виден и кликается сквозь модель. Только для skeleton-стиля. */
 function manikinOnTop(): void {
   if (curHumanStyle !== 'skeleton') return;
@@ -548,7 +554,7 @@ function applyChar(id: string): void {
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
   human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
@@ -565,7 +571,7 @@ function rebuildManikin(): void {
   const c = curChar(); const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
   human.footLift = physFootLift;                              // подъём стопы сохраняется при пересборке стиля манекена
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
@@ -712,6 +718,25 @@ function poseTools(): void {
   ragRow('мотор нога · сила', () => MOTOR.leg[1], (v) => { MOTOR.leg[1] = v; }, 1e6, 2e7, 5e5);
   ragRow('мотор торс · сила', () => MOTOR.core[1], (v) => { MOTOR.core[1] = v; }, 5e5, 1e7, 5e5);
   body.append(pbtn('сброс лимитов/моторов', () => { LIMITS.arm = LIMITS.leg = LIMITS.core = LIMITS.head = 1; MOTOR.leg = [20, 6e6]; MOTOR.arm = [20, 6e6]; MOTOR.core = [15, 3e6]; MOTOR.head = [13, 2e5]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); if (ragdoll) rebuildRagdoll(); renderAnim(); }));
+  // ── ПРЕСЕТЫ СКЕЛЕТА (Ф3.3): человек / обратные колени / свободный / без пределов ──
+  // Пресет = набор оверрайдов в тот же jointOv, что и ручная правка. Обратные колени работают без нового кода
+  // ровно потому, что диапазоны асимметричные (min/max), а не симметричный конус.
+  {
+    const prow = el('div', 'display:flex;align-items:center;gap:4px;margin-top:6px'); body.append(prow);
+    const lab = el('span', 'flex:1;font-size:11px'); lab.textContent = 'пресет скелета'; prow.append(lab);
+    const sel = document.createElement('select'); sel.style.cssText = impInput;
+    for (const pr of LIMIT_PRESETS) { const o = document.createElement('option'); o.value = pr.id; o.textContent = pr.label; o.title = pr.hint; sel.append(o); }
+    sel.value = limitPresetId;
+    sel.onchange = () => {
+      limitPresetId = sel.value;
+      const pr = findPreset(limitPresetId);
+      for (const k in jointOv) delete jointOv[k];
+      if (pr) for (const k in pr.joints) jointOv[k] = { ...pr.joints[k]! };
+      saveRagdollConfig(); savePoseKey('pe_ragdoll'); if (ragdoll) rebuildRagdoll(); updateLimitGizmo(); renderAnim();
+    };
+    prow.append(sel);
+    const hint = el('div', 'color:#6b7180;font-size:10px'); hint.textContent = findPreset(limitPresetId)?.hint ?? ''; body.append(hint);
+  }
   // ── ПРЕДЕЛЫ СУСТАВА: тумблеры + пер-сустав диапазоны (правится симметрично L/R; групповой × выше — множитель) ──
   const lt = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:4px'); body.append(lt);
   lt.append(
@@ -733,9 +758,11 @@ function poseTools(): void {
     };
     row.append(s, v); body.append(row);
   }
-  const canon = (tab === 'anim' && selected) ? canonOfHuman(selected) : null;
-  if (canon && JOINT_DEF[canon]) {
-    const def = JOINT_DEF[canon]!;
+  // Сустав выбранной кости: сначала физ-риг, иначе без-физический (фаланги — у них тела нет и не будет).
+  const canon = (tab === 'anim' && selected) ? (canonOfHuman(selected) ?? limitViewForBone(selected)?.canon ?? null) : null;
+  const canonDef = canon ? (JOINT_DEF[canon] ?? (selected ? extraLimitView(selected) && { kind: 'swing' as const, group: 'arm' as const, planeMin: extraLimitView(selected)!.planeMin, planeMax: extraLimitView(selected)!.planeMax, normalMin: extraLimitView(selected)!.normalMin, normalMax: extraLimitView(selected)!.normalMax, twistMin: extraLimitView(selected)!.twistMin, twistMax: extraLimitView(selected)!.twistMax } : null)) : null;
+  if (canon && canonDef) {
+    const def = canonDef;
     const jh = el('div', 'color:#ffcf66;font-weight:bold;margin:6px 0 2px'); jh.textContent = `СУСТАВ: ${selected} → ${canon} (симметрия L/R)`; body.append(jh);
     const D = 180 / Math.PI, r2d = (r: number): number => Math.round(r * D), d2r = (d: number): number => d / D;
     type JF = 'planeMin' | 'planeMax' | 'normalMin' | 'normalMax' | 'twistMin' | 'twistMax' | 'flex' | 'hyperext';
@@ -766,9 +793,60 @@ function poseTools(): void {
     pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { physOn = true; setPhysVis(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
     pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; if (ragdoll) ragdoll.group.visible = showBoxes; renderAnim(); }); }, showBoxes),
   );
-  const bh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); bh.textContent = 'FK · выбрать кость'; body.append(bh);
-  const bl = el('div', 'display:flex;flex-wrap:wrap;gap:2px;max-height:150px;overflow:auto'); body.append(bl);
-  for (const nm of human.boneNames) { const b = document.createElement('button'); b.textContent = nm; b.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;cursor:pointer;border:1px solid #39415a;background:${nm === selected ? '#3a5030' : '#20242f'};color:#b8bec8`; b.onclick = () => { setMode('fk'); selected = nm; highlight(human.meshes.find((x) => x.userData.bone === nm) ?? null); attachBoneGizmo(nm); renderAnim(); }; bl.append(b); }
+  boneTreeSection();
+}
+
+// ── Ф3.7: ДЕРЕВО КОСТЕЙ ──
+// Плоская сетка кнопок читалась на 22 костях и стала нечитаемой на 52 (с пальцами).
+// Группы сворачиваются; в Простом режиме кисти скрыты целиком (там хват выбирается пресетом).
+const BONE_GROUPS: [string, (n: string) => boolean][] = [
+  ['Торс', (n) => ['Root', 'Hips', 'Spine', 'Chest', 'UpperChest', 'Neck', 'Head'].includes(n)],
+  ['Рука Л', (n) => /^Left(Shoulder|UpperArm|LowerArm|Hand)$/.test(n)],
+  ['Кисть Л', (n) => /^Left(Thumb|Index|Middle|Ring|Little)/.test(n)],
+  ['Рука П', (n) => /^Right(Shoulder|UpperArm|LowerArm|Hand)$/.test(n)],
+  ['Кисть П', (n) => /^Right(Thumb|Index|Middle|Ring|Little)/.test(n)],
+  ['Нога Л', (n) => /^Left(UpperLeg|LowerLeg|Foot|Toes)$/.test(n)],
+  ['Нога П', (n) => /^Right(UpperLeg|LowerLeg|Foot|Toes)$/.test(n)],
+];
+const boneGroupOpen: Record<string, boolean> = { 'Торс': true };
+let boneFilter = '';
+function boneTreeSection(): void {
+  const head = el('div', 'display:flex;align-items:center;gap:4px;margin:8px 0 2px'); body.append(head);
+  const t = el('span', 'color:#8fb7ff;font-weight:bold;flex:1'); t.textContent = 'FK · КОСТИ'; head.append(t);
+  const f = el('input', 'width:88px;' + impInput) as HTMLInputElement;
+  f.placeholder = 'поиск'; f.value = boneFilter;
+  f.oninput = () => { boneFilter = f.value.trim().toLowerCase(); renderAnim(); const again = body.querySelector('input[placeholder="поиск"]') as HTMLInputElement | null; if (again) { again.focus(); again.selectionStart = again.value.length; } };
+  head.append(f);
+  if (uiPro) head.append(pbtn(wantFingers() ? '✋ пальцы' : '✋ нет', () => { fingersForced = !fingersForced; rebuildManikin(); if (pw) buildGhost(); disposeOnion(); refreshAll(); }, wantFingers()));
+
+  const known = new Set<string>();
+  const mkBoneBtn = (nm: string): HTMLButtonElement => {
+    const b = document.createElement('button'); b.textContent = nm;
+    b.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;cursor:pointer;border:1px solid #39415a;background:${nm === selected ? '#3a5030' : '#20242f'};color:#b8bec8`;
+    b.onclick = () => { setMode('fk'); selected = nm; highlight(human.meshes.find((x) => x.userData.bone === nm) ?? null); attachBoneGizmo(nm); renderAnim(); };
+    return b;
+  };
+  for (const [label, match] of BONE_GROUPS) {
+    const hand = label.startsWith('Кисть');
+    if (hand && !uiPro) continue;                                    // Простой: пальцы поштучно не показываем
+    const all = human.boneNames.filter(match);
+    for (const n of all) known.add(n);
+    const list = boneFilter ? all.filter((n) => n.toLowerCase().includes(boneFilter)) : all;
+    if (!list.length) continue;
+    const open = boneFilter ? true : (boneGroupOpen[label] ?? false);
+    const hdr = pbtn(`${open ? '▾' : '▸'} ${label} (${list.length})`, () => { boneGroupOpen[label] = !open; renderAnim(); }, open);
+    hdr.style.width = '100%'; hdr.style.textAlign = 'left';
+    body.append(hdr);
+    if (!open) continue;
+    const row = el('div', 'display:flex;flex-wrap:wrap;gap:2px;margin:0 0 3px 8px'); body.append(row);
+    for (const nm of list) row.append(mkBoneBtn(nm));
+  }
+  const rest = human.boneNames.filter((n) => !known.has(n) && (!boneFilter || n.toLowerCase().includes(boneFilter)));
+  if (rest.length) {
+    const hdr = el('div', 'color:#6b7180;font-size:10px;margin-top:3px'); hdr.textContent = 'прочее'; body.append(hdr);
+    const row = el('div', 'display:flex;flex-wrap:wrap;gap:2px;margin-left:8px'); body.append(row);
+    for (const nm of rest) row.append(mkBoneBtn(nm));
+  }
 }
 
 // Вкладка АНИМАЦИЯ = клипы + кадры(с временем) + инструменты позы (правишь позу = правишь текущий кадр)
@@ -1684,7 +1762,7 @@ function buildGhost(): void {
   const c = curChar();
   // Физ-тело = ОСНОВНОЙ рендер как `solid` в игре (единый путь редактор↔игра): те же цвета (body/limb дефолты buildHumanoid),
   // НЕПРОЗРАЧНОЕ. Скелет-манекен (октаэдры) рисуется поверх (manikinOnTop, depthTest off) — кликается для позинга.
-  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), body: 0x8a93ad, limb: 0x6f7690, profile: atlasProfile() });
+  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), body: 0x8a93ad, limb: 0x6f7690, profile: atlasProfile(), fingers: wantFingers() });
   ghostHuman.footLift = physFootLift;                           // подъём стопы: заземление физ-тела на пол (footIk.groundFeet)
   ghostHuman.meshes.forEach((m) => { m.castShadow = true; });   // тени как у игрового solid
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
@@ -1694,7 +1772,7 @@ function setPhysVis(on: boolean): void { if (ghostHuman) ghostHuman.root.visible
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
 function mkOnion(tint: number): Humanoid {
   const c = curChar();
-  const h = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), limb: tint, body: tint, head: tint });
+  const h = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), limb: tint, body: tint, head: tint, fingers: wantFingers() });
   for (const m of h.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25; }
   scene.add(h.root); h.root.visible = false; return h;
 }

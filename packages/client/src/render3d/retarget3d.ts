@@ -10,6 +10,7 @@
  */
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
+import { mapFingerBones, allFingerBones } from './boneNames.js';
 
 // Эталонный скелет БЕЗ профиля (дефолтные длины) — знаменатель относительного конформа. Строим один раз.
 let _baseH: Humanoid | null = null;
@@ -24,6 +25,14 @@ export const OUR_BONES = [
   'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes',
 ] as const;
 export type OurBone = typeof OUR_BONES[number];
+
+/** 30 пальцевых костей (канон Unity Humanoid). НЕ входят в `OUR_BONES` осознанно:
+ *  по OUR_BONES итерируют замеры пропорций, T-позное выпрямление и конформ длин — для фаланг всё это
+ *  лишнее и вредное («канонического направления пальца» не существует). Пальцы только ВРАЩАЮТСЯ. */
+export const OUR_FINGERS: readonly string[] = allFingerBones();
+/** Порядок ведения ретаргета: родитель раньше ребёнка (фаланги — дети кисти, поэтому после). */
+const DRIVE_ORDER: readonly string[] = [...OUR_BONES, ...OUR_FINGERS];
+const IS_FINGER = new Set<string>(OUR_FINGERS);
 
 /** Родитель в цепи ретаргета (для конформа длин звеньев: segment = parent→child). */
 const OUR_PARENT: Partial<Record<OurBone, OurBone>> = {
@@ -68,10 +77,17 @@ const CORE: Record<string, [OurBone] | [null, OurBone, OurBone]> = {
   toe: [null, 'LeftToes', 'RightToes'], toebase: [null, 'LeftToes', 'RightToes'], ball: [null, 'LeftToes', 'RightToes'],
 };
 
-/** Авто-карта: имена костей импорт-скелета → наши имена (эвристика по названиям; правится вручную в редакторе). */
-export function autoBoneMap(importedBoneNames: string[]): Record<OurBone, string> {
-  const out = {} as Record<OurBone, string>;
+/** Авто-карта: имена костей импорт-скелета → наши имена (эвристика по названиям; правится вручную в редакторе).
+ *  Пальцы мапятся ОТДЕЛЬНЫМ разбором (`boneNames.mapFingerBones`): у них свои конвенции сегментов,
+ *  которые плоская таблица подстрок разобрать не может (4 сегмента у Mixamo, Metacarpal у VRM и т.д.). */
+export function autoBoneMap(importedBoneNames: string[]): Record<string, string> {
+  const out = {} as Record<string, string>;
+  // Кость считается пальцем только если она РЕАЛЬНО заняла слот в карте пальцев, а не «похожа на палец».
+  // Иначе любое ложное срабатывание синонима ТИХО выкидывает настоящую кость из основной карты.
+  const fingers = mapFingerBones(importedBoneNames);
+  const fingerRaw = new Set(Object.values(fingers));
   for (const raw of importedBoneNames) {
+    if (fingerRaw.has(raw)) continue;           // уже разобрана как фаланга
     const side = sideOf(raw); const core = coreOf(raw);
     // ищем ядро как подстроку (самое длинное совпадение — точнее)
     let best: string | null = null;
@@ -81,7 +97,17 @@ export function autoBoneMap(importedBoneNames: string[]): Record<OurBone, string
     const our = map.length === 1 ? map[0]! : (side === 'r' ? map[2]! : map[1]!);   // центр / L / R
     if (our && !out[our]) out[our] = raw;   // первое совпадение выигрывает (двойников избегаем)
   }
+  Object.assign(out, fingers);
   return out;
+}
+
+/** Отчёт по покрытию карты — чтобы редактор говорил «смаплено 48/52», а не молча терял кости. */
+export function boneMapReport(map: Record<string, string>): { core: number; coreTotal: number; fingers: number; missing: string[] } {
+  const missing = OUR_BONES.filter((b) => !map[b]);
+  return {
+    core: OUR_BONES.length - missing.length, coreTotal: OUR_BONES.length,
+    fingers: OUR_FINGERS.filter((b) => map[b]).length, missing,
+  };
 }
 
 export interface RetargetRig {
@@ -261,8 +287,8 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
     // Корень импорта на мир-таз источника — непривязанные кости (twist/Waist/пальцы) следуют иерархии.
     const hips = driver.bones.get('Hips'); if (hips) { hips.getWorldPosition(_v); loaded.position.set(_v.x, _v.y - hipRestY, _v.z); }
     loaded.updateMatrixWorld(true);
-    // порядок родитель→ребёнок → parentWorld цели уже обновлён к моменту ребёнка
-    for (const our of OUR_BONES) {
+    // порядок родитель→ребёнок → parentWorld цели уже обновлён к моменту ребёнка (фаланги — после кисти)
+    for (const our of DRIVE_ORDER) {
       const tName = boneMap[our]; if (!tName) continue;
       const tb = byName.get(tName); const sb = driver.bones.get(our); const rt = restW.get(tName);
       if (!tb || !sb || !rt) continue;
@@ -273,7 +299,9 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
       // ПОЗИЦ-ВЕДЕНИЕ (conform): мир-позиция кости меша = мир-позиция кости КАНОН-скелета → суставы совпадают, меш ложится на
       // канон-аватар 1:1 (руки/ноги из бинд-позы A подтягиваются к канон-T плавной деформацией скина, БЕЗ спайка — длины уже
       // сконформлены). Непривязанные кости (twist/пальцы) остаются на иерархии.
-      if (posDrive && tb.parent) { sb.getWorldPosition(_wp); _m.copy(tb.parent.matrixWorld).invert(); tb.position.copy(_wp).applyMatrix4(_m); }
+      // Пальцам позиц-ведение НЕ даём: наша геометрия фаланг — прикидка, и она затянула бы кисть модели
+      // на чужие пропорции. Пальцы только вращаются — длины остаются родные модели.
+      if (posDrive && tb.parent && !IS_FINGER.has(our)) { sb.getWorldPosition(_wp); _m.copy(tb.parent.matrixWorld).invert(); tb.position.copy(_wp).applyMatrix4(_m); }
       tb.updateMatrixWorld(false);                     // дети прочитают верный parentWorld
     }
   }
