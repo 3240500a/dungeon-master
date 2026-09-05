@@ -13,7 +13,9 @@ import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, type LimitView } from './humanoidRagdoll.js';
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
-import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';   // Ф6: тайм-лайн с дорожками
+import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';
+import { capturePose, pastePose, pasteIntoInterval, mirrorPoseSide, flipPoseSides, flipClip, mirrorClip,
+  rotateClipPhase, comparePoses, EMPTY_POSE_LIBRARY, type PoseLibrary } from './poseLibrary.js';   // Ф7: библиотека поз и copy-tools   // Ф6: тайм-лайн с дорожками
 import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
   mergeBoneScale, applyMorphChange, sampleMorph, rangeWarnings, type BodyMorph, type MorphKey, type MorphRange } from './bodyMorph.js';   // Ф8: морфинг тела   // Ф4: пины + full-body IK
 import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
@@ -612,6 +614,10 @@ function morphBoneScale(): BoneScale | undefined {
 // +30 групп на КАЖДЫЙ гуманоид (манекен + призрак + 2 ониона) без нужды — пустая цена.
 let fingersForced = false;
 let limitPresetId = 'human';
+// ── Ф7: БИБЛИОТЕКА ПОЗ И COPY-TOOLS ──
+let poseLib: PoseLibrary = (() => { try { return { ...EMPTY_POSE_LIBRARY(), ...(JSON.parse(localStorage.getItem('pe_poselib') || '{}') as PoseLibrary) }; } catch { return EMPTY_POSE_LIBRARY(); } })();
+function savePoseLib(): void { try { localStorage.setItem('pe_poselib', JSON.stringify(poseLib)); savePoseKey('pe_poselib'); } catch { /* */ } }
+let poseBuf: Pose | null = null;   // буфер «копировать позу» (выделенные кости либо всё тело)
 // ХВАТ КИСТИ (Ф3.5) — не часть клипа: привязан к ключу оружия, накладывается поверх.
 // Кадр, в котором фаланги ЗАДАНЫ явно (Про-режим крутил их руками), хват не перебивает.
 let gripCfg: GripConfig = (() => { try { return { ...EMPTY_GRIP_CONFIG(), ...(JSON.parse(localStorage.getItem('pe_gripposes') || '{}') as GripConfig) }; } catch { return EMPTY_GRIP_CONFIG(); } })();
@@ -888,8 +894,80 @@ function poseTools(): void {
     pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { physOn = true; setPhysVis(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
     pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; if (ragdoll) ragdoll.group.visible = showBoxes; renderAnim(); }); }, showBoxes),
   );
+  poseLibSection();
   gripSection();
   boneTreeSection();
+}
+
+// ── Ф7: ПОЗЫ / КОПИРОВАНИЕ / ЗЕРКАЛО ──
+// mirror и flip — РАЗНЫЕ операции: mirror подтягивает вторую сторону под первую (поза та же),
+// flip меняет стороны местами (удар справа становится ударом слева). Раньше была только первая.
+function poseLibSection(): void {
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); h.textContent = 'ПОЗЫ И КОПИРОВАНИЕ'; body.append(h);
+  const r1 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r1);
+  const selBones = (): string[] | undefined => (selected ? [selected] : undefined);
+  r1.append(
+    pbtn(selected ? '⌘ копир кость' : '⌘ копир позу', () => { poseBuf = capturePose(readPoseFull(), selBones()); renderAnim(); }),
+    pbtn('⤓ вставить', () => { if (!poseBuf) return; histLib('вставить позу', () => { const c = curClip(); const k = c?.keys[frameIdx]; if (k) { k.pose = pastePose(k.pose, poseBuf!); saveLib(); goFrame(frameIdx); } }); }),
+    pbtn('⇄ зеркало Л→П', () => histPose('зеркало Л→П', mirrorLR)),
+    pbtn('↺ перевернуть позу', () => histPose('перевернуть позу', () => { applyPose(flipPoseSides(readPoseFull())); if (mode === 'ik') captureRig(); })),
+  );
+  if (poseBuf) {
+    const hint = el('div', 'color:#6b7180;font-size:10px'); hint.textContent = `в буфере: ${Object.keys(poseBuf).length} костей`; body.append(hint);
+    const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
+    // INTERVAL EDIT: влияние нарастает от начала диапазона к концу — это и делает бесшовный луп.
+    const intoInterval = (curve: 'linear' | 'bezier'): void => histLib('вставить в интервал', () => {
+      const c = curClip(); if (!c || !poseBuf) return;
+      const sl = tl.selection();
+      const from = sl.length ? Math.min(...sl) : frameIdx;
+      const to = sl.length ? Math.max(...sl) : c.keys.length - 1;
+      pasteIntoInterval(c.keys, from, to, poseBuf); void curve;
+      saveLib(); goFrame(frameIdx);
+    });
+    r2.append(pbtn('⤓⤓ вставить В ИНТЕРВАЛ', () => intoInterval('linear')));
+    const ih = el('div', 'color:#6b7180;font-size:10px'); ih.textContent = 'влияние нарастает к концу диапазона (выдели ключи на тайм-лайне)'; body.append(ih);
+  }
+  // Сохранённые позы
+  const r3 = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:3px'); body.append(r3);
+  r3.append(pbtn('★ в библиотеку', () => {
+    const nm = prompt('имя позы', 'поза ' + (Object.keys(poseLib.poses).length + 1)); if (!nm) return;
+    const id = 'p' + Date.now().toString(36);
+    poseLib.poses[id] = { id, label: nm, pose: capturePose(readPoseFull(), selBones()) };
+    savePoseLib(); renderAnim();
+  }));
+  for (const sp of Object.values(poseLib.poses)) {
+    const g = el('div', 'display:inline-flex;align-items:center'); r3.append(g);
+    g.append(
+      pbtn(sp.label, () => histLib('поза из библиотеки', () => { const c = curClip(); const k = c?.keys[frameIdx]; if (k) { k.pose = pastePose(k.pose, sp.pose); saveLib(); goFrame(frameIdx); } })),
+      pbtn('⇄', () => histLib('поза зеркально', () => { const c = curClip(); const k = c?.keys[frameIdx]; if (k) { k.pose = pastePose(k.pose, flipPoseSides(sp.pose)); saveLib(); goFrame(frameIdx); } })),
+      pbtn('✕', () => { delete poseLib.poses[sp.id]; savePoseLib(); renderAnim(); }),
+    );
+  }
+  if (uiPro) {
+    const r4 = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:3px'); body.append(r4);
+    const onClip = (label: string, fn: (c: Clip) => Clip): HTMLButtonElement => pbtn(label, () => histLib(label, () => {
+      const c = curClip(); if (!c) return;
+      const i = library.indexOf(c); if (i < 0) return;
+      library[i] = fn(c); saveLib(); goFrame(frameIdx);
+    }));
+    r4.append(
+      onClip('↺ перевернуть КЛИП', (c) => flipClip(c)),
+      onClip('⇄ зеркало КЛИПА', (c) => mirrorClip(c, 'Left')),
+      onClip('↻ фаза +1', (c) => rotateClipPhase(c, 1)),
+    );
+    // «А в игре так же?» — требование «редактор ≡ игра» становится ИЗМЕРИМЫМ, а не на глаз.
+    body.append(pbtn('⚖ сверить с физ-призраком', () => {
+      if (!ghostHuman) { alert('Включи физику — без призрака сверять не с чем.'); return; }
+      const d = comparePoses(human.readPose() as Pose, ghostHuman.readPose() as Pose, (x, y) => {
+        const qa = new THREE.Quaternion().setFromEuler(new THREE.Euler(x[0] ?? 0, x[1] ?? 0, x[2] ?? 0, 'XYZ'));
+        const qb = new THREE.Quaternion().setFromEuler(new THREE.Euler(y[0] ?? 0, y[1] ?? 0, y[2] ?? 0, 'XYZ'));
+        return qa.angleTo(qb) * 180 / Math.PI;
+      });
+      alert('Расхождение авторской позы и физ-призрака (градусы):\n\n'
+        + d.perBone.slice(0, 8).map((x) => `${x.bone}: ${x.deg.toFixed(1)}°`).join('\n')
+        + `\n\nхудшая: ${d.worstBone} ${d.worstDeg.toFixed(1)}°`);
+    }));
+  }
 }
 
 // ── Ф3.5: ХВАТ КИСТИ ──
