@@ -176,9 +176,23 @@ export function defaultWeaponGrip(weaponKey: string): WeaponGrip {
   return { R: byName(main), L: byName(off), closeL: 1, closeR: 1 };
 }
 
+/**
+ * Какой хват ДЕЙСТВУЕТ для персонажа+оружия: АВТО по типу оружия, поверх — только то, что явно
+ * сохранили руками. Раньше выбор из списка ЗАМОРАЖИВАЛСЯ в конфиг при первом же показе панели,
+ * и дальше смена оружия уже ничего не меняла. Теперь база всегда пересчитывается от ключа оружия.
+ */
+export function effectiveWeaponGrip(cfg: GripConfig, charId: string, weaponKey: string): Required<Pick<WeaponGrip, 'closeL' | 'closeR'>> & WeaponGrip {
+  const auto = defaultWeaponGrip(weaponKey);
+  const ov = cfg.byWeapon[charId]?.[weaponKey];
+  return {
+    L: ov?.L ?? auto.L, R: ov?.R ?? auto.R,
+    closeL: ov?.closeL ?? auto.closeL ?? 1, closeR: ov?.closeR ?? auto.closeR ?? 1,
+  };
+}
+
 /** Итоговая поза пальцев для персонажа+оружия (учитывая свои хваты и привязку). */
 export function resolveGripPose(cfg: GripConfig, charId: string, weaponKey: string, axes?: Record<string, FingerAxes> | null): Pose {
-  const bind = cfg.byWeapon[charId]?.[weaponKey] ?? defaultWeaponGrip(weaponKey);
+  const bind = effectiveWeaponGrip(cfg, charId, weaponKey);
   const side = (id: string | undefined, s: 'Left' | 'Right', close: number): Pose => {
     if (!id) return {};
     const custom = cfg.custom[id];

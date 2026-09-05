@@ -18,7 +18,7 @@
  */
 import type { LimitView, JointLim } from './humanoidRagdoll.js';
 import { FINGER_CHAINS, FINGER_SEGMENTS } from './boneNames.js';
-import { canonicalFingerAxes, fingerAxesOf, type FingerAxes } from './fingerAxes.js';
+import { canonicalFingerAxes, fingerAxesOf, bindCurlOver, type FingerAxes } from './fingerAxes.js';
 
 type Vec3 = [number, number, number];
 const D = Math.PI / 180;
@@ -73,10 +73,17 @@ export function extraLimitView(boneName: string, axes?: Record<string, FingerAxe
   const j = EXTRA_JOINTS[boneName]; if (!j) return null;
   const e = j.def;
   const a = fingerAxesOf(boneName, axes) ?? { twist: j.twist, plane: j.plane, normal: cross(j.twist, j.plane) };
+  // Ф17: ДИАПАЗОН СГИБА СДВИГАЕТСЯ НА БИНД-ИЗБЫТОК. Числа в `fingerJoints` — анатомия, отсчитанная
+  // ОТ ПРЯМОГО пальца (переразгиб −25°, сгиб +95°), а локальный угол кости отсчитывается от rest,
+  // то есть от БИНДА модели. У CC бинд поджат на 20–50°, и получалось: выпрямление (локальный −over)
+  // выходило за planeMin, а кулак не доставал до planeMax. Сдвиг возвращает обе границы на место —
+  // «прямой палец» ровно внутри зоны, «полный кулак» ровно на её краю, на любой модели.
+  const shift = bindCurlOver(boneName, axes);
   return {
     kind: 'swing', group: e.group, canon: j.canon,
     twist: a.twist, plane: a.plane, normal: a.normal,
-    planeMin: e.planeMin, planeMax: e.planeMax, normalMin: e.normalMin, normalMax: e.normalMax, twistMin: e.twistMin, twistMax: e.twistMax,
+    planeMin: (e.planeMin ?? 0) - shift, planeMax: (e.planeMax ?? 0) - shift,
+    normalMin: e.normalMin, normalMax: e.normalMax, twistMin: e.twistMin, twistMax: e.twistMax,
   };
 }
 

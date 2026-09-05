@@ -46,6 +46,44 @@ describe('fingerAxes — канонический манекен', () => {
   });
 });
 
+describe('fingerAxes — большой палец гнётся в СВОЕЙ плоскости (Ф17)', () => {
+  const ax = canonicalFingerAxes();
+  /** Куда уедет кончик при ПОЛОЖИТЕЛЬНОМ угле вокруг оси сгиба (родриг). */
+  const tip = (a: { twist: Vec3; plane: Vec3 }, th = 0.5): number[] => {
+    const { twist: t, plane: p } = a;
+    const k = p[0] * t[0] + p[1] * t[1] + p[2] * t[2];
+    const c = [p[1] * t[2] - p[2] * t[1], p[2] * t[0] - p[0] * t[2], p[0] * t[1] - p[1] * t[0]];
+    return t.map((_, i) => t[i]! * Math.cos(th) + c[i]! * Math.sin(th) + p[i]! * k * (1 - Math.cos(th)));
+  };
+
+  it('ГЛАВНОЕ: ось большого — НОРМАЛЬ ЛАДОНИ (Y), а не «поперёк» (Z), как у остальных', () => {
+    // Пясть большого развёрнута на ~90° (противопоставление) → общая формула давала ему
+    // ось, повёрнутую ровно на 90° — гизмо предела смотрело попёрёк реального хода.
+    for (const nm of ['LeftThumbProximal', 'RightThumbProximal', 'LeftThumbDistal']) {
+      const p = ax[nm]!.plane;
+      expect(Math.abs(p[1]), nm).toBeGreaterThan(0.9);
+      expect(Math.abs(p[2]), nm).toBeLessThan(0.3);
+    }
+    expect(Math.abs(ax['LeftIndexProximal']!.plane[2])).toBeGreaterThan(0.9);   // у остальных — по-прежнему Z
+  });
+
+  it('положительный угол ведёт большой ПОПЕРЁК ладони, к мизинцу — на ОБЕИХ кистях', () => {
+    // Мизинец у нас на −Z (Index z=+1.5 … Little z=−1.4), и Z при зеркале не меняется.
+    // Знак держится на том, что взят `palmN` (псевдовектор), а НЕ `palmInward` (полярен).
+    expect(tip(ax['LeftThumbProximal']!)[2]!).toBeLessThan(-0.1);
+    expect(tip(ax['RightThumbProximal']!)[2]!).toBeLessThan(-0.1);
+  });
+
+  it('тройка большого осталась ортонормированной (нормаль ладони к фаланге НЕ перпендикулярна)', () => {
+    for (const nm of ['LeftThumbProximal', 'LeftThumbIntermediate', 'RightThumbDistal']) {
+      const { twist, plane, normal } = ax[nm]!;
+      for (const v of [twist, plane, normal]) expect(len(v), nm).toBeCloseTo(1, 6);
+      expect(dot(twist, plane), nm).toBeCloseTo(0, 6);
+      expect(dot(plane, normal), nm).toBeCloseTo(0, 6);
+    }
+  });
+});
+
 describe('fingerAxes — оси едут за геометрией', () => {
   it('повернули кисть — оси повернулись вместе с ней', () => {
     const base = canonicalFingerOffsets();

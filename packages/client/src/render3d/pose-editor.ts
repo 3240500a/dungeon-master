@@ -28,7 +28,7 @@ import { capturePose, pastePose, pasteIntoInterval, mirrorPoseSide, flipPoseSide
   rotateClipPhase, comparePoses, EMPTY_POSE_LIBRARY, type PoseLibrary } from './poseLibrary.js';   // Ф7: библиотека поз и copy-tools   // Ф6: тайм-лайн с дорожками
 import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
   mergeBoneScale, applyMorphChange, sampleMorph, rangeWarnings, type BodyMorph, type MorphKey, type MorphRange } from './bodyMorph.js';   // Ф8: морфинг тела   // Ф4: пины + full-body IK
-import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, mirrorHandPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
+import { findGrip, gripToPose, resolveGripPose, effectiveWeaponGrip, applyGripPose, mirrorHandPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits((b) => extraLimitView(b, fingerAxes()));   // до первого limitViewForBone; Ф14.4 — оси из ЭТОГО рига
 import { deriveFingerAxes, bindCurlReport, type FingerAxes } from './fingerAxes.js';   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
 import { makeLimitGizmo } from './poseLimitGizmo.js';
@@ -490,11 +490,11 @@ function readPoseFull(): Pose {
     p['__lgripP'] = [+lp.x.toFixed(2), +lp.y.toFixed(2), +lp.z.toFixed(2)];
     p['__lgripR'] = [+lr.x.toFixed(3), +lr.y.toFixed(3), +lr.z.toFixed(3)];
   }
-  // Фаланги попадают в кадр ТОЛЬКО если отличаются от текущего хвата: иначе каждый кадр запомнил бы
-  // дефолтный хват и смена оружия перестала бы на нём работать (весь смысл отдельного канала).
-  { const g = curGripPose();
-    for (const nm in p) if (isHandBone(nm)) { const gv = g[nm]; const v = p[nm]!;
-      if (gv && Math.abs(gv[0] - v[0]) < 1e-3 && Math.abs(gv[1] - v[1]) < 1e-3 && Math.abs(gv[2] - v[2]) < 1e-3) delete p[nm]; } }
+  // Ф17: ФАЛАНГИ В КАДР НЕ ПОПАДАЮТ НИКОГДА. Раньше писались те, что ОТЛИЧАЮТСЯ от текущего
+  // хвата — и любая правка формулы хвата превращала старые совпадения в расхождения, то есть в мёртвые
+  // ключи, которые глушат хват навсегда. Канал хвата теперь единственный источник позы пальцев;
+  // в клип они попадают только НА ЭКСПОРТЕ (`bakeGripIntoClip`), где это осознанный выбор пользователя.
+  for (const nm in p) if (isHandBone(nm)) delete p[nm];
   // Офсет таза — ДЕЛЬТА от rest тела (Ф12): абсолют зависел от телосложения — «присед» среднего был бы «цыпочками» высокого.
   { const hp = human.hips.position, hr = human.hipsRest; setHipsOffset(p, [+(hp.x - hr.x).toFixed(2), +(hp.y - hr.y).toFixed(2), +(hp.z - hr.z).toFixed(2)]); }
   return p;
@@ -729,16 +729,61 @@ let poseBuf: Pose | null = null;   // буфер «копировать позу
 // Кадр, в котором фаланги ЗАДАНЫ явно (Про-режим крутил их руками), хват не перебивает.
 let gripCfg: GripConfig = (() => { try { return { ...EMPTY_GRIP_CONFIG(), ...(JSON.parse(localStorage.getItem('pe_gripposes') || '{}') as GripConfig) }; } catch { return EMPTY_GRIP_CONFIG(); } })();
 function saveGrips(): void { try { localStorage.setItem('pe_gripposes', JSON.stringify(gripCfg)); savePoseKey('pe_gripposes'); } catch { /* */ } }
+(function migrateGripBinds(): void {
+  // Ф17: выбор пресета больше не хранится — тип хвата выводится из ключа оружия. В старых записях
+  // лежат id встроенных пресетов, которые туда ЗАМОРАЖИВАЛО само открытие панели — отличить их от
+  // осознанного выбора невозможно, и именно они держали старый хват при смене оружия. Свои кисти
+  // (`c_*`, сохранённые кнопкой) — явный выбор, их оставляем. Идемпотентно.
+  let ch = false;
+  for (const char of Object.keys(gripCfg.byWeapon)) {
+    const byW = gripCfg.byWeapon[char]!;
+    for (const w of Object.keys(byW)) {
+      const e = byW[w]!;
+      const keepL = e.L?.startsWith('c_') ? e.L : undefined, keepR = e.R?.startsWith('c_') ? e.R : undefined;
+      if (!keepL && !keepR) { delete byW[w]; ch = true; continue; }
+      if (e.L !== keepL || e.R !== keepR) { byW[w] = { L: keepL, R: keepR, closeL: e.closeL, closeR: e.closeR }; ch = true; }
+    }
+    if (!Object.keys(byW).length) { delete gripCfg.byWeapon[char]; ch = true; }
+  }
+  if (ch) saveGrips();
+})();
+// Ф17: запись оверрайдов для ТЕКУЩЕГО оружия — СОЗДАЁТСЯ ПУСТОЙ. Раньше сюда сразу ложился
+// `defaultWeaponGrip(weapon)`, то есть АВТО-выбор замораживался в конфиг при ПЕРВОМ же показе панели.
+// Действующий хват считает `effectiveWeaponGrip` — всегда от КЛЮЧА ОРУЖИЯ, поверх — только явно сохранённое.
 const weaponGripBind = (): { L?: string; R?: string; closeL?: number; closeR?: number } =>
-  (gripCfg.byWeapon[curCharId] ??= {})[weapon] ??= defaultWeaponGrip(weapon);
+  (gripCfg.byWeapon[curCharId] ??= {})[weapon] ??= {};
+/** Что действует сейчас (авто по оружию + оверрайды). */
+const gripNow = (): ReturnType<typeof effectiveWeaponGrip> => effectiveWeaponGrip(gripCfg, curCharId, weapon);
 /** Поза пальцев для текущего персонажа/оружия. */
 const curGripPose = (): Pose => resolveGripPose(gripCfg, curCharId, weapon, fingerAxes());
-/** Наложить хват на те фаланги, которые НЕ заданы позой кадра. */
-function applyGripOver(p?: Pose): void {
+/**
+ * Запомнить ТЕКУЩЕЕ положение кисти как хват для ЭТОГО оружия (Ф17) — замена бывшего списка
+ * пресетов. Ручная правка пальцев теперь живёт тут, а не в кадре клипа (там она глушила весь канал).
+ */
+function saveHandAsGrip(side: 'Left' | 'Right'): void {
+  const id = `c_${curCharId}_${weapon}_${side === 'Left' ? 'L' : 'R'}`.replace(/[^\w+]/g, '_');
+  const pose: Pose = {};
+  for (const nmb of human.boneNames) if (isHandBone(nmb) && nmb.startsWith(side)) { const r = human.bones.get(nmb)!.rotation; pose[nmb] = [+r.x.toFixed(4), +r.y.toFixed(4), +r.z.toFixed(4)]; }
+  if (!Object.keys(pose).length) return;
+  gripCfg.custom[id] = { id, label: `${weapon} ${side === 'Left' ? 'Л' : 'П'}`, pose };
+  const b = weaponGripBind(); if (side === 'Left') b.L = id; else b.R = id;
+  saveGrips(); goFrame(frameIdx); refreshAll();
+}
+
+/**
+ * Наложить хват. Ф17: ХВАТ ВЕДЁТ ФАЛАНГИ ВСЕГДА, без оглядки на позу кадра.
+ *
+ * Было: кадр с явно записанными фалангами хват не перебивал — и именно это выглядело как
+ * «на левой хват работает, на правой нет, причём только на топоре»: в `idle_axe` все 15 фаланг правой
+ * кисти оказались записаны почти-нулями (осадок прошлой формулы), и рука намертво стояла в бинде.
+ *
+ * По дизайну (шапка `gripPoses.ts`) хват — ОТДЕЛЬНЫЙ КАНАЛ, а не часть клипа; исключение «кроме
+ * случаев, когда канал всё-таки часть клипа» создавало невидимую ловушку без единого признака в UI.
+ * Ручная правка пальцев не потеряна — она сохраняется кнопкой «запомнить эту кисть» в тот же канал.
+ */
+function applyGripOver(_p?: Pose): void {
   if (!wantFingers()) return;
-  const g = curGripPose(); const out: Pose = {};
-  for (const nm in g) if (!p || p[nm] === undefined) out[nm] = g[nm]!;
-  applyGripPose(human.bones, out);
+  applyGripPose(human.bones, curGripPose());
 }   // выбранный пресет пределов скелета (Ф3.3)
 // ТРИ НЕЗАВИСИМЫХ причины построить пальцы, объединённые OR, а не один флаг на всех:
 // выход из режима хвата не должен сносить пальцы, включённые кнопкой ✋ или пришедшие с моделью.
@@ -1173,27 +1218,27 @@ function gripSection(): void {
     body.append(hint); return;
   }
   const bind = weaponGripBind();
-  const options = (): HTMLOptionElement[] => [
-    ...BUILTIN_GRIPS.map((g) => { const o = document.createElement('option'); o.value = g.id; o.textContent = g.label; return o; }),
-    ...Object.values(gripCfg.custom).map((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = '★ ' + c.label; return o; }),
-  ];
+  const eff = gripNow();
   const hand = (side: 'L' | 'R', label: string): void => {
-    const row = el('div', 'display:flex;align-items:center;gap:4px;margin-top:2px'); body.append(row);
+    // Ф17: СПИСКА ПРЕСЕТОВ НЕТ. Хват выводится из ключа оружия (`defaultWeaponGrip`), потому что
+    // редактор и так знает, что в руках. Список был не просто лишним: открытие панели ЗАМОРАЖИВАЛО
+    // текущий выбор в конфиг, и дальше смена оружия хват уже не меняла.
+    const row = el('div', 'display:flex;align-items:baseline;gap:5px;margin-top:3px'); body.append(row);
     const lb = el('span', 'width:52px;font-size:11px'); lb.textContent = label; row.append(lb);
-    const sel = document.createElement('select'); sel.style.cssText = impInput + ';flex:1';
-    for (const o of options()) sel.append(o);
-    sel.value = (side === 'L' ? bind.L : bind.R) ?? 'open';
-    sel.onchange = () => { if (side === 'L') bind.L = sel.value; else bind.R = sel.value; saveGrips(); goFrame(frameIdx); };
-    row.append(sel);
+    const id = (side === 'L' ? eff.L : eff.R) ?? 'open';
+    const own = gripCfg.custom[id];
+    const nm2 = el('span', `flex:1;font-size:11px;color:${own ? '#c8b06a' : '#9ae6a0'}`);
+    nm2.textContent = own ? '★ ' + own.label : (findGrip(id)?.label ?? id) + ' — по оружию';
+    row.append(nm2);
     // Ф16: слайдер «раскрытая ладонь ↔ хват» — своя строка с подписями концов и числом.
     // Раньше это был безымянный ползунок в 70px, и его смысл (а на нуле теперь ВЫПРЯМЛЕНИЕ, а не
     // бинд модели) прочитать было неоткуда.
-    const row2 = el('div', 'display:flex;align-items:center;gap:5px;margin:1px 0 4px 56px'); body.append(row2);
+    const row2 = el('div', 'display:flex;align-items:center;gap:5px;margin:0 0 3px 56px'); body.append(row2);
     const cap = (t: string): HTMLElement => { const e = el('span', 'font-size:10px;color:#8a90a0;white-space:nowrap'); e.textContent = t; return e; };
     const num = el('span', 'font-size:10px;color:#cfd6e6;width:26px;text-align:right;font-variant-numeric:tabular-nums');
     const sl = el('input', 'flex:1;min-width:60px') as HTMLInputElement;
     sl.type = 'range'; sl.min = '0'; sl.max = '1'; sl.step = '0.05';
-    sl.value = String((side === 'L' ? bind.closeL : bind.closeR) ?? 1);
+    sl.value = String(side === 'L' ? eff.closeL : eff.closeR);
     sl.title = '0 = ладонь принудительно выпрямлена (бинд-сгиб модели вычтен), 1 = хват как в пресете';
     const show = (): void => { num.textContent = Math.round(parseFloat(sl.value) * 100) + '%'; };
     show();
@@ -1213,36 +1258,13 @@ function gripSection(): void {
       : `бинд модели поджат: Л ${l.avg.toFixed(0)}° (макс ${l.max.toFixed(0)}°), П ${r.avg.toFixed(0)}° (макс ${r.max.toFixed(0)}°) — вычитается из хвата`;
     body.append(d);
   }
-  // ЗАПЕЧЁННЫЕ ФАЛАНГИ В КЛИПАХ ГЛУШАТ ХВАТ — и это невидимо.
-  // Кадр с явно записанными фалангами хват не перебивает (это дизайн: Про-режим правит пальцы
-  // руками). Но старые клипы держат фаланги, записанные ПРОШЛОЙ формулой хвата — замерено на
-  // knight_05: все 15 фаланг правой кисти забиты почти-нулями, то есть рука намертво стояла в бинде
-  // (MCP 78°, полукулак), а слайдер на неё НЕ ДЕЙСТВОВАЛ и выглядел сломанным.
-  // Показываем это числом и даём вернуть канал хвату одной кнопкой.
-  {
-    const clips = library.filter((c) => c.character === curCharId);
-    let frames = 0;
-    for (const c of clips) for (const k of c.keys) if (Object.keys(k.pose).some(isHandBone)) frames++;
-    if (frames) {
-      const w = el('div', 'color:#c8b06a;font-size:10px;margin-top:3px');
-      w.textContent = `⚠ фаланги записаны в кадрах: ${frames} — там хват и слайдер не действуют`;
-      body.append(w, pbtn('✕ отдать пальцы хвату', () => {
-        if (!confirm(`Убрать записанные фаланги из ${frames} кадров «${curCharId}»?\nПальцами снова будет управлять хват.`)) return;
-        for (const c of clips) for (const k of c.keys) for (const nm of Object.keys(k.pose)) if (isHandBone(nm)) delete k.pose[nm];
-        saveLib(); goFrame(frameIdx); refreshAll();
-      }));
-    }
-  }
   if (uiPro) {
     const row = el('div', 'margin-top:3px'); body.append(row);
     row.append(
-      pbtn('★ сохранить свой', () => {
-        const nm = prompt('имя хвата', 'хват ' + (Object.keys(gripCfg.custom).length + 1)); if (!nm) return;
-        const id = 'c_' + Date.now().toString(36);
-        const pose: Pose = {}; for (const nmb of human.boneNames) if (isHandBone(nmb)) { const r = human.bones.get(nmb)!.rotation; pose[nmb] = [+r.x.toFixed(4), +r.y.toFixed(4), +r.z.toFixed(4)]; }
-        gripCfg.custom[id] = { id, label: nm, pose };
-        bind.L = id; bind.R = id; saveGrips(); refreshAll();
-      }),
+      // Ф17: сохраняем РУКАМИ ПОПРАВЛЕННУЮ кисть КАК ХВАТ ДЛЯ ЭТОГО ОРУЖИЯ — без списка и без выбора.
+      // Раньше свой хват надо было ещё и найти в выпадающем списке, а сохранялся он СРАЗУ НА ОБЕ кисти.
+      pbtn('★ запомнить правую', () => saveHandAsGrip('Right')),
+      pbtn('★ запомнить левую', () => saveHandAsGrip('Left')),
       pbtn('⇄ зеркало П→Л', () => histPose('зеркало хвата', () => {
         // Ф16: зеркало живёт в `gripPoses.mirrorHandPose` — кроме канон-знаков `[x, −y, −z]` оно добавляет
         // разницу бинд-избытков: у модели кисти поджаты ПО-РАЗНОМУ, и голое зеркало углов давало бы
@@ -1251,7 +1273,7 @@ function gripSection(): void {
         for (const nmb of human.boneNames) if (isHandBone(nmb) && nmb.startsWith('Right')) { const r = human.bones.get(nmb)!.rotation; src[nmb] = [r.x, r.y, r.z]; }
         applyGripPose(human.bones, mirrorHandPose(src, 'Right', fingerAxes()));
       })),
-      pbtn('✕ сброс привязки', () => { delete (gripCfg.byWeapon[curCharId] ?? {})[weapon]; saveGrips(); goFrame(frameIdx); refreshAll(); }),
+      pbtn('✕ вернуть авто', () => { delete (gripCfg.byWeapon[curCharId] ?? {})[weapon]; saveGrips(); goFrame(frameIdx); refreshAll(); }),
     );
   }
 }
@@ -2269,6 +2291,14 @@ function saveAtk(): void { try { localStorage.setItem('pe_attacks', JSON.stringi
   if (clipsCh) saveLib();
   if (atkCh) saveAtk();
   if (locoCh) saveLoco();
+})();
+(function stripFingerKeys(): void {
+  // Ф17: фаланги больше НЕ хранятся в клипах (канал хвата — единственный источник). Старые записи
+  // их несут и ГЛУШАТ хват насмерть — именно поэтому на топоре правая кисть не реагировала на слайдер,
+  // а левая (без таких ключей) реагировала. Идемпотентно.
+  let ch = false;
+  for (const c of library) for (const k of c.keys) for (const nm of Object.keys(k.pose)) if (isHandBone(nm)) { delete k.pose[nm]; ch = true; }
+  if (ch) saveLib();
 })();
 function atkList(): string[] { return atkCfgs[curCharId]?.[weapon] ?? []; }
 function toggleAtk(name: string): void { const byC = (atkCfgs[curCharId] ??= {}); const arr = (byC[weapon] ??= []); const i = arr.indexOf(name); if (i >= 0) arr.splice(i, 1); else arr.push(name); saveAtk(); }

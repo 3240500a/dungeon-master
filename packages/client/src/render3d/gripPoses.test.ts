@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   BUILTIN_GRIPS, findGrip, gripToPose, gripToPoseBoth, handBones, isHandBone, straightHandPose,
-  resolveGripPose, defaultWeaponGrip, applyGripPose, mirrorHandPose, EMPTY_GRIP_CONFIG, type GripConfig,
+  resolveGripPose, defaultWeaponGrip, effectiveWeaponGrip, applyGripPose, mirrorHandPose, EMPTY_GRIP_CONFIG, type GripConfig,
 } from './gripPoses.js';
 import { buildHumanoid } from './humanoid.js';
 import { allFingerBones } from './boneNames.js';
@@ -118,6 +118,18 @@ describe('gripPoses — привязка к оружию', () => {
     for (const k in p) for (const c of p[k]!) expect(Math.abs(c)).toBeLessThan(1e-9);
   });
 
+  it('Ф17: база всегда пересчитывается от ОРУЖИЯ, оверрайд — только точечный', () => {
+    // Раньше панель писала в конфиг весь `defaultWeaponGrip` при первом показе — и смена
+    // оружия переставала менять хват вообще.
+    const cfg: GripConfig = EMPTY_GRIP_CONFIG();
+    cfg.byWeapon['w'] = { bow: { closeR: 0.3 } };            // только сжатие, без id
+    const e = effectiveWeaponGrip(cfg, 'w', 'bow');
+    expect(e.R).toBe('bow_grip');                            // тип взялся от оружия
+    expect(e.closeR).toBe(0.3);                              // а сжатие — из оверрайда
+    expect(effectiveWeaponGrip(cfg, 'w', 'axe').R).toBe('axe');
+    expect(effectiveWeaponGrip(cfg, 'w', 'axe').closeR).toBe(1);
+  });
+
   it('свой хват (готовые углы) берётся вместо встроенного, только кости своей кисти', () => {
     const cfg: GripConfig = EMPTY_GRIP_CONFIG();
     cfg.custom['my'] = { id: 'my', label: 'мой', pose: { LeftIndexProximal: [0, -0.4, 0], RightIndexProximal: [0, 9, 0] } };
@@ -176,6 +188,40 @@ describe('gripPoses — наложение на скелет', () => {
         }
       }
     }
+  });
+});
+
+describe('gripPoses — хват укладывается в пределы НА ЛЮБОМ бинде (Ф17)', () => {
+  it('ГЛАВНОЕ: на поджатой кисти и выпрямление, и кулак ОСТАЮТСЯ В ЗОНЕ', () => {
+    // До Ф17 числа предела брались КАК ЕСТЬ, то есть отсчитывались от БИНДА модели, а не от
+    // прямого пальца — и выпрямление (локальный −over) вылетало за planeMin на первой же модели CC.
+    const c = canonicalFingerAxes(); const bent: Record<string, FingerAxes> = {};
+    for (const k in c) bent[k] = { ...c[k]!, bindCurl: c[k]!.bindCurl + (k.startsWith('Left') ? 0.23 : 0.53) };
+    for (const g of BUILTIN_GRIPS) {
+      for (const side of ['Left', 'Right'] as const) {
+        for (const close of [0, 0.5, 1]) {
+          const p = gripToPose(g, side, close, bent);
+          for (const k in p) {
+            const view = extraLimitView(k, bent)!;
+            const v = p[k]!;
+            _q.setFromEuler(_e.set(v[0], v[1], v[2], 'XYZ'));
+            const d = decomposeToLimit(_q, view);
+            expect(d.rP, `${g.id}/${k}/close=${close} сгиб`).toBeLessThanOrEqual(view.planeMax! + 1e-6);
+            expect(d.rP, `${g.id}/${k}/close=${close} переразгиб`).toBeGreaterThanOrEqual(view.planeMin! - 1e-6);
+          }
+        }
+      }
+    }
+  });
+
+  it('зона едет ЗА биндом, а не стоит на месте', () => {
+    const c = canonicalFingerAxes(); const bent: Record<string, FingerAxes> = {};
+    for (const k in c) bent[k] = { ...c[k]!, bindCurl: c[k]!.bindCurl + 0.4 };
+    const straight = extraLimitView('LeftIndexProximal')!;
+    const shifted = extraLimitView('LeftIndexProximal', bent)!;
+    expect(shifted.planeMin!).toBeCloseTo(straight.planeMin! - 0.4, 6);
+    expect(shifted.planeMax!).toBeCloseTo(straight.planeMax! - 0.4, 6);
+    expect(shifted.normalMin!).toBe(straight.normalMin!);   // боковой развод не сдвигается — его не выпрямляют
   });
 });
 
