@@ -6,6 +6,10 @@
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';   // Ф5: честная обводка выделения
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
@@ -60,7 +64,35 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), ne
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
 function scrollFloor(): void { checkerTex.offset.set(gaitPx / FLOOR_TILE, -gaitPz / FLOOR_TILE); }   // тредмилл: пол едет под бегущим (V текстуры смотрит в −Z из-за поворота пола → Z со знаком минус)
 
+// ── Ф5: ВЬЮПОРТ-КИТ ──
+// Обводка выделения через OutlinePass вместо подмены emissive: emissive-хак работал только
+// в скелет-стиле (там у каждой кости свой материал); в solid материалы ОБЩИЕ и подсвечивалась
+// вся конечность сразу. Обводка не зависит от материалов вообще.
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const outline = new OutlinePass(new THREE.Vector2(1, 1), scene, camera);
+outline.edgeStrength = 4; outline.edgeGlow = 0; outline.edgeThickness = 1.2;
+outline.visibleEdgeColor.set('#ffcf66'); outline.hiddenEdgeColor.set('#6b4a10');
+composer.addPass(outline);
+composer.addPass(new OutputPass());   // ОБЯЗАТЕЛЬНЫЙ последний пасс: буферы композера линейные, без него картинка темнее
+let useComposer = true;   // аварийный тумблер: если постобработка где-то врёт — рисуем напрямую, как раньше
+
+// Сетка поверх пола-шахматки: даёт чувство масштаба и осей (TILE = 32 юнита = 1 м).
+const grid = new THREE.GridHelper(320, 10, 0x4a5680, 0x2a3040);
+grid.position.y = 0.02; (grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = 0.35;
+scene.add(grid);
+const axes = new THREE.AxesHelper(20); axes.position.y = 0.03; scene.add(axes);
+
 const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); scene.add(gizmo.getHelper());
+// СНАП: в Простом режиме включён (5° / 1 юнит) — новичку проще попадать в круглые значения;
+// Shift во время драга снап отключает (точная правка). Раньше setTranslationSnap не звался ни разу.
+let snapOn = true;
+function applySnap(off = false): void {
+  const on = snapOn && !off;
+  gizmo.setTranslationSnap(on ? 1 : null);
+  gizmo.setRotationSnap(on ? THREE.MathUtils.degToRad(5) : null);
+}
+applySnap();
 // ── FK-ГИЗМО ПО ОСЯМ СУСТАВА (локальное, а не мировое): гизмо цепляется к ПРОКСИ, ориентированному по DOF-осям сустава
 //    (twist/plane/normal из jointLimitView — те же, что рисует гизмо пределов). Кольцо twist охватывает ось кости → удобно
 //    твистить/сгибать сустав. Дельта прокси (мир) → лок. поворот кости → клэмп. Кость без сустава → оси самой кости. ──
@@ -543,6 +575,38 @@ function libRestore(s: LibState): void {
 const histPose = (label: string, act: () => void): void => history.run(label, snapshot, restore, act);
 /** СТРУКТУРНАЯ правка (кадры/клипы/библиотека) — записать «до/после» в историю. */
 const histLib = (label: string, act: () => void): void => history.run(label, libSnap, libRestore, act);
+// Ф5: виды камеры и фокус — без них каждый ракурс крутился мышью вручную
+function camView(dir: [number, number, number]): void {
+  const t = orbit.target.clone();
+  const d = camera.position.distanceTo(t) || 150;
+  camera.position.set(t.x + dir[0] * d, t.y + dir[1] * d, t.z + dir[2] * d);
+  camera.lookAt(t); orbit.update();
+}
+function camFocus(obj?: THREE.Object3D | null): void {
+  const o = obj ?? (selected ? human.bones.get(selected) : null) ?? human.hips;
+  const p = o.getWorldPosition(V());
+  const off = camera.position.clone().sub(orbit.target);
+  orbit.target.copy(p); camera.position.copy(p).add(off); orbit.update();
+}
+addEventListener('keydown', (e) => {
+  const tgt = e.target as HTMLElement | null;
+  if (tgt && /^(INPUT|TEXTAREA|SELECT)$/.test(tgt.tagName)) return;   // не перехватываем набор текста
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  switch (e.key) {
+    case '1': camView([0, 0, 1]); break;                      // спереди
+    case '3': camView([1, 0, 0]); break;                      // сбоку
+    case '7': camView([0, 1, 0.001]); break;                  // сверху
+    case 'f': case 'F': case 'а': case 'А': camFocus(); break;   // фокус на выбранной кости
+    case '.': camFocus(human.hips); break;
+    case 'w': case 'W': case 'ц': case 'Ц': gizmo.setMode('translate'); break;
+    case 'e': case 'E': case 'у': case 'У': gizmo.setMode('rotate'); break;
+    case 's': case 'S': case 'ы': case 'Ы': snapOn = !snapOn; applySnap(); break;
+    default: return;
+  }
+  e.preventDefault();
+});
+addEventListener('keydown', (e) => { if (e.key === 'Shift') applySnap(true); });
+addEventListener('keyup', (e) => { if (e.key === 'Shift') applySnap(); });
 addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) history.redo(); else history.undo(); } if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); history.redo(); } });
 
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
@@ -2245,7 +2309,11 @@ function jiggle(dt: number): void {
 ensureSeed();   // первый запуск: залить примерный контент Волкодава (idle-стойки + удары по оружию)
 applyChar(curCharId); setMode('ik'); tab = 'anim'; syncModeB(); refreshAll();
 void ensurePhysics().then(() => { physOn = true; setPhysVis(true); });   // по умолчанию — полупрозрачное физ-тело (силуэт) вокруг скелета
-function resize(): void { const w = canvas.clientWidth || 800, h = canvas.clientHeight || 600; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+function resize(): void {
+  const w = canvas.clientWidth || 800, h = canvas.clientHeight || 600;
+  renderer.setSize(w, h, false); composer.setSize(w, h); outline.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
 addEventListener('resize', resize); new ResizeObserver(resize).observe(canvas); resize();
 let last = performance.now();
 function loop(): void {
@@ -2287,11 +2355,14 @@ function loop(): void {
   const atlasOn = !!atlasBS();
   if (ghostHuman) ghostHuman.root.visible = physOn && !hideMan && !atlasOn;
   if (atlasOn) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; }
-  orbit.update(); renderer.render(scene, camera); requestAnimationFrame(loop);
+  orbit.update();
+  outline.selectedObjects = selMesh ? [selMesh] : [];   // Ф5: обводка выбранной кости
+  if (useComposer) composer.render(); else renderer.render(scene, camera);
+  requestAnimationFrame(loop);
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setMode, applyChar, setWeapon, solveRig, captureRig, syncEff, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setMode, applyChar, setWeapon, solveRig, captureRig, syncEff, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
