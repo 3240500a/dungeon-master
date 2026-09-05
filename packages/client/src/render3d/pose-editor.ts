@@ -12,7 +12,9 @@ import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, type LimitView } from './humanoidRagdoll.js';
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
-import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';   // Ф4: пины + full-body IK
+import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
+import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
+  mergeBoneScale, applyMorphChange, sampleMorph, rangeWarnings, type BodyMorph, type MorphKey, type MorphRange } from './bodyMorph.js';   // Ф8: морфинг тела   // Ф4: пины + full-body IK
 import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits(extraLimitView);   // до первого limitViewForBone
 import { makeLimitGizmo } from './poseLimitGizmo.js';
@@ -578,7 +580,33 @@ function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.strin
  *  совпадают с мешем 1:1. Нет атласа → undefined (база, как раньше; классы/монстры без атласа не трогаем). */
 function atlasBS(): BoneScale | undefined { return modelsTab.boneScale(); }
 function atlasOff(): Record<string, number[]> | undefined { return modelsTab.boneOffsets(); }   // полные rest-офсеты ФБХ (приоритет над boneScale)
-function atlasProfile(): BodyProfile | undefined { return modelsTab.profile(); }
+// ── Ф8: МОРФ ТЕЛА — СВОЙСТВО ПЕРСОНАЖА, НЕ АНИМАЦИИ (инвариант Ф1.6) ──
+// Вариация персонажа = ТОТ ЖЕ меш + набор чисел. Меш на сервере один, персонажей на нём сколько угодно.
+let morphCfg: Record<string, BodyMorph> = (() => { try { return (JSON.parse(localStorage.getItem('pe_morph') || '{}') as Record<string, BodyMorph>); } catch { return {}; } })();
+let morphRanges: Record<string, MorphRange> = (() => { try { return (JSON.parse(localStorage.getItem('pe_morph_range') || '{}') as Record<string, MorphRange>); } catch { return {}; } })();
+let morphPinned = new Set<string>();
+const curMorph = (): BodyMorph => (morphCfg[curCharId] ??= {});
+function saveMorph(): void {
+  try { localStorage.setItem('pe_morph', JSON.stringify(morphCfg)); savePoseKey('pe_morph'); } catch { /* */ }
+  try { localStorage.setItem('pe_morph_range', JSON.stringify(morphRanges)); savePoseKey('pe_morph_range'); } catch { /* */ }
+}
+function atlasProfile(): BodyProfile | undefined {
+  const base = modelsTab.profile();
+  const m = curMorph();
+  const mp = morphToProfile(m);
+  if (!base) return mp;
+  return { height: (base.height ?? 1) * (mp.height ?? 1), arm: (base.arm ?? 1) * (mp.arm ?? 1), leg: (base.leg ?? 1) * (mp.leg ?? 1), torso: (base.torso ?? 1) * (mp.torso ?? 1), girth: (base.girth ?? 1) * (mp.girth ?? 1) };
+}
+/** Пропорции модели × морф персонажа (перемножаются). */
+/** Толщина: ручные слайдеры персонажа × морф (обхваты по регионам). */
+function morphBuild(c: Char): BuildScale {
+  const b = morphToBuild(curMorph());
+  return { arm: (c.build.arm ?? 1) * (b.arm ?? 1), leg: (c.build.leg ?? 1) * (b.leg ?? 1), torso: (c.build.torso ?? 1) * (b.torso ?? 1), head: (c.build.head ?? 1) * (b.head ?? 1) };
+}
+function morphBoneScale(): BoneScale | undefined {
+  const merged = mergeBoneScale(atlasBS(), morphToBoneScale(curMorph()));
+  return Object.keys(merged).length ? merged : undefined;
+}
 // Пальцы строим только когда они есть у ЗАГРУЖЕННОЙ модели либо юзер включил их руками:
 // +30 групп на КАЖДЫЙ гуманоид (манекен + призрак + 2 ониона) без нужды — пустая цена.
 let fingersForced = false;
@@ -612,7 +640,7 @@ function applyChar(id: string): void {
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: morphBuild(c), style: manStyle(), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
   human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
@@ -630,7 +658,7 @@ function rebuildManikin(): void {
   const c = curChar(); const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
-  human = buildHumanoid({ gender: c.gender, build: c.build, style: manStyle(), boneScale: atlasBS(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
+  human = buildHumanoid({ gender: c.gender, build: morphBuild(c), style: manStyle(), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
   human.footLift = physFootLift;                              // подъём стопы сохраняется при пересборке стиля манекена
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
   applyPose(pose); if (mode === 'ik') captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
@@ -1242,9 +1270,89 @@ function renderChar(): void {
   const shHint = el('div', 'color:#8f897c;font-size:10px;margin-top:2px'); shHint.textContent = isShieldKey
     ? 'позу щита дотюнь для ЭТОГО оружия: авторь клип «idle_' + weapon + '» (иначе берётся базовая «idle_shield»).'
     : 'база: авторь «idle_shield» (оружие «shield» → левая рука → «захватить стойку»). Для тюна под оружие выбери офф-руку «щит».'; body.append(shHint);
+  morphSection();
   const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'СВОИ ПЕРСОНАЖИ'; body.append(ah);
   body.append(pbtn('+ создать из текущего', () => { const nm = prompt('имя персонажа', 'char' + (customChars.length + 1)); if (!nm) return; const id = 'c' + Date.now(); customChars.push({ id, name: nm, gender: c.gender, build: { ...c.build }, weapon }); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(id); }));
   if (!c.builtin) body.append(pbtn('удалить персонажа', () => { customChars = customChars.filter((x) => x.id !== c.id); localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); applyChar(CLASS_CHARS[0]!.id); }));
+}
+
+// ── Ф8: МОРФИНГ ТЕЛА ──
+// Простой: сетка пресетов 3×3 + два глобальных слайдера — меняется всё тело сразу.
+// Про: замеры по регионам + ЗАКРЕПЛЕНИЕ параметра (пресет его не перебивает) + диапазоны для монстров.
+function rebuildForMorph(): void { applyChar(curCharId); tab = 'char'; refreshAll(); }
+function morphSection(): void {
+  const m = curMorph();
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:10px 0 2px;border-top:1px solid #39415a;padding-top:8px');
+  h.textContent = 'ТЕЛОСЛОЖЕНИЕ (морф)'; body.append(h);
+
+  const grid = el('div', 'display:grid;grid-template-columns:repeat(3,1fr);gap:2px'); body.append(grid);
+  for (const pr of MORPH_PRESETS) {
+    grid.append(pbtn(pr.label, () => {
+      morphCfg[curCharId] = applyMorphChange(m, pr.morph, morphPinned);
+      saveMorph(); rebuildForMorph();
+    }));
+  }
+
+  const knob = (key: MorphKey, label: string, min = 0.7, max = 1.4): void => {
+    const row = el('label', 'display:flex;align-items:center;gap:5px'); 
+    const lb = el('span', 'flex:1;font-size:11px'); lb.textContent = label; row.append(lb);
+    if (uiPro) {
+      const pin = pbtn(morphPinned.has(key) ? '●' : '○', () => { if (morphPinned.has(key)) morphPinned.delete(key); else morphPinned.add(key); renderChar(); }, morphPinned.has(key));
+      pin.title = 'закрепить: пресеты и глобальные ручки этот параметр не трогают';
+      pin.style.padding = '1px 4px'; row.append(pin);
+    }
+    const s = el('input', 'width:92px') as HTMLInputElement;
+    s.type = 'range'; s.min = String(min); s.max = String(max); s.step = '0.01';
+    s.value = String(m[key] ?? DEFAULT_MORPH[key]);
+    const v = el('span', 'width:34px;text-align:right;color:#9ae6a0'); v.textContent = (m[key] ?? 1).toFixed(2);
+    s.oninput = () => { m[key] = parseFloat(s.value); v.textContent = s.value; };
+    s.onchange = () => { saveMorph(); rebuildForMorph(); };
+    row.append(s, v); body.append(row);
+  };
+  knob('height', 'рост', 0.75, 1.25);
+  knob('weight', 'худой ↔ полный', 0.7, 1.4);
+
+  if (uiPro) {
+    for (const reg of MORPH_REGIONS) {
+      const rh = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); rh.textContent = reg.label; body.append(rh);
+      for (const k of reg.keys) knob(k, k);
+    }
+    // Разброс для монстров: значение экземпляра берётся по СИДУ от его id — клиент и сервер видят одно и то же.
+    const rg = (morphRanges[curCharId] ??= {});
+    const rh2 = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rh2.textContent = 'РАЗБРОС (экземпляры монстров)'; body.append(rh2);
+    const rr = (key: MorphKey): void => {
+      const cur = rg[key] ?? [1, 1];
+      const row = el('div', 'display:flex;align-items:center;gap:4px'); body.append(row);
+      const lb = el('span', 'flex:1;font-size:11px'); lb.textContent = key; row.append(lb);
+      for (const i of [0, 1] as const) {
+        const inp = el('input', 'width:46px;' + impInput) as HTMLInputElement;
+        inp.type = 'number'; inp.step = '0.01'; inp.value = String(cur[i]);
+        inp.onchange = () => { const nx: [number, number] = [cur[0], cur[1]]; nx[i] = parseFloat(inp.value) || 1; rg[key] = nx; saveMorph(); renderChar(); };
+        row.append(inp);
+      }
+    };
+    rr('height'); rr('weight');
+    for (const w of rangeWarnings(rg)) { const e2 = el('div', 'color:#d0a060;font-size:10px'); e2.textContent = '⚠ ' + w; body.append(e2); }
+    body.append(pbtn('≈ показать 6 случайных', () => {
+      const rows = [0, 1, 2, 3, 4, 5].map((i) => { const sm = sampleMorph(rg, curCharId + '#' + i); return `${i}: рост ${(sm.height ?? 1).toFixed(2)} · полнота ${(sm.weight ?? 1).toFixed(2)}`; });
+      alert('Экземпляры по сиду (один id — всегда один вид):\n' + rows.join('\n'));
+    }));
+  }
+
+  const act = el('div', 'margin-top:4px'); body.append(act);
+  act.append(
+    pbtn('➕ сохранить как нового персонажа', () => {
+      const c0 = curChar();
+      const nm = prompt('имя вариации', c0.name + ' вариант'); if (!nm) return;
+      const id = 'c' + Date.now();
+      // ТОТ ЖЕ меш и та же сборка — меняется только набор чисел. Ноль дублирования мегабайт.
+      customChars.push({ id, name: nm, gender: c0.gender, build: { ...c0.build }, weapon });
+      morphCfg[id] = JSON.parse(JSON.stringify(m)) as BodyMorph;
+      localStorage.setItem('pe_chars', JSON.stringify(customChars)); savePoseKey('pe_chars'); saveMorph();
+      applyChar(id); tab = 'char'; refreshAll();
+    }),
+    pbtn('✕ сброс морфа', () => { morphCfg[curCharId] = {}; morphPinned = new Set(); saveMorph(); rebuildForMorph(); }),
+  );
 }
 
 // Вкладка БЕГ — 2D бленд-дерево локомоции (Unity-стиль): узлы-клипы на VelX/VelZ, красная точка-семпл, превью на месте
@@ -1889,7 +1997,7 @@ function buildGhost(): void {
   const c = curChar();
   // Физ-тело = ОСНОВНОЙ рендер как `solid` в игре (единый путь редактор↔игра): те же цвета (body/limb дефолты buildHumanoid),
   // НЕПРОЗРАЧНОЕ. Скелет-манекен (октаэдры) рисуется поверх (manikinOnTop, depthTest off) — кликается для позинга.
-  ghostHuman = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), body: 0x8a93ad, limb: 0x6f7690, profile: atlasProfile(), fingers: wantFingers() });
+  ghostHuman = buildHumanoid({ gender: c.gender, build: morphBuild(c), boneScale: morphBoneScale(), boneOffsets: atlasOff(), body: 0x8a93ad, limb: 0x6f7690, profile: atlasProfile(), fingers: wantFingers() });
   ghostHuman.footLift = physFootLift;                           // подъём стопы: заземление физ-тела на пол (footIk.groundFeet)
   ghostHuman.meshes.forEach((m) => { m.castShadow = true; });   // тени как у игрового solid
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
@@ -1899,7 +2007,7 @@ function setPhysVis(on: boolean): void { if (ghostHuman) ghostHuman.root.visible
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
 function mkOnion(tint: number): Humanoid {
   const c = curChar();
-  const h = buildHumanoid({ gender: c.gender, build: c.build, boneScale: atlasBS(), boneOffsets: atlasOff(), limb: tint, body: tint, head: tint, fingers: wantFingers() });
+  const h = buildHumanoid({ gender: c.gender, build: morphBuild(c), boneScale: morphBoneScale(), boneOffsets: atlasOff(), limb: tint, body: tint, head: tint, fingers: wantFingers() });
   for (const m of h.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25; }
   scene.add(h.root); h.root.visible = false; return h;
 }
