@@ -12,6 +12,7 @@ import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, type LimitView } from './humanoidRagdoll.js';
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
+import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';   // Ф4: пины + full-body IK
 import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits(extraLimitView);   // до первого limitViewForBone
 import { makeLimitGizmo } from './poseLimitGizmo.js';
@@ -248,9 +249,45 @@ function captureRig(): void {
   human.root.updateMatrixWorld(true);
   for (const e of effList()) syncEff(e);
 }
+// Ф4: FULL-BODY IK. Пересобирается вместе с манекеном (смена персонажа/пальцев/пропорций).
+let fbik: FbikRig | null = null;
+let fbikFor: Humanoid | null = null;
+let fbikOn = true;   // выкл → старый двухкостный режим (сравнение/аварийный фолбэк)
+function getFbik(): FbikRig {
+  if (!fbik || fbikFor !== human) { fbik = makeFullBodyIk(human, { limits: limitViewForBone }); fbikFor = human; }
+  return fbik;
+}
+/**
+ * Решить позу под текущее состояние контроллеров.
+ *
+ * Раньше здесь гнались ЧЕТЫРЕ НЕЗАВИСИМЫЕ двухкостные цепи, а «пин» в решение не входил вообще
+ * (он только фильтровал `moveHips`) — отсюда и «кручу таз, а ноги едут за ним».
+ * Теперь: якорь = то, что тянет пользователь, цели = пины + перетаскиваемый эффектор,
+ * решается всё тело сразу и с учётом пределов суставов (они же задают плоскость сгиба колена/локтя).
+ */
 function solveRig(): void {
-  const hips = human.bones.get('Hips')!; hips.position.copy(rig.hipsPos); hips.quaternion.copy(rig.hipsQuat); hips.updateMatrixWorld(true);
-  for (const e of effList()) { if (e.ik) { solve2Bone(e.root, e.mid, e.end, e.target, e.pole); setEndOrient(e); } else e.target.copy(human.bones.get(e.end)!.getWorldPosition(V())); }
+  const hips = human.hips;
+  hips.position.copy(rig.hipsPos); hips.quaternion.copy(rig.hipsQuat); hips.updateMatrixWorld(true);
+  if (!fbikOn) {   // фолбэк: старые независимые цепи
+    for (const e of effList()) { if (e.ik) { solve2Bone(e.root, e.mid, e.end, e.target, e.pole); setEndOrient(e); } else e.target.copy(human.bones.get(e.end)!.getWorldPosition(V())); }
+    return;
+  }
+  const targets = new Map<string, THREE.Vector3>();
+  for (const k in rig.eff) {
+    const e = rig.eff[k]!;
+    if (e.pin || k === activeKey) targets.set(e.end, e.target.clone());   // пин держит, перетаскиваемый ведёт
+  }
+  const anchorBone = (activeKey && activeKey !== 'hips') ? rig.eff[activeKey]!.end : 'Hips';
+  const anchorPos = anchorBone === 'Hips' ? human.hips.getWorldPosition(V()) : rig.eff[activeKey!]!.target.clone();
+  if (targets.size) getFbik().solve(targets, { bone: anchorBone, pos: anchorPos });
+  // Стопы/кисти без цели едут за телом — подтягиваем их ручки к фактическому положению костей.
+  human.root.updateMatrixWorld(true);
+  for (const k in rig.eff) {
+    const e = rig.eff[k]!;
+    if (!e.pin && k !== activeKey) e.target.copy(human.bones.get(e.end)!.getWorldPosition(V()));
+    if (e.isFoot) e.footQuat.copy(human.bones.get(e.end)!.getWorldQuaternion(Q()));
+  }
+  rig.hipsPos.copy(human.hips.position);   // солвер мог сдвинуть таз (пины его ограничивают)
 }
 function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.add(delta); for (const e of effList()) if (!e.isFoot && !e.pin && e !== except) e.target.add(delta); }
 
@@ -589,6 +626,7 @@ function setWeapon(w: string): void { weapon = w; updateWeapon(); clipIdx = 0; f
 function manStyle(): 'solid' | 'skeleton' { return manView === 'skel' ? 'skeleton' : 'solid'; }
 // Лёгкая пересборка манекена под новый стиль (скелет↔тело) С СОХРАНЕНИЕМ позы/оружия (в отличие от applyChar — без сброса клипа/undo).
 function rebuildManikin(): void {
+  fbik = null;   // солвер связан с КОНКРЕТНЫМ скелетом (топология/длины) — пересобрать
   const c = curChar(); const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
@@ -669,9 +707,11 @@ function poseTools(): void {
   const lh = el('div', 'color:#8fb7ff;font-weight:bold;margin:6px 0 2px'); lh.textContent = 'КОНЕЧНОСТИ IK/FK'; body.append(lh);
   const lr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(lr);
   for (const k of ['LH', 'RH', 'LF', 'RF']) { const e = rig.eff[k]!; lr.append(pbtn(`${limbLabels[k]}: ${e.ik ? 'IK' : 'FK'}`, () => { e.ik = !e.ik; if (e.ik) syncEff(e); renderAnim(); }, e.ik)); }
-  const ph = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ph.textContent = 'ПИНЫ'; body.append(ph);
+  const ph = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ph.textContent = 'ПИНЫ (закрепить точку)'; body.append(ph);
+  { const hint = el('div', 'color:#6b7180;font-size:10px'); hint.textContent = fbikOn ? 'приколотое не двигается: крути таз — стопы стоят' : ' ⚠ full-body IK выключен — пины не работают'; body.append(hint); }
   const pr = el('div', 'display:flex;flex-wrap:wrap;gap:6px'); body.append(pr);
   for (const [k, lb] of [['LH', 'кисть Л'], ['RH', 'кисть П'], ['LF', 'стопа Л'], ['RF', 'стопа П']] as const) { const lab = el('label', 'font-size:11px'); const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox'; cb.checked = rig.eff[k]!.pin; cb.onchange = () => { rig.eff[k]!.pin = cb.checked; }; lab.append(cb, document.createTextNode(lb)); pr.append(lab); }
+  if (uiPro) body.append(pbtn(fbikOn ? 'IK: всё тело' : 'IK: по конечностям', () => { fbikOn = !fbikOn; renderAnim(); }, fbikOn));
   const rh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rh.textContent = 'REACH (тело за рукой)'; body.append(rh);
   const bf = el('input', 'width:100%') as HTMLInputElement; bf.type = 'range'; bf.min = '0'; bf.max = '1'; bf.step = '0.05'; bf.value = String(bodyFollow); bf.oninput = () => { bodyFollow = parseFloat(bf.value); }; body.append(bf);
   if (weaponGroups.length) {
