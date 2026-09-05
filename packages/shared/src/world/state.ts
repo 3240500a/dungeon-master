@@ -254,6 +254,16 @@ export function newWorldState(grid: Grid, seed: number, depth: number, difficult
 }
 
 /** Создаёт runtime-монстра из отскейленного определения в заданной позиции. */
+/**
+ * РАДИУСЫ КОЛЛИЗИИ (игровые пиксели, TILE=32=1м). Это то, что уезжает на клиент в `PlayerView.r`/`MonsterView.r`
+ * и по чему сервер решает столкновения (`moveWithCollision`) и дистанции боя (сумма радиусов) — то есть
+ * настоящий «размер» сущности на полу, а не полширины меша. Вынесены из литералов, чтобы поз-редактор
+ * рисовал ровно тот круг, которым считает сервер, и они не разъехались при первом же тюне.
+ */
+export const PLAYER_RADIUS = 14;
+export const MONSTER_RADIUS = 12;
+export const MONSTER_RADIUS_UNIQUE = 15;   // уник ~+25% (не настолько большой, чтобы не дотягиваться до удара)
+
 export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, facing: number): MonsterEntity {
   return {
     id,
@@ -263,7 +273,7 @@ export function makeMonsterEntity(id: number, def: ScaledMonster, pos: Vec2, fac
     facing,
     hp: def.hp,
     maxHp: def.hp,
-    radius: def.rarity === 'unique' ? 15 : 12, // уник ~+25% (не настолько большой, чтобы не дотягиваться до удара)
+    radius: def.rarity === 'unique' ? MONSTER_RADIUS_UNIQUE : MONSTER_RADIUS,
     debuffs: newDebuffState(),
     attackCd: 0,
     windup: null,
@@ -293,7 +303,7 @@ export function makePlayerEntity(id: string, save: SaveState, pos: Vec2, hp: num
     maxHp: hp,
     mana,
     stamina,
-    radius: 14,
+    radius: PLAYER_RADIUS,
     debuffs: newDebuffState(),
     attackCd: 0,
     combatTimer: 0,

@@ -91,6 +91,8 @@ export interface Humanoid {
   root: THREE.Group;                       // КОРЕНЬ (Root, не таз!) — ставится в сцену; его позиция = позиция персонажа
   bones: Map<string, THREE.Group>;         // имя → пивот-группа сустава (крутить .rotation = FK)
   meshes: THREE.Mesh[];                    // сегмент-меши (для рейкаст-выбора; mesh.userData.bone = имя)
+  /** Шары-суставы скелет-вида (подмножество `meshes`). Пусто у solid-стиля. См. `scaleJointsToScreen`. */
+  joints: THREE.Mesh[];
   boneNames: string[];
   /** Снимок поз покоя (T-поза) — для «сброса». */
   restQuat: Map<string, THREE.Quaternion>;
@@ -136,8 +138,49 @@ function segment(to: THREE.Vector3, r: number, mat: THREE.Material): THREE.Mesh 
 
 /** Октаэдр-«кость» от сустава (0,0,0) до первого ребёнка `to` (лок.) — классический ромб арматуры Blender:
  *  остриё-голова у сустава, широкое кольцо на ~15% длины, длинный конус к ребёнку. Показывает направление кости. */
+/**
+ * Полуширина октаэдра по длине кости (Ф13.2). Пол АБСОЛЮТНЫЙ (0.8) работал, пока самая короткая кость
+ * тела была 4 юнита; на фаланге в 0.9 он давал почти кубик — палец переставал читаться как палец.
+ * Пол сделан ОТНОСИТЕЛЬНЫМ: при `len >= 4` он равен прежним 0.8 (тело не меняется ни на пиксель),
+ * ниже — сжимается вместе с костью.
+ */
+export const boneWidth = (len: number): number => Math.min(3, Math.max(Math.min(0.8, len * 0.2), len * 0.14));
+
+/**
+ * Ф13.1: мировой радиус, дающий на экране ровно `px` пикселей на расстоянии `dist` от перспективной камеры.
+ * `2·dist·tan(fov/2)` — высота кадра в мировых единицах на этой дистанции; делим на высоту вьюпорта в пикселях.
+ * Чистая функция (без THREE) — тестируется в node.
+ */
+export const screenRadiusToWorld = (dist: number, fovDeg: number, viewportH: number, px: number): number =>
+  (px * 2 * dist * Math.tan((fovDeg * Math.PI) / 360)) / Math.max(1, viewportH);
+
+const _jp = new THREE.Vector3(), _js = new THREE.Vector3();
+/**
+ * Держать шары-суставы ПОСТОЯННОГО ЭКРАННОГО РАЗМЕРА — как контроллеры в Blender/Cascadeur/Maya.
+ * Иначе жёсткий минимум радиуса (1.6 юнита) делает шар КРУПНЕЕ фаланги (0.8–1.9 юнита), и кисть
+ * превращается в ком, по которому ещё и не попасть мышью. При постоянном экранном размере подлёт к кисти
+ * автоматически делает шары мелкими ОТНОСИТЕЛЬНО пальцев, а отлёт оставляет их кликабельными.
+ *
+ * `px` может быть функцией от имени кости — так режим правки хвата поднимает фаланги и приглушает остальное.
+ * Звать ПОСЛЕ обновления камеры (у OrbitControls включён демпфинг: до `update()` шары отстают на кадр).
+ */
+export function scaleJointsToScreen(
+  h: Humanoid, cam: THREE.PerspectiveCamera, viewportH: number,
+  px: number | ((bone: string) => number), minR = 0.12, maxR = 3.2,
+): void {
+  for (const j of h.joints) {
+    j.getWorldPosition(_jp);
+    const want = typeof px === 'function' ? px(j.userData.bone as string) : px;
+    const r = Math.min(maxR, Math.max(minR, screenRadiusToWorld(_jp.distanceTo(cam.position), cam.fov, viewportH, want)));
+    // Делим на масштаб РОДИТЕЛЯ: в редакторе он единичный, но у игровой куклы root масштабируется
+    // (`gamePlayerDoll`), и без деления шары там разъехались бы вместе с ростом персонажа.
+    const ps = j.parent ? (_js.setFromMatrixScale(j.parent.matrixWorld).x || 1) : 1;
+    j.scale.setScalar(r / ps);
+  }
+}
+
 function octaBone(to: THREE.Vector3, mat: THREE.Material): THREE.Mesh {
-  const len = to.length(), w = Math.min(3, Math.max(0.8, len * 0.14));
+  const len = to.length(), w = boneWidth(len);
   const g = new THREE.OctahedronGeometry(1, 0);            // 6 вершин, 8 граней
   const p = g.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < p.count; i++) {                      // тянем вдоль +Y: голова→0, кольцо→0.15·len, хвост→len
@@ -222,6 +265,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
 
   const bones = new Map<string, THREE.Group>();
   const meshes: THREE.Mesh[] = [];
+  const joints: THREE.Mesh[] = [];   // только шары-суставы скелет-вида (Ф13.1: пересчёт экранного размера)
   const childrenOf = new Map<string, HBone[]>();
   for (const b of table) { if (b.parent) (childrenOf.get(b.parent) ?? childrenOf.set(b.parent, []).get(b.parent)!).push(b); }
 
@@ -237,9 +281,15 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
     // Сегмент-меш кости: спец-форма или цилиндр к ПЕРВОМУ ребёнку (визуально «кость до сустава-ребёнка»).
     const s = sc(b.name);   // масштаб толщины группы
     if (skel) {   // СКЕЛЕТ-вид: шар-сустав (клик-цель) + октаэдр-кость к первому ребёнку (направление). Игнорируем спец-формы.
+      // Шар строится ЕДИНИЧНЫМ, а радиус задаётся масштабом (Ф13.1) — тогда его можно пересчитывать
+      // покадрово под экранный размер, не трогая геометрию. Без пересчёта scale = прежняя формула,
+      // то есть вид ровно как раньше. Геометрия НЕ общая: `applyChar`/`rebuildManikin`/`disposeOnion`
+      // делают сплошной `traverse(o => o.geometry.dispose())`, и общая сфера умерла бы на первой смене.
       const jr = Math.min(3.2, Math.max(1.6, b.r * s * 0.5));
-      const ball = new THREE.Mesh(new THREE.SphereGeometry(jr, 12, 10), jointMat());
-      ball.userData.bone = b.name; g.add(ball); meshes.push(ball);
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), jointMat());
+      ball.scale.setScalar(jr);
+      ball.userData.bone = b.name; ball.userData.joint = true; ball.userData.jr = jr;
+      g.add(ball); meshes.push(ball); joints.push(ball);
       const kids = childrenOf.get(b.name);
       if (kids && kids.length) {
         const c = kids[0]!;   // первый ребёнок задаёт направление кости
@@ -288,7 +338,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
 
   const hips = bones.get('Hips')!;
   return {
-    root, bones, meshes, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0, hips,
+    root, bones, meshes, joints, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0, hips,
     hipsRest: restPos.get('Hips')!.clone(),
     readPose() {
       const out: Record<string, [number, number, number]> = {};

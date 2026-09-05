@@ -17,7 +17,9 @@ export interface LimitGizmo {
   group: THREE.Group;
   set(view: LimitView | null): void;                                   // пересобрать зону под лимит
   mark(view: LimitView, rP: number, rN: number, twist: number): void;  // подвинуть индикатор текущего положения кости
-  place(pos: THREE.Vector3, parentQuat: THREE.Quaternion): void;       // поставить на сустав (мир) + ориентация родителя
+  /** Поставить на сустав (мир) + ориентация родителя. `scale` — под размер кости: радиус зоны фиксированный
+   *  (14u, под кости тела), и на фаланге в 1.7u он закрывал бы пол-экрана. */
+  place(pos: THREE.Vector3, parentQuat: THREE.Quaternion, scale?: number): void;
 }
 
 const v3 = (a: readonly number[]): THREE.Vector3 => new THREE.Vector3(a[0], a[1], a[2]).normalize();
@@ -103,7 +105,7 @@ export function makeLimitGizmo(): LimitGizmo {
       twistMark.visible = false;
     }
   }
-  function place(pos: THREE.Vector3, parentQuat: THREE.Quaternion): void { group.position.copy(pos); group.quaternion.copy(parentQuat); }
+  function place(pos: THREE.Vector3, parentQuat: THREE.Quaternion, scale = 1): void { group.position.copy(pos); group.quaternion.copy(parentQuat); group.scale.setScalar(scale); }
 
   return { group, set, mark, place };
 }

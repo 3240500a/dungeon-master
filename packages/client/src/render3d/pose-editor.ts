@@ -15,7 +15,9 @@ import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, type LimitView } from './humanoidRagdoll.js';
-import { PHYS_PRESETS, presetBodies } from './physRig.js';   // Ф11: набор физ-тел настраивается в редакторе
+import { PHYS_PRESETS, presetBodies } from './physRig.js';
+import { scaleJointsToScreen } from './humanoid.js';                       // Ф13.1: суставы постоянного экранного размера
+import { PLAYER_RADIUS, MONSTER_RADIUS } from '@dm/shared';                // Ф13.4: тот же радиус, что у сервера   // Ф11: набор физ-тел настраивается в редакторе
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';
@@ -156,7 +158,8 @@ function updateLimitGizmo(): void {
 function placeLimitGizmo(): void {
   if (!limitGizmo.group.visible || !selected || !curLimitView) return;
   const b = human.bones.get(selected); if (!b) return;
-  limitGizmo.place(b.getWorldPosition(V()), b.parent ? b.parent.getWorldQuaternion(Q()) : Q());
+  // Ф13.3: на фаланге зона предела (радиус 14u, под кости тела) закрыла бы весь вид — ужимаем ТОЛЬКО её.
+  limitGizmo.place(b.getWorldPosition(V()), b.parent ? b.parent.getWorldQuaternion(Q()) : Q(), isHandBone(selected) ? 0.18 : 1);
   const d = decomposeToLimit(b.quaternion, curLimitView);
   limitGizmo.mark(curLimitView, d.rP, d.rN, d.twist);
 }
@@ -370,9 +373,14 @@ canvas.addEventListener('pointerdown', (ev) => {
     }
     gizmo.detach(); activeKey = null; activePole = null; return;
   }
-  // FK: кости + меши оружия (оружие — вращение вокруг хвата)
-  const meshes: THREE.Mesh[] = [...human.meshes];
-  for (const g of weaponGroups) g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+  // FK: кости + меши оружия (оружие — вращение вокруг хвата).
+  // Ф13.3: ФАЛАНГИ кликабельны ТОЛЬКО в режиме хвата, и тогда — только они (плюс сама кисть).
+  // Иначе клик по кисти постоянно попадал бы в палец, а в режиме хвата оружие перехватывало бы
+  // пальцы, обёрнутые вокруг рукояти (меш оружия — сплошной бокс вокруг точки хвата).
+  const pickable = (nm: string | undefined): boolean =>
+    gripMode ? (!!nm && (isHandBone(nm) || nm === 'LeftHand' || nm === 'RightHand')) : !(nm && isHandBone(nm));
+  const meshes: THREE.Mesh[] = human.meshes.filter((m) => pickable(m.userData.bone as string | undefined));
+  if (!gripMode) for (const g of weaponGroups) g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
   const hit = ray.intersectObjects(meshes, false)[0];
   if (hit) {
     const obj = hit.object as THREE.Mesh;
@@ -688,6 +696,14 @@ function morphBoneScale(): BoneScale | undefined {
 // Пальцы строим только когда они есть у ЗАГРУЖЕННОЙ модели либо юзер включил их руками:
 // +30 групп на КАЖДЫЙ гуманоид (манекен + призрак + 2 ониона) без нужды — пустая цена.
 let fingersForced = false;
+// Ф13.3: РЕЖИМ ХВАТА. По пальцам кликаем ТОЛЬКО в нём — иначе, целясь в кисть, хватаешь фалангу.
+// НЕ зависит от Простой/Про: настройка хвата нужна любому. НЕ персистится: иначе после F5
+// открываешь редактор с камерой в ладони и не понимаешь, почему не выбирается ни одна кость тела.
+let gripMode = false;
+let gripSide: 'Left' | 'Right' = 'Right';
+const JOINT_PX = 7;                       // при дефолтном кадре это ровно сегодняшние ~1.6 юнита — тело выглядит как раньше
+const jointPxGrip = (bone: string): number => (isHandBone(bone) ? 10 : 4);
+let gripCamBack: { pos: THREE.Vector3; tgt: THREE.Vector3 } | null = null;   // куда вернуть камеру на выходе
 let limitPresetId = 'human';
 // ── Ф7: БИБЛИОТЕКА ПОЗ И COPY-TOOLS ──
 let poseLib: PoseLibrary = (() => { try { return { ...EMPTY_POSE_LIBRARY(), ...(JSON.parse(localStorage.getItem('pe_poselib') || '{}') as PoseLibrary) }; } catch { return EMPTY_POSE_LIBRARY(); } })();
@@ -708,7 +724,9 @@ function applyGripOver(p?: Pose): void {
   for (const nm in g) if (!p || p[nm] === undefined) out[nm] = g[nm]!;
   applyGripPose(human.bones, out);
 }   // выбранный пресет пределов скелета (Ф3.3)
-function wantFingers(): boolean { return fingersForced || modelsTab.hasFingers(); }   // профиль тела (модульные пропорции) — как игра строит solid/target; редактор строит манекен/призрак им (P3: opts 1:1)
+// ТРИ НЕЗАВИСИМЫХ причины построить пальцы, объединённые OR, а не один флаг на всех:
+// выход из режима хвата не должен сносить пальцы, включённые кнопкой ✋ или пришедшие с моделью.
+function wantFingers(): boolean { return fingersForced || gripMode || modelsTab.hasFingers(); }   // профиль тела (модульные пропорции) — как игра строит solid/target; редактор строит манекен/призрак им (P3: opts 1:1)
 /** Скелет-манекен ПОВЕРХ импортного меша (depthTest off) — виден и кликается сквозь модель. Только для skeleton-стиля. */
 function manikinOnTop(): void {
   if (curHumanStyle !== 'skeleton') return;
@@ -783,6 +801,11 @@ const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => 
 const modeB = mkBtn('', () => { uiPro = !uiPro; saveUi(); syncModeB(); refreshAll(); });
 function syncModeB(): void { modeB.textContent = uiPro ? '⚙ Про' : '○ Простой'; modeB.title = uiPro ? 'Про: все настройки (лимиты, моторы, физика, тюнинг походки)' : 'Простой: только позинг и клипы — инженерные панели скрыты (их значения действуют)'; modeB.classList.toggle('on', uiPro); }
 const manB = mkBtn('манекен: скелет', () => { manView = manView === 'skel' ? 'solid' : manView === 'solid' ? 'hidden' : 'skel'; setManView(); });
+// Ф13.3/13.4: режим хвата и точка серверной позиции — ОБА видны всегда, без привязки к Про.
+const gripB = mkBtn('✋ хват', () => cycleGrip());
+gripB.title = 'Правка хвата: камера на кисть, кликабельны ТОЛЬКО фаланги. Клики: правая → левая → выкл.';
+const posB = mkBtn('⌖ позиция', () => { posMarkOn = !posMarkOn; saveUi(); syncPosMark(); });
+posB.title = 'Точка и круг коллизии, которые сервер считает позицией персонажа. Это НЕ таз: таз в кадре может быть смещён (выпад удара), и в игре точно так же.';
 // Тумблер ростера: персонажи (классы) ↔ монстры. Переключает список выбора персонажа и грузит первого из ростера.
 let personaB!: HTMLButtonElement;
 personaB = mkBtn('◧ персонажи', () => {
@@ -794,14 +817,82 @@ personaB = mkBtn('◧ персонажи', () => {
 });
 bar.append(personaB, document.createTextNode('Персонаж'), charSel, document.createTextNode('Оружие'), wpnSel, document.createTextNode('офф'), offSel, sep(), ikB, fkB, hipsB, sep(),
   mkBtn('зеркало L→R', () => histPose('зеркало L→R', mirrorLR)), mkBtn('T-поза', () => histPose('T-поза', () => { human.reset(); if (mode === 'ik') captureRig(); })), sep(),
-  mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, sep(), modeB);
+  mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, gripB, posB, sep(), modeB);
 
 // ── Панель-вкладки (Анимация = клипы+кадры+поза; Бег = 2D бленд локомоции; Персонаж = setup) ──
 // РЕЖИМ ИНТЕРФЕЙСА (Ф1.5). Не два разных UI, а один с прогрессивным раскрытием: «Про» ДОБАВЛЯЕТ инженерные
 // панели (лимиты суставов, моторы, PHYS, тюнинг походки), ничего не переставляя. В Простом все эти
 // настройки ПРОДОЛЖАЮТ действовать со своими значениями — просто не показываются.
 let uiPro: boolean = (() => { try { return (JSON.parse(localStorage.getItem('pe_ui') || '{}') as { pro?: boolean }).pro === true; } catch { return false; } })();
-function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify({ pro: uiPro })); savePoseKey('pe_ui'); } catch { /* */ } }
+let posMarkOn: boolean = (() => { try { return (JSON.parse(localStorage.getItem('pe_ui') || '{}') as { posMark?: boolean }).posMark === true; } catch { return false; } })();
+function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify({ pro: uiPro, posMark: posMarkOn })); savePoseKey('pe_ui'); } catch { /* */ } }
+
+// ── Ф13.4: ТОЧКА ПОЗИЦИИ ПЕРСОНАЖА (та, что едет на сервер) ────────────────────────
+// Сервер знает персонажа как ЦЕНТР КРУГА на полу (`PlayerView {x, y, r}`): по этому кругу решаются
+// столкновения и дистанции боя. Высоты у него нет вообще. В редакторе `human.root` закреплён в начале
+// координат и НИКОГДА не двигается (бег — тредмилл, едет пол), поэтому маркер статичен — и это не лень,
+// а главное свойство: таз НАМЕРЕННО уезжает с этой точки (`__hipsD`, выпад удара), и в игре тоже.
+// Визуальный язык — как у дебаг-слоя игры (`debug3d.circle`: плоское кольцо на y=2, без depth-теста).
+const POS_COL = 0x39d0ff;
+const posMat = (): THREE.LineBasicMaterial => new THREE.LineBasicMaterial({ color: POS_COL, depthTest: false, transparent: true, opacity: 0.85 });
+const posRing = new THREE.LineLoop(new THREE.BufferGeometry(), posMat());
+const posCross = new THREE.LineSegments(new THREE.BufferGeometry(), posMat());
+const posMark = new THREE.Group();
+posMark.add(posRing, posCross); posMark.position.y = 2; posMark.visible = false; scene.add(posMark);
+for (const o of [posRing, posCross]) { o.renderOrder = 999; o.frustumCulled = false; }
+let posMarkR = -1;
+/** Радиус берём ИЗ SHARED, а не переписываем число — иначе кольцо разъедется с сервером на первом же тюне. */
+const curRadius = (): number => (persona === 'monster' ? MONSTER_RADIUS : PLAYER_RADIUS);
+function syncPosMark(): void {
+  const r = curRadius();
+  if (r !== posMarkR) {
+    posMarkR = r;
+    const ring: THREE.Vector3[] = [];
+    for (let i = 0; i < 48; i++) { const a = (i / 48) * Math.PI * 2; ring.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); }
+    posRing.geometry.dispose(); posRing.geometry = new THREE.BufferGeometry().setFromPoints(ring);
+    const c = 2.5;
+    posCross.geometry.dispose();
+    posCross.geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-c, 0, 0), new THREE.Vector3(c, 0, 0), new THREE.Vector3(0, 0, -c), new THREE.Vector3(0, 0, c),
+    ]);
+  }
+  posMark.visible = posMarkOn;
+  posB.textContent = posMarkOn ? `⌖ позиция r=${r}` : '⌖ позиция';
+  posB.classList.toggle('on', posMarkOn);
+}
+
+// ── Ф13.3: РЕЖИМ ХВАТА ────────────────────────────────────────────────────────
+/** Клики по кнопке: выкл → правая кисть → левая → выкл. */
+function cycleGrip(): void {
+  if (!gripMode) setGripMode(true, 'Right');
+  else if (gripSide === 'Right') setGripMode(true, 'Left');
+  else setGripMode(false);
+}
+function setGripMode(on: boolean, side?: 'Left' | 'Right'): void {
+  const was = gripMode, hadFingers = wantFingers();
+  gripMode = on; if (side) gripSide = side;
+  if (on && !was) {
+    setMode('fk');   // в IK-ветке пикинга костей нет вообще — без этого по фалангам было бы не попасть
+    gripCamBack = { pos: camera.position.clone(), tgt: orbit.target.clone() };
+  }
+  // Пальцы могли уже стоять (модель/кнопка ✋) — пересобираем ТОЛЬКО когда набор костей реально меняется.
+  if (wantFingers() !== hadFingers) { rebuildManikin(); if (pw) buildGhost(); disposeOnion(); }
+  if (on) focusHand();
+  else if (gripCamBack) { camera.position.copy(gripCamBack.pos); orbit.target.copy(gripCamBack.tgt); orbit.update(); gripCamBack = null; }
+  syncGripB(); refreshAll();
+}
+function syncGripB(): void {
+  gripB.textContent = gripMode ? `✋ хват: ${gripSide === 'Left' ? 'Л' : 'П'}` : '✋ хват';
+  gripB.classList.toggle('on', gripMode);
+}
+/** Подлететь к кисти. НЕ `camFocus`: тот сохраняет дистанцию, а здесь нужно именно приблизиться. */
+function focusHand(): void {
+  const b = human.bones.get(gripSide + 'Hand'); if (!b) return;
+  const p = b.getWorldPosition(new THREE.Vector3());
+  orbit.target.copy(p);
+  camera.position.copy(p).add(new THREE.Vector3(gripSide === 'Left' ? 9 : -9, 4, 11));   // ~15u: кисть занимает больше половины кадра
+  orbit.update();
+}
 let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' | 'ai' = 'anim';
 const tabBar = document.createElement('div'); tabBar.style.cssText = 'display:flex;gap:3px;margin-bottom:6px';
 const body = document.createElement('div');
@@ -816,7 +907,7 @@ for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn
 const modelsTab = createModelsTab(scene);
 let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); }
+function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 function refreshLimbs(): void { if (tab === 'anim') renderAnim(); }
 
@@ -2605,13 +2696,17 @@ function loop(): void {
   if (ghostHuman) ghostHuman.root.visible = physOn && !hideMan && !atlasOn;
   if (atlasOn) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; }
   orbit.update();
+  // Ф13.1: шары-суставы — постоянного экранного размера. СТРОГО ПОСЛЕ orbit.update(): у контролов
+  // включён демпфинг, и до него камера ещё не на месте — шары отставали бы на кадр и «дышали» при вращении.
+  // В режиме хвата фаланги поднимаются, а остальной скелет приглушается — без возни с материалами.
+  if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, gripMode ? jointPxGrip : JOINT_PX);
   outline.selectedObjects = selMesh ? [selMesh] : [];   // Ф5: обводка выбранной кости
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setMode, applyChar, setWeapon, solveRig, captureRig, syncEff, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setMode, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },

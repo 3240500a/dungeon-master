@@ -6,9 +6,11 @@
     <title>DM — Pose Editor</title>
     <style>
       html, body { margin: 0; height: 100%; }
-      body { display: grid; grid-template-rows: 44px 1fr 148px;   /* Ф6: выше — в Про в тайм-лайне дорожки по группам костей */ grid-template-columns: 1fr 288px; height: 100vh; overflow: hidden;
+      body { display: grid; grid-template-rows: auto 1fr 148px;   /* Ф6: тайм-лайн выше (дорожки по группам); Ф13: тулбар переносится, а не прячет кнопки за краем */ grid-template-columns: 1fr 288px; height: 100vh; overflow: hidden;
              background: #1a1d26; color: #cfd3e0; font: 12px/1.4 system-ui, sans-serif; }
-      #toolbar { grid-area: 1 / 1 / 2 / 3; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: #12141c; border-bottom: 1px solid #39415a; overflow-x: auto; white-space: nowrap; }
+      /* Ф13: БЫЛО overflow-x:auto в жёстких 44px — кнопки за краем находились только горизонтальной прокруткой,
+         то есть их фактически не существовало. Переносим строкой: лучше лишние 22px высоты, чем спрятанный тумблер. */
+      #toolbar { grid-area: 1 / 1 / 2 / 3; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-height: 44px; padding: 4px 10px; box-sizing: border-box; background: #12141c; border-bottom: 1px solid #39415a; }
       #app { grid-area: 2 / 1 / 3 / 2; display: block; width: 100%; height: 100%; }
       #panel { grid-area: 2 / 2 / 3 / 3; overflow: auto; background: rgba(16,18,26,.96); border-left: 1px solid #39415a; padding: 8px 11px; font-family: monospace; }
       #timeline { grid-area: 3 / 1 / 4 / 3; background: #12141c; border-top: 1px solid #39415a; padding: 6px 12px; display: flex; align-items: center; gap: 6px; }
