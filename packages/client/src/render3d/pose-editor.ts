@@ -13,6 +13,7 @@ import { initPhysics, PhysWorld } from './ragdoll.js';
 import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, type LimitView } from './humanoidRagdoll.js';
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
+import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';   // Ф6: тайм-лайн с дорожками
 import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
   mergeBoneScale, applyMorphChange, sampleMorph, rangeWarnings, type BodyMorph, type MorphKey, type MorphRange } from './bodyMorph.js';   // Ф8: морфинг тела   // Ф4: пины + full-body IK
 import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
@@ -1589,16 +1590,57 @@ function renderTurn(): void {
 
 // ── Таймлайн ──
 let playing = false, playT = 0, playSpeed = 1;
-const tlName = el('span', 'color:#9ae6a0;min-width:90px'); const tlDots = el('div', 'position:relative;flex:1;height:22px'); const scrub = el('input', 'flex:2') as HTMLInputElement;
-scrub.type = 'range'; scrub.min = '0'; scrub.max = '1'; scrub.step = '0.005'; scrub.value = '0'; scrub.oninput = () => { const c = curClip(); if (c) preview(parseFloat(scrub.value) * clipDur(c)); if (mode === 'ik') captureRig(); };
+const tlName = el('span', 'color:#9ae6a0;min-width:90px');
 const playBtn = mkBtn('▶', () => { const c = curClip(); if (!playing && c && playT >= clipDur(c)) playT = 0; playing = !playing; playBtn.textContent = playing ? '⏸' : '▶'; });
 const spd = el('input', 'width:80px') as HTMLInputElement; spd.type = 'range'; spd.min = '0.2'; spd.max = '3'; spd.step = '0.1'; spd.value = '1'; spd.oninput = () => { playSpeed = parseFloat(spd.value); };
-timeline.append(playBtn, tlName, scrub, document.createTextNode('скор'), spd, tlDots);
+// Ф6: верхняя строка — транспорт и действия над ключами, нижняя — сам тайм-лайн (канвас)
+timeline.style.flexDirection = 'column'; timeline.style.alignItems = 'stretch';
+const tlTop = el('div', 'display:flex;align-items:center;gap:5px;flex-wrap:wrap');
+const tlBody = el('div', 'flex:1;min-height:34px;position:relative');
+timeline.append(tlTop, tlBody);
+tlTop.append(playBtn, tlName, document.createTextNode('скор'), spd);
+
+/** Ключи, над которыми работают кнопки: выделение на тайм-лайне, иначе текущий кадр. */
+const tlSel = (): number[] => { const s2 = tl.selection(); return s2.length ? s2 : [frameIdx]; };
+const tlAct = (label: string, hint: string, fn: (c: Clip, sel: number[]) => void): HTMLButtonElement => {
+  const b = mkBtn(label, () => { const c = curClip(); if (!c) return; histLib(hint, () => { fn(c, tlSel()); sortKeys(c); saveLib(); refreshAll(); }); });
+  b.title = hint; return b;
+};
+tlTop.append(
+  sep(),
+  tlAct('↗ плавно', 'кривая: плавно (ease)', (c, sl) => setInterp(c.keys, sl, 'ease', [0.42, 0, 0.58, 1])),
+  tlAct('╱ резко', 'кривая: линейно', (c, sl) => setInterp(c.keys, sl, 'linear')),
+  tlAct('■ держать', 'кривая: ступенька (stepped-блокинг)', (c, sl) => setInterp(c.keys, sl, 'step')),
+  sep(),
+  tlAct('⧉ дубль', 'дублировать кадры', (c, sl) => {
+    const add = sl.map((i) => c.keys[i]).filter((k): k is Keyframe => !!k)
+      .map((k) => ({ pose: clonePose(k.pose), t: k.t + 0.05, interp: k.interp, ease: k.ease }));
+    c.keys.push(...add);
+  }),
+  tlAct('✕ удалить', 'удалить кадры', (c, sl) => {
+    const drop = new Set(sl);
+    const kept = c.keys.filter((_, i) => !drop.has(i));
+    if (kept.length >= 1) { c.keys.length = 0; c.keys.push(...kept); frameIdx = Math.min(frameIdx, c.keys.length - 1); }
+  }),
+  tlAct('⇔ ×1.25', 'растянуть выделение по времени', (c, sl) => scaleKeys(c.keys, sl, 1.25)),
+  tlAct('⇔ ×0.8', 'сжать выделение по времени', (c, sl) => scaleKeys(c.keys, sl, 0.8)),
+);
+
+const tl: TimelinePanel = makeTimelinePanel(tlBody, {
+  clip: () => curClip(),
+  frameIdx: () => frameIdx,
+  playT: () => playT,
+  pro: () => uiPro,
+  onSelectFrame: (i) => goFrame(i),
+  onScrub: (t) => { playT = t; preview(t); if (mode === 'ik') captureRig(); },
+  onMoveKeys: (moves) => { const c = curClip(); if (!c) return; moveKeys(c.keys, moves); saveLib(); tl.draw(); },
+  onSelectionChange: () => { /* кнопки читают выделение лениво, перерисовка не нужна */ },
+});
 function refreshTimeline(): void {
-  const c = curClip(); tlName.textContent = c ? c.name : '(нет клипа)'; tlDots.innerHTML = '';
+  const c = curClip();
+  tlName.textContent = c ? c.name : '(нет клипа)';
+  tl.draw();   // Ф6: ключи/дорожки/плейхед рисует канвас-панель
   if (!c) return;
-  const dur = clipDur(c) || 1;
-  c.keys.forEach((kf, i) => { const d = el('div', `position:absolute;top:4px;width:12px;height:12px;border-radius:50%;cursor:pointer;border:1px solid #39415a;background:${i === frameIdx ? '#46d07a' : '#4a5680'};left:${(kf.t / dur) * 92}%`); d.title = `${i + 1} · ${kf.t.toFixed(2)}с`; d.onclick = () => goFrame(i); tlDots.append(d); });
 }
 function goFrame(i: number): void { const c = curClip(); if (!c) return; frameIdx = i; if (c.keys[i]) applyPose(c.keys[i]!.pose); if (mode === 'ik') captureRig(); refreshAll(); }
 function preview(time: number): void {   // time в секундах
@@ -2136,7 +2178,7 @@ function loop(): void {
   else if (playing && c) {
     const dur = clipDur(c);
     if (dur < 1e-3 || c.keys.length < 2) { playing = false; playBtn.textContent = '▶'; }
-    else { playT += dt * playSpeed; if (playT > dur) { if (c.loop) playT %= dur; else { playT = dur; playing = false; playBtn.textContent = '▶'; } } scrub.value = String(playT / dur); preview(playT); }
+    else { playT += dt * playSpeed; if (playT > dur) { if (c.loop) playT %= dur; else { playT = dur; playing = false; playBtn.textContent = '▶'; } } preview(playT); tl.draw(); }
   }
   else if (mode === 'ik') {
     // Солвим IK ТОЛЬКО когда реально тянешь эффектор. Иначе (вхолостую) 2-костный IK пересчитывал руки/ноги из
