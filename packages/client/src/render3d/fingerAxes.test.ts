@@ -96,3 +96,23 @@ describe('fingerAxes — вырождения и фолбэк', () => {
     expect(fingerAxesOf('Spine')).toBeNull();
   });
 });
+
+describe('fingerAxes — бинд-сгиб (Ф15.4)', () => {
+  it('у прямой канон-кисти фаланги не считаются согнутыми', () => {
+    const ax = canonicalFingerAxes();
+    for (const nm in ax) expect(Math.abs(ax[nm]!.bindCurl), nm).toBeLessThan(0.02);
+  });
+
+  it('ГЛАВНОЕ: полусогнутый бинд (как у CC) измеряется, а не игнорируется', () => {
+    // Гнём указательный на 0.4 рад в каждом межфаланговом суставе — вокруг Z (ось сгиба нашей кисти).
+    const base = canonicalFingerOffsets();
+    const bent: Record<string, Vec3> = { ...base };
+    const rotZ = (v: Vec3, a: number): Vec3 => [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a), v[2]];
+    bent['LeftIndexIntermediate'] = rotZ(base['LeftIndexIntermediate']!, -0.4);
+    bent['LeftIndexDistal'] = rotZ(base['LeftIndexDistal']!, -0.8);
+    const ax = deriveFingerAxes((b) => bent[b] ?? null);
+    expect(ax['LeftIndexIntermediate']!.bindCurl).toBeGreaterThan(0.3);
+    expect(ax['LeftIndexProximal']!.bindCurl).toBe(0);          // проксимальная — точка отсчёта цепи
+    expect(Math.abs(ax['LeftMiddleIntermediate']!.bindCurl)).toBeLessThan(0.02);   // соседний палец не тронут
+  });
+});

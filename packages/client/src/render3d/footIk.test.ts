@@ -86,3 +86,51 @@ describe('legGroundIK — заземляющий IK ставит стопу в �
     expect(Math.abs(lf.y - 1.5)).toBeLessThan(1.0);              // опорная — заземлена на пол
   });
 });
+
+describe('footIk — длины ноги берутся с рига, а не из констант (Ф15.3)', () => {
+  const V = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y, z);
+  /** Гуманоид с ногой ДРУГОЙ длины — как у импортированной модели. */
+  const legRig = (thigh: number, shin: number): ReturnType<typeof buildHumanoid> => buildHumanoid({
+    boneOffsets: {
+      Hips: [0, thigh + shin + 1, 0],
+      LeftUpperLeg: [4, -2, 0], LeftLowerLeg: [0, -thigh, 0], LeftFoot: [0, -shin, 0],
+      RightUpperLeg: [-4, -2, 0], RightLowerLeg: [0, -thigh, 0], RightFoot: [0, -shin, 0],
+    },
+  });
+
+  it('ГЛАВНОЕ: на КОРОТКОЙ ноге стопа встаёт в цель (раньше солвер считал бедро 15-юнитовым)', () => {
+    const h = legRig(9, 8);
+    h.setHipsWorld(0, 20, 0); h.root.updateMatrixWorld(true);
+    const u = h.bones.get('LeftUpperLeg')!, l = h.bones.get('LeftLowerLeg')!, f = h.bones.get('LeftFoot')!;
+    const hip = u.getWorldPosition(V(0, 0, 0));
+    const target = V(hip.x, hip.y - 14, hip.z + 1);
+    groundFeet(h, 20, { off: 0 }, 1, () => target.y - 1.5, [true, true]);
+    h.root.updateMatrixWorld(true);
+    expect(f.getWorldPosition(V(0, 0, 0)).y).toBeCloseTo(target.y, 0);
+    // Бедро могло уехать вместе с корнем (заземление двигает root) — меряем от НОВОГО положения бедра.
+    const hipNow = u.getWorldPosition(V(0, 0, 0));
+    expect(l.getWorldPosition(V(0, 0, 0)).distanceTo(hipNow)).toBeCloseTo(9, 1);   // колено на СВОЁМ бедре, а не на 15-юнитовом
+  });
+
+  it('на ДЛИННОЙ ноге (36u) досягание не обрезается прежним потолком 28.5', () => {
+    const h = legRig(19, 17);
+    h.setHipsWorld(0, 40, 0); h.root.updateMatrixWorld(true);
+    const u = h.bones.get('LeftUpperLeg')!, f = h.bones.get('LeftFoot')!;
+    const hip = u.getWorldPosition(V(0, 0, 0));
+    const drop = 33;                                                  // больше старого IK_MAX = 28.5
+    groundFeet(h, 40, { off: 0 }, 1, () => hip.y - drop - 1.5, [true, true]);
+    h.root.updateMatrixWorld(true);
+    expect(hip.y - f.getWorldPosition(V(0, 0, 0)).y).toBeGreaterThan(30);
+  });
+
+  it('после заземления остатка нет — корень не уезжает следующим кадром', () => {
+    const h = legRig(11, 10);
+    h.setHipsWorld(0, 24, 0); h.root.updateMatrixWorld(true);
+    const gs = { off: 0 };
+    const floor = (): number => 0;
+    for (let i = 0; i < 30; i++) groundFeet(h, 24, gs, 1 / 30, floor, [true, true]);
+    const settled = gs.off;
+    for (let i = 0; i < 30; i++) groundFeet(h, 24, gs, 1 / 30, floor, [true, true]);
+    expect(Math.abs(gs.off - settled)).toBeLessThan(0.05);            // устоялось, а не «догоняет» бесконечно
+  });
+});

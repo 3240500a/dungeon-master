@@ -9,8 +9,29 @@ export type GroundQuery = (x: number, z: number) => number;
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 const SOLE = 1.5;                    // высота кости стопы над полом, когда подошва на полу (= FOOT_Y в pose.ts)
-const IK_THIGH = 15, IK_SHIN = 14;   // фактические длины костей ноги из BONES (UpperLeg→LowerLeg, LowerLeg→Foot)
-const IK_MAX = IK_THIGH + IK_SHIN - 0.5, IK_MIN = Math.abs(IK_THIGH - IK_SHIN) + 0.5;
+/**
+ * Ф15.3: ДЛИНЫ НОГИ БЕРУТСЯ С РИГА, а не из констант.
+ * Раньше тут стояло `IK_THIGH = 15, IK_SHIN = 14` «из BONES» — и на импортированной модели с другой ногой
+ * солвер ставил колено на 15 юнитов вдоль бедра, которое не 15 длиной. Лодыжка не попадала в цель, остаток
+ * каждый кадр уходил в СДВИГ КОРНЯ (`gs.off` ниже двигает весь скелет) — отсюда «заземление съезжает».
+ * Нога длиннее 28.5 к тому же обрезалась клэмпом досягания.
+ * Длины читаются из rest-офсетов костей (у нас анимируются только повороты, `.position` = rest) и кэшируются
+ * на объекте `Humanoid`: пересборка манекена даёт новый объект → замер обновляется сам.
+ */
+interface LegGeom { thigh: number; shin: number; max: number; min: number }
+const _legCache = new WeakMap<Humanoid, LegGeom[]>();
+function legGeom(mesh: Humanoid, i: number): LegGeom {
+  let all = _legCache.get(mesh);
+  if (!all) {
+    all = IK_LEGS.map((L) => {
+      const thigh = mesh.bones.get(L.l)?.position.length() ?? 15;   // офсет голени от бедра = длина бедра
+      const shin = mesh.bones.get(L.f)?.position.length() ?? 14;    // офсет стопы от голени = длина голени
+      return { thigh, shin, max: thigh + shin - 0.5, min: Math.abs(thigh - shin) + 0.5 };
+    });
+    _legCache.set(mesh, all);
+  }
+  return all[i]!;
+}
 const PLANT_MAX = 6;                 // стопа выше своего пола меньше этого → ОПОРНАЯ (планти на пол); выше → маховая (не трогаем)
 const GROUND_LAG = 8;                // скорость сглаживания сдвига таза к полу (меньше → мягче/плавнее боб)
 const IK_LEGS = [{ u: 'LeftUpperLeg', l: 'LeftLowerLeg', f: 'LeftFoot' }, { u: 'RightUpperLeg', l: 'RightLowerLeg', f: 'RightFoot' }];
@@ -42,17 +63,18 @@ function aimBoneFrame(bone: THREE.Object3D, child: THREE.Object3D | null, dir: T
 /** Аналитический 2-костный IK ноги: гнём бедро+колено так, чтобы кость стопы встала в targetWorld.
  *  pole — направление сгиба колена (вперёд). Стопу ВЫРАВНИВАЕМ по faceQuat (плоско + носок по фейсингу тела): иначе
  *  твист от aimBoneDown не задан и стопа висит в фикс. мировой стороне. Длины костей фиксированы, кламп разгиба. */
-export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: THREE.Object3D, targetWorld: THREE.Vector3, pole: THREE.Vector3, faceQuat: THREE.Quaternion): void {
+export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: THREE.Object3D, targetWorld: THREE.Vector3, pole: THREE.Vector3, faceQuat: THREE.Quaternion, geom?: LegGeom): void {
+  const g = geom ?? { thigh: 15, shin: 14, max: 28.5, min: 1.5 };
   upper.getWorldPosition(_iH);
   _iDir.subVectors(targetWorld, _iH);
   let dist = _iDir.length(); if (dist < 1e-3) return;
-  dist = clamp(dist, IK_MIN, IK_MAX); _iDir.normalize();
-  const a = Math.acos(clamp((IK_THIGH * IK_THIGH + dist * dist - IK_SHIN * IK_SHIN) / (2 * IK_THIGH * dist), -1, 1));
+  dist = clamp(dist, g.min, g.max); _iDir.normalize();
+  const a = Math.acos(clamp((g.thigh * g.thigh + dist * dist - g.shin * g.shin) / (2 * g.thigh * dist), -1, 1));
   _iBend.crossVectors(_iDir, pole);
   if (_iBend.lengthSq() < 1e-6) _iBend.set(1, 0, 0); else _iBend.normalize();
   _iThigh.copy(_iDir).applyAxisAngle(_iBend, a);       // бедро: линия к цели, отклонённая на a → колено вперёд
   aimBoneFrame(upper, lower, _iThigh, pole); upper.updateMatrixWorld(true);   // полный фрейм: колено смотрит на pole (не крутится наружу)
-  _iK.copy(_iH).addScaledVector(_iThigh, IK_THIGH);    // колено в мире
+  _iK.copy(_iH).addScaledVector(_iThigh, g.thigh);     // колено в мире
   _iShin.subVectors(targetWorld, _iK).normalize();
   aimBoneFrame(lower, foot, _iShin, pole); lower.updateMatrixWorld(true);     // голень: тот же pole → без паразитного твиста
   lower.getWorldQuaternion(_ipq);                      // выровнять СТОПУ: мир-ориентация = faceQuat (плоско, носок по телу)
@@ -99,6 +121,6 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     if (_iFtFwd.x * _iFtFwd.x + _iFtFwd.z * _iFtFwd.z < 1e-8) _iFace.copy(_ipq);              // стопа вертикально → берём как есть
     else _iFace.setFromAxisAngle(_UP, Math.atan2(_iFtFwd.x, _iFtFwd.z));                      // плоско по полу, носок по позе-рыску
     fb.getWorldPosition(_iFoot);
-    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace);
+    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace, legGeom(mesh, i));
   }
 }

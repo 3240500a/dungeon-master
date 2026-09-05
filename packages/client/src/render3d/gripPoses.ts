@@ -90,7 +90,10 @@ export function gripToPose(spec: GripSpec, side: 'Left' | 'Right', close = 1, ax
     const max = ch === 'Thumb' ? THUMB_CURL_MAX : CURL_MAX;
     for (let i = 0; i < 3; i++) {
       const nm = side + ch + FINGER_SEGMENTS[i];
-      const bend = max[i]! * c;
+      // Ф15.4: сгиб задан «от ПРЯМОГО пальца», а наша rest-поза — бинд модели, который уже полусогнут.
+      // Вычитаем то, что уже согнуто, иначе кулак кладётся поверх полукулака (переизгиб на CC-кистях).
+      const already = fingerAxesOf(nm, axes)?.bindCurl ?? 0;
+      const bend = Math.max(0, max[i]! - already) * c;
       const opp = ch === 'Thumb' && i === 0 ? (spec.oppose ?? 0) * close * THUMB_OPPOSE * oppSign : 0;
       const a = fingerAxesOf(nm, axes);
       if (!a) { out[nm] = [0, 0, 0]; continue; }

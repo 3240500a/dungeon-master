@@ -26,7 +26,17 @@ import { FINGER_CHAINS, FINGER_SEGMENTS, type FingerChain } from './boneNames.js
 import { FINGER_GEO } from './humanoid.js';
 
 export type Vec3 = [number, number, number];
-export interface FingerAxes { twist: Vec3; plane: Vec3; normal: Vec3 }
+export interface FingerAxes {
+  twist: Vec3; plane: Vec3; normal: Vec3;
+  /**
+   * Ф15.4: НАСКОЛЬКО ФАЛАНГА УЖЕ СОГНУТА В БИНДЕ (рад, вокруг оси сгиба, положительное = к ладони).
+   * У CC/AccuRIG кисть в бинде расслаблена, то есть полусогнута, и это наша rest-поза. Хват задаёт
+   * АБСОЛЮТНЫЙ сгиб «от прямого пальца», а ложится он поверх бинда — получался кулак поверх полукулака.
+   * Вычитая `bindCurl`, «открытая» = ровно бинд модели, а «кулак» = кулак, а не переизгиб.
+   * У проксимальной всегда 0: она сама и есть точка отсчёта цепи.
+   */
+  bindCurl: number;
+}
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -84,7 +94,10 @@ export function deriveFingerAxes(offsetOf: OffsetOf): Record<string, FingerAxes>
         const t = along(chain, seg); if (!t) continue;
         const plane = norm(cross(t, palmInward)); if (!plane) continue;   // палец вдоль нормали ладони — вырождение
         const normal = norm(cross(t, plane)); if (!normal) continue;
-        out[boneName(side, chain, seg)] = { twist: t, plane, normal };
+        // Бинд-сгиб = знаковый угол от направления ПРЕДЫДУЩЕЙ фаланги к этой, вокруг оси сгиба.
+        const prev = seg > 0 ? along(chain, (seg - 1) as 0 | 1 | 2) : null;
+        const bindCurl = prev ? Math.atan2(dot(cross(prev, t), plane), dot(prev, t)) : 0;
+        out[boneName(side, chain, seg)] = { twist: t, plane, normal, bindCurl };
       }
     }
   }
