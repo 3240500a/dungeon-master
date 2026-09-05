@@ -12,13 +12,19 @@
  * глазами, правится одним числом и корректно масштабируется слайдером «сжатие». Ручная правка каждой
  * фаланги тоже возможна (Про-режим) — тогда хват хранится готовыми углами.
  *
- * Знак сгиба: у нас Left = +X, пальцы смотрят наружу и сгибаются к ладони вращением вокруг Y.
- * У правой руки кости зеркальны, поэтому знак противоположный.
+ * Ось сгиба НЕ зашита (Ф14.4): она выводится из геометрии кисти (`fingerAxes.ts`), поэтому один и тот же
+ * пресет сжимает кулак и нашему манекену, и импортированной модели с любой ориентацией кисти.
+ * Знак сгиба одинаков для обеих кистей — зеркальность уже сидит в самой оси; пер-сторонний знак нужен
+ * только противопоставлению большого пальца (его ось полярна). Закреплено тестом «зеркало L↔R».
  *
- * Файл ЧИСТЫЙ — тестируется в node.
+ * Файл ЧИСТЫЙ (THREE только как математика, без сцены) — тестируется в node.
  */
+import * as THREE from 'three';
 import { FINGER_CHAINS, FINGER_SEGMENTS, type FingerChain } from './boneNames.js';
+import { fingerAxesOf, type FingerAxes } from './fingerAxes.js';
 import type { Pose } from './clipModel.js';
+
+const _qb = new THREE.Quaternion(), _qt = new THREE.Quaternion(), _v = new THREE.Vector3(), _e = new THREE.Euler();
 
 /** Сколько радиан «полного сжатия» на каждую фалангу (проксимальная/средняя/дистальная). */
 const CURL_MAX: readonly number[] = [1.45, 1.55, 1.15];
@@ -68,24 +74,41 @@ export const isHandBone = (name: string): boolean => ALL_HAND_BONES.has(name);
  * Развернуть хват в позу пальцев. `close` 0..1 — общий множитель («слайдер сжатия»):
  * 0 отдаёт прямую кисть, 1 — пресет как есть, промежуточное — плавно между ними.
  */
-export function gripToPose(spec: GripSpec, side: 'Left' | 'Right', close = 1): Pose {
-  const sx = side === 'Left' ? -1 : 1;   // сгиб к ладони: у левой −Y, у правой +Y (кости зеркальны)
+export function gripToPose(spec: GripSpec, side: 'Left' | 'Right', close = 1, axes?: Record<string, FingerAxes> | null): Pose {
+  // Ф14.4: сгиб — поворот вокруг ВЫВЕДЕННОЙ оси, а не запись в фиксированную компоненту эйлера.
+  // Раньше сгиб клался в Y, а палец у нас лежит вдоль ±X при ладони, тонкой по Y → поворот вокруг Y
+  // уводил кончик ВБОК по ладони. Кулак не сжимался ни на манекене, ни тем более на чужой модели.
+  //
+  // ЗНАКИ (выведено и закреплено тестом «зеркало»): зеркало L↔R — это M=diag(−1,1,1), и
+  // mirror(R(a,θ)) = R(Ma, −θ). Ось сгиба уже зеркальна сама (plane_R = −M·plane_L), поэтому
+  // у СГИБА пер-стороннего множителя быть не должно; ось твиста полярна (twist_R = M·twist_L),
+  // поэтому у ПРОТИВОПОСТАВЛЕНИЯ большого пальца — должен.
+  const oppSign = side === 'Left' ? 1 : -1;
   const out: Pose = {};
   for (const ch of FINGER_CHAINS) {
     const c = (spec.curls[ch] ?? 0) * close;
     const max = ch === 'Thumb' ? THUMB_CURL_MAX : CURL_MAX;
     for (let i = 0; i < 3; i++) {
-      const bend = max[i]! * c * sx;
-      const opp = ch === 'Thumb' && i === 0 ? (spec.oppose ?? 0) * close * THUMB_OPPOSE * sx : 0;
-      out[side + ch + FINGER_SEGMENTS[i]] = [opp, bend, 0];
+      const nm = side + ch + FINGER_SEGMENTS[i];
+      const bend = max[i]! * c;
+      const opp = ch === 'Thumb' && i === 0 ? (spec.oppose ?? 0) * close * THUMB_OPPOSE * oppSign : 0;
+      const a = fingerAxesOf(nm, axes);
+      if (!a) { out[nm] = [0, 0, 0]; continue; }
+      // Порядок swing·twist — тот же, что восстанавливает `jointClamp.clampLocalToLimit`,
+      // поэтому разложение обратно даёт ровно {plane: bend, normal: 0, twist: opp}.
+      _qb.setFromAxisAngle(_v.set(a.plane[0], a.plane[1], a.plane[2]), bend);
+      _qt.setFromAxisAngle(_v.set(a.twist[0], a.twist[1], a.twist[2]), opp);
+      _qb.multiply(_qt);
+      _e.setFromQuaternion(_qb, 'XYZ');
+      out[nm] = [+_e.x.toFixed(5), +_e.y.toFixed(5), +_e.z.toFixed(5)];
     }
   }
   return out;
 }
 
 /** Обе кисти разом. */
-export function gripToPoseBoth(specL: GripSpec, specR: GripSpec, closeL = 1, closeR = 1): Pose {
-  return { ...gripToPose(specL, 'Left', closeL), ...gripToPose(specR, 'Right', closeR) };
+export function gripToPoseBoth(specL: GripSpec, specR: GripSpec, closeL = 1, closeR = 1, axes?: Record<string, FingerAxes> | null): Pose {
+  return { ...gripToPose(specL, 'Left', closeL, axes), ...gripToPose(specR, 'Right', closeR, axes) };
 }
 
 // ── Персист: библиотека своих хватов + привязка к оружию ─────────────────────────────────────────
@@ -116,7 +139,7 @@ export function defaultWeaponGrip(weaponKey: string): WeaponGrip {
 }
 
 /** Итоговая поза пальцев для персонажа+оружия (учитывая свои хваты и привязку). */
-export function resolveGripPose(cfg: GripConfig, charId: string, weaponKey: string): Pose {
+export function resolveGripPose(cfg: GripConfig, charId: string, weaponKey: string, axes?: Record<string, FingerAxes> | null): Pose {
   const bind = cfg.byWeapon[charId]?.[weaponKey] ?? defaultWeaponGrip(weaponKey);
   const side = (id: string | undefined, s: 'Left' | 'Right', close: number): Pose => {
     if (!id) return {};
@@ -126,7 +149,7 @@ export function resolveGripPose(cfg: GripConfig, charId: string, weaponKey: stri
       for (const k in custom.pose) if (k.startsWith(s)) { const v = custom.pose[k]!; out[k] = [v[0], v[1], v[2]]; }
       return out;
     }
-    const g = findGrip(id); return g ? gripToPose(g, s, close) : {};
+    const g = findGrip(id); return g ? gripToPose(g, s, close, axes) : {};
   };
   return { ...side(bind.L, 'Left', bind.closeL ?? 1), ...side(bind.R, 'Right', bind.closeR ?? 1) };
 }

@@ -18,6 +18,7 @@
  */
 import type { LimitView, JointLim } from './humanoidRagdoll.js';
 import { FINGER_CHAINS, FINGER_SEGMENTS } from './boneNames.js';
+import { canonicalFingerAxes, fingerAxesOf, type FingerAxes } from './fingerAxes.js';
 
 type Vec3 = [number, number, number];
 const D = Math.PI / 180;
@@ -34,19 +35,23 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0
  */
 function fingerJoints(): Record<string, ExtraJoint> {
   const out: Record<string, ExtraJoint> = {};
+  const canon = canonicalFingerAxes();
   for (const side of ['Left', 'Right'] as const) {
-    const sx = side === 'Left' ? 1 : -1;
     for (const chain of FINGER_CHAINS) {
       for (let i = 0; i < 3; i++) {
         const name = side + chain + FINGER_SEGMENTS[i];
-        const twist: Vec3 = [sx, 0, 0];            // вдоль пальца (наружу)
-        const plane: Vec3 = [0, 1, 0];             // сгиб вокруг вертикали кисти → пальцы к ладони
+        // Ф14.4: оси НЕ зашиты. Раньше тут стояло `twist=[sx,0,0], plane=[0,1,0]` — и `plane` был неверен
+        // даже для нашего манекена: пальцы разложены по Z, ладонь тонкая по Y, поэтому сгиб — вокруг Z,
+        // а вокруг Y палец уезжал ВБОК. Теперь ось выводится из самой геометрии (`fingerAxes.ts`).
+        const ax = canon[name]; if (!ax) continue;
+        const twist: Vec3 = ax.twist, plane: Vec3 = ax.plane;
         const isThumb = chain === 'Thumb';
         const base = i === 0;
         const def: JointLim = {
           kind: 'swing', group: 'arm',
-          // основной сгиб: почти только «в кулак», переразгиб маленький
-          planeMin: (base ? -95 : -100) * D, planeMax: (base ? 25 : 5) * D,
+          // Основной сгиб: почти только «в кулак», переразгиб маленький. ЗНАК СЛЕДУЕТ ЗА ОСЬЮ:
+          // положительный угол вокруг выведенной оси = сгиб к ладони (на ОБЕИХ кистях — ось уже зеркальна).
+          planeMin: (base ? -25 : -5) * D, planeMax: (base ? 95 : 100) * D,
           // боковой развод — только у основания (и заметно шире у большого)
           normalMin: (base ? (isThumb ? -35 : -18) : -3) * D, normalMax: (base ? (isThumb ? 35 : 18) : 3) * D,
           // осевой твист — почти нет, кроме противопоставления большого
@@ -62,13 +67,15 @@ function fingerJoints(): Record<string, ExtraJoint> {
 /** Кость → предел, если у неё НЕТ физ-тела. */
 export const EXTRA_JOINTS: Record<string, ExtraJoint> = fingerJoints();
 
-/** `LimitView` для кости без физ-тела (тот же контракт, что у физического `jointLimitView`). */
-export function extraLimitView(boneName: string): LimitView | null {
+/** `LimitView` для кости без физ-тела (тот же контракт, что у физического `jointLimitView`).
+ *  `axes` — оси, выведенные из КОНКРЕТНОГО рига (импортированная модель); нет — берутся канонические. */
+export function extraLimitView(boneName: string, axes?: Record<string, FingerAxes> | null): LimitView | null {
   const j = EXTRA_JOINTS[boneName]; if (!j) return null;
   const e = j.def;
+  const a = fingerAxesOf(boneName, axes) ?? { twist: j.twist, plane: j.plane, normal: cross(j.twist, j.plane) };
   return {
     kind: 'swing', group: e.group, canon: j.canon,
-    twist: j.twist, plane: j.plane, normal: cross(j.twist, j.plane),
+    twist: a.twist, plane: a.plane, normal: a.normal,
     planeMin: e.planeMin, planeMax: e.planeMax, normalMin: e.normalMin, normalMax: e.normalMax, twistMin: e.twistMin, twistMax: e.twistMax,
   };
 }

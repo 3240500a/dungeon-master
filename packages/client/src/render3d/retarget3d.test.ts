@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { autoBoneMap, makeRetargetRig, OUR_BONES } from './retarget3d.js';
+import { autoBoneMap, makeRetargetRig, measureBoneOffsets, FINGER_PARENT, OUR_BONES } from './retarget3d.js';
 import { buildHumanoid } from './humanoid.js';
 
 describe('retarget3d — авто-карта костей', () => {
@@ -65,5 +65,68 @@ describe('retarget3d — драйв', () => {
     const tgtW = arm.getWorldQuaternion(new THREE.Quaternion());
     expect(tgtW.angleTo(srcW)).toBeLessThan(0.01);   // цель повторила мировое вращение источника
     expect(OUR_BONES).toContain('LeftUpperArm');
+  });
+});
+
+describe('retarget3d — офсеты ПАЛЬЦЕВ снимаются с модели (Ф14.2)', () => {
+  /** Скелетик: таз/голова/стопа задают масштаб, кисть и один палец — то, что проверяем. */
+  const mkRig = (): THREE.Object3D => {
+    const root = new THREE.Object3D();
+    const mk = (name: string, parent: THREE.Object3D, p: [number, number, number]): THREE.Bone => {
+      const b = new THREE.Bone(); b.name = name; b.position.set(...p); parent.add(b); return b;
+    };
+    const hips = mk('Hips', root, [0, 32, 0]);
+    const spine = mk('Spine', hips, [0, 5, 0]);
+    const chest = mk('Chest', spine, [0, 6, 0]);
+    const upper = mk('UpperChest', chest, [0, 5, 0]);
+    const neck = mk('Neck', upper, [0, 5, 0]);
+    mk('Head', neck, [0, 4, 0]);
+    const thigh = mk('LeftUpperLeg', hips, [4, -2, 0]);
+    const shin = mk('LeftLowerLeg', thigh, [0, -15, 0]);
+    mk('LeftFoot', shin, [0, -14, 0]);
+    const clav = mk('LeftShoulder', upper, [3, 3, 0]);
+    const arm = mk('LeftUpperArm', clav, [4, 0, 0]);
+    const fore = mk('LeftLowerArm', arm, [13, 0, 0]);
+    const hand = mk('LeftHand', fore, [11, 0, 0]);
+    const prox = mk('LeftIndexProximal', hand, [3, 0, 1]);          // палец «в сторону и вперёд»
+    const inter = mk('LeftIndexIntermediate', prox, [2, 0, 0]);
+    mk('LeftIndexDistal', inter, [1.5, 0, 0]);
+    root.updateMatrixWorld(true);
+    return root;
+  };
+  const MAP: Record<string, string> = {
+    Hips: 'Hips', Spine: 'Spine', Chest: 'Chest', UpperChest: 'UpperChest', Neck: 'Neck', Head: 'Head',
+    LeftUpperLeg: 'LeftUpperLeg', LeftLowerLeg: 'LeftLowerLeg', LeftFoot: 'LeftFoot',
+    LeftShoulder: 'LeftShoulder', LeftUpperArm: 'LeftUpperArm', LeftLowerArm: 'LeftLowerArm', LeftHand: 'LeftHand',
+    LeftIndexProximal: 'LeftIndexProximal', LeftIndexIntermediate: 'LeftIndexIntermediate', LeftIndexDistal: 'LeftIndexDistal',
+  };
+
+  it('ГЛАВНОЕ: фаланги получают офсеты — раньше их не было вообще и рисовалась хардкод-кисть', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    for (const nm of ['LeftIndexProximal', 'LeftIndexIntermediate', 'LeftIndexDistal']) expect(off[nm], nm).toBeDefined();
+  });
+
+  it('офсет = мировая дельта «родитель → кость», нормированная к нашему росту', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    // Сверяем ПРОПОРЦИИ, а не абсолют: офсеты нормируются к нашему росту и округляются до 2 знаков,
+    // поэтому осмысленно проверять именно соотношение звеньев модели (3 : 2 : 1.5 и Z:X = 1:3).
+    const prox = off['LeftIndexProximal']!, inter = off['LeftIndexIntermediate']!, dist = off['LeftIndexDistal']!;
+    expect(prox[0] / inter[0]).toBeCloseTo(3 / 2, 2);
+    expect(dist[0] / inter[0]).toBeCloseTo(1.5 / 2, 2);
+    expect(prox[2] / prox[0]).toBeCloseTo(1 / 3, 2);                 // Z не теряется — палец идёт и вперёд
+    expect(inter[2]).toBeCloseTo(0, 6);
+  });
+
+  it('родитель фаланги известен и цепь замкнута на кисть', () => {
+    expect(FINGER_PARENT['LeftIndexProximal']).toBe('LeftHand');
+    expect(FINGER_PARENT['LeftIndexIntermediate']).toBe('LeftIndexProximal');
+    expect(FINGER_PARENT['RightLittleDistal']).toBe('RightLittleIntermediate');
+    expect(Object.keys(FINGER_PARENT).length).toBe(30);
+  });
+
+  it('телесные замеры не изменились от расширения цикла', () => {
+    const off = measureBoneOffsets(mkRig(), MAP);
+    expect(off['Hips']).toBeDefined();
+    expect(off['LeftHand']).toBeDefined();
   });
 });

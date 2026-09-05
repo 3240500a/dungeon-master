@@ -9,7 +9,8 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, OUR_BONES, type RetargetRig } from './retarget3d.js';
+import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, OUR_BONES, OUR_FINGERS, type RetargetRig } from './retarget3d.js';
+const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая проверка «это фаланга?» для само-лечения замеров
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
 import { DEFAULT_PROFILE, type BodyProfile, type BoneScale } from './bodyProfile.js';
@@ -99,7 +100,10 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   function rebuildAsm(): void {
     if (asmSkin) { asmSkin.dispose(); asmSkin = null; }
     if (asmSrc) { scene.remove(asmSrc.root); asmSrc.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-    asmSrc = buildHumanoid({ profile: asmProfile, boneScale: curAtlas()?.boneScale, boneOffsets: curAtlas()?.boneOffsets });   // геометрия ФБХ → source=физ-скелет 1:1
+    // `fingers: true` ОБЯЗАТЕЛЕН (Ф14.1): без него `asmSrc.boneNames` не содержит фаланг, поэтому
+    // driveAsm ниже не копирует их повороты, а `RetargetRig.drive` молча делает `continue`
+    // (`driver.bones.get('LeftIndexProximal') === undefined`) — пальцы модели не шевелятся вообще.
+    asmSrc = buildHumanoid({ profile: asmProfile, boneScale: curAtlas()?.boneScale, boneOffsets: curAtlas()?.boneOffsets, fingers: true });   // геометрия ФБХ → source=физ-скелет 1:1
     asmSrc.root.visible = false;                  // источник невидим — видим меши атласа поверх
     scene.add(asmSrc.root);
     asmSkin = createModelSkin(scene, asmSrc);     // новый скин на НОВЫЙ источник (конформ к профилю с нуля)
@@ -108,8 +112,41 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
   async function applyAsm(): Promise<void> {
     if (!asmSkin) return;
     const atlas = curAtlas();
-    if (atlas) asmMeshes = await asmSkin.setAtlas(atlas, asmVisible, { materials: cfg.materials, textures: cfg.textures });
+    if (!atlas) return;
+    asmMeshes = await asmSkin.setAtlas(atlas, asmVisible, { materials: cfg.materials, textures: cfg.textures });
+    await healFingerOffsets(atlas);
   }
+
+  /**
+   * Ф14.2: САМО-ЛЕЧЕНИЕ ЗАМЕРОВ ПАЛЬЦЕВ.
+   * До Ф14.2 `measureBoneOffsets` шёл только по `OUR_BONES`, поэтому у всех уже импортированных
+   * моделей в конфиге лежат замеры БЕЗ фаланг (18 офсетов), и скелет рисовал хардкод-кисть.
+   * Переимпортировать руками не надо: если в записи пальцев нет, а в скелете они есть — замеряем и дописываем.
+   * Телесные замеры НЕ трогаем — только добавляем отсутствующие ключи.
+   * Замер делается ПО БИНД-ПОЗЕ (`skeleton.pose()`), иначе мы бы замерили текущую позу,
+   * в которую его уже ведёт риг; следующий `drive()` позу вернёт.
+   */
+  async function healFingerOffsets(atlas: ModelEntry): Promise<void> {
+    const t = asmSkin?.atlasExport(); if (!t) return;
+    const isFinger = (n: string): boolean => FINGER_SET.has(n);
+    if (Object.keys(atlas.boneOffsets ?? {}).some(isFinger)) return;         // уже вылечено
+    if (!Object.keys(t.boneMap).some(isFinger)) return;                      // у модели нет пальцев — нечего лечить
+    t.root.traverse((o) => { const sk = (o as THREE.SkinnedMesh).skeleton; if (sk) sk.pose(); });
+    t.root.updateMatrixWorld(true);
+    const off = measureBoneOffsets(t.root, t.boneMap);
+    const add: Record<string, [number, number, number]> = {};
+    for (const k of OUR_FINGERS) { const v = off[k]; if (v) add[k] = v; }
+    if (!Object.keys(add).length) return;
+    atlas.boneOffsets = { ...(atlas.boneOffsets ?? {}), ...add };            // НОВЫЙ объект → редактор увидит смену по ссылке
+    asmStatus = `\u0434\u043e\u0437\u0430\u043c\u0435\u0440\u0435\u043d\u044b \u043f\u0430\u043b\u044c\u0446\u044b: +${Object.keys(add).length} \u043e\u0444\u0441\u0435\u0442\u043e\u0432`;
+    try {
+      const models = cfg.models as ModelEntry[];
+      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models }) });
+    } catch { /* конфиг-сервер мог быть недоступен — в памяти замеры всё равно уже применены */ }
+    rebuildAsm();                                                            // source-риг построен со старой геометрией
+    renderBody();
+  }
+
   /** Импорт АТЛАСА: FBX/GLB (скелет + все части) → авто-классификация сабмешей → ОДИН GLB → конфиг character → превью. */
   async function importAtlas(get: () => Promise<THREE.Group>, name: string, atlasKey = ''): Promise<void> {
     asmStatus = 'импорт атласа…'; renderBody();
@@ -127,7 +164,8 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });   // g больше не нужен (превью грузит из url)
       const up = await uploadAsset(id, glb, 'model/gltf-binary');
       const key = atlasKey.trim() || undefined;   // пусто = глоб. игрок; для монстра = фракция (напр. 'undead')
-      const e: ModelEntry = { id, name, url: up.url, kind: 'character', classId: key, slots, body: { ...asmProfile }, boneScale, boneOffsets, base: false, hideHair: false, scale: 1, boneMap: {}, submeshMaterials: {} };
+      // Ф14.2: карта сохраняется, а не выбрасывается в `{}` — иначе её негде посмотреть и нечем править.
+      const e: ModelEntry = { id, name, url: up.url, kind: 'character', classId: key, slots, body: { ...asmProfile }, boneScale, boneOffsets, base: false, hideHair: false, scale: 1, boneMap: _map, submeshMaterials: {} };
       // КОПИЛКА: атласы копятся по ИМЕНИ (id). Заменяем лишь одноимённый (переимпорт того же файла) — все прочие целы.
       const models = (cfg.models as ModelEntry[]).filter((m) => m.id !== id).concat(e);
       const bodyJson = JSON.stringify({ models });
@@ -266,7 +304,7 @@ export function createModelsTab(scene: THREE.Scene): ModelsTabHandle {
       buildRig(entry.boneMap, entry.scale);
       for (const mesh of submeshes) { const mid = entry.submeshMaterials[mesh.name]; if (mid) applyMaterial(mesh, mid); }   // восстановить материалы
       const mapped = Object.values(entry.boneMap).filter(Boolean).length;
-      status = `загружено: ${submeshes.length} сабмеш(ей), карта костей ${mapped}/${OUR_BONES.length}, масштаб ${entry.scale}`;
+      status = `загружено: ${submeshes.length} сабмеш(ей), карта костей ${mapped}/${OUR_BONES.length + OUR_FINGERS.length}, масштаб ${entry.scale}`;
     } catch (e) { status = 'ошибка: ' + (e as Error).message; loaded = null; rig = null; }
     renderBody();
   }

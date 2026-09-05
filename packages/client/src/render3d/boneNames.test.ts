@@ -127,3 +127,30 @@ describe('boneNames — ложные срабатывания синонимов
     }
   });
 });
+
+describe('boneNames — НОСКИ не пальцы (реальный CC/AccuRIG-риг)', () => {
+  // Взято с живой модели `knight_05_modular_rig.glb`: у CC на СТОПЕ есть кости с теми же синонимами
+  // цепи, что и на кисти. Без отсечки `toe` карта отдавала 8 фаланг из 30 на стопу — проверено вживую.
+  const CC_HAND = ['Thumb', 'Index', 'Mid', 'Ring', 'Pinky'].flatMap((c) =>
+    ['L', 'R'].flatMap((s) => [1, 2, 3].map((i) => `CC_Base_${s}_${c}${i}`)));
+  const CC_TOES = ['L', 'R'].flatMap((s) => ['BigToe1', 'IndexToe1', 'MidToe1', 'RingToe1', 'PinkyToe1', 'ToeBase']
+    .map((t) => `CC_Base_${s}_${t}`));
+
+  it('ни одна кость СТОПЫ не разбирается как палец', () => {
+    for (const n of CC_TOES) expect(parseBoneName(n).chain, n).toBe(null);
+  });
+
+  it('карта пальцев — ровно 30 костей КИСТИ, без единого носка', () => {
+    const map = mapFingerBones([...CC_HAND, ...CC_TOES]);
+    expect(Object.keys(map).length).toBe(30);
+    for (const [our, raw] of Object.entries(map)) expect(raw, our).not.toMatch(/Toe/i);
+  });
+
+  it('сегменты не съезжают: 1→Proximal, 2→Intermediate, 3→Distal', () => {
+    const map = mapFingerBones([...CC_HAND, ...CC_TOES]);
+    expect(map['LeftIndexProximal']).toBe('CC_Base_L_Index1');
+    expect(map['LeftIndexIntermediate']).toBe('CC_Base_L_Index2');   // раньше сюда попадал CC_Base_L_IndexToe1
+    expect(map['LeftIndexDistal']).toBe('CC_Base_L_Index3');
+    expect(map['RightLittleIntermediate']).toBe('CC_Base_R_Pinky2');
+  });
+});

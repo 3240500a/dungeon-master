@@ -29,7 +29,8 @@ import { capturePose, pastePose, pasteIntoInterval, mirrorPoseSide, flipPoseSide
 import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
   mergeBoneScale, applyMorphChange, sampleMorph, rangeWarnings, type BodyMorph, type MorphKey, type MorphRange } from './bodyMorph.js';   // Ф8: морфинг тела   // Ф4: пины + full-body IK
 import { BUILTIN_GRIPS, findGrip, gripToPose, resolveGripPose, defaultWeaponGrip, applyGripPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
-registerExtraLimits(extraLimitView);   // до первого limitViewForBone
+registerExtraLimits((b) => extraLimitView(b, fingerAxes()));   // до первого limitViewForBone; Ф14.4 — оси из ЭТОГО рига
+import { deriveFingerAxes, type FingerAxes } from './fingerAxes.js';   // Ф14.4: оси сгиба пальцев из геометрии рига
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
@@ -145,6 +146,19 @@ const limitGizmo = makeLimitGizmo(); scene.add(limitGizmo.group);   // гизм�
 let showLimits = true;                                              // рисовать пределы выбранного сустава (дефолт вкл)
 let clampFk = true;                                                 // FK-драг клэмпит кость к пределу сустава (дефолт вкл)
 let human!: Humanoid;
+// Ф14.4: ОСИ ПАЛЬЦЕВ ЭТОГО РИГА (у импортированной модели кисть смотрит куда угодно — фиксированная ось
+// врёт). Кэш на объекте `Humanoid`: пересборка манекена создаёт новый объект → вывод обновляется сам,
+// а внутри кадра `limitViewForBone` зовётся десятки раз (FABRIK) и не должен пересчитывать оси.
+const _fingerAxCache = new WeakMap<Humanoid, Record<string, FingerAxes>>();
+function fingerAxes(): Record<string, FingerAxes> | null {
+  const h = human as Humanoid | undefined; if (!h) return null;
+  let a = _fingerAxCache.get(h);
+  if (!a) {
+    a = deriveFingerAxes((b) => { const g = h.bones.get(b); return g ? [g.position.x, g.position.y, g.position.z] : null; });
+    _fingerAxCache.set(h, a);
+  }
+  return a;
+}
 let mode: 'fk' | 'ik' = 'ik';
 // Перестроить гизмо предела под ВЫБРАННЫЙ сустав (FK-кость → rag-кость → эффективные лимиты). Дёшево — на выбор/правку.
 let curLimitView: LimitView | null = null;
@@ -716,7 +730,7 @@ function saveGrips(): void { try { localStorage.setItem('pe_gripposes', JSON.str
 const weaponGripBind = (): { L?: string; R?: string; closeL?: number; closeR?: number } =>
   (gripCfg.byWeapon[curCharId] ??= {})[weapon] ??= defaultWeaponGrip(weapon);
 /** Поза пальцев для текущего персонажа/оружия. */
-const curGripPose = (): Pose => resolveGripPose(gripCfg, curCharId, weapon);
+const curGripPose = (): Pose => resolveGripPose(gripCfg, curCharId, weapon, fingerAxes());
 /** Наложить хват на те фаланги, которые НЕ заданы позой кадра. */
 function applyGripOver(p?: Pose): void {
   if (!wantFingers()) return;
@@ -906,6 +920,8 @@ for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
 const modelsTab = createModelsTab(scene);
 let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
+let lastHasFingers = false;          // Ф14.1: пальцы атласа появляются ПОЗЖЕ boneScale (после загрузки GLB)
+let lastBO: unknown;                 // Ф14.2: само-лечение дописывает офсеты пальцев уже ПОСЛЕ загрузки — следим за сменой ССЫЛКИ
 
 function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
@@ -1188,7 +1204,10 @@ function gripSection(): void {
       pbtn('⇄ зеркало П→Л', () => histPose('зеркало хвата', () => {
         for (const nmb of human.boneNames) { if (!isHandBone(nmb) || !nmb.startsWith('Right')) continue;
           const dst = human.bones.get('Left' + nmb.slice(5)); const src = human.bones.get(nmb)!.rotation;
-          if (dst) dst.rotation.set(-src.x, -src.y, src.z); }
+          // Ф14.4: канон-зеркало нашего рига — `[x, −y, −z]` (`clipModel.mirrorSide`), а не самодельное
+          // `[−x, −y, z]`. Раньше оно случайно совпадало со знаками старого хвата; после переноса сгиба
+          // на выведенную ось совпадение бы кончилось и зеркалило бы палец не туда.
+          if (dst) dst.rotation.set(src.x, -src.y, -src.z); }
       })),
       pbtn('✕ сброс привязки', () => { delete (gripCfg.byWeapon[curCharId] ?? {})[weapon]; saveGrips(); goFrame(frameIdx); refreshAll(); }),
     );
@@ -2684,7 +2703,11 @@ function loop(): void {
   jiggle(dt);   // вторичное движение груди (female)
   // Атлас загрузился/сменился → пересобрать манекен/призрак/онион под пропорции ФБХ (boneScale), чтобы скелет
   // совпадал с мешем. Сравнение по ссылке (меняется только на импорте/загрузке конфига — редко).
-  { const bs = modelsTab.boneScale(); if (bs !== lastBS) { lastBS = bs; rebuildManikin(); if (pw) buildGhost(); disposeOnion(); } }
+  // Ф14.1: следим И за появлением пальцев. Раньше сравнивалась только ссылка `boneScale`, а она меняется
+  // РАНЬШЕ, чем догрузится GLB — манекен пересобирался с `fingers:false`, и пальцы не появлялись, пока
+  // не нажмёшь ✋. Со стороны это выглядело как «пальцы не работают».
+  { const bs = modelsTab.boneScale(), hf = modelsTab.hasFingers(), bo = modelsTab.boneOffsets();
+    if (bs !== lastBS || hf !== lastHasFingers || bo !== lastBO) { lastBS = bs; lastHasFingers = hf; lastBO = bo; rebuildManikin(); if (pw) buildGhost(); disposeOnion(); } }
   // Атлас-скин ведём ФИЗ-телом (ghostHuman) — как игра (скин на solid) → превью атласа = игра. Физ off → манекеном.
   // ghostHuman позирован stepPhysics выше (физ-бленд по PHYS.match), у него та же геометрия атласа (buildGhost).
   modelsTab.drive(physOn && ghostHuman ? ghostHuman : human);   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена

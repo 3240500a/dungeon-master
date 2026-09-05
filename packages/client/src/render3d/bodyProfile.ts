@@ -30,6 +30,7 @@ export function lenMult(boneName: string, p?: BodyProfile): number {
   if (!p) return 1;
   const h = p.height ?? 1;
   if (boneName === 'LeftLowerArm' || boneName === 'RightLowerArm' || boneName === 'LeftHand' || boneName === 'RightHand') return (p.arm ?? 1) * h;
+  if (FINGER_RE.test(boneName)) return (p.arm ?? 1) * h;   // Ф14.2: фаланги едут с рукой, иначе слайдер «длина рук» отрывает кисть от пальцев
   if (boneName === 'LeftLowerLeg' || boneName === 'RightLowerLeg' || boneName === 'LeftFoot' || boneName === 'RightFoot') return (p.leg ?? 1) * h;
   if (boneName === 'Spine' || boneName === 'Chest' || boneName === 'UpperChest') return (p.torso ?? 1) * h;
   return h;   // шея/голова/плечи/таз-офсеты/бёдра-офсет — общий рост

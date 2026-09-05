@@ -92,10 +92,16 @@ export function parseBoneName(raw: string): ParsedBone {
   if (tw) twist = tw[1] ? parseInt(tw[1], 10) : 1;
 
   // ── палец: цепь + номер сегмента ───────────────────────────────────────────
+  // НОСКИ НЕ ПАЛЬЦЫ. У CC/AccuRIG на стопе живут `L_IndexToe1`, `L_MidToe1`, `L_RingToe1`, `L_PinkyToe1` —
+  // подстрока цепи в них есть, и без этой отсечки носок занимал слот средней фаланги (проверено на живой
+  // модели: 8 из 30 костей карты указывали на стопу). Тот же класс ошибки, что синоним `fore` → `Forearm`.
+  // `LeftToes` при этом не теряется: он мапится телесной таблицей `CORE`, а не разбором пальцев.
   let chain: FingerChain | null = null;
   let chainKey = '';
-  for (const k of Object.keys(CHAIN_ALIAS)) {
-    if (core.includes(k) && k.length > chainKey.length) { chainKey = k; chain = CHAIN_ALIAS[k]!; }
+  if (!core.includes('toe')) {
+    for (const k of Object.keys(CHAIN_ALIAS)) {
+      if (core.includes(k) && k.length > chainKey.length) { chainKey = k; chain = CHAIN_ALIAS[k]!; }
+    }
   }
   let segment: number | null = null;
   if (chain) {

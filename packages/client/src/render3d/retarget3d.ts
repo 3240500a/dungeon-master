@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { mapFingerBones, allFingerBones } from './boneNames.js';
+import { mapFingerBones, allFingerBones, FINGER_CHAINS, FINGER_SEGMENTS } from './boneNames.js';
 
 // Эталонный скелет БЕЗ профиля (дефолтные длины) — знаменатель относительного конформа. Строим один раз.
 let _baseH: Humanoid | null = null;
@@ -33,6 +33,26 @@ export const OUR_FINGERS: readonly string[] = allFingerBones();
 /** Порядок ведения ретаргета: родитель раньше ребёнка (фаланги — дети кисти, поэтому после). */
 const DRIVE_ORDER: readonly string[] = [...OUR_BONES, ...OUR_FINGERS];
 const IS_FINGER = new Set<string>(OUR_FINGERS);
+
+/**
+ * Родитель фаланги в НАШЕЙ цепи (Ф14.2). Нужен ровно для одного — замера офсетов по модели.
+ * Без него `measureBoneOffsets` пропускал пальцы, наш скелет падал на хардкод `FINGER_GEO`, и от
+ * правильного (замеренного) запястья висела ЧУЖАЯ процедурная кисть.
+ * Выпрямление T-позы и конформ длин пальцев по-прежнему НЕ касаются — там они вредны.
+ */
+export const FINGER_PARENT: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const side of ['Left', 'Right'] as const) {
+    for (const ch of FINGER_CHAINS) {
+      for (let i = 0; i < 3; i++) {
+        out[side + ch + FINGER_SEGMENTS[i]] = i === 0 ? side + 'Hand' : side + ch + FINGER_SEGMENTS[i - 1];
+      }
+    }
+  }
+  return out;
+})();
+/** Родитель любой нашей кости (тело + фаланги) — одна точка правды для замеров. */
+export const parentOfOur = (our: string): string | undefined => OUR_PARENT[our as OurBone] ?? FINGER_PARENT[our];
 
 /** Родитель в цепи ретаргета (для конформа длин звеньев: segment = parent→child). */
 const OUR_PARENT: Partial<Record<OurBone, OurBone>> = {
@@ -183,9 +203,10 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   const scale = fbxH > 1e-3 ? 57 / fbxH : 1;   // нормировка к нашему росту ~57u
   const out: Record<string, [number, number, number]> = {};
   const legDrop = (hip && foot) ? (hip.y - foot.y) * scale : 32;
-  for (const our of OUR_BONES) {
+  // Ф14.2: пальцы ЗАМЕРЯЕМ (позиции и длины — из модели), но НЕ выпрямляем и не конформим.
+  for (const our of [...OUR_BONES, ...OUR_FINGERS] as string[]) {
     if (our === 'Hips') { out['Hips'] = [0, +(legDrop + 1).toFixed(2), 0]; continue; }   // высота таза = дроп ноги + зазор подошвы
-    const p = OUR_PARENT[our]; if (!p) continue;
+    const p = parentOfOur(our); if (!p) continue;
     const c = w(our), pp = w(p);
     if (c && pp) out[our] = [+((c.x - pp.x) * scale).toFixed(2), +((c.y - pp.y) * scale).toFixed(2), +((c.z - pp.z) * scale).toFixed(2)];
   }
