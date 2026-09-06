@@ -58,7 +58,7 @@ const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, 
  * СОСТОЯНИЕ ИНТЕРФЕЙСА (`pe_ui`) — ОДИН словарь на всё (Ф26.2). Было два независимых чтения того же ключа
  * и запись целиком — любое новое поле затирало бы соседей. Здесь же живут прозрачности и (дальше) свёрнутость свитков.
  */
-interface UiState { pro?: boolean; posMark?: boolean; aSkel?: number; aHandle?: number; open?: Record<string, boolean> }
+interface UiState { pro?: boolean; posMark?: boolean; aSkel?: number; aHandle?: number; open?: Record<string, boolean>; clipKind?: string; clipSort?: string; panelW?: number }
 const ui: UiState = (() => { try { return JSON.parse(localStorage.getItem('pe_ui') || '{}') as UiState; } catch { return {}; } })();
 function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify(ui)); savePoseKey('pe_ui'); } catch { /* */ } }
 /** Прозрачность скелета и ручек: по жалобе «скелет слишком активный, не видно, как выглядит меш». */
@@ -2198,9 +2198,38 @@ function focusHand(): void {
 }
 let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' | 'ai' = 'anim';
 const tabBar = document.createElement('div'); tabBar.style.cssText = 'display:flex;gap:3px;margin-bottom:6px';
-const body = document.createElement('div');
+let body: HTMLElement = document.createElement('div');
+const panelRoot = body;
 panel.append(tabBar, body);
+// ШИРИНА ПАНЕЛИ — тянется за левый край и помнится (Ф26.4): со свитками и списком клипов в 288px тесно.
+{
+  const grip = document.getElementById('panelgrip');
+  const setW = (w: number): void => { document.body.style.setProperty('--panelw', Math.round(clamp(w, 240, 620)) + 'px'); };
+  if (ui.panelW) setW(ui.panelW);
+  grip?.addEventListener('pointerdown', (ev: PointerEvent) => {
+    ev.preventDefault(); grip.setPointerCapture(ev.pointerId);
+    const move = (m: PointerEvent): void => { const w = window.innerWidth - m.clientX; setW(w); ui.panelW = Math.round(clamp(w, 240, 620)); };
+    const up = (): void => { grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); saveUi(); window.dispatchEvent(new Event('resize')); };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up);
+  });
+}
 const el = (t: string, css: string): HTMLElement => { const e = document.createElement(t); e.style.cssText = css; return e; };
+/**
+ * СВИТОК (Ф26.4) — сворачиваемый раздел, как в эдит-поли 3ds Max. Состояние живёт в `pe_ui.open`
+ * и переживает перезагрузку. Внутри `draw()` цель аппенда (`body`) временно подменена на контейнер свитка —
+ * поэтому весь старый код секций работает без правок. Прототип приёма — группы в дереве костей (Ф21).
+ */
+function rollout(key: string, title: string, draw: () => void, def = false): void {
+  const open = (ui.open ??= {})[key] ?? def;
+  const hdr = pbtn(`${open ? '▾' : '▸'} ${title}`, () => { (ui.open ??= {})[key] = !open; saveUi(); renderAnim(); }, open);
+  hdr.style.cssText += ';width:100%;text-align:left;margin-top:5px';
+  body.append(hdr);
+  if (!open) return;
+  const box = el('div', 'padding:1px 0 3px 5px;border-left:2px solid #2a3350;margin-left:2px');
+  body.append(box);
+  const outer = body; body = box;
+  try { draw(); } finally { body = outer; }
+}
 const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = `margin:2px 3px 2px 0;padding:3px 7px;background:${on ? '#3a5030' : '#2a3350'};color:#cfd3e0;border:1px solid #4a5680;border-radius:4px;cursor:pointer;font:11px monospace`; b.onclick = fn; return b; };
 // Вкладка «Повороты» авто-включает превью бега (`renderTurn`: locoOn=true). При уходе на не-локо вкладку его НАДО
 // выключить, иначе гейт продолжает вести манекен и перекрывает воспроизведение клипов («после Поворотов анимации не работают»).
@@ -2326,7 +2355,7 @@ function poseTools(): void {
   };
   phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('★ пин · жёсткость (кадр)', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
   phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);
-  physRigSection();
+  rollout('physrig', 'НАБОР ФИЗ-ТЕЛ (пересборка)', physRigSection);
   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
   // ── ЛИМИТЫ/МОТОРЫ суставов (RB3): множитель конусов/диапазонов + сила моторов. Применяется ПЕРЕСБОРКОЙ куклы на отпускание. ──
   const rgh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rgh.textContent = 'ЛИМИТЫ/МОТОРЫ (пересборка)'; body.append(rgh);
@@ -2435,9 +2464,9 @@ function poseTools(): void {
     pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { setPhys(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
     pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; if (ragdoll) ragdoll.group.visible = showBoxes; renderAnim(); }); }, showBoxes),
   );
-  poseLibSection();
-  gripSection();
-  boneTreeSection();
+  rollout('poses', 'ПОЗЫ И БУФЕР', poseLibSection);
+  rollout('grip', 'ХВАТ КИСТИ', gripSection);
+  rollout('bones', 'КОСТИ (FK)', boneTreeSection);
 }
 
 // ── Ф7: ПОЗЫ / КОПИРОВАНИЕ / ЗЕРКАЛО ──
@@ -2792,7 +2821,18 @@ function physRigSection(): void {
   note.textContent = 'Выключенное тело не теряется: его угол сливается в ближайшего потомка. Клип это не трогает.';
   body.append(note);
 }
-function renderAnim(): void { body.innerHTML = ''; clipSection(); animExportSection(); poseTools(); }
+/**
+ * Вкладка «Анимация» — свитки (Ф26.4). Скролл ПАНЕЛИ СОХРАНЯЕТСЯ: эта функция зовётся НА КАЖДЫЙ
+ * клик по кости/ручке (`refreshPose`/`refreshLimbs`), и без восстановления панель прыгала бы вверх после каждого тыка.
+ */
+function renderAnim(): void {
+  const top = panel.scrollTop;
+  body = panelRoot; body.innerHTML = '';
+  rollout('clips', 'КЛИПЫ И КАДРЫ', clipSection, true);
+  rollout('export', 'ЭКСПОРТ АНИМАЦИЙ → GLB', animExportSection);
+  poseTools();
+  panel.scrollTop = top;
+}
 
 // ── Ф2.3: ВЫВОЗ КЛИПОВ НАРУЖУ (GLB с анимациями + манифест) ──
 // Цель экспорта — ЗАГРУЖЕННЫЙ атлас (скин + его скелет), если он есть; иначе наш канон-манекен
@@ -2848,6 +2888,63 @@ function animExportSection(): void {
   );
   if (expStatus) { const st = el('div', 'font-size:10px;margin-top:3px;color:' + (expStatus[0] === '✗' ? '#e08080' : '#9ae6a0')); st.textContent = expStatus; body.append(st); }
 }
+/** Вид клипа для групп/фильтра — теми же префиксами, что читает игра и экспорт (`clipToAnimation`), чтобы UI и данные не разъехались. */
+type ClipKind = 'stance' | 'hit' | 'gait' | 'other';
+const clipKind = (n: string): ClipKind =>
+  /^(combat_)?idle_/.test(n) ? 'stance'
+  : /^(s_)?hit_/.test(n) ? 'hit'
+  : /^(idle|walk|run|strafe)(_|$)/.test(n) ? 'gait' : 'other';
+const KIND_LABEL: Record<ClipKind, string> = { stance: 'стойки', hit: 'удары', gait: 'ходьба', other: 'прочее' };
+/**
+ * СПИСОК КЛИПОВ (Ф26.4) — вертикальный, со СВОИМ скроллом, поиском, чипсами вида и сортировкой.
+ * Запечённая ходьба (`walk_*`/`run_*`/`strafe_*`) — ОТДЕЛЬНОЙ группой, свёрнутой по умолчанию: её пишет
+ * бейк с вкладки «Бег» десятками клипов, и вручную там делать обычно нечего.
+ */
+function clipList(list: Clip[]): void {
+  const f = el('div', 'display:flex;gap:3px;align-items:center;margin-top:4px'); body.append(f);
+  const inp = el('input', 'flex:1;min-width:60px;' + impInput) as HTMLInputElement;
+  inp.type = 'search'; inp.placeholder = 'поиск'; inp.value = clipFilter;
+  inp.oninput = () => { clipFilter = inp.value; renderAnim(); const el2 = panel.querySelector('input[type=search]') as HTMLInputElement | null; if (el2) { el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); } };
+  const sel = document.createElement('select'); sel.style.cssText = impInput;
+  for (const [v, lb] of [['name', 'а→я'], ['kind', 'по виду'], ['len', 'по кадрам']] as const) { const o = document.createElement('option'); o.value = v; o.textContent = lb; o.selected = clipSort === v; sel.append(o); }
+  sel.onchange = () => { clipSort = sel.value as typeof clipSort; ui.clipSort = clipSort; saveUi(); renderAnim(); };
+  f.append(inp, sel);
+  const chips = el('div', 'display:flex;flex-wrap:wrap;gap:2px;margin-top:2px'); body.append(chips);
+  for (const k of ['все', 'stance', 'hit', 'gait', 'other'] as const) {
+    const on = clipKindF === k;
+    chips.append(pbtn(k === 'все' ? 'все' : KIND_LABEL[k], () => { clipKindF = k; ui.clipKind = k; saveUi(); renderAnim(); }, on));
+  }
+  const q = clipFilter.trim().toLowerCase();
+  const shown = list.filter((c) => (!q || c.name.toLowerCase().includes(q)) && (clipKindF === 'все' || clipKind(c.name) === clipKindF));
+  const cmp = clipSort === 'len' ? (a: Clip, b2: Clip) => b2.keys.length - a.keys.length
+    : clipSort === 'kind' ? (a: Clip, b2: Clip) => clipKind(a.name).localeCompare(clipKind(b2.name)) || a.name.localeCompare(b2.name)
+    : (a: Clip, b2: Clip) => a.name.localeCompare(b2.name);
+  const gait = shown.filter((c) => clipKind(c.name) === 'gait').sort(cmp);
+  const main = shown.filter((c) => clipKind(c.name) !== 'gait').sort(cmp);
+  const box = el('div', 'max-height:186px;overflow-y:auto;margin-top:3px;border:1px solid #2a3350;border-radius:4px;padding:2px'); body.append(box);
+  const row = (cl: Clip): void => {
+    const i = list.indexOf(cl), act = i === clipIdx;
+    const r = el('div', `display:flex;align-items:center;gap:4px;padding:1px 3px;border-radius:3px;cursor:pointer;background:${act ? '#3a5030' : 'transparent'}`);
+    const nm = el('span', `flex:1;font-size:11px;color:${act ? '#eaf3de' : '#cfd3e0'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`);
+    nm.textContent = cl.name; nm.title = cl.name + ' · ' + KIND_LABEL[clipKind(cl.name)];
+    const cnt = el('span', 'font-size:10px;color:#6b7180'); cnt.textContent = String(cl.keys.length);
+    const del = el('span', 'font-size:10px;color:#8a6a6a;padding:0 2px'); del.textContent = '✗'; del.title = 'удалить';
+    del.onclick = (ev) => { ev.stopPropagation(); if (confirm('Удалить «' + cl.name + '»?')) delClip(cl); };
+    r.onclick = () => { clipIdx = i; frameIdx = 0; goFrame(0); };
+    r.append(nm, cnt, del); box.append(r);
+  };
+  for (const cl of main) row(cl);
+  if (gait.length) {
+    const open = (ui.open ??= {})['gaitGroup'] ?? false;
+    const g = pbtn(`${open ? '▾' : '▸'} ходьба (запечённая) · ${gait.length}`, () => { (ui.open ??= {})['gaitGroup'] = !open; saveUi(); renderAnim(); }, open);
+    g.style.cssText += ';width:100%;text-align:left'; box.append(g);
+    if (open) for (const cl of gait) row(cl);
+  }
+  if (!shown.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = list.length ? 'Ничего не нашлось — сними фильтр.' : 'Нет клипов для этого оружия. «+ новый» создаёт из текущей позы.'; box.append(e); }
+}
+let clipFilter = '';
+let clipKindF: 'все' | ClipKind = (ui.clipKind as 'все' | ClipKind) ?? 'все';
+let clipSort: 'name' | 'kind' | 'len' = (ui.clipSort as 'name' | 'kind' | 'len') ?? 'name';
 function clipSection(): void {
   const list = clipsHere();
   const info = el('div', 'color:#9ae6a0;margin-bottom:4px'); info.textContent = `${curChar().name} · ${weapon} · клипов: ${list.length}`; body.append(info);
@@ -2889,14 +2986,7 @@ function clipSection(): void {
       pbtn('⚙ запечь физику', () => { void bakeCurrentClip(); }),
     );
   }
-  const selr = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:5px'); body.append(selr);
-  list.forEach((cl, i) => {   // клип = кнопка выбора + ✗ удалить (любую позу/анимацию прямо из списка)
-    const grp = el('div', 'display:inline-flex;align-items:center');
-    grp.append(pbtn(cl.name, () => { clipIdx = i; frameIdx = 0; goFrame(0); }, i === clipIdx));
-    grp.append(pbtn('✗', () => { if (confirm('Удалить «' + cl.name + '»?')) delClip(cl); }));
-    selr.append(grp);
-  });
-  if (!list.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = 'Нет клипов для этого оружия. «+ новый» создаёт из текущей позы.'; body.append(e); }
+  clipList(list);
   if (c) {
     const isAtk = isAttackClip(c); const lockEnds = isAtk || !!c.idleEnds; const lastI = c.keys.length - 1;   // концы = стойка (удар hit_ ИЛИ импорт с idleEnds)
     const isEnd = (i: number): boolean => lockEnds && (i === 0 || i === lastI);
@@ -2932,7 +3022,7 @@ function clipSection(): void {
     trajBtn = pbtn(trajLabel(), () => { trajOn = !trajOn; refreshAll(); }, trajOn);
     trajBtn.title = 'Путь выбранной кости за весь клип. Расстояние между точками = скорость (сетка времени равномерная).';
     vr.append(trajBtn); }
-  curveSection(c);
+  rollout('curve', 'КРИВАЯ ПЕРЕХОДА', () => curveSection(c));
   }
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); eh.textContent = 'ЭКСПОРТ / ИМПОРТ'; body.append(eh);
   const ta = el('textarea', 'width:100%;height:70px;background:#0e1016;color:#9ae6a0;border:1px solid #39415a;border-radius:4px;font:10px monospace') as HTMLTextAreaElement; body.append(ta);
