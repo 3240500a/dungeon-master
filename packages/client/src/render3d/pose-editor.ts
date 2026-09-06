@@ -508,7 +508,7 @@ function syncHandles(): void {
   // таза от тяги тела каждый кадр ВПИТЫВАЛСЯ в авторскую позу (замер: 3.2° → 6.2° → 9.1° → 14.2° за пять кадров),
   // плечо уезжало вместе с ним, и тяга, меряемая от плеча, таяла — корпус САМ РАСПРЯМЛЯЛСЯ за несколько кадров
   // (жалоба «он выпрямляет корпус и руки уезжают»). Авторский таз меняют ручка таза, FK-правка и смена позы — они пишут явно.
-  const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position);
+  const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position).sub(balanceOff);   // Ф26.6б: без вычета сдвиг баланса впитался бы в позу и персонаж уползал
   human.root.updateMatrixWorld(true);
   // Ф25.5: без исключения `activePole` — вне драга оно только мешало: ручка кисти не садилась на кисть
   // до следующего клика (замер: расхождение 1.8u держалось после отпускания).
@@ -765,6 +765,83 @@ function bodyFollowAngles(e: Eff, missDrive = 0): [number, number, number] | nul
   const yaw = Math.atan2(v.z, v.x * side);                   // 0 = рука вбок (нейтраль), + вперёд, − назад
   const cross = Math.min(0, (v.x * side) / L);               // рука ушла ЗА СРЕДИНУ тела → боковой наклон
   return [-side * yaw * gTwist * amt, -elev * gPitch * amt, -side * cross * BEND_ROLL * 2 * gRoll * amt];
+}
+/**
+ * ЦЕНТР МАСС ПО ФИЗ-ТЕЛАМ (Ф26.6б). Масса тела = объём его формы × плотность, положение — центр формы
+ * на ТЕКУЩЕЙ позе (кость цепи + смещение, повёрнутое её мировым кватернионом). Плюс масса оружия в кистях —
+ * топор реально тянет центр масс туда, куда его вынесли.
+ *
+ * Почему по физ-телам, а не по «примерным весам костей»: после Ф26.5 тела сняты с костей и едут за
+ * морфом — значит центр масс автоматически верен для толстого, худого и высокого без отдельной таблицы.
+ */
+function massCenter(): { p: THREE.Vector3; m: number } {
+  const p = V(); let m = 0;
+  human.root.updateMatrixWorld(true);
+  for (const pb of physBodies()) {
+    const sh = pb.shape;
+    const vol = sh.k === 'box' ? 8 * sh.h[0]! * sh.h[1]! * sh.h[2]!
+      : sh.k === 'sphere' ? (4 / 3) * Math.PI * sh.r ** 3
+      : sh.k === 'cylinder' ? Math.PI * sh.r ** 2 * sh.half * 2
+      : Math.PI * sh.r ** 2 * sh.half * 2 + (4 / 3) * Math.PI * sh.r ** 3;
+    const bone = human.bones.get((pb.chain.length ? pb.chain : [pb.name])[0]!); if (!bone) continue;
+    const c = bone.getWorldPosition(V()).add(V().set(pb.off[0], pb.off[1], pb.off[2]).applyQuaternion(bone.getWorldQuaternion(Q())));
+    p.addScaledVector(c, vol); m += vol;
+  }
+  const [lw, rw] = weaponHandMasses(weapon);                                    // оружие в кг → в тех же единицах объёма
+  for (const [nm, kg] of [['LeftHand', lw], ['RightHand', rw]] as const) {
+    if (kg <= 0) continue;
+    const b = human.bones.get(nm); if (!b) continue;
+    const vol = kg / 1000 * 32 * 32 * 32;   // кг → объём в юнитах при метре = 32u (та же плотность, что у тел)
+    p.addScaledVector(b.getWorldPosition(V()), vol); m += vol;
+  }
+  if (m > 1e-6) p.multiplyScalar(1 / m);
+  return { p, m };
+}
+/** ОПОРА: прямоугольник в плане по стоящим стопам (запиненным или лежащим на полу). Нет таких — баланс не работает. */
+function supportRect(): { x0: number; x1: number; z0: number; z1: number } | null {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, n = 0;
+  for (const k of ['LF', 'RF'] as const) {
+    const e = rig.eff[k]; if (!e) continue;
+    const f = human.bones.get(e.end); if (!f) continue;
+    const p = f.getWorldPosition(V());
+    if (p.y > SOLE_STAND) continue;                                             // ОПОРА — ЭТО ВЫСОТА, А НЕ ПИН: заколотая в воздухе стопа ничего не держит
+    x0 = Math.min(x0, p.x - FOOT_HALF); x1 = Math.max(x1, p.x + FOOT_HALF);
+    z0 = Math.min(z0, p.z - FOOT_HALF); z1 = Math.max(z1, p.z + FOOT_HALF * 1.6);   // носок длиннее пятки
+    n++;
+  }
+  return n ? { x0, x1, z0, z1 } : null;
+}
+const SOLE_STAND = 4;      // выше этого над полом стопа считается поднятой
+const FOOT_HALF = 3;       // полуширина стопы в плане
+const BAL_MARGIN = 0.75;   // целимся не в край опоры, а внутрь неё
+const BAL_TRANSFER = 0.65; // доля массы выше таза: сдвинув таз на X, центр масс едет примерно на 0.65X
+const BAL_MAX = 9;         // дальше таз не едет — это уже шаг, а не перенос веса
+const balanceOff = V();    // текущий сдвиг таза от баланса (НЕ авторский! см. `syncHandles`)
+let balanceOn = true, weightShift = 0.6;
+/**
+ * ПЕРЕНОС ВЕСА (Ф26.6б) — таз сдвигается так, чтобы проекция центра масс оставалась над опорой.
+ * Это то, что в Cascadeur делает физический риг: тянешь руку далеко вбок — человек отставляет таз в другую.
+ *
+ * Сдвиг живёт в ОТДЕЛЬНОМ `balanceOff`, а НЕ в `rig.hipsPos`: от авторской позиции считается дельта драга
+ * таза (урок Ф22.4), а `syncHandles` её перечитывает с живой кости — без вычета смещение впиталось бы в позу
+ * каждый кадр и персонаж уползал (та же утечка, что была у доворота таза в Ф26.7).
+ */
+function applyBalance(): void {
+  balanceOff.set(0, 0, 0);
+  if (!balanceOn || weightShift <= 0) return;
+  const sup = supportRect(); if (!sup) return;
+  for (let it = 0; it < 2; it++) {
+    const { p } = massCenter();
+    const tx = clamp(p.x, sup.x0 + (sup.x1 - sup.x0) * (1 - BAL_MARGIN) * 0.5, sup.x1 - (sup.x1 - sup.x0) * (1 - BAL_MARGIN) * 0.5);
+    const tz = clamp(p.z, sup.z0 + (sup.z1 - sup.z0) * (1 - BAL_MARGIN) * 0.5, sup.z1 - (sup.z1 - sup.z0) * (1 - BAL_MARGIN) * 0.5);
+    const dx = (tx - p.x) / BAL_TRANSFER * weightShift, dz = (tz - p.z) / BAL_TRANSFER * weightShift;
+    if (Math.hypot(dx, dz) < 0.05) break;
+    const nx = clamp(balanceOff.x + dx, -BAL_MAX, BAL_MAX), nz = clamp(balanceOff.z + dz, -BAL_MAX, BAL_MAX);
+    human.hips.position.x += nx - balanceOff.x; human.hips.position.z += nz - balanceOff.z;
+    balanceOff.set(nx, 0, nz);
+    human.root.updateMatrixWorld(true);
+  }
+  clampHipsToPins();                                                            // таз не уедет туда, откуда ноги не дотянутся (Ф22.2)
 }
 const LIMB_PREFER_ARM = new THREE.Vector3(0, -1, -0.4);   // локоть назад-вниз (UE PBIK «preferred angle»)
 const LIMB_PREFER_LEG = new THREE.Vector3(0, 0, 1);       // колено вперёд
@@ -1082,6 +1159,7 @@ function solveRigAnalytic(): void {
     }
     solveLimbAssisted(e, false);                                                // корпус добирает только под перетаскиваемую (тяга от всех уже применена выше)
   }
+  if (activeKey !== 'hips') applyBalance();                                      // Ф26.6б: центр масс над опорой (при драге таза командует человек)
   if (holdPins() > PULL_SLACK && pinPower >= 1 && pullBase) {                    // пин не удержался — виновата тяга корпуса, снимаем её
     pullRelax();
     if (ae && ae.ik) solveLimb(ae, ae.target, naturalPole(ae, ae.target));
@@ -2303,6 +2381,9 @@ function poseTools(): void {
       grow('наклон', () => gRoll, (v) => { gRoll = v; }, 1.5);
       grow('таз доворачивает', () => pelvisFollow, (v) => { pelvisFollow = v; }, 0.5);
     }
+    const br = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:3px'); body.append(br);
+    br.append(pbtn(balanceOn ? 'баланс: вкл' : 'баланс: выкл', () => { balanceOn = !balanceOn; refreshLive(); renderAnim(); }, balanceOn));
+    if (uiPro) grow('перенос веса', () => weightShift, (v) => { weightShift = v; }, 1);
     const gh = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); gh.textContent = 'гибкость персонажа (доспех сковывает, акробат гибче)'; body.append(gh);
     grow('гибк. скрутка', () => flexTw, (v) => { flexTw = v; }, 2, saveFlex);
     grow('гибк. наклоны', () => flexBend, (v) => { flexBend = v; }, 2, saveFlex);
@@ -4392,7 +4473,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
