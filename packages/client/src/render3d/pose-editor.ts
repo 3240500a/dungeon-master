@@ -379,7 +379,7 @@ function syncHandles(): void {
 }
 /** Поза ЗАМЕНЕНА (клип/кадр/T-поза/undo): всё перечитываем заново, включая пины и опору корпуса. */
 function captureRig(): void {
-  pullForget();
+  pullForget(); hipsGood = null; pinBase = 0; goodPose.clear();
   const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position); rig.hipsQuat.copy(hips.quaternion);
   human.root.updateMatrixWorld(true);
   for (const e of effList()) syncEff(e);
@@ -437,7 +437,9 @@ function solveRig(): void {
   const anchorBone = plan.anchorBone;
   if (plan.targets.size) {
     const f = getFbik();
-    f.solve(plan.targets, { bone: anchorBone, pos: plan.anchorPos ?? human.hips.getWorldPosition(V()) }, plan.mask, plan.poles, plan.rigid);
+    const anchor = { bone: anchorBone, pos: plan.anchorPos ?? human.hips.getWorldPosition(V()) };
+    f.solve(plan.targets, anchor, plan.mask, plan.poles, plan.rigid);
+    if (activeKey === 'hips') hipsFollowPins(f, plan, anchor);   // Ф22.4: таз не уйдёт туда, откуда ноги не дотянутся
     // PULL — ВТОРАЯ ПОПЫТКА ПО ФАКТИЧЕСКОМУ НЕДОЛЁТУ, а не по расчётной длине цепи (Ф21.4).
     //
     // Первая версия сравнивала дистанцию до цели с суммой длин звеньев — то есть видела только «далеко»
@@ -462,7 +464,7 @@ function solveRig(): void {
         if (!pullBase) { pullBase = new Map(); for (const n of TWIST_BONES) { const b = human.bones.get(n); if (b) pullBase.set(n, b.quaternion.clone()); } }
         twistTorso(human, res, PULL_W);
         human.root.updateMatrixWorld(true);
-        f.solve(plan.targets, { bone: anchorBone, pos: plan.anchorPos! }, plan.mask, plan.poles, plan.rigid);   // плечо уехало — дорешаем руку
+        f.solve(plan.targets, anchor, plan.mask, plan.poles, plan.rigid);   // плечо уехало — дорешаем руку
       }
       // ФАБРИКА ПО СПИНЕ ЗДЕСЬ НЕ ДЕЛАЕТСЯ, и это ЗАМЕРЕННОЕ решение, а не лень. Была вторая
       // ступень: «если после скрутки всё ещё не дотянулись — добавить корпус в маску FABRIK«. Замер на тяге
@@ -486,7 +488,10 @@ function solveRig(): void {
     if (!e.pin && k !== activeKey) e.target.copy(human.bones.get(e.end)!.getWorldPosition(V()));
     if (e.isFoot) e.footQuat.copy(human.bones.get(e.end)!.getWorldQuaternion(Q()));
   }
-  rig.hipsPos.copy(human.hips.position);   // солвер мог сдвинуть таз (пины его ограничивают)
+  // ЖЕЛАНИЕ НЕ ЗАТИРАЕМ ФАКТОМ (Ф22.4). Здесь стояло `rig.hipsPos.copy(human.hips.position)`, и кламп
+  // дрался с драгом: `moveHips` считает дельту ОТ `rig.hipsPos`, а тот уезжал под кламп.
+  // Теперь `rig.hipsPos` = ЖЕЛАНИЕ (куда тянешь), кость = РЕЗУЛЬТАТ — точно как у ручки кисти,
+  // которая может быть вне досягаемости. `syncHandles` вне драга схлопывает желание к факту.
 }
 /**
  * КОРНИ ЦЕПЕЙ (аналог Chain Length в Blender). Рука решается до КЛЮЧИЦЫ, нога — до ТАЗА.
@@ -555,6 +560,18 @@ function chainReach(chain: string[]): number {
  * Несколько пинов — пересечение шаров, берётся итерациями (как в FABRIK): 4 прохода сходятся.
  */
 const HIP_SLACK = 0.995;                                     // пара промилле запаса: строго прямая конечность — сингулярность для IK
+const PIN_SLACK = 1.5;                                       // допуск на ТРАНЗИЕНТ солвера. 0.25 было СЛИШКОМ СТРОГО:
+// мелкий рабочий промах читался как срыв фиксатора, откат шёл каждый кадр и таз не двигался вовсе
+// (замер: y = 36.7 на пяти разных тягах подряд). Настоящий срыв — это десятки юнитов, его этот порог ловит.                                      // меньше четверти юнита недолёта — таз не дёргаем
+/**
+ * ПРЕД-КЛАМП по шару досягаемости — грубый, но дешёвый первый шаг.
+ *
+ * Меняет ТОЛЬКО `human.hips.position`, а НЕ `rig.hipsPos`. Это важно: `rig.hipsPos` — ЭТО ЖЕЛАНИЕ
+ * ПОЛЬЗОВАТЕЛЯ (туда он тянет ручку), а позиция кости — РЕЗУЛЬТАТ, как у любого эффектора.
+ * Первая версия писала в `rig.hipsPos`, и кламп дрался с драгом: `moveHips` считает дельту
+ * ОТ `rig.hipsPos`, а кламп его же сдвигал — ручка уезжала от таза. `syncHandles` вне драга
+ * схлопывает желание к факту, так что после отпускания мыши ручка сама возвращается на таз.
+ */
 function clampHipsToPins(): void {
   const lim: { root: string; goal: THREE.Vector3; reach: number }[] = [];
   for (const k in rig.eff) {
@@ -567,16 +584,74 @@ function clampHipsToPins(): void {
   for (let it = 0; it < 4; it++) {
     let moved = 0;
     for (const L of lim) {
-      human.hips.position.copy(rig.hipsPos); human.root.updateMatrixWorld(true);
+      human.root.updateMatrixWorld(true);
       const r = human.bones.get(L.root)?.getWorldPosition(V()); if (!r) continue;
       const d = r.distanceTo(L.goal);
       if (d <= L.reach) continue;
-      rig.hipsPos.addScaledVector(r.sub(L.goal).multiplyScalar(1 / d), L.reach - d);   // подтянули к поверхности шара
+      human.hips.position.addScaledVector(r.sub(L.goal).multiplyScalar(1 / d), L.reach - d);
       moved = Math.max(moved, d - L.reach);
     }
     if (moved < 1e-3) break;
   }
-  human.hips.position.copy(rig.hipsPos); human.root.updateMatrixWorld(true);
+  human.root.updateMatrixWorld(true);
+}
+/**
+ * ТАЗ ОСТАНАВЛИВАЕТСЯ ТАМ, ГДЕ ФИКСАТОРЫ ЕЩЁ ДЕРЖАЛИСЬ (Ф22.4). Зовётся ПОСЛЕ солва.
+ *
+ * Почему шара досягаемости НЕ ХВАТАЕТ: он ловит только «слишком далеко». А на приседе цель
+ * недостижима по СЛИШКОМ БЛИЗКО и по УГЛУ в суставах — шар этого не видит, и таз спокойно
+ * уходил ПОД ПОЛ, утаскивая стопы (замер без этой функции: стопа на y = −34.6, отрыв 37.6u).
+ *
+ * ПОЧЕМУ ИМЕННО ОТКАТ, А НЕ ПОИСК МИНИМУМА. Первая версия двигала таз на вектор недолёта и
+ * пересолвливала. Беда в том, что цель стопы достижима ДВУМЯ разными позами — ПРИСЕДОМ и СТОЙКОЙ,
+ * — и поиск минимума уводил в стойку: тянешь таз ВНИЗ, а персонаж ВЫПРЯМЛЯЕТСЯ (замер: колено
+ * 126° → 0.4°, таз 19.5 → 25.5). Демпфер шага проблему не решил, а размазал: перещёлк ушёл
+ * дальше по глубине, зато отрыв пинов вырос до 5–8u.
+ *
+ * Правильная семантика фиксатора — НЕ «найди лучшее положение», а «ДАЛЬШЕ НЕ ПУЩУ». Поэтому
+ * во время драга помним ПОСЛЕДНЕЕ ХОРОШЕЕ положение таза и откатываемся к нему, как только
+ * пин срывается. Таз упирается в предел и стоит, ветка решения не перещёлкивается, отрыв ≈ 0.
+ */
+let hipsGood: THREE.Vector3 | null = null;
+let pinBase = 0;
+const goodPose = new Map<string, THREE.Quaternion>();        // поза решаемых костей в тот же момент                                             // отрыв пинов НА НАЧАЛО драга: двигать таз можно, пока не становится ХУЖЕ                   // последняя позиция таза, при которой фиксаторы держались
+/** Запомнить текущий кадр как ХОРОШИЙ: позицию таза И позу всех костей цепей пинов. */
+function markHipsGood(bones?: Iterable<string>): void {
+  hipsGood = human.hips.position.clone();
+  goodPose.clear();
+  const list = bones ?? (function* (): Generator<string> {
+    for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.pin) yield* boneChain(e.end, 'Hips'); }
+  })();
+  for (const n of list) { const b = human.bones.get(n); if (b) goodPose.set(n, b.quaternion.clone()); }
+}
+/** Максимальный отрыв запиненного конца от своей цели (мир). */
+function pinMiss(): number {
+  human.root.updateMatrixWorld(true);
+  let worst = 0;
+  for (const k in rig.eff) {
+    const e = rig.eff[k]!;
+    if (!e.ik || !e.pin) continue;
+    worst = Math.max(worst, human.bones.get(e.end)!.getWorldPosition(V()).distanceTo(e.target));
+  }
+  return worst;
+}
+function hipsFollowPins(f: FbikRig, plan: SolvePlan, anchor: { bone: string; pos: THREE.Vector3 }): void {
+  if (!effList().some((e) => e.ik && e.pin)) { hipsGood = null; return; }
+  // КРИТЕРИЙ — «НЕ УХУДШАТЬ», а не «быть идеальным». С абсолютным порогом таз ЗАСТРЕВАЛ:
+  // солвер не идеален, отрыв 1.3u оставался с прошлого драга, порог 0.25 не достигался никогда
+  // — и каждый кадр шёл откат, таз навечно прибивало к одной точке (замер: y = 24.7 на ЛЮБОЙ тяге).
+  const m = pinMiss();
+  if (m <= pinBase + PIN_SLACK) {
+    // Снимок ЦЕЛИКОМ, а не одна позиция таза: откат только таза оставлял ноги в испорченной
+    // конфигурации — замер: при ТОМ ЖЕ тазе y = 22.7 отрыв был то 1.32, то 10.3 (колено 113° → 119°).
+    pinBase = Math.min(pinBase, m); markHipsGood(plan.mask);
+    return;
+  }
+  if (!hipsGood) return;                                     // срыв был ещё до драга — откатываться некуда
+  human.hips.position.copy(hipsGood);
+  for (const [n, q] of goodPose) human.bones.get(n)?.quaternion.copy(q);
+  human.root.updateMatrixWorld(true);
+  void f; void anchor;                                       // пересолв не нужен: восстановлен ЦЕЛЫЙ валидный кадр
 }
 
 /**
@@ -637,7 +712,14 @@ function solvePlan(): SolvePlan {
     anchorBone = 'Hips'; anchorPos = human.hips.getWorldPosition(V());
     for (const n of [...mask]) if (isHandBone(n)) mask.delete(n);
     const poles0 = new Map<string, THREE.Vector3>();
-    for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.poleSet && mask.has(e.mid)) poles0.set(e.mid, e.pole.clone()); }
+    // У НОГ ПОЛЮС РАБОТАЕТ ВСЕГДА (Ф22.4), у рук — только после ручного драга.
+  //
+  // Колено смотрит вперёд — это АНАТОМИЯ, а не «ручная докрутка». Без полюса сторона сгиба
+  // берётся из ЗНАКА ПРЕДЕЛА через ось шарнира В МИРЕ, а она зависит от ориентации бедра —
+  // получается самоподдерживающийся ФЛИП. Замер на приседе: сгиб колена 70.4° → ВНЕЗАПНО 2.3°,
+  // таз проваливался на 20u, нога уходила вбок — «шпагат» со скрина юзера. У рук включённый
+  // всегда полюс, наоборот, ронял недолёт с 0 до 15–17u (Ф21.5) — поэтому разделённо.
+  for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && (e.poleSet || e.isFoot) && mask.has(e.mid)) poles0.set(e.mid, e.pole.clone()); }
     return { mask, targets, rigid, anchorBone, anchorPos, pull: null, poles: poles0 };
   }
 
@@ -673,7 +755,14 @@ function solvePlan(): SolvePlan {
   // свивель локтя загоняет твист плеча за его предел (±80°), клэмп режет — и рука перестаёт целиться.
   // Так же сказано и в плане Ф21: «полюс — только когда его двигали; иначе прежний знак предела».
   const poles = new Map<string, THREE.Vector3>();
-  for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.poleSet && mask.has(e.mid)) poles.set(e.mid, e.pole.clone()); }
+  // У НОГ ПОЛЮС РАБОТАЕТ ВСЕГДА (Ф22.4), у рук — только после ручного драга.
+  //
+  // Колено смотрит вперёд — это АНАТОМИЯ, а не «ручная докрутка». Без полюса сторона сгиба
+  // берётся из ЗНАКА ПРЕДЕЛА через ось шарнира В МИРЕ, а она зависит от ориентации бедра —
+  // получается самоподдерживающийся ФЛИП. Замер на приседе: сгиб колена 70.4° → ВНЕЗАПНО 2.3°,
+  // таз проваливался на 20u, нога уходила вбок — «шпагат» со скрина юзера. У рук включённый
+  // всегда полюс, наоборот, ронял недолёт с 0 до 15–17u (Ф21.5) — поэтому разделённо.
+  for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && (e.poleSet || e.isFoot) && mask.has(e.mid)) poles.set(e.mid, e.pole.clone()); }
   return { mask, targets, rigid, anchorBone, anchorPos, pull, poles };
 }
 function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.add(delta); for (const e of effList()) if (!e.isFoot && !e.pin && e !== except) e.target.add(delta); }
@@ -707,7 +796,7 @@ canvas.addEventListener('pointerdown', (ev) => {
     const hit = ray.intersectObjects(list, false)[0];
     if (hit) {
       activeKey = null; activePole = null;
-      if (hit.object === rig.hipsHandle) { activeKey = 'hips'; gizmo.setSpace('world'); gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); gizmo.attach(rig.hipsHandle); }
+      if (hit.object === rig.hipsHandle) { activeKey = 'hips'; pinBase = pinMiss(); markHipsGood(); gizmo.setSpace('world'); gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); gizmo.attach(rig.hipsHandle); }
       else {
         const endK = Object.keys(rig.eff).find((k) => rig.eff[k]!.handle === hit.object);
         const polK = Object.keys(rig.eff).find((k) => rig.eff[k]!.poleHandle === hit.object);
@@ -3313,7 +3402,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, get fbikOn() { return fbikOn; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, get fbikOn() { return fbikOn; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
