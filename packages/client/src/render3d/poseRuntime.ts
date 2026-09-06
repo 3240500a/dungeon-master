@@ -533,12 +533,22 @@ export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProf
   if (Math.abs(residual) > twist.maxTwist) residual = Math.sign(residual) * twist.maxTwist;   // кламп (не выворачивать шею)
   return { rootYaw: root, residual, turning };
 }
-/** Навесить скрутку на риг: таз на rootYaw + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ gaitToHumanoid. */
-export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number]): void {
+/**
+ * ТОЛЬКО АДДИТИВНАЯ скрутка цепочки [Spine..Head] (веса сумм.=1), БЕЗ таза.
+ *
+ * Отделено от `applyTorsoTwist` ради РУЧНОГО ПОЗИНГА (Ф21.4): в редакторе таз АВТОРСКИЙ,
+ * его `rotation.y` перезаписывать нельзя — а сама развёртка остатка по спине нужна та же самая,
+ * что и в походке. Один шов — одинаковый вид скрутки в анимации и в ручной позе.
+ */
+export function twistTorso(human: Humanoid, residual: number, weights: [number, number, number, number, number]): void {
   const H = human.bones;
-  H.get('Hips')!.rotation.y = rootYaw;                        // facing таза (углы ног body-local → корень на rootYaw)
   // rotateY аддитивен поверх авторской позы; цепочка Spine→…→Head накапливает → плечи/голова ведут, оружие (на UpperChest) следом.
   for (let i = 0; i < TWIST_BONES.length; i++) { const b = H.get(TWIST_BONES[i]!); if (b && weights[i]) b.rotateY(residual * weights[i]!); }
+}
+/** Навесить скрутку на риг: таз на rootYaw + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ gaitToHumanoid. */
+export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number]): void {
+  human.bones.get('Hips')!.rotation.y = rootYaw;              // facing таза (углы ног body-local → корень на rootYaw)
+  twistTorso(human, residual, weights);
 }
 const _UP_Y = new THREE.Vector3(0, 1, 0);
 const _hlCur = new THREE.Quaternion(), _hlDes = new THREE.Quaternion(), _hlP = new THREE.Quaternion();

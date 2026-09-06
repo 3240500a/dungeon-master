@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PoseDriver, GAIT } from './pose.js';
-import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT, measureStancePlants, resolveTwistStates, blendTwist } from './poseRuntime.js';
+import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT, measureStancePlants, resolveTwistStates, blendTwist, twistTorso, applyTorsoTwist } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
 import * as THREE from 'three';
 
@@ -606,5 +606,45 @@ describe('resolveTwistStates / blendTwist — скрутка по состоян
     const w = blendTwist(s, GAIT.speedRun).weights;
     expect(w[4]).toBeCloseTo(1, 5);   // на бегу вес полностью на Head
     expect(w[2]).toBeCloseTo(0, 5);
+  });
+});
+
+/**
+ * АДДИТИВНАЯ СКРУТКА КОРПУСА (Ф21.4). Выделена из `applyTorsoTwist` ради ручного позинга:
+ * в редакторе таз АВТОРСКИЙ, и перезапись `Hips.rotation.y` стёрла бы позу каждый кадр драга.
+ */
+describe('twistTorso — скрутка без таза (Ф21.4)', () => {
+  const W: [number, number, number, number, number] = [0.2, 0.4, 0.4, 0, 0];
+
+  it('ГЛАВНОЕ: таз НЕ ТРОГАЕТСЯ, в отличие от applyTorsoTwist', () => {
+    const h = buildHumanoid({});
+    h.bones.get('Hips')!.rotation.y = 0.37;                   // авторский рыск таза
+    twistTorso(h, 0.4, W);
+    expect(h.bones.get('Hips')!.rotation.y).toBeCloseTo(0.37, 9);
+    applyTorsoTwist(h, 0, 0.4, W);                            // а вот она — перезаписывает
+    expect(h.bones.get('Hips')!.rotation.y).toBeCloseTo(0, 9);
+  });
+
+  it('остаток размазан по весам, а не всажен в одну кость', () => {
+    const h = buildHumanoid({});
+    twistTorso(h, 0.5, W);
+    expect(h.bones.get('Spine')!.rotation.y).toBeCloseTo(0.5 * 0.2, 6);
+    expect(h.bones.get('Chest')!.rotation.y).toBeCloseTo(0.5 * 0.4, 6);
+    expect(h.bones.get('UpperChest')!.rotation.y).toBeCloseTo(0.5 * 0.4, 6);
+    expect(h.bones.get('Head')!.rotation.y).toBeCloseTo(0, 9);   // вес 0 — голова не отворачивается за рукой
+  });
+
+  it('аддитивна: ложится ПОВЕРХ авторского поворота спины', () => {
+    const h = buildHumanoid({});
+    h.bones.get('Chest')!.rotation.y = 0.1;
+    twistTorso(h, 0.2, W);
+    expect(h.bones.get('Chest')!.rotation.y).toBeCloseTo(0.1 + 0.2 * 0.4, 6);
+  });
+
+  it('нулевой остаток — поза бит-в-бит та же (нет дрейфа от вызова каждый кадр)', () => {
+    const h = buildHumanoid({});
+    const q = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'].map((n) => h.bones.get(n)!.quaternion.clone());
+    for (let i = 0; i < 50; i++) twistTorso(h, 0, W);
+    ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'].forEach((n, i) => expect(h.bones.get(n)!.quaternion.angleTo(q[i]!), n).toBeLessThan(1e-9));
   });
 });

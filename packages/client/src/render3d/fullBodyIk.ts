@@ -55,7 +55,27 @@ export interface FbikRig {
    * @param anchor   кость, чья позиция авторитетна (перетаскиваемая); от неё идёт прямой проход
    * @returns макс. остаточный промах по целям (юниты)
    */
-  solve(targets: Map<string, THREE.Vector3>, anchor?: { bone: string; pos: THREE.Vector3 } | null): number;
+  solve(
+    targets: Map<string, THREE.Vector3>,
+    anchor?: { bone: string; pos: THREE.Vector3 } | null,
+    /**
+     * МАСКА АКТИВНЫХ КОСТЕЙ (Ф21.3) — аналог Chain Length в IK-констрейнте Blender.
+     * Кость вне маски ЖЁСТКАЯ: не сеется, не участвует в FABRIK и НЕ получает новый кватернион —
+     * авторская поза на ней сохраняется. `undefined` = весь скелет, как было до Ф21.
+     *
+     * Зачем: без маски решается ВЕСЬ скелет от перетаскиваемой точки. Замерено на knight_05:
+     * тянешь ПРАВУЮ кисть на 3u — ЛЕВАЯ уезжает на 13.3u, голени на 6.5u, носки на 6.2u.
+     * В Blender это же сказано прямым текстом: Chain Length = 0 гонит солвер до корня и тянет
+     * спину с торсом — «обычно это не то, что нужно».
+     */
+    active?: ReadonlySet<string> | null,
+    /**
+     * ПОЛЮСЫ (Ф21.5): кость-шарнир (предплечье/голень) → направление, куда смотрит локоть/колено.
+     * Без них сторона сгиба берётся из ЗНАКА ПРЕДЕЛА — то есть ручная докрутка сустава терялась
+     * при первом же драге эффектора.
+     */
+    poles?: ReadonlyMap<string, THREE.Vector3> | null,
+  ): number;
   /** Мировые позиции костей (после последнего solve). */
   worldPos(bone: string): THREE.Vector3 | null;
 }
@@ -86,6 +106,11 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
   const proposals: THREE.Vector3[][] = names.map(() => []);
 
   const hipsIdx = index.get('Hips') ?? 0;
+  /** Активна ли кость в ТЕКУЩЕМ решении (см. `solve(…, active)`). Всё включено, пока маску не задали. */
+  const on: boolean[] = names.map(() => true);
+  const setMask = (active?: ReadonlySet<string> | null): void => {
+    for (let i = 0; i < names.length; i++) on[i] = !active || active.has(names[i]!);
+  };
   const readFk = (): void => {
     human.root.updateMatrixWorld(true);
     for (let i = 0; i < names.length; i++) human.bones.get(names[i]!)!.getWorldPosition(pos[i]!);
@@ -113,7 +138,9 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
    */
   function seedHinges(): void {
     if (!limitOf) return;
-    for (const nm of names) {
+    for (let i = 0; i < names.length; i++) {
+      if (!on[i]) continue;                                         // Ф21.3: жёсткую кость не подгибаем
+      const nm = names[i]!;
       const view = limitOf(nm);
       if (!view || view.kind !== 'hinge' || !view.axis) continue;
       const b = human.bones.get(nm)!;
@@ -136,6 +163,7 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
     // НАЗАД: от листьев к корню. Цель тянет кость в свою точку, а родителю предлагается позиция
     // на расстоянии длины кости в сторону его ТЕКУЩЕГО положения. Развилки усредняют предложения детей.
     for (let i = names.length - 1; i >= 0; i--) {
+      if (!on[i]) continue;                                         // Ф21.3: жёсткая кость остаётся там, где её выставила авторская поза
       const t = targets.get(i);
       if (t) work[i]!.copy(t);
       else if (proposals[i]!.length) {
@@ -144,7 +172,7 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
         work[i]!.multiplyScalar(1 / proposals[i]!.length);
       }
       const par = nodes[i]!.parent;
-      if (par >= 0) {
+      if (par >= 0 && on[par]) {                                    // Ф21.3: за границу маски тяга не передаётся — это и есть «длина цепи»
         _v1.copy(pos[par]!).sub(work[i]!);
         const l = _v1.length();
         if (l > 1e-6) _v1.multiplyScalar(nodes[i]!.len / l); else _v1.set(0, nodes[i]!.len, 0);
@@ -157,13 +185,13 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
     for (let i = 0; i < names.length; i++) pos[i]!.copy(work[i]!);
     pos[anchorIdx]!.copy(anchorPos);
     const order: number[] = [];
-    const push = (i: number): void => { order.push(i); for (const c of nodes[i]!.children) push(c); };
+    const push = (i: number): void => { if (!on[i]) return; order.push(i); for (const c of nodes[i]!.children) push(c); };
     // от якоря вниз по его поддереву
     push(anchorIdx);
     // остальные корни поддеревьев (если якорь не корень — вверх по родителям тоже надо восстановить)
     let up = nodes[anchorIdx]!.parent;
     let child = anchorIdx;
-    while (up >= 0) {
+    while (up >= 0 && on[up]) {                                     // Ф21.3: подъём останавливается на границе маски
       _v1.copy(pos[up]!).sub(pos[child]!);
       const l = _v1.length();
       if (l > 1e-6) _v1.multiplyScalar(nodes[child]!.len / l); else _v1.set(0, nodes[child]!.len, 0);
@@ -190,13 +218,17 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
    * вместе с засевом (seedHinges) это удерживает анатомическую сторону сгиба.
    * Остальные цепи (спина, пальцы, лишние звенья) по-прежнему решает FABRIK — длину цепи он не знает.
    */
+  /** ПОЛЮСЫ текущего солва (Ф21.5). Живёт ровно один вызов `solve`. */
+  let poleOf: ReadonlyMap<string, THREE.Vector3> | null = null;
+
   function placeHingeMids(): void {
     if (!limitOf) return;
     for (let m = 0; m < names.length; m++) {
+      if (!on[m]) continue;                                         // Ф21.3
       const view = limitOf(names[m]!);
       if (!view || view.kind !== 'hinge' || !view.axis) continue;
       const r = nodes[m]!.parent, e = nodes[m]!.children[0];
-      if (r < 0 || e === undefined) continue;
+      if (r < 0 || e === undefined || !on[r] || !on[e]) continue;   // оба соседа тоже должны быть в решении
       const L1 = nodes[m]!.len, L2 = nodes[e]!.len;
       if (L1 < 1e-6 || L2 < 1e-6) continue;
 
@@ -214,11 +246,23 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
       // у прямой конечности оба решения равноудалены, и выбор по близости уводил колено НАЗАД (z=-10.5).
       // Положительный поворот звена вокруг оси уводит КОНЕЦ назад, то есть СРЕДНЕЕ ЗВЕНО — вперёд
       // по cross(направление, ось). Знак берём по тому, куда сустав вообще гнётся (|max| или |min| больше).
-      _v3.crossVectors(_v1, _v2);
-      if (_v3.lengthSq() < 1e-9) continue;
-      _v3.normalize();
-      const lo = view.min ?? 0, hi = view.max ?? 0;
-      if (Math.abs(lo) > Math.abs(hi)) _v3.negate();
+      // ПОЛЮС ИМЕЕТ ПРИОРИТЕТ (Ф21.5). До этого `e.pole` в FBIK-пути НЕ ЧИТАЛСЯ вовсе: оранжевые
+      // ручки локтя/колена таскались, а сгиб не менялся. И так как `syncEff` снимает полюс С ЖИВОЙ
+      // ПОЗЫ при каждом захвате, драг теперь СОХРАНЯЕТ авторскую сторону сгиба, а не сбрасывает
+      // её в «куда разрешает предел». Знак предела остаётся фолбэком — он починил «колено назад» (Ф4).
+      const pl = poleOf ? poleOf.get(names[m]!) : undefined;
+      let aimed = false;
+      if (pl) {
+        _v3.copy(pl).addScaledVector(_v1, -pl.dot(_v1));     // компонента полюса перпендикулярно линии корень→конец
+        if (_v3.lengthSq() > 1e-9) { _v3.normalize(); aimed = true; }
+      }
+      if (!aimed) {
+        _v3.crossVectors(_v1, _v2);
+        if (_v3.lengthSq() < 1e-9) continue;
+        _v3.normalize();
+        const lo = view.min ?? 0, hi = view.max ?? 0;
+        if (Math.abs(lo) > Math.abs(hi)) _v3.negate();
+      }
 
       const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d);
       const hgt = Math.sqrt(Math.max(0, L1 * L1 - a * a));
@@ -228,10 +272,14 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
 
   /** Позиции → повороты: каждая кость доворачивается так, чтобы её ПЕРВЫЙ ребёнок попал в цель. */
   function positionsToRotations(): void {
-    writeHipsPosition();
+    if (on[hipsIdx]) writeHipsPosition();                           // таз вне маски — персонаж не едет
     for (let i = 0; i < names.length; i++) {
       const kid = nodes[i]!.children[0];
       if (kid === undefined) continue;
+      // Ф21.3: кость вне маски НЕ получает новый кватернион. И если её ПЕРВЫЙ РЕБЁНОК
+      // вне маски — тоже не получает: иначе кость доворачивалась бы на УСТАРЕВШУЮ точку.
+      // Побочный и желанный эффект: кисть больше не «целится в первый палец» и не крутит оружие.
+      if (!on[i] || !on[kid]) continue;
       const bone = human.bones.get(names[i]!)!;
       const kidBone = human.bones.get(names[kid]!)!;
       bone.updateMatrixWorld(true);
@@ -254,7 +302,9 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
   return {
     bones: names,
     worldPos(bone) { const i = index.get(bone); return i === undefined ? null : pos[i]!.clone(); },
-    solve(targets, anchor) {
+    solve(targets, anchor, active, poles) {
+      setMask(active);
+      poleOf = poles ?? null;
       seedHinges();
       readFk();
       const tIdx = new Map<number, THREE.Vector3>();

@@ -288,9 +288,15 @@ export function canonOfHuman(humanBone: string): string | null { const r = RAG_O
 let _extraLimit: ((bone: string) => LimitView | null) | null = null;
 export function registerExtraLimits(fn: (bone: string) => LimitView | null): void { _extraLimit = fn; }
 export function limitViewForBone(humanBone: string): LimitView | null {
+  // Ф21.4: ЯВНАЯ ТАБЛИЦА ВЫИГРЫВАЕТ у физ-рига. Раньше было наоборот, и это врало на костях,
+  // КОТОРЫЕ ФИЗИКА СЛИВАЕТ В ОДНО ТЕЛО: `RETARGET.ArmR = [RightShoulder, RightUpperArm]`, поэтому КЛЮЧИЦА
+  // получала пределы ПЛЕЧЕВОГО сустава (±97° сгиб, ±69° развод) и работала как второе плечо.
+  // ЗАМЕР: тянешь правую кисть налево — ключица выкручивалась на 89.5°, а спина — на 0°. Отсюда «корпус не скручивается».
+  // Порядок безопасен: в явной таблице лежат только кости, чьи пределы заданы анатомично и адресно.
+  const own = _extraLimit ? _extraLimit(humanBone) : null;
+  if (own) return own;
   const rag = RAG_OF_HUMAN[humanBone];
-  const phys = rag ? jointLimitView(rag) : null;
-  return phys ?? (_extraLimit ? _extraLimit(humanBone) : null);
+  return rag ? jointLimitView(rag) : null;
 }
 /** Всё для клэмпа/гизмо предела на суставе `ragName`: оси (лок., T-поза) + ЭФФЕКТИВНЫЕ диапазоны (× групповой LIMITS). */
 export interface LimitView {

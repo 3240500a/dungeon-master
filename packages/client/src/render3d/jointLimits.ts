@@ -83,8 +83,37 @@ function fingerJoints(): Record<string, ExtraJoint> {
   return out;
 }
 
-/** Кость → предел, если у неё НЕТ физ-тела. */
-export const EXTRA_JOINTS: Record<string, ExtraJoint> = fingerJoints();
+/**
+ * КЛЮЧИЦА (Ф21.4). Физ-риг её НЕ имеет: `RETARGET.ArmL = [LeftShoulder, LeftUpperArm]` сливает
+ * ключицу с плечом в ОДНО тело — и без этой записи она получала пределы ПЛЕЧА и работала
+ * как второе плечо. Замерено: при тяге кисти поперёк тела солвер выкручивал ключицу на 89.5°,
+ * а спина оставалась на 0° — то есть «корпус не скручивается» было не багом солвера, а слишком широким пределом.
+ *
+ * Анатомия грудино-ключичного сустава: выведение/приведение (плечо вперёд/назад) ~±20°,
+ * подъём/опускание ~±15°, осевое вращение ~±10° (почти пассивное). Оси — в локальном фрейме
+ * родителя в T-позе: ключица идёт вдоль ±X (twist), главное движение — вокруг вертикали Y (plane),
+ * подъём — вокруг normal = twist × plane = ±Z. Зеркальность выходит сама из знака twist.
+ */
+function clavicleJoints(): Record<string, ExtraJoint> {
+  const out: Record<string, ExtraJoint> = {};
+  for (const side of ['Left', 'Right'] as const) {
+    const sx: number = side === 'Left' ? 1 : -1;
+    out[side + 'Shoulder'] = {
+      canon: 'clavicle',
+      twist: [sx, 0, 0], plane: [0, 1, 0],
+      def: {
+        kind: 'swing', group: 'arm',
+        planeMin: -20 * D, planeMax: 20 * D,       // плечо вперёд/назад (протракция/ретракция)
+        normalMin: -15 * D, normalMax: 15 * D,     // подъём/опускание
+        twistMin: -10 * D, twistMax: 10 * D,
+      },
+    };
+  }
+  return out;
+}
+
+/** Кость → предел, заданный ЯВНО: фаланги (тела нет) и ключица (тело ЕСТЬ, но чужое — плеча). */
+export const EXTRA_JOINTS: Record<string, ExtraJoint> = { ...fingerJoints(), ...clavicleJoints() };
 
 /** `LimitView` для кости без физ-тела (тот же контракт, что у физического `jointLimitView`).
  *  `axes` — оси, выведенные из КОНКРЕТНОГО рига (импортированная модель); нет — берутся канонические. */
