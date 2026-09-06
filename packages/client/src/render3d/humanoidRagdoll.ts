@@ -145,6 +145,12 @@ function fingerPhysBodies(): HBone[] {
 }
 CATALOG.push(...fingerPhysBodies());
 const _catBone = new Map(CATALOG.map((b) => [b.name, b]));
+/**
+ * КАТАЛОЖНОЕ (авторское) смещение тела — эталон длины для тел, которым скелет длины НЕ ДАЁТ:
+ * листья цепи (голова, кисти, носки) и ступицы без выноса (таз). Ф26.8: авто-подгонка обязана
+ * читать ЕГО, а не текущее `off` живого тела, иначе замер кормится собственным выходом.
+ */
+export function physCatalogOff(name: string): Vec3 | undefined { return _catBone.get(name)?.off; }
 /** Ось тела (0=X, 1=Y, 2=Z): куда оно тянется от сустава. Берётся из `off`, а если он нулевой (таз) — из самой длинной полуоси. */
 export function bodyAxis(b: { off: Vec3; shape: PhysShape }): 0 | 1 | 2 {
   const o = b.off.map(Math.abs);
@@ -156,7 +162,9 @@ export function bodyAxis(b: { off: Vec3; shape: PhysShape }): 0 | 1 | 2 {
 function sized(src: HBone): HBone {
   const ov = PHYS_SIZES[src.name]; if (!ov) return src;
   const b: HBone = { ...src, anchor: [...(ov.anchor ?? src.anchor)] as Vec3, off: [...(ov.off ?? src.off)] as Vec3 };
-  const ax = bodyAxis(src);
+  // Ось берётся из ФАКТИЧЕСКОГО (уже переопределённого) смещения — ровно как в `shapeRot`. По каталожному
+  // `off` она могла разойтись с разворотом формы, и «длина» ложилась бы на поперечную полуось.
+  const ax = bodyAxis({ off: b.off, shape: src.shape });
   const w = ov.w ?? 1, d = ov.d ?? 1;
   const baseHalf = src.shape.k === 'box' ? src.shape.h[ax]! : src.shape.k === 'sphere' ? src.shape.r : src.shape.half;
   const baseR = src.shape.k === 'box' ? (src.shape.h[(ax + 1) % 3]! + src.shape.h[(ax + 2) % 3]!) / 2 : src.shape.k === 'sphere' ? src.shape.r : src.shape.r;

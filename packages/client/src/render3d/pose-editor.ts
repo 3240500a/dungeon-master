@@ -14,7 +14,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, PHYS_SIZES, physBodies, bodyAxis, type PhysSize, type LimitView } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, PHYS_SIZES, physBodies, bodyAxis, physCatalogOff, type PhysSize, type LimitView } from './humanoidRagdoll.js';
 import { PHYS_PRESETS, presetBodies } from './physRig.js';
 import { scaleJointsToScreen } from './humanoid.js';                       // Ф13.1: суставы постоянного экранного размера
 import { PLAYER_RADIUS, MONSTER_RADIUS } from '@dm/shared';                // Ф13.4: тот же радиус, что у сервера   // Ф11: набор физ-тел настраивается в редакторе
@@ -2544,7 +2544,7 @@ function poseTools(): void {
   if (uiPro) phb.append(
     pbtn('дёрг (удар)', () => { void ensurePhysics().then(() => { setPhys(true); if (ragdoll) { ragdoll.hit('Torso', 0, 0.3, 1, 1.4); ragdoll.hit('Head', 0, 0.3, 1, 0.8); } }); }),
     pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { setPhys(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
-    pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; if (ragdoll) ragdoll.group.visible = showBoxes; renderAnim(); }); }, showBoxes),
+    pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; applyBoxVis(); renderAnim(); }); }, showBoxes),
   );
   rollout('poses', 'ПОЗЫ И БУФЕР', poseLibSection);
   rollout('grip', 'ХВАТ КИСТИ', gripSection);
@@ -2862,29 +2862,49 @@ function fitPhysToBones(): void {
   const hp = human.hips.position.clone();
   human.reset(); human.root.updateMatrixWorld(true);                     // → Т-поза с текущими длинами костей
   try {
+    const v3 = (w: THREE.Vector3): [number, number, number] => [+w.x.toFixed(2), +w.y.toFixed(2), +w.z.toFixed(2)];
+    const leaves: { ov: PhysSize; tip: THREE.Vector3; dir: THREE.Vector3; cat: number }[] = [];
+    const ratios: number[] = [];
+    // ПРОХОД 1 — тела, у которых конец цепи ИМЕЕТ детей: длина честно снимается со скелета.
     for (const pb of physBodies()) {
       const chain = pb.chain.length ? pb.chain : [pb.name];
       const first = human.bones.get(chain[0]!); if (!first) continue;
       const last = human.bones.get(chain[chain.length - 1]!) ?? first;
       const a = first.getWorldPosition(V());
-      const kids = (last.children as THREE.Object3D[]).filter((c) => human.bones.get(c.name) === c);
-      let b2: THREE.Vector3;
-      if (kids.length) { b2 = V(); for (const k of kids) b2.add(k.getWorldPosition(V())); b2.multiplyScalar(1 / kids.length); }
-      else {
-        const dir = last.getWorldPosition(V()).sub(last.parent ? last.parent.getWorldPosition(V()) : a);
-        const len = Math.hypot(pb.off[0], pb.off[1], pb.off[2]) * 2 || 4;
-        b2 = last.getWorldPosition(V()).add(dir.lengthSq() > 1e-6 ? dir.normalize().multiplyScalar(len) : V().set(0, len, 0));
-      }
-      const half = b2.clone().sub(a).multiplyScalar(0.5);
       const ov = (PHYS_SIZES[pb.name] ??= {});
       // АНКЕР ПИШЕМ ВСЕГДА, даже у таза с вырожденной длиной: рест-трансляции констрейнтов считаются
       // КАК РАЗНИЦА АНКЕРОВ (`anchor − parentAnchor`), и пропущенный родитель сдвинул бы ВСЮ цепь на свою
       // ошибку (замер: таз оставался каталожным на 6.7u ниже кости — кукла дралась бы сама с собой).
-      ov.anchor = [+a.x.toFixed(2), +a.y.toFixed(2), +a.z.toFixed(2)];
-      if (half.length() >= 0.3) {                                         // длина только осмысленная (у таза «длины кости» нет)
-        ov.off = [+half.x.toFixed(2), +half.y.toFixed(2), +half.z.toFixed(2)];
-        ov.len = +half.length().toFixed(2);
+      ov.anchor = v3(a);
+      const co = physCatalogOff(pb.name);
+      const cat = co ? Math.hypot(co[0], co[1], co[2]) : 0;
+      const kids = (last.children as THREE.Object3D[]).filter((c) => human.bones.get(c.name) === c);
+      // СТУПИЦА (таз): в каталоге выноса нет, а среднее по детям вырождено — ноги идут вниз, спина вверх,
+      // и они гасят друг друга (замер: половина 0.35u → таз становился блином 0.35u толщиной).
+      // Такому телу скелет длины НЕ ДАЁТ ВООБЩЕ — чистим прежнюю и оставляем каталожную форму.
+      if (cat < 0.3) { delete ov.off; delete ov.len; continue; }
+      if (!kids.length) {                       // лист (голова/кисть/носок) — во второй проход
+        const par = last.parent ? last.parent.getWorldPosition(V()) : a.clone();
+        const dir = last.getWorldPosition(V()).sub(par);
+        leaves.push({ ov, tip: last.getWorldPosition(V()), dir: dir.lengthSq() > 1e-6 ? dir.normalize() : V().set(0, 1, 0), cat });
+        continue;
       }
+      const b2 = V(); for (const k of kids) b2.add(k.getWorldPosition(V())); b2.multiplyScalar(1 / kids.length);
+      const half = b2.sub(a).multiplyScalar(0.5);
+      if (half.length() < 0.3) { delete ov.off; delete ov.len; continue; }
+      ov.off = v3(half); ov.len = +half.length().toFixed(2);
+      ratios.push(half.length() / cat);
+    }
+    // ПРОХОД 2 — ЛИСТЬЯ. У последней кости нет детей, то есть СКЕЛЕТ ДЛИНЫ НЕ СОДЕРЖИТ. Раньше её брали
+    // как `|pb.off| * 2` — из ТЕКУЩЕГО тела, которое само же и подогнано: замер кормился своим выходом и
+    // голова росла на 2.45u за каждую переподгонку (4 → 57.11u, шар улетал над персонажем).
+    // Теперь длина = КАТАЛОЖНАЯ, масштабированная МЕДИАНОЙ отношений «замер / каталог» по измеримым телам
+    // (то есть ростом текущего телосложения). Операция идемпотентна: второй прогон даёт те же числа.
+    ratios.sort((x, y) => x - y);
+    const s = ratios.length ? ratios[ratios.length >> 1]! : 1;
+    for (const lf of leaves) {
+      const half = lf.dir.multiplyScalar(lf.cat * s);
+      lf.ov.off = v3(half); lf.ov.len = +half.length().toFixed(2);
     }
   } finally {
     for (const [n, q] of snap) human.bones.get(n)?.quaternion.copy(q);
@@ -2931,15 +2951,15 @@ function physSizeSection(): void {
   };
   const ax = bodyAxis(cur);
   const curLen = cur.shape.k === 'box' ? cur.shape.h[ax]! : cur.shape.k === 'sphere' ? cur.shape.r : cur.shape.half;
-  srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
-  srow('ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
-  srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
+  if (cur.shape.k !== 'sphere') srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
+  srow(cur.shape.k === 'sphere' ? 'радиус ×' : 'ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
+  if (cur.shape.k === 'box') srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
   const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
   r2.append(
     pbtn('⚖ снять с костей', () => fitPhysToBones()),
     pbtn('сброс тела', () => { delete PHYS_SIZES[sizeBody]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
     pbtn('сброс всех', () => { for (const k in PHYS_SIZES) delete PHYS_SIZES[k]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
-    pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { showBoxes = !showBoxes; renderAnim(); }, showBoxes),
+    pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; applyBoxVis(); renderAnim(); }); }, showBoxes),
   );
   const hint = el('div', 'color:#6b7180;font-size:10px');
   hint.textContent = '«Снять с костей» берёт длины из Т-позы текущего телосложения; ширина/толщина остаются ручными.'; body.append(hint);
@@ -3733,6 +3753,13 @@ let physMs = 0;   // среднее время физ-шага, мс (Ф3.4: с�
 let manView: 'skel' | 'solid' | 'hidden' = 'skel';   // вид манекена: скелет-арматура / солид-тело / скрыт (дефолт — скелет)
 let curHumanStyle: 'solid' | 'skeleton' = 'skeleton';   // с каким стилем реально построен human (чтобы не пересобирать зря)
 let showBoxes = false;   // дебаг: показать сырые физ-боксы рэгдолла (по умолчанию — только силуэт-призрак)
+/**
+ * ВИДИМОСТЬ СЫРЫХ ФИЗ-БОКСОВ — ОДИН ШОВ (Ф26.8). Кукла ПЕРЕСОБИРАЕТСЯ на каждую правку размера/формы
+ * (`rebuildRagdoll` → новая `ragdoll.group`), и новая группа приходила в сцену ВСЕГДА скрытой — боксы
+ * «пропадали» ровно в тот момент, когда на них и смотрят. Теперь видимость выставляется из `showBoxes`
+ * везде, где группа появляется в сцене, а кнопки только переключают флаг.
+ */
+function applyBoxVis(): void { if (ragdoll) ragdoll.group.visible = showBoxes; }
 let footGround = true;   // заземление стоп (foot-IK) на физ-теле; выкл → авторская ротация стопы видна
 let ragdoll: HumanoidRagdoll | null = null;
 let reviveT = -1; const reviveFrom = new THREE.Vector3(); const reviveDur = 0.9;   // плавное вставание с пола
@@ -4268,7 +4295,7 @@ async function ensurePhysics(): Promise<void> {
   loadRagdollConfig();                                      // RB3: лимиты/моторы из pe_ragdoll ДО создания рэгдолла
   ragdoll = makeHumanoidRagdoll(pw);
   syncPinArrays();
-  scene.add(ragdoll.group); ragdoll.group.visible = false;   // боксы-физтела скрыты — показываем гуманоид-призрак
+  scene.add(ragdoll.group); applyBoxVis();   // боксы по флагу; по умолчанию скрыты — показываем гуманоид-призрак
   buildGhost();
   refitPhysIfFitted();                                      // Ф26.5: тела сняты с костей — приводим их к ТЕКУЩЕМУ телосложению
   updateWeapon();   // до физики оружие висело на манекене (fallback) → переносим на свежий физ-призрак
@@ -4283,7 +4310,7 @@ function rebuildRagdoll(): void {
   scene.remove(ragdoll.group); ragdoll.dispose();
   ragdoll = makeHumanoidRagdoll(pw);
   syncPinArrays();   // Ф11: набор тел мог смениться — длина массивов пинов другая
-  scene.add(ragdoll.group); ragdoll.group.visible = false;
+  scene.add(ragdoll.group); applyBoxVis();   // Ф26.8: пересборка НЕ гасит боксы, если они включены
 }
 // ДЛИНА зависит от набора тел (Ф11) — пересобираем вместе с куклой, иначе пины уедут на чужие индексы.
 let pinVecs: THREE.Vector3[] = []; let pinArr: (THREE.Vector3 | null)[] = [];
