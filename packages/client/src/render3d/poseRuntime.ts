@@ -77,7 +77,8 @@ export function blendTwist(s: TwistStates, speed: number): TwistProfile {
   if (speed <= w) return lerpTwistInto(_twBlend, s.stand, s.walk, clamp(speed / Math.max(1, w), 0, 1));
   return lerpTwistInto(_twBlend, s.walk, s.run, clamp((speed - w) / (r - w), 0, 1));
 }
-const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
+/** Цепочка скрутки корпуса — ОДНА истина для походки и ручного позинга (веса всегда в этом порядке). */
+export const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as const;
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
 export interface PoseContent {

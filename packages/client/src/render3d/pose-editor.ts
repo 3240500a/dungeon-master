@@ -37,7 +37,7 @@ import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: ск
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -365,8 +365,21 @@ function syncEff(e: Eff): void {
   if (dir.lengthSq() > 1e-6) { const perp = mp.clone().sub(rp).sub(dir.clone().multiplyScalar(mp.clone().sub(rp).dot(dir) / dir.lengthSq())); if (perp.lengthSq() > 1) e.pole.copy(perp.normalize()); }   // прямая рука → полюс не трогаем
   e.footQuat.copy(end.getWorldQuaternion(Q()));   // ориентация КОНЦА (кисть/стопа) — восстановим после солва (иначе IK крутит скрутку)
 }
+/**
+ * РУЧКИ ГОНЯТСЯ ЗА КОСТЯМИ (каждый кадр вне драга). Позу НЕ трогает.
+ *
+ * ЗАПИНЕННЫЕ ЦЕЛИ НЕ ОБНОВЛЯЮТСЯ (Ф22.1) — в этом весь смысл пина. Раньше `captureRig`
+ * звался каждый кадр и тянул `syncEff` для ВСЕХ — то есть стоило отпустить мышь, как цель пина
+ * переезжала на то место, куда точку как раз увезло. Пин отменял сам себя.
+ */
+function syncHandles(): void {
+  const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position); rig.hipsQuat.copy(hips.quaternion);
+  human.root.updateMatrixWorld(true);
+  for (const e of effList()) if (!(e.ik && e.pin)) syncEff(e);
+}
+/** Поза ЗАМЕНЕНА (клип/кадр/T-поза/undo): всё перечитываем заново, включая пины и опору корпуса. */
 function captureRig(): void {
-  pullTwist = 0;   // Ф21.4: текущая поза стала истиной — скрутка предыдущего драга запечена в неё, откатывать нечего
+  pullForget();
   const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position); rig.hipsQuat.copy(hips.quaternion);
   human.root.updateMatrixWorld(true);
   for (const e of effList()) syncEff(e);
@@ -388,27 +401,43 @@ function getFbik(): FbikRig {
  * решается всё тело сразу и с учётом пределов суставов (они же задают плоскость сгиба колена/локтя).
  */
 /**
- * СКРУТКА, ДОБАВЛЕННАЯ PULL’ом В ЭТОМ ДРАГЕ (рад, Ф21.4).
+ * ОПОРНАЯ ПОЗА КОРПУСА ДЛЯ PULL (Ф22.3) — кватернионы [Spine..Head] ДО того, как Pull
+ * впервые довернул корпус.
  *
- * `twistTorso` аддитивен, а `solveRig` зовётся КАЖДЫЙ КАДР драга — без этой памяти скрутка КОПИЛАСЬ
- * и поза зависела от ТОГО, СКОЛЬКО КАДРОВ ты держал мышь — для инструмента анимации это негодно.
- * Поэтому каждый солв СНИМАЕТ свою прошлую скрутку и считает её заново от авторской позы: одна и та же
- * цель — одна и та же поза. `captureRig` обнуляет память: драг кончился, скрутка — часть позы.
+ * Было число `pullTwist` («сколько я накрутил в ЭТОМ драге»), и его обнулял `captureRig` —
+ * а он звался КАЖДЫЙ КАДР вне драга. Следствие, на которое и пожаловался юзер: завёл руку
+ * назад → корпус довернулся → отпустил мышь → скрутка ЗАПЕКЛАСЬ в позу и снять её было уже нечем;
+ * двигаешь руку обратно — корпус стоит скрученный.
+ *
+ * Модель взята из HumanIK Stiffness: часть тела «resists transformation and tries to maintain its
+ * INITIAL FK ANGLES» — то есть у корпуса есть ОПОРНЫЕ УГЛЫ, к которым он возвращается, а не
+ * накопитель поворотов. Опора ЖИВЁТ МЕЖДУ ДРАГАМИ и забывается только когда корпус правят
+ * РУКАМИ или меняют позу целиком. Авторский изгиб руки/ноги при этом НЕ трогается вовсе:
+ * восстанавливаются ТОЛЬКО кости цепочки скрутки.
  */
-let pullTwist = 0;
+let pullBase: Map<string, THREE.Quaternion> | null = null;
+/** Вернуть корпус в опорную позу (точный откат, без накопления ошибки). */
+function pullRelax(): void {
+  if (!pullBase) return;
+  for (const [n, q] of pullBase) human.bones.get(n)?.quaternion.copy(q);
+  human.root.updateMatrixWorld(true);
+}
+/** Забыть опору: текущий поворот корпуса стал АВТОРСКИМ и откатывать его больше нельзя. */
+function pullForget(): void { pullBase = null; }
 function solveRig(): void {
   const hips = human.hips;
   hips.position.copy(rig.hipsPos); hips.quaternion.copy(rig.hipsQuat); hips.updateMatrixWorld(true);
-  if (pullTwist !== 0) { twistTorso(human, -pullTwist, PULL_W); pullTwist = 0; human.root.updateMatrixWorld(true); }
+  pullRelax();                                               // Ф22.3: корпус всегда стартует из опорной позы — и сам распрямляется, когда рука достаёт
+  clampHipsToPins();                                         // Ф22.2: таз не уезжает дальше, чем пускают заколотые конечности
   if (!fbikOn) {   // фолбэк: старые независимые цепи
     for (const e of effList()) { if (e.ik) { solve2Bone(e.root, e.mid, e.end, e.target, e.pole); setEndOrient(e); } else e.target.copy(human.bones.get(e.end)!.getWorldPosition(V())); }
     return;
   }
   const plan = solvePlan();
-  const anchorBone = (activeKey && activeKey !== 'hips') ? rig.eff[activeKey]!.end : 'Hips';
+  const anchorBone = plan.anchorBone;
   if (plan.targets.size) {
     const f = getFbik();
-    f.solve(plan.targets, { bone: anchorBone, pos: plan.anchorPos ?? human.hips.getWorldPosition(V()) }, plan.mask, plan.poles);
+    f.solve(plan.targets, { bone: anchorBone, pos: plan.anchorPos ?? human.hips.getWorldPosition(V()) }, plan.mask, plan.poles, plan.rigid);
     // PULL — ВТОРАЯ ПОПЫТКА ПО ФАКТИЧЕСКОМУ НЕДОЛЁТУ, а не по расчётной длине цепи (Ф21.4).
     //
     // Первая версия сравнивала дистанцию до цели с суммой длин звеньев — то есть видела только «далеко»
@@ -430,9 +459,10 @@ function solveRig(): void {
       const a = Math.atan2(pull.goal.x - hp.x, pull.goal.z - hp.z) - Math.atan2(got.x - hp.x, got.z - hp.z);
       const res = clamp(Math.atan2(Math.sin(a), Math.cos(a)) * bodyFollow, -PULL_TWIST, PULL_TWIST);
       if (Math.abs(res) > 1e-3) {
-        twistTorso(human, res, PULL_W); pullTwist = res;
+        if (!pullBase) { pullBase = new Map(); for (const n of TWIST_BONES) { const b = human.bones.get(n); if (b) pullBase.set(n, b.quaternion.clone()); } }
+        twistTorso(human, res, PULL_W);
         human.root.updateMatrixWorld(true);
-        f.solve(plan.targets, { bone: anchorBone, pos: plan.anchorPos! }, plan.mask, plan.poles);   // плечо уехало — дорешаем руку
+        f.solve(plan.targets, { bone: anchorBone, pos: plan.anchorPos! }, plan.mask, plan.poles, plan.rigid);   // плечо уехало — дорешаем руку
       }
       // ФАБРИКА ПО СПИНЕ ЗДЕСЬ НЕ ДЕЛАЕТСЯ, и это ЗАМЕРЕННОЕ решение, а не лень. Была вторая
       // ступень: «если после скрутки всё ещё не дотянулись — добавить корпус в маску FABRIK«. Замер на тяге
@@ -493,7 +523,61 @@ function missOf(p: { end: string; goal: THREE.Vector3 }): number {
   return human.bones.get(p.end)!.getWorldPosition(V()).distanceTo(p.goal);
 }
 /** Результат сборки: какие кости решаем, куда ведём и что проверить на недолёт (Pull). */
-interface SolvePlan { mask: Set<string>; targets: Map<string, THREE.Vector3>; anchorPos: THREE.Vector3 | null; pull: { end: string; goal: THREE.Vector3 } | null; poles: Map<string, THREE.Vector3> }
+interface SolvePlan {
+  mask: Set<string>; targets: Map<string, THREE.Vector3>;
+  /** ОПОРА внутри маски (Ф22.1): участвует в цепи, но свой угол НЕ меняет. */
+  rigid: Set<string>;
+  anchorBone: string; anchorPos: THREE.Vector3 | null;
+  pull: { end: string; goal: THREE.Vector3 } | null; poles: Map<string, THREE.Vector3>;
+}
+/** Предки кости включительно её самой (до корня скелета). */
+function boneAndAncestors(nm: string): string[] { return boneChain(nm, 'Root'); }
+/**
+ * СКОЛЬКО ЦЕПЬ ВООБЩЕ ДОСТАЁТ от своего корня (сумма длин звеньев).
+ * `boneChain` идёт от конца к корню, а `bone.position.length()` — расстояние ДО РОДИТЕЛЯ,
+ * поэтому корень в сумму не входит.
+ */
+function chainReach(chain: string[]): number {
+  let sum = 0;
+  for (let i = 0; i < chain.length - 1; i++) { const b = human.bones.get(chain[i]!); if (b) sum += b.position.length(); }
+  return sum;
+}
+/**
+ * ТАЗ НЕ УЕЗЖАЕТ ЗА ПРЕДЕЛ ДОСЯГАЕМОСТИ ЗАПИНЕННЫХ (Ф22.2).
+ *
+ * Замерено до: тянешь ручку таза вверх на 120u при запиненных стопах — стопа едет за ним 1:1
+ * (длина ноги 41.2u). Солвер при этом НЕ виноват: он честно вытягивает ногу в струну, больше ему
+ * делать нечего. Ограничивать надо САМО ДВИЖЕНИЕ ТАЗА — так же делает foot-IK в играх
+ * («pelvis adjustment prevents the character from splitting»).
+ *
+ * Геометрия: корень цепи жёстко связан с тазом, значит сдвиг таза на Δ сдвигает и его на Δ.
+ * Значит корень обязан остаться в ШАРЕ радиуса `reach` вокруг цели — проецируем на него.
+ * Несколько пинов — пересечение шаров, берётся итерациями (как в FABRIK): 4 прохода сходятся.
+ */
+const HIP_SLACK = 0.995;                                     // пара промилле запаса: строго прямая конечность — сингулярность для IK
+function clampHipsToPins(): void {
+  const lim: { root: string; goal: THREE.Vector3; reach: number }[] = [];
+  for (const k in rig.eff) {
+    const e = rig.eff[k]!;
+    if (!e.ik || !e.pin) continue;
+    const chain = boneChain(e.end, CHAIN_ROOT[k] ?? 'Hips');
+    lim.push({ root: chain[chain.length - 1]!, goal: e.target, reach: chainReach(chain) * HIP_SLACK });
+  }
+  if (!lim.length) return;
+  for (let it = 0; it < 4; it++) {
+    let moved = 0;
+    for (const L of lim) {
+      human.hips.position.copy(rig.hipsPos); human.root.updateMatrixWorld(true);
+      const r = human.bones.get(L.root)?.getWorldPosition(V()); if (!r) continue;
+      const d = r.distanceTo(L.goal);
+      if (d <= L.reach) continue;
+      rig.hipsPos.addScaledVector(r.sub(L.goal).multiplyScalar(1 / d), L.reach - d);   // подтянули к поверхности шара
+      moved = Math.max(moved, d - L.reach);
+    }
+    if (moved < 1e-3) break;
+  }
+  human.hips.position.copy(rig.hipsPos); human.root.updateMatrixWorld(true);
+}
 
 /**
  * МАСКА РЕШЕНИЯ + PULL (Ф21.3). Собирается каждый кадр драга.
@@ -516,9 +600,46 @@ function solvePlan(): SolvePlan {
   const mask = new Set<string>();
   const targets = new Map<string, THREE.Vector3>();
   const add = (c: string[]): void => { for (const n of c) mask.add(n); };
+  const rigid = new Set<string>();
   const ae = activeKey && activeKey !== 'hips' ? rig.eff[activeKey] ?? null : null;
+  let anchorBone = (activeKey && activeKey !== 'hips') ? rig.eff[activeKey]!.end : 'Hips';
   let anchorPos: THREE.Vector3 | null = null;
   let pull: { end: string; goal: THREE.Vector3 } | null = null;
+
+  // КРУТИМ КОСТЬ В FK, А КОНЕЧНОСТИ ЗАПИНЕНЫ (Ф22.1) — держим их на месте.
+  //
+  // До Ф22 этого не было вовсе: солвер звался только на драге РУЧКИ. Замер: при всех четырёх
+  // запиненных точках поворот `Hips` на 40° увозил ОБЕ кисти на 26.1u, `Spine` — тоже на 26.1u.
+  // В Cascadeur фиксатор (R) прибивает точку и при любой манипуляции — оба режима там работают
+  // одновременно («both these modes are supported simultaneously»).
+  //
+  // КЛЮЧ: кость, которую крутят, и ВСЕ ЕЁ ПРЕДКИ — ЖЁСТКИЕ (`rigid`). В маске они остаются
+  // (иначе цепь до руки рвётся и forward-проход до неё не дойдёт), но СВОЙ угол не меняют — иначе
+  // корпус КОМПЕНСИРОВАЛ бы твоё же вращение и крутить кость стало бы бессмысленно.
+  if (!ae && activeKey !== 'hips' && fkProxyBone && human.bones.get(fkProxyBone)) {
+    const frozen = new Set(boneAndAncestors(fkProxyBone));
+    for (const k in rig.eff) {
+      const e = rig.eff[k]!;
+      if (!e.ik || !e.pin) continue;
+      add(boneChain(e.end, 'Hips'));                                    // покрытие: цепь связна до таза
+      targets.set(e.end, e.target.clone());
+    }
+    for (const n of mask) {
+      // решаемые = только собственные цепи конечностей (кисть→ключица, стопа→таз) вне «заморозки»
+      let solvable = false;
+      for (const k in rig.eff) {
+        const e = rig.eff[k]!;
+        if (!e.ik || !e.pin) continue;
+        if (boneChain(e.end, CHAIN_ROOT[k] ?? 'Hips').includes(n) && !frozen.has(n)) { solvable = true; break; }
+      }
+      if (!solvable) rigid.add(n);
+    }
+    anchorBone = 'Hips'; anchorPos = human.hips.getWorldPosition(V());
+    for (const n of [...mask]) if (isHandBone(n)) mask.delete(n);
+    const poles0 = new Map<string, THREE.Vector3>();
+    for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.poleSet && mask.has(e.mid)) poles0.set(e.mid, e.pole.clone()); }
+    return { mask, targets, rigid, anchorBone, anchorPos, pull: null, poles: poles0 };
+  }
 
   if (ae && ae.ik) {
     add(boneChain(ae.end, CHAIN_ROOT[activeKey!] ?? 'Hips'));
@@ -527,7 +648,11 @@ function solvePlan(): SolvePlan {
     anchorPos = goal.clone();
     pull = { end: ae.end, goal: goal.clone() };
   } else if (activeKey === 'hips') {
-    add(['Hips']);
+    // ТАЗ ЖЁСТКИЙ, КОГДА ЕГО ТЯНЕШЬ САМ (Ф22.2). В маске он нужен для связности цепей,
+    // но его ПОЗИЦИЯ АВТОРИТЕТНА: её уже ограничил `clampHipsToPins`. Без этой пометки FABRIK
+    // через `writeHipsPosition` тянул таз ОБРАТНО к стопам, кламп поднимал его снова,
+    // и система уравновешивалась на месте: тянешь на 20u — таз едет на 1.8u и стоит.
+    add(['Hips']); rigid.add('Hips');
   }
 
   // Запиненные цепи — только когда таз в решении (иначе им негде сдвинуться).
@@ -549,7 +674,7 @@ function solvePlan(): SolvePlan {
   // Так же сказано и в плане Ф21: «полюс — только когда его двигали; иначе прежний знак предела».
   const poles = new Map<string, THREE.Vector3>();
   for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.poleSet && mask.has(e.mid)) poles.set(e.mid, e.pole.clone()); }
-  return { mask, targets, anchorPos, pull, poles };
+  return { mask, targets, rigid, anchorBone, anchorPos, pull, poles };
 }
 function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.add(delta); for (const e of effList()) if (!e.isFoot && !e.pin && e !== except) e.target.add(delta); }
 
@@ -636,7 +761,12 @@ gizmo.addEventListener('objectChange', () => {
         _nw.copy(_dq).multiply(_bBase);                         // newBoneWorld = deltaWorld · boneWorld0
         b.quaternion.copy(_parInv).multiply(_nw);               // newBoneLocal = parent⁻¹ · newBoneWorld
         if (clampFk) { const view = limitViewForBone(nm); if (view) b.quaternion.copy(clampLocalToLimit(b.quaternion, view)); }
-        const lk = LIMB_OF[nm]; if (lk) { rig.eff[lk]!.ik = false; refreshLimbs(); } if (nm === 'Hips') rig.hipsQuat.copy(b.quaternion); const fk = nm === 'LeftFoot' ? 'LF' : nm === 'RightFoot' ? 'RF' : null; if (fk) rig.eff[fk]!.footQuat.copy(b.getWorldQuaternion(Q()));
+        // АВТО-FK, НО ПИН ВАЖНЕЕ (Ф22.1). Поворот кости конечности раньше ВСЕГДА гасил её IK —
+        // и заколотая кисть теряла фиксатор от одного касания плеча. Заколота — значит держим.
+        const lk = LIMB_OF[nm]; if (lk && !rig.eff[lk]!.pin) { rig.eff[lk]!.ik = false; refreshLimbs(); }
+        // Правишь корпус руками — этот поворот стал АВТОРСКИМ, Pull больше не вправе его откатывать (Ф22.3).
+        if ((TWIST_BONES as readonly string[]).includes(nm)) pullForget();
+        if (nm === 'Hips') rig.hipsQuat.copy(b.quaternion); const fk = nm === 'LeftFoot' ? 'LF' : nm === 'RightFoot' ? 'RF' : null; if (fk) rig.eff[fk]!.footQuat.copy(b.getWorldQuaternion(Q()));
       }
     }
     return;   // оружие/маркер (gizmo.object = группа) вращается гизмо напрямую — доп. обработки не нужно
@@ -3111,10 +3241,14 @@ function loop(): void {
     // в одном инструменте драг кости (FK) и драг ручки (IK) идут через один и тот же гизмо.
     const onHandle = !!(activeKey || activePole);
     if (gizmo.dragging && onHandle && (ikOn || activeKey === 'hips')) solveRig();
+    // Ф22.1: ФИКСАТОРЫ ДЕЙСТВУЮТ И ПРИ FK-ВРАЩЕНИИ КОСТИ. Раньше солвер звался только
+    // на драге РУЧКИ, поэтому пины при повороте кости не держали вообще (замер: `Hips` на 40°
+    // — кисти уезжали на 26.1u). В Cascadeur фиксатор держит точку при ЛЮБОЙ манипуляции.
+    else if (gizmo.dragging && ikOn && fkProxyBone && effList().some((e) => e.ik && e.pin)) solveRig();
     // НЕ тянем — ручки ГОНЯТСЯ ЗА КОСТЯМИ (Ф21.1). Раньше этого не требовалось: в FK-режиме ручки
     // были спрятаны целиком. Теперь они видны всегда, и без этого синяя ручка оставалась висеть в воздухе
     // после поворота плеча кольцами.
-    else if (!gizmo.dragging) captureRig();
+    else if (!gizmo.dragging) syncHandles();
     const active = gizmo.dragging ? gizmo.object : null;
     if (rig.hipsHandle !== active) rig.hipsHandle.position.copy(rig.hipsPos);
     for (const e of effList()) { if (e.handle !== active) e.handle.position.copy(e.target); if (e.poleHandle !== active) e.poleHandle.position.copy((viewBone(e.mid) ?? human.bones.get(e.mid)!).getWorldPosition(V())); }   // Ф20.2: полюс — на ВИДИМОМ суставе
@@ -3179,7 +3313,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, get fbikOn() { return fbikOn; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },

@@ -75,6 +75,17 @@ export interface FbikRig {
      * при первом же драге эффектора.
      */
     poles?: ReadonlyMap<string, THREE.Vector3> | null,
+    /**
+     * ЖЁСТКИЕ КОСТИ (Ф22.1) — ОПОРА ВНУТРИ МАСКИ. Подмножество `active`: кость участвует
+     * в проходах (чтобы цепь была СВЯЗНОЙ и forward-проход дошёл до листьев), но САМА НЕ ДВИГАЕТСЯ
+     * и НЕ получает новый кватернион — и тягу выше себя НЕ пускает.
+     *
+     * Зачем отдельно от маски: при FK-вращении кости с ЗАПИНЕННЫМИ конечностями надо решать
+     * только сами конечности, но цепь до них идёт через КОРПУС и ТАЗ. Выкинешь их из маски —
+     * маска распадётся на несвязные куски и forward-проход от якоря не дойдёт ни до одной руки.
+     * Оставишь без пометки — корпус начнёт КОМПЕНСИРОВАТЬ твоё же вращение, и крутить кость станет бессмысленно.
+     */
+    rigid?: ReadonlySet<string> | null,
   ): number;
   /** Мировые позиции костей (после последнего solve). */
   worldPos(bone: string): THREE.Vector3 | null;
@@ -111,6 +122,11 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
   const setMask = (active?: ReadonlySet<string> | null): void => {
     for (let i = 0; i < names.length; i++) on[i] = !active || active.has(names[i]!);
   };
+  /** Опора внутри маски (Ф22.1): в проходах участвует, но не двигается и не крутится. */
+  const stiff: boolean[] = names.map(() => false);
+  const setRigid = (r?: ReadonlySet<string> | null): void => {
+    for (let i = 0; i < names.length; i++) stiff[i] = !!r && r.has(names[i]!);
+  };
   const readFk = (): void => {
     human.root.updateMatrixWorld(true);
     for (let i = 0; i < names.length; i++) human.bones.get(names[i]!)!.getWorldPosition(pos[i]!);
@@ -139,7 +155,7 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
   function seedHinges(): void {
     if (!limitOf) return;
     for (let i = 0; i < names.length; i++) {
-      if (!on[i]) continue;                                         // Ф21.3: жёсткую кость не подгибаем
+      if (!on[i] || stiff[i]) continue;                             // Ф21.3/Ф22.1: жёсткую кость не подгибаем
       const nm = names[i]!;
       const view = limitOf(nm);
       if (!view || view.kind !== 'hinge' || !view.axis) continue;
@@ -163,7 +179,11 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
     // НАЗАД: от листьев к корню. Цель тянет кость в свою точку, а родителю предлагается позиция
     // на расстоянии длины кости в сторону его ТЕКУЩЕГО положения. Развилки усредняют предложения детей.
     for (let i = names.length - 1; i >= 0; i--) {
-      if (!on[i]) continue;                                         // Ф21.3: жёсткая кость остаётся там, где её выставила авторская поза
+      if (!on[i]) continue;                                         // Ф21.3: кость вне маски остаётся там, где её выставила авторская поза
+      // Ф22.1: ЖЁСТКАЯ КОСТЬ — ОПОРА. Стоит там, где её поставил FK, и ТЯГУ ВЫШЕ НЕ ПЕРЕДАЁТ
+      // (не дойдя до `proposals[par]`). Именно это делает вращение кости в FK осмысленным при пинах:
+      // ты крутишь корпус, а рука догоняет СВОИМИ суставами, а не корпус откручивается обратно.
+      if (stiff[i]) { work[i]!.copy(pos[i]!); continue; }
       const t = targets.get(i);
       if (t) work[i]!.copy(t);
       else if (proposals[i]!.length) {
@@ -224,7 +244,7 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
   function placeHingeMids(): void {
     if (!limitOf) return;
     for (let m = 0; m < names.length; m++) {
-      if (!on[m]) continue;                                         // Ф21.3
+      if (!on[m] || stiff[m]) continue;                             // Ф21.3/Ф22.1
       const view = limitOf(names[m]!);
       if (!view || view.kind !== 'hinge' || !view.axis) continue;
       const r = nodes[m]!.parent, e = nodes[m]!.children[0];
@@ -272,14 +292,14 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
 
   /** Позиции → повороты: каждая кость доворачивается так, чтобы её ПЕРВЫЙ ребёнок попал в цель. */
   function positionsToRotations(): void {
-    if (on[hipsIdx]) writeHipsPosition();                           // таз вне маски — персонаж не едет
+    if (on[hipsIdx] && !stiff[hipsIdx]) writeHipsPosition();        // таз вне маски или жёсткий — персонаж не едет
     for (let i = 0; i < names.length; i++) {
       const kid = nodes[i]!.children[0];
       if (kid === undefined) continue;
       // Ф21.3: кость вне маски НЕ получает новый кватернион. И если её ПЕРВЫЙ РЕБЁНОК
       // вне маски — тоже не получает: иначе кость доворачивалась бы на УСТАРЕВШУЮ точку.
       // Побочный и желанный эффект: кисть больше не «целится в первый палец» и не крутит оружие.
-      if (!on[i] || !on[kid]) continue;
+      if (!on[i] || stiff[i] || !on[kid]) continue;
       const bone = human.bones.get(names[i]!)!;
       const kidBone = human.bones.get(names[kid]!)!;
       bone.updateMatrixWorld(true);
@@ -302,8 +322,9 @@ export function makeFullBodyIk(human: Humanoid, opts: FbikOptions = {}): FbikRig
   return {
     bones: names,
     worldPos(bone) { const i = index.get(bone); return i === undefined ? null : pos[i]!.clone(); },
-    solve(targets, anchor, active, poles) {
+    solve(targets, anchor, active, poles, rigid) {
       setMask(active);
+      setRigid(rigid);
       poleOf = poles ?? null;
       seedHinges();
       readFk();

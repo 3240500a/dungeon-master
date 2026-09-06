@@ -41,6 +41,64 @@ describe('fullBodyIk — базовое достижение цели', () => {
   });
 });
 
+describe('fullBodyIk — ЖЁСТКИЕ КОСТИ / ФИКСАТОРЫ (Ф22.1)', () => {
+  const chain = (h: Humanoid, end: string, root: string): string[] => {
+    const out: string[] = [];
+    for (let b: THREE.Object3D | null = h.bones.get(end)!; b; b = b.parent && h.bones.get(b.parent.name) ? b.parent : null) {
+      out.push(b.name);
+      if (b.name === root) break;
+    }
+    return out;
+  };
+
+  it('ГЛАВНОЕ: жёсткая кость НЕ получает новый кватернион, хоть и стоит ПОСРЕДИ решаемой цепи', () => {
+    // Это и есть отличие от маски: выбросишь корпус из маски — цепь до руки распадётся
+    // и forward-проход от таза до руки не дойдёт вовсе.
+    const h = buildHumanoid({});
+    const mask = new Set(chain(h, 'LeftHand', 'Hips'));
+    const rigid = new Set(['Hips', 'Spine', 'Chest', 'UpperChest']);
+    const before = [...rigid].map((n) => h.bones.get(n)!.quaternion.clone());
+    const rig = makeFullBodyIk(h);
+    const target = wpos(h, 'LeftHand').clone().add(V(-5, -9, 7));
+    rig.solve(new Map([['LeftHand', target]]), { bone: 'Hips', pos: wpos(h, 'Hips') }, mask, null, rigid);
+    [...rigid].forEach((n, i) => expect(h.bones.get(n)!.quaternion.angleTo(before[i]!), n).toBeLessThan(1e-9));
+    // а рука — решалась
+    expect(h.bones.get('LeftLowerArm')!.quaternion.angleTo(new THREE.Quaternion())).toBeGreaterThan(1e-6);
+  });
+
+  it('жёсткая кость НЕ СДВИГАЕТСЯ: тяга через неё наверх не проходит', () => {
+    const h = buildHumanoid({});
+    const hips0 = wpos(h, 'Hips').clone(), chest0 = wpos(h, 'Chest').clone();
+    const rig = makeFullBodyIk(h);
+    const target = wpos(h, 'LeftHand').clone().add(V(-60, -60, 0));   // заведомо недостижимо
+    rig.solve(new Map([['LeftHand', target]]), { bone: 'Hips', pos: hips0 },
+      new Set(chain(h, 'LeftHand', 'Hips')), null, new Set(['Hips', 'Spine', 'Chest', 'UpperChest']));
+    expect(wpos(h, 'Hips').distanceTo(hips0)).toBeLessThan(1e-6);
+    expect(wpos(h, 'Chest').distanceTo(chest0)).toBeLessThan(1e-6);
+  });
+
+  it('таз помечен жёстким — `writeHipsPosition` не зовётся, персонаж не едет', () => {
+    // Ф22.2: именно это давало «тянешь таз на 20u — он едет на 1.8u и стоит»:
+    // кламп поднимал таз, а солвер тут же тянул его обратно к стопам.
+    const h = buildHumanoid({});
+    const hipsLocal = h.hips.position.clone();
+    const rig = makeFullBodyIk(h);
+    const foot = wpos(h, 'LeftFoot').clone();
+    const mask = new Set([...chain(h, 'LeftFoot', 'Hips'), ...chain(h, 'RightFoot', 'Hips')]);
+    rig.solve(new Map([['LeftFoot', foot.clone().add(V(0, -40, 0))]]), { bone: 'Hips', pos: wpos(h, 'Hips') }, mask, null, new Set(['Hips']));
+    expect(h.hips.position.distanceTo(hipsLocal)).toBeLessThan(1e-9);
+  });
+
+  it('без `rigid` — поведение КАК РАНЬШЕ (старые вызовы не сломаны)', () => {
+    const h = buildHumanoid({});
+    const chest = h.bones.get('Chest')!.quaternion.clone();
+    const rig = makeFullBodyIk(h);
+    const target = wpos(h, 'LeftHand').clone().add(V(-5, -9, 7));
+    rig.solve(new Map([['LeftHand', target]]), { bone: 'Hips', pos: wpos(h, 'Hips') }, new Set(chain(h, 'LeftHand', 'Hips')));
+    expect(h.bones.get('Chest')!.quaternion.angleTo(chest)).toBeGreaterThan(1e-6);   // без пометки корпус решается
+  });
+});
+
 describe('fullBodyIk — ПОЛЮС СГИБА (Ф21.5)', () => {
   const D = Math.PI / 180;
   /** Локоть — шарнир вокруг Y, то есть плоскость сгиба — XZ, и обе стороны (±Z) разрешены. */
