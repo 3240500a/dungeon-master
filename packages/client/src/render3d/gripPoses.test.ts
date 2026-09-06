@@ -191,6 +191,92 @@ describe('gripPoses — наложение на скелет', () => {
   });
 });
 
+describe('gripPoses — концы слайдера снимаются РУКАМИ (Ф18)', () => {
+  /** Поза кисти из 15 фаланг с заданным углом вокруг X (просто что-то узнаваемое). */
+  const handPose = (side: 'Left' | 'Right', v: [number, number, number]): Pose => {
+    const out: Pose = {}; for (const b of handBones(side)) out[b] = [...v] as [number, number, number]; return out;
+  };
+  const cfgWith = (openPose: Pose | null, fistPose: Pose | null): GripConfig => {
+    const cfg: GripConfig = EMPTY_GRIP_CONFIG();
+    const e: Record<string, unknown> = {};
+    if (openPose) { cfg.custom['o'] = { id: 'o', label: 'ладонь', pose: openPose }; e['openR'] = 'o'; }
+    if (fistPose) { cfg.custom['f'] = { id: 'f', label: 'кулак', pose: fistPose }; e['R'] = 'f'; }
+    cfg.byWeapon['w'] = { axe: e };
+    return cfg;
+  };
+
+  it('ГЛАВНОЕ: на концах слайдера — РОВНО то, что сняли, бит-в-бит', () => {
+    // Смысл фичи: никакой процедурной математики ПОВЕРХ снятого — ни вычитания бинда,
+    // ни клэмпов. Иначе «выставил глазами и снял» перестаёт быть предсказуемым.
+    const openP = handPose('Right', [0.1, 0.2, -0.3]), fistP = handPose('Right', [-0.4, 0.5, 1.1]);
+    const cfg = cfgWith(openP, fistP);
+    cfg.byWeapon['w']!['axe']!.closeR = 0;
+    const at0 = resolveGripPose(cfg, 'w', 'axe');
+    cfg.byWeapon['w']!['axe']!.closeR = 1;
+    const at1 = resolveGripPose(cfg, 'w', 'axe');
+    for (const b of handBones('Right')) {
+      for (let i = 0; i < 3; i++) {
+        expect(at0[b]![i]!, `0/${b}[${i}]`).toBeCloseTo(openP[b]![i]!, 4);
+        expect(at1[b]![i]!, `1/${b}[${i}]`).toBeCloseTo(fistP[b]![i]!, 4);
+      }
+    }
+  });
+
+  it('середина — между двумя снятыми позами, а не в какой-то третьей точке', () => {
+    const openP = handPose('Right', [0, 0, 0]), fistP = handPose('Right', [0, 0, 1.0]);
+    const cfg = cfgWith(openP, fistP);
+    cfg.byWeapon['w']!['axe']!.closeR = 0.5;
+    const mid = resolveGripPose(cfg, 'w', 'axe');
+    expect(mid['RightIndexProximal']![2]!).toBeCloseTo(0.5, 3);
+  });
+
+  it('снят только КУЛАК — открытый конец остаётся выпрямленной кистью', () => {
+    const fistP = handPose('Right', [0, 0, 0.9]);
+    const cfg = cfgWith(null, fistP);
+    cfg.byWeapon['w']!['axe']!.closeR = 0;
+    const at0 = resolveGripPose(cfg, 'w', 'axe');
+    const straight = straightHandPose('Right');
+    for (const b of handBones('Right')) for (let i = 0; i < 3; i++) expect(at0[b]![i]!, b).toBeCloseTo(straight[b]![i]!, 4);
+  });
+
+  it('снятая ПРАВАЯ не трогает левую — та остаётся авто-пресетом по оружию', () => {
+    const cfg = cfgWith(handPose('Right', [0, 0, 0]), handPose('Right', [0, 0, 1]));
+    const p = resolveGripPose(cfg, 'w', 'axe');
+    expect(Object.keys(p).length).toBe(30);
+    // пустая офф-рука топора → авто-пресет 'relaxed' (Index 0.3 × CURL_MAX 1.45)
+    expect(curl(p, 'LeftIndexProximal')).toBeCloseTo(0.3 * 1.45, 2);
+  });
+});
+
+describe('jointLimits — большой палец уводится В СТОРОНУ (Ф18)', () => {
+  it('ГЛАВНОЕ: у большого разгиб ВДВОЕ+ шире, чем у прочих — им ставится раскрытая ладонь', () => {
+    // У прочих пальцев отрицательная сторона — крохотный переразгиб, а у большого это
+    // ЛУЧЕВОЕ ОТВЕДЕНИЕ. Со старыми −25° клин предела уходил почти весь в сгиб, и FK-клэмп
+    // не давал отвести большой в сторону вообще.
+    const th = extraLimitView('LeftThumbProximal')!, ix = extraLimitView('LeftIndexProximal')!;
+    expect(th.planeMin!).toBeLessThan(-55 * Math.PI / 180);
+    expect(th.planeMin!).toBeLessThan(ix.planeMin! * 2);
+    expect(Math.abs(th.normalMin!)).toBeGreaterThan(Math.abs(ix.normalMin!) * 2);   // ладонное отведение тоже шире
+  });
+
+  it('межфаланговый большого переразгибается заметно, а у прочих — почти нет', () => {
+    expect(extraLimitView('LeftThumbIntermediate')!.planeMin!).toBeLessThan(-15 * Math.PI / 180);
+    expect(extraLimitView('LeftIndexIntermediate')!.planeMin!).toBeGreaterThan(-10 * Math.PI / 180);
+  });
+
+  it('расширение НЕ сломало верхнюю границу: кулак по-прежнему в зоне', () => {
+    for (const side of ['Left', 'Right'] as const) {
+      const p = gripToPose(findGrip('fist')!, side);
+      for (const k in p) {
+        const view = extraLimitView(k)!;
+        const v = p[k]!;
+        _q.setFromEuler(_e.set(v[0], v[1], v[2], 'XYZ'));
+        expect(decomposeToLimit(_q, view).rP, k).toBeLessThanOrEqual(view.planeMax! + 1e-6);
+      }
+    }
+  });
+});
+
 describe('gripPoses — хват укладывается в пределы НА ЛЮБОМ бинде (Ф17)', () => {
   it('ГЛАВНОЕ: на поджатой кисти и выпрямление, и кулак ОСТАЮТСЯ В ЗОНЕ', () => {
     // До Ф17 числа предела брались КАК ЕСТЬ, то есть отсчитывались от БИНДА модели, а не от

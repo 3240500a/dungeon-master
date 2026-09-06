@@ -154,6 +154,19 @@ describe('fingerAxes — бинд-сгиб (Ф15.4)', () => {
     expect(bindCurlOver('LeftIndexProximal', ax)).toBeGreaterThan(0.4);
   });
 
+  it('У БОЛЬШОГО ПАЛЬЦА ИЗБЫТКА НЕТ НИКОГДА — его нейтраль это его СОБСТВЕННЫЙ бинд (Ф18)', () => {
+    // Наш процедурный «большой» — просто ещё один палец в углу ладони (пясть не развёрнута),
+    // поэтому разность с ним меряет разницу РИГОВ, а не согнутость модели. На knight_05 это были −29°,
+    // и окно предела большого уезжало в сгиб — отвести палец в сторону было некуда.
+    const c = canonicalFingerAxes();
+    const wild: Record<string, typeof c[string]> = {};
+    for (const k in c) wild[k] = { ...c[k]!, bindCurl: c[k]!.bindCurl + 0.9 };
+    for (const nm of ['LeftThumbProximal', 'RightThumbIntermediate', 'LeftThumbDistal']) {
+      expect(bindCurlOver(nm, wild), nm).toBe(0);
+    }
+    expect(bindCurlOver('LeftIndexProximal', wild)).toBeCloseTo(0.9, 6);   // у прочих — меряется как и раньше
+  });
+
   it('ГЛАВНОЕ: полусогнутый бинд (как у CC) измеряется, а не игнорируется', () => {
     // Гнём указательный на 0.4 рад в каждом межфаланговом суставе — вокруг Z (ось сгиба нашей кисти).
     const base = canonicalFingerOffsets();

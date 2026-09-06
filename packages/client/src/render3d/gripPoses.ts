@@ -152,8 +152,12 @@ export function gripToPoseBoth(specL: GripSpec, specR: GripSpec, closeL = 1, clo
 // ── Персист: библиотека своих хватов + привязка к оружию ─────────────────────────────────────────
 /** Свой хват хранится готовыми углами (Про-режим правил фаланги руками). */
 export interface CustomGrip { id: string; label: string; pose: Pose }
-/** Привязка хватов к ключу оружия (`main+off`): что в правой, что в левой, и насколько сжато. */
-export interface WeaponGrip { L?: string; R?: string; closeL?: number; closeR?: number }
+/**
+ * Привязка хватов к ключу оружия (`main+off`). `L`/`R` — ЗАКРЫТЫЙ конец слайдера (кулак/хват),
+ * `openL`/`openR` — ОТКРЫТЫЙ (Ф18). Оба необязательны: чего нет — считается процедурно
+ * (выпрямленная кисть и пресет по оружию), что есть — берётся как есть.
+ */
+export interface WeaponGrip { L?: string; R?: string; openL?: string; openR?: string; closeL?: number; closeR?: number }
 export interface GripConfig {
   custom: Record<string, CustomGrip>;                        // id → свой хват
   byWeapon: Record<string, Record<string, WeaponGrip>>;      // персонаж → ключ оружия → привязка
@@ -186,6 +190,7 @@ export function effectiveWeaponGrip(cfg: GripConfig, charId: string, weaponKey: 
   const ov = cfg.byWeapon[charId]?.[weaponKey];
   return {
     L: ov?.L ?? auto.L, R: ov?.R ?? auto.R,
+    openL: ov?.openL, openR: ov?.openR,          // открытый конец авто-дефолта не имеет: нет снятого → выпрямленная кисть
     closeL: ov?.closeL ?? auto.closeL ?? 1, closeR: ov?.closeR ?? auto.closeR ?? 1,
   };
 }
@@ -193,24 +198,34 @@ export function effectiveWeaponGrip(cfg: GripConfig, charId: string, weaponKey: 
 /** Итоговая поза пальцев для персонажа+оружия (учитывая свои хваты и привязку). */
 export function resolveGripPose(cfg: GripConfig, charId: string, weaponKey: string, axes?: Record<string, FingerAxes> | null): Pose {
   const bind = effectiveWeaponGrip(cfg, charId, weaponKey);
-  const side = (id: string | undefined, s: 'Left' | 'Right', close: number): Pose => {
-    if (!id) return {};
-    const custom = cfg.custom[id];
-    if (custom) {                                     // свой хват: берём только кости нужной кисти
-      // Слайдер работает и на своих хватах: они хранятся ГОТОВЫМИ углами, масштабировать «сжатие»
-      // в них нечего — поэтому смешиваем от выпрямленной кисти к сохранённой. Раньше слайдер на своём
-      // хвате молча не делал ничего.
-      const straight = close < 0.999 ? straightHandPose(s, axes) : null;
-      const out: Pose = {};
-      for (const k in custom.pose) if (k.startsWith(s)) {
-        const v = custom.pose[k]!;
-        out[k] = straight ? blendEuler(straight[k], v, close) : [v[0], v[1], v[2]];
-      }
-      return out;
-    }
-    const g = findGrip(id); return g ? gripToPose(g, s, close, axes) : {};
+  /** Кости ОДНОЙ кисти из сохранённой позы. */
+  const pick = (p: Pose, s: 'Left' | 'Right'): Pose => {
+    const out: Pose = {};
+    for (const k in p) if (k.startsWith(s) && isHandBone(k)) { const v = p[k]!; out[k] = [v[0], v[1], v[2]]; }
+    return out;
   };
-  return { ...side(bind.L, 'Left', bind.closeL ?? 1), ...side(bind.R, 'Right', bind.closeR ?? 1) };
+  const side = (s: 'Left' | 'Right', openId: string | undefined, closedId: string | undefined, close: number): Pose => {
+    const openOwn = openId ? cfg.custom[openId] : undefined;
+    const closedOwn = closedId ? cfg.custom[closedId] : undefined;
+    // ОБА конца процедурные — аналитический путь (точный, с вычитанием бинд-избытка).
+    if (!openOwn && !closedOwn) {
+      const g = closedId ? findGrip(closedId) : null;
+      return g ? gripToPose(g, s, close, axes) : straightHandPose(s, axes);
+    }
+    // Хотя бы один конец СНЯТ РУКАМИ (Ф18) — слайдер идёт МЕЖДУ ДВУМЯ ПОЗАМИ, без всякой
+    // процедурной математики поверх: что выставили руками, то и будет на концах бит-в-бит.
+    const open = openOwn ? pick(openOwn.pose, s) : straightHandPose(s, axes);
+    const closedG = !closedOwn && closedId ? findGrip(closedId) : null;
+    const closed = closedOwn ? pick(closedOwn.pose, s) : (closedG ? gripToPose(closedG, s, 1, axes) : open);
+    const out: Pose = {};
+    for (const k in closed) out[k] = blendEuler(open[k], closed[k]!, close);
+    for (const k in open) if (out[k] === undefined) { const v = open[k]!; out[k] = [v[0], v[1], v[2]]; }
+    return out;
+  };
+  return {
+    ...side('Left', bind.openL, bind.L, bind.closeL),
+    ...side('Right', bind.openR, bind.R, bind.closeR),
+  };
 }
 
 /**
