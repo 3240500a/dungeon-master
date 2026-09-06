@@ -306,16 +306,16 @@ function highlight(m: THREE.Mesh | null): void {
 }
 
 // ── IK-риг ──
-interface Eff { root: string; mid: string; end: string; pole: THREE.Vector3; poleSet: boolean; isFoot: boolean; pin: boolean; ik: boolean; target: THREE.Vector3; prev: THREE.Vector3; footQuat: THREE.Quaternion; handle: THREE.Mesh; poleHandle: THREE.Mesh }
+interface Eff { root: string; mid: string; end: string; pole: THREE.Vector3; isFoot: boolean; pin: boolean; ik: boolean; target: THREE.Vector3; prev: THREE.Vector3; footQuat: THREE.Quaternion; handle: THREE.Mesh; poleHandle: THREE.Mesh }
 const LIMB_OF: Record<string, string> = { LeftUpperArm: 'LH', LeftLowerArm: 'LH', LeftHand: 'LH', RightUpperArm: 'RH', RightLowerArm: 'RH', RightHand: 'RH', LeftUpperLeg: 'LF', LeftLowerLeg: 'LF', RightUpperLeg: 'RF', RightLowerLeg: 'RF' };
 const mkHandle = (color: number, r: number, box = false): THREE.Mesh => { const m = new THREE.Mesh(box ? new THREE.BoxGeometry(r * 1.6, r * 1.6, r * 1.6) : new THREE.SphereGeometry(r, 12, 10), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 })); m.renderOrder = 999; scene.add(m); return m; };
 const rig = {
   hipsPos: V(), hipsQuat: Q(), hipsHandle: mkHandle(0xf0c020, 3.4, true),
   eff: {
-    LH: { root: 'LeftUpperArm', mid: 'LeftLowerArm', end: 'LeftHand', pole: new THREE.Vector3(0, -1, -0.4), poleSet: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
-    RH: { root: 'RightUpperArm', mid: 'RightLowerArm', end: 'RightHand', pole: new THREE.Vector3(0, -1, -0.4), poleSet: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
-    LF: { root: 'LeftUpperLeg', mid: 'LeftLowerLeg', end: 'LeftFoot', pole: new THREE.Vector3(0, 0, 1), poleSet: false, isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
-    RF: { root: 'RightUpperLeg', mid: 'RightLowerLeg', end: 'RightFoot', pole: new THREE.Vector3(0, 0, 1), poleSet: false, isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
+    LH: { root: 'LeftUpperArm', mid: 'LeftLowerArm', end: 'LeftHand', pole: new THREE.Vector3(0, -1, -0.4), isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
+    RH: { root: 'RightUpperArm', mid: 'RightLowerArm', end: 'RightHand', pole: new THREE.Vector3(0, -1, -0.4), isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
+    LF: { root: 'LeftUpperLeg', mid: 'LeftLowerLeg', end: 'LeftFoot', pole: new THREE.Vector3(0, 0, 1), isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
+    RF: { root: 'RightUpperLeg', mid: 'RightLowerLeg', end: 'RightFoot', pole: new THREE.Vector3(0, 0, 1), isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
   } as Record<string, Eff>,
 };
 const effList = (): Eff[] => Object.values(rig.eff);
@@ -344,6 +344,51 @@ function solve2Bone(rootN: string, midN: string, endN: string, target: THREE.Vec
 // Восстановить МИРОВУЮ ориентацию конца эффектора (кисть/стопа) после солва: solve2Bone целит плечо/предплечье
 // минимальной дугой (`setFromUnitVectors`) → даёт ПРОИЗВОЛЬНУЮ скрутку, и кисть (с оружием) разворачивало. Держим
 // захваченную ориентацию (footQuat) — как у стоп. Так drag руки в IK больше не «сбрасывает» углы и не крутит топор.
+/**
+ * СВИВЕЛЬ ЛОКТЯ/КОЛЕНА — АНАЛИТИЧЕСКИ, а не через FABRIK (Ф23.1).
+ *
+ * Свивель — это вращение всей цепи ВОКРУГ ЛИНИИ корень→конец. Оба конца лежат НА этой
+ * оси, поэтому кисть/стопа ОСТАЁТСЯ НА МЕСТЕ ПО ПОСТРОЕНИЮ — достаточно повернуть ОДНУ
+ * кость-корень (плечо/бедро), остальное поедет за ней как жёсткое тело.
+ *
+ * Замер до: попытка отдать свивель солверу (полюс → `placeHingeMids`) увозила кисть на 7.07u:
+ * принудительный свивель загоняет твист плеча за предел (±80°), клэмп режет — и рука
+ * перестаёт целиться (та же причина, что в Ф21.5). Поэтому свивель ставится точной формулой,
+ * а солвер после него только ДОБИРАЕТ то, что срезал клэмп.
+ */
+const SWIVEL_STEPS = 12;                                     // шагов доворота: мельче шаг — точнее упор в предел
+const SWIVEL_SLACK = 0.3;                                    // насколько конец вообще вправе сойти с места
+function applySwivel(e: Eff): void {
+  const root = human.bones.get(e.root), mid = human.bones.get(e.mid), end = human.bones.get(e.end);
+  if (!root || !mid || !end || !root.parent) return;
+  human.root.updateMatrixWorld(true);
+  const ep0 = end.getWorldPosition(V()).clone();
+  const rp = root.getWorldPosition(V()), mp = mid.getWorldPosition(V());
+  const axis = ep0.clone().sub(rp); if (axis.lengthSq() < 1e-6) return; axis.normalize();
+  const perp = (v: THREE.Vector3): THREE.Vector3 => v.addScaledVector(axis, -v.dot(axis));
+  const cur = perp(mp.sub(rp)), want = perp(e.pole.clone());
+  if (cur.lengthSq() < 1e-6 || want.lengthSq() < 1e-6) return;   // прямая конечность — свивеля нет по определению
+  cur.normalize(); want.normalize();
+  let ang = Math.acos(clamp(cur.dot(want), -1, 1));
+  if (V().crossVectors(cur, want).dot(axis) < 0) ang = -ang;
+  if (Math.abs(ang) < 1e-4) return;
+  // МАЛЫМИ ШАГАМИ С КЛЭМПОМ И ОТКАТОМ. Сам по себе свивель конец не двигает (оба конца
+  // на оси вращения), но КЛЭМП ПЛЕЧА двигает: замер одним большим шагом — сгиб сохранялся
+  // точно (110°→110°), а кисть уезжала на 22–29u. Поэтому та же семантика, что у фиксаторов
+  // таза (Ф22.4): шагнули → зажали по пределу → если конец сошёл с места, шаг откатили и СТОП.
+  // Свивель доворачивается до анатомического предела и там упирается, конец стоит.
+  const view = limitViewForBone(e.root);
+  for (let i = 0; i < SWIVEL_STEPS; i++) {
+    const q0 = root.quaternion.clone();
+    const ax = end.getWorldPosition(V()).sub(root.getWorldPosition(V()));
+    if (ax.lengthSq() < 1e-6) break;
+    const w = root.getWorldQuaternion(Q()).premultiply(Q().setFromAxisAngle(ax.normalize(), ang / SWIVEL_STEPS));
+    root.quaternion.copy(root.parent.getWorldQuaternion(Q()).invert().multiply(w));
+    if (view) root.quaternion.copy(clampLocalToLimit(root.quaternion, view));
+    human.root.updateMatrixWorld(true);
+    if (end.getWorldPosition(V()).distanceTo(ep0) > SWIVEL_SLACK) { root.quaternion.copy(q0); human.root.updateMatrixWorld(true); break; }
+  }
+}
 function setEndOrient(e: Eff): void {
   const end = human.bones.get(e.end)!; end.updateMatrixWorld();
   const pInv = end.parent!.getWorldQuaternion(Q()).invert();
@@ -375,7 +420,7 @@ function syncEff(e: Eff): void {
 function syncHandles(): void {
   const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position); rig.hipsQuat.copy(hips.quaternion);
   human.root.updateMatrixWorld(true);
-  for (const e of effList()) if (!(e.ik && e.pin)) syncEff(e);
+  for (const k in rig.eff) { const e = rig.eff[k]!; if (!(e.ik && e.pin) && k !== activePole) syncEff(e); }
 }
 /** Поза ЗАМЕНЕНА (клип/кадр/T-поза/undo): всё перечитываем заново, включая пины и опору корпуса. */
 function captureRig(): void {
@@ -485,7 +530,10 @@ function solveRig(): void {
   human.root.updateMatrixWorld(true);
   for (const k in rig.eff) {
     const e = rig.eff[k]!;
-    if (!e.pin && k !== activeKey) e.target.copy(human.bones.get(e.end)!.getWorldPosition(V()));
+    // Ф23.1: ЦЕЛЬ НЕ ПЛЫВЁТ ПРИ ДРАГЕ ПОЛЮСА. Без `k !== activePole` цель той же конечности
+    // переписывалась каждый кадр на текущее место кисти — удерживать было НЕЧЕГО, и свивель
+    // увозил конец на 20–26u вместо того, чтобы вращать локоть вокруг него.
+    if (!e.pin && k !== activeKey && k !== activePole) e.target.copy(human.bones.get(e.end)!.getWorldPosition(V()));
     if (e.isFoot) e.footQuat.copy(human.bones.get(e.end)!.getWorldQuaternion(Q()));
   }
   // ЖЕЛАНИЕ НЕ ЗАТИРАЕМ ФАКТОМ (Ф22.4). Здесь стояло `rig.hipsPos.copy(human.hips.position)`, и кламп
@@ -712,15 +760,36 @@ function solvePlan(): SolvePlan {
     anchorBone = 'Hips'; anchorPos = human.hips.getWorldPosition(V());
     for (const n of [...mask]) if (isHandBone(n)) mask.delete(n);
     const poles0 = new Map<string, THREE.Vector3>();
-    // У НОГ ПОЛЮС РАБОТАЕТ ВСЕГДА (Ф22.4), у рук — только после ручного драга.
+    // В СОЛВЕР ПОЛЮС ИДЁТ ТОЛЬКО ДЛЯ НОГ (Ф23.1).
   //
   // Колено смотрит вперёд — это АНАТОМИЯ, а не «ручная докрутка». Без полюса сторона сгиба
   // берётся из ЗНАКА ПРЕДЕЛА через ось шарнира В МИРЕ, а она зависит от ориентации бедра —
   // получается самоподдерживающийся ФЛИП. Замер на приседе: сгиб колена 70.4° → ВНЕЗАПНО 2.3°,
   // таз проваливался на 20u, нога уходила вбок — «шпагат» со скрина юзера. У рук включённый
   // всегда полюс, наоборот, ронял недолёт с 0 до 15–17u (Ф21.5) — поэтому разделённо.
-  for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && (e.poleSet || e.isFoot) && mask.has(e.mid)) poles0.set(e.mid, e.pole.clone()); }
+  for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.isFoot && mask.has(e.mid)) poles0.set(e.mid, e.pole.clone()); }
     return { mask, targets, rigid, anchorBone, anchorPos, pull: null, poles: poles0 };
+  }
+
+  // ТЯНЕМ ОРАНЖЕВУЮ РУЧКУ ЛОКТЯ/КОЛЕНА (Ф23.1).
+  //
+  // До этого полюс был РОВНО БЕСПОЛЕЗЕН, и причина была не в солвере: при драге полюса
+  // `activeKey` и `fkProxyBone` ОБА `null`, поэтому ни одна ветка плана не срабатывала —
+  // маска пустая, `plan.targets.size === 0`, и `solve` не звался ВООБЩЕ. Оранжевая точка
+  // таскалась, `e.pole` честно менялся — и никто его не читал до следующего драга кисти.
+  //
+  // Цель конца остаётся где была: свивель — это вращение ЛОКТЯ ВОКРУГ линии плечо→кисть,
+  // кисть при этом стоит. Поэтому якорь и цель — конец на своём же `target`.
+  const ap = activePole ? rig.eff[activePole] ?? null : null;
+  if (ap && ap.ik) {
+    add(boneChain(ap.end, CHAIN_ROOT[activePole!] ?? 'Hips'));
+    targets.set(ap.end, ap.target.clone());
+    anchorBone = ap.end; anchorPos = ap.target.clone();
+    for (const n of [...mask]) if (isHandBone(n)) mask.delete(n);
+    // Полюс ИМЕННО ЭТОЙ конечности — всегда: его прямо сейчас тянет пользователь.
+    const polesP = new Map<string, THREE.Vector3>([[ap.mid, ap.pole.clone()]]);
+    for (const k in rig.eff) { const e = rig.eff[k]!; if (k !== activePole && e.ik && e.isFoot && mask.has(e.mid)) polesP.set(e.mid, e.pole.clone()); }
+    return { mask, targets, rigid, anchorBone, anchorPos, pull: null, poles: polesP };
   }
 
   if (ae && ae.ik) {
@@ -749,20 +818,20 @@ function solvePlan(): SolvePlan {
   for (const n of [...mask]) if (isHandBone(n)) mask.delete(n);   // фаланги — территория хвата
   // ПОЛЮСЫ только для того, что решаем: чужой полюс для жёсткой кости всё равно не применится.
   //
-  // ПОЛЮС ПРИМЕНЯЕТСЯ ТОЛЬКО ПОСЛЕ РУЧНОГО ДРАГА оранжевой ручки (`poleSet`), а не всегда.
-  // Первая версия включала его всегда (полюс снимался `syncEff` с живой позы) — ЗАМЕР ЗАПРЕТИЛ:
-  // на тяге кисти к точке перед левым плечом недолёт вырос с 0 до 15–17u. Причина: зафиксированный
-  // свивель локтя загоняет твист плеча за его предел (±80°), клэмп режет — и рука перестаёт целиться.
-  // Так же сказано и в плане Ф21: «полюс — только когда его двигали; иначе прежний знак предела».
+  // РУКАМ ПОЛЮС В СОЛВЕР НЕ ПЕРЕДАЁТСЯ ВООБЩЕ (Ф23.1). Свивель руки ставится `applySwivel` —
+  // точной формулой в момент драга оранжевой ручки, и остаётся в позе как авторский угол.
+  // Зафиксированный ЖЕ в солвере свивель загоняет твист плеча за предел (±80°), клэмп режет —
+  // и рука перестаёт целиться: замер на тяге кисти поперёк тела — недолёт 0 → 10.5u.
+  // У НОГ полюс в солвере НУЖЕН: он чинит ФЛИП КОЛЕНА (Ф22.4), а стопа от него не страдает.
   const poles = new Map<string, THREE.Vector3>();
-  // У НОГ ПОЛЮС РАБОТАЕТ ВСЕГДА (Ф22.4), у рук — только после ручного драга.
+  // В СОЛВЕР ПОЛЮС ИДЁТ ТОЛЬКО ДЛЯ НОГ (Ф23.1).
   //
   // Колено смотрит вперёд — это АНАТОМИЯ, а не «ручная докрутка». Без полюса сторона сгиба
   // берётся из ЗНАКА ПРЕДЕЛА через ось шарнира В МИРЕ, а она зависит от ориентации бедра —
   // получается самоподдерживающийся ФЛИП. Замер на приседе: сгиб колена 70.4° → ВНЕЗАПНО 2.3°,
   // таз проваливался на 20u, нога уходила вбок — «шпагат» со скрина юзера. У рук включённый
   // всегда полюс, наоборот, ронял недолёт с 0 до 15–17u (Ф21.5) — поэтому разделённо.
-  for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && (e.poleSet || e.isFoot) && mask.has(e.mid)) poles.set(e.mid, e.pole.clone()); }
+  for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.isFoot && mask.has(e.mid)) poles.set(e.mid, e.pole.clone()); }
   return { mask, targets, rigid, anchorBone, anchorPos, pull, poles };
 }
 function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.add(delta); for (const e of effList()) if (!e.isFoot && !e.pin && e !== except) e.target.add(delta); }
@@ -771,6 +840,7 @@ function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.
 const ray = new THREE.Raycaster(); let activeKey: string | null = null; let activePole: string | null = null;
 canvas.addEventListener('pointerdown', (ev) => {
   if (gizmo.dragging) return;
+  if (shiftRings && !ev.shiftKey) shiftReset();   // Ф23.2: состояние колец протухло (потерян keyup) — чиним до пикинга
   const r = canvas.getBoundingClientRect();
   ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
   if (editPlant && locoOn && locoGait) {                     // режим правки: тянем АВТОРСКИЕ маркеры (плант/обвод), кости не трогаем
@@ -861,7 +931,7 @@ gizmo.addEventListener('objectChange', () => {
     return;   // оружие/маркер (gizmo.object = группа) вращается гизмо напрямую — доп. обработки не нужно
   }
   if (!ikOn && activeKey !== 'hips') return;   // тумблер выкл: ручки спрятаны, но таз — нет; его ветка ниже работает всегда
-  if (activePole) { const e = rig.eff[activePole]!; const rp = human.bones.get(e.root)!.getWorldPosition(V()); const pv = e.poleHandle.position.clone().sub(rp); if (pv.lengthSq() > 1e-6) { e.pole.copy(pv.normalize()); e.poleSet = true; } return; }
+  if (activePole) { const e = rig.eff[activePole]!; const rp = human.bones.get(e.root)!.getWorldPosition(V()); const pv = e.poleHandle.position.clone().sub(rp); if (pv.lengthSq() > 1e-6) e.pole.copy(pv.normalize()); return; }
   if (activeKey === 'hips') { if (hipsMode === 'translate') moveHips(rig.hipsHandle.position.clone().sub(rig.hipsPos), null); else rig.hipsQuat.copy(rig.hipsHandle.quaternion); }
   else {
     // Ф21.4: ТЯГА КИСТИ БОЛЬШЕ НЕ ДВИГАЕТ ТАЗ. Здесь стояло `moveHips(дельта × bodyFollow)` — КАЖДЫЙ
@@ -1136,6 +1206,18 @@ function ringsOff(): void {
 }
 addEventListener('keydown', (e) => { if (e.key === 'Shift') { applySnap(true); ringsOn(); } });
 addEventListener('keyup', (e) => { if (e.key === 'Shift') { applySnap(); ringsOff(); } });
+/**
+ * АВАРИЙНЫЙ СБРОС «ЗАЛИПШЕГО» SHIFT (Ф23.2).
+ *
+ * `keyup` может НЕ ПРИЙТИ вообще: Alt+Tab, клик мимо окна, переключение вкладки —
+ * окно теряет фокус с зажатой клавишей. Тогда `shiftRings` оставался непустым НАВСЕГДА,
+ * `ringsOn` каждый раз выходил по первой же строке — и кольца больше не появлялись. Именно
+ * так выглядит жалоба «через какое-то время пропал Shift и вращение»: вращение и ЕСТЬ кольца.
+ * Снап залипал точно так же — поэтому сбрасываем оба.
+ */
+function shiftReset(): void { ringsOff(); applySnap(); }
+addEventListener('blur', shiftReset);
+document.addEventListener('visibilitychange', () => { if (document.hidden) shiftReset(); });
 addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) history.redo(); else history.undo(); } if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); history.redo(); } });
 
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
@@ -3329,7 +3411,12 @@ function loop(): void {
     // Ф21.1: гейт теперь по ТОМУ, ЧТО ТЯНЕШЬ (ручка, а не кость), а не по глобальному режиму:
     // в одном инструменте драг кости (FK) и драг ручки (IK) идут через один и тот же гизмо.
     const onHandle = !!(activeKey || activePole);
-    if (gizmo.dragging && onHandle && (ikOn || activeKey === 'hips')) solveRig();
+    // Ф23.1: свивель ставится ТОЧНОЙ ФОРМУЛОЙ до солва — он сохраняет конец по построению.
+    // ПРИ ДРАГЕ ПОЛЮСА — ТОЛЬКО СВИВЕЛЬ, без FABRIK. Свивель точен по построению
+    // (сгиб сохраняется 110°→110°), а солвер после него его же и ломал: замер с FABRIK —
+    // сгиб 106°→138° и конец на 15–26u в стороне.
+    if (gizmo.dragging && activePole && ikOn) applySwivel(rig.eff[activePole]!);
+    else if (gizmo.dragging && onHandle && (ikOn || activeKey === 'hips')) solveRig();
     // Ф22.1: ФИКСАТОРЫ ДЕЙСТВУЮТ И ПРИ FK-ВРАЩЕНИИ КОСТИ. Раньше солвер звался только
     // на драге РУЧКИ, поэтому пины при повороте кости не держали вообще (замер: `Hips` на 40°
     // — кисти уезжали на 26.1u). В Cascadeur фиксатор держит точку при ЛЮБОЙ манипуляции.
@@ -3402,7 +3489,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, get fbikOn() { return fbikOn; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, get fbikOn() { return fbikOn; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
