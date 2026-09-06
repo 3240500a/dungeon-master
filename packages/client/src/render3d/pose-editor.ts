@@ -1918,9 +1918,20 @@ const body = document.createElement('div');
 panel.append(tabBar, body);
 const el = (t: string, css: string): HTMLElement => { const e = document.createElement(t); e.style.cssText = css; return e; };
 const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => { const b = document.createElement('button'); b.textContent = label; b.style.cssText = `margin:2px 3px 2px 0;padding:3px 7px;background:${on ? '#3a5030' : '#2a3350'};color:#cfd3e0;border:1px solid #4a5680;border-radius:4px;cursor:pointer;font:11px monospace`; b.onclick = fn; return b; };
-// Вкладка «Повороты» авто-включает превью бега (updateTurnTest: locoOn=true). При уходе на не-локо вкладку его НАДО
+// Вкладка «Повороты» авто-включает превью бега (`renderTurn`: locoOn=true). При уходе на не-локо вкладку его НАДО
 // выключить, иначе гейт продолжает вести манекен и перекрывает воспроизведение клипов («после Поворотов анимации не работают»).
-const tabSwitch = (k: typeof tab): void => { if (k !== 'turn' && k !== 'loco' && locoOn) { locoOn = false; goFrame(frameIdx); } tab = k; refreshAll(); };
+//
+// Ф26.1 — ПОРЯДОК ЗДЕСЬ РЕШАЕТ, и это была НАСТОЯЩАЯ причина «персонаж взлетел». Раньше `goFrame` звался ДО
+// `tab = k`, а он внутри дёргает `refreshAll()` — то есть перерисовывал ЕЩЁ СТАРУЮ вкладку, а `renderTurn` снова
+// ставил `locoOn = true`. Превью походки НИКОГДА не выключалось: гейт продолжал каждый кадр ставить таз
+// в `30 + bobY` (`gaitToHumanoid`), а при авторской высоте таза ~40 это выглядит как «персонаж провалился/взлетел»
+// (замер: таз 40.28 → 30.0, стопа 1.84 → −8.63 под полом).
+const tabSwitch = (k: typeof tab): void => {
+  const stop = locoOn && k !== 'turn' && k !== 'loco';
+  tab = k;                                                   // СНАЧАЛА переключаем вкладку, ПОТОМ гасим превью — см. ниже
+  if (stop) { locoOn = false; ghostGround.off = 0; goFrame(frameIdx); }
+  refreshAll();
+};
 for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
 // Ф15.1 + Ф20.1: риг-источник строится ТЕМ ЖЕ профилем И ТЕМ ЖЕ boneScale, что манекен —
@@ -3088,7 +3099,19 @@ function refreshTimeline(): void {
   tl.draw();   // Ф6: ключи/дорожки/плейхед рисует канвас-панель
   if (!c) return;
 }
-function goFrame(i: number): void { const c = curClip(); if (!c) return; frameIdx = i; if (c.keys[i]) applyPose(c.keys[i]!.pose); if (ikOn) captureRig(); refreshAll(); }
+/**
+ * ВСТАТЬ НА КАДР — и ОБЯЗАТЕЛЬНО НА ПОЛ (Ф26.1). Раньше восстанавливалась только ПОЗА (повороты костей),
+ * а два вертикальных состояния жили своей жизнью: сдвиг заземления призрака (`ghostGround.off`) и корень манекена
+ * (`human.reset()` НЕ трогает `Root` — см. `humanoid.ts`). Нет клипа/кадра (сменили оружие на вкладке «Бег») —
+ * тем более надо снять высоту: именно там раньше был ранний `return` и персонаж оставался в гейт-позе.
+ */
+function goFrame(i: number): void {
+  ghostGround.off = 0; human.root.position.y = 0;
+  const c = curClip(); if (!c) return;
+  frameIdx = i; if (c.keys[i]) applyPose(c.keys[i]!.pose);
+  if (ikOn) captureRig();
+  refreshAll();
+}
 function preview(time: number): void {   // time в секундах
   // Интервал и фазу (уже отремапленную кривой кадра — linear/ease/step) считает ОБЩИЙ clipSegmentAt,
   // тот же, что у игрового clipPoseAt → редактор и игра гнут кривые одинаково.
@@ -3837,7 +3860,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
