@@ -38,7 +38,7 @@ import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: ск
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -567,6 +567,7 @@ function girdleForget(): void { girdleBase = null; }
 function pullRelax(): void {
   if (!pullBase) return;
   for (const [n, q] of pullBase) human.bones.get(n)?.quaternion.copy(q);
+  human.hips.quaternion.copy(rig.hipsQuat);   // Ф26.6: таз тоже участвует в тяге — его авторское состояние в `rig.hipsQuat`
   human.root.updateMatrixWorld(true);
 }
 /** Забыть опору: текущий поворот корпуса стал АВТОРСКИМ и откатывать его больше нельзя. */
@@ -668,6 +669,60 @@ function pullTwistToward(endName: string, goal: THREE.Vector3): boolean {
   return true;
 }
 
+/**
+ * ТЕЛО ЕДЕТ ЗА РУКОЙ (Ф26.6) — три степени свободы плюс доворот таза.
+ *
+ * Жалоба юзера: «оттянул руку вверх и назад — тело почти не едет, а хочется завести руку назад и чтобы
+ * корпус довернул и выгнулся назад, естественно». Две причины, почему раньше не ехало:
+ *  1) КОГДА: старый Pull включался ТОЛЬКО по НЕДОЛЁТУ (Ф21.4) — а замах руке ДОСТУПЕН, значит корпус
+ *     не подключался НИКОГДА. Теперь ведёт НАТЯЖЕНИЕ: с 70% вытяжения руки и плавно до 1 на полном
+ *     (недолёт остался вторым драйвером — цель вне досягаемости тоже тянет тело).
+ *  2) ЧТО: была одна ось — осевая скрутка. Прогиба назад в коде не было вообще (`bendTorso`, Ф26.6).
+ *
+ * Направление тяги считается В ФРЕЙМЕ ТАЗА от НЕЙТРАЛИ РУКИ (вбок, ±X), а не от «вперёд»: рука,
+ * разведённая в сторону, корпус не крутит, а вынесенная вперёд/назад — крутит (анатомия плечевого пояса).
+ * Каждая ось клэмпится своим анатомическим пределом, потом размазывается по спине весами (`bendTorso`).
+ */
+function pullBodyToward(e: Eff, missDrive = 0): boolean {
+  if (e.isFoot || bodyFollow <= 0) return false;
+  const root = human.bones.get(e.root), mid = human.bones.get(e.mid), end = human.bones.get(e.end);
+  if (!root || !mid || !end) return false;
+  human.root.updateMatrixWorld(true);
+  const L = mid.position.length() + end.position.length();
+  const S = root.getWorldPosition(V());
+  const v = e.target.clone().sub(S).applyQuaternion(human.hips.getWorldQuaternion(Q()).invert());   // в фрейме таза: +X влево, +Z вперёд
+  const side = e.root.startsWith('Left') ? 1 : -1;
+  // СИЛА ТЯГИ — МАКСИМУМ ТРЁХ ПРИЗНАКОВ «поза стала крайней»:
+  //  * ВЫНОС руки от анатомической нейтрали (рука вдоль тела) — ГЛАВНЫЙ: настоящий замах делают
+  //    СОГНУТОЙ рукой, и по одной дистанции он не отличается от руки у груди (замер: одно натяжение
+  //    давало 0.37 и прогиб всего 2.2° на замахе);
+  //  * НАТЯЖЕНИЕ по длине (решение юзера: с 70% вытяжения);
+  //  * НЕДОЛЁТ (цель вне досягаемости) — поведение Ф21.4, чтобы не потерять старый случай.
+  const neutral = V().set(0.35 * side, -1, 0).normalize();   // рука висит вдоль тела, чуть отведена
+  const exc = Math.acos(clamp(v.clone().normalize().dot(neutral), -1, 1)) / Math.PI;
+  // Натяжение ГАСИТСЯ у нейтрали: рука, висящая вдоль тела, тоже почти полностью вытянута — без этого
+  // гейта просто стоящий персонаж клонило вперёд на 10.5° (замер).
+  const dirGate = clamp((exc - 0.15) / 0.2, 0, 1);
+  const follow = Math.max(
+    clamp((exc - 0.25) / 0.45, 0, 1),                                            // первые ~45 градусов выноса тело игнорирует
+    clamp((S.distanceTo(e.target) / L - PULL_START) / (1 - PULL_START), 0, 1) * dirGate,
+    missDrive);
+  const amt = follow * bodyFollow;
+  if (amt < 0.02) return false;
+  const horiz = Math.hypot(v.x, v.z) || 1e-6;
+  const elev = Math.atan2(v.y, horiz);                       // выше плеча → прогиб назад
+  const yaw = Math.atan2(v.z, v.x * side);                   // 0 = рука вбок (нейтраль), + вперёд, − назад
+  const cross = Math.min(0, (v.x * side) / L);               // рука ушла ЗА СРЕДИНУ тела → боковой наклон
+  const twist = clamp(-side * yaw * gTwist * amt, -PULL_TWIST * flexTw, PULL_TWIST * flexTw);
+  const pitch = clamp(-elev * gPitch * amt, -BEND_EXT * flexBend, BEND_FLEX * flexBend);
+  const roll = clamp(-side * cross * BEND_ROLL * 2 * gRoll * amt, -BEND_ROLL * flexBend, BEND_ROLL * flexBend);
+  if (Math.abs(twist) < 1e-3 && Math.abs(pitch) < 1e-3 && Math.abs(roll) < 1e-3) return false;
+  if (!pullBase) { pullBase = new Map(); for (const n of TWIST_BONES) { const b = human.bones.get(n); if (b) pullBase.set(n, b.quaternion.clone()); } }
+  bendTorso(human, twist, pitch, roll, PULL_W, BEND_W);
+  if (pelvisFollow > 0 && Math.abs(twist) > 1e-3) human.hips.rotateY(twist * pelvisFollow * flexPelvis);   // таз доворачивается вместе с корпусом
+  human.root.updateMatrixWorld(true);
+  return true;
+}
 const LIMB_PREFER_ARM = new THREE.Vector3(0, -1, -0.4);   // локоть назад-вниз (UE PBIK «preferred angle»)
 const LIMB_PREFER_LEG = new THREE.Vector3(0, 0, 1);       // колено вперёд
 /**
@@ -813,6 +868,11 @@ function shoulderGirdle(e: Eff, wantS: THREE.Vector3): void {
  * у голой конечности — именно это чувствуется как «рука улетела от хелпера».
  */
 function solveLimbAssisted(e: Eff, torso: boolean): number {
+  // ПОРЯДОК: ТЕЛО ПОДХВАТЫВАЕТ ДО РЕШЕНИЯ РУКИ (Ф26.6). Эта часть зависит только от ЦЕЛИ, а не от
+  // результата солва — значит детерминирована и метаться не может. Когда тяга шла ПОСЛЕ солва и сравнивалась
+  // сама с собой по «стало ли лучше», у полного вытяжения возникал цикл «согнулся → плечо уехало →
+  // откат» через кадр (замер на дуге: скачки до 29.7° между соседними кадрами).
+  if (torso) pullBodyToward(e);
   let miss = solveLimb(e, e.target, e.pole);
   if (miss <= PULL_SLACK) return miss;
   const root = human.bones.get(e.root), clav = root?.parent;
@@ -824,12 +884,14 @@ function solveLimbAssisted(e: Eff, torso: boolean): number {
     if (m2 < miss - 1e-3) miss = m2;
     else { clav.quaternion.copy(q0); human.root.updateMatrixWorld(true); miss = solveLimb(e, e.target, e.pole); }
   }
+  // Цель ВНЕ досягаемости — корпус добавляет СВЕРХ эстетики (поведение Pull из Ф21.4). Здесь откат уместен:
+  // добавка существует ИМЕННО ради дотягивания — не помогла, возвращаемся к чисто эстетической позе.
   if (torso && miss > PULL_SLACK && bodyFollow > 0) {
-    if (pullTwistToward(e.end, e.target)) {
-      const m2 = solveLimb(e, e.target, e.pole);
-      if (m2 < miss - 1e-3) miss = m2;
-      else { pullRelax(); miss = solveLimb(e, e.target, e.pole); }                  // скрутка не помогла — корпус назад
-    }
+    const base = miss;
+    pullRelax(); pullBodyToward(e, clamp(miss / PULL_MISS_FULL, 0, 1));
+    const m2 = solveLimb(e, e.target, e.pole);
+    if (m2 < base - 1e-3) miss = m2;
+    else { pullRelax(); pullBodyToward(e); miss = solveLimb(e, e.target, e.pole); }
   }
   return miss;
 }
@@ -941,6 +1003,15 @@ const PULL_SLACK = 0.5;                                      // меньше п�
 const PULL_TWIST = 45 * Math.PI / 180;                       // анатомический предел осевой скрутки туловища (поясничный ~10° + грудной ~35°)
 /** Веса скрутки по [Spine, Chest, UpperChest, Neck, Head]. Голова/шея — НОЛЬ: тянешься рукой, а не отворачиваешься. */
 const PULL_W: [number, number, number, number, number] = [0.2, 0.4, 0.4, 0, 0];
+// ТЕЛО ЗА РУКОЙ (Ф26.6). Анатомические пределы грудо-поясничного отдела: разгиб (прогиб назад) меньше
+// сгиба вперёд — поэтому два разных числа, а не симметричный клэмп.
+const PULL_START = 0.7;                                      // натяжение начинается с 70% вытяжения руки (решение юзера)
+const PULL_MISS_FULL = 6;                                    // недолёт в эти юниты = полная сила (цель вне досягаемости)
+const BEND_EXT = 35 * Math.PI / 180;                         // прогиб назад
+const BEND_FLEX = 40 * Math.PI / 180;                        // наклон вперёд
+const BEND_ROLL = 35 * Math.PI / 180;                        // боковой наклон
+let gTwist = 0.7, gPitch = 0.6, gRoll = 0.5;              // доли угла тяги, которые берёт корпус (Про-ползунки)
+let pelvisFollow = 0.15;                                     // доля скрутки, уходящая в таз (в реальном замахе таз всегда участвует)
 /** Насколько конец НЕ дошёл до своей цели ПОСЛЕ солва (мир). Критерий Pull — ФАКТ, а не расчёт длины цепи. */
 function missOf(p: { end: string; goal: THREE.Vector3 }): number {
   human.root.updateMatrixWorld(true);
@@ -1611,8 +1682,29 @@ addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLow
 // ── Физ-настройки per-персонаж (pe_phys): вес совпадения рендера с манекеном (RB2) — редактор пишет, игра читает. ──
 const DEF_PINKP = PHYS.pinKp;   // дефолт жёсткости пинов (фолбэк для кадров без __pinKp)
 let physMatchBase = DEFAULT_MATCH;   // база match персонажа (pe_phys) — фолбэк для кадров БЕЗ __match (и для покоя/бега в игре); дефолт = игровой (DEFAULT_MATCH)
+/**
+ * ПРОФИЛЬ ГИБКОСТИ КОРПУСА (Ф26.6, пер-персонаж) — множители анатомических пределов тяги тела.
+ * Тяжёлый воин в доспехе скованнее, ассассин гибче — при одном и том же ползунке «тело за рукой».
+ * Лежит в `pe_phys[char]` рядом с match/footLift: та же секция уже ездит на сервер и читается игрой.
+ */
+let flexTw = 1, flexBend = 1, flexPelvis = 1;
 let physFootLift = 0;   // подъём стопы персонажа (pe_phys.footLift) — ставится на human/ghostHuml после сборки; standY+заземление подошвы меша на пол
-function loadPhys(id: string): void { try { const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number; footLift?: number }>; physMatchBase = c[id]?.match ?? DEFAULT_MATCH; physFootLift = c[id]?.footLift ?? 0; } catch { physMatchBase = DEFAULT_MATCH; physFootLift = 0; } PHYS.match = physMatchBase; PHYS.pinKp = DEF_PINKP; }
+interface PhysPer { match?: number; footLift?: number; flex?: [number, number, number] }
+function loadPhys(id: string): void {
+  try {
+    const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, PhysPer>;
+    physMatchBase = c[id]?.match ?? DEFAULT_MATCH; physFootLift = c[id]?.footLift ?? 0;
+    const f = c[id]?.flex; flexTw = f?.[0] ?? 1; flexBend = f?.[1] ?? 1; flexPelvis = f?.[2] ?? 1;
+  } catch { physMatchBase = DEFAULT_MATCH; physFootLift = 0; flexTw = flexBend = flexPelvis = 1; }
+  PHYS.match = physMatchBase; PHYS.pinKp = DEF_PINKP;
+}
+function saveFlex(): void {
+  try {
+    const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, PhysPer>;
+    (c[curCharId] ??= {}).flex = [+flexTw.toFixed(2), +flexBend.toFixed(2), +flexPelvis.toFixed(2)];
+    localStorage.setItem('pe_phys', JSON.stringify(c)); savePoseKey('pe_phys');
+  } catch { /* офлайн — норм */ }
+}
 // per-кадр физ-настройки match/pinKp хранятся в позе кадра (__match/__pinKp = [v,0,0]); интерполируются как обычные ключи позы.
 // applyFramePhys: поза кадра → PHYS (для превью-физики и ползунков). Нет ключа → база персонажа / дефолт.
 function applyFramePhys(p: Pose): void { PHYS.match = p['__match'] ? p['__match']![0] : physMatchBase; PHYS.pinKp = p['__pinKp'] ? p['__pinKp']![0] : DEF_PINKP; }
@@ -1627,7 +1719,7 @@ function writeFramePhys(): void {
 // Подъём стопы per-персонаж → pe_phys[char].footLift (та же секция, что RB2-match; читает игра loadFootLift → редактор ≡ игра).
 function saveFootLift(): void {
   try {
-    const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { match?: number; footLift?: number }>;
+    const c = JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, PhysPer>;
     (c[curCharId] ??= {}).footLift = +physFootLift.toFixed(3);
     localStorage.setItem('pe_phys', JSON.stringify(c)); savePoseKey('pe_phys');
   } catch { /* офлайн — норм */ }
@@ -1994,6 +2086,8 @@ let lastBO: unknown;                 // Ф14.2: само-лечение допи
 
 function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
+/** Пересчитать позу без перерисовки панели — для `oninput` ползунков (перерисовка отобрала бы у мыши захваченный бегунок). */
+function refreshLive(): void { if (ikOn) solveRig(); }
 function refreshLimbs(): void { if (tab === 'anim') renderAnim(); }
 
 // Инструменты позы (аппендятся в общую панель «Анимация»; правка позы = правка текущего кадра)
@@ -2013,8 +2107,29 @@ function poseTools(): void {
   const rr = el('div', 'display:flex;flex-wrap:wrap;gap:6px'); body.append(rr);
   for (const [k, lb] of [['LH', 'кисть Л'], ['RH', 'кисть П'], ['LF', 'стопа Л'], ['RF', 'стопа П']] as const) { const lab = el('label', 'font-size:11px'); const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox'; cb.checked = rig.eff[k]!.keepRot; cb.onchange = () => { const e = rig.eff[k]!; e.keepRot = cb.checked; if (e.keepRot) syncEff(e); }; lab.append(cb, document.createTextNode(lb)); rr.append(lab); }
   if (uiPro) body.append(pbtn(solverMode === 'analytic' ? 'солвер: аналитика' : 'солвер: FABRIK (старый)', () => { solverMode = solverMode === 'analytic' ? 'fabrik' : 'analytic'; renderAnim(); }, solverMode === 'analytic'));
-  const rh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rh.textContent = 'REACH (тело за рукой)'; body.append(rh);
+  const rh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rh.textContent = 'ТЕЛО ЗА РУКОЙ (замах)'; body.append(rh);
   const bf = el('input', 'width:100%') as HTMLInputElement; bf.type = 'range'; bf.min = '0'; bf.max = '1'; bf.step = '0.05'; bf.value = String(bodyFollow); bf.oninput = () => { bodyFollow = parseFloat(bf.value); }; body.append(bf);
+  {   // Ф26.6 — Про: раздельно скрутка / прогиб / наклон + доля таза; в простом режиме всё ведёт один ползунок выше
+    const grow = (label: string, get: () => number, set: (v: number) => void, max: number, fin?: () => void): void => {
+      const row = el('label', 'display:flex;align-items:center;gap:6px');
+      row.innerHTML = `<span style="flex:0 0 86px">${label}</span>`;
+      const out = el('span', 'width:32px;text-align:right;color:#9ae6a0'); out.textContent = get().toFixed(2);
+      const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = '0'; r.max = String(max); r.step = '0.05'; r.value = String(get());
+      r.oninput = () => { set(parseFloat(r.value)); out.textContent = get().toFixed(2); refreshLive(); };
+      if (fin) r.onchange = fin;
+      row.append(r, out); body.append(row);
+    };
+    if (uiPro) {
+      grow('скрутка', () => gTwist, (v) => { gTwist = v; }, 1.5);
+      grow('прогиб', () => gPitch, (v) => { gPitch = v; }, 1.5);
+      grow('наклон', () => gRoll, (v) => { gRoll = v; }, 1.5);
+      grow('таз доворачивает', () => pelvisFollow, (v) => { pelvisFollow = v; }, 0.5);
+    }
+    const gh = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); gh.textContent = 'гибкость персонажа (доспех сковывает, акробат гибче)'; body.append(gh);
+    grow('гибк. скрутка', () => flexTw, (v) => { flexTw = v; }, 2, saveFlex);
+    grow('гибк. наклоны', () => flexBend, (v) => { flexBend = v; }, 2, saveFlex);
+    grow('гибк. таз', () => flexPelvis, (v) => { flexPelvis = v; }, 2, saveFlex);
+  }
   if (weaponGroups.length) {
     const wh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); wh.textContent = 'ОРУЖИЕ · ⟳ вращать / ✥ двигать (в кадр)'; body.append(wh);
     const wr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(wr);
@@ -3927,7 +4042,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, pullBodyToward, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },

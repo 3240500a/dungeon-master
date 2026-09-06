@@ -546,6 +546,30 @@ export function twistTorso(human: Humanoid, residual: number, weights: [number, 
   // rotateY аддитивен поверх авторской позы; цепочка Spine→…→Head накапливает → плечи/голова ведут, оружие (на UpperChest) следом.
   for (let i = 0; i < TWIST_BONES.length; i++) { const b = H.get(TWIST_BONES[i]!); if (b && weights[i]) b.rotateY(residual * weights[i]!); }
 }
+/**
+ * КОРПУС В ТРЁХ СТЕПЕНЯХ СВОБОДЫ (Ф26.6) — расширение `twistTorso` на наклоны. Аддитивно поверх
+ * авторской позы, БЕЗ таза — та же конвенция, что у скрутки, поэтому редактор и игра гнут спину ОДНИМ швом.
+ *
+ * Зачем: до Ф26.6 корпус умел ТОЛЬКО осевую скрутку (`rotateY`), и замах «рука вверх-назад» физически
+ * не мог выгнуть спину назад — не было такой степени свободы вообще.
+ *
+ * Оси — локальные кости (спина смотрит вверх): Y = скрутка, X = сгиб/разгиб (плюс — вперёд, минус — прогиб
+ * назад), Z = боковой наклон. Веса У НАКЛОНОВ СВОИ: в скрутке ведёт грудной отдел, а в прогибе/наклоне —
+ * поясничный (анатомия: поясница гнётся сильно, но почти не крутится — фасеточные суставы стоят сагиттально).
+ */
+export const BEND_W: [number, number, number, number, number] = [0.45, 0.35, 0.2, 0, 0];   // прогиб/наклон: поясница ведёт
+export function bendTorso(human: Humanoid, twist: number, pitch: number, roll: number,
+                          wTwist: [number, number, number, number, number] = PULL_W_DEF,
+                          wBend: [number, number, number, number, number] = BEND_W): void {
+  const H = human.bones;
+  for (let i = 0; i < TWIST_BONES.length; i++) {
+    const b = H.get(TWIST_BONES[i]!); if (!b) continue;
+    if (twist && wTwist[i]) b.rotateY(twist * wTwist[i]!);
+    if (pitch && wBend[i]) b.rotateX(pitch * wBend[i]!);
+    if (roll && wBend[i]) b.rotateZ(roll * wBend[i]!);
+  }
+}
+const PULL_W_DEF: [number, number, number, number, number] = [0.2, 0.4, 0.4, 0, 0];
 /** Навесить скрутку на риг: таз на rootYaw + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ gaitToHumanoid. */
 export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number]): void {
   human.bones.get('Hips')!.rotation.y = rootYaw;              // facing таза (углы ног body-local → корень на rootYaw)
