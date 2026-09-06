@@ -30,7 +30,9 @@ import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBui
   mergeBoneScale, applyMorphChange, sampleMorph, rangeWarnings, type BodyMorph, type MorphKey, type MorphRange } from './bodyMorph.js';   // Ф8: морфинг тела   // Ф4: пины + full-body IK
 import { findGrip, gripToPose, resolveGripPose, effectiveWeaponGrip, applyGripPose, mirrorHandPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig, type WeaponGrip } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits((b) => extraLimitView(b, fingerAxes()));   // до первого limitViewForBone; Ф14.4 — оси из ЭТОГО рига
-import { deriveFingerAxes, bindCurlReport, type FingerAxes } from './fingerAxes.js';   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
+import { deriveFingerAxes, bindCurlReport, type FingerAxes } from './fingerAxes.js';
+import { parentOfOur } from './retarget3d.js';   // НАШа канон-топология: вид скелета строится по ней, а не по иерархии модели
+import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: скелет по НАСТОЯЩИМ костям модели   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
@@ -144,6 +146,23 @@ function dofBasis(nm: string, out: THREE.Quaternion): void {
  * ОСТАЁТСЯ на `human` — только в его фрейме эта математика верна.
  */
 function viewRig(): Humanoid { return physOn && ghostHuman ? ghostHuman : human; }
+
+/**
+ * ВИД СКЕЛЕТА ПО НАСТОЯЩИМ КОСТЯМ МОДЕЛИ (Ф20.4). Пока атлас не загружен, его нет и
+ * всё работает как раньше: манекен И ЕСТЬ модель, рисовать поверх нечего.
+ */
+const boneView = makeBoneView();
+scene.add(boneView.group);
+const boneSrc: BoneSource = {
+  get names() { return human.boneNames; },              // порядок родитель→ребёнок уже гарантирован таблицей костей
+  parentOf: (n) => parentOfOur(n) ?? null,
+  boneOf: (n) => modelsTab.atlasBone(n),
+};
+/** Рисуем ли сейчас кости модели (а не манекена). */
+const onModelBones = (): boolean => boneView.group.visible;
+/** Меши для рейкаста/подсветки — чьи кости видны, тех и кликаем. */
+const boneMeshes = (): THREE.Mesh[] => (onModelBones() ? boneView.meshes : human.meshes);
+let lastAtlasRoot: THREE.Object3D | null | undefined;   // undefined = ещё не смотрели
 /** Кость ведущего рига по имени (фолбэк на манекен) — только для ОТРИСОВКИ. */
 function viewBone(nm: string): THREE.Object3D | null { return viewRig().bones.get(nm) ?? human.bones.get(nm) ?? null; }
 
@@ -416,7 +435,7 @@ canvas.addEventListener('pointerdown', (ev) => {
   // пальцы, обёрнутые вокруг рукояти (меш оружия — сплошной бокс вокруг точки хвата).
   const pickable = (nm: string | undefined): boolean =>
     gripMode ? (!!nm && (isHandBone(nm) || nm === 'LeftHand' || nm === 'RightHand')) : !(nm && isHandBone(nm));
-  const meshes: THREE.Mesh[] = human.meshes.filter((m) => pickable(m.userData.bone as string | undefined));
+  const meshes: THREE.Mesh[] = boneMeshes().filter((m) => pickable(m.userData.bone as string | undefined));   // Ф20.4: кликаем то, что видно
   if (!gripMode) for (const g of weaponGroups) g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
   const hit = ray.intersectObjects(meshes, false)[0];
   if (hit) {
@@ -840,6 +859,10 @@ function wantFingers(): boolean { return fingersForced || gripMode || modelsTab.
 function manikinOnTop(): void {
   if (curHumanStyle !== 'skeleton') return;
   for (const m of human.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.depthTest = false; m.renderOrder = 998; }
+}
+/** То же для вида костей модели: без этого кости тонут внутри скина и по ним не попасть мышью. */
+function boneViewOnTop(): void {
+  for (const m of boneView.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.depthTest = false; m.renderOrder = 998; }
 }
 
 /** Ф12: перевести клипы персонажа в дельта-форму офсета таза. Зовётся тогда, когда rest-высота
@@ -1367,7 +1390,7 @@ function boneTreeSection(): void {
   const mkBoneBtn = (nm: string): HTMLButtonElement => {
     const b = document.createElement('button'); b.textContent = nm;
     b.style.cssText = `font-size:10px;padding:1px 4px;border-radius:3px;cursor:pointer;border:1px solid #39415a;background:${nm === selected ? '#3a5030' : '#20242f'};color:#b8bec8`;
-    b.onclick = () => { setMode('fk'); selected = nm; highlight(human.meshes.find((x) => x.userData.bone === nm) ?? null); attachBoneGizmo(nm); renderAnim(); };
+    b.onclick = () => { setMode('fk'); selected = nm; highlight(boneMeshes().find((x) => x.userData.bone === nm) ?? null); attachBoneGizmo(nm); renderAnim(); };
     return b;
   };
   for (const [label, match] of BONE_GROUPS) {
@@ -2870,6 +2893,25 @@ function loop(): void {
   syncWeaponHost();   // 2B: оружие на кисть ВИДИМОГО атлас-меша (после drive — кисть уже позирована)
   const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
   human.root.visible = !hideMan;
+  // Ф20.4: ВИД КОСТЕЙ МОДЕЛИ. Пересобираем по ИДЕНТИЧНОСТИ корня атласа: `exportTarget()`
+  // аллоцирует НОВУЮ обёртку на каждый вызов, сравнивать её бесполезно. `rebuildAsm` дизпоузит
+  // геометрию GLB — старые ссылки на кости мертвы, а перезагрузка асинхронна, так что
+  // есть окно в несколько кадров без атласа — тогда возвращаемся на манекен.
+  {
+    const ar = modelsTab.exportTarget()?.root ?? null;
+    if (ar !== lastAtlasRoot) {
+      lastAtlasRoot = ar;
+      boneView.rebuild(boneSrc);
+      boneViewOnTop();
+      selMesh = null; highlight(null);                     // материал выбранного меша мог быть дизпоузнут
+      if (selected) highlight(boneMeshes().find((x) => x.userData.bone === selected) ?? null);
+    }
+    const show = !!ar && !hideMan && curHumanStyle === 'skeleton' && boneView.mapped.length > 0;
+    boneView.group.visible = show;
+    if (show) boneView.update(boneSrc);
+    // Манекен прячем ПОМЕШНО, а не целиком: его трансформы всё ещё нужны физике, гизмо и jiggle.
+    for (const m of human.meshes) m.visible = !show;
+  }
   // Загружен атлас → «только скелет + модель»: прячем ЛИШНИЕ процедурные тела (физ-призрак, онион). Меш = визуал тела.
   const atlasOn = !!atlasBS();
   if (ghostHuman) ghostHuman.root.visible = physOn && !hideMan && !atlasOn;
@@ -2878,7 +2920,8 @@ function loop(): void {
   // Ф13.1: шары-суставы — постоянного экранного размера. СТРОГО ПОСЛЕ orbit.update(): у контролов
   // включён демпфинг, и до него камера ещё не на месте — шары отставали бы на кадр и «дышали» при вращении.
   // В режиме хвата фаланги поднимаются, а остальной скелет приглушается — без возни с материалами.
-  if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, JOINT_PX);
+  if (onModelBones()) scaleJointsToScreen(boneView, camera, canvas.clientHeight || 1, JOINT_PX);
+  else if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, JOINT_PX);
   outline.selectedObjects = selMesh ? [selMesh] : [];   // Ф5: обводка выбранной кости
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   requestAnimationFrame(loop);

@@ -165,7 +165,9 @@ const _jp = new THREE.Vector3(), _js = new THREE.Vector3();
  * Звать ПОСЛЕ обновления камеры (у OrbitControls включён демпфинг: до `update()` шары отстают на кадр).
  */
 export function scaleJointsToScreen(
-  h: Humanoid, cam: THREE.PerspectiveCamera, viewportH: number,
+  // Ф20.4: требуется только `joints` — так та же функция держит экранный размер и шарам
+  // вида костей модели (`boneView`), который не `Humanoid`. `Humanoid` остаётся присваиваемым.
+  h: { joints: THREE.Mesh[] }, cam: THREE.PerspectiveCamera, viewportH: number,
   px: number | ((bone: string) => number), minR = 0.12, maxR = 3.2,
 ): void {
   for (const j of h.joints) {

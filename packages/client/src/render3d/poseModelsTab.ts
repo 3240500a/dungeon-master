@@ -38,6 +38,9 @@ export interface ModelsTabHandle {
   boneOffsets(): Record<string, number[]> | undefined;   // ПОЛНЫЕ rest-офсеты ФБХ текущего атласа (приоритет; геометрия 1:1)
   profile(): BodyProfile | undefined;       // профиль тела (модульные пропорции) — редактор/игра строят тело им (единый opts)
   handBone(our: string): THREE.Object3D | null;   // кисть ВИДИМОГО атласа (для крепления оружия к мешу, не к манекену)
+  /** НАСТОЯЩАЯ кость модели по нашему имени (Ф20.3): то же, что `handBone`, но без врущего «кисть» в имени —
+   *  вид скелета спрашивает её для всех 52 костей, а не для кистей. */
+  atlasBone(our: string): THREE.Object3D | null;
   /** Загруженный атлас как ЦЕЛЬ ЭКСПОРТА (скин + его скелет) и карта наша кость→кость модели; null — атлас не загружен. */
   exportTarget(): { root: THREE.Object3D; boneMap: Record<string, string> } | null;
   /** Есть ли у ЗАГРУЖЕННОГО атласа кости пальцев — строить ли их в манекене (Ф3.1). */
@@ -639,6 +642,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     hasFingers: () => { const t = asmSkin?.atlasExport(); return !!t && Object.keys(t.boneMap).some((b) => /(Thumb|Index|Middle|Ring|Little)(Proximal|Intermediate|Distal)$/.test(b)); },
     exportTarget: () => asmSkin?.atlasExport() ?? null,   // Ф2.3: экспорт со скином, если атлас загружен
     handBone: (our) => asmSkin?.atlasBone(our) ?? null,   // кисть ВИДИМОГО атласа (asmSkin) → оружие крепим к мешу, не к манекену
+    atlasBone: (our) => asmSkin?.atlasBone(our) ?? null,
 
     debug: () => ({
       status: asmStatus, atlas: asmAtlas ? { id: asmAtlas.id, url: asmAtlas.url, slots: asmAtlas.slots } : null,
