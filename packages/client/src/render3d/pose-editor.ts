@@ -14,7 +14,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, type LimitView } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, PHYS_SIZES, physBodies, bodyAxis, type PhysSize, type LimitView } from './humanoidRagdoll.js';
 import { PHYS_PRESETS, presetBodies } from './physRig.js';
 import { scaleJointsToScreen } from './humanoid.js';                       // Ф13.1: суставы постоянного экранного размера
 import { PLAYER_RADIUS, MONSTER_RADIUS } from '@dm/shared';                // Ф13.4: тот же радиус, что у сервера   // Ф11: набор физ-тел настраивается в редакторе
@@ -2076,7 +2076,7 @@ const mkBtn = (label: string, fn: () => void, cls = 'tbtn'): HTMLButtonElement =
 const sep = (): HTMLElement => { const s = document.createElement('div'); s.className = 'tb-sep'; return s; };
 
 // ── Тулбар ──
-const charSel = document.createElement('select'); charSel.onchange = () => applyChar(charSel.value);
+const charSel = document.createElement('select'); charSel.onchange = () => { applyChar(charSel.value); refitPhysIfFitted(); };   // Ф26.5: у нового персонажа свои длины костей
 const wpnSel = document.createElement('select');
 for (const w of WEAPONS) { const o = document.createElement('option'); o.value = w; o.textContent = w; wpnSel.append(o); }
 const offSel = document.createElement('select');   // офф-рука: нет / щит / второе оружие → ключ main+off
@@ -2356,6 +2356,7 @@ function poseTools(): void {
   phRow('пины (сила)', 'pin', 0, 1, 0.05); phRow('★ пин · жёсткость (кадр)', 'pinKp', 0, 12000, 200); phRow('мышцы (ведение)', 'muscle', 0, 1, 0.05); phRow('вес оружия', 'load', 0, 3, 0.1);
   phRow('★ совпадение с манекеном (кадр)', 'match', 0, 1, 0.05);
   rollout('physrig', 'НАБОР ФИЗ-ТЕЛ (пересборка)', physRigSection);
+  rollout('physsize', 'РАЗМЕРЫ ФИЗ-ТЕЛ', physSizeSection);
   // ★ = per-frame (в позе кадра); 0 = физика, 1 = ровно твоя поза
   // ── ЛИМИТЫ/МОТОРЫ суставов (RB3): множитель конусов/диапазонов + сила моторов. Применяется ПЕРЕСБОРКОЙ куклы на отпускание. ──
   const rgh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rgh.textContent = 'ЛИМИТЫ/МОТОРЫ (пересборка)'; body.append(rgh);
@@ -2765,6 +2766,103 @@ async function showImportPanel(file: File): Promise<void> {
  * В поз-плеере на экране ВСЕГДА один персонаж, а результат всё равно запекается в клип — значит физика
  * здесь инструмент авторинга, и её объём — выбор автора. Стоимость показываем честно (тела + замер шага).
  */
+/**
+ * КОНЦЫ ФИЗ-ТЕЛА ПО КОСТЯМ (Ф26.5). Цепь ретаргета тела (`chain`) даёт начало; конец — среднее по ДЕТЯМ
+ * последней кости цепи (у кисти это середина оснований пальцев = конец ладони). Нет детей (голова, носок) —
+ * продлеваем от родителя на текущую длину тела.
+ *
+ * ЗАМЕР ИДЁТ В Т-ПОЗЕ, а не в текущей: анкеры физ-рига заданы именно в рест-фрейме (там же живут
+ * оси суставов и рест-трансляции констрейнтов). А вот ДЛИНЫ в Т-позе уже с морфом и профилем атласа —
+ * именно поэтому после авто-подгонки тела едут за телосложением.
+ */
+function fitPhysToBones(): void {
+  const snap = new Map<string, THREE.Quaternion>();
+  for (const [n, b] of human.bones) snap.set(n, b.quaternion.clone());
+  const hp = human.hips.position.clone();
+  human.reset(); human.root.updateMatrixWorld(true);                     // → Т-поза с текущими длинами костей
+  try {
+    for (const pb of physBodies()) {
+      const chain = pb.chain.length ? pb.chain : [pb.name];
+      const first = human.bones.get(chain[0]!); if (!first) continue;
+      const last = human.bones.get(chain[chain.length - 1]!) ?? first;
+      const a = first.getWorldPosition(V());
+      const kids = (last.children as THREE.Object3D[]).filter((c) => human.bones.get(c.name) === c);
+      let b2: THREE.Vector3;
+      if (kids.length) { b2 = V(); for (const k of kids) b2.add(k.getWorldPosition(V())); b2.multiplyScalar(1 / kids.length); }
+      else {
+        const dir = last.getWorldPosition(V()).sub(last.parent ? last.parent.getWorldPosition(V()) : a);
+        const len = Math.hypot(pb.off[0], pb.off[1], pb.off[2]) * 2 || 4;
+        b2 = last.getWorldPosition(V()).add(dir.lengthSq() > 1e-6 ? dir.normalize().multiplyScalar(len) : V().set(0, len, 0));
+      }
+      const half = b2.clone().sub(a).multiplyScalar(0.5);
+      const ov = (PHYS_SIZES[pb.name] ??= {});
+      // АНКЕР ПИШЕМ ВСЕГДА, даже у таза с вырожденной длиной: рест-трансляции констрейнтов считаются
+      // КАК РАЗНИЦА АНКЕРОВ (`anchor − parentAnchor`), и пропущенный родитель сдвинул бы ВСЮ цепь на свою
+      // ошибку (замер: таз оставался каталожным на 6.7u ниже кости — кукла дралась бы сама с собой).
+      ov.anchor = [+a.x.toFixed(2), +a.y.toFixed(2), +a.z.toFixed(2)];
+      if (half.length() >= 0.3) {                                         // длина только осмысленная (у таза «длины кости» нет)
+        ov.off = [+half.x.toFixed(2), +half.y.toFixed(2), +half.z.toFixed(2)];
+        ov.len = +half.length().toFixed(2);
+      }
+    }
+  } finally {
+    for (const [n, q] of snap) human.bones.get(n)?.quaternion.copy(q);
+    human.hips.position.copy(hp); human.root.updateMatrixWorld(true);
+  }
+  saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim();
+}
+/**
+ * Переснять тела с костей, ЕСЛИ пользователь уже снимал их раньше (Ф26.5). Анкеры/длины хранятся
+ * АБСОЛЮТНО и в ГЛОБАЛЬНОМ `pe_ragdoll` (один на всех), а телосложение у каждого своё — значит при смене
+ * персонажа или морфа их надо пересчитать, иначе кукла останется от чужого тела. Ручные множители
+ * ширины/толщины и выбранные формы при этом СОХРАНЯЮТСЯ — переснимается только геометрия костей.
+ */
+function refitPhysIfFitted(): void { if (ragdoll && Object.values(PHYS_SIZES).some((v) => v.anchor)) fitPhysToBones(); }
+/** РАЗМЕРЫ ФИЗ-ТЕЛ (Ф26.5): форма + длина/ширина/толщина на тело, плюс авто-подгонка по костям. */
+let sizeBody = 'Torso';
+function physSizeSection(): void {
+  const bodies = physBodies();
+  if (!bodies.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = 'Нет активных тел.'; body.append(e); return; }
+  if (!bodies.some((b) => b.name === sizeBody)) sizeBody = bodies[0]!.name;
+  const cur = bodies.find((b) => b.name === sizeBody)!;
+  const ov = PHYS_SIZES[sizeBody] ?? {};
+  const apply = (fn: (o: PhysSize) => void, rebuild = true): void => {
+    fn(PHYS_SIZES[sizeBody] ??= {});
+    saveRagdollConfig(); savePoseKey('pe_ragdoll');
+    if (rebuild) { rebuildRagdoll(); renderAnim(); }
+  };
+  const r1 = el('div', 'display:flex;gap:3px;align-items:center'); body.append(r1);
+  const bsel = document.createElement('select'); bsel.style.cssText = impInput + ';flex:1';
+  for (const b2 of bodies) { const o = document.createElement('option'); o.value = b2.name; o.textContent = PHYS_LABEL[b2.name] ?? b2.name; o.selected = b2.name === sizeBody; bsel.append(o); }
+  bsel.onchange = () => { sizeBody = bsel.value; renderAnim(); };
+  const ksel = document.createElement('select'); ksel.style.cssText = impInput;
+  for (const [v, lb] of [['box', 'бокс'], ['sphere', 'шар'], ['cylinder', 'цилиндр'], ['capsule', 'пилюля']] as const) { const o = document.createElement('option'); o.value = v; o.textContent = lb; o.selected = cur.shape.k === v; ksel.append(o); }
+  ksel.onchange = () => apply((o) => { o.k = ksel.value as PhysSize['k']; });
+  r1.append(bsel, ksel);
+  const srow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
+    const row = el('label', 'display:flex;align-items:center;gap:6px');
+    row.innerHTML = `<span style="flex:0 0 74px">${label}</span>`;
+    const out = el('span', 'width:38px;text-align:right;color:#9ae6a0'); out.textContent = get().toFixed(2);
+    const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.value = String(get());
+    r.oninput = () => { out.textContent = parseFloat(r.value).toFixed(2); };
+    r.onchange = () => set(parseFloat(r.value));   // пересборка куклы — ПО ОТПУСКАНИЮ (на каждый тик было бы дорого)
+    row.append(r, out); body.append(row);
+  };
+  const ax = bodyAxis(cur);
+  const curLen = cur.shape.k === 'box' ? cur.shape.h[ax]! : cur.shape.k === 'sphere' ? cur.shape.r : cur.shape.half;
+  srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
+  srow('ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
+  srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
+  const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
+  r2.append(
+    pbtn('⚖ снять с костей', () => fitPhysToBones()),
+    pbtn('сброс тела', () => { delete PHYS_SIZES[sizeBody]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
+    pbtn('сброс всех', () => { for (const k in PHYS_SIZES) delete PHYS_SIZES[k]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
+    pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { showBoxes = !showBoxes; renderAnim(); }, showBoxes),
+  );
+  const hint = el('div', 'color:#6b7180;font-size:10px');
+  hint.textContent = '«Снять с костей» берёт длины из Т-позы текущего телосложения; ширина/толщина остаются ручными.'; body.append(hint);
+}
 function physRigSection(): void {
   const on = new Set(PHYS_SET.bodies);
   const fingerNames = PHYS_CATALOG.filter((n) => n.tier === 'opt').map((n) => n.name);
@@ -3156,7 +3254,15 @@ function renderAi(): void {
 // ── Ф8: МОРФИНГ ТЕЛА ──
 // Простой: сетка пресетов 3×3 + два глобальных слайдера — меняется всё тело сразу.
 // Про: замеры по регионам + ЗАКРЕПЛЕНИЕ параметра (пресет его не перебивает) + диапазоны для монстров.
-function rebuildForMorph(): void { applyChar(curCharId); tab = 'char'; refreshAll(); }
+/** Морф меняет ДЛИНЫ КОСТЕЙ — значит и физ-тела надо пересобрать (Ф26.5): раньше кукла оставалась от старого телосложения. */
+function rebuildForMorph(): void {
+  applyChar(curCharId);
+  // Физ-тела едут за морфом (Ф26.5). Размеры хранятся АБСОЛЮТНО (анкер + полудлина), иначе ручная
+  // доводка потеряла бы смысл — поэтому после смены телосложения их надо ПЕРЕСНЯТЬ с костей. Ширина/толщина
+  // — множители, они переживают переснятие.
+  if (ragdoll) { if (Object.values(PHYS_SIZES).some((v) => v.anchor)) fitPhysToBones(); else rebuildRagdoll(); }
+  tab = 'char'; refreshAll();
+}
 function morphSection(): void {
   const m = curMorph();
   const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:10px 0 2px;border-top:1px solid #39415a;padding-top:8px');
@@ -4083,11 +4189,16 @@ async function ensurePhysics(): Promise<void> {
   syncPinArrays();
   scene.add(ragdoll.group); ragdoll.group.visible = false;   // боксы-физтела скрыты — показываем гуманоид-призрак
   buildGhost();
+  refitPhysIfFitted();                                      // Ф26.5: тела сняты с костей — приводим их к ТЕКУЩЕМУ телосложению
   updateWeapon();   // до физики оружие висело на манекене (fallback) → переносим на свежий физ-призрак
 }
 // RB3: пересборка рэгдолла с текущими LIMITS/MOTOR (они читаются при СОЗДАНИИ в makeCon; live-правка сустава роняет wasm).
 function rebuildRagdoll(): void {
   if (!pw || !ragdoll) return;
+  // Ф26.5: активный набор тел `B` собирается ТОЛЬКО в `applyPhysProfile` — именно там впекаются
+  // размеры/формы из `PHYS_SIZES`. Без этого вызова правка размера сохранялась в конфиг, но кукла пересобиралась со СТАРЫМИ
+  // телами (замер: после «снять с костей» анкеры не сдвинулись ни на юнит).
+  applyPhysProfile([...PHYS_SET.bodies]);
   scene.remove(ragdoll.group); ragdoll.dispose();
   ragdoll = makeHumanoidRagdoll(pw);
   syncPinArrays();   // Ф11: набор тел мог смениться — длина массивов пинов другая
@@ -4281,7 +4392,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },

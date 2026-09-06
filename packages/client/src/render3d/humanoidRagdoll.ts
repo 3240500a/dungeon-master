@@ -26,6 +26,24 @@ type Con =
   | { kind: 'swing'; twist: Vec3; plane: Vec3; planeLim: [number, number]; normalLim: [number, number]; twistLim: [number, number] }
   | { kind: 'hinge'; axis: Vec3; normal: Vec3; lim: [number, number] };
 type MGroup = 'leg' | 'arm' | 'core' | 'head';
+/**
+ * ФОРМА ФИЗ-ТЕЛА (Ф26.5). Цилиндр и капсула в Jolt всегда по оси Y, а наши кости смотрят куда угодно
+ * (руки по ±X, ноги по −Y, стопы по +Z) — поэтому форма разворачивается кватернионом в `RotatedTranslatedShapeSettings`
+ * (там уже передаётся смещение `off`, раньше ротация там была единичная). Призрак получает тот же разворот,
+ * запечённый в геометрию.
+ */
+export type PhysShape =
+  | { k: 'box'; h: Vec3 }
+  | { k: 'sphere'; r: number }
+  | { k: 'cylinder'; r: number; half: number }
+  | { k: 'capsule'; r: number; half: number };
+/**
+ * ПЕР-ТЕЛО ОВЕРРАЙД РАЗМЕРОВ (Ф26.5), лежит в `pe_ragdoll.sizes` рядом с набором тел и лимитами.
+ * `len` — ПОЛОВИНА длины вдоль оси тела (так же заданы `h` в каталоге), `w`/`d` — МНОЖИТЕЛИ сечения
+ * (ширина/толщина; у круглых форм работает `w`). `anchor`/`off` пишет кнопка «снять с костей».
+ */
+export interface PhysSize { k?: PhysShape['k']; len?: number; w?: number; d?: number; anchor?: Vec3; off?: Vec3 }
+export const PHYS_SIZES: Record<string, PhysSize> = {};
 
 interface HBone {
   name: string;
@@ -36,7 +54,7 @@ interface HBone {
   tier: 'core' | 'extra' | 'opt';
   anchor: Vec3;                 // мировой сустав в T-позе покоя = начало тела
   off: Vec3;                    // смещение формы/меша от сустава (кость свисает/тянется от него)
-  shape: { k: 'box'; h: Vec3 } | { k: 'sphere'; r: number };
+  shape: PhysShape;
   con: Con | null;
   group: MGroup;
   damp: number;
@@ -127,6 +145,35 @@ function fingerPhysBodies(): HBone[] {
 }
 CATALOG.push(...fingerPhysBodies());
 const _catBone = new Map(CATALOG.map((b) => [b.name, b]));
+/** Ось тела (0=X, 1=Y, 2=Z): куда оно тянется от сустава. Берётся из `off`, а если он нулевой (таз) — из самой длинной полуоси. */
+export function bodyAxis(b: { off: Vec3; shape: PhysShape }): 0 | 1 | 2 {
+  const o = b.off.map(Math.abs);
+  let i: 0 | 1 | 2 = o[0]! >= o[1]! && o[0]! >= o[2]! ? 0 : o[1]! >= o[2]! ? 1 : 2;
+  if (o[0]! + o[1]! + o[2]! < 1e-6 && b.shape.k === 'box') { const h = b.shape.h; i = h[0]! >= h[1]! && h[0]! >= h[2]! ? 0 : h[1]! >= h[2]! ? 1 : 2; }
+  return i;
+}
+/** Применить оверрайд размеров к телу каталога (Ф26.5). Отсутствующие поля — из каталога, то есть «сброс» = удалить ключ. */
+function sized(src: HBone): HBone {
+  const ov = PHYS_SIZES[src.name]; if (!ov) return src;
+  const b: HBone = { ...src, anchor: [...(ov.anchor ?? src.anchor)] as Vec3, off: [...(ov.off ?? src.off)] as Vec3 };
+  const ax = bodyAxis(src);
+  const w = ov.w ?? 1, d = ov.d ?? 1;
+  const baseHalf = src.shape.k === 'box' ? src.shape.h[ax]! : src.shape.k === 'sphere' ? src.shape.r : src.shape.half;
+  const baseR = src.shape.k === 'box' ? (src.shape.h[(ax + 1) % 3]! + src.shape.h[(ax + 2) % 3]!) / 2 : src.shape.k === 'sphere' ? src.shape.r : src.shape.r;
+  const half = ov.len ?? baseHalf;
+  const k = ov.k ?? src.shape.k;
+  if (k === 'box') {
+    const h: Vec3 = [0, 0, 0];
+    h[ax] = half;
+    h[(ax + 1) % 3] = (src.shape.k === 'box' ? src.shape.h[(ax + 1) % 3]! : baseR) * w;
+    h[(ax + 2) % 3] = (src.shape.k === 'box' ? src.shape.h[(ax + 2) % 3]! : baseR) * w * d;
+    b.shape = { k: 'box', h };
+  } else if (k === 'sphere') b.shape = { k: 'sphere', r: baseR * w };
+  else b.shape = { k, r: baseR * w, half: Math.max(0.05, k === 'capsule' ? half - baseR * w : half) };   // капсула: half — без шапочек
+  return b;
+}
+/** Активные тела только на чтение — редактору для авто-подгонки по костям и центра масс. */
+export const physBodies = (): readonly ActiveBone[] => B;
 
 /** Каталог для UI/пересборки: только то, что нужно чистому ядру (`physRig.ts`). */
 export const PHYS_CATALOG: PhysNode[] = CATALOG.map((b) => ({ name: b.name, parent: b.parent, tier: b.tier, chain: [] }));
@@ -158,7 +205,7 @@ export function applyPhysProfile(bodies?: readonly string[], id?: string): void 
   B.length = 0;
   for (const a of active) {
     const src = _catBone.get(a.name); if (!src) continue;
-    B.push({ ...src, parentIdx: a.parent, chain: a.chain });
+    B.push({ ...sized(src), parentIdx: a.parent, chain: a.chain });
   }
   RAG_NAMES.length = 0;
   for (const k in RAG_INDEX) delete RAG_INDEX[k];
@@ -328,7 +375,9 @@ export function jointLimitView(ragName: string): LimitView | null {
 /** Загрузить лимиты/моторы (localStorage `pe_ragdoll`, ГЛОБАЛЬНО на всех) в LIMITS/MOTOR — ЗВАТЬ ДО создания рэгдолла. */
 export function loadRagdollConfig(): void {
   try {
-    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>>; joints?: Record<string, Record<string, number>>; physrig?: { id?: string; bodies?: string[] } };
+    const c = JSON.parse(localStorage.getItem('pe_ragdoll') || '{}') as { limits?: Partial<Record<MGroup, number>>; motor?: Partial<Record<MGroup, [number, number]>>; joints?: Record<string, Record<string, number>>; physrig?: { id?: string; bodies?: string[] }; sizes?: Record<string, PhysSize> };
+    for (const k in PHYS_SIZES) delete PHYS_SIZES[k];
+    if (c.sizes) for (const k in c.sizes) PHYS_SIZES[k] = { ...c.sizes[k]! };   // РАЗМЕРЫ ЧИТАЮТСЯ ДО applyPhysProfile — именно он их впекает в активный набор
     // Набор тел живёт ЗДЕСЬ, а не отдельным ключом: у него тот же жизненный цикл, что у лимитов и моторов
     // (правка = пересборка куклы), и лишний round-trip на сервер не нужен.
     if (c.physrig?.bodies?.length) applyPhysProfile(c.physrig.bodies);
@@ -346,7 +395,7 @@ export function loadRagdollConfig(): void {
   } catch { /* */ }
 }
 export function saveRagdollConfig(): void {
-  try { localStorage.setItem('pe_ragdoll', JSON.stringify({ limits: { ...LIMITS }, motor: { ...MOTOR }, joints: { ...jointOv }, physrig: { id: PHYS_SET.id, bodies: PHYS_SET.bodies } })); } catch { /* */ }
+  try { localStorage.setItem('pe_ragdoll', JSON.stringify({ limits: { ...LIMITS }, motor: { ...MOTOR }, joints: { ...jointOv }, physrig: { id: PHYS_SET.id, bodies: PHYS_SET.bodies }, sizes: { ...PHYS_SIZES } })); } catch { /* */ }
 }
 
 export interface HumanoidRagdoll {
@@ -378,6 +427,19 @@ export interface HumanoidRagdoll {
   dispose(): void;
 }
 
+const _AX_V: THREE.Vector3[] = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+const _UP_SHAPE = new THREE.Vector3(0, 1, 0);
+/** Разворот формы: цилиндр/капсула в Jolt и three — по Y, а тело тянется по своей оси. Бокс/сфера — без разворота. */
+function shapeRot(b: { off: Vec3; shape: PhysShape }): THREE.Quaternion {
+  const q = new THREE.Quaternion();
+  if (b.shape.k !== 'cylinder' && b.shape.k !== 'capsule') return q;
+  const d = new THREE.Vector3(b.off[0], b.off[1], b.off[2]);
+  // По ФАКТИЧЕСКОМУ направлению тела, а не по доминантной оси: после «снять с костей» кости стоят
+  // наискосок (ключица, разведённые ноги), и осевой разворот давал бы цилиндр поперёк кости.
+  if (d.lengthSq() > 1e-8) q.setFromUnitVectors(_UP_SHAPE, d.normalize());
+  else q.setFromUnitVectors(_UP_SHAPE, _AX_V[bodyAxis(b)]!);
+  return q;
+}
 export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
   const J = jolt();
   const group = new THREE.Group();
@@ -387,10 +449,13 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     const s = b.shape;
     let inner;
     if (s.k === 'sphere') inner = new J.SphereShapeSettings(s.r);
+    else if (s.k === 'capsule') inner = new J.CapsuleShapeSettings(s.half, s.r);
+    else if (s.k === 'cylinder') inner = new J.CylinderShapeSettings(s.half, s.r);
     else { const h = new J.Vec3(s.h[0], s.h[1], s.h[2]); inner = new J.BoxShapeSettings(h, 0.2); J.destroy(h); }
     inner.mDensity = DENSITY;
     const off = new J.Vec3(b.off[0], b.off[1], b.off[2]);
-    const rot = new J.Quat(0, 0, 0, 1);
+    const rq = shapeRot(b);
+    const rot = new J.Quat(rq.x, rq.y, rq.z, rq.w);
     const shape = new J.RotatedTranslatedShapeSettings(off, rot, inner).Create().Get();
     J.destroy(rot); J.destroy(off);
     return shape;
@@ -482,7 +547,11 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
   const ghostMat = new THREE.MeshStandardMaterial({ color: 0x39d0ff, transparent: true, opacity: 0.45, roughness: 0.5 });
   const meshes = B.map((b) => {
     const s = b.shape;
-    const geo = s.k === 'sphere' ? new THREE.SphereGeometry(s.r, 12, 10) : new THREE.BoxGeometry(s.h[0] * 2, s.h[1] * 2, s.h[2] * 2);
+    const geo = s.k === 'sphere' ? new THREE.SphereGeometry(s.r, 12, 10)
+      : s.k === 'capsule' ? new THREE.CapsuleGeometry(s.r, s.half * 2, 4, 10)
+      : s.k === 'cylinder' ? new THREE.CylinderGeometry(s.r, s.r, s.half * 2, 12)
+      : new THREE.BoxGeometry(s.h[0] * 2, s.h[1] * 2, s.h[2] * 2);
+    if (s.k === 'capsule' || s.k === 'cylinder') geo.applyQuaternion(shapeRot(b));   // разворот запекаем в геометрию — меш ведётся кватернионом тела
     const m = new THREE.Mesh(geo, ghostMat); group.add(m); return m;
   });
   const offs = B.map((b) => new THREE.Vector3(...b.off));
