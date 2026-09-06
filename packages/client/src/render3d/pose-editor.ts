@@ -795,7 +795,20 @@ function resetHandEnds(side: 'Left' | 'Right'): void {
  */
 function applyGripOver(_p?: Pose): void {
   if (!wantFingers()) return;
-  applyGripPose(human.bones, curGripPose());
+  const g = curGripPose();
+  applyGripPose(human.bones, g);
+  if (ghostHuman) applyGripPose(ghostHuman.bones, g);   // см. `applyGripToGhost`
+}
+/**
+ * ХВАТ НАДО КЛАСТЬ И НА ПРИЗРАКА (Ф19) — именно он ведёт МЕШ, когда физика включена.
+ *
+ * Фаланги не имеют физ-тел в базовом наборе, поэтому `renderRagdollGhost` их не трогает и они
+ * остаются в rest — то есть в БИНДЕ модели. Замерено на knight_05: фаланга призрака расходилась
+ * с манекеном на 5.8°, кончик — на 1.1u, и это НЕ зависело от `PHYS.match` (при match = 1 то же самое).
+ * Со стороны это выглядело как «включаю физику — меш съезжает, а кости стоят».
+ */
+function applyGripToGhost(): void {
+  if (ghostHuman && wantFingers()) applyGripPose(ghostHuman.bones, curGripPose());
 }   // выбранный пресет пределов скелета (Ф3.3)
 // ТРИ НЕЗАВИСИМЫХ причины построить пальцы, объединённые OR, а не один флаг на всех:
 // выход из режима хвата не должен сносить пальцы, включённые кнопкой ✋ или пришедшие с моделью.
@@ -2545,6 +2558,7 @@ function buildGhost(): void {
   ghostHuman.footLift = physFootLift;                           // подъём стопы: заземление физ-тела на пол (footIk.groundFeet)
   ghostHuman.meshes.forEach((m) => { m.castShadow = true; });   // тени как у игрового solid
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
+  applyGripToGhost();                                           // свежесобранный призрак — в rest; без этого кадр до первого шага физики с бинд-кистью
 }
 function setPhysVis(on: boolean): void { if (ghostHuman) ghostHuman.root.visible = on; }
 // ── Онион-скин: полупрозрачные призраки соседних кадров (пред=синий, след=оранжевый) при позинге в «Анимации» ──
@@ -2718,6 +2732,7 @@ function stepPhysics(dt: number): void {
     const rMatch = physDead ? 0 : (locoOn ? renderMatchWeight(physMatchBase, lp().attackWeight, lp().attackMatch) : PHYS.match);
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
       rMatch > 0.001 ? human.readPose() : null, rMatch, undefined, locoOn ? [!sw[0], !sw[1]] : undefined, footGround);
+    applyGripToGhost();   // призрак пересобирает позу каждый кадр — хват кладём после него, иначе фаланги уедут в бинд
   }
 }
 const ghostGround = newGhostGround();

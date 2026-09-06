@@ -249,19 +249,28 @@ describe('gripPoses — концы слайдера снимаются РУКА�
 });
 
 describe('jointLimits — большой палец уводится В СТОРОНУ (Ф18)', () => {
-  it('ГЛАВНОЕ: у большого разгиб ВДВОЕ+ шире, чем у прочих — им ставится раскрытая ладонь', () => {
-    // У прочих пальцев отрицательная сторона — крохотный переразгиб, а у большого это
-    // ЛУЧЕВОЕ ОТВЕДЕНИЕ. Со старыми −25° клин предела уходил почти весь в сгиб, и FK-клэмп
-    // не давал отвести большой в сторону вообще.
+  it('ГЛАВНОЕ: у большого разгиб сильно шире, чем у прочих — им ставится раскрытая ладонь', () => {
+    // У прочих пальцев отрицательная сторона — крохотный переразгиб (−25°), а у большого это
+    // ЛУЧЕВОЕ ОТВЕДЕНИЕ в седловидном CMC. Обе границы важны: слишком узко — не отвести
+    // палец (было до Ф18), слишком широко — клин гизмо перестаёт быть анатомичным (было до Ф19).
     const th = extraLimitView('LeftThumbProximal')!, ix = extraLimitView('LeftIndexProximal')!;
-    expect(th.planeMin!).toBeLessThan(-55 * Math.PI / 180);
-    expect(th.planeMin!).toBeLessThan(ix.planeMin! * 2);
+    expect(th.planeMin!).toBeLessThan(-40 * Math.PI / 180);
+    expect(th.planeMin!).toBeGreaterThan(-50 * Math.PI / 180);
+    expect(th.planeMin!).toBeLessThan(ix.planeMin! * 1.5);
     expect(Math.abs(th.normalMin!)).toBeGreaterThan(Math.abs(ix.normalMin!) * 2);   // ладонное отведение тоже шире
   });
 
-  it('межфаланговый большого переразгибается заметно, а у прочих — почти нет', () => {
-    expect(extraLimitView('LeftThumbIntermediate')!.planeMin!).toBeLessThan(-15 * Math.PI / 180);
-    expect(extraLimitView('LeftIndexIntermediate')!.planeMin!).toBeGreaterThan(-10 * Math.PI / 180);
+  it('три сустава большого РАЗНЫЕ: CMC широкий, MCP почти шарнир, IP с переразгибом', () => {
+    // В именах Unity у большого те же Proximal/Intermediate/Distal, но анатомически это
+    // пястная (CMC) / проксимальная (MCP) / дистальная (IP) — фаланги всего две.
+    const D2 = Math.PI / 180;
+    const cmc = extraLimitView('LeftThumbProximal')!, mcp = extraLimitView('LeftThumbIntermediate')!, ip = extraLimitView('LeftThumbDistal')!;
+    expect(Math.abs(cmc.normalMax!)).toBeGreaterThan(30 * D2);   // отведение живёт в CMC…
+    expect(Math.abs(mcp.normalMax!)).toBeLessThan(15 * D2);      // …а MCP почти шарнир
+    expect(Math.abs(cmc.twistMax!)).toBeGreaterThan(20 * D2);    // оппозиция — тоже CMC
+    expect(Math.abs(mcp.twistMax!)).toBeLessThan(10 * D2);
+    expect(ip.planeMin!).toBeLessThan(-15 * D2);                 // IP заметно переразгибается
+    expect(extraLimitView('LeftIndexIntermediate')!.planeMin!).toBeGreaterThan(-10 * D2);
   });
 
   it('расширение НЕ сломало верхнюю границу: кулак по-прежнему в зоне', () => {

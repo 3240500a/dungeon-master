@@ -290,9 +290,14 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
       ball.scale.setScalar(jr);
       ball.userData.bone = b.name; ball.userData.joint = true; ball.userData.jr = jr;
       g.add(ball); meshes.push(ball); joints.push(ball);
-      const kids = childrenOf.get(b.name);
-      if (kids && kids.length) {
-        const c = kids[0]!;   // первый ребёнок задаёт направление кости
+      // КОСТЬ РИСУЕТСЯ К КАЖДОМУ РЕБЁНКУ, а не только к первому (Ф19) — как в Blender/Maya.
+      // Именно из-за `kids[0]` у кисти рисовалась РОВНО ОДНА пястная кость — к большому пальцу
+      // (он первый в `FINGER_GEO`), а четыре остальные ладонь не показывала вообще: пальцы казались
+      // висящими в воздухе. Отдельных КОСТЕЙ-пястей в риге нет и быть не может (ни у Unity Humanoid,
+      // ни у CC/AccuRIG их нет, драйвить нечем) — но СЕГМЕНТ запястье→костяшка задан офсетом
+      // фаланги и рисуется бесплатно. Клик по нему выбирает КИСТЬ — то, что и крутит этот сегмент.
+      // Попутно чинится таз (была только спина, теперь ещё два бедра) и грудь (шея + две ключицы).
+      for (const c of childrenOf.get(b.name) ?? []) {
         const bone = octaBone(new THREE.Vector3(...posOf(c)), boneMat());
         bone.userData.bone = b.name; g.add(bone); meshes.push(bone);
       }

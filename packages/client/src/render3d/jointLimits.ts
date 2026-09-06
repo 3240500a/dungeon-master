@@ -47,6 +47,19 @@ function fingerJoints(): Record<string, ExtraJoint> {
         const twist: Vec3 = ax.twist, plane: Vec3 = ax.plane;
         const isThumb = chain === 'Thumb';
         const base = i === 0;
+        // Ф19: у большого ТРИ РАЗНЫХ СУСТАВА, а не «base / не base». В именах Unity Humanoid
+        // у него те же Proximal/Intermediate/Distal, но анатомически это ПЯСТНАЯ (сустав CMC),
+        // проксимальная (MCP) и дистальная (IP) — у большого всего ДВЕ фаланги.
+        //   CMC — седловидный: широкое отведение и оппозиция (твист);
+        //   MCP — почти шарнир (сгиб ~55°, развода почти нет);
+        //   IP  — шарнир с заметным переразгибом.
+        // Общие «большие» числа давали клин шире анатомии на всех трёх суставах сразу.
+        const TH: [number, number, number, number][] = [   // [planeMin, planeMax, normal±, twist±]
+          [-45, 50, 45, 35],   // Proximal  = пястная, CMC
+          [-10, 55, 10, 5],    // Intermediate = проксимальная, MCP
+          [-20, 80, 3, 5],     // Distal = дистальная, IP
+        ];
+        const th = TH[i]!;
         const def: JointLim = {
           kind: 'swing', group: 'arm',
           // Основной сгиб: почти только «в кулак», переразгиб маленький. ЗНАК СЛЕДУЕТ ЗА ОСЬЮ:
@@ -57,11 +70,11 @@ function fingerJoints(): Record<string, ExtraJoint> {
           // которым ставится раскрытая ладонь, и хода там не 25°, а все 60°. С прежними числами клин
           // предела уходил почти целиком в сторону сгиба, и отвести большой было некуда — FK-клэмп
           // упирал его в границу. Межфаланговый большого (IP) тоже заметно переразгибается (~20°).
-          planeMin: (isThumb ? (base ? -60 : -20) : (base ? -25 : -5)) * D, planeMax: (base ? 95 : 100) * D,
-          // боковой развод — только у основания. У большого это ладонное отведение (из плоскости ладони), тоже ~50°.
-          normalMin: (base ? (isThumb ? -50 : -18) : -3) * D, normalMax: (base ? (isThumb ? 50 : 18) : 3) * D,
-          // осевой твист — почти нет, кроме противопоставления большого
-          twistMin: (isThumb && base ? -45 : -8) * D, twistMax: (isThumb && base ? 45 : 8) * D,
+          planeMin: (isThumb ? th[0] : (base ? -25 : -5)) * D, planeMax: (isThumb ? th[1] : (base ? 95 : 100)) * D,
+          // боковой развод — только у основания; у большого это ладонное отведение и живёт оно в CMC
+          normalMin: (isThumb ? -th[2] : (base ? -18 : -3)) * D, normalMax: (isThumb ? th[2] : (base ? 18 : 3)) * D,
+          // осевой твист — почти нет, кроме противопоставления большого (тоже CMC)
+          twistMin: (isThumb ? -th[3] : -8) * D, twistMax: (isThumb ? th[3] : 8) * D,
         };
         out[name] = { canon: `finger_${chain.toLowerCase()}_${FINGER_SEGMENTS[i]!.toLowerCase()}`, twist, plane, def };
       }
