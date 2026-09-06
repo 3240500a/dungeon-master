@@ -53,6 +53,16 @@ import { createModelsTab } from './poseModelsTab.js';
 import { bakeAnimationToClip, listAnimations } from './clipBaker.js';
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
+
+/**
+ * СОСТОЯНИЕ ИНТЕРФЕЙСА (`pe_ui`) — ОДИН словарь на всё (Ф26.2). Было два независимых чтения того же ключа
+ * и запись целиком — любое новое поле затирало бы соседей. Здесь же живут прозрачности и (дальше) свёрнутость свитков.
+ */
+interface UiState { pro?: boolean; posMark?: boolean; aSkel?: number; aHandle?: number; open?: Record<string, boolean> }
+const ui: UiState = (() => { try { return JSON.parse(localStorage.getItem('pe_ui') || '{}') as UiState; } catch { return {}; } })();
+function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify(ui)); savePoseKey('pe_ui'); } catch { /* */ } }
+/** Прозрачность скелета и ручек: по жалобе «скелет слишком активный, не видно, как выглядит меш». */
+let aSkel = ui.aSkel ?? 0.55, aHandle = ui.aHandle ?? 0.7;
 const V = (): THREE.Vector3 => new THREE.Vector3();
 const Q = (): THREE.Quaternion => new THREE.Quaternion();
 
@@ -309,7 +319,23 @@ function highlight(m: THREE.Mesh | null): void {
 // ── IK-риг ──
 interface Eff { root: string; mid: string; end: string; pole: THREE.Vector3; keepRot: boolean; isFoot: boolean; pin: boolean; ik: boolean; target: THREE.Vector3; prev: THREE.Vector3; footQuat: THREE.Quaternion; handle: THREE.Mesh; poleHandle: THREE.Mesh }
 const LIMB_OF: Record<string, string> = { LeftUpperArm: 'LH', LeftLowerArm: 'LH', LeftHand: 'LH', RightUpperArm: 'RH', RightLowerArm: 'RH', RightHand: 'RH', LeftUpperLeg: 'LF', LeftLowerLeg: 'LF', RightUpperLeg: 'RF', RightLowerLeg: 'RF' };
-const mkHandle = (color: number, r: number, box = false): THREE.Mesh => { const m = new THREE.Mesh(box ? new THREE.BoxGeometry(r * 1.6, r * 1.6, r * 1.6) : new THREE.SphereGeometry(r, 12, 10), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 })); m.renderOrder = 999; scene.add(m); return m; };
+/** ВСЕ ручки-хелперы в одном списке — чтобы прозрачность применялась одним проходом и никого не забывала. */
+const allHandles: THREE.Mesh[] = [];
+const mkHandle = (color: number, r: number, box = false): THREE.Mesh => { const m = new THREE.Mesh(box ? new THREE.BoxGeometry(r * 1.6, r * 1.6, r * 1.6) : new THREE.SphereGeometry(r, 12, 10), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 })); m.renderOrder = 999; scene.add(m); allHandles.push(m); return m; };
+/**
+ * ПРОЗРАЧНОСТЬ СКЕЛЕТА И РУЧЕК (Ф26.2). Приём взят у онион-скина: `transparent` + `opacity` +
+ * `depthWrite = false` (иначе прозрачные кости режут друг друга по Z). Непрозрачное состояние (a ≈ 1) возвращает запись в Z,
+ * чтобы не платить за сортировку там, где она не нужна. Зовётся после любой пересборки манекена/костей модели.
+ */
+function applyAlpha(): void {
+  const put = (mat: THREE.Material, a: number): void => {
+    const m = mat as THREE.MeshStandardMaterial;
+    m.transparent = a < 0.999; m.opacity = a; m.depthWrite = a >= 0.999; m.needsUpdate = true;
+  };
+  for (const m of human.meshes) put(m.material as THREE.Material, aSkel);
+  for (const m of boneView.meshes) put(m.material as THREE.Material, aSkel);
+  for (const h of allHandles) put(h.material as THREE.Material, aHandle);
+}
 const rig = {
   hipsPos: V(), hipsQuat: Q(), hipsHandle: mkHandle(0xf0c020, 3.4, true),
   eff: {
@@ -320,6 +346,12 @@ const rig = {
   } as Record<string, Eff>,
 };
 const effList = (): Eff[] => Object.values(rig.eff);
+/**
+ * ХЕЛПЕРЫ ПЛЕЧ (Ф26.3) — ручка на плечевом суставе тянет КЛЮЧИЦУ в её пределах (±20° вперёд-назад,
+ * ±15° вверх-вниз, ±10° твист — `jointLimits.ts`). Тот же шов, которым локтевой хелпер Ф25 опускает ключицу
+ * автоматом — теперь его можно дёрнуть рукой.
+ */
+const shoulderHandles: Record<string, THREE.Mesh> = { LH: mkHandle(0xb07aff, 2.2), RH: mkHandle(0xb07aff, 2.2) };
 
 /**
  * ХЕЛПЕР ВЗГЛЯДА (Ф24.2) — aim-констрейнт на голову с распределением по цепочке.
@@ -340,6 +372,9 @@ let gazeOn = false;
 const gazeTarget = V();
 const gazeHandle = mkHandle(0xf2f2f2, 2.2);
 gazeHandle.visible = false;
+/** Луч «голова → точка взгляда»: без него белый шар перед лицом читается как «что-то висит», а не как цель. */
+const gazeLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(), V()]), new THREE.LineBasicMaterial({ color: 0xf2f2f2, depthTest: false, transparent: true, opacity: 0.35 }));
+gazeLine.renderOrder = 998; gazeLine.visible = false; scene.add(gazeLine);
 let gazeBase: Map<string, THREE.Quaternion> | null = null;
 /** Снять взгляд: вернуть шею/голову в опорную позу (точный откат). */
 function gazeRelax(): void {
@@ -374,7 +409,8 @@ function applyGaze(): void {
 }
 /** Вкл/выкл хелпера. При включении цель встаёт ПЕРЕД ЛИЦОМ по МИРОВОМУ вперёд. */
 function setGaze(on: boolean): void {
-  gazeOn = on; gazeHandle.visible = on; gazeForget();
+  gazeOn = on; gazeHandle.visible = on || ikOn; gazeLine.visible = gazeHandle.visible; gazeForget();
+  gazeB?.classList.toggle('on', on);   // Ф26.3: взгляд включается и КЛИКОМ ПО РУЧКЕ ГОЛОВЫ — кнопка должна это показывать
   if (on) {
     const hd = human.bones.get('Head');
     if (hd) { human.root.updateMatrixWorld(true); gazeTarget.copy(hd.getWorldPosition(V())).add(new THREE.Vector3(0, 0, GAZE_DIST)); }
@@ -1172,6 +1208,7 @@ function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.
 
 // ── Пикинг ──
 const ray = new THREE.Raycaster(); let activeKey: string | null = null; let activePole: string | null = null; let activeGaze = false;
+let activeShoulder: string | null = null;   // Ф26.3: тянем ручку плеча (ключ конечности LH/RH)
 canvas.addEventListener('pointerdown', (ev) => {
   if (gizmo.dragging) return;
   if (shiftRings && !ev.shiftKey) shiftReset();   // Ф23.2: состояние колец протухло (потерян keyup) — чиним до пикинга
@@ -1196,11 +1233,14 @@ canvas.addEventListener('pointerdown', (ev) => {
   // значит и в пикинге должны быть сверху. Невидимые (IK выкл) не ловятся — `visible` уважает raycast.
   {
     const list: THREE.Object3D[] = [rig.hipsHandle, gazeHandle];
+    for (const k in shoulderHandles) list.push(shoulderHandles[k]!);
     for (const e of effList()) list.push(e.handle, e.poleHandle);
     const hit = ray.intersectObjects(list, false)[0];
     if (hit) {
-      activeKey = null; activePole = null; activeGaze = false;
-      if (hit.object === gazeHandle) { activeGaze = true; gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(gazeHandle); }
+      activeKey = null; activePole = null; activeGaze = false; activeShoulder = null;
+      const shK = Object.keys(shoulderHandles).find((k) => shoulderHandles[k] === hit.object);
+      if (shK) { activeShoulder = shK; if (!gazeOn) girdleForget(); gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(shoulderHandles[shK]!); }
+      else if (hit.object === gazeHandle) { activeGaze = true; if (!gazeOn) setGaze(true); gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(gazeHandle); }
       else if (hit.object === rig.hipsHandle) { activeKey = 'hips'; pinBase = pinMiss(); markHipsGood(); gizmo.setSpace('world'); gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); gizmo.attach(rig.hipsHandle); }
       else {
         const endK = Object.keys(rig.eff).find((k) => rig.eff[k]!.handle === hit.object);
@@ -1212,7 +1252,7 @@ canvas.addEventListener('pointerdown', (ev) => {
       return;
     }
   }
-  activeKey = null; activePole = null; activeGaze = false;
+  activeKey = null; activePole = null; activeGaze = false; activeShoulder = null;
   // Кости + меши оружия (оружие — вращение вокруг хвата).
   // Ф13.3: ФАЛАНГИ кликабельны ТОЛЬКО в режиме хвата, и тогда — только они (плюс сама кисть).
   // Иначе клик по кисти постоянно попадал бы в палец, а в режиме хвата оружие перехватывало бы
@@ -1248,6 +1288,16 @@ gizmo.addEventListener('objectChange', () => {
     return;
   }
   if (activeGaze) { gazeTarget.copy(gazeHandle.position); return; }   // Ф24.2: тянем точку взгляда
+  // ХЕЛПЕР ПЛЕЧА (Ф26.3): тянем плечевой сустав → доворачиваем ключицу туда же, в её пределах.
+  // `girdleForget()` ПОСЛЕ правки обязателен: иначе следующий же `solveRig` сделает `girdleRelax()` и вернёт
+  // ключицу в опорную позу — ручка бы не держала (та же логика, что у FK-правки ключицы ниже).
+  if (activeShoulder) {
+    const e = rig.eff[activeShoulder]!;
+    shoulderGirdle(e, shoulderHandles[activeShoulder]!.position);
+    girdleForget();
+    if (e.pin || effList().some((x) => x.ik && x.pin)) solveRig(); else syncEff(e);
+    return;
+  }
   if (gizmo.object === boneProxy || !(activeKey || activePole)) {
     if (gizmo.object === boneProxy && fkProxyBone) {           // прокси-вращение ПО ОСЯМ СУСТАВА: дельта прокси (мир) → лок. кость → клэмп
       const nm = fkProxyBone; const b = human.bones.get(nm);
@@ -1759,7 +1809,7 @@ function applyChar(id: string): void {
   normalizeHipsOfChar(id);   // Ф12: rest-высота ЭТОГО тела только что стала известна — переводим его клипы в дельту
   modelsTab.refreshProfile();   // Ф15.1: морф этого персонажа обязан уехать И в риг-источник, иначе меш не поедет за скелетом
   human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
-  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
+  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
   disposeOnion();                                             // онион-призраки пересоберутся под новые пропорции
@@ -1777,7 +1827,7 @@ function rebuildManikin(): void {
   gizmo.detach(); selMesh = null; selected = null;
   human = buildHumanoid({ gender: c.gender, build: morphBuild(c), style: manStyle(), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
   human.footLift = physFootLift;                              // подъём стопы сохраняется при пересборке стиля манекена
-  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop();
+  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();
   applyPose(pose); if (ikOn) captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
 function setManView(): void {
@@ -1809,24 +1859,26 @@ let ikB!: HTMLButtonElement, gazeB!: HTMLButtonElement, hipsB!: HTMLButtonElemen
 function setIk(on: boolean): void {
   ikOn = on;
   for (const e of effList()) { e.handle.visible = on; e.poleHandle.visible = on; }
-  if (!on && (activeKey && activeKey !== 'hips' || activePole)) { gizmo.detach(); activeKey = null; activePole = null; }
+  for (const k in shoulderHandles) shoulderHandles[k]!.visible = on;   // Ф26.3: плечи — такая же ручка, живёт с тумблером IK
+  gazeHandle.visible = on || gazeOn; gazeLine.visible = gazeHandle.visible;   // голова видна и без кнопки 
+  if (!on && (activeKey && activeKey !== 'hips' || activePole || activeShoulder)) { gizmo.detach(); activeKey = null; activePole = null; activeShoulder = null; }
   if (on) captureRig();
   ikB.textContent = on ? 'IK ●' : 'IK ○'; ikB.classList.toggle('on', on);
   ikB.title = on ? 'Инверсная кинематика ВКЛ: тянешь синюю/зелёную ручку — цепь решается' : 'Инверсная кинематика ВЫКЛ: чистый FK, ручки конечностей скрыты (таз остаётся)';
   refreshPose();
 }
 ikB = mkBtn('IK ●', () => setIk(!ikOn));
-gazeB = mkBtn('👁 взгляд', () => { setGaze(!gazeOn); gazeB.classList.toggle('on', gazeOn); });
+gazeB = mkBtn('👁 взгляд', () => setGaze(!gazeOn));
 gazeB.title = 'Голова смотрит в точку-хелпер (белый шар перед лицом): взгляд держится вперёд, как бы ни скручивался корпус';
 hipsB = mkBtn('таз: двигать', () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); } });
 const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => setPhys(!physOn)); });
-const modeB = mkBtn('', () => { uiPro = !uiPro; saveUi(); syncModeB(); refreshAll(); });
+const modeB = mkBtn('', () => { uiPro = !uiPro; ui.pro = uiPro; saveUi(); syncModeB(); refreshAll(); });
 function syncModeB(): void { modeB.textContent = uiPro ? '⚙ Про' : '○ Простой'; modeB.title = uiPro ? 'Про: все настройки (лимиты, моторы, физика, тюнинг походки)' : 'Простой: только позинг и клипы — инженерные панели скрыты (их значения действуют)'; modeB.classList.toggle('on', uiPro); }
 const manB = mkBtn('манекен: скелет', () => { manView = manView === 'skel' ? 'solid' : manView === 'solid' ? 'hidden' : 'skel'; setManView(); });
 // Ф13.3/13.4: режим хвата и точка серверной позиции — ОБА видны всегда, без привязки к Про.
 const gripB = mkBtn('✋ хват', () => cycleGrip());
 gripB.title = 'Правка хвата: камера на кисть, кликабельны ТОЛЬКО фаланги. Клики: правая → левая → выкл.';
-const posB = mkBtn('⌖ позиция', () => { posMarkOn = !posMarkOn; saveUi(); syncPosMark(); });
+const posB = mkBtn('⌖ позиция', () => { posMarkOn = !posMarkOn; ui.posMark = posMarkOn; saveUi(); syncPosMark(); });
 posB.title = 'Точка и круг коллизии, которые сервер считает позицией персонажа. Это НЕ таз: таз в кадре может быть смещён (выпад удара), и в игре точно так же.';
 // Тумблер ростера: персонажи (классы) ↔ монстры. Переключает список выбора персонажа и грузит первого из ростера.
 let personaB!: HTMLButtonElement;
@@ -1845,9 +1897,8 @@ bar.append(personaB, document.createTextNode('Персонаж'), charSel, docum
 // РЕЖИМ ИНТЕРФЕЙСА (Ф1.5). Не два разных UI, а один с прогрессивным раскрытием: «Про» ДОБАВЛЯЕТ инженерные
 // панели (лимиты суставов, моторы, PHYS, тюнинг походки), ничего не переставляя. В Простом все эти
 // настройки ПРОДОЛЖАЮТ действовать со своими значениями — просто не показываются.
-let uiPro: boolean = (() => { try { return (JSON.parse(localStorage.getItem('pe_ui') || '{}') as { pro?: boolean }).pro === true; } catch { return false; } })();
-let posMarkOn: boolean = (() => { try { return (JSON.parse(localStorage.getItem('pe_ui') || '{}') as { posMark?: boolean }).posMark === true; } catch { return false; } })();
-function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify({ pro: uiPro, posMark: posMarkOn })); savePoseKey('pe_ui'); } catch { /* */ } }
+let uiPro = ui.pro === true;
+let posMarkOn = ui.posMark === true;
 
 // ── Ф13.4: ТОЧКА ПОЗИЦИИ ПЕРСОНАЖА (та, что едет на сервер) ────────────────────────
 // Сервер знает персонажа как ЦЕНТР КРУГА на полу (`PlayerView {x, y, r}`): по этому кругу решаются
@@ -2057,6 +2108,20 @@ function poseTools(): void {
     pbtn(clampFk ? 'клэмп FK: вкл' : 'клэмп FK: выкл', () => { clampFk = !clampFk; renderAnim(); }, clampFk),
     pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; renderAnim(); }, footGround),
   );
+  {   // Ф26.2 — ПРОЗРАЧНОСТЬ: скелет перестаёт забивать меш (жалоба «слишком активный»), ручки не рябят
+    const arow = (label: string, get: () => number, set: (v: number) => void): void => {
+      const row = el('label', 'display:flex;align-items:center;gap:6px');
+      row.innerHTML = `<span style="flex:0 0 72px;color:#9ae6a0">${label}</span>`;
+      const out = el('span', 'width:32px;text-align:right;color:#cfd3e0'); out.textContent = get().toFixed(2);
+      const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = '0.15'; r.max = '1'; r.step = '0.05'; r.value = String(get());
+      r.oninput = () => { set(parseFloat(r.value)); out.textContent = get().toFixed(2); applyAlpha(); };
+      r.onchange = () => { ui.aSkel = aSkel; ui.aHandle = aHandle; saveUi(); };
+      row.append(r, out); body.append(row);
+    };
+    const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'ПРОЗРАЧНОСТЬ'; body.append(ah);
+    arow('скелет', () => aSkel, (v) => { aSkel = v; });
+    arow('хелперы', () => aHandle, (v) => { aHandle = v; });
+  }
   // Офсет заземления стоп (per-персонаж, pe_phys.footLift): цель foot-IK = пол + SOLE + офсет. + поднять (стопы тонут под пол),
   // − опустить (парят над полом). Живо, per-персонаж, держится после бега. Тот же офсет читает игра (loadFootLift).
   {
@@ -3788,7 +3853,7 @@ function loop(): void {
     // Ф22.1: ФИКСАТОРЫ ДЕЙСТВУЮТ И ПРИ FK-ВРАЩЕНИИ КОСТИ. Раньше солвер звался только
     // на драге РУЧКИ, поэтому пины при повороте кости не держали вообще (замер: `Hips` на 40°
     // — кисти уезжали на 26.1u). В Cascadeur фиксатор держит точку при ЛЮБОЙ манипуляции.
-    else if (gizmo.dragging && ikOn && fkProxyBone && effList().some((e) => e.ik && e.pin)) solveRig();
+    else if (gizmo.dragging && ikOn && (fkProxyBone || activeShoulder) && effList().some((e) => e.ik && e.pin)) solveRig();
     // НЕ тянем — ручки ГОНЯТСЯ ЗА КОСТЯМИ (Ф21.1). Раньше этого не требовалось: в FK-режиме ручки
     // были спрятаны целиком. Теперь они видны всегда, и без этого синяя ручка оставалась висеть в воздухе
     // после поворота плеча кольцами.
@@ -3797,6 +3862,8 @@ function loop(): void {
     if (gazeHandle !== active) gazeHandle.position.copy(gazeTarget);
     if (rig.hipsHandle !== active) rig.hipsHandle.position.copy(rig.hipsPos);
     for (const e of effList()) { if (e.handle !== active) e.handle.position.copy(e.target); if (e.poleHandle !== active) e.poleHandle.position.copy((viewBone(e.mid) ?? human.bones.get(e.mid)!).getWorldPosition(V())); }
+    for (const k in shoulderHandles) { const h = shoulderHandles[k]!; if (h !== active) h.position.copy((viewBone(rig.eff[k]!.root) ?? human.bones.get(rig.eff[k]!.root)!).getWorldPosition(V())); }
+    if (gazeLine.visible) { const hd = viewBone('Head') ?? human.bones.get('Head'); if (hd) (gazeLine.geometry as THREE.BufferGeometry).setFromPoints([hd.getWorldPosition(V()), gazeTarget]); }
     // Ф24.2: взгляд — ПОВЕРХ всего (солвера, скрутки, FK): сняли прошлый доворот и навели заново.
     gazeRelax(); applyGaze();   // Ф20.2: полюс — на ВИДИМОМ суставе
   }
@@ -3834,7 +3901,7 @@ function loop(): void {
     if (ar !== lastAtlasRoot) {
       lastAtlasRoot = ar;
       boneView.rebuild(boneSrc);
-      boneViewOnTop();
+      boneViewOnTop(); applyAlpha();
       selMesh = null; highlight(null);                     // материал выбранного меша мог быть дизпоузнут
       if (selected) highlight(boneMeshes().find((x) => x.userData.bone === selected) ?? null);
     }
@@ -3860,7 +3927,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
