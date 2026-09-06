@@ -31,6 +31,7 @@ import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBui
 import { findGrip, gripToPose, resolveGripPose, effectiveWeaponGrip, applyGripPose, mirrorHandPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig, type WeaponGrip } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits((b) => extraLimitView(b, fingerAxes()));   // до первого limitViewForBone; Ф14.4 — оси из ЭТОГО рига
 import { deriveFingerAxes, bindCurlReport, type FingerAxes } from './fingerAxes.js';
+import { groundFeet } from './footIk.js';   // Ф20.5: заземление попадает в ЗАПИСАННУЮ позу — ОБЩИЙ код с игрой
 import { parentOfOur } from './retarget3d.js';   // НАШа канон-топология: вид скелета строится по ней, а не по иерархии модели
 import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: скелет по НАСТОЯЩИМ костям модели   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
 import { makeLimitGizmo } from './poseLimitGizmo.js';
@@ -515,7 +516,33 @@ function applyLgripPreview(): void {
   const pole = toEl.lengthSq() > 0.5 ? toEl.normalize() : V().set(0, -1, -0.4);
   solveTwoBoneIK(human, 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', target, q, pole);
 }
+/**
+ * ЗАЗЕМЛЕНИЕ ПОПАДАЕТ В ЗАПИСАННУЮ ПОЗУ (Ф20.5). Решение юзера: «заземление в поз-редакторе
+ * как раз и надо, чтобы делать позы, которые уже полу-соответствуют, а в игре подгонится, если пол кривой».
+ *
+ * ОДНИМ ШВОМ НА ЧТЕНИИ, а НЕ покадрово. Покадровое заземление манекена крутилось бы на
+ * собственном выходе (`gs.off` — интегратор без затухания), после первого кадра стёрло бы
+ * авторские углы ног и отменяло правки IK — следующий кадр возвращал бы ногу на пол.
+ * Здесь же: заземлили → прочитали → вернули как было. Авторская поза в редакторе не меняется.
+ *
+ * Свой `GhostGround` — делить его с призраком нельзя: два рига на одном интеграторе удваивают шаг.
+ */
+const LEG_BONES = ['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot'];
+const _manGround = newGhostGround();
+function groundManikin(): (() => void) | null {
+  if (!footGround) return null;
+  const save = LEG_BONES.map((n) => human.bones.get(n)?.quaternion.clone() ?? null);
+  const rootY = human.root.position.y;
+  _manGround.off = 0;                                   // одноразовый шаг: интегратор с нуля…
+  groundFeet(human, human.hipsWorldY(), _manGround, 1e3, () => 0);   // …и большой dt → полное схождение за один вызов
+  return () => {
+    LEG_BONES.forEach((n, i) => { const b = human.bones.get(n), q = save[i]; if (b && q) b.quaternion.copy(q); });
+    human.root.position.y = rootY; human.root.updateMatrixWorld(true);
+  };
+}
+
 function readPoseFull(): Pose {
+  const ungroundManikin = groundManikin();   // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу, потом возвращаем манекен как был
   const p = human.readPose();
   delete p['LeftBreast']; delete p['RightBreast'];           // jiggle груди — рантайм, не пишем в позу
 
@@ -539,6 +566,7 @@ function readPoseFull(): Pose {
   for (const nm in p) if (isHandBone(nm)) delete p[nm];
   // Офсет таза — ДЕЛЬТА от rest тела (Ф12): абсолют зависел от телосложения — «присед» среднего был бы «цыпочками» высокого.
   { const hp = human.hips.position, hr = human.hipsRest; setHipsOffset(p, [+(hp.x - hr.x).toFixed(2), +(hp.y - hr.y).toFixed(2), +(hp.z - hr.z).toFixed(2)]); }
+  ungroundManikin?.();   // заземление двигает КОРЕНЬ, а не `hips.position`, так что в `__hipsD` выше оно не течёт
   return p;
 }
 let wpnOverride = false;   // галка «хват: своя правка (кадр)» текущего кадра (иначе — БАЗА pe_grip, единый хват во всех позах)

@@ -404,7 +404,12 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     const body = JSON.stringify({ models });
     await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
     await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    cfg.models = models; renderBody();
+    cfg.models = models;
+    // Ф20.6: снесли АКТИВНЫЙ атлас — пересобрать источник/скин. Без этого `curAtlas()` уезжал на
+    // другую запись (или в undefined), манекен перестраивался под дефолтные пропорции, а СТАРЫЙ GLB
+    // оставался в сцене и продолжал вестись — скелет на чужом теле.
+    if (asmAtlas?.id === id) { asmAtlas = null; rebuildAsm(); }
+    renderBody();
   }
 
   // ── ОРУЖИЕ: один FBX со всеми оружиями → GLB на каждый меш (kind='weapon' + weaponType). ОБЩЕЕ на всех
