@@ -128,6 +128,25 @@ function dofBasis(nm: string, out: THREE.Quaternion): void {
   out.identity();
 }
 /** Пере-выставить прокси на ТЕКУЩУЮ кость: DOF-базис в мире · её мир-ориентация + позиция сустава. Зов при attach и старте драга. */
+/**
+ * РИГ, КОТОРЫЙ РЕАЛЬНО ВЕДЁТ МЕШ (Ф20.2) — ровно тот же выбор, что в `modelsTab.drive(…)`.
+ *
+ * Ретаргет ведёт кости модели И ПОЗИЦИОННО (`posDrive`, retarget3d.ts), то есть суставы модели
+ * НАСИЛЬНО садятся на суставы ведущего рига. Замерено на knight_05 с ВЫКЛЮЧЕННОЙ физикой:
+ * расхождение тела с манекеном ровно 0.000u (даже при сильном пер-костном морфе), пальцы 0.01u.
+ *
+ * Значит расхождение, которое видел юзер (колено 18.4°, корень +0.26u), — НЕ ошибка ретаргета и не
+ * бленд физики, а то, что ВЕДУЩИЙ РИГ НЕ ТОТ, КОТОРЫЙ МЫ ПОКАЗЫВАЕМ: при включённой физике
+ * меш ведёт ЗАЗЕМЛЁННЫЙ призрак, а виджеты читают НЕзаземлённый `human`.
+ *
+ * ПОЭТОМУ: всё, что ПОКАЗЫВАЕТ (позиции гизмо/хэндлов/фокуса), берёт координаты ОТСЮДА,
+ * а всё, что ПРАВИТ позу (`syncEff`, `solveRig`, дельта-математика прокси, разложение по пределам),
+ * ОСТАЁТСЯ на `human` — только в его фрейме эта математика верна.
+ */
+function viewRig(): Humanoid { return physOn && ghostHuman ? ghostHuman : human; }
+/** Кость ведущего рига по имени (фолбэк на манекен) — только для ОТРИСОВКИ. */
+function viewBone(nm: string): THREE.Object3D | null { return viewRig().bones.get(nm) ?? human.bones.get(nm) ?? null; }
+
 function rebaselineProxy(): void {
   if (!fkProxyBone) return;
   const b = human.bones.get(fkProxyBone); if (!b) return;
@@ -136,7 +155,9 @@ function rebaselineProxy(): void {
   b.parent!.getWorldQuaternion(_parInv); _parInv.invert();
   dofBasis(fkProxyBone, _rdof);
   _pBase.copy(_bBase).multiply(_rdof); _pBaseInv.copy(_pBase).invert();
-  boneProxy.quaternion.copy(_pBase); b.getWorldPosition(boneProxy.position); boneProxy.updateMatrixWorld(true);
+  // Ф20.2: ПОЗИЦИЯ колец — с ведущего рига (там же стоит кость модели), а `_bBase`/`_parInv` выше —
+  // СТРОГО с `human`: дельта `parent⁻¹ · дельтаМир · костьМир0` верна только во фрейме манекена.
+  boneProxy.quaternion.copy(_pBase); (viewBone(fkProxyBone) ?? b).getWorldPosition(boneProxy.position); boneProxy.updateMatrixWorld(true);
 }
 /** Прицепить гизмо вращения к кости ЧЕРЕЗ прокси (кольца по осям сустава). Замена прямого gizmo.attach(bone). */
 function attachBoneGizmo(nm: string): void { fkProxyBone = nm; rebaselineProxy(); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(boneProxy); }
@@ -173,7 +194,9 @@ function placeLimitGizmo(): void {
   if (!limitGizmo.group.visible || !selected || !curLimitView) return;
   const b = human.bones.get(selected); if (!b) return;
   // Ф13.3: на фаланге зона предела (радиус 14u, под кости тела) закрыла бы весь вид — ужимаем ТОЛЬКО её.
-  limitGizmo.place(b.getWorldPosition(V()), b.parent ? b.parent.getWorldQuaternion(Q()) : Q(), isHandBone(selected) ? 0.18 : 1);
+  // Ф20.2: ПОЗИЦИЯ — с ведущего рига (гизмо садится на ВИДИМУЮ кость), а КВАТЕРНИОН РОДИТЕЛЯ
+  // и `decomposeToLimit` ниже — с `human`: отсчёт предела задан в его фрейме, иначе зона и угол поедут.
+  limitGizmo.place((viewBone(selected) ?? b).getWorldPosition(V()), b.parent ? b.parent.getWorldQuaternion(Q()) : Q(), isHandBone(selected) ? 0.18 : 1);
   const d = decomposeToLimit(b.quaternion, curLimitView);
   limitGizmo.mark(curLimitView, d.rP, d.rN, d.twist);
 }
@@ -616,7 +639,7 @@ function camView(dir: [number, number, number]): void {
   camera.lookAt(t); orbit.update();
 }
 function camFocus(obj?: THREE.Object3D | null): void {
-  const o = obj ?? (selected ? human.bones.get(selected) : null) ?? human.hips;
+  const o = obj ?? (selected ? viewBone(selected) : null) ?? viewRig().hips;   // Ф20.2: летим к ВИДИМОЙ кости
   const p = o.getWorldPosition(V());
   const off = camera.position.clone().sub(orbit.target);
   orbit.target.copy(p); camera.position.copy(p).add(off); orbit.update();
@@ -884,7 +907,7 @@ let fkB!: HTMLButtonElement, ikB!: HTMLButtonElement, hipsB!: HTMLButtonElement;
 function setMode(m: 'fk' | 'ik'): void { mode = m; gizmo.detach(); fkProxyBone = null; highlight(null); selected = null; activeKey = null; activePole = null; for (const e of effList()) { e.handle.visible = m === 'ik'; e.poleHandle.visible = m === 'ik'; } rig.hipsHandle.visible = m === 'ik'; if (m === 'ik') captureRig(); fkB.classList.toggle('on', m === 'fk'); ikB.classList.toggle('on', m === 'ik'); refreshPose(); }
 ikB = mkBtn('IK', () => setMode('ik')); fkB = mkBtn('FK', () => setMode('fk'));
 hipsB = mkBtn('таз: двигать', () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); } });
-const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => { physOn = !physOn; physB.textContent = 'физ: ' + (physOn ? 'вкл' : 'выкл'); physB.classList.toggle('on', physOn); setPhysVis(physOn); }); });
+const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => setPhys(!physOn)); });
 const modeB = mkBtn('', () => { uiPro = !uiPro; saveUi(); syncModeB(); refreshAll(); });
 function syncModeB(): void { modeB.textContent = uiPro ? '⚙ Про' : '○ Простой'; modeB.title = uiPro ? 'Про: все настройки (лимиты, моторы, физика, тюнинг походки)' : 'Простой: только позинг и клипы — инженерные панели скрыты (их значения действуют)'; modeB.classList.toggle('on', uiPro); }
 const manB = mkBtn('манекен: скелет', () => { manView = manView === 'skel' ? 'solid' : manView === 'solid' ? 'hidden' : 'skel'; setManView(); });
@@ -974,7 +997,7 @@ function syncGripB(): void {
 }
 /** Подлететь к кисти. НЕ `camFocus`: тот сохраняет дистанцию, а здесь нужно именно приблизиться. */
 function focusHand(): void {
-  const b = human.bones.get(gripSide + 'Hand'); if (!b) return;
+  const b = viewBone(gripSide + 'Hand'); if (!b) return;   // Ф20.2: камера летит к ВИДИМОЙ кисти
   const p = b.getWorldPosition(new THREE.Vector3());
   orbit.target.copy(p);
   camera.position.copy(p).add(new THREE.Vector3(gripSide === 'Left' ? 9 : -9, 4, 11));   // ~15u: кисть занимает больше половины кадра
@@ -991,7 +1014,9 @@ const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => {
 const tabSwitch = (k: typeof tab): void => { if (k !== 'turn' && k !== 'loco' && locoOn) { locoOn = false; goFrame(frameIdx); } tab = k; refreshAll(); };
 for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
-const modelsTab = createModelsTab(scene, () => atlasProfile());   // Ф15.1: риг-источник строится ТЕМ ЖЕ профилем, что манекен
+// Ф15.1 + Ф20.1: риг-источник строится ТЕМ ЖЕ профилем И ТЕМ ЖЕ boneScale, что манекен —
+// иначе кости модели стоят не там, где нарисованы кости редактора (колено расходилось на 2.37u).
+const modelsTab = createModelsTab(scene, () => atlasProfile(), () => morphBoneScale());
 let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
 let lastHasFingers = false;          // Ф14.1: пальцы атласа появляются ПОЗЖЕ boneScale (после загрузки GLB)
 let lastBO: unknown;                 // Ф14.2: само-лечение дописывает офсеты пальцев уже ПОСЛЕ загрузки — следим за сменой ССЫЛКИ
@@ -1149,11 +1174,11 @@ function poseTools(): void {
   updateLimitGizmo();
   const phb = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:4px'); body.append(phb);
   phb.append(
-    pbtn('физика вкл/выкл', () => { void ensurePhysics().then(() => { physOn = !physOn; setPhysVis(physOn); }); }, physOn),
+    pbtn('физика вкл/выкл', () => { void ensurePhysics().then(() => { setPhys(!physOn); renderAnim(); }); }, physOn),
   );
   if (uiPro) phb.append(
-    pbtn('дёрг (удар)', () => { void ensurePhysics().then(() => { physOn = true; setPhysVis(true); if (ragdoll) { ragdoll.hit('Torso', 0, 0.3, 1, 1.4); ragdoll.hit('Head', 0, 0.3, 1, 0.8); } }); }),
-    pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { physOn = true; setPhysVis(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
+    pbtn('дёрг (удар)', () => { void ensurePhysics().then(() => { setPhys(true); if (ragdoll) { ragdoll.hit('Torso', 0, 0.3, 1, 1.4); ragdoll.hit('Head', 0, 0.3, 1, 0.8); } }); }),
+    pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { setPhys(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
     pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; if (ragdoll) ragdoll.group.visible = showBoxes; renderAnim(); }); }, showBoxes),
   );
   poseLibSection();
@@ -2044,7 +2069,7 @@ function updateTurnPlants(): void {
     const cur = turnPlantMarks[i]!, goal = goalStanceMarks[i]!;
     cur.visible = show; goal.visible = show;
     if (!show) continue;
-    const fb = human.bones.get(i === 0 ? 'LeftFoot' : 'RightFoot');   // ТЕКУЩАЯ позиция стопы (где нога сейчас) — сфера
+    const fb = viewBone(i === 0 ? 'LeftFoot' : 'RightFoot');   // ТЕКУЩАЯ позиция стопы — сфера; Ф20.2: где СТОИТ видимая нога
     if (fb) { const fp = fb.getWorldPosition(V()); setXZ(cur, fp.x, fp.z); }
     const [gx, gz] = lp().driver.stanceAtGoal(i as 0 | 1);           // ЦЕЛЬ: идл-стойка на ПРИЦЕЛЕ (куда шагнёт после доворота) — кольцо
     setXZ(goal, gx - gaitPx, gz - gaitPz);
@@ -2306,7 +2331,7 @@ let attackSpeed = 1;   // множитель темпа удара (ползун
 function triggerAttack(c: Clip): void {   // запустить удар через ТОТ ЖЕ PosePlayer, что игра; включить физику → физ-призрак = верный замах
   syncAttackEnds(c);   // концы = актуальная стойка (на случай если стойку поправили)
   lp().triggerAttack(c); lp().atkSpeed = attackSpeed;
-  void ensurePhysics().then(() => { physOn = true; setPhysVis(true); });
+  void ensurePhysics().then(() => setPhys(true));
 }
 // Пометка клипов как ударов (per char×weapon) — их кнопки появляются в превью бега.
 function loadAtk(): Record<string, Record<string, string[]>> { try { return JSON.parse(localStorage.getItem('pe_attacks') || '{}') as Record<string, Record<string, string[]>>; } catch { return {}; } }
@@ -2560,7 +2585,22 @@ function buildGhost(): void {
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
   applyGripToGhost();                                           // свежесобранный призрак — в rest; без этого кадр до первого шага физики с бинд-кистью
 }
-function setPhysVis(on: boolean): void { if (ghostHuman) ghostHuman.root.visible = on; }
+/**
+ * ЕДИНАЯ ТОЧКА ПРАВДЫ О ФИЗИКЕ: состояние + видимость призрака + МЕТКА КНОПКИ (Ф20.2).
+ *
+ * Раньше `physOn` выставлялся из шести мест, а метку тулбар-кнопки обновляло только одно из них.
+ * Хуже того, стартовое `ensurePhysics().then(() => physOn = true)` резолвится через секунды (WASM) —
+ * если за это время успеть выключить физику, промис молча включал её обратно, а кнопка продолжала
+ * показывать «выкл». На этом легко ошибиться при замерах: видишь «выкл», а меш ведёт призрак.
+ */
+let physTouched = false;                                        // юзер уже трогал тумблер — стартовый промис его не перебивает
+function setPhys(on: boolean, byUser = true): void {
+  if (byUser) physTouched = true; else if (physTouched) return;   // авто-включение после загрузки WASM не трогает выбор юзера
+  physOn = on;
+  if (ghostHuman) ghostHuman.root.visible = on;
+  physB.textContent = 'физ: ' + (on ? 'вкл' : 'выкл');
+  physB.classList.toggle('on', on);
+}
 // ── Онион-скин: полупрозрачные призраки соседних кадров (пред=синий, след=оранжевый) при позинге в «Анимации» ──
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
 function mkOnion(tint: number): Humanoid {
@@ -2740,7 +2780,7 @@ const ghostGround = newGhostGround();
 async function bakeCurrentClip(): Promise<void> {
   await ensurePhysics();
   const c = curClip(); if (!c || !ragdoll) return;
-  physOn = true; setPhysVis(true);
+  setPhys(true);
   const dur = clipDur(c) || 0.5, dt = 1 / 60, sampleEvery = 2;   // сэмпл 30 к/с
   const baked: Keyframe[] = [];
   preview(0); for (let i = 0; i < 40; i++) stepPhysics(dt);       // устаканиться на стартовой позе
@@ -2778,7 +2818,7 @@ function jiggle(dt: number): void {
 // ── Цикл ──
 ensureSeed();   // первый запуск: залить примерный контент Волкодава (idle-стойки + удары по оружию)
 applyChar(curCharId); setMode('ik'); tab = 'anim'; syncModeB(); refreshAll();
-void ensurePhysics().then(() => { physOn = true; setPhysVis(true); });   // по умолчанию — полупрозрачное физ-тело (силуэт) вокруг скелета
+void ensurePhysics().then(() => setPhys(true, false));   // дефолт — физ-силуэт вокруг скелета; `byUser=false` — не перебивает ручное выключение
 function resize(): void {
   const w = canvas.clientWidth || 800, h = canvas.clientHeight || 600;
   renderer.setSize(w, h, false); composer.setSize(w, h); outline.setSize(w, h);
@@ -2803,12 +2843,11 @@ function loop(): void {
     if (gizmo.dragging) solveRig();
     const active = gizmo.dragging ? gizmo.object : null;
     if (rig.hipsHandle !== active) rig.hipsHandle.position.copy(rig.hipsPos);
-    for (const e of effList()) { if (e.handle !== active) e.handle.position.copy(e.target); if (e.poleHandle !== active) e.poleHandle.position.copy(human.bones.get(e.mid)!.getWorldPosition(V())); }
+    for (const e of effList()) { if (e.handle !== active) e.handle.position.copy(e.target); if (e.poleHandle !== active) e.poleHandle.position.copy((viewBone(e.mid) ?? human.bones.get(e.mid)!).getWorldPosition(V())); }   // Ф20.2: полюс — на ВИДИМОМ суставе
   }
   if (!locoOn) applyLgripPreview();   // Анимация: левая кисть IK-ом на маркер хвата (в Бег это делает gaitToHumanoid)
   updatePlantMarks();
   updateTurnPlants();   // вкладка «Повороты»: живые плант-цели стоп (куда стремятся ноги)
-  placeLimitGizmo();    // гизмо предела едет за выбранным суставом манекена
   scrollFloor();   // тредмилл-пол под бегущим (тянется по gaitPx/gaitPz)
   stepPhysics(dt);
   jiggle(dt);   // вторичное движение груди (female)
@@ -2825,6 +2864,9 @@ function loop(): void {
   // Атлас-скин ведём ФИЗ-телом (ghostHuman) — как игра (скин на solid) → превью атласа = игра. Физ off → манекеном.
   // ghostHuman позирован stepPhysics выше (физ-бленд по PHYS.match), у него та же геометрия атласа (buildGhost).
   modelsTab.drive(physOn && ghostHuman ? ghostHuman : human);   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена
+  // Ф20.2: гизмо предела ставится ПОСЛЕ `drive` — до него локальные трансформы костей модели
+  // держат вывод ПРОШЛОГО кадра, и гизмо отставало на кадр при перетаскивании.
+  placeLimitGizmo();
   syncWeaponHost();   // 2B: оружие на кисть ВИДИМОГО атлас-меша (после drive — кисть уже позирована)
   const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
   human.root.visible = !hideMan;

@@ -76,7 +76,11 @@ function slotOfSubmesh(name: string): ModelEntry['slot'] | undefined {
  * замерено: все кости манекена были ×1.08 от модели. Теперь конформ длин тянет кости модели тем же
  * профилем, и скин едет следом.
  */
-export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProfile | undefined): ModelsTabHandle {
+/**
+ * `charProfile`/`charBoneScale` — ГЕОМЕТРИЯ МАНЕКЕНА, переданная снаружи. Риг-источник `asmSrc` ОБЯЗАН
+ * строиться ТЕМ ЖЕ, чем манекен, иначе кости модели встают НЕ там, где нарисованы кости редактора.
+ */
+export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProfile | undefined, charBoneScale?: () => BoneScale | undefined): ModelsTabHandle {
   let cfg: AssetCfg = { models: [], materials: [], textures: [] };
   let loaded: THREE.Group | null = null;
   let rig: RetargetRig | null = null;
@@ -109,10 +113,15 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
   function rebuildAsm(): void {
     if (asmSkin) { asmSkin.dispose(); asmSkin = null; }
     if (asmSrc) { scene.remove(asmSrc.root); asmSrc.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
+    // Ф20.1: `boneScale` тоже берётся СНАРУЖИ. Раньше здесь стоял голый `curAtlas()?.boneScale`, то есть
+    // ПЕР-КОСТНЫЙ МОРФ персонажа (шея/голова/плечи/таз/кисти/стопы) до модели НЕ ДОЕЗЖАЛ: манекен
+    // строился `mergeBoneScale(atlasBS(), morphToBoneScale(curMorph()))`, а источник — только атласным.
+    // Замерено на knight_05 (физика ВЫКЛ, то есть без заземления): расходилась КАЖДАЯ кость тела —
+    // колено 2.37u, кисть 0.93u, стопа 0.76u, таз/спина 0.29u. Это было больше всего остального вместе взятого.
+    //
     // `fingers: true` ОБЯЗАТЕЛЕН (Ф14.1): без него `asmSrc.boneNames` не содержит фаланг, поэтому
-    // driveAsm ниже не копирует их повороты, а `RetargetRig.drive` молча делает `continue`
-    // (`driver.bones.get('LeftIndexProximal') === undefined`) — пальцы модели не шевелятся вообще.
-    asmSrc = buildHumanoid({ profile: charProfile?.() ?? asmProfile, boneScale: curAtlas()?.boneScale, boneOffsets: curAtlas()?.boneOffsets, fingers: true });   // геометрия ФБХ → source=физ-скелет 1:1
+    // driveAsm ниже не копирует их повороты, а `RetargetRig.drive` молча делает `continue`.
+    asmSrc = buildHumanoid({ profile: charProfile?.() ?? asmProfile, boneScale: charBoneScale?.() ?? curAtlas()?.boneScale, boneOffsets: curAtlas()?.boneOffsets, fingers: true });
     asmSrc.root.visible = false;                  // источник невидим — видим меши атласа поверх
     scene.add(asmSrc.root);
     asmSkin = createModelSkin(scene, asmSrc);     // новый скин на НОВЫЙ источник (конформ к профилю с нуля)
