@@ -123,8 +123,8 @@ const CATALOG: HBone[] = [
   // брало с плеча — в Т-позе всё сходилось, а при опущенной руке форма вылезала за локоть ровно на длину ключицы.
   // Предел берётся из готовой анатомичной записи `clavicleJoints()` (`jointLimits.ts`): ±20° вперёд-назад,
   // ±15° подъём, ±10° твист; оси те же (twist вдоль ±X, plane = Y).
-  { name: 'ClavL', parent: 'UpperChest', tier: 'core', anchor: [3, 51, 0], off: [2, 0, 0], shape: { k: 'box', h: [2, 2.2, 2.4] }, con: swing([-0.35, 0.35], [-0.26, 0.26], [-0.17, 0.17], [1, 0, 0], [0, 1, 0]), group: 'core', damp: 1 },
-  { name: 'ClavR', parent: 'UpperChest', tier: 'core', anchor: [-3, 51, 0], off: [-2, 0, 0], shape: { k: 'box', h: [2, 2.2, 2.4] }, con: swing([-0.35, 0.35], [-0.26, 0.26], [-0.17, 0.17], [-1, 0, 0], [0, 1, 0]), group: 'core', damp: 1 },
+  { name: 'ClavL', parent: 'UpperChest', tier: 'core', anchor: [3, 51, 0], off: [2, 0, 0], shape: { k: 'capsule', r: 1.5, half: 0.5 }, con: swing([-0.35, 0.35], [-0.26, 0.26], [-0.17, 0.17], [1, 0, 0], [0, 1, 0]), group: 'core', damp: 1 },
+  { name: 'ClavR', parent: 'UpperChest', tier: 'core', anchor: [-3, 51, 0], off: [-2, 0, 0], shape: { k: 'capsule', r: 1.5, half: 0.5 }, con: swing([-0.35, 0.35], [-0.26, 0.26], [-0.17, 0.17], [-1, 0, 0], [0, 1, 0]), group: 'core', damp: 1 },
   // Плечо: твист ±1.4≈±80° (внутр/внеш ротация плеча, реально ~±90°; было ±0.8≈±46° — мало). Свинг ±1.7/±1.2 game-широкий.
   // ПЛЕЧО (Ф26.7): подъём/опускание ±69° было МЕНЬШЕ АНАТОМИИ: от T-позы до «рука над головой» ровно 90°,
   // до «рука вдоль тела» тоже 90° — то есть ОБА крайних бытовых положения были ЗА ПРЕДЕЛОМ. Оттуда шли две жалобы:
@@ -137,17 +137,17 @@ const CATALOG: HBone[] = [
   // голову, локоть вперёд) требует РОВНО 180° доворота. ЗАМЕР: при ±91.7° клэмп срезал 88.3° и возвращал предплечье
   // к голове — жалоба «не даёт сделать замах» (одинаково в обеих версиях лимитов, т.к. это ДАННЫЕ, а не алгоритм).
   // Плечу нужен полный оборот параметризации; настоящее анатомическое ограничение даёт КОНУС свинга, он и остался.
-  { name: 'ArmL', parent: 'ClavL', tier: 'core', anchor: [7, 51, 0], off: [6.5, 0, 0], shape: { k: 'box', h: [6.5, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-3.14, 3.14], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ArmR', parent: 'ClavR', tier: 'core', anchor: [-7, 51, 0], off: [-6.5, 0, 0], shape: { k: 'box', h: [6.5, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-3.14, 3.14], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ForeL', parent: 'ArmL', tier: 'core', anchor: [20, 51, 0], off: [5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-2.4, 0.1], [0, 1, 0], [1, 0, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ForeR', parent: 'ArmR', tier: 'core', anchor: [-20, 51, 0], off: [-5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-0.1, 2.4], [0, 1, 0], [-1, 0, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ArmL', parent: 'ClavL', tier: 'core', anchor: [7, 51, 0], off: [6.5, 0, 0], shape: { k: 'capsule', r: 2.6, half: 3.9 }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-3.14, 3.14], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ArmR', parent: 'ClavR', tier: 'core', anchor: [-7, 51, 0], off: [-6.5, 0, 0], shape: { k: 'capsule', r: 2.6, half: 3.9 }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-3.14, 3.14], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ForeL', parent: 'ArmL', tier: 'core', anchor: [20, 51, 0], off: [5.5, 0, 0], shape: { k: 'capsule', r: 2.2, half: 3.3 }, con: hinge([-2.4, 0.1], [0, 1, 0], [1, 0, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ForeR', parent: 'ArmR', tier: 'core', anchor: [-20, 51, 0], off: [-5.5, 0, 0], shape: { k: 'capsule', r: 2.2, half: 3.3 }, con: hinge([-0.1, 2.4], [0, 1, 0], [-1, 0, 0]), group: 'arm', damp: 0.9 },
   // Бедро: твист (внутр/внеш ротация) ±0.7≈±40° — анатомично (было ±0.4≈±23°, вдвое мало). Бокс НЕквадратный (X>Z, колено
   // «смотрит» вперёд) → осевой твист ВИДЕН на призраке (квадрат его прятал). ab/ad ±1.4 оставлено ШИРЕ анатомии — game-tuned
   // (стойка опирается на него; сужать = клипать гейт). Сгиб/разгиб ±0.9 симметрично — асимметрию даёт Ф2 (bias-рамка).
-  { name: 'ThighL', parent: 'Hips', tier: 'core', anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.9, 7.5, 2.9] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'ThighR', parent: 'Hips', tier: 'core', anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'box', h: [3.9, 7.5, 2.9] }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'ShinL', parent: 'ThighL', tier: 'core', anchor: [4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [3.3, 7, 2.5] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  { name: 'ShinR', parent: 'ThighR', tier: 'core', anchor: [-4, 15, 0], off: [0, -7, 0], shape: { k: 'box', h: [3.3, 7, 2.5] }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  { name: 'ThighL', parent: 'Hips', tier: 'core', anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', r: 3.4, half: 4.1 }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'ThighR', parent: 'Hips', tier: 'core', anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', r: 3.4, half: 4.1 }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'ShinL', parent: 'ThighL', tier: 'core', anchor: [4, 15, 0], off: [0, -7, 0], shape: { k: 'capsule', r: 2.9, half: 4.1 }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  { name: 'ShinR', parent: 'ThighR', tier: 'core', anchor: [-4, 15, 0], off: [0, -7, 0], shape: { k: 'capsule', r: 2.9, half: 4.1 }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
   // Голеностоп — SWING (малый многоосевой ход): twist вдоль голени = лево-право (рыск), plane=питч (плантар/дорси), normal=крен.
   { name: 'FootL', parent: 'ShinL', tier: 'core', anchor: [4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
   { name: 'FootR', parent: 'ShinR', tier: 'core', anchor: [-4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
@@ -206,7 +206,10 @@ export function physCatalogHalf(name: string): { along: number; u: number; v: nu
   const ax = bodyAxis(b), s = b.shape;
   if (s.k === 'box') return { along: s.h[ax]!, u: s.h[(ax + 1) % 3]!, v: s.h[(ax + 2) % 3]! };
   if (s.k === 'sphere') return { along: s.r, u: s.r, v: s.r };
-  return { along: s.half, u: s.r, v: s.r };   // cylinder/capsule/taper — круглые, поперечник один
+  // `along` — ПОЛНАЯ полудлина, как `h[ax]` у бокса: в самой форме `half` шапочки не считает,
+  // а обжатие по вершинам делит на эти числа измеренные юниты.
+  const cap = s.k === 'capsule' ? s.r : s.k === 'taper' ? Math.max(s.r, s.r2) : 0;
+  return { along: s.half + cap, u: s.r, v: s.r };   // cylinder/capsule/taper — круглые, поперечник один
 }
 /** Ось тела (0=X, 1=Y, 2=Z): куда оно тянется от сустава. Берётся из `off`, а если он нулевой (таз) — из самой длинной полуоси. */
 export function bodyAxis(b: { off: Vec3; shape: PhysShape }): 0 | 1 | 2 {
@@ -225,7 +228,14 @@ function sized(src: HBone): HBone {
   // `off` она могла разойтись с разворотом формы, и «длина» ложилась бы на поперечную полуось.
   const ax = bodyAxis({ off: b.off, shape: src.shape });
   const w = ov.w ?? 1, d = ov.d ?? 1;
-  const baseHalf = src.shape.k === 'box' ? src.shape.h[ax]! : src.shape.k === 'sphere' ? src.shape.r : src.shape.half;   // taper тоже через half
+  // У КАПСУЛЫ И КОНУСА `half` в форме — БЕЗ ШАПОЧЕК (так их задаёт Jolt), а `len`
+  // в оверрайде и `h[ax]` в боксе — ПОЛНАЯ полудлина. Не вернув шапочку здесь, любой оверрайд
+  // (даже один `w`) укорачивал бы капсулу на радиус при каждом чтении каталога.
+  const baseHalf = src.shape.k === 'box' ? src.shape.h[ax]!
+    : src.shape.k === 'sphere' ? src.shape.r
+      : src.shape.k === 'capsule' ? src.shape.half + src.shape.r
+        : src.shape.k === 'taper' ? src.shape.half + Math.max(src.shape.r, src.shape.r2)
+          : src.shape.half;
   const baseR = src.shape.k === 'box' ? (src.shape.h[(ax + 1) % 3]! + src.shape.h[(ax + 2) % 3]!) / 2 : src.shape.k === 'sphere' ? src.shape.r : src.shape.r;
   const half = ov.len ?? baseHalf;
   const k = ov.k ?? src.shape.k;
