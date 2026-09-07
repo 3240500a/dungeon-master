@@ -1992,8 +1992,15 @@ function stampRig<T extends Humanoid>(h: T): T { h.root.userData.rigKey = recipe
  * призрак и модель), затем призрак, затем онионы и риг-источник модели.
  * В покое не делает НИЧЕГО — иначе выбор кости слетал бы каждый кадр (`rebuildManikin` сбрасывает `selected`).
  */
+const RIG_SETTLE = 6;            // кадров покоя ключа до пересборки (~0.1 с)
+let pendKey = '', pendN = 0;
 function syncRigs(): void {
   const key = recipeKey(rigRecipe());
+  // КЛЮЧ ОБЯЗАН ОТСТОЯТЬСЯ. Слайдеры морфа пишут значение на `oninput`, а пересобирать риги
+  // положено на ОТПУСКАНИИ (правило Ф26.5) — без этой выдержки протяжка ползунка роста
+  // пересобирала бы все четыре рига КАЖДЫЙ КАДР и сбрасывала выбор кости.
+  if (key !== pendKey) { pendKey = key; pendN = 0; return; }
+  if (pendN < RIG_SETTLE) { pendN++; return; }
   let touched = false;
   if (human && rigKeyOf(human) !== key) { rebuildManikin(); touched = true; }
   if (pw && (!ghostHuman || rigKeyOf(ghostHuman) !== key)) { buildGhost(); touched = true; }
