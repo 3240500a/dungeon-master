@@ -40,6 +40,13 @@ export interface FitResult {
   /** Полуширина по `u` и полутолщина по `v` — для бокса. */
   hu: number;
   hv: number;
+  /**
+   * Радиус БЛИЖНЕЙ и ДАЛЬНЕЙ половин тела — для конической капсулы. Конечность человека
+   * сужается к концу (бедро толще колена), и одним радиусом это не опишешь: либо толсто внизу,
+   * либо тонко вверху. Именно этой формой ткань аппроксимирует конечности (пара сфер разного радиуса).
+   */
+  rNear: number;
+  rFar: number;
   /** Сколько вершин участвовало. 0 → мерить было нечего, вызывающий обязан оставить прежнее. */
   n: number;
 }
@@ -64,18 +71,29 @@ export function percentileSorted(sorted: number[], pct: number): number {
 export function fitCollider(pts: readonly BodyPoint[], opts: FitOpts = {}): FitResult {
   const pct = opts.pct ?? 0.95, inflate = opts.inflate ?? 1;
   const n = pts.length;
-  if (!n) return { half: 0, center: 0, r: 0, hu: 0, hv: 0, n: 0 };
+  if (!n) return { half: 0, center: 0, r: 0, hu: 0, hv: 0, rNear: 0, rFar: 0, n: 0 };
   const ax: number[] = [], rad: number[] = [], du: number[] = [], dv: number[] = [];
   for (const p of pts) { ax.push(p.a); rad.push(Math.hypot(p.u, p.v)); du.push(Math.abs(p.u)); dv.push(Math.abs(p.v)); }
   ax.sort((x, y) => x - y); rad.sort((x, y) => x - y); du.sort((x, y) => x - y); dv.sort((x, y) => x - y);
   const t = opts.axPct ?? 0;
   const lo = percentileSorted(ax, t), hi = percentileSorted(ax, 1 - t);
+  // Радиусы концов берутся по КРАЙНИМ ЧЕТВЕРТЯМ, а не по половинам: половина тянет оценку
+  // к середине тела и конус получается почти цилиндром (замер на конусе 4u→2u: дальний
+  // радиус выходил 2.95 вместо 2.5). Границы — по ОСИ, а не по числу точек: плотность вершин неровная.
+  const q = (hi - lo) / 4;
+  const near: number[] = [], farr: number[] = [];
+  for (const p of pts) { const r0 = Math.hypot(p.u, p.v); if (p.a <= lo + q) near.push(r0); else if (p.a >= hi - q) farr.push(r0); }
+  if (!near.length) near.push(percentileSorted(rad, pct));
+  if (!farr.length) farr.push(percentileSorted(rad, pct));
+  near.sort((x, y) => x - y); farr.sort((x, y) => x - y);
   return {
     half: (hi - lo) / 2,
     center: (hi + lo) / 2,
     r: percentileSorted(rad, pct) * inflate,
     hu: percentileSorted(du, pct) * inflate,
     hv: percentileSorted(dv, pct) * inflate,
+    rNear: percentileSorted(near, pct) * inflate,
+    rFar: percentileSorted(farr, pct) * inflate,
     n,
   };
 }

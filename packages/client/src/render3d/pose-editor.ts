@@ -3051,89 +3051,6 @@ function fitPhysToBones(): void {
   saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim();
 }
 /**
- * Переснять тела с костей, ЕСЛИ пользователь уже снимал их раньше (Ф26.5). Анкеры/длины хранятся
- * АБСОЛЮТНО и в ГЛОБАЛЬНОМ `pe_ragdoll` (один на всех), а телосложение у каждого своё — значит при смене
- * персонажа или морфа их надо пересчитать, иначе кукла останется от чужого тела. Ручные множители
- * ширины/толщины и выбранные формы при этом СОХРАНЯЮТСЯ — переснимается только геометрия костей.
- */
-function refitPhysIfFitted(): void { if (ragdoll && Object.values(PHYS_SIZES).some((v) => v.anchor)) fitPhysToBones(); }
-/** РАЗМЕРЫ ФИЗ-ТЕЛ (Ф26.5): форма + длина/ширина/толщина на тело, плюс авто-подгонка по костям. */
-let sizeBody = 'Torso';
-function physSizeSection(): void {
-  const bodies = physBodies();
-  if (!bodies.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = 'Нет активных тел.'; body.append(e); return; }
-  if (!bodies.some((b) => b.name === sizeBody)) sizeBody = bodies[0]!.name;
-  const cur = bodies.find((b) => b.name === sizeBody)!;
-  const ov = PHYS_SIZES[sizeBody] ?? {};
-  const apply = (fn: (o: PhysSize) => void, rebuild = true): void => {
-    fn(PHYS_SIZES[sizeBody] ??= {});
-    saveRagdollConfig(); savePoseKey('pe_ragdoll');
-    if (rebuild) { rebuildRagdoll(); renderAnim(); }
-  };
-  const r1 = el('div', 'display:flex;gap:3px;align-items:center'); body.append(r1);
-  const bsel = document.createElement('select'); bsel.style.cssText = impInput + ';flex:1';
-  for (const b2 of bodies) { const o = document.createElement('option'); o.value = b2.name; o.textContent = PHYS_LABEL[b2.name] ?? b2.name; o.selected = b2.name === sizeBody; bsel.append(o); }
-  bsel.onchange = () => { sizeBody = bsel.value; renderAnim(); };
-  const ksel = document.createElement('select'); ksel.style.cssText = impInput;
-  for (const [v, lb] of [['box', 'бокс'], ['sphere', 'шар'], ['cylinder', 'цилиндр'], ['capsule', 'пилюля']] as const) { const o = document.createElement('option'); o.value = v; o.textContent = lb; o.selected = cur.shape.k === v; ksel.append(o); }
-  ksel.onchange = () => apply((o) => { o.k = ksel.value as PhysSize['k']; });
-  r1.append(bsel, ksel);
-  const srow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
-    const row = el('label', 'display:flex;align-items:center;gap:6px');
-    row.innerHTML = `<span style="flex:0 0 74px">${label}</span>`;
-    const out = el('span', 'width:38px;text-align:right;color:#9ae6a0'); out.textContent = get().toFixed(2);
-    const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.value = String(get());
-    r.oninput = () => { out.textContent = parseFloat(r.value).toFixed(2); };
-    r.onchange = () => set(parseFloat(r.value));   // пересборка куклы — ПО ОТПУСКАНИЮ (на каждый тик было бы дорого)
-    row.append(r, out); body.append(row);
-  };
-  const ax = bodyAxis(cur);
-  const curLen = cur.shape.k === 'box' ? cur.shape.h[ax]! : cur.shape.k === 'sphere' ? cur.shape.r : cur.shape.half;
-  if (cur.shape.k !== 'sphere') srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
-  srow(cur.shape.k === 'sphere' ? 'радиус ×' : 'ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
-  if (cur.shape.k === 'box') srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
-  // Ф28.2 — СДВИГ И ПОВОРОТ ФОРМЫ, мимо сустава. Анкер трогать нельзя: он же точка констрейнта
-  // и рест-трансляция скелета — сдвинув его, сдвинешь сустав и всю цепь ниже. В Unreal точно так же:
-  // тело стоит на кости, а примитив внутри него имеет свой Center/Rotation.
-  {
-    const AX = ['X', 'Y', 'Z'] as const;
-    const g = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g.textContent = 'сдвиг формы (сустав не трогается)'; body.append(g);
-    for (let i = 0; i < 3; i++) srow('сдвиг ' + AX[i], () => ov.pos?.[i] ?? 0,
-      (v) => apply((o) => { const a = (o.pos ??= [0, 0, 0]) as number[]; a[i] = +v.toFixed(2); }), -12, 12, 0.1);
-    const g2 = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g2.textContent = 'поворот формы, градусы'; body.append(g2);
-    for (let i = 0; i < 3; i++) srow('поворот ' + AX[i], () => +((ov.rot?.[i] ?? 0) * 180 / Math.PI).toFixed(0),
-      (v) => apply((o) => { const a = (o.rot ??= [0, 0, 0]) as number[]; a[i] = +(v * Math.PI / 180).toFixed(4); }), -90, 90, 1);
-  }
-  const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
-  r2.append(
-    pbtn('⚖ снять с костей', () => fitPhysToBones()),
-    pbtn('сброс тела', () => { delete PHYS_SIZES[sizeBody]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
-    pbtn('сброс всех', () => { for (const k in PHYS_SIZES) delete PHYS_SIZES[k]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
-    pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; applyBoxVis(); renderAnim(); }); }, showBoxes),
-  );
-  const hint = el('div', 'color:#6b7180;font-size:10px');
-  hint.textContent = '«Снять с костей» берёт длины из Т-позы текущего телосложения; ширина/толщина остаются ручными.'; body.append(hint);
-}
-function physRigSection(): void {
-  const on = new Set(PHYS_SET.bodies);
-  const fingerNames = PHYS_CATALOG.filter((n) => n.tier === 'opt').map((n) => n.name);
-  const apply = (names: string[]): void => {
-    applyPhysProfile(names);
-    saveRagdollConfig(); savePoseKey('pe_ragdoll');
-    if (ragdoll) rebuildRagdoll();
-    renderAnim();
-  };
-  const cost = physSetCost();
-  const c = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
-  c.textContent = `тел: ${cost.bodies} · суставов: ${cost.constraints} · шаг симуляции ~${physMs.toFixed(2)} мс`;
-  body.append(c);
-  if (!uiPro) return;                       // в Простом режиме — только читаут, без галок
-
-  const ph = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ph.textContent = 'НАБОР ФИЗ-ТЕЛ (пересборка)'; body.append(ph);
-  const prow = el('div', 'display:flex;align-items:center;gap:4px'); body.append(prow);
-  const lab = el('span', 'flex:1;font-size:11px'); lab.textContent = 'пресет'; prow.append(lab);
-  const sel = document.createElement('select'); sel.style.cssText = impInput;
-/**
  * ОБЖАТЬ ФИЗ-ТЕЛА ПО ВЕРШИНАМ МЕША (Ф28.3) — то, чего не умела подгонка по костям.
  *
  * Кости дают только ДЛИНУ и НАПРАВЛЕНИЕ; толщина оставалась ручным множителем «на глаз».
@@ -3250,7 +3167,6 @@ function fitPhysToMesh(inflate = 0.95, pct = 0.95): { bodies: number; verts: num
   const grid = el('div', 'display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px'); body.append(grid);
   for (const n of PHYS_CATALOG) {
     if (n.tier === 'opt') continue;                            // фаланги — одной галкой ниже (30 штук поштучно нечитаемы)
-let meshFitNote = '';   // Ф28.3: что ответила подгонка по мешу
     const l = el('label', 'font-size:11px;display:flex;align-items:center;gap:3px');
     const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox';
     cb.checked = on.has(n.name); cb.disabled = n.parent === null;   // таз — корень, выключить нельзя
@@ -3328,6 +3244,102 @@ function animExportSection(): void {
       profile: tgt ? expProfile : (expProfile === 'model' ? 'canon' : expProfile),
       nativeProfile: tgt ? 'model' : 'canon',   // атлас уже в своих именах, манекен — в каноне
       boneMap: tgt?.boneMap,
+/**
+ * Переснять тела с костей, ЕСЛИ пользователь уже снимал их раньше (Ф26.5). Анкеры/длины хранятся
+ * АБСОЛЮТНО и в ГЛОБАЛЬНОМ `pe_ragdoll` (один на всех), а телосложение у каждого своё — значит при смене
+ * персонажа или морфа их надо пересчитать, иначе кукла останется от чужого тела. Ручные множители
+ * ширины/толщины и выбранные формы при этом СОХРАНЯЮТСЯ — переснимается только геометрия костей.
+ */
+function refitPhysIfFitted(): void { if (ragdoll && Object.values(PHYS_SIZES).some((v) => v.anchor)) fitPhysToBones(); }
+/** РАЗМЕРЫ ФИЗ-ТЕЛ (Ф26.5): форма + длина/ширина/толщина на тело, плюс авто-подгонка по костям. */
+let sizeBody = 'Torso';
+let meshFitNote = '';   // Ф28.3: что ответила подгонка по мешу
+function physSizeSection(): void {
+  const bodies = physBodies();
+  if (!bodies.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = 'Нет активных тел.'; body.append(e); return; }
+  if (!bodies.some((b) => b.name === sizeBody)) sizeBody = bodies[0]!.name;
+  const cur = bodies.find((b) => b.name === sizeBody)!;
+  const ov = PHYS_SIZES[sizeBody] ?? {};
+  const apply = (fn: (o: PhysSize) => void, rebuild = true): void => {
+    fn(PHYS_SIZES[sizeBody] ??= {});
+    saveRagdollConfig(); savePoseKey('pe_ragdoll');
+    if (rebuild) { rebuildRagdoll(); renderAnim(); }
+  };
+  const r1 = el('div', 'display:flex;gap:3px;align-items:center'); body.append(r1);
+  const bsel = document.createElement('select'); bsel.style.cssText = impInput + ';flex:1';
+  for (const b2 of bodies) { const o = document.createElement('option'); o.value = b2.name; o.textContent = PHYS_LABEL[b2.name] ?? b2.name; o.selected = b2.name === sizeBody; bsel.append(o); }
+  bsel.onchange = () => { sizeBody = bsel.value; renderAnim(); };
+  const ksel = document.createElement('select'); ksel.style.cssText = impInput;
+  for (const [v, lb] of [['box', 'бокс'], ['sphere', 'шар'], ['cylinder', 'цилиндр'], ['capsule', 'пилюля'], ['taper', 'конус (ткань)']] as const) { const o = document.createElement('option'); o.value = v; o.textContent = lb; o.selected = cur.shape.k === v; ksel.append(o); }
+  ksel.onchange = () => apply((o) => { o.k = ksel.value as PhysSize['k']; });
+  r1.append(bsel, ksel);
+  const srow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
+    const row = el('label', 'display:flex;align-items:center;gap:6px');
+    row.innerHTML = `<span style="flex:0 0 74px">${label}</span>`;
+    const out = el('span', 'width:38px;text-align:right;color:#9ae6a0'); out.textContent = get().toFixed(2);
+    const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.value = String(get());
+    r.oninput = () => { out.textContent = parseFloat(r.value).toFixed(2); };
+    r.onchange = () => set(parseFloat(r.value));   // пересборка куклы — ПО ОТПУСКАНИЮ (на каждый тик было бы дорого)
+    row.append(r, out); body.append(row);
+  };
+  const ax = bodyAxis(cur);
+  const curLen = cur.shape.k === 'box' ? cur.shape.h[ax]! : cur.shape.k === 'sphere' ? cur.shape.r : cur.shape.half;
+  if (cur.shape.k !== 'sphere') srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
+  srow(cur.shape.k === 'sphere' ? 'радиус ×' : 'ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
+  if (cur.shape.k === 'box') srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
+  // У конуса то же поле `d` значит СУЖЕНИЕ к дальнему концу (у круглых второй поперечник бессмыслен).
+  if (cur.shape.k === 'taper') srow('сужение ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
+  // Ф28.2 — СДВИГ И ПОВОРОТ ФОРМЫ, мимо сустава. Анкер трогать нельзя: он же точка констрейнта
+  // и рест-трансляция скелета — сдвинув его, сдвинешь сустав и всю цепь ниже. В Unreal точно так же:
+  // тело стоит на кости, а примитив внутри него имеет свой Center/Rotation.
+  {
+    const AX = ['X', 'Y', 'Z'] as const;
+    const g = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g.textContent = 'сдвиг формы (сустав не трогается)'; body.append(g);
+    for (let i = 0; i < 3; i++) srow('сдвиг ' + AX[i], () => ov.pos?.[i] ?? 0,
+      (v) => apply((o) => { const a = (o.pos ??= [0, 0, 0]) as number[]; a[i] = +v.toFixed(2); }), -12, 12, 0.1);
+    const g2 = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g2.textContent = 'поворот формы, градусы'; body.append(g2);
+    for (let i = 0; i < 3; i++) srow('поворот ' + AX[i], () => +((ov.rot?.[i] ?? 0) * 180 / Math.PI).toFixed(0),
+      (v) => apply((o) => { const a = (o.rot ??= [0, 0, 0]) as number[]; a[i] = +(v * Math.PI / 180).toFixed(4); }), -90, 90, 1);
+  }
+  const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
+  r2.append(
+    pbtn('⚖ снять с костей', () => fitPhysToBones()),
+    pbtn('◉ обжать по мешу', () => { const r = fitPhysToMesh(); meshFitNote = r ? `обжато тел: ${r.bodies}, вершин: ${r.verts}` : 'модель не загружена — осталась подгонка по костям'; renderAnim(); }),
+    pbtn('сброс тела', () => { delete PHYS_SIZES[sizeBody]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
+    pbtn('сброс всех', () => { for (const k in PHYS_SIZES) delete PHYS_SIZES[k]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
+    pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; applyBoxVis(); renderAnim(); }); }, showBoxes),
+  );
+  const hint = el('div', 'color:#6b7180;font-size:10px');
+  hint.textContent = '«С костей» даёт анкер и ось. «По мешу» ещё и толщину — по вершинам кости, как в Unreal.'; body.append(hint);
+  if (meshFitNote) { const n = el('div', 'color:#9ae6a0;font-size:10px'); n.textContent = meshFitNote; body.append(n); }
+}
+function physRigSection(): void {
+  const on = new Set(PHYS_SET.bodies);
+  const fingerNames = PHYS_CATALOG.filter((n) => n.tier === 'opt').map((n) => n.name);
+  const apply = (names: string[]): void => {
+    applyPhysProfile(names);
+    saveRagdollConfig(); savePoseKey('pe_ragdoll');
+    if (ragdoll) rebuildRagdoll();
+    renderAnim();
+  };
+  const cost = physSetCost();
+  const c = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
+  c.textContent = `тел: ${cost.bodies} · суставов: ${cost.constraints} · шаг симуляции ~${physMs.toFixed(2)} мс`;
+  body.append(c);
+  {   // Ф28.4: ткань видит ТОЛЬКО сферы и капсулы, боксы для неё прозрачны — показываем заранее
+    const cl = clothColliderCount();
+    const t = el('div', 'font-size:10px');
+    t.innerHTML = '<span style="color:#6b7180">для ткани (шары и капсулы): </span>'
+      + '<span style="color:' + (cl.ok > cl.limit ? '#ff6b6b' : '#9ae6a0') + '">' + cl.ok + ' из ' + cl.limit + '</span>'
+      + (cl.box ? '<span style="color:#e6a05a"> · боксом ' + cl.box + ' (ткань их НЕ видит)</span>' : '');
+    body.append(t);
+  }
+  if (!uiPro) return;                       // в Простом режиме — только читаут, без галок
+
+  const ph = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ph.textContent = 'НАБОР ФИЗ-ТЕЛ (пересборка)'; body.append(ph);
+  const prow = el('div', 'display:flex;align-items:center;gap:4px'); body.append(prow);
+  const lab = el('span', 'flex:1;font-size:11px'); lab.textContent = 'пресет'; prow.append(lab);
+  const sel = document.createElement('select'); sel.style.cssText = impInput;
     })
       .then((res) => {
         downloadFile(fname + '.glb', res.glb, 'model/gltf-binary');

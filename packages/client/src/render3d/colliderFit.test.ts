@@ -73,6 +73,19 @@ describe('обжатие коллайдера по вершинам (Ф28.3)', (
     expect(fitCollider(pts, { axPct: 0.03 }).half).toBeCloseTo(5, 0);   // с подрезкой — настоящая длина
   });
 
+  it('КОНУС: радиус ближней и дальней половин разный — бедро толще колена', () => {
+    const pts: BodyPoint[] = [];
+    for (let i = 0; i < 200; i++) {
+      const a = (i / 199) * 20, r = 4 - (a / 20) * 2;              // 4u у сустава → 2u на конце
+      const th = (i / 200) * Math.PI * 2 * 7;
+      pts.push({ a, u: Math.cos(th) * r, v: Math.sin(th) * r });
+    }
+    const f = fitCollider(pts);
+    expect(f.rNear).toBeGreaterThan(f.rFar * 1.3);
+    expect(f.rNear).toBeCloseTo(4, 0);
+    expect(f.rFar).toBeCloseTo(2.5, 0);
+  });
+
   it('пустое облако не роняет и честно сообщает нулём', () => {
     const f = fitCollider([]);
     expect(f.n).toBe(0);

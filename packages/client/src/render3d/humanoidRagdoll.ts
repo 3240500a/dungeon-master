@@ -36,7 +36,14 @@ export type PhysShape =
   | { k: 'box'; h: Vec3 }
   | { k: 'sphere'; r: number }
   | { k: 'cylinder'; r: number; half: number }
-  | { k: 'capsule'; r: number; half: number };
+  | { k: 'capsule'; r: number; half: number }
+  /**
+   * КОНИЧЕСКАЯ КАПСУЛА (Ф28.4) — два разных радиуса по концам. Именно ей ткань аппроксимирует
+   * конечности: в Unreal это Tapered Capsule (помечена cloth only), в Unity — пара сфер разного
+   * радиуса. Бедро толще колена почти вдвое, и одним радиусом тут либо толсто внизу, либо тонко вверху.
+   * `r` — у сустава, `r2` — на дальнем конце (вдоль `off`). В Jolt — `TaperedCapsuleShapeSettings`.
+   */
+  | { k: 'taper'; r: number; r2: number; half: number };
 /**
  * ПЕР-ТЕЛО ОВЕРРАЙД РАЗМЕРОВ (Ф26.5), лежит в `pe_ragdoll.sizes` рядом с набором тел и лимитами.
  * `len` — ПОЛОВИНА длины вдоль оси тела (так же заданы `h` в каталоге), `w`/`d` — МНОЖИТЕЛИ сечения
@@ -199,7 +206,7 @@ export function physCatalogHalf(name: string): { along: number; u: number; v: nu
   const ax = bodyAxis(b), s = b.shape;
   if (s.k === 'box') return { along: s.h[ax]!, u: s.h[(ax + 1) % 3]!, v: s.h[(ax + 2) % 3]! };
   if (s.k === 'sphere') return { along: s.r, u: s.r, v: s.r };
-  return { along: s.half, u: s.r, v: s.r };
+  return { along: s.half, u: s.r, v: s.r };   // cylinder/capsule/taper — круглые, поперечник один
 }
 /** Ось тела (0=X, 1=Y, 2=Z): куда оно тянется от сустава. Берётся из `off`, а если он нулевой (таз) — из самой длинной полуоси. */
 export function bodyAxis(b: { off: Vec3; shape: PhysShape }): 0 | 1 | 2 {
@@ -218,7 +225,7 @@ function sized(src: HBone): HBone {
   // `off` она могла разойтись с разворотом формы, и «длина» ложилась бы на поперечную полуось.
   const ax = bodyAxis({ off: b.off, shape: src.shape });
   const w = ov.w ?? 1, d = ov.d ?? 1;
-  const baseHalf = src.shape.k === 'box' ? src.shape.h[ax]! : src.shape.k === 'sphere' ? src.shape.r : src.shape.half;
+  const baseHalf = src.shape.k === 'box' ? src.shape.h[ax]! : src.shape.k === 'sphere' ? src.shape.r : src.shape.half;   // taper тоже через half
   const baseR = src.shape.k === 'box' ? (src.shape.h[(ax + 1) % 3]! + src.shape.h[(ax + 2) % 3]!) / 2 : src.shape.k === 'sphere' ? src.shape.r : src.shape.r;
   const half = ov.len ?? baseHalf;
   const k = ov.k ?? src.shape.k;
@@ -229,8 +236,21 @@ function sized(src: HBone): HBone {
     h[(ax + 2) % 3] = (src.shape.k === 'box' ? src.shape.h[(ax + 2) % 3]! : baseR) * w * d;
     b.shape = { k: 'box', h };
   } else if (k === 'sphere') b.shape = { k: 'sphere', r: baseR * w };
+  // У конуса `d` НЕ толщина, а СУЖЕНИЕ: отношение дальнего радиуса к ближнему. У круглых форм
+  // второй поперечник бессмыслен, так что поле простаивало — заводить новое ради одной формы не стал.
+  else if (k === 'taper') { const r0 = baseR * w, r1 = baseR * w * d; b.shape = { k, r: r0, r2: r1, half: Math.max(0.05, half - Math.max(r0, r1)) }; }
   else b.shape = { k, r: baseR * w, half: Math.max(0.05, k === 'capsule' ? half - baseR * w : half) };   // капсула: half — без шапочек
   return b;
+}
+/**
+ * СКОЛЬКО ТЕЛ ГОДЯТСЯ ПОД ТКАНЬ (Ф28.4). Ткань везде сталкивается ТОЛЬКО со сферами
+ * и капсулами (коническая = пара сфер), боксы она не видит; бюджет порядка 32 штук.
+ * Значит плащ и юбка будут проваливаться сквозь всё, что осталось боксом — читаут показывает это заранее.
+ */
+export function clothColliderCount(): { ok: number; box: number; limit: number } {
+  let ok = 0, box = 0;
+  for (const b of B) { if (b.shape.k === 'box') box++; else ok++; }
+  return { ok, box, limit: 32 };
 }
 /** Активные тела только на чтение — редактору для авто-подгонки по костям и центра масс. */
 export const physBodies = (): readonly ActiveBone[] => B;
@@ -522,7 +542,7 @@ const _srE = new THREE.Euler(), _srQ = new THREE.Quaternion();
 function shapeRot(b: { off: Vec3; shape: PhysShape; rot?: Vec3 }): THREE.Quaternion {
   const q = new THREE.Quaternion();
   if (b.shape.k === 'sphere') return q;                       // шар симметричен — разворот бессмыслен
-  const round = b.shape.k === 'cylinder' || b.shape.k === 'capsule';
+  const round = b.shape.k === 'cylinder' || b.shape.k === 'capsule' || b.shape.k === 'taper';
   const from = round ? _UP_SHAPE : _AX_V[bodyAxis(b)]!;       // исходная ось формы
   const d = new THREE.Vector3(b.off[0], b.off[1], b.off[2]);
   if (d.lengthSq() > 1e-8) q.setFromUnitVectors(from, d.normalize());
@@ -543,6 +563,8 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     if (s.k === 'sphere') inner = new J.SphereShapeSettings(s.r);
     else if (s.k === 'capsule') inner = new J.CapsuleShapeSettings(s.half, s.r);
     else if (s.k === 'cylinder') inner = new J.CylinderShapeSettings(s.half, s.r);
+    // ВЕРХ КОНУСА — ДАЛЬНИЙ КОНЕЦ: `shapeRot` ведёт +Y формы на направление `off`, то есть от сустава наружу.
+    else if (s.k === 'taper') inner = new J.TaperedCapsuleShapeSettings(s.half, s.r2, s.r);
     else { const h = new J.Vec3(s.h[0], s.h[1], s.h[2]); inner = new J.BoxShapeSettings(h, 0.2); J.destroy(h); }
     inner.mDensity = DENSITY;
     const so = shapeOff(b);                                  // Ф28.2: кость + ручная доводка
@@ -643,6 +665,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     const geo = s.k === 'sphere' ? new THREE.SphereGeometry(s.r, 12, 10)
       : s.k === 'capsule' ? new THREE.CapsuleGeometry(s.r, s.half * 2, 4, 10)
       : s.k === 'cylinder' ? new THREE.CylinderGeometry(s.r, s.r, s.half * 2, 12)
+      : s.k === 'taper' ? new THREE.CylinderGeometry(s.r2, s.r, s.half * 2, 12)
       : new THREE.BoxGeometry(s.h[0] * 2, s.h[1] * 2, s.h[2] * 2);
     if (s.k !== 'sphere') geo.applyQuaternion(shapeRot(b));   // разворот запекаем в геометрию (И ДЛЯ БОКСА) — меш ведётся кватернионом тела
     const m = new THREE.Mesh(geo, ghostMat); group.add(m); return m;
