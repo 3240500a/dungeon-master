@@ -1957,6 +1957,85 @@ function saveShield(): void { try { localStorage.setItem('pe_shield', JSON.strin
  *  совпадают с мешем 1:1. Нет атласа → undefined (база, как раньше; классы/монстры без атласа не трогаем). */
 function atlasBS(): BoneScale | undefined { return modelsTab.boneScale(); }
 function atlasOff(): Record<string, number[]> | undefined { return modelsTab.boneOffsets(); }   // полные rest-офсеты ФБХ (приоритет над boneScale)
+/**
+ * ── Ф27: ОДИН РЕЦЕПТ СКЕЛЕТА НА ВСЕ РИГИ ──────────────────────────────────────────────
+ *
+ * В редакторе живут ЧЕТЫРЕ рига ОДНОЙ анатомии: авторский манекен `human`, физ-призрак
+ * `ghostHuman` (он же `solid` игры — именно он ведёт МЕШ), онион-призраки соседних кадров и
+ * риг-источник модели внутри вкладки «Модели». Входы у них одни и те же, а ПОВОД пересборки
+ * был у каждого СВОЙ — и любой повод, поднявший только один, разводил их по РАЗНЫМ скелетам:
+ *
+ *  • смена вида манекена (`setManView` → `rebuildManikin`) поднимала ТОЛЬКО манекен — замер:
+ *    плечо 10.80u против 15.60u у призрака, кисть уезжала на 4.71u, стопа на 4.91u;
+ *  • сторож в цикле сравнивал офсеты атласа ПО ССЫЛКЕ, а их лечение ДОПИСЫВАЕТ тот же объект —
+ *    смена не замечалась, и ОБА рига оставались процедурными, хотя офсеты готовы на 366-й мс;
+ *  • гейт `if (pw)` молча пропускал пересборку призрака, пометив смену применённой.
+ *
+ * Лечение: рецепт становится ЗНАЧЕНИЕМ с ключом ПО СОДЕРЖИМОМУ, ключ штампуется НА САМОМ риге,
+ * а `syncRigs()` раз в кадр поднимает те, чей ключ устарел. Поводов больше нет — есть один ключ.
+ */
+type RigRecipe = {
+  gender: 'male' | 'female'; build: ReturnType<typeof morphBuild>; boneScale: ReturnType<typeof morphBoneScale>;
+  boneOffsets: ReturnType<typeof atlasOff>; profile: ReturnType<typeof atlasProfile>; fingers: boolean;
+};
+function rigRecipe(): RigRecipe {
+  const c = curChar();
+  return { gender: c.gender, build: morphBuild(c), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() };
+}
+/** Ключ ПО СОДЕРЖИМОМУ: ссылка на офсеты при их лечении НЕ меняется, а числа — меняются. */
+const recipeKey = (r: RigRecipe): string => JSON.stringify([r.gender, r.build, r.boneScale, r.boneOffsets, r.profile, r.fingers]);
+/** Ключ, которым риг ФАКТИЧЕСКИ построен — хранится на нём же, поэтому не теряется ни при какой пересборке. */
+const rigKeyOf = (h: Humanoid): string => (h.root.userData.rigKey as string) ?? '';
+function stampRig<T extends Humanoid>(h: T): T { h.root.userData.rigKey = recipeKey(rigRecipe()); return h; }
+/**
+ * Раз в кадр: поднять риги, чей рецепт устарел. Манекен ПЕРВЫМ (с него читают позу
+ * призрак и модель), затем призрак, затем онионы и риг-источник модели.
+ * В покое не делает НИЧЕГО — иначе выбор кости слетал бы каждый кадр (`rebuildManikin` сбрасывает `selected`).
+ */
+function syncRigs(): void {
+  const key = recipeKey(rigRecipe());
+  let touched = false;
+  if (human && rigKeyOf(human) !== key) { rebuildManikin(); touched = true; }
+  if (pw && (!ghostHuman || rigKeyOf(ghostHuman) !== key)) { buildGhost(); touched = true; }
+  if ((onionPrev && rigKeyOf(onionPrev) !== key) || (onionNext && rigKeyOf(onionNext) !== key)) { disposeOnion(); touched = true; }
+  // РИГ-ИСТОЧНИК МОДЕЛИ СЮДА НЕ ВХОДИТ ОСОЗНАННО: он строится ПРЯМО из атласа (`curAtlas()`),
+  // то есть всегда актуален, а морф ему довозит `refreshProfile()`. Замер (Ф27): до починки манекена
+  // расхождение с костями модели было 5.07u ИМЕННО из-за манекена. Пересобирать его по ключу ВРЕДНО:
+  // `rebuildAsm()` дизпоузит скин и тянет GLB заново — меш исчезал на несколько секунд на каждой смене рецепта.
+  if (touched) { updateWeapon(); refreshAll(); }   // оружие висело на старом риге; панель читает геометрию
+}
+/** Кости, по которым меряется расхождение ригов (без фаланг: их ведёт отдельный канал хвата). */
+const DELTA_BONES = ['Hips', 'Spine', 'Chest', 'UpperChest', 'Neck', 'Head', 'LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand',
+  'RightShoulder', 'RightUpperArm', 'RightLowerArm', 'RightHand', 'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot'];
+/**
+ * РАСХОЖДЕНИЕ РИГОВ (Ф27.2) — максимум по костям, в юнитах. Два РАЗНЫХ числа:
+ *  • `ghost` — манекен против призрака. ЧЕСТНАЯ разница: призрак заземлён и блендится к позе
+ *    по `PHYS.match`, то есть показывает то же, что увидит игра. При выключенной физике обязана быть 0.
+ *  • `mesh` — призрак против НАСТОЯЩИХ костей загруженной модели. ОБЯЗАНА быть 0 ВСЕГДА:
+ *    серое тело — это тот самый риг, которым ведётся меш, и врать про него оно не имеет права.
+ */
+function rigDelta(): { ghost: number; ground: number; pose: number; mesh: number | null; bones: number } {
+  let g = 0, m = 0, n = 0, ps = 0;
+  // ВЕРТИКАЛЬ ТАЗА = ЗАЗЕМЛЕНИЕ, а не рассинхрон. Призрак стоит на полу (foot-IK + `gs.off`),
+  // авторская поза — нет; в игре видно только заземлённое тело, поэтому разницу важно ПОКАЗАТЬ ОТДЕЛЬНО:
+  // без этого честный параллельный перенос читается как поломка ригов.
+  const hm = human?.bones.get('Hips'), hg = ghostHuman?.bones.get('Hips');
+  const gy = (hm && hg) ? hg.getWorldPosition(V()).y - hm.getWorldPosition(V()).y : 0;
+  for (const nm of DELTA_BONES) {
+    const a = human?.bones.get(nm); if (!a) continue;
+    const gb = ghostHuman?.bones.get(nm);
+    if (gb) {
+      const d = gb.getWorldPosition(V()).sub(a.getWorldPosition(V()));
+      g = Math.max(g, d.length());
+      d.y -= gy; ps = Math.max(ps, d.length());     // без вертикали заземления — чистая разница ПОЗЫ (физ-бленд по `match`)
+    }
+    const mb = modelsTab.atlasBone(nm);
+    // СЧЁТЧИК СРАВНЁННЫХ КОСТЕЙ ОБЯЗАТЕЛЕН: без него метрика врёт самым опасным способом —
+    // показывает бодрый 0.00u там, где модель просто не загружена и сравнивать не с чем (поймано контрольным замером).
+    if (mb) { n++; m = Math.max(m, (gb ?? a).getWorldPosition(V()).distanceTo(mb.getWorldPosition(V()))); }
+  }
+  return { ghost: +g.toFixed(2), ground: +gy.toFixed(2), pose: +ps.toFixed(2), mesh: n ? +m.toFixed(2) : null, bones: n };
+}
 // ── Ф8: МОРФ ТЕЛА — СВОЙСТВО ПЕРСОНАЖА, НЕ АНИМАЦИИ (инвариант Ф1.6) ──
 // Вариация персонажа = ТОТ ЖЕ меш + набор чисел. Меш на сервере один, персонажей на нём сколько угодно.
 let morphCfg: Record<string, BodyMorph> = (() => { try { return (JSON.parse(localStorage.getItem('pe_morph') || '{}') as Record<string, BodyMorph>); } catch { return {}; } })();
@@ -2116,7 +2195,7 @@ function applyChar(id: string): void {
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
   if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
-  human = buildHumanoid({ gender: c.gender, build: morphBuild(c), style: manStyle(), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
+  human = stampRig(buildHumanoid({ ...rigRecipe(), style: manStyle() })); curHumanStyle = manStyle();   // Ф27: геометрия — только из рецепта
   normalizeHipsOfChar(id);   // Ф12: rest-высота ЭТОГО тела только что стала известна — переводим его клипы в дельту
   modelsTab.refreshProfile();   // Ф15.1: морф этого персонажа обязан уехать И в риг-источник, иначе меш не поедет за скелетом
   human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
@@ -2133,10 +2212,10 @@ function manStyle(): 'solid' | 'skeleton' { return manView === 'skel' ? 'skeleto
 // Лёгкая пересборка манекена под новый стиль (скелет↔тело) С СОХРАНЕНИЕМ позы/оружия (в отличие от applyChar — без сброса клипа/undo).
 function rebuildManikin(): void {
   fbik = null;   // солвер связан с КОНКРЕТНЫМ скелетом (топология/длины) — пересобрать
-  const c = curChar(); const pose = readPoseFull();
+  const pose = readPoseFull();
   scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
-  human = buildHumanoid({ gender: c.gender, build: morphBuild(c), style: manStyle(), boneScale: morphBoneScale(), boneOffsets: atlasOff(), profile: atlasProfile(), fingers: wantFingers() }); curHumanStyle = manStyle();
+  human = stampRig(buildHumanoid({ ...rigRecipe(), style: manStyle() })); curHumanStyle = manStyle();   // Ф27: геометрия — только из рецепта
   human.footLift = physFootLift;                              // подъём стопы сохраняется при пересборке стиля манекена
   scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();
   applyPose(pose); if (ikOn) captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
@@ -2328,9 +2407,6 @@ for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn
 // Ф15.1 + Ф20.1: риг-источник строится ТЕМ ЖЕ профилем И ТЕМ ЖЕ boneScale, что манекен —
 // иначе кости модели стоят не там, где нарисованы кости редактора (колено расходилось на 2.37u).
 const modelsTab = createModelsTab(scene, () => atlasProfile(), () => morphBoneScale());
-let lastBS: BoneScale | undefined;   // последний применённый boneScale атласа (детект смены → пересборка скелетов)
-let lastHasFingers = false;          // Ф14.1: пальцы атласа появляются ПОЗЖЕ boneScale (после загрузки GLB)
-let lastBO: unknown;                 // Ф14.2: само-лечение дописывает офсеты пальцев уже ПОСЛЕ загрузки — следим за сменой ССЫЛКИ
 
 function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
@@ -2496,6 +2572,16 @@ function poseTools(): void {
     const ah = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ah.textContent = 'ПРОЗРАЧНОСТЬ'; body.append(ah);
     arow('скелет', () => aSkel, (v) => { aSkel = v; });
     arow('хелперы', () => aHandle, (v) => { aHandle = v; });
+  }
+  {   // Ф27.2 — РАСХОЖДЕНИЕ РИГОВ числом, а не по скриншоту. «призрак↔меш» обязано быть 0.00u ВСЕГДА;
+      // «манекен↔призрак» — честная разница заземления и физ-бленда по `match` (то, что увидит игра).
+    const d = rigDelta();
+    const row = el('div', 'font-size:10px;margin-top:3px');
+    row.innerHTML = '<span style="color:#6b7180">расхождение</span> '
+      + '<span style="color:' + (d.pose > 0.05 ? '#e6a05a' : '#6b7180') + '">манекен↔призрак ' + d.ghost.toFixed(2) + 'u (заземл. ' + d.ground.toFixed(2) + ' · поза ' + d.pose.toFixed(2) + ')</span> · '
+      + (d.mesh === null ? '<span style="color:#6b7180">призрак↔меш: модель не загружена</span>'
+        : '<span style="color:' + (d.mesh > 0.05 ? '#ff6b6b' : '#9ae6a0') + '">призрак↔меш ' + d.mesh.toFixed(2) + 'u (' + d.bones + ' костей)</span>');
+    body.append(row);
   }
   // Офсет заземления стоп (per-персонаж, pe_phys.footLift): цель foot-IK = пол + SOLE + офсет. + поднять (стопы тонут под пол),
   // − опустить (парят над полом). Живо, per-персонаж, держится после бега. Тот же офсет читает игра (loadFootLift).
@@ -4146,10 +4232,10 @@ function stepLoco(dt: number): void {
 let ghostHuman: Humanoid | null = null;   // физ-призрак — ТАКОЙ ЖЕ гуманоид (форма/пропорции), ведомый результатом физики
 function buildGhost(): void {
   if (ghostHuman) { scene.remove(ghostHuman.root); ghostHuman.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-  const c = curChar();
   // Физ-тело = ОСНОВНОЙ рендер как `solid` в игре (единый путь редактор↔игра): те же цвета (body/limb дефолты buildHumanoid),
   // НЕПРОЗРАЧНОЕ. Скелет-манекен (октаэдры) рисуется поверх (manikinOnTop, depthTest off) — кликается для позинга.
-  ghostHuman = buildHumanoid({ gender: c.gender, build: morphBuild(c), boneScale: morphBoneScale(), boneOffsets: atlasOff(), body: 0x8a93ad, limb: 0x6f7690, profile: atlasProfile(), fingers: wantFingers() });
+  // Ф27: тот ЖЕ рецепт, что у манекена — иначе призрак врёт про меш, который сам же и ведёт.
+  ghostHuman = stampRig(buildHumanoid({ ...rigRecipe(), body: 0x8a93ad, limb: 0x6f7690 }));
   ghostHuman.footLift = physFootLift;                           // подъём стопы: заземление физ-тела на пол (footIk.groundFeet)
   ghostHuman.meshes.forEach((m) => { m.castShadow = true; });   // тени как у игрового solid
   scene.add(ghostHuman.root); ghostHuman.root.visible = physOn;
@@ -4174,8 +4260,7 @@ function setPhys(on: boolean, byUser = true): void {
 // ── Онион-скин: полупрозрачные призраки соседних кадров (пред=синий, след=оранжевый) при позинге в «Анимации» ──
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
 function mkOnion(tint: number): Humanoid {
-  const c = curChar();
-  const h = buildHumanoid({ gender: c.gender, build: morphBuild(c), boneScale: morphBoneScale(), boneOffsets: atlasOff(), limb: tint, body: tint, head: tint, fingers: wantFingers() });
+  const h = stampRig(buildHumanoid({ ...rigRecipe(), limb: tint, body: tint, head: tint }));
   for (const m of h.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25; }
   scene.add(h.root); h.root.visible = false; return h;
 }
@@ -4451,17 +4536,13 @@ function loop(): void {
   // Ф14.1: следим И за появлением пальцев. Раньше сравнивалась только ссылка `boneScale`, а она меняется
   // РАНЬШЕ, чем догрузится GLB — манекен пересобирался с `fingers:false`, и пальцы не появлялись, пока
   // не нажмёшь ✋. Со стороны это выглядело как «пальцы не работают».
-  { const bs = modelsTab.boneScale(), hf = modelsTab.hasFingers(), bo = modelsTab.boneOffsets();
-    if (bs !== lastBS || hf !== lastHasFingers || bo !== lastBO) { lastBS = bs; lastHasFingers = hf; lastBO = bo; rebuildManikin(); if (pw) buildGhost(); disposeOnion();
-      // Ф16: панель тоже читает геометрию манекена (отчёт о поджатости бинда, состояние кнопки ⪼пальцы).
-      // Атлас догружается ПОСЛЕ отрисовки панели, и без этого она врала: «бинд прямой» на кисти, согнутой на 22°.
-      refreshAll(); } }
+  syncRigs();   // Ф27: все риги с ОДНИМ рецептом; панель перерисуется там же
   // Атлас-скин ведём ФИЗ-телом (ghostHuman) — как игра (скин на solid) → превью атласа = игра. Физ off → манекеном.
   // ghostHuman позирован stepPhysics выше (физ-бленд по PHYS.match), у него та же геометрия атласа (buildGhost).
   modelsTab.drive(physOn && ghostHuman ? ghostHuman : human);   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена
   // Ф20.2: гизмо предела ставится ПОСЛЕ `drive` — до него локальные трансформы костей модели
   // держат вывод ПРОШЛОГО кадра, и гизмо отставало на кадр при перетаскивании.
-  placeLimitGizmo();
+  placeLimitGizmo(); parkProxy();   // кольца FK стоят в том же фрейме, что и зона предела
   syncWeaponHost();   // 2B: оружие на кисть ВИДИМОГО атлас-меша (после drive — кисть уже позирована)
   const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
   human.root.visible = !hideMan;
@@ -4500,7 +4581,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
