@@ -1679,6 +1679,39 @@ function groundManikin(): (() => void) | null {
   };
 }
 
+/**
+ * Ф27.5 — МАНЕКЕН РИСУЕТСЯ ЗАЗЕМЛЁННЫМ, КАК ПРИЗРАК И МЕШ — НО ТОЛЬКО НА ОТРИСОВКУ.
+ *
+ * Зазор между авторской позой и тем, что видно, — ЭТО НЕ РАССИНХРОН РИГОВ, а ПОДЪЁМ СТОПЫ
+ * (`pe_phys.footLift`). Замер: при `footLift = 1.4` сдвиг призрака вверх 1.11u, при `footLift = 0`
+ * он падает до −0.29u. Призрак поднимает лодыжку, чтобы ПОДОШВА МЕША лежала на полу, а манекен этот
+ * подъём не применял вообще: его `footLift` читает только `groundFeet`, а его на манекене никто не звал.
+ *
+ * ПОЧЕМУ НЕЛЬЗЯ ЗАЗЕМЛИТЬ НАСОВСЕМ — две причины, обе уже куплены багами:
+ *  1. `groundFeet` ПИШЕТ УГЛЫ опорных ног — авторский сгиб колена стирался бы каждый кадр
+ *     (ровно то, против чего написана шапка `groundManikin` выше).
+ *  2. Сдвинуть манекен на `gs.off` призрака тоже нельзя: физика берёт цель таза С МАНЕКЕНА,
+ *     и сдвиг вернётся в следующий `gs.off` с обратным знаком — автоколебатель с усилением −1
+ *     (та же семья ошибок, что утечка таза в Ф26.7 и самокормящаяся подгонка в Ф26.8).
+ *
+ * Поэтому: ЗАЗЕМЛИЛИ → НАРИСОВАЛИ → ВЕРНУЛИ, всё в ОДНОМ синхронном блоке. Между ними нет
+ * ни `await`, ни событий, так что СОЛВЕР, ФИЗИКА, ПИНЫ и ЗАПИСЬ КАДРА видят только авторскую позу.
+ * Работает ЛИШЬ ПРИ ВКЛЮЧЁННОЙ ФИЗИКЕ: без призрака сравнивать не с чем, а отрывать ручки от костей зря.
+ */
+let manGroundView = true;
+function groundManikinForView(): (() => void) | null {
+  if (!manGroundView || !physOn || !ghostHuman) return null;
+  const y0 = human.root.position.y;
+  const un = groundManikin(); if (!un) return null;
+  const dy = human.root.position.y - y0;
+  // РУЧКИ ЦЕЛЕЙ ЕДУТ ВМЕСТЕ С КОСТЬЮ: они стоят на `e.target` в АВТОРСКОМ пространстве,
+  // и без этого сдвига синяя ручка оторвалась бы от кисти на те же 1.4u. Полюсные и плечевые НЕ трогаем:
+  // при включённой физике они уже стоят на ПРИЗРАКЕ (`viewBone`), то есть уже в заземлённом пространстве.
+  const moved: THREE.Object3D[] = [rig.hipsHandle, ...effList().map((e) => e.handle)];
+  for (const o of moved) o.position.y += dy;
+  return () => { for (const o of moved) o.position.y -= dy; un(); };
+}
+
 function readPoseFull(): Pose {
   const ungroundManikin = groundManikin();   // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу, потом возвращаем манекен как был
   const p = human.readPose();
@@ -2565,6 +2598,7 @@ function poseTools(): void {
     pbtn(showLimits ? 'гизмо предела: вкл' : 'гизмо предела: выкл', () => { showLimits = !showLimits; renderAnim(); }, showLimits),
     pbtn(clampFk ? 'клэмп FK: вкл' : 'клэмп FK: выкл', () => { clampFk = !clampFk; renderAnim(); }, clampFk),
     pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; renderAnim(); }, footGround),
+    pbtn(manGroundView ? 'манекен на полу: вкл' : 'манекен на полу: выкл', () => { manGroundView = !manGroundView; renderAnim(); }, manGroundView),
   );
   {   // Ф26.2 — ПРОЗРАЧНОСТЬ: скелет перестаёт забивать меш (жалоба «слишком активный»), ручки не рябят
     const arow = (label: string, get: () => number, set: (v: number) => void): void => {
@@ -4583,12 +4617,14 @@ function loop(): void {
   if (onModelBones()) scaleJointsToScreen(boneView, camera, canvas.clientHeight || 1, JOINT_PX);
   else if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, JOINT_PX);
   outline.selectedObjects = selMesh ? [selMesh] : [];   // Ф5: обводка выбранной кости
+  const ungroundView = groundManikinForView();   // Ф27.5: рисуем ЗАЗЕМЛЁННЫЙ манекен…
   if (useComposer) composer.render(); else renderer.render(scene, camera);
+  ungroundView?.();                              // …и ТУТ ЖЕ возвращаем — авторская поза не тронута
   requestAnimationFrame(loop);
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, groundManikinForView, get manGroundView() { return manGroundView; }, set manGroundView(v: boolean) { manGroundView = v; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
