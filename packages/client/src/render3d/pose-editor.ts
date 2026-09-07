@@ -3019,7 +3019,14 @@ function fitPhysToBones(): void {
         leaves.push({ ov, tip: last.getWorldPosition(V()), dir: dir.lengthSq() > 1e-6 ? dir.normalize() : V().set(0, 1, 0), cat });
         continue;
       }
-      const b2 = V(); for (const k of kids) b2.add(k.getWorldPosition(V())); b2.multiplyScalar(1 / kids.length);
+      // ДЕТИ БЕРУТСЯ НЕ ВСЕ, А ТОЛЬКО ПРОДОЛЖАЮЩИЕ ОСЬ ТЕЛА (Ф28.1). Среднее по ВСЕМ детям верно там, где они
+      // расходятся веером вокруг оси (кисть → пять пальцев), и неверно там, где ребёнок уходит ПОПЕРЁК:
+      // у `UpperChest` дети — шея (вверх) и две ключицы (вбок), и среднее валило тело на 20.9° и укорачивало
+      // его с 5.6u до 4.2u. Критерий — каталожное направление тела: оно и есть авторская ось.
+      const axis = V().set(co![0], co![1], co![2]).normalize();
+      const along = kids.filter((k) => k.getWorldPosition(V()).sub(a).normalize().dot(axis) > 0.75);   // 0.5 МАЛО: ключица поднимается 2.8u при выносе 4u, дот ровно 0.50 и она проходила
+      const use = along.length ? along : kids;                      // никто не совпал — ведём себя как раньше
+      const b2 = V(); for (const k of use) b2.add(k.getWorldPosition(V())); b2.multiplyScalar(1 / use.length);
       const half = b2.sub(a).multiplyScalar(0.5);
       if (half.length() < 0.3) { delete ov.off; delete ov.len; continue; }
       ov.off = v3(half); ov.len = +half.length().toFixed(2);

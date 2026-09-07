@@ -58,6 +58,13 @@ interface HBone {
   con: Con | null;
   group: MGroup;
   damp: number;
+  /**
+   * Ф28.1 — МНОЖИТЕЛЬ ПРЕДЕЛА НА СЕГМЕНТ. Несколько тел делят ОДИН канон-сустав (три сегмента
+   * спины — все `spine`), а диапазон в таблице задан на ВЕСЬ корпус. Без деления суммарный
+   * изгиб утроился бы и корпус складывался. Умножается И в констрейнте (`makeCon`), И в виде предела
+   * (`jointLimitView`) — иначе физика и клэмп манекена разойдутся.
+   */
+  limScale?: number;
 }
 /** Тело АКТИВНОГО набора: родитель уже индексом (требование Jolt) и цепь ретаргета с учётом слияний. */
 type ActiveBone = HBone & { parentIdx: number; chain: string[] };
@@ -81,18 +88,39 @@ const hinge = (lim: [number, number], axis: Vec3, normal: Vec3): Con => ({ kind:
 //   → для асимм. дефолтов физика чуть шире клэмпа манекена (<0.1рад, незаметно); полная асимметрия (bias-рамка) отложена —
 //   конфликтует с тюнингом бега + нужна верификация в игре. Пределы правятся живьём в редакторе (RB3, pe_ragdoll → jointOv).
 // Кости в порядке скелета (родитель раньше ребёнка — требование Jolt). Пропорции = гуманоид T-поза.
+/** Доля общего диапазона `spine` на ОДИН сегмент спины (три сегмента в сумме дают анатомию целиком). */
+const SPINE_SEG = 1 / 3;
 const CATALOG: HBone[] = [
   { name: 'Hips', parent: null, tier: 'core', anchor: [0, 32, 0], off: [0, 0, 0], shape: { k: 'box', h: [5, 3, 3] }, con: null, group: 'core', damp: 1 },
-  { name: 'Torso', parent: 'Hips', tier: 'core', anchor: [0, 35, 0], off: [0, 8.5, 0], shape: { k: 'box', h: [5, 8.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1 },
-  { name: 'Head', parent: 'Torso', tier: 'core', anchor: [0, 53, 0], off: [0, 4, 0], shape: { k: 'sphere', r: 5 }, con: swing([-0.5, 0.5], [-0.4, 0.4], [-0.7, 0.7], [0, 1, 0], [1, 0, 0]), group: 'head', damp: 1 },
+  // СПИНА — ТРИ СЕГМЕНТА (Ф28.1), по одному на кость. Раньше `Spine`+`Chest`+`UpperChest` жили в ОДНОМ
+  // теле длиной 17u: форма брала поворот ПОСЛЕДНЕЙ кости цепи, поэтому на любом изгибе корпуса
+  // коробка уезжала от меша, а ткань с таким коллайдером протыкала бы спину. Анкеры — ровно на суставах
+  // дефолтного рига (`humanoid.ts`: Spine 37, Chest 43, UpperChest 48, Neck 53).
+  { name: 'Torso', parent: 'Hips', tier: 'core', anchor: [0, 37, 0], off: [0, 3, 0], shape: { k: 'box', h: [4.6, 3, 3.0] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
+  { name: 'Chest', parent: 'Torso', tier: 'core', anchor: [0, 43, 0], off: [0, 2.5, 0], shape: { k: 'box', h: [5.4, 2.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
+  { name: 'UpperChest', parent: 'Chest', tier: 'core', anchor: [0, 48, 0], off: [0, 2.5, 0], shape: { k: 'box', h: [5.2, 2.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
+  { name: 'Head', parent: 'UpperChest', tier: 'core', anchor: [0, 53, 0], off: [0, 4, 0], shape: { k: 'sphere', r: 5 }, con: swing([-0.5, 0.5], [-0.4, 0.4], [-0.7, 0.7], [0, 1, 0], [1, 0, 0]), group: 'head', damp: 1 },
+  // КЛЮЧИЦЫ ОТДЕЛЬНЫМИ ТЕЛАМИ (Ф28.1). Жалоба «руки съехали»: тело `ArmL` покрывало КЛЮЧИЦУ И ПЛЕЧО
+  // разом (замер на атласе: анкер на ключице, длина 19.7u при плече→локоть 15.1u и ключице 4.6u), а поворот
+  // брало с плеча — в Т-позе всё сходилось, а при опущенной руке форма вылезала за локоть ровно на длину ключицы.
+  // Предел берётся из готовой анатомичной записи `clavicleJoints()` (`jointLimits.ts`): ±20° вперёд-назад,
+  // ±15° подъём, ±10° твист; оси те же (twist вдоль ±X, plane = Y).
+  { name: 'ClavL', parent: 'UpperChest', tier: 'core', anchor: [3, 51, 0], off: [2, 0, 0], shape: { k: 'box', h: [2, 2.2, 2.4] }, con: swing([-0.35, 0.35], [-0.26, 0.26], [-0.17, 0.17], [1, 0, 0], [0, 1, 0]), group: 'core', damp: 1 },
+  { name: 'ClavR', parent: 'UpperChest', tier: 'core', anchor: [-3, 51, 0], off: [-2, 0, 0], shape: { k: 'box', h: [2, 2.2, 2.4] }, con: swing([-0.35, 0.35], [-0.26, 0.26], [-0.17, 0.17], [-1, 0, 0], [0, 1, 0]), group: 'core', damp: 1 },
   // Плечо: твист ±1.4≈±80° (внутр/внеш ротация плеча, реально ~±90°; было ±0.8≈±46° — мало). Свинг ±1.7/±1.2 game-широкий.
   // ПЛЕЧО (Ф26.7): подъём/опускание ±69° было МЕНЬШЕ АНАТОМИИ: от T-позы до «рука над головой» ровно 90°,
   // до «рука вдоль тела» тоже 90° — то есть ОБА крайних бытовых положения были ЗА ПРЕДЕЛОМ. Оттуда шли две жалобы:
   // кисть к бедру не дотягивалась (Ф25) и локоть при поднятой руке уходил за спину (Ф26.7) — клэмп выбирал
   // единственную доступную сторону круга свивеля (замер: без клэмпа локоть встаёт вперёд на +6.8u, с клэмпом — −14.1u).
   // Стало ±109° подъём и ±92° твист (наружная ротация плеча у человека ~90°). Это ДЕФОЛТ — пер-сустав тюн в панели перебивает.
-  { name: 'ArmL', parent: 'Torso', tier: 'core', anchor: [6, 51, 0], off: [7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-1.6, 1.6], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
-  { name: 'ArmR', parent: 'Torso', tier: 'core', anchor: [-6, 51, 0], off: [-7, 0, 0], shape: { k: 'box', h: [6.8, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-1.6, 1.6], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  // ⚠ ТВИСТ ПЛЕЧА ±180°, А НЕ «АНАТОМИЧЕСКИЕ» ±92° — И ЭТО НЕ ОПЕЧАТКА.
+  // Твист меряется ОТ T-ПОЗЫ (рест-фрейм, перенесённый минимальной дугой), а этот отсчёт для руки НАД ГОЛОВОЙ не
+  // анатомичен: минимальная дуга «рука вбок → рука вверх» уносит ось локтя так, что бытовой ЗАМАХ ТОПОРОМ (кисть за
+  // голову, локоть вперёд) требует РОВНО 180° доворота. ЗАМЕР: при ±91.7° клэмп срезал 88.3° и возвращал предплечье
+  // к голове — жалоба «не даёт сделать замах» (одинаково в обеих версиях лимитов, т.к. это ДАННЫЕ, а не алгоритм).
+  // Плечу нужен полный оборот параметризации; настоящее анатомическое ограничение даёт КОНУС свинга, он и остался.
+  { name: 'ArmL', parent: 'ClavL', tier: 'core', anchor: [7, 51, 0], off: [6.5, 0, 0], shape: { k: 'box', h: [6.5, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-3.14, 3.14], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
+  { name: 'ArmR', parent: 'ClavR', tier: 'core', anchor: [-7, 51, 0], off: [-6.5, 0, 0], shape: { k: 'box', h: [6.5, 2.6, 2.6] }, con: swing([-1.7, 1.7], [-1.9, 1.9], [-3.14, 3.14], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.9 },
   { name: 'ForeL', parent: 'ArmL', tier: 'core', anchor: [20, 51, 0], off: [5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-2.4, 0.1], [0, 1, 0], [1, 0, 0]), group: 'arm', damp: 0.9 },
   { name: 'ForeR', parent: 'ArmR', tier: 'core', anchor: [-20, 51, 0], off: [-5.5, 0, 0], shape: { k: 'box', h: [5.5, 2.2, 2.2] }, con: hinge([-0.1, 2.4], [0, 1, 0], [-1, 0, 0]), group: 'arm', damp: 0.9 },
   // Бедро: твист (внутр/внеш ротация) ±0.7≈±40° — анатомично (было ±0.4≈±23°, вдвое мало). Бокс НЕквадратный (X>Z, колено
@@ -187,7 +215,7 @@ export const physBodies = (): readonly ActiveBone[] => B;
 export const PHYS_CATALOG: PhysNode[] = CATALOG.map((b) => ({ name: b.name, parent: b.parent, tier: b.tier, chain: [] }));
 /** Читаемая подпись тела в панели (по-русски, чтобы галки не были загадкой). */
 export const PHYS_LABEL: Record<string, string> = {
-  Hips: 'таз', Torso: 'спина', Head: 'голова', ArmL: 'плечо Л', ArmR: 'плечо П', ForeL: 'предплечье Л', ForeR: 'предплечье П',
+  Hips: 'таз', Torso: 'поясница', Chest: 'грудь', UpperChest: 'верх груди', ClavL: 'ключица Л', ClavR: 'ключица П', Head: 'голова', ArmL: 'плечо Л', ArmR: 'плечо П', ForeL: 'предплечье Л', ForeR: 'предплечье П',
   HandL: 'кисть Л', HandR: 'кисть П', ThighL: 'бедро Л', ThighR: 'бедро П', ShinL: 'голень Л', ShinR: 'голень П',
   FootL: 'стопа Л', FootR: 'стопа П', ToeL: 'носок Л', ToeR: 'носок П',
 };
@@ -231,8 +259,9 @@ export const physSetCost = (): { bodies: number; constraints: number } => physCo
  * UpperChest, голова = Neck+Head, плечо = Shoulder+UpperArm.
  */
 const RETARGET: Record<string, string[]> = {
-  Torso: ['Spine', 'Chest', 'UpperChest'], Head: ['Neck', 'Head'],
-  ArmL: ['LeftShoulder', 'LeftUpperArm'], ArmR: ['RightShoulder', 'RightUpperArm'],
+  Torso: ['Spine'], Chest: ['Chest'], UpperChest: ['UpperChest'], Head: ['Neck', 'Head'],
+  ClavL: ['LeftShoulder'], ClavR: ['RightShoulder'],
+  ArmL: ['LeftUpperArm'], ArmR: ['RightUpperArm'],
   ForeL: ['LeftLowerArm'], ForeR: ['RightLowerArm'],
   ThighL: ['LeftUpperLeg'], ThighR: ['RightUpperLeg'],
   ShinL: ['LeftLowerLeg'], ShinR: ['RightLowerLeg'],
@@ -256,13 +285,15 @@ export function retargetHumanoidPose(pose: Record<string, [number, number, numbe
 /** Инверсный ретаргет (для запекания): физ-кость → ОСНОВНАЯ humanoid-кость, куда лечь её локальному повороту.
  *  Слитые кости пишутся в одну (торс→Spine, голова→Neck, плечо→UpperArm); остальные при applyPose = покой. */
 const PRIMARY: Record<string, string> = {
-  Torso: 'Spine', Head: 'Neck', ArmL: 'LeftUpperArm', ArmR: 'RightUpperArm', ForeL: 'LeftLowerArm', ForeR: 'RightLowerArm',
+  Torso: 'Spine', Chest: 'Chest', UpperChest: 'UpperChest', Head: 'Neck',
+  ClavL: 'LeftShoulder', ClavR: 'RightShoulder', ArmL: 'LeftUpperArm', ArmR: 'RightUpperArm', ForeL: 'LeftLowerArm', ForeR: 'RightLowerArm',
   ThighL: 'LeftUpperLeg', ThighR: 'RightUpperLeg', ShinL: 'LeftLowerLeg', ShinR: 'RightLowerLeg',
   FootL: 'LeftFoot', FootR: 'RightFoot', HandL: 'LeftHand', HandR: 'RightHand', ToeL: 'LeftToes', ToeR: 'RightToes',
 };
 /** Цель ПИНА (позиц. подтяжка тела к анимации, идея PuppetMaster): физ-кость → humanoid-сустав (его мир-позиция). */
 export const PIN_SRC: Record<string, string> = {
-  Torso: 'Spine', Head: 'Neck', ArmL: 'LeftUpperArm', ArmR: 'RightUpperArm', ForeL: 'LeftLowerArm', ForeR: 'RightLowerArm',
+  Torso: 'Spine', Chest: 'Chest', UpperChest: 'UpperChest', Head: 'Neck',
+  ClavL: 'LeftShoulder', ClavR: 'RightShoulder', ArmL: 'LeftUpperArm', ArmR: 'RightUpperArm', ForeL: 'LeftLowerArm', ForeR: 'RightLowerArm',
   ThighL: 'LeftUpperLeg', ThighR: 'RightUpperLeg', ShinL: 'LeftLowerLeg', ShinR: 'RightLowerLeg',
   FootL: 'LeftFoot', FootR: 'RightFoot', HandL: 'LeftHand', HandR: 'RightHand', ToeL: 'LeftToes', ToeR: 'RightToes',
 };
@@ -303,7 +334,8 @@ export const LIMITS: Record<MGroup, number> = { leg: 1, arm: 1, core: 1, head: 1
 // Канон-id объединяет левую/правую кость в ОДИН сустав → правишь один раз, применяется к обеим сторонам.
 // Оси/знак сгиба остаются per-bone в B[] (они зеркальны), тут храним только УГЛЫ в «канон-форме».
 export const CANON: Record<string, string> = {
-  Torso: 'spine', Head: 'head', ArmL: 'shoulder', ArmR: 'shoulder', ForeL: 'elbow', ForeR: 'elbow',
+  Torso: 'spine', Chest: 'spine', UpperChest: 'spine', Head: 'head',
+  ClavL: 'clavicle', ClavR: 'clavicle', ArmL: 'shoulder', ArmR: 'shoulder', ForeL: 'elbow', ForeR: 'elbow',
   HandL: 'wrist', HandR: 'wrist', ThighL: 'hip', ThighR: 'hip', ShinL: 'knee', ShinR: 'knee',
   FootL: 'ankle', FootR: 'ankle', ToeL: 'toe', ToeR: 'toe',
 };
@@ -368,7 +400,7 @@ export interface LimitView {
 export function jointLimitView(ragName: string): LimitView | null {
   const b = _bBone.get(ragName); if (!b || !b.con) return null;
   const canon = CANON[ragName]; if (!canon) return null;
-  const e = effJoint(canon), c = b.con, L = LIMITS[b.group];
+  const e = effJoint(canon), c = b.con, L = LIMITS[b.group] * (b.limScale ?? 1);   // Ф28.1: доля сегмента — и в клэмпе манекена тоже
   if (c.kind === 'swing') {
     // Оси — этой кости (правая уже зеркальна в B[]). Диапазоны — канон (левая конвенция) × L. Для СИММЕТРИЧНЫХ
     // дефолтов зеркальные оси дают верное L/R автоматически; асимметрия (юзер-тюн) калибруется отдельно (Ф5).
@@ -388,8 +420,13 @@ export function loadRagdollConfig(): void {
     if (c.sizes) for (const k in c.sizes) PHYS_SIZES[k] = { ...c.sizes[k]! };   // РАЗМЕРЫ ЧИТАЮТСЯ ДО applyPhysProfile — именно он их впекает в активный набор
     // Набор тел живёт ЗДЕСЬ, а не отдельным ключом: у него тот же жизненный цикл, что у лимитов и моторов
     // (правка = пересборка куклы), и лишний round-trip на сервер не нужен.
-    if (c.physrig?.bodies?.length) applyPhysProfile(c.physrig.bodies);
-    else applyPhysProfile(undefined, c.physrig?.id ?? 'base');
+    // МИГРАЦИЯ Ф28.1: список тел, сохранённый ДО разделения, новых имён не знает — без этого
+    // ключицы и сегменты спины молча остались бы выключены, и цепи слились бы обратно (`resolvePhysSet`
+    // складывает цепь выключенного предка в потомка) — то есть правка бы «не применилась» без всякой ошибки.
+    const saved = c.physrig?.bodies?.length ? [...c.physrig.bodies] : null;
+    if (saved && !saved.includes('ClavL')) for (const n of ['Chest', 'UpperChest', 'ClavL', 'ClavR']) if (!saved.includes(n)) saved.push(n);
+    if (saved) applyPhysProfile(saved);
+    else applyPhysProfile(undefined, c.physrig?.id ?? 'base');   // пресет по тирам — новые core-тела попадают сами
     const gs: MGroup[] = ['leg', 'arm', 'core', 'head'];
     if (c.limits) for (const g of gs) if (typeof c.limits[g] === 'number') LIMITS[g] = c.limits[g]!;
     if (c.motor) for (const g of gs) if (Array.isArray(c.motor[g])) MOTOR[g] = c.motor[g]!;
@@ -492,7 +529,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
   // ── Суставы ──
   const makeCon = (b: ActiveBone): InstanceType<JoltNS['TwoBodyConstraintSettings']> => {
     const [ax, ay, az] = b.anchor;
-    const [freq, torque] = MOTOR[b.group]; const L = LIMITS[b.group];   // L = множитель лимитов группы (RB3)
+    const [freq, torque] = MOTOR[b.group]; const L = LIMITS[b.group] * (b.limScale ?? 1);   // множитель группы (RB3) × доля сегмента (Ф28.1)
     const c = b.con!;
     const canon = CANON[b.name]; const e = canon ? effJoint(canon) : null;   // пер-сустав оверрайд (симметрия L/R) поверх базы
     const spring = (m: InstanceType<JoltNS['MotorSettings']>): void => {
@@ -642,7 +679,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       const i = RAG_INDEX[name]; if (i === undefined) return;
       const s = 9000 * power; force.Set(dx * s, dy * s, dz * s); pw.bi.AddImpulse(ids[i]!, force);
       // «отпустить» задетую зону (верх тела), чтобы дёрг был виден и затем вернулся пинами
-      for (const n of ['Torso', 'Head', 'ArmL', 'ArmR', 'ForeL', 'ForeR', 'HandL', 'HandR']) { const k = RAG_INDEX[n]; if (k !== undefined) limp[k] = 1; }
+      for (const n of ['Torso', 'Chest', 'UpperChest', 'Head', 'ClavL', 'ClavR', 'ArmL', 'ArmR', 'ForeL', 'ForeR', 'HandL', 'HandR']) { const k = RAG_INDEX[n]; if (k !== undefined) limp[k] = 1; }
     },
     setDead(d) {
       if (d === dead) return; dead = d;
