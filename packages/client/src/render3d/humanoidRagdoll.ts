@@ -42,7 +42,7 @@ export type PhysShape =
  * `len` — ПОЛОВИНА длины вдоль оси тела (так же заданы `h` в каталоге), `w`/`d` — МНОЖИТЕЛИ сечения
  * (ширина/толщина; у круглых форм работает `w`). `anchor`/`off` пишет кнопка «снять с костей».
  */
-export interface PhysSize { k?: PhysShape['k']; len?: number; w?: number; d?: number; anchor?: Vec3; off?: Vec3 }
+export interface PhysSize { k?: PhysShape['k']; len?: number; w?: number; d?: number; anchor?: Vec3; off?: Vec3; pos?: Vec3; rot?: Vec3 }
 export const PHYS_SIZES: Record<string, PhysSize> = {};
 
 interface HBone {
@@ -53,7 +53,18 @@ interface HBone {
   /** `core` — без этого куклы нет; `extra` — кисти/носки; `opt` — пальцы (по умолчанию выключены). */
   tier: 'core' | 'extra' | 'opt';
   anchor: Vec3;                 // мировой сустав в T-позе покоя = начало тела
-  off: Vec3;                    // смещение формы/меша от сустава (кость свисает/тянется от него)
+  off: Vec3;                    // НАПРАВЛЕНИЕ КОСТИ: смещение центра формы от сустава; задаёт и длинную ось, и разворот
+  /**
+   * РУЧНАЯ ДОВОДКА ФОРМЫ (Ф28.2) — только геометрия и масса, НИКОГДА не сустав.
+   *
+   * Двигать ради этого `anchor` НЕЛЬЗЯ: он одновременно origin тела, точка констрейнта
+   * (`mPoint1`/`mPosition1`) И рест-трансляция скелета (`anchor − parentAnchor`) — сдвинув его, сдвинешь
+   * сустав и всю цепь ниже. Аналог в индустрии — Center/Rotation примитива в Unreal PhysicsAsset:
+   * тело стоит на кости, а примитив внутри него двигается своим гизмо.
+   * Оба в ФРЕЙМЕ ТЕЛА (= фрейм кости в Т-позе), `rot` — эйлер В РАДИАНАХ.
+   */
+  pos?: Vec3;
+  rot?: Vec3;
   shape: PhysShape;
   con: Con | null;
   group: MGroup;
@@ -190,6 +201,8 @@ export function bodyAxis(b: { off: Vec3; shape: PhysShape }): 0 | 1 | 2 {
 function sized(src: HBone): HBone {
   const ov = PHYS_SIZES[src.name]; if (!ov) return src;
   const b: HBone = { ...src, anchor: [...(ov.anchor ?? src.anchor)] as Vec3, off: [...(ov.off ?? src.off)] as Vec3 };
+  if (ov.pos) b.pos = [...ov.pos] as Vec3;      // Ф28.2: ручная доводка формы — мимо сустава
+  if (ov.rot) b.rot = [...ov.rot] as Vec3;
   // Ось берётся из ФАКТИЧЕСКОГО (уже переопределённого) смещения — ровно как в `shapeRot`. По каталожному
   // `off` она могла разойтись с разворотом формы, и «длина» ложилась бы на поперечную полуось.
   const ax = bodyAxis({ off: b.off, shape: src.shape });
@@ -491,7 +504,11 @@ const _UP_SHAPE = new THREE.Vector3(0, 1, 0);
  * `[3.03, −16.27, 2.59]` (наискосок внаружу и вперёд), а бокс висел СТРОГО ВЕРТИКАЛЬНО — жалоба
  * «физ-тела должны повторять угол поворота кости, а не просто боксиком быть вертикальным».
  */
-function shapeRot(b: { off: Vec3; shape: PhysShape }): THREE.Quaternion {
+export function shapeOff(b: { off: Vec3; pos?: Vec3 }): Vec3 {
+  const p = b.pos; return p ? [b.off[0] + p[0], b.off[1] + p[1], b.off[2] + p[2]] : b.off;
+}
+const _srE = new THREE.Euler(), _srQ = new THREE.Quaternion();
+function shapeRot(b: { off: Vec3; shape: PhysShape; rot?: Vec3 }): THREE.Quaternion {
   const q = new THREE.Quaternion();
   if (b.shape.k === 'sphere') return q;                       // шар симметричен — разворот бессмыслен
   const round = b.shape.k === 'cylinder' || b.shape.k === 'capsule';
@@ -499,6 +516,9 @@ function shapeRot(b: { off: Vec3; shape: PhysShape }): THREE.Quaternion {
   const d = new THREE.Vector3(b.off[0], b.off[1], b.off[2]);
   if (d.lengthSq() > 1e-8) q.setFromUnitVectors(from, d.normalize());
   else if (round) q.setFromUnitVectors(_UP_SHAPE, _AX_V[bodyAxis(b)]!);   // тело без выноса (таз): по доминантной
+  // Ручной доворот (Ф28.2) — СЛЕВА, то есть в ФРЕЙМЕ ТЕЛА (оси кости), а не в собственных осях формы:
+  // так «повернуть вокруг X» значит вокруг X КОСТИ и не зависит от выбранной формы.
+  if (b.rot && (b.rot[0] || b.rot[1] || b.rot[2])) { _srE.set(b.rot[0], b.rot[1], b.rot[2]); q.premultiply(_srQ.setFromEuler(_srE)); }
   return q;
 }
 export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
@@ -514,7 +534,8 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     else if (s.k === 'cylinder') inner = new J.CylinderShapeSettings(s.half, s.r);
     else { const h = new J.Vec3(s.h[0], s.h[1], s.h[2]); inner = new J.BoxShapeSettings(h, 0.2); J.destroy(h); }
     inner.mDensity = DENSITY;
-    const off = new J.Vec3(b.off[0], b.off[1], b.off[2]);
+    const so = shapeOff(b);                                  // Ф28.2: кость + ручная доводка
+    const off = new J.Vec3(so[0], so[1], so[2]);
     const rq = shapeRot(b);
     const rot = new J.Quat(rq.x, rq.y, rq.z, rq.w);
     const shape = new J.RotatedTranslatedShapeSettings(off, rot, inner).Create().Get();
@@ -615,7 +636,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     if (s.k !== 'sphere') geo.applyQuaternion(shapeRot(b));   // разворот запекаем в геометрию (И ДЛЯ БОКСА) — меш ведётся кватернионом тела
     const m = new THREE.Mesh(geo, ghostMat); group.add(m); return m;
   });
-  const offs = B.map((b) => new THREE.Vector3(...b.off));
+  const offs = B.map((b) => new THREE.Vector3(...shapeOff(b)));   // Ф28.2: то же смещение, что у физ-формы
 
   const kPos = new J.RVec3(0, 0, 0), kRot = new J.Quat(0, 0, 0, 1), force = new J.Vec3(0, 0, 0);
   const q = new THREE.Quaternion(), qi = new THREE.Quaternion(), e = new THREE.Euler(), tmp = new THREE.Vector3();

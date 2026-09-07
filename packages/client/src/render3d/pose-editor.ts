@@ -3091,6 +3091,18 @@ function physSizeSection(): void {
   if (cur.shape.k !== 'sphere') srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
   srow(cur.shape.k === 'sphere' ? 'радиус ×' : 'ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
   if (cur.shape.k === 'box') srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
+  // Ф28.2 — СДВИГ И ПОВОРОТ ФОРМЫ, мимо сустава. Анкер трогать нельзя: он же точка констрейнта
+  // и рест-трансляция скелета — сдвинув его, сдвинешь сустав и всю цепь ниже. В Unreal точно так же:
+  // тело стоит на кости, а примитив внутри него имеет свой Center/Rotation.
+  {
+    const AX = ['X', 'Y', 'Z'] as const;
+    const g = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g.textContent = 'сдвиг формы (сустав не трогается)'; body.append(g);
+    for (let i = 0; i < 3; i++) srow('сдвиг ' + AX[i], () => ov.pos?.[i] ?? 0,
+      (v) => apply((o) => { const a = (o.pos ??= [0, 0, 0]) as number[]; a[i] = +v.toFixed(2); }), -12, 12, 0.1);
+    const g2 = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g2.textContent = 'поворот формы, градусы'; body.append(g2);
+    for (let i = 0; i < 3; i++) srow('поворот ' + AX[i], () => +((ov.rot?.[i] ?? 0) * 180 / Math.PI).toFixed(0),
+      (v) => apply((o) => { const a = (o.rot ??= [0, 0, 0]) as number[]; a[i] = +(v * Math.PI / 180).toFixed(4); }), -90, 90, 1);
+  }
   const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
   r2.append(
     pbtn('⚖ снять с костей', () => fitPhysToBones()),
