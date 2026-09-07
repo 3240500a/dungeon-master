@@ -444,15 +444,24 @@ export interface HumanoidRagdoll {
 
 const _AX_V: THREE.Vector3[] = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
 const _UP_SHAPE = new THREE.Vector3(0, 1, 0);
-/** Разворот формы: цилиндр/капсула в Jolt и three — по Y, а тело тянется по своей оси. Бокс/сфера — без разворота. */
+/**
+ * Разворот формы — ВДОЛЬ ФАКТИЧЕСКОГО НАПРАВЛЕНИЯ ТЕЛА (`off`), а не по доминантной оси.
+ *
+ * Цилиндр и капсула в Jolt и three заданы по Y — их исходная ось Y. У БОКСА исходная ось — его СОБСТВЕННАЯ
+ * длинная полуось (`bodyAxis`), туда же `sized()` кладёт длину. Сфера симметрична — её не крутим.
+ *
+ * БОКС РАНЬШЕ НЕ КРУТИЛСЯ ВОВСЕ, и это было видно на глаз: у атласного рига бедро идёт
+ * `[3.03, −16.27, 2.59]` (наискосок внаружу и вперёд), а бокс висел СТРОГО ВЕРТИКАЛЬНО — жалоба
+ * «физ-тела должны повторять угол поворота кости, а не просто боксиком быть вертикальным».
+ */
 function shapeRot(b: { off: Vec3; shape: PhysShape }): THREE.Quaternion {
   const q = new THREE.Quaternion();
-  if (b.shape.k !== 'cylinder' && b.shape.k !== 'capsule') return q;
+  if (b.shape.k === 'sphere') return q;                       // шар симметричен — разворот бессмыслен
+  const round = b.shape.k === 'cylinder' || b.shape.k === 'capsule';
+  const from = round ? _UP_SHAPE : _AX_V[bodyAxis(b)]!;       // исходная ось формы
   const d = new THREE.Vector3(b.off[0], b.off[1], b.off[2]);
-  // По ФАКТИЧЕСКОМУ направлению тела, а не по доминантной оси: после «снять с костей» кости стоят
-  // наискосок (ключица, разведённые ноги), и осевой разворот давал бы цилиндр поперёк кости.
-  if (d.lengthSq() > 1e-8) q.setFromUnitVectors(_UP_SHAPE, d.normalize());
-  else q.setFromUnitVectors(_UP_SHAPE, _AX_V[bodyAxis(b)]!);
+  if (d.lengthSq() > 1e-8) q.setFromUnitVectors(from, d.normalize());
+  else if (round) q.setFromUnitVectors(_UP_SHAPE, _AX_V[bodyAxis(b)]!);   // тело без выноса (таз): по доминантной
   return q;
 }
 export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
@@ -566,7 +575,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       : s.k === 'capsule' ? new THREE.CapsuleGeometry(s.r, s.half * 2, 4, 10)
       : s.k === 'cylinder' ? new THREE.CylinderGeometry(s.r, s.r, s.half * 2, 12)
       : new THREE.BoxGeometry(s.h[0] * 2, s.h[1] * 2, s.h[2] * 2);
-    if (s.k === 'capsule' || s.k === 'cylinder') geo.applyQuaternion(shapeRot(b));   // разворот запекаем в геометрию — меш ведётся кватернионом тела
+    if (s.k !== 'sphere') geo.applyQuaternion(shapeRot(b));   // разворот запекаем в геометрию (И ДЛЯ БОКСА) — меш ведётся кватернионом тела
     const m = new THREE.Mesh(geo, ghostMat); group.add(m); return m;
   });
   const offs = B.map((b) => new THREE.Vector3(...b.off));
