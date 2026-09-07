@@ -32,6 +32,7 @@ import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBui
 import { findGrip, gripToPose, resolveGripPose, effectiveWeaponGrip, applyGripPose, mirrorHandPose, isHandBone, bakeGripIntoClip, EMPTY_GRIP_CONFIG, type GripConfig, type WeaponGrip } from './gripPoses.js';   // Ф3.5: хват — отдельный канал   // Ф3.3: пределы без физ-тела (пальцы) + пресеты скелета
 registerExtraLimits((b) => extraLimitView(b, fingerAxes()));   // до первого limitViewForBone; Ф14.4 — оси из ЭТОГО рига
 import { deriveFingerAxes, bindCurlReport, type FingerAxes } from './fingerAxes.js';
+import { fitCollider, type BodyPoint } from './colliderFit.js';   // Ф28.3: обжатие по вершинам — чистая математика, node-тест
 import { groundFeet } from './footIk.js';   // Ф20.5: заземление попадает в ЗАПИСАННУЮ позу — ОБЩИЙ код с игрой
 import { parentOfOur } from './retarget3d.js';   // НАШа канон-топология: вид скелета строится по ней, а не по иерархии модели
 import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: скелет по НАСТОЯЩИМ костям модели   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
@@ -3132,6 +3133,114 @@ function physRigSection(): void {
   const prow = el('div', 'display:flex;align-items:center;gap:4px'); body.append(prow);
   const lab = el('span', 'flex:1;font-size:11px'); lab.textContent = 'пресет'; prow.append(lab);
   const sel = document.createElement('select'); sel.style.cssText = impInput;
+/**
+ * ОБЖАТЬ ФИЗ-ТЕЛА ПО ВЕРШИНАМ МЕША (Ф28.3) — то, чего не умела подгонка по костям.
+ *
+ * Кости дают только ДЛИНУ и НАПРАВЛЕНИЕ; толщина оставалась ручным множителем «на глаз».
+ * В Unreal PhysicsAsset тела генерятся по ВЕРШИНАМ, взвешенным на кость (`Vertex Weighting Type`),
+ * и только поэтому коллайдер повторяет тело. Здесь то же самое.
+ *
+ * ТРИ ГРАБЛИ, каждая могла тихо испортить замер:
+ *  1. Кость вершины резолвится ТОЛЬКО через `mesh.skeleton.bones[idx]` ЭТОГО меша: после дедупа
+ *     скелетов у меша может быть СВОЙ `Skeleton` поверх общих костей — глобального индекса НЕТ.
+ *  2. Замер идёт В Т-ПОЗЕ и по МИРОВЫМ вершинам (`applyBoneTransform` + `matrixWorld`), потому что
+ *     так не надо угадывать ни бинд-матрицы, ни масштаб импорта: ретаргет и так ведёт кости модели
+ *     НА наши (замер Ф27: 0.00u), значит мировой фрейм — общий.
+ *  3. Размеры хранятся МНОЖИТЕЛЯМИ к каталогу, а замер даёт юниты — делим на каталожную полуось.
+ *
+ * Сначала всегда идёт подгонка ПО КОСТЯМ: она даёт анкер и ось, а вершины уточняют толщину,
+ * длину и центр. Без загруженной модели возвращает null и оставляет подгонку по костям.
+ */
+function fitPhysToMesh(inflate = 0.95, pct = 0.95): { bodies: number; verts: number } | null {
+  const ex = modelsTab.exportTarget(); if (!ex) return null;
+  const meshes: THREE.SkinnedMesh[] = [];
+  ex.root.traverse((o) => { const m = o as THREE.SkinnedMesh; if (m.isSkinnedMesh && m.geometry.getAttribute('skinWeight')) meshes.push(m); });
+  if (!meshes.length) return null;
+  const ourOf: Record<string, string> = {};                       // кость модели → наша кость
+  for (const our in ex.boneMap) ourOf[ex.boneMap[our]!] = our;
+
+  fitPhysToBones();                                               // анкеры и оси — с костей, как раньше
+  const snap = new Map<string, THREE.Quaternion>();
+  for (const [n, b] of human.bones) snap.set(n, b.quaternion.clone());
+  const hp = human.hips.position.clone();
+  human.reset(); human.root.updateMatrixWorld(true);
+  modelsTab.drive(human);                                         // меш в Т-позе ровно по нашим костям
+  const cloud = new Map<string, number[]>();                      // физ-тело → [x,y,z, x,y,z, …] в МИРЕ
+  let verts = 0;
+  try {
+    const v = new THREE.Vector3();
+    for (const m of meshes) {
+      const pos = m.geometry.getAttribute('position'), si = m.geometry.getAttribute('skinIndex'), sw = m.geometry.getAttribute('skinWeight');
+      if (!pos || !si || !sw) continue;
+      m.updateWorldMatrix(true, false);
+      for (let i = 0; i < pos.count; i++) {
+        let bi = si.getX(i), bw = sw.getX(i);                      // ДОМИНАНТНЫЙ вес (Dominant Weight в UE): без двойного учёта
+        if (sw.getY(i) > bw) { bw = sw.getY(i); bi = si.getY(i); }
+        if (sw.getZ(i) > bw) { bw = sw.getZ(i); bi = si.getZ(i); }
+        if (sw.getW(i) > bw) { bw = sw.getW(i); bi = si.getW(i); }
+        if (bw <= 0) continue;
+        const bone = m.skeleton.bones[bi]; if (!bone) continue;    // ГРАБЛЯ 1: только скелет ЭТОГО меша
+        // ГРАБЛЯ 4: СКИН ВИСИТ НА ТВИСТ-КОСТЯХ. У CC/UE-ригов большая часть вершин руки взвешена
+        // не на `UpperArm`, а на `UpperarmTwist01/02`, которых в нашей карте нет. Без подъёма по родителям
+        // руки и ноги НЕ ОБЖИМАЛИСЬ вовсе (замер: из 21 тела получилось 10, и ни одной конечности).
+        let our = ourOf[bone.name], up: THREE.Object3D | null = bone;
+        while (!our && up) { up = up.parent; if (up) our = ourOf[up.name]; }
+        if (!our) continue;
+        const body = RAG_OF_HUMAN[our]; if (!body) continue;
+        v.fromBufferAttribute(pos, i); m.applyBoneTransform(i, v); v.applyMatrix4(m.matrixWorld);
+        let arr = cloud.get(body); if (!arr) { arr = []; cloud.set(body, arr); }
+        arr.push(v.x, v.y, v.z); verts++;
+      }
+    }
+    // Облако в МИРЕ → фрейм тела → обжатие → множители.
+    let done = 0;
+    const eU = V(), eV = V(), eA = V(), rel = V();
+    for (const pb of physBodies()) {
+      const arr = cloud.get(pb.name); if (!arr || arr.length < 30) continue;
+      const half = physCatalogHalf(pb.name); if (!half || half.u < 1e-3) continue;
+      const chain = pb.chain.length ? pb.chain : [pb.name];
+      const first = human.bones.get(chain[0]!), last = human.bones.get(chain[chain.length - 1]!) ?? first;
+      if (!first || !last) continue;
+      const org = first.getWorldPosition(V());
+      eA.set(pb.off[0], pb.off[1], pb.off[2]).applyQuaternion(last.getWorldQuaternion(Q()));
+      if (eA.lengthSq() < 1e-8) continue;
+      eA.normalize();
+      eU.set(0, 1, 0); if (Math.abs(eU.dot(eA)) > 0.9) eU.set(1, 0, 0);
+      eU.addScaledVector(eA, -eU.dot(eA)).normalize(); eV.crossVectors(eA, eU).normalize();
+      const pts: BodyPoint[] = [];
+      for (let i = 0; i < arr.length; i += 3) {
+        rel.set(arr[i]!, arr[i + 1]!, arr[i + 2]!).sub(org);
+        pts.push({ a: rel.dot(eA), u: rel.dot(eU), v: rel.dot(eV) });
+      }
+      const f = fitCollider(pts, { pct, inflate, axPct: 0.02 });   // 2% с каждого конца — против воротника на груди
+      if (!f.n || f.half < 0.2) continue;
+      const ov = (PHYS_SIZES[pb.name] ??= {});
+      // ЗАМЕР ПО ВЕРШИНАМ ОГРАНИЧИВАЕТСЯ ДЛИНОЙ КОСТИ. Скиннинг не обязан совпадать с нашей сегментацией:
+      // у CC-рига почти весь торс висит на ОДНОЙ кости груди, и облако растягивало тело с 2.82u до 9.12u,
+      // съедая только что сделанное разделение спины. Кости дают длину точно (замер Ф28.1: 0.0° и длина
+      // в длину), вершины — толщину, которую кости не знают. Коридор ±60% оставляет мешу право уточнить
+      // край там, где он честно длиннее кости (стопа за лодыжкой, череп за шеей).
+      const boneHalf = Math.hypot(pb.off[0], pb.off[1], pb.off[2]);
+      const lim = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
+      ov.len = +lim(f.half, boneHalf * 0.6, boneHalf * 1.6).toFixed(2);
+      const w = lim(f.hu / half.u, 0.3, 2.5);
+      ov.w = +w.toFixed(3);
+      ov.d = +lim((f.hv / half.v) / w, 0.3, 2.5).toFixed(3);
+      // ЦЕНТР ФОРМЫ СДВИГАЕТСЯ `pos`, А НЕ `off`: `off` задаёт ещё и разворот формы,
+      // а `anchor` — вообще сустав. Смещение считается в ФРЕЙМЕ ТЕЛА, поэтому мировую ось возвращаем обратно.
+      const d = f.center - Math.hypot(pb.off[0], pb.off[1], pb.off[2]);
+      const loc = V().set(pb.off[0], pb.off[1], pb.off[2]).normalize().multiplyScalar(d);
+      ov.pos = [+loc.x.toFixed(2), +loc.y.toFixed(2), +loc.z.toFixed(2)];
+      done++;
+    }
+    saveRagdollConfig(); savePoseKey('pe_ragdoll');
+    return { bodies: done, verts };
+  } finally {
+    for (const [n, q] of snap) human.bones.get(n)?.quaternion.copy(q);
+    human.hips.position.copy(hp); human.root.updateMatrixWorld(true);
+    rebuildRagdoll(); renderAnim();
+  }
+}
   for (const pr of PHYS_PRESETS) { const o = document.createElement('option'); o.value = pr.id; o.textContent = pr.label; o.title = pr.hint; sel.append(o); }
   { const o = document.createElement('option'); o.value = 'custom'; o.textContent = 'Свой'; sel.append(o); }
   sel.value = PHYS_SET.id;
@@ -3141,6 +3250,7 @@ function physRigSection(): void {
   const grid = el('div', 'display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px'); body.append(grid);
   for (const n of PHYS_CATALOG) {
     if (n.tier === 'opt') continue;                            // фаланги — одной галкой ниже (30 штук поштучно нечитаемы)
+let meshFitNote = '';   // Ф28.3: что ответила подгонка по мешу
     const l = el('label', 'font-size:11px;display:flex;align-items:center;gap:3px');
     const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox';
     cb.checked = on.has(n.name); cb.disabled = n.parent === null;   // таз — корень, выключить нельзя

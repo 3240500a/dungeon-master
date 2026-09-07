@@ -190,6 +190,17 @@ const _catBone = new Map(CATALOG.map((b) => [b.name, b]));
  * читать ЕГО, а не текущее `off` живого тела, иначе замер кормится собственным выходом.
  */
 export function physCatalogOff(name: string): Vec3 | undefined { return _catBone.get(name)?.off; }
+/**
+ * КАТАЛОЖНЫЕ ПОЛУОСИ тела в его собственном базисе: `along` — вдоль оси, `u`/`v` — поперёк (Ф28.3).
+ * Нужны, чтобы замер по вершинам (абсолютные юниты) перевести в МНОЖИТЕЛИ `w`/`d`, в которых хранятся размеры.
+ */
+export function physCatalogHalf(name: string): { along: number; u: number; v: number } | undefined {
+  const b = _catBone.get(name); if (!b) return undefined;
+  const ax = bodyAxis(b), s = b.shape;
+  if (s.k === 'box') return { along: s.h[ax]!, u: s.h[(ax + 1) % 3]!, v: s.h[(ax + 2) % 3]! };
+  if (s.k === 'sphere') return { along: s.r, u: s.r, v: s.r };
+  return { along: s.half, u: s.r, v: s.r };
+}
 /** Ось тела (0=X, 1=Y, 2=Z): куда оно тянется от сустава. Берётся из `off`, а если он нулевой (таз) — из самой длинной полуоси. */
 export function bodyAxis(b: { off: Vec3; shape: PhysShape }): 0 | 1 | 2 {
   const o = b.off.map(Math.abs);
