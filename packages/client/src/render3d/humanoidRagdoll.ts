@@ -426,6 +426,13 @@ export interface HumanoidRagdoll {
   setDead(d: boolean): void;
   /** Жёстко поставить тела на текущую позу-цель + обнулить скорости (спавн без перехлёста T-поза→стойка). */
   snapToPose(): void;
+  /**
+   * Ф27.6 — ПОКАЗАТЬ ФОРМЫ НА ЗАДАННОМ СКЕЛЕТЕ (отладочный оверлей редактора), а не в СЫРОМ
+   * физ-пространстве. Сырые тела НЕ заземлены и не блендятся к позе по `match`, поэтому оверлей
+   * висел ниже призрака и стоял под другим углом (замер: 1.15u по высоте, 1.2–14.8° по углу).
+   * `null` — вернуться к сырому физ-состоянию (дебаг взрывов куклы).
+   */
+  poseShapes(src: Humanoid | null): void;
   /** Окно-culling: on=false → RemoveFromPhysicsSystem (тела вон из pw.step); on=true → AddToPhysicsSystem+Activate. */
   setSimEnabled(on: boolean): void;
   update(dt: number): void;                               // ведём к цели + двигаем kinematic-таз + синк мешей
@@ -566,6 +573,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
 
   const kPos = new J.RVec3(0, 0, 0), kRot = new J.Quat(0, 0, 0, 1), force = new J.Vec3(0, 0, 0);
   const q = new THREE.Quaternion(), qi = new THREE.Quaternion(), e = new THREE.Euler(), tmp = new THREE.Vector3();
+  const _psP = new THREE.Vector3();   // Ф27.6: мир-позиция кости-анкера для `poseShapes`
   const wq = B.map(() => new THREE.Quaternion()), invQ = new THREE.Quaternion(), locQ = new THREE.Quaternion(), eb = new THREE.Euler();
   let target: (Vec3 | null)[] = B.map(() => null);
   let pinTargets: (THREE.Vector3 | null)[] = B.map(() => null);
@@ -582,6 +590,24 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
   // Мотор одной кости (индекс сустава = индекс кости − 1, т.к. таз без сустава). Off = кость свободна (дёрг виден).
   const setBoneMotor = (bi: number, on: boolean): void => conState(ragdoll.GetConstraint(bi - 1), on ? J.EMotorState_Position : J.EMotorState_Off);
 
+  /**
+   * Ф27.6 — формы на КОСТЯХ заданного рига. Фрейм тела: ПОЗИЦИЯ — первая кость его цепи
+   * (там же анкер), ПОВОРОТ — ПОСЛЕДНЯЯ (именно её мировой угол ведёт `retargetHumanoidPose`).
+   * Смещение формы крутится тем же кватернионом — ровно как в `sync()` с физ-телом.
+   */
+  function poseShapes(src: Humanoid | null): void {
+    if (!src) { sync(); return; }
+    for (let i = 0; i < meshes.length; i++) {
+      const b = B[i]!, chain = RETARGET[b.name] ?? [b.name];
+      const first = src.bones.get(chain[0]!); if (!first) continue;
+      const last = src.bones.get(chain[chain.length - 1]!) ?? first;
+      const m = meshes[i]!;
+      last.getWorldQuaternion(m.quaternion);
+      first.getWorldPosition(_psP);
+      tmp.copy(offs[i]!).applyQuaternion(m.quaternion);
+      m.position.set(_psP.x + tmp.x, _psP.y + tmp.y, _psP.z + tmp.z);
+    }
+  }
   function sync(): void {
     for (let i = 0; i < meshes.length; i++) {
       const p = pw.bi.GetPosition(ids[i]!), r = pw.bi.GetRotation(ids[i]!);
@@ -600,6 +626,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     setPoseTarget(p) { target = retargetHumanoidPose(p); },
     setPelvis(pos, quat) { if (Number.isFinite(pos.x) && Number.isFinite(pos.y) && Number.isFinite(pos.z)) { pelvisPos.copy(pos); pelvisQuat.copy(quat); } },
     setPinTargets(t) { pinTargets = t; },
+    poseShapes,
     setWeights(name, pin, muscle) { const i = RAG_INDEX[name]; if (i !== undefined) { pinW[i] = pin; muscleW[i] = muscle; } },
     setLoad(name, kg) { const i = RAG_INDEX[name]; if (i !== undefined) load[i] = kg; },
     hit(name, dx, dy, dz, power = 1) {

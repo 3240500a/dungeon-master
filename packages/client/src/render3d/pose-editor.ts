@@ -4618,6 +4618,10 @@ function loop(): void {
   else if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, JOINT_PX);
   outline.selectedObjects = selMesh ? [selMesh] : [];   // Ф5: обводка выбранной кости
   const ungroundView = groundManikinForView();   // Ф27.5: рисуем ЗАЗЕМЛЁННЫЙ манекен…
+  // Ф27.6: боксы физ-тел — НА ТОМ ЖЕ СКЕЛЕТЕ, что виден. Сырое физ-состояние не заземлено и
+  // не сбленжено к позе по `match`, поэтому оверлей висел ниже призрака на 1.15u и стоял
+  // под своим углом (1.2–14.8°) — жалоба «бокс вертикальный, а кость под углом».
+  if (showBoxes && ragdoll) ragdoll.poseShapes(physOn && ghostHuman ? ghostHuman : human);
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   ungroundView?.();                              // …и ТУТ ЖЕ возвращаем — авторская поза не тронута
   requestAnimationFrame(loop);
