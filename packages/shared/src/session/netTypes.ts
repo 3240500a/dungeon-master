@@ -181,7 +181,10 @@ export type ClientFrame =
   // Забросить незавершённый забег: персонаж считается погибшим (штраф смерти), грейс-комната чистится.
   | { t: 'abandon'; token: string; charId: string }
   | { t: 'input'; seq: number; input: PlayerInput }
-  | { t: 'cmd'; command: TownCommand }
+  // `id` — номер команды (Ф2.5). Клиент нумерует, сервер пропускает повтор уже выполненной:
+  // при обрыве связи честный клиент повторяет последнюю команду, а повтор «купить» — это
+  // лишняя вещь за лишнее золото. Поле необязательное: старые вкладки продолжают работать.
+  | { t: 'cmd'; command: TownCommand; id?: number }
   // Спуск: из города — старт забега (difficultyId=тир; runConfig=выбор алтаря: биом/шаблон/модификаторы);
   // в подземелье — спуск по ребру графа (targetNodeId).
   | { t: 'descend'; difficultyId?: string; targetNodeId?: string; runConfig?: { biomeId?: string; templateId?: string; modifiers?: string[] } }

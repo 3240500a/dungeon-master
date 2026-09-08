@@ -35,7 +35,14 @@ export async function getUserById(id: string): Promise<UserRow | null> {
 }
 
 // ── Сессии ─────────────────────────────────────────────────────────────────────
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
+/**
+ * Ф3.4: срок жизни токена. Было 30 дней без продления — украденный токен работал месяц.
+ * Стало 7 дней, но СКОЛЬЗЯЩИЕ: каждое использование отодвигает срок, поэтому тот, кто играет,
+ * не разлогинивается никогда, а брошенный токен протухает за неделю.
+ */
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Продлеваем не чаще раза в сутки: иначе на каждый вход в комнату шла бы лишняя запись. */
+const SESSION_RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /** Заводит сессию, возвращает opaque-токен (32 байта hex). */
 export async function createSession(userId: string, ttlMs = SESSION_TTL_MS): Promise<string> {
@@ -51,9 +58,24 @@ export async function createSession(userId: string, ttlMs = SESSION_TTL_MS): Pro
  * в комнату), а чистка — дело `sweepSessions` на старте.
  */
 export async function getSession(token: string): Promise<string | null> {
-  const r = await q1<{ userId: string }>(
-    'SELECT user_id AS "userId" FROM sessions WHERE token = $1 AND expires_at > now()', [token]);
-  return r?.userId ?? null;
+  const r = await q1<{ userId: string; renew: boolean }>(
+    `SELECT user_id AS "userId", expires_at < now() + $2 * interval '1 millisecond' AS renew
+     FROM sessions WHERE token = $1 AND expires_at > now()`,
+    [token, SESSION_TTL_MS - SESSION_RENEW_AFTER_MS]);
+  if (!r) return null;
+  if (r.renew) {
+    await q(`UPDATE sessions SET expires_at = now() + $2 * interval '1 millisecond' WHERE token = $1`,
+      [token, SESSION_TTL_MS]);
+  }
+  return r.userId;
+}
+/**
+ * Отозвать ВСЕ сессии пользователя. Нужен на смене пароля и на кнопку «выйти везде»:
+ * иначе увод токена не лечится ничем, кроме ожидания срока.
+ */
+export async function deleteSessionsOfUser(userId: string): Promise<number> {
+  const rows = await q<{ token: string }>('DELETE FROM sessions WHERE user_id = $1 RETURNING token', [userId]);
+  return rows.length;
 }
 /** Убирает протухшие сессии. Зовётся на старте — таблица не должна расти вечно. */
 export async function sweepSessions(): Promise<number> {

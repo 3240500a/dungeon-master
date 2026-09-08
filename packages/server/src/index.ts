@@ -12,6 +12,7 @@ import {
   listCharacters, listAllCharacters, getCharacter, createCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions,
+  deleteSessionsOfUser,
 } from './db/db.js';
 import { initSchema, closePool } from './db/pool.js';
 import { attachWsServer } from './net/wsServer.js';
@@ -70,6 +71,15 @@ async function boot(): Promise<void> {
 
   const gone = await sweepSessions();
   if (gone) console.log(`[dm-server] убрано протухших сессий: ${gone}`);
+
+  // Ф3.4: в бою трафик обязан идти по TLS. Сам процесс слушает голый HTTP всегда — шифрование
+  // терминирует nginx перед ним, и определить это изнутри нельзя. Поэтому требуем ЯВНОГО
+  // подтверждения: без него в проде остаётся громкое предупреждение, а не тихая уверенность,
+  // что «наверное, там прокси».
+  if (process.env.NODE_ENV === 'production' && process.env.DM_BEHIND_TLS !== '1') {
+    console.warn('[dm-server] ВНИМАНИЕ: не подтверждён TLS перед сервером. Токены и игровой трафик'
+      + ' могут идти открытым текстом. Поставьте DM_BEHIND_TLS=1, если снаружи стоит https-прокси.');
+  }
 }
 
 const MAX_CHARS = 5;
@@ -375,6 +385,18 @@ app.post('/api/login', ah(async (req, res) => {
   }
   limits.login.reset(ip);
   res.json({ token: await createSession(user.id), userId: user.id, username: user.username });
+}));
+
+/**
+ * Ф3.4: выйти на ВСЕХ устройствах. Единственный способ обезвредить уведённый токен, не дожидаясь
+ * его срока. Сюда же должна звать смена пароля, когда она появится: пароль сменили, а старые
+ * сессии продолжают играть — это не защита.
+ */
+app.post('/api/logout-all', ah(async (req, res) => {
+  const userId = await requireAuth(req, res); if (!userId) return;
+  const n = await deleteSessionsOfUser(userId);
+  console.log(`[dm-server] отозваны все сессии пользователя ${userId}: ${n}`);
+  res.json({ ok: true, revoked: n });
 }));
 
 app.post('/api/logout', ah(async (req, res) => {

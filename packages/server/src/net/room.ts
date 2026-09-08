@@ -17,6 +17,7 @@ import { putCharacter, putCharacterWithStash } from '../db/db.js';
 import { tickScheduler, TICK_MS, type Tickable } from './scheduler.js';
 import { counters } from './metrics.js';
 import { loadAccountStash, saveAccountStash } from './accountStash.js';
+import { cmdAllowedIn, CommandDedup } from './guard.js';
 
 const TICK_DT = TICK_MS / 1000;
 /**
@@ -66,6 +67,8 @@ interface Client {
   saveVersion: number;
   /** Хвост очереди записей сейва (Ф2): записи одного персонажа идут строго друг за другом. */
   saving: Promise<void>;
+  /** Номера уже выполненных команд (Ф2.5) — повтор после обрыва связи не выполняется дважды. */
+  dedup: CommandDedup;
 }
 
 /** Выбор «алтаря» при старте забега (биом/шаблон/модификаторы) — из кадра `descend` города. */
@@ -186,7 +189,7 @@ export class Room implements Tickable {
     if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
 
     const pid = `p_${randomUUID()}`;
-    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), baselined: false, delta: new SnapshotDelta(), visible: new Set() });
+    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), dedup: new CommandDedup(), baselined: false, delta: new SnapshotDelta(), visible: new Set() });
     this.session.addPlayer(pid, save, spawnAt);
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
     void this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
@@ -307,10 +310,28 @@ export class Room implements Tickable {
   }
 
   // ── Команды города ──────────────────────────────────────────────────────────
-  async handleCmd(pid: string, command: TownCommand): Promise<void> {
+  async handleCmd(pid: string, command: TownCommand, id?: number): Promise<void> {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (!c || !p) return;
+
+    // Ф2.5: повтор уже выполненной команды. Молча пропускаем, но сейв клиенту дошлём —
+    // повтор случается как раз тогда, когда клиент не уверен, что дошло, и ему нужен ответ.
+    if (!c.dedup.accept(id)) {
+      counters.cmdDuplicate++;
+      this.sendSave(pid);
+      return;
+    }
+
+    // Ф3.1: городская команда, присланная не из города. Честный клиент такого не шлёт —
+    // лавка, кузница и сундук открываются только подходом к объекту города.
+    if (!cmdAllowedIn(command.cmd, this.area)) {
+      counters.cmdOutOfPlace++;
+      console.warn(`[room ${this.code}] команда «${command.cmd}» вне города (область ${this.area}), игрок ${p.save.charId}`);
+      this.send(c.ws, { t: 'error', code: 'cmd', msg: 'Это доступно только в городе' });
+      return;
+    }
+
     const save = p.save;
     let r: { ok: boolean; reason?: string } = { ok: false, reason: 'неизвестная команда' };
     switch (command.cmd) {

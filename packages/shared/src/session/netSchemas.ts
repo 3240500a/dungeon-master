@@ -72,7 +72,7 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('join'), token, charId, roomCode: z.string().max(8).optional(), fresh: z.boolean().optional(), resume: z.boolean().optional() }),
   z.object({ t: z.literal('runStatus'), token, charId }),
   z.object({ t: z.literal('abandon'), token, charId }),
-  z.object({ t: z.literal('cmd'), command: townCommandSchema }),
+  z.object({ t: z.literal('cmd'), command: townCommandSchema, id: z.number().int().nonnegative().optional() }),
   z.object({
     t: z.literal('descend'),
     difficultyId: z.string().max(32).optional(),

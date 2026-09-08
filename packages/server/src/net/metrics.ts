@@ -37,6 +37,10 @@ export const counters = {
   droppedTicks: 0,
   /** Записей сейва, отклонённых по версии (Ф0.3). Ноль на исправном сервере. */
   saveConflicts: 0,
+  /** Команд отклонено проверкой места (Ф3.1): городская команда прислана не из города. */
+  cmdOutOfPlace: 0,
+  /** Команд отброшено как повтор по номеру (Ф2.5). */
+  cmdDuplicate: 0,
   /** Выселено живых сессий (Ф0.3): реконнекты и попытки двойного входа. */
   sessionsEvicted: 0,
   /** Шагов симуляции выполнено — из этого считается фактическая частота мира. */
@@ -107,6 +111,8 @@ export function renderMetrics(): string {
   g('dm_rate_limited_total', 'Отказов лимитеров частоты', counters.rateLimited, 'counter');
   g('dm_save_conflicts_total', 'Записей сейва отклонено по версии (ИНЦИДЕНТ, если растёт)', counters.saveConflicts, 'counter');
   g('dm_sessions_evicted_total', 'Живых сессий выселено при повторном входе', counters.sessionsEvicted, 'counter');
+  g('dm_cmd_out_of_place_total', 'Городских команд прислано не из города (Ф3.1)', counters.cmdOutOfPlace, 'counter');
+  g('dm_cmd_duplicate_total', 'Команд отброшено как повтор по номеру (Ф2.5)', counters.cmdDuplicate, 'counter');
 
   loop.reset();
   return lines.join('\n') + '\n';

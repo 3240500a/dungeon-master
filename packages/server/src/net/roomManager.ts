@@ -208,7 +208,7 @@ export class RoomManager {
     const conn = this.conns.get(ws);
     if (!conn) return;
     switch (frame.t) {
-      case 'cmd': await conn.room.handleCmd(conn.pid, frame.command); break;
+      case 'cmd': await conn.room.handleCmd(conn.pid, frame.command, frame.id); break;
       case 'descend': conn.room.descend(conn.pid, frame.difficultyId, frame.targetNodeId, frame.runConfig); break;
       case 'arena': conn.room.enterArena(conn.pid); break;
       case 'return': conn.room.returnTown(conn.pid); break;
