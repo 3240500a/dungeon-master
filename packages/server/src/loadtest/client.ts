@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { applyWorldDelta, worldChecksum, type ClientFrame, type ServerFrame, type WorldSnapshot } from '@dm/shared';
+import { applyWorldDelta, worldChecksum, decodeWorldFrame, emptySnapshot, WIRE_FULL, type ClientFrame, type ServerFrame, type WorldSnapshot } from '@dm/shared';
 
 /**
  * Бот-клиент нагрузочного стенда: регистрация → персонаж → комната → спуск → ввод с частотой тика.
@@ -82,7 +82,7 @@ export class LoadBot {
       ws.once('open', () => res());
       ws.once('error', rej);
     });
-    ws.on('message', (data: Buffer) => this.onMessage(data, group));
+    ws.on('message', (data: Buffer, isBinary: boolean) => this.onMessage(data, group, isBinary));
 
     // Не-хост ждёт, пока хост создаст комнату и сообщит её код.
     if (!isHost) {
@@ -114,25 +114,26 @@ export class LoadBot {
     this.stats.deltaMismatches = 0; this.stats.deltaChecks = 0;
   }
 
-  private onMessage(data: Buffer, group: number): void {
+  private onMessage(data: Buffer, group: number, isBinary: boolean): void {
     this.stats.bytes += data.length;
+    // Ф1.4: кадры мира двоичные, управляющие — текстовый JSON.
+    if (isBinary) {
+      this.stats.snapshots++;
+      const f = decodeWorldFrame(new Uint8Array(data));
+      const base = f.kind === WIRE_FULL ? emptySnapshot() : this.world;
+      if (!base) return;
+      this.world = applyWorldDelta(base, f.delta);
+      // Сверка на ТОМ ЖЕ тике: сумма приехала вместе с кадром.
+      this.stats.deltaChecks++;
+      if (worldChecksum(this.world) !== f.sum) {
+        this.stats.deltaMismatches++;
+      }
+      return;
+    }
     let frame: ServerFrame;
     try { frame = JSON.parse(data.toString()) as ServerFrame; } catch { return; }
     switch (frame.t) {
-      case 'snapshot':
-        this.stats.snapshots++;
-        this.world = frame.snap;
-        break;
-      case 'snapDelta':
-        this.stats.snapshots++;
-        if (this.world) {
-          this.world = applyWorldDelta(this.world, frame.delta);
-          // Сверка НА ТОМ ЖЕ ТИКЕ: сумма приехала вместе с дельтой. Сравнивать реконструкцию
-          // со следующим полным кадром нельзя — он описывает более поздний тик.
-          this.stats.deltaChecks++;
-          if (worldChecksum(this.world) !== frame.sum) this.stats.deltaMismatches++;
-        }
-        break;
+
       case 'pong': {
         const at = this.pingSentAt.get(frame.id);
         if (at != null) { this.stats.rttSum += Date.now() - at; this.stats.rttCount++; this.pingSentAt.delete(frame.id); }

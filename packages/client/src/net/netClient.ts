@@ -1,4 +1,4 @@
-import type { ClientFrame, ServerFrame } from '@dm/shared';
+import { decodeWorldFrame, applyWorldDelta, emptySnapshot, WIRE_FULL, type ClientFrame, type ServerFrame, type WorldSnapshot } from '@dm/shared';
 
 type Handler = (frame: ServerFrame) => void;
 
@@ -19,7 +19,14 @@ export class NetClient {
   private pingId = 0;
   private pingSentAt = new Map<number, number>();
   private _rtt = -1;
-  private _netMs = 0;   // сглаженная стоимость обработки кадра сервера (JSON.parse + диспатч) на главном потоке — профиль спайков снапшота
+  private _netMs = 0;
+  /** Ф1.4: своя копия мира — к ней применяются двоичные дельты. */
+  private world?: WorldSnapshot;
+  /** Контрольная сумма последнего кадра (Ф1.3) — для диагностики расхождений. */
+  private lastSum = 0;
+
+  /** Сумма, пришедшая с последним кадром мира. Совпадение с `worldChecksum` своей копии = всё сошлось. */
+  get worldSum(): number { return this.lastSum; }   // сглаженная стоимость обработки кадра сервера (JSON.parse + диспатч) на главном потоке — профиль спайков снапшота
 
   /** Последний измеренный RTT (мс), −1 если ещё не измерен / нет соединения. */
   get rtt(): number { return this._rtt; }
@@ -28,13 +35,27 @@ export class NetClient {
 
   connect(url = wsUrl()): void {
     const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';   // Ф1.4: кадры мира приходят двоичными
     this.ws = ws;
     ws.onopen = () => { this.startPing(); for (const cb of this.openCbs) cb(); };
     ws.onclose = () => { this.stopPing(); this._rtt = -1; for (const cb of this.closeCbs) cb(); };
     ws.onmessage = (ev) => {
       const _t = performance.now();
       let frame: ServerFrame;
-      try { frame = JSON.parse(ev.data as string) as ServerFrame; } catch { return; }
+      if (typeof ev.data !== 'string') {
+        // Ф1.4: двоичный кадр мира. Раскодируем, применяем к своей копии и отдаём сцене
+        // в привычном виде `snapshot` — весь код выше по стеку об этом не знает.
+        const f = decodeWorldFrame(new Uint8Array(ev.data as ArrayBuffer));
+        const base = f.kind === WIRE_FULL ? emptySnapshot() : this.world;
+        if (!base) return;                       // дельта до первого полного кадра — ждём его
+        this.world = applyWorldDelta(base, f.delta);
+        this.lastSum = f.sum;
+        frame = { t: 'snapshot', snap: this.world };
+        for (const h of this.handlers.get('snapshot') ?? []) h(frame);
+        this._netMs += (performance.now() - _t - this._netMs) * 0.08;
+        return;
+      }
+      try { frame = JSON.parse(ev.data) as ServerFrame; } catch { return; }
       if (frame.t === 'pong') { // транспортный кадр — не отдаём в обработчики сцены (и не мерим netMs)
         const sent = this.pingSentAt.get(frame.id);
         if (sent != null) { this._rtt = Math.round(performance.now() - sent); this.pingSentAt.delete(frame.id); }
@@ -67,6 +88,8 @@ export class NetClient {
   }
   onOpen(cb: () => void): void { this.openCbs.push(cb); }
   onClose(cb: () => void): void { this.closeCbs.push(cb); }
+  /** Сбросить копию мира (смена области/переподключение) — следующий полный кадр задаст новую. */
+  resetWorld(): void { this.world = undefined; }
 
   /** Снять все обработчики типа кадра (сцена пере-подписывается при каждом входе — иначе дубли). */
   off<T extends ServerFrame['t']>(t: T): void { this.handlers.delete(t); }

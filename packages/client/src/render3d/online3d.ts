@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, applyWorldDelta, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
+import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { resolveBodyProfile, resolveBoneScale, resolveBoneOffsets } from './modelSkin.js';
@@ -332,8 +332,6 @@ export async function startOnline3d(): Promise<void> {
   const projMeshes = new Map<number, THREE.Mesh>();
   const dropMeshes = new Map<number, THREE.Object3D>();
   let latest: WorldSnapshotFull | undefined;
-  /** Последняя ДИНАМИКА с сервера — база для применения дельт (Ф1.3). */
-  let lastDynamic: WorldSnapshot | undefined;
   /**
    * Ф1.1: реестр СТАТИКИ игроков (имя, класс, макс. HP, радиус, оружие, броня). Сервер шлёт её
    * отдельно — при входе и при изменении, — а снапшот несёт только динамику. Сливаем здесь,
@@ -476,7 +474,6 @@ export async function startOnline3d(): Promise<void> {
     // renderWorld отработает по старому снапшоту: новые куклы не в seenM → чистка сирот их снесёт (→ невидимые
     // монстры, миникарта из снапшота их всё равно рисует). Ждём первый снапшот новой области.
     latest = undefined;
-    lastDynamic = undefined;
     // снести прошлую область
     for (const a of peers.values()) disposeActor(a); peers.clear();
     for (const a of monsters.values()) disposeActor(a); monsters.clear();
@@ -903,13 +900,8 @@ export async function startOnline3d(): Promise<void> {
   }
 
   // ── Сетевые обработчики (данные + жизненный цикл) ────────────────────────────
-  // Ф1.3: держим ДИНАМИКУ отдельно (к ней применяются дельты) и слитый вид для рендера.
-  app.net.on('snapshot', (f) => { lastDynamic = f.snap; latest = mergeSnapshot(f.snap); });
-  app.net.on('snapDelta', (f) => {
-    if (!lastDynamic) return; // дельта до первого полного кадра — игнорируем, сервер его пришлёт
-    lastDynamic = applyWorldDelta(lastDynamic, f.delta);
-    latest = mergeSnapshot(lastDynamic);
-  });
+  // Ф1.4: дельты применяет транспорт (`netClient`) — сюда приходит уже собранный мир.
+  app.net.on('snapshot', (f) => { latest = mergeSnapshot(f.snap); });
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;

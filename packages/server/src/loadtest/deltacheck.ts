@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { applyWorldDelta, worldChecksum, type ServerFrame, type WorldSnapshot } from '@dm/shared';
+import { applyWorldDelta, worldChecksum, decodeWorldFrame, emptySnapshot, WIRE_FULL, type ServerFrame, type WorldSnapshot } from '@dm/shared';
 
 /**
  * Диагностика дельт (Ф1.3): один бот применяет дельты и при первом расхождении с полным
@@ -61,38 +61,37 @@ async function main(): Promise<void> {
   let maxDist = 0;
 
   ws.on('open', () => ws.send(JSON.stringify({ t: 'join', token, charId: character.charId, fresh: true })));
-  ws.on('message', (data: Buffer) => {
-    const f = JSON.parse(data.toString()) as ServerFrame;
-    if (f.t === 'joined') { myId = f.playerId; } 
-    if (f.t === 'joined') setTimeout(() => ws.send(JSON.stringify({ t: 'descend', difficultyId: 'normal' })), 1200);
-    else if (f.t === 'voteStart') ws.send(JSON.stringify({ t: 'vote', accept: true }));
-    else if (f.t === 'snapDelta') {
-      if (!world) return;
-      world = applyWorldDelta(world, f.delta);
+  ws.on('message', (data: Buffer, isBinary: boolean) => {
+    if (isBinary) {
+      const wf = decodeWorldFrame(new Uint8Array(data));
+      const base = wf.kind === WIRE_FULL ? emptySnapshot() : world;
+      if (!base) return;
+      world = applyWorldDelta(base, wf.delta);
       applied++;
       checks++;
       const me = world.players.find((p) => p.id === myId);
       if (me) {
         maxSeen = Math.max(maxSeen, world.monsters.length);
-        for (const m of world.monsters) {
-          maxDist = Math.max(maxDist, Math.hypot(m.x - me.x, m.y - me.y));
-        }
+        for (const m of world.monsters) maxDist = Math.max(maxDist, Math.hypot(m.x - me.x, m.y - me.y));
       }
-      if (worldChecksum(world) !== f.sum) {
+      if (worldChecksum(world) !== wf.sum) {
         bad++;
-        if (bad <= 5) console.log(`расхождение #${bad} на тике ${f.delta.t} (дельт с полного кадра: ${applied})`);
-        pending = world; // сверим состав по ближайшему полному кадру — покажет, ЧТО именно уехало
+        if (bad <= 3) pending = world;   // сверим с эталоном того же тика (DM_WIRE_VERIFY=1)
+        if (bad <= 3) console.log(`расхождение #${bad} на тике ${wf.delta.t} (кадров с полного: ${applied}), дельта: ${JSON.stringify(wf.delta).slice(0, 400)}`);
       }
+      if (wf.kind === WIRE_FULL) applied = 0;
+      return;
     }
-    else if (f.t === 'snapshot') {
-      if (pending) {
-        const diff = firstDiff(pending, f.snap);
-        console.log(`  ближайший полный кадр (тик позже) отличается так: ${diff ?? 'состав совпадает, разошлись только величины'}`);
-        pending = undefined;
-      }
-      world = f.snap;
-      applied = 0;
+    const f = JSON.parse(data.toString()) as ServerFrame;
+    if (f.t === 'snapshot' && pending) {
+      // Эталон ТОГО ЖЕ тика (DM_WIRE_VERIFY=1) — показывает, что именно разошлось.
+      console.log(`  что разошлось: ${firstDiff(pending, f.snap) ?? 'состав и поля совпали (разница только в сумме)'}`);
+      pending = undefined;
+      return;
     }
+    if (f.t === 'joined') { myId = f.playerId; } 
+    if (f.t === 'joined') setTimeout(() => ws.send(JSON.stringify({ t: 'descend', difficultyId: 'normal' })), 1200);
+    else if (f.t === 'voteStart') ws.send(JSON.stringify({ t: 'vote', accept: true }));
   });
 
   // Двигаемся и бьём — иначе мир статичен и дельты пустые.

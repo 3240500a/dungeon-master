@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
-  GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum,
+  GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
   buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
@@ -43,6 +43,8 @@ const FULL_SNAPSHOT_MS = 5_000;
 const AOI_RADIUS = Math.max(0, Number(process.env.DM_AOI_RADIUS ?? 1000));
 /** Выход из области шире входа: без гистерезиса сущности на кромке мигали бы каждый кадр. */
 const AOI_EXIT_MULT = 1.2;
+/** Отладка провода (Ф1.4): дублировать кадр текстом для точной сверки. Только для стенда. */
+const WIRE_VERIFY = process.env.DM_WIRE_VERIFY === '1';
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARENA_SIZE клеток
@@ -789,17 +791,22 @@ export class Room implements Tickable {
       }
       c.visible = new Set(view.monsters.map((m) => m.id));
 
+      // Ф1.4: кадры мира уходят ДВОИЧНЫМИ. WebSocket сам различает текст и бинарь, поэтому
+      // управляющие кадры остаются JSON и своего поля типа не требуют.
+      const sum = worldChecksum(view);
+      // Отладка провода: рядом с двоичным кадром шлём эталон ТОГО ЖЕ тика текстом, чтобы
+      // диагностика могла сравнить поле за полем. Только по явной переменной окружения.
+      if (WIRE_VERIFY) c.ws.send(JSON.stringify({ t: 'snapshot', snap: view } satisfies ServerFrame));
       if (!c.baselined || forceFull) {
-        const msg = JSON.stringify({ t: 'snapshot', snap: view } satisfies ServerFrame);
-        c.ws.send(msg);
+        const buf = encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(view), sum });
+        c.ws.send(buf, { binary: true });
         c.delta.prime(view);
         c.baselined = true;
-        bytes += msg.length;
+        bytes += buf.length;
       } else {
-        const delta = c.delta.next(view)!;
-        const msg = JSON.stringify({ t: 'snapDelta', delta, sum: worldChecksum(view) } satisfies ServerFrame);
-        c.ws.send(msg);
-        bytes += msg.length;
+        const buf = encodeWorldFrame({ kind: WIRE_DELTA, delta: c.delta.next(view)!, sum });
+        c.ws.send(buf, { binary: true });
+        bytes += buf.length;
       }
       sent++;
     }

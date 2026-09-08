@@ -4,6 +4,7 @@ import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { FloorInit, WorldSnapshot, PeerInfo } from './netTypes.js';
 import type { PlayerEntity } from '../world/state.js';
 import { weapon3dKeyFromEquipment } from './weapon3d.js';
+import { posQ, posU, angQ, angU } from './wire.js';
 
 /**
  * Чистая сериализация мира в сетевые кадры (без Phaser/DOM). Снапшот — только
@@ -36,25 +37,44 @@ export function dominantType(pk: DamagePacket): DamageType {
 }
 
 /** Снапшот мира за тик: игроки/монстры/снаряды/дропы (по id, только рантайм-поля). */
+/**
+ * Ф1.4: КВАНТОВАНИЕ делается здесь, при сборке снапшота, а не в кодеке. Смысл в том, чтобы
+ * сервер оперировал ровно теми значениями, которые переживут провод: иначе контрольная сумма
+ * (Ф1.3) считалась бы по одним числам, а клиент восстанавливал бы другие, и сверка ловила бы
+ * расхождения, которых нет. Побочный выигрыш: дрожь ниже четверти пикселя больше не порождает
+ * патчей в дельте.
+ */
+const qp = (v: number): number => posU(posQ(v));
+const qa = (a: number): number => angU(angQ(a));
+/**
+ * Пул (HP/мана/выносливость) на провод: целое и НЕ отрицательное.
+ *
+ * Зажим именно здесь, а не в кодеке: при добивании HP уходит в минус (перебор урона), кодек
+ * пишет пулы беззнаковыми и зажимал бы их у себя — тогда сервер считал бы контрольную сумму
+ * по −2, а клиент восстанавливал 0, и сверка (Ф1.3) ловила бы расхождение. Отрицательное HP —
+ * внутренняя деталь боя, клиенту она не нужна ни для полоски, ни для чего-то ещё.
+ */
+const qpool = (v: number): number => Math.max(0, Math.round(v));
+
 export function serializeWorld(w: WorldState): WorldSnapshot {
   return {
     tick: w.tick,
     players: Object.values(w.players).map((p) => ({
       id: p.id,
-      x: p.pos.x, y: p.pos.y, facing: p.facing,
-      hp: p.hp, mana: p.mana, stamina: p.stamina, alive: p.alive,
+      x: qp(p.pos.x), y: qp(p.pos.y), facing: qa(p.facing),
+      hp: qpool(p.hp), mana: qpool(p.mana), stamina: qpool(p.stamina), alive: p.alive,
       debuffs: p.debuffs, toggles: p.toggles,
       inCombat: p.combatTimer > 0,
     })),
     monsters: w.monsters.map((m) => ({
-      id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,
-      hp: m.hp, maxHp: m.maxHp, alive: m.alive,
+      id: m.id, x: qp(m.pos.x), y: qp(m.pos.y), facing: qa(m.facing),
+      hp: qpool(m.hp), maxHp: qpool(m.maxHp), alive: m.alive,
       stun: m.stunTimer > 0, downed: m.downTimer > 0, debuffs: m.debuffs, r: m.radius, aiState: m.aiState,
     })),
     projectiles: w.projectiles.map((pr) => ({
-      id: pr.id, x: pr.pos.x, y: pr.pos.y, owner: pr.owner, dom: dominantType(pr.packet), r: pr.radius,
+      id: pr.id, x: qp(pr.pos.x), y: qp(pr.pos.y), owner: pr.owner, dom: dominantType(pr.packet), r: pr.radius,
     })),
-    drops: w.drops.map((d) => ({ id: d.id, x: d.pos.x, y: d.pos.y, item: d.item })),
+    drops: w.drops.map((d) => ({ id: d.id, x: qp(d.pos.x), y: qp(d.pos.y), item: d.item })),
   };
 }
 

@@ -90,7 +90,7 @@ async function main(): Promise<void> {
   трафик вниз    ${kbPerClient.toFixed(0)} КБ/с на клиента · ${(bytes / dt / 1048576).toFixed(2)} МБ/с всего
   живых          ${alive}/${N}                          ${verdict(okAlive)}
   ошибок         ${errors.length}                              ${verdict(okErr)}
-  дельты         ${checks} сверок, ${mismatches} расхождений       ${verdict(okDelta)}
+  дельты         ${checks} сверок, ${mismatches} расхождений  ${verdict(okDelta)}
 ────────────────────────────────────────────────────────`);
   if (errors.length) {
     const uniq = [...new Set(errors)].slice(0, 5);
