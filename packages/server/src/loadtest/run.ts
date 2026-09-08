@@ -25,7 +25,11 @@ const SECS = num('secs', 30);
 const GROUP = num('group', 1);
 const INPUT_HZ = num('hz', 30);
 const DESCEND = bool('descend', true);
-const TICK_HZ = num('tickHz', 30);      // норма частоты мира, с которой сравниваем
+// Норма частоты СНАПШОТОВ. С Ф1.5 она развязана с частотой симуляции: мир считается 30 раз
+// в секунду, а состояние рассылается 20 (см. DM_SNAPSHOT_HZ). Стенд видит именно снапшоты,
+// поэтому и сравнивать надо с их частотой — фактический тик симуляции смотрится в /metrics
+// (`dm_tick_hz`), стенду он не виден в принципе.
+const SNAP_HZ = num('snapHz', Number(process.env.DM_SNAPSHOT_HZ ?? 20));
 const RTT_LIMIT = num('rttLimit', 50);  // порог RTT медианы, мс (локально всё, что выше — уже проблема)
 
 /** Пороги вердикта: тикрейт не ниже 95 % нормы, RTT в пределах, никто не отвалился, ошибок нет. */
@@ -68,7 +72,7 @@ async function main(): Promise<void> {
   const tickRate = snaps / dt / Math.max(alive, 1);
   const kbPerClient = bytes / dt / 1024 / Math.max(alive, 1);
 
-  const okTick = tickRate >= TICK_HZ * 0.95;
+  const okTick = tickRate >= SNAP_HZ * 0.95;
   const okRtt = median <= RTT_LIMIT;
   const okAlive = alive === bots.length && bots.length === N;
   const okErr = errors.length === 0;
@@ -76,7 +80,7 @@ async function main(): Promise<void> {
   console.log(`
 ────────────────────────────────────────────────────────
 ИТОГ   ${N} ботов, пати по ${GROUP}, ${dt.toFixed(0)} с
-  частота мира   ${tickRate.toFixed(1)} Гц   (норма ${TICK_HZ})        ${verdict(okTick)}
+  снапшотов/с    ${tickRate.toFixed(1)}   (норма ${SNAP_HZ})        ${verdict(okTick)}
   RTT медиана    ${median.toFixed(1)} мс   (порог ${RTT_LIMIT})        ${verdict(okRtt)}
   RTT p95        ${p95.toFixed(1)} мс
   трафик вниз    ${kbPerClient.toFixed(0)} КБ/с на клиента · ${(bytes / dt / 1048576).toFixed(2)} МБ/с всего

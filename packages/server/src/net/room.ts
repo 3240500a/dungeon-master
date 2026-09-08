@@ -15,9 +15,21 @@ import {
 } from '@dm/shared';
 import { putCharacter, putCharacterWithStash } from '../db/db.js';
 import { tickScheduler, TICK_MS, type Tickable } from './scheduler.js';
+import { counters } from './metrics.js';
 import { loadAccountStash, saveAccountStash } from './accountStash.js';
 
 const TICK_DT = TICK_MS / 1000;
+/**
+ * Ф1.5: частота СНАПШОТОВ развязана с частотой симуляции. Мир считается 30 раз в секунду
+ * (иначе меняется физика боя), а состояние рассылается 20 — цена кадра не зависит от его
+ * размера, поэтому расход транспорта линеен по числу отправок, и треть из них лишняя:
+ * клиент всё равно рисует чужие сущности с интерполяцией в прошлом (INTERP_DELAY 100 мс,
+ * то есть два интервала при 20 Гц — запаса хватает).
+ *
+ * Меняется переменной `DM_SNAPSHOT_HZ` — на случай, если понадобится вернуть 30 Гц без сборки.
+ */
+const SNAPSHOT_HZ = Math.max(5, Math.min(30, Number(process.env.DM_SNAPSHOT_HZ ?? 20)));
+const SNAPSHOT_DT = 1 / SNAPSHOT_HZ;
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARENA_SIZE клеток
@@ -76,6 +88,8 @@ export class Room implements Tickable {
   // Ф0.10: у каждой комнаты своя фаза автосейва. Иначе все комнаты, созданные примерно
   // одновременно, сохраняются в один и тот же оборот цикла — сотня синхронных записей подряд.
   private lastSaveAt = Date.now() - Math.floor(Math.random() * AUTOSAVE_MS);
+  /** Накопитель времени до следующего снапшота (Ф1.5). Стартовая фаза случайна — как у автосейва. */
+  private snapAcc = Math.random() * SNAPSHOT_DT;
   private vote: { kind: 'descend' | 'town' | 'arena'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
   // Активный забег v2: конфиг (сид/биом/шаблон/тир), регенерируемый граф и текущий узел.
   private runConfig: RunConfig | null = null;
@@ -595,7 +609,15 @@ export class Room implements Tickable {
     const inputs: Record<string, PlayerInput> = {};
     for (const [pid, c] of this.clients) inputs[pid] = c.input;
     const events = this.session.tick(TICK_DT, inputs);
-    if (emit) this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world, this.cfg.get('items.base')) });
+    counters.ticks++;
+    // Снапшот шлём по СВОЕЙ частоте (Ф1.5) и только на последнем шаге пачки догона (Ф0.2):
+    // промежуточные состояния клиенту не нужны, ему нужно актуальное.
+    this.snapAcc += TICK_DT;
+    if (this.snapAcc >= SNAPSHOT_DT) {
+      this.snapAcc -= SNAPSHOT_DT;
+      if (this.snapAcc > SNAPSHOT_DT) this.snapAcc = 0; // сильно отстали — не копим долг кадров
+      if (emit) this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world, this.cfg.get('items.base')) });
+    }
     if (Date.now() - this.lastSaveAt >= AUTOSAVE_MS) this.persistAll(); // периодический автосейв прогресса
     if (this.wipeAt && Date.now() >= this.wipeAt) this.enterTown(); // вайп → авто-возврат в город
     if (this.area === 'arena' && this.arenaRespawns.size) this.tickArenaRespawns(); // авто-возрождение в PvP
@@ -671,6 +693,7 @@ export class Room implements Tickable {
       ? putCharacterWithStash(p.save.charId, c.userId, p.save, c.saveVersion, stash)
       : putCharacter(p.save.charId, c.userId, p.save, c.saveVersion);
     if (next === null) {
+      counters.saveConflicts++;
       console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв ${p.save.charId} (версия ${c.saveVersion}) — этот процесс держит копию, которую кто-то обогнал`);
       return false;
     }
@@ -682,6 +705,7 @@ export class Room implements Tickable {
   private persistDisconnected(charId: string, info: Disconnected): boolean {
     const next = putCharacter(charId, info.userId, info.save, info.saveVersion);
     if (next === null) {
+      counters.saveConflicts++;
       console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв отключённого ${charId} (версия ${info.saveVersion})`);
       return false;
     }
@@ -747,7 +771,9 @@ export class Room implements Tickable {
   }
   private broadcast(frame: ServerFrame): void {
     const msg = JSON.stringify(frame);
-    for (const c of this.clients.values()) if (c.ws.readyState === c.ws.OPEN) c.ws.send(msg);
+    let sent = 0;
+    for (const c of this.clients.values()) if (c.ws.readyState === c.ws.OPEN) { c.ws.send(msg); sent++; }
+    if (frame.t === 'snapshot') { counters.snapshotFrames += sent; counters.snapshotBytes += msg.length * sent; }
   }
   private broadcastExcept(pid: string, frame: ServerFrame): void {
     const msg = JSON.stringify(frame);

@@ -15,6 +15,7 @@ import {
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
 import { limits, clientIp } from './net/rateLimit.js';
+import { renderMetrics } from './net/metrics.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 
@@ -59,6 +60,17 @@ const MAX_CHARS = 5;
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+/**
+ * Ф1.7: метрики для мониторинга. Отдаём ТОЛЬКО локально — состав комнат, число игроков и
+ * счётчики нарушений это внутренняя информация, наружу её выставлять незачем. Prometheus
+ * ходит с той же машины или через прокси, который сам решает, кого пускать.
+ */
+app.get('/metrics', (req, res) => {
+  const ip = req.socket.remoteAddress ?? '';
+  if (!LOCAL_HOSTS.has(ip)) return res.status(403).end();
+  res.type('text/plain; version=0.0.4').send(renderMetrics());
+});
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'dm-server', version: '0.1.0' });

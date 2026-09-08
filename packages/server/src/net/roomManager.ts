@@ -3,6 +3,7 @@ import { levelForXp, packInventory, applyDeathPenalty, type ConfigRegistry, type
 import { getSession, getCharacter, putCharacter } from '../db/db.js';
 import { Room } from './room.js';
 import { limits } from './rateLimit.js';
+import { counters, setGaugeProvider } from './metrics.js';
 
 function newCode(): string {
   return Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -49,7 +50,14 @@ export class RoomManager {
   private connKeys = new WeakMap<WebSocket, string>();
   private connSeq = 0;
 
-  constructor(private cfg: ConfigRegistry) {}
+  constructor(private cfg: ConfigRegistry) {
+    // Ф1.7: показатели считаются в момент запроса метрик — состав комнат знает только менеджер.
+    setGaugeProvider(() => {
+      let players = 0;
+      for (const room of this.rooms.values()) players += room.size;
+      return { rooms: this.rooms.size, players, connections: this.conns.size };
+    });
+  }
 
   /** Сброс прогресса всех комнат в БД — для graceful shutdown (рестарт/остановка сервера). */
   flushAll(): void {
@@ -66,7 +74,9 @@ export class RoomManager {
     // Ф0.5: общий потолок кадров на соединение — проверяем ДО разбора JSON, иначе флудер
     // заставляет нас парсить его мусор. Превышение потолка это уже не «высокий FPS»
     // (тот отсекается мягким лимитом ввода), а поведение, которого у клиента быть не должно.
+    counters.framesIn++;
     if (!limits.wsFrames.take(this.connKey(ws))) {
+      counters.rateLimited++;
       try { ws.close(4008, 'rate limit'); } catch { /* уже закрыт */ }
       this.onClose(ws);
       return;
@@ -200,6 +210,7 @@ export class RoomManager {
     const old = this.live.get(charId);
     if (!old) return;
     this.live.delete(charId);
+    counters.sessionsEvicted++;
     const conn = this.conns.get(old);
     if (conn) { conn.room.removePlayer(conn.pid); this.conns.delete(old); }
     this.inputRate.delete(old);
@@ -237,7 +248,7 @@ export class RoomManager {
     let r = this.inputRate.get(ws);
     if (!r || r.sec !== sec) { r = { sec, seen: 0, dropped: 0 }; this.inputRate.set(ws, r); }
     r.seen++;
-    if (r.seen > INPUT_HZ_LIMIT) { r.dropped++; return false; }
+    if (r.seen > INPUT_HZ_LIMIT) { r.dropped++; counters.inputThrottled++; return false; }
     return true;
   }
 

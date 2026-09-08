@@ -22,6 +22,8 @@
  * нулём на здоровом сервере.
  */
 
+import { counters } from './metrics.js';
+
 /** Комната, которую умеет тикать планировщик. */
 export interface Tickable {
   /**
@@ -101,6 +103,7 @@ export class TickScheduler {
         // Отстали сильнее, чем готовы догонять: ресинк, чтобы не уйти в спираль.
         const behind = Math.ceil((now - e.nextAt) / TICK_MS);
         this.droppedTicks += behind;
+        counters.droppedTicks += behind;
         e.nextAt = now + TICK_MS;
       }
 
