@@ -2,6 +2,7 @@ import type { Item, RolledAffix, Rarity } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { Rng } from './rng.js';
+import { uuidv7 } from './uuid.js';
 
 type ItemsBase = ConfigShapes['items.base'];
 type Affixes = ConfigShapes['affixes'];
@@ -191,10 +192,12 @@ function baseItemLevel(base: ItemsBase[number], tiers?: ItemTiers): number {
 
 type Rarities = ConfigShapes['rarities'];
 
-let uidCounter = 0;
-function nextUid(): string {
-  return `it_${Date.now().toString(36)}_${(uidCounter++).toString(36)}`;
-}
+/**
+ * Ф2: идентификатор предмета — UUIDv7. Прежний `it_<время>_<счётчик>` не был глобально
+ * уникальным (счётчик обнулялся на рестарте), а на нём должен держаться журнал происхождения.
+ * Подробности — в `uuid.ts`.
+ */
+const nextUid = uuidv7;
 
 /**
  * ЕДИНАЯ сборка Item из базы — весь маппинг полей/сигнатур + масштаб тира в одном

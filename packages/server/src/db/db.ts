@@ -2,6 +2,7 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { SaveState, AccountStash } from '@dm/shared';
 import { q, q1, tx } from './pool.js';
+import { syncItems } from './items.js';
 
 /**
  * Хранилище: Postgres (`db/pool.ts`). Аккаунты — `users` (логин+хеш пароля), `sessions`
@@ -69,9 +70,13 @@ export interface CharacterRow { userId: string; data: SaveState; version: number
 
 /** Создаёт сейв нового персонажа. Возвращает стартовую версию (1). Бросает при дубле charId. */
 export async function createCharacter(charId: string, userId: string, data: SaveState): Promise<number> {
-  await q('INSERT INTO characters (char_id, user_id, data, updated_at, version) VALUES ($1, $2, $3, now(), 1)',
-    [charId, userId, JSON.stringify(data)]);
-  return 1;
+  return tx(async (c) => {
+    await c.query('INSERT INTO characters (char_id, user_id, data, updated_at, version) VALUES ($1, $2, $3, now(), 1)',
+      [charId, userId, JSON.stringify(data)]);
+    // Стартовый комплект — тоже вещи: они рождаются здесь и должны попасть в журнал.
+    await syncItems(c, userId, charId, data, undefined, 'newCharacter');
+    return 1;
+  });
 }
 
 /**
@@ -83,13 +88,20 @@ export async function createCharacter(charId: string, userId: string, data: Save
  * либо зависшую комнату. Поэтому зовущая сторона обязана шуметь в лог, а не глотать.
  */
 export async function putCharacter(
-  charId: string, userId: string, data: SaveState, expectedVersion: number,
+  charId: string, userId: string, data: SaveState, expectedVersion: number, reason = 'autosave',
 ): Promise<number | null> {
-  const row = await q1<{ version: number }>(
-    `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
-     WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
-    [JSON.stringify(data), charId, userId, expectedVersion]);
-  return row?.version ?? null;
+  return tx(async (c) => {
+    const r = await c.query<{ version: number }>(
+      `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+       WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
+      [JSON.stringify(data), charId, userId, expectedVersion]);
+    const version = r.rows[0]?.version;
+    if (version == null) return null;
+    // Ф2: движение вещей записывается ТОЙ ЖЕ транзакцией, что и сейв. Иначе леджер и сейв
+    // разъедутся ровно на то окно, в котором и происходят дюпы.
+    await syncItems(c, userId, charId, data, undefined, reason);
+    return version;
+  });
 }
 
 /** Персонаж по charId (с владельцем и версией) — для проверки владения на входе. */
@@ -121,6 +133,9 @@ export async function putCharacterWithStash(
       `INSERT INTO account_stash (user_id, data, updated_at) VALUES ($1, $2, now())
        ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
       [userId, JSON.stringify(stash)]);
+    // Ф2: сундук участвует в этой записи, поэтому и он попадает в проекцию — только так
+    // перенос «инвентарь → сундук» виден леджеру как ОДНО перемещение, а не пропажа и находка.
+    await syncItems(c, userId, charId, data, stash, 'stash');
     return version;
   });
 }

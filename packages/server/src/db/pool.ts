@@ -123,11 +123,60 @@ export async function initSchema(): Promise<void> {
       updated_at bigint NOT NULL
     );
 
+    -- ── Предметы как данные (Ф2) ────────────────────────────────────────────────
+    -- ЛЕДЖЕР: у каждой вещи ровно одна строка и ровно одно место. Дубль вещи невозможен
+    -- по построению: id — первичный ключ, а «оказаться в двух местах» здесь просто негде.
+    CREATE TABLE IF NOT EXISTS items (
+      id       uuid PRIMARY KEY,
+      user_id  text NOT NULL,
+      -- Где вещь сейчас: 'char:<charId>' | 'stash' | 'world'.
+      -- 'world' = ушла от аккаунта (продана, выброшена, уничтожена). Вернуться оттуда можно
+      -- (подобрал свой же дроп) — журнал покажет и уход, и возврат.
+      loc      text NOT NULL,
+      base_id  text NOT NULL,
+      data     jsonb NOT NULL,
+      born_at  timestamptz NOT NULL DEFAULT now(),
+      moved_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS items_owner ON items (user_id, loc);
+
+    -- ЖУРНАЛ ПРОИСХОЖДЕНИЯ: только дозапись. Одного лишь уникального id мало — Blizzard в D2
+    -- удаляла дубли по id, и дуперы обходили это, превращая руну в новую вещь через Куб.
+    -- Историю переходов нельзя ни подчистить, ни переписать: см. триггер ниже.
+    CREATE TABLE IF NOT EXISTS item_events (
+      seq      bigserial PRIMARY KEY,
+      item_id  uuid NOT NULL,
+      at       timestamptz NOT NULL DEFAULT now(),
+      kind     text NOT NULL,          -- created | moved | changed | gone
+      user_id  text NOT NULL,
+      from_loc text,
+      to_loc   text,
+      reason   text,                   -- чем вызвана запись (autosave / stash / join / …)
+      data     jsonb                   -- снимок вещи: на создании и на изменении (ковка)
+    );
+    CREATE INDEX IF NOT EXISTS item_events_item ON item_events (item_id, seq);
+    CREATE INDEX IF NOT EXISTS item_events_at ON item_events (at);
+
     CREATE TABLE IF NOT EXISTS pose_store (
       key        text PRIMARY KEY,
       json       jsonb NOT NULL,
       updated_at bigint NOT NULL
     );
+  `);
+
+  // Запрет на переписывание журнала — на стороне БАЗЫ, а не кода. Приложение может ошибиться
+  // или быть скомпрометировано; здесь же любое UPDATE/DELETE по журналу падает с ошибкой.
+  await q(`
+    CREATE OR REPLACE FUNCTION item_events_append_only() RETURNS trigger AS $fn$
+    BEGIN
+      RAISE EXCEPTION 'item_events — журнал только на дозапись, % запрещён', TG_OP;
+    END;
+    $fn$ LANGUAGE plpgsql;
+  `);
+  await q('DROP TRIGGER IF EXISTS item_events_no_rewrite ON item_events');
+  await q(`
+    CREATE TRIGGER item_events_no_rewrite BEFORE UPDATE OR DELETE ON item_events
+    FOR EACH STATEMENT EXECUTE FUNCTION item_events_append_only();
   `);
 }
 

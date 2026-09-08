@@ -1,4 +1,5 @@
 export * from './rng.js';
+export * from './uuid.js';
 export * from './stats.js';
 export * from './combat.js';
 export * from './xp.js';
