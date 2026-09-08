@@ -8,7 +8,7 @@ import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { ConfigRegistry, newCharacterSave } from '@dm/shared';
 import { hashPassword, verifyPassword } from './auth/password.js';
 import {
-  createUser, getUserByName, createSession, deleteSession, getSession,
+  createUser, getUserByName, createSession, deleteSession, getSession, countRecentRegistrations,
   listCharacters, listAllCharacters, getCharacter, createCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions,
@@ -83,6 +83,18 @@ async function boot(): Promise<void> {
 }
 
 const MAX_CHARS = 5;
+/**
+ * Ф3.5: сколько аккаунтов можно завести с одного адреса за сутки. Пять — с запасом на семью
+ * и общий интернет: люди заводят аккаунт один раз, а ферма ботов упирается в потолок.
+ */
+const MAX_ACCOUNTS_PER_IP = Number(process.env.DM_MAX_ACCOUNTS_PER_IP ?? 5);
+/**
+ * Стенд заводит сотню аккаунтов с одного адреса и упирался в этот потолок (в первом прогоне
+ * дошли 5 ботов из 60). Потолок — тот же лимит частоты по смыслу, поэтому и выключается тем
+ * же переключателем `DM_RATELIMIT=off`, который ставит только `loadtest/probe.ts`. Боевая
+ * конфигурация проверяется отдельно — `npm run poc:flood`.
+ */
+const ACCOUNT_CAP_ON = process.env.DM_RATELIMIT !== 'off';
 
 /**
  * Express 4 не ловит отказ промиса из обработчика: необработанный `reject` уронил бы процесс.
@@ -363,9 +375,16 @@ app.post('/api/register', ah(async (req, res) => {
   }
   const creds = validCreds(req.body);
   if (!creds) return res.status(422).json({ error: 'Ник 3–20 символов, пароль от 6' });
+  // Ф3.5: суточный потолок аккаунтов с одного адреса. Лимит частоты выше защищает от шквала
+  // за минуту, но завести двадцать аккаунтов не спеша он не мешает — а ферму ботов разводят
+  // именно так. Честный игрок заводит аккаунт один раз и потолка не замечает.
+  if (ACCOUNT_CAP_ON && await countRecentRegistrations(ip) >= MAX_ACCOUNTS_PER_IP) {
+    console.warn(`[dm-server] потолок регистраций с адреса ${ip}`);
+    return res.status(429).json({ error: 'С этого адреса сегодня создано слишком много аккаунтов' });
+  }
   if (await getUserByName(creds.username)) return res.status(409).json({ error: 'Ник уже занят' });
   const { hash, salt } = hashPassword(creds.password);
-  const userId = await createUser(creds.username, hash, salt);
+  const userId = await createUser(creds.username, hash, salt, ip);
   res.json({ token: await createSession(userId), userId, username: creds.username });
 }));
 

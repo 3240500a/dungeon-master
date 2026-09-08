@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
+import { clientIp } from './rateLimit.js';
 import type { GameConn } from './conn.js';
 
 /**
@@ -12,7 +13,7 @@ import type { GameConn } from './conn.js';
 
 /** Обёртка `ws.WebSocket` → `GameConn`. Один объект на всё соединение (годится ключом Map). */
 class WsConn implements GameConn {
-  constructor(private readonly ws: WebSocket) {}
+  constructor(private readonly ws: WebSocket, readonly ip: string) {}
   get open(): boolean { return this.ws.readyState === this.ws.OPEN; }
   send(data: string | Uint8Array): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
@@ -51,14 +52,14 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
   // Логируем; освобождение порта/повтор listen обрабатывает server.on('error') в index.ts.
   wss.on('error', (e) => console.warn('[ws] WebSocketServer error:', (e as Error).message));
   const rooms = new RoomManager(cfg);
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     // Heartbeat: помечаем «живым» на любой pong/сообщение; мёртвые (обрыв интернета, TCP ещё висит)
     // добиваем ниже — иначе removePlayer не сработал бы до TCP-таймаута (~2 мин) и в комнате копился
     // бы «призрак» игрока (дубль при реконнекте).
     (ws as { isAlive?: boolean }).isAlive = true;
     ws.on('pong', () => { (ws as { isAlive?: boolean }).isAlive = true; });
     ws.on('message', () => { (ws as { isAlive?: boolean }).isAlive = true; });
-    rooms.handleConnection(new WsConn(ws));
+    rooms.handleConnection(new WsConn(ws, clientIp(req.headers, req.socket.remoteAddress)));
   });
   // Пинг всех раз в 10с; кто не ответил с прошлого пинга — terminate() → 'close' → removePlayer.
   const heartbeat = setInterval(() => {

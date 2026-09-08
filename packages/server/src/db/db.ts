@@ -21,11 +21,25 @@ export interface UserRow { id: string; username: string; passHash: string; passS
 const USER_COLS = 'id, username, pass_hash AS "passHash", pass_salt AS "passSalt"';
 
 /** Создаёт пользователя (ник уникален, регистронезависимо). Бросает при дубле (UNIQUE). */
-export async function createUser(username: string, passHash: string, passSalt: string): Promise<string> {
+export async function createUser(username: string, passHash: string, passSalt: string, ip?: string): Promise<string> {
   const id = `u_${randomUUID()}`;
-  await q('INSERT INTO users (id, username, pass_hash, pass_salt) VALUES ($1, $2, $3, $4)',
-    [id, username, passHash, passSalt]);
+  await q('INSERT INTO users (id, username, pass_hash, pass_salt, created_ip) VALUES ($1, $2, $3, $4, $5)',
+    [id, username, passHash, passSalt, ip ?? null]);
   return id;
+}
+
+/**
+ * Ф3.5: сколько аккаунтов заведено с этого адреса за последние часы.
+ *
+ * Лимит частоты (Ф0.5) защищает от шквала за минуту, но не мешает завести двадцать аккаунтов
+ * не спеша — а именно так и разводят ферму ботов. Суточный потолок стоит ботоводу времени
+ * и не стоит ничего честному игроку: он заводит аккаунт один раз.
+ */
+export async function countRecentRegistrations(ip: string, hours = 24): Promise<number> {
+  const r = await q1<{ n: string }>(
+    `SELECT COUNT(*) n FROM users WHERE created_ip = $1 AND created_at > now() - ($2 || ' hours')::interval`,
+    [ip, String(hours)]);
+  return Number(r?.n ?? 0);
 }
 export async function getUserByName(username: string): Promise<UserRow | null> {
   return q1<UserRow>(`SELECT ${USER_COLS} FROM users WHERE lower(username) = lower($1)`, [username]);

@@ -89,8 +89,13 @@ export async function initSchema(): Promise<void> {
       username   text NOT NULL,
       pass_hash  text NOT NULL,
       pass_salt  text NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now()
+      created_at timestamptz NOT NULL DEFAULT now(),
+      -- Ф3.5: адрес, с которого завели аккаунт. По нему стоит суточный потолок на число
+      -- новых аккаунтов: честному игроку он незаметен, ботоводу мешает разводить пачку.
+      created_ip text
     );
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS created_ip text;
+    CREATE INDEX IF NOT EXISTS users_created_ip ON users (created_ip, created_at DESC);
     -- Ник уникален БЕЗ учёта регистра: «Vasya» и «vasya» — один и тот же игрок.
     CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (lower(username));
 
@@ -156,6 +161,32 @@ export async function initSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS item_events_item ON item_events (item_id, seq);
     CREATE INDEX IF NOT EXISTS item_events_at ON item_events (at);
+
+    -- ── Телеметрия поведения (Ф3.2) ─────────────────────────────────────────────
+    -- Наблюдения, а не состояние игры: чистятся по сроку, теряются без последствий.
+    CREATE TABLE IF NOT EXISTS play_sessions (
+      id             bigserial PRIMARY KEY,
+      user_id        text NOT NULL,
+      char_id        text NOT NULL,
+      ip             text,
+      started_at     timestamptz NOT NULL,
+      updated_at     timestamptz NOT NULL DEFAULT now(),
+      ended_at       timestamptz,
+      minutes        double precision NOT NULL DEFAULT 0,
+      kills          integer NOT NULL DEFAULT 0,
+      gold           integer NOT NULL DEFAULT 0,
+      xp             integer NOT NULL DEFAULT 0,
+      items          integer NOT NULL DEFAULT 0,
+      deaths         integer NOT NULL DEFAULT 0,
+      floors         integer NOT NULL DEFAULT 0,
+      actions        integer NOT NULL DEFAULT 0,
+      -- Ритм действий: среднее и разброс интервала. Разброс около нуля — это не человек.
+      action_mean_ms double precision NOT NULL DEFAULT 0,
+      action_sd_ms   double precision NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS play_sessions_user ON play_sessions (user_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS play_sessions_ip ON play_sessions (ip, started_at DESC);
+    CREATE INDEX IF NOT EXISTS play_sessions_updated ON play_sessions (updated_at);
 
     CREATE TABLE IF NOT EXISTS pose_store (
       key        text PRIMARY KEY,

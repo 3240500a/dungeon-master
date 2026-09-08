@@ -29,6 +29,7 @@ let cfg: ConfigRegistry;
 
 class FakeWs implements GameConn {
   open = true;
+  readonly ip = '127.0.0.1';
   frames: ServerFrame[] = [];
   /** Двоичные кадры мира (Ф1.4) тесту не нужны — он читает управляющие. */
   send(raw: string | Uint8Array): void { if (typeof raw === 'string') this.frames.push(JSON.parse(raw) as ServerFrame); }

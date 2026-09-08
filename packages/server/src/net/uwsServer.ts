@@ -24,6 +24,7 @@ import type { GameConn } from './conn.js';
 
 /** Минимальная типизация нужного нам куска uWS (пакет ставится опционально). */
 interface UwsSocket {
+  getRemoteAddressAsText(): ArrayBuffer;
   send(data: string | ArrayBufferView, isBinary?: boolean): number;
   end(code?: number, reason?: string): void;
   close(): void;
@@ -61,7 +62,7 @@ class UwsConn implements GameConn {
   open = true;
   onMsg?: (raw: string) => void;
   onEnd?: () => void;
-  constructor(private readonly ws: UwsSocket) {}
+  constructor(private readonly ws: UwsSocket, readonly ip: string) {}
   send(data: string | Uint8Array): void {
     if (!this.open) return;
     // uWS бросает, если сокет уже закрыт «под нами» (клиент отвалился между тиком и отправкой).
@@ -107,7 +108,7 @@ export function startUwsServer(cfg: ConfigRegistry, port: number, httpPort: numb
     // память сервера. На `ws` эту роль играет рост bufferedAmount, но там его никто не рубит.
     maxBackpressure: 16 * 1024 * 1024,
     open: (ws: UwsSocket) => {
-      const conn = new UwsConn(ws);
+      const conn = new UwsConn(ws, dec.decode(ws.getRemoteAddressAsText()));
       conns.set(ws, conn);
       rooms.handleConnection(conn);
     },

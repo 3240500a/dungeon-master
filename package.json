@@ -24,6 +24,7 @@
     "loadtest:server": "tsx packages/server/src/loadtest/probe.ts",
     "poc:dupe": "tsx packages/server/src/loadtest/dupe.ts",
     "bench:tick": "tsx packages/server/src/loadtest/tick.ts",
+    "watch:anomalies": "tsx packages/server/src/db/watchCli.ts",
     "items:audit": "tsx packages/server/src/db/itemsCli.ts audit",
     "items:history": "tsx packages/server/src/db/itemsCli.ts history",
     "items:revoke": "tsx packages/server/src/db/itemsCli.ts revoke",

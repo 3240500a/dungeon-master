@@ -18,6 +18,8 @@ import { tickScheduler, TICK_MS, type Tickable } from './scheduler.js';
 import { counters } from './metrics.js';
 import { loadAccountStash, saveAccountStash } from './accountStash.js';
 import { cmdAllowedIn, CommandDedup } from './guard.js';
+import { SessionTelemetry } from './telemetry.js';
+import { upsertPlaySession } from '../db/telemetry.js';
 
 const TICK_DT = TICK_MS / 1000;
 /**
@@ -47,6 +49,12 @@ const AOI_EXIT_MULT = 1.2;
 /** Отладка провода (Ф1.4): дублировать кадр текстом для точной сверки. Только для стенда. */
 const WIRE_VERIFY = process.env.DM_WIRE_VERIFY === '1';
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
+/**
+ * Ф3.2: как часто наблюдения о сессии уходят в базу. Реже автосейва: это не прогресс игрока,
+ * потерять пять минут наблюдений не страшно. Но и «только при выходе» не годится — бот из игры
+ * не выходит, и сигнатура «шестнадцать часов без пауз» не сработала бы никогда.
+ */
+const TELEMETRY_FLUSH_MS = Number(process.env.DM_TELEMETRY_FLUSH_MS ?? 5 * 60_000);
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARENA_SIZE клеток
 const ARENA_IMMUNE_MS = 2_000;      // спавн-иммунитет игрока в арене (мс)
@@ -69,6 +77,12 @@ interface Client {
   saving: Promise<void>;
   /** Номера уже выполненных команд (Ф2.5) — повтор после обрыва связи не выполняется дважды. */
   dedup: CommandDedup;
+  /** Наблюдения за игрой этой сессии (Ф3.2). Не влияет на игру, только измеряет. */
+  tm: SessionTelemetry;
+  /** id строки телеметрии в базе: null, пока сессия ни разу не записывалась. */
+  tmRow: string | null;
+  /** Когда телеметрию сбрасывали в базу — длинная сессия должна быть видна ДО своего конца. */
+  tmFlushedAt: number;
 }
 
 /** Выбор «алтаря» при старте забега (биом/шаблон/модификаторы) — из кадра `descend` города. */
@@ -189,7 +203,8 @@ export class Room implements Tickable {
     if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
 
     const pid = `p_${randomUUID()}`;
-    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), dedup: new CommandDedup(), baselined: false, delta: new SnapshotDelta(), visible: new Set() });
+    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), dedup: new CommandDedup(),
+      tm: new SessionTelemetry(), tmRow: null, tmFlushedAt: Date.now(), baselined: false, delta: new SnapshotDelta(), visible: new Set() });
     this.session.addPlayer(pid, save, spawnAt);
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
     void this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
@@ -209,6 +224,7 @@ export class Room implements Tickable {
     const c = this.clients.get(pid);
     if (p && c) {
       void this.persist(pid); // персист прогресса
+      void this.writeTelemetry(c, true);   // Ф3.2: закрываем наблюдение за этой сессией
       // Грейс-реконнект — ТОЛЬКО из подземелья: тело убираем из мира (монстры не бьют «пустого»),
       // ждём возврата в ту же точку. В городе выход = чистый разрыв (реконнекта нет, ждать нечего).
       if (this.area === 'dungeon') {
@@ -331,6 +347,8 @@ export class Room implements Tickable {
       this.send(c.ws, { t: 'error', code: 'cmd', msg: 'Это доступно только в городе' });
       return;
     }
+
+    c.tm.action();   // Ф3.2: команда — намеренное действие, её ритм тоже о многом говорит
 
     const save = p.save;
     let r: { ok: boolean; reason?: string } = { ok: false, reason: 'неизвестная команда' };
@@ -559,6 +577,7 @@ export class Room implements Tickable {
     if (!node) return;
     this.wipeAt = 0;
     this.area = 'dungeon'; this.runNodeId = nodeId; this.depth = node.depth;
+    for (const c of this.clients.values()) c.tm.floors++;   // Ф3.2: этажей за сессию
     this.session.world.difficultyId = this.difficultyId;
     const biomes = this.cfg.get('biomes');
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
@@ -680,6 +699,7 @@ export class Room implements Tickable {
       if (emit) this.emitWorld();
     }
     if (Date.now() - this.lastSaveAt >= AUTOSAVE_MS) this.persistAll(); // периодический автосейв прогресса
+    this.flushTelemetry();   // Ф3.2: длинная сессия должна быть видна ДО своего конца
     if (this.wipeAt && Date.now() >= this.wipeAt) this.enterTown(); // вайп → авто-возврат в город
     if (this.area === 'arena' && this.arenaRespawns.size) this.tickArenaRespawns(); // авто-возрождение в PvP
     if (!events.length) return;
@@ -688,6 +708,7 @@ export class Room implements Tickable {
     const quest: SessionEvent[] = [];
     for (const e of events) {
       if (e.type === 'gold' || e.type === 'xp' || e.type === 'levelup' || e.type === 'item-picked') touched.add(e.playerId);
+      this.observe(e);   // Ф3.2: наблюдения о поведении, на саму игру не влияют
       if (e.type === 'monster-died' && e.by) this.track(e.by, 'kill', e.def.id, touched, quest);
       else if (e.type === 'item-picked') this.track(e.playerId, 'collect-item', e.item.baseId, touched, quest);
       else if (e.type === 'player-died') { if (this.area === 'arena') this.onArenaDeath(e.playerId); else this.onPlayerDeath(e.playerId, touched); }
@@ -769,6 +790,39 @@ export class Room implements Tickable {
     const next = c.saving.then(run, run);   // отказ прошлой записи не должен рвать очередь
     c.saving = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+  /**
+   * Ф3.2: разложить событие сессии по счётчикам наблюдений. Ничего не решает и ничего
+   * не запрещает — только считает. Замах (`swing`) считается ДЕЙСТВИЕМ: именно по интервалам
+   * между действиями видно машинный ритм.
+   */
+  private observe(e: SessionEvent): void {
+    switch (e.type) {
+      case 'monster-died': { const c = e.by ? this.clients.get(e.by) : undefined; if (c) c.tm.kills++; break; }
+      case 'gold': { const c = this.clients.get(e.playerId); if (c) c.tm.gold += e.amount; break; }
+      case 'xp': { const c = this.clients.get(e.playerId); if (c) c.tm.xp += e.amount; break; }
+      case 'item-picked': { const c = this.clients.get(e.playerId); if (c) c.tm.items++; break; }
+      case 'player-died': { const c = this.clients.get(e.playerId); if (c) c.tm.deaths++; break; }
+      case 'swing': { const c = this.clients.get(e.playerId); if (c) c.tm.action(); break; }
+      default: break;
+    }
+  }
+
+  /** Сброс наблюдений в базу не чаще раза в пять минут — это не горячий путь. */
+  private flushTelemetry(): void {
+    const now = Date.now();
+    for (const c of this.clients.values()) {
+      if (now - c.tmFlushedAt < TELEMETRY_FLUSH_MS) continue;
+      c.tmFlushedAt = now;
+      void this.writeTelemetry(c, false);
+    }
+  }
+
+  private async writeTelemetry(c: Client, ended: boolean): Promise<void> {
+    const p = this.session.world.players[c.pid];
+    if (!p) return;
+    c.tmRow = await upsertPlaySession(c.tmRow, c.userId, p.save.charId, c.ws.ip, c.tm, ended);
   }
 
   /** То же для отключённого игрока (грейс): у него своя копия сейва и своя версия. */
