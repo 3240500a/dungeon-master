@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
-import type { WebSocket } from 'ws';
+import type { GameConn } from './conn.js';
 import { ConfigRegistry, newCharacterSave, type ServerFrame, type RunPlan, type RunNode } from '@dm/shared';
 
 /**
@@ -26,11 +26,14 @@ type Room = import('./room.js').Room;
 let RoomCtor: typeof import('./room.js').Room;
 let cfg: ConfigRegistry;
 
-class FakeWs {
-  readonly OPEN = 1;
-  readyState = 1;
+class FakeWs implements GameConn {
+  open = true;
   frames: ServerFrame[] = [];
-  send(raw: string): void { this.frames.push(JSON.parse(raw) as ServerFrame); }
+  /** Двоичные кадры мира (Ф1.4) тесту не нужны — он читает управляющие. */
+  send(raw: string | Uint8Array): void { if (typeof raw === 'string') this.frames.push(JSON.parse(raw) as ServerFrame); }
+  close(): void { this.open = false; }
+  onMessage(): void { /* тест не шлёт кадры вверх — комнату дёргают напрямую */ }
+  onClose(): void { /* закрытие в тесте не проверяется */ }
   last<T extends ServerFrame['t']>(t: T): Extract<ServerFrame, { t: T }> | undefined {
     for (let i = this.frames.length - 1; i >= 0; i--) {
       const f = this.frames[i]!;
@@ -47,7 +50,7 @@ function makeRoom(): { room: Room; ws: FakeWs; pid: string } {
   rooms.push(room);
   const ws = new FakeWs();
   const save = newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Hero', `char-${++seq}`);
-  const pid = room.addPlayer(ws as unknown as WebSocket, 'user-1', save, 1);
+  const pid = room.addPlayer(ws as unknown as GameConn, 'user-1', save, 1);
   return { room, ws, pid };
 }
 const nodeOf = (plan: RunPlan, id: string): RunNode => plan.nodes.find((n) => n.id === id)!;

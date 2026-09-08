@@ -1,4 +1,4 @@
-import type { WebSocket } from 'ws';
+import type { GameConn } from './conn.js';
 import { levelForXp, packInventory, applyDeathPenalty, type ConfigRegistry, type ClientFrame, type SaveState } from '@dm/shared';
 import { getSession, getCharacter, putCharacter } from '../db/db.js';
 import { Room } from './room.js';
@@ -35,8 +35,8 @@ const INPUT_HZ_LIMIT = 40;
 export class RoomManager {
   private rooms = new Map<string, Room>();
   /** Счётчик кадров ввода в текущем окне на соединение: {окно (сек), сколько пришло, сколько отброшено}. */
-  private inputRate = new Map<WebSocket, { sec: number; seen: number; dropped: number }>();
-  private conns = new Map<WebSocket, { pid: string; room: Room }>();
+  private inputRate = new Map<GameConn, { sec: number; seen: number; dropped: number }>();
+  private conns = new Map<GameConn, { pid: string; room: Room }>();
   /** charId → комната, ждущая его реконнекта (заморожена/активна). Реконнект возвращает в ту же точку. */
   private graceByChar = new Map<string, Room>();
   /**
@@ -45,9 +45,9 @@ export class RoomManager {
    * без кода просто создавал вторую комнату — обе держали свою копию сейва и писали её раз
    * в 10 секунд (last-writer-wins). Это и есть подтверждённый дюп; PoC — `loadtest/dupe.ts`.
    */
-  private live = new Map<string, WebSocket>();
+  private live = new Map<string, GameConn>();
   /** Ключи соединений для лимитеров частоты (Ф0.5). */
-  private connKeys = new WeakMap<WebSocket, string>();
+  private connKeys = new WeakMap<GameConn, string>();
   private connSeq = 0;
 
   constructor(private cfg: ConfigRegistry) {
@@ -64,20 +64,19 @@ export class RoomManager {
     for (const room of this.rooms.values()) room.flush();
   }
 
-  handleConnection(ws: WebSocket): void {
-    ws.on('message', (data: Buffer) => this.onMessage(ws, data.toString()));
-    ws.on('close', () => this.onClose(ws));
-    ws.on('error', () => this.onClose(ws));
+  handleConnection(ws: GameConn): void {
+    ws.onMessage((raw) => this.onMessage(ws, raw));
+    ws.onClose(() => this.onClose(ws));
   }
 
-  private onMessage(ws: WebSocket, raw: string): void {
+  private onMessage(ws: GameConn, raw: string): void {
     // Ф0.5: общий потолок кадров на соединение — проверяем ДО разбора JSON, иначе флудер
     // заставляет нас парсить его мусор. Превышение потолка это уже не «высокий FPS»
     // (тот отсекается мягким лимитом ввода), а поведение, которого у клиента быть не должно.
     counters.framesIn++;
     if (!limits.wsFrames.take(this.connKey(ws))) {
       counters.rateLimited++;
-      try { ws.close(4008, 'rate limit'); } catch { /* уже закрыт */ }
+      ws.close(4008, 'rate limit');
       this.onClose(ws);
       return;
     }
@@ -195,7 +194,7 @@ export class RoomManager {
   }
 
   /** Стабильный ключ соединения для лимитеров: сокет живёт ровно одну сессию. */
-  private connKey(ws: WebSocket): string {
+  private connKey(ws: GameConn): string {
     let k = this.connKeys.get(ws);
     if (!k) { k = `c${++this.connSeq}`; this.connKeys.set(ws, k); }
     return k;
@@ -217,7 +216,7 @@ export class RoomManager {
     try { old.close(4001, 'replaced'); } catch { /* уже закрыт */ }
   }
 
-  private onClose(ws: WebSocket): void {
+  private onClose(ws: GameConn): void {
     this.inputRate.delete(ws);
     const conn = this.conns.get(ws);
     if (!conn) return;
@@ -243,7 +242,7 @@ export class RoomManager {
    * отбрасываются. Соединение не рвём: лишняя частота это почти всегда высокий FPS клиента,
    * а не злонамеренность (злонамеренность ловит общий лимит кадров ws, задача Ф0.5).
    */
-  private allowInput(ws: WebSocket): boolean {
+  private allowInput(ws: GameConn): boolean {
     const sec = Math.floor(Date.now() / 1000);
     let r = this.inputRate.get(ws);
     if (!r || r.sec !== sec) { r = { sec, seen: 0, dropped: 0 }; this.inputRate.set(ws, r); }
@@ -253,7 +252,7 @@ export class RoomManager {
   }
 
   /** Проверка сессии + владения персонажем. Ошибку шлёт сама; возвращает userId или undefined. */
-  private authOwner(ws: WebSocket, token: string, charId: string): string | undefined {
+  private authOwner(ws: GameConn, token: string, charId: string): string | undefined {
     const userId = getSession(token);
     if (!userId) { ws.send(JSON.stringify({ t: 'error', code: 'auth', msg: 'Требуется вход' })); return undefined; }
     const character = getCharacter(charId);

@@ -14,6 +14,7 @@ import {
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty,
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
+import { startUwsServer } from './net/uwsServer.js';
 import { limits, clientIp } from './net/rateLimit.js';
 import { renderMetrics } from './net/metrics.js';
 import { stripGlbTextures } from './glbStrip.js';
@@ -405,25 +406,36 @@ if (!SERVE_STATIC) {
 }
 
 const PORT = Number(process.env.PORT ?? 3001);
+/**
+ * Ф1.6: транспорт сменный. `DM_WS=uws` отдаёт игровой порт uWebSockets.js (C++-сервер под
+ * биндингом, в бенче примерно на четверть дешевле по CPU), а express переезжает на порт петли
+ * и получает запросы прокси. Снаружи адрес не меняется: тот же порт, тот же `/ws`, тот же
+ * `/api`. Если пакет не собран под платформу — откат на `ws`, сервер всё равно поднимется.
+ */
+const wantUws = process.env.DM_WS === 'uws';
+const uws = wantUws && startUwsServer(config, PORT, Number(process.env.DM_HTTP_PORT ?? PORT + 1));
+const HTTP_PORT = uws ? Number(process.env.DM_HTTP_PORT ?? PORT + 1) : PORT;
 const server = createServer(app);
 // Выключаем алгоритм Нейгла на КАЖДОМ TCP-соединении (HTTP + апгрейд WS идут по этим же сокетам):
 // иначе мелкие реалтайм-пакеты (ввод/снапшоты) склеиваются и ждут до ~40мс, что складывается с пингом.
 server.on('connection', (socket) => socket.setNoDelay(true));
-attachWsServer(server, config); // авторитетный кооп на /ws (комнаты = GameSession)
+if (!uws) attachWsServer(server, config); // авторитетный кооп на /ws (комнаты = GameSession)
 // EADDRINUSE устойчиво: при dev-рестарте старый инстанс может ещё держать порт — НЕ роняем процесс необработанной
 // ошибкой (иначе сервер умирает и редактор/клиент ловят ECONNREFUSED), а ждём освобождения и повторяем listen.
 let listenTries = 0;
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE' && listenTries < 10) {
     listenTries++;
-    console.warn(`[dm-server] порт ${PORT} занят (рестарт dev?) — повтор #${listenTries} через 500мс…`);
-    setTimeout(() => server.listen(PORT), 500);
+    console.warn(`[dm-server] порт ${HTTP_PORT} занят (рестарт dev?) — повтор #${listenTries} через 500мс…`);
+    setTimeout(() => server.listen(HTTP_PORT), 500);
   } else {
     console.error('[dm-server] фатальная ошибка сервера:', err);
     process.exit(1);
   }
 });
-server.listen(PORT, () => {
+// В режиме uws express слушает ТОЛЬКО петлю: снаружи на него не должно быть прямого хода
+// мимо прокси, иначе мимо него уедут и заголовки адреса, по которым считаются лимиты частоты.
+server.listen(HTTP_PORT, uws ? '127.0.0.1' : undefined, () => {
   listenTries = 0;
   console.log(`[dm-server] слушает http://localhost:${PORT}`);
 });

@@ -1,12 +1,39 @@
 import type { Server } from 'node:http';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
+import type { GameConn } from './conn.js';
 
 /**
- * Поднимает WebSocket-сервер на пути `/ws` поверх общего HTTP-сервера (тот же порт,
- * что REST). Каждый коннект уходит в `RoomManager` (комнаты = авторитетные сессии).
+ * Транспорт по умолчанию: библиотека `ws` поверх общего HTTP-сервера (тот же порт, что REST).
+ * Игровая логика видит соединение через `GameConn` (см. `conn.ts`), поэтому здесь остаётся
+ * только специфика библиотеки: рукопожатие, heartbeat и завершение работы.
  */
+
+/** Обёртка `ws.WebSocket` → `GameConn`. Один объект на всё соединение (годится ключом Map). */
+class WsConn implements GameConn {
+  constructor(private readonly ws: WebSocket) {}
+  get open(): boolean { return this.ws.readyState === this.ws.OPEN; }
+  send(data: string | Uint8Array): void {
+    if (this.ws.readyState !== this.ws.OPEN) return;
+    // `binary` обязателен: без него Buffer уехал бы текстовым кадром и клиент не распознал бы его.
+    if (typeof data === 'string') this.ws.send(data);
+    else this.ws.send(data, { binary: true });
+  }
+  close(code?: number, reason?: string): void {
+    try { this.ws.close(code, reason); } catch { /* уже закрыт */ }
+  }
+  onMessage(cb: (raw: string) => void): void {
+    this.ws.on('message', (data: Buffer) => cb(data.toString()));
+  }
+  onClose(cb: () => void): void {
+    let done = false;
+    const once = (): void => { if (!done) { done = true; cb(); } };
+    this.ws.on('close', once);
+    this.ws.on('error', once);
+  }
+}
+
 export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
   // Ф0.1: сжатие ВЫКЛЮЧЕНО осознанно. Замер: perMessageDeflate стоит 179 мкс на кадр НА КАЖДОГО
   // клиента и выполняется в пуле из четырёх потоков libuv. На сотне клиентов пул захлёбывается,
@@ -31,7 +58,7 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
     (ws as { isAlive?: boolean }).isAlive = true;
     ws.on('pong', () => { (ws as { isAlive?: boolean }).isAlive = true; });
     ws.on('message', () => { (ws as { isAlive?: boolean }).isAlive = true; });
-    rooms.handleConnection(ws);
+    rooms.handleConnection(new WsConn(ws));
   });
   // Пинг всех раз в 10с; кто не ответил с прошлого пинга — terminate() → 'close' → removePlayer.
   const heartbeat = setInterval(() => {
@@ -43,11 +70,17 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
     }
   }, 10_000);
   wss.on('close', () => clearInterval(heartbeat));
-  console.log('[dm-server] WebSocket на /ws');
+  console.log('[dm-server] WebSocket на /ws (транспорт ws)');
 
-  // Graceful shutdown: при остановке/рестарте (в dev — `tsx watch` шлёт SIGTERM на каждую
-  // правку кода) успеваем синхронно сбросить прогресс всех комнат в БД — забег не теряется.
-  const shutdown = () => { try { rooms.flushAll(); } finally { process.exit(0); } };
+  installShutdown(rooms);
+}
+
+/**
+ * Graceful shutdown: при остановке/рестарте (в dev — `tsx watch` шлёт SIGTERM на каждую
+ * правку кода) успеваем синхронно сбросить прогресс всех комнат в БД — забег не теряется.
+ */
+export function installShutdown(rooms: RoomManager): void {
+  const shutdown = (): never => { try { rooms.flushAll(); } finally { process.exit(0); } };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 }

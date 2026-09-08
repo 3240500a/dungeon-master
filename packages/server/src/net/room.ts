@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { WebSocket } from 'ws';
+import type { GameConn } from './conn.js';
 import {
   GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
@@ -59,7 +59,7 @@ interface Client {
   /** Монстры в его поле зрения: вход в набор = отправка определения (Ф1.2). */
   visible: Set<number>;
   pid: string;
-  ws: WebSocket;
+  ws: GameConn;
   input: PlayerInput;
   userId: string;
   /** Версия сейва в БД, которую держит эта сессия (Ф0.3). Растёт после каждой успешной записи. */
@@ -139,13 +139,13 @@ export class Room implements Tickable {
   // ── Игроки ──────────────────────────────────────────────────────────────────
   // Личность/владение персонажем проверяет `roomManager` (сессия+charId), сюда приходит уже
   // авторитетный сейв владельца `userId` — комната лишь ведёт игру и персистит.
-  addPlayer(ws: WebSocket, userId: string, save: SaveState, version: number): string {
+  addPlayer(ws: GameConn, userId: string, save: SaveState, version: number): string {
     return this.attach(ws, userId, save, version);
   }
 
   /** Вход + немедленное ПРОДОЛЖЕНИЕ сохранённого забега (реконнект БЕЗ грейс-комнаты: комната истекла или
    *  разрыв был в городе, но `save.run` цел). Граф регенерится из `save.run.config`, входим в текущий узел. */
-  addPlayerResumeRun(ws: WebSocket, userId: string, save: SaveState, version: number): string {
+  addPlayerResumeRun(ws: GameConn, userId: string, save: SaveState, version: number): string {
     const pid = this.attach(ws, userId, save, version);
     if (save.run) this.resumeRun(save);   // регенерит runPlan из config и enterNode(currentNodeId) → тот же этаж
     return pid;
@@ -156,7 +156,7 @@ export class Room implements Tickable {
    * если пати ещё на том же этаже; если без него спустились дальше — начало текущего этажа.
    * Снимаем паузу (соло) и отменяем грейс-таймер.
    */
-  reconnect(ws: WebSocket, userId: string, save: SaveState, version: number): string {
+  reconnect(ws: GameConn, userId: string, save: SaveState, version: number): string {
     const info = this.disconnected.get(save.charId);
     this.disconnected.delete(save.charId);
     this.hooks.onUngrace(save.charId);
@@ -167,14 +167,14 @@ export class Room implements Tickable {
   }
 
   /** Общий путь входа/реконнекта: добавить игрока (опц. в заданную точку) и разослать кадры. */
-  private attach(ws: WebSocket, userId: string, save: SaveState, version: number, spawnAt?: { x: number; y: number }): string {
+  private attach(ws: GameConn, userId: string, save: SaveState, version: number, spawnAt?: { x: number; y: number }): string {
     // Дедуп по charId: если этот персонаж уже активен (реконнект при ещё не разорванном старом ws —
     // TCP держит мёртвый коннект до heartbeat/таймаута), выселяем СТАРУЮ сущность БЕЗ грейса — иначе
     // в комнате два «меня» (тот самый баг «игра думает что нас трое»). Ровно один энтити на charId.
     for (const [oldPid, oc] of this.clients) {
       const op = this.session.world.players[oldPid];
       if (!op || op.save.charId !== save.charId) continue;
-      try { oc.ws.close(4001, 'replaced'); } catch { /* уже закрыт */ }
+      oc.ws.close(4001, 'replaced');
       this.session.removePlayer(oldPid);
       this.clients.delete(oldPid);
       this.broadcast({ t: 'peerLeft', id: oldPid });
@@ -775,7 +775,7 @@ export class Room implements Tickable {
     let bytes = 0;
     let sent = 0;
     for (const c of this.clients.values()) {
-      if (c.ws.readyState !== c.ws.OPEN) continue;
+      if (!c.ws.open) continue;
       const view = this.viewFor(snap, c);
 
       // Определения монстров, вошедших в поле зрения (и повторно вошедших: клиент сносит куклу,
@@ -791,7 +791,7 @@ export class Room implements Tickable {
       }
       c.visible = new Set(view.monsters.map((m) => m.id));
 
-      // Ф1.4: кадры мира уходят ДВОИЧНЫМИ. WebSocket сам различает текст и бинарь, поэтому
+      // Ф1.4: кадры мира уходят ДВОИЧНЫМИ. GameConn сам различает текст и бинарь, поэтому
       // управляющие кадры остаются JSON и своего поля типа не требуют.
       const sum = worldChecksum(view);
       // Отладка провода: рядом с двоичным кадром шлём эталон ТОГО ЖЕ тика текстом, чтобы
@@ -799,13 +799,13 @@ export class Room implements Tickable {
       if (WIRE_VERIFY) c.ws.send(JSON.stringify({ t: 'snapshot', snap: view } satisfies ServerFrame));
       if (!c.baselined || forceFull) {
         const buf = encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(view), sum });
-        c.ws.send(buf, { binary: true });
+        c.ws.send(buf);
         c.delta.prime(view);
         c.baselined = true;
         bytes += buf.length;
       } else {
         const buf = encodeWorldFrame({ kind: WIRE_DELTA, delta: c.delta.next(view)!, sum });
-        c.ws.send(buf, { binary: true });
+        c.ws.send(buf);
         bytes += buf.length;
       }
       sent++;
@@ -905,17 +905,17 @@ export class Room implements Tickable {
   private questEvent(pid: string, kind: 'accepted' | 'turned-in', questId: string, name: string): void {
     this.broadcast({ t: 'events', events: [{ type: 'quest', playerId: pid, kind, questId, name }] });
   }
-  private send(ws: WebSocket, frame: ServerFrame): void {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame));
+  private send(ws: GameConn, frame: ServerFrame): void {
+    if (ws.open) ws.send(JSON.stringify(frame));
   }
   private broadcast(frame: ServerFrame): void {
     const msg = JSON.stringify(frame);
     let sent = 0;
-    for (const c of this.clients.values()) if (c.ws.readyState === c.ws.OPEN) { c.ws.send(msg); sent++; }
+    for (const c of this.clients.values()) if (c.ws.open) { c.ws.send(msg); sent++; }
     if (frame.t === 'snapshot') { counters.snapshotFrames += sent; counters.snapshotBytes += msg.length * sent; }
   }
   private broadcastExcept(pid: string, frame: ServerFrame): void {
     const msg = JSON.stringify(frame);
-    for (const [id, c] of this.clients) if (id !== pid && c.ws.readyState === c.ws.OPEN) c.ws.send(msg);
+    for (const [id, c] of this.clients) if (id !== pid && c.ws.open) c.ws.send(msg);
   }
 }
