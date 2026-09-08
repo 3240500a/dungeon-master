@@ -78,13 +78,17 @@ export const mirrorPoseSide = (p: Pose, from: 'Left' | 'Right' = 'Left'): Pose =
 /** Перевернуть позу: стороны меняются местами (шаг левой → шаг правой). */
 export const flipPoseSides = (p: Pose): Pose => flipPose(p);
 
-/** Перевернуть ВЕСЬ клип (частая операция: сделал удар справа — получил слева). */
+/** Перевернуть ВЕСЬ клип (частая операция: сделал удар справа — получил слева).
+ *  Метки едут с ключами, но `footstep` меняет ногу: перевёрнутый шаг делает ДРУГАЯ нога. */
 export function flipClip(c: Clip): Clip {
-  return { ...c, keys: c.keys.map((k) => ({ ...k, pose: flipPose(k.pose) })) };
+  return { ...c, keys: c.keys.map((k) => ({
+    ...k, pose: flipPose(k.pose),
+    marks: k.marks?.map((m) => (m.foot ? { ...m, foot: m.foot === 'L' ? 'R' as const : 'L' as const } : { ...m })),
+  })) };
 }
 /** Отзеркалить одну сторону на другую во всех кадрах клипа. */
 export function mirrorClip(c: Clip, from: 'Left' | 'Right' = 'Left'): Clip {
-  return { ...c, keys: c.keys.map((k) => ({ ...k, pose: mirrorSide(k.pose, from) })) };
+  return { ...c, keys: c.keys.map((k) => ({ ...k, pose: mirrorSide(k.pose, from), marks: k.marks?.map((m) => ({ ...m })) })) };
 }
 
 /** Сдвинуть фазу циклического клипа: полезно, чтобы луп начинался с нужной ноги. */

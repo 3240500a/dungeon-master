@@ -836,7 +836,9 @@ export async function startOnline3d(): Promise<void> {
         // Проиграть авторский удар КУКЛОЙ (у Волкодава — `hit_axe`): свой игрок или пир.
         const pv = latest?.players.find((p) => p.id === e.playerId);
         const actor = e.playerId === myId ? self : peers.get(e.playerId);
-        actor?.d.attack(abilityPoseClips(e.ability), e.lockMs / 1000);   // скил с poseClips → чередуемые удары; базовая атака → удар по оружию. lockMs = окно атаки → клип целиком за него
+        // lockMs = окно атаки (клип целиком за него), windupMs = момент УРОНА: размеченный кадр `impact`
+        // садится ровно туда (раньше windupMs приходил и выбрасывался, и удар визуально расходился с уроном).
+        actor?.d.attack(abilityPoseClips(e.ability), e.lockMs / 1000, e.windupMs / 1000);
         if (pv) vfx.slash(pv.x, pv.y, pv.facing, 0xffe6a0, 48);
         if (e.playerId === myId) {   // свой удар — заливка-откат слота биндов
           const now = performance.now();
@@ -844,7 +846,9 @@ export async function startOnline3d(): Promise<void> {
           app.attackLockUntil = now + e.lockMs;
         }
       } else if (e.type === 'monster-swing') {
-        monsters.get(e.id)?.d.attack();   // монстр машет своим оружием (авторский удар фракции / фолбэк)
+        // Телеграф монстра несёт только windupMs (окна атаки у него нет) — этого достаточно, чтобы кадр
+        // `impact` сел ровно на момент удара: игроку становится видно, когда уворачиваться.
+        monsters.get(e.id)?.d.attack(undefined, 0, e.windupMs / 1000);   // монстр машет своим оружием (авторский удар фракции / фолбэк)
       } else if (e.type === 'dodge') {
         // Уклонение (dodge-рывок): облачко пыли из-под ног в точке отталкивания + вжух своему игроку.
         vfx.burst(e.x, e.y, 0xb9a88a, 14, 130, 0.4, 9, 6);

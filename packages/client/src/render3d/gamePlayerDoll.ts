@@ -211,13 +211,16 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     setPose(x, z, yaw) { if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(yaw)) { tx = x; tz = z; tyaw = yaw; } },
     setMove(_s) { /* магнитуда не нужна: скорость из setWorldVel или дельты позиции */ },
     setWorldVel(vx, vz) { if (Number.isFinite(vx) && Number.isFinite(vz)) { wvx = vx; wvz = vz; hasWvel = true; } },
-    attack(clips, windowSec) {   // скил с poseClips → его позы (адаптированные под оружие); иначе базовая атака = все hit_-клипы оружия. Цикл по кругу.
+    attack(clips, windowSec, windupSec) {   // скил с poseClips → его позы (адаптированные под оружие); иначе базовая атака = все hit_-клипы оружия. Цикл по кругу.
       const pool = (clips && clips.length)
         ? clips.map((n) => content.resolveAbilityClip(n, weapon)).filter((c): c is NonNullable<typeof c> => !!c)
         : content.attackClips(weapon);
-      if (pool.length) { player.triggerAttack(pool[atkClipIdx % pool.length]!, windowSec); atkClipIdx++; }
-      else player.triggerAttack(content.attackClip(weapon), windowSec);   // ничего не авторено → прежний фолбэк
+      if (pool.length) { player.triggerAttack(pool[atkClipIdx % pool.length]!, windowSec, windupSec); atkClipIdx++; }
+      else player.triggerAttack(content.attackClip(weapon), windowSec, windupSec);   // ничего не авторено → прежний фолбэк
     },
+    /** Метки кадров — просто пробрасываем наружу: кукла не знает ни про звук, ни про VFX. */
+    get onMark() { return player.onMark; },
+    set onMark(fn) { player.onMark = fn ?? null; },
     setDead(d) {
       if (d && !simEnabled) { simEnabled = true; snapNext = true; }   // умер спящим (вне окна) → будим, чтоб коллапс отыгрался
       if (d) { downT = 0; riseInit = false; }   // смерть главнее нокдауна: обрываем подъём, дальше свободный коллапс

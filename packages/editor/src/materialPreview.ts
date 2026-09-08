@@ -1,24 +1,20 @@
 /**
  * Превью-сфера материала (как шар материала в 3ds Max/Unity), НАШИМ рендером (Three.js) — чтобы материал в редакторе
  * выглядел 1:1 как в игре. Пара источников света + окружение (RoomEnvironment) для PBR-отражений; автоповорот + орбита
- * мышью. `update(mat, textures)` пересобирает MeshStandardMaterial из конфига (те же поля, что assetCache в клиенте,
- * включая normalFlipY = инверсия зелёного канала DirectX→OpenGL через знак normalScale.y) — вызывается на каждое
- * изменение параметра в реальном времени. Один WebGL-контекст: создаётся один раз, `dispose()` при пересборке панели.
+ * мышью. Один WebGL-контекст: создаётся один раз, `dispose()` при пересборке панели.
+ *
+ * ⚠ Материал НЕ собирается здесь: `update()` зовёт `buildMaterial` из клиентского `assetCache` — ЕДИНСТВЕННЫЙ перевод
+ * URP-описания в three.js. Раньше у превью была своя копия логики, и она расходилась с игрой (разное цветовое
+ * пространство карт данных) — теперь расхождение невозможно по построению.
  */
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { buildMaterial, type MaterialCfg, type TextureCfg } from '@dm/client/render3d/assetCache.js';
 
-/** Форма записи текстуры/материала (совпадает с config-секциями textures/materials). */
-export interface TexCfg { id: string; url?: string; colorSpace?: string; wrapS?: string; wrapT?: string; flipY?: boolean }
-export interface MatCfg {
-  baseColor?: unknown; opacity?: unknown; metalness?: unknown; roughness?: unknown; emissive?: unknown;
-  emissiveIntensity?: unknown; normalScale?: unknown; normalFlipY?: unknown; roughnessIsSmoothness?: unknown; roughnessOffset?: unknown; metalnessOffset?: unknown;
-  map?: unknown; normalMap?: unknown; roughnessMap?: unknown; metalnessMap?: unknown; emissiveMap?: unknown; aoMap?: unknown;
-}
+/** Форма записи текстуры/материала = config-секции textures/materials (канон URP Lit, см. schemas.ts). */
+export type TexCfg = TextureCfg;
+export type MatCfg = Partial<MaterialCfg> & { id?: string };
 export interface MaterialPreview { el: HTMLElement; update(mat: MatCfg, textures: TexCfg[]): void; setEnv(intensity: number): void; dispose(): void }
-
-const num = (v: unknown, d: number): number => (typeof v === 'number' ? v : d);
-const col = (v: unknown, d: number): THREE.Color => (Array.isArray(v) ? new THREE.Color(v[0] as number, v[1] as number, v[2] as number) : new THREE.Color(d));
 
 /** Создать превью-сферу материала. size — сторона канваса (px). */
 export function createMaterialPreview(size = 240): MaterialPreview {
@@ -43,23 +39,10 @@ export function createMaterialPreview(size = 240): MaterialPreview {
   const fill = new THREE.DirectionalLight(0x9fb4ff, 0.6); fill.position.set(-4, -1, 2); scene.add(fill);
   const torch = new THREE.PointLight(0xff9a4a, 5, 16, 2); torch.position.set(-2.4, 1.8, -2.2); scene.add(torch);   // тёплый ободок-факел
 
-  const mat = new THREE.MeshStandardMaterial({ color: 0xbfbfbf, roughness: 0.8, metalness: 0 });
+  let mat = new THREE.MeshStandardMaterial({ color: 0xbfbfbf, roughness: 0.8, metalness: 0 });
   const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), mat);
   scene.add(sphere);
   let envIntensity = 0;      // ВЫКЛ по умолчанию = вид игры (в игре envMap нет). IBL даёт ложный блик швов (Fresnel по канавкам) — глушим. Слайдер поднимает для авторинга металла.
-  let roughOff = 0, metalOff = 0;   // смещения (offset-ползунки), уходят в шейдер каждый кадр
-  // Смещение roughness/metalness поверх карты — тот же приём, что assetCache.applyPbrOffset; юниформы обновляем в loop.
-  let matShader: { uniforms: Record<string, { value: number }> } | null = null;
-  mat.onBeforeCompile = (shader): void => {
-    shader.fragmentShader = 'uniform float uRoughOff;\nuniform float uMetalOff;\n' + shader.fragmentShader
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + uRoughOff, 0.0, 1.0);')
-      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = clamp(metalnessFactor + uMetalOff, 0.0, 1.0);');
-    shader.uniforms.uRoughOff = { value: roughOff }; shader.uniforms.uMetalOff = { value: metalOff };
-    matShader = shader as unknown as { uniforms: Record<string, { value: number }> };
-  };
-
-  const loader = new THREE.TextureLoader();
-  const texCache = new Map<string, THREE.Texture>();
 
   // Орбита мышью + автоповорот (стоп при перетаскивании).
   const el = renderer.domElement;
@@ -77,7 +60,6 @@ export function createMaterialPreview(size = 240): MaterialPreview {
     if (el.isConnected) wasConnected = true;
     else if (wasConnected) { dispose(); return; }   // канвас убрали из DOM (сменили секцию/запись) → освободить WebGL-контекст
     if (auto) yaw += 0.005;
-    if (matShader) { matShader.uniforms.uRoughOff!.value = roughOff; matShader.uniforms.uMetalOff!.value = metalOff; }   // offset-ползунки живьём
     camera.position.set(Math.sin(yaw) * Math.cos(pitch) * R, Math.sin(pitch) * R, Math.cos(yaw) * Math.cos(pitch) * R);
     camera.lookAt(0, 0, 0);
     renderer.render(scene, camera);
@@ -85,55 +67,28 @@ export function createMaterialPreview(size = 240): MaterialPreview {
   };
   raf = requestAnimationFrame(loop);
 
-  /** Инверсия текстуры (RGB → 1−value) через canvas — Smoothness(Unity) → Roughness(glTF). */
-  function loadInverted(url: string): THREE.Texture {
-    const cv = document.createElement('canvas'); const ct = new THREE.CanvasTexture(cv);
-    const img = new Image(); img.crossOrigin = 'anonymous';
-    img.onload = (): void => { cv.width = img.naturalWidth; cv.height = img.naturalHeight; const g = cv.getContext('2d'); if (!g) return; g.drawImage(img, 0, 0); const d = g.getImageData(0, 0, cv.width, cv.height), px = d.data; for (let i = 0; i < px.length; i += 4) { px[i] = 255 - px[i]!; px[i + 1] = 255 - px[i + 1]!; px[i + 2] = 255 - px[i + 2]!; } g.putImageData(d, 0, 0); ct.needsUpdate = true; };
-    img.src = url; return ct;
-  }
-  /** Текстура по id из конфига. srgb: цвет/эмиссия — sRGB (если сама текстура не помечена linear); карты данных — linear.
-   *  invert → инверсия значения (Smoothness→Roughness). */
-  function tex(textures: TexCfg[], id: unknown, srgb: boolean, invert = false): THREE.Texture | null {
-    if (typeof id !== 'string' || !id) return null;
-    const c = textures.find((t) => t.id === id);
-    if (!c || !c.url) return null;
-    const ck = invert ? id + '|inv' : id;
-    let t = texCache.get(ck);
-    if (!t) { t = invert ? loadInverted(c.url) : loader.load(c.url); texCache.set(ck, t); }
-    t.colorSpace = c.colorSpace === 'linear' ? THREE.LinearSRGBColorSpace : (srgb ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace);
-    t.wrapS = c.wrapS === 'clamp' ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
-    t.wrapT = c.wrapT === 'clamp' ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
-    if (typeof c.flipY === 'boolean') t.flipY = c.flipY;
-    t.needsUpdate = true;
-    return t;
-  }
+  /** Дефолты URP-материала — форма редактора может быть неполной, пока запись не сохранена (zod-дефолты ставятся
+   *  реестром при загрузке конфига, а свежесозданная запись их ещё не имеет). */
+  const DEF: MaterialCfg = {
+    id: '__preview', surface: 'opaque', blend: 'alpha', alphaClip: false, cutoff: 0.5, cull: 'back',
+    baseColor: [1, 1, 1, 1], metallic: 0, smoothness: 0.5, occlusionStrength: 1, bumpScale: 1,
+    emissionColor: [0, 0, 0], emissionIntensity: 1, tiling: [1, 1], offset: [0, 0],
+  };
 
   function update(m: MatCfg, textures: TexCfg[]): void {
-    mat.color = col(m.baseColor, 0xffffff);
-    mat.opacity = num(m.opacity, 1); mat.transparent = mat.opacity < 0.999;
-    mat.metalness = num(m.metalness, 0);
-    mat.roughness = num(m.roughness, 0.8);
-    roughOff = num(m.roughnessOffset, 0); metalOff = num(m.metalnessOffset, 0);   // offset-ползунки → в шейдер (loop)
-    mat.emissive = col(m.emissive, 0x000000);
-    mat.emissiveIntensity = num(m.emissiveIntensity, 1);
-    mat.envMapIntensity = envIntensity;                  // вклад IBL (регулируется слайдером «Окружение»)
-    const ns = num(m.normalScale, 1);
-    mat.normalScale.set(ns, m.normalFlipY ? -ns : ns);   // flip green: DirectX(Y−)→OpenGL(Y+) без пересжатия текстуры
-    mat.map = tex(textures, m.map, true);
-    mat.normalMap = tex(textures, m.normalMap, false);
-    mat.roughnessMap = tex(textures, m.roughnessMap, false, !!m.roughnessIsSmoothness);   // Smoothness-карта → инверсия
-    mat.metalnessMap = tex(textures, m.metalnessMap, false);
-    mat.emissiveMap = tex(textures, m.emissiveMap, true);
-    mat.aoMap = tex(textures, m.aoMap, false);
-    mat.needsUpdate = true;
+    const set = Object.fromEntries(Object.entries(m).filter(([, v]) => v !== undefined)) as Partial<MaterialCfg>;
+    const full: MaterialCfg = { ...DEF, ...set, id: '__preview' };
+    const next = buildMaterial({ materials: [full], textures }, '__preview') as THREE.MeshStandardMaterial | null;
+    if (!next) return;
+    next.envMapIntensity = envIntensity;   // вклад IBL — ТОЛЬКО превью (в игре envMap нет), слайдер «Окружение»
+    sphere.material = next;
+    mat.dispose();                         // текстуры общие (кэш assetCache) — их не трогаем
+    mat = next;
   }
 
   function dispose(): void {
     if (!alive) return;   // идемпотентно (само-очистка из loop + явный вызов панели могут совпасть)
     alive = false; cancelAnimationFrame(raf);
-    for (const t of texCache.values()) t.dispose();
-    texCache.clear();
     mat.dispose(); sphere.geometry.dispose(); pmrem.dispose();
     scene.environment?.dispose();
     renderer.dispose();

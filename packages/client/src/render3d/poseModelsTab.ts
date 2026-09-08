@@ -2,7 +2,9 @@
  * ВКЛАДКА «МОДЕЛИ» поз-редактора (C5) — рабочий стол импорта скинед-мешей персонажа/оружия.
  * Поток: FBX/GLB (AccuRIG/CC) → `autoBoneMap` → `makeRetargetRig` → ЖИВОЙ ретаргет ведётся нашей позой
  * (`drive(human)` в loop) → правка карты костей / масштаба / материалов по сабмешам → Экспорт GLB
- * (`exportGLB`→`uploadAsset`) + запись `models`-записи в конфиг (`/api/dev/config-file` + live `/api/dev/config`).
+ * (`exportGLB`→`uploadAsset`) + запись `models`-записи в РАБОЧУЮ КОПИЮ конфига (`configEdits.saveConfigSection`).
+ * ⚠ Ф12: на сервер отсюда больше не ходим — правки (в т.ч. ~80 селектов сабмешей) ложатся локально сразу и
+ * переживают перезагрузку даже без сервера, а публикуются кнопкой «Опубликовать» в тулбаре.
  * Игра берёт GLB из конфига (`models[].url`). Редактор = конвертер; тяжёлый FBXLoader только тут, в игре — GLB.
  */
 import * as THREE from 'three';
@@ -14,6 +16,7 @@ const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая п�
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
 import { DEFAULT_PROFILE, type BodyProfile, type BoneScale } from './bodyProfile.js';
+import { saveConfigSection } from './configEdits.js';
 
 /** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). character = атлас (один GLB + slots). */
 interface ModelEntry {
@@ -161,9 +164,8 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     atlas.boneOffsets = { ...(atlas.boneOffsets ?? {}), ...add };            // НОВЫЙ объект → редактор увидит смену по ссылке
     asmStatus = `\u0434\u043e\u0437\u0430\u043c\u0435\u0440\u0435\u043d\u044b \u043f\u0430\u043b\u044c\u0446\u044b: +${Object.keys(add).length} \u043e\u0444\u0441\u0435\u0442\u043e\u0432`;
     try {
-      const models = cfg.models as ModelEntry[];
-      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models }) });
-    } catch { /* конфиг-сервер мог быть недоступен — в памяти замеры всё равно уже применены */ }
+      saveConfigSection('models', cfg.models as ModelEntry[]);
+    } catch { /* запись локальная и не падает; в памяти замеры всё равно уже применены */ }
     rebuildAsm();                                                            // source-риг построен со старой геометрией
     renderBody();
   }
@@ -190,8 +192,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       // КОПИЛКА: атласы копятся по ИМЕНИ (id). Заменяем лишь одноимённый (переимпорт того же файла) — все прочие целы.
       const models = (cfg.models as ModelEntry[]).filter((m) => m.id !== id).concat(e);
       const bodyJson = JSON.stringify({ models });
-      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
-      await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+      saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
       cfg.models = models; asmAtlas = e;
       rebuildAsm();   // ВСЕГДА пересобираем скин: setAtlas дедуплицирует по URL, а переимпорт того же файла URL не меняет → иначе превью зависло бы на старом GLB
       asmStatus = `атлас «${id}» [${key ?? 'игрок'}]: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`;
@@ -203,16 +204,14 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     if (!asmAtlas) return;
     const models = (cfg.models as ModelEntry[]).map((m) => (m.id === asmAtlas!.id ? asmAtlas! : m));
     const bodyJson = JSON.stringify({ models });
-    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
-    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
     cfg.models = models;
   }
   /** ЯВНЫЙ ЭКСПОРТ: записать ВСЕ атласы/модели (как есть в cfg.models) в конфиг. Ничего не стирает — просто флаш. */
   async function exportAllAtlases(): Promise<void> {
     const models = cfg.models as ModelEntry[];
     const bodyJson = JSON.stringify({ models });
-    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
-    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
     const chars = models.filter((m) => m.kind === 'character');
     asmStatus = `📤 экспортировано атласов: ${chars.length} — ${chars.map((m) => `${m.id}[${m.classId ?? 'игрок'}]`).join(', ')}`;
     renderBody();
@@ -223,8 +222,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     const models = (cfg.models as ModelEntry[]).map((m) => (m.id === id ? { ...m, classId: k } : m));
     if (asmAtlas?.id === id) asmAtlas = { ...asmAtlas, classId: k };
     const bodyJson = JSON.stringify({ models });
-    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
-    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson });
+    saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
     cfg.models = models; renderBody();
   }
   /** Выбрать атлас из списка для ПРЕВЬЮ: делаем активным → пересобираем источник+скин под его пропорции, грузим его GLB. */
@@ -350,8 +348,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       const i = models.findIndex((m) => m.id === persisted.id);
       if (i >= 0) models[i] = persisted; else models.push(persisted);
       const body = JSON.stringify({ models });
-      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });   // персист в data/models.json
-      await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });         // live-оверрайд
+      saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
       cfg.models = models;
       status = `сохранено: ${entry.id} → ${up.url} (${(glb.byteLength / 1024).toFixed(0)} КБ)`;
     } catch (e) { status = 'ошибка экспорта: ' + (e as Error).message; }
@@ -390,8 +387,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
         made.push(`${slot}:${sm.name}`);
       }
       const body = JSON.stringify({ models });
-      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-      await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
       cfg.models = models;
       status = `сплит готов: ${made.join(', ')}`;
     } catch (e) { status = 'ошибка сплита: ' + (e as Error).message; }
@@ -402,8 +398,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
   async function deleteModel(id: string): Promise<void> {
     const models = cfg.models.filter((m) => m.id !== id);
     const body = JSON.stringify({ models });
-    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
     cfg.models = models;
     // Ф20.6: снесли АКТИВНЫЙ атлас — пересобрать источник/скин. Без этого `curAtlas()` уезжал на
     // другую запись (или в undefined), манекен перестраивался под дефолтные пропорции, а СТАРЫЙ GLB
@@ -461,8 +456,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       }
       g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
       const body = JSON.stringify({ models });
-      await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-      await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
       cfg.models = models;
       wpnStatus = `оружие: ${meshes.length} → ${made.join(', ')}`;
     } catch (e) { wpnStatus = 'ошибка: ' + (e as Error).message; }
@@ -472,8 +466,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
   async function setWeaponType(id: string, weaponType: string): Promise<void> {
     const models = (cfg.models as ModelEntry[]).map((m) => (m.id === id ? { ...m, weaponType } : m));
     const body = JSON.stringify({ models });
-    await fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    await fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
     cfg.models = models; renderBody();
   }
 

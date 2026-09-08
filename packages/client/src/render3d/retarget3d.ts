@@ -9,6 +9,7 @@
  * Затем в локаль цели: targetLocal = parentTargetWorld⁻¹ · targetWorld. Разница bind-поз учтена R_restTarget.
  */
 import * as THREE from 'three';
+import { findTwistChains, driveTwistChains, twistReport, type TwistChain } from './twistBones.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { mapFingerBones, allFingerBones, FINGER_CHAINS, FINGER_SEGMENTS } from './boneNames.js';
 
@@ -137,6 +138,7 @@ export interface RetargetRig {
   setBone(our: OurBone, targetName: string): void;   // ручная правка карты (пересчёт оффсета)
   targetBoneNames(): string[];
   targetBone(our: string): THREE.Object3D | null;    // кость ИМПОРТНОГО скелета по нашему имени (для крепления оружия к видимой кисти)
+  twistBones(): { bone: string; gain: number }[];    // найденные твист-кости и их доли оборота (диагностика)
   dispose(): void;
 }
 
@@ -351,6 +353,9 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
   const bake = (targetName: string): void => { const b = byName.get(targetName); if (b) restW.set(targetName, b.getWorldQuaternion(new THREE.Quaternion())); };
   for (const t of Object.values(boneMap)) bake(t);
   let hipRestY = 0; { const h = boneMap['Hips'] && byName.get(boneMap['Hips']); if (h) hipRestY = h.getWorldPosition(new THREE.Vector3()).y; }
+  // ТВИСТ-КОСТИ модели (CC: `..._UpperarmTwist01/02`, `ForearmTwist`, `ThighTwist`, `CalfTwist`). Снимаются ЗДЕСЬ,
+  // в бинд-позе: доли и оси берутся из фактических позиций. Их нет — массив пуст, поведение как раньше.
+  const twistChains: TwistChain[] = findTwistChains(byName as Map<string, THREE.Object3D>, boneMap);
   const posDrive = !!source;   // conform (атлас/игра): ведём и ПОЗИЦИИ костей → меш подтягивается к КАНОН-скелету (руки горизонт,
   //   ноги вертикально) через плавную деформацию скина, независимо от бинда (A/T) модели. Длины уже сконформлены (блок выше).
 
@@ -377,11 +382,15 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
       if (posDrive && tb.parent && !IS_FINGER.has(our)) { sb.getWorldPosition(_wp); _m.copy(tb.parent.matrixWorld).invert(); tb.position.copy(_wp).applyMatrix4(_m); }
       tb.updateMatrixWorld(false);                     // дети прочитают верный parentWorld
     }
+    // ⚠ ПОСЛЕ основных костей: оборот сегмента растягивается по твист-костям, иначе меш скручивает «фантиком»
+    // в одной точке (жалоба на замахе топором — плечу нужен полный оборот). Подробности — в `twistBones.ts`.
+    driveTwistChains(twistChains, driver);
   }
 
   return {
     root: loaded, boneMap, drive,
     targetBoneNames: () => [...byName.keys()],
+    twistBones: () => twistReport(twistChains),   // диагностика: какие твисты найдены и с какой долей
     targetBone: (our) => byName.get(boneMap[our] ?? '') ?? null,   // импортная кость по нашему имени
     setBone(our, targetName) { boneMap[our] = targetName; bake(targetName); },
     dispose() { loaded.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); },
@@ -401,8 +410,27 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
 export interface BakeRig {
   boneMap: Record<string, string>;
   restW: Map<string, THREE.Quaternion>;               // бинд-мировые кватернионы цели (оффсет T-поз)
-  /** Снять ТЕКУЩУЮ позу импорт-скелета (после кадра анимации) в наши кости (пишет dst.bones[*].quaternion). */
-  sampleInto(dst: Humanoid): void;
+  /**
+   * Снять ТЕКУЩУЮ позу импорт-скелета (после кадра анимации) в наши кости (пишет dst.bones[*].quaternion).
+   * `fingers` — снимать ли ещё и 30 фаланг (мокап-хват). По умолчанию нет: у большинства мокапов пальцев
+   * в треках нет вовсе, а наш хват авторится покадрово (`gripPoses.ts`) и мусорные фаланги его перетёрли бы.
+   */
+  sampleInto(dst: Humanoid, fingers?: boolean): void;
+  /**
+   * Смещение ТАЗА текущего кадра относительно бинда, пересчитанное в НАШИ юниты (по отношению высот таза).
+   * `feetRelative` — вычесть среднюю ГОРИЗОНТАЛЬ стоп, то есть мерить таз ОТНОСИТЕЛЬНО ОПОРЫ: тогда перенос
+   * веса (ноги стоят, таз ходит вперёд-назад) остаётся, а настоящий травел (бег, который едет вперёд)
+   * вычитается ПО ПОСТРОЕНИЮ — без порогов и эвристик «это уже рут-моушен или ещё нет».
+   * Вертикаль не трогаем никогда: присед/подскок — это движение тела, а не перенос персонажа.
+   */
+  /**
+   * СЫРОЕ смещение таза от бинда, УЖЕ пересчитанное в наши юниты. Ничего не вычитает.
+   * ⚠ Раньше здесь же вычиталась «опора» (средняя горизонталь стоп). ЗАМЕР показал, что это неверно
+   * в принципе: у in-place источника таз стоит (0 на всех кадрах), едут только стопы, и любое покадровое
+   * вычитание опоры ВЫДУМЫВАЕТ качание таза (среднее по двум стопам дало 3.95 юнита, по опорной — 21.7,
+   * при истинных 0.00). Травел снимается ТРЕНДОМ по всему клипу — `footLock.detrendTravel`.
+   */
+  sampleHipsDelta(dst: Humanoid): [number, number, number] | null;
 }
 
 /** Собрать запекатель из импорт-скелета + карты костей. `restW` снимается ЗДЕСЬ (loaded должен быть в bind-позе:
@@ -414,24 +442,41 @@ export function makeBakeRig(loaded: THREE.Object3D, boneMap: Record<string, stri
   if (byName.size === 0) loaded.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });   // BVH/Group-риги без isBone
   loaded.updateMatrixWorld(true);
   const restW = new Map<string, THREE.Quaternion>();
-  for (const t of Object.values(boneMap)) { const b = byName.get(t); if (b) restW.set(t, b.getWorldQuaternion(new THREE.Quaternion())); }
+  const restP = new Map<string, THREE.Vector3>();               // бинд-мировые ПОЗИЦИИ — точка отсчёта смещения таза
+  for (const t of Object.values(boneMap)) {
+    const b = byName.get(t); if (!b) continue;
+    restW.set(t, b.getWorldQuaternion(new THREE.Quaternion()));
+    restP.set(t, b.getWorldPosition(new THREE.Vector3()));
+  }
 
   const _Wt = new THREE.Quaternion(), _rtI = new THREE.Quaternion(), _pwI = new THREE.Quaternion();
-  const Wmap = new Map<OurBone, THREE.Quaternion>();
-  function sampleInto(dst: Humanoid): void {
+  const Wmap = new Map<string, THREE.Quaternion>();
+  function sampleInto(dst: Humanoid, fingers = false): void {
     Wmap.clear();
     loaded.updateMatrixWorld(true);
-    for (const our of OUR_BONES) {                      // порядок родитель→ребёнок (parentOurWorld уже в Wmap)
+    // Порядок родитель→ребёнок (parentOurWorld уже в Wmap). Фаланги — ПОСЛЕ тела: их родитель по цепочке
+    // упирается в кисть, а она снимается в OUR_BONES; `OUR_FINGERS` сам идёт от проксимальной к дистальной.
+    for (const our of fingers ? [...OUR_BONES, ...OUR_FINGERS] as string[] : OUR_BONES as readonly string[]) {
       const tName = boneMap[our]; if (!tName) continue;
       const tb = byName.get(tName), rt = restW.get(tName), db = dst.bones.get(our);
       if (!tb || !rt || !db) continue;
       tb.getWorldQuaternion(_Wt);                        // W_target
       const Wour = new THREE.Quaternion().copy(_Wt).multiply(_rtI.copy(rt).invert());   // W_our = W_target·R_restTarget⁻¹
       Wmap.set(our, Wour);
-      const pName = OUR_PARENT[our];
+      const pName = parentOfOur(our);
       const pw = pName ? Wmap.get(pName) : undefined;   // мировой нашей родит-кости (или identity для Hips/непривязанных)
       db.quaternion.copy(pw ? _pwI.copy(pw).invert().multiply(Wour) : Wour);            // → локаль (rotation синхронизируется)
     }
   }
-  return { boneMap, restW, sampleInto };
+  const _hp = new THREE.Vector3();
+  function sampleHipsDelta(dst: Humanoid): [number, number, number] | null {
+    const hipName = boneMap['Hips']; if (!hipName) return null;
+    const hb = byName.get(hipName), hr = restP.get(hipName);
+    if (!hb || !hr) return null;
+    loaded.updateMatrixWorld(true);
+    hb.getWorldPosition(_hp).sub(hr);                            // смещение таза в юнитах ИСТОЧНИКА
+    const k = Math.abs(hr.y) > 1e-6 ? dst.hipsRest.y / hr.y : 1; // масштаб источник→наши юниты по высоте таза
+    return [_hp.x * k, _hp.y * k, _hp.z * k];
+  }
+  return { boneMap, restW, sampleInto, sampleHipsDelta };
 }

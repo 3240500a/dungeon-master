@@ -1,8 +1,10 @@
 /**
  * ГИЗМО ПРЕДЕЛОВ СУСТАВА (поз-редактор) — рисует допустимую зону движения выбранного сустава ПРЯМО на манекене,
  * чтобы крутилки лимитов стали наглядными (как арматура-лимиты в Blender / RotationLimit в Final IK). Строится ТОЙ ЖЕ
- * параметризацией, что FK-клэмп (`jointClamp.ts`): swing = вектор поворота (rP вокруг plane, rN вокруг normal),
- * граница = АСИММЕТРИЧНЫЙ бокс [planeMin,planeMax]×[normalMin,normalMax] → гизмо совпадает с реальным упором кости 1:1.
+ * параметризацией, что клэмп и кольца гизмо (`jointDof.ts`): углы осей сустава, граница = АСИММЕТРИЧНЫЙ бокс
+ * [planeMin,planeMax]×[normalMin,normalMax] → зона совпадает с реальным упором кости 1:1.
+ * ⚠ Раньше зона строилась swing-лог-картой, а кольца — эйлеровыми скалярами: области РАЗНЫЕ, и кость упиралась
+ * не там, где нарисовано. Одна модель на всё — иначе картинка врёт.
  *  - swing (плечо/бедро/кисть/торс/голова/голеностоп) → полупрозрачная «шапка» допустимых направлений + дуга твиста;
  *  - hinge (локоть/колено/носок) → плоский клин (сектор) от min до max.
  *  - ИНДИКАТОР: жёлтая точка = текущее направление кости в зоне, стрелка = текущий твист (сколько до предела).
@@ -10,6 +12,7 @@
  */
 import * as THREE from 'three';
 import type { LimitView } from './humanoidRagdoll.js';
+import { quatFromDof } from './jointDof.js';
 
 const R = 14;   // визуальный радиус зоны/дуги (u)
 
@@ -23,12 +26,9 @@ export interface LimitGizmo {
 }
 
 const v3 = (a: readonly number[]): THREE.Vector3 => new THREE.Vector3(a[0], a[1], a[2]).normalize();
-// Направление оси кости (twist) после swing-поворота (rP вокруг plane, rN вокруг normal) — лог-карта, как в клэмпе.
-function swingDir(rP: number, rN: number, T: THREE.Vector3, P: THREE.Vector3, N: THREE.Vector3): THREE.Vector3 {
-  const mag = Math.hypot(rP, rN);
-  if (mag < 1e-6) return T.clone();
-  const axis = P.clone().multiplyScalar(rP / mag).addScaledVector(N, rN / mag);
-  return T.clone().applyQuaternion(new THREE.Quaternion().setFromAxisAngle(axis, mag));
+/** Куда смотрит ось кости при углах (rP вокруг plane, rN вокруг normal) — ровно тем же `quatFromDof`, что и клэмп. */
+function swingDir(view: LimitView, rP: number, rN: number, T: THREE.Vector3): THREE.Vector3 {
+  return T.clone().applyQuaternion(quatFromDof(view, [rP, rN, 0]));
 }
 
 export function makeLimitGizmo(): LimitGizmo {
@@ -63,7 +63,7 @@ export function makeLimitGizmo(): LimitGizmo {
     if (!view) { group.visible = false; return; }
     group.visible = true;
     if (view.kind === 'swing') {
-      const T = v3(view.twist!), P = v3(view.plane!), N = v3(view.normal!);
+      const T = v3(view.twist!), P = v3(view.plane!);
       const pMin = view.planeMin ?? 0, pMax = view.planeMax ?? 0, nMin = view.normalMin ?? 0, nMax = view.normalMax ?? 0, STEP = 48;
       const dirs: THREE.Vector3[] = [];
       for (let i = 0; i < STEP; i++) {                        // обход прямоугольника (rP,rN) по периметру асимм. бокса
@@ -73,7 +73,7 @@ export function makeLimitGizmo(): LimitGizmo {
         else if (t < 2) { rP = pMax; rN = nMin + (nMax - nMin) * (t - 1); }
         else if (t < 3) { rP = pMax - (pMax - pMin) * (t - 2); rN = nMax; }
         else { rP = pMin; rN = nMax - (nMax - nMin) * (t - 3); }
-        dirs.push(swingDir(rP, rN, T, P, N));
+        dirs.push(swingDir(view, rP, rN, T));
       }
       surface(dirs, 0x39a0ff, 0.20, true); line(dirs, 0x8fd0ff, true);      // зона + контур
       line([new THREE.Vector3(0, 0, 0), T], 0xffffff, false);               // ось кости (twist)
@@ -94,8 +94,8 @@ export function makeLimitGizmo(): LimitGizmo {
   function mark(view: LimitView, rP: number, rN: number, twist: number): void {
     if (!group.visible) return;
     if (view.kind === 'swing') {
-      const T = v3(view.twist!), P = v3(view.plane!), N = v3(view.normal!);
-      dot.position.copy(swingDir(rP, rN, T, P, N)).multiplyScalar(R);
+      const T = v3(view.twist!), P = v3(view.plane!);
+      dot.position.copy(swingDir(view, rP, rN, T)).multiplyScalar(R);
       const tp = P.clone().applyAxisAngle(T, twist).multiplyScalar(R * 0.55);
       (twistMark.geometry as THREE.BufferGeometry).setFromPoints([new THREE.Vector3(), tp]);
       twistMark.visible = true;

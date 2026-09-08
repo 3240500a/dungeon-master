@@ -13,8 +13,8 @@
  *
  * Модуль ЗАМКНУТ на переданные колбэки — он ничего не знает про библиотеку клипов и не пишет на сервер.
  */
-import type { Clip, Keyframe, Interp } from './clipModel.js';
-import { clipDur } from './clipModel.js';
+import type { Clip, Keyframe, Interp, MarkTrack } from './clipModel.js';
+import { clipDur, MARK_TRACK } from './clipModel.js';
 
 /** Группы дорожек в Про-режиме: имя → предикат по имени кости. */
 export const TRACK_GROUPS: readonly [string, RegExp][] = [
@@ -26,6 +26,9 @@ export const TRACK_GROUPS: readonly [string, RegExp][] = [
   ['нога Л', /^Left(UpperLeg|LowerLeg|Foot|Toes)$/],
   ['нога П', /^Right(UpperLeg|LowerLeg|Foot|Toes)$/],
 ];
+
+/** Цвет метки по дорожке: геймплей — янтарь (удар), звук — голубой, VFX — сиреневый, камера — зелёный. */
+export const MARK_COLOR: Record<MarkTrack, string> = { gameplay: '#ffcf66', audio: '#8fb7ff', vfx: '#b088ff', camera: '#9ae6a0' };
 
 /** Цвет ромба по форме перехода — форма читается с одного взгляда. */
 export const INTERP_COLOR: Record<Interp | 'none', string> = {
@@ -41,8 +44,18 @@ export interface TimelineCallbacks {
   pro(): boolean;
   onSelectFrame(i: number): void;
   onScrub(t: number): void;
-  /** Времена ключей изменились (перетаскивание) — сохранить и пересортировать. */
-  onMoveKeys(moves: { index: number; t: number }[]): void;
+  /**
+   * Времена ключей меняются ПРЯМО СЕЙЧАС (каждое движение мыши) — только показать.
+   * Ключи адресуются ССЫЛКОЙ, а не индексом: пересортировка на коммите переставляет массив, и индекс,
+   * снятый на `pointerdown`, начал бы указывать на ЧУЖОЙ ключ, как только перетаскиваемый обгонит соседа.
+   */
+  onMoveKeys(moves: { key: Keyframe; t: number }[]): void;
+  /**
+   * Перетаскивание закончено — здесь и только здесь пересортировка, запись в историю и сохранение.
+   * (`saveLib` на каждый `pointermove` слал всю библиотеку на сервер, а он fire-and-forget: параллельные
+   * POST могли прийти не по порядку и сервер запоминал не последнее состояние.)
+   */
+  onMoveEnd(): void;
   /** Выделение изменилось (для панели действий). */
   onSelectionChange(sel: number[]): void;
 }
@@ -80,7 +93,7 @@ export function makeTimelinePanel(host: HTMLElement, cb: TimelineCallbacks): Tim
   const ctx = canvas.getContext('2d')!;
 
   let sel: number[] = [];
-  let dragging: { start: number; moved: boolean; base: Map<number, number> } | null = null;
+  let dragging: { start: number; moved: boolean; base: Map<Keyframe, number> } | null = null;
   let box: { x0: number; y0: number; x1: number; y1: number } | null = null;
   let w = 0, hgt = 0;
 
@@ -122,11 +135,32 @@ export function makeTimelinePanel(host: HTMLElement, cb: TimelineCallbacks): Tim
     const groups = pro ? TRACK_GROUPS.filter(([lb]) => c.keys.some((_, i) => changedGroups(c, i).has(lb))) : [];
     const keyRowY = RULER_H + 8;
 
+    // ── МЕТКИ (Notify / Notify State): точки и «капсулы» отрезков одной строкой ──
+    // Отдельной строки на дорожку не делаем: метка бьёт сразу в несколько дорожек (у `impact` есть и звук,
+    // и эффект), и разложить её по строкам без дублирования нельзя. Цвет = дорожка, форма = точка/отрезок.
+    const hasMarks = c.keys.some((k) => k.marks?.length);
+    const markY = keyRowY + 9;
+    if (hasMarks) {
+      for (const k of c.keys) {
+        for (const m of k.marks ?? []) {
+          const x = xOf(k.t), col = MARK_COLOR[MARK_TRACK[m.type]] ?? '#8fb7ff';
+          ctx.fillStyle = col;
+          if (m.dur !== undefined && m.dur > 0) {
+            const x2 = xOf(Math.min(D, k.t + m.dur));
+            ctx.globalAlpha = 0.45; ctx.fillRect(x, markY - 3, Math.max(2, x2 - x), 6); ctx.globalAlpha = 1;
+            ctx.fillRect(x - 1, markY - 4, 2, 8); ctx.fillRect(x2 - 1, markY - 4, 2, 8);
+          } else if (m.type === 'impact') {                     // удар — особый: крупнее и янтарный
+            ctx.beginPath(); ctx.arc(x, markY, 3.6, 0, Math.PI * 2); ctx.fill();
+          } else { ctx.beginPath(); ctx.arc(x, markY, 2.4, 0, Math.PI * 2); ctx.fill(); }
+        }
+      }
+    }
+
     // дорожки по группам (Про)
     if (pro) {
       ctx.font = '9px monospace';
       groups.forEach(([label], gi) => {
-        const y = keyRowY + 10 + gi * ROW_H;
+        const y = keyRowY + (hasMarks ? 20 : 10) + gi * ROW_H;
         ctx.fillStyle = '#1a1d26'; ctx.fillRect(0, y - ROW_H / 2, w, ROW_H - 1);
         ctx.fillStyle = '#6b7180'; ctx.fillText(label, 2, y + 3);
         for (let i = 0; i < c.keys.length; i++) {
@@ -189,8 +223,8 @@ export function makeTimelinePanel(host: HTMLElement, cb: TimelineCallbacks): Tim
       else if (!sel.includes(i)) sel = [i];
       cb.onSelectFrame(i);
       cb.onSelectionChange(sel);
-      const base = new Map<number, number>();
-      for (const s of sel) base.set(s, c.keys[s]!.t);
+      const base = new Map<Keyframe, number>();
+      for (const s of sel) { const k = c.keys[s]; if (k) base.set(k, k.t); }
       dragging = { start: x, moved: false, base };
       canvas.setPointerCapture(ev.pointerId);
     } else if (y < RULER_H + 4) {
@@ -209,8 +243,8 @@ export function makeTimelinePanel(host: HTMLElement, cb: TimelineCallbacks): Tim
       const dt = tOf(x) - tOf(dragging.start);
       if (Math.abs(x - dragging.start) > 2) dragging.moved = true;
       if (dragging.moved) {
-        const moves: { index: number; t: number }[] = [];
-        for (const [i, t0] of dragging.base) moves.push({ index: i, t: Math.max(0, +(t0 + dt).toFixed(4)) });
+        const moves: { key: Keyframe; t: number }[] = [];
+        for (const [k, t0] of dragging.base) moves.push({ key: k, t: Math.max(0, +(t0 + dt).toFixed(4)) });
         cb.onMoveKeys(moves);
       }
       draw();
@@ -222,6 +256,14 @@ export function makeTimelinePanel(host: HTMLElement, cb: TimelineCallbacks): Tim
 
   const onUp = (ev: PointerEvent): void => {
     const c = cb.clip();
+    if (dragging?.moved) {
+      const held = [...dragging.base.keys()];
+      dragging = null;
+      cb.onMoveEnd();                                       // тут пересортировка + история + сохранение
+      // Выделение живёт индексами, а пересортировка их перетасовала → пере-находим ПО ССЫЛКЕ.
+      const cc = cb.clip();
+      if (cc) { sel = held.map((k) => cc.keys.indexOf(k)).filter((i) => i >= 0).sort((a, b) => a - b); cb.onSelectionChange(sel); }
+    }
     if (box && c) {
       const lo = Math.min(box.x0, box.x1), hi = Math.max(box.x0, box.x1);
       if (hi - lo > 3) {
@@ -258,10 +300,14 @@ export function makeTimelinePanel(host: HTMLElement, cb: TimelineCallbacks): Tim
 }
 
 // ── Операции над ключами, которые нужны панели (чистые, тестируемые) ─────────────────────────────
-/** Сдвинуть/переставить ключи по новым временам, сохранив порядок. Возвращает новый порядок индексов. */
-export function moveKeys(keys: Keyframe[], moves: { index: number; t: number }[]): void {
-  for (const m of moves) { const k = keys[m.index]; if (k) k.t = Math.max(0, m.t); }
-  keys.sort((a, b) => a.t - b.t);
+/**
+ * Задать времена ключей ПО ССЫЛКЕ и БЕЗ сортировки — шаг перетаскивания.
+ * Сортировка тут была бы вредна: она переставляет массив под уже снятыми индексами (протащил ключ мимо
+ * соседа — и следующий шаг драга поехал на чужой ключ). Порядок наводит редактор ОДИН РАЗ на отпускании
+ * своим `sortKeys`, который заодно пере-находит текущий кадр по идентичности.
+ */
+export function setKeyTimes(moves: { key: Keyframe; t: number }[]): void {
+  for (const m of moves) m.key.t = Math.max(0, m.t);
 }
 
 /** Задать форму перехода выделенным ключам. */

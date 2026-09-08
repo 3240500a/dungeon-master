@@ -232,12 +232,12 @@ fieldCustomRenderers.materialByClass = (value, onChange) => {
   }
   return wrap;
 };
-// map/normalMap/… (у материала) → id текстуры из вкладки «Текстуры»; '' = без карты.
+// baseMap/bumpMap/maskMap/… (у материала) → id текстуры из вкладки «Текстуры»; '' = без карты.
 const textureIds = (): string[] => ['', ...((data['textures'] as { id: string }[]) ?? []).map((t) => t.id)];
-for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) fieldEnumSources[k] = textureIds;
-// baseColor/emissive (материал) → пикер цвета (tuple [r,g,b] 0..1); url (текстура/меш) → поле + аплоад файла.
+for (const k of ['baseMap', 'bumpMap', 'maskMap', 'occlusionMap', 'emissionMap']) fieldEnumSources[k] = textureIds;
+// baseColor/emissionColor (материал) → пикер цвета; url (текстура/меш) → поле + аплоад файла.
 fieldCustomRenderers.baseColor = (value, onChange) => renderColorField(value, onChange);
-fieldCustomRenderers.emissive = (value, onChange) => renderColorField(value, onChange);
+fieldCustomRenderers.emissionColor = (value, onChange) => renderColorField(value, onChange);
 fieldCustomRenderers.url = (value, onChange, parent) => renderUploadField(value, onChange, parent);
 // Объекты мира (objects): role — авто (enum); modelId — выпадашка всех моделей (фолбэк modelIdOptions); materialId —
 // материал-override ('' = из GLB); biomes — мультиселект биомов, к которым относится объект.
@@ -769,8 +769,11 @@ function renderPage(page: HTMLElement): void {
   const toolbar = document.createElement('div');
   toolbar.style.cssText = 'position:sticky;top:0;z-index:5;display:flex;gap:8px;flex-wrap:wrap;padding:2px 0 10px;margin-bottom:6px;background:#14141a;border-bottom:1px solid #22222c';
   toolbar.append(
-    btn('✔ Применить (тест, локально)', apply, '#2a4a2a'),
-    btn('💾 Применить везде (в файл)', applyToFile, '#26406a'),
+    // ⚠ Ф12.6: подпись врала. «Локально» читалось как «в браузере», а кнопка ВСЕГДА писала на СЕРВЕР
+    // (оверрайд в БД). Разница между двумя кнопками не в том, где сохраняется, а в том, попадёт ли правка
+    // в файл-источник (git/деплой) или останется оверрайдом до сброса.
+    btn('✔ Применить на сервере', apply, '#2a4a2a', 'Пишет оверрайд в БД сервера: действует сразу и переживает рестарт, но в файлы data/*.json (git, деплой) НЕ попадёт.'),
+    btn('💾 Применить и записать в файл', applyToFile, '#26406a', 'То же плюс запись в data/*.json — правка попадёт в git и на деплой.'),
     btn('🔎 Проверить конфиг', () => { void runValidation(); }, '#3a2f18'),
     btn('⭳ Экспорт', exportJson),
     btn('⭱ Импорт', importJson),
@@ -906,7 +909,13 @@ function renderArrayPage(page: HTMLElement, elemSchema: z.ZodTypeAny): void {
   // onDone = render + apply(): пакетно-загруженные текстуры/модели СРАЗУ персистят на сервер (иначе на перезагрузке пропадут,
   // а материал, что на них ссылается, покажется без карты — «не применился»). Записи валидны (id+url) → apply не отвалит.
   const uploadDone = (): void => { render(); apply(); };
-  if (current === 'textures') crud.appendChild(renderBatchUpload('.png,.jpg,.jpeg,.webp', arr as Record<string, unknown>[], (id, url, fn, flipY) => ({ id, name: fn, url, colorSpace: /(normal|_nrm|_norm)/i.test(fn) ? 'linear' : 'srgb', wrapS: 'repeat', wrapT: 'repeat', flipY: flipY ?? false }), uploadDone));
+  // Текстуры: тип/sRGB угадываются по имени файла, как делает импортёр Unity. `*_n|_nrm|_norm|normal` → Normal map;
+  // карты ДАННЫХ (`_m`/mask/orm/rough/metal/ao) — линейные; остальное (альбедо/эмиссия) — sRGB. Чекбокс форсирует нормалмап.
+  if (current === 'textures') crud.appendChild(renderBatchUpload('.png,.jpg,.jpeg,.webp', arr as Record<string, unknown>[], (id, url, fn, forceNormal) => {
+    const isNormal = !!forceNormal || /(_n|_nrm|_norm|normal)$/i.test(fn);
+    const isData = isNormal || /(_m|_mask|_orm|_rough|_metal|_ao|_s)$/i.test(fn);
+    return { id, name: fn, url, type: isNormal ? 'normalMap' : 'default', sRGB: !isData, flipGreenChannel: false, wrapMode: 'repeat', filterMode: 'bilinear', aniso: 4, mipmaps: true, compression: 'normal' };
+  }, uploadDone));
   if (current === 'models') crud.appendChild(renderBatchUpload('.glb,.gltf', arr as Record<string, unknown>[], (id, url, fn) => { const cat = currentAssetCategory(); return { id, name: fn, url, category: cat, kind: kindForCategory(cat) }; }, uploadDone));
   // Чистка «хвостов»: убрать записи, у которых нет файла на сервере (+ каскад материалы/объекты). Для 3D-ассетов.
   if (['textures', 'models', 'materials', 'objects'].includes(current)) {
@@ -1120,7 +1129,7 @@ async function pruneDeadAssets(): Promise<void> {
   for (const t of textures) if (typeof t.url === 'string' && t.url && !(await assetExists(t.url))) deadTex.add(String(t.id));
   const deadModel = new Set<string>();
   for (const m of models) if (typeof m.url === 'string' && m.url && !(await assetExists(m.url))) deadModel.add(String(m.id));
-  const MAPS = ['map', 'roughnessMap', 'normalMap', 'metalnessMap', 'emissiveMap', 'aoMap'];
+  const MAPS = ['baseMap', 'bumpMap', 'maskMap', 'occlusionMap', 'emissionMap'];
   const deadMat = new Set<string>();
   for (const mm of materials) if (MAPS.some((k) => typeof mm[k] === 'string' && mm[k] && deadTex.has(mm[k] as string))) deadMat.add(String(mm.id));
   const deadObj = new Set<string>();
@@ -1171,7 +1180,7 @@ async function validateConfig(): Promise<ConfigIssue[]> {
   };
   ref('objects', 'modelId', models, 'models', 'error');
   ref('objects', 'materialId', materials, 'materials', 'error');
-  for (const f of ['map', 'roughnessMap', 'normalMap', 'metalnessMap', 'emissiveMap', 'aoMap']) ref('materials', f, textures, 'textures', 'error');
+  for (const f of ['baseMap', 'bumpMap', 'maskMap', 'occlusionMap', 'emissionMap']) ref('materials', f, textures, 'textures', 'error');
   ref('items.base', 'modelId', models, 'models', 'warn');       // шмотка ссылается на незалитую 3D-модель — фолбэк на процедурку
   ref('monster-gear', 'modelId', models, 'models', 'warn');
 
@@ -1272,9 +1281,10 @@ function resetConfig(): void {
   setStatus('Сброшено к значениям по умолчанию.', '#cbd');
 }
 
-function btn(text: string, onClick: () => void, bg = '#2c2c3a'): HTMLButtonElement {
+function btn(text: string, onClick: () => void, bg = '#2c2c3a', title = ''): HTMLButtonElement {
   const b = document.createElement('button');
   b.textContent = text;
+  if (title) b.title = title;   // «что именно делает кнопка» — подсказкой, а не догадкой по подписи
   b.style.cssText = `padding:7px 12px;cursor:pointer;background:${bg};color:#e8e8f0;border:1px solid #3c3c4a;border-radius:6px;font-size:13px`;
   b.addEventListener('click', onClick);
   return b;

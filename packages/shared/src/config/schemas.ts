@@ -1703,34 +1703,52 @@ export type RoomPrefab = z.infer<typeof roomPrefabsSchema>[number];
 
 // ── 3D-АССЕТЫ (текстуры/материалы/модели) — импорт в поз-редакторе; бинари GLB/PNG на диске /assets по url ──
 const rgb = z.tuple([z.number(), z.number(), z.number()]);
-/** Текстура = картинка (/assets/<id>.png) + параметры сэмплера. ПЕРЕИСПОЛЬЗУЕТСЯ материалами. */
+const rgba = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+/** Текстура = картинка (/assets/<id>.png) + НАСТРОЙКИ ИМПОРТА, один-в-один как в Unity. Переиспользуется материалами.
+ *  КАНОН — Unity: `type` заменяет угадывание «это нормалмап» по имени файла (галка Texture Type), `sRGB` — цветовое
+ *  пространство (albedo/emission — true; normal/mask — false). Веб переводит это в three.js, Unity берёт как есть. */
 export const texturesSchema = z.array(z.object({
   id: z.string(),
   name: z.string().default(''),
   url: z.string(),                                       // /assets/<id>.png|jpg (сервер /assets)
-  colorSpace: z.enum(['srgb', 'linear']).default('srgb'),   // srgb для цвета/эмиссии, linear для normal/rough/metal
-  wrapS: z.enum(['repeat', 'clamp']).default('repeat'),
-  wrapT: z.enum(['repeat', 'clamp']).default('repeat'),
-  flipY: z.boolean().default(false),                    // glTF-конвенция: false
+  type: z.enum(['default', 'normalMap']).default('default'),          // Unity Texture Type: обычная / нормалмап
+  sRGB: z.boolean().default(true),                                    // Unity «sRGB (Color Texture)»; данные (normal/mask) — false
+  flipGreenChannel: z.boolean().default(false),                       // Unity «Flip Green Channel» (только type='normalMap'): DirectX/3ds Max (−Y) → OpenGL (+Y)
+  wrapMode: z.enum(['repeat', 'clamp']).default('repeat'),
+  filterMode: z.enum(['point', 'bilinear', 'trilinear']).default('bilinear'),
+  aniso: z.number().int().min(0).max(16).default(1),                  // анизотропия (косые углы: пол/стены)
+  mipmaps: z.boolean().default(true),
+  compression: z.enum(['none', 'normal', 'high']).default('normal'),  // подсказка Editor-бейкеру Unity (BC7/BC5)
 }));
-/** Материал PBR (metallic-roughness, как glTF/three/Unity/UE). ПЕРЕИСПОЛЬЗУЕМЫЙ — назначается на сабмеши моделей. */
+/** Материал = инспектор URP Lit 1:1 (КАНОН — Unity; веб переводит это в three.js, Unity ставит на сток URP/Lit).
+ *  МАСКА (`maskMap`) — раскладка URP: **R = metallic, G = AO, B = —, A = smoothness**.
+ *  ⚠ Если AO не рисуется — канал G должен быть БЕЛЫМ (URP читает окклюзию из G; чёрный G = всё чёрное).
+ *  ⚠ Альфа обязана быть в файле (PNG-32/TGA): «Alpha From Grayscale» даёт A = яркость(RGB), т.е. smoothness=metallic. */
 export const materialsSchema = z.array(z.object({
   id: z.string(),
   name: z.string().default(''),
-  baseColor: rgb.default([1, 1, 1]),
-  opacity: z.number().min(0).max(1).default(1),
-  metalness: z.number().min(0).max(1).default(0),
-  roughness: z.number().min(0).max(1).default(0.8),
-  emissive: rgb.default([0, 0, 0]),
-  emissiveIntensity: z.number().min(0).default(1),
-  normalScale: z.number().default(1),
-  normalFlipY: z.boolean().default(false),              // инверсия зелёного канала нормалмапы (DirectX/3ds Max → OpenGL/glTF): normalScale.y *= -1
-  roughnessIsSmoothness: z.boolean().default(false),    // roughness-карта на деле SMOOTHNESS (Unity: ярче=глаже) → инвертируем 1−value
-  roughnessOffset: z.number().default(0),               // смещение −1…+1 ПОВЕРХ карты/скаляра: clamp(rough + off, 0, 1). + матовее, − глянцевее
-  metalnessOffset: z.number().default(0),               // смещение −1…+1 ПОВЕРХ карты/скаляра металличности
-  map: z.string().optional(),                           // textureId (albedo)
-  normalMap: z.string().optional(), roughnessMap: z.string().optional(), metalnessMap: z.string().optional(),
-  emissiveMap: z.string().optional(), aoMap: z.string().optional(),
+  // ── Surface Options ──
+  surface: z.enum(['opaque', 'transparent']).default('opaque'),
+  blend: z.enum(['alpha', 'premultiply', 'additive', 'multiply']).default('alpha'),   // только при surface='transparent'
+  alphaClip: z.boolean().default(false),                              // alpha-cutout (glTF MASK)
+  cutoff: z.number().min(0).max(1).default(0.5),
+  cull: z.enum(['back', 'front', 'off']).default('back'),             // 'off' = двусторонний
+  // ── Surface Inputs ──
+  baseMap: z.string().optional(),                                     // textureId (albedo), sRGB
+  baseColor: rgba.default([1, 1, 1, 1]),                              // множитель baseMap; A = прозрачность
+  maskMap: z.string().optional(),                                     // textureId: R=metallic, G=AO, A=smoothness
+  metallic: z.number().min(0).max(1).default(0),                      // скаляр; при maskMap металл берётся из R карты
+  smoothness: z.number().min(0).max(1).default(0.5),                  // скаляр; при maskMap — МНОЖИТЕЛЬ канала A
+  occlusionMap: z.string().optional(),                                // обычно = maskMap (URP читает канал G)
+  occlusionStrength: z.number().min(0).max(1).default(1),
+  bumpMap: z.string().optional(),                                     // нормалмап (textures[].type='normalMap')
+  bumpScale: z.number().default(1),
+  emissionMap: z.string().optional(),
+  emissionColor: rgb.default([0, 0, 0]),
+  emissionIntensity: z.number().min(0).default(1),                    // итог: _EmissionColor = emissionColor × intensity
+  // ── UV (URP: ОДНА трансформация _BaseMap_ST на ВСЕ карты) ──
+  tiling: z.tuple([z.number(), z.number()]).default([1, 1]),
+  offset: z.tuple([z.number(), z.number()]).default([0, 0]),
 }));
 /** 3D-модель: `character` = ОДИН GLB-атлас персонажа (скелет + все сабмеши-части, тумблер по слоту),
  *  `part` = отдельный меш слота (легаси), `weapon` = оружие. GLB на /assets + карта ретаргета + материалы. */

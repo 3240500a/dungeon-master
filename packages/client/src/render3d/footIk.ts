@@ -18,7 +18,7 @@ const SOLE = 1.5;                    // высота кости стопы на�
  * Длины читаются из rest-офсетов костей (у нас анимируются только повороты, `.position` = rest) и кэшируются
  * на объекте `Humanoid`: пересборка манекена даёт новый объект → замер обновляется сам.
  */
-interface LegGeom { thigh: number; shin: number; max: number; min: number }
+export interface LegGeom { thigh: number; shin: number; max: number; min: number }
 const _legCache = new WeakMap<Humanoid, LegGeom[]>();
 function legGeom(mesh: Humanoid, i: number): LegGeom {
   let all = _legCache.get(mesh);
@@ -133,4 +133,49 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     fb.getWorldPosition(_iFoot);
     legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace, legGeom(mesh, i));
   }
+}
+
+/**
+ * Геометрия ноги с ЗАДАННЫМ запасом до полного выпрямления.
+ * ⚠ Штатный `legGeom` держит запас 0.5 — чтобы колено в ИГРЕ не вставало в замок. Для ЗАПЕКАНИЯ это вредно:
+ * наша rest-нога выпрямлена ровно на `thigh+shin`, и с запасом 0.5 приколотая стопа в покое уезжала бы
+ * на полюнита каждый кадр (замерено падающим тестом). Здесь запас маленький — точность важнее.
+ */
+export function legGeomFor(mesh: Humanoid, i: number, guard = 0.02): LegGeom {
+  const g = legGeom(mesh, i);
+  return { thigh: g.thigh, shin: g.shin, max: g.thigh + g.shin - guard, min: g.min };
+}
+/**
+ * ЧЕСТНАЯ длина ноги i (0=Л, 1=П) в юнитах: бедро+голень, длины С РИГА.
+ * ⚠ Это НЕ `legGeom().max`: там `thigh+shin−0.5` — солверный запас, чтобы колено не вставало в замок.
+ * Для «дотянется ли нога до цели» нужна именно полная длина, иначе в rest-позе (нога выпрямлена ровно на
+ * `thigh+shin`) любой пин считался бы недосягаемым и таз дёргало бы на ровном месте.
+ */
+export function legReach(mesh: Humanoid, i: number): number {
+  const L = IK_LEGS[i]!;
+  return (mesh.bones.get(L.l)?.position.length() ?? 0) + (mesh.bones.get(L.f)?.position.length() ?? 0);
+}
+/** Имена костей ноги i — чтобы вызывающий не переписывал таблицу у себя. */
+export const legBones = (i: number): { u: string; l: string; f: string } => IK_LEGS[i]!;
+/** Сколько ног знает заземлитель (2). */
+export const LEG_COUNT = IK_LEGS.length;
+/** Высота кости стопы над полом при подошве на полу — публично, чтобы цели пинов можно было заземлить. */
+export const FOOT_SOLE = SOLE;
+
+const _gbFoot = new THREE.Vector3();
+/**
+ * ЗАЗЕМЛЕНИЕ ДЛЯ ЗАПЕКАНИЯ: на сколько ЮНИТОВ поднять таз, чтобы НИЖНЯЯ стопа встала на пол `floorY`.
+ * Отличие от `groundFeet` — мгновенно и БЕЗ правки скелета: `groundFeet` живёт в кадре игры, у него
+ * демпфер по `dt` и он догибает колени; здесь нужен один чистый ответ, который ляжет в `__hipsD` клипа.
+ * Отрицательный результат (обе стопы висят) тоже возвращаем: клип с прыжком не должен «прилипать» к полу.
+ */
+export function groundBakeOffset(mesh: Humanoid, floorY = 0): number {
+  const sole = SOLE + (mesh.footLift ?? 0);
+  let worst = -Infinity;
+  for (const L of IK_LEGS) {
+    const fb = mesh.bones.get(L.f); if (!fb) continue;
+    fb.getWorldPosition(_gbFoot);
+    worst = Math.max(worst, floorY + sole - _gbFoot.y);
+  }
+  return Number.isFinite(worst) ? worst : 0;
 }

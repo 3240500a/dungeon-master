@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { changedGroups, moveKeys, setInterp, scaleKeys, TRACK_GROUPS, INTERP_COLOR } from './timelinePanel.js';
+import { changedGroups, setKeyTimes, setInterp, scaleKeys, TRACK_GROUPS, INTERP_COLOR } from './timelinePanel.js';
 import type { Clip, Keyframe, Pose } from './clipModel.js';
 
 const P = (o: Record<string, [number, number, number]>): Pose => o;
@@ -56,22 +56,32 @@ describe('timelinePanel — операции над ключами', () => {
     { pose: P({ Spine: [2, 0, 0] }), t: 0.6 },
   ];
 
-  it('перетаскивание меняет время и пересортировывает', () => {
+  it('шаг драга меняет время И НЕ СОРТИРУЕТ (порядок наводит редактор на отпускании)', () => {
     const k = keys();
-    moveKeys(k, [{ index: 1, t: 0.9 }]);
-    expect(k.map((x) => x.t)).toEqual([0, 0.6, 0.9]);
-    expect(k[2]!.pose['Spine']![0]).toBe(1);      // «уехавший» ключ сохранил свою позу
+    setKeyTimes([{ key: k[1]!, t: 0.9 }]);
+    expect(k.map((x) => x.t)).toEqual([0, 0.9, 0.6]);
+    expect(k[1]!.pose['Spine']![0]).toBe(1);      // ключ остался СОБОЙ и на своём месте в массиве
+  });
+
+  it('ПРОТАЩИЛ МИМО СОСЕДА: второй шаг драга едет НА ТОТ ЖЕ ключ, а не на чужой', () => {
+    // Регрессия ФО: раньше ключи держались по ИНДЕКСУ, а сортировка на каждом шаге переставляла массив под ними.
+    const k = keys();
+    const dragged = k[1]!;                        // его и тащим весь драг
+    setKeyTimes([{ key: dragged, t: 0.9 }]);      // обогнали третий ключ
+    setKeyTimes([{ key: dragged, t: 1.2 }]);      // тащим дальше
+    expect(dragged.t).toBe(1.2);
+    expect(k[2]!.t).toBe(0.6);                    // сосед НЕ сдвинулся
   });
 
   it('время не уходит в минус', () => {
     const k = keys();
-    moveKeys(k, [{ index: 1, t: -5 }]);
-    expect(k[0]!.t).toBe(0);
+    setKeyTimes([{ key: k[1]!, t: -5 }]);
+    expect(k[1]!.t).toBe(0);
   });
 
   it('перетаскивание нескольких сохраняет их взаимные интервалы', () => {
     const k = keys();
-    moveKeys(k, [{ index: 1, t: 0.5 }, { index: 2, t: 0.8 }]);
+    setKeyTimes([{ key: k[1]!, t: 0.5 }, { key: k[2]!, t: 0.8 }]);
     expect(k.map((x) => x.t)).toEqual([0, 0.5, 0.8]);
   });
 

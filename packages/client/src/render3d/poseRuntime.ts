@@ -7,11 +7,17 @@ import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, type PoseTargets } from './pose
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
 // Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
-export type { Pose, Keyframe, Clip, Interp } from './clipModel.js';
+export type { Pose, Keyframe, Clip, Interp, Mark, MarkType, MarkTrack, MarkEvent } from './clipModel.js';
 export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
 import { hipsOffset } from './clipModel.js';   // Ф12: офсет таза читаем только через него (дельта + терпимость к легаси-абсолюту)
-import { blendTwo, clipPoseAt, clipDur } from './clipModel.js';
+import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, type MarkEvent } from './clipModel.js';
+// Коридор скорости тайм-варпа удара. Нижняя граница НИЖЕ единицы осознанно: контакт в мокапе
+// обычно на ~60 % клипа, а вайндап сервера — ~35 % окна, то есть хвост обязан уметь РАСТЯГИВАТЬСЯ.
+const WARP_MIN = 0.35, WARP_MAX = 8;
+/** Кроссфейд между ударами цепочки (сек). Короткий: удары должны читаться отдельными, а не смазываться. */
+const XFADE_SEC = 0.12;
 import { WPN_KEYS, WPN_POS } from './clipModel.js';
+import { maskBones, boneWeight, type BoneMask } from './boneMask.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
 export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: number; elbowBendRun?: number }   // *Run — раздельно для бега (интерп по sb); нет → = ходьба. legWidth убран (дубль stanceWidth)
@@ -89,13 +95,28 @@ export interface PoseContent {
 export interface AttackState { clip: Clip | null; t: number }
 
 export { WPN_KEYS, WPN_POS } from './clipModel.js';          // спец-ключи позы: поворот/позиция оружия (одна копия — clipModel)
-export const UPPER_BONES = ['Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand'];
-const ATK_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand', 'Spine'];
-// Кости, которые перекрывает ЩИТ-оверлей: левая рука (держит щит) + корпус (лёгкий разворот к щиту). Аддитивно, с весом.
-export const SHIELD_BONES = ['LeftShoulder', 'LeftUpperArm', 'LeftLowerArm', 'LeftHand', 'Spine', 'Chest', 'UpperChest'];
-// Спад влияния стойки щита ПО ДИСТАНЦИИ ОТ ЩИТА (кисть 1.0 → корпус ~0). Применяется ТОЛЬКО во время удара (× огибающая):
-// в покое щит держит всё (guard), а на ударе кисть держит щит, а локоть/плечо/корпус свободны для маха.
-const SHIELD_FALLOFF: Record<string, number> = { LeftHand: 1, LeftLowerArm: 0.38, LeftUpperArm: 0.22, LeftShoulder: 0.15, UpperChest: 0.1, Chest: 0.07, Spine: 0.04 };
+
+// ── СЛОИ РАНТАЙМА НА ТОМ ЖЕ ТИПЕ МАСКИ, что импорт и правка (`boneMask.ts`) ──────────────────────
+// Было: три ЗАХАРДКОЖЕННЫХ списка костей + отдельная карта затухания. Одно и то же понятие («какие кости
+// берёт этот слой и с каким весом») в четырёх видах, и ни один нельзя было ни увидеть, ни настроить.
+// Стало: `BoneMask` с по-костными весами — ровно `Layered blend per bone` + `Blend Mask` из Unreal.
+// Списки/веса РАЗВЁРНУТЫ ОДИН РАЗ на старте модуля: горячие циклы бегут по массиву, как и раньше.
+const w1 = (bones: readonly string[]): Record<string, number> => Object.fromEntries(bones.map((b) => [b, 1]));
+/** Слой «верх idle»: корпус + плечи + кисти (остальное ведёт гейт). */
+const UPPER_MASK: BoneMask = { parts: {}, weights: w1(['Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand']) };
+/** Слой удара: обе руки целиком + корпус. */
+const ATK_MASK: BoneMask = { parts: {}, weights: w1(['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'Chest', 'UpperChest', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand', 'Spine']) };
+/**
+ * Слой ЩИТА: левая рука (держит щит) + корпус, с затуханием ПО ДИСТАНЦИИ ОТ ЩИТА (кисть 1.0 → спина ~0).
+ * Вес применяется ТОЛЬКО во время удара (× огибающая): в покое щит держит всё (guard), на ударе кисть
+ * держит щит, а локоть/плечо/корпус свободны для маха. Это и есть Blend Mask — просто раньше он был зашит в код.
+ */
+const SHIELD_MASK: BoneMask = { parts: {}, weights: { LeftHand: 1, LeftLowerArm: 0.38, LeftUpperArm: 0.22, LeftShoulder: 0.15, UpperChest: 0.1, Chest: 0.07, Spine: 0.04 } };
+const layerBones = (m: BoneMask): string[] => [...maskBones(m)];
+export const UPPER_BONES = layerBones(UPPER_MASK);
+const ATK_BONES = layerBones(ATK_MASK);
+export const SHIELD_BONES = layerBones(SHIELD_MASK);
+const SHIELD_FALLOFF: Record<string, number> = Object.fromEntries(SHIELD_BONES.map((b) => [b, boneWeight(SHIELD_MASK, b)]));
 /** Убрать суффикс '+shield' — позы/удары берём по БАЗОВОМУ оружию, щит идёт отдельным оверлеем. */
 export const baseWeapon = (w: string): string => (w.endsWith('+shield') ? w.slice(0, -'+shield'.length) : w);
 /** Миграция старой конвенции имён клипов на новую (idle_/hit_): стойка_<w>→idle_<w>, удар_<w>→hit_<w>.
@@ -120,7 +141,10 @@ const _ik0 = new THREE.Vector3(), _ik1 = new THREE.Vector3(), _ik2 = new THREE.V
 const _ikA = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikq = new THREE.Quaternion(), _ikq2 = new THREE.Quaternion();
 /** Аналитический two-bone IK: root/mid/end к targetWorld; pole — сторона изгиба сустава; endQuatWorld (опц.) — мировая
  *  ориентация конца (кисть). Длины и оси костей берутся из локальных оффсетов рига, поэтому работает и для руки, и для ноги. */
-export function solveTwoBoneIK(human: Humanoid, rootN: string, midN: string, endN: string, targetWorld: THREE.Vector3, endQuatWorld: THREE.Quaternion | null, pole: THREE.Vector3): void {
+/** `guard` — запас до полного выпрямления (юниты). 0.5 в игре, чтобы локоть/колено не вставало в замок;
+ *  на ЗАПЕКАНИИ нужен маленький (та же грабля, что у `footIk.legGeomFor`): прямая рука, стоящая ровно в цели,
+ *  иначе даёт постоянный промах в полюнита. */
+export function solveTwoBoneIK(human: Humanoid, rootN: string, midN: string, endN: string, targetWorld: THREE.Vector3, endQuatWorld: THREE.Quaternion | null, pole: THREE.Vector3, guard = 0.5): void {
   const root = human.bones.get(rootN), mid = human.bones.get(midN), end = human.bones.get(endN);
   if (!root || !mid || !end) return;
   const aimRoot = _ik0.copy(mid.position).normalize(), aimMid = _ik1.copy(end.position).normalize();
@@ -128,7 +152,7 @@ export function solveTwoBoneIK(human: Humanoid, rootN: string, midN: string, end
   root.updateMatrixWorld();
   const rp = root.getWorldPosition(_ik2);
   const dir = _ik3.copy(targetWorld).sub(rp);
-  let d = dir.length(); d = clamp(d, Math.abs(L1 - L2) + 0.5, L1 + L2 - 0.5); dir.normalize();
+  let d = dir.length(); d = clamp(d, Math.abs(L1 - L2) + guard, L1 + L2 - guard); dir.normalize();
   const a = Math.acos(clamp((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d), -1, 1));
   const bend = _ik4.crossVectors(dir, pole); if (bend.lengthSq() < 1e-6) bend.set(0, 0, 1); else bend.normalize();
   const midPos = _ik5.copy(rp).addScaledVector(_ik6.copy(dir).applyAxisAngle(bend, a), L1);
@@ -184,10 +208,10 @@ function attackEnv(tt: number, dur: number): number {
   if (tt > dur - AB_OUT) return s((dur - tt) / AB_OUT);
   return 1;
 }
-function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: AttackState): void {   // наложить позу удара по времени с огибающей
+function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: AttackState, w = 1): void {   // наложить позу удара по времени с огибающей
   const clip = atk.clip; if (!clip) return;
   const dur = clipDur(clip) || 0.001;
-  const ab = attackEnv(atk.t, dur);
+  const ab = attackEnv(atk.t, dur) * w;
   const ap = clipPoseAt(clip, atk.t / dur);
   const H = human.bones;
   for (const nm of ATK_BONES) { const e = ap[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qB); b.quaternion.slerp(_qB, ab); }
@@ -206,10 +230,10 @@ const _apE = new THREE.Euler(), _apQ = new THREE.Quaternion(), _apI = new THREE.
  *  Смещение берётся как ДЕЛЬТА `__hipsP` кадра от `__hipsP` ПЕРВОГО кадра клипа — у ударов первый кадр это idle-стойка
  *  (`idleEnds`), значит дельта = «насколько таз ушёл от стойки». Отдельный ключ для этого не нужен.
  *  Зовётся ПОСЛЕ applyTorsoTwist (facing уже на тазе) и ДО applyHeadLookAt. Аддитивно: нет ключа → no-op. */
-export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: number): void {
+export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: number, w = 1): void {
   if (!atk.clip || atk.t < 0) return;
   const dur = clipDur(atk.clip) || 0.001;
-  const ab = attackEnv(atk.t, dur);
+  const ab = attackEnv(atk.t, dur) * w;
   if (ab <= 1e-3) return;
   const hips = human.bones.get('Hips'); if (!hips) return;
   const ap = clipPoseAt(atk.clip, atk.t / dur);
@@ -225,7 +249,7 @@ export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: nu
     hips.position.x += dz * s + dx * c; hips.position.y += dy; hips.position.z += dz * c - dx * s;
   }
 }
-function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0): void {
+function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null): void {
   const H = human.bones;
   const up = content.resolveUpper(weapon, combat);
   // Раздельные руки ходьба↔бег: armDown/elbowBend блендятся walk→run по t.sb (POSE armSh/armEl/armSwing уже слиты в pose.ts).
@@ -250,6 +274,9 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
     for (const nm of UPPER_BONES) blendEuler(H.get(nm), [0, 0, 0], up.pose[nm], hw);
     applyWeaponUpper(weaponGroups, up.pose, hw);
   }
+  // Кроссфейд цепочки: УХОДЯЩИЙ удар кладём первым с затухающим весом, входящий — поверх него.
+  // Без этого второй `triggerAttack` жёстко подменял первый и на стыке комбо был рывок.
+  if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w);
   if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk);   // удар поверх idle/маха
 }
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
@@ -271,7 +298,9 @@ export function applyLegAdduct(human: Humanoid, scale = 1): void {
 // Приведение РУК в рантайме НЕ делаем: модели биндятся в T-позе (руки горизонт = поза покоя клипов). A-позный бинд корёжит
 // ретаргет (46° доворота от бинда скин не тянет) → требуем экспорт скелета в T-позе. См. render3d/README.
 
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0): void {
+/** Уходящий удар цепочки: его поза подмешивается с весом `w`, пока он не затух. */
+export interface AttackFade { atk: AttackState; w: number; rate: number }
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   const m = legMag;
@@ -291,7 +320,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, armMag);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, armMag);
   blendBone(human, 'Head', [0, 0, 0], idle, armMag);
-  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
+  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
@@ -577,16 +606,18 @@ export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: numb
 }
 const _UP_Y = new THREE.Vector3(0, 1, 0);
 const _hlCur = new THREE.Quaternion(), _hlDes = new THREE.Quaternion(), _hlP = new THREE.Quaternion();
+const _hlWas = new THREE.Quaternion(), _hlD = new THREE.Quaternion(), _hlI = new THREE.Quaternion(), _hlNW = new THREE.Quaternion();
 const _hlFwd = new THREE.Vector3(), _hlR = new THREE.Vector3(), _hlU = new THREE.Vector3();
 const _hlM = new THREE.Matrix4();
 /** Head look-at + ВЕРТИКАЛЬ: стабилизация головы на ПРИЦЕЛ (мир-yaw), вертикально (up=мир-вверх → нет бокового наклона/ролла) И
  *  на ЗАДАННЫЙ кивок `pitch` (не наследованный свинг-нырок от удара). weight 0..1: 1 = строго на курсор+вертикаль+кивок, 0 = как
  *  есть (голова с телом), ~0.85 = держит + чуть гуляет (подмес). pitch (рад): 0 = ровно, <0 = вниз. Зови ПОСЛЕ applyTorsoTwist/overlayAttack. */
-export function applyHeadLookAt(human: Humanoid, aimYaw: number, weight: number, pitch = 0): void {
+export function applyHeadLookAt(human: Humanoid, aimYaw: number, weight: number, pitch = 0, neckShare = 0): void {
   if (weight <= 0.001) return;
   const head = human.bones.get('Head'); if (!head) return;
   head.updateWorldMatrix(true, false);                         // мир головы = итог цепочки (после твиста/удара)
   head.getWorldQuaternion(_hlCur);
+  _hlWas.copy(_hlCur);                                          // мир головы ДО коррекции (для доли шеи)
   const cp = Math.cos(pitch), sp = Math.sin(pitch);            // ЦЕЛЕВОЙ кивок: forward.y = sin(pitch) (<0 = вниз), горизонт = cos(pitch)
   _hlFwd.set(Math.sin(aimYaw) * cp, sp, Math.cos(aimYaw) * cp).normalize();   // yaw→прицел, pitch→ЗАДАННЫЙ (убирает свинг-нырок корпуса)
   _hlR.crossVectors(_UP_Y, _hlFwd);                            // right = up × fwd (горизонт, без ролла)
@@ -594,6 +625,22 @@ export function applyHeadLookAt(human: Humanoid, aimYaw: number, weight: number,
   _hlR.normalize(); _hlU.crossVectors(_hlFwd, _hlR).normalize();   // up = fwd × right (в плоскости fwd–мирВверх → нет наклона вбок)
   _hlM.makeBasis(_hlR, _hlU, _hlFwd); _hlDes.setFromRotationMatrix(_hlM);   // целевая: смотрит на прицел, ВЕРТИКАЛЬНА
   _hlCur.slerp(_hlDes, weight);                                // бленд итог→цель по весу (0.85 = держит + чуть гуляет)
+  // ДОЛЯ ШЕИ. Вся коррекция целиком в кости головы = «голова набок» на резком замахе: гасить размах корпуса
+  // одним суставом анатомически нечем. Отдаём шее часть ДЕЛЬТЫ (мировой), а голову потом добираем ТОЧНО до цели —
+  // направление взгляда не меняется, меняется только распределение по цепи. Нужно на ЗАПЕКАНИИ (там weight = 1
+  // и коррекция максимальна); в рантайме `neckShare = 0` → поведение байт-в-байт прежнее.
+  if (neckShare > 0.001) {
+    const neck = human.bones.get('Neck');
+    if (neck) {
+      _hlD.copy(_hlCur).multiply(_hlWas.invert());             // D = целевой·текущий⁻¹ (мировая дельта)
+      _hlI.identity().slerp(_hlD, Math.min(1, neckShare));
+      neck.updateWorldMatrix(true, false);
+      neck.getWorldQuaternion(_hlNW);
+      const np = neck.parent;
+      neck.quaternion.copy(np ? np.getWorldQuaternion(_hlP).invert().multiply(_hlI.multiply(_hlNW)) : _hlI.multiply(_hlNW));
+      neck.updateWorldMatrix(false, true);                     // дети (голова) — на новый мир шеи
+    }
+  }
   const par = head.parent;
   head.quaternion.copy(par ? par.getWorldQuaternion(_hlP).invert().multiply(_hlCur) : _hlCur);   // → локаль родителя
 }
@@ -638,6 +685,17 @@ export class PosePlayer {
   private turning = false;   // защёлка доворота таза (torso-lead): вкл за порогом, выкл когда догнал
   private prevAim = 0; private aimStableFor = 0;   // сколько прицел стабилен (для relaxTime — доворот таза к нейтрали)
   moveMag = 0; atkSpeed = 1;
+  /** Множитель темпа удара ПОВЕРХ расчётной скорости (ползунок редактора).
+   *  Отдельным полем, а не записью в `atkSpeed`: та затирала расчёт `triggerAttack`, и превью редактора
+   *  расходилось с игрой (требование «редактор ≡ игра»). */
+  atkTempo = 1;
+  /** Двухотрезковый тайм-варп под серверный вайндап; null — метки нет, играем ровной скоростью. */
+  private warp: { impact: number; pre: number; post: number } | null = null;
+  /** Уходящий удар цепочки — доигрывает с затухающим весом, пока входящий набирает свой. */
+  private fade: AttackFade | null = null;
+  private atkPrevT = 0;   // время клипа на прошлом кадре — по этому интервалу ищем метки
+  /** Куда уходят метки кадров (звук/VFX/тряска/шаги). Клип говорит ЧТО и КОГДА, обработчик решает КАК. */
+  onMark: ((e: MarkEvent) => void) | null = null;
   combat = 0;                     // боевой айдл 0..1 (сглажен, кроссфейд за GAIT.combatBlend сек)
   private combatTarget = 0;
   setCombat(on: boolean): void { this.combatTarget = on ? 1 : 0; }   // вход/выход боевой стойки (сервер-авторитетный флаг)
@@ -666,13 +724,41 @@ export class PosePlayer {
   setYaw(yaw: number): void { this.aimYaw = yaw; if (!this.yawInit) { this.rootYaw = yaw; this.yawInit = true; } }
   /** Снять лаг таза (спавн/пробуждение/телепорт): таз мгновенно = прицел, без доворота-«юлы». */
   snapYaw(): void { this.rootYaw = this.aimYaw; this.turning = false; }
-  /** Запустить удар. windowSec — окно атаки (attack-лок из сервера): клип ужимается, чтобы отыграть ЦЕЛИКОМ за это
-   *  окно (быстрее бьёшь — быстрее клип, но всегда до конечных кадров). Медленнее авторского темпа не растягиваем (min 1×). */
-  triggerAttack(clip: Clip | null, windowSec = 0): void {
+  /**
+   * Запустить удар. `windowSec` — окно атаки (attack-лок с сервера): клип ужимается, чтобы отыграть ЦЕЛИКОМ за
+   * это окно (быстрее бьёшь — быстрее клип, но всегда до конечных кадров). Без метки медленнее авторского темпа
+   * не растягиваем (min 1×) — прежнее поведение байт-в-байт.
+   *
+   * `windupSec` — вайндап с сервера (`swing.windupMs`): урон наносится РОВНО в конце вайндапа
+   * (`session.stepWindup` → `executeBasicAttack`). Если в клипе размечен кадр `impact`, клип играется ДВУМЯ
+   * отрезками, чтобы этот кадр пришёлся ровно на `windupSec`, а клип целиком уложился в `windowSec`.
+   * ⚠ Пост-импактный отрезок обязан уметь РАСТЯГИВАТЬСЯ: контакт в мокапе обычно на ~60 % клипа, а вайндап
+   * сервера — ~35 % окна, поэтому коридор скорости `[0.35, 8]`, а не `max(1, …)`.
+   */
+  triggerAttack(clip: Clip | null, windowSec = 0, windupSec = 0): void {
     if (!clip) return;
-    this.atk.clip = clip; this.atk.t = 0;
+    // ЦЕПОЧКА (атака зажата): новый свинг пришёл, пока предыдущий ещё играет. Уходящий клип кроссфейдим,
+    // а входящий стартуем с ЗАМАХА, минуя idle-вход — это Montage Sections из Unreal, только разметкой внутри
+    // клипа, а не резкой клипов. idle-выход при этом играет только ПОСЛЕДНИЙ удар: у прерванных он не наступает.
+    const chain = !!this.atk.clip && this.atk.t >= 0;
+    this.fade = chain ? { atk: { clip: this.atk.clip, t: this.atk.t }, w: 1, rate: this.atkRate() } : null;
+    const start = chain ? (markSec(clip, 'windup') ?? (clip.idleEnds ? clip.keys[1]?.t ?? 0 : 0)) : 0;
+    this.atk.clip = clip; this.atk.t = start; this.atkPrevT = start; this.warp = null;
     const dur = clipDur(clip);
-    this.atkSpeed = windowSec > 0 && dur > 0 ? Math.max(1, dur / windowSec) : 1;
+    const imp = windupSec > 0 ? impactSec(clip) : null;
+    if (imp !== null && dur > 0 && windupSec > 0 && imp > start && imp < dur) {
+      const c = (v: number): number => Math.min(WARP_MAX, Math.max(WARP_MIN, v));
+      const pre = c((imp - start) / windupSec);
+      // Окна атаки нет (телеграф монстра шлёт только вайндап) → после импакта держим ТУ ЖЕ скорость:
+      // момент удара всё равно попадает точно, а хвост доигрывается в авторском темпе, сжатом так же, как замах.
+      this.warp = { impact: imp, pre, post: windowSec > windupSec ? c((dur - imp) / (windowSec - windupSec)) : pre };
+      this.atkSpeed = pre;
+    } else this.atkSpeed = windowSec > 0 && dur > 0 ? Math.max(1, (dur - start) / windowSec) : 1;
+  }
+  /** Скорость проигрывания удара в текущий момент: с меткой — свой множитель до и после импакта. */
+  private atkRate(): number {
+    const w = this.warp;
+    return (w ? (this.atk.t < w.impact ? w.pre : w.post) : this.atkSpeed) * this.atkTempo;
   }
   get attacking(): boolean { return !!this.atk.clip; }
   /** Вес авторской позы удара в кадре (огибающая attackEnv): 0 в покое, 1 на пике замаха. Для буста match-веса рендера —
@@ -703,7 +789,20 @@ export class PosePlayer {
    *  Кормим гейт РЕАЛЬНЫМ yaw — StepPlanner видит смену facing и делает подшаг при повороте на месте; узость ног
    *  держит ЧИСТАЯ скорость (p.vel), а не дёрганая Δpos (её джиттер в vLat = ложный страйф разводил ноги). */
   step(dt: number): void {
-    if (this.atk.clip) { this.atk.t += dt * this.atkSpeed; if (this.atk.t > clipDur(this.atk.clip)) { this.atk.clip = null; this.atk.t = -1; } }
+    if (this.atk.clip) {
+      const clip = this.atk.clip;
+      this.atkPrevT = this.atk.t;
+      this.atk.t += dt * this.atkRate();
+      // Метки ищем ПО ПРОЙДЕННОМУ ИНТЕРВАЛУ (на сжатом клипе кадр между вызовами проскакивает целиком),
+      // а на первом кадре — включая саму ноль, иначе метка на t=0 не сработала бы никогда.
+      if (this.onMark) for (const e of marksInRange(clip, this.atkPrevT > 0 ? this.atkPrevT : -1e-9, this.atk.t)) this.onMark(e);
+      if (this.atk.t > clipDur(clip)) { this.atk.clip = null; this.atk.t = -1; this.warp = null; }
+    }
+    if (this.fade) {                                   // уходящий удар доигрывает и гаснет
+      this.fade.atk.t += dt * this.fade.rate;
+      this.fade.w -= dt / XFADE_SEC;
+      if (this.fade.w <= 0) this.fade = null;
+    }
     const cstep = dt / Math.max(0.01, GAIT.combatBlend);   // кроссфейд боевой стойки (линейно за combatBlend сек)
     this.combat += clamp(this.combatTarget - this.combat, -cstep, cstep);
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
@@ -745,9 +844,20 @@ export class PosePlayer {
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat);
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade);
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
-    applyAttackPelvis(this.human, this.atk, yaw);   // мах/скрутка таза удара in-place (поверх facing; Root≠Pelvis) — аддитивно
+    // ТАЗ УДАРА ГАСНЕТ ЛОКОМОЦИЕЙ. Удар — слой ВЕРХА, низом владеет походка (в Unreal такой слой кладут
+    // `Layered blend per bone` с исключённым тазом, в Unity — маской слоя). Наша маска удара таз и так не
+    // содержит (`Hips` нет в `ATK_BONES`), но `applyAttackPelvis` добавляет его ОТДЕЛЬНО — ради маха таза
+    // у СТОЯЧЕГО удара. На бегу этот мах ложится ПОВЕРХ жёстко поставленного гейтом боба (`hips.position.set`
+    // в `gaitToHumanoid`, дальше здесь `+=`) и читается как рывок.
+    // Гейт по `moveMag` (насколько персонаж ДВИЖЕТСЯ), а НЕ по `legMag`. Пробовал `legMag` — тесты поймали
+    // две беды: (1) он держится высоким ещё ~0.3 с после того, как планировщик устаканился, и стоячий удар
+    // терял мах таза на старте; (2) он поднимается на ПОДШАГЕ при развороте на месте, а бить с разворотом
+    // персонаж имеет право. `moveMag` = скорость/шаговая, ровно то условие, которое и требовалось.
+    const pelvisW = 1 - this.moveMag;
+    if (this.fade) applyAttackPelvis(this.human, this.fade.atk, yaw, this.fade.w * pelvisW);   // таз уходящего удара — тоже с кроссфейдом
+    applyAttackPelvis(this.human, this.atk, yaw, pelvisW);   // мах/скрутка таза удара in-place (поверх facing; Root≠Pelvis) — аддитивно
     applyHeadLookAt(this.human, this.aimYaw, twist.headLook, twist.headPitch);   // голова на ПРИЦЕЛ + ЗАДАННЫЙ кивок (убирает свинг-нырок от удара)
   }
 }

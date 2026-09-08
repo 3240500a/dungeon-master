@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import initJolt from 'jolt-physics';
 import { TILE, Cell, type DungeonLayout } from '@dm/shared';
 import { WALL_H } from './env3d.js';
+import type { MarkEvent } from './clipModel.js';
 
 export type JoltNS = Awaited<ReturnType<typeof initJolt>>;
 let J!: JoltNS;
@@ -126,7 +127,11 @@ export interface RagdollHandle {
   setWorldVel?(vx: number, vz: number): void;
   /** Проиграть удар. clips (имена поз-клипов скила) — если заданы, чередуются по кругу; иначе удар по оружию.
    *  windowSec — окно атаки (attack-лок): клип ужимается, чтобы отыграть целиком за него (быстрее атака → быстрее клип). */
-  attack(clips?: string[], windowSec?: number): void;
+  /** `windupSec` — вайндап сервера: размеченный кадр `impact` садится ровно на момент урона. */
+  attack(clips?: string[], windowSec?: number, windupSec?: number): void;
+  /** Метки кадров играющего клипа (удар/звук/VFX/шаг/тряска). Клип говорит ЧТО и КОГДА, обработчик — КАК.
+   *  Подписчиков пока нет (ассетов звука/VFX не существует) — шов готов, чтобы подключать их не трогая куклу. */
+  onMark?: ((e: MarkEvent) => void) | null;
   setDead(d: boolean): void;
   /** Дёрг при попадании: импульс в верх тела (dx,dz — направление отбрасывания, ед. вектор; power — сила ×). */
   hitReact(dx: number, dz: number, power?: number): void;

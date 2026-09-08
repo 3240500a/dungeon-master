@@ -1,73 +1,73 @@
 /**
- * КЛЭМП ЛОКАЛЬНОГО ПОВОРОТА КОСТИ К ПРЕДЕЛУ СУСТАВА (swing-twist декомпозиция, как the-orange-duck / Final IK).
- * Чтобы манекен в поз-редакторе ОБЯЗАТЕЛЬНО слушался пределов (иначе гизмо врёт — руку можно согнуть назад).
- * Кость упирается ровно в границу конуса/шарнира. Та же параметризация (rP,rN,twist) рисуется гизмо → гизмо=реальность.
+ * КЛЭМП ЛОКАЛЬНОГО ПОВОРОТА КОСТИ К ПРЕДЕЛУ СУСТАВА — ТОНКИЙ АДАПТЕР НАД `jointDof.ts`.
+ *
+ * ОДНА МОДЕЛЬ НА ВЕСЬ РЕДАКТОР. Раньше их было две: гизмо/клэмп жили в swing-лог-карте (rP,rN вокруг plane/normal
+ * + твист), а после Ф2 драг кольца правит ЭЙЛЕРОВЫ СКАЛЯРЫ (`jointDof`). Области у них РАЗНЫЕ, и это ловилось живьём:
+ * ИК уводил плечо в `plane = −143°` (swing-конус такое пускает), после чего ПЕРВОЕ ЖЕ касание кольца зажимало позу
+ * до −97.4° — скачок 46°. Теперь параметризация ровно одна: солвер не может оставить кость там, где гизмо её не
+ * удержит, а нарисованная зона предела (`poseLimitGizmo`) строится теми же углами → гизмо = клэмп = зона.
+ *
+ * НАКОПИТЕЛЯ БОЛЬШЕ НЕТ (был `lastValid`/`ACC_MARGIN`, память по кости). Он лечил СЛЕДСТВИЕ: разложение кватерниона
+ * в цикле драга давало угол только в (−π,π], и «дотянул до 181°» читалось как −179°. В драге разложения больше нет
+ * (углы копит сам редактор от точки захвата), а тут остались НЕ-интерактивные писатели — солверы, для которых
+ * лимит обязан быть ЧИСТОЙ ФУНКЦИЕЙ, как в Blender. Память в итеративном солвере ещё и вредна: он зовёт клэмп
+ * по несколько раз за один солв, и «шаги пользователя» ей мерещились бы на каждой итерации.
  *
  * Чистый модуль: только THREE + СТРУКТУРНЫЙ тип предела (тип импортится type-only → node-тест не тянет DOM env3d).
  * Rest-фрейм костей гуманоида = identity (T-поза), поэтому клэмпим локальный кватернион напрямую (= отклонение от покоя).
  */
 import * as THREE from 'three';
 import type { LimitView } from './humanoidRagdoll.js';
+import { dofSpec, quatFromDof, dofFromQuat, type Dof } from './jointDof.js';
+import { limitLocalV2 } from './jointLimitV2.js';
 
-const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
-const _v = new THREE.Vector3(), _sv = new THREE.Vector3(), _P = new THREE.Vector3(), _N = new THREE.Vector3(), _T = new THREE.Vector3(), _A = new THREE.Vector3();
-const _tw = new THREE.Quaternion(), _sw = new THREE.Quaternion(), _out = new THREE.Quaternion();
+/**
+ * ПЕРЕКЛЮЧАТЕЛЬ СИСТЕМЫ СУСТАВОВ (тумблер в редакторе, дефолт — v2).
+ *   v1 — наша модель «скаляры это поза» (`jointDof`): кольцо правит скаляр, кватернион пересобирается;
+ *   v2 — порт FinalIK (`jointLimitV2`): поза = кватернион, гизмо крутит свободно, предел ТОЛЬКО останавливает.
+ * Живёт здесь, потому что через `clampLocalToLimit` ходят ВСЕ писатели (редактор ×8 + `fullBodyIk`), и переключать
+ * надо их разом, иначе солвер и гизмо снова разъедутся по разным областям.
+ */
+let LIMIT_V = 2;
+export function setLimitVersion(v: 1 | 2): void { LIMIT_V = v; }
+export function limitVersion(): 1 | 2 { return LIMIT_V as 1 | 2; }
 
-/** Разложить q = swing · twist, где twist — вокруг оси `axis` (единичной). Результат в _sw/_tw (перезаписываются). */
-function decompose(q: THREE.Quaternion, axis: THREE.Vector3): void {
-  _v.set(q.x, q.y, q.z);
-  const d = _v.dot(axis);                       // проекция мнимой части на ось твиста
-  _tw.set(axis.x * d, axis.y * d, axis.z * d, q.w);
-  if (_tw.lengthSq() < 1e-12) _tw.identity(); else _tw.normalize();
-  _sw.copy(q).multiply(_tw.clone().conjugate());   // swing = q · twist⁻¹
-  if (_sw.w < 0) { _sw.x = -_sw.x; _sw.y = -_sw.y; _sw.z = -_sw.z; _sw.w = -_sw.w; }   // кратчайший (double-cover)
-  if (_tw.w < 0) { _tw.x = -_tw.x; _tw.y = -_tw.y; _tw.z = -_tw.z; _tw.w = -_tw.w; }
-}
-/** Знаковый угол твиста (вокруг оси) из кватерниона твиста. */
-function twistAngle(tw: THREE.Quaternion, axis: THREE.Vector3): number {
-  const s = _v.set(tw.x, tw.y, tw.z).dot(axis);   // sin(θ/2) вдоль оси
-  return 2 * Math.atan2(s, tw.w);
+const TAU = Math.PI * 2;
+/** Свернуть угол в (−π, π]. */
+const wrapPi = (a: number): number => { const x = (a + Math.PI) % TAU; return (x < 0 ? x + TAU : x) - Math.PI; };
+/**
+ * Клэмп УГЛА к [min,max] ПО КРУГУ: за пределом выбираем границу, БЛИЖАЙШУЮ ПО ДУГЕ, а не численно.
+ * Это буквально `clamp_angle` из Blender 4.2 (их фикс «непредсказуемые перевороты костей»).
+ * ЗАЧЕМ: кватернион всегда отдаёт КРАТЧАЙШИЙ угол ∈ (−π,π], поэтому «дотянули на 181°» читается как −179°, и
+ * наивный Math.min/max кидал кость к ПРОТИВОПОЛОЖНОМУ упору — локоть из полного сгиба щёлкал в переразгиб.
+ * По дуге −179° лежит в 43° от max(137°) и в 173° от min(−6°) → упираемся в max, как и ожидает рука.
+ *
+ * В драге кольца это НЕ нужно (там угол непрерывный, свой накопитель) — там работает скалярный `clampDof`.
+ */
+export function clampAngle(a: number, min: number, max: number): number {
+  if (a >= min && a <= max) return a;
+  return Math.abs(wrapPi(a - min)) <= Math.abs(wrapPi(a - max)) ? min : max;
 }
 
 /** Клэмпнуть локальный кватернион `q` к пределу `view`. Возвращает НОВЫЙ THREE.Quaternion (q не мутируется). */
-export function clampLocalToLimit(q: THREE.Quaternion, view: LimitView): THREE.Quaternion {
-  if (view.kind === 'hinge') {
-    _A.set(view.axis![0], view.axis![1], view.axis![2]).normalize();
-    decompose(q, _A);
-    const ha = clamp(twistAngle(_tw, _A), view.min ?? 0, view.max ?? 0);
-    return _out.setFromAxisAngle(_A, ha).clone();   // шарнир 1-DOF: внеосевой swing отбрасываем (жёстко)
-  }
-  _T.set(view.twist![0], view.twist![1], view.twist![2]).normalize();
-  _P.set(view.plane![0], view.plane![1], view.plane![2]).normalize();
-  _N.set(view.normal![0], view.normal![1], view.normal![2]).normalize();
-  decompose(q, _T);
-  // twist
-  const tw = clamp(twistAngle(_tw, _T), view.twistMin ?? 0, view.twistMax ?? 0);
-  // swing → вектор поворота (лог-карта): rP вокруг plane, rN вокруг normal; клэмп к асимм. боксу
-  _sv.set(_sw.x, _sw.y, _sw.z);
-  const svl = _sv.length();
-  const sAngle = 2 * Math.atan2(svl, _sw.w);       // ∈ [0, π] (swing уже кратчайший)
-  let rP = 0, rN = 0;
-  if (svl > 1e-8) { _sv.multiplyScalar(1 / svl); rP = sAngle * _sv.dot(_P); rN = sAngle * _sv.dot(_N); }
-  rP = clamp(rP, view.planeMin ?? 0, view.planeMax ?? 0);
-  rN = clamp(rN, view.normalMin ?? 0, view.normalMax ?? 0);
-  const mag = Math.hypot(rP, rN);
-  if (mag < 1e-8) _sw.identity();
-  else _sw.setFromAxisAngle(_v.copy(_P).multiplyScalar(rP / mag).addScaledVector(_N, rN / mag), mag);
-  _tw.setFromAxisAngle(_T, tw);
-  return _out.copy(_sw).multiply(_tw).clone();      // q' = swing' · twist'
+export function clampLocalToLimit(q: THREE.Quaternion, view: LimitView, key?: object): THREE.Quaternion {
+  if (LIMIT_V === 2) return limitLocalV2(q, view, key);
+  const s = dofSpec(view);
+  const th = dofFromQuat(view, q);
+  for (let i = 0; i < 3; i++) th[i] = s.locked[i] ? 0 : clampAngle(th[i]!, s.min[i]!, s.max[i]!);
+  return quatFromDof(view, th);
 }
 
-/** Разложить локальный кватернион на (rP, rN, twist) в осях предела — для ИНДИКАТОРА текущего положения в гизмо. */
+/**
+ * СОБРАТЬ кватернион из компонент сустава (rP, rN, twist) — обратная к `decomposeToLimit`.
+ * Имена компонент историчны (rP=вокруг plane, rN=вокруг normal), смысл теперь эйлеров — см. `jointDof`.
+ */
+export function composeFromLimit(view: LimitView, a: { rP: number; rN: number; twist: number }): THREE.Quaternion {
+  return quatFromDof(view, [a.rP, a.rN, a.twist]);
+}
+
+/** Разложить локальный кватернион на углы осей предела — для ИНДИКАТОРА текущего положения в гизмо и тестов. */
 export function decomposeToLimit(q: THREE.Quaternion, view: LimitView): { rP: number; rN: number; twist: number } {
-  if (view.kind === 'hinge') { _A.set(view.axis![0], view.axis![1], view.axis![2]).normalize(); decompose(q, _A); return { rP: 0, rN: 0, twist: twistAngle(_tw, _A) }; }
-  _T.set(view.twist![0], view.twist![1], view.twist![2]).normalize();
-  _P.set(view.plane![0], view.plane![1], view.plane![2]).normalize();
-  _N.set(view.normal![0], view.normal![1], view.normal![2]).normalize();
-  decompose(q, _T);
-  const tw = twistAngle(_tw, _T);
-  _sv.set(_sw.x, _sw.y, _sw.z); const svl = _sv.length(); const sAngle = 2 * Math.atan2(svl, _sw.w);
-  if (svl <= 1e-8) return { rP: 0, rN: 0, twist: tw };
-  _sv.multiplyScalar(1 / svl);
-  return { rP: sAngle * _sv.dot(_P), rN: sAngle * _sv.dot(_N), twist: tw };
+  const t: Dof = dofFromQuat(view, q);
+  return { rP: t[0], rN: t[1], twist: t[2] };
 }

@@ -11,7 +11,7 @@ import {
   createUser, getUserByName, createSession, deleteSession, getSession,
   listCharacters, listAllCharacters, getCharacter, putCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
-  getPoseStore, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty,
+  getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty,
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
 import { stripGlbTextures } from './glbStrip.js';
@@ -136,12 +136,34 @@ app.delete('/api/dev/config/:key', (req, res) => {
 app.get('/api/pose', (_req, res) => {
   res.json(getPoseStore());
 });
+// Ревизии без тел: редактор зовёт их на каждой загрузке, чтобы понять, ушёл ли сервер вперёд.
+app.get('/api/pose/rev', (_req, res) => {
+  res.json(getPoseRevs());
+});
+/**
+ * Публикация рабочей копии редактора. `__baseRev` — ревизии, НА КОТОРЫХ основана присланная копия.
+ * Если на сервере ключ новее, вся публикация отклоняется (409) и НИЧЕГО не пишется.
+ *
+ * ⚠ Зачем замок: тело шлётся ключом ЦЕЛИКОМ (`pe_clips` = вся библиотека), поэтому вкладка, открытая со
+ * старым снимком, одним сохранением затирала всё, что появилось позже, — так пропал клип `hit_axe`.
+ * Без `__baseRev` (старые клиенты, ручной curl) поведение прежнее: пишем как есть.
+ */
 app.post('/api/dev/pose', (req, res) => {
   if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const keys = Object.keys(body);
-  for (const k of keys) setPoseStore(k, body[k]);
-  res.json({ ok: true, saved: keys });
+  const baseRev = body.__baseRev as Record<string, number> | undefined;
+  const keys = Object.keys(body).filter((k) => k !== '__baseRev');
+  if (baseRev) {
+    const cur = getPoseRevs();
+    const conflicts = keys.filter((k) => (cur[k] ?? 0) > (baseRev[k] ?? 0));
+    if (conflicts.length) {
+      console.log(`[dm-server] публикация отклонена (на сервере новее): ${conflicts.join(', ')}`);
+      return res.status(409).json({ error: 'На сервере более новая версия', conflicts, rev: cur });
+    }
+  }
+  const rev: Record<string, number> = {};
+  for (const k of keys) rev[k] = setPoseStore(k, body[k]);
+  res.json({ ok: true, saved: keys, rev });
 });
 app.delete('/api/dev/pose/:key', (req, res) => {
   if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });

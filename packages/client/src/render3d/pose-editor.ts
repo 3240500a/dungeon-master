@@ -14,14 +14,15 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildHumanoid, type Humanoid, type BuildScale } from './humanoid.js';
 import type { BoneScale, BodyProfile } from './bodyProfile.js';
 import { initPhysics, PhysWorld } from './ragdoll.js';
-import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, PHYS_SIZES, physBodies, bodyAxis, physCatalogOff, type PhysSize, type LimitView } from './humanoidRagdoll.js';
+import { makeHumanoidRagdoll, type HumanoidRagdoll, PHYS, LIMITS, MOTOR, loadRagdollConfig, saveRagdollConfig, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, newGhostGround, canonOfHuman, jointOv, JOINT_DEF, limitViewForBone, registerExtraLimits, applyPhysProfile, physSetCost, PHYS_CATALOG, PHYS_LABEL, PHYS_SET, PHYS_SIZES, physBodies, bodyAxis, physCatalogOff, physCatalogHalf, clothColliderCount, RAG_OF_HUMAN, type PhysSize, type LimitView } from './humanoidRagdoll.js';
 import { PHYS_PRESETS, presetBodies } from './physRig.js';
 import { scaleJointsToScreen } from './humanoid.js';                       // Ф13.1: суставы постоянного экранного размера
 import { PLAYER_RADIUS, MONSTER_RADIUS } from '@dm/shared';                // Ф13.4: тот же радиус, что у сервера   // Ф11: набор физ-тел настраивается в редакторе
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { solveTwoBone, elbowGoal, perpTo, LIMB_SOFT } from './limbIk.js';
-import { makeTimelinePanel, moveKeys, setInterp, scaleKeys, type TimelinePanel } from './timelinePanel.js';
+import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type TimelinePanel } from './timelinePanel.js';
+import { MARK_TRACK, type MarkType } from './clipModel.js';
 import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
 import { trajectorySamples, polylineLength, arcRatio, excursion } from './trajectory.js';                                          // Ф10: траектория кости
 import { requestGeneration, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
@@ -37,12 +38,15 @@ import { groundFeet } from './footIk.js';   // Ф20.5: заземление по
 import { parentOfOur } from './retarget3d.js';   // НАШа канон-топология: вид скелета строится по ней, а не по иерархии модели
 import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: скелет по НАСТОЯЩИМ костям модели   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
 import { makeLimitGizmo } from './poseLimitGizmo.js';
-import { clampLocalToLimit, decomposeToLimit } from './jointClamp.js';
+import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
+import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
+import { createPublishButton } from './publishPanel.js';
+import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
 import { bakeGaitSet, defaultReadPose, GAIT_PRESETS } from './clipBake.js';                    // Ф2.1: процедурка → клипы
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
@@ -51,7 +55,9 @@ import { hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';  
 import { blendTwo, clipPoseAt, clipSegmentAt, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
   type Pose, type Keyframe, type Clip } from './clipModel.js';   // Ф1.1: одна модель клипа на редактор и игру
 import { createModelsTab } from './poseModelsTab.js';
-import { bakeAnimationToClip, listAnimations } from './clipBaker.js';
+
+import type { ImportPanel } from './clipImportPanel.js';
+import { getPref, setPref, migrateFromUi } from './editorPrefs.js';
 
 const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, a), b);
 
@@ -61,7 +67,15 @@ const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, 
  */
 interface UiState { pro?: boolean; posMark?: boolean; aSkel?: number; aHandle?: number; open?: Record<string, boolean>; clipKind?: string; clipSort?: string; panelW?: number }
 const ui: UiState = (() => { try { return JSON.parse(localStorage.getItem('pe_ui') || '{}') as UiState; } catch { return {}; } })();
-function saveUi(): void { try { localStorage.setItem('pe_ui', JSON.stringify(ui)); savePoseKey('pe_ui'); } catch { /* */ } }
+migrateFromUi(ui as Record<string, unknown>);   // разовый переезд: прозрачности/свитки уже настроены — не терять
+/**
+ * ⚠ Это ЛИЧНЫЕ настройки рабочего места, а не контент: пишем в `pe_prefs` (он же `UserSettings` из Unity —
+ * «can't be checked into source control and shared between users») и НЕ публикуем на сервер. Раньше они
+ * ехали в `pe_ui` вместе с контентом и вторая машина перетирала их своими.
+ */
+function saveUi(): void {
+  for (const k of Object.keys(ui) as (keyof UiState)[]) setPref(k, ui[k] as never);
+}
 /** Прозрачность скелета и ручек: по жалобе «скелет слишком активный, не видно, как выглядит меш». */
 let aSkel = ui.aSkel ?? 0.55, aHandle = ui.aHandle ?? 0.7;
 const V = (): THREE.Vector3 => new THREE.Vector3();
@@ -121,27 +135,15 @@ applySnap();
 //    твистить/сгибать сустав. Дельта прокси (мир) → лок. поворот кости → клэмп. Кость без сустава → оси самой кости. ──
 const boneProxy = new THREE.Object3D(); boneProxy.name = '__boneProxy'; scene.add(boneProxy);
 let dragUndo: State | null = null;   // снимок позы на НАЧАЛЕ драга — иначе откат отставал на шаг (писали уже изменённое состояние)
-let fkProxyBone: string | null = null;                       // кость, редактируемая через прокси (null = прокси не активен)
+let fkProxyBone: string | null = null;
+let _dofBase: Dof | null = null;          // углы осей сустава, снятые на ЗАХВАТЕ кольца (драг правит их скалярно)
+let _dragAxis = -1, _dragAcc = 0, _dragRaw = 0;   // ось ведомого кольца + НАКОПЛЕННЫЙ угол ввода (как оператор Blender)
+const _dDof = new THREE.Quaternion(), _parW = new THREE.Quaternion();
 const _pBase = new THREE.Quaternion(), _pBaseInv = new THREE.Quaternion(), _bBase = new THREE.Quaternion();
-const _parInv = new THREE.Quaternion(), _rdof = new THREE.Quaternion(), _dq = new THREE.Quaternion(), _nw = new THREE.Quaternion();
-const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bz = new THREE.Vector3(), _m4 = new THREE.Matrix4();
-/** DOF-базис сустава кости nm (правосторонний): X=normal, Y=twist(green), Z=plane. Hinge → ось сгиба на Y. Нет сустава → identity. */
-function dofBasis(nm: string, out: THREE.Quaternion): void {
-  const v = limitViewForBone(nm);   // физ-риг, иначе без-физическая таблица (фаланги)
-  if (v && v.kind === 'swing' && v.twist && v.plane && v.normal) {   // X=normal,Y=twist,Z=plane → Z=X×Y=plane (правостор.)
-    _bx.set(v.normal[0], v.normal[1], v.normal[2]).normalize();
-    _by.set(v.twist[0], v.twist[1], v.twist[2]).normalize();
-    _bz.set(v.plane[0], v.plane[1], v.plane[2]).normalize();
-    _m4.makeBasis(_bx, _by, _bz); out.setFromRotationMatrix(_m4); return;
-  }
-  if (v && v.kind === 'hinge' && v.axis) {                    // шарнир: ось сгиба на Y, X/Z — любой перпендикуляр
-    _by.set(v.axis[0], v.axis[1], v.axis[2]).normalize();
-    _bx.set(1, 0, 0); if (Math.abs(_by.dot(_bx)) > 0.9) _bx.set(0, 0, 1);
-    _bx.addScaledVector(_by, -_by.dot(_bx)).normalize(); _bz.crossVectors(_bx, _by).normalize();
-    _m4.makeBasis(_bx, _by, _bz); out.setFromRotationMatrix(_m4); return;
-  }
-  out.identity();
-}
+const _parInv = new THREE.Quaternion(), _dq = new THREE.Quaternion(), _nw = new THREE.Quaternion();
+
+const _m4V2 = new THREE.Matrix4(), _rdofV2 = new THREE.Quaternion();
+const AXI: Readonly<Record<string, number>> = { X: 0, Y: 1, Z: 2 };
 /** Пере-выставить прокси на ТЕКУЩУЮ кость: DOF-базис в мире · её мир-ориентация + позиция сустава. Зов при attach и старте драга. */
 /**
  * РИГ, КОТОРЫЙ РЕАЛЬНО ВЕДЁТ МЕШ (Ф20.2) — ровно тот же выбор, что в `modelsTab.drive(…)`.
@@ -176,28 +178,75 @@ const onModelBones = (): boolean => boneView.group.visible;
 /** Меши для рейкаста/подсветки — чьи кости видны, тех и кликаем. */
 const boneMeshes = (): THREE.Mesh[] => (onModelBones() ? boneView.meshes : human.meshes);
 let lastAtlasRoot: THREE.Object3D | null | undefined;   // undefined = ещё не смотрели
+let lastBoneKey = -1;                                   // размер набора костей манекена (хват добавляет фаланги)
 /** Кость ведущего рига по имени (фолбэк на манекен) — только для ОТРИСОВКИ. */
 function viewBone(nm: string): THREE.Object3D | null { return viewRig().bones.get(nm) ?? human.bones.get(nm) ?? null; }
 
-function rebaselineProxy(): void {
+/**
+ * ПРИПАРКОВАТЬ прокси: `parentWorld · gimbalFrame` + позиция сустава. Зовётся КАЖДЫЙ КАДР вне драга (см. `loop`).
+ *
+ * Два «почему» вместо одного:
+ * 1) **Гимбал-фрейм, а не фрейм кости и не фрейм родителя.** Кольцо обязано стоять там, где оно РЕАЛЬНО крутит;
+ *    у эйлеровой цепочки это разные фреймы для разных углов (разбор и цена компромисса — в `jointDof.gimbalFrame`).
+ *    `boneWorld·dof` (было до Ф2) верен только для твиста, неподвижный `parentWorld·dof` (был в Ф2) — только для
+ *    внешнего угла, и на отпускании кольца ПРЫГАЛИ, меняясь местами.
+ * 2) **Каждый кадр, а не на захвате.** `TransformControls` снимает свою точку отсчёта в `pointerDown` — ДО того, как
+ *    выстрелит `dragging-changed`. Выставлять прокси в обработчике захвата бесполезно: первое же движение мыши
+ *    вернёт его на снятое ТС значение. Значит прокси обязан стоять на месте ЗАРАНЕЕ.
+ */
+function parkProxy(): void {
+  if (!fkProxyBone || gizmo.dragging) return;
+  const b = human.bones.get(fkProxyBone); if (!b) return;
+  b.parent!.getWorldQuaternion(_parW);
+  const vw = limitViewForBone(fkProxyBone);
+  if (limitVersion() === 2 || !vw) {
+    // v2 (FinalIK) и кость без сустава: драг — СВОБОДНЫЙ поворот, значит и кольца просто ЛОКАЛЬНЫЕ, на кости.
+    // Гимбал-фрейм тут не нужен и был бы вреден: там кольца подгонялись под оси скалярной модели, которой нет.
+    b.getWorldQuaternion(boneProxy.quaternion);
+    // Базис — ИЗ `dofSpec`, а не из полей `plane/normal/twist` напрямую: у ШАРНИРА их нет вовсе (там `axis`),
+    // и кольцо вставало мимо оси сгиба — локоть от своего единственного кольца не гнулся (замер: угол 0°).
+    if (vw) { const a = dofSpec(vw).axes; boneProxy.quaternion.multiply(_rdofV2.setFromRotationMatrix(_m4V2.makeBasis(a[0], a[1], a[2]))); }
+  } else {
+    // ГИМБАЛ-ФРЕЙМ (`jointDof.gimbalFrame` — там же разобрано, почему именно он и чем платим).
+    // ПОЧЕМУ НЕ ПРОСТО ФРЕЙМ РОДИТЕЛЯ (я так и сделал сначала — юзер поймал): в эйлеровой цепочке ТОЛЬКО ВНЕШНИЙ угол
+    // крутит вокруг оси родителя. Средний крутит вокруг оси, уже повёрнутой внешним, а твист — вокруг ТЕКУЩЕЙ оси кости.
+    // ЗАМЕР (рука поднята, кость смотрит [0,1,0]): пока держишь кольцо, Z(твист) = [0,1,0] — вдоль кости, верно; а
+    // парковка в фрейм родителя ставила Z = [1,0,0] поперёк, и вдоль кости вставал X(сгиб). Кольца буквально менялись
+    // местами на отпускании — «оси уезжают, скрутка стала вращением, руку вверх не поднять».
+    // Внутренний угол (твист) выкидываем: он ось не двигает, а без него фрейм совпадает с осями средней и внутренней
+    // ровно всегда, а с внешней — когда средний угол 0 (это и есть неортогональность гимбала, ортонормировать нечем).
+    boneProxy.quaternion.copy(_parW).multiply(gimbalFrame(vw, dofFromQuat(vw, b.quaternion, _dofBase ?? undefined)));
+  }
+  (viewBone(fkProxyBone) ?? b).getWorldPosition(boneProxy.position);   // Ф20.2: позиция — с ВЕДУЩЕГО рига (там кость модели)
+  boneProxy.updateMatrixWorld(true);
+}
+/** ЗАХВАТ кольца: снять углы сустава (единственное разложение за весь драг) и обнулить накопитель ввода. */
+function beginProxyDrag(): void {
   if (!fkProxyBone) return;
   const b = human.bones.get(fkProxyBone); if (!b) return;
   human.root.updateMatrixWorld(true);
   b.getWorldQuaternion(_bBase);
-  b.parent!.getWorldQuaternion(_parInv); _parInv.invert();
-  dofBasis(fkProxyBone, _rdof);
-  _pBase.copy(_bBase).multiply(_rdof); _pBaseInv.copy(_pBase).invert();
-  // Ф20.2: ПОЗИЦИЯ колец — с ведущего рига (там же стоит кость модели), а `_bBase`/`_parInv` выше —
-  // СТРОГО с `human`: дельта `parent⁻¹ · дельтаМир · костьМир0` верна только во фрейме манекена.
-  boneProxy.quaternion.copy(_pBase); (viewBone(fkProxyBone) ?? b).getWorldPosition(boneProxy.position); boneProxy.updateMatrixWorld(true);
+  b.parent!.getWorldQuaternion(_parW); _parInv.copy(_parW).invert();
+  _pBase.copy(boneProxy.quaternion); _pBaseInv.copy(_pBase).invert();   // ровно то, что снял ТС в pointerDown
+  const vw = limitViewForBone(fkProxyBone);
+  // `_dofBase` прошлого драга — ветвь для анроллинга: без неё зажатый −137° прочитался бы как +222° и поза прыгнула бы.
+  _dofBase = vw ? dofFromQuat(vw, b.quaternion, _dofBase ?? undefined) : null;
+  _dragAxis = -1; _dragAcc = 0; _dragRaw = 0;
 }
 /** Прицепить гизмо вращения к кости ЧЕРЕЗ прокси (кольца по осям сустава). Замена прямого gizmo.attach(bone). */
-function attachBoneGizmo(nm: string): void { fkProxyBone = nm; rebaselineProxy(); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(boneProxy); }
-gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) rebaselineProxy(); dragUndo = plantDrag >= 0 ? null : snapshot(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else { bakeBodyFollow(); if (dragUndo) { const before = dragUndo, after = snapshot(); history.push('правка позы', () => restore(before), () => restore(after)); dragUndo = null; } if (!wpnOverride && weaponGroups.includes(gizmo.object as THREE.Group)) saveGripBase(); } });   // правка оружия без галки → авто в БАЗУ pe_grip
+function attachBoneGizmo(nm: string): void {
+  if (fkProxyBone !== nm) _dofBase = null;   // другая кость — своя ветвь углов, память прошлой не годится
+  fkProxyBone = nm; parkProxy();
+  const vw = limitViewForBone(nm);
+  const lk = vw ? dofSpec(vw).locked : [false, false, false];   // шарнир: две оси заперты → рисуем ОДНО кольцо
+  gizmo.showX = !lk[0]; gizmo.showY = !lk[1]; gizmo.showZ = !lk[2];
+  gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(boneProxy);
+}
+gizmo.addEventListener('dragging-changed', (e) => { const dragging = (e as unknown as { value: boolean }).value; orbit.enabled = !dragging; if (dragging) { if (gizmo.object === boneProxy && fkProxyBone) beginProxyDrag(); dragUndo = plantDrag >= 0 ? null : snapshot(); return; } if (plantDrag >= 0) { plantDrag = -1; dragMark = null; gizmo.detach(); saveGaitCfg(); } else { bakeBodyFollow(); if (dragUndo) { const before = dragUndo, after = snapshot(); history.push('правка позы', () => restore(before), () => restore(after)); dragUndo = null; } if (!wpnOverride && weaponGroups.includes(gizmo.object as THREE.Group)) saveGripBase(); } });   // правка оружия без галки → авто в БАЗУ pe_grip
 
 const limitGizmo = makeLimitGizmo(); scene.add(limitGizmo.group);   // гизмо предела выбранного сустава (на манекене)
-let showLimits = true;                                              // рисовать пределы выбранного сустава (дефолт вкл)
-let clampFk = true;                                                 // FK-драг клэмпит кость к пределу сустава (дефолт вкл)
+let showLimits = getPref('limitGizmo', true);                       // рисовать пределы выбранного сустава (дефолт вкл)
+let clampFk = getPref('clampFk', true);                             // FK-драг клэмпит кость к пределу сустава (дефолт вкл)
 let human!: Humanoid;
 // Ф14.4: ОСИ ПАЛЬЦЕВ ЭТОГО РИГА (у импортированной модели кисть смотрит куда угодно — фиксированная ось
 // врёт). Кэш на объекте `Humanoid`: пересборка манекена создаёт новый объект → вывод обновляется сам,
@@ -242,7 +291,7 @@ function placeLimitGizmo(): void {
   const d = decomposeToLimit(b.quaternion, curLimitView);
   limitGizmo.mark(curLimitView, d.rP, d.rN, d.twist);
 }
-let hipsMode: 'translate' | 'rotate' = 'translate';
+let hipsMode: 'translate' | 'rotate' = getPref<'translate' | 'rotate'>('hipsMode', 'translate');
 let bodyFollow = 0.45;
 let pinPower = 1;                                            // сила привязки (Ф26.7): 1 = точка держится насмерть, 0 = едет за телом
 
@@ -319,7 +368,7 @@ function highlight(m: THREE.Mesh | null): void {
 }
 
 // ── IK-риг ──
-interface Eff { root: string; mid: string; end: string; pole: THREE.Vector3; swivel: number; bodyApplied: [number, number, number]; keepRot: boolean; isFoot: boolean; pin: boolean; ik: boolean; target: THREE.Vector3; prev: THREE.Vector3; footQuat: THREE.Quaternion; handle: THREE.Mesh; poleHandle: THREE.Mesh }
+interface Eff { root: string; mid: string; end: string; pole: THREE.Vector3; swivel: number; bodyApplied: [number, number, number]; keepRot: boolean; isFoot: boolean; pin: boolean; ik: boolean; target: THREE.Vector3; prev: THREE.Vector3; footQuat: THREE.Quaternion; handle: THREE.Mesh; poleHandle: THREE.Mesh; viewOff: THREE.Vector3 }
 const LIMB_OF: Record<string, string> = { LeftUpperArm: 'LH', LeftLowerArm: 'LH', LeftHand: 'LH', RightUpperArm: 'RH', RightLowerArm: 'RH', RightHand: 'RH', LeftUpperLeg: 'LF', LeftLowerLeg: 'LF', RightUpperLeg: 'RF', RightLowerLeg: 'RF' };
 /** ВСЕ ручки-хелперы в одном списке — чтобы прозрачность применялась одним проходом и никого не забывала. */
 const allHandles: THREE.Mesh[] = [];
@@ -339,12 +388,12 @@ function applyAlpha(): void {
   for (const h of allHandles) put(h.material as THREE.Material, aHandle);
 }
 const rig = {
-  hipsPos: V(), hipsQuat: Q(), hipsHandle: mkHandle(0xf0c020, 3.4, true),
+  hipsPos: V(), hipsQuat: Q(), hipsHandle: mkHandle(0xf0c020, 2.3, true),
   eff: {
-    LH: { root: 'LeftUpperArm', mid: 'LeftLowerArm', end: 'LeftHand', pole: new THREE.Vector3(0, -1, -0.4), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
-    RH: { root: 'RightUpperArm', mid: 'RightLowerArm', end: 'RightHand', pole: new THREE.Vector3(0, -1, -0.4), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
-    LF: { root: 'LeftUpperLeg', mid: 'LeftLowerLeg', end: 'LeftFoot', pole: new THREE.Vector3(0, 0, 1), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: true, isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
-    RF: { root: 'RightUpperLeg', mid: 'RightLowerLeg', end: 'RightFoot', pole: new THREE.Vector3(0, 0, 1), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: true, isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 2.6), poleHandle: mkHandle(0xff8c3a, 2.0) },
+    LH: { root: 'LeftUpperArm', mid: 'LeftLowerArm', end: 'LeftHand', pole: new THREE.Vector3(0, -1, -0.4), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 1.7), poleHandle: mkHandle(0xff8c3a, 1.3), viewOff: V() },
+    RH: { root: 'RightUpperArm', mid: 'RightLowerArm', end: 'RightHand', pole: new THREE.Vector3(0, -1, -0.4), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 1.7), poleHandle: mkHandle(0xff8c3a, 1.3), viewOff: V() },
+    LF: { root: 'LeftUpperLeg', mid: 'LeftLowerLeg', end: 'LeftFoot', pole: new THREE.Vector3(0, 0, 1), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: true, isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 1.7), poleHandle: mkHandle(0xff8c3a, 1.3), viewOff: V() },
+    RF: { root: 'RightUpperLeg', mid: 'RightLowerLeg', end: 'RightFoot', pole: new THREE.Vector3(0, 0, 1), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: true, isFoot: true, pin: true, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x46d07a, 1.7), poleHandle: mkHandle(0xff8c3a, 1.3), viewOff: V() },
   } as Record<string, Eff>,
 };
 const effList = (): Eff[] => Object.values(rig.eff);
@@ -353,7 +402,7 @@ const effList = (): Eff[] => Object.values(rig.eff);
  * ±15° вверх-вниз, ±10° твист — `jointLimits.ts`). Тот же шов, которым локтевой хелпер Ф25 опускает ключицу
  * автоматом — теперь его можно дёрнуть рукой.
  */
-const shoulderHandles: Record<string, THREE.Mesh> = { LH: mkHandle(0xb07aff, 2.2), RH: mkHandle(0xb07aff, 2.2) };
+const shoulderHandles: Record<string, THREE.Mesh> = { LH: mkHandle(0xb07aff, 1.5), RH: mkHandle(0xb07aff, 1.5) };
 
 /**
  * ХЕЛПЕР ВЗГЛЯДА (Ф24.2) — aim-констрейнт на голову с распределением по цепочке.
@@ -372,7 +421,7 @@ const GAZE_DIST = 55;                                        // как дале�
 const GAZE_FWD = new THREE.Vector3(0, 0, 1);                 // в нашем риге вперёд = +Z
 let gazeOn = false;
 const gazeTarget = V();
-const gazeHandle = mkHandle(0xf2f2f2, 2.2);
+const gazeHandle = mkHandle(0xf2f2f2, 1.5);
 gazeHandle.visible = false;
 /** Луч «голова → точка взгляда»: без него белый шар перед лицом читается как «что-то висит», а не как цель. */
 const gazeLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V(), V()]), new THREE.LineBasicMaterial({ color: 0xf2f2f2, depthTest: false, transparent: true, opacity: 0.35 }));
@@ -488,6 +537,23 @@ function setEndOrient(e: Eff): void {
 }
 // Захватить цель И полюс (направление изгиба локтя/колена) из ТЕКУЩЕЙ позы кости —
 // чтобы возврат в IK воспроизводил позу, а не сбрасывал ручную докрутку сустава.
+/**
+ * СМЕЩЕНИЕ РУЧКИ ОТ СУСТАВА К ВИДИМОЙ ТОЧКЕ (только кисти). Кость `LeftHand` — это ЗАПЯСТЬЕ, а глазами кисть
+ * находится дальше по ладони, и ручка выглядела «уехавшей в сторону» от руки (жалоба со скрина). Сдвигаем ЛИШЬ
+ * ОТРИСОВКУ: цель ИК остаётся на суставе, драг вычитает то же смещение обратно — иначе рука прыгала бы на него.
+ * Ориентир — основание среднего пальца ВИДИМОГО рига; нет пальцев → доля вдоль оси кисти.
+ */
+function handleViewOff(e: Eff, out: THREE.Vector3): THREE.Vector3 {
+  out.set(0, 0, 0);
+  if (e.isFoot) return out;
+  const end = viewBone(e.end); if (!end) return out;
+  const ep = end.getWorldPosition(V());
+  const mid = viewBone(e.end.replace('Hand', 'MiddleProximal'));
+  if (mid) return out.copy(mid.getWorldPosition(V())).sub(ep).multiplyScalar(0.75);
+  const fore = viewBone(e.mid); if (!fore) return out;
+  const dir = ep.clone().sub(fore.getWorldPosition(V()));
+  return dir.lengthSq() > 1e-6 ? out.copy(dir).normalize().multiplyScalar(2.2) : out;
+}
 function syncEff(e: Eff): void {
   const root = human.bones.get(e.root)!, mid = human.bones.get(e.mid)!, end = human.bones.get(e.end)!;
   root.updateMatrixWorld(); mid.updateMatrixWorld(); end.updateMatrixWorld();
@@ -532,7 +598,7 @@ let fbikFor: Humanoid | null = null;
  * для сравнения: на шарнире локтя/колена он теряет непрерывность (замер: «кисть к бедру» —
  * сгиб 7° вместо 24°, недолёт 6u).
  */
-let solverMode: 'analytic' | 'fabrik' = 'analytic';
+let solverMode: 'analytic' | 'fabrik' = getPref<'analytic' | 'fabrik'>('solver', 'analytic');
 function getFbik(): FbikRig {
   if (!fbik || fbikFor !== human) { fbik = makeFullBodyIk(human, { limits: limitViewForBone }); fbikFor = human; }
   return fbik;
@@ -818,7 +884,7 @@ const BAL_MARGIN = 0.75;   // целимся не в край опоры, а в�
 const BAL_TRANSFER = 0.65; // доля массы выше таза: сдвинув таз на X, центр масс едет примерно на 0.65X
 const BAL_MAX = 9;         // дальше таз не едет — это уже шаг, а не перенос веса
 const balanceOff = V();    // текущий сдвиг таза от баланса (НЕ авторский! см. `syncHandles`)
-let balanceOn = true, weightShift = 0.6;
+let balanceOn = getPref('balance', true), weightShift = 0.6;
 /**
  * ПЕРЕНОС ВЕСА (Ф26.6б) — таз сдвигается так, чтобы проекция центра масс оставалась над опорой.
  * Это то, что в Cascadeur делает физический риг: тянешь руку далеко вбок — человек отставляет таз в другую.
@@ -1555,7 +1621,9 @@ canvas.addEventListener('pointerdown', (ev) => {
   const hit = ray.intersectObjects(meshes, false)[0];
   if (hit) {
     const obj = hit.object as THREE.Mesh;
-    if (obj.userData.bone) { const nm = obj.userData.bone as string; selected = nm; highlight(obj); attachBoneGizmo(nm); refreshPose(); }
+    // Открыта панель импорта → клик по кости ПЕРЕКЛЮЧАЕТ ЧАСТЬ МАСКИ (пикер по манекену, а не список галок).
+    if (obj.userData.bone && importPanel?.togglePartOfBone(obj.userData.bone as string)) { /* маска переключена */ }
+    else if (obj.userData.bone) { const nm = obj.userData.bone as string; selected = nm; highlight(obj); attachBoneGizmo(nm); refreshPose(); }
     else { let g: THREE.Object3D | null = obj; while (g && !(weaponGroups as THREE.Object3D[]).includes(g)) g = g.parent; if (g) { fkProxyBone = null; selected = null; highlight(null); gizmo.setSpace('local'); gizmo.setMode('rotate'); gizmo.attach(g); refreshPose(); } }
   }
   else { fkProxyBone = null; gizmo.detach(); highlight(null); selected = null; refreshPose(); }
@@ -1590,13 +1658,35 @@ gizmo.addEventListener('objectChange', () => {
     return;
   }
   if (gizmo.object === boneProxy || !(activeKey || activePole)) {
-    if (gizmo.object === boneProxy && fkProxyBone) {           // прокси-вращение ПО ОСЯМ СУСТАВА: дельта прокси (мир) → лок. кость → клэмп
+    if (gizmo.object === boneProxy && fkProxyBone) {           // кольцо правит ОДИН СКАЛЯР сустава (см. jointDof.ts)
       const nm = fkProxyBone; const b = human.bones.get(nm);
       if (b) {
-        _dq.copy(boneProxy.quaternion).multiply(_pBaseInv);     // deltaWorld = proxyNow · pBase⁻¹
-        _nw.copy(_dq).multiply(_bBase);                         // newBoneWorld = deltaWorld · boneWorld0
-        b.quaternion.copy(_parInv).multiply(_nw);               // newBoneLocal = parent⁻¹ · newBoneWorld
-        if (clampFk) { const view = limitViewForBone(nm); if (view) b.quaternion.copy(clampLocalToLimit(b.quaternion, view)); }
+        const view = limitViewForBone(nm);
+        if (view && limitVersion() === 2) {
+          // v2 (FinalIK): кость просто едет за кольцом, а предел ТОЛЬКО останавливает. Никакой пересборки из
+          // скаляров — именно она давала и гимбал-лок, и «руку крутит вокруг своей оси» при подъёме.
+          _dq.copy(boneProxy.quaternion).multiply(_pBaseInv);   // deltaWorld = proxyNow · pBase⁻¹
+          _nw.copy(_dq).multiply(_bBase);                       // newBoneWorld = deltaWorld · boneWorld0
+          b.quaternion.copy(_parInv).multiply(_nw);             // newBoneLocal = parent⁻¹ · newBoneWorld
+          if (clampFk) b.quaternion.copy(clampLocalToLimit(b.quaternion, view, b));
+        } else if (view && _dofBase) {
+          // ДЕЛЬТА ГИЗМО В ОСЯХ КОЛЕЦ. ТС вращает прокси вокруг его ЛОКАЛЬНОЙ X/Y/Z (`space:'local'`,
+          // `q = qStart · axisAngle(unit, φ)`), а локальные оси прокси мы САМИ поставили на оси сустава,
+          // несомые свингом (`parkProxy` → `gimbalFrame`). Значит `qStart⁻¹ · qNow` — чистый поворот вокруг ОДНОЙ
+          // нарисованной оси, и его угол — ровно ввод пользователя. Что с ним делать, решает `swingRing`:
+          // кольцо твиста правит свой скаляр, кольца свинга КРУТЯТ кость вокруг своей оси и гасят наведённый твист.
+          _dDof.copy(_pBaseInv).multiply(boneProxy.quaternion);
+          if (_dragAxis < 0) _dragAxis = AXI[gizmo.axis ?? ''] ?? ringAxis(_dDof);   // E/XYZE (свободные кольца) — по доминирующей оси
+          const [raw, step] = ringDelta(_dDof, _dragAxis, _dragRaw);
+          _dragAcc += step; _dragRaw = raw;
+          const th = swingRing(view, _dofBase, _dragAxis, _dragAcc);
+          b.quaternion.copy(quatFromDof(view, clampFk ? clampDof(view, th) : th));
+        } else {
+          // Кость без сустава (таз): степеней свободы не объявлено — старая композиция, клэмпить нечем.
+          _dq.copy(boneProxy.quaternion).multiply(_pBaseInv);   // deltaWorld = proxyNow · pBase⁻¹
+          _nw.copy(_dq).multiply(_bBase);                       // newBoneWorld = deltaWorld · boneWorld0
+          b.quaternion.copy(_parInv).multiply(_nw);             // newBoneLocal = parent⁻¹ · newBoneWorld
+        }
         // АВТО-FK, НО ПИН ВАЖНЕЕ (Ф22.1). Поворот кости конечности раньше ВСЕГДА гасил её IK —
         // и заколотая кисть теряла фиксатор от одного касания плеча. Заколота — значит держим.
         const lk = LIMB_OF[nm]; if (lk && !rig.eff[lk]!.pin) { rig.eff[lk]!.ik = false; refreshLimbs(); }
@@ -1617,14 +1707,18 @@ gizmo.addEventListener('objectChange', () => {
     // кадр драга весь персонаж ехал на 0.45 смещения руки, а запиненные стопы держали — это и есть
     // «раскорячивает». Теперь тело идёт за рукой СКРУТКОЙ КОРПУСА (см. PULL в `solveRig`), а таз
     // двигается только своей ручкой — как в Cascadeur, где таз отдельный контроллер.
-    const e = rig.eff[activeKey!]!; const nt = e.handle.position.clone();
+    const e = rig.eff[activeKey!]!; const nt = e.handle.position.clone().sub(e.viewOff);   // ручка нарисована на ладони — цель на суставе
     e.target.copy(nt); e.prev.copy(nt);
   }
 });
 
 // ── Позы / клипы / undo ── (типы, blendTwo/clipPoseAt/migrateClip — из clipModel.ts)
 function loadLib(): Clip[] { try { const s = localStorage.getItem('pe_clips'); if (!s) return []; return (JSON.parse(s) as unknown[]).map(migrateClip); } catch { return []; } }
-function saveLib(): void { try { localStorage.setItem('pe_clips', JSON.stringify(library)); savePoseKey('pe_clips'); } catch { /* */ } }
+function saveLib(): void {
+  // Превью импорта живёт В БИБЛИОТЕКЕ (чтобы даром получить скраб/таймлайн/призрака), но наружу его пускать нельзя.
+  const out = library.filter((c) => c.name !== IMPORT_PREVIEW);
+  try { localStorage.setItem('pe_clips', JSON.stringify(out)); savePoseKey('pe_clips'); } catch { /* */ }
+}
 let library: Clip[] = loadLib();
 let clipBuf: Clip | null = null;      // буфер «копировать позу» — переживает переключение оружия/персонажа (вставка в другое оружие)
 let clipBufWasAtk = false;            // был ли исходник в буфере помечен ударом (перенести метку при вставке)
@@ -1699,7 +1793,7 @@ function groundManikin(): (() => void) | null {
  * ни `await`, ни событий, так что СОЛВЕР, ФИЗИКА, ПИНЫ и ЗАПИСЬ КАДРА видят только авторскую позу.
  * Работает ЛИШЬ ПРИ ВКЛЮЧЁННОЙ ФИЗИКЕ: без призрака сравнивать не с чем, а отрывать ручки от костей зря.
  */
-let manGroundView = true;
+let manGroundView = getPref('floorMannequin', true);
 function groundManikinForView(): (() => void) | null {
   if (!manGroundView || !physOn || !ghostHuman) return null;
   const y0 = human.root.position.y;
@@ -1876,10 +1970,35 @@ addEventListener('keydown', (e) => {
     case 'w': case 'W': case 'ц': case 'Ц': gizmo.setMode('translate'); break;
     case 'e': case 'E': case 'у': case 'У': gizmo.setMode('rotate'); break;
     case 's': case 'S': case 'ы': case 'Ы': snapOn = !snapOn; applySnap(); break;
+    // Анимационные клавиши — только на вкладке «Анимация» и только когда есть клип (иначе пробел «проглатывался»
+    // на других вкладках, а Del удалял бы кадр там, где кадров вообще нет).
+    case ' ': if (!animKeys()) return; togglePlay(); break;
+    case 'ArrowLeft': if (!animKeys()) return; goFrame(Math.max(0, frameIdx - 1)); break;
+    case 'ArrowRight': if (!animKeys()) return; { const c = curClip()!; goFrame(Math.min(c.keys.length - 1, frameIdx + 1)); } break;
+    case 'i': case 'I': case 'ш': case 'Ш': if (!animKeys()) return; recordFrame(); break;
+    case 'Delete': if (!animKeys()) return; deleteFrame(); break;
     default: return;
   }
   e.preventDefault();
 });
+/** Клавиши правки клипа активны только там, где они имеют смысл. */
+const animKeys = (): boolean => tab === 'anim' && !!curClip()?.keys.length;
+function togglePlay(): void { playBtn.click(); }
+/** `i` — записать текущую позу в кадр (концы-стойка неприкосновенны, как и у кнопки). */
+function recordFrame(): void {
+  const c = curClip(); if (!c || isEndFrame(c, frameIdx)) return;
+  histLib('записать кадр', () => { if (c.keys[frameIdx]) c.keys[frameIdx]!.pose = readPoseFull(); saveLib(); });
+}
+/** Del — удалить кадр (те же ограничения, что у кнопки «− кадр»). */
+function deleteFrame(): void {
+  const c = curClip(); if (!c || isEndFrame(c, frameIdx)) return;
+  const lock = !!c.idleEnds || isAttackClip(c);
+  if (c.keys.length <= (lock ? 3 : 1)) return;
+  histLib('удалить кадр', () => { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); });
+}
+/** Крайний кадр клипа-удара/импорта = idle-стойка: правится в стойке, а не тут. */
+const isEndFrame = (c: Clip, i: number): boolean =>
+  (!!c.idleEnds || isAttackClip(c)) && (i === 0 || i === c.keys.length - 1);
 /**
  * КОЛЬЦА ПО УДЕРЖАНИЮ SHIFT (Ф21.1). Двигать и крутить надо ОДНИМ инструментом, но два
  * постоянных набора ручек на экране — каша и промахи мышью. Держишь Shift → гизмо становится
@@ -2304,11 +2423,11 @@ function setIk(on: boolean): void {
 ikB = mkBtn('IK ●', () => setIk(!ikOn));
 gazeB = mkBtn('👁 взгляд', () => setGaze(!gazeOn));
 gazeB.title = 'Голова смотрит в точку-хелпер (белый шар перед лицом): взгляд держится вперёд, как бы ни скручивался корпус';
-hipsB = mkBtn('таз: двигать', () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); } });
+hipsB = mkBtn('таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'), () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; setPref('hipsMode', hipsMode); hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); } });
 const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => setPhys(!physOn)); });
 const modeB = mkBtn('', () => { uiPro = !uiPro; ui.pro = uiPro; saveUi(); syncModeB(); refreshAll(); });
 function syncModeB(): void { modeB.textContent = uiPro ? '⚙ Про' : '○ Простой'; modeB.title = uiPro ? 'Про: все настройки (лимиты, моторы, физика, тюнинг походки)' : 'Простой: только позинг и клипы — инженерные панели скрыты (их значения действуют)'; modeB.classList.toggle('on', uiPro); }
-const manB = mkBtn('манекен: скелет', () => { manView = manView === 'skel' ? 'solid' : manView === 'solid' ? 'hidden' : 'skel'; setManView(); });
+const manB = mkBtn('манекен: скелет', () => { manView = manView === 'skel' ? 'solid' : manView === 'solid' ? 'hidden' : 'skel'; setPref('mannequin', manView); setManView(); });
 // Ф13.3/13.4: режим хвата и точка серверной позиции — ОБА видны всегда, без привязки к Про.
 const gripB = mkBtn('✋ хват', () => cycleGrip());
 gripB.title = 'Правка хвата: камера на кисть, кликабельны ТОЛЬКО фаланги. Клики: правая → левая → выкл.';
@@ -2323,9 +2442,15 @@ personaB = mkBtn('◧ персонажи', () => {
   const first = rosterChars()[0];
   if (first) applyChar(first.id); else refreshAll();
 });
+/**
+ * ПУБЛИКАЦИЯ (Ф12): рабочая копия живёт локально и не пропадает, на сервер уходит по этой кнопке.
+ * Счётчик = сколько разделов правлено с прошлой публикации; «⟳ на сервере новее» = кто-то опередил.
+ */
+const pubBtn = createPublishButton({ extraDirty: () => configDirtyKeys(), publishExtra: () => publishConfigEdits() });
+
 bar.append(personaB, document.createTextNode('Персонаж'), charSel, document.createTextNode('Оружие'), wpnSel, document.createTextNode('офф'), offSel, sep(), ikB, gazeB, hipsB, sep(),
   mkBtn('зеркало L→R', () => histPose('зеркало L→R', mirrorLR)), mkBtn('T-поза', () => histPose('T-поза', () => { human.reset(); if (ikOn) captureRig(); })), sep(),
-  mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, gripB, posB, sep(), modeB);
+  mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, gripB, posB, sep(), pubBtn.el, modeB);
 
 // ── Панель-вкладки (Анимация = клипы+кадры+поза; Бег = 2D бленд локомоции; Персонаж = setup) ──
 // РЕЖИМ ИНТЕРФЕЙСА (Ф1.5). Не два разных UI, а один с прогрессивным раскрытием: «Про» ДОБАВЛЯЕТ инженерные
@@ -2482,7 +2607,7 @@ function poseTools(): void {
   { const hint = el('div', 'color:#6b7180;font-size:10px'); hint.textContent = 'выкл — кисть/стопа едет за цепью (естественно); вкл — держит мировой угол (оружие, подошва)'; body.append(hint); }
   const rr = el('div', 'display:flex;flex-wrap:wrap;gap:6px'); body.append(rr);
   for (const [k, lb] of [['LH', 'кисть Л'], ['RH', 'кисть П'], ['LF', 'стопа Л'], ['RF', 'стопа П']] as const) { const lab = el('label', 'font-size:11px'); const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox'; cb.checked = rig.eff[k]!.keepRot; cb.onchange = () => { const e = rig.eff[k]!; e.keepRot = cb.checked; if (e.keepRot) syncEff(e); }; lab.append(cb, document.createTextNode(lb)); rr.append(lab); }
-  if (uiPro) body.append(pbtn(solverMode === 'analytic' ? 'солвер: аналитика' : 'солвер: FABRIK (старый)', () => { solverMode = solverMode === 'analytic' ? 'fabrik' : 'analytic'; renderAnim(); }, solverMode === 'analytic'));
+  if (uiPro) body.append(pbtn(solverMode === 'analytic' ? 'солвер: аналитика' : 'солвер: FABRIK (старый)', () => { solverMode = solverMode === 'analytic' ? 'fabrik' : 'analytic'; setPref('solver', solverMode); renderAnim(); }, solverMode === 'analytic'));
   const rh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rh.textContent = 'ТЕЛО ЗА РУКОЙ (замах)'; body.append(rh);
   const bf = el('input', 'width:100%') as HTMLInputElement; bf.type = 'range'; bf.min = '0'; bf.max = '1'; bf.step = '0.05'; bf.value = String(bodyFollow); bf.oninput = () => { bodyFollow = parseFloat(bf.value); }; body.append(bf);
   {   // Ф26.6 — Про: раздельно скрутка / прогиб / наклон + доля таза; в простом режиме всё ведёт один ползунок выше
@@ -2502,7 +2627,7 @@ function poseTools(): void {
       grow('таз доворачивает', () => pelvisFollow, (v) => { pelvisFollow = v; }, 0.5);
     }
     const br = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:3px'); body.append(br);
-    br.append(pbtn(balanceOn ? 'баланс: вкл' : 'баланс: выкл', () => { balanceOn = !balanceOn; refreshLive(); renderAnim(); }, balanceOn));
+    br.append(pbtn(balanceOn ? 'баланс: вкл' : 'баланс: выкл', () => { balanceOn = !balanceOn; setPref('balance', balanceOn); refreshLive(); renderAnim(); }, balanceOn));
     if (uiPro) grow('перенос веса', () => weightShift, (v) => { weightShift = v; }, 1);
     const gh = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); gh.textContent = 'гибкость персонажа (доспех сковывает, акробат гибче)'; body.append(gh);
     grow('гибк. скрутка', () => flexTw, (v) => { flexTw = v; }, 2, saveFlex);
@@ -2599,10 +2724,18 @@ function poseTools(): void {
   // ── ПРЕДЕЛЫ СУСТАВА: тумблеры + пер-сустав диапазоны (правится симметрично L/R; групповой × выше — множитель) ──
   const lt = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:4px'); body.append(lt);
   lt.append(
-    pbtn(showLimits ? 'гизмо предела: вкл' : 'гизмо предела: выкл', () => { showLimits = !showLimits; renderAnim(); }, showLimits),
-    pbtn(clampFk ? 'клэмп FK: вкл' : 'клэмп FK: выкл', () => { clampFk = !clampFk; renderAnim(); }, clampFk),
-    pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; renderAnim(); }, footGround),
-    pbtn(manGroundView ? 'манекен на полу: вкл' : 'манекен на полу: выкл', () => { manGroundView = !manGroundView; renderAnim(); }, manGroundView),
+    pbtn(showLimits ? 'гизмо предела: вкл' : 'гизмо предела: выкл', () => { showLimits = !showLimits; setPref('limitGizmo', showLimits); renderAnim(); }, showLimits),
+    pbtn(clampFk ? 'клэмп FK: вкл' : 'клэмп FK: выкл', () => { clampFk = !clampFk; setPref('clampFk', clampFk); renderAnim(); }, clampFk),
+    // ДВЕ СИСТЕМЫ СУСТАВОВ РЯДОМ, чтобы сравнить живьём и лишнюю выкинуть (см. jointLimitV2.ts):
+    //   v2 (FinalIK) — кость едет за кольцом свободно, предел только останавливает;
+    //   v1 (скаляры) — кольцо правит скаляр, кватернион пересобирается.
+    pbtn(limitVersion() === 2 ? 'суставы: v2 FinalIK' : 'суставы: v1 скаляры', () => {
+      setLimitVersion(limitVersion() === 2 ? 1 : 2);
+      if (fkProxyBone) attachBoneGizmo(fkProxyBone);   // кольца живут в разных фреймах → пере-прицепить
+      renderAnim();
+    }, limitVersion() === 2),
+    pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; setPref('groundFeet', footGround); renderAnim(); }, footGround),
+    pbtn(manGroundView ? 'манекен на полу: вкл' : 'манекен на полу: выкл', () => { manGroundView = !manGroundView; setPref('floorMannequin', manGroundView); renderAnim(); }, manGroundView),
   );
   {   // Ф26.2 — ПРОЗРАЧНОСТЬ: скелет перестаёт забивать меш (жалоба «слишком активный»), ручки не рябят
     const arow = (label: string, get: () => number, set: (v: number) => void): void => {
@@ -2670,12 +2803,10 @@ function poseTools(): void {
   updateLimitGizmo();
   const phb = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:4px'); body.append(phb);
   phb.append(
-    pbtn('физика вкл/выкл', () => { void ensurePhysics().then(() => { setPhys(!physOn); renderAnim(); }); }, physOn),
   );
   if (uiPro) phb.append(
     pbtn('дёрг (удар)', () => { void ensurePhysics().then(() => { setPhys(true); if (ragdoll) { ragdoll.hit('Torso', 0, 0.3, 1, 1.4); ragdoll.hit('Head', 0, 0.3, 1, 0.8); } }); }),
     pbtn(physDead ? 'встать' : 'упасть', () => { void ensurePhysics().then(() => { setPhys(true); if (!ragdoll) return; if (physDead) { const h = ragdoll.bodyPos('Hips'); reviveFrom.set(h[0], h[1], h[2]); reviveT = 0; ragdoll.setDead(false); physDead = false; } else { ragdoll.setDead(true); physDead = true; reviveT = -1; } renderAnim(); }); }, physDead),
-    pbtn('боксы физтела', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; applyBoxVis(); renderAnim(); }); }, showBoxes),
   );
   rollout('poses', 'ПОЗЫ И БУФЕР', poseLibSection);
   rollout('grip', 'ХВАТ КИСТИ', gripSection);
@@ -2906,72 +3037,85 @@ function openImportAnimModal(): void {
   file.click();
 }
 const impInput = 'background:#0f1119;color:#dfe3ee;border:1px solid #39415a;border-radius:4px;padding:2px 5px;font:11px monospace';
-async function showImportPanel(file: File): Promise<void> {
-  const ov = el('div', 'position:fixed;inset:0;background:rgba(6,8,14,.6);z-index:99999;display:flex;align-items:center;justify-content:center');
-  const box = el('div', 'background:#141824;border:1px solid #39415a;border-radius:8px;padding:14px;width:380px;font:12px monospace;color:#dfe3ee;box-shadow:0 8px 32px rgba(0,0,0,.5)');
-  ov.append(box); document.body.append(ov);
-  const title = el('div', 'color:#8fb7ff;font-weight:bold;margin-bottom:8px'); title.textContent = '📥 Импорт анимации: ' + file.name; box.append(title);
-  const row = (label: string): HTMLElement => { const r = el('label', 'display:flex;align-items:center;gap:8px;margin:6px 0'); const s = el('span', 'flex:1;color:#9aa3b8'); s.textContent = label; r.append(s); return r; };
+// РУЧНЫЕ КАРТЫ КОСТЕЙ ПО СИГНАТУРЕ РИГА: правишь карту один раз — следующий файл того же пакета
+// (Mixamo/CC выгоняют все клипы одним скелетом) подхватывает её сам.
+let boneMaps: Record<string, Record<string, string>> = (() => { try { return JSON.parse(localStorage.getItem('pe_bonemaps') ?? '{}') as Record<string, Record<string, string>>; } catch { return {}; } })();
+function saveBoneMaps(): void { try { localStorage.setItem('pe_bonemaps', JSON.stringify(boneMaps)); savePoseKey('pe_bonemaps'); } catch { /* */ } }
 
-  const animSel = document.createElement('select'); animSel.style.cssText = impInput + ';flex:2';
-  const animRow = row('анимация'); animRow.append(animSel); box.append(animRow);
+/** Превью импорта живёт в библиотеке под зарезервированным именем: так оно бесплатно получает скраб,
+ *  таймлайн и физ-призрака. `saveLib` это имя фильтрует, поэтому превью физически не попадает ни в
+ *  localStorage, ни на сервер. */
+const IMPORT_PREVIEW = '__import_preview';
+let importPanel: ImportPanel | null = null;
 
-  const fpsIn = document.createElement('input'); fpsIn.type = 'number'; fpsIn.min = '5'; fpsIn.max = '120'; fpsIn.value = '30'; fpsIn.style.cssText = impInput + ';width:70px';
-  const fpsRow = row('семпл fps'); fpsRow.append(fpsIn); box.append(fpsRow);
-
-  const epsIn = document.createElement('input'); epsIn.type = 'range'; epsIn.min = '0'; epsIn.max = '50'; epsIn.step = '0.5'; epsIn.value = '3'; epsIn.style.flex = '2';
-  const epsVal = el('span', 'color:#c8b06a;min-width:64px;text-align:right'); const setEps = (): void => { const e = parseFloat(epsIn.value); epsVal.textContent = e === 0 ? 'все кадры' : e.toFixed(1) + '°'; }; epsIn.oninput = setEps; setEps();
-  const epsRow = row('детализация'); epsRow.append(epsIn, epsVal); box.append(epsRow);
-
-  const loopChk = document.createElement('input'); loopChk.type = 'checkbox';
-  const loopRow = row('зациклить (walk/run/idle)'); loopRow.append(loopChk); box.append(loopRow);
-
-  const bodySel = document.createElement('select'); bodySel.style.cssText = impInput + ';flex:2';
-  for (const [v, t] of [['full', 'всё тело'], ['upper', 'только ВЕРХ (торс+руки)'], ['lower', 'только НИЗ (таз+ноги)']] as [string, string][]) { const o = document.createElement('option'); o.value = v; o.textContent = t; bodySel.append(o); }
-  const bodyRow = row('тело (маска)'); bodyRow.append(bodySel); box.append(bodyRow);
-
-  const idleChk = document.createElement('input'); idleChk.type = 'checkbox'; idleChk.checked = true;
-  const idleRow = row('встроить idle (ноги + старт/финиш)'); idleRow.title = 'Не-двигаемые кости (напр. ноги при маске «верх») берутся из нашей idle-стойки; idle идёт первым и последним ключом → клип idle→движение→idle.'; idleRow.append(idleChk); box.append(idleRow);
-
-  const status = el('div', 'color:#c8b06a;font-size:11px;margin:8px 0 4px;min-height:14px'); box.append(status);
-  const btns = el('div', 'display:flex;gap:6px;margin-top:6px;justify-content:flex-end');
-  const bakeBtn = pbtn('Запечь', () => void doBake());
-  btns.append(pbtn('Отмена', () => ov.remove()), bakeBtn); box.append(btns);
-
-  status.textContent = 'чтение анимаций…';
-  try {
-    const anims = await listAnimations(file);
-    animSel.innerHTML = '';
-    anims.forEach((n, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = n; animSel.append(o); });
-    const first = anims[0] ?? ''; if (/walk|run|idle|ход|бег|цикл|loop/i.test(first)) loopChk.checked = true;
-    status.textContent = anims.length ? `${curChar().name} · ${weapon} · анимаций: ${anims.length}` : 'в файле нет анимаций';
-  } catch (e) { status.textContent = 'ошибка чтения: ' + (e as Error).message; }
-
-  async function doBake(): Promise<void> {
-    bakeBtn.disabled = true; status.textContent = 'запекаю…';
-    try {
-      const res = await bakeAnimationToClip(file, {
-        character: curCharId, weapon,
-        animationIndex: parseInt(animSel.value, 10) || 0,
-        fps: parseFloat(fpsIn.value) || 30,
-        epsDeg: parseFloat(epsIn.value) || 0,
-        loop: loopChk.checked,
-        body: bodySel.value as 'full' | 'upper' | 'lower',
-        idlePose: idleChk.checked ? (editorContent.resolveUpper(weapon)?.pose ?? undefined) : undefined,
-        anchorIdle: idleChk.checked,
-      });
-      let nm = (res.clip.name || 'anim').replace(/[^\wа-яА-Я0-9:+._-]/g, '_'); const base = nm;
-      for (let i = 2; library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon); i++) nm = base + '_' + i;
-      res.clip.name = nm; res.clip.character = curCharId; res.clip.weapon = weapon;
-      if (res.clip.idleEnds) syncAttackEnds(res.clip as Clip);   // концы = актуальная стойка (единый источник), дальше синкаются при правке стойки
-      library.push(res.clip); saveLib();
-      clipIdx = clipsHere().findIndex((x) => x.name === nm); frameIdx = 0; refreshAll();
-      status.textContent = `готово: «${nm}» — ${res.frames} кадров → ${res.keys} ключей`;
-      setTimeout(() => ov.remove(), 1100);
-    } catch (e) { status.textContent = 'ошибка: ' + (e as Error).message; bakeBtn.disabled = false; }
+/** Показать/убрать превью-клип импорта (колбэк панели). */
+/** Куда вернуть выбор, когда превью убрано (импорт отменили или приняли). */
+let importPrevSel: { clip: number; frame: number } | null = null;
+function setImportPreview(c: Clip | null): void {
+  const i = library.findIndex((x) => x.name === IMPORT_PREVIEW);
+  if (i >= 0) library.splice(i, 1);
+  if (c) {
+    if (!importPrevSel) importPrevSel = { clip: clipIdx, frame: frameIdx };
+    // `loop: true` НАСИЛЬНО: превью надо СМОТРЕТЬ в цикле, а не ловить один прогон. Это выброшенная копия —
+    // в библиотеку уходит `last.clip` из панели, у него свой честный флаг цикла.
+    library.push({ ...c, name: IMPORT_PREVIEW, character: curCharId, weapon, loop: true });
+    clipIdx = clipsHere().findIndex((x) => x.name === IMPORT_PREVIEW);
+    frameIdx = 0;
+    // ⚠ Превью бега ГЛУШИТ проигрывание клипа: в цикле кадра стоит `if (locoOn) stepGait(...) else if (playing)`.
+    // Если его не снять, галки в панели переключаются, а в вьюпорте по-прежнему бежит гейт — «не видно анимации».
+    if (locoOn) { locoOn = false; }
+    // САМО ПРОИГРЫВАНИЕ — главное, ради чего превью существует: без него клип стоит на первом кадре
+    // и «все настройки есть, а на что они влияют — не видно».
+    playT = 0; playing = true; playBtn.textContent = '⏸';
+    refreshAll();
+    preview(playT);
+  } else {
+    playing = false; playBtn.textContent = '▶';
+    if (importPrevSel) { clipIdx = importPrevSel.clip; frameIdx = importPrevSel.frame; importPrevSel = null; }
+    clipIdx = Math.min(clipIdx, Math.max(0, clipsHere().length - 1));
+    frameIdx = Math.min(frameIdx, Math.max(0, (curClip()?.keys.length ?? 1) - 1));
+    refreshAll();
+    goFrame(frameIdx);
   }
 }
 
+/** Позы-кандидаты в базовый слой: обычная стойка, боевая стойка, любой клип этого оружия (его первый кадр). */
+function importBasePoses(): { id: string; label: string; pose: Pose }[] {
+  const out: { id: string; label: string; pose: Pose }[] = [];
+  const relaxed = resolveUpper(weapon, 0)?.pose, combat = resolveUpper(weapon, 1)?.pose;
+  if (relaxed) out.push({ id: 'idle', label: 'обычная стойка (idle)', pose: relaxed });
+  if (combat) out.push({ id: 'combat', label: 'боевая стойка (combat_idle)', pose: combat });
+  for (const c of clipsHere()) {
+    const k = c.keys[0]; if (!k || c.name === IMPORT_PREVIEW) continue;
+    out.push({ id: 'clip:' + c.name, label: 'клип «' + c.name + '» (кадр 1)', pose: k.pose });
+  }
+  return out;
+}
+
+async function showImportPanel(file: File): Promise<void> {
+  const { openClipImportPanel } = await import('./clipImportPanel.js');
+  importPanel?.close();
+  camFocus(human.hips);   // камера на персонажа: настраивать импорт, не видя фигуры, бессмысленно
+  importPanel = openClipImportPanel(file, {
+    title: `${curChar().name} \u00b7 ${weapon}`,
+    basePoses: importBasePoses,
+    preview: setImportPreview,
+    togglePlay: () => { playBtn.click(); },
+    isPlaying: () => playing,
+    loadBoneMap: (sig) => boneMaps[sig],
+    saveBoneMap: (sig, map) => { boneMaps[sig] = map; saveBoneMaps(); },
+    commit: (clip) => {
+      histLib('импорт анимации', () => {
+        let nm = (clip.name || 'anim').replace(/[^\w\u0430-\u044f\u0410-\u042f0-9:+._-]/g, '_'); const base = nm;
+        for (let i = 2; library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon); i++) nm = base + '_' + i;
+        clip.name = nm; clip.character = curCharId; clip.weapon = weapon;
+        if (clip.idleEnds) syncAttackEnds(clip);   // концы = актуальная стойка (единый источник), дальше синкаются при правке стойки
+        library.push(clip); saveLib();
+        clipIdx = clipsHere().findIndex((x) => x.name === nm); frameIdx = 0; refreshAll();
+      });
+    },
+  });
+}
 
 /**
  * Ф11: НАБОР ФИЗ-ТЕЛ — настройка, а не запрет.
@@ -3132,6 +3276,7 @@ function fitPhysToMesh(inflate = 0.95, pct = 0.95): { bodies: number; verts: num
       const f = fitCollider(pts, { pct, inflate, axPct: 0.02 });   // 2% с каждого конца — против воротника на груди
       if (!f.n || f.half < 0.2) continue;
       const ov = (PHYS_SIZES[pb.name] ??= {});
+      const cur0 = pb.shape.k;
       // ЗАМЕР ПО ВЕРШИНАМ ОГРАНИЧИВАЕТСЯ ДЛИНОЙ КОСТИ. Скиннинг не обязан совпадать с нашей сегментацией:
       // у CC-рига почти весь торс висит на ОДНОЙ кости груди, и облако растягивало тело с 2.82u до 9.12u,
       // съедая только что сделанное разделение спины. Кости дают длину точно (замер Ф28.1: 0.0° и длина
@@ -3142,7 +3287,10 @@ function fitPhysToMesh(inflate = 0.95, pct = 0.95): { bodies: number; verts: num
       ov.len = +lim(f.half, boneHalf * 0.6, boneHalf * 1.6).toFixed(2);
       const w = lim(f.hu / half.u, 0.3, 2.5);
       ov.w = +w.toFixed(3);
-      ov.d = +lim((f.hv / half.v) / w, 0.3, 2.5).toFixed(3);
+      // У конуса `d` — СУЖЕНИЕ, и его тоже можно снять с вершин: отношение радиусов крайних четвертей.
+      ov.d = cur0 === 'taper' && f.rNear > 1e-3
+        ? +lim(f.rFar / f.rNear, 0.3, 2.5).toFixed(3)
+        : +lim((f.hv / half.v) / w, 0.3, 2.5).toFixed(3);
       // ЦЕНТР ФОРМЫ СДВИГАЕТСЯ `pos`, А НЕ `off`: `off` задаёт ещё и разворот формы,
       // а `anchor` — вообще сустав. Смещение считается в ФРЕЙМЕ ТЕЛА, поэтому мировую ось возвращаем обратно.
       const d = f.center - Math.hypot(pb.off[0], pb.off[1], pb.off[2]);
@@ -3158,6 +3306,102 @@ function fitPhysToMesh(inflate = 0.95, pct = 0.95): { bodies: number; verts: num
     rebuildRagdoll(); renderAnim();
   }
 }
+/**
+ * Переснять тела с костей, ЕСЛИ пользователь уже снимал их раньше (Ф26.5). Анкеры/длины хранятся
+ * АБСОЛЮТНО и в ГЛОБАЛЬНОМ `pe_ragdoll` (один на всех), а телосложение у каждого своё — значит при смене
+ * персонажа или морфа их надо пересчитать, иначе кукла останется от чужого тела. Ручные множители
+ * ширины/толщины и выбранные формы при этом СОХРАНЯЮТСЯ — переснимается только геометрия костей.
+ */
+function refitPhysIfFitted(): void { if (ragdoll && Object.values(PHYS_SIZES).some((v) => v.anchor)) fitPhysToBones(); }
+/** РАЗМЕРЫ ФИЗ-ТЕЛ (Ф26.5): форма + длина/ширина/толщина на тело, плюс авто-подгонка по костям. */
+let sizeBody = 'Torso';
+let meshFitNote = '';   // Ф28.3: что ответила подгонка по мешу
+function physSizeSection(): void {
+  const bodies = physBodies();
+  if (!bodies.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = 'Нет активных тел.'; body.append(e); return; }
+  if (!bodies.some((b) => b.name === sizeBody)) sizeBody = bodies[0]!.name;
+  const cur = bodies.find((b) => b.name === sizeBody)!;
+  const ov = PHYS_SIZES[sizeBody] ?? {};
+  const apply = (fn: (o: PhysSize) => void, rebuild = true): void => {
+    fn(PHYS_SIZES[sizeBody] ??= {});
+    saveRagdollConfig(); savePoseKey('pe_ragdoll');
+    if (rebuild) { rebuildRagdoll(); renderAnim(); }
+  };
+  const r1 = el('div', 'display:flex;gap:3px;align-items:center'); body.append(r1);
+  const bsel = document.createElement('select'); bsel.style.cssText = impInput + ';flex:1';
+  for (const b2 of bodies) { const o = document.createElement('option'); o.value = b2.name; o.textContent = PHYS_LABEL[b2.name] ?? b2.name; o.selected = b2.name === sizeBody; bsel.append(o); }
+  bsel.onchange = () => { sizeBody = bsel.value; renderAnim(); };
+  const ksel = document.createElement('select'); ksel.style.cssText = impInput;
+  for (const [v, lb] of [['box', 'бокс'], ['sphere', 'шар'], ['cylinder', 'цилиндр'], ['capsule', 'пилюля'], ['taper', 'конус (ткань)']] as const) { const o = document.createElement('option'); o.value = v; o.textContent = lb; o.selected = cur.shape.k === v; ksel.append(o); }
+  ksel.onchange = () => apply((o) => { o.k = ksel.value as PhysSize['k']; });
+  r1.append(bsel, ksel);
+  const srow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
+    const row = el('label', 'display:flex;align-items:center;gap:6px');
+    row.innerHTML = `<span style="flex:0 0 74px">${label}</span>`;
+    const out = el('span', 'width:38px;text-align:right;color:#9ae6a0'); out.textContent = get().toFixed(2);
+    const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.value = String(get());
+    r.oninput = () => { out.textContent = parseFloat(r.value).toFixed(2); };
+    r.onchange = () => set(parseFloat(r.value));   // пересборка куклы — ПО ОТПУСКАНИЮ (на каждый тик было бы дорого)
+    row.append(r, out); body.append(row);
+  };
+  const ax = bodyAxis(cur);
+  const curLen = cur.shape.k === 'box' ? cur.shape.h[ax]! : cur.shape.k === 'sphere' ? cur.shape.r : cur.shape.half;
+  if (cur.shape.k !== 'sphere') srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
+  srow(cur.shape.k === 'sphere' ? 'радиус ×' : 'ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
+  if (cur.shape.k === 'box') srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
+  // У конуса то же поле `d` значит СУЖЕНИЕ к дальнему концу (у круглых второй поперечник бессмыслен).
+  if (cur.shape.k === 'taper') srow('сужение ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
+  // Ф28.2 — СДВИГ И ПОВОРОТ ФОРМЫ, мимо сустава. Анкер трогать нельзя: он же точка констрейнта
+  // и рест-трансляция скелета — сдвинув его, сдвинешь сустав и всю цепь ниже. В Unreal точно так же:
+  // тело стоит на кости, а примитив внутри него имеет свой Center/Rotation.
+  {
+    const AX = ['X', 'Y', 'Z'] as const;
+    const g = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g.textContent = 'сдвиг формы (сустав не трогается)'; body.append(g);
+    for (let i = 0; i < 3; i++) srow('сдвиг ' + AX[i], () => ov.pos?.[i] ?? 0,
+      (v) => apply((o) => { const a = (o.pos ??= [0, 0, 0]) as number[]; a[i] = +v.toFixed(2); }), -12, 12, 0.1);
+    const g2 = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g2.textContent = 'поворот формы, градусы'; body.append(g2);
+    for (let i = 0; i < 3; i++) srow('поворот ' + AX[i], () => +((ov.rot?.[i] ?? 0) * 180 / Math.PI).toFixed(0),
+      (v) => apply((o) => { const a = (o.rot ??= [0, 0, 0]) as number[]; a[i] = +(v * Math.PI / 180).toFixed(4); }), -90, 90, 1);
+  }
+  const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
+  r2.append(
+    pbtn('⚖ снять с костей', () => fitPhysToBones()),
+    pbtn('◉ обжать по мешу', () => { const r = fitPhysToMesh(); meshFitNote = r ? `обжато тел: ${r.bodies}, вершин: ${r.verts}` : 'модель не загружена — осталась подгонка по костям'; renderAnim(); }),
+    pbtn('сброс тела', () => { delete PHYS_SIZES[sizeBody]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
+    pbtn('сброс всех', () => { for (const k in PHYS_SIZES) delete PHYS_SIZES[k]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
+    pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; setPref('boxes', showBoxes); applyBoxVis(); renderAnim(); }); }, showBoxes),
+  );
+  const hint = el('div', 'color:#6b7180;font-size:10px');
+  hint.textContent = '«С костей» даёт анкер и ось. «По мешу» ещё и толщину — по вершинам кости, как в Unreal.'; body.append(hint);
+  if (meshFitNote) { const n = el('div', 'color:#9ae6a0;font-size:10px'); n.textContent = meshFitNote; body.append(n); }
+}
+function physRigSection(): void {
+  const on = new Set(PHYS_SET.bodies);
+  const fingerNames = PHYS_CATALOG.filter((n) => n.tier === 'opt').map((n) => n.name);
+  const apply = (names: string[]): void => {
+    applyPhysProfile(names);
+    saveRagdollConfig(); savePoseKey('pe_ragdoll');
+    if (ragdoll) rebuildRagdoll();
+    renderAnim();
+  };
+  const cost = physSetCost();
+  const c = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
+  c.textContent = `тел: ${cost.bodies} · суставов: ${cost.constraints} · шаг симуляции ~${physMs.toFixed(2)} мс`;
+  body.append(c);
+  {   // Ф28.4: ткань видит ТОЛЬКО сферы и капсулы, боксы для неё прозрачны — показываем заранее
+    const cl = clothColliderCount();
+    const t = el('div', 'font-size:10px');
+    t.innerHTML = '<span style="color:#6b7180">для ткани (шары и капсулы): </span>'
+      + '<span style="color:' + (cl.ok > cl.limit ? '#ff6b6b' : '#9ae6a0') + '">' + cl.ok + ' из ' + cl.limit + '</span>'
+      + (cl.box ? '<span style="color:#e6a05a"> · боксом ' + cl.box + ' (ткань их НЕ видит)</span>' : '');
+    body.append(t);
+  }
+  if (!uiPro) return;                       // в Простом режиме — только читаут, без галок
+
+  const ph = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ph.textContent = 'НАБОР ФИЗ-ТЕЛ (пересборка)'; body.append(ph);
+  const prow = el('div', 'display:flex;align-items:center;gap:4px'); body.append(prow);
+  const lab = el('span', 'flex:1;font-size:11px'); lab.textContent = 'пресет'; prow.append(lab);
+  const sel = document.createElement('select'); sel.style.cssText = impInput;
   for (const pr of PHYS_PRESETS) { const o = document.createElement('option'); o.value = pr.id; o.textContent = pr.label; o.title = pr.hint; sel.append(o); }
   { const o = document.createElement('option'); o.value = 'custom'; o.textContent = 'Свой'; sel.append(o); }
   sel.value = PHYS_SET.id;
@@ -3244,102 +3488,6 @@ function animExportSection(): void {
       profile: tgt ? expProfile : (expProfile === 'model' ? 'canon' : expProfile),
       nativeProfile: tgt ? 'model' : 'canon',   // атлас уже в своих именах, манекен — в каноне
       boneMap: tgt?.boneMap,
-/**
- * Переснять тела с костей, ЕСЛИ пользователь уже снимал их раньше (Ф26.5). Анкеры/длины хранятся
- * АБСОЛЮТНО и в ГЛОБАЛЬНОМ `pe_ragdoll` (один на всех), а телосложение у каждого своё — значит при смене
- * персонажа или морфа их надо пересчитать, иначе кукла останется от чужого тела. Ручные множители
- * ширины/толщины и выбранные формы при этом СОХРАНЯЮТСЯ — переснимается только геометрия костей.
- */
-function refitPhysIfFitted(): void { if (ragdoll && Object.values(PHYS_SIZES).some((v) => v.anchor)) fitPhysToBones(); }
-/** РАЗМЕРЫ ФИЗ-ТЕЛ (Ф26.5): форма + длина/ширина/толщина на тело, плюс авто-подгонка по костям. */
-let sizeBody = 'Torso';
-let meshFitNote = '';   // Ф28.3: что ответила подгонка по мешу
-function physSizeSection(): void {
-  const bodies = physBodies();
-  if (!bodies.length) { const e = el('div', 'color:#d0a060;font-size:11px'); e.textContent = 'Нет активных тел.'; body.append(e); return; }
-  if (!bodies.some((b) => b.name === sizeBody)) sizeBody = bodies[0]!.name;
-  const cur = bodies.find((b) => b.name === sizeBody)!;
-  const ov = PHYS_SIZES[sizeBody] ?? {};
-  const apply = (fn: (o: PhysSize) => void, rebuild = true): void => {
-    fn(PHYS_SIZES[sizeBody] ??= {});
-    saveRagdollConfig(); savePoseKey('pe_ragdoll');
-    if (rebuild) { rebuildRagdoll(); renderAnim(); }
-  };
-  const r1 = el('div', 'display:flex;gap:3px;align-items:center'); body.append(r1);
-  const bsel = document.createElement('select'); bsel.style.cssText = impInput + ';flex:1';
-  for (const b2 of bodies) { const o = document.createElement('option'); o.value = b2.name; o.textContent = PHYS_LABEL[b2.name] ?? b2.name; o.selected = b2.name === sizeBody; bsel.append(o); }
-  bsel.onchange = () => { sizeBody = bsel.value; renderAnim(); };
-  const ksel = document.createElement('select'); ksel.style.cssText = impInput;
-  for (const [v, lb] of [['box', 'бокс'], ['sphere', 'шар'], ['cylinder', 'цилиндр'], ['capsule', 'пилюля'], ['taper', 'конус (ткань)']] as const) { const o = document.createElement('option'); o.value = v; o.textContent = lb; o.selected = cur.shape.k === v; ksel.append(o); }
-  ksel.onchange = () => apply((o) => { o.k = ksel.value as PhysSize['k']; });
-  r1.append(bsel, ksel);
-  const srow = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number): void => {
-    const row = el('label', 'display:flex;align-items:center;gap:6px');
-    row.innerHTML = `<span style="flex:0 0 74px">${label}</span>`;
-    const out = el('span', 'width:38px;text-align:right;color:#9ae6a0'); out.textContent = get().toFixed(2);
-    const r = el('input', 'flex:1') as HTMLInputElement; r.type = 'range'; r.min = String(min); r.max = String(max); r.step = String(step); r.value = String(get());
-    r.oninput = () => { out.textContent = parseFloat(r.value).toFixed(2); };
-    r.onchange = () => set(parseFloat(r.value));   // пересборка куклы — ПО ОТПУСКАНИЮ (на каждый тик было бы дорого)
-    row.append(r, out); body.append(row);
-  };
-  const ax = bodyAxis(cur);
-  const curLen = cur.shape.k === 'box' ? cur.shape.h[ax]! : cur.shape.k === 'sphere' ? cur.shape.r : cur.shape.half;
-  if (cur.shape.k !== 'sphere') srow('длина (½)', () => ov.len ?? curLen, (v) => apply((o) => { o.len = v; }), 0.5, 20, 0.1);
-  srow(cur.shape.k === 'sphere' ? 'радиус ×' : 'ширина ×', () => ov.w ?? 1, (v) => apply((o) => { o.w = v; }), 0.3, 2.5, 0.05);
-  if (cur.shape.k === 'box') srow('толщина ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
-  // У конуса то же поле `d` значит СУЖЕНИЕ к дальнему концу (у круглых второй поперечник бессмыслен).
-  if (cur.shape.k === 'taper') srow('сужение ×', () => ov.d ?? 1, (v) => apply((o) => { o.d = v; }), 0.3, 2.5, 0.05);
-  // Ф28.2 — СДВИГ И ПОВОРОТ ФОРМЫ, мимо сустава. Анкер трогать нельзя: он же точка констрейнта
-  // и рест-трансляция скелета — сдвинув его, сдвинешь сустав и всю цепь ниже. В Unreal точно так же:
-  // тело стоит на кости, а примитив внутри него имеет свой Center/Rotation.
-  {
-    const AX = ['X', 'Y', 'Z'] as const;
-    const g = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g.textContent = 'сдвиг формы (сустав не трогается)'; body.append(g);
-    for (let i = 0; i < 3; i++) srow('сдвиг ' + AX[i], () => ov.pos?.[i] ?? 0,
-      (v) => apply((o) => { const a = (o.pos ??= [0, 0, 0]) as number[]; a[i] = +v.toFixed(2); }), -12, 12, 0.1);
-    const g2 = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); g2.textContent = 'поворот формы, градусы'; body.append(g2);
-    for (let i = 0; i < 3; i++) srow('поворот ' + AX[i], () => +((ov.rot?.[i] ?? 0) * 180 / Math.PI).toFixed(0),
-      (v) => apply((o) => { const a = (o.rot ??= [0, 0, 0]) as number[]; a[i] = +(v * Math.PI / 180).toFixed(4); }), -90, 90, 1);
-  }
-  const r2 = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(r2);
-  r2.append(
-    pbtn('⚖ снять с костей', () => fitPhysToBones()),
-    pbtn('◉ обжать по мешу', () => { const r = fitPhysToMesh(); meshFitNote = r ? `обжато тел: ${r.bodies}, вершин: ${r.verts}` : 'модель не загружена — осталась подгонка по костям'; renderAnim(); }),
-    pbtn('сброс тела', () => { delete PHYS_SIZES[sizeBody]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
-    pbtn('сброс всех', () => { for (const k in PHYS_SIZES) delete PHYS_SIZES[k]; saveRagdollConfig(); savePoseKey('pe_ragdoll'); rebuildRagdoll(); renderAnim(); }),
-    pbtn(showBoxes ? 'боксы: видны' : 'боксы: скрыты', () => { void ensurePhysics().then(() => { showBoxes = !showBoxes; applyBoxVis(); renderAnim(); }); }, showBoxes),
-  );
-  const hint = el('div', 'color:#6b7180;font-size:10px');
-  hint.textContent = '«С костей» даёт анкер и ось. «По мешу» ещё и толщину — по вершинам кости, как в Unreal.'; body.append(hint);
-  if (meshFitNote) { const n = el('div', 'color:#9ae6a0;font-size:10px'); n.textContent = meshFitNote; body.append(n); }
-}
-function physRigSection(): void {
-  const on = new Set(PHYS_SET.bodies);
-  const fingerNames = PHYS_CATALOG.filter((n) => n.tier === 'opt').map((n) => n.name);
-  const apply = (names: string[]): void => {
-    applyPhysProfile(names);
-    saveRagdollConfig(); savePoseKey('pe_ragdoll');
-    if (ragdoll) rebuildRagdoll();
-    renderAnim();
-  };
-  const cost = physSetCost();
-  const c = el('div', 'color:#6b7180;font-size:10px;margin-top:2px');
-  c.textContent = `тел: ${cost.bodies} · суставов: ${cost.constraints} · шаг симуляции ~${physMs.toFixed(2)} мс`;
-  body.append(c);
-  {   // Ф28.4: ткань видит ТОЛЬКО сферы и капсулы, боксы для неё прозрачны — показываем заранее
-    const cl = clothColliderCount();
-    const t = el('div', 'font-size:10px');
-    t.innerHTML = '<span style="color:#6b7180">для ткани (шары и капсулы): </span>'
-      + '<span style="color:' + (cl.ok > cl.limit ? '#ff6b6b' : '#9ae6a0') + '">' + cl.ok + ' из ' + cl.limit + '</span>'
-      + (cl.box ? '<span style="color:#e6a05a"> · боксом ' + cl.box + ' (ткань их НЕ видит)</span>' : '');
-    body.append(t);
-  }
-  if (!uiPro) return;                       // в Простом режиме — только читаут, без галок
-
-  const ph = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); ph.textContent = 'НАБОР ФИЗ-ТЕЛ (пересборка)'; body.append(ph);
-  const prow = el('div', 'display:flex;align-items:center;gap:4px'); body.append(prow);
-  const lab = el('span', 'flex:1;font-size:11px'); lab.textContent = 'пресет'; prow.append(lab);
-  const sel = document.createElement('select'); sel.style.cssText = impInput;
     })
       .then((res) => {
         downloadFile(fname + '.glb', res.glb, 'model/gltf-binary');
@@ -3489,15 +3637,17 @@ function clipSection(): void {
     }
     { const vr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(vr);
     vr.append(pbtn('🧅 призраки соседних кадров', () => { onionOn = !onionOn; refreshAll(); }, onionOn));
+    if (onionOn) vr.append(pbtn('±' + onionSpan, () => { onionSpan = onionSpan >= 3 ? 1 : onionSpan + 1; refreshAll(); }));
     trajBtn = pbtn(trajLabel(), () => { trajOn = !trajOn; refreshAll(); }, trajOn);
     trajBtn.title = 'Путь выбранной кости за весь клип. Расстояние между точками = скорость (сетка времени равномерная).';
     vr.append(trajBtn); }
   rollout('curve', 'КРИВАЯ ПЕРЕХОДА', () => curveSection(c));
+  rollout('marks', 'МЕТКИ КАДРА', () => marksSection(c));
   }
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); eh.textContent = 'ЭКСПОРТ / ИМПОРТ'; body.append(eh);
   const ta = el('textarea', 'width:100%;height:70px;background:#0e1016;color:#9ae6a0;border:1px solid #39415a;border-radius:4px;font:10px monospace') as HTMLTextAreaElement; body.append(ta);
   const er = el('div', ''); body.append(er);
-  er.append(pbtn('клип', () => { if (c) ta.value = JSON.stringify(c); }), pbtn('всё', () => { ta.value = JSON.stringify(library); }), pbtn('копир', () => navigator.clipboard?.writeText(ta.value)), pbtn('импорт', () => histLib('импорт JSON', () => { try { const d = JSON.parse(ta.value); const arr = Array.isArray(d) ? d : [d]; const cl = arr.map(migrateClip); if (Array.isArray(d)) library = cl; else library.push(...cl); saveLib(); refreshAll(); } catch { /* */ } })));
+  er.append(pbtn('клип', () => { if (c) ta.value = JSON.stringify(c); }), pbtn('всё', () => { ta.value = JSON.stringify(library); }), pbtn('копир клипы', () => navigator.clipboard?.writeText(ta.value)), pbtn('импорт клипы', () => histLib('импорт JSON', () => { try { const d = JSON.parse(ta.value); const arr = Array.isArray(d) ? d : [d]; const cl = arr.map(migrateClip); if (Array.isArray(d)) library = cl; else library.push(...cl); saveLib(); refreshAll(); } catch { /* */ } })));
 }
 
 // Сохранение внешности персонажа: конфиг-персонаж/фракция (builtin) → серверный pe_appearance (ростер-СПИСОК остаётся
@@ -3603,14 +3753,21 @@ function renderAi(): void {
   secRow.append(sec); body.append(secRow);
 
   const row = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(row);
-  row.append(pbtn('✦ сгенерировать', () => {
+  // Ф12.6: кнопка, которой нужен ВНЕШНИЙ сервис, не должна выглядеть рабочей, пока адрес не задан —
+  // иначе «непонятно, какие кнопки работают»: жмёшь, и вместо результата ошибка.
+  const genBtn = pbtn('✦ сгенерировать', () => {
     aiStatus = '… запрос'; refreshAll();
     void requestGeneration(aiCfg, { prompt: pr.value, seconds: aiCfg.seconds, character: curCharId, weapon }).then(async (r) => {
       if (r.error) { aiStatus = '✗ ' + r.error; refreshAll(); return; }
       if (r.clip) { histLib('ИИ: добавить клип', () => { library.push(migrateClip(r.clip)); saveLib(); }); aiStatus = '✓ клип принят'; refreshAll(); return; }
       await aiBvhToClip(r.bvh ?? '', pr.value);
     });
-  }));
+  });
+  genBtn.disabled = !aiCfg.url;
+  genBtn.title = aiCfg.url ? 'Отправить запрос сервису генерации' : 'Нужен внешний сервис генерации: впиши его адрес в поле «сервис» выше. Путь «↑ BVH из файла» работает без него.';
+  genBtn.style.opacity = aiCfg.url ? '1' : '0.45';
+  genBtn.style.cursor = aiCfg.url ? 'pointer' : 'not-allowed';
+  row.append(genBtn);
   // Путь «из файла» — чтобы вся цепочка проверялась без сервиса.
   const fi = el('input', 'display:none') as HTMLInputElement;
   fi.type = 'file'; fi.accept = '.bvh,text/plain';
@@ -3867,8 +4024,8 @@ function renderGaitTune(): void {
   const gr = el('div', 'display:flex;gap:2px;margin-top:2px'); box.append(gr);
   gr.append(
     pbtn('экспорт', () => { saveGaitCfg(); ga.value = JSON.stringify(gaitCfgs); }),
-    pbtn('копир', () => navigator.clipboard?.writeText(ga.value)),
-    pbtn('импорт', () => { try { const d = JSON.parse(ga.value) as typeof gaitCfgs; if (d && typeof d === 'object') { gaitCfgs = d; localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); applyGaitCfg(curCharId); renderLoco(); } } catch { /* */ } }),
+    pbtn('копир походку', () => navigator.clipboard?.writeText(ga.value)),
+    pbtn('импорт походку', () => { try { const d = JSON.parse(ga.value) as typeof gaitCfgs; if (d && typeof d === 'object') { gaitCfgs = d; localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); applyGaitCfg(curCharId); renderLoco(); } } catch { /* */ } }),
   );
   body.append(box);
 }
@@ -3978,8 +4135,40 @@ tlTop.append(
   }),
   tlAct('⇔ ×1.25', 'растянуть выделение по времени', (c, sl) => scaleKeys(c.keys, sl, 1.25)),
   tlAct('⇔ ×0.8', 'сжать выделение по времени', (c, sl) => scaleKeys(c.keys, sl, 0.8)),
+  sep(),
+  // Ретайминг ВСЕГО клипа: выделять все ключи ради этого — лишний шаг, а операция частая (подогнать
+  // длительность под окно атаки). Метки едут вместе с ключами, отрезки (`dur`) масштабируются так же.
+  mkBtn('⟷ клип ×1.25', () => retimeClip(1.25)),
+  mkBtn('⟷ клип ×0.8', () => retimeClip(0.8)),
+  sep(),
+  mkBtn('⧉ копир. кадры', () => { const c = curClip(); if (!c) return; keyBuf = tlSel().map((i) => c.keys[i]).filter((k): k is Keyframe => !!k).map(cloneKeyDeep); }),
+  mkBtn('⤓ вставить кадры', () => pasteKeys()),
 );
+/** Буфер копирования кадров (переживает переключение клипа/оружия — тем и полезен). */
+let keyBuf: Keyframe[] = [];
+const cloneKeyDeep = (k: Keyframe): Keyframe => ({ ...k, pose: clonePose(k.pose), marks: k.marks?.map((m) => ({ ...m })) });
+/** Растянуть/сжать клип целиком вокруг нуля. Метки-отрезки масштабируются вместе с временем. */
+function retimeClip(f: number): void {
+  const c = curClip(); if (!c || c.keys.length < 2) return;
+  histLib('ретайминг клипа', () => {
+    for (const k of c.keys) {
+      k.t = +(k.t * f).toFixed(4);
+      for (const m of k.marks ?? []) if (m.dur !== undefined) m.dur = +(m.dur * f).toFixed(4);
+    }
+    saveLib(); refreshAll();
+  });
+}
+/** Вставить скопированные кадры ПОСЛЕ текущего, сохранив их взаимные интервалы. */
+function pasteKeys(): void {
+  const c = curClip(); if (!c || !keyBuf.length) return;
+  histLib('вставить кадры', () => {
+    const t0 = keyBuf[0]!.t, at = c.keys[frameIdx]?.t ?? 0;
+    const add = keyBuf.map((k) => ({ ...cloneKeyDeep(k), t: +(at + (k.t - t0) + DEF_GAP).toFixed(4) }));
+    c.keys.push(...add); sortKeys(c); saveLib(); refreshAll();
+  });
+}
 
+let keyDragUndo: LibState | null = null;   // снимок на НАЧАЛЕ драга ключей (см. `curveUndo` — та же грабля)
 const tl: TimelinePanel = makeTimelinePanel(tlBody, {
   clip: () => curClip(),
   frameIdx: () => frameIdx,
@@ -3987,7 +4176,16 @@ const tl: TimelinePanel = makeTimelinePanel(tlBody, {
   pro: () => uiPro,
   onSelectFrame: (i) => goFrame(i),
   onScrub: (t) => { playT = t; preview(t); if (ikOn) captureRig(); },
-  onMoveKeys: (moves) => { const c = curClip(); if (!c) return; moveKeys(c.keys, moves); saveLib(); tl.draw(); },
+  // Драг ключей: тот же паттерн, что у ручек кривой — снимок ДО первой правки, одна запись в историю на отпускании.
+  // Пока тащим — только время и перерисовка: ни сортировки (перетасует массив под драгом), ни `saveLib`
+  // (это POST всей библиотеки на каждое движение мыши, и он fire-and-forget → порядок прихода не гарантирован).
+  onMoveKeys: (moves) => { const c = curClip(); if (!c) return; if (!keyDragUndo) keyDragUndo = libSnap(); setKeyTimes(moves); tl.draw(); },
+  onMoveEnd: () => {
+    const c = curClip(); if (!c) return;
+    sortKeys(c); saveLib();
+    if (keyDragUndo) { const before = keyDragUndo, after = libSnap(); history.push('сдвиг кадров', () => libRestore(before), () => libRestore(after)); keyDragUndo = null; }
+    refreshAll();
+  },
   onSelectionChange: () => { /* кнопки читают выделение лениво, перерисовка не нужна */ },
 });
 function refreshTimeline(): void {
@@ -4021,9 +4219,9 @@ function preview(time: number): void {   // time в секундах
 // ── Физика (Ф2b: рэгдолл на гуманоид-скелете — призрак, ведомый моторами к позе) ──
 let pw: PhysWorld | null = null; let physOn = false; let physDead = false;
 let physMs = 0;   // среднее время физ-шага, мс (Ф3.4: стоимость набора тел видна, а не угадывается)
-let manView: 'skel' | 'solid' | 'hidden' = 'skel';   // вид манекена: скелет-арматура / солид-тело / скрыт (дефолт — скелет)
+let manView: 'skel' | 'solid' | 'hidden' = getPref<'skel' | 'solid' | 'hidden'>('mannequin', 'skel');   // вид манекена (личная настройка)
 let curHumanStyle: 'solid' | 'skeleton' = 'skeleton';   // с каким стилем реально построен human (чтобы не пересобирать зря)
-let showBoxes = false;   // дебаг: показать сырые физ-боксы рэгдолла (по умолчанию — только силуэт-призрак)
+let showBoxes = getPref('boxes', false);   // дебаг: сырые физ-боксы рэгдолла (по умолчанию — только силуэт-призрак)
 /**
  * ВИДИМОСТЬ СЫРЫХ ФИЗ-БОКСОВ — ОДИН ШОВ (Ф26.8). Кукла ПЕРЕСОБИРАЕТСЯ на каждую правку размера/формы
  * (`rebuildRagdoll` → новая `ragdoll.group`), и новая группа приходила в сцену ВСЕГДА скрытой — боксы
@@ -4031,7 +4229,7 @@ let showBoxes = false;   // дебаг: показать сырые физ-бо�
  * везде, где группа появляется в сцене, а кнопки только переключают флаг.
  */
 function applyBoxVis(): void { if (ragdoll) ragdoll.group.visible = showBoxes; }
-let footGround = true;   // заземление стоп (foot-IK) на физ-теле; выкл → авторская ротация стопы видна
+let footGround = getPref('groundFeet', true);   // заземление стоп (foot-IK) на физ-теле; выкл → авторская ротация стопы видна
 let ragdoll: HumanoidRagdoll | null = null;
 let reviveT = -1; const reviveFrom = new THREE.Vector3(); const reviveDur = 0.9;   // плавное вставание с пола
 let locoOn = false, locoPhase = 0, locoVx = 0, locoVz = 0.7, locoTempo = 1, locoGait = true;   // превью локомоции (движок: gait/бленд)
@@ -4168,10 +4366,20 @@ function captureUpper(nm: string = stanceName(weapon)): void {   // снять �
   });
 }
 // ── Удары на бегу (Феча 3): авторский клип-удар поверх бегущих ног, физически ведомый (моторы гонят рэгдолл к цели) ──
-let attackSpeed = 1;   // множитель темпа удара (ползунок) → player.atkSpeed
+let attackSpeed = 1;   // множитель темпа удара (ползунок) → player.atkTempo
+/**
+ * ОКНО АТАКИ ДЛЯ ПРЕВЬЮ = то, что сервер пришлёт как `lockMs`. У базовой атаки это ровно цикл
+ * атаки (`session.ts`: `emitSwing(p,'attack', windup, attackCd, attackCd)`), а вайндап — его доля `baseWindupFrac`.
+ * Зачем в редакторе: тайм-варп метки `impact` работает только от этой пары, и без неё превью бы
+ * показывало НЕ то, что увидит игрок (требование «редактор ≡ игра»).
+ */
+let atkWindow = 0.8;
+const BASE_WINDUP_FRAC = 0.35;   // = balance.melee.baseWindupFrac на сервере
+const atkWindowSec = (): number => atkWindow;
+const atkWindupSec = (): number => atkWindow * BASE_WINDUP_FRAC;
 function triggerAttack(c: Clip): void {   // запустить удар через ТОТ ЖЕ PosePlayer, что игра; включить физику → физ-призрак = верный замах
   syncAttackEnds(c);   // концы = актуальная стойка (на случай если стойку поправили)
-  lp().triggerAttack(c); lp().atkSpeed = attackSpeed;
+  lp().triggerAttack(c, atkWindowSec(), atkWindupSec()); lp().atkTempo = attackSpeed;   // ТОТ ЖЕ вход, что у игры: окно + вайндап сервера, а ползунок — множитель ПОВЕРХ
   void ensurePhysics().then(() => setPhys(true));
 }
 // Пометка клипов как ударов (per char×weapon) — их кнопки появляются в превью бега.
@@ -4331,6 +4539,12 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
     const s = el('input', 'flex:2') as HTMLInputElement; s.type = 'range'; s.min = '0.3'; s.max = '2'; s.step = '0.1'; s.value = String(attackSpeed);
     const v = el('span', 'width:30px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = attackSpeed.toFixed(1);
     s.oninput = () => { attackSpeed = parseFloat(s.value); v.textContent = attackSpeed.toFixed(1); }; tr.append(s, v); box.append(tr);
+    const wr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:4px'); wr.innerHTML = '<span style="flex:1;font-size:11px">окно атаки (lockMs), сек</span>';
+    const wi = el('input', 'width:60px') as HTMLInputElement; wi.type = 'number'; wi.step = '0.05'; wi.min = '0.1'; wi.value = String(atkWindow);
+    const wv = el('span', 'color:#9ae6a0;font-size:10px'); const setW = (): void => { wv.textContent = 'вайндап ' + atkWindupSec().toFixed(2) + 'с'; }; setW();
+    wi.oninput = () => { atkWindow = Math.max(0.1, parseFloat(wi.value) || 0.8); setW(); };
+    wr.title = 'Сервер шлёт lockMs (весь клип за него) и windupMs (момент урона). Кадр с меткой «удар» садится ровно на вайндап.';
+    wr.append(wi, wv); box.append(wr);
     const hint = el('div', 'color:#8fb7ff;font-size:10px;margin-top:3px'); hint.textContent = 'Удар ведётся физикой (моторы гонят рэгдолл к позам) — смотри на призрака. Сила — в панели ФИЗИКА.'; box.append(hint);
   }
   body.append(box);
@@ -4385,7 +4599,7 @@ let stanceMeasuredFor = '';   // замеряем ширину стойки од
 function stepGait(dt: number): void {
   const player = lp();
   // Живые правки редактора → в плеер (ТЕ ЖЕ ссылки, что читает игра): gx/plant/twist/скорость удара/боевая — ползунки между кадрами.
-  player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates; player.atkSpeed = attackSpeed;
+  player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates; player.atkTempo = attackSpeed;
   player.setCombat(!!editorCombat);
   if (player.weapon !== weapon) { player.setWeapon(weapon); stanceMeasuredFor = weapon; }   // смена оружия → пере-замер стойки внутри
   else if (stanceMeasuredFor !== weapon) { player.measureStance(); stanceMeasuredFor = weapon; }   // idle-поза правится живьём → пере-замер
@@ -4436,7 +4650,7 @@ function buildGhost(): void {
  */
 let physTouched = false;                                        // юзер уже трогал тумблер — стартовый промис его не перебивает
 function setPhys(on: boolean, byUser = true): void {
-  if (byUser) physTouched = true; else if (physTouched) return;   // авто-включение после загрузки WASM не трогает выбор юзера
+  if (byUser) { physTouched = true; setPref('phys', on); } else if (physTouched) return;   // авто-включение после загрузки WASM не трогает выбор юзера
   physOn = on;
   if (ghostHuman) ghostHuman.root.visible = on;
   physB.textContent = 'физ: ' + (on ? 'вкл' : 'выкл');
@@ -4444,6 +4658,9 @@ function setPhys(on: boolean, byUser = true): void {
 }
 // ── Онион-скин: полупрозрачные призраки соседних кадров (пред=синий, след=оранжевый) при позинге в «Анимации» ──
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
+/** Сколько кадров назад/вперёд показывать призраками. Больше 1 нужно на быстрых замахах: соседний кадр там
+ *  почти совпадает с текущим, и «след» движения виден только через 2-3 ключа. */
+let onionSpan = 1;
 function mkOnion(tint: number): Humanoid {
   const h = stampRig(buildHumanoid({ ...rigRecipe(), limb: tint, body: tint, head: tint }));
   for (const m of h.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25; }
@@ -4460,6 +4677,73 @@ function applyPoseTo(h: Humanoid, p: Pose): void {   // применить по�
 }
 
 // Ф10: ГРАФ КРИВОЙ — ручки безье вместо трёх кнопок-пресетов. Редактируется РЕМАП ФАЗЫ интервала
+/**
+ * МЕТКИ КАДРА (модель Unreal Notify / Notify State).
+ *
+ * Клип несёт только «ЧТО и КОГДА», обработчик решает «КАК» — поэтому звук и эффект здесь это ИДЕНТИФИКАТОРЫ,
+ * а не пути к файлам. Звук/эффект — ПОЛЯ метки, а не отдельные метки: ставить три штуки на один кадр удара
+ * незачем. `dur` превращает метку в отрезок (взмах = свист клинка + след меча на одних границах).
+ */
+const MARK_KINDS: { type: MarkType; label: string; hint: string; range?: boolean }[] = [
+  { type: 'impact', label: '⚔ удар', hint: 'Кадр самого удара: на него садится windupMs сервера, тут же играются звук и искра. Ставить на кадр МАКСИМАЛЬНОЙ скорости оружия.' },
+  { type: 'swing', label: '〰 взмах', hint: 'ОТРЕЗОК: свист клинка (звук) + след меча (эффект). Начало = меч пошёл, конец = меч встал.', range: true },
+  { type: 'footstep', label: '👣 шаг', hint: 'Материал поверхности знает мир, клип говорит только «шаг, левая/правая».' },
+  { type: 'camshake', label: '📷 тряска', hint: 'Сила отдельным числом — чтобы масштабировать от тяжести удара.' },
+  { type: 'sfx', label: '🔊 звук', hint: 'Прочие звуки: выкрик, лязг щита, шорох брони.' },
+  { type: 'vfx', label: '✨ эффект', hint: 'Прочие эффекты.' },
+  { type: 'combo', label: '⛓ окно комбо', hint: 'ОТРЕЗОК: branch point — пока играет он, удержанная атака уходит в следующий удар минуя стойку.', range: true },
+  { type: 'windup', label: '↖ замах', hint: 'Начало замаха: с этой точки стартует ВТОРОЙ и следующие удары цепочки (idle-вход пропускается).' },
+  { type: 'recover', label: '↘ отработка', hint: 'Конец отработки удара.' },
+];
+function marksSection(c: Clip): void {
+  const k = c.keys[frameIdx];
+  if (!k) return;
+  const note = el('div', 'color:#6b7180;font-size:10px;margin-bottom:3px');
+  note.textContent = 'Метка едет за кадром при ретайминге и переживает прореживание. Отрезок задаётся длительностью.';
+  body.append(note);
+  const add = el('div', 'display:flex;flex-wrap:wrap;gap:2px'); body.append(add);
+  for (const kind of MARK_KINDS) {
+    const b = pbtn('+ ' + kind.label, () => histLib('метка: ' + kind.label, () => {
+      const kk = curClip()?.keys[frameIdx]; if (!kk) return;
+      (kk.marks ??= []).push(kind.range ? { type: kind.type, dur: 0.15 } : { type: kind.type });
+      saveLib(); refreshAll();
+    }));
+    b.title = kind.hint; add.append(b);
+  }
+  if (!k.marks?.length) { const e = el('div', 'color:#6b7180;font-size:10px;margin-top:4px'); e.textContent = 'на этом кадре меток нет'; body.append(e); return; }
+  k.marks.forEach((m, i) => {
+    const kind = MARK_KINDS.find((x) => x.type === m.type);
+    const r = el('div', 'display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:3px;padding:3px;background:#171b26;border-radius:4px'); body.append(r);
+    const tag = el('span', `min-width:86px;font-size:11px;color:${MARK_COLOR[MARK_TRACK[m.type]]}`); tag.textContent = kind?.label ?? m.type; r.append(tag);
+    const upd = (fn: () => void): void => histLib('правка метки', () => { fn(); saveLib(); refreshTimeline(); });
+    if (m.dur !== undefined) {
+      const d = el('input', 'width:56px') as HTMLInputElement; d.type = 'number'; d.step = '0.02'; d.min = '0.02'; d.value = String(m.dur);
+      d.title = 'Длительность отрезка (сек клипа). Тайм-варп удара растягивает её вместе с анимацией.';
+      d.onchange = () => upd(() => { m.dur = Math.max(0.02, parseFloat(d.value) || 0.15); });
+      const dl = el('span', 'font-size:10px;color:#9aa3b8'); dl.textContent = 'длит'; r.append(dl, d);
+    }
+    if (m.type === 'footstep') {
+      r.append(pbtn(m.foot === 'R' ? 'правая' : 'левая', () => upd(() => { m.foot = m.foot === 'R' ? 'L' : 'R'; })));
+    }
+    if (m.type === 'camshake') {
+      const n = el('input', 'width:56px') as HTMLInputElement; n.type = 'number'; n.step = '0.1'; n.value = String(m.num ?? 1);
+      n.onchange = () => upd(() => { m.num = parseFloat(n.value) || 1; });
+      const nl = el('span', 'font-size:10px;color:#9aa3b8'); nl.textContent = 'сила'; r.append(nl, n);
+    }
+    for (const f of ['sfx', 'vfx'] as const) {
+      if (m.type === 'combo' || m.type === 'windup' || m.type === 'recover' || m.type === 'footstep' || m.type === 'camshake') continue;
+      const t = el('input', 'width:104px') as HTMLInputElement; t.style.cssText += ';' + impInput; t.placeholder = f === 'sfx' ? 'id звука' : 'id эффекта';
+      t.value = m[f] ?? ''; t.onchange = () => upd(() => { const v = t.value.trim(); if (v) m[f] = v; else delete m[f]; });
+      r.append(t);
+    }
+    r.append(pbtn('✕', () => histLib('удалить метку', () => {
+      const kk = curClip()?.keys[frameIdx]; if (!kk?.marks) return;
+      kk.marks.splice(i, 1); if (!kk.marks.length) delete kk.marks;
+      saveLib(); refreshAll();
+    })));
+  });
+}
+
 // (общий на все кости): клип хранит ПОЗУ ЦЕЛИКОМ на ключ, а не дорожки на кость — см. шапку curveEditor.ts.
 let curvePanel: CurvePanel | null = null;
 let curveUndo: LibState | null = null;   // снимок на НАЧАЛЕ таскания ручки (та же грабля, что у гизмо: писать после = откат отстаёт на шаг)
@@ -4553,9 +4837,10 @@ function updateOnion(): void {
   const c = onionOn && tab === 'anim' ? curClip() : null;
   if (!c || c.keys.length < 2) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; return; }
   if (!onionPrev) { onionPrev = mkOnion(0x4a8cff); onionNext = mkOnion(0xff8c3a); }
-  const pv = c.keys[frameIdx - 1], nx = c.keys[frameIdx + 1];
-  if (pv) { applyPoseTo(onionPrev!, pv.pose); onionPrev!.root.visible = true; } else onionPrev!.root.visible = false;
-  if (nx) { applyPoseTo(onionNext!, nx.pose); onionNext!.root.visible = true; } else onionNext!.root.visible = false;
+  const pv = c.keys[Math.max(0, frameIdx - onionSpan)], nx = c.keys[Math.min(c.keys.length - 1, frameIdx + onionSpan)];
+  const havePv = frameIdx > 0, haveNx = frameIdx < c.keys.length - 1;
+  if (pv && havePv) { applyPoseTo(onionPrev!, pv.pose); onionPrev!.root.visible = true; } else onionPrev!.root.visible = false;
+  if (nx && haveNx) { applyPoseTo(onionNext!, nx.pose); onionNext!.root.visible = true; } else onionNext!.root.visible = false;
 }
 async function ensurePhysics(): Promise<void> {
   if (pw) return;
@@ -4662,8 +4947,10 @@ function jiggle(dt: number): void {
 
 // ── Цикл ──
 ensureSeed();   // первый запуск: залить примерный контент Волкодава (idle-стойки + удары по оружию)
-applyChar(curCharId); setIk(true); tab = 'anim'; syncModeB(); refreshAll();
-void ensurePhysics().then(() => setPhys(true, false));   // дефолт — физ-силуэт вокруг скелета; `byUser=false` — не перебивает ручное выключение
+applyChar(curCharId); setIk(true); tab = 'anim'; syncModeB(); setManView(); refreshAll();   // setManView: применить
+// запомненный вид манекена (личная настройка) — кнопка создаётся с дефолтной подписью, а состояние приходит из `pe_prefs`
+void ensurePhysics().then(() => setPhys(getPref('phys', true), false));   // дефолт — физ-силуэт вокруг скелета; выбор юзера помнится
+                                                                          // (`byUser=false` — не перебивает ручное выключение в те ~2 c, пока грузится WASM)
 function resize(): void {
   const w = canvas.clientWidth || 800, h = canvas.clientHeight || 600;
   renderer.setSize(w, h, false); composer.setSize(w, h); outline.setSize(w, h);
@@ -4704,7 +4991,7 @@ function loop(): void {
     const active = gizmo.dragging ? gizmo.object : null;
     if (gazeHandle !== active) gazeHandle.position.copy(gazeTarget);
     if (rig.hipsHandle !== active) rig.hipsHandle.position.copy(rig.hipsPos);
-    for (const e of effList()) { if (e.handle !== active) e.handle.position.copy(e.target); if (e.poleHandle !== active) e.poleHandle.position.copy((viewBone(e.mid) ?? human.bones.get(e.mid)!).getWorldPosition(V())); }
+    for (const e of effList()) { handleViewOff(e, e.viewOff); if (e.handle !== active) e.handle.position.copy(e.target).add(e.viewOff); if (e.poleHandle !== active) e.poleHandle.position.copy((viewBone(e.mid) ?? human.bones.get(e.mid)!).getWorldPosition(V())); }
     for (const k in shoulderHandles) { const h = shoulderHandles[k]!; if (h !== active) h.position.copy((viewBone(rig.eff[k]!.root) ?? human.bones.get(rig.eff[k]!.root)!).getWorldPosition(V())); }
     if (gazeLine.visible) { const hd = viewBone('Head') ?? human.bones.get('Head'); if (hd) (gazeLine.geometry as THREE.BufferGeometry).setFromPoints([hd.getWorldPosition(V()), gazeTarget]); }
     // Ф24.2: взгляд — ПОВЕРХ всего (солвера, скрутки, FK): сняли прошлый доворот и навели заново.
@@ -4737,8 +5024,12 @@ function loop(): void {
   // есть окно в несколько кадров без атласа — тогда возвращаемся на манекен.
   {
     const ar = modelsTab.exportTarget()?.root ?? null;
-    if (ar !== lastAtlasRoot) {
-      lastAtlasRoot = ar;
+    // ⚠ Пересобирать надо И при смене НАБОРА КОСТЕЙ, не только атласа. Вход в режим хвата пересобирает манекен
+    // с фалангами (23 → 53 кости), а вид костей оставался старым — в нём пальцев НЕТ, и кликать в хвате было
+    // НЕ ПО ЧЕМУ (замер: `boneMeshes` = 41 меш, из них пальцев 0). Именно по этому набору идёт пикинг.
+    const bkey = human.boneNames.length;
+    if (ar !== lastAtlasRoot || bkey !== lastBoneKey) {
+      lastAtlasRoot = ar; lastBoneKey = bkey;
       boneView.rebuild(boneSrc);
       boneViewOnTop(); applyAlpha();
       selMesh = null; highlight(null);                     // материал выбранного меша мог быть дизпоузнут
@@ -4772,7 +5063,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, groundManikinForView, get manGroundView() { return manGroundView; }, set manGroundView(v: boolean) { manGroundView = v; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, fitPhysToMesh, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, groundManikinForView, get manGroundView() { return manGroundView; }, set manGroundView(v: boolean) { manGroundView = v; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, get selected() { return selected; }, get gripMode() { return gripMode; }, pickSet: () => ({ onModelBones: onModelBones(), meshes: boneMeshes().length, fingers: boneMeshes().filter((m) => isHandBone(m.userData.bone as string)).length, visible: boneMeshes().filter((m) => m.visible).length }), pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },

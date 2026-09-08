@@ -129,14 +129,15 @@ function stripCheckbox(): { el: HTMLElement; on: () => boolean } {
   wrap.append(cb, t);
   return { el: wrap, on: () => cb.checked };
 }
-/** Чекбокс flipY для загрузки текстур. Персонаж-атласы (Max/FBX) несут UV в конвенции V-вверх → их текстурам нужен flipY=true
- *  (иначе кладутся кверх ногами). Окружение (тайлы/стриппер) — glTF V-вниз, flipY=false. Дефолт ВКЛ (грузим персонажей); сними для окружения. */
-function flipYCheckbox(): { el: HTMLElement; on: () => boolean } {
+/** Чекбокс «это нормалмапы» для пакетной загрузки текстур — аналог Texture Type: Normal map в Unity (тип едет на
+ *  сервер и оттуда в Unity). По умолчанию ВЫКЛ: тип определяется по имени файла (`*_n`/`*normal`), чекбокс форсирует
+ *  для всей пачки. Тип задаёт и sRGB: нормалмапы/маски — линейные данные, альбедо/эмиссия — sRGB. */
+function normalMapCheckbox(): { el: HTMLElement; on: () => boolean } {
   const wrap = document.createElement('label');
   wrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center;cursor:pointer;font-size:11px;color:#9aa;white-space:nowrap';
-  wrap.title = 'flipY: перевернуть текстуру по вертикали. ВКЛ для текстур ПЕРСОНАЖЕЙ (Max/FBX — их UV V-вверх, иначе кверх ногами). Сними для ОКРУЖЕНИЯ (тайлы/стриппер — glTF V-вниз).';
-  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
-  const t = document.createElement('span'); t.textContent = '🔄 flipY (перс.)';
+  wrap.title = 'Пометить ВСЮ пачку как Normal map (Unity Texture Type). Обычно не нужно: тип угадывается по имени файла (*_n, *_nrm, *normal). «Flip Green Channel» правится потом во вкладке «Текстуры».';
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = false;
+  const t = document.createElement('span'); t.textContent = '🔷 всё это нормалмапы';
   wrap.append(cb, t);
   return { el: wrap, on: () => cb.checked };
 }
@@ -191,7 +192,7 @@ export function renderUploadField(value: unknown, onChange: (v: unknown) => void
 
 /** Кнопка ПАКЕТНОЙ загрузки: мультивыбор файлов → upload каждого → `makeEntry(id,url,filename)` пушится в `arr` → `onDone`.
  *  id ассета = имя файла без расширения (уникальность между несколькими файлами). Для вкладок Текстуры/3D. */
-export function renderBatchUpload(accept: string, arr: Record<string, unknown>[], makeEntry: (id: string, url: string, filename: string, flipY?: boolean) => Record<string, unknown>, onDone: () => void): HTMLElement {
+export function renderBatchUpload(accept: string, arr: Record<string, unknown>[], makeEntry: (id: string, url: string, filename: string, forceNormal?: boolean) => Record<string, unknown>, onDone: () => void): HTMLElement {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;max-width:100%';
   const file = document.createElement('input');
@@ -202,8 +203,8 @@ export function renderBatchUpload(accept: string, arr: Record<string, unknown>[]
   const status = document.createElement('span'); status.style.cssText = 'font-size:11px;color:#9aa';
   const strip = stripCheckbox();
   const showStrip = /glb|gltf/i.test(accept);   // чекбокс стрипа только там, где грузят меши
-  const flip = flipYCheckbox();
-  const showFlip = /png|jpe?g|webp/i.test(accept);   // чекбокс flipY только для картинок
+  const nrm = normalMapCheckbox();
+  const showNrm = /png|jpe?g|webp/i.test(accept);    // чекбокс «нормалмап» только для картинок
   btn.addEventListener('click', () => file.click());
   file.addEventListener('change', () => {
     const files = [...(file.files ?? [])];
@@ -217,13 +218,13 @@ export function renderBatchUpload(accept: string, arr: Record<string, unknown>[]
       const dir = assetDirFor(ext);
       f.arrayBuffer()
         .then((buf) => uploadAsset(id, buf, CONTENT_TYPE[ext] ?? 'application/octet-stream', doStrip, dir))
-        .then((res) => { arr.push(makeEntry(id, res.url, f.name.replace(/\.[^.]+$/, ''), flip.on())); ok++; })
+        .then((res) => { arr.push(makeEntry(id, res.url, f.name.replace(/\.[^.]+$/, ''), nrm.on())); ok++; })
         .catch(() => { /* пропускаем битый файл */ })
         .finally(() => { done++; status.textContent = `${done}/${files.length}`; if (done === files.length) { status.textContent = `готово: ${ok}/${files.length}`; status.style.color = '#7fd67f'; onDone(); } });
     }
     file.value = '';
   });
-  wrap.append(btn, file, renderFolderField(), ...(showStrip ? [strip.el] : []), ...(showFlip ? [flip.el] : []), status);
+  wrap.append(btn, file, renderFolderField(), ...(showStrip ? [strip.el] : []), ...(showNrm ? [nrm.el] : []), status);
   return wrap;
 }
 
@@ -255,6 +256,25 @@ function matCheck(value: boolean, onChange: (v: boolean) => void, title?: string
   const t = document.createElement('span'); t.textContent = value ? 'вкл' : ''; t.style.cssText = 'font-size:11px;color:#9aa';
   cb.addEventListener('change', () => { t.textContent = cb.checked ? 'вкл' : ''; onChange(cb.checked); });
   wrap.append(cb, t); return wrap;
+}
+/** Выпадашка перечисления (Surface Type / Blend / Render Face / фильтр текстуры…). */
+function matEnum(opts: readonly string[], value: string, onChange: (v: string) => void, labels?: Record<string, string>): HTMLElement {
+  const sel = document.createElement('select'); sel.style.cssText = inputCss + ';width:100%';
+  for (const o of opts) { const op = document.createElement('option'); op.value = o; op.textContent = labels?.[o] ?? o; sel.appendChild(op); }
+  sel.value = value; sel.addEventListener('change', () => onChange(sel.value));
+  return sel;
+}
+/** Пара чисел (Tiling / Offset — URP `_BaseMap_ST`, одна трансформация на ВСЕ карты материала). */
+function matVec2(value: [number, number], step: number, onChange: (v: [number, number]) => void): HTMLElement {
+  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:8px;align-items:center';
+  const cur: [number, number] = [value[0], value[1]];
+  for (const i of [0, 1] as const) {
+    const lbl = document.createElement('span'); lbl.textContent = i ? 'Y' : 'X'; lbl.style.cssText = 'font-size:11px;color:#9aa';
+    const n = document.createElement('input'); n.type = 'number'; n.step = String(step); n.value = String(cur[i]); n.style.cssText = inputCss + ';width:72px';
+    n.addEventListener('change', () => { cur[i] = parseFloat(n.value) || 0; onChange([cur[0], cur[1]]); });
+    wrap.append(lbl, n);
+  }
+  return wrap;
 }
 
 /** Панель материала (аналог Surface Inputs в Unity URP) + живая ПРЕВЬЮ-СФЕРА нашим рендером (Three.js). Smoothness =
@@ -294,36 +314,56 @@ export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: ()
   }
   right.appendChild(head);
 
+  // ── Surface Options (как в URP Lit) ──
+  const surf = matSection('Surface Options');
+  const isTransparent = (): boolean => str(m.surface) === 'transparent';
+  matRow(surf, 'Surface Type', matEnum(['opaque', 'transparent'], str(m.surface) || 'opaque', (v) => { m.surface = v; onChange(m); }, { opaque: 'Opaque (непрозрачный)', transparent: 'Transparent (прозрачный)' }));
+  if (isTransparent()) matRow(surf, 'Blending Mode', matEnum(['alpha', 'premultiply', 'additive', 'multiply'], str(m.blend) || 'alpha', (v) => { m.blend = v; live(); }));
+  matRow(surf, 'Alpha Clipping', matCheck(!!m.alphaClip, (v) => { m.alphaClip = v; live(); }, 'Альфа-вырезание (glTF MASK): пиксель либо есть, либо нет. Для сеток/листвы/дыр — дешевле прозрачности.'));
+  matRow(surf, 'Threshold', matSlider(num(m.cutoff, 0.5), 0, 1, 0.01, (v) => { m.cutoff = v; live(); }));
+  matRow(surf, 'Render Face', matEnum(['back', 'front', 'off'], str(m.cull) || 'back', (v) => { m.cull = v; live(); }, { back: 'Front (обычный)', front: 'Back (изнанка)', off: 'Both (двусторонний)' }));
+  right.appendChild(surf);
+
+  // ── Surface Inputs ──
   const base = matSection('Base Map');
-  matRow(base, 'Текстура', texSelect(textureIds(), str(m.map), (v) => setTex('map', v)));
-  matRow(base, 'Цвет (tint)', renderColorField(m.baseColor ?? [1, 1, 1], (v) => { m.baseColor = v; live(); }));
-  matRow(base, 'Прозрачность', matSlider(num(m.opacity, 1), 0, 1, 0.01, (v) => { m.opacity = v; live(); }));
+  matRow(base, 'Текстура', texSelect(textureIds(), str(m.baseMap), (v) => setTex('baseMap', v)));
+  const bc = Array.isArray(m.baseColor) ? m.baseColor as number[] : [1, 1, 1, 1];
+  matRow(base, 'Цвет (tint)', renderColorField(bc.slice(0, 3), (v) => { const c = v as number[]; m.baseColor = [c[0] ?? 1, c[1] ?? 1, c[2] ?? 1, (m.baseColor as number[])?.[3] ?? 1]; live(); }));
+  matRow(base, 'Alpha', matSlider(bc[3] ?? 1, 0, 1, 0.01, (v) => { const c = (m.baseColor as number[]) ?? [1, 1, 1, 1]; m.baseColor = [c[0] ?? 1, c[1] ?? 1, c[2] ?? 1, v]; live(); }));
   right.appendChild(base);
 
-  const met = matSection('Metallic Map');
-  matRow(met, 'Текстура', texSelect(textureIds(), str(m.metalnessMap), (v) => setTex('metalnessMap', v)));
-  matRow(met, 'Metallic', matSlider(num(m.metalness, 0), 0, 1, 0.01, (v) => { m.metalness = v; live(); }));
-  matRow(met, 'Metallic ±сдвиг', matSlider(num(m.metalnessOffset, 0), -1, 1, 0.02, (v) => { m.metalnessOffset = v; live(); }));   // поверх карты: + металличнее, − нет
-  matRow(met, 'Smoothness', matSlider(1 - num(m.roughness, 0.8), 0, 1, 0.01, (v) => { m.roughness = +(1 - v).toFixed(3); live(); }));   // Unity: 1 − roughness (множитель карты)
-  matRow(met, 'Roughness ±сдвиг', matSlider(num(m.roughnessOffset, 0), -1, 1, 0.02, (v) => { m.roughnessOffset = v; live(); }));   // ПОВЕРХ карты: + матовее (гасит глянец швов), − глянцевее
-  matRow(met, 'Roughness Map', texSelect(textureIds(), str(m.roughnessMap), (v) => setTex('roughnessMap', v)));
-  matRow(met, '🔄 Инверт. карту', matCheck(!!m.roughnessIsSmoothness, (v) => { m.roughnessIsSmoothness = v; live(); }, 'ИНВЕРТИРОВАТЬ карту шероховатости (1−value). Включи, если глянец и матовость перепутаны местами (карта — Smoothness из Unity: ярче=глаже).'));
+  const met = matSection('Mask Map  (R = Metallic · G = AO · A = Smoothness)');
+  matRow(met, 'Текстура', texSelect(textureIds(), str(m.maskMap), (v) => setTex('maskMap', v)));
+  matRow(met, 'Metallic', matSlider(num(m.metallic, 0), 0, 1, 0.01, (v) => { m.metallic = v; live(); }));
+  matRow(met, 'Smoothness', matSlider(num(m.smoothness, 0.5), 0, 1, 0.01, (v) => { m.smoothness = v; live(); }));
+  const maskNote = document.createElement('div');
+  maskNote.textContent = 'При наличии карты: Metallic берётся из R, Smoothness = A × ползунок. Если AO не рисуешь — канал G должен быть БЕЛЫМ. Альфа обязана быть в файле (PNG-32/TGA).';
+  maskNote.style.cssText = 'font-size:10px;color:#8a8; margin:2px 0 0 0';
+  met.appendChild(maskNote);
   right.appendChild(met);
 
+  const occ = matSection('Occlusion');
+  matRow(occ, 'Текстура', texSelect(textureIds(), str(m.occlusionMap), (v) => setTex('occlusionMap', v)));
+  matRow(occ, 'Strength', matSlider(num(m.occlusionStrength, 1), 0, 1, 0.01, (v) => { m.occlusionStrength = v; live(); }));
+  const occNote = document.createElement('div');
+  occNote.textContent = 'Обычно = та же Mask Map (окклюзия читается из канала G).';
+  occNote.style.cssText = 'font-size:10px;color:#8a8;margin-top:2px';
+  occ.appendChild(occNote);
+  right.appendChild(occ);
+
   const nrm = matSection('Normal Map');
-  matRow(nrm, 'Текстура', texSelect(textureIds(), str(m.normalMap), (v) => setTex('normalMap', v)));
-  matRow(nrm, 'Сила', matSlider(num(m.normalScale, 1), 0, 2, 0.05, (v) => { m.normalScale = v; live(); }));
-  matRow(nrm, 'Flip Green', matCheck(!!m.normalFlipY, (v) => { m.normalFlipY = v; live(); }, 'Инвертировать зелёный канал: 3ds Max/DirectX (Y−) → OpenGL/glTF (Y+). Если выпуклости выглядят как вмятины — включи.'));
-  // «Fix» = пометить нормал-текстуру linear (наклон — данные, не цвет). Аналог кнопки «Fix Now» у нормалмапы в Unity.
-  const fix = document.createElement('button'); fix.type = 'button'; fix.textContent = '🛠 Fix нормалмап';
-  fix.title = 'Пометить нормал-текстуру как linear (данные наклона, не sRGB-цвет). Аналог «Fix Now» в Unity.';
+  matRow(nrm, 'Текстура', texSelect(textureIds(), str(m.bumpMap), (v) => setTex('bumpMap', v)));
+  matRow(nrm, 'Сила', matSlider(num(m.bumpScale, 1), 0, 2, 0.05, (v) => { m.bumpScale = v; live(); }));
+  // «Fix» = выставить у ТЕКСТУРЫ настройки импорта нормалмапа (как Texture Type: Normal map + sRGB off в Unity).
+  const fix = document.createElement('button'); fix.type = 'button'; fix.textContent = '🛠 Пометить как нормалмап';
+  fix.title = 'Выставить у текстуры type=normalMap и sRGB=выкл (наклон — данные, не цвет). Аналог Texture Type: Normal map в Unity. «Flip Green Channel» — там же, во вкладке «Текстуры».';
   fix.style.cssText = 'padding:4px 8px;cursor:pointer;background:#2c2c3a;color:#e8e8f0;border:1px solid #3c3c4a;border-radius:4px;font-size:12px';
   const fixNote = document.createElement('span'); fixNote.style.cssText = 'font-size:11px;color:#9aa;margin-left:8px';
   fix.addEventListener('click', () => {
-    const id = str(m.normalMap);
+    const id = str(m.bumpMap);
     if (!id) { fixNote.textContent = 'нет нормал-текстуры'; fixNote.style.color = '#ff9b9b'; return; }
     const t = texData().find((x) => x.id === id);
-    if (t) { t.colorSpace = 'linear'; live(); fixNote.textContent = `ок: ${id} → linear`; fixNote.style.color = '#7fd67f'; }
+    if (t) { t.type = 'normalMap'; t.sRGB = false; live(); fixNote.textContent = `ок: ${id} → normalMap, sRGB выкл`; fixNote.style.color = '#7fd67f'; }
     else { fixNote.textContent = 'текстура не найдена в конфиге'; fixNote.style.color = '#ff9b9b'; }
   });
   const fixRow = document.createElement('div'); fixRow.style.cssText = matRowCss;
@@ -333,14 +373,18 @@ export function renderMaterialPanel(mat: Record<string, unknown>, textureIds: ()
   right.appendChild(nrm);
 
   const emi = matSection('Emission');
-  matRow(emi, 'Цвет', renderColorField(m.emissive ?? [0, 0, 0], (v) => { m.emissive = v; live(); }));
-  matRow(emi, 'Интенсивность', matSlider(num(m.emissiveIntensity, 1), 0, 8, 0.1, (v) => { m.emissiveIntensity = v; live(); }));
-  matRow(emi, 'Текстура', texSelect(textureIds(), str(m.emissiveMap), (v) => setTex('emissiveMap', v)));
+  matRow(emi, 'Текстура', texSelect(textureIds(), str(m.emissionMap), (v) => setTex('emissionMap', v)));
+  matRow(emi, 'Цвет', renderColorField(m.emissionColor ?? [0, 0, 0], (v) => { m.emissionColor = v; live(); }));
+  matRow(emi, 'Интенсивность', matSlider(num(m.emissionIntensity, 1), 0, 8, 0.1, (v) => { m.emissionIntensity = v; live(); }));
   right.appendChild(emi);
 
-  const occ = matSection('Occlusion');
-  matRow(occ, 'AO Map', texSelect(textureIds(), str(m.aoMap), (v) => setTex('aoMap', v)));
-  right.appendChild(occ);
+  // ── UV: в URP одна трансформация (_BaseMap_ST) на ВСЕ карты материала ──
+  const uv = matSection('Tiling / Offset  (одна трансформация на все карты)');
+  const tl = Array.isArray(m.tiling) ? m.tiling as number[] : [1, 1];
+  const of = Array.isArray(m.offset) ? m.offset as number[] : [0, 0];
+  matRow(uv, 'Tiling', matVec2([tl[0] ?? 1, tl[1] ?? 1], 0.1, (v) => { m.tiling = v; live(); }));
+  matRow(uv, 'Offset', matVec2([of[0] ?? 0, of[1] ?? 0], 0.05, (v) => { m.offset = v; live(); }));
+  right.appendChild(uv);
 
   live();   // первичная отрисовка материала на сфере
   return box;

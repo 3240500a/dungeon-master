@@ -4,16 +4,35 @@
  * GLB (быстрый парс). FBXLoader тяжёлый — только авторинг; в игре — только GLTFLoader.
  */
 import * as THREE from 'three';
+import { getAsset, putAsset } from './assetStore.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { BVHLoader } from 'three/addons/loaders/BVHLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { dedupeSkeletons, type DedupeReport } from './skeletonDedupe.js';
 
-/** Разобрать буфер по расширению → корневой Object3D (FBX через FBXLoader, GLB/GLTF через GLTFLoader). */
+/** Отчёт схлопывания по последней разобранной модели (для панели «Модели» — там видно, чем выгнали ассет). */
+let _lastDedupe: DedupeReport | null = null;
+export function lastDedupeReport(): DedupeReport | null { return _lastDedupe; }
+
+/**
+ * Разобрать буфер по расширению → корневой Object3D (FBX через FBXLoader, GLB/GLTF через GLTFLoader).
+ * СРАЗУ схлопываем дубликаты скелетов: конвертеры FBX→glTF выписывают каждому мешу свой скин, и наш рыцарь
+ * приезжал с 38 копиями по 100 суставов (см. `skeletonDedupe.ts`). Делать это надо ЗДЕСЬ — единственная точка,
+ * через которую модель попадает и в редактор, и в игру.
+ */
 async function parseModel(buf: ArrayBuffer, ext: string): Promise<THREE.Group> {
-  if (ext === 'fbx') return new FBXLoader().parse(buf, '') as unknown as THREE.Group;
-  return await new Promise<THREE.Group>((resolve, reject) =>
-    new GLTFLoader().parse(buf, '', (g) => resolve(g.scene as unknown as THREE.Group), reject));
+  const root = ext === 'fbx'
+    ? (new FBXLoader().parse(buf, '') as unknown as THREE.Group)
+    : await new Promise<THREE.Group>((resolve, reject) =>
+      new GLTFLoader().parse(buf, '', (g) => resolve(g.scene as unknown as THREE.Group), reject));
+  _lastDedupe = dedupeSkeletons(root);
+  if (_lastDedupe.skins > 1) {
+    console.warn(`[модель] пришла с ${_lastDedupe.skins} скелетами → схлопнуто в 1 `
+      + `(костей ${_lastDedupe.bonesBefore} → ${_lastDedupe.bonesAfter}). Перевыгоняйте с ОБЩИМ скелетом: `
+      + `все меши должны ссылаться на один skin.`);
+  }
+  return root;
 }
 
 /** Загрузить модель из выбранного файла (.fbx / .glb / .gltf) → корневой Object3D (со скелетом/скиннед-мешами). */
@@ -43,12 +62,26 @@ export async function loadAnimatedModelFile(file: File): Promise<AnimatedModel> 
     new GLTFLoader().parse(buf, '', (g) => resolve({ root: g.scene as unknown as THREE.Group, animations: g.animations ?? [] }), reject));
 }
 
-/** Загрузить модель по URL (FBX/GLB/GLTF — расширение из URL). Для игры/редактора из /assets/<id>.<ext>. */
+/**
+ * Загрузить модель по URL (FBX/GLB/GLTF — расширение из URL). Для игры/редактора из /assets/<id>.<ext>.
+ *
+ * Ф12.5: успешная загрузка оседает в IndexedDB, а при недоступной сети модель берётся оттуда — иначе без
+ * сервера редактор открывался без единой модели и настраивать сабмеши было не на чем. Сеть выигрывает у
+ * кэша (модель могли перезалить), кэш — страховка, а не истина.
+ */
 export async function loadModelUrl(url: string): Promise<THREE.Group> {
   const ext = (url.toLowerCase().split('?')[0] ?? '').split('.').pop() ?? '';
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('load ' + r.status + ' ' + url);
-  return parseModel(await r.arrayBuffer(), ext);
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('load ' + r.status + ' ' + url);
+    const buf = await r.arrayBuffer();
+    void putAsset(url, buf.slice(0));            // копия: парсер вправе забрать буфер себе
+    return parseModel(buf, ext);
+  } catch (e) {
+    const cached = await getAsset(url);
+    if (!cached) throw e;
+    return parseModel(cached.slice(0), ext);     // офлайн: та же модель из локального кэша
+  }
 }
 
 /** Экспорт объекта в бинарный GLB (ArrayBuffer).

@@ -11,6 +11,7 @@ import type { Humanoid } from './humanoid.js';
 import { loadModelUrl, skeletonBoneNames } from './modelAssets.js';
 import { makeRetargetRig, autoBoneMap, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
+import { mergedConfig } from './configEdits.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 
 /** Разрешённая модель для слота (из resolveSlotModels). */
@@ -100,22 +101,31 @@ function resolveBoneMap(g: THREE.Object3D, stored: Record<string, string>): Reco
 
 let cfgCache: Promise<AssetConfig> | null = null;
 const EMPTY_CFG = (): AssetConfig => ({ models: [], materials: [], textures: [] });
+/** Последний известный серверный конфиг из localStorage — то, на чём работаем без сервера. */
+const cachedConfigSnapshot = (): Record<string, unknown> => {
+  try { return JSON.parse(localStorage.getItem('pe_config') || '{}') as Record<string, unknown>; } catch { return {}; }
+};
 /** Эффективный конфиг ассетов (модели/материалы/текстуры) — из /api/config, кэш на процесс.
  *  ОШИБКУ НЕ КЭШИРУЕМ: если fetch упал (500 при рестарте tsx-watch / гонка на бусте), сбрасываем кэш, чтобы
  *  следующий вызов ретаил — иначе кукла навсегда осталась бы с пустым конфигом (персонаж-атлас не появился бы). */
 export function loadAssetConfig(force = false): Promise<AssetConfig> {
   if (!cfgCache || force) {
     let failed = false;
+    // Ф12: сервер — не единственный источник. Порядок слоёв: живой `/api/config` → кэш `pe_config` (офлайн)
+    // → локальные правки (`pe_config_edits`). Иначе без сервера вкладка «Модели» открывалась пустой и
+    // настроенные сабмеши было негде взять.
     const p: Promise<AssetConfig> = fetch('/api/config')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('config http ' + r.status))))
+      .catch(() => { failed = true; return cachedConfigSnapshot(); })
+      .then((d: Record<string, unknown>) => mergedConfig(d) as Record<string, unknown>)
       .then((d: Record<string, unknown>) => ({
         models: (Array.isArray(d.models) ? d.models : []) as ModelCfg[],
         materials: (Array.isArray(d.materials) ? d.materials : []) as MaterialCfg[],
         textures: (Array.isArray(d.textures) ? d.textures : []) as TextureCfg[],
-      }))
-      .catch(() => { failed = true; return EMPTY_CFG(); });
+      }));
     cfgCache = p;
     void p.then(() => { if (failed && cfgCache === p) cfgCache = null; });   // не кэшируем провал → ретрай на след. вызове
+                                                                                              // (данные при этом взяты из локального кэша, а не потеряны)
   }
   return cfgCache;
 }

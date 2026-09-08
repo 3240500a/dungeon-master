@@ -20,11 +20,57 @@ export type Pose = Record<string, [number, number, number]>;
  *  `fixed` — интервал считается уже записанным покадрово, доп. сглаживания нет (== linear). */
 export type Interp = 'linear' | 'ease' | 'step' | 'fixed';
 
+// ── Метки на кадрах (модель Unreal Notify / Notify State) ────────────────────────────────────────
+/**
+ * Тип метки. `dur` НЕ задан → точечное событие (Notify); `dur` задан → отрезок с началом и концом
+ * (Notify State). Дорожку НЕ храним — она выводится из типа (`MARK_TRACK`): одна метка бьёт сразу в
+ * несколько дорожек, и поле `track` заставило бы дублировать метку на каждую.
+ *
+ * `impact` несёт СВОИ звук и эффект полями, а не тремя метками на одном кадре; `swing` — один взмах,
+ * то есть свист клинка и след меча на общем отрезке. Окна урона и неуязвимости не нужны: урон у нас
+ * серверный и падает ровно на `impact`, неуязвимости в игре нет.
+ */
+export type MarkType =
+  | 'impact'      // кадр удара: на него садится windupMs сервера + звук/искра
+  | 'sfx'         // прочий звук
+  | 'vfx'         // прочий эффект
+  | 'footstep'    // шаг (материал поверхности знает мир, не клип)
+  | 'camshake'    // тряска камеры, сила в `num`
+  | 'swing'       // ОТРЕЗОК: свист клинка + след меча
+  | 'combo'       // ОТРЕЗОК: окно ветвления цепочки ударов
+  | 'windup'      // начало замаха (секция для цепочки)
+  | 'recover';    // конец отработки (секция для цепочки)
+export type MarkTrack = 'gameplay' | 'audio' | 'vfx' | 'camera';
+export interface Mark {
+  type: MarkType;
+  /** id звука из конфига (клип говорит ЧТО и КОГДА, обработчик решает КАК). */
+  sfx?: string;
+  /** id эффекта из конфига. */
+  vfx?: string;
+  foot?: 'L' | 'R';
+  /** Число-параметр: сила тряски камеры. */
+  num?: number;
+  /** Длительность (сек) → метка становится отрезком. Варпится вместе с ключами при тайм-варпе удара. */
+  dur?: number;
+}
+/** Дорожка типа — только для отрисовки в таймлайне (`impact` рисуем на геймплейной, значки звука/эффекта рядом). */
+export const MARK_TRACK: Readonly<Record<MarkType, MarkTrack>> = {
+  impact: 'gameplay', combo: 'gameplay', windup: 'gameplay', recover: 'gameplay',
+  sfx: 'audio', footstep: 'audio', swing: 'audio', vfx: 'vfx', camshake: 'camera',
+};
+/** Типы, которые ОБЯЗАНЫ быть отрезком (у них `dur` есть всегда). */
+export const RANGE_MARKS: ReadonlySet<MarkType> = new Set<MarkType>(['swing', 'combo']);
+export const isRangeMark = (m: Mark): boolean => m.dur !== undefined && m.dur > 0;
+
 export interface Keyframe {
   pose: Pose;
   t: number;                    // сек от начала клипа (кадры отсортированы по t)
   interp?: Interp;              // нет → 'linear'
   ease?: [number, number, number, number];   // ручки безье (x1,y1,x2,y2), только для interp='ease'
+  /** Метки событий. Живут НА КЛЮЧЕ, а не на клипе: `migrateClip` пересобирает клип по явному списку
+   *  полей и молча выбросил бы новое поле уровня клипа, а ключи проходят по ссылке; плюс метка сама
+   *  едет за ключом при ретайминге и переживает прореживание. */
+  marks?: Mark[];
 }
 export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[]; idleEnds?: boolean }   // idleEnds: первый/последний кадр = idle-стойка (заблокированы в редакторе, синкаются из стойки — как у ударов hit_)
 
@@ -160,6 +206,41 @@ export function clipPoseAt(c: Clip, t01: number): Pose {
   const seg = clipSegmentAt(c, clamp01(t01) * (clipDur(c) || 1));
   if (!seg) return {};
   return seg.a === seg.b ? seg.a.pose : blendTwo(seg.a.pose, seg.b.pose, seg.u);
+}
+
+// ── Метки: чтение ────────────────────────────────────────────────────────────────────────────────
+/** Время метки `impact` (сек от начала клипа) или null, если удар не размечен. Первая по времени. */
+export function impactSec(c: Clip): number | null {
+  for (const k of c.keys) if (k.marks?.some((m) => m.type === 'impact')) return k.t;
+  return null;
+}
+/** Первый ключ с меткой такого типа (сек) или null. */
+export function markSec(c: Clip, type: MarkType): number | null {
+  for (const k of c.keys) if (k.marks?.some((m) => m.type === type)) return k.t;
+  return null;
+}
+export interface MarkEvent { mark: Mark; phase: 'point' | 'begin' | 'end'; t: number }
+/**
+ * Метки, ПЕРЕСЕЧЁННЫЕ на интервале (tPrev, tNow] времени КЛИПА. Точечные дают `point`, отрезки — `begin`
+ * на своём ключе и `end` через `dur`.
+ * ⚠ Искать надо по ПРОЙДЕННОМУ интервалу, а не по «ближайшему кадру»: на сжатом тайм-варпом клипе кадр
+ * между двумя вызовами проскакивают целиком, и метка бы потерялась.
+ * `dur` живёт во времени КЛИПА, поэтому тайм-варп удара растягивает отрезок вместе с анимацией сам собой.
+ */
+export function marksInRange(c: Clip, tPrev: number, tNow: number): MarkEvent[] {
+  const out: MarkEvent[] = [];
+  if (tNow <= tPrev) return out;
+  for (const k of c.keys) {
+    if (!k.marks) continue;
+    for (const m of k.marks) {
+      if (m.dur !== undefined && m.dur > 0) {
+        if (k.t > tPrev && k.t <= tNow) out.push({ mark: m, phase: 'begin', t: k.t });
+        const e = k.t + m.dur;
+        if (e > tPrev && e <= tNow) out.push({ mark: m, phase: 'end', t: e });
+      } else if (k.t > tPrev && k.t <= tNow) out.push({ mark: m, phase: 'point', t: k.t });
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
 }
 
 // ── Зеркало / переворот ───────────────────────────────────────────────────────────────────────────

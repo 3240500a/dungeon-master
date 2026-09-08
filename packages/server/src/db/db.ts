@@ -206,6 +206,7 @@ const upsertPoseStmt = db.prepare(
    ON CONFLICT(key) DO UPDATE SET json = excluded.json, updatedAt = excluded.updatedAt`,
 );
 const allPoseStmt = db.prepare('SELECT key, json FROM pose_store');
+const revPoseStmt = db.prepare('SELECT key, updatedAt FROM pose_store');
 const deletePoseStmt = db.prepare('DELETE FROM pose_store WHERE key = ?');
 
 /** Весь контент поз-редактора (ключ→значение) — отдаётся редактору и игре. */
@@ -215,9 +216,22 @@ export function getPoseStore(): Record<string, unknown> {
   for (const r of rows) out[r.key] = JSON.parse(r.json);
   return out;
 }
-/** Пишет/обновляет один ключ контента поз-редактора (персистентно). */
-export function setPoseStore(key: string, value: unknown): void {
-  upsertPoseStmt.run(key, JSON.stringify(value), Date.now());
+/**
+ * РЕВИЗИИ контента: `{ключ: updatedAt}`. Редактор держит рабочую копию у себя и сравнивает ревизии, чтобы
+ * (а) показать «на сервере новее» и (б) не затереть чужую правку вслепую. Отдельный роут, потому что тела
+ * тяжёлые (одни клипы — сотни килобайт), а ревизии нужны на каждой загрузке.
+ */
+export function getPoseRevs(): Record<string, number> {
+  const rows = revPoseStmt.all() as { key: string; updatedAt: number }[];
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.key] = r.updatedAt;
+  return out;
+}
+/** Пишет/обновляет один ключ контента поз-редактора (персистентно). Возвращает НОВУЮ ревизию. */
+export function setPoseStore(key: string, value: unknown): number {
+  const rev = Date.now();
+  upsertPoseStmt.run(key, JSON.stringify(value), rev);
+  return rev;
 }
 /** Удаляет ключ контента поз-редактора (чистка устаревших/тест-ключей). */
 export function deletePoseStore(key: string): void {
