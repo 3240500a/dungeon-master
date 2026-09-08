@@ -13,7 +13,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
  */
 process.env.PORT ??= '3999';
 // Отдельная база под стенд: боевые данные нагрузкой не трогаем (Ф2).
-process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5433/dungeon_test';
+process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test';
 process.env.NODE_ENV ??= 'production'; // как в проде: dev-роуты закрыты, кэш ассетов включён
 // Сотня ботов регистрируется с одного адреса и упёрлась бы в лимит Ф0.5 раньше замера.
 // Сами лимиты проверяются отдельно: `npm run poc:flood` против сервера БЕЗ этого флага.

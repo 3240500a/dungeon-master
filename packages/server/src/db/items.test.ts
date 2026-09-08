@@ -6,9 +6,9 @@ import { ConfigRegistry, newCharacterSave, emptyStash, uuidv7, type SaveState, t
  *
  * Мокать здесь нечего: проверяется ровно то, что делает Postgres (транзакция, первичный ключ,
  * триггер запрета переписывания журнала). Без базы тест пропускается — `DM_PG` или локальный
- * сервер на 5433, см. `loadtest/README.md`.
+ * PostgreSQL на 5432, см. `loadtest/README.md`.
  */
-const PG = process.env.DM_PG ?? 'postgresql://dm:dmpass@127.0.0.1:5433/dungeon_test';
+const PG = process.env.DM_PG ?? 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test';
 process.env.DM_PG = PG;
 
 let db: typeof import('./db.js');

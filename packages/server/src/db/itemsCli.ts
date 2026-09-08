@@ -21,6 +21,16 @@ const arg = (k: string): string | undefined =>
 async function audit(): Promise<void> {
   console.log('АУДИТ ПРЕДМЕТОВ\n');
 
+  // Схему заводит сервер при старте. Внятное сообщение вместо простыни из недр драйвера:
+  // «нет таблицы items» на свежей базе — частый и совершенно нестрашный случай.
+  const ready = await q1<{ ok: boolean }>(`SELECT to_regclass('items') IS NOT NULL AS ok`);
+  if (!ready?.ok) {
+    console.log('в этой базе ещё нет таблиц предметов — она не инициализирована.');
+    console.log('Схема создаётся при первом старте сервера: npm run dev:server (или укажите DM_PG на нужную базу).');
+    process.exitCode = 1;
+    return;
+  }
+
   const items = (await q1<{ n: string }>('SELECT COUNT(*) n FROM items'))?.n ?? '0';
   const evts = (await q1<{ n: string }>('SELECT COUNT(*) n FROM item_events'))?.n ?? '0';
   console.log(`в леджере вещей: ${items}, записей в журнале: ${evts}`);

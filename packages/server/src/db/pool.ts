@@ -20,7 +20,7 @@ const { Pool } = pg;
  * Адрес базы. В разработке — локальный сервер со стенда, в бою обязателен `DM_PG`:
  * молчаливый уход на localhost в проде хуже падения при старте.
  */
-const DEV_URL = 'postgresql://dm:dmpass@127.0.0.1:5433/dungeon';
+const DEV_URL = 'postgresql://dm:dmpass@127.0.0.1:5432/dungeon';
 const URL_ = process.env.DM_PG ?? (process.env.NODE_ENV === 'production' ? '' : DEV_URL);
 if (!URL_) {
   console.error('[dm-server] не задан DM_PG (строка подключения к Postgres) — в бою это обязательно');

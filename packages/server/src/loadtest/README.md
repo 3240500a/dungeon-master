@@ -46,7 +46,7 @@ npm run bench:tick -- --players=4 --ticks=200000
 проверяются отдельно — `poc:flood` против сервера, поднятого КАК БОЕВОЙ:
 
 ```bash
-PORT=3999 DM_PG=postgresql://dm:dmpass@127.0.0.1:5433/dungeon_test NODE_ENV=production npx tsx packages/server/src/index.ts
+PORT=3999 DM_PG=postgresql://dm:dmpass@127.0.0.1:5432/dungeon_test NODE_ENV=production npx tsx packages/server/src/index.ts
 npm run poc:flood
 ```
 
@@ -166,14 +166,20 @@ npm run items:revoke -- --id=<uuid> --reason="дюп"   # точечный от�
 
 ### Как поднять базу локально
 
+На машине разработки PostgreSQL 17 стоит службой Windows (`postgresql-x64-17`, автозапуск,
+порт 5432). Развернуть с нуля на другой машине — `packages/server/data/setup-postgres.ps1`
+(от администратора): ставит сервер, заводит пользователя `dm` и базы `dungeon` /
+`dungeon_test`, заливает дамп авторского контента.
+
+Вручную то же самое:
+
 ```bash
-# один раз: создать базы (Postgres 16+)
 psql -U postgres -c "CREATE USER dm PASSWORD 'dmpass'" -c "CREATE DATABASE dungeon OWNER dm" -c "CREATE DATABASE dungeon_test OWNER dm"
 ```
 
-Адрес — `DM_PG`; в разработке по умолчанию `postgresql://dm:dmpass@127.0.0.1:5433/dungeon`,
-стенд ходит в `dungeon_test`. Схема создаётся сама при старте. Разовый перенос авторского
-контента со старой SQLite — `npm run db:import`.
+Адрес — `DM_PG`; в разработке по умолчанию `postgresql://dm:dmpass@127.0.0.1:5432/dungeon`,
+стенд и тесты ходят в `dungeon_test`. Схема создаётся сама при старте. Разовый перенос
+авторского контента со старой SQLite — `npm run db:import`.
 
 ## Ф1.6 (транспорт uWebSockets.js): выигрыша НЕТ, и вот почему
 
