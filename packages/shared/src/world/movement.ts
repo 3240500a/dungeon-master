@@ -1,3 +1,4 @@
+import { vecLen } from './fastMath.js';
 import { isBlockedCell, TILE, type Grid } from './grid.js';
 import type { Obstacle } from './state.js';
 
@@ -86,7 +87,7 @@ export function pushOutObstacle(x: number, y: number, radius: number, o: Obstacl
     let dx = x - o.x;
     let dy = y - o.y;
     const min = radius + r;
-    let d = Math.hypot(dx, dy);
+    let d = vecLen(dx, dy);
     if (d >= min) return null;
     if (d < 1e-6) { dx = 1; dy = 0; d = 1; } // центры совпали — детерм. ось
     const push = min - d;

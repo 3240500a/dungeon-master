@@ -73,7 +73,9 @@ export class Room implements Tickable {
   private shop: Item[] = [];
   private questBoard: QuestDef[] = [];
   private wipeAt = 0; // serverTime авто-возврата в город после вайпа пати (0 = не запланирован)
-  private lastSaveAt = 0; // serverTime последнего автосейва в БД (0 = ещё не было)
+  // Ф0.10: у каждой комнаты своя фаза автосейва. Иначе все комнаты, созданные примерно
+  // одновременно, сохраняются в один и тот же оборот цикла — сотня синхронных записей подряд.
+  private lastSaveAt = Date.now() - Math.floor(Math.random() * AUTOSAVE_MS);
   private vote: { kind: 'descend' | 'town' | 'arena'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
   // Активный забег v2: конфиг (сид/биом/шаблон/тир), регенерируемый граф и текущий узел.
   private runConfig: RunConfig | null = null;

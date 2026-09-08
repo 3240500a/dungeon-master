@@ -13,6 +13,14 @@ const DB_PATH = process.env.DM_DB ?? 'data/dm.db';
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
 export const db = new DatabaseSync(DB_PATH);
+// Ф0.10: WAL вместо журнала отката. Читатели не блокируют писателя, запись не переписывает
+// базу целиком, а дописывает лог — на автосейвах комнат это снимает основную часть выбросов
+// лага цикла (в замере до правки `loop max` достигал 200-300 мс, то есть шести пропущенных
+// тиков подряд). `synchronous=NORMAL` не ждёт fsync на каждой транзакции: при падении процесса
+// теряется последний фрагмент лога, но не целостность базы — для игровых сейвов это верный
+// размен, полная надёжность стоит на порядок дороже.
+db.exec('PRAGMA journal_mode = WAL');
+db.exec('PRAGMA synchronous = NORMAL');
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,

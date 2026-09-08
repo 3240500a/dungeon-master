@@ -1,3 +1,4 @@
+import { vecLen } from './fastMath.js';
 import { moveWithCollision, type Vec2 } from './movement.js';
 import type { Grid } from './grid.js';
 import type { Obstacle } from './state.js';
@@ -30,7 +31,7 @@ function separatePair(a: CollisionBody, b: CollisionBody, grid: Grid, obstacles?
   let dx = b.pos.x - a.pos.x;
   let dy = b.pos.y - a.pos.y;
   const minDist = a.radius + b.radius;
-  let dist = Math.hypot(dx, dy);
+  let dist = vecLen(dx, dy);
   if (dist >= minDist) return; // не пересекаются
   if (dist < 1e-6) { dx = 1; dy = 0; dist = 1; } // центры совпали — детерм. ось (без NaN)
 

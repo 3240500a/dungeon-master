@@ -1,3 +1,4 @@
+import { vecLen, wrapAngle } from '../world/fastMath.js';
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
 import type { Item, AttackType } from '../types/items.js';
@@ -387,7 +388,7 @@ export class GameSession {
           if (act === 'shoot') { if (this.hasLos(m.pos, target.pos)) this.monsterShoot(m, target); }
           else {
             const reach = m.radius + target.radius + MONSTER_MELEE_WHIFF_SLACK;
-            if (Math.hypot(target.pos.x - m.pos.x, target.pos.y - m.pos.y) <= reach && this.hasLos(m.pos, target.pos)) this.monsterMelee(m, target);
+            if (vecLen(target.pos.x - m.pos.x, target.pos.y - m.pos.y) <= reach && this.hasLos(m.pos, target.pos)) this.monsterMelee(m, target);
           }
         }
         continue;
@@ -451,7 +452,7 @@ export class GameSession {
     const attacking = !!p.windup || p.attackCd > 0;
     const moveMult = stunned ? 0 : attacking ? snap.derived.attackMoveMult : 1;   // per-класс замедление при атаке (из класс-scaling)
     if (input && !stunned) p.facing = input.facing;
-    const len = input ? Math.hypot(input.move.x, input.move.y) : 0;
+    const len = input ? vecLen(input.move.x, input.move.y) : 0;
     if (input && moveMult > 0 && len > 0) {
       const speed = snap.derived.moveSpeed * pm.moveMult * moveMult;
       p.vel = { x: (input.move.x / len) * speed, y: (input.move.y / len) * speed };
@@ -537,14 +538,14 @@ export class GameSession {
       if (!m.alive) continue;
       const dx = m.pos.x - p.pos.x;
       const dy = m.pos.y - p.pos.y;
-      if (Math.hypot(dx, dy) > range) continue;
+      if (vecLen(dx, dy) > range) continue;
       const ang = Math.atan2(dy, dx);
       if (Math.abs(this.wrap(ang - p.facing)) > arc) continue;
       this.hitMonster(p, m, packet, attacker, hitOpts);
     }
     this.hitEnemyPlayers(p, packet, attacker, hitOpts, (t) => {
       const dx = t.pos.x - p.pos.x, dy = t.pos.y - p.pos.y;
-      if (Math.hypot(dx, dy) > range) return false;
+      if (vecLen(dx, dy) > range) return false;
       return Math.abs(this.wrap(Math.atan2(dy, dx) - p.facing)) <= arc;
     });
   }
@@ -837,9 +838,9 @@ export class GameSession {
     const r = active.radius > 0 ? active.radius : 60;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (Math.hypot(m.pos.x - to.x, m.pos.y - to.y) <= r) this.hitMonster(p, m, packet, attacker, opts);
+      if (vecLen(m.pos.x - to.x, m.pos.y - to.y) <= r) this.hitMonster(p, m, packet, attacker, opts);
     }
-    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => Math.hypot(t.pos.x - to.x, t.pos.y - to.y) <= r);
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => vecLen(t.pos.x - to.x, t.pos.y - to.y) <= r);
     this.launchDash(p, dir, from, to, active, rank);
   }
 
@@ -852,7 +853,7 @@ export class GameSession {
   private tryDodge(p: PlayerEntity, input: PlayerInput): boolean {
     const cfg = this.cfg.get('balance').dodge;
     if (cfg.staminaCost > 0 && p.stamina < cfg.staminaCost) return false;   // не хватает выносливости
-    const len = Math.hypot(input.move.x, input.move.y);
+    const len = vecLen(input.move.x, input.move.y);
     const dir = len > 1e-4 ? Math.atan2(input.move.y, input.move.x) : input.facing;   // WASD или прицел (стоя)
     if (cfg.staminaCost > 0) p.stamina -= cfg.staminaCost;
     p.dodgeCd = cfg.cooldownSec;
@@ -865,7 +866,7 @@ export class GameSession {
 
   /** Запуск движения рывка/прыжка к точке `to` (расталкивание весом, `weightMult`). */
   private launchDash(p: PlayerEntity, dir: number, from: Vec2, to: Vec2, active: CastAbility, rank: number): void {
-    const travel = Math.hypot(to.x - from.x, to.y - from.y);
+    const travel = vecLen(to.x - from.x, to.y - from.y);
     const speed = active.dashSpeed * abilityRankMult(rank);
     p.dash = { dx: Math.cos(dir), dy: Math.sin(dir), speed, remaining: speed > 0 ? travel / speed : 0, weightMult: 1 + active.dashWeightBonus / 100, hitIds: [] };
   }
@@ -904,9 +905,9 @@ export class GameSession {
     const radius = active.radius || ABILITY_AOE_RADIUS;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= radius) this.hitMonster(p, m, packet, attacker, opts);
+      if (vecLen(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= radius) this.hitMonster(p, m, packet, attacker, opts);
     }
-    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => Math.hypot(t.pos.x - p.pos.x, t.pos.y - p.pos.y) <= radius);
+    this.hitEnemyPlayers(p, packet, attacker, opts, (t) => vecLen(t.pos.x - p.pos.x, t.pos.y - p.pos.y) <= radius);
   }
 
   /** Бумеранг (cast boomerang): летит вперёд, разворачивается к владельцу, бьёт на лету в обе стороны. */
@@ -929,7 +930,7 @@ export class GameSession {
     p.vel = { x: d.dx * d.speed, y: d.dy * d.speed };
     p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt, this.world.obstacles);
     d.remaining -= dt;
-    if (d.remaining <= 0 || Math.hypot(p.pos.x - bx, p.pos.y - by) < 0.5) p.dash = null; // конец или упор в стену
+    if (d.remaining <= 0 || vecLen(p.pos.x - bx, p.pos.y - by) < 0.5) p.dash = null; // конец или упор в стену
   }
 
   /** Вес (масса) монстра для расталкивания: базовый вес × множитель чемпиона. */
@@ -998,7 +999,7 @@ export class GameSession {
     const kind = active.ailment ? (active.ailment.kind ?? this.cfg.get('magic-subtypes').find((d) => d.id === (active.element ?? 'physical'))?.ailment) : undefined;
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) > active.radius) continue;
+      if (vecLen(m.pos.x - p.pos.x, m.pos.y - p.pos.y) > active.radius) continue;
       if (active.taunt) m.alertTimer = ALERT_TIME;
       if (kind && active.ailment) {
         addDebuffStack(m.debuffs, { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs }, this.world.timeMs);
@@ -1009,7 +1010,7 @@ export class GameSession {
       for (const id of Object.keys(this.world.players)) {
         const t = this.world.players[id]!;
         if (t === p || !t.alive || t.spawnImmuneUntil > this.world.timeMs) continue;
-        if (Math.hypot(t.pos.x - p.pos.x, t.pos.y - p.pos.y) > active.radius) continue;
+        if (vecLen(t.pos.x - p.pos.x, t.pos.y - p.pos.y) > active.radius) continue;
         addDebuffStack(t.debuffs, { kind, chance: active.ailment.chance, mag: active.ailment.mag, mag2: active.ailment.mag2, maxStacks: active.ailment.maxStacks, durationMs: active.ailment.durationMs }, this.world.timeMs);
       }
     }
@@ -1019,7 +1020,7 @@ export class GameSession {
     const abx = b.x - a.x, aby = b.y - a.y;
     const len2 = abx * abx + aby * aby || 1;
     const t = Math.max(0, Math.min(1, ((pt.x - a.x) * abx + (pt.y - a.y) * aby) / len2));
-    return Math.hypot(pt.x - (a.x + abx * t), pt.y - (a.y + aby * t));
+    return vecLen(pt.x - (a.x + abx * t), pt.y - (a.y + aby * t));
   }
 
   // ── Применение урона ──────────────────────────────────────
@@ -1229,7 +1230,7 @@ export class GameSession {
       proj.ttl -= dt;
       // Саб-степпинг: дробим смещение за тик на шаги ≤8px, чтобы снаряд не
       // «проскакивал» сквозь стены/цели при крупном dt (иначе дальний бой ломается).
-      const dist = Math.hypot(proj.vel.x, proj.vel.y) * dt;
+      const dist = vecLen(proj.vel.x, proj.vel.y) * dt;
       const steps = Math.max(1, Math.ceil(dist / 8));
       const sub = dt / steps;
       let gone = false;
@@ -1238,7 +1239,7 @@ export class GameSession {
         proj.pos.y += proj.vel.y * sub;
         // Бумеранг: у макс. дальности разворот к владельцу; гаснет, вернувшись к нему.
         if (proj.boomerang && proj.origin) {
-          if (!proj.returning && Math.hypot(proj.pos.x - proj.origin.x, proj.pos.y - proj.origin.y) >= (proj.maxRange ?? 300)) {
+          if (!proj.returning && vecLen(proj.pos.x - proj.origin.x, proj.pos.y - proj.origin.y) >= (proj.maxRange ?? 300)) {
             proj.returning = true;
             proj.hitIds = []; // на обратном пути бьёт цели заново
           }
@@ -1246,9 +1247,9 @@ export class GameSession {
             const owner = w.players[proj.ownerId as string];
             if (owner) {
               const a = Math.atan2(owner.pos.y - proj.pos.y, owner.pos.x - proj.pos.x);
-              const sp = Math.hypot(proj.vel.x, proj.vel.y);
+              const sp = vecLen(proj.vel.x, proj.vel.y);
               proj.vel = { x: Math.cos(a) * sp, y: Math.sin(a) * sp };
-              if (Math.hypot(proj.pos.x - owner.pos.x, proj.pos.y - owner.pos.y) < 24) { gone = true; break; }
+              if (vecLen(proj.pos.x - owner.pos.x, proj.pos.y - owner.pos.y) < 24) { gone = true; break; }
             }
           }
         }
@@ -1270,7 +1271,7 @@ export class GameSession {
       for (const m of w.monsters) {
         if (!m.alive) continue;
         if (proj.hitIds && proj.hitIds.includes(m.id)) continue; // пробивающий/бумеранг: не бить дважды
-        if (Math.hypot(proj.pos.x - m.pos.x, proj.pos.y - m.pos.y) < proj.radius) {
+        if (vecLen(proj.pos.x - m.pos.x, proj.pos.y - m.pos.y) < proj.radius) {
           if (killer) this.hitMonster(killer, m, proj.packet, proj.attacker, proj.hitOpts ?? {});
           if (proj.pierce || proj.boomerang) { (proj.hitIds ??= []).push(m.id); continue; } // летит дальше
           return true; // обычный снаряд гаснет о первую цель
@@ -1281,7 +1282,7 @@ export class GameSession {
         for (const id of Object.keys(w.players)) {
           const t = w.players[id]!;
           if (t === killer || !t.alive || t.spawnImmuneUntil > w.timeMs) continue;
-          if (Math.hypot(proj.pos.x - t.pos.x, proj.pos.y - t.pos.y) < proj.radius) {
+          if (vecLen(proj.pos.x - t.pos.x, proj.pos.y - t.pos.y) < proj.radius) {
             this.hitPlayer(t, proj.packet, proj.attacker, proj.hitOpts?.onHit ?? [], killer.id);
             return true;
           }
@@ -1291,7 +1292,7 @@ export class GameSession {
       for (const id of Object.keys(w.players)) {
         const p = w.players[id]!;
         if (!p.alive) continue;
-        if (Math.hypot(proj.pos.x - p.pos.x, proj.pos.y - p.pos.y) < proj.radius) {
+        if (vecLen(proj.pos.x - p.pos.x, proj.pos.y - p.pos.y) < proj.radius) {
           const src = w.monsters.find((mm) => mm.id === proj.ownerId);
           this.hitPlayer(p, proj.packet, proj.attacker, proj.onHit ?? [], proj.attackerName ?? 'Враг', src);
           return true;
@@ -1368,7 +1369,7 @@ export class GameSession {
     // Подбор ближайшего дропа в радиусе (E-ключ/бот). Клик по предмету — точечно, см. pickupDropById.
     for (let i = 0; i < this.world.drops.length; i++) {
       const d = this.world.drops[i]!;
-      if (Math.hypot(d.pos.x - p.pos.x, d.pos.y - p.pos.y) <= 48) {
+      if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) <= 48) {
         const took = this.takeDrop(p, i);
         if (took) this.events.push({ type: 'item-picked', playerId: p.id, item: took.item, x: took.x, y: took.y });
         return; // полон — не поднимаем (took === null), но и других в этот тик не берём
@@ -1387,7 +1388,7 @@ export class GameSession {
     const i = this.world.drops.findIndex((d) => d.id === dropId);
     if (i < 0) return null;
     const d = this.world.drops[i]!;
-    if (Math.hypot(d.pos.x - p.pos.x, d.pos.y - p.pos.y) > 48) return null;
+    if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) > 48) return null;
     return this.takeDrop(p, i);
   }
 
@@ -1424,7 +1425,7 @@ export class GameSession {
     const p = this.world.players[playerId];
     const lv = this.world.levers.find((l) => l.id === leverId);
     if (!p || !lv || lv.used) return null;
-    if (Math.hypot(lv.pos.x - p.pos.x, lv.pos.y - p.pos.y) > 56) return null; // проксимити (анти-чит)
+    if (vecLen(lv.pos.x - p.pos.x, lv.pos.y - p.pos.y) > 56) return null; // проксимити (анти-чит)
     const door = this.world.doors.find((d) => d.id === lv.doorId);
     if (!door) return null;
     for (const c of door.cells) { const row = this.world.grid[c.cy]; if (row) row[c.cx] = Cell.Floor; }
@@ -1456,7 +1457,7 @@ export class GameSession {
   private makeNoise(p: PlayerEntity, radius: number): void {
     for (const m of this.world.monsters) {
       if (!m.alive) continue;
-      if (Math.hypot(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius) m.alertTimer = ALERT_TIME;
+      if (vecLen(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius) m.alertTimer = ALERT_TIME;
     }
   }
 
@@ -1466,7 +1467,7 @@ export class GameSession {
     for (const id of Object.keys(this.world.players)) {
       const p = this.world.players[id]!;
       if (!p.alive) continue;
-      const d = Math.hypot(p.pos.x - pos.x, p.pos.y - pos.y);
+      const d = vecLen(p.pos.x - pos.x, p.pos.y - pos.y);
       if (d < bestD) { bestD = d; best = p; }
     }
     return best;
@@ -1497,13 +1498,13 @@ export class GameSession {
    * Пересчёт пути троттлится (~0.3с) и при достижении точки — findPath дёшев, но не каждый тик.
    */
   private navChase(m: MonsterEntity, targetPos: Vec2, grid: Grid, losClear: boolean, dt: number): void {
-    const speed = Math.hypot(m.vel.x, m.vel.y);
+    const speed = vecLen(m.vel.x, m.vel.y);
     if (speed < 1) { m.waypoint = null; return; }
     const toward = m.vel.x * (targetPos.x - m.pos.x) + m.vel.y * (targetPos.y - m.pos.y) > 0;
     if (toward && !losClear) {
       // Погоня без прямой видимости → обход стен по BFS-пути.
       m.pathCd -= dt;
-      const reached = !!m.waypoint && Math.hypot(m.waypoint.x - m.pos.x, m.waypoint.y - m.pos.y) < 16;
+      const reached = !!m.waypoint && vecLen(m.waypoint.x - m.pos.x, m.waypoint.y - m.pos.y) < 16;
       if (!m.waypoint || reached || m.pathCd <= 0) {
         const path = findPath(grid, m.pos, targetPos);
         m.waypoint = path.length ? path[0]! : null;
@@ -1511,7 +1512,7 @@ export class GameSession {
       }
       if (m.waypoint) {
         const wx = m.waypoint.x - m.pos.x, wy = m.waypoint.y - m.pos.y;
-        const d = Math.hypot(wx, wy) || 1;
+        const d = vecLen(wx, wy) || 1;
         m.vel.x = (wx / d) * speed;
         m.vel.y = (wy / d) * speed;
       }
@@ -1542,7 +1543,7 @@ export class GameSession {
   private tryBlink(m: MonsterEntity, targetPos: Vec2, b: MonsterBehavior, dt: number): void {
     m.blinkCd = Math.max(0, m.blinkCd - dt);
     if (m.aiState !== 'chase' || m.blinkCd > 0) return;
-    if (Math.hypot(targetPos.x - m.pos.x, targetPos.y - m.pos.y) >= b.keepDistMin) return; // не жмут — не блинкуем
+    if (vecLen(targetPos.x - m.pos.x, targetPos.y - m.pos.y) >= b.keepDistMin) return; // не жмут — не блинкуем
     const r = (b.keepDistMin + b.keepDistMax) / 2;
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + this.rng.next() * 0.6;
@@ -1566,14 +1567,14 @@ export class GameSession {
     for (const id of Object.keys(this.world.players)) {
       const p = this.world.players[id]!;
       if (!p.alive) continue;
-      if (Math.hypot(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius + p.radius) {
+      if (vecLen(p.pos.x - m.pos.x, p.pos.y - m.pos.y) <= radius + p.radius) {
         this.hitPlayer(p, a.packet, a.attacker, a.debuffs, `${m.def.name} (взрыв)`, m);
       }
     }
   }
 
   private wrap(a: number): number {
-    return Math.atan2(Math.sin(a), Math.cos(a));
+    return wrapAngle(a);
   }
 
   private awayDir(from: Vec2, to: Vec2, force: number): Vec2 {

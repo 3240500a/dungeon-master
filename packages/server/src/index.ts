@@ -43,8 +43,8 @@ function applyConfigOverrides(): void {
 function rebuildConfig(): void {
   config.loadAll();
   applyConfigOverrides();
+  rebuildConfigCache(); // Ф0.7: тело для /api/config готовим здесь же, а не на каждом запросе
 }
-rebuildConfig(); // старт: дефолты + сохранённые правки редактора
 
 // Рестарт сервера = чистый лист забегов: сбрасываем все НЕЗАВЕРШЁННЫЕ забеги (save.run) у всех персонажей.
 // Иначе спуск из города РЕЗЮМИТ старый забег (со старым биомом/сидом) и игнорит выбор алтаря — «хвосты».
@@ -67,17 +67,61 @@ app.get('/api/health', (_req, res) => {
 // ── Конфиг игры (единая истина: сервер) ─────────────────────────────────────────
 // GET отдаёт АКТУАЛЬНЫЙ эффективный конфиг (дефолты + сохранённые правки) — его грузят
 // и клиент (вью/тултипы), и редактор (показывает реальные значения). Одна истина везде.
-app.get('/api/config', (_req, res) => {
+// Ф0.7: тело конфига сериализуется ОДИН раз — при старте и при каждой правке из редактора.
+// Раньше на каждый запрос шёл `structuredClone` всего реестра плюс `JSON.stringify`: 8,58 мс
+// блокировки цикла и 436 КБ тела. Один вход игрока съедал четверть тикового бюджета, сотня
+// входов в секунду — 86 % ядра на один этот роут.
+let configBody = '';
+let configEtag = '';
+function rebuildConfigCache(): void {
+  configBody = JSON.stringify(config.snapshot());
+  // Слабый ETag по длине и дешёвой контрольной сумме тела: считать sha по 436 КБ на каждой
+  // правке незачем, а от случайного совпадения этого достаточно.
+  let h = 0;
+  for (let i = 0; i < configBody.length; i += 64) h = (h * 31 + configBody.charCodeAt(i)) | 0;
+  configEtag = `W/"${configBody.length.toString(36)}-${(h >>> 0).toString(36)}"`;
+}
+
+rebuildConfig(); // старт: дефолты + сохранённые правки редактора + готовое тело ответа
+
+app.get('/api/config', (req, res) => {
   if (process.env.NODE_ENV !== 'production') res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
-  res.json(config.snapshot());
+  res.setHeader('ETag', configEtag);
+  if (req.headers['if-none-match'] === configEtag) return res.status(304).end();
+  res.type('application/json').send(configBody);
 });
 
 // Правки редактора: валидируем → ПЕРСИСТИМ в SQLite → пересобираем живой конфиг. Переживает
 // рестарт сервера. balance действует сразу, статы монстров/лут — со следующего этажа.
 // АНТИ-ЧИТ: запись только вне продакшена — иначе клиент мог бы переписать баланс сервера.
 const DEV_CONFIG_APPLY = process.env.NODE_ENV !== 'production';
+
+/**
+ * Ф0.12: dev-роуты (правка баланса, заливка ассетов, чтение чужих персонажей) закрыты ДВУМЯ
+ * независимыми условиями: не продакшен И запрос пришёл с локальной машины. Раньше условие было
+ * одно — `NODE_ENV`, то есть одна ошибка в деплое открывала наружу переписывание баланса сервера
+ * и загрузку 64-мегабайтных файлов.
+ *
+ * Локальность выбрана потому, что редактор ходит через Vite-прокси с той же машины, и это не
+ * требует логина в редакторе. Полноценная ролевая авторизация (роль `admin` у пользователя)
+ * остаётся отдельной задачей: она требует экрана входа в редакторе, см. план Ф3.4.
+ *
+ * ВАЖНО: за обратным прокси все запросы выглядят локальными. Поэтому прокси не должен
+ * проксировать `/api/dev/*` наружу — это записано в README сервера.
+ */
+const LOCAL_HOSTS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost']);
+function devGuard(req: Request, res: Response): boolean {
+  if (!DEV_CONFIG_APPLY) { res.status(403).json({ error: 'Отключено в продакшене' }); return false; }
+  const ip = req.socket.remoteAddress ?? '';
+  if (!LOCAL_HOSTS.has(ip)) {
+    console.warn(`[dm-server] отказ dev-роута ${req.path} с внешнего адреса ${ip}`);
+    res.status(403).json({ error: 'Доступно только с локальной машины' });
+    return false;
+  }
+  return true;
+}
 app.post('/api/dev/config', (req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка конфига отключена в продакшене' });
+  if (!devGuard(req, res)) return;
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в БД (на временном реестре)
@@ -98,7 +142,7 @@ app.post('/api/dev/config', (req, res) => {
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
 const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
 app.post('/api/dev/config-file', (req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка конфига отключена в продакшене' });
+  if (!devGuard(req, res)) return;
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в файл
@@ -124,7 +168,7 @@ app.post('/api/dev/config-file', (req, res) => {
 
 // Сброс ключа к встроенному дефолту (удаляет персистентный оверрайд).
 app.delete('/api/dev/config/:key', (req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка конфига отключена в продакшене' });
+  if (!devGuard(req, res)) return;
   deleteConfigOverride(req.params.key);
   rebuildConfig();
   console.log(`[dm-server] конфиг сброшен к дефолту: ${req.params.key}`);
@@ -150,7 +194,7 @@ app.get('/api/pose/rev', (_req, res) => {
  * Без `__baseRev` (старые клиенты, ручной curl) поведение прежнее: пишем как есть.
  */
 app.post('/api/dev/pose', (req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });
+  if (!devGuard(req, res)) return;
   const body = (req.body ?? {}) as Record<string, unknown>;
   const baseRev = body.__baseRev as Record<string, number> | undefined;
   const keys = Object.keys(body).filter((k) => k !== '__baseRev');
@@ -167,7 +211,7 @@ app.post('/api/dev/pose', (req, res) => {
   res.json({ ok: true, saved: keys, rev });
 });
 app.delete('/api/dev/pose/:key', (req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Правка контента отключена в продакшене' });
+  if (!devGuard(req, res)) return;
   deletePoseStore(req.params.key);
   res.json({ ok: true, deleted: req.params.key });
 });
@@ -195,7 +239,7 @@ app.use('/assets', (_req, res) => { res.status(404).json({ error: 'asset not fou
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
 const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), (req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
+  if (!devGuard(req, res)) return;
   const id = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, '');   // sanitize → без path-traversal
   if (!id) return res.status(400).json({ error: 'bad id' });
   let buf = req.body as Buffer;
@@ -224,12 +268,12 @@ app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limi
 });
 
 // ── Dev: загрузка РЕАЛЬНЫХ сейвов в калькулятор/сим баланса (без auth, только не в проде) ──
-app.get('/api/dev/characters', (_req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
+app.get('/api/dev/characters', (req, res) => {
+  if (!devGuard(req, res)) return;
   res.json({ characters: listAllCharacters() });
 });
 app.get('/api/dev/characters/:charId', (req, res) => {
-  if (!DEV_CONFIG_APPLY) return res.status(403).json({ error: 'Отключено в продакшене' });
+  if (!devGuard(req, res)) return;
   const ch = getCharacter(req.params.charId);
   if (!ch) return res.status(404).json({ error: 'Персонаж не найден' });
   res.json({ save: ch.data });
@@ -329,7 +373,14 @@ app.delete('/api/characters/:charId', (req, res) => {
 // Регистрируется ПОСЛЕ всех /api-роутов, поэтому их не затирает; WS — на upgrade `/ws`, отдельно.
 // Клиент сам находит сервер на том же origin (`/api`, `wss://<host>/ws`), доп. конфиг не нужен.
 const CLIENT_DIST = process.env.CLIENT_DIST ?? join(dirname(fileURLToPath(import.meta.url)), '../../client/dist');
-if (existsSync(join(CLIENT_DIST, 'index.html'))) {
+// Ф0.9: `DM_SERVE_STATIC=off` снимает раздачу клиента с игрового процесса. Сейчас через него
+// идут 7,4 МБ бандла и 31 МБ моделей — один холодный заход стоит игровому ядру десятков
+// мегабайт. Правильный ответ это CDN; переменная нужна, чтобы отделить игру от раздачи уже
+// сегодня, не дожидаясь CDN (второй процесс с тем же CLIENT_DIST).
+const SERVE_STATIC = process.env.DM_SERVE_STATIC !== 'off';
+if (!SERVE_STATIC) {
+  console.log('[dm-server] раздача статики выключена (DM_SERVE_STATIC=off)');
+} else if (existsSync(join(CLIENT_DIST, 'index.html'))) {
   app.use(express.static(CLIENT_DIST));
   // SPA-фолбэк: любой не-/api GET → index.html (deep links). /api/* уходит в 404 выше по стеку.
   app.get('*', (req, res, next) => {

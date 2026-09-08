@@ -1,3 +1,4 @@
+import { vecLen, wrapAngle } from '../world/fastMath.js';
 import { debuffMods } from '../world/debuffs.js';
 import type { MonsterEntity } from '../world/state.js';
 import type { Vec2 } from '../world/movement.js';
@@ -19,14 +20,10 @@ export const ALERT_TIME = 2.5; // длительность аггро от «ш�
 const MELEE_REACH_GAP = 18; // мили-погоня: остановка/удар
 const STATIONARY_REACH_GAP = 24; // стационарный: реакция/удар
 
-function wrapAngle(a: number): number {
-  return Math.atan2(Math.sin(a), Math.cos(a));
-}
-
 function perceive(m: MonsterEntity, target: Vec2, b: MonsterBehavior, losClear: boolean, noiseMult: number, dt: number): number {
   const dx = target.x - m.pos.x;
   const dy = target.y - m.pos.y;
-  const dist = Math.hypot(dx, dy);
+  const dist = vecLen(dx, dy);
   const angleToPlayer = Math.atan2(dy, dx);
   const halfCone = ((m.def.visionAngle * Math.PI) / 180) / 2;
   const inCone = Math.abs(wrapAngle(angleToPlayer - m.facing)) <= halfCone;
@@ -81,7 +78,7 @@ export function stepMonsterAi(
   // ── Погоня ──────────────────────────────────────────────
   const dx = target.x - m.pos.x;
   const dy = target.y - m.pos.y;
-  const dist = Math.hypot(dx, dy);
+  const dist = vecLen(dx, dy);
   const angle = Math.atan2(dy, dx);
   const cos = Math.cos(angle), sin = Math.sin(angle);
   m.facing = angle; // в погоне смотрит на игрока
