@@ -11,3 +11,4 @@ export * from './serialize.js';
 export * from './weapon3d.js';
 export * from './toggles.js';
 export * from './netSchemas.js';
+export * from './delta.js';

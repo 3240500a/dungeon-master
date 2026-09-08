@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
-  GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf,
+  GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
   buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
@@ -30,6 +30,8 @@ const TICK_DT = TICK_MS / 1000;
  */
 const SNAPSHOT_HZ = Math.max(5, Math.min(30, Number(process.env.DM_SNAPSHOT_HZ ?? 20)));
 const SNAPSHOT_DT = 1 / SNAPSHOT_HZ;
+/** Как часто слать ПОЛНЫЙ кадр вместо дельты — страховка от расхождения (Ф1.3). */
+const FULL_SNAPSHOT_MS = 5_000;
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARENA_SIZE клеток
@@ -37,6 +39,8 @@ const ARENA_IMMUNE_MS = 2_000;      // спавн-иммунитет игрок�
 const ARENA_RESPAWN_MS = 3_000;     // задержка авто-возрождения после гибели в арене (мс)
 
 interface Client {
+  /** Получил ли клиент полный кадр (Ф1.3). До этого дельты ему бессмысленны. */
+  baselined: boolean;
   pid: string;
   ws: WebSocket;
   input: PlayerInput;
@@ -90,6 +94,10 @@ export class Room implements Tickable {
   private lastSaveAt = Date.now() - Math.floor(Math.random() * AUTOSAVE_MS);
   /** Накопитель времени до следующего снапшота (Ф1.5). Стартовая фаза случайна — как у автосейва. */
   private snapAcc = Math.random() * SNAPSHOT_DT;
+  /** Базис дельт комнаты (Ф1.3). Один на всех: пока нет области интереса, кадры одинаковы. */
+  private delta = new SnapshotDelta();
+  /** Когда в последний раз слали ПОЛНЫЙ кадр — страховка от расхождения. */
+  private lastFullAt = 0;
   private vote: { kind: 'descend' | 'town' | 'arena'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
   // Активный забег v2: конфиг (сид/биом/шаблон/тир), регенерируемый граф и текущий узел.
   private runConfig: RunConfig | null = null;
@@ -161,7 +169,7 @@ export class Room implements Tickable {
     if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
 
     const pid = `p_${randomUUID()}`;
-    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version });
+    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, baselined: false });
     this.session.addPlayer(pid, save, spawnAt);
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
     this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
@@ -526,6 +534,7 @@ export class Room implements Tickable {
     });
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
     this.broadcastPeerInfo();
+    this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast({ t: 'runPlan', plan: this.runPlan, currentNodeId: nodeId });
     // Персист указателя забега + прогресс сложности/квестов.
     const qev: SessionEvent[] = [];
@@ -552,6 +561,7 @@ export class Room implements Tickable {
     for (const pid of this.clients.keys()) ensureMainQuest(this.cfg, this.session.world.players[pid]!.save);
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
     this.broadcastPeerInfo();
+    this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
     this.broadcast({ t: 'shop', items: this.shop });
     this.broadcastQuestBoard();
     for (const pid of this.clients.keys()) this.sendSave(pid); // город мог выдать main-квест
@@ -578,6 +588,7 @@ export class Room implements Tickable {
     }
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
     this.broadcastPeerInfo();
+    this.resetDeltaBaseline(); // Ф1.3: мир заменён — прошлый базис к нему не применим
   }
   private regenShop(): void {
     const itemsBase = this.cfg.get('items.base');
@@ -622,7 +633,7 @@ export class Room implements Tickable {
     if (this.snapAcc >= SNAPSHOT_DT) {
       this.snapAcc -= SNAPSHOT_DT;
       if (this.snapAcc > SNAPSHOT_DT) this.snapAcc = 0; // сильно отстали — не копим долг кадров
-      if (emit) this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world) });
+      if (emit) this.emitWorld();
     }
     if (Date.now() - this.lastSaveAt >= AUTOSAVE_MS) this.persistAll(); // периодический автосейв прогресса
     if (this.wipeAt && Date.now() >= this.wipeAt) this.enterTown(); // вайп → авто-возврат в город
@@ -717,6 +728,58 @@ export class Room implements Tickable {
     }
     info.saveVersion = next;
     return true;
+  }
+
+  /** Сбросить базис дельт (Ф1.3): следующий кадр уйдёт ПОЛНЫМ всем клиентам. */
+  private resetDeltaBaseline(): void {
+    this.delta.reset();
+    for (const c of this.clients.values()) c.baselined = false;
+  }
+
+  /**
+   * Разослать состояние мира (Ф1.3). Клиенту, который ещё не получал полного кадра, уходит
+   * полный снапшот; остальным — дельта от общего базиса комнаты. Раз в `FULL_SNAPSHOT_MS`
+   * базис сбрасывается и полный кадр уходит всем: это страховка от расхождения, если в самой
+   * дельте когда-нибудь окажется ошибка. Стоит она немного — один полный кадр на несколько сотен.
+   */
+  private emitWorld(): void {
+    if (this.clients.size === 0) return;
+    const snap = serializeWorld(this.session.world);
+    const now = Date.now();
+
+    const forceFull = !this.delta.ready || now - this.lastFullAt >= FULL_SNAPSHOT_MS;
+    if (forceFull) {
+      this.delta.prime(snap);
+      this.lastFullAt = now;
+      const msg = JSON.stringify({ t: 'snapshot', snap } satisfies ServerFrame);
+      let sent = 0;
+      for (const c of this.clients.values()) {
+        if (c.ws.readyState !== c.ws.OPEN) continue;
+        c.ws.send(msg); c.baselined = true; sent++;
+      }
+      counters.snapshotFrames += sent;
+      counters.snapshotBytes += msg.length * sent;
+      return;
+    }
+
+    const delta = this.delta.next(snap)!;
+    // Контрольная сумма ТОГО ЖЕ кадра: клиент сверяет по ней свою реконструкцию.
+    const deltaMsg = JSON.stringify({ t: 'snapDelta', delta, sum: worldChecksum(snap) } satisfies ServerFrame);
+    let fullMsg: string | null = null;
+    let bytes = 0;
+    let sent = 0;
+    for (const c of this.clients.values()) {
+      if (c.ws.readyState !== c.ws.OPEN) continue;
+      if (c.baselined) { c.ws.send(deltaMsg); bytes += deltaMsg.length; }
+      else {
+        // Вошёл между кадрами: базис у него пустой, поэтому первый кадр — полный.
+        fullMsg ??= JSON.stringify({ t: 'snapshot', snap } satisfies ServerFrame);
+        c.ws.send(fullMsg); c.baselined = true; bytes += fullMsg.length;
+      }
+      sent++;
+    }
+    counters.snapshotFrames += sent;
+    counters.snapshotBytes += bytes;
   }
 
   /** Трекинг цели квеста для игрока: мутирует сейв, копит «выполнено»-события. */

@@ -24,7 +24,8 @@
     "loadtest:server": "tsx packages/server/src/loadtest/probe.ts",
     "poc:dupe": "tsx packages/server/src/loadtest/dupe.ts",
     "bench:tick": "tsx packages/server/src/loadtest/tick.ts",
-    "poc:flood": "tsx packages/server/src/loadtest/flood.ts"
+    "poc:flood": "tsx packages/server/src/loadtest/flood.ts",
+    "poc:delta": "tsx packages/server/src/loadtest/deltacheck.ts"
   },
   "engines": {
     "node": ">=24"

@@ -44,7 +44,7 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
       x: p.pos.x, y: p.pos.y, facing: p.facing,
       hp: p.hp, mana: p.mana, stamina: p.stamina, alive: p.alive,
       debuffs: p.debuffs, toggles: p.toggles,
-      inCombat: p.combatTimer > 0 ? true : undefined,
+      inCombat: p.combatTimer > 0,
     })),
     monsters: w.monsters.map((m) => ({
       id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,

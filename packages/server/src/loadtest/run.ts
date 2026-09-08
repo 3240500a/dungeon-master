@@ -66,6 +66,8 @@ async function main(): Promise<void> {
   const bytes = bots.reduce((a, b) => a + b.stats.bytes, 0);
   const snaps = bots.reduce((a, b) => a + b.stats.snapshots, 0);
   const errors = bots.flatMap((b) => b.stats.errors);
+  const mismatches = bots.reduce((a, b) => a + b.stats.deltaMismatches, 0);
+  const checks = bots.reduce((a, b) => a + b.stats.deltaChecks, 0);
   const rtts = bots.filter((b) => b.stats.rttCount > 0).map((b) => b.stats.rttSum / b.stats.rttCount).sort((x, y) => x - y);
   const median = rtts.length ? rtts[Math.floor(rtts.length / 2)]! : NaN;
   const p95 = rtts.length ? rtts[Math.min(rtts.length - 1, Math.floor(rtts.length * 0.95))]! : NaN;
@@ -76,16 +78,19 @@ async function main(): Promise<void> {
   const okRtt = median <= RTT_LIMIT;
   const okAlive = alive === bots.length && bots.length === N;
   const okErr = errors.length === 0;
+  // Ф1.3: сверок должно быть больше нуля, расхождений — ровно ноль.
+  const okDelta = mismatches === 0 && checks > 0;
 
   console.log(`
 ────────────────────────────────────────────────────────
 ИТОГ   ${N} ботов, пати по ${GROUP}, ${dt.toFixed(0)} с
-  снапшотов/с    ${tickRate.toFixed(1)}   (норма ${SNAP_HZ})        ${verdict(okTick)}
+  кадров мира/с  ${tickRate.toFixed(1)}   (норма ${SNAP_HZ})        ${verdict(okTick)}
   RTT медиана    ${median.toFixed(1)} мс   (порог ${RTT_LIMIT})        ${verdict(okRtt)}
   RTT p95        ${p95.toFixed(1)} мс
   трафик вниз    ${kbPerClient.toFixed(0)} КБ/с на клиента · ${(bytes / dt / 1048576).toFixed(2)} МБ/с всего
   живых          ${alive}/${N}                          ${verdict(okAlive)}
   ошибок         ${errors.length}                              ${verdict(okErr)}
+  дельты         ${checks} сверок, ${mismatches} расхождений       ${verdict(okDelta)}
 ────────────────────────────────────────────────────────`);
   if (errors.length) {
     const uniq = [...new Set(errors)].slice(0, 5);
@@ -93,7 +98,7 @@ async function main(): Promise<void> {
   }
 
   for (const b of bots) b.stop();
-  process.exit(okTick && okRtt && okAlive && okErr ? 0 : 1);
+  process.exit(okTick && okRtt && okAlive && okErr && okDelta ? 0 : 1);
 }
 
 void main();

@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { ClientFrame, ServerFrame } from '@dm/shared';
+import { applyWorldDelta, worldChecksum, type ClientFrame, type ServerFrame, type WorldSnapshot } from '@dm/shared';
 
 /**
  * Бот-клиент нагрузочного стенда: регистрация → персонаж → комната → спуск → ввод с частотой тика.
@@ -37,10 +37,21 @@ export interface BotStats {
   snapshots: number;
   /** Кадры `error` от сервера — важны: молчаливый отказ легко проглядеть. */
   errors: string[];
+  /**
+   * Расхождения дельт (Ф1.3). Бот применяет дельты к своей копии мира, а когда приходит
+   * периодический ПОЛНЫЙ кадр — сверяет реконструкцию с истиной. Любое ненулевое значение
+   * означает ошибку в дельта-протоколе, и это самая дешёвая возможная проверка: сервер
+   * и так шлёт полный кадр раз в несколько секунд.
+   */
+  deltaMismatches: number;
+  /** Сколько полных кадров удалось сверить (чтобы «ноль расхождений» не означал «ноль сверок»). */
+  deltaChecks: number;
 }
 
 export class LoadBot {
-  readonly stats: BotStats = { rttSum: 0, rttCount: 0, bytes: 0, snapshots: 0, errors: [] };
+  readonly stats: BotStats = { rttSum: 0, rttCount: 0, bytes: 0, snapshots: 0, errors: [], deltaMismatches: 0, deltaChecks: 0 };
+  /** Своя копия мира: полный кадр задаёт её, дельты двигают. */
+  private world?: WorldSnapshot;
   private ws?: WebSocket;
   private inputTimer?: ReturnType<typeof setInterval>;
   private pingTimer?: ReturnType<typeof setInterval>;
@@ -100,6 +111,7 @@ export class LoadBot {
   resetStats(): void {
     this.stats.rttSum = 0; this.stats.rttCount = 0;
     this.stats.bytes = 0; this.stats.snapshots = 0;
+    this.stats.deltaMismatches = 0; this.stats.deltaChecks = 0;
   }
 
   private onMessage(data: Buffer, group: number): void {
@@ -109,6 +121,17 @@ export class LoadBot {
     switch (frame.t) {
       case 'snapshot':
         this.stats.snapshots++;
+        this.world = frame.snap;
+        break;
+      case 'snapDelta':
+        this.stats.snapshots++;
+        if (this.world) {
+          this.world = applyWorldDelta(this.world, frame.delta);
+          // Сверка НА ТОМ ЖЕ ТИКЕ: сумма приехала вместе с дельтой. Сравнивать реконструкцию
+          // со следующим полным кадром нельзя — он описывает более поздний тик.
+          this.stats.deltaChecks++;
+          if (worldChecksum(this.world) !== frame.sum) this.stats.deltaMismatches++;
+        }
         break;
       case 'pong': {
         const at = this.pingSentAt.get(frame.id);

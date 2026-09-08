@@ -7,7 +7,7 @@ import { DroppedItem } from '../modules/loot/droppedItem.js';
 import { PlayerVfx } from '../modules/combat/playerVfx.js';
 import { SnapshotBuffer } from './snapshotBuffer.js';
 import { dmgColorNum } from '../core/damageTypes.js';
-import { monsterCombatStats } from '@dm/shared';
+import { monsterCombatStats, applyWorldDelta } from '@dm/shared';
 import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot, WorldSnapshotFull, PeerInfo } from '@dm/shared';
 
 /** Задержка интерполяции чужих сущностей (мс): рисуем их немного в прошлом, чтобы сгладить 30 Гц + джиттер. */
@@ -62,6 +62,8 @@ export class NetDriver {
   private buffer = new SnapshotBuffer();
   /** Ф1.1: статика игроков (имя/класс/макс.HP/радиус/внешность) — приходит отдельно от снапшота. */
   private peerStatics = new Map<string, PeerInfo>();
+  /** Последняя ДИНАМИКА с сервера — база для применения дельт (Ф1.3). */
+  private lastDynamic?: WorldSnapshot;
 
   /** Слить динамику снапшота со статикой из реестра. */
   private mergeSnapshot(snap: WorldSnapshot): WorldSnapshotFull {
@@ -111,7 +113,18 @@ export class NetDriver {
     app.net.on('peerInfo', (f) => { for (const pi of f.peers) this.peerStatics.set(pi.id, pi); });
     app.net.on('peerJoined', (f) => { this.peerStatics.set(f.peer.id, f.peer); });
     app.net.on('snapshot', (f) => {
+      this.lastDynamic = f.snap;
       const merged = this.mergeSnapshot(f.snap);
+      this.latest = merged;
+      this.buffer.push(merged, performance.now());
+    });
+    // Ф1.3: дельта применяется к последней ДИНАМИКЕ, статика подмешивается после.
+    app.net.on('snapDelta', (f) => {
+      const base = this.lastDynamic;
+      if (!base) return; // до первого полного кадра применять не к чему
+      const next = applyWorldDelta(base, f.delta);
+      this.lastDynamic = next;
+      const merged = this.mergeSnapshot(next);
       this.latest = merged;
       this.buffer.push(merged, performance.now());
     });

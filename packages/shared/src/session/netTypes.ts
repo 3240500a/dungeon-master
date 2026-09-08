@@ -8,6 +8,7 @@ import type { Grid } from '../world/grid.js';
 import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { RunPlan } from '../dungeon/run/types.js';
 import type { PlayerInput, SessionEvent } from './session.js';
+import type { WorldDelta } from './delta.js';
 
 /**
  * Сетевой протокол кооп-сервера (MP-2). Кадры JSON, авторитет — сервер: клиент шлёт
@@ -37,8 +38,14 @@ export interface PlayerView {
   alive: boolean;
   debuffs: DebuffState;
   toggles: string[];
-  /** «В бою» (боевой айдл): своя атака ИЛИ на игрока целится монстр. Клиент → боевая стойка. */
-  inCombat?: boolean;
+  /**
+   * «В бою» (боевой айдл): своя атака ИЛИ на игрока целится монстр. Клиент → боевая стойка.
+   *
+   * Поле ОБЯЗАТЕЛЬНОЕ, и это важно для дельт (Ф1.3): `undefined` не переживает JSON, поэтому
+   * «флаг погас» через отсутствие ключа не передаётся — клиент навсегда остался бы в бою.
+   * Проверено стендом: 594 расхождения из 602 сверок, пока поле было опциональным.
+   */
+  inCombat: boolean;
 }
 
 /**
@@ -197,6 +204,9 @@ export type ServerFrame =
   // Подтверждение abandon: забег заброшен (персонаж погиб со штрафом) — клиент открывает лобби.
   | { t: 'abandoned' }
   | { t: 'snapshot'; snap: WorldSnapshot }
+  // Ф1.3: дельта к прошлому кадру. Первый кадр клиента ВСЕГДА полный, дальше идут дельты;
+  // WebSocket поверх TCP гарантирует порядок и доставку, поэтому подтверждений не нужно.
+  | { t: 'snapDelta'; delta: WorldDelta; sum: number }
   | { t: 'events'; events: SessionEvent[] }
   | { t: 'saveUpdate'; save: SaveState }
   | { t: 'shop'; items: Item[] }
