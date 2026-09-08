@@ -14,9 +14,9 @@ import {
   type DecorObject, type RunConfig, type RunPlan,
 } from '@dm/shared';
 import { putCharacter } from '../db/db.js';
+import { tickScheduler, TICK_MS, type Tickable } from './scheduler.js';
 import { loadAccountStash, saveAccountStash } from './accountStash.js';
 
-const TICK_MS = 1000 / 30;
 const TICK_DT = TICK_MS / 1000;
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
@@ -49,7 +49,7 @@ function idleInput(): PlayerInput {
  * города (магазин/экип/распределение) исполняет `townActions` над авторитетным сейвом. Спуск
  * по лестнице — по голосованию (переход когда все «за»).
  */
-export class Room {
+export class Room implements Tickable {
   readonly code: string;
   private cfg: ConfigRegistry;
   private session: GameSession;
@@ -72,7 +72,6 @@ export class Room {
   private runConfig: RunConfig | null = null;
   private runPlan: RunPlan | null = null;
   private runNodeId: string | null = null;
-  private loop: ReturnType<typeof setInterval> | null = null;
   private hooks: RoomHooks;
   /** Отключённые игроки (charId → инфо) — ждут реконнекта в эту комнату. */
   private disconnected = new Map<string, Disconnected>();
@@ -86,7 +85,7 @@ export class Room {
     this.seed = ((Date.now() & 0xffffff) >>> 0) || 1;
     this.session = new GameSession(cfg, this.seed, this.difficultyId, { rewards: true });
     this.enterTown();
-    this.loop = setInterval(() => this.step(), TICK_MS);
+    tickScheduler.add(this);
   }
 
   get size(): number { return this.clients.size; }
@@ -116,7 +115,7 @@ export class Room {
     this.disconnected.delete(save.charId);
     this.hooks.onUngrace(save.charId);
     if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; }
-    if (!this.loop) this.loop = setInterval(() => this.step(), TICK_MS); // снять паузу (соло)
+    tickScheduler.add(this); // снять паузу (соло) — планировщик игнорит повторный add
     const spawnAt = info && info.floor === this.depth ? info.lastPos : undefined; // тот же этаж → та же точка
     return this.attach(ws, userId, save, spawnAt);
   }
@@ -206,7 +205,7 @@ export class Room {
 
   /** Комната опустела: пауза симуляции (мир замирает) + грейс-таймер. Возврат — через reconnect(). */
   private enterGrace(): void {
-    if (this.loop) { clearInterval(this.loop); this.loop = null; }
+    tickScheduler.remove(this);
     if (this.graceTimer) clearTimeout(this.graceTimer);
     const ms = Math.max(0, this.cfg.get('balance').reconnectGraceSec) * 1000;
     this.graceTimer = setTimeout(() => this.expireGrace(), ms);
@@ -566,11 +565,17 @@ export class Room {
   }
 
   // ── Луп ─────────────────────────────────────────────────────────────────────
-  private step(): void {
+  /**
+   * Один фиксированный шаг симуляции. Зовёт `tickScheduler`; `emit=false` на промежуточных
+   * шагах догона — тогда мир продвигается, но снапшот не рассылается (клиенту нужно актуальное
+   * состояние, а не история промежуточных шагов). События рассылаются всегда: они редкие,
+   * мелкие и терять их нельзя.
+   */
+  step(emit = true): void {
     const inputs: Record<string, PlayerInput> = {};
     for (const [pid, c] of this.clients) inputs[pid] = c.input;
     const events = this.session.tick(TICK_DT, inputs);
-    this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world, this.cfg.get('items.base')) });
+    if (emit) this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world, this.cfg.get('items.base')) });
     if (Date.now() - this.lastSaveAt >= AUTOSAVE_MS) this.persistAll(); // периодический автосейв прогресса
     if (this.wipeAt && Date.now() >= this.wipeAt) this.enterTown(); // вайп → авто-возврат в город
     if (this.area === 'arena' && this.arenaRespawns.size) this.tickArenaRespawns(); // авто-возрождение в PvP
@@ -642,7 +647,7 @@ export class Room {
   }
 
   stop(): void {
-    if (this.loop) { clearInterval(this.loop); this.loop = null; }
+    tickScheduler.remove(this);
   }
 
   // ── Хелперы отправки ────────────────────────────────────────────────────────

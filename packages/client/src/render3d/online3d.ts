@@ -947,6 +947,8 @@ export async function startOnline3d(): Promise<void> {
 
   // ── Ввод → сервер (схема как в 2D NetDriver) ─────────────────────────────────
   const wasHeld: Record<string, boolean> = {};   // предыдущее удержание по источнику — фронт-детекция тоглов
+  const INPUT_PERIOD = 1 / 30;                  // Ф0.8: шлём ввод с частотой тика сервера, не кадров
+  let inputAcc = INPUT_PERIOD;                  // первый кадр отправляем сразу
   function isToggleSkill(nodeId: string): boolean {
     const cat = app.config.get('skill-tree')?.nodes.find((n) => n.id === nodeId)?.effect.active?.category;
     return cat === 'aura' || cat === 'stance';
@@ -1030,7 +1032,11 @@ export async function startOnline3d(): Promise<void> {
     updatePing();
     if (app.net.connected && myId && latest && app.state) {
       const _tw = performance.now();
-      sendInput(); renderWorld(dt); hud.update(); updateInteractions();   // «мир»: драйв актёров + поза-пайплайн + HUD
+      // Ф0.8: ввод не чаще тика сервера. Раньше слался каждый кадр (60–144 Гц), а сервер
+      // всё равно оставляет последний за тик — лишние кадры это только разбор JSON на сервере.
+      inputAcc += dt;
+      if (inputAcc >= INPUT_PERIOD) { inputAcc = 0; sendInput(); }
+      renderWorld(dt); hud.update(); updateInteractions();   // «мир»: драйв актёров + поза-пайплайн + HUD
       msWorld += (performance.now() - _tw - msWorld) * 0.1;
       const me = latest.players.find((p) => p.id === myId);
       miniAcc += dt;

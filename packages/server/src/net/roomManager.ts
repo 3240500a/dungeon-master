@@ -22,8 +22,18 @@ function runDepthOf(nodeId: string): number {
  * Реконнект-грейс возникает ТОЛЬКО при выходе из подземелья (в городе выход = чистый разрыв).
  * Роутит кадры клиента в его комнату; ws → {playerId, room}; пустая комната самоуничтожается.
  */
+/**
+ * Ф0.8: потолок частоты кадров `input` на соединение. Боевой клиент шлёт ввод из рендер-цикла,
+ * то есть 60–144 Гц, а полезны из них только 30: `setInput` просто перезаписывает последний.
+ * Приём кадра стоит ~13 мкс, то есть столько же, сколько отправка, — лишние кадры это чистая
+ * потеря. Лимит с запасом на джиттер клиента; сверх лимита кадр молча отбрасывается.
+ */
+const INPUT_HZ_LIMIT = 40;
+
 export class RoomManager {
   private rooms = new Map<string, Room>();
+  /** Счётчик кадров ввода в текущем окне на соединение: {окно (сек), сколько пришло, сколько отброшено}. */
+  private inputRate = new Map<WebSocket, { sec: number; seen: number; dropped: number }>();
   private conns = new Map<WebSocket, { pid: string; room: Room }>();
   /** charId → комната, ждущая его реконнекта (заморожена/активна). Реконнект возвращает в ту же точку. */
   private graceByChar = new Map<string, Room>();
@@ -124,7 +134,7 @@ export class RoomManager {
     const conn = this.conns.get(ws);
     if (!conn) return;
     switch (frame.t) {
-      case 'input': conn.room.setInput(conn.pid, frame.input); break;
+      case 'input': if (this.allowInput(ws)) conn.room.setInput(conn.pid, frame.input); break;
       case 'cmd': conn.room.handleCmd(conn.pid, frame.command); break;
       case 'descend': conn.room.descend(conn.pid, frame.difficultyId, frame.targetNodeId, frame.runConfig); break;
       case 'arena': conn.room.enterArena(conn.pid); break;
@@ -136,6 +146,7 @@ export class RoomManager {
   }
 
   private onClose(ws: WebSocket): void {
+    this.inputRate.delete(ws);
     const conn = this.conns.get(ws);
     if (!conn) return;
     conn.room.removePlayer(conn.pid);
@@ -152,6 +163,20 @@ export class RoomManager {
     });
     this.rooms.set(code, room);
     return room;
+  }
+
+  /**
+   * Пропускать ли этот кадр ввода. Окно — одна секунда; сверх `INPUT_HZ_LIMIT` кадры
+   * отбрасываются. Соединение не рвём: лишняя частота это почти всегда высокий FPS клиента,
+   * а не злонамеренность (злонамеренность ловит общий лимит кадров ws, задача Ф0.5).
+   */
+  private allowInput(ws: WebSocket): boolean {
+    const sec = Math.floor(Date.now() / 1000);
+    let r = this.inputRate.get(ws);
+    if (!r || r.sec !== sec) { r = { sec, seen: 0, dropped: 0 }; this.inputRate.set(ws, r); }
+    r.seen++;
+    if (r.seen > INPUT_HZ_LIMIT) { r.dropped++; return false; }
+    return true;
   }
 
   /** Проверка сессии + владения персонажем. Ошибку шлёт сама; возвращает userId или undefined. */
