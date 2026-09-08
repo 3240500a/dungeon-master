@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import { levelForXp, packInventory, applyDeathPenalty, type ConfigRegistry, type ClientFrame, type SaveState } from '@dm/shared';
 import { getSession, getCharacter, putCharacter } from '../db/db.js';
 import { Room } from './room.js';
+import { limits } from './rateLimit.js';
 
 function newCode(): string {
   return Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -37,6 +38,16 @@ export class RoomManager {
   private conns = new Map<WebSocket, { pid: string; room: Room }>();
   /** charId → комната, ждущая его реконнекта (заморожена/активна). Реконнект возвращает в ту же точку. */
   private graceByChar = new Map<string, Room>();
+  /**
+   * Ф0.3: РЕЕСТР ЖИВЫХ СЕССИЙ, `charId → соединение`. Инвариант: у персонажа во всём процессе
+   * ровно одна живая сессия. Раньше дедуп был только ВНУТРИ комнаты, поэтому второй `join`
+   * без кода просто создавал вторую комнату — обе держали свою копию сейва и писали её раз
+   * в 10 секунд (last-writer-wins). Это и есть подтверждённый дюп; PoC — `loadtest/dupe.ts`.
+   */
+  private live = new Map<string, WebSocket>();
+  /** Ключи соединений для лимитеров частоты (Ф0.5). */
+  private connKeys = new WeakMap<WebSocket, string>();
+  private connSeq = 0;
 
   constructor(private cfg: ConfigRegistry) {}
 
@@ -52,6 +63,14 @@ export class RoomManager {
   }
 
   private onMessage(ws: WebSocket, raw: string): void {
+    // Ф0.5: общий потолок кадров на соединение — проверяем ДО разбора JSON, иначе флудер
+    // заставляет нас парсить его мусор. Превышение потолка это уже не «высокий FPS»
+    // (тот отсекается мягким лимитом ввода), а поведение, которого у клиента быть не должно.
+    if (!limits.wsFrames.take(this.connKey(ws))) {
+      try { ws.close(4008, 'rate limit'); } catch { /* уже закрыт */ }
+      this.onClose(ws);
+      return;
+    }
     let frame: ClientFrame;
     try { frame = JSON.parse(raw) as ClientFrame; } catch { return; }
 
@@ -65,9 +84,10 @@ export class RoomManager {
       const userId = this.authOwner(ws, frame.token, frame.charId);
       if (!userId) return;
       const room = this.graceByChar.get(frame.charId);
-      const save = room ? undefined : this.ownedSave(userId, frame.charId);
-      const hasRun = !!room || !!save?.run;
-      const depth = room?.currentDepth ?? (save?.run ? runDepthOf(save.run.currentNodeId) : 0);
+      const owned = room ? undefined : this.ownedSave(userId, frame.charId);
+      const run = owned?.save.run;
+      const hasRun = !!room || !!run;
+      const depth = room?.currentDepth ?? (run ? runDepthOf(run.currentNodeId) : 0);
       ws.send(JSON.stringify({ t: 'runStatus', hasRun, roomCode: room?.code, depth }));
       return;
     }
@@ -80,8 +100,14 @@ export class RoomManager {
       const graceRoom = this.graceByChar.get(frame.charId);
       if (graceRoom) graceRoom.abandonAsDead(frame.charId);
       else {
-        const save = this.ownedSave(userId, frame.charId);
-        if (save?.run) { applyDeathPenalty(save, this.cfg.get('balance').deathPenalty); save.run = undefined; putCharacter(frame.charId, userId, save); }
+        const owned = this.ownedSave(userId, frame.charId);
+        if (owned?.save.run) {
+          applyDeathPenalty(owned.save, this.cfg.get('balance').deathPenalty);
+          owned.save.run = undefined;
+          if (putCharacter(frame.charId, userId, owned.save, owned.version) === null) {
+            console.warn(`[room] отклонён устаревший сейв при abandon ${frame.charId}`);
+          }
+        }
       }
       ws.send(JSON.stringify({ t: 'abandoned' }));
       return;
@@ -91,22 +117,28 @@ export class RoomManager {
       if (this.conns.has(ws)) return;
       const userId = this.authOwner(ws, frame.token, frame.charId);
       if (!userId) return;
+      // Ф0.3: этот персонаж уже где-то играет — выселяем старую сессию ДО чтения сейва из БД,
+      // чтобы новая прочитала уже зафиксированный прогресс, а не обогнала его.
+      this.evictLive(frame.charId);
 
       // Продолжить забег: грейс-комната → возврат в ту же точку; иначе (грейс истёк / город-разрыв,
       // но save.run цел) → пересобираем забег в НОВОЙ комнате из save.run.config (тот же узел).
       if (frame.resume) {
-        const save = this.ownedSave(userId, frame.charId);
-        if (!save) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
+        const owned = this.ownedSave(userId, frame.charId);
+        if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
+        const { save, version } = owned;
         const graceRoom = this.graceByChar.get(frame.charId);
         if (graceRoom) {
-          const pid = graceRoom.reconnect(ws, userId, save);
+          const pid = graceRoom.reconnect(ws, userId, save, version);
           this.conns.set(ws, { pid, room: graceRoom });
+          this.live.set(save.charId, ws);
           return;
         }
         if (save.run) {
           const room = this.createRoom();
-          const pid = room.addPlayerResumeRun(ws, userId, save);
+          const pid = room.addPlayerResumeRun(ws, userId, save, version);
           this.conns.set(ws, { pid, room });
+          this.live.set(save.charId, ws);
           return;
         }
         ws.send(JSON.stringify({ t: 'error', code: 'no-run', msg: 'Забег не найден' }));
@@ -116,18 +148,25 @@ export class RoomManager {
       // Осознанный вход в НОВУЮ комнату (соло/хост/по коду): висел незавершённый забег — считаем
       // его брошенным (штраф) ДО чтения сейва, чтобы новый вход взял уже урезанный сейв из БД.
       this.graceByChar.get(frame.charId)?.abandonAsDead(frame.charId);
-      const save = this.ownedSave(userId, frame.charId);
-      if (!save) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
+      const owned = this.ownedSave(userId, frame.charId);
+      if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
       let room: Room;
       if (frame.roomCode) {
         const existing = this.rooms.get(frame.roomCode.toUpperCase());
         if (!existing) { ws.send(JSON.stringify({ t: 'error', code: 'no-room', msg: 'Комната не найдена' })); return; }
         room = existing;
       } else {
+        // Ф0.5: каждая новая комната — это свой тик в планировщике. Без лимита тысяча join'ов
+        // кладёт процесс. Ключ — пользователь: он уже проверен на владение персонажем.
+        if (!limits.roomCreate.take(userId)) {
+          ws.send(JSON.stringify({ t: 'error', code: 'rate', msg: 'Слишком часто создаёте комнаты' }));
+          return;
+        }
         room = this.createRoom();
       }
-      const pid = room.addPlayer(ws, userId, save);
+      const pid = room.addPlayer(ws, userId, owned.save, owned.version);
       this.conns.set(ws, { pid, room });
+      this.live.set(owned.save.charId, ws);
       return;
     }
 
@@ -145,10 +184,33 @@ export class RoomManager {
     }
   }
 
+  /** Стабильный ключ соединения для лимитеров: сокет живёт ровно одну сессию. */
+  private connKey(ws: WebSocket): string {
+    let k = this.connKeys.get(ws);
+    if (!k) { k = `c${++this.connSeq}`; this.connKeys.set(ws, k); }
+    return k;
+  }
+
+  /**
+   * Выселяет живую сессию персонажа, если она есть: закрывает её соединение и снимает игрока
+   * с комнаты (это же персистит его прогресс). Выселяем, а не отказываем новому входу: чаще
+   * всего вторая сессия — это реконнект после обрыва, и держать игрока снаружи до таймаута хуже.
+   */
+  private evictLive(charId: string): void {
+    const old = this.live.get(charId);
+    if (!old) return;
+    this.live.delete(charId);
+    const conn = this.conns.get(old);
+    if (conn) { conn.room.removePlayer(conn.pid); this.conns.delete(old); }
+    this.inputRate.delete(old);
+    try { old.close(4001, 'replaced'); } catch { /* уже закрыт */ }
+  }
+
   private onClose(ws: WebSocket): void {
     this.inputRate.delete(ws);
     const conn = this.conns.get(ws);
     if (!conn) return;
+    for (const [charId, sock] of this.live) if (sock === ws) { this.live.delete(charId); break; }
     conn.room.removePlayer(conn.pid);
     this.conns.delete(ws);
   }
@@ -190,11 +252,14 @@ export class RoomManager {
     return userId;
   }
 
-  /** Свежий сейв персонажа из БД (после возможного штрафа за бросок забега) + лёгкий анти-чит. */
-  private ownedSave(userId: string, charId: string): SaveState | undefined {
+  /**
+   * Свежий сейв персонажа из БД + его версия (Ф0.3) + лёгкий анти-чит. Версия едет в комнату
+   * и предъявляется при каждой записи: устаревшая копия не сможет затереть свежую.
+   */
+  private ownedSave(userId: string, charId: string): { save: SaveState; version: number } | undefined {
     const character = getCharacter(charId);
     if (!character || character.userId !== userId) return undefined;
-    return this.sanitize(character.data);
+    return { save: this.sanitize(character.data), version: character.version };
   }
 
   /** Лёгкий анти-чит поверх сохранённого сейва: уровень из опыта, золото ≥0 (полный объект, без стрипа). */

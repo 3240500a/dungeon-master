@@ -64,14 +64,28 @@ async function main(): Promise<void> {
   console.log(`PoC дюпа: персонаж ${character.charId}`);
 
   const a = await openSession('сессия A', token, character.charId);
+  let aClosed = false;
+  a.ws.on('close', () => { aClosed = true; });
   await new Promise((r) => setTimeout(r, 500));
 
+  // Инвариант — «во всём процессе ровно одна живая сессия персонажа». Его держат ДВЕ разные
+  // допустимые семантики, и обе для нас годятся:
+  //   отказ    — второй вход отклонён, играет A;
+  //   выселение — второй вход принят, но A принудительно отключён (так сделано у нас: чаще
+  //               всего второй вход это реконнект после обрыва, держать игрока снаружи хуже).
+  // Дюп — это третий случай: B вошёл, а A остался жив. Тогда две копии сейва пишутся
+  // независимо, last-writer-wins, и предмет из сундука возвращается в инвентарь.
   let dupe = false;
   try {
     const b = await openSession('сессия B (тот же charId!)', token, character.charId);
-    dupe = true;
-    console.log(`\n✗ ДЮП ВОСПРОИЗВОДИТСЯ: один персонаж живёт в комнатах ${a.room} и ${b.room} одновременно.`);
-    console.log('  Обе комнаты держат свою копию сейва и пишут её в БД каждые 10 с (last-writer-wins).');
+    await new Promise((r) => setTimeout(r, 1500)); // даём серверу закрыть выселенную сессию
+    if (aClosed) {
+      console.log(`\n✓ Инвариант держится: B вошёл в ${b.room}, сессия A выселена и отключена.`);
+    } else {
+      dupe = true;
+      console.log(`\n✗ ДЮП ВОСПРОИЗВОДИТСЯ: персонаж живёт в комнатах ${a.room} и ${b.room} одновременно.`);
+      console.log('  Обе комнаты держат свою копию сейва и пишут её в БД раз в 10 с (last-writer-wins).');
+    }
     b.ws.close();
   } catch {
     console.log('\n✓ Инвариант держится: второй вход тем же персонажем отклонён.');

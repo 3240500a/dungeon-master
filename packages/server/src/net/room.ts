@@ -11,9 +11,9 @@ import {
   PROTOCOL_VERSION,
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
   type FloorInit, type PeerLite, type ServerFrame, type TownCommand, type QuestDef,
-  type DecorObject, type RunConfig, type RunPlan,
+  type DecorObject, type RunConfig, type RunPlan, type AccountStash,
 } from '@dm/shared';
-import { putCharacter } from '../db/db.js';
+import { putCharacter, putCharacterWithStash } from '../db/db.js';
 import { tickScheduler, TICK_MS, type Tickable } from './scheduler.js';
 import { loadAccountStash, saveAccountStash } from './accountStash.js';
 
@@ -24,13 +24,20 @@ const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARE
 const ARENA_IMMUNE_MS = 2_000;      // спавн-иммунитет игрока в арене (мс)
 const ARENA_RESPAWN_MS = 3_000;     // задержка авто-возрождения после гибели в арене (мс)
 
-interface Client { pid: string; ws: WebSocket; input: PlayerInput; userId: string; }
+interface Client {
+  pid: string;
+  ws: WebSocket;
+  input: PlayerInput;
+  userId: string;
+  /** Версия сейва в БД, которую держит эта сессия (Ф0.3). Растёт после каждой успешной записи. */
+  saveVersion: number;
+}
 
 /** Выбор «алтаря» при старте забега (биом/шаблон/модификаторы) — из кадра `descend` города. */
 type AltarConfig = { biomeId?: string; templateId?: string; modifiers?: string[] };
 
 /** Инфо об отключённом игроке — чтобы вернуть его на ту же точку при реконнекте. */
-interface Disconnected { save: SaveState; userId: string; lastPos: { x: number; y: number }; floor: number; }
+interface Disconnected { save: SaveState; userId: string; lastPos: { x: number; y: number }; floor: number; saveVersion: number; }
 
 /** Хуки комнаты в RoomManager: уничтожение + регистрация/снятие грейс-реконнекта по charId. */
 interface RoomHooks {
@@ -93,14 +100,14 @@ export class Room implements Tickable {
   // ── Игроки ──────────────────────────────────────────────────────────────────
   // Личность/владение персонажем проверяет `roomManager` (сессия+charId), сюда приходит уже
   // авторитетный сейв владельца `userId` — комната лишь ведёт игру и персистит.
-  addPlayer(ws: WebSocket, userId: string, save: SaveState): string {
-    return this.attach(ws, userId, save);
+  addPlayer(ws: WebSocket, userId: string, save: SaveState, version: number): string {
+    return this.attach(ws, userId, save, version);
   }
 
   /** Вход + немедленное ПРОДОЛЖЕНИЕ сохранённого забега (реконнект БЕЗ грейс-комнаты: комната истекла или
    *  разрыв был в городе, но `save.run` цел). Граф регенерится из `save.run.config`, входим в текущий узел. */
-  addPlayerResumeRun(ws: WebSocket, userId: string, save: SaveState): string {
-    const pid = this.attach(ws, userId, save);
+  addPlayerResumeRun(ws: WebSocket, userId: string, save: SaveState, version: number): string {
+    const pid = this.attach(ws, userId, save, version);
     if (save.run) this.resumeRun(save);   // регенерит runPlan из config и enterNode(currentNodeId) → тот же этаж
     return pid;
   }
@@ -110,18 +117,18 @@ export class Room implements Tickable {
    * если пати ещё на том же этаже; если без него спустились дальше — начало текущего этажа.
    * Снимаем паузу (соло) и отменяем грейс-таймер.
    */
-  reconnect(ws: WebSocket, userId: string, save: SaveState): string {
+  reconnect(ws: WebSocket, userId: string, save: SaveState, version: number): string {
     const info = this.disconnected.get(save.charId);
     this.disconnected.delete(save.charId);
     this.hooks.onUngrace(save.charId);
     if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; }
     tickScheduler.add(this); // снять паузу (соло) — планировщик игнорит повторный add
     const spawnAt = info && info.floor === this.depth ? info.lastPos : undefined; // тот же этаж → та же точка
-    return this.attach(ws, userId, save, spawnAt);
+    return this.attach(ws, userId, save, version, spawnAt);
   }
 
   /** Общий путь входа/реконнекта: добавить игрока (опц. в заданную точку) и разослать кадры. */
-  private attach(ws: WebSocket, userId: string, save: SaveState, spawnAt?: { x: number; y: number }): string {
+  private attach(ws: WebSocket, userId: string, save: SaveState, version: number, spawnAt?: { x: number; y: number }): string {
     // Дедуп по charId: если этот персонаж уже активен (реконнект при ещё не разорванном старом ws —
     // TCP держит мёртвый коннект до heartbeat/таймаута), выселяем СТАРУЮ сущность БЕЗ грейса — иначе
     // в комнате два «меня» (тот самый баг «игра думает что нас трое»). Ровно один энтити на charId.
@@ -138,10 +145,10 @@ export class Room implements Tickable {
     if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
 
     const pid = `p_${randomUUID()}`;
-    this.clients.set(pid, { pid, ws, input: idleInput(), userId });
+    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version });
     this.session.addPlayer(pid, save, spawnAt);
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
-    putCharacter(save.charId, userId, save); // фиксируем на входе (reconnect найдёт запись)
+    this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
     this.send(ws, {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
       floor: this.currentFloorInit(), peers: this.peerList(pid), save,
@@ -157,11 +164,11 @@ export class Room implements Tickable {
     const p = this.session.world.players[pid];
     const c = this.clients.get(pid);
     if (p && c) {
-      putCharacter(p.save.charId, c.userId, p.save); // персист прогресса
+      this.persist(pid); // персист прогресса
       // Грейс-реконнект — ТОЛЬКО из подземелья: тело убираем из мира (монстры не бьют «пустого»),
       // ждём возврата в ту же точку. В городе выход = чистый разрыв (реконнекта нет, ждать нечего).
       if (this.area === 'dungeon') {
-        this.disconnected.set(p.save.charId, { save: p.save, userId: c.userId, lastPos: { ...p.pos }, floor: this.depth });
+        this.disconnected.set(p.save.charId, { save: p.save, userId: c.userId, lastPos: { ...p.pos }, floor: this.depth, saveVersion: c.saveVersion });
         this.hooks.onGrace(p.save.charId);
       }
     }
@@ -185,7 +192,7 @@ export class Room implements Tickable {
     const info = this.disconnected.get(charId);
     if (info) {
       applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty);
-      putCharacter(charId, info.userId, info.save);
+      this.persistDisconnected(charId, info);
       this.disconnected.delete(charId);
     }
     this.hooks.onUngrace(charId);
@@ -224,7 +231,7 @@ export class Room implements Tickable {
     const penalty = this.cfg.get('balance').deathPenalty;
     for (const [charId, info] of this.disconnected) {
       applyDeathPenalty(info.save, penalty);
-      putCharacter(charId, info.userId, info.save);
+      this.persistDisconnected(charId, info);
       this.hooks.onUngrace(charId);
     }
     this.disconnected.clear();
@@ -239,7 +246,7 @@ export class Room implements Tickable {
   private persistAll(): void {
     for (const [pid, c] of this.clients) {
       const p = this.session.world.players[pid];
-      if (p) putCharacter(p.save.charId, c.userId, p.save);
+      if (p) this.persist(c.pid);
     }
     this.lastSaveAt = Date.now();
   }
@@ -281,9 +288,20 @@ export class Room implements Tickable {
       case 'moveItem': r = moveInventoryItem(this.cfg, save, command.uid, command.x, command.y); break;
       case 'stashOpen': this.sendStash(pid); r = { ok: true }; break;
       case 'stashMove': {
+        // Ф0.4: сейв и сундук пишутся ОДНОЙ транзакцией прямо здесь. Раньше сундук уходил в базу
+        // сразу, а инвентарь — только следующим автосейвом (до 10 с): падение в этом окне давало
+        // предмет и там, и там. Если транзакция не прошла — откатываем перенос в памяти тоже,
+        // иначе разъедется уже оперативное состояние.
         const stash = loadAccountStash(c.userId, this.cfg);
+        const before = JSON.stringify(save.inventory);
         r = stashMove(this.cfg, save, stash, command.uid, command.dst, command.x, command.y);
-        if (r.ok) { saveAccountStash(c.userId, stash); this.sendStash(pid); } // инвентарь уедет в sendSave ниже
+        if (r.ok) {
+          if (this.persist(pid, stash)) this.sendStash(pid);
+          else {
+            save.inventory = JSON.parse(before) as typeof save.inventory;
+            r = { ok: false, reason: 'Не удалось сохранить перемещение, попробуйте ещё раз' };
+          }
+        }
         break;
       }
       case 'bind': r = setBinding(save, command.slot, command.value); break;
@@ -634,6 +652,39 @@ export class Room implements Tickable {
       const spawn = this.arenaSpawnByPid.get(pid) ?? this.arenaSpawns[0];
       if (spawn) this.session.respawnPlayer(pid, spawn, ARENA_IMMUNE_MS);
     }
+  }
+
+  /**
+   * ЕДИНСТВЕННАЯ точка записи сейва живого игрока (Ф0.3). Предъявляет версию, которую держит
+   * эта сессия, и запоминает новую. Отказ означает, что нашу копию кто-то обогнал — на исправном
+   * сервере такого быть не может (реестр живых сессий это исключает), поэтому шумим в лог.
+   *
+   * `stash` — если передан, сейв и сундук пишутся ОДНОЙ транзакцией (Ф0.4).
+   */
+  private persist(pid: string, stash?: AccountStash): boolean {
+    const c = this.clients.get(pid);
+    const p = this.session.world.players[pid];
+    if (!c || !p) return false;
+    const next = stash
+      ? putCharacterWithStash(p.save.charId, c.userId, p.save, c.saveVersion, stash)
+      : putCharacter(p.save.charId, c.userId, p.save, c.saveVersion);
+    if (next === null) {
+      console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв ${p.save.charId} (версия ${c.saveVersion}) — этот процесс держит копию, которую кто-то обогнал`);
+      return false;
+    }
+    c.saveVersion = next;
+    return true;
+  }
+
+  /** То же для отключённого игрока (грейс): у него своя копия сейва и своя версия. */
+  private persistDisconnected(charId: string, info: Disconnected): boolean {
+    const next = putCharacter(charId, info.userId, info.save, info.saveVersion);
+    if (next === null) {
+      console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв отключённого ${charId} (версия ${info.saveVersion})`);
+      return false;
+    }
+    info.saveVersion = next;
+    return true;
   }
 
   /** Трекинг цели квеста для игрока: мутирует сейв, копит «выполнено»-события. */

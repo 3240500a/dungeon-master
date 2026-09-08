@@ -30,7 +30,8 @@ db.exec(`
     charId TEXT PRIMARY KEY,
     userId TEXT NOT NULL,
     data TEXT NOT NULL,
-    updatedAt INTEGER NOT NULL
+    updatedAt INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_characters_userId ON characters (userId);
   CREATE TABLE IF NOT EXISTS config_overrides (
@@ -49,6 +50,16 @@ db.exec(`
     updatedAt INTEGER NOT NULL
   );
 `);
+
+// Миграция старых баз: колонка `version` появилась в Ф0.3 (оптимистичная блокировка сейва).
+// `CREATE TABLE IF NOT EXISTS` выше не трогает уже созданную таблицу, поэтому досоздаём вручную.
+{
+  const cols = db.prepare('PRAGMA table_info(characters)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'version')) {
+    db.exec('ALTER TABLE characters ADD COLUMN version INTEGER NOT NULL DEFAULT 0');
+    console.log('[dm-server] миграция: characters.version добавлена');
+  }
+}
 
 // ── Пользователи ───────────────────────────────────────────────────────────────
 export interface UserRow { id: string; username: string; passHash: string; passSalt: string; }
@@ -97,26 +108,76 @@ export function deleteSession(token: string): void {
 
 // ── Персонажи ──────────────────────────────────────────────────────────────────
 export interface CharacterSummary { charId: string; name: string; classId: string; level: number; }
-export interface CharacterRow { userId: string; data: SaveState; }
+export interface CharacterRow { userId: string; data: SaveState; version: number; }
 
-const upsertCharStmt = db.prepare(
-  `INSERT INTO characters (charId, userId, data, updatedAt) VALUES (?, ?, ?, ?)
-   ON CONFLICT(charId) DO UPDATE SET data = excluded.data, updatedAt = excluded.updatedAt`,
+const insertCharStmt = db.prepare(
+  'INSERT INTO characters (charId, userId, data, updatedAt, version) VALUES (?, ?, ?, ?, 1)',
 );
-const charStmt = db.prepare('SELECT userId, data FROM characters WHERE charId = ?');
+// Оптимистичная блокировка (Ф0.3): запись проходит, ТОЛЬКО если версия в базе та же, что была
+// прочитана. Устаревшая копия сейва (вторая живая сессия, зависшая комната) физически не может
+// затереть свежую — именно этим дюпы вида «положил в сундук из одной сессии, вторая вернула
+// старый инвентарь» и живут.
+const casCharStmt = db.prepare(
+  `UPDATE characters SET data = ?, updatedAt = ?, version = version + 1
+   WHERE charId = ? AND userId = ? AND version = ?`,
+);
+const charStmt = db.prepare('SELECT userId, data, version FROM characters WHERE charId = ?');
 const charsByUserStmt = db.prepare('SELECT data FROM characters WHERE userId = ? ORDER BY updatedAt DESC');
 const allCharsStmt = db.prepare('SELECT data FROM characters ORDER BY updatedAt DESC');
 const deleteCharStmt = db.prepare('DELETE FROM characters WHERE charId = ? AND userId = ?');
 const countCharsStmt = db.prepare('SELECT COUNT(*) AS n FROM characters WHERE userId = ?');
 
-/** Пишет/обновляет сейв персонажа (владелец фиксируется при создании). */
-export function putCharacter(charId: string, userId: string, data: SaveState): void {
-  upsertCharStmt.run(charId, userId, JSON.stringify(data), Date.now());
+/**
+ * Создаёт сейв нового персонажа. Возвращает стартовую версию (1).
+ * Бросает при попытке создать существующего (PRIMARY KEY).
+ */
+export function createCharacter(charId: string, userId: string, data: SaveState): number {
+  insertCharStmt.run(charId, userId, JSON.stringify(data), Date.now());
+  return 1;
 }
-/** Персонаж по charId (с владельцем) — для проверки владения на входе. */
+
+/**
+ * Пишет сейв персонажа с проверкой версии (Ф0.3). Возвращает НОВУЮ версию либо `null`, если
+ * версия разошлась — значит эту запись обогнал кто-то другой, и наша копия устарела.
+ *
+ * Отказ — это НЕ штатная ситуация: при исправном сервере у персонажа ровно одна живая сессия
+ * (`RoomManager.live`), поэтому расхождение версий означает либо гонку, которую мы не закрыли,
+ * либо зависшую комнату. Поэтому зовущая сторона обязана шуметь в лог, а не глотать.
+ */
+export function putCharacter(charId: string, userId: string, data: SaveState, expectedVersion: number): number | null {
+  const r = casCharStmt.run(JSON.stringify(data), Date.now(), charId, userId, expectedVersion);
+  return r.changes === 1 ? expectedVersion + 1 : null;
+}
+
+/** Персонаж по charId (с владельцем и версией) — для проверки владения на входе. */
 export function getCharacter(charId: string): CharacterRow | null {
-  const row = charStmt.get(charId) as { userId: string; data: string } | undefined;
-  return row ? { userId: row.userId, data: JSON.parse(row.data) as SaveState } : null;
+  const row = charStmt.get(charId) as { userId: string; data: string; version: number } | undefined;
+  return row ? { userId: row.userId, data: JSON.parse(row.data) as SaveState, version: row.version } : null;
+}
+
+/**
+ * Ф0.4: перенос предмета инвентарь ↔ сундук ОДНОЙ транзакцией.
+ *
+ * Раньше сундук писался сразу, а инвентарь игрока — только следующим автосейвом, до десяти
+ * секунд спустя. Падение процесса в этом окне давало предмет и там, и там: ровно та схема,
+ * которой дюпали D2R через сундук. Теперь либо обе строки, либо ни одной.
+ *
+ * Возвращает новую версию сейва либо `null`, если версия разошлась (тогда не записано ничего).
+ */
+export function putCharacterWithStash(
+  charId: string, userId: string, data: SaveState, expectedVersion: number, stash: AccountStash,
+): number | null {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const r = casCharStmt.run(JSON.stringify(data), Date.now(), charId, userId, expectedVersion);
+    if (r.changes !== 1) { db.exec('ROLLBACK'); return null; }
+    upsertStashStmt.run(userId, JSON.stringify(stash), Date.now());
+    db.exec('COMMIT');
+    return expectedVersion + 1;
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
 }
 /** Краткий ростер пользователя (для экрана выбора). */
 export function listCharacters(userId: string): CharacterSummary[] {
@@ -147,7 +208,7 @@ export function countCharacters(userId: string): number {
  */
 export function clearAllRuns(): number {
   const rows = db.prepare('SELECT charId, data FROM characters').all() as { charId: string; data: string }[];
-  const upd = db.prepare('UPDATE characters SET data = ?, updatedAt = ? WHERE charId = ?');
+  const upd = db.prepare('UPDATE characters SET data = ?, updatedAt = ?, version = version + 1 WHERE charId = ?');
   let n = 0;
   for (const r of rows) {
     let s: SaveState & { run?: unknown };

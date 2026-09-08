@@ -14,7 +14,10 @@ import { ConfigRegistry, newCharacterSave, type ServerFrame, type RunPlan, type 
  * из исходящих кадров.
  */
 vi.mock('../db/db.js', () => ({
-  putCharacter: () => {},
+  // Ф0.3: запись сейва возвращает НОВУЮ версию (или null при расхождении). Мок всегда успешен.
+  putCharacter: (_c: string, _u: string, _d: unknown, v: number) => v + 1,
+  putCharacterWithStash: (_c: string, _u: string, _d: unknown, v: number) => v + 1,
+  createCharacter: () => 1,
   getCharacter: () => null,
   getAccountStash: () => null,
   putAccountStash: () => {},
@@ -44,7 +47,7 @@ function makeRoom(): { room: Room; ws: FakeWs; pid: string } {
   rooms.push(room);
   const ws = new FakeWs();
   const save = newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Hero', `char-${++seq}`);
-  const pid = room.addPlayer(ws as unknown as WebSocket, 'user-1', save);
+  const pid = room.addPlayer(ws as unknown as WebSocket, 'user-1', save, 1);
   return { room, ws, pid };
 }
 const nodeOf = (plan: RunPlan, id: string): RunNode => plan.nodes.find((n) => n.id === id)!;

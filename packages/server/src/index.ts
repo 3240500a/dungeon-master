@@ -9,11 +9,12 @@ import { ConfigRegistry, newCharacterSave } from '@dm/shared';
 import { hashPassword, verifyPassword } from './auth/password.js';
 import {
   createUser, getUserByName, createSession, deleteSession, getSession,
-  listCharacters, listAllCharacters, getCharacter, putCharacter, deleteCharacter, countCharacters,
+  listCharacters, listAllCharacters, getCharacter, createCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty,
 } from './db/db.js';
 import { attachWsServer } from './net/wsServer.js';
+import { limits, clientIp } from './net/rateLimit.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 
@@ -257,6 +258,13 @@ function validCreds(body: unknown): { username: string; password: string } | nul
 
 // ── Аутентификация ───────────────────────────────────────────────────────────
 app.post('/api/register', (req, res) => {
+  // Ф0.5: без лимита один скрипт кладёт сервер регистрациями — каждая это scrypt (~100 мс CPU
+  // и десятки мегабайт). Ключ — IP; заголовок прокси учитывается, если он есть.
+  const ip = clientIp(req.headers, req.socket.remoteAddress);
+  if (!limits.register.take(ip)) {
+    res.setHeader('Retry-After', String(limits.register.retryAfterSec(ip)));
+    return res.status(429).json({ error: 'Слишком часто. Попробуйте позже' });
+  }
   const creds = validCreds(req.body);
   if (!creds) return res.status(422).json({ error: 'Ник 3–20 символов, пароль от 6' });
   if (getUserByName(creds.username)) return res.status(409).json({ error: 'Ник уже занят' });
@@ -266,12 +274,20 @@ app.post('/api/register', (req, res) => {
 });
 
 app.post('/api/login', (req, res) => {
+  // Ф0.5: тот же scrypt плюс защита от перебора пароля. Успешный вход обнуляет счётчик —
+  // человек, промахнувшийся пару раз, не должен потом ждать.
+  const ip = clientIp(req.headers, req.socket.remoteAddress);
+  if (!limits.login.take(ip)) {
+    res.setHeader('Retry-After', String(limits.login.retryAfterSec(ip)));
+    return res.status(429).json({ error: 'Слишком много попыток входа. Попробуйте позже' });
+  }
   const creds = validCreds(req.body);
   if (!creds) return res.status(422).json({ error: 'Неверные данные' });
   const user = getUserByName(creds.username);
   if (!user || !verifyPassword(creds.password, user.passHash, user.passSalt)) {
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
+  limits.login.reset(ip);
   res.json({ token: createSession(user.id), userId: user.id, username: user.username });
 });
 
@@ -297,7 +313,7 @@ app.post('/api/characters', (req, res) => {
   if (countCharacters(userId) >= MAX_CHARS) return res.status(409).json({ error: `Лимит ${MAX_CHARS} персонажей` });
   const charId = randomUUID();
   const save = newCharacterSave(config, classId, name, charId); // авторитетный стартовый сейв
-  putCharacter(charId, userId, save);
+  createCharacter(charId, userId, save);
   res.json({ character: { charId, name: save.name, classId: save.classId, level: save.level } });
 });
 

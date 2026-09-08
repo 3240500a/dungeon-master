@@ -14,6 +14,9 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 process.env.PORT ??= '3999';
 process.env.DM_DB ??= 'data/loadtest.db';
 process.env.NODE_ENV ??= 'production'; // как в проде: dev-роуты закрыты, кэш ассетов включён
+// Сотня ботов регистрируется с одного адреса и упёрлась бы в лимит Ф0.5 раньше замера.
+// Сами лимиты проверяются отдельно: `npm run poc:flood` против сервера БЕЗ этого флага.
+process.env.DM_RATELIMIT ??= 'off';
 
 const hist = monitorEventLoopDelay({ resolution: 5 });
 hist.enable();
