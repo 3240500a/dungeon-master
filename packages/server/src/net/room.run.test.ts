@@ -9,18 +9,19 @@ import { ConfigRegistry, newCharacterSave, type ServerFrame, type RunPlan, type 
  * завершение → город; `save.run` персистится в забеге и очищается на финале. Плюс алтарь:
  * выбор биома/шаблона учитывается, невалидный/выключенный отбрасывается (анти-чит).
  *
- * БД замокана: `db.ts` открывает SQLite (node:sqlite) при импорте — не тащим её в тест (и не
+ * БД замокана: `db.ts` открывает пул к Postgres при импорте — не тащим базу в юнит-тест (и не
  * трогаем боевую БД дев-сервера); персистентность здесь не проверяется, состояние забега берём
- * из исходящих кадров.
+ * из исходящих кадров. Ф2: доступ асинхронный, поэтому мок отдаёт ПРОМИСЫ — синхронный мок
+ * молча ломал бы `await` в комнате.
  */
 vi.mock('../db/db.js', () => ({
   // Ф0.3: запись сейва возвращает НОВУЮ версию (или null при расхождении). Мок всегда успешен.
-  putCharacter: (_c: string, _u: string, _d: unknown, v: number) => v + 1,
-  putCharacterWithStash: (_c: string, _u: string, _d: unknown, v: number) => v + 1,
-  createCharacter: () => 1,
-  getCharacter: () => null,
-  getAccountStash: () => null,
-  putAccountStash: () => {},
+  putCharacter: (_c: string, _u: string, _d: unknown, v: number) => Promise.resolve(v + 1),
+  putCharacterWithStash: (_c: string, _u: string, _d: unknown, v: number) => Promise.resolve(v + 1),
+  createCharacter: () => Promise.resolve(1),
+  getCharacter: () => Promise.resolve(null),
+  getAccountStash: () => Promise.resolve(null),
+  putAccountStash: () => Promise.resolve(),
 }));
 type Room = import('./room.js').Room;
 let RoomCtor: typeof import('./room.js').Room;

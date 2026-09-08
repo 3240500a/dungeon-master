@@ -64,6 +64,8 @@ interface Client {
   userId: string;
   /** Версия сейва в БД, которую держит эта сессия (Ф0.3). Растёт после каждой успешной записи. */
   saveVersion: number;
+  /** Хвост очереди записей сейва (Ф2): записи одного персонажа идут строго друг за другом. */
+  saving: Promise<void>;
 }
 
 /** Выбор «алтаря» при старте забега (биом/шаблон/модификаторы) — из кадра `descend` города. */
@@ -184,10 +186,10 @@ export class Room implements Tickable {
     if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
 
     const pid = `p_${randomUUID()}`;
-    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, baselined: false, delta: new SnapshotDelta(), visible: new Set() });
+    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, saving: Promise.resolve(), baselined: false, delta: new SnapshotDelta(), visible: new Set() });
     this.session.addPlayer(pid, save, spawnAt);
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
-    this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
+    void this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
     this.send(ws, {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
       floor: this.currentFloorInit(), peers: this.peerList(), save,
@@ -203,7 +205,7 @@ export class Room implements Tickable {
     const p = this.session.world.players[pid];
     const c = this.clients.get(pid);
     if (p && c) {
-      this.persist(pid); // персист прогресса
+      void this.persist(pid); // персист прогресса
       // Грейс-реконнект — ТОЛЬКО из подземелья: тело убираем из мира (монстры не бьют «пустого»),
       // ждём возврата в ту же точку. В городе выход = чистый разрыв (реконнекта нет, ждать нечего).
       if (this.area === 'dungeon') {
@@ -231,7 +233,7 @@ export class Room implements Tickable {
     const info = this.disconnected.get(charId);
     if (info) {
       applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty);
-      this.persistDisconnected(charId, info);
+      void this.persistDisconnected(charId, info);
       this.disconnected.delete(charId);
     }
     this.hooks.onUngrace(charId);
@@ -270,7 +272,7 @@ export class Room implements Tickable {
     const penalty = this.cfg.get('balance').deathPenalty;
     for (const [charId, info] of this.disconnected) {
       applyDeathPenalty(info.save, penalty);
-      this.persistDisconnected(charId, info);
+      void this.persistDisconnected(charId, info);
       this.hooks.onUngrace(charId);
     }
     this.disconnected.clear();
@@ -282,16 +284,22 @@ export class Room implements Tickable {
    * весь прогресс забега (персонаж откатывался к последнему сохранённому уровню). Вызывается
    * периодически (автосейв) и на чекпойнтах (город/смена этажа/левелап).
    */
-  private persistAll(): void {
+  private persistAll(): Promise<unknown> {
+    const all: Promise<boolean>[] = [];
     for (const [pid, c] of this.clients) {
       const p = this.session.world.players[pid];
-      if (p) this.persist(c.pid);
+      if (p) all.push(this.persist(c.pid));
     }
     this.lastSaveAt = Date.now();
+    return Promise.all(all);
   }
 
-  /** Принудительно сохранить прогресс всех игроков — для graceful shutdown сервера. */
-  flush(): void { this.persistAll(); }
+  /**
+   * Принудительно сохранить прогресс всех игроков — для graceful shutdown сервера.
+   * Ф2: ЖДАТЬ ОБЯЗАТЕЛЬНО. Раньше запись была синхронной и `process.exit` сразу после вызова
+   * был безопасен; с Postgres выход без ожидания просто выбросил бы незаписанные сейвы.
+   */
+  flush(): Promise<unknown> { return this.persistAll(); }
 
   setInput(pid: string, input: PlayerInput): void {
     const c = this.clients.get(pid);
@@ -299,7 +307,7 @@ export class Room implements Tickable {
   }
 
   // ── Команды города ──────────────────────────────────────────────────────────
-  handleCmd(pid: string, command: TownCommand): void {
+  async handleCmd(pid: string, command: TownCommand): Promise<void> {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
     if (!c || !p) return;
@@ -325,17 +333,17 @@ export class Room implements Tickable {
       case 'allocSkill': r = allocActive(this.cfg, save, command.nodeId); break;
       case 'moveBelt': r = moveToBelt(save, command.uid); break;
       case 'moveItem': r = moveInventoryItem(this.cfg, save, command.uid, command.x, command.y); break;
-      case 'stashOpen': this.sendStash(pid); r = { ok: true }; break;
+      case 'stashOpen': await this.sendStash(pid); r = { ok: true }; break;
       case 'stashMove': {
         // Ф0.4: сейв и сундук пишутся ОДНОЙ транзакцией прямо здесь. Раньше сундук уходил в базу
         // сразу, а инвентарь — только следующим автосейвом (до 10 с): падение в этом окне давало
         // предмет и там, и там. Если транзакция не прошла — откатываем перенос в памяти тоже,
         // иначе разъедется уже оперативное состояние.
-        const stash = loadAccountStash(c.userId, this.cfg);
+        const stash = await loadAccountStash(c.userId, this.cfg);
         const before = JSON.stringify(save.inventory);
         r = stashMove(this.cfg, save, stash, command.uid, command.dst, command.x, command.y);
         if (r.ok) {
-          if (this.persist(pid, stash)) this.sendStash(pid);
+          if (await this.persist(pid, stash)) await this.sendStash(pid);
           else {
             save.inventory = JSON.parse(before) as typeof save.inventory;
             r = { ok: false, reason: 'Не удалось сохранить перемещение, попробуйте ещё раз' };
@@ -717,25 +725,34 @@ export class Room implements Tickable {
    *
    * `stash` — если передан, сейв и сундук пишутся ОДНОЙ транзакцией (Ф0.4).
    */
-  private persist(pid: string, stash?: AccountStash): boolean {
+  private persist(pid: string, stash?: AccountStash): Promise<boolean> {
     const c = this.clients.get(pid);
     const p = this.session.world.players[pid];
-    if (!c || !p) return false;
-    const next = stash
-      ? putCharacterWithStash(p.save.charId, c.userId, p.save, c.saveVersion, stash)
-      : putCharacter(p.save.charId, c.userId, p.save, c.saveVersion);
-    if (next === null) {
-      counters.saveConflicts++;
-      console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв ${p.save.charId} (версия ${c.saveVersion}) — этот процесс держит копию, которую кто-то обогнал`);
-      return false;
-    }
-    c.saveVersion = next;
-    return true;
+    if (!c || !p) return Promise.resolve(false);
+    // ОЧЕРЕДЬ НА ПЕРСОНАЖА. Запись стала асинхронной (Ф2), а версия сейва — это счётчик,
+    // который надо прочитать, предъявить и обновить. Две записи внахлёст предъявили бы одну
+    // и ту же версию: вторая гарантированно получила бы отказ и потеряла бы свои изменения.
+    // Поэтому записи одного клиента идут строго друг за другом.
+    const run = async (): Promise<boolean> => {
+      const next = stash
+        ? await putCharacterWithStash(p.save.charId, c.userId, p.save, c.saveVersion, stash)
+        : await putCharacter(p.save.charId, c.userId, p.save, c.saveVersion);
+      if (next === null) {
+        counters.saveConflicts++;
+        console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв ${p.save.charId} (версия ${c.saveVersion}) — этот процесс держит копию, которую кто-то обогнал`);
+        return false;
+      }
+      c.saveVersion = next;
+      return true;
+    };
+    const next = c.saving.then(run, run);   // отказ прошлой записи не должен рвать очередь
+    c.saving = next.then(() => undefined, () => undefined);
+    return next;
   }
 
   /** То же для отключённого игрока (грейс): у него своя копия сейва и своя версия. */
-  private persistDisconnected(charId: string, info: Disconnected): boolean {
-    const next = putCharacter(charId, info.userId, info.save, info.saveVersion);
+  private async persistDisconnected(charId: string, info: Disconnected): Promise<boolean> {
+    const next = await putCharacter(charId, info.userId, info.save, info.saveVersion);
     if (next === null) {
       counters.saveConflicts++;
       console.error(`[room ${this.code}] ОТКЛОНЁН устаревший сейв отключённого ${charId} (версия ${info.saveVersion})`);
@@ -888,10 +905,10 @@ export class Room implements Tickable {
     if (c && p) this.send(c.ws, { t: 'saveUpdate', save: p.save });
   }
   /** Шлёт клиенту полный слепок его аккаунт-сундука (на stashOpen и после stashMove). */
-  private sendStash(pid: string): void {
+  private async sendStash(pid: string): Promise<void> {
     const c = this.clients.get(pid);
     if (!c) return;
-    const stash = loadAccountStash(c.userId, this.cfg);
+    const stash = await loadAccountStash(c.userId, this.cfg);
     const d = stashDims(this.cfg);
     this.send(c.ws, { t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg) });
   }

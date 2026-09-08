@@ -12,7 +12,7 @@
   `client/dist` локально и заливай)
 - 15–30 ГБ NVMe, публичный IPv4
 
-`node:sqlite` требует **Node 24** (см. `.nvmrc`).
+Нужны **Node 24** (см. `.nvmrc`) и **PostgreSQL 16+**.
 
 ## Cloud-init (необязательно, но удобно на первый раз)
 Поле «Cloud-init» при создании сервера = скрипт, который выполнится ОДИН РАЗ при первом запуске
@@ -25,7 +25,7 @@ set -eux
 fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
 echo '/swapfile none swap sw 0 0' >> /etc/fstab
 apt-get update && apt-get install -y curl git ufw
-# Node.js 24 (для node:sqlite)
+# Node.js 24
 curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs
 # Caddy (авто-HTTPS reverse-proxy)
 apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
@@ -69,7 +69,7 @@ After=network.target
 WorkingDirectory=/opt/dm
 Environment=NODE_ENV=production
 Environment=PORT=3001
-Environment=DM_DB=/opt/dm/data/dm.db
+Environment=DM_PG=postgresql://dm:ПАРОЛЬ@127.0.0.1:5432/dungeon
 ExecStart=/usr/bin/npx tsx packages/server/src/index.ts
 Restart=always
 RestartSec=2
@@ -107,8 +107,12 @@ cd /opt/dm && git pull && npm ci && npm run build && systemctl restart dm
 ```
 
 ## Важное
-- **Бэкап БД:** единственный ценный файл — `DM_DB` (`/opt/dm/data/dm.db`). Включи бэкап диска TimeWeb
-  или cron `cp`.
+- **Бэкап БД:** `pg_dump dungeon | gzip > /var/backups/dm-$(date +%F).sql.gz` по cron. Бэкап диска
+  TimeWeb этого НЕ заменяет: копия файлов работающей базы может оказаться нецелостной.
+- **Postgres обязателен.** Сервер не поднимется без `DM_PG` в проде (осознанно: молчаливый уход на
+  localhost хуже падения при старте). Схема создаётся сама при первом запуске.
+- **Перенос авторского контента** со старой SQLite (позы редактора и оверрайды конфига) — разово:
+  `npm run db:import -- --from=packages/server/data/dm.db`. Аккаунты и персонажи НЕ переносятся.
 - **Баланс в проде фиксирован:** `NODE_ENV=production` отключает live-правку конфига из редактора
   (анти-чит). Меняй баланс локально → Экспорт JSON в `data/*.json` → коммит → обновление (см. выше).
 - **Одна инстанция:** комнаты живут в памяти; рестарт роняет активные забеги, но автосейв (10с) +

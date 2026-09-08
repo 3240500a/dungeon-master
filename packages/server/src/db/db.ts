@@ -1,146 +1,76 @@
-import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
 import type { SaveState, AccountStash } from '@dm/shared';
+import { q, q1, tx } from './pool.js';
 
 /**
- * Хранилище на встроенном node:sqlite (без нативных зависимостей). Аккаунты:
- * `users` (логин+хеш пароля), `sessions` (токен→userId), `characters` (charId→userId+сейв).
- * Владение персонажем проверяется по `characters.userId` (анти-чит: чужой charId не загрузить).
+ * Хранилище: Postgres (`db/pool.ts`). Аккаунты — `users` (логин+хеш пароля), `sessions`
+ * (токен→userId), `characters` (charId→userId+сейв). Владение персонажем проверяется по
+ * `characters.user_id` (анти-чит: чужой charId не загрузить).
+ *
+ * ВСЁ ЗДЕСЬ АСИНХРОННО. Раньше слой был синхронным (node:sqlite), и обращение к базе можно
+ * было воткнуть в любую строчку. Теперь нельзя: вызывающая сторона обязана дождаться. Там,
+ * где порядок важен (кадры одного соединения), очередь держит `RoomManager`.
+ *
+ * `data jsonb` — Postgres отдаёт разобранный объект, `JSON.parse` не нужен и вреден.
  */
-const DB_PATH = process.env.DM_DB ?? 'data/dm.db';
-mkdirSync(dirname(DB_PATH), { recursive: true });
-
-export const db = new DatabaseSync(DB_PATH);
-// Ф0.10: WAL вместо журнала отката. Читатели не блокируют писателя, запись не переписывает
-// базу целиком, а дописывает лог — на автосейвах комнат это снимает основную часть выбросов
-// лага цикла (в замере до правки `loop max` достигал 200-300 мс, то есть шести пропущенных
-// тиков подряд). `synchronous=NORMAL` не ждёт fsync на каждой транзакции: при падении процесса
-// теряется последний фрагмент лога, но не целостность базы — для игровых сейвов это верный
-// размен, полная надёжность стоит на порядок дороже.
-db.exec('PRAGMA journal_mode = WAL');
-db.exec('PRAGMA synchronous = NORMAL');
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    passHash TEXT NOT NULL,
-    passSalt TEXT NOT NULL,
-    createdAt INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    userId TEXT NOT NULL,
-    expiresAt INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS characters (
-    charId TEXT PRIMARY KEY,
-    userId TEXT NOT NULL,
-    data TEXT NOT NULL,
-    updatedAt INTEGER NOT NULL,
-    version INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE INDEX IF NOT EXISTS idx_characters_userId ON characters (userId);
-  CREATE TABLE IF NOT EXISTS config_overrides (
-    key TEXT PRIMARY KEY,
-    json TEXT NOT NULL,
-    updatedAt INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS account_stash (
-    userId TEXT PRIMARY KEY,
-    data TEXT NOT NULL,
-    updatedAt INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS pose_store (
-    key TEXT PRIMARY KEY,
-    json TEXT NOT NULL,
-    updatedAt INTEGER NOT NULL
-  );
-`);
-
-// Миграция старых баз: колонка `version` появилась в Ф0.3 (оптимистичная блокировка сейва).
-// `CREATE TABLE IF NOT EXISTS` выше не трогает уже созданную таблицу, поэтому досоздаём вручную.
-{
-  const cols = db.prepare('PRAGMA table_info(characters)').all() as { name: string }[];
-  if (!cols.some((c) => c.name === 'version')) {
-    db.exec('ALTER TABLE characters ADD COLUMN version INTEGER NOT NULL DEFAULT 0');
-    console.log('[dm-server] миграция: characters.version добавлена');
-  }
-}
 
 // ── Пользователи ───────────────────────────────────────────────────────────────
 export interface UserRow { id: string; username: string; passHash: string; passSalt: string; }
-
-const insertUserStmt = db.prepare(
-  'INSERT INTO users (id, username, passHash, passSalt, createdAt) VALUES (?, ?, ?, ?, ?)',
-);
-const userByNameStmt = db.prepare('SELECT id, username, passHash, passSalt FROM users WHERE username = ? COLLATE NOCASE');
-const userByIdStmt = db.prepare('SELECT id, username, passHash, passSalt FROM users WHERE id = ?');
+const USER_COLS = 'id, username, pass_hash AS "passHash", pass_salt AS "passSalt"';
 
 /** Создаёт пользователя (ник уникален, регистронезависимо). Бросает при дубле (UNIQUE). */
-export function createUser(username: string, passHash: string, passSalt: string): string {
+export async function createUser(username: string, passHash: string, passSalt: string): Promise<string> {
   const id = `u_${randomUUID()}`;
-  insertUserStmt.run(id, username, passHash, passSalt, Date.now());
+  await q('INSERT INTO users (id, username, pass_hash, pass_salt) VALUES ($1, $2, $3, $4)',
+    [id, username, passHash, passSalt]);
   return id;
 }
-export function getUserByName(username: string): UserRow | null {
-  return (userByNameStmt.get(username) as UserRow | undefined) ?? null;
+export async function getUserByName(username: string): Promise<UserRow | null> {
+  return q1<UserRow>(`SELECT ${USER_COLS} FROM users WHERE lower(username) = lower($1)`, [username]);
 }
-export function getUserById(id: string): UserRow | null {
-  return (userByIdStmt.get(id) as UserRow | undefined) ?? null;
+export async function getUserById(id: string): Promise<UserRow | null> {
+  return q1<UserRow>(`SELECT ${USER_COLS} FROM users WHERE id = $1`, [id]);
 }
 
 // ── Сессии ─────────────────────────────────────────────────────────────────────
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
-const insertSessionStmt = db.prepare('INSERT INTO sessions (token, userId, expiresAt) VALUES (?, ?, ?)');
-const sessionStmt = db.prepare('SELECT userId, expiresAt FROM sessions WHERE token = ?');
-const deleteSessionStmt = db.prepare('DELETE FROM sessions WHERE token = ?');
 
 /** Заводит сессию, возвращает opaque-токен (32 байта hex). */
-export function createSession(userId: string, ttlMs = SESSION_TTL_MS): string {
+export async function createSession(userId: string, ttlMs = SESSION_TTL_MS): Promise<string> {
   const token = randomBytes(32).toString('hex');
-  insertSessionStmt.run(token, userId, Date.now() + ttlMs);
+  await q('INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, to_timestamp($3))',
+    [token, userId, (Date.now() + ttlMs) / 1000]);
   return token;
 }
-/** userId по валидному непросроченному токену; иначе null (просроченный удаляется). */
-export function getSession(token: string): string | null {
-  const row = sessionStmt.get(token) as { userId: string; expiresAt: number } | undefined;
-  if (!row) return null;
-  if (row.expiresAt < Date.now()) { deleteSessionStmt.run(token); return null; }
-  return row.userId;
+/**
+ * userId по валидному непросроченному токену; иначе null.
+ *
+ * Один запрос, без удаления протухшего на месте: этот путь горячий (проверка на каждом входе
+ * в комнату), а чистка — дело `sweepSessions` на старте.
+ */
+export async function getSession(token: string): Promise<string | null> {
+  const r = await q1<{ userId: string }>(
+    'SELECT user_id AS "userId" FROM sessions WHERE token = $1 AND expires_at > now()', [token]);
+  return r?.userId ?? null;
 }
-export function deleteSession(token: string): void {
-  deleteSessionStmt.run(token);
+/** Убирает протухшие сессии. Зовётся на старте — таблица не должна расти вечно. */
+export async function sweepSessions(): Promise<number> {
+  const rows = await q<{ token: string }>('DELETE FROM sessions WHERE expires_at < now() RETURNING token');
+  return rows.length;
+}
+export async function deleteSession(token: string): Promise<void> {
+  await q('DELETE FROM sessions WHERE token = $1', [token]);
 }
 
 // ── Персонажи ──────────────────────────────────────────────────────────────────
 export interface CharacterSummary { charId: string; name: string; classId: string; level: number; }
 export interface CharacterRow { userId: string; data: SaveState; version: number; }
 
-const insertCharStmt = db.prepare(
-  'INSERT INTO characters (charId, userId, data, updatedAt, version) VALUES (?, ?, ?, ?, 1)',
-);
-// Оптимистичная блокировка (Ф0.3): запись проходит, ТОЛЬКО если версия в базе та же, что была
-// прочитана. Устаревшая копия сейва (вторая живая сессия, зависшая комната) физически не может
-// затереть свежую — именно этим дюпы вида «положил в сундук из одной сессии, вторая вернула
-// старый инвентарь» и живут.
-const casCharStmt = db.prepare(
-  `UPDATE characters SET data = ?, updatedAt = ?, version = version + 1
-   WHERE charId = ? AND userId = ? AND version = ?`,
-);
-const charStmt = db.prepare('SELECT userId, data, version FROM characters WHERE charId = ?');
-const charsByUserStmt = db.prepare('SELECT data FROM characters WHERE userId = ? ORDER BY updatedAt DESC');
-const allCharsStmt = db.prepare('SELECT data FROM characters ORDER BY updatedAt DESC');
-const deleteCharStmt = db.prepare('DELETE FROM characters WHERE charId = ? AND userId = ?');
-const countCharsStmt = db.prepare('SELECT COUNT(*) AS n FROM characters WHERE userId = ?');
-
-/**
- * Создаёт сейв нового персонажа. Возвращает стартовую версию (1).
- * Бросает при попытке создать существующего (PRIMARY KEY).
- */
-export function createCharacter(charId: string, userId: string, data: SaveState): number {
-  insertCharStmt.run(charId, userId, JSON.stringify(data), Date.now());
+/** Создаёт сейв нового персонажа. Возвращает стартовую версию (1). Бросает при дубле charId. */
+export async function createCharacter(charId: string, userId: string, data: SaveState): Promise<number> {
+  await q('INSERT INTO characters (char_id, user_id, data, updated_at, version) VALUES ($1, $2, $3, now(), 1)',
+    [charId, userId, JSON.stringify(data)]);
   return 1;
 }
 
@@ -152,15 +82,20 @@ export function createCharacter(charId: string, userId: string, data: SaveState)
  * (`RoomManager.live`), поэтому расхождение версий означает либо гонку, которую мы не закрыли,
  * либо зависшую комнату. Поэтому зовущая сторона обязана шуметь в лог, а не глотать.
  */
-export function putCharacter(charId: string, userId: string, data: SaveState, expectedVersion: number): number | null {
-  const r = casCharStmt.run(JSON.stringify(data), Date.now(), charId, userId, expectedVersion);
-  return r.changes === 1 ? expectedVersion + 1 : null;
+export async function putCharacter(
+  charId: string, userId: string, data: SaveState, expectedVersion: number,
+): Promise<number | null> {
+  const row = await q1<{ version: number }>(
+    `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+     WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
+    [JSON.stringify(data), charId, userId, expectedVersion]);
+  return row?.version ?? null;
 }
 
 /** Персонаж по charId (с владельцем и версией) — для проверки владения на входе. */
-export function getCharacter(charId: string): CharacterRow | null {
-  const row = charStmt.get(charId) as { userId: string; data: string; version: number } | undefined;
-  return row ? { userId: row.userId, data: JSON.parse(row.data) as SaveState, version: row.version } : null;
+export async function getCharacter(charId: string): Promise<CharacterRow | null> {
+  return q1<CharacterRow>(
+    'SELECT user_id AS "userId", data, version FROM characters WHERE char_id = $1', [charId]);
 }
 
 /**
@@ -172,153 +107,142 @@ export function getCharacter(charId: string): CharacterRow | null {
  *
  * Возвращает новую версию сейва либо `null`, если версия разошлась (тогда не записано ничего).
  */
-export function putCharacterWithStash(
+export async function putCharacterWithStash(
   charId: string, userId: string, data: SaveState, expectedVersion: number, stash: AccountStash,
-): number | null {
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const r = casCharStmt.run(JSON.stringify(data), Date.now(), charId, userId, expectedVersion);
-    if (r.changes !== 1) { db.exec('ROLLBACK'); return null; }
-    upsertStashStmt.run(userId, JSON.stringify(stash), Date.now());
-    db.exec('COMMIT');
-    return expectedVersion + 1;
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+): Promise<number | null> {
+  return tx(async (c) => {
+    const r = await c.query<{ version: number }>(
+      `UPDATE characters SET data = $1, updated_at = now(), version = version + 1
+       WHERE char_id = $2 AND user_id = $3 AND version = $4 RETURNING version`,
+      [JSON.stringify(data), charId, userId, expectedVersion]);
+    const version = r.rows[0]?.version;
+    if (version == null) return null;   // версия разошлась — коммитим пустую транзакцию, ничего не изменив
+    await c.query(
+      `INSERT INTO account_stash (user_id, data, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+      [userId, JSON.stringify(stash)]);
+    return version;
+  });
 }
+
 /** Краткий ростер пользователя (для экрана выбора). */
-export function listCharacters(userId: string): CharacterSummary[] {
-  const rows = charsByUserStmt.all(userId) as { data: string }[];
-  return rows.map((r) => {
-    const s = JSON.parse(r.data) as SaveState;
-    return { charId: s.charId, name: s.name, classId: s.classId, level: s.level };
-  });
+export async function listCharacters(userId: string): Promise<CharacterSummary[]> {
+  const rows = await q<{ data: SaveState }>(
+    'SELECT data FROM characters WHERE user_id = $1 ORDER BY updated_at DESC', [userId]);
+  return rows.map((r) => summary(r.data));
 }
-/** ВСЕ персонажи всех пользователей (только dev-инструменты баланса: загрузка реального билда в калькулятор/сим). */
-export function listAllCharacters(): CharacterSummary[] {
-  return (allCharsStmt.all() as { data: string }[]).map((r) => {
-    const s = JSON.parse(r.data) as SaveState;
-    return { charId: s.charId, name: s.name, classId: s.classId, level: s.level };
-  });
+/** ВСЕ персонажи всех пользователей (только dev-инструменты баланса: реальный билд в калькулятор/сим). */
+export async function listAllCharacters(): Promise<CharacterSummary[]> {
+  const rows = await q<{ data: SaveState }>('SELECT data FROM characters ORDER BY updated_at DESC');
+  return rows.map((r) => summary(r.data));
 }
-export function deleteCharacter(charId: string, userId: string): void {
-  deleteCharStmt.run(charId, userId);
+function summary(s: SaveState): CharacterSummary {
+  return { charId: s.charId, name: s.name, classId: s.classId, level: s.level };
 }
-export function countCharacters(userId: string): number {
-  return (countCharsStmt.get(userId) as { n: number }).n;
+export async function deleteCharacter(charId: string, userId: string): Promise<void> {
+  await q('DELETE FROM characters WHERE char_id = $1 AND user_id = $2', [charId, userId]);
+}
+export async function countCharacters(userId: string): Promise<number> {
+  const r = await q1<{ n: string }>('SELECT COUNT(*) AS n FROM characters WHERE user_id = $1', [userId]);
+  return Number(r?.n ?? 0);
 }
 
 /**
- * Сбрасывает НЕЗАВЕРШЁННЫЕ забеги у ВСЕХ персонажей (удаляет `save.run`). Зовётся на старте сервера:
- * рестарт = чистый лист, без «хвостов» (иначе спуск из города РЕЗЮМИТ старый забег и игнорит выбор алтаря).
- * Возвращает число затронутых персонажей.
+ * Сбрасывает НЕЗАВЕРШЁННЫЕ забеги у ВСЕХ персонажей (удаляет `save.run`). Зовётся на старте
+ * сервера: рестарт = чистый лист, без «хвостов» (иначе спуск из города РЕЗЮМИТ старый забег и
+ * игнорит выбор алтаря). Возвращает число затронутых персонажей.
  */
-export function clearAllRuns(): number {
-  const rows = db.prepare('SELECT charId, data FROM characters').all() as { charId: string; data: string }[];
-  const upd = db.prepare('UPDATE characters SET data = ?, updatedAt = ?, version = version + 1 WHERE charId = ?');
-  let n = 0;
-  for (const r of rows) {
-    let s: SaveState & { run?: unknown };
-    try { s = JSON.parse(r.data) as SaveState & { run?: unknown }; } catch { continue; }
-    if (s.run !== undefined) { delete s.run; upd.run(JSON.stringify(s), Date.now(), r.charId); n++; }
-  }
-  return n;
+export async function clearAllRuns(): Promise<number> {
+  // `data - 'run'` — удаление ключа из jsonb прямо в базе: разбирать сейвы в Node незачем.
+  const rows = await q<{ char_id: string }>(
+    `UPDATE characters SET data = data - 'run', version = version + 1, updated_at = now()
+     WHERE data ? 'run' RETURNING char_id`);
+  return rows.length;
 }
 
 // ── Оверрайды конфигов (единая серверная истина: редактор пишет, игра+редактор читают) ──
-const upsertConfigStmt = db.prepare(
-  `INSERT INTO config_overrides (key, json, updatedAt) VALUES (?, ?, ?)
-   ON CONFLICT(key) DO UPDATE SET json = excluded.json, updatedAt = excluded.updatedAt`,
-);
-const allConfigStmt = db.prepare('SELECT key, json FROM config_overrides');
-const deleteConfigStmt = db.prepare('DELETE FROM config_overrides WHERE key = ?');
-
 /** Все персистентные оверрайды конфигов (ключ→значение) — применяются поверх дефолтов. */
-export function getConfigOverrides(): Record<string, unknown> {
-  const rows = allConfigStmt.all() as { key: string; json: string }[];
+export async function getConfigOverrides(): Promise<Record<string, unknown>> {
+  const rows = await q<{ key: string; json: unknown }>('SELECT key, json FROM config_overrides');
   const out: Record<string, unknown> = {};
-  for (const r of rows) out[r.key] = JSON.parse(r.json);
+  for (const r of rows) out[r.key] = r.json;
   return out;
 }
 /** Пишет/обновляет оверрайд одного конфига (персистентно). */
-export function setConfigOverride(key: string, value: unknown): void {
-  upsertConfigStmt.run(key, JSON.stringify(value), Date.now());
+export async function setConfigOverride(key: string, value: unknown): Promise<void> {
+  await q(
+    `INSERT INTO config_overrides (key, json, updated_at) VALUES ($1, $2, $3)
+     ON CONFLICT (key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
+    [key, JSON.stringify(value), Date.now()]);
 }
 /** Удаляет оверрайд ключа (сброс к встроенному дефолту). */
-export function deleteConfigOverride(key: string): void {
-  deleteConfigStmt.run(key);
+export async function deleteConfigOverride(key: string): Promise<void> {
+  await q('DELETE FROM config_overrides WHERE key = $1', [key]);
 }
 
 // ── Общий сундук аккаунта (shared stash: одна истина на всех персонажей пользователя) ──
-const upsertStashStmt = db.prepare(
-  `INSERT INTO account_stash (userId, data, updatedAt) VALUES (?, ?, ?)
-   ON CONFLICT(userId) DO UPDATE SET data = excluded.data, updatedAt = excluded.updatedAt`,
-);
-const stashStmt = db.prepare('SELECT data FROM account_stash WHERE userId = ?');
-
 /** Сундук аккаунта из БД (или null, если ещё пуст). */
-export function getAccountStash(userId: string): AccountStash | null {
-  const row = stashStmt.get(userId) as { data: string } | undefined;
-  return row ? (JSON.parse(row.data) as AccountStash) : null;
+export async function getAccountStash(userId: string): Promise<AccountStash | null> {
+  const r = await q1<{ data: AccountStash }>('SELECT data FROM account_stash WHERE user_id = $1', [userId]);
+  return r?.data ?? null;
 }
 /** Пишет/обновляет сундук аккаунта (last-writer-wins). */
-export function putAccountStash(userId: string, data: AccountStash): void {
-  upsertStashStmt.run(userId, JSON.stringify(data), Date.now());
+export async function putAccountStash(userId: string, data: AccountStash): Promise<void> {
+  await q(
+    `INSERT INTO account_stash (user_id, data, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+    [userId, JSON.stringify(data)]);
 }
 
 // ── Контент 3D поз-редактора (единая истина: редактор пишет, редактор+игра читают) ──
-// Опаковые JSON-блобы по ключам (pe_gait/pe_clips/pe_sway/pe_phys/pe_ragdoll/pe_chars) — авторский контент
-// (клипы/кадры/гейты), НЕ через ConfigRegistry (слишком сложен для zod-схем). Аналог config_overrides.
-const upsertPoseStmt = db.prepare(
-  `INSERT INTO pose_store (key, json, updatedAt) VALUES (?, ?, ?)
-   ON CONFLICT(key) DO UPDATE SET json = excluded.json, updatedAt = excluded.updatedAt`,
-);
-const allPoseStmt = db.prepare('SELECT key, json FROM pose_store');
-const revPoseStmt = db.prepare('SELECT key, updatedAt FROM pose_store');
-const deletePoseStmt = db.prepare('DELETE FROM pose_store WHERE key = ?');
-
+// Опаковые JSON-блобы по ключам (pe_gait/pe_clips/pe_sway/pe_phys/pe_ragdoll/pe_chars) — авторский
+// контент (клипы/кадры/гейты), НЕ через ConfigRegistry (слишком сложен для zod-схем).
 /** Весь контент поз-редактора (ключ→значение) — отдаётся редактору и игре. */
-export function getPoseStore(): Record<string, unknown> {
-  const rows = allPoseStmt.all() as { key: string; json: string }[];
+export async function getPoseStore(): Promise<Record<string, unknown>> {
+  const rows = await q<{ key: string; json: unknown }>('SELECT key, json FROM pose_store');
   const out: Record<string, unknown> = {};
-  for (const r of rows) out[r.key] = JSON.parse(r.json);
+  for (const r of rows) out[r.key] = r.json;
   return out;
 }
 /**
- * РЕВИЗИИ контента: `{ключ: updatedAt}`. Редактор держит рабочую копию у себя и сравнивает ревизии, чтобы
- * (а) показать «на сервере новее» и (б) не затереть чужую правку вслепую. Отдельный роут, потому что тела
- * тяжёлые (одни клипы — сотни килобайт), а ревизии нужны на каждой загрузке.
+ * РЕВИЗИИ контента: `{ключ: updatedAt}`. Редактор держит рабочую копию у себя и сравнивает
+ * ревизии, чтобы (а) показать «на сервере новее» и (б) не затереть чужую правку вслепую.
+ * Отдельный роут, потому что тела тяжёлые (одни клипы — сотни килобайт), а ревизии нужны
+ * на каждой загрузке.
  */
-export function getPoseRevs(): Record<string, number> {
-  const rows = revPoseStmt.all() as { key: string; updatedAt: number }[];
+export async function getPoseRevs(): Promise<Record<string, number>> {
+  const rows = await q<{ key: string; updated_at: string }>('SELECT key, updated_at FROM pose_store');
   const out: Record<string, number> = {};
-  for (const r of rows) out[r.key] = r.updatedAt;
+  for (const r of rows) out[r.key] = Number(r.updated_at);
   return out;
 }
 /** Пишет/обновляет один ключ контента поз-редактора (персистентно). Возвращает НОВУЮ ревизию. */
-export function setPoseStore(key: string, value: unknown): number {
+export async function setPoseStore(key: string, value: unknown): Promise<number> {
   const rev = Date.now();
-  upsertPoseStmt.run(key, JSON.stringify(value), rev);
+  await q(
+    `INSERT INTO pose_store (key, json, updated_at) VALUES ($1, $2, $3)
+     ON CONFLICT (key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
+    [key, JSON.stringify(value), rev]);
   return rev;
 }
 /** Удаляет ключ контента поз-редактора (чистка устаревших/тест-ключей). */
-export function deletePoseStore(key: string): void {
-  deletePoseStmt.run(key);
+export async function deletePoseStore(key: string): Promise<void> {
+  await q('DELETE FROM pose_store WHERE key = $1', [key]);
 }
 
-const countPoseStmt = db.prepare('SELECT COUNT(*) AS n FROM pose_store');
 /**
  * Посев авторского 3D-контента (pose_store) из файла-сида `pose-seed.json` при ПУСТОЙ таблице
- * (свежая/сброшенная БД, напр. чистый прод-сервер). Источник — файл в git (выгружен из поз-редактора),
- * чтобы 3D-анимации были из коробки и переживали чистку БД. Возвращает число засеянных ключей.
+ * (свежая/сброшенная БД, напр. чистый прод-сервер). Источник — файл в git (выгружен из
+ * поз-редактора), чтобы 3D-анимации были из коробки и переживали чистку БД. Возвращает число
+ * засеянных ключей.
  */
-export function seedPoseStoreIfEmpty(): number {
-  if ((countPoseStmt.get() as { n: number }).n > 0) return 0; // уже есть контент — не трогаем
+export async function seedPoseStoreIfEmpty(): Promise<number> {
+  const r = await q1<{ n: string }>('SELECT COUNT(*) AS n FROM pose_store');
+  if (Number(r?.n ?? 0) > 0) return 0;   // уже есть контент — не трогаем
   try {
     const seed = JSON.parse(readFileSync(new URL('../pose-seed.json', import.meta.url), 'utf8')) as Record<string, unknown>;
     let k = 0;
-    for (const [key, value] of Object.entries(seed)) { setPoseStore(key, value); k++; }
+    for (const [key, value] of Object.entries(seed)) { await setPoseStore(key, value); k++; }
     return k;
-  } catch { return 0; } // нет файла/битый — тихо пропускаем (не критично)
+  } catch { return 0; }   // нет файла/битый — тихо пропускаем (не критично)
 }

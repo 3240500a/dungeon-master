@@ -2,16 +2,18 @@ import { getAccountStash, putAccountStash } from '../db/db.js';
 import { sanitizeStash, emptyStash, type AccountStash, type ConfigRegistry } from '@dm/shared';
 
 /**
- * Доступ к ОБЩЕМУ на аккаунт сундуку (shared stash). БД — единая истина: `node:sqlite`
- * синхронна, значит каждая команда `handleCmd` выполняется атомарно в одном потоке —
- * расхождения между комнатами процесса невозможны. Кэша нет намеренно (всегда свежее
- * состояние из БД); при гонке одновременных изменений — last-writer-wins.
+ * Доступ к ОБЩЕМУ на аккаунт сундуку (shared stash). БД — единая истина, кэша нет намеренно:
+ * всегда свежее состояние из базы.
+ *
+ * Ф2: доступ стал асинхронным (Postgres), и прежнее рассуждение «синхронная БД = команда
+ * атомарна» больше не работает. Атомарность переноса держится не на этом, а на транзакции
+ * `putCharacterWithStash` (сейв и сундук одной записью) и на очереди команд соединения.
  */
-export function loadAccountStash(userId: string, cfg: ConfigRegistry): AccountStash {
-  const fromDb = getAccountStash(userId);
+export async function loadAccountStash(userId: string, cfg: ConfigRegistry): Promise<AccountStash> {
+  const fromDb = await getAccountStash(userId);
   return fromDb ? sanitizeStash(cfg, fromDb) : emptyStash(cfg);
 }
 
-export function saveAccountStash(userId: string, stash: AccountStash): void {
-  putAccountStash(userId, stash);
+export async function saveAccountStash(userId: string, stash: AccountStash): Promise<void> {
+  await putAccountStash(userId, stash);
 }

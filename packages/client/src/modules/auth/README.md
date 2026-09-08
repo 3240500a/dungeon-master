@@ -13,7 +13,7 @@
   (join `{token, charId}`; полный сейв приходит в `joined`).
 - **Сервер:** `packages/server` — `/api/register|login|logout`, `/api/characters` CRUD
   (`requireAuth` по токену). Пароль — scrypt+соль (`auth/password.ts`, без зависимостей),
-  сессия — токен в БД (`node:sqlite`: таблицы `users`/`sessions`/`characters`). WS-join проверяет
+  сессия — токен в БД (Postgres: таблицы `users`/`sessions`/`characters`). WS-join проверяет
   сессию и ВЛАДЕНИЕ персонажем (`characters.userId`); чужой `charId` → `forbidden`.
 - **На будущее:** `charId`/token — гостевая модель без 2FA; email-верификация, rate-limit брутфорса,
   refresh-токены — вне объёма. Прод: обязательно https/wss (токен идёт в join-кадре/заголовке).

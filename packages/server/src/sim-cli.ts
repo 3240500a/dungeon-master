@@ -67,7 +67,7 @@ if (str('scenario', 'progression') === 'ttk') {
   const charId = str('char', '');
   let save: SaveState;
   if (charId) {
-    const ch = getCharacter(charId);
+    const ch = await getCharacter(charId);
     if (!ch) { console.error(`Персонаж ${charId} не найден в БД`); process.exit(1); }
     save = ch.data;
   } else {

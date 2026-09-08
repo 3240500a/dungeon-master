@@ -17,7 +17,7 @@
 - **Клиент — вью:** движение/бой/реген игрока уже идут через сессию и в городе, и в
   подземелье (`SessionController` = драйвер; игрок — чистый вид). Локальный игрок уже
   авторитетен.
-- **Сервер:** есть Express + `node:sqlite`, REST `/api/auth|save|load`, zod-валидация
+- **Сервер:** есть Express + Postgres, REST `/api/auth|save|load`, zod-валидация
   сейвов (база анти-чита). charId независим — сейвы по игрокам уже разведены.
 
 ---
@@ -68,7 +68,7 @@
   shared `newCharacterSave` (клиентский `startingItems` убран).
 
 ### Аккаунты (логин+пароль, владение персонажами) — ✅ СДЕЛАНО (июль 2026)
-- **Хранилище** (`server/src/db/db.ts`, `node:sqlite`): `users` (ник UNIQUE NOCASE + scrypt-хеш+соль),
+- **Хранилище** (`server/src/db/db.ts` + `db/pool.ts`, Postgres; доступ асинхронный): `users` (ник UNIQUE NOCASE + scrypt-хеш+соль),
   `sessions` (токен→userId, TTL 30д), `characters` (charId→userId+сейв, индекс по userId). Старая
   `saves` осиротела (для сброса — удалить `data/dm.db`).
 - **Пароли** (`server/src/auth/password.ts`): `node:crypto` scrypt+соль, `timingSafeEqual` — без

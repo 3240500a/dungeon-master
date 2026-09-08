@@ -77,10 +77,21 @@ export function attachWsServer(server: Server, cfg: ConfigRegistry): void {
 
 /**
  * Graceful shutdown: при остановке/рестарте (в dev — `tsx watch` шлёт SIGTERM на каждую
- * правку кода) успеваем синхронно сбросить прогресс всех комнат в БД — забег не теряется.
+ * правку кода) сбрасываем прогресс всех комнат в БД — забег не теряется.
  */
 export function installShutdown(rooms: RoomManager): void {
-  const shutdown = (): never => { try { rooms.flushAll(); } finally { process.exit(0); } };
+  // Ф2: запись в базу асинхронна, поэтому выходим ТОЛЬКО после её завершения. Прежний
+  // `process.exit` сразу после вызова просто выбросил бы незаписанные сейвы.
+  let leaving = false;
+  const shutdown = (): void => {
+    if (leaving) return;
+    leaving = true;
+    const done = (): never => process.exit(0);
+    // Страховка: если база молчит, всё равно выходим — иначе рестарт dev-сервера подвиснет.
+    const guard = setTimeout(done, 5000);
+    void rooms.flushAll().catch((e: unknown) => console.error('[dm-server] сейвы при остановке:', e))
+      .finally(() => { clearTimeout(guard); done(); });
+  };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 }

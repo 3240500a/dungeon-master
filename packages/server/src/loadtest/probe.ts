@@ -7,12 +7,13 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
  * не видно с клиента.
  *
  *   npm run loadtest:server
- *   PORT=3999 DM_DB=data/loadtest.db npm run loadtest:server
+ *   PORT=3999 DM_PG=postgresql://…/dungeon_test npm run loadtest:server
  *
  * Отдельная БД по умолчанию: боты плодят аккаунты, боевую базу этим засорять нельзя.
  */
 process.env.PORT ??= '3999';
-process.env.DM_DB ??= 'data/loadtest.db';
+// Отдельная база под стенд: боевые данные нагрузкой не трогаем (Ф2).
+process.env.DM_PG ??= 'postgresql://dm:dmpass@127.0.0.1:5433/dungeon_test';
 process.env.NODE_ENV ??= 'production'; // как в проде: dev-роуты закрыты, кэш ассетов включён
 // Сотня ботов регистрируется с одного адреса и упёрлась бы в лимит Ф0.5 раньше замера.
 // Сами лимиты проверяются отдельно: `npm run poc:flood` против сервера БЕЗ этого флага.

@@ -60,16 +60,42 @@ export class RoomManager {
   }
 
   /** Сброс прогресса всех комнат в БД — для graceful shutdown (рестарт/остановка сервера). */
-  flushAll(): void {
-    for (const room of this.rooms.values()) room.flush();
+  flushAll(): Promise<unknown> {
+    return Promise.all([...this.rooms.values()].map((room) => room.flush()));
   }
 
+  /**
+   * Ф2: ОЧЕРЕДЬ КАДРОВ НА СОЕДИНЕНИЕ. Обработка кадра стала асинхронной (доступ к базе), а
+   * значит два кадра одного игрока могли бы выполняться внахлёст: второй `join` начал бы
+   * работу, пока первый ещё читает сейв, и оба записали бы игрока в разные комнаты. Кадры
+   * одного соединения идут строго друг за другом.
+   *
+   * Мимо очереди пропущены `ping` и `input` — они не ходят в базу, зато идут десятками в
+   * секунду: ставить их в очередь значило бы добавлять задержку самому горячему пути.
+   */
   handleConnection(ws: GameConn): void {
-    ws.onMessage((raw) => this.onMessage(ws, raw));
-    ws.onClose(() => this.onClose(ws));
+    let chain: Promise<void> = Promise.resolve();
+    ws.onMessage((raw) => {
+      const frame = this.accept(ws, raw);
+      if (!frame) return;
+      if (frame.t === 'ping') { ws.send(JSON.stringify({ t: 'pong', id: frame.id })); return; }
+      if (frame.t === 'input') {
+        const conn = this.conns.get(ws);
+        if (conn && this.allowInput(ws)) conn.room.setInput(conn.pid, frame.input);
+        return;
+      }
+      chain = chain.then(() => this.onFrame(ws, frame)).catch((e: unknown) => {
+        console.error('[room] отказ при обработке кадра:', e);
+      });
+    });
+    ws.onClose(() => { chain = chain.then(() => { this.onClose(ws); }); });
   }
 
-  private onMessage(ws: GameConn, raw: string): void {
+  /**
+   * Общий вход кадра: лимит частоты и разбор. Возвращает кадр либо undefined, если кадр
+   * отброшен (и тогда соединение уже могло быть закрыто).
+   */
+  private accept(ws: GameConn, raw: string): ClientFrame | undefined {
     // Ф0.5: общий потолок кадров на соединение — проверяем ДО разбора JSON, иначе флудер
     // заставляет нас парсить его мусор. Превышение потолка это уже не «высокий FPS»
     // (тот отсекается мягким лимитом ввода), а поведение, которого у клиента быть не должно.
@@ -78,22 +104,22 @@ export class RoomManager {
       counters.rateLimited++;
       ws.close(4008, 'rate limit');
       this.onClose(ws);
-      return;
+      return undefined;
     }
-    let frame: ClientFrame;
-    try { frame = JSON.parse(raw) as ClientFrame; } catch { return; }
+    try { return JSON.parse(raw) as ClientFrame; } catch { return undefined; }
+  }
 
-    // Замер задержки: сразу эхо-pong (без auth/комнаты) — клиент считает RTT. Также keepalive.
-    if (frame.t === 'ping') { ws.send(JSON.stringify({ t: 'pong', id: frame.id })); return; }
+  /** Кадры, которым нужна база: идут по очереди соединения (см. `handleConnection`). */
+  private async onFrame(ws: GameConn, frame: ClientFrame): Promise<void> {
 
     // Есть ли незавершённый забег? Грейс-комната (из подземелья, ещё жива) ИЛИ сохранённый `save.run`
     // (город-разрыв / истёкший грейс / реконнект). Модалка «Продолжить/Завершить» появляется ВСЕГДА,
     // пока забег не завершён. (После рестарта сервера save.run уже сброшен clearAllRuns → hasRun=false.)
     if (frame.t === 'runStatus') {
-      const userId = this.authOwner(ws, frame.token, frame.charId);
+      const userId = await this.authOwner(ws, frame.token, frame.charId);
       if (!userId) return;
       const room = this.graceByChar.get(frame.charId);
-      const owned = room ? undefined : this.ownedSave(userId, frame.charId);
+      const owned = room ? undefined : await this.ownedSave(userId, frame.charId);
       const run = owned?.save.run;
       const hasRun = !!room || !!run;
       const depth = room?.currentDepth ?? (run ? runDepthOf(run.currentNodeId) : 0);
@@ -104,16 +130,16 @@ export class RoomManager {
     // Завершить забег: персонаж гибнет со штрафом. Грейс-комната → её abandonAsDead; иначе (грейс истёк /
     // город-разрыв, но save.run цел) — применяем штраф и чистим `run` прямо в сейве.
     if (frame.t === 'abandon') {
-      const userId = this.authOwner(ws, frame.token, frame.charId);
+      const userId = await this.authOwner(ws, frame.token, frame.charId);
       if (!userId) return;
       const graceRoom = this.graceByChar.get(frame.charId);
       if (graceRoom) graceRoom.abandonAsDead(frame.charId);
       else {
-        const owned = this.ownedSave(userId, frame.charId);
+        const owned = await this.ownedSave(userId, frame.charId);
         if (owned?.save.run) {
           applyDeathPenalty(owned.save, this.cfg.get('balance').deathPenalty);
           owned.save.run = undefined;
-          if (putCharacter(frame.charId, userId, owned.save, owned.version) === null) {
+          if (await putCharacter(frame.charId, userId, owned.save, owned.version) === null) {
             console.warn(`[room] отклонён устаревший сейв при abandon ${frame.charId}`);
           }
         }
@@ -124,7 +150,7 @@ export class RoomManager {
 
     if (frame.t === 'join') {
       if (this.conns.has(ws)) return;
-      const userId = this.authOwner(ws, frame.token, frame.charId);
+      const userId = await this.authOwner(ws, frame.token, frame.charId);
       if (!userId) return;
       // Ф0.3: этот персонаж уже где-то играет — выселяем старую сессию ДО чтения сейва из БД,
       // чтобы новая прочитала уже зафиксированный прогресс, а не обогнала его.
@@ -133,7 +159,7 @@ export class RoomManager {
       // Продолжить забег: грейс-комната → возврат в ту же точку; иначе (грейс истёк / город-разрыв,
       // но save.run цел) → пересобираем забег в НОВОЙ комнате из save.run.config (тот же узел).
       if (frame.resume) {
-        const owned = this.ownedSave(userId, frame.charId);
+        const owned = await this.ownedSave(userId, frame.charId);
         if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
         const { save, version } = owned;
         const graceRoom = this.graceByChar.get(frame.charId);
@@ -157,7 +183,7 @@ export class RoomManager {
       // Осознанный вход в НОВУЮ комнату (соло/хост/по коду): висел незавершённый забег — считаем
       // его брошенным (штраф) ДО чтения сейва, чтобы новый вход взял уже урезанный сейв из БД.
       this.graceByChar.get(frame.charId)?.abandonAsDead(frame.charId);
-      const owned = this.ownedSave(userId, frame.charId);
+      const owned = await this.ownedSave(userId, frame.charId);
       if (!owned) { ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return; }
       let room: Room;
       if (frame.roomCode) {
@@ -182,8 +208,7 @@ export class RoomManager {
     const conn = this.conns.get(ws);
     if (!conn) return;
     switch (frame.t) {
-      case 'input': if (this.allowInput(ws)) conn.room.setInput(conn.pid, frame.input); break;
-      case 'cmd': conn.room.handleCmd(conn.pid, frame.command); break;
+      case 'cmd': await conn.room.handleCmd(conn.pid, frame.command); break;
       case 'descend': conn.room.descend(conn.pid, frame.difficultyId, frame.targetNodeId, frame.runConfig); break;
       case 'arena': conn.room.enterArena(conn.pid); break;
       case 'return': conn.room.returnTown(conn.pid); break;
@@ -252,10 +277,10 @@ export class RoomManager {
   }
 
   /** Проверка сессии + владения персонажем. Ошибку шлёт сама; возвращает userId или undefined. */
-  private authOwner(ws: GameConn, token: string, charId: string): string | undefined {
-    const userId = getSession(token);
+  private async authOwner(ws: GameConn, token: string, charId: string): Promise<string | undefined> {
+    const userId = await getSession(token);
     if (!userId) { ws.send(JSON.stringify({ t: 'error', code: 'auth', msg: 'Требуется вход' })); return undefined; }
-    const character = getCharacter(charId);
+    const character = await getCharacter(charId);
     if (!character || character.userId !== userId) {
       ws.send(JSON.stringify({ t: 'error', code: 'forbidden', msg: 'Персонаж недоступен' })); return undefined;
     }
@@ -266,8 +291,8 @@ export class RoomManager {
    * Свежий сейв персонажа из БД + его версия (Ф0.3) + лёгкий анти-чит. Версия едет в комнату
    * и предъявляется при каждой записи: устаревшая копия не сможет затереть свежую.
    */
-  private ownedSave(userId: string, charId: string): { save: SaveState; version: number } | undefined {
-    const character = getCharacter(charId);
+  private async ownedSave(userId: string, charId: string): Promise<{ save: SaveState; version: number } | undefined> {
+    const character = await getCharacter(charId);
     if (!character || character.userId !== userId) return undefined;
     return { save: this.sanitize(character.data), version: character.version };
   }

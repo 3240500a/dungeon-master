@@ -2,7 +2,7 @@
 
 Браузерный dungeon-crawler в духе Diablo 2. Top-down экшн-RPG: город → процедурное
 подземелье → лут → экипировка → прокачка → смерть/возврат → город. Стек: **Phaser 3 +
-TypeScript + Vite** (клиент), **Node + Express + SQLite** (сервер), **HTML-редактор**
+TypeScript + Vite** (клиент), **Node + Express + Postgres** (сервер), **HTML-редактор**
 конфигов. Всё, что касается баланса и контента, — data-driven (JSON + zod-схемы).
 
 > **Как пользоваться этим файлом:** это оглавление. При доработке любой механики открой
@@ -32,7 +32,7 @@ TypeScript + Vite** (клиент), **Node + Express + SQLite** (сервер), 
 ## Структура
 - `packages/shared` — типы, формулы, события, config registry. Общий фундамент.
 - `packages/client` — Phaser-игра. Сцены в `src/scenes`, фичи в `src/modules/<feature>`.
-- `packages/server` — Express + SQLite: `/auth`, `/save`, `/load` + валидация.
+- `packages/server` — Express + Postgres (`db/pool.ts`, доступ АСИНХРОННЫЙ): `/auth`, `/save`, `/load` + валидация.
 - `packages/editor` — HTML-редактор конфигов (страницы по механикам, CRUD, live-apply).
 
 ## Модули клиента (`packages/client/src/modules/`)

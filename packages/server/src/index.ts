@@ -1,4 +1,4 @@
-import express, { type Request, type Response } from 'express';
+import express, { type Request, type Response, type RequestHandler } from 'express';
 import cors from 'cors';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -11,8 +11,9 @@ import {
   createUser, getUserByName, createSession, deleteSession, getSession,
   listCharacters, listAllCharacters, getCharacter, createCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
-  getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty,
+  getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions,
 } from './db/db.js';
+import { initSchema, closePool } from './db/pool.js';
 import { attachWsServer } from './net/wsServer.js';
 import { startUwsServer } from './net/uwsServer.js';
 import { limits, clientIp } from './net/rateLimit.js';
@@ -24,16 +25,16 @@ import { extractColliderFromGlb } from './glbMeshBbox.js';
  * Бэкенд игры. Аккаунты по HTTP (`/api/register|login|logout`, `/api/characters` CRUD),
  * сама игра (город/данж/экономика/сейвы) — авторитетно в кооп-комнатах на WebSocket
  * (`net/wsServer` → `Room`). Персонажи принадлежат пользователю (`characters.userId`);
- * WS-join проверяет сессию+владение. Хранилище — `node:sqlite` (db/db.ts).
+ * WS-join проверяет сессию+владение. Хранилище — Postgres (db/pool.ts, db/db.ts).
  */
 // Конфиг игры — ЕДИНАЯ СЕРВЕРНАЯ ИСТИНА: встроенные дефолты (data/*.json в бандле shared)
-// + персистентные оверрайды редактора (SQLite `config_overrides`). Клиент и редактор берут
+// + персистентные оверрайды редактора (таблица `config_overrides`). Клиент и редактор берут
 // эффективный конфиг через GET /api/config, правки редактора идут в POST /api/dev/config.
 const config = new ConfigRegistry();
 
 /** Накатывает сохранённые оверрайды поверх дефолтов (устойчиво к невалидным — пропускает). */
-function applyConfigOverrides(): void {
-  for (const [key, value] of Object.entries(getConfigOverrides())) {
+async function applyConfigOverrides(): Promise<void> {
+  for (const [key, value] of Object.entries(await getConfigOverrides())) {
     try {
       config.reload({ [key]: value });
     } catch (e) {
@@ -42,21 +43,50 @@ function applyConfigOverrides(): void {
   }
 }
 /** Полная пересборка живого конфига: дефолты + персистентные оверрайды (комнаты держат ссылку). */
-function rebuildConfig(): void {
+async function rebuildConfig(): Promise<void> {
   config.loadAll();
-  applyConfigOverrides();
+  await applyConfigOverrides();
   rebuildConfigCache(); // Ф0.7: тело для /api/config готовим здесь же, а не на каждом запросе
 }
 
-// Рестарт сервера = чистый лист забегов: сбрасываем все НЕЗАВЕРШЁННЫЕ забеги (save.run) у всех персонажей.
-// Иначе спуск из города РЕЗЮМИТ старый забег (со старым биомом/сидом) и игнорит выбор алтаря — «хвосты».
-{ const wiped = clearAllRuns(); if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`); }
+/**
+ * Подготовка хранилища перед приёмом запросов (Ф2). Раньше всё это делалось прямо в модуле —
+ * доступ был синхронным. Теперь порядок явный, и слушать порт мы начинаем ТОЛЬКО после того,
+ * как схема есть, а конфиг собран: иначе первый же запрос увидел бы полупустой реестр.
+ */
+async function boot(): Promise<void> {
+  await initSchema();
+  await rebuildConfig();   // дефолты + сохранённые правки редактора + готовое тело ответа
 
-// Посев авторского 3D-контента поз-редактора при пустой БД (свежий/сброшенный сервер) — чтобы анимации
-// были из коробки. Источник — pose-seed.json в git; на проде поз-редактор выключен, иначе контента бы не было.
-{ const seeded = seedPoseStoreIfEmpty(); if (seeded) console.log(`[dm-server] pose_store засеян из pose-seed.json: ${seeded} ключей`); }
+  // Рестарт сервера = чистый лист забегов: сбрасываем все НЕЗАВЕРШЁННЫЕ забеги (save.run) у всех
+  // персонажей. Иначе спуск из города РЕЗЮМИТ старый забег (старый биом/сид) и игнорит алтарь.
+  const wiped = await clearAllRuns();
+  if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`);
+
+  // Посев авторского 3D-контента поз-редактора при пустой БД (свежий/сброшенный сервер) — чтобы
+  // анимации были из коробки. Источник — pose-seed.json в git.
+  const seeded = await seedPoseStoreIfEmpty();
+  if (seeded) console.log(`[dm-server] pose_store засеян из pose-seed.json: ${seeded} ключей`);
+
+  const gone = await sweepSessions();
+  if (gone) console.log(`[dm-server] убрано протухших сессий: ${gone}`);
+}
 
 const MAX_CHARS = 5;
+
+/**
+ * Express 4 не ловит отказ промиса из обработчика: необработанный `reject` уронил бы процесс.
+ * Все обработчики, ходящие в базу (Ф2 — доступ асинхронный), оборачиваются этим.
+ */
+type RouteParams = Record<string, string>;
+const ah = <P extends RouteParams = RouteParams>(
+  fn: (req: Request<P>, res: Response) => Promise<unknown>,
+): RequestHandler<P> => (req, res) => {
+  void fn(req as Request<P>, res).catch((e: unknown) => {
+    console.error('[dm-server] отказ в обработчике:', e);
+    if (!res.headersSent) res.status(500).json({ error: 'Внутренняя ошибка' });
+  });
+};
 
 const app = express();
 app.use(cors());
@@ -95,7 +125,6 @@ function rebuildConfigCache(): void {
   configEtag = `W/"${configBody.length.toString(36)}-${(h >>> 0).toString(36)}"`;
 }
 
-rebuildConfig(); // старт: дефолты + сохранённые правки редактора + готовое тело ответа
 
 app.get('/api/config', (req, res) => {
   if (process.env.NODE_ENV !== 'production') res.setHeader('Cache-Control', 'no-store');   // DEV: конфиг всегда свежий (модели/текстуры/объекты)
@@ -104,7 +133,7 @@ app.get('/api/config', (req, res) => {
   res.type('application/json').send(configBody);
 });
 
-// Правки редактора: валидируем → ПЕРСИСТИМ в SQLite → пересобираем живой конфиг. Переживает
+// Правки редактора: валидируем → ПЕРСИСТИМ в базу → пересобираем живой конфиг. Переживает
 // рестарт сервера. balance действует сразу, статы монстров/лут — со следующего этажа.
 // АНТИ-ЧИТ: запись только вне продакшена — иначе клиент мог бы переписать баланс сервера.
 const DEV_CONFIG_APPLY = process.env.NODE_ENV !== 'production';
@@ -133,7 +162,7 @@ function devGuard(req: Request, res: Response): boolean {
   }
   return true;
 }
-app.post('/api/dev/config', (req, res) => {
+app.post('/api/dev/config', ah(async (req, res) => {
   if (!devGuard(req, res)) return;
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
@@ -143,18 +172,18 @@ app.post('/api/dev/config', (req, res) => {
   } catch (e) {
     return res.status(422).json({ error: e instanceof Error ? e.message : String(e) });
   }
-  for (const [key, value] of Object.entries(overrides)) setConfigOverride(key, value);
-  rebuildConfig();
+  for (const [key, value] of Object.entries(overrides)) await setConfigOverride(key, value);
+  await rebuildConfig();
   console.log(`[dm-server] конфиг сохранён из редактора: ${Object.keys(overrides).join(', ') || '—'}`);
   res.json({ ok: true, applied: Object.keys(overrides) });
-});
+}));
 
 // «Применить везде»: пишет правку прямо в ФАЙЛ-источник (data/*.json) → попадёт в git и на деплой.
 // Дополнительно ставит оверрайд в БД, чтобы живой конфиг остался верным (не откатился на дефолт,
 // импортированный в память при старте — файл перечитается лишь при рестарте процесса). DEV-only.
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
 const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
-app.post('/api/dev/config-file', (req, res) => {
+app.post('/api/dev/config-file', ah(async (req, res) => {
   if (!devGuard(req, res)) return;
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
@@ -168,7 +197,7 @@ app.post('/api/dev/config-file', (req, res) => {
   try {
     for (const [key, value] of Object.entries(overrides)) {
       writeFileSync(configFileFor(key), JSON.stringify(value, null, 2) + '\n');
-      setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
+      await setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
       written.push(key);
     }
   } catch (e) {
@@ -177,27 +206,27 @@ app.post('/api/dev/config-file', (req, res) => {
   rebuildConfig();
   console.log(`[dm-server] конфиг записан в ФАЙЛ (+БД): ${written.join(', ') || '—'}`);
   res.json({ ok: true, written });
-});
+}));
 
 // Сброс ключа к встроенному дефолту (удаляет персистентный оверрайд).
-app.delete('/api/dev/config/:key', (req, res) => {
+app.delete('/api/dev/config/:key', ah<{ key: string }>(async (req, res) => {
   if (!devGuard(req, res)) return;
-  deleteConfigOverride(req.params.key);
-  rebuildConfig();
+  await deleteConfigOverride(req.params.key);
+  await rebuildConfig();
   console.log(`[dm-server] конфиг сброшен к дефолту: ${req.params.key}`);
   res.json({ ok: true, reset: req.params.key });
-});
+}));
 
 // ── Контент 3D поз-редактора (единая истина: сервер) ─────────────────────────────
 // GET — весь авторский контент (pe_gait/clips/sway/phys/ragdoll/chars); грузят и редактор, и игра
 // (кэшируют в localStorage). POST — правки редактора, DEV-only (в проде клиент не переписывает контент).
-app.get('/api/pose', (_req, res) => {
-  res.json(getPoseStore());
-});
+app.get('/api/pose', ah(async (_req, res) => {
+  res.json(await getPoseStore());
+}));
 // Ревизии без тел: редактор зовёт их на каждой загрузке, чтобы понять, ушёл ли сервер вперёд.
-app.get('/api/pose/rev', (_req, res) => {
-  res.json(getPoseRevs());
-});
+app.get('/api/pose/rev', ah(async (_req, res) => {
+  res.json(await getPoseRevs());
+}));
 /**
  * Публикация рабочей копии редактора. `__baseRev` — ревизии, НА КОТОРЫХ основана присланная копия.
  * Если на сервере ключ новее, вся публикация отклоняется (409) и НИЧЕГО не пишется.
@@ -206,13 +235,13 @@ app.get('/api/pose/rev', (_req, res) => {
  * старым снимком, одним сохранением затирала всё, что появилось позже, — так пропал клип `hit_axe`.
  * Без `__baseRev` (старые клиенты, ручной curl) поведение прежнее: пишем как есть.
  */
-app.post('/api/dev/pose', (req, res) => {
+app.post('/api/dev/pose', ah(async (req, res) => {
   if (!devGuard(req, res)) return;
   const body = (req.body ?? {}) as Record<string, unknown>;
   const baseRev = body.__baseRev as Record<string, number> | undefined;
   const keys = Object.keys(body).filter((k) => k !== '__baseRev');
   if (baseRev) {
-    const cur = getPoseRevs();
+    const cur = await getPoseRevs();
     const conflicts = keys.filter((k) => (cur[k] ?? 0) > (baseRev[k] ?? 0));
     if (conflicts.length) {
       console.log(`[dm-server] публикация отклонена (на сервере новее): ${conflicts.join(', ')}`);
@@ -220,14 +249,14 @@ app.post('/api/dev/pose', (req, res) => {
     }
   }
   const rev: Record<string, number> = {};
-  for (const k of keys) rev[k] = setPoseStore(k, body[k]);
+  for (const k of keys) rev[k] = await setPoseStore(k, body[k]);
   res.json({ ok: true, saved: keys, rev });
-});
-app.delete('/api/dev/pose/:key', (req, res) => {
+}));
+app.delete('/api/dev/pose/:key', ah<{ key: string }>(async (req, res) => {
   if (!devGuard(req, res)) return;
-  deletePoseStore(req.params.key);
+  await deletePoseStore(req.params.key);
   res.json({ ok: true, deleted: req.params.key });
-});
+}));
 
 // ── Dev: ассеты 3D-моделей (GLB) — импорт из поз-редактора (FBX→настройка→экспорт GLB), раздача в игру ──
 // GLB — бинарь, в pose_store НЕ кладём (там мелкие JSON); файлы на диске, мелкий конфиг (карта костей/тип/хват)
@@ -281,16 +310,16 @@ app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limi
 });
 
 // ── Dev: загрузка РЕАЛЬНЫХ сейвов в калькулятор/сим баланса (без auth, только не в проде) ──
-app.get('/api/dev/characters', (req, res) => {
+app.get('/api/dev/characters', ah(async (req, res) => {
   if (!devGuard(req, res)) return;
-  res.json({ characters: listAllCharacters() });
-});
-app.get('/api/dev/characters/:charId', (req, res) => {
+  res.json({ characters: await listAllCharacters() });
+}));
+app.get('/api/dev/characters/:charId', ah<{ charId: string }>(async (req, res) => {
   if (!devGuard(req, res)) return;
-  const ch = getCharacter(req.params.charId);
+  const ch = await getCharacter(req.params.charId);
   if (!ch) return res.status(404).json({ error: 'Персонаж не найден' });
   res.json({ save: ch.data });
-});
+}));
 
 // ── Хелперы ────────────────────────────────────────────────────────────────────
 function bearer(req: Request): string | null {
@@ -298,9 +327,9 @@ function bearer(req: Request): string | null {
   return m ? m[1]! : null;
 }
 /** userId по токену из заголовка; иначе шлёт 401 и возвращает null. */
-function requireAuth(req: Request, res: Response): string | null {
+async function requireAuth(req: Request, res: Response): Promise<string | null> {
   const token = bearer(req);
-  const userId = token ? getSession(token) : null;
+  const userId = token ? await getSession(token) : null;
   if (!userId) { res.status(401).json({ error: 'Требуется вход' }); return null; }
   return userId;
 }
@@ -314,7 +343,7 @@ function validCreds(body: unknown): { username: string; password: string } | nul
 }
 
 // ── Аутентификация ───────────────────────────────────────────────────────────
-app.post('/api/register', (req, res) => {
+app.post('/api/register', ah(async (req, res) => {
   // Ф0.5: без лимита один скрипт кладёт сервер регистрациями — каждая это scrypt (~100 мс CPU
   // и десятки мегабайт). Ключ — IP; заголовок прокси учитывается, если он есть.
   const ip = clientIp(req.headers, req.socket.remoteAddress);
@@ -324,13 +353,13 @@ app.post('/api/register', (req, res) => {
   }
   const creds = validCreds(req.body);
   if (!creds) return res.status(422).json({ error: 'Ник 3–20 символов, пароль от 6' });
-  if (getUserByName(creds.username)) return res.status(409).json({ error: 'Ник уже занят' });
+  if (await getUserByName(creds.username)) return res.status(409).json({ error: 'Ник уже занят' });
   const { hash, salt } = hashPassword(creds.password);
-  const userId = createUser(creds.username, hash, salt);
-  res.json({ token: createSession(userId), userId, username: creds.username });
-});
+  const userId = await createUser(creds.username, hash, salt);
+  res.json({ token: await createSession(userId), userId, username: creds.username });
+}));
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', ah(async (req, res) => {
   // Ф0.5: тот же scrypt плюс защита от перебора пароля. Успешный вход обнуляет счётчик —
   // человек, промахнувшийся пару раз, не должен потом ждать.
   const ip = clientIp(req.headers, req.socket.remoteAddress);
@@ -340,47 +369,47 @@ app.post('/api/login', (req, res) => {
   }
   const creds = validCreds(req.body);
   if (!creds) return res.status(422).json({ error: 'Неверные данные' });
-  const user = getUserByName(creds.username);
+  const user = await getUserByName(creds.username);
   if (!user || !verifyPassword(creds.password, user.passHash, user.passSalt)) {
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
   limits.login.reset(ip);
-  res.json({ token: createSession(user.id), userId: user.id, username: user.username });
-});
+  res.json({ token: await createSession(user.id), userId: user.id, username: user.username });
+}));
 
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', ah(async (req, res) => {
   const token = bearer(req);
-  if (token) deleteSession(token);
+  if (token) await deleteSession(token);
   res.json({ ok: true });
-});
+}));
 
 // ── Персонажи (принадлежат пользователю) ───────────────────────────────────────
-app.get('/api/characters', (req, res) => {
-  const userId = requireAuth(req, res); if (!userId) return;
-  res.json({ characters: listCharacters(userId) });
-});
+app.get('/api/characters', ah(async (req, res) => {
+  const userId = await requireAuth(req, res); if (!userId) return;
+  res.json({ characters: await listCharacters(userId) });
+}));
 
-app.post('/api/characters', (req, res) => {
-  const userId = requireAuth(req, res); if (!userId) return;
+app.post('/api/characters', ah(async (req, res) => {
+  const userId = await requireAuth(req, res); if (!userId) return;
   const b = req.body as { classId?: unknown; name?: unknown };
   const classId = typeof b?.classId === 'string' ? b.classId : '';
   const name = (typeof b?.name === 'string' ? b.name : '').trim();
   if (!name || name.length > 16) return res.status(422).json({ error: 'Имя 1–16 символов' });
   if (!config.get('classes').some((c) => c.id === classId && c.enabled !== false)) return res.status(422).json({ error: 'Неизвестный или отключённый класс' });
-  if (countCharacters(userId) >= MAX_CHARS) return res.status(409).json({ error: `Лимит ${MAX_CHARS} персонажей` });
+  if (await countCharacters(userId) >= MAX_CHARS) return res.status(409).json({ error: `Лимит ${MAX_CHARS} персонажей` });
   const charId = randomUUID();
   const save = newCharacterSave(config, classId, name, charId); // авторитетный стартовый сейв
-  createCharacter(charId, userId, save);
+  await createCharacter(charId, userId, save);
   res.json({ character: { charId, name: save.name, classId: save.classId, level: save.level } });
-});
+}));
 
-app.delete('/api/characters/:charId', (req, res) => {
-  const userId = requireAuth(req, res); if (!userId) return;
-  const ch = getCharacter(req.params.charId);
+app.delete('/api/characters/:charId', ah<{ charId: string }>(async (req, res) => {
+  const userId = await requireAuth(req, res); if (!userId) return;
+  const ch = await getCharacter(req.params.charId);
   if (!ch || ch.userId !== userId) return res.status(404).json({ error: 'Персонаж не найден' });
-  deleteCharacter(req.params.charId, userId);
+  await deleteCharacter(req.params.charId, userId);
   res.json({ ok: true });
-});
+}));
 
 // ── Статика клиента (прод: ОДИН сервер отдаёт игру + /api + /ws на одном домене) ──────────
 // Регистрируется ПОСЛЕ всех /api-роутов, поэтому их не затирает; WS — на upgrade `/ws`, отдельно.
@@ -412,6 +441,9 @@ const PORT = Number(process.env.PORT ?? 3001);
  * и получает запросы прокси. Снаружи адрес не меняется: тот же порт, тот же `/ws`, тот же
  * `/api`. Если пакет не собран под платформу — откат на `ws`, сервер всё равно поднимется.
  */
+// Хранилище готово, конфиг собран — только теперь можно принимать запросы (Ф2).
+await boot();
+
 const wantUws = process.env.DM_WS === 'uws';
 const uws = wantUws && startUwsServer(config, PORT, Number(process.env.DM_HTTP_PORT ?? PORT + 1));
 const HTTP_PORT = uws ? Number(process.env.DM_HTTP_PORT ?? PORT + 1) : PORT;
