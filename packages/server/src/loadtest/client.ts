@@ -1,0 +1,160 @@
+import WebSocket from 'ws';
+import type { ClientFrame, ServerFrame } from '@dm/shared';
+
+/**
+ * Бот-клиент нагрузочного стенда: регистрация → персонаж → комната → спуск → ввод с частотой тика.
+ * Ведёт себя как настоящий клиент по протоколу (`ClientFrame`/`ServerFrame`), поэтому меряет
+ * реальный путь сервера целиком: разбор кадров, тик комнаты, сериализацию и отправку.
+ *
+ * Собирает с СВОЕЙ стороны: RTT (ping/pong), сколько снапшотов пришло, сколько байт принято.
+ * Серверную сторону (CPU, лаг цикла) печатает `probe.ts`.
+ */
+export interface BotOptions {
+  /** База сервера, например `http://127.0.0.1:3999`. */
+  base: string;
+  /** Уникальный префикс имён аккаунтов этого прогона (чтобы прогоны не конфликтовали). */
+  tag: string;
+  /** Порядковый номер бота. */
+  index: number;
+  /** Класс персонажа. */
+  classId: string;
+  /** Частота отправки ввода, Гц. */
+  inputHz: number;
+  /** Размер пати: 1 — каждый в своей комнате, N — по N ботов на комнату. */
+  groupSize: number;
+  /** Спускаться в подземелье (иначе бот стоит в городе). */
+  descend: boolean;
+  /** Общая на прогон карта «индекс группы → код комнаты» — хост записывает, остальные ждут. */
+  roomCodes: Map<number, string>;
+}
+
+export interface BotStats {
+  /** Сумма и число замеров RTT — для медианы по популяции берётся среднее бота. */
+  rttSum: number;
+  rttCount: number;
+  /** Принято байт и снапшотов. */
+  bytes: number;
+  snapshots: number;
+  /** Кадры `error` от сервера — важны: молчаливый отказ легко проглядеть. */
+  errors: string[];
+}
+
+export class LoadBot {
+  readonly stats: BotStats = { rttSum: 0, rttCount: 0, bytes: 0, snapshots: 0, errors: [] };
+  private ws?: WebSocket;
+  private inputTimer?: ReturnType<typeof setInterval>;
+  private pingTimer?: ReturnType<typeof setInterval>;
+  private pingSentAt = new Map<number, number>();
+  private pingId = 0;
+  private seq = 0;
+
+  constructor(private readonly o: BotOptions) {}
+
+  get connected(): boolean { return this.ws?.readyState === WebSocket.OPEN; }
+
+  /** Регистрация + персонаж по HTTP, затем вход в комнату по WS. Бросает при отказе сервера. */
+  async start(): Promise<void> {
+    const { token } = await this.post<{ token: string }>('/api/register', {
+      username: `lt_${this.o.tag}_${this.o.index}`,
+      password: 'loadtest-password',
+    });
+    const { character } = await this.post<{ character: { charId: string } }>(
+      '/api/characters', { classId: this.o.classId, name: `B${this.o.index}` }, token,
+    );
+
+    const group = Math.floor(this.o.index / this.o.groupSize);
+    const isHost = this.o.index % this.o.groupSize === 0;
+
+    const ws = new WebSocket(this.o.base.replace(/^http/, 'ws') + '/ws');
+    this.ws = ws;
+    await new Promise<void>((res, rej) => {
+      ws.once('open', () => res());
+      ws.once('error', rej);
+    });
+    ws.on('message', (data: Buffer) => this.onMessage(data, group));
+
+    // Не-хост ждёт, пока хост создаст комнату и сообщит её код.
+    if (!isHost) {
+      for (let i = 0; i < 200 && !this.o.roomCodes.has(group); i++) await sleep(50);
+    }
+    const code = this.o.roomCodes.get(group);
+    this.send({ t: 'join', token, charId: character.charId, ...(isHost || !code ? { fresh: true } : { roomCode: code }) });
+
+    this.inputTimer = setInterval(() => this.sendInput(), 1000 / this.o.inputHz);
+    this.pingTimer = setInterval(() => {
+      const id = ++this.pingId;
+      this.pingSentAt.set(id, Date.now());
+      if (this.pingSentAt.size > 20) this.pingSentAt.delete(this.pingSentAt.keys().next().value!);
+      this.send({ t: 'ping', id });
+    }, 1000);
+    ws.on('close', () => this.stop());
+  }
+
+  stop(): void {
+    if (this.inputTimer) { clearInterval(this.inputTimer); this.inputTimer = undefined; }
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = undefined; }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close();
+  }
+
+  /** Обнулить счётчики — зовётся после прогрева, чтобы замер шёл с установившегося режима. */
+  resetStats(): void {
+    this.stats.rttSum = 0; this.stats.rttCount = 0;
+    this.stats.bytes = 0; this.stats.snapshots = 0;
+  }
+
+  private onMessage(data: Buffer, group: number): void {
+    this.stats.bytes += data.length;
+    let frame: ServerFrame;
+    try { frame = JSON.parse(data.toString()) as ServerFrame; } catch { return; }
+    switch (frame.t) {
+      case 'snapshot':
+        this.stats.snapshots++;
+        break;
+      case 'pong': {
+        const at = this.pingSentAt.get(frame.id);
+        if (at != null) { this.stats.rttSum += Date.now() - at; this.stats.rttCount++; this.pingSentAt.delete(frame.id); }
+        break;
+      }
+      case 'joined':
+        this.o.roomCodes.set(group, frame.roomCode);
+        // Спуск идёт голосованием: хост инициирует, остальные голосуют «за» по `voteStart`.
+        if (this.o.descend) setTimeout(() => this.send({ t: 'descend', difficultyId: 'normal' }), 1500 + Math.random() * 1500);
+        break;
+      case 'voteStart':
+        setTimeout(() => this.send({ t: 'vote', accept: true }), 100);
+        break;
+      case 'error':
+        this.stats.errors.push(`${frame.code}: ${frame.msg}`);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Ввод «бегу в случайную сторону и бью» — нагружает движение, ИИ и бой, а не только сеть. */
+  private sendInput(): void {
+    const a = Math.random() * Math.PI * 2;
+    this.send({
+      t: 'input', seq: this.seq++,
+      input: { move: { x: Math.cos(a), y: Math.sin(a) }, facing: a, attack: true, cast: null, interact: false },
+    });
+  }
+
+  private send(frame: ClientFrame): void {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(frame));
+  }
+
+  private async post<T>(path: string, body: unknown, token?: string): Promise<T> {
+    const r = await fetch(this.o.base + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`${path} → ${r.status} ${await r.text()}`);
+    return (await r.json()) as T;
+  }
+}
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
