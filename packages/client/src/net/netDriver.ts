@@ -111,6 +111,11 @@ export class NetDriver {
     // Ф1.1: статика игроков приходит отдельным кадром; сливаем её со снапшотом на приёме,
     // чтобы остальной код работал с привычной формой.
     app.net.on('peerInfo', (f) => { for (const pi of f.peers) this.peerStatics.set(pi.id, pi); });
+    app.net.on('monsterInfo', (f) => {
+      for (const m of f.monsters) {
+        if (!this.monsters.has(m.id)) this.monsters.set(m.id, new Monster(this.scene, m.x, m.y, m.def));
+      }
+    });
     app.net.on('peerJoined', (f) => { this.peerStatics.set(f.peer.id, f.peer); });
     app.net.on('snapshot', (f) => {
       this.lastDynamic = f.snap;
@@ -151,7 +156,8 @@ export class NetDriver {
   buildMonsters(floor: FloorInit): void {
     for (const m of this.monsters.values()) m.destroy();
     this.monsters.clear();
-    for (const m of floor.monsters) this.monsters.set(m.id, new Monster(this.scene, m.x, m.y, m.def));
+    // Ф1.2: монстры приходят кадром `monsterInfo` по мере входа в область интереса,
+    // а не списком всего этажа в FloorInit.
   }
 
   private onDown = (p: Phaser.Input.Pointer): void => {

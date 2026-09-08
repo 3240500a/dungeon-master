@@ -121,7 +121,6 @@ export interface FloorInit {
   /** id активных модификаторов этажа (v2). */
   floorModifiers?: string[];
   decor: DecorObject[];
-  monsters: { id: number; def: ScaledMonster; x: number; y: number }[];
   /** Запертые ворота (клетки грида) — для рендера/открытия по `doorOpened`. */
   doors: { id: number; cells: { cx: number; cy: number }[] }[];
   /** Рычаги (мировые координаты) — спрайт + интерактив «[E] Рычаг», открывает свою дверь. */
@@ -216,6 +215,12 @@ export type ServerFrame =
   | { t: 'peerJoined'; peer: PeerInfo }
   // Ф1.1: обновление СТАТИКИ игроков — экипировка, уровень, смена области.
   | { t: 'peerInfo'; peers: PeerInfo[] }
+  /**
+   * Ф1.2: определения монстров, ВОШЕДШИХ в поле зрения этого клиента. Раньше весь список
+   * этажа приезжал в `FloorInit` — это и лишний килобайт на входе, и готовый maphack:
+   * клиент знал про всех монстров карты, включая тех, кого не видит.
+   */
+  | { t: 'monsterInfo'; monsters: { id: number; def: ScaledMonster; x: number; y: number }[] }
   | { t: 'peerLeft'; id: string }
   | { t: 'areaChanged'; floor: FloorInit }
   // Структура текущего забега (v2) — данные для панели-карты (граф узлов, «видно вперёд»).

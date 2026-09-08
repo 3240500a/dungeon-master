@@ -292,6 +292,43 @@ export async function startOnline3d(): Promise<void> {
   let selfWeaponKey = '';   // текущий 3D-ключ оружия/щита игрока (для пересборки при смене снаряжения)
   const peers = new Map<string, Actor>();
   const monsters = new Map<number, Actor>();
+
+  /**
+   * Создать куклу монстра по его определению (Ф1.2). Раньше это был цикл по `FloorInit.monsters`;
+   * теперь определения приходят кадром `monsterInfo` — при входе в область интереса и при
+   * повторном входе (куклу пропавшего монстра мы сносим, поэтому определение нужно снова).
+   */
+  function spawnMonster(m: { id: number; def: ScaledMonster; x: number; y: number }): void {
+    if (monsters.has(m.id)) return;
+
+      const def = m.def;
+      const faction = def.faction ?? 'monster';
+      const mc = charFor(monsterCharId(faction));
+      const col = FACTION[faction] ?? 0x8a6f4a;
+      // atlasKey (семья subfaction||faction) → атлас монстра со своими submesh (нет → процедурка). weaponKey/weaponModels/
+      // armorModels — надетый гир как процедур.форма/GLB/submesh. gaitId (по фракции) — тюн походки/ударов (как раньше).
+      const atl = monsterAtlasBody(def.atlasKey);   // пропорции/скелет из собственного атласа монстра (физ-скелет 1:1 под меш)
+      const d = makeHumanoidDoll(pw, {
+        x: m.x, z: m.y, weapon: def.weaponKey ?? mc.weapon, weaponModels: { main: def.weaponModelId, off: def.shieldModelId },
+        atlasKey: def.atlasKey, baseAppearance: atlasBaseAppearanceOf(def.atlasKey), gaitId: monsterCharId(faction), gaitFallback: 'warrior',
+        gender: mc.gender, build: mc.build, colors: { body: col, limb: 0x5a5a64, head: col },
+        profile: atl?.body && Object.keys(atl.body).length ? atl.body : undefined,
+        boneScale: atl?.boneScale && Object.keys(atl.boneScale).length ? atl.boneScale : undefined,
+        boneOffsets: atl?.boneOffsets && Object.keys(atl.boneOffsets).length ? atl.boneOffsets : undefined,
+      });
+      if (def.armorModels) {   // броня монстра (chest/helm) → submesh-вариант атласа
+        const app: Record<string, { modelId?: string }> = {};
+        if (def.armorModels.chest) app.chest = { modelId: def.armorModels.chest };
+        if (def.armorModels.helm) app.helm = { modelId: def.armorModels.helm };
+        d.setAppearance?.(app);
+      }
+      if (monKinematic) d.setPhysicsMode?.('kinematic');   // спавн при активном debug-режиме → сразу кинематический
+      actorsGroup.add(d.group);
+      const champion = m.def.rarity === 'unique', special = champion || m.def.affixes.length > 0;
+      const hp = makeNameplate(m.def.name, champion, special); actorsGroup.add(hp.spr);
+    monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp, def: m.def, animAcc: 0 });
+  }
+
   const projMeshes = new Map<number, THREE.Mesh>();
   const dropMeshes = new Map<number, THREE.Object3D>();
   let latest: WorldSnapshotFull | undefined;
@@ -483,35 +520,8 @@ export async function startOnline3d(): Promise<void> {
     if (!hudBars) hudBars = { action: new ActionBar(app, root), belt: new BeltBar(app, root) };
     smoothX = floor.spawn.x; smoothZ = floor.spawn.y; hasSmooth = false;
 
-    // Монстры области (по FloorInit; вид/удары/стойки — по фракции из конфига; 3D-внешность гира — из ScaledMonster.def).
-    for (const m of floor.monsters) {
-      const def = m.def;
-      const faction = def.faction ?? 'monster';
-      const mc = charFor(monsterCharId(faction));
-      const col = FACTION[faction] ?? 0x8a6f4a;
-      // atlasKey (семья subfaction||faction) → атлас монстра со своими submesh (нет → процедурка). weaponKey/weaponModels/
-      // armorModels — надетый гир как процедур.форма/GLB/submesh. gaitId (по фракции) — тюн походки/ударов (как раньше).
-      const atl = monsterAtlasBody(def.atlasKey);   // пропорции/скелет из собственного атласа монстра (физ-скелет 1:1 под меш)
-      const d = makeHumanoidDoll(pw, {
-        x: m.x, z: m.y, weapon: def.weaponKey ?? mc.weapon, weaponModels: { main: def.weaponModelId, off: def.shieldModelId },
-        atlasKey: def.atlasKey, baseAppearance: atlasBaseAppearanceOf(def.atlasKey), gaitId: monsterCharId(faction), gaitFallback: 'warrior',
-        gender: mc.gender, build: mc.build, colors: { body: col, limb: 0x5a5a64, head: col },
-        profile: atl?.body && Object.keys(atl.body).length ? atl.body : undefined,
-        boneScale: atl?.boneScale && Object.keys(atl.boneScale).length ? atl.boneScale : undefined,
-        boneOffsets: atl?.boneOffsets && Object.keys(atl.boneOffsets).length ? atl.boneOffsets : undefined,
-      });
-      if (def.armorModels) {   // броня монстра (chest/helm) → submesh-вариант атласа
-        const app: Record<string, { modelId?: string }> = {};
-        if (def.armorModels.chest) app.chest = { modelId: def.armorModels.chest };
-        if (def.armorModels.helm) app.helm = { modelId: def.armorModels.helm };
-        d.setAppearance?.(app);
-      }
-      if (monKinematic) d.setPhysicsMode?.('kinematic');   // спавн при активном debug-режиме → сразу кинематический
-      actorsGroup.add(d.group);
-      const champion = m.def.rarity === 'unique', special = champion || m.def.affixes.length > 0;
-      const hp = makeNameplate(m.def.name, champion, special); actorsGroup.add(hp.spr);
-      monsters.set(m.id, { d, vx: 0, vz: 0, lx: m.x, lz: m.y, hp, def: m.def, animAcc: 0 });
-    }
+    // Ф1.2: монстры больше НЕ приезжают списком в FloorInit — сервер шлёт определения
+    // только тех, кто вошёл в поле зрения (`monsterInfo`). Это и трафик, и античит.
 
     if (floor.area === 'dungeon') {
       const isFinale = (floor.exits?.length ?? 0) === 0;
@@ -925,6 +935,7 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('error', (f) => { if (f.code === 'no-run') { hideResume(); showLobby(); return; } if (statusEl) statusEl.textContent = f.msg; });
   app.net.on('peerLeft', (f) => { const a = peers.get(f.id); if (a) { disposeActor(a); peers.delete(f.id); } peerStatics.delete(f.id); });
   app.net.on('peerInfo', (f) => { for (const pi of f.peers) peerStatics.set(pi.id, pi); });
+  app.net.on('monsterInfo', (f) => { for (const m of f.monsters) spawnMonster(m); });
   app.net.on('peerJoined', (f) => { peerStatics.set(f.peer.id, f.peer); });
 
   // ── Модалки (DOM, как в 2D OnlineScene) ──────────────────────────────────────

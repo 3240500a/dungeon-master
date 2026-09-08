@@ -51,14 +51,19 @@ async function main(): Promise<void> {
 
   const ws = new WebSocket(BASE.replace(/^http/, 'ws') + '/ws');
   let world: WorldSnapshot | undefined;
+  let myId = '';
   let applied = 0;
   let pending: WorldSnapshot | undefined;
   let checks = 0;
   let bad = 0;
+  // Ф1.2: прямая проверка античит-свойства — дальние сущности клиенту приходить не должны.
+  let maxSeen = 0;
+  let maxDist = 0;
 
   ws.on('open', () => ws.send(JSON.stringify({ t: 'join', token, charId: character.charId, fresh: true })));
   ws.on('message', (data: Buffer) => {
     const f = JSON.parse(data.toString()) as ServerFrame;
+    if (f.t === 'joined') { myId = f.playerId; } 
     if (f.t === 'joined') setTimeout(() => ws.send(JSON.stringify({ t: 'descend', difficultyId: 'normal' })), 1200);
     else if (f.t === 'voteStart') ws.send(JSON.stringify({ t: 'vote', accept: true }));
     else if (f.t === 'snapDelta') {
@@ -66,6 +71,13 @@ async function main(): Promise<void> {
       world = applyWorldDelta(world, f.delta);
       applied++;
       checks++;
+      const me = world.players.find((p) => p.id === myId);
+      if (me) {
+        maxSeen = Math.max(maxSeen, world.monsters.length);
+        for (const m of world.monsters) {
+          maxDist = Math.max(maxDist, Math.hypot(m.x - me.x, m.y - me.y));
+        }
+      }
       if (worldChecksum(world) !== f.sum) {
         bad++;
         if (bad <= 5) console.log(`расхождение #${bad} на тике ${f.delta.t} (дельт с полного кадра: ${applied})`);
@@ -94,6 +106,7 @@ async function main(): Promise<void> {
   clearInterval(iv);
   ws.close();
   console.log(`\nИТОГ: сверок ${checks}, расхождений ${bad}`);
+  console.log(`область интереса: максимум монстров в кадре ${maxSeen}, дальний монстр в ${maxDist.toFixed(0)} игровых пикселях (радиус ${process.env.DM_AOI_RADIUS ?? '1000'})`);
   process.exit(bad === 0 && checks > 0 ? 0 : 1);
 }
 

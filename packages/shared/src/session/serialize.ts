@@ -89,7 +89,6 @@ export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorO
     runNodeType: w.runNodeType,
     floorModifiers: w.floorModifiers,
     decor,
-    monsters: w.monsters.map((m) => ({ id: m.id, def: m.def, x: m.pos.x, y: m.pos.y })),
     doors: w.doors.map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) })),
     levers: w.levers.filter((l) => !l.used).map((l) => ({ id: l.id, x: l.pos.x, y: l.pos.y, doorId: l.doorId })),
   };

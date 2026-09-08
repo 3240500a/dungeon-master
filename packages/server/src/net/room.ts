@@ -32,6 +32,17 @@ const SNAPSHOT_HZ = Math.max(5, Math.min(30, Number(process.env.DM_SNAPSHOT_HZ ?
 const SNAPSHOT_DT = 1 / SNAPSHOT_HZ;
 /** Как часто слать ПОЛНЫЙ кадр вместо дельты — страховка от расхождения (Ф1.3). */
 const FULL_SNAPSHOT_MS = 5_000;
+/**
+ * Ф1.2: РАДИУС ОБЛАСТИ ИНТЕРЕСА в игровых пикселях (TILE=32, то есть 1000 ≈ 31 клетка).
+ * Клиент получает только то, что рядом. Это одновременно трафик и античит: сегодня клиент
+ * знает про ВСЕХ монстров этажа, и никакой обфускацией это не закрыть — веб-клиент открыт.
+ *
+ * Значение подобрано с запасом относительно экрана; уменьшать — только с проверкой глазами,
+ * иначе монстры начнут появляться на виду. `DM_AOI_RADIUS=0` выключает фильтрацию целиком.
+ */
+const AOI_RADIUS = Math.max(0, Number(process.env.DM_AOI_RADIUS ?? 1000));
+/** Выход из области шире входа: без гистерезиса сущности на кромке мигали бы каждый кадр. */
+const AOI_EXIT_MULT = 1.2;
 const AUTOSAVE_MS = 10_000; // периодический сброс прогресса в БД — рестарт/краш теряет ≤10с
 const SHOP_CONSUMABLES = ['minor-healing-potion', 'healing-potion', 'mana-potion', 'antidote'];
 const ARENA_SIZE = 20;              // круглый PvP-зал ARENA_SIZE×ARENA_SIZE клеток
@@ -41,6 +52,10 @@ const ARENA_RESPAWN_MS = 3_000;     // задержка авто-возрожд�
 interface Client {
   /** Получил ли клиент полный кадр (Ф1.3). До этого дельты ему бессмысленны. */
   baselined: boolean;
+  /** Базис дельт ЭТОГО клиента (Ф1.2: у каждого свой вид мира, значит и свой базис). */
+  delta: SnapshotDelta;
+  /** Монстры в его поле зрения: вход в набор = отправка определения (Ф1.2). */
+  visible: Set<number>;
   pid: string;
   ws: WebSocket;
   input: PlayerInput;
@@ -94,9 +109,7 @@ export class Room implements Tickable {
   private lastSaveAt = Date.now() - Math.floor(Math.random() * AUTOSAVE_MS);
   /** Накопитель времени до следующего снапшота (Ф1.5). Стартовая фаза случайна — как у автосейва. */
   private snapAcc = Math.random() * SNAPSHOT_DT;
-  /** Базис дельт комнаты (Ф1.3). Один на всех: пока нет области интереса, кадры одинаковы. */
-  private delta = new SnapshotDelta();
-  /** Когда в последний раз слали ПОЛНЫЙ кадр — страховка от расхождения. */
+  /** Когда в последний раз слали ПОЛНЫЙ кадр — страховка от расхождения (Ф1.3). */
   private lastFullAt = 0;
   private vote: { kind: 'descend' | 'town' | 'arena'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
   // Активный забег v2: конфиг (сид/биом/шаблон/тир), регенерируемый граф и текущий узел.
@@ -169,7 +182,7 @@ export class Room implements Tickable {
     if (this.disconnected.has(save.charId)) { this.disconnected.delete(save.charId); this.hooks.onUngrace(save.charId); }
 
     const pid = `p_${randomUUID()}`;
-    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, baselined: false });
+    this.clients.set(pid, { pid, ws, input: idleInput(), userId, saveVersion: version, baselined: false, delta: new SnapshotDelta(), visible: new Set() });
     this.session.addPlayer(pid, save, spawnAt);
     ensureMainQuest(this.cfg, save); // свежему персонажу — первый квест цепочки (до кадра joined)
     this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
@@ -730,56 +743,93 @@ export class Room implements Tickable {
     return true;
   }
 
-  /** Сбросить базис дельт (Ф1.3): следующий кадр уйдёт ПОЛНЫМ всем клиентам. */
+  /**
+   * Сбросить базисы дельт (Ф1.3): следующий кадр уйдёт ПОЛНЫМ всем клиентам.
+   * Заодно забываем, кого клиент видел — на новом этаже монстры другие.
+   */
   private resetDeltaBaseline(): void {
-    this.delta.reset();
-    for (const c of this.clients.values()) c.baselined = false;
+    for (const c of this.clients.values()) {
+      c.delta.reset();
+      c.baselined = false;
+      c.visible.clear();
+    }
   }
 
   /**
-   * Разослать состояние мира (Ф1.3). Клиенту, который ещё не получал полного кадра, уходит
-   * полный снапшот; остальным — дельта от общего базиса комнаты. Раз в `FULL_SNAPSHOT_MS`
-   * базис сбрасывается и полный кадр уходит всем: это страховка от расхождения, если в самой
-   * дельте когда-нибудь окажется ошибка. Стоит она немного — один полный кадр на несколько сотен.
+   * Разослать состояние мира. С Ф1.2 вид у каждого клиента СВОЙ: сущности за радиусом
+   * области интереса ему не отправляются вовсе. Значит и базис дельт (Ф1.3) персональный.
+   *
+   * Порядок на клиента: сначала определения монстров, ВОШЕДШИХ в поле зрения (`monsterInfo`),
+   * потом сам кадр — иначе клиент получит id монстра, про которого ничего не знает, и молча
+   * его пропустит.
    */
   private emitWorld(): void {
     if (this.clients.size === 0) return;
     const snap = serializeWorld(this.session.world);
     const now = Date.now();
+    const forceFull = now - this.lastFullAt >= FULL_SNAPSHOT_MS;
+    if (forceFull) this.lastFullAt = now;
 
-    const forceFull = !this.delta.ready || now - this.lastFullAt >= FULL_SNAPSHOT_MS;
-    if (forceFull) {
-      this.delta.prime(snap);
-      this.lastFullAt = now;
-      const msg = JSON.stringify({ t: 'snapshot', snap } satisfies ServerFrame);
-      let sent = 0;
-      for (const c of this.clients.values()) {
-        if (c.ws.readyState !== c.ws.OPEN) continue;
-        c.ws.send(msg); c.baselined = true; sent++;
-      }
-      counters.snapshotFrames += sent;
-      counters.snapshotBytes += msg.length * sent;
-      return;
-    }
-
-    const delta = this.delta.next(snap)!;
-    // Контрольная сумма ТОГО ЖЕ кадра: клиент сверяет по ней свою реконструкцию.
-    const deltaMsg = JSON.stringify({ t: 'snapDelta', delta, sum: worldChecksum(snap) } satisfies ServerFrame);
-    let fullMsg: string | null = null;
     let bytes = 0;
     let sent = 0;
     for (const c of this.clients.values()) {
       if (c.ws.readyState !== c.ws.OPEN) continue;
-      if (c.baselined) { c.ws.send(deltaMsg); bytes += deltaMsg.length; }
-      else {
-        // Вошёл между кадрами: базис у него пустой, поэтому первый кадр — полный.
-        fullMsg ??= JSON.stringify({ t: 'snapshot', snap } satisfies ServerFrame);
-        c.ws.send(fullMsg); c.baselined = true; bytes += fullMsg.length;
+      const view = this.viewFor(snap, c);
+
+      // Определения монстров, вошедших в поле зрения (и повторно вошедших: клиент сносит куклу,
+      // когда монстр пропадает из кадра, поэтому при возврате определение нужно снова).
+      const fresh = view.monsters.filter((m) => !c.visible.has(m.id));
+      if (fresh.length) {
+        const live = new Map(this.session.world.monsters.map((m) => [m.id, m]));
+        const info = fresh
+          .map((m) => live.get(m.id))
+          .filter((m): m is NonNullable<typeof m> => !!m)
+          .map((m) => ({ id: m.id, def: m.def, x: m.pos.x, y: m.pos.y }));
+        if (info.length) { const msg = JSON.stringify({ t: 'monsterInfo', monsters: info } satisfies ServerFrame); c.ws.send(msg); bytes += msg.length; }
+      }
+      c.visible = new Set(view.monsters.map((m) => m.id));
+
+      if (!c.baselined || forceFull) {
+        const msg = JSON.stringify({ t: 'snapshot', snap: view } satisfies ServerFrame);
+        c.ws.send(msg);
+        c.delta.prime(view);
+        c.baselined = true;
+        bytes += msg.length;
+      } else {
+        const delta = c.delta.next(view)!;
+        const msg = JSON.stringify({ t: 'snapDelta', delta, sum: worldChecksum(view) } satisfies ServerFrame);
+        c.ws.send(msg);
+        bytes += msg.length;
       }
       sent++;
     }
     counters.snapshotFrames += sent;
     counters.snapshotBytes += bytes;
+  }
+
+  /**
+   * Персональный вид мира для клиента (Ф1.2). Игроки видны всегда — они нужны интерфейсу пати
+   * и их единицы; монстры, дропы и снаряды режутся по радиусу. У монстров гистерезис: вход
+   * по `AOI_RADIUS`, выход по нему же с запасом, иначе сущность на кромке мигала бы каждый кадр
+   * и гоняла бы определения туда-сюда.
+   */
+  private viewFor(snap: ReturnType<typeof serializeWorld>, c: Client): ReturnType<typeof serializeWorld> {
+    const p = this.session.world.players[c.pid];
+    if (!p || AOI_RADIUS <= 0) return snap;
+    const px = p.pos.x, py = p.pos.y;
+    const rIn2 = AOI_RADIUS * AOI_RADIUS;
+    const rOut2 = (AOI_RADIUS * AOI_EXIT_MULT) * (AOI_RADIUS * AOI_EXIT_MULT);
+    const near = (x: number, y: number, r2: number): boolean => {
+      const dx = x - px, dy = y - py;
+      return dx * dx + dy * dy <= r2;
+    };
+    return {
+      tick: snap.tick,
+      players: snap.players,
+      monsters: snap.monsters.filter((m) => near(m.x, m.y, c.visible.has(m.id) ? rOut2 : rIn2)),
+      projectiles: snap.projectiles.filter((r) => near(r.x, r.y, rIn2)),
+      drops: snap.drops.filter((d) => near(d.x, d.y, rIn2)),
+    };
   }
 
   /** Трекинг цели квеста для игрока: мутирует сейв, копит «выполнено»-события. */
