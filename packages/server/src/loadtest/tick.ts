@@ -70,7 +70,6 @@ function buildFloor(): { session: GameSession; inputs: Record<string, PlayerInpu
 }
 
 const { session, inputs, monsters, cols, rows } = buildFloor();
-const itemsBase = reg.get('items.base');
 
 for (let i = 0; i < 2000; i++) session.tick(TICK_DT, inputs); // прогрев JIT
 
@@ -81,7 +80,7 @@ for (let i = 0; i < TICKS; i++) {
   const t0 = process.hrtime.bigint();
   session.tick(TICK_DT, inputs);
   const t1 = process.hrtime.bigint();
-  const msg = JSON.stringify({ t: 'snapshot', snap: serializeWorld(session.world, itemsBase) });
+  const msg = JSON.stringify({ t: 'snapshot', snap: serializeWorld(session.world) });
   const t2 = process.hrtime.bigint();
   tickNs += Number(t1 - t0);
   frameNs += Number(t2 - t1);

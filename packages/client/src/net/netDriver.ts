@@ -8,7 +8,7 @@ import { PlayerVfx } from '../modules/combat/playerVfx.js';
 import { SnapshotBuffer } from './snapshotBuffer.js';
 import { dmgColorNum } from '../core/damageTypes.js';
 import { monsterCombatStats } from '@dm/shared';
-import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot } from '@dm/shared';
+import type { DamagePacket, DamageType, FloorInit, SaveState, SessionEvent, WorldSnapshot, WorldSnapshotFull, PeerInfo } from '@dm/shared';
 
 /** Задержка интерполяции чужих сущностей (мс): рисуем их немного в прошлом, чтобы сгладить 30 Гц + джиттер. */
 const INTERP_DELAY_MS = 100;
@@ -57,9 +57,32 @@ export class NetDriver {
   /** Предыдущее удержание по источнику ввода — для фронт-детекции нажатия тоглов. */
   private wasHeld: Record<string, boolean> = {};
   private seq = 0;
-  private latest?: WorldSnapshot;
+  private latest?: WorldSnapshotFull;
   /** Буфер снапшотов для интерполяции чужих сущностей (пиры/монстры/снаряды). */
   private buffer = new SnapshotBuffer();
+  /** Ф1.1: статика игроков (имя/класс/макс.HP/радиус/внешность) — приходит отдельно от снапшота. */
+  private peerStatics = new Map<string, PeerInfo>();
+
+  /** Слить динамику снапшота со статикой из реестра. */
+  private mergeSnapshot(snap: WorldSnapshot): WorldSnapshotFull {
+    return {
+      ...snap,
+      players: snap.players.map((pv) => {
+        const st = this.peerStatics.get(pv.id);
+        // Статики может не быть ровно один кадр — между входом и догоняющим peerInfo.
+        // Тогда безопасные умолчания, чтобы не городить проверок по всему рендеру.
+        return {
+          ...pv,
+          classId: st?.classId ?? 'warrior',
+          name: st?.name ?? '',
+          maxHp: st?.maxHp ?? Math.max(1, pv.hp),
+          r: st?.r ?? 14,
+          weaponKey: st?.weaponKey,
+          armorModels: st?.armorModels,
+        };
+      }),
+    };
+  }
   /** Сглаженная позиция СВОЕГО игрока (лерп к авторитетной); hasSmooth=false → первый кадр ставит точно. */
   private smoothX = 0;
   private smoothY = 0;
@@ -83,10 +106,18 @@ export class NetDriver {
     scene.input.on('pointerdown', this.onDown);
     scene.input.on('pointerup', this.onUp);
 
-    app.net.on('snapshot', (f) => { this.latest = f.snap; this.buffer.push(f.snap, performance.now()); });
+    // Ф1.1: статика игроков приходит отдельным кадром; сливаем её со снапшотом на приёме,
+    // чтобы остальной код работал с привычной формой.
+    app.net.on('peerInfo', (f) => { for (const pi of f.peers) this.peerStatics.set(pi.id, pi); });
+    app.net.on('peerJoined', (f) => { this.peerStatics.set(f.peer.id, f.peer); });
+    app.net.on('snapshot', (f) => {
+      const merged = this.mergeSnapshot(f.snap);
+      this.latest = merged;
+      this.buffer.push(merged, performance.now());
+    });
     app.net.on('events', (f) => this.onEvents(f.events));
     app.net.on('saveUpdate', (f) => this.applySave(f.save));
-    app.net.on('peerLeft', (f) => { const r = this.remotes.get(f.id); r?.sprite.destroy(); r?.nose.destroy(); this.remotes.delete(f.id); });
+    app.net.on('peerLeft', (f) => { const r = this.remotes.get(f.id); r?.sprite.destroy(); r?.nose.destroy(); this.remotes.delete(f.id); this.peerStatics.delete(f.id); });
   }
 
   setMyId(id: string): void { this.myId = id; }
@@ -188,7 +219,7 @@ export class NetDriver {
     else state.toggles = mine.toggles;
   }
 
-  private render(snap: WorldSnapshot): void {
+  private render(snap: WorldSnapshotFull): void {
     // Пиры (свой игрок нарисован в renderSelf — здесь пропускаем).
     for (const pv of snap.players) {
       if (pv.id === this.myId) continue;

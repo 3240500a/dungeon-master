@@ -1,7 +1,8 @@
 import type { DamagePacket, DamageType } from '../types/combat.js';
 import type { WorldState } from '../world/state.js';
 import type { DecorObject } from '../dungeon/floorCommon.js';
-import type { FloorInit, WorldSnapshot } from './netTypes.js';
+import type { FloorInit, WorldSnapshot, PeerInfo } from './netTypes.js';
+import type { PlayerEntity } from '../world/state.js';
 import { weapon3dKeyFromEquipment } from './weapon3d.js';
 
 /**
@@ -35,17 +36,15 @@ export function dominantType(pk: DamagePacket): DamageType {
 }
 
 /** Снапшот мира за тик: игроки/монстры/снаряды/дропы (по id, только рантайм-поля). */
-export function serializeWorld(w: WorldState, itemsBase?: ItemBaseLite[]): WorldSnapshot {
+export function serializeWorld(w: WorldState): WorldSnapshot {
   return {
     tick: w.tick,
     players: Object.values(w.players).map((p) => ({
-      id: p.id, classId: p.save.classId, name: p.save.name,
+      id: p.id,
       x: p.pos.x, y: p.pos.y, facing: p.facing,
-      hp: p.hp, maxHp: p.maxHp, mana: p.mana, stamina: p.stamina, alive: p.alive,
-      debuffs: p.debuffs, toggles: p.toggles, r: p.radius,
-      weaponKey: weapon3dKeyFromEquipment(p.save.equipment.weapon, p.save.equipment.offhand) ?? undefined,
+      hp: p.hp, mana: p.mana, stamina: p.stamina, alive: p.alive,
+      debuffs: p.debuffs, toggles: p.toggles,
       inCombat: p.combatTimer > 0 ? true : undefined,
-      armorModels: armorModelsOf(p.save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined>, p.save.classId, itemsBase),
     })),
     monsters: w.monsters.map((m) => ({
       id: m.id, x: m.pos.x, y: m.pos.y, facing: m.facing,
@@ -56,6 +55,23 @@ export function serializeWorld(w: WorldState, itemsBase?: ItemBaseLite[]): World
       id: pr.id, x: pr.pos.x, y: pr.pos.y, owner: pr.owner, dom: dominantType(pr.packet), r: pr.radius,
     })),
     drops: w.drops.map((d) => ({ id: d.id, x: d.pos.x, y: d.pos.y, item: d.item })),
+  };
+}
+
+/**
+ * СТАТИКА игрока для кадра `peerInfo` (Ф1.1). Считается редко — на входе, экипировке, уровне
+ * и смене области, — поэтому здесь не жалко линейного поиска по базам предметов, который
+ * раньше делался на каждого игрока каждый тик.
+ */
+export function peerInfoOf(p: PlayerEntity, itemsBase?: ItemBaseLite[]): PeerInfo {
+  return {
+    id: p.id,
+    classId: p.save.classId,
+    name: p.save.name,
+    maxHp: p.maxHp,
+    r: p.radius,
+    weaponKey: weapon3dKeyFromEquipment(p.save.equipment.weapon, p.save.equipment.offhand) ?? undefined,
+    armorModels: armorModelsOf(p.save.equipment as Record<string, { modelId?: string; baseId?: string } | undefined>, p.save.classId, itemsBase),
   };
 }
 

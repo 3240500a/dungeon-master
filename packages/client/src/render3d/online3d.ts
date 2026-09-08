@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { App } from '../core/app.js';
 import { GameState } from '../core/gameState.js';
-import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
+import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { resolveBodyProfile, resolveBoneScale, resolveBoneOffsets } from './modelSkin.js';
@@ -294,7 +294,30 @@ export async function startOnline3d(): Promise<void> {
   const monsters = new Map<number, Actor>();
   const projMeshes = new Map<number, THREE.Mesh>();
   const dropMeshes = new Map<number, THREE.Object3D>();
-  let latest: WorldSnapshot | undefined;
+  let latest: WorldSnapshotFull | undefined;
+  /**
+   * Ф1.1: реестр СТАТИКИ игроков (имя, класс, макс. HP, радиус, оружие, броня). Сервер шлёт её
+   * отдельно — при входе и при изменении, — а снапшот несёт только динамику. Сливаем здесь,
+   * один раз на кадр, чтобы весь код ниже работал с привычной формой игрока.
+   */
+  const peerStatics = new Map<string, PeerInfo>();
+  const mergeSnapshot = (snap: WorldSnapshot): WorldSnapshotFull => ({
+    ...snap,
+    players: snap.players.map((pv) => {
+      const st = peerStatics.get(pv.id);
+      // Статики может не быть ровно один кадр — между входом и догоняющим peerInfo.
+      // Тогда безопасные умолчания, чтобы не городить проверок по всему рендеру.
+      return {
+        ...pv,
+        classId: st?.classId ?? 'warrior',
+        name: st?.name ?? '',
+        maxHp: st?.maxHp ?? Math.max(1, pv.hp),
+        r: st?.r ?? 14,
+        weaponKey: st?.weaponKey,
+        armorModels: st?.armorModels,
+      };
+    }),
+  });
   let smoothX = 0, smoothZ = 0, hasSmooth = false;
   // Наблюдение: когда локальный игрок мёртв — id живого союзника, за которым ведём камеру (Tab циклит).
   let spectateId: string | null = null;
@@ -867,7 +890,7 @@ export async function startOnline3d(): Promise<void> {
   }
 
   // ── Сетевые обработчики (данные + жизненный цикл) ────────────────────────────
-  app.net.on('snapshot', (f) => { latest = f.snap; });
+  app.net.on('snapshot', (f) => { latest = mergeSnapshot(f.snap); });
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;
@@ -891,7 +914,9 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('runStatus', (f) => { hideConnecting(); if (f.hasRun) showResume(f.roomCode ?? '', f.depth ?? 0); else showLobby(); });
   app.net.on('abandoned', () => { hideResume(); showLobby(); });
   app.net.on('error', (f) => { if (f.code === 'no-run') { hideResume(); showLobby(); return; } if (statusEl) statusEl.textContent = f.msg; });
-  app.net.on('peerLeft', (f) => { const a = peers.get(f.id); if (a) { disposeActor(a); peers.delete(f.id); } });
+  app.net.on('peerLeft', (f) => { const a = peers.get(f.id); if (a) { disposeActor(a); peers.delete(f.id); } peerStatics.delete(f.id); });
+  app.net.on('peerInfo', (f) => { for (const pi of f.peers) peerStatics.set(pi.id, pi); });
+  app.net.on('peerJoined', (f) => { peerStatics.set(f.peer.id, f.peer); });
 
   // ── Модалки (DOM, как в 2D OnlineScene) ──────────────────────────────────────
   let lobby: HTMLElement | undefined, resumeB: HTMLElement | undefined, connecting: HTMLElement | undefined;

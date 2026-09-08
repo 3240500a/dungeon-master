@@ -20,31 +20,48 @@ import type { PlayerInput, SessionEvent } from './session.js';
 export const PROTOCOL_VERSION = 1;
 
 // ── View-типы (то, что едет в снапшоте, по id) ──────────────────────────────
+/**
+ * ДИНАМИКА игрока — то, что действительно меняется от кадра к кадру. Ф1.1: статика (имя,
+ * класс, максимум HP, радиус, ключ оружия, модели брони) отсюда УБРАНА и едет отдельным
+ * кадром `peerInfo` — она менялась раз в сессию, а платили за неё каждый кадр каждому.
+ * Заодно ушёл линейный поиск по базам предметов, который делался на каждого игрока каждый тик.
+ */
 export interface PlayerView {
   id: string;
-  classId: string;
-  /** Имя персонажа — для неймплейта пира. */
-  name: string;
   x: number;
   y: number;
   facing: number;
   hp: number;
-  /** Максимум HP — для полоски здоровья пира (у монстров уже есть, у игроков не хватало). */
-  maxHp: number;
   mana: number;
   stamina: number;
   alive: boolean;
   debuffs: DebuffState;
   toggles: string[];
-  /** Радиус коллизии (для debug-draw коллайдеров). */
-  r: number;
-  /** 3D-ключ экипированного оружия (для рендера кукол пиров: меш + адаптация поз). Нет оружия — поле отсутствует (клиент → класс-дефолт). */
-  weaponKey?: string;
   /** «В бою» (боевой айдл): своя атака ИЛИ на игрока целится монстр. Клиент → боевая стойка. */
   inCombat?: boolean;
-  /** Внешность брони по слотам (C7): slot→modelId надетых предметов (helm/chest/gloves/boots). Клиент → скин-слой пира. Пусто — базы слотов. */
+}
+
+/**
+ * СТАТИКА игрока (Ф1.1). Шлётся при входе (`joined.peers`, `peerJoined`) и при изменении
+ * (`peerInfo`) — то есть на экипировку, уровень и смену области, а не каждый кадр.
+ */
+export interface PeerInfo {
+  id: string;
+  classId: string;
+  /** Имя персонажа — для неймплейта пира. */
+  name: string;
+  /** Максимум HP — для полоски здоровья пира. */
+  maxHp: number;
+  /** Радиус коллизии (debug-draw и попадания на клиенте). */
+  r: number;
+  /** 3D-ключ экипированного оружия (меш + адаптация поз). Нет оружия — клиент берёт класс-дефолт. */
+  weaponKey?: string;
+  /** Внешность брони по слотам (C7): slot→modelId. Пусто — базы слотов. */
   armorModels?: Record<string, string>;
 }
+
+/** Игрок глазами клиента: динамика из снапшота, слитая со статикой из реестра пиров. */
+export type PlayerViewFull = PlayerView & PeerInfo;
 export interface MonsterView {
   id: number;
   x: number;
@@ -78,11 +95,7 @@ export interface DropView {
   y: number;
   item: Item;
 }
-export interface PeerLite {
-  id: string;
-  classId: string;
-  name: string;
-}
+
 
 /** Область комнаты и её геометрия (шлётся один раз при входе). */
 export interface FloorInit {
@@ -106,6 +119,11 @@ export interface FloorInit {
   doors: { id: number; cells: { cx: number; cy: number }[] }[];
   /** Рычаги (мировые координаты) — спрайт + интерактив «[E] Рычаг», открывает свою дверь. */
   levers: { id: number; x: number; y: number; doorId: number }[];
+}
+
+/** Снапшот, слитый со статикой пиров — то, с чем работает клиент (Ф1.1). */
+export interface WorldSnapshotFull extends Omit<WorldSnapshot, 'players'> {
+  players: PlayerViewFull[];
 }
 
 /** Полный снапшот мира за тик. */
@@ -173,7 +191,7 @@ export type ClientFrame =
 
 // ── Кадры сервер → клиент ───────────────────────────────────────────────────
 export type ServerFrame =
-  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerLite[]; save: SaveState }
+  | { t: 'joined'; v: number; playerId: string; roomCode: string; floor: FloorInit; peers: PeerInfo[]; save: SaveState }
   // Ответ на runStatus: есть ли незавершённый забег (+ код комнаты и этаж для модалки).
   | { t: 'runStatus'; hasRun: boolean; roomCode?: string; depth?: number }
   // Подтверждение abandon: забег заброшен (персонаж погиб со штрафом) — клиент открывает лобби.
@@ -185,7 +203,9 @@ export type ServerFrame =
   // Полный слепок общего сундука (шлётся на stashOpen и после каждого stashMove).
   | { t: 'stash'; tabs: Item[][]; cols: number; rows: number; tabCount: number }
   | { t: 'questBoard'; quests: QuestDef[] }
-  | { t: 'peerJoined'; peer: PeerLite }
+  | { t: 'peerJoined'; peer: PeerInfo }
+  // Ф1.1: обновление СТАТИКИ игроков — экипировка, уровень, смена области.
+  | { t: 'peerInfo'; peers: PeerInfo[] }
   | { t: 'peerLeft'; id: string }
   | { t: 'areaChanged'; floor: FloorInit }
   // Структура текущего забега (v2) — данные для панели-карты (граф узлов, «видно вперёд»).

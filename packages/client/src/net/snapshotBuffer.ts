@@ -1,4 +1,4 @@
-import type { WorldSnapshot } from '@dm/shared';
+import type { WorldSnapshotFull } from '@dm/shared';
 
 /**
  * Буфер снапшотов для интерполяции чужих сущностей. Сервер шлёт мир 30 Гц; чтобы пиры/монстры/
@@ -8,7 +8,7 @@ import type { WorldSnapshot } from '@dm/shared';
  * NetDriver — иначе своё движение ощущалось бы с лагом). Чистый вид, авторитет — на сервере.
  */
 
-interface Stamped { t: number; snap: WorldSnapshot; }
+interface Stamped { t: number; snap: WorldSnapshotFull; }
 
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t; }
 
@@ -24,7 +24,7 @@ export class SnapshotBuffer {
   private readonly maxAgeMs = 1000; // держим ~1с истории (с запасом на джиттер)
 
   /** Добавить полученный снапшот с временем приёма (performance.now()). */
-  push(snap: WorldSnapshot, t: number): void {
+  push(snap: WorldSnapshotFull, t: number): void {
     this.buf.push({ t, snap });
     const cutoff = t - this.maxAgeMs;
     while (this.buf.length > 2 && this.buf[0]!.t < cutoff) this.buf.shift();
@@ -36,7 +36,7 @@ export class SnapshotBuffer {
    * Интерполированный снапшот на момент `renderTime` (ms в шкале performance.now()).
    * До/после диапазона — ближайший крайний снапшот (без экстраполяции). undefined — буфер пуст.
    */
-  sample(renderTime: number): WorldSnapshot | undefined {
+  sample(renderTime: number): WorldSnapshotFull | undefined {
     const n = this.buf.length;
     if (n === 0) return undefined;
     if (n === 1) return this.buf[0]!.snap;
@@ -54,7 +54,7 @@ export class SnapshotBuffer {
 }
 
 /** Позиции/повороты лерпятся a→b; остальные поля (hp/alive/…) берутся из b (целевого). */
-function lerpSnapshot(a: WorldSnapshot, b: WorldSnapshot, t: number): WorldSnapshot {
+function lerpSnapshot(a: WorldSnapshotFull, b: WorldSnapshotFull, t: number): WorldSnapshotFull {
   const ap = new Map(a.players.map((p) => [p.id, p]));
   const am = new Map(a.monsters.map((m) => [m.id, m]));
   const aj = new Map(a.projectiles.map((p) => [p.id, p]));

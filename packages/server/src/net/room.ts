@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
-  GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit,
+  GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
   buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
@@ -10,7 +10,7 @@ import {
   isDifficultyUnlocked, applyDeathPenalty,
   PROTOCOL_VERSION,
   type ConfigRegistry, type PlayerInput, type Item, type SaveState, type SessionEvent,
-  type FloorInit, type PeerLite, type ServerFrame, type TownCommand, type QuestDef,
+  type FloorInit, type PeerInfo, type ServerFrame, type TownCommand, type QuestDef,
   type DecorObject, type RunConfig, type RunPlan, type AccountStash,
 } from '@dm/shared';
 import { putCharacter, putCharacterWithStash } from '../db/db.js';
@@ -167,12 +167,12 @@ export class Room implements Tickable {
     this.persist(pid); // фиксируем на входе (reconnect найдёт запись)
     this.send(ws, {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
-      floor: this.currentFloorInit(), peers: this.peerList(pid), save,
+      floor: this.currentFloorInit(), peers: this.peerList(), save,
     });
     if (this.area === 'town') this.send(ws, { t: 'shop', items: this.shop });
     if (this.runPlan && this.runNodeId) this.send(ws, { t: 'runPlan', plan: this.runPlan, currentNodeId: this.runNodeId });
     this.send(ws, { t: 'questBoard', quests: this.questBoard });
-    this.broadcastExcept(pid, { t: 'peerJoined', peer: this.peerLite(pid) });
+    this.broadcastExcept(pid, { t: 'peerJoined', peer: this.peerInfo(pid) });
     return pid;
   }
 
@@ -347,6 +347,9 @@ export class Room implements Tickable {
       }
     }
     if (!r.ok) this.send(c.ws, { t: 'error', code: 'cmd', msg: r.reason ?? '' });
+    // Ф1.1: успешная команда города могла сменить экипировку/уровень/максимум HP — значит
+    // статика устарела. Команды редки, поэтому шлём без всякой хитрости.
+    else this.broadcastPeerInfo();
     this.sendSave(pid);
   }
 
@@ -522,6 +525,7 @@ export class Room implements Tickable {
       runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: biome.id,
     });
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+    this.broadcastPeerInfo();
     this.broadcast({ t: 'runPlan', plan: this.runPlan, currentNodeId: nodeId });
     // Персист указателя забега + прогресс сложности/квестов.
     const qev: SessionEvent[] = [];
@@ -547,6 +551,7 @@ export class Room implements Tickable {
     this.questBoard = generateBoard(this.cfg, createRng(((Date.now() & 0xffffff) >>> 0) || 1));
     for (const pid of this.clients.keys()) ensureMainQuest(this.cfg, this.session.world.players[pid]!.save);
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+    this.broadcastPeerInfo();
     this.broadcast({ t: 'shop', items: this.shop });
     this.broadcastQuestBoard();
     for (const pid of this.clients.keys()) this.sendSave(pid); // город мог выдать main-квест
@@ -572,6 +577,7 @@ export class Room implements Tickable {
       i++;
     }
     this.broadcast({ t: 'areaChanged', floor: this.currentFloorInit() });
+    this.broadcastPeerInfo();
   }
   private regenShop(): void {
     const itemsBase = this.cfg.get('items.base');
@@ -616,7 +622,7 @@ export class Room implements Tickable {
     if (this.snapAcc >= SNAPSHOT_DT) {
       this.snapAcc -= SNAPSHOT_DT;
       if (this.snapAcc > SNAPSHOT_DT) this.snapAcc = 0; // сильно отстали — не копим долг кадров
-      if (emit) this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world, this.cfg.get('items.base')) });
+      if (emit) this.broadcast({ t: 'snapshot', snap: serializeWorld(this.session.world) });
     }
     if (Date.now() - this.lastSaveAt >= AUTOSAVE_MS) this.persistAll(); // периодический автосейв прогресса
     if (this.wipeAt && Date.now() >= this.wipeAt) this.enterTown(); // вайп → авто-возврат в город
@@ -633,7 +639,7 @@ export class Room implements Tickable {
     }
     this.broadcast({ t: 'events', events: quest.length ? [...events, ...quest] : events });
     for (const pid of touched) this.sendSave(pid);
-    if (events.some((e) => e.type === 'levelup')) this.persistAll(); // левелап — сразу фиксируем в БД
+    if (events.some((e) => e.type === 'levelup')) { this.persistAll(); this.broadcastPeerInfo(); } // левелап — фиксируем в БД и обновляем статику (макс. HP)
   }
 
   /**
@@ -736,12 +742,25 @@ export class Room implements Tickable {
     // Арена рендерится клиентом как обычный этаж (грид+спавн), поэтому area → 'dungeon'.
     return floorInit(this.area === 'town' ? 'town' : 'dungeon', this.session.world, this.decor);
   }
-  private peerLite(pid: string): PeerLite {
-    const s = this.session.world.players[pid]!.save;
-    return { id: pid, classId: s.classId, name: s.name };
+  /** Статика игрока для кадра `peerInfo` (Ф1.1). */
+  private peerInfo(pid: string): PeerInfo {
+    return peerInfoOf(this.session.world.players[pid]!, this.cfg.get('items.base'));
   }
-  private peerList(exclude: string): PeerLite[] {
-    return [...this.clients.keys()].filter((id) => id !== exclude).map((id) => this.peerLite(id));
+  /**
+   * Статика ВСЕХ игроков комнаты, включая самого получателя: клиент сливает её со снапшотом,
+   * и своя запись ему нужна ровно так же, как чужие.
+   */
+  private peerList(): PeerInfo[] {
+    return [...this.clients.keys()].map((id) => this.peerInfo(id));
+  }
+  /**
+   * Разослать обновлённую статику (Ф1.1). Зовётся редко: вход, успешная команда города
+   * (экипировка/уровень/распределение), смена области. Держать это в каждом кадре было
+   * тем же, что слать имя игрока тридцать раз в секунду.
+   */
+  private broadcastPeerInfo(): void {
+    if (this.clients.size === 0) return;
+    this.broadcast({ t: 'peerInfo', peers: this.peerList() });
   }
   private sendSave(pid: string): void {
     const c = this.clients.get(pid);

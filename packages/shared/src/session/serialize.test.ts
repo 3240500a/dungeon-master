@@ -5,7 +5,7 @@ import { generateMonster } from '../formulas/monstergen.js';
 import { Cell, makeGrid, cellToWorld, type Grid } from '../world/grid.js';
 import { newBotSave } from '../sim/playerBot.js';
 import { GameSession, type PlayerInput } from './session.js';
-import { serializeWorld } from './serialize.js';
+import { serializeWorld, peerInfoOf } from './serialize.js';
 
 function reg(): ConfigRegistry {
   const r = new ConfigRegistry();
@@ -34,8 +34,22 @@ describe('serializeWorld / removePlayer', () => {
 
     const snap = serializeWorld(s.world);
     expect(snap.players.map((p) => p.id).sort()).toEqual(['p1', 'p2']);
-    expect(snap.players[0]).toHaveProperty('classId');
     expect(snap.players[0]).not.toHaveProperty('save'); // тяжёлый сейв не едет
+    // Ф1.1: СТАТИКА (класс, имя, макс. HP, радиус, внешность) в снапшоте больше не едет —
+    // она уходит отдельным кадром `peerInfo` при входе и при изменении, а не 20 раз в секунду.
+    for (const field of ['classId', 'name', 'maxHp', 'r', 'weaponKey', 'armorModels']) {
+      expect(snap.players[0]).not.toHaveProperty(field);
+    }
+    // ...но динамика на месте.
+    for (const field of ['x', 'y', 'facing', 'hp', 'mana', 'stamina', 'alive']) {
+      expect(snap.players[0]).toHaveProperty(field);
+    }
+    // ...а статика доступна отдельно.
+    const pi = peerInfoOf(s.world.players['p1']!, r.get('items.base'));
+    expect(pi.id).toBe('p1');
+    expect(typeof pi.classId).toBe('string');
+    expect(pi.maxHp).toBeGreaterThan(0);
+    expect(pi.r).toBeGreaterThan(0);
     expect(snap.monsters.length).toBe(1);
     expect(snap.monsters[0]).toHaveProperty('hp');
     expect(typeof snap.tick).toBe('number');
