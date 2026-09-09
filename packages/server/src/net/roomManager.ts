@@ -148,7 +148,10 @@ export class RoomManager {
     if (frame.t === 'runStatus') {
       const userId = await this.authOwner(ws, frame.token, frame.charId);
       if (!userId) return;
-      const room = this.graceByChar.get(frame.charId);
+      // Комната сама по себе НЕ значит «есть забег»: она живёт и когда игрок просто стоит
+      // в городе — в том числе сразу после гибели. Спрашиваем комнату, идёт ли забег на самом деле.
+      const graceRoom = this.graceByChar.get(frame.charId);
+      const room = graceRoom?.inRun ? graceRoom : undefined;
       const owned = room ? undefined : await this.ownedSave(userId, frame.charId);
       const run = owned?.save.run;
       const hasRun = !!room || !!run;

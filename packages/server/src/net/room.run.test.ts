@@ -111,6 +111,82 @@ describe('Room — жизненный цикл забега v2 (сервер, he
     expect(ws.last('saveUpdate')?.save.run, 'после финиша забег очищен').toBeUndefined();
   });
 
+  /**
+   * БАГ ИЗ ИГРЫ: погиб в забеге, вернулся в город — а реконнект предлагал «продолжить»
+   * и высаживал на том же этаже, где убили, со всем живым прогрессом.
+   *
+   * Корень: возврат после вайпа идёт через `enterTown`, а забег чистил только `finishRun`
+   * (финал). Значит `save.run` переживал смерть и персистился со старым узлом.
+   */
+  it('вАЙП ЗАВЕРШАЕТ ЗАБЕГ: после смерти соло `save.run` пуст, продолжать нечего', () => {
+    const { room, ws, pid } = makeRoom();
+    room.descend(pid);
+    const startId = ws.last('runPlan')!.plan.startId;
+    // Спускаемся ГЛУБЖЕ старта — иначе «новый забег начался со старта» ничего не доказывает:
+    // погибнув на стартовом узле, мы бы и при НЕИСПРАВЛЕННОМ баге вернулись туда же.
+    const firstEdge = nodeOf(ws.last('runPlan')!.plan, startId).edges[0]!.to;
+    room.descend(pid, undefined, firstEdge);
+    const runBefore = ws.last('saveUpdate')?.save.run;
+    expect(runBefore, 'в забеге указатель есть').toBeTruthy();
+    const diedAt = runBefore!.currentNodeId;
+    expect(diedAt, 'гибнем НЕ на стартовом узле').not.toBe(startId);
+
+    // Убиваем игрока через САМУ СИМУЛЯЦИЮ (смертельный DoT), а не вызовом внутреннего
+    // метода: баг был именно в СЦЕПЛЕНИИ «событие смерти → вайп → забег», и проверять
+    // надо весь этот путь. Сессия приватная — тянемся через каст, это тест.
+    const inner = room as unknown as { session: { world: { players: Record<string, { hp: number; debuffs: Record<string, unknown> }> } } };
+    const p = inner.session.world.players[pid]!;
+    p.hp = 1;
+    p.debuffs.poison = { stacks: 1, maxStacks: 1, expiresAt: Date.now() + 60_000, mag: 9999, mag2: 0 };
+
+    for (let i = 0; i < 20 && !ws.last('died'); i++) room.step(false);
+    expect(ws.last('died'), 'игрок действительно погиб').toBeDefined();
+    expect(ws.last('died')!.toTown, 'соло = вайп → возврат в город').toBe(true);
+
+    // ГЛАВНОЕ: указатель забега снят СРАЗУ на вайпе, а не когда-нибудь потом —
+    // именно этот сейв уйдảт в БД автосейвом и его же прочитает реконнект.
+    expect(ws.last('saveUpdate')?.save.run, 'после вайпа забег окончен').toBeUndefined();
+
+    // И следующий спуск начинает НОВЫЙ забег с начала, а не возвращает на этаж гибели.
+    room.step(false);                       // доводим таймер окна смерти до города
+    (room as unknown as { wipeAt: number }).wipeAt = 1;   // не ждём 4 секунды реального времени
+    room.step(false);
+    expect(ws.last('areaChanged')?.floor.area, 'вайп уводит в город').toBe('town');
+    room.descend(pid);
+    const rp = ws.last('runPlan')!;
+    expect(rp.currentNodeId, 'новый забег — со стартового узла').toBe(rp.plan.startId);
+    expect(rp.currentNodeId, 'и ТОЧНО не с этажа, где убили').not.toBe(diedAt);
+  });
+
+  /**
+   * Соседняя болезнь того же бага. Модалка «Продолжить/Завершить» считала забег идущим по
+   * САМОМУ ФАКТУ живой грейс-комнаты, а комната живёт и когда игрок просто стоит в городе.
+   * Забег идёт ровно пока жив план — это и спрашивает `roomManager` через `inRun`.
+   */
+  it('inRun честно говорит, идёт ли забег: город → нет, забег → да, после вайпа → нет', () => {
+    const { room, ws, pid } = makeRoom();
+    expect(room.inRun, 'в городе до старта продолжать нечего').toBe(false);
+
+    room.descend(pid);
+    expect(room.inRun, 'в забеге — есть').toBe(true);
+
+    // Выход в город ПОСРЕДИ забега его НЕ завершает: туда ходят за покупками и возвращаются.
+    room.returnTown(pid);
+    expect(ws.last('areaChanged')?.floor.area).toBe('town');
+    expect(room.inRun, 'выход в город — не конец забега').toBe(true);
+    expect(ws.last('saveUpdate')?.save.run, 'указатель цел — есть куда вернуться').toBeTruthy();
+
+    // А вот гибель — конец.
+    room.descend(pid);
+    const inner = room as unknown as { session: { world: { players: Record<string, { hp: number; debuffs: Record<string, unknown> }> } } };
+    const p = inner.session.world.players[pid]!;
+    p.hp = 1;
+    p.debuffs.poison = { stacks: 1, maxStacks: 1, expiresAt: Date.now() + 60_000, mag: 9999, mag2: 0 };
+    for (let i = 0; i < 20 && !ws.last('died'); i++) room.step(false);
+    expect(ws.last('died'), 'игрок погиб').toBeDefined();
+    expect(room.inRun, 'после вайпа продолжать нечего — модалка не должна появляться').toBe(false);
+  });
+
   it('алтарь: выбранные биом/шаблон учитываются; несуществующие/выключенные отбрасываются (фолбэк)', () => {
     const biomes = cfg.get('biomes').filter((b) => b.enabled !== false);
     const tpls = cfg.get('run-templates').filter((t) => t.enabled !== false);

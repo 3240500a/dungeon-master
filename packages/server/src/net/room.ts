@@ -272,7 +272,10 @@ export class Room implements Tickable {
   abandonAsDead(charId: string): void {
     const info = this.disconnected.get(charId);
     if (info) {
-      applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty);
+      // ШТРАФ ТОЛЬКО ЗА БРОШЕННЫЙ ЗАБЕГ. Стоять в городе и отключиться — не преступление;
+      // без этой проверки уже погибший игрок платил бы второй раз за ту же смерть.
+      if (info.save.run) applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty);
+      info.save.run = undefined;   // «Завершить» обязано завершать: иначе модалка выскакивала снова
       void this.persistDisconnected(charId, info);
       this.disconnected.delete(charId);
     }
@@ -290,6 +293,14 @@ export class Room implements Tickable {
 
   /** Текущий этаж (0 = город) — для модалки «Продолжить/Забросить». */
   get currentDepth(): number { return this.depth; }
+  /**
+   * ИДЁТ ЛИ ЗАБЕГ в этой комнате. Раньше реконнект считал «забег есть» по САМОМУ ФАКТУ
+   * существования грейс-комнаты — а комната живёт и когда игрок просто стоит в городе.
+   * Поэтому после гибели модалка «Продолжить» выскакивала даже тогда, когда продолжать было нечего.
+   * План существует ровно между стартом забега и `endRun()` — это и есть честный ответ.
+   * В город можно выйти и ПОСРЕДИ забега — там план цел, и продолжить действительно есть что.
+   */
+  get inRun(): boolean { return !!this.runPlan; }
 
   /** Комната опустела: пауза симуляции (мир замирает) + грейс-таймер. Возврат — через reconnect(). */
   private enterGrace(): void {
@@ -311,7 +322,8 @@ export class Room implements Tickable {
   private finalizeDisconnectedAsDead(): void {
     const penalty = this.cfg.get('balance').deathPenalty;
     for (const [charId, info] of this.disconnected) {
-      applyDeathPenalty(info.save, penalty);
+      if (info.save.run) applyDeathPenalty(info.save, penalty);   // только за брошенный забег, см. `abandonAsDead`
+      info.save.run = undefined;   // погиб → забег окончен; без этого следующий вход снова предлагал «продолжить»
       void this.persistDisconnected(charId, info);
       this.hooks.onUngrace(charId);
     }
@@ -585,10 +597,19 @@ export class Room implements Tickable {
     this.enterNode(nid);
     return true;
   }
-  /** Завершить забег: очистить run у всех, вернуться в город. */
-  private finishRun(): void {
+  /**
+   * ЗАБЕГ ОКОНЧЕН: снять указатель у всех игроков комнаты и обнулить план.
+   *
+   * Город сюда НЕ входит намеренно: финал возвращает порталом СРАЗУ, а вайп — таймером
+   * через окно смерти. Общее у них ровно одно — забега больше нет, и продолжать нечего.
+   */
+  private endRun(): void {
     for (const pid of this.clients.keys()) { const p = this.session.world.players[pid]; if (p) p.save.run = undefined; }
     this.runConfig = null; this.runPlan = null; this.runNodeId = null;
+  }
+  /** Финал забега: забег окончен + возврат в город. */
+  private finishRun(): void {
+    this.endRun();
     this.enterTown();
   }
   /** Войти в узел забега: сгенерировать этаж по floorSpec, заселить по ролям/фичам, разослать кадры. */
@@ -757,7 +778,13 @@ export class Room implements Tickable {
     this.send(c.ws, { t: 'died', goldLost: summary.goldLost, itemsLost: summary.itemsLost, toTown: allDead });
     if (allDead) {
       this.wipeAt = Date.now() + 4000;
-      this.finalizeDisconnectedAsDead(); // пати вайпнулась → отключённые тоже погибли, забег окончен
+      // ВАЙП = ЗАБЕГ ОКОНЧЕН. Раньше здесь чистились только отключённые, а `save.run` живых
+      // оставался со старым узлом: возврат в город идёт через `enterTown`, а тот забег не трогает
+      // (его чистил только `finishRun` на финале). Из-за этого после гибели реконнект предлагал
+      // «продолжить» и высаживал на том же этаже, где убили — со всем живым прогрессом этажа.
+      // Кооп без вайпа сюда не попадает: там забег идёт дальше, а мёртвый оживает на следующем этаже.
+      this.endRun();
+      this.finalizeDisconnectedAsDead(); // пати вайпнулась → отключённые тоже погибли
     }
   }
 
