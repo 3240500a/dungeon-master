@@ -293,6 +293,20 @@ async fn run(a: Args, threads: usize) {
         target = (target + step).min(max);
     }
 
+    // Отчёт файлом: сравнивать прогоны должен инструмент, а не глаз (см. report.rs).
+    if let Some(out) = a.0.get("out") {
+        let params = serde_json::json!({
+            "base": base, "mode": mode, "from": from, "step": step, "max": max,
+            "secs": secs, "warmup": warmup, "hz": hz, "group": group, "threads": threads,
+            "see": see, "churn": churn, "churnSec": churn_sec, "slow": slow, "slowMs": slow_ms,
+            "burst": burst, "every": every,
+        });
+        match report::write(out, params, &rows, capacity, base_rtt) {
+            Ok(()) => println!("\nотчёт: {out}"),
+            Err(e) => eprintln!("\nотчёт не записан ({out}): {e}"),
+        }
+    }
+
     println!("\n════════════════════════════════════════════════════════");
     if soak {
         // Дрейф важнее любого отдельного окна: сервер, который час держит те же числа, и сервер,
