@@ -105,7 +105,9 @@ async function main(): Promise<void> {
   clearInterval(iv);
   ws.close();
   console.log(`\nИТОГ: сверок ${checks}, расхождений ${bad}`);
-  console.log(`область интереса: максимум монстров в кадре ${maxSeen}, дальний монстр в ${maxDist.toFixed(0)} игровых пикселях (радиус ${process.env.DM_AOI_RADIUS ?? '1000'})`);
+  const r = Number(process.env.DM_AOI_RADIUS ?? 0);
+  console.log(`видимость: максимум монстров в кадре ${maxSeen}, дальний монстр в ${maxDist.toFixed(0)} игровых пикселях`
+    + (r > 0 ? ` (область интереса включена, радиус ${r})` : ' (область интереса выключена — общий кадр на комнату)'));
   process.exit(bad === 0 && checks > 0 ? 0 : 1);
 }
 

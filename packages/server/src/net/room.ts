@@ -36,14 +36,28 @@ const SNAPSHOT_DT = 1 / SNAPSHOT_HZ;
 /** Как часто слать ПОЛНЫЙ кадр вместо дельты — страховка от расхождения (Ф1.3). */
 const FULL_SNAPSHOT_MS = 5_000;
 /**
- * Ф1.2: РАДИУС ОБЛАСТИ ИНТЕРЕСА в игровых пикселях (TILE=32, то есть 1000 ≈ 31 клетка).
- * Клиент получает только то, что рядом. Это одновременно трафик и античит: сегодня клиент
- * знает про ВСЕХ монстров этажа, и никакой обфускацией это не закрыть — веб-клиент открыт.
+ * РАДИУС ОБЛАСТИ ИНТЕРЕСА в игровых пикселях (TILE=32, то есть 1000 ≈ 31 клетка).
+ * По умолчанию ВЫКЛЮЧЕН — и это осознанное решение, а не откат Ф1.2.
  *
- * Значение подобрано с запасом относительно экрана; уменьшать — только с проверкой глазами,
- * иначе монстры начнут появляться на виду. `DM_AOI_RADIUS=0` выключает фильтрацию целиком.
+ * ПОЧЕМУ ВЫКЛЮЧЕН. В Ф1.2 область интереса решала две задачи: резала трафик и закрывала
+ * maphack. Первая задача решена другими средствами (дельты + бинарный кадр: 6–9 КБ/с на
+ * игрока), а вторая в НАШЕЙ игре не стоит:
+ *   • подземелье — инстанс одной пати, все игроки заодно, и миникарта у них общая по замыслу.
+ *     Прятать монстров от союзника не от кого: преимущество получают не над другим игроком,
+ *     а над самой игрой;
+ *   • арена PvP — зал размером примерно в два экрана, карта видна целиком и так;
+ *   • город — тоже инстанс пати, посторонних там нет.
+ *
+ * ЧТО ЭТО ДАЁТ. Если у всех в комнате один и тот же вид мира, то снимок, дельта и бинарный
+ * кадр считаются ОДИН РАЗ НА КОМНАТУ, а не по разу на каждого клиента. Замер части 4 показал,
+ * что сборка кадра (22,5 мкс) дороже самой симуляции (19,0 мкс) — и вся она умножалась на
+ * число игроков.
+ *
+ * КОГДА ВЕРНУТЬ. Как только появится место, где рядом оказываются НЕ союзники: публичная зона,
+ * большая арена со стенами, открытый мир. Тогда `DM_AOI_RADIUS=1000` возвращает персональный
+ * вид — механизм цел и покрыт тестами; политику удобнее держать здесь, а не разносить по коду.
  */
-const AOI_RADIUS = Math.max(0, Number(process.env.DM_AOI_RADIUS ?? 1000));
+const AOI_RADIUS = Math.max(0, Number(process.env.DM_AOI_RADIUS ?? 0));
 /** Выход из области шире входа: без гистерезиса сущности на кромке мигали бы каждый кадр. */
 const AOI_EXIT_MULT = 1.2;
 /** Отладка провода (Ф1.4): дублировать кадр текстом для точной сверки. Только для стенда. */
@@ -132,6 +146,13 @@ export class Room implements Tickable {
   private snapAcc = Math.random() * SNAPSHOT_DT;
   /** Когда в последний раз слали ПОЛНЫЙ кадр — страховка от расхождения (Ф1.3). */
   private lastFullAt = 0;
+  /**
+   * ОБЩАЯ дельта комнаты: когда область интереса выключена, вид мира у всех один, значит
+   * и базис один. Персональные базисы (`Client.delta`) в этом режиме не используются.
+   */
+  private roomDelta = new SnapshotDelta();
+  /** Монстры, чьи определения комната уже разослала. Сбрасывается на смене этажа. */
+  private known = new Set<number>();
   private vote: { kind: 'descend' | 'town' | 'arena'; diffId?: string; targetNodeId?: string; finish?: boolean; runCfg?: AltarConfig; yes: Set<string>; no: Set<string> } | null = null;
   // Активный забег v2: конфиг (сид/биом/шаблон/тир), регенерируемый граф и текущий узел.
   private runConfig: RunConfig | null = null;
@@ -842,6 +863,10 @@ export class Room implements Tickable {
    * Заодно забываем, кого клиент видел — на новом этаже монстры другие.
    */
   private resetDeltaBaseline(): void {
+    // Общий базис комнаты и список знакомых монстров: на новом этаже монстры другие,
+    // а идентификаторы продолжают расти — старые определения клиенту уже не нужны.
+    this.roomDelta.reset();
+    this.known.clear();
     for (const c of this.clients.values()) {
       c.delta.reset();
       c.baselined = false;
@@ -863,6 +888,8 @@ export class Room implements Tickable {
     const now = Date.now();
     const forceFull = now - this.lastFullAt >= FULL_SNAPSHOT_MS;
     if (forceFull) this.lastFullAt = now;
+
+    if (AOI_RADIUS <= 0) { this.emitShared(snap, forceFull); return; }
 
     let bytes = 0;
     let sent = 0;
@@ -899,6 +926,66 @@ export class Room implements Tickable {
         const buf = encodeWorldFrame({ kind: WIRE_DELTA, delta: c.delta.next(view)!, sum });
         c.ws.send(buf);
         bytes += buf.length;
+      }
+      sent++;
+    }
+    counters.snapshotFrames += sent;
+    counters.snapshotBytes += bytes;
+  }
+
+  /**
+   * ОБЩИЙ кадр на всю комнату — основной режим (см. `AOI_RADIUS`).
+   *
+   * Вид мира у всех в комнате один, поэтому контрольная сумма, дельта и бинарный кадр
+   * считаются ОДИН РАЗ, а клиентам уходит один и тот же буфер. Раньше эта работа умножалась
+   * на число игроков, и замер части 4 показал, что она дороже самой симуляции.
+   *
+   * Единственное, что остаётся персональным, — момент первого кадра: подключившийся посреди
+   * забега должен получить ПОЛНЫЙ кадр того же тика, от которого посчитана общая дельта.
+   * Тогда со следующего тика он идёт в общем потоке.
+   */
+  private emitShared(snap: ReturnType<typeof serializeWorld>, forceFull: boolean): void {
+    const sum = worldChecksum(snap);
+
+    // Определения новых монстров — один раз на комнату. Без области интереса монстр появляется
+    // ровно однажды (на входе на этаж) и исчезает только со смертью, поэтому список знакомых
+    // растёт монотонно и чистится сменой этажа.
+    const fresh = snap.monsters.filter((m) => !this.known.has(m.id));
+    if (fresh.length) {
+      const live = new Map(this.session.world.monsters.map((m) => [m.id, m]));
+      const info = fresh
+        .map((m) => live.get(m.id))
+        .filter((m): m is NonNullable<typeof m> => !!m)
+        .map((m) => ({ id: m.id, def: m.def, x: m.pos.x, y: m.pos.y }));
+      if (info.length) this.broadcast({ t: 'monsterInfo', monsters: info });
+      for (const m of fresh) this.known.add(m.id);
+    }
+
+    // Полный кадр: по расписанию, при первом кадре комнаты — и лениво, если кто-то подключился
+    // и ещё не имеет базиса.
+    const roomFull = forceFull || !this.roomDelta.ready;
+    let fullBuf: Uint8Array | undefined;
+    let deltaBuf: Uint8Array | undefined;
+    if (roomFull) {
+      fullBuf = encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(snap), sum });
+      this.roomDelta.prime(snap);
+    } else {
+      deltaBuf = encodeWorldFrame({ kind: WIRE_DELTA, delta: this.roomDelta.next(snap)!, sum });
+    }
+
+    let bytes = 0;
+    let sent = 0;
+    for (const c of this.clients.values()) {
+      if (!c.ws.open) continue;
+      if (WIRE_VERIFY) c.ws.send(JSON.stringify({ t: 'snapshot', snap } satisfies ServerFrame));
+      if (roomFull || !c.baselined) {
+        fullBuf ??= encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(snap), sum });
+        c.ws.send(fullBuf);
+        c.baselined = true;
+        bytes += fullBuf.length;
+      } else {
+        c.ws.send(deltaBuf!);
+        bytes += deltaBuf!.length;
       }
       sent++;
     }
