@@ -82,7 +82,26 @@ export async function tx<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
  * инструмента миграций нет намеренно — таблиц мало, а изменения проходят через этот файл,
  * который читается целиком за минуту.
  */
+/**
+ * Ключ консультативной блокировки на создание схемы. С Ф4 процессов много, и стартуют они
+ * одновременно: без блокировки два процесса одновременно делают `DROP TRIGGER` + `CREATE
+ * TRIGGER`, и второй падает с «триггер уже существует». Проверено на первом же запуске
+ * кластера из пяти процессов.
+ */
+const SCHEMA_LOCK = 947_213_001;
+
 export async function initSchema(): Promise<void> {
+  const c = await pool.connect();
+  try {
+    await c.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK]);
+    await initSchemaLocked();
+  } finally {
+    try { await c.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK]); } catch { /* соединение умерло */ }
+    c.release();
+  }
+}
+
+async function initSchemaLocked(): Promise<void> {
   await q(`
     CREATE TABLE IF NOT EXISTS users (
       id         text PRIMARY KEY,

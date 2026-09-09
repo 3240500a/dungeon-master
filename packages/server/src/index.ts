@@ -17,6 +17,7 @@ import {
 import { initSchema, closePool } from './db/pool.js';
 import { attachWsServer } from './net/wsServer.js';
 import { startUwsServer } from './net/uwsServer.js';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { limits, clientIp } from './net/rateLimit.js';
 import { renderMetrics } from './net/metrics.js';
 import { stripGlbTextures } from './glbStrip.js';
@@ -122,6 +123,15 @@ app.use(express.json({ limit: '2mb' }));
 app.get('/metrics', (req, res) => {
   const ip = req.socket.remoteAddress ?? '';
   if (!LOCAL_HOSTS.has(ip)) return res.status(403).end();
+  // Ф4: на гейтвее метрики — это СУММА по кластеру. Иначе мониторинг показывал бы работу
+  // процесса, который игру не ведёт, а стенд мерил бы одну ноду из десяти.
+  if (process.env.DM_ROLE === 'gateway') {
+    void (async () => {
+      const { clusterMetrics } = await import('./cluster/gateway.js');
+      res.type('text/plain; version=0.0.4').send(await clusterMetrics());
+    })().catch(() => res.status(500).end());
+    return;
+  }
   res.type('text/plain; version=0.0.4').send(renderMetrics());
 });
 
@@ -475,24 +485,65 @@ if (!SERVE_STATIC) {
   console.log('[dm-server] client/dist не найден — статику не отдаю (dev: клиент на Vite :5173)');
 }
 
+/**
+ * Роль процесса (Ф4). Один и тот же файл — три разных занятия:
+ *   supervisor — поднимает гейтвей и ноды и следит за ними (по умолчанию в бою);
+ *   gateway    — HTTP, аккаунты, конфиг, статика, маршрутизация и очередь; игры в нём нет;
+ *   node       — только WebSocket и комнаты;
+ *   single     — всё в одном процессе, как было до Ф4 (стенд, разработка, малый онлайн).
+ */
+const ROLE = process.env.DM_ROLE ?? 'single';
+/** Лаг цикла событий этой ноды — уезжает в реестр с каждым ударом сердца (Ф4). */
+const clusterLoop = monitorEventLoopDelay({ resolution: 5 });
+clusterLoop.enable();
+if (ROLE === 'supervisor') {
+  const { runSupervisor } = await import('./cluster/supervisor.js');
+  runSupervisor();
+  // Супервизор не слушает портов и не ходит в базу — дальше по файлу ему делать нечего.
+  await new Promise(() => { /* живёт, пока живы дети */ });
+}
+
 const PORT = Number(process.env.PORT ?? 3001);
 /**
- * Ф1.6: транспорт сменный. `DM_WS=uws` отдаёт игровой порт uWebSockets.js (C++-сервер под
- * биндингом, в бенче примерно на четверть дешевле по CPU), а express переезжает на порт петли
- * и получает запросы прокси. Снаружи адрес не меняется: тот же порт, тот же `/ws`, тот же
- * `/api`. Если пакет не собран под платформу — откат на `ws`, сервер всё равно поднимется.
+ * Ф1.6: транспорт сменный. По умолчанию `uws` — замер после общего кадра на комнату дал
+ * 9–12 % меньше CPU и на четверть меньше задержки, потому что транспорт стал основной
+ * работой процесса. `DM_WS=ws` возвращает прежнюю библиотеку; если пакет uWS не собран
+ * под платформу, откат на `ws` происходит сам, и сервер всё равно поднимается.
+ *
+ * В режиме uws игровой порт занимает он, а express переезжает на порт петли и получает
+ * запросы через прокси: снаружи адрес не меняется — тот же порт, тот же `/ws`, тот же `/api`.
  */
 // Хранилище готово, конфиг собран — только теперь можно принимать запросы (Ф2).
 await boot();
 
-const wantUws = process.env.DM_WS === 'uws';
+// Гейтвею игровой транспорт не нужен: он раздаёт адреса нод, а не возит кадры.
+const wantUws = ROLE !== 'gateway' && (process.env.DM_WS ?? 'uws') === 'uws';
 const uws = wantUws && startUwsServer(config, PORT, Number(process.env.DM_HTTP_PORT ?? PORT + 1));
 const HTTP_PORT = uws ? Number(process.env.DM_HTTP_PORT ?? PORT + 1) : PORT;
 const server = createServer(app);
 // Выключаем алгоритм Нейгла на КАЖДОМ TCP-соединении (HTTP + апгрейд WS идут по этим же сокетам):
 // иначе мелкие реалтайм-пакеты (ввод/снапшоты) склеиваются и ждут до ~40мс, что складывается с пингом.
 server.on('connection', (socket) => socket.setNoDelay(true));
-if (!uws) attachWsServer(server, config); // авторитетный кооп на /ws (комнаты = GameSession)
+if (!uws && ROLE !== 'gateway') attachWsServer(server, config); // авторитетный кооп на /ws (комнаты = GameSession)
+
+// Ф4.1: маршрутизация и очередь живут на гейтвее (и в одиночном режиме — там он сам себе узел).
+if (ROLE === 'gateway' || ROLE === 'single') {
+  const { installGatewayRoutes } = await import('./cluster/gateway.js');
+  const { initClusterSchema } = await import('./cluster/registry.js');
+  await initClusterSchema();
+  installGatewayRoutes(app);
+}
+
+// Ф4.3: нода объявляет себя кластеру и уходит с деплоя по-человечески (Ф4.5).
+if (ROLE === 'node' || ROLE === 'single') {
+  const { joinCluster, installNodeShutdown } = await import('./cluster/node.js');
+  const { clusterHooks } = await import('./net/roomManager.js');
+  const nodeId = process.env.DM_NODE_ID ?? 'node-0';
+  const url = process.env.DM_NODE_URL ?? `ws://127.0.0.1:${PORT}/ws`;
+  await joinCluster(nodeId, url, () => clusterHooks.liveCharIds(), clusterLoop);
+  installNodeShutdown(nodeId, () => clusterHooks.flushAll());
+  console.log(`[${nodeId}] в кластере: ${url}`);
+}
 // EADDRINUSE устойчиво: при dev-рестарте старый инстанс может ещё держать порт — НЕ роняем процесс необработанной
 // ошибкой (иначе сервер умирает и редактор/клиент ловят ECONNREFUSED), а ждём освобождения и повторяем listen.
 let listenTries = 0;

@@ -112,3 +112,27 @@ function wsUrl(): string {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${location.host}/ws`;
 }
+
+/**
+ * Ф4.1: спросить у гейтвея, к какому узлу подключаться. Возвращает либо адрес, либо место
+ * в очереди — очередь это НЕ ошибка, а штатный ответ на потолке кластера: держать людей
+ * в очереди дешевле, чем принять всех и лечь.
+ *
+ * Если маршрутизации нет (старый сервер или одиночный режим без кластера) — возвращаем
+ * обычный адрес, и клиент работает как раньше.
+ */
+export async function routeToNode(token: string, charId: string, ticket?: string, roomCode?: string)
+  : Promise<{ url: string } | { queue: { ticket: string; position: number; total: number } }> {
+  const qs = new URLSearchParams({ charId });
+  if (ticket) qs.set('ticket', ticket);
+  if (roomCode) qs.set('roomCode', roomCode);
+  try {
+    const r = await fetch(`/api/route?${qs.toString()}`, { headers: { authorization: `Bearer ${token}` } });
+    if (r.ok) return (await r.json()) as { url: string };
+    if (r.status === 503) {
+      const b = (await r.json()) as { queue?: { ticket: string; position: number; total: number } };
+      if (b.queue) return { queue: b.queue };
+    }
+  } catch { /* сети нет — падём на общий адрес ниже */ }
+  return { url: wsUrl() };
+}

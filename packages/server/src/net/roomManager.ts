@@ -4,9 +4,19 @@ import { getSession, getCharacter, putCharacter } from '../db/db.js';
 import { Room } from './room.js';
 import { limits } from './rateLimit.js';
 import { counters, setGaugeProvider } from './metrics.js';
+import { releaseChar } from '../cluster/registry.js';
 
+/**
+ * Ф4.1: ПЕРВАЯ БУКВА КОДА — это нода, на которой живёт комната. Благодаря ей «зайти к другу
+ * по коду» не требует ни одного запроса в реестр: гейтвей смотрит на букву и отправляет
+ * клиента к нужному процессу. Дешевле любой таблицы соответствий и не может протухнуть.
+ */
+function nodeLetter(): string {
+  const idx = Number(/(\d+)$/.exec(process.env.DM_NODE_ID ?? 'node-0')?.[1] ?? 0);
+  return String.fromCharCode(65 + (idx % 26));
+}
 function newCode(): string {
-  return Math.random().toString(36).slice(2, 6).toUpperCase();
+  return nodeLetter() + Math.random().toString(36).slice(2, 6).toUpperCase();
 }
 
 /** Глубина этажа по id узла забега ('start'=0, 'n<depth>_<lane>'). Для подписи модалки без регенерации графа. */
@@ -31,6 +41,21 @@ function runDepthOf(nodeId: string): number {
  * потеря. Лимит с запасом на джиттер клиента; сверх лимита кадр молча отбрасывается.
  */
 const INPUT_HZ_LIMIT = 40;
+/** Имя этой ноды в кластере (Ф4). В одиночном режиме — `node-0`. */
+const NODE_ID = process.env.DM_NODE_ID ?? 'node-0';
+
+/**
+ * Доступ кластера к менеджеру комнат этого процесса (Ф4): сердцебиению нужны имена живых
+ * персонажей, чтобы продлить их закрепление за нодой, а сливу — дописать прогресс.
+ * Менеджер в процессе один, поэтому ссылку держим здесь, а не тащим её через пять слоёв.
+ */
+let current: RoomManager | null = null;
+export const clusterHooks = {
+  /** Персонажи с живой сессией на этой ноде. */
+  liveCharIds(): string[] { return current ? [...current.liveChars()] : []; },
+  /** Дописать прогресс всех комнат — для слива ноды. */
+  flushAll(): Promise<unknown> { return current ? current.flushAll() : Promise.resolve(); },
+};
 
 export class RoomManager {
   private rooms = new Map<string, Room>();
@@ -50,7 +75,11 @@ export class RoomManager {
   private connKeys = new WeakMap<GameConn, string>();
   private connSeq = 0;
 
+  /** Имена персонажей с живой сессией — для продления закрепления в реестре (Ф4). */
+  liveChars(): IterableIterator<string> { return this.live.keys(); }
+
   constructor(private cfg: ConfigRegistry) {
+    current = this;
     // Ф1.7: показатели считаются в момент запроса метрик — состав комнат знает только менеджер.
     setGaugeProvider(() => {
       let players = 0;
@@ -245,7 +274,14 @@ export class RoomManager {
     this.inputRate.delete(ws);
     const conn = this.conns.get(ws);
     if (!conn) return;
-    for (const [charId, sock] of this.live) if (sock === ws) { this.live.delete(charId); break; }
+    for (const [charId, sock] of this.live) {
+      if (sock !== ws) continue;
+      this.live.delete(charId);
+      // Ф4: закрепление снимаем ТОЛЬКО если ждать нечего. Если у персонажа осталась
+      // грейс-комната, он обязан вернуться на эту же ноду — иначе забег потеряется.
+      if (!this.graceByChar.has(charId)) void releaseChar(charId, NODE_ID).catch(() => undefined);
+      break;
+    }
     conn.room.removePlayer(conn.pid);
     this.conns.delete(ws);
   }

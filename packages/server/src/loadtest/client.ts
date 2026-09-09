@@ -63,6 +63,26 @@ export class LoadBot {
 
   get connected(): boolean { return this.ws?.readyState === WebSocket.OPEN; }
 
+  /**
+   * Куда подключаться (Ф4.1). Гейтвей отвечает адресом узла либо местом в очереди —
+   * очередь ждём, а не считаем ошибкой: она и есть штатное поведение на потолке.
+   */
+  private async route(token: string, charId: string, roomCode?: string): Promise<string> {
+    let ticket = '';
+    for (let i = 0; i < 60; i++) {
+      const qs = `charId=${encodeURIComponent(charId)}${ticket ? `&ticket=${ticket}` : ''}`
+        + (roomCode ? `&roomCode=${encodeURIComponent(roomCode)}` : '');
+      const r = await fetch(`${this.o.base}/api/route?${qs}`, { headers: { authorization: `Bearer ${token}` } });
+      if (r.ok) return ((await r.json()) as { url: string }).url;
+      if (r.status === 503) {
+        const b = (await r.json()) as { queue?: { ticket: string } };
+        if (b.queue) { ticket = b.queue.ticket; await new Promise((s) => setTimeout(s, 1000)); continue; }
+      }
+      throw new Error(`/api/route → ${r.status} ${await r.text()}`);
+    }
+    throw new Error('очередь на вход не подошла за минуту');
+  }
+
   /** Регистрация + персонаж по HTTP, затем вход в комнату по WS. Бросает при отказе сервера. */
   async start(): Promise<void> {
     const { token } = await this.post<{ token: string }>('/api/register', {
@@ -76,7 +96,17 @@ export class LoadBot {
     const group = Math.floor(this.o.index / this.o.groupSize);
     const isHost = this.o.index % this.o.groupSize === 0;
 
-    const ws = new WebSocket(this.o.base.replace(/^http/, 'ws') + '/ws');
+    // Не-хост ждёт код комнаты ДО маршрутизации: код несёт в себе букву ноды, и без него
+    // гейтвей отправит его к другому процессу, где этой комнаты нет.
+    if (!isHost) {
+      for (let i = 0; i < 200 && !this.o.roomCodes.has(group); i++) await sleep(50);
+    }
+    const code = this.o.roomCodes.get(group);
+
+    // Ф4: адрес игрового узла спрашиваем у гейтвея. В одиночном режиме он вернёт сам себя,
+    // поэтому стенд одинаково работает и с кластером, и без него.
+    const url = await this.route(token, character.charId, isHost ? undefined : code);
+    const ws = new WebSocket(url);
     this.ws = ws;
     await new Promise<void>((res, rej) => {
       ws.once('open', () => res());
@@ -84,11 +114,6 @@ export class LoadBot {
     });
     ws.on('message', (data: Buffer, isBinary: boolean) => this.onMessage(data, group, isBinary));
 
-    // Не-хост ждёт, пока хост создаст комнату и сообщит её код.
-    if (!isHost) {
-      for (let i = 0; i < 200 && !this.o.roomCodes.has(group); i++) await sleep(50);
-    }
-    const code = this.o.roomCodes.get(group);
     this.send({ t: 'join', token, charId: character.charId, ...(isHost || !code ? { fresh: true } : { roomCode: code }) });
 
     this.inputTimer = setInterval(() => this.sendInput(), 1000 / this.o.inputHz);

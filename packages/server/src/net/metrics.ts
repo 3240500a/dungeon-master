@@ -57,6 +57,8 @@ export interface Gauges { rooms: number; players: number; connections: number; }
  */
 let gaugeProvider: (() => Gauges) | null = null;
 export function setGaugeProvider(fn: () => Gauges): void { gaugeProvider = fn; }
+/** Текущие показатели состава — нужны не только метрикам, но и сердцебиению ноды (Ф4). */
+export function readGauges(): Gauges { return gaugeProvider?.() ?? { rooms: 0, players: 0, connections: 0 }; }
 
 const loop = monitorEventLoopDelay({ resolution: 5 });
 loop.enable();
