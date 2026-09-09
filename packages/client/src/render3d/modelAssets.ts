@@ -8,6 +8,7 @@ import { getAsset, putAsset } from './assetStore.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { BVHLoader } from 'three/addons/loaders/BVHLoader.js';
+import { devFetch } from '../devAuth.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { dedupeSkeletons, type DedupeReport } from './skeletonDedupe.js';
 
@@ -96,7 +97,7 @@ export function exportGLB(obj: THREE.Object3D, animations?: THREE.AnimationClip[
 
 /** Залить бинарь (GLB/PNG/JPG) на сервер под id → { url }. DEV-only (в проде 403). contentType задаёт расширение. */
 export async function uploadAsset(id: string, data: ArrayBuffer, contentType = 'application/octet-stream'): Promise<{ ok: boolean; id: string; url: string; bytes: number }> {
-  const r = await fetch('/api/dev/assets/' + encodeURIComponent(id), {
+  const r = await devFetch('/api/dev/assets/' + encodeURIComponent(id), {
     method: 'POST', headers: { 'content-type': contentType }, body: data,
   });
   if (!r.ok) throw new Error('upload failed: ' + r.status);

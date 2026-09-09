@@ -115,6 +115,12 @@ async function initSchemaLocked(): Promise<void> {
     );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS created_ip text;
     CREATE INDEX IF NOT EXISTS users_created_ip ON users (created_ip, created_at DESC);
+    -- РОЛЬ. Инструментальные роуты (/api/dev/*) держались на том, что запрос пришёл с локальной
+    -- машины. Это не пропуск, а его видимость: браузер разработчика тоже ходит с 127.0.0.1, значит
+    -- под гейт подпадала ЛЮБАЯ открытая в нём страница. Теперь пускает роль, а не адрес.
+    -- Умолчание player — существующие аккаунты правами не обрастают, админа выдаёт grant-admin.
+    -- (Обратные кавычки в этом комментарии недопустимы: SQL лежит в шаблонной строке.)
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'player';
     -- Ник уникален БЕЗ учёта регистра: «Vasya» и «vasya» — один и тот же игрок.
     CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (lower(username));
 

@@ -11,6 +11,7 @@
  * → `pe_config_edits` (эти правки). Верхний слой выигрывает — как оверрайд конфига на сервере, только локально.
  */
 import { notifySyncChange } from './poseServer.js';
+import { devFetch } from '../devAuth.js';
 
 const EDITS_KEY = 'pe_config_edits';
 const CACHE_KEY = 'pe_config';
@@ -55,7 +56,7 @@ export async function publishConfigEdits(): Promise<{ ok: boolean; error?: strin
   const body = JSON.stringify(edits);
   try {
     for (const url of ['/api/dev/config-file', '/api/dev/config']) {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      const res = await devFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
       if (!res.ok) {
         let msg = 'сервер отказал (' + res.status + ')';
         try { msg = ((await res.json()) as { error?: string }).error ?? msg; } catch { /* */ }

@@ -24,6 +24,7 @@
  *
  * API сервера: `GET /api/pose` (тела), `GET /api/pose/rev` (ревизии), `POST /api/dev/pose` (DEV-only).
  */
+import { devFetch } from '../devAuth.js';   // публикация — инструментальный роут: нужен токен админа
 export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield', 'pe_twist', 'pe_models', 'pe_grip', 'pe_ui', 'pe_gripposes', 'pe_morph', 'pe_morph_range', 'pe_poselib', 'pe_ai', 'pe_bonemaps'] as const;
 export type PoseKey = typeof POSE_KEYS[number];
 
@@ -191,7 +192,7 @@ export async function publish(keys?: readonly string[]): Promise<PublishResult> 
 
   let res: Response;
   try {
-    res = await fetch('/api/dev/pose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    res = await devFetch('/api/dev/pose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   } catch { return { ok: false, saved: [], conflicts: [], error: 'сервер недоступен — правки остались локально' }; }
 
   if (res.status === 409) {

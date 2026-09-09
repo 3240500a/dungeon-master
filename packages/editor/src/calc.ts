@@ -5,6 +5,7 @@ import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
 import { characterPanel } from '@dm/client/modules/progression/panels.js';
 import { inventoryPanel } from '@dm/client/modules/inventory/inventoryPanel.js';
 import { renderPassiveTree } from '@dm/client/modules/skills-passive/treeView.js';
+import { devFetch } from '@dm/client/devAuth.js';
 import { renderSkillTree } from '@dm/client/modules/skills/skillTreeView.js';
 
 /**
@@ -58,7 +59,7 @@ function freshSave(reg: ConfigRegistry, clsId: string, lvl: number): SaveState {
 function loadCharList(page: HTMLElement, data: Record<string, unknown>): void {
   if (charList !== null || charListLoading) return;
   charListLoading = true;
-  fetch('/api/dev/characters')
+  devFetch('/api/dev/characters')
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
     .then((j: { characters?: NonNullable<typeof charList> }) => { charList = j.characters ?? []; })
     .catch(() => { charList = []; }) // нет доступа/роута (прод) — просто пусто
@@ -77,7 +78,7 @@ function charLoader(page: HTMLElement, data: Record<string, unknown>): HTMLEleme
     const v = sel.value;
     if (v === '__wait' || v === '__empty') { renderCalcPage(page, data); return; }
     if (!v) { loadedSave = null; harness = null; renderCalcPage(page, data); return; }
-    fetch(`/api/dev/characters/${encodeURIComponent(v)}`)
+    devFetch(`/api/dev/characters/${encodeURIComponent(v)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((j: { save: SaveState }) => { loadedSave = j.save; loadToken++; harness = null; ttkEngine = null; renderCalcPage(page, data); })
       .catch(() => { /* не удалось — оставляем текущий билд */ });

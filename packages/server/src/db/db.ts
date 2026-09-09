@@ -17,8 +17,9 @@ import { syncItems } from './items.js';
  */
 
 // ── Пользователи ───────────────────────────────────────────────────────────────
-export interface UserRow { id: string; username: string; passHash: string; passSalt: string; }
-const USER_COLS = 'id, username, pass_hash AS "passHash", pass_salt AS "passSalt"';
+/** `role`: `player` — обычный игрок, `admin` — доступ к инструментальным роутам (`/api/dev/*`, рабочая копия поз-редактора). */
+export interface UserRow { id: string; username: string; passHash: string; passSalt: string; role: string; }
+const USER_COLS = 'id, username, pass_hash AS "passHash", pass_salt AS "passSalt", role';
 
 /** Создаёт пользователя (ник уникален, регистронезависимо). Бросает при дубле (UNIQUE). */
 export async function createUser(username: string, passHash: string, passSalt: string, ip?: string): Promise<string> {
@@ -46,6 +47,21 @@ export async function getUserByName(username: string): Promise<UserRow | null> {
 }
 export async function getUserById(id: string): Promise<UserRow | null> {
   return q1<UserRow>(`SELECT ${USER_COLS} FROM users WHERE id = $1`, [id]);
+}
+/**
+ * Роль по id. Отдельным запросом, а не через `getUserById`, намеренно: проверка прав идёт на КАЖДОМ
+ * инструментальном запросе, и тащить ради неё хеш пароля из базы незачем.
+ * Нет пользователя → `null`, и вызывающий обязан трактовать это как отказ, а не как «обычный игрок».
+ */
+export async function getUserRole(id: string): Promise<string | null> {
+  const r = await q1<{ role: string }>('SELECT role FROM users WHERE id = $1', [id]);
+  return r?.role ?? null;
+}
+/** Выдать/снять роль по НИКУ (регистронезависимо, как и вход). Возвращает id или null, если ника нет. */
+export async function setUserRole(username: string, role: string): Promise<string | null> {
+  const r = await q1<{ id: string }>(
+    'UPDATE users SET role = $2 WHERE lower(username) = lower($1) RETURNING id', [username, role]);
+  return r?.id ?? null;
 }
 
 // ── Сессии ─────────────────────────────────────────────────────────────────────

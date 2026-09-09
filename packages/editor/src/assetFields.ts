@@ -7,6 +7,7 @@
  */
 
 import { createMaterialPreview, type MaterialPreview, type MatCfg, type TexCfg } from './materialPreview.js';
+import { devFetch } from '@dm/client/devAuth.js';   // заливка ассетов — инструментальный роут: нужен токен админа
 
 let activeMatPreview: MaterialPreview | undefined;   // одна превью-сфера за раз (гасим прошлый WebGL-контекст при пересборке панели)
 
@@ -62,7 +63,7 @@ async function uploadAsset(id: string, data: ArrayBuffer, contentType: string, s
   if (strip) q.set('strip', '1');
   if (dir) q.set('dir', dir);
   const qs = q.toString();
-  const r = await fetch('/api/dev/assets/' + encodeURIComponent(id) + (qs ? '?' + qs : ''), {
+  const r = await devFetch('/api/dev/assets/' + encodeURIComponent(id) + (qs ? '?' + qs : ''), {
     method: 'POST', headers: { 'content-type': contentType }, body: data,
   });
   if (!r.ok) throw new Error('upload ' + r.status);

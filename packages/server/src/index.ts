@@ -1,7 +1,7 @@
 import express, { type Request, type Response, type RequestHandler } from 'express';
 import cors from 'cors';
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -12,6 +12,7 @@ import {
   listCharacters, listAllCharacters, getCharacter, createCharacter, deleteCharacter, countCharacters,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions,
+  getUserRole,
   deleteSessionsOfUser,
 } from './db/db.js';
 import { initSchema, closePool } from './db/pool.js';
@@ -20,6 +21,7 @@ import { startUwsServer } from './net/uwsServer.js';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { limits, clientIp } from './net/rateLimit.js';
 import { renderMetrics } from './net/metrics.js';
+import { originAllowed, parseOrigins, keyMatches } from './net/adminAccess.js';
 import { stripGlbTextures } from './glbStrip.js';
 import { extractColliderFromGlb } from './glbMeshBbox.js';
 
@@ -112,7 +114,24 @@ const ah = <P extends RouteParams = RouteParams>(
 };
 
 const app = express();
-app.use(cors());
+/**
+ * CORS ПО СПИСКУ, а не «всем подряд».
+ *
+ * Раньше здесь стоял `cors()` без параметров — API отвечал ЛЮБОМУ источнику. В паре с гейтом
+ * dev-роутов «по адресу сокета» это давало дыру, для которой не нужна даже сеть: браузер
+ * разработчика ходит с `127.0.0.1`, значит проверку локальности проходила ЛЮБАЯ открытая в нём
+ * страница — и могла переписать баланс (`/api/dev/config`), файлы-истины `data/*.json` и залить
+ * 64-мегабайтный ассет. Список источников закрывает это ещё до авторизации.
+ *
+ * Запросы БЕЗ `Origin` (curl, сервер-сервер) не отсекаем намеренно: CORS защищает браузер от чужой
+ * страницы, а не сервер от клиента — сервер защищает авторизация. По той же причине разрешён
+ * собственный хост: при `DM_SERVE_STATIC` игра раздаётся с этого же адреса.
+ */
+const ORIGINS = parseOrigins(process.env.DM_ORIGINS, 'http://localhost:5173,http://localhost:5174');
+app.use(cors((req, cb) => {
+  const h = req.headers as { origin?: string; host?: string };
+  cb(null, { origin: originAllowed(h.origin, h.host, ORIGINS) });
+}));
 app.use(express.json({ limit: '2mb' }));
 
 /**
@@ -171,31 +190,37 @@ app.get('/api/config', (req, res) => {
 const DEV_CONFIG_APPLY = process.env.NODE_ENV !== 'production';
 
 /**
- * Ф0.12: dev-роуты (правка баланса, заливка ассетов, чтение чужих персонажей) закрыты ДВУМЯ
- * независимыми условиями: не продакшен И запрос пришёл с локальной машины. Раньше условие было
- * одно — `NODE_ENV`, то есть одна ошибка в деплое открывала наружу переписывание баланса сервера
- * и загрузку 64-мегабайтных файлов.
+ * Ф0.12 закрыл dev-роуты (правка баланса, заливка ассетов, чтение чужих сейвов) ДВУМЯ независимыми
+ * условиями: не продакшен И запрос с локальной машины. Второе условие оказалось не пропуском, а лишь
+ * его видимостью — см. комментарий у CORS: браузер разработчика тоже локальный, поэтому под гейт
+ * подпадала любая открытая в нём страница. Плюс этот же код предупреждал, что «за обратным прокси все
+ * запросы выглядят локальными», а на вторую машину такой гейт не расширяется в принципе.
  *
- * Локальность выбрана потому, что редактор ходит через Vite-прокси с той же машины, и это не
- * требует логина в редакторе. Полноценная ролевая авторизация (роль `admin` у пользователя)
- * остаётся отдельной задачей: она требует экрана входа в редакторе, см. план Ф3.4.
+ * Теперь второе условие — РОЛЬ. Человек входит логином/паролем и получает сессию (роль `admin`
+ * выдаётся `grant-admin`), процессы (скрипты, шим генерации анимаций) предъявляют `DM_ADMIN_KEY`.
+ * Первое условие — прежнее `DEV_CONFIG_APPLY`, его не трогаем: два независимых условия были
+ * осознанным решением.
  *
- * ВАЖНО: за обратным прокси все запросы выглядят локальными. Поэтому прокси не должен
- * проксировать `/api/dev/*` наружу — это записано в README сервера.
+ * Отзыв доступа: `logout-all` гасит все сессии человека, смена `DM_ADMIN_KEY` — ключ процессов.
  */
 const LOCAL_HOSTS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost']);
-function devGuard(req: Request, res: Response): boolean {
+const ADMIN_KEY = process.env.DM_ADMIN_KEY ?? '';
+async function devGuard(req: Request, res: Response): Promise<boolean> {
   if (!DEV_CONFIG_APPLY) { res.status(403).json({ error: 'Отключено в продакшене' }); return false; }
-  const ip = req.socket.remoteAddress ?? '';
-  if (!LOCAL_HOSTS.has(ip)) {
-    console.warn(`[dm-server] отказ dev-роута ${req.path} с внешнего адреса ${ip}`);
-    res.status(403).json({ error: 'Доступно только с локальной машины' });
+  const token = bearer(req);
+  if (!token) { res.status(401).json({ error: 'Требуется вход' }); return false; }
+  if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return true;
+  const userId = await getSession(token);
+  if (!userId) { res.status(401).json({ error: 'Требуется вход' }); return false; }
+  if (await getUserRole(userId) !== 'admin') {
+    console.warn(`[dm-server] отказ dev-роута ${req.path}: у ${userId} нет прав администратора`);
+    res.status(403).json({ error: 'Нужны права администратора' });
     return false;
   }
   return true;
 }
 app.post('/api/dev/config', ah(async (req, res) => {
-  if (!devGuard(req, res)) return;
+  if (!await devGuard(req, res)) return;
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в БД (на временном реестре)
@@ -216,7 +241,7 @@ app.post('/api/dev/config', ah(async (req, res) => {
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'config', 'data');
 const configFileFor = (key: string): string => join(DATA_DIR, key.replace(/\./g, '-') + '.json');
 app.post('/api/dev/config-file', ah(async (req, res) => {
-  if (!devGuard(req, res)) return;
+  if (!await devGuard(req, res)) return;
   const overrides = (req.body ?? {}) as Record<string, unknown>;
   try {
     const trial = new ConfigRegistry(); // валидация ДО записи в файл
@@ -242,7 +267,7 @@ app.post('/api/dev/config-file', ah(async (req, res) => {
 
 // Сброс ключа к встроенному дефолту (удаляет персистентный оверрайд).
 app.delete('/api/dev/config/:key', ah<{ key: string }>(async (req, res) => {
-  if (!devGuard(req, res)) return;
+  if (!await devGuard(req, res)) return;
   await deleteConfigOverride(req.params.key);
   await rebuildConfig();
   console.log(`[dm-server] конфиг сброшен к дефолту: ${req.params.key}`);
@@ -268,7 +293,7 @@ app.get('/api/pose/rev', ah(async (_req, res) => {
  * Без `__baseRev` (старые клиенты, ручной curl) поведение прежнее: пишем как есть.
  */
 app.post('/api/dev/pose', ah(async (req, res) => {
-  if (!devGuard(req, res)) return;
+  if (!await devGuard(req, res)) return;
   const body = (req.body ?? {}) as Record<string, unknown>;
   const baseRev = body.__baseRev as Record<string, number> | undefined;
   const keys = Object.keys(body).filter((k) => k !== '__baseRev');
@@ -285,7 +310,7 @@ app.post('/api/dev/pose', ah(async (req, res) => {
   res.json({ ok: true, saved: keys, rev });
 }));
 app.delete('/api/dev/pose/:key', ah<{ key: string }>(async (req, res) => {
-  if (!devGuard(req, res)) return;
+  if (!await devGuard(req, res)) return;
   await deletePoseStore(req.params.key);
   res.json({ ok: true, deleted: req.params.key });
 }));
@@ -312,8 +337,9 @@ app.use('/assets', express.static(ASSETS_DIR, {
 app.use('/assets', (_req, res) => { res.status(404).json({ error: 'asset not found' }); });
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
 const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
-app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), (req, res) => {
-  if (!devGuard(req, res)) return;
+// Обработчик стал асинхронным вместе с `devGuard` (проверка роли ходит в базу) — отсюда `ah`.
+app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limit: '64mb' }), ah<{ id: string }>(async (req, res) => {
+  if (!await devGuard(req, res)) return;
   const id = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, '');   // sanitize → без path-traversal
   if (!id) return res.status(400).json({ error: 'bad id' });
   let buf = req.body as Buffer;
@@ -339,15 +365,15 @@ app.post('/api/dev/assets/:id', express.raw({ type: Object.keys(ASSET_EXT), limi
   const collider = ext === 'glb' ? extractColliderFromGlb(buf) : null;
   if (collider) console.log(`[assets] коллайдер ${id}: ${JSON.stringify(collider)}`);
   res.json({ ok: true, id, url: '/assets/' + relPath, bytes: buf.length, stripped: !!stripNote, note: stripNote || undefined, collider: collider ?? undefined });
-});
+}));
 
 // ── Dev: загрузка РЕАЛЬНЫХ сейвов в калькулятор/сим баланса (без auth, только не в проде) ──
 app.get('/api/dev/characters', ah(async (req, res) => {
-  if (!devGuard(req, res)) return;
+  if (!await devGuard(req, res)) return;
   res.json({ characters: await listAllCharacters() });
 }));
 app.get('/api/dev/characters/:charId', ah<{ charId: string }>(async (req, res) => {
-  if (!devGuard(req, res)) return;
+  if (!await devGuard(req, res)) return;
   const ch = await getCharacter(req.params.charId);
   if (!ch) return res.status(404).json({ error: 'Персонаж не найден' });
   res.json({ save: ch.data });

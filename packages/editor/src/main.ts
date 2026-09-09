@@ -10,6 +10,7 @@ import { renderRunGenPage } from './runGen.js';
 import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
 import { renderCalcPage } from './calc.js';
+import { devFetch } from '@dm/client/devAuth.js';   // инструментальные роуты требуют роли admin
 import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
@@ -1040,7 +1041,7 @@ function applyToFile(): void {
   const publish = (): void => {
     bc?.postMessage({ key: current, value: result.data });
     sendConfig(
-      () => fetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [current]: result.data }) }),
+      () => devFetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [current]: result.data }) }),
       'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
     );
     setStatus('Запись в файл…', '#9fb0c0');
@@ -1092,7 +1093,7 @@ function sendConfig(req: () => Promise<Response>, okMsg: string, attempt = 0): v
  */
 function pushToServer(overrides: Record<string, unknown>): void {
   sendConfig(
-    () => fetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(overrides) }),
+    () => devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(overrides) }),
     'Сохранено на сервере (переживёт рестарт) и применено к игре. Balance — сразу; статы монстров/лут — со следующего этажа.',
   );
 }
