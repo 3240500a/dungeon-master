@@ -1,5 +1,8 @@
 # DEPLOY.md — деплой на TimeWeb (Облачный сервер / VDS)
 
+> Это БОЕВОЙ деплой. Рабочее место на второй машине (игра + редакторы + ИИ-генератор) — [SECOND_MACHINE.md](SECOND_MACHINE.md),
+> нагрузочный стенд — [tools/deploy/STAND.md](../tools/deploy/STAND.md).
+
 Игра = **один Node-процесс**, который отдаёт статику клиента (`packages/client/dist`) + REST `/api/*`
 + WebSocket `/ws` на **одном домене**. Клиент сам находит сервер на том же origin (`/api`,
 `wss://<host>/ws`) — доп. настройка клиента не нужна.

@@ -8,3 +8,6 @@ packages/server/data/
 coverage/
 *.tsbuildinfo
 packages/server/data/
+
+# Локальные секреты рабочего места (setup-workstation.ps1 их генерирует). НИКОГДА в git.
+tools/deploy/local.env.ps1
