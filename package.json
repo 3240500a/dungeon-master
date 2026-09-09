@@ -29,6 +29,7 @@
     "items:audit": "tsx packages/server/src/db/itemsCli.ts audit",
     "items:history": "tsx packages/server/src/db/itemsCli.ts history",
     "items:revoke": "tsx packages/server/src/db/itemsCli.ts revoke",
+    "db:repair": "tsx packages/server/src/db/repairConfig.ts",
     "db:import": "tsx packages/server/src/db/importFromSqlite.ts",
     "poc:cluster": "tsx packages/server/src/loadtest/cluster.ts",
     "poc:cheat": "tsx packages/server/src/loadtest/cheat.ts",
