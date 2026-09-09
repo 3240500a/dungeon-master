@@ -47,8 +47,16 @@ export const counters = {
   ticks: 0,
 };
 
-/** Мгновенные значения. */
-export interface Gauges { rooms: number; players: number; connections: number; }
+/**
+ * Мгновенные значения.
+ *
+ * `rooms` — все комнаты процесса, `ticking` — только те, что реально под планировщиком.
+ * Различие не косметическое: комната, из которой все вышли из подземелья, ЖИВЁТ ещё час
+ * (грейс на реконнект), но НЕ тикает. Пока частоту мира делили на все комнаты, каждая
+ * такая пауза занижала `dm_tick_hz` — и ворота нагрузочного стенда падали на здоровом
+ * сервере. Нашлось новым стендом: 520 комнат в грейсе давали 5,8 Гц при живых 30.
+ */
+export interface Gauges { rooms: number; ticking: number; players: number; connections: number; }
 
 /**
  * Поставщик мгновенных значений. Раньше они обновлялись «по событию» (вход/выход) и к моменту
@@ -58,7 +66,7 @@ export interface Gauges { rooms: number; players: number; connections: number; }
 let gaugeProvider: (() => Gauges) | null = null;
 export function setGaugeProvider(fn: () => Gauges): void { gaugeProvider = fn; }
 /** Текущие показатели состава — нужны не только метрикам, но и сердцебиению ноды (Ф4). */
-export function readGauges(): Gauges { return gaugeProvider?.() ?? { rooms: 0, players: 0, connections: 0 }; }
+export function readGauges(): Gauges { return gaugeProvider?.() ?? { rooms: 0, ticking: 0, players: 0, connections: 0 }; }
 
 const loop = monitorEventLoopDelay({ resolution: 5 });
 loop.enable();
@@ -74,14 +82,15 @@ let tickHz = 0;
 /** Отдаёт метрики в текстовом формате Prometheus. */
 export function renderMetrics(): string {
   const now = Date.now();
-  const gauges: Gauges = gaugeProvider?.() ?? { rooms: 0, players: 0, connections: 0 };
+  const gauges: Gauges = gaugeProvider?.() ?? { rooms: 0, ticking: 0, players: 0, connections: 0 };
   const mem = process.memoryUsage();
   const cpu = process.cpuUsage();
 
   const dt = (now - lastAt) / 1000;
   if (lastTicks < 0) { lastTicks = counters.ticks; lastAt = now; }
   else if (dt >= 1) {
-    tickHz = (counters.ticks - lastTicks) / dt / Math.max(1, gauges.rooms);
+    // Делим на ТИКАЮЩИЕ комнаты: паузы грейса не должны выглядеть как слоу-мо.
+    tickHz = (counters.ticks - lastTicks) / dt / Math.max(1, gauges.ticking);
     lastTicks = counters.ticks;
     lastAt = now;
   }
@@ -91,7 +100,8 @@ export function renderMetrics(): string {
     lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} ${type}`, `${name} ${value}`);
   };
 
-  g('dm_rooms', 'Активных комнат под тиком', gauges.rooms);
+  g('dm_rooms', 'Комнат в процессе (включая паузу грейса)', gauges.rooms);
+  g('dm_rooms_ticking', 'Комнат под планировщиком тиков', gauges.ticking);
   g('dm_players', 'Игроков в мире', gauges.players);
   g('dm_connections', 'Открытых WebSocket-соединений', gauges.connections);
   g('dm_tick_hz', 'Фактическая частота мира на комнату, Гц', Number(tickHz.toFixed(2)));

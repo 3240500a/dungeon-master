@@ -4,6 +4,7 @@ import { getSession, getCharacter, putCharacter } from '../db/db.js';
 import { Room } from './room.js';
 import { limits } from './rateLimit.js';
 import { counters, setGaugeProvider } from './metrics.js';
+import { tickScheduler } from './scheduler.js';
 import { releaseChar } from '../cluster/registry.js';
 
 /**
@@ -84,7 +85,7 @@ export class RoomManager {
     setGaugeProvider(() => {
       let players = 0;
       for (const room of this.rooms.values()) players += room.size;
-      return { rooms: this.rooms.size, players, connections: this.conns.size };
+      return { rooms: this.rooms.size, ticking: tickScheduler.size, players, connections: this.conns.size };
     });
   }
 

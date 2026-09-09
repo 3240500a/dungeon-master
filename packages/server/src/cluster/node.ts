@@ -41,7 +41,8 @@ export async function joinCluster(
     const now = Date.now();
     const dt = Math.max(0.001, (now - lastAt) / 1000);
     // Частота симуляции считается между двумя ударами сердца — по факту, а не по заданию.
-    const hz = g.rooms > 0 ? (counters.ticks - lastTicks) / dt / g.rooms : 0;
+    // Делитель — ТИКАЮЩИЕ комнаты: паузы грейса не тикают и занижали бы частоту.
+    const hz = g.ticking > 0 ? (counters.ticks - lastTicks) / dt / g.ticking : 0;
     lastTicks = counters.ticks; lastAt = now;
 
     await heartbeat(nodeId, url, {

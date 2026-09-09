@@ -1,0 +1,20 @@
+[package]
+name = "dmload"
+version = "0.1.0"
+edition = "2021"
+
+# Нагрузочный стенд игры на Rust. Зачем не на Node, где написано всё остальное:
+# нынешний стенд тратит 31 мкс на сообщение против 13 мкс у самого сервера — прибор
+# дороже измеряемого, а его паузы сборки мусора попадают в наши перцентили задержки.
+# Подробности и план — часть 5 серии.
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "time", "sync", "io-util", "signal"] }
+tokio-tungstenite = "0.28"
+futures-util = "0.3"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
