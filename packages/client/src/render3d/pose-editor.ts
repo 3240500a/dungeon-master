@@ -25,7 +25,7 @@ import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type 
 import { MARK_TRACK, type MarkType } from './clipModel.js';
 import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
 import { trajectorySamples, polylineLength, arcRatio, excursion } from './trajectory.js';                                          // Ф10: траектория кости
-import { requestGeneration, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
+import { requestGeneration, checkHealth, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
 import { capturePose, pastePose, pasteIntoInterval, mirrorPoseSide, flipPoseSides, flipClip, mirrorClip,
   rotateClipPhase, comparePoses, EMPTY_POSE_LIBRARY, type PoseLibrary } from './poseLibrary.js';   // Ф7: библиотека поз и copy-tools   // Ф6: тайм-лайн с дорожками
 import { MORPH_PRESETS, MORPH_REGIONS, DEFAULT_MORPH, morphToProfile, morphToBuild, morphToBoneScale,
@@ -3710,12 +3710,23 @@ function renderChar(): void {
 let aiCfg: AiConfig = (() => { try { return { ...DEFAULT_AI_CONFIG(), ...(JSON.parse(localStorage.getItem('pe_ai') || '{}') as AiConfig) }; } catch { return DEFAULT_AI_CONFIG(); } })();
 let aiStatus = '';
 function saveAi(): void { try { localStorage.setItem('pe_ai', JSON.stringify(aiCfg)); savePoseKey('pe_ai'); } catch { /* */ } }
+/** Ключ доступа к сервису — из ЛИЧНЫХ настроек: `pe_prefs` на сервер не уходит вовсе. */
+const aiKey = (): string => getPref<string>('aiKey', '');
 
-/** Общий хвост: BVH-текст → клип в библиотеке (тем же запекателем, что и ручной импорт FBX/BVH). */
-async function aiBvhToClip(bvh: string, label: string): Promise<void> {
-  if (!looksLikeBvh(bvh)) { aiStatus = '✗ это не похоже на BVH'; refreshAll(); return; }
+/**
+ * Общий хвост: ответ сервиса → клип в библиотеке (тем же запекателем, что и ручной импорт FBX/BVH).
+ *
+ * ДВА ФОРМАТА ОДНИМ ПУТЁМ. Текстовый BVH отдают text-to-motion модели и экспорт Kimodo;
+ * скелетный GLB — `kimodo.cpp`. Конвертер между ними не нужен: запекатель читает оба,
+ * различая их по расширению файла — поэтому вся разница сводится к имени и типу `File`.
+ */
+async function aiResultToClip(data: string | ArrayBuffer, label: string): Promise<void> {
+  const isBvh = typeof data === 'string';
+  if (isBvh && !looksLikeBvh(data)) { aiStatus = '✗ это не похоже на BVH'; refreshAll(); return; }
   const { bakeAnimationToClip } = await import('./clipBaker.js');
-  const file = new File([bvh], 'ai.bvh', { type: 'text/plain' });
+  const file = isBvh
+    ? new File([data], 'ai.bvh', { type: 'text/plain' })
+    : new File([data], 'ai.glb', { type: 'model/gltf-binary' });
   const idle = resolveUpper(weapon)?.pose;
   const name = generatedClipName(label, library.filter((c) => c.character === curCharId && c.weapon === weapon).map((c) => c.name));
   try {
@@ -3740,6 +3751,27 @@ function renderAi(): void {
   url.onchange = () => { aiCfg.url = url.value.trim(); saveAi(); };
   urlRow.append(url); body.append(urlRow);
 
+  // КЛЮЧ — В ЛИЧНЫХ НАСТРОЙКАХ, НЕ В `pe_ai`. Адрес сервиса общий для всех машин и едет в рабочей
+  // копии, а рабочая копия публикуется на сервер целиком — учётным данным там не место.
+  const keyRow = el('label', 'display:flex;align-items:center;gap:5px;margin-bottom:3px');
+  keyRow.innerHTML = '<span style="width:52px;font-size:11px">ключ</span>';
+  const keyIn = el('input', 'flex:1;' + impInput) as HTMLInputElement;
+  keyIn.type = 'password'; keyIn.placeholder = 'ANIM_KEY сервиса'; keyIn.value = aiKey();
+  keyIn.onchange = () => { setPref('aiKey', keyIn.value.trim()); };
+  keyRow.append(keyIn); body.append(keyRow);
+
+  const pingBtn = pbtn('⌘ проверить связь', () => {
+    aiStatus = '… проверка'; refreshAll();
+    void checkHealth(aiCfg, aiKey()).then((h) => {
+      aiStatus = h.error ? '✗ ' + h.error
+        : '✓ ' + [h.backend, h.model, h.device].filter(Boolean).join(' · ');
+      refreshAll();
+    });
+  });
+  pingBtn.disabled = !aiCfg.url; pingBtn.style.opacity = aiCfg.url ? '1' : '0.45';
+  pingBtn.title = 'Спросить у сервиса, жив ли он и какой движок поднят';
+  body.append(pingBtn);
+
   const pr = el('textarea', 'width:100%;height:52px;box-sizing:border-box;' + impInput) as HTMLTextAreaElement;
   pr.placeholder = 'опиши движение: «широкий замах двуручным топором сверху вниз»';
   pr.value = aiCfg.prompt; pr.onchange = () => { aiCfg.prompt = pr.value; saveAi(); };
@@ -3757,10 +3789,10 @@ function renderAi(): void {
   // иначе «непонятно, какие кнопки работают»: жмёшь, и вместо результата ошибка.
   const genBtn = pbtn('✦ сгенерировать', () => {
     aiStatus = '… запрос'; refreshAll();
-    void requestGeneration(aiCfg, { prompt: pr.value, seconds: aiCfg.seconds, character: curCharId, weapon }).then(async (r) => {
+    void requestGeneration(aiCfg, { prompt: pr.value, seconds: aiCfg.seconds, character: curCharId, weapon }, aiKey()).then(async (r) => {
       if (r.error) { aiStatus = '✗ ' + r.error; refreshAll(); return; }
       if (r.clip) { histLib('ИИ: добавить клип', () => { library.push(migrateClip(r.clip)); saveLib(); }); aiStatus = '✓ клип принят'; refreshAll(); return; }
-      await aiBvhToClip(r.bvh ?? '', pr.value);
+      await aiResultToClip(r.glb ?? r.bvh ?? '', pr.value);
     });
   });
   genBtn.disabled = !aiCfg.url;
@@ -3771,7 +3803,7 @@ function renderAi(): void {
   // Путь «из файла» — чтобы вся цепочка проверялась без сервиса.
   const fi = el('input', 'display:none') as HTMLInputElement;
   fi.type = 'file'; fi.accept = '.bvh,text/plain';
-  fi.onchange = () => { const f = fi.files?.[0]; if (f) void f.text().then((t) => aiBvhToClip(t, pr.value || f.name)); };
+  fi.onchange = () => { const f = fi.files?.[0]; if (f) void f.text().then((t) => aiResultToClip(t, pr.value || f.name)); };
   body.append(fi);
   row.append(pbtn('↑ BVH из файла', () => fi.click()));
   if (aiStatus) { const st = el('div', 'font-size:10px;margin-top:4px;color:' + (aiStatus[0] === '✗' ? '#e08080' : '#9ae6a0')); st.textContent = aiStatus; body.append(st); }

@@ -31,6 +31,8 @@
     "items:history": "tsx packages/server/src/db/itemsCli.ts history",
     "items:rollback": "tsx packages/server/src/db/itemsCli.ts rollback",
     "items:revoke": "tsx packages/server/src/db/itemsCli.ts revoke",
+    "anim-ai": "tsx tools/anim-ai/server.ts",
+    "anim-ai:stub": "tsx tools/anim-ai/server.ts --stub",
     "grant-admin": "tsx packages/server/src/db/roleCli.ts grant",
     "revoke-admin": "tsx packages/server/src/db/roleCli.ts revoke",
     "admins": "tsx packages/server/src/db/roleCli.ts list",
