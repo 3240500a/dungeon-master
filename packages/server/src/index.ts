@@ -10,6 +10,7 @@ import { hashPassword, verifyPassword } from './auth/password.js';
 import {
   createUser, getUserByName, createSession, deleteSession, getSession, countRecentRegistrations,
   listCharacters, listAllCharacters, getCharacter, createCharacter, deleteCharacter, countCharacters,
+  getUserById,
   getConfigOverrides, setConfigOverride, deleteConfigOverride,
   getPoseStore, getPoseRevs, setPoseStore, deletePoseStore, clearAllRuns, seedPoseStoreIfEmpty, sweepSessions,
   getUserRole,
@@ -458,6 +459,26 @@ app.post('/api/logout', ah(async (req, res) => {
   const token = bearer(req);
   if (token) await deleteSession(token);
   res.json({ ok: true });
+}));
+
+/**
+ * КТО Я И ЧТО МНЕ МОЖНО. Нужен редакторам на ВХОДЕ: они спрашивают вход до того, как
+ * что-нибудь показать, а значит обязаны ПРОВЕРИТЬ сохранённый токен, а не поверить ему. Самого по себе
+ * наличия строки в localStorage не достаточно: роль могли снять, сессию — отозвать, ключ — сменить.
+ *
+ * Отвечает и обычному игроку (`role: 'player'`) — это не утечка, человек узнаёт только о СЕБЕ,
+ * зато редактор может сказать «вошёл, но прав нет» вместо безликого отказа.
+ */
+app.get('/api/me', ah(async (req, res) => {
+  const token = bearer(req);
+  if (!token) return res.status(401).json({ error: 'Требуется вход' });
+  // Ключ процессов — не человек: имени у него нет, права админские.
+  if (keyMatches(token, ADMIN_KEY, timingSafeEqual)) return res.json({ role: 'admin', via: 'key' });
+  const userId = await getSession(token);
+  if (!userId) return res.status(401).json({ error: 'Требуется вход' });
+  const user = await getUserById(userId);
+  if (!user) return res.status(401).json({ error: 'Требуется вход' });
+  res.json({ userId, username: user.username, role: user.role, via: 'session' });
 }));
 
 // ── Персонажи (принадлежат пользователю) ───────────────────────────────────────

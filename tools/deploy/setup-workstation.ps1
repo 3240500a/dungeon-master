@@ -75,7 +75,7 @@ Say ' ' 'подключать так:  . .\tools\deploy\local.env.ps1'
 # --- Первый администратор ---
 Write-Host "`n=== Права ===" -ForegroundColor Cyan
 if ($Admin -eq '') {
-  Say 'надо' 'ник не указан. Зарегистрируйся в игре, потом: npm run grant-admin -- <ник>'
+  Say 'надо' 'ник не указан. Завести админа: npm run create-admin -- <ник>'
   Say ' '   '  Без роли admin редакторы не смогут писать конфиги и публиковать контент.'
 } else {
   & npm run grant-admin -- $Admin

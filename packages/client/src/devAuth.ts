@@ -7,6 +7,17 @@
  * ассет. Теперь сервер требует роль `admin` (или `DM_ADMIN_KEY` для процессов), а этот модуль —
  * единственное место в клиенте, которое хранит токен и подставляет его в запросы.
  *
+ * ДВА РЕЖИМА, и это намеренно:
+ *  • `ensureAdmin()` — ВХОД НА ВХОДЕ. Редакторы зовут его ДО того, как что-либо показать:
+ *    без прав администратора инструмент не открывается вообще. Отмены здесь нет.
+ *  • `devFetch()` — подставляет токен и переспрашивает вход, если сервер ответил 401
+ *    (сессию могли отозвать посреди работы — терять из-за этого правку нельзя).
+ *
+ * САМ ПО СЕБЕ ЭКРАН ВХОДА — НЕ ЗАЩИТА, а удобство и честная граница: страница — это код
+ * в браузере, его можно обойти. Защищает СЕРВЕР: `/api/dev/*` и публикация требуют роли
+ * на КАЖДОМ запросе. Экран убирает две другие беды: инструмент не выглядит открытым для всех,
+ * и правка не упирается в отказ после часа работы.
+ *
  * ⚠ ТОКЕН НЕ КЛАДЁТСЯ В `pe_*`. Ключи `pe_*` — рабочая копия, которую кнопка «Опубликовать»
  * отправляет НА СЕРВЕР целиком (`poseServer.POSE_KEYS`). Учётные данные не должны ездить вместе
  * с контентом ни при каких обстоятельствах, поэтому у токена свой ключ и своя жизнь.
@@ -40,7 +51,54 @@ export async function devFetch(url: string, init: RequestInit = {}): Promise<Res
 
 /** Показать вход, если токена нет или он не подошёл. `true` — токен в наличии. */
 export function requireDevLogin(): Promise<boolean> {
-  return (pending ??= openLoginModal().finally(() => { pending = null; }));
+  return (pending ??= openLoginModal(false).finally(() => { pending = null; }));
+}
+
+/** Кто вошёл. `via: 'key'` — не человек, а ключ процессов, имени у него нет. */
+export interface DevIdentity { username?: string; role: string; via: 'session' | 'key' }
+
+/**
+ * Спросить у СЕРВЕРА, кто мы. Именно у сервера, а не у localStorage: роль могли снять,
+ * сессию отозвать, ключ сменить — сохранённая строка об этом не знает.
+ */
+export async function whoAmI(): Promise<DevIdentity | null> {
+  const token = getDevToken();
+  if (!token) return null;
+  try {
+    const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    return await res.json() as DevIdentity;
+  } catch { return null; }        // сервер не поднят — это не «нет прав», разбирается вызывающий
+}
+
+/**
+ * ВХОД НА ВХОДЕ в инструмент. Не возвращается, пока не вошли админом: отмены нет,
+ * потому что половинчатый редактор без прав — хуже закрытого.
+ *
+ * Сервер недоступен — НЕ ЗАПИРАЕМ. Редактор умеет работать оффлайн на рабочей копии
+ * (так задумано в `poseServer`), и превращать падение сервера в потерю инструмента нельзя.
+ * Публиковать всё равно не выйдет — это решает сервер, когда поднимется.
+ */
+export async function ensureAdmin(): Promise<DevIdentity | null> {
+  for (;;) {
+    const me = await whoAmI();
+    if (me?.role === 'admin') return me;
+    if (me) {
+      // Вошли, но роль не та: повторный ввод пароля этого не чинит — говорим прямо.
+      setDevToken('');
+      await openLoginModal(true, `Вы вошли как «${me.username ?? '?'}», но у этого аккаунта нет прав администратора.`);
+      continue;
+    }
+    if (getDevToken()) setDevToken('');   // токен есть, но сервер его не знает — хранить мусор незачем
+    // Сервер мог быть просто не поднят. Различаем это от «нет прав» отдельной проверкой.
+    if (!await serverAlive()) return null;
+    await openLoginModal(true);
+  }
+}
+
+/** Жив ли сервер. Без этого отказ сети неотличим от отказа в доступе. */
+async function serverAlive(): Promise<boolean> {
+  try { return (await fetch('/api/health')).ok; } catch { return false; }
 }
 
 /** Выйти: токен забывается, следующий инструментальный запрос снова спросит вход. */
@@ -49,7 +107,7 @@ export function devLogout(): void { setDevToken(''); }
 // ── Окно входа ───────────────────────────────────────────────────────────────────────────────────
 // Голый DOM с инлайновыми стилями намеренно: модуль общий для двух приложений с РАЗНЫМИ
 // UI-китами, и тащить сюда любой из них — значит связать их друг с другом ради одной формы.
-function openLoginModal(): Promise<boolean> {
+function openLoginModal(blocking = false, why = ''): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font:13px system-ui,sans-serif';
@@ -70,6 +128,7 @@ function openLoginModal(): Promise<boolean> {
     const user = inp('логин'), pass = inp('пароль', 'password'), key = inp('или ключ DM_ADMIN_KEY', 'password');
     const err = document.createElement('div');
     err.style.cssText = 'color:#ff8a8a;min-height:16px';
+    if (why) err.textContent = why;
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:4px';
     const mk = (t: string): HTMLButtonElement => {
@@ -78,9 +137,11 @@ function openLoginModal(): Promise<boolean> {
       return b;
     };
     const cancel = mk('отмена'), ok = mk('войти');
+    // В блокирующем режиме уходить некуда: за формой пустая страница, отмена лишь создала бы видимость выбора.
+    if (blocking) cancel.style.display = 'none';
 
     const close = (v: boolean): void => { wrap.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(false); };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape' && !blocking) close(false); };
     const submit = (): void => {
       err.textContent = '';
       // Ключ — путь для тех, у кого нет аккаунта (скрипты, чужая машина): он и есть готовый токен.

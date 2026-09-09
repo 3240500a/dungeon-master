@@ -57,6 +57,18 @@ export async function getUserRole(id: string): Promise<string | null> {
   const r = await q1<{ role: string }>('SELECT role FROM users WHERE id = $1', [id]);
   return r?.role ?? null;
 }
+/**
+ * Смена пароля. В игре её пока нет (см. комментарий у `/api/logout-all`), а админский аккаунт без неё
+ * означал бы, что случайный пароль остаётся навсегда. Здесь она есть — из консоли, то есть для того,
+ * у кого есть доступ к машине с базой. Сессии при этом надо гасить отдельно: пароль сменили,
+ * а старые токены продолжают работать — это не защита.
+ */
+export async function setUserPassword(username: string, passHash: string, passSalt: string): Promise<string | null> {
+  const r = await q1<{ id: string }>(
+    'UPDATE users SET pass_hash = $2, pass_salt = $3 WHERE lower(username) = lower($1) RETURNING id',
+    [username, passHash, passSalt]);
+  return r?.id ?? null;
+}
 /** Выдать/снять роль по НИКУ (регистронезависимо, как и вход). Возвращает id или null, если ника нет. */
 export async function setUserRole(username: string, role: string): Promise<string | null> {
   const r = await q1<{ id: string }>(
