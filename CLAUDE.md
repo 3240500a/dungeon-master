@@ -32,7 +32,7 @@ TypeScript + Vite** (клиент), **Node + Express + Postgres** (сервер)
 ## Структура
 - `packages/shared` — типы, формулы, события, config registry. Общий фундамент.
 - `packages/client` — Phaser-игра. Сцены в `src/scenes`, фичи в `src/modules/<feature>`.
-- `packages/server` — Express + Postgres (`db/pool.ts`, доступ АСИНХРОННЫЙ): `/auth`, `/save`, `/load` + валидация.
+- `packages/server` — Express + Postgres (`db/pool.ts`, доступ АСИНХРОННЫЙ): `/auth`, `/save`, `/load` + валидация. С Ф4 процесс имеет РОЛЬ (`DM_ROLE`): supervisor / gateway / node / single (умолчание).
 - `packages/editor` — HTML-редактор конфигов (страницы по механикам, CRUD, live-apply).
 
 ## Модули клиента (`packages/client/src/modules/`)

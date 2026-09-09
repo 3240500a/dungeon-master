@@ -30,6 +30,7 @@
     "items:history": "tsx packages/server/src/db/itemsCli.ts history",
     "items:revoke": "tsx packages/server/src/db/itemsCli.ts revoke",
     "db:import": "tsx packages/server/src/db/importFromSqlite.ts",
+    "poc:cluster": "tsx packages/server/src/loadtest/cluster.ts",
     "poc:cheat": "tsx packages/server/src/loadtest/cheat.ts",
     "poc:flood": "tsx packages/server/src/loadtest/flood.ts",
     "poc:delta": "tsx packages/server/src/loadtest/deltacheck.ts"

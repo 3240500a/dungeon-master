@@ -534,6 +534,22 @@ if (ROLE === 'gateway' || ROLE === 'single') {
   installGatewayRoutes(app);
 }
 
+/**
+ * Ф4.5: СЛИВ УЗЛА ПО КОМАНДЕ — только с самой машины (как и метрики).
+ *
+ * Зачем ручка, если есть SIGTERM: во-первых, на Windows сигналов нет вовсе и проверить слив
+ * иначе нельзя; во-вторых, в бою это штатный инструмент выкатки — «слить узел 3, дождаться
+ * пустоты, перезапустить», и так по одному, без простоя для остальных.
+ */
+app.post('/internal/drain', (req, res) => {
+  const ip = req.socket.remoteAddress ?? '';
+  if (!LOCAL_HOSTS.has(ip)) return res.status(403).end();
+  console.log(`[${process.env.DM_NODE_ID ?? 'node-0'}] слив по команде`);
+  res.json({ ok: true, node: process.env.DM_NODE_ID ?? 'node-0' });
+  // Ответ уходит ДО начала слива: вызывающий должен получить подтверждение, а не таймаут.
+  setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50);
+});
+
 // Ф4.3: нода объявляет себя кластеру и уходит с деплоя по-человечески (Ф4.5).
 if (ROLE === 'node' || ROLE === 'single') {
   const { joinCluster, installNodeShutdown } = await import('./cluster/node.js');

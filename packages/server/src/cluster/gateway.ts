@@ -49,6 +49,13 @@ const issued = new Map<string, number>();
 /** Раз в несколько секунд показатели узлов догоняют реальность — счётчик обнуляем. */
 setInterval(() => issued.clear(), 4_000).unref();
 
+/** Сколько игроков направлено, но ещё не отражено в показателях узлов. */
+function pendingIssued(): number {
+  let n = 0;
+  for (const v of issued.values()) n += v;
+  return n;
+}
+
 /** Самая свободная живая нода с учётом уже выданных, но ещё не учтённых направлений. */
 function leastLoaded(nodes: NodeRow[]): NodeRow | undefined {
   const score = (n: NodeRow): number => n.players + (issued.get(n.id) ?? 0);
@@ -84,7 +91,11 @@ export function installGatewayRoutes(app: Express): void {
       }
 
       // 2. Очередь: считаем ПЕРЕД закреплением, иначе место занимает тот, кого не пустили.
-      const total = nodes.reduce((a, n) => a + n.players, 0);
+      //
+      // К числу игроков из реестра ОБЯЗАТЕЛЬНО прибавляем уже выданные направления: показатели
+      // приходят раз в две секунды, а полсотни человек заходят за доли секунды. Без этой
+      // поправки потолок не срабатывает вовсе — проверено, пропустило всех 50 при потолке 30.
+      const total = nodes.reduce((a, n) => a + n.players, 0) + pendingIssued();
       const ticket = String(req.query.ticket ?? '');
       if (MAX_PLAYERS > 0 && total >= MAX_PLAYERS) {
         const q1r = await admit(ticket, userId, MAX_PLAYERS - total);

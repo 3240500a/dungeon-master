@@ -235,7 +235,11 @@ async function main(): Promise<void> {
 
   const last = rows[rows.length - 1];
   console.log('\n════════════════════════════════════════════════════════');
-  console.log(`ЁМКОСТЬ: ${capacity} игроков на одном процессе (одно ядро симуляции)`);
+  const last2 = await serverMetrics().catch((): Record<string, number> => ({}));
+  const nodes = last2.dm_nodes ?? 1;
+  console.log(`ЁМКОСТЬ: ${capacity} игроков` + (nodes > 1
+    ? ` на кластере из ${nodes} узлов (${Math.round(capacity / nodes)} на узел)`
+    : ' на одном процессе (одно ядро симуляции)'));
   if (last && !last.trustworthy) {
     console.log('ОГОВОРКА: поиск остановлен не сервером, а машиной — настоящий потолок ВЫШЕ.');
     console.log('Чтобы найти его, нужен отдельный нагрузчик (--base на другую машину).');
