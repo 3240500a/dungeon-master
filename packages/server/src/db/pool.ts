@@ -207,6 +207,18 @@ async function initSchemaLocked(): Promise<void> {
     CREATE INDEX IF NOT EXISTS play_sessions_ip ON play_sessions (ip, started_at DESC);
     CREATE INDEX IF NOT EXISTS play_sessions_updated ON play_sessions (updated_at);
 
+    -- История аудитов (Ф2.6). Без неё «ноль нарушений» ничего не значит: не с чем сравнить,
+    -- и не видно, когда именно инвариант поехал.
+    CREATE TABLE IF NOT EXISTS audit_runs (
+      id        bigserial PRIMARY KEY,
+      at        timestamptz NOT NULL DEFAULT now(),
+      items     integer NOT NULL DEFAULT 0,
+      events    integer NOT NULL DEFAULT 0,
+      incidents integer NOT NULL DEFAULT 0,
+      findings  jsonb NOT NULL DEFAULT '[]'::jsonb
+    );
+    CREATE INDEX IF NOT EXISTS audit_runs_at ON audit_runs (at DESC);
+
     CREATE TABLE IF NOT EXISTS pose_store (
       key        text PRIMARY KEY,
       json       jsonb NOT NULL,

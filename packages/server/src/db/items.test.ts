@@ -141,6 +141,72 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('леджер предметов'
     expect((await events(item.uid)).map((e) => e.kind)).toEqual(['created', 'revoked']);
   });
 
+  it('аудит ловит одну вещь в двух сейвах и старые id', async () => {
+    if (!alive) return;
+    const { runAudit } = await import('./audit.js');
+
+    const a = await freshChar();
+    const b = await freshChar();
+    const shared = Object.values(a.save.equipment)[0]!;
+
+    // Подсаживаем нарушения ПРЯМО В БАЗУ, мимо кода игры: аудит обязан ловить и то,
+    // что записал не наш сервер, — иначе он проверяет лишь собственную аккуратность.
+    b.save.inventory.push(shared);                                   // одна вещь в двух сейвах
+    b.save.inventory.push({ ...shared, uid: 'it_старый_формат' });   // id до Ф2
+    await pool.q('UPDATE characters SET data = $1 WHERE char_id = $2',
+      [JSON.stringify(b.save), b.charId]);
+
+    const r = await runAudit();
+    const dupe = r.findings.find((f) => f.kind === 'dupe');
+    const legacy = r.findings.find((f) => f.kind === 'legacy');
+    expect(dupe, 'дубль обязан быть найден').toBeTruthy();
+    expect(dupe!.examples.join(' ')).toContain(shared.uid);
+    expect(legacy, 'старый id обязан быть замечен').toBeTruthy();
+    expect(r.incidents, 'дубль это инцидент, а не замечание').toBeGreaterThan(0);
+
+    // Убираем за собой, иначе следующий прогон аудита будет вечно красным.
+    await pool.q('DELETE FROM characters WHERE char_id = $1', [b.charId]);
+  });
+
+  it('откат возвращает вещь на место и забирает появившуюся позже', async () => {
+    if (!alive) return;
+    const { planRollback, applyRollback } = await import('./rollback.js');
+
+    const { userId, charId, save } = await freshChar();
+    const kept = Object.values(save.equipment)[0]!;
+
+    // Момент отсечки: всё, что было ДО него, считается законным.
+    await new Promise((r) => setTimeout(r, 50));
+    const cutoff = new Date();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // После отсечки: одну вещь потеряли, другая появилась из ниоткуда.
+    const appeared = { ...kept, uid: uuidv7(), name: 'Появилась позже' };
+    const gone = Object.keys(save.equipment)[0] as keyof typeof save.equipment;
+    delete save.equipment[gone];
+    save.inventory.push(appeared);
+    await db.putCharacter(charId, userId, save, 1, 'cmd:test');
+
+    const plan = await planRollback(userId, cutoff);
+    expect(plan.restore.map((r) => r.id), 'потерянная вещь должна вернуться').toContain(kept.uid);
+    expect(plan.remove.map((r) => r.id), 'появившаяся позже должна быть забрана').toContain(appeared.uid);
+
+    const done = await applyRollback(plan, 'тест');
+    expect(done.restored).toBeGreaterThan(0);
+
+    const after = await db.getCharacter(charId);
+    const uids = [
+      ...after!.data.inventory.map((i) => i.uid),
+      ...Object.values(after!.data.equipment).map((i) => i?.uid),
+    ];
+    expect(uids, 'вещь на месте').toContain(kept.uid);
+    expect(uids, 'лишней вещи нет').not.toContain(appeared.uid);
+
+    // Леджер обязан согласиться с сейвом, иначе ближайший аудит назовёт откат нарушением.
+    const row = await pool.q1<{ loc: string }>('SELECT loc FROM items WHERE id = $1', [kept.uid]);
+    expect(row?.loc).toBe(`char:${charId}`);
+  });
+
   it('перековка записывается изменением, а не новой вещью', async () => {
     if (!alive) return;
     const { userId, charId, save } = await freshChar();

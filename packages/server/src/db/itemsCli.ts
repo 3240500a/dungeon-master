@@ -1,7 +1,7 @@
-import type { SaveState } from '@dm/shared';
-import { isUuid } from '@dm/shared';
-import { q, q1, closePool } from './pool.js';
-import { itemsOfSave, itemsOfStash, locOfChar, revokeItem, LOC_REVOKED } from './items.js';
+import { q, q1, closePool, initSchema } from './pool.js';
+import { revokeItem } from './items.js';
+import { runAudit, formatAudit, saveAuditRun } from './audit.js';
+import { planRollback, applyRollback } from './rollback.js';
 
 /**
  * Инструменты по предметам (Ф2). Ради них всё и затевалось: без журнала происхождения на
@@ -19,8 +19,6 @@ const arg = (k: string): string | undefined =>
   process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
 
 async function audit(): Promise<void> {
-  console.log('АУДИТ ПРЕДМЕТОВ\n');
-
   // Схему заводит сервер при старте. Внятное сообщение вместо простыни из недр драйвера:
   // «нет таблицы items» на свежей базе — частый и совершенно нестрашный случай.
   const ready = await q1<{ ok: boolean }>(`SELECT to_regclass('items') IS NOT NULL AS ok`);
@@ -31,69 +29,21 @@ async function audit(): Promise<void> {
     return;
   }
 
-  const items = (await q1<{ n: string }>('SELECT COUNT(*) n FROM items'))?.n ?? '0';
-  const evts = (await q1<{ n: string }>('SELECT COUNT(*) n FROM item_events'))?.n ?? '0';
-  console.log(`в леджере вещей: ${items}, записей в журнале: ${evts}`);
+  const r = await runAudit();
+  console.log(formatAudit(r));
 
-  // 1. Вещи без записи о рождении — такого быть не может, если писал только наш код.
-  const orphan = await q<{ id: string }>(
-    `SELECT i.id FROM items i
-     WHERE NOT EXISTS (SELECT 1 FROM item_events e WHERE e.item_id = i.id AND e.kind = 'created')
-     LIMIT 10`);
-  report('вещи без записи о рождении', orphan.map((r) => r.id));
+  // Ручной прогон тоже попадает в историю: иначе «в ту ночь всё было чисто» проверить нечем.
+  if (process.argv.includes('--save')) { await saveAuditRun(r); console.log('\nпрогон записан в историю'); }
 
-  // 2. Главная сверка: то, что лежит у персонажей и в сундуках, против леджера.
-  //    Расхождение = вещь есть в сейве, а леджер считает её чужой, ушедшей или не знает вовсе.
-  const chars = await q<{ char_id: string; user_id: string; data: SaveState }>(
-    'SELECT char_id, user_id, data FROM characters');
-  const stashes = await q<{ user_id: string; data: { tabs?: unknown } }>(
-    'SELECT user_id, data FROM account_stash');
-
-  const mismatch: string[] = [];
-  const legacy: string[] = [];
-  const seen = new Map<string, string>();   // id вещи → где встретили (для поиска дублей в сейвах)
-  const dupes: string[] = [];
-
-  const check = async (id: string, where: string, userId: string): Promise<void> => {
-    if (!isUuid(id)) { legacy.push(`${id} (${where})`); return; }
-    const prev = seen.get(id);
-    if (prev) { dupes.push(`${id}: ${prev} И ${where}`); return; }
-    seen.set(id, where);
-    const row = await q1<{ loc: string; user_id: string }>('SELECT loc, user_id FROM items WHERE id = $1', [id]);
-    if (!row) { mismatch.push(`${id} (${where}): нет в леджере`); return; }
-    if (row.user_id !== userId) { mismatch.push(`${id} (${where}): леджер числит за ${row.user_id}`); return; }
-    if (row.loc !== where) mismatch.push(`${id} (${where}): леджер говорит «${row.loc}»`);
-  };
-
-  for (const c of chars) {
-    for (const it of itemsOfSave(c.data)) await check(it.uid, locOfChar(c.char_id), c.user_id);
-  }
-  for (const s of stashes) {
-    for (const it of itemsOfStash(s.data as never)) await check(it.uid, 'stash', s.user_id);
+  // Прошлые прогоны рядом: одно число без ряда ничего не говорит.
+  const prev = await q<{ at: Date; incidents: number; items: number }>(
+    'SELECT at, incidents, items FROM audit_runs ORDER BY at DESC LIMIT 5');
+  if (prev.length) {
+    console.log('\nпрошлые прогоны:');
+    for (const p of prev) console.log(`  ${p.at.toISOString().slice(0, 16).replace('T', ' ')}  вещей ${p.items}, инцидентов ${p.incidents}`);
   }
 
-  report('ОДНА ВЕЩЬ В ДВУХ МЕСТАХ (дюп)', dupes);
-  report('сейв и леджер разошлись', mismatch);
-  report('вещи со старыми id (до Ф2, вне леджера)', legacy);
-
-  // 3. Возвраты «из мира»: подобранный свой дроп это нормально, но всплеск — повод посмотреть.
-  const backs = (await q1<{ n: string }>(
-    `SELECT COUNT(*) n FROM item_events WHERE from_loc = 'world'`))?.n ?? '0';
-  console.log(`\nвозвратов из мира (подбор своего дропа): ${backs}`);
-
-  const revoked = (await q1<{ n: string }>('SELECT COUNT(*) n FROM items WHERE loc = $1', [LOC_REVOKED]))?.n ?? '0';
-  console.log(`отозванных вещей: ${revoked}`);
-
-  const bad = dupes.length + mismatch.length + orphan.length;
-  console.log(bad === 0 ? '\n✓ Инварианты держатся.' : `\n✗ Нарушений: ${bad}`);
-  process.exitCode = bad === 0 ? 0 : 1;
-}
-
-function report(title: string, list: string[]): void {
-  if (!list.length) { console.log(`  ✓ ${title}: нет`); return; }
-  console.log(`  ✗ ${title}: ${list.length}`);
-  for (const l of list.slice(0, 10)) console.log(`      ${l}`);
-  if (list.length > 10) console.log(`      … и ещё ${list.length - 10}`);
+  process.exitCode = r.incidents === 0 ? 0 : 1;
 }
 
 async function history(id: string): Promise<void> {
@@ -117,13 +67,58 @@ async function revoke(id: string, reason: string): Promise<void> {
   console.log('  вернуться она не сможет: syncItems отклоняет запись отозванной вещи');
 }
 
+/**
+ * Откат предметов аккаунта на момент времени (Ф2.7). По умолчанию только показывает план:
+ * применять чужой прогресс вслепую нельзя.
+ */
+async function rollback(userId: string, to: string, reason: string): Promise<void> {
+  const at = new Date(to);
+  if (Number.isNaN(at.getTime())) {
+    console.log('нужна дата в виде --to=2026-09-09T10:00:00Z');
+    process.exitCode = 1;
+    return;
+  }
+  const plan = await planRollback(userId, at);
+  console.log(`ОТКАТ аккаунта ${userId} на ${at.toISOString()}
+`);
+  console.log(`  вернуть на место: ${plan.restore.length}`);
+  for (const r of plan.restore.slice(0, 10)) console.log(`      ${r.id} → ${r.to}  (${r.item.name})`);
+  if (plan.restore.length > 10) console.log(`      … и ещё ${plan.restore.length - 10}`);
+  console.log(`  забрать (на тот момент не существовали): ${plan.remove.length}`);
+  for (const r of plan.remove.slice(0, 10)) console.log(`      ${r.id} из ${r.from}`);
+  if (plan.remove.length > 10) console.log(`      … и ещё ${plan.remove.length - 10}`);
+  console.log(`  без изменений: ${plan.untouched}`);
+
+  console.log('\nЧЕГО ОТКАТ НЕ ВЕРНЁТ: золото и опыт (журнала для них нет),');
+  console.log('слоты экипировки (журнал пишет место, но не слот — всё уедет в инвентарь),');
+  console.log('и отозванные вещи (решение человека сильнее восстановления по времени).');
+
+  if (!process.argv.includes('--apply')) {
+    console.log('\nЭто был показ. Чтобы применить: добавьте --apply');
+    return;
+  }
+  const done = await applyRollback(plan, reason);
+  console.log(`\n✓ Применено: возвращено ${done.restored}, забрано ${done.removed}.`);
+  console.log('  Игроку стоит перезайти: у него в памяти прежняя копия сейва.');
+}
+
 async function main(): Promise<void> {
+  // Схема идемпотентна и берётся под блокировкой — инструмент не должен зависеть от того,
+  // перезапускали ли сервер после появления новой таблицы.
+  await initSchema();
   const cmd = process.argv[2];
   const id = arg('id') ?? '';
   if (cmd === 'audit') await audit();
   else if (cmd === 'history') await history(id);
   else if (cmd === 'revoke') await revoke(id, arg('reason') ?? 'без причины');
-  else console.log('использование: audit | history --id=<uuid> | revoke --id=<uuid> --reason="…"');
+  else if (cmd === 'rollback') await rollback(arg('user') ?? '', arg('to') ?? '', arg('reason') ?? 'откат по инциденту');
+  else {
+    console.log('использование:');
+    console.log('  audit [--save]                                  сверка инвариантов');
+    console.log('  history --id=<uuid>                             жизнь одной вещи');
+    console.log('  revoke --id=<uuid> --reason="…"                 отозвать вещь');
+    console.log('  rollback --user=<id> --to=<ISO-дата> [--apply]  откат предметов аккаунта');
+  }
   await closePool();
 }
 

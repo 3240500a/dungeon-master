@@ -1,0 +1,167 @@
+import type { SaveState, Item, AccountStash } from '@dm/shared';
+import { tx } from './pool.js';
+import { LOC_STASH, LOC_WORLD, LOC_REVOKED, locOfChar, itemsOfSave, itemsOfStash } from './items.js';
+
+/**
+ * Точечный откат аккаунта по журналу (Ф2.7).
+ *
+ * ЗАЧЕМ ИМЕННО ТОЧЕЧНЫЙ. Откат всей базы карает невиновных: у сотни человек пропадает вечер
+ * игры из-за одного дупера. Отраслевой опыт тут единодушен — хранить журнал и откатывать
+ * выборочно. Журнал у нас есть с Ф2, значит и откат возможен.
+ *
+ * ЧТО ОТКАТЫВАЕТСЯ: где лежали вещи аккаунта на заданный момент. Вещь, которой на тот момент
+ * ещё не было, — исчезает; вещь, лежавшая в сундуке, — возвращается в сундук.
+ *
+ * ЧЕГО ОТКАТ НЕ ДЕЛАЕТ, И ЭТО ВАЖНО ЗНАТЬ:
+ *  • ЗОЛОТО И ОПЫТ не откатываются — журнала для них нет, есть только журнал предметов.
+ *    Врать в этом месте опаснее, чем признать границу;
+ *  • ЭКИПИРОВКА не восстанавливается по слотам: журнал пишет место («у персонажа»), но не
+ *    слот. Всё возвращённое кладётся в инвентарь, игрок надевает сам;
+ *  • отозванные вещи (`revoked`) откат НЕ воскрешает: отзыв — это решение человека,
+ *    и оно сильнее восстановления по времени.
+ *
+ * Работает ОДНОЙ транзакцией и по умолчанию только показывает, что сделает.
+ */
+
+export interface RollbackPlan {
+  userId: string;
+  at: Date;
+  /** Куда какая вещь должна вернуться. */
+  restore: { id: string; to: string; item: Item }[];
+  /** Вещи, которых на тот момент не существовало — их надо забрать. */
+  remove: { id: string; from: string }[];
+  /** Что осталось без изменений — для отчёта. */
+  untouched: number;
+  /** Персонажи и сундук, которые придётся переписать. */
+  touched: string[];
+}
+
+interface EventRow { item_id: string; kind: string; to_loc: string | null; data: Item | null }
+
+/**
+ * Построить план: где вещи аккаунта лежали на момент `at`, и чем это отличается от «сейчас».
+ * Ничего не меняет — план можно показать человеку и только потом применять.
+ */
+export async function planRollback(userId: string, at: Date): Promise<RollbackPlan> {
+  return tx(async (c) => {
+    // Состояние на момент времени: последнее событие каждой вещи до отсечки.
+    const evts = await c.query<EventRow>(
+      `SELECT item_id, kind, to_loc, data FROM item_events
+       WHERE user_id = $1 AND at <= $2 ORDER BY seq`, [userId, at]);
+
+    const locAt = new Map<string, string>();
+    const dataAt = new Map<string, Item>();
+    for (const e of evts.rows) {
+      if (e.to_loc) locAt.set(e.item_id, e.to_loc);
+      // Снимок вещи пишется на рождении и на изменении — берём самый свежий до отсечки.
+      if (e.data) dataAt.set(e.item_id, e.data);
+    }
+
+    // Что лежит сейчас.
+    const chars = await c.query<{ char_id: string; data: SaveState }>(
+      'SELECT char_id, data FROM characters WHERE user_id = $1', [userId]);
+    const stash = await c.query<{ data: AccountStash }>(
+      'SELECT data FROM account_stash WHERE user_id = $1', [userId]);
+
+    const now = new Map<string, string>();
+    for (const ch of chars.rows) for (const it of itemsOfSave(ch.data)) now.set(it.uid, locOfChar(ch.char_id));
+    if (stash.rows[0]) for (const it of itemsOfStash(stash.rows[0].data)) now.set(it.uid, LOC_STASH);
+
+    const restore: RollbackPlan['restore'] = [];
+    const remove: RollbackPlan['remove'] = [];
+    let untouched = 0;
+    const touched = new Set<string>();
+
+    // Вещь была где-то на момент отсечки, но лежит не там (или пропала) — вернуть.
+    for (const [id, was] of locAt) {
+      if (was === LOC_WORLD || was === LOC_REVOKED) continue;      // тогда её у аккаунта и не было
+      const isNow = now.get(id);
+      if (isNow === was) { untouched++; continue; }
+      const item = dataAt.get(id);
+      if (!item) continue;                                          // снимка нет — восстанавливать нечего
+      restore.push({ id, to: was, item });
+      touched.add(was);
+      if (isNow) touched.add(isNow);
+    }
+
+    // Вещь есть сейчас, но на момент отсечки её не существовало — забрать.
+    for (const [id, isNow] of now) {
+      if (locAt.has(id)) continue;
+      remove.push({ id, from: isNow });
+      touched.add(isNow);
+    }
+
+    return { userId, at, restore, remove, untouched, touched: [...touched] };
+  });
+}
+
+/**
+ * Применить план. Одной транзакцией: половина отката хуже, чем его отсутствие.
+ * Возвращает, сколько вещей вернули и сколько забрали.
+ */
+export async function applyRollback(plan: RollbackPlan, reason: string): Promise<{ restored: number; removed: number }> {
+  return tx(async (c) => {
+    const chars = await c.query<{ char_id: string; data: SaveState; version: number }>(
+      'SELECT char_id, data, version FROM characters WHERE user_id = $1', [plan.userId]);
+    const stashRow = await c.query<{ data: AccountStash }>(
+      'SELECT data FROM account_stash WHERE user_id = $1', [plan.userId]);
+
+    const saves = new Map(chars.rows.map((r) => [locOfChar(r.char_id), r]));
+    const stash = stashRow.rows[0]?.data;
+
+    /** Вынуть вещь отовсюду, где она сейчас лежит. */
+    const pull = (id: string): void => {
+      for (const r of chars.rows) {
+        const s = r.data;
+        s.inventory = s.inventory.filter((i) => i.uid !== id);
+        s.belt = s.belt.map((i) => (i && i.uid === id ? null : i));
+        for (const [slot, it] of Object.entries(s.equipment)) {
+          if (it && it.uid === id) delete s.equipment[slot as keyof typeof s.equipment];
+        }
+      }
+      if (stash) stash.tabs = stash.tabs.map((tab) => tab.filter((i) => i.uid !== id));
+    };
+
+    for (const r of plan.remove) pull(r.id);
+
+    for (const r of plan.restore) {
+      pull(r.id);
+      if (r.to === LOC_STASH) {
+        // Возврат в сундук: позиция из снимка. Наложения лечит `sanitizeStash` при выдаче.
+        if (stash) stash.tabs[0]?.push(r.item);
+      } else {
+        const target = saves.get(r.to);
+        // ВСЁ кладём в инвентарь, а не в слоты: журнал знает место, но не слот экипировки.
+        if (target) target.data.inventory.push({ ...r.item, pos: r.item.pos ?? null });
+      }
+    }
+
+    for (const r of chars.rows) {
+      await c.query('UPDATE characters SET data = $1, version = version + 1, updated_at = now() WHERE char_id = $2',
+        [JSON.stringify(r.data), r.char_id]);
+    }
+    if (stash) {
+      await c.query('UPDATE account_stash SET data = $1, updated_at = now() WHERE user_id = $2',
+        [JSON.stringify(stash), plan.userId]);
+    }
+
+    // Леджер и журнал приводим в то же состояние: иначе ближайший аудит объявит откат нарушением.
+    for (const r of plan.restore) {
+      await c.query('UPDATE items SET loc = $2, data = $3, moved_at = now() WHERE id = $1',
+        [r.id, r.to, JSON.stringify(r.item)]);
+      await c.query(
+        `INSERT INTO item_events (item_id, kind, user_id, from_loc, to_loc, reason, data)
+         VALUES ($1, 'rollback', $2, NULL, $3, $4, $5)`,
+        [r.id, plan.userId, r.to, reason, JSON.stringify(r.item)]);
+    }
+    for (const r of plan.remove) {
+      await c.query('UPDATE items SET loc = $2, moved_at = now() WHERE id = $1', [r.id, LOC_WORLD]);
+      await c.query(
+        `INSERT INTO item_events (item_id, kind, user_id, from_loc, to_loc, reason)
+         VALUES ($1, 'rollback', $2, $3, $4, $5)`,
+        [r.id, plan.userId, r.from, LOC_WORLD, reason]);
+    }
+
+    return { restored: plan.restore.length, removed: plan.remove.length };
+  });
+}

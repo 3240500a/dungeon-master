@@ -134,6 +134,41 @@ export function installGatewayRoutes(app: Express): void {
 
   // Узлы, переставшие подавать признаки жизни, не должны копиться в реестре.
   setInterval(() => { void sweepNodes().catch(() => undefined); }, 30_000).unref();
+
+  installNightlyAudit();
+}
+
+/**
+ * Ночной аудит инвариантов (Ф2.6) — на гейтвее, потому что он в кластере один: гоняй его
+ * каждая нода, проверка шла бы восемь раз за ночь и наперегонки.
+ *
+ * Час задаётся `DM_AUDIT_HOUR` (по умолчанию 4 утра — самое пустое время). Проверяем раз
+ * в десять минут, наступил ли нужный час и не гоняли ли мы уже сегодня: это надёжнее
+ * одного длинного таймера, который переживёт перевод часов и паузу процесса.
+ *
+ * НАХОДКА — НЕ ДЕЙСТВИЕ. Задача только считает и пишет в историю; чинить и наказывать
+ * будет человек, глядя на выгрузку.
+ */
+function installNightlyAudit(): void {
+  const hour = Number(process.env.DM_AUDIT_HOUR ?? 4);
+  let lastDay = '';
+  const tick = async (): Promise<void> => {
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    if (now.getHours() !== hour || day === lastDay) return;
+    lastDay = day;
+    const { runAudit, formatAudit, saveAuditRun } = await import('../db/audit.js');
+    const r = await runAudit();
+    await saveAuditRun(r);
+    // В лог отчёт уходит ЦЕЛИКОМ: если инцидент был, разбирать его будут по логу,
+    // а не по одной строке «нашлось 3».
+    console.log(`[аудит] ночной прогон
+${formatAudit(r)}`);
+    if (r.incidents > 0) {
+      console.error(`[аудит] ИНЦИДЕНТ: нарушений инвариантов ${r.incidents} — требуется разбор человеком`);
+    }
+  };
+  setInterval(() => { void tick().catch((e: unknown) => console.error('[аудит] прогон не удался:', e)); }, 10 * 60_000).unref();
 }
 
 /**

@@ -1,6 +1,6 @@
 import { recentSessions, prunePlaySessions } from './telemetry.js';
 import { detect, summarize, DEFAULT_THRESHOLDS } from '../net/anomaly.js';
-import { q1, closePool } from './pool.js';
+import { q1, closePool, initSchema } from './pool.js';
 
 /**
  * Разбор телеметрии (Ф3.3).
@@ -17,6 +17,7 @@ const arg = (k: string): string | undefined =>
   process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
 
 async function main(): Promise<void> {
+  await initSchema();
   const ready = await q1<{ ok: boolean }>(`SELECT to_regclass('play_sessions') IS NOT NULL AS ok`);
   if (!ready?.ok) {
     console.log('в этой базе ещё нет таблицы телеметрии — она не инициализирована.');
