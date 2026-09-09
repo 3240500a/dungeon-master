@@ -33,6 +33,7 @@ export async function joinCluster(
   await initClusterSchema();
 
   let lastTicks = counters.ticks;
+  let lastRoomSeconds = counters.roomSeconds;
   let lastAt = Date.now();
 
   const send = async (): Promise<void> => {
@@ -41,9 +42,12 @@ export async function joinCluster(
     const now = Date.now();
     const dt = Math.max(0.001, (now - lastAt) / 1000);
     // Частота симуляции считается между двумя ударами сердца — по факту, а не по заданию.
-    // Делитель — ТИКАЮЩИЕ комнаты: паузы грейса не тикают и занижали бы частоту.
-    const hz = g.ticking > 0 ? (counters.ticks - lastTicks) / dt / g.ticking : 0;
-    lastTicks = counters.ticks; lastAt = now;
+    // Знаменатель — комнато-секунды за тот же интервал: паузы грейса не тикают, а число
+    // комнат внутри интервала меняется, и «комнаты на момент замера» дают частоту, которой
+    // не было (см. net/metrics.ts).
+    const rs = counters.roomSeconds - lastRoomSeconds;
+    const hz = rs > 0 ? (counters.ticks - lastTicks) / rs : 0;
+    lastTicks = counters.ticks; lastRoomSeconds = counters.roomSeconds; lastAt = now;
 
     await heartbeat(nodeId, url, {
       players: g.players, rooms: g.rooms,

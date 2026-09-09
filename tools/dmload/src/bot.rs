@@ -29,6 +29,16 @@ pub struct BotOpts {
     pub descend: bool,
     /// Разбирать кадры мира и сверять контрольную сумму.
     pub see: bool,
+    /// Через сколько секунд рвать соединение и возвращаться в ту же комнату (0 — не рвать).
+    ///
+    /// Сценарий реконнекта: комната уходит в грейс, персонаж ждёт возвращения, а не гибнет.
+    /// Это единственный путь, который под нагрузкой НЕ проверялся ни разу.
+    pub churn_sec: u64,
+    /// Читать сокет медленно, мс паузы после каждого кадра (0 — читать сразу).
+    ///
+    /// Медленный клиент — не выдумка: подвисший главный поток браузера ведёт себя именно так.
+    /// Вопрос к серверу один: он копит неотправленное без предела или отключает такого клиента.
+    pub slow_ms: u64,
 }
 
 /// Коды комнат по группам: хост создаёт комнату, остальные заходят по коду.
@@ -37,17 +47,49 @@ pub struct BotOpts {
 pub type RoomCodes = Arc<Mutex<HashMap<usize, String>>>;
 
 pub async fn run(o: BotOpts, st: Arc<Stats>, codes: RoomCodes) {
-    if let Err(e) = play(&o, &st, &codes).await {
-        st.errors.fetch_add(1, Relaxed);
-        // Первые несколько причин полезны, дальше это шум.
-        if st.errors.load(Relaxed) <= 5 {
-            eprintln!("[бот {}] {e}", o.index);
+    let who = match enroll(&o).await {
+        Ok(v) => v,
+        Err(e) => {
+            fail(&st, o.index, &e);
+            return;
+        }
+    };
+    // Аккаунт заводится ОДИН раз на бота: при churn перезаходит тот же персонаж, иначе мы
+    // мерили бы не возвращение в комнату, а регистрацию.
+    let mut resume = false;
+    loop {
+        match session(&o, &st, &codes, &who, resume).await {
+            Ok(true) => {
+                st.reconnects.fetch_add(1, Relaxed);
+                // Дальше заходим ИМЕННО как реконнект, а не «в комнату по коду»: по коду
+                // сервер считает незавершённый забег брошенным и выдаёт штраф смерти.
+                resume = true;
+                continue;
+            }
+            Ok(false) => break,
+            Err(e) => {
+                fail(&st, o.index, &e);
+                break;
+            }
         }
     }
-    st.alive.fetch_sub(1, Relaxed);
 }
 
-async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), String> {
+fn fail(st: &Arc<Stats>, index: usize, e: &str) {
+    st.errors.fetch_add(1, Relaxed);
+    // Первые несколько причин полезны, дальше это шум.
+    if st.errors.load(Relaxed) <= 5 {
+        eprintln!("[бот {index}] {e}");
+    }
+}
+
+/// Аккаунт и персонаж — один раз за жизнь бота.
+struct Who {
+    token: String,
+    char_id: String,
+}
+
+async fn enroll(o: &BotOpts) -> Result<Who, String> {
     let user = format!("rl_{}_{}", o.tag, o.index);
     let r = http::post(
         &o.base,
@@ -74,19 +116,27 @@ async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), Str
         .ok()
         .and_then(|v| v.get("character")?.get("charId")?.as_str().map(String::from))
         .ok_or_else(|| format!("персонаж → {} {}", r.status, r.body))?;
+    Ok(Who { token, char_id })
+}
 
+/// Одна сессия: маршрут → сокет → игра. `Ok(true)` — оборвались нарочно, надо перезайти.
+async fn session(
+    o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes, who: &Who, resume: bool,
+) -> Result<bool, String> {
+    let (token, char_id) = (&who.token, &who.char_id);
     let group = o.index / o.group_size;
     let is_host = o.index % o.group_size == 0;
 
-    // Не-хост ждёт код комнаты ДО маршрутизации.
-    let mut code: Option<String> = None;
-    if !is_host {
+    // Код комнаты нужен всем: не-хост ЖДЁТ его, хост берёт уже известный — при перезаходе
+    // это возвращение в ту же комнату, а `fresh` создал бы новую и потерял забег.
+    let mut code: Option<String> = codes.lock().await.get(&group).cloned();
+    if !is_host && !resume && code.is_none() {
         for _ in 0..200 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
             if let Some(c) = codes.lock().await.get(&group) {
                 code = Some(c.clone());
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 
@@ -124,11 +174,22 @@ async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), Str
         .map_err(|e| format!("сокет {url}: {e}"))?;
     let (mut tx, mut rx) = ws.split();
     st.connected.fetch_add(1, Relaxed);
-    st.alive.fetch_add(1, Relaxed);
+    // Счётчик живых снимается на ЛЮБОМ выходе, включая ошибку из `?`, — иначе оборвавшиеся
+    // боты остались бы живыми на бумаге и ворота качества смотрели бы в никуда.
+    let _alive = AliveGuard::new(st.clone());
 
-    let join = match &code {
-        Some(c) => format!(r#"{{"t":"join","token":"{token}","charId":"{char_id}","roomCode":"{c}"}}"#),
-        None => format!(r#"{{"t":"join","token":"{token}","charId":"{char_id}","fresh":true}}"#),
+    // ТРИ РАЗНЫХ ВХОДА, и путать их дорого:
+    //   resume  — вернуться в свой забег (грейс-комната или пересборка из сейва);
+    //   roomCode — осознанный вход в чужую комнату: сервер считает свой незавершённый забег
+    //              БРОШЕННЫМ и выдаёт штраф смерти;
+    //   fresh   — новая комната с нуля.
+    let join = if resume {
+        format!(r#"{{"t":"join","token":"{token}","charId":"{char_id}","resume":true}}"#)
+    } else {
+        match &code {
+            Some(c) => format!(r#"{{"t":"join","token":"{token}","charId":"{char_id}","roomCode":"{c}"}}"#),
+            None => format!(r#"{{"t":"join","token":"{token}","charId":"{char_id}","fresh":true}}"#),
+        }
     };
     send(&mut tx, st, join).await?;
 
@@ -139,8 +200,18 @@ async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), Str
     let mut angle = (o.index as f64) * 0.37;
     let mut seq: u64 = 0;
     let mut world = wire::Snapshot::default();
+    // Разброс в разрыве обязателен: одновременный уход всех — это уже сценарий всплеска,
+    // а не реконнекта, и он проверяется отдельно.
+    let churn_at = (o.churn_sec > 0).then(|| {
+        Instant::now() + Duration::from_millis(o.churn_sec * 1000 + (o.index as u64 % 17) * 250)
+    });
 
     loop {
+        if let Some(at) = churn_at {
+            if Instant::now() >= at {
+                return Ok(true);
+            }
+        }
         tokio::select! {
             _ = input.tick() => {
                 // Направление плавно вращается: постоянный вектор дал бы монстрам скучный
@@ -161,7 +232,7 @@ async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), Str
                 send(&mut tx, st, format!(r#"{{"t":"ping","id":{ping_id}}}"#)).await?;
             }
             msg = rx.next() => {
-                let Some(msg) = msg else { return Ok(()) };
+                let Some(msg) = msg else { return Ok(false) };
                 let msg = msg.map_err(|e| format!("приём: {e}"))?;
                 match msg {
                     Message::Binary(b) => {
@@ -186,11 +257,30 @@ async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), Str
                         st.text_frames.fetch_add(1, Relaxed);
                         handle_text(&t, o, st, codes, group, is_host, &mut tx, &mut ping_at).await?;
                     }
-                    Message::Close(_) => return Ok(()),
+                    Message::Close(_) => return Ok(false),
                     _ => {}
+                }
+                // Медленный клиент: не читаем, пока сервер копит. Пауза здесь — это давление
+                // на его исходящую очередь, ровно как подвисший главный поток браузера.
+                if o.slow_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(o.slow_ms)).await;
                 }
             }
         }
+    }
+}
+
+/// Снимает бота с учёта живых, чем бы сессия ни кончилась.
+struct AliveGuard(Arc<Stats>);
+impl AliveGuard {
+    fn new(st: Arc<Stats>) -> Self {
+        st.alive.fetch_add(1, Relaxed);
+        Self(st)
+    }
+}
+impl Drop for AliveGuard {
+    fn drop(&mut self) {
+        self.0.alive.fetch_sub(1, Relaxed);
     }
 }
 
@@ -230,7 +320,10 @@ async fn handle_text(
             if let Some(c) = v.get("roomCode").and_then(|x| x.as_str()) {
                 codes.lock().await.entry(group).or_insert_with(|| c.to_string());
             }
-            if o.descend && is_host {
+            let in_town = v.get("floor").and_then(|f| f.get("depth")).and_then(|d| d.as_i64()) == Some(0);
+            // Спускаемся ТОЛЬКО из города: при перезаходе комната уже на этаже, и повторный
+            // спуск увёл бы пати глубже вместо возвращения в забег.
+            if o.descend && is_host && in_town {
                 // Небольшой разброс, чтобы группы не спускались одним залпом.
                 let d = 1500 + (o.index as u64 % 7) * 200;
                 tokio::time::sleep(Duration::from_millis(d)).await;

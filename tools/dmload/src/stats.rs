@@ -22,6 +22,8 @@ pub struct Stats {
     /// Сверки контрольной суммы (заполняется зрячими ботами, фаза С2).
     pub checks: AtomicU64,
     pub mismatches: AtomicU64,
+    /// Возвращений в комнату после нарочного разрыва (сценарий реконнекта).
+    pub reconnects: AtomicU64,
     rtt: Vec<AtomicU64>,
     rtt_over: AtomicU64,
     rtt_count: AtomicU64,
@@ -45,6 +47,7 @@ impl Stats {
             input_sent: AtomicU64::new(0),
             checks: AtomicU64::new(0),
             mismatches: AtomicU64::new(0),
+            reconnects: AtomicU64::new(0),
             rtt: (0..BUCKETS).map(|_| AtomicU64::new(0)).collect(),
             rtt_over: AtomicU64::new(0),
             rtt_count: AtomicU64::new(0),
@@ -67,7 +70,7 @@ impl Stats {
     pub fn reset(&self) {
         for c in [
             &self.errors, &self.bytes_in, &self.bytes_out, &self.world_frames,
-            &self.text_frames, &self.input_sent, &self.checks, &self.mismatches,
+            &self.text_frames, &self.input_sent, &self.checks, &self.mismatches, &self.reconnects,
             &self.rtt_over, &self.rtt_count, &self.rtt_sum_us,
         ] {
             c.store(0, Relaxed);

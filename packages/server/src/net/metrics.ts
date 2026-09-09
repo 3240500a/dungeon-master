@@ -45,6 +45,10 @@ export const counters = {
   sessionsEvicted: 0,
   /** Шагов симуляции выполнено — из этого считается фактическая частота мира. */
   ticks: 0,
+  /** Отключено клиентов, не успевавших читать (переполнение исходящей очереди). */
+  slowClientsDropped: 0,
+  /** «Комната × секунда» под тиком — знаменатель частоты мира. */
+  roomSeconds: 0,
 };
 
 /**
@@ -76,6 +80,7 @@ loop.enable();
 // Считается ТОЛЬКО между двумя сборками. Первый запрос отдаёт 0, а не «среднее от старта
 // процесса»: на старте комнат ещё нет, и такое среднее выглядит как слоу-мо, которого нет.
 let lastTicks = -1;
+let lastRoomSeconds = 0;
 let lastAt = 0;
 let tickHz = 0;
 
@@ -87,11 +92,15 @@ export function renderMetrics(): string {
   const cpu = process.cpuUsage();
 
   const dt = (now - lastAt) / 1000;
-  if (lastTicks < 0) { lastTicks = counters.ticks; lastAt = now; }
+  if (lastTicks < 0) { lastTicks = counters.ticks; lastRoomSeconds = counters.roomSeconds; lastAt = now; }
   else if (dt >= 1) {
-    // Делим на ТИКАЮЩИЕ комнаты: паузы грейса не должны выглядеть как слоу-мо.
-    tickHz = (counters.ticks - lastTicks) / dt / Math.max(1, gauges.ticking);
+    // Знаменатель — комнато-секунды за тот же интервал, а не «комнаты на момент замера».
+    // Иначе изменение числа комнат ВНУТРИ окна даёт частоту, которой не было: замерено 52 Гц
+    // при живых 30, когда за окно половина комнат закрылась.
+    const rs = counters.roomSeconds - lastRoomSeconds;
+    if (rs > 0) tickHz = (counters.ticks - lastTicks) / rs;
     lastTicks = counters.ticks;
+    lastRoomSeconds = counters.roomSeconds;
     lastAt = now;
   }
 
@@ -102,6 +111,7 @@ export function renderMetrics(): string {
 
   g('dm_rooms', 'Комнат в процессе (включая паузу грейса)', gauges.rooms);
   g('dm_rooms_ticking', 'Комнат под планировщиком тиков', gauges.ticking);
+  g('dm_slow_clients_dropped_total', 'Отключено клиентов из-за переполнения исходящей очереди', counters.slowClientsDropped, 'counter');
   g('dm_players', 'Игроков в мире', gauges.players);
   g('dm_connections', 'Открытых WebSocket-соединений', gauges.connections);
   g('dm_tick_hz', 'Фактическая частота мира на комнату, Гц', Number(tickHz.toFixed(2)));

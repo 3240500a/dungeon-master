@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 mod bot;
 mod http;
+mod report;
 mod stats;
 mod wire;
 
@@ -70,17 +71,43 @@ async fn run(a: Args, threads: usize) {
         net_probe(&base).await;
         return;
     }
+    // Сравнение отчётов — работа без сервера: два файла на вход, таблица и оговорки на выход.
+    if let Some(pair) = a.0.get("compare") {
+        let mut it = pair.split(',');
+        match (it.next(), it.next()) {
+            (Some(x), Some(y)) => {
+                if let Err(e) = report::compare(x, y) {
+                    eprintln!("сравнение: {e}");
+                    std::process::exit(1);
+                }
+            }
+            _ => eprintln!("--compare=первый.json,второй.json"),
+        }
+        return;
+    }
 
     let from = a.num("from", a.num("n", 200));
     let step = a.num("step", 0);
     let max = a.num("max", a.num("n", from));
-    let secs = a.num("secs", 30);
+    let mut secs = a.num("secs", 30);
     let warmup = a.num("warmup", 8);
     let hz = a.num("hz", 30);
     let group = a.num("group", 1).max(1) as usize;
     // Зрячие боты: сколько первых разбирают кадры и сверяют сумму. Дороже слепых, поэтому
     // их берут горстью — расхождение протокола видно и на десятке.
     let see = a.num("see", 20);
+    // Сценарии С3. Каждый проверяет свой отказ, и все сочетаются друг с другом.
+    let churn = a.num("churn", 0);       // сколько ботов рвут связь и возвращаются
+    let churn_sec = a.num("churnSec", 30);
+    let slow = a.num("slow", 0);         // сколько ботов читают сокет медленно
+    let slow_ms = a.num("slowMs", 400);
+    let burst = a.0.contains_key("burst"); // подключаться залпом, без разбивки
+    let every = a.num("every", 60);      // шаг отчёта в режиме выдержки
+    // Выдержка: ступеней нет, есть одна нагрузка и много окон подряд. Ищем не потолок,
+    // а ДРЕЙФ — то, что за минуту незаметно, а за час убивает сервер.
+    let soak = mode == "soak";
+    let total = secs;
+    if soak { secs = every; }
     let snap_hz = a.num("snapHz", 20) as f64;
     let rtt_limit = a.num("rttLimit", 120) as f64;
     let tick_floor = a.num("tickFloor", 28) as f64;
@@ -92,6 +119,10 @@ async fn run(a: Args, threads: usize) {
         if step > 0 { format!("…{max} шагом {step}") } else { String::new() }
     );
     println!("[dmload] зрячих ботов {see} (разбирают кадры и сверяют сумму)");
+    if churn > 0 { println!("[dmload] реконнект: {churn} ботов рвут связь каждые ~{churn_sec} с и возвращаются в ту же комнату"); }
+    if slow > 0 { println!("[dmload] медленные клиенты: {slow} ботов читают сокет с паузой {slow_ms} мс"); }
+    if burst { println!("[dmload] всплеск: подключаемся залпом, без разбивки"); }
+    if mode == "soak" { println!("[dmload] выдержка: отчёт каждые {every} с"); }
 
     // Канал меряем ДО нагрузки: без этой базы непонятно, чья задержка в перцентилях.
     let base_rtt = net_probe(&base).await;
@@ -103,7 +134,15 @@ async fn run(a: Args, threads: usize) {
 
     let mut spawned = 0u64;
     let mut capacity = 0u64;
-    let mut target = from;
+    let mut target = if soak { a.num("n", from) } else { from };
+    /// Окно замера: то, по чему потом видно дрейф.
+    struct Window { world: f64, tick: f64, p50: f64, rss: f64, srv_cpu: f64 }
+    let mut windows: Vec<Window> = Vec::new();
+    let mut rows: Vec<report::Row> = Vec::new();
+    // Счётчики обнуляются перед каждым окном, поэтому итог выдержки копим отдельно —
+    // иначе в сводке оказались бы числа последней минуты, а не всего прогона.
+    let (mut tot_err, mut tot_mis, mut tot_rec, mut tot_chk) = (0u64, 0u64, 0u64, 0u64);
+    let started = Instant::now();
 
     loop {
         // Доводим число ботов до ступени.
@@ -117,15 +156,23 @@ async fn run(a: Args, threads: usize) {
                 group_size: group,
                 descend: true,
                 see: spawned + i < see,
+                churn_sec: if spawned + i < churn { churn_sec } else { 0 },
+                slow_ms: if spawned + i < slow { slow_ms } else { 0 },
             };
             let (s, c) = (st.clone(), codes.clone());
             tokio::spawn(bot::run(o, s, c));
-            // Вразбивку: залпом мы бы мерили scrypt регистрации, а не игру.
-            tokio::time::sleep(Duration::from_millis(6)).await;
+            // Вразбивку: залпом мы бы мерили scrypt регистрации, а не игру. `--burst` снимает
+            // разбивку намеренно — тогда это и есть сценарий всплеска подключений.
+            if !burst {
+                tokio::time::sleep(Duration::from_millis(6)).await;
+            }
+        }
+        // Прогрев нужен только после подсадки ботов: в выдержке окна идут встык.
+        if need > 0 {
+            tokio::time::sleep(Duration::from_secs(warmup)).await;
         }
         spawned = target;
 
-        tokio::time::sleep(Duration::from_secs(warmup)).await;
         st.reset();
         let m0 = http::metrics(&base).await;
         let cpu0 = stats::cpu_ms();
@@ -148,7 +195,10 @@ async fn run(a: Args, threads: usize) {
         let rss = m1.get("dm_rss_bytes").unwrap_or(&0.0) / 1048576.0;
 
         let mut why: Vec<String> = Vec::new();
-        if world < snap_hz * 0.95 {
+        // Медленные боты по построению читают реже нормы и тянут среднее вниз: гейт на кадры
+        // при них меряет НАС, а не сервер. Здоровье сервера в этом сценарии показывают тик,
+        // RTT остальных и рост памяти.
+        if world < snap_hz * 0.95 && slow == 0 {
             why.push(format!("кадров мира {world:.1} < {:.1}", snap_hz * 0.95));
         }
         if tick > 0.0 && tick < tick_floor {
@@ -158,7 +208,9 @@ async fn run(a: Args, threads: usize) {
         if !(p50 <= rtt_limit) {
             why.push(format!("RTT {p50:.0} мс > {rtt_limit:.0}"));
         }
-        if alive != target {
+        // При сценарии реконнекта провал живых до числа перезаходящих — это он и есть,
+        // а не отвал. Всё, что глубже, — уже отказ.
+        if alive + churn.min(target) < target {
             why.push(format!("живых {alive}/{target}"));
         }
         if st.errors.load(Relaxed) > 0 {
@@ -182,6 +234,17 @@ async fn run(a: Args, threads: usize) {
         if !ok {
             println!("        {}", why.join(" · "));
         }
+        if slow > 0 {
+            let dropped = *m1.get("dm_slow_clients_dropped_total").unwrap_or(&0.0)
+                - *m0.get("dm_slow_clients_dropped_total").unwrap_or(&0.0);
+            println!(
+                "        медленных клиентов {slow} (кадры в среднем занижены ими); отключено сервером за окно {dropped:.0}"
+            );
+        }
+        let rec = st.reconnects.load(Relaxed);
+        if rec > 0 {
+            println!("        возвращений в комнату {rec}");
+        }
         let checks = st.checks.load(Relaxed);
         if checks > 0 {
             println!(
@@ -192,6 +255,12 @@ async fn run(a: Args, threads: usize) {
         }
         // Стенд обязан знать свою цену: 50 сообщений в секунду на бота — это его работа.
         let msgs = (st.input_sent.load(Relaxed) + st.world_frames.load(Relaxed) + st.text_frames.load(Relaxed)) as f64;
+        let us_per_msg = if msgs > 0.0 { self_cpu * dt * 1e6 / msgs } else { f64::NAN };
+        rows.push(report::Row {
+            bots: target, ok, world, tick, p50, p95: st.rtt_pct(0.95), p99: st.rtt_pct(0.99),
+            kb, srv_cpu, self_cpu, rss, us_per_msg,
+            checks, mismatches: st.mismatches.load(Relaxed),
+        });
         if msgs > 0.0 {
             println!(
                 "        стенд: {:.1} мкс на сообщение, {} замеров RTT{}",
@@ -201,6 +270,19 @@ async fn run(a: Args, threads: usize) {
             );
         }
 
+        if soak {
+            windows.push(Window { world, tick, p50, rss, srv_cpu });
+            tot_err += st.errors.load(Relaxed);
+            tot_mis += st.mismatches.load(Relaxed);
+            tot_rec += st.reconnects.load(Relaxed);
+            tot_chk += checks;
+            // В выдержке проваленное окно НЕ повод останавливаться: интересно ровно то,
+            // как дальше пойдёт деградация, а не факт её начала.
+            if started.elapsed().as_secs() >= total {
+                break;
+            }
+            continue;
+        }
         if !ok {
             break;
         }
@@ -212,6 +294,22 @@ async fn run(a: Args, threads: usize) {
     }
 
     println!("\n════════════════════════════════════════════════════════");
+    if soak {
+        // Дрейф важнее любого отдельного окна: сервер, который час держит те же числа, и сервер,
+        // у которого память растёт по мегабайту в минуту, на коротком замере неразличимы.
+        if let (Some(f), Some(l)) = (windows.first(), windows.last()) {
+            let mins = (started.elapsed().as_secs_f64() / 60.0).max(1.0);
+            println!("ВЫДЕРЖКА {:.0} мин, {} окон, {target} ботов:", mins, windows.len());
+            println!("  кадры   {:.1} → {:.1}", f.world, l.world);
+            println!("  тик     {:.1} → {:.1} Гц", f.tick, l.tick);
+            println!("  RTT p50 {:.1} → {:.1} мс", f.p50, l.p50);
+            println!("  RSS     {:.0} → {:.0} МБ ({:+.1} МБ/мин)", f.rss, l.rss, (l.rss - f.rss) / mins);
+            println!("  CPU     {:.0} → {:.0} %", f.srv_cpu * 100.0, l.srv_cpu * 100.0);
+            println!("  за прогон: сверок дельт {tot_chk}, расхождений {tot_mis} · возвращений в комнату {tot_rec} · ошибок {tot_err}");
+        }
+        println!("════════════════════════════════════════════════════════");
+        std::process::exit(if tot_mis == 0 && tot_err == 0 { 0 } else { 1 });
+    }
     println!(
         "ЁМКОСТЬ: {capacity} игроков{}",
         if base_rtt.is_finite() { format!(" · задержка канала вхолостую {base_rtt:.2} мс") } else { String::new() }

@@ -3,7 +3,7 @@ import { request as httpRequest } from 'node:http';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
 import { installShutdown } from './wsServer.js';
-import type { GameConn } from './conn.js';
+import { MAX_BACKPRESSURE, type GameConn } from './conn.js';
 
 /**
  * Транспорт на uWebSockets.js (Ф1.6) — включается `DM_WS=uws`.
@@ -106,7 +106,7 @@ export function startUwsServer(cfg: ConfigRegistry, port: number, httpPort: numb
     idleTimeout: 32,
     // Потолок неотправленного на клиента: кто не успевает читать — отключается, а не съедает
     // память сервера. На `ws` эту роль играет рост bufferedAmount, но там его никто не рубит.
-    maxBackpressure: 16 * 1024 * 1024,
+    maxBackpressure: MAX_BACKPRESSURE,
     open: (ws: UwsSocket) => {
       const conn = new UwsConn(ws, dec.decode(ws.getRemoteAddressAsText()));
       conns.set(ws, conn);

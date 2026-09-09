@@ -3,7 +3,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { ConfigRegistry } from '@dm/shared';
 import { RoomManager } from './roomManager.js';
 import { clientIp } from './rateLimit.js';
-import type { GameConn } from './conn.js';
+import { MAX_BACKPRESSURE, type GameConn } from './conn.js';
+import { counters } from './metrics.js';
 
 /**
  * Транспорт по умолчанию: библиотека `ws` поверх общего HTTP-сервера (тот же порт, что REST).
@@ -17,6 +18,14 @@ class WsConn implements GameConn {
   get open(): boolean { return this.ws.readyState === this.ws.OPEN; }
   send(data: string | Uint8Array): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
+    // Клиент, который не успевает читать, копит неотправленное В ПАМЯТИ СЕРВЕРА. У uWS для
+    // этого есть `maxBackpressure`, у `ws` — только растущий `bufferedAmount`, и его никто
+    // не рубил: подвисший браузер мог тянуть сервер за собой. Порог тот же, что у uWS.
+    if (this.ws.bufferedAmount > MAX_BACKPRESSURE) {
+      counters.slowClientsDropped++;
+      this.close(1013, 'slow-client');
+      return;
+    }
     // `binary` обязателен: без него Buffer уехал бы текстовым кадром и клиент не распознал бы его.
     if (typeof data === 'string') this.ws.send(data);
     else this.ws.send(data, { binary: true });

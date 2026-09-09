@@ -46,6 +46,8 @@ export class TickScheduler {
   private readonly entries = new Map<Tickable, Entry>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private wakeAt = 0;
+  /** Момент прошлого начисления комнато-секунд. */
+  private lastAccrual = 0;
   /** Сколько шагов симуляции пришлось выбросить из-за перегрузки. Ноль на здоровом сервере. */
   droppedTicks = 0;
 
@@ -93,6 +95,15 @@ export class TickScheduler {
 
   private tick(): void {
     const now = performance.now();
+    // Комнато-секунды: сколько «комната × секунда» прошло под тиком. Частота мира считается
+    // как шаги ÷ комнато-секунды, а не шаги ÷ время ÷ КОМНАТЫ-НА-МОМЕНТ-ЗАМЕРА. Разница
+    // не теоретическая: когда за окно замера комнат стало вдвое меньше, второй способ показал
+    // 52 Гц при живых 30 — а точно так же он занижает, когда комнаты добавляются, и роняет
+    // ворота нагрузочного стенда на здоровом сервере.
+    if (this.lastAccrual > 0) {
+      counters.roomSeconds += this.entries.size * ((now - this.lastAccrual) / 1000);
+    }
+    this.lastAccrual = now;
     for (const e of this.entries.values()) {
       if (e.nextAt > now) continue;
 
@@ -117,7 +128,7 @@ export class TickScheduler {
       }
     }
     if (this.entries.size > 0) this.schedule(performance.now());
-    else this.timer = null;
+    else { this.timer = null; this.lastAccrual = 0; }
   }
 }
 
