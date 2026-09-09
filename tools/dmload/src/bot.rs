@@ -9,13 +9,16 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::http;
 use crate::stats::Stats;
+use crate::wire;
 
 /// Один бот: аккаунт, персонаж, маршрут, сокет, ввод и замер задержки.
 ///
-/// ЧТО БОТ НЕ ДЕЛАЕТ (пока): не разбирает двоичные кадры мира. Серверу безразлично, понимает
-/// клиент присланное или выбрасывает — работа сервера та же, а масса ботов получается вдесятеро
-/// дешевле. Корректность протокола проверяют «зрячие» боты: сейчас это десяток ботов прежнего
-/// стенда на TypeScript, дальше — доля ботов здесь же (фаза С2).
+/// ЗРЯЧИЕ И СЛЕПЫЕ. По умолчанию бот не разбирает двоичные кадры мира: серверу безразлично,
+/// понимает клиент присланное или выбрасывает — работа сервера та же, а масса ботов выходит
+/// заметно дешевле. Но слепая масса не заметит порчу протокола, поэтому `--see=N` делает первые
+/// N ботов зрячими: они восстанавливают мир из дельт и сверяют контрольную сумму ТОГО ЖЕ тика.
+/// Порт декодера доказан эталоном (`npm run golden:wire` + `cargo test`) — иначе его собственная
+/// ошибка выглядела бы как баг сервера.
 
 pub struct BotOpts {
     pub base: String,
@@ -24,6 +27,8 @@ pub struct BotOpts {
     pub input_hz: u64,
     pub group_size: usize,
     pub descend: bool,
+    /// Разбирать кадры мира и сверять контрольную сумму.
+    pub see: bool,
 }
 
 /// Коды комнат по группам: хост создаёт комнату, остальные заходят по коду.
@@ -133,6 +138,7 @@ async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), Str
     let mut ping_at: HashMap<u64, Instant> = HashMap::new();
     let mut angle = (o.index as f64) * 0.37;
     let mut seq: u64 = 0;
+    let mut world = wire::Snapshot::default();
 
     loop {
         tokio::select! {
@@ -161,6 +167,19 @@ async fn play(o: &BotOpts, st: &Arc<Stats>, codes: &RoomCodes) -> Result<(), Str
                     Message::Binary(b) => {
                         st.bytes_in.fetch_add(b.len() as u64, Relaxed);
                         st.world_frames.fetch_add(1, Relaxed);
+                        if o.see {
+                            match wire::decode(&b) {
+                                Ok(f) => {
+                                    world = f.apply(&world);
+                                    st.checks.fetch_add(1, Relaxed);
+                                    if world.checksum() != f.sum {
+                                        st.mismatches.fetch_add(1, Relaxed);
+                                    }
+                                }
+                                // Нечитаемый кадр — это отказ протокола, а не «пропустим один».
+                                Err(e) => return Err(format!("кадр мира: {e}")),
+                            }
+                        }
                     }
                     Message::Text(t) => {
                         st.bytes_in.fetch_add(t.len() as u64, Relaxed);

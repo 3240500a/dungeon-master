@@ -36,7 +36,8 @@
     "poc:cluster": "tsx packages/server/src/loadtest/cluster.ts",
     "poc:cheat": "tsx packages/server/src/loadtest/cheat.ts",
     "poc:flood": "tsx packages/server/src/loadtest/flood.ts",
-    "poc:delta": "tsx packages/server/src/loadtest/deltacheck.ts"
+    "poc:delta": "tsx packages/server/src/loadtest/deltacheck.ts",
+    "golden:wire": "tsx packages/server/src/loadtest/golden.ts"
   },
   "engines": {
     "node": ">=24"

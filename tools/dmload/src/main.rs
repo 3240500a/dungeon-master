@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 mod bot;
 mod http;
 mod stats;
+mod wire;
 
 use stats::Stats;
 
@@ -77,6 +78,9 @@ async fn run(a: Args, threads: usize) {
     let warmup = a.num("warmup", 8);
     let hz = a.num("hz", 30);
     let group = a.num("group", 1).max(1) as usize;
+    // Зрячие боты: сколько первых разбирают кадры и сверяют сумму. Дороже слепых, поэтому
+    // их берут горстью — расхождение протокола видно и на десятке.
+    let see = a.num("see", 20);
     let snap_hz = a.num("snapHz", 20) as f64;
     let rtt_limit = a.num("rttLimit", 120) as f64;
     let tick_floor = a.num("tickFloor", 28) as f64;
@@ -87,6 +91,7 @@ async fn run(a: Args, threads: usize) {
         from,
         if step > 0 { format!("…{max} шагом {step}") } else { String::new() }
     );
+    println!("[dmload] зрячих ботов {see} (разбирают кадры и сверяют сумму)");
 
     // Канал меряем ДО нагрузки: без этой базы непонятно, чья задержка в перцентилях.
     let base_rtt = net_probe(&base).await;
@@ -111,6 +116,7 @@ async fn run(a: Args, threads: usize) {
                 input_hz: hz,
                 group_size: group,
                 descend: true,
+                see: spawned + i < see,
             };
             let (s, c) = (st.clone(), codes.clone());
             tokio::spawn(bot::run(o, s, c));
@@ -158,6 +164,10 @@ async fn run(a: Args, threads: usize) {
         if st.errors.load(Relaxed) > 0 {
             why.push(format!("ошибок {}", st.errors.load(Relaxed)));
         }
+        // Расхождение реконструкции — отказ протокола: смысла мерить дальше нет.
+        if st.mismatches.load(Relaxed) > 0 {
+            why.push(format!("расхождений дельт {}", st.mismatches.load(Relaxed)));
+        }
 
         let ok = why.is_empty();
         println!(
@@ -171,6 +181,14 @@ async fn run(a: Args, threads: usize) {
         );
         if !ok {
             println!("        {}", why.join(" · "));
+        }
+        let checks = st.checks.load(Relaxed);
+        if checks > 0 {
+            println!(
+                "        сверок дельт {checks}, расхождений {} (зрячих ботов {})",
+                st.mismatches.load(Relaxed),
+                see.min(target)
+            );
         }
         // Стенд обязан знать свою цену: 50 сообщений в секунду на бота — это его работа.
         let msgs = (st.input_sent.load(Relaxed) + st.world_frames.load(Relaxed) + st.text_frames.load(Relaxed)) as f64;
