@@ -25,6 +25,113 @@ const abilityGate = (gate) => {
   return g;
 };
 
+const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'packages/shared/src/config/data');
+const INSERTS = JSON.parse(readFileSync(join(dataDir, 'skill-inserts.json'), 'utf8'));
+const INS_TYPES = JSON.parse(readFileSync(join(dataDir, 'skill-insert-types.json'), 'utf8'));
+const insById = new Map(INSERTS.map((i) => [i.id, i]));
+const typeName = (id) => (INS_TYPES.find((t) => t.id === id) || {}).name || id;
+
+// ── ОПИСАНИЯ. Раньше здесь стояло буквально `Активный скилл: <имя>` — отсюда и «половина скилов
+// непонятно что делают». Текст собирается ИЗ ЧИСЕЛ способности: что не задано, то и не упоминается,
+// поэтому описание не врёт и не устаревает при правке значений.
+const AIL_RU = {
+  wound: 'рану', bleed: 'кровотечение', sunder: 'увечье', daze: 'ошеломление',
+  burn: 'поджиг', poison: 'отравление', shock: 'шок', freeze: 'обморожение',
+};
+const EL_RU = { physical: 'физическим', fire: 'огнём', cold: 'холодом', lightning: 'молнией', poison: 'ядом' };
+const RES_RU = { stamina: 'выносливости', mana: 'маны' };
+const SHAPE_RU = { nova: 'взрыв вокруг себя', ground: 'зона на земле', meteor: 'удар с неба',
+  dash: 'рывок сквозь врагов', leap: 'прыжок', boomerang: 'снаряд' };
+const pct = (x) => `${Math.round(x * 100)}%`;
+/** Заглавная первая буква: фразы собираются из кусков, и начало предложения не должно быть строчным. */
+const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+const num = (x) => String(Math.round(x * 100) / 100);
+
+/** Кусок про накладываемый статус — общий для атак, кастов и проклятий. */
+function ailPhrase(al) {
+  if (!al || !al.kind) return null;
+  const dur = al.durationMs ? ` на ${num(al.durationMs / 1000)} с` : '';
+  const st = al.maxStacks > 1 ? `, до ${al.maxStacks} стаков` : '';
+  return `${pct(al.chance)} наложить ${AIL_RU[al.kind] || al.kind}${dur}${st}`;
+}
+
+/** Описание способности из её полей. Порядок фраз — от главного к деталям. */
+function describeAbility(a) {
+  const out = [];
+  if (a.category === 'attack') {
+    const parts = [`Удар оружием ×${num(a.damageMult ?? 1)} к урону`];
+    if (a.hits > 1) parts.push(`${a.hits} удара подряд`);
+    if (a.count > 1) parts.push(`${a.count} снаряда веером`);
+    if (a.speed && a.speed !== 1) parts.push(`скорость ×${num(a.speed)}`);
+    if (a.arcMult && a.arcMult !== 1) parts.push(`дуга ×${num(a.arcMult)}`);
+    if (a.rangeMult && a.rangeMult !== 1) parts.push(`дальность ×${num(a.rangeMult)}`);
+    if (a.pierce) parts.push('пробивает насквозь');
+    out.push(parts.join(', ') + '.');
+  } else if (a.category === 'cast') {
+    const parts = [`${SHAPE_RU[a.shape] || a.shape} ×${num(a.damageMult ?? 1)} к урону`];
+    if (a.radius) parts.push(`радиус ${Math.round(a.radius)}`);
+    if (a.dashDist) parts.push(`рывок на ${Math.round(a.dashDist)}`);
+    out.push(cap(parts.join(', ')) + '.');
+  } else if (a.category === 'curse') {
+    out.push(`Проклятие по площади${a.radius ? `, радиус ${Math.round(a.radius)}` : ''}.`);
+  } else if (a.category === 'aura' || a.category === 'stance') {
+    out.push(`${a.category === 'aura' ? 'Аура' : 'Стойка'}: резервирует ${pct(a.reservePct ?? 0)} пула.`);
+  } else if (a.category === 'buff') {
+    out.push(`Усиление на ${num(a.durationSec ?? 0)} с.`);
+  }
+  // Состав урона: стихия появляется только там, где реально меняет пакет.
+  if (a.element && a.element !== 'physical') {
+    if (a.convertPct) out.push(`${pct(a.convertPct)} урона переводится в урон ${EL_RU[a.element] || a.element}.`);
+    else if (a.addElementPct) out.push(`Сверху ${pct(a.addElementPct)} урона ${EL_RU[a.element] || a.element}.`);
+    else out.push(`Бьёт ${EL_RU[a.element] || a.element}.`);
+  }
+  const ail = ailPhrase(a.ailment);
+  if (ail) out.push(cap(ail) + '.');
+  const ctl = [];
+  if (a.knockback) ctl.push(`отбрасывает на ${Math.round(a.knockback)}`);
+  if (a.stunSec) ctl.push(`оглушает на ${num(a.stunSec)} с`);
+  if (a.knockdownChance) ctl.push(`${pct(a.knockdownChance)} сбить с ног`);
+  if (ctl.length) out.push(cap(ctl.join(', ')) + '.');
+  // Модификаторы аур/стоек/баффов — иначе про них не сказано вообще ничего.
+  for (const m of a.buffMods || []) {
+    const sign = m.value >= 0 ? '+' : '−';
+    out.push(`${sign}${pct(Math.abs(m.value))} ${SL[m.stat] || m.stat}.`);
+  }
+  const cost = [];
+  if (a.manaCost) cost.push(`${num(a.manaCost)} ${RES_RU[a.resource] || a.resource || ''}`.trim());
+  if (a.cooldown) cost.push(`откат ${num(a.cooldown)} с`);
+  if (a.castTimeSec) cost.push(`каст ${num(a.castTimeSec)} с`);
+  if (cost.length) out.push(`Цена: ${cost.join(', ')}.`);
+  return out.join(' ');
+}
+
+/**
+ * Описание пассива из его модификаторов. Классовые узлы приезжают из легаси-файла, где описания
+ * либо пустые, либо бессодержательные, — собираем сами по тем же правилам, что и для веток.
+ */
+function describePassive(mods, fallback) {
+  const parts = (mods || []).map((m) => {
+    const sign = m.value >= 0 ? '+' : '−';
+    return `${sign}${pct(Math.abs(m.value))} ${SL[m.stat] || m.stat}`;
+  });
+  if (!parts.length) return fallback || '';
+  return `${parts.join(', ')} за ранг.`;
+}
+
+/** Описание узла-вставки: что открывает, что вставка делает и чем за это платят. */
+function describeInsertNode(ins) {
+  const cost = [];
+  if (ins.costMult !== 1) cost.push(`стоимость ×${num(ins.costMult)}`);
+  if (ins.cooldownMult !== 1) cost.push(`откат ×${num(ins.cooldownMult)}`);
+  // Про конверсию говорим ОТДЕЛЬНО: она гасит физический статус оружия (packet.physical → 0),
+  // и без этой строчки игрок считает пропавшее кровотечение багом.
+  const conv = ins.tune && ins.tune.convertPct >= 1
+    ? ' Полная конверсия убирает физические статусы оружия (кровотечение, увечье и прочие).' : '';
+  return `Открывает вставку «${ins.name}» (${typeName(ins.type)}). ${ins.description}` +
+    (cost.length ? ` Носитель платит: ${cost.join(', ')}.` : '') + conv +
+    ' Ранг узла усиливает вставку.';
+}
+
 // Подпись стата для описания пассива (fallback, если не задана явно).
 const SL = {
   critChance: 'к шансу крита', critMultiplier: 'к множителю крита', ailmentPct: 'к наложению статусов',
@@ -209,6 +316,28 @@ function elemPas(elStat, names) {
   ];
 }
 
+/**
+ * ВСТАВКИ ПО ВЕТКАМ. Ветка отдаёт то, чем сама занимается: мечи режут, булавы оглушают,
+ * стихии дают свою стихию. Раздача живёт ЗДЕСЬ, а не в JSON вставок, чтобы структура дерева
+ * собиралась из одного места; сам контент вставки — в `skill-inserts.json`.
+ */
+const BRANCH_INS = {
+  'b-sword1h': ['ins-serrated'],
+  'b-mace1h': ['ins-sweep'],
+  'b-sword2h': ['ins-wide-arc'],
+  'b-mace2h': ['ins-heavy-blow'],
+  'b-crossbow': ['ins-piercing'],
+  'b-dual': ['ins-flurry'],
+  'b-fire': ['ins-flame-edge', 'ins-kindling'],
+  'b-cold': ['ins-frost-edge', 'ins-hoarfrost', 'ins-cold-wave'],
+  'b-lightning': ['ins-arc-burst'],
+  'b-aura': ['ins-thrift'],
+  'b-stance': ['ins-quickening'],
+  'b-armor-light': ['ins-swiftness'],
+  'b-armor-plate': ['ins-ward'],
+  'b-shield': ['ins-shove'],
+};
+
 // ── 25 веток: метаданные (гейт/ресурс/группа) + контент из C ──
 const B = [
   { id: 'b-sword1h', name: 'Мечи', group: 'melee1h', res: 'stamina', gate: { weaponClasses: ['sword'], hands: 'one' }, c: 'sword1h' },
@@ -238,28 +367,74 @@ const B = [
   { id: 'b-shield', name: 'Щит', group: 'shield', res: 'stamina', gate: {}, c: 'shield' },
 ];
 
-// Шаблон 15-узловой сетки ветки: [key, kind, subcol(-1..1), tier(0..5), parentKey].
-const TPL = [
-  ['e', 'p', 0, 0, null],
-  ['p1', 'p', -1, 1, 'e'], ['a1', 'a', 1, 1, 'e'], ['p2', 'p', 0, 1, 'e'],
-  ['a2', 'a', -1, 2, 'p1'], ['p3', 'p', 1, 2, 'a1'], ['p4', 'p', 0, 2, 'p2'],
-  ['p5', 'p', -1, 3, 'a2'], ['a3', 'a', 1, 3, 'p3'], ['p6', 'p', 0, 3, 'p4'],
-  ['a4', 'a', -1, 4, 'p5'], ['p7', 'p', 1, 4, 'a3'], ['p8', 'p', 0, 4, 'p6'],
-  ['a5', 'a', 0, 5, 'p8'], ['p9', 'p', -1, 5, 'a4'],
-];
+/**
+ * СЕТКА ВЕТКИ СТРОИТСЯ ИЗ ЕЁ КОНТЕНТА, а не берётся фиксированным шаблоном: сколько у ветки
+ * активок, вставок и пассивов — столько узлов и ярусов. Раньше шаблон жёстко клал ТРИ узла
+ * на ярус, и на кольце радиуса ~177 оказывалось 96 узлов — по 11.6 единицы на узел при иконке
+ * в 15. Отсюда и 128 пар реально перекрывающихся квадратов.
+ *
+ * Правило простое: НЕ БОЛЬШЕ ДВУХ УЗЛОВ НА ЯРУС. Слева идёт «интересное» (активка или вставка),
+ * справа — пассив; когда что-то кончается, ярус доклеивается тем, что осталось.
+ *
+ * Возвращает строки [key, kind('a'|'i'|'p'), sub(-1..1), tier, parentKey].
+ */
+function buildTemplate(nAct, nIns, nPas) {
+  const rows = [['e', 'p', 0, 0, null]];
+  // Активки и вставки вперемешку: сперва активка, потом вставка — чтобы ветка не начиналась
+  // с трёх вставок подряд и не заканчивалась стеной пассивов.
+  const spicy = [];
+  for (let i = 0; i < Math.max(nAct, nIns); i++) {
+    if (i < nAct) spicy.push(['a', i]);
+    if (i < nIns) spicy.push(['i', i]);
+  }
+  let pas = 0, tier = 1, prevTier = ['e'];
+  while (spicy.length || pas < nPas) {
+    const slots = [];
+    if (spicy.length) slots.push(spicy.shift());
+    if (pas < nPas) slots.push(['p', pas++]);
+    else if (spicy.length) slots.push(spicy.shift());
+    const keys = [];
+    slots.forEach(([kind, idx], j) => {
+      const sub = slots.length === 1 ? 0 : (j === 0 ? -1 : 1);
+      const key = `${kind}${idx + 1}`;
+      rows.push([key, kind, sub, tier, prevTier[Math.min(j, prevTier.length - 1)]]);
+      keys.push(key);
+    });
+    prevTier = keys;
+    tier++;
+  }
+  return rows;
+}
 
+/** Уровень по ярусу. Дальше от центра — позже открывается; за шестым ярусом упирается в 30. */
 const TIER_LVL = [1, 6, 12, 18, 24, 30];
+const lvlAt = (tier) => TIER_LVL[Math.min(tier, TIER_LVL.length - 1)];
 
 // ── Радиальная раскладка ЕДИНОГО древа (как пассивка): из центра ветви расходятся во все стороны.
 // Лево = боевые (выносливость), право = магия (мана), низ = броня (none), верх = классовые.
 // (sub -1..1) → перпендикулярное смещение веера, (tier 0..5) → радиус от центра.
-const R0 = 120, TIER_R = 56, SUB_A = 28;
-function radialXY(angleDeg, sub, tier) {
+const R0 = 190, TIER_R = 95;
+/** Веер занимает эту долю УГЛОВОГО КОРИДОРА ветки (расстояние до ближайшей соседней ветки). */
+const SUB_FRAC = 0.28, SUB_MIN = 14, SUB_MAX = 34;
+/** Радиальный зигзаг: левый узел яруса чуть ближе к центру, правый — чуть дальше. */
+const RSTAG = 22;
+/** Минимальный зазор между любыми двумя видимыми узлами; ниже — генератор падает. */
+const MIN_GAP = 30;
+
+/**
+ * ВЕЕР — ДОЛЯ КОРИДОРА, А НЕ КОНСТАНТА. Раньше было `SUB_A = 28` при любом радиусе: на радиусе 288
+ * соседние ветки разведены на 58 единиц, а два встречных веера съедали 56 — оставалось 2.
+ * Теперь ширина веера считается от того, сколько места у ветки есть, и вдобавок узлы яруса
+ * разъезжаются ПО РАДИУСУ (`RSTAG`) — тогда даже сблизившиеся по углу узлы стоят на разных кольцах.
+ */
+function radialXY(angleDeg, corridorRad, sub, tier) {
   const a = (angleDeg * Math.PI) / 180;
   const dx = Math.cos(a), dy = Math.sin(a);          // радиальное направление (мат. координаты)
-  const r = R0 + tier * TIER_R;
-  const mx = dx * r + -dy * (sub * SUB_A);            // + перпендикуляр (−dy, dx)
-  const my = dy * r + dx * (sub * SUB_A);
+  const r0 = R0 + tier * TIER_R;
+  const r = r0 + sub * RSTAG;                        // зигзаг: −1 ближе, +1 дальше
+  const subA = Math.min(SUB_MAX, Math.max(SUB_MIN, r0 * corridorRad * SUB_FRAC));
+  const mx = dx * r + -dy * (sub * subA);            // + перпендикуляр (−dy, dx)
+  const my = dy * r + dx * (sub * subA);
   return { x: Math.round(mx), y: Math.round(-my) };   // экран: y вниз, +угол = вверх
 }
 // Углы веток по ресурсу (порядок B сохраняет тематическую группировку внутри сектора).
@@ -268,9 +443,57 @@ const stamB = B.filter((b) => b.res === 'stamina');
 const manaB = B.filter((b) => b.res === 'mana');
 const noneB = B.filter((b) => b.res === 'none');
 const BRANCH_ANGLE = new Map();
+// СЕКТОРА РАЗВЕДЕНЫ ТАК, ЧТОБЫ МЕЖДУ ГРУППАМИ ОСТАВАЛСЯ ЗАЗОР. Раньше магия кончалась на −66°,
+// а броня начиналась на 288° (=−72°) — шесть градусов, и на входном кольце это 18 единиц: входы
+// «Ауры» и «Тяжёлой брони» просто налезали друг на друга. Теперь магия ужата до −52°.
 stamB.forEach((b, i) => BRANCH_ANGLE.set(b.id, spread(stamB.length, 100, 250, i))); // левая дуга (сверху вниз)
-manaB.forEach((b, i) => BRANCH_ANGLE.set(b.id, spread(manaB.length, 70, -66, i)));  // правая дуга (сверху вниз)
-noneB.forEach((b, i) => BRANCH_ANGLE.set(b.id, [264, 276, 288][i] ?? 276));         // нижний сектор (броня)
+manaB.forEach((b, i) => BRANCH_ANGLE.set(b.id, spread(manaB.length, 68, -52, i)));  // правая дуга (сверху вниз)
+noneB.forEach((b, i) => BRANCH_ANGLE.set(b.id, [262, 274, 286][i] ?? 274));         // нижний сектор (броня)
+
+/** Угловое расстояние между двумя направлениями, град (0..180). */
+const angDist = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+
+/**
+ * Коридор ветки — угол до БЛИЖАЙШЕЙ соседней ветки. Классовые ветки делят вершину (в игре и в
+ * редакторе виден только свой класс), поэтому друг друга соседями не считают.
+ */
+function corridorRad(id) {
+  const a = BRANCH_ANGLE.get(id);
+  const mine = id.startsWith('b-class-');
+  let best = 180;
+  for (const [oid, oa] of BRANCH_ANGLE) {
+    if (oid === id) continue;
+    if (mine && oid.startsWith('b-class-')) continue;
+    best = Math.min(best, angDist(a, oa));
+  }
+  return (best * Math.PI) / 180;
+}
+
+/**
+ * САМОПРОВЕРКА РАСКЛАДКИ. Игрок видит общие ветки плюс ОДНУ свою классовую — значит и проверять
+ * надо каждый такой набор отдельно, а не всё дерево разом (иначе наложение классовых веток друг
+ * на друга, которого игрок никогда не увидит, завалило бы проверку).
+ */
+function assertNoOverlap(nodes, branches) {
+  const universal = branches.filter((b) => !b.classId).map((b) => b.id);
+  const classes = branches.filter((b) => b.classId).map((b) => b.id);
+  let worst = { d: Infinity, a: '', b: '', set: '' };
+  for (const cls of classes.length ? classes : [null]) {
+    const vis = new Set(cls ? [...universal, cls] : universal);
+    const ns = nodes.filter((n) => vis.has(n.branchId));
+    for (let i = 0; i < ns.length; i++) {
+      for (let j = i + 1; j < ns.length; j++) {
+        const d = Math.hypot(ns[i].x - ns[j].x, ns[i].y - ns[j].y);
+        if (d < worst.d) worst = { d, a: ns[i].id, b: ns[j].id, set: cls ?? 'общие' };
+      }
+    }
+  }
+  if (worst.d < MIN_GAP) {
+    throw new Error(`Раскладка налезает: ${worst.a} и ${worst.b} в ${worst.d.toFixed(2)} ед. ` +
+      `(набор «${worst.set}», нужно ≥ ${MIN_GAP}). Крути R0/TIER_R/SUB_FRAC/RSTAG.`);
+  }
+  return worst;
+}
 
 const branches = [], entryNodes = [], edges = [], nodes = [];
 
@@ -282,15 +505,27 @@ B.forEach((br) => {
   const resource = br.res === 'none' ? 'mana' : br.res;
   const idOf = (k) => `${br.id}-${k}`;
   const placed = {};
+  const corr = corridorRad(br.id);
+  const inserts = (BRANCH_INS[br.id] || []).map((id) => {
+    const ins = insById.get(id);
+    if (!ins) throw new Error(`Ветка ${br.id}: вставки «${id}» нет в skill-inserts.json`);
+    return ins;
+  });
+  const tpl = buildTemplate(acts.length, inserts.length, pas.length);
+  const lastAct = `a${acts.length}`, lastPas = `p${pas.length}`;
 
-  for (const [key, kind, sub, tier, parent] of TPL) {
+  for (const [key, kind, sub, tier, parent] of tpl) {
     let node;
-    const { x, y } = radialXY(angle, sub, tier);
-    const common = { id: idOf(key), branchId: br.id, cost: { type: 'points', amount: 1 }, requires: [], levelReq: TIER_LVL[tier], x, y, notable: key === 'a5' || key === 'p9' };
+    const { x, y } = radialXY(angle, corr, sub, tier);
+    const common = { id: idOf(key), branchId: br.id, cost: { type: 'points', amount: 1 }, requires: [], levelReq: lvlAt(tier), x, y, notable: key === lastAct || key === lastPas };
     if (kind === 'a' && acts.length) {
       const ab = acts.shift();
       ab.a = { ...ab.a, resource, ...abilityGate(br.gate) };
-      node = { ...common, kind: 'active', name: ab.name, description: `Активный скилл: ${ab.name}.`, maxRank: 20, effect: { active: ab.a } };
+      node = { ...common, kind: 'active', name: ab.name, description: describeAbility(ab.a), maxRank: 20, effect: { active: ab.a } };
+    } else if (kind === 'i' && inserts.length) {
+      // Узел-вставка: рангов десять, и ранг задаёт СИЛУ вставки, а не только доступ к ней.
+      const ins = inserts.shift();
+      node = { ...common, kind: 'passive', name: ins.name, description: describeInsertNode(ins), maxRank: 10, effect: { grantsInsert: ins.id } };
     } else if (pas.length) {
       const [stat, mkind, value, label, statLabel] = pas.shift();
       const pct = Math.round(value * 1000) / 10;
@@ -318,12 +553,6 @@ const CLASS_META = {
   arbalest: { name: 'Уловки', res: 'stamina' },
   vorozheya: { name: 'Порча', res: 'mana' },
 };
-const CLASS_TPL = [
-  ['e', 'p', 0, 0, null],
-  ['a1', 'a', -1, 1, 'e'], ['a2', 'a', 1, 1, 'e'], ['p1', 'p', 0, 1, 'e'],
-  ['a3', 'a', -1, 2, 'a1'], ['a4', 'a', 1, 2, 'a2'], ['p2', 'p', 0, 2, 'p1'],
-  ['a5', 'a', -1, 3, 'a3'], ['a6', 'a', 1, 3, 'a4'], ['p3', 'p', 0, 3, 'p2'],
-];
 let oldActive = [];
 try { oldActive = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'packages/shared/src/config/data/skills-active.json'), 'utf8')); } catch { /* нет файла */ }
 Object.entries(CLASS_META).forEach(([classId, meta]) => {
@@ -334,19 +563,31 @@ Object.entries(CLASS_META).forEach(([classId, meta]) => {
   const bid = `b-class-${classId}`;
   const idOf = (k) => `${bid}-${k}`;
   const placed = {};
-  for (const [key, kind, sub, tier, parent] of CLASS_TPL) {
+  BRANCH_ANGLE.set(bid, 90);
+  const corr = corridorRad(bid);
+  const cIns = (BRANCH_INS[bid] || []).map((id) => {
+    const ins = insById.get(id);
+    if (!ins) throw new Error(`Ветка ${bid}: вставки «${id}» нет в skill-inserts.json`);
+    return ins;
+  });
+  const tpl = buildTemplate(aq.length, cIns.length, pq.length);
+  for (const [key, kind, sub, tier, parent] of tpl) {
     let node;
     // Класс — верхний сектор (угол 90°). В игре виден только свой класс, поэтому все классы делят вершину.
-    const { x, y } = radialXY(90, sub, tier);
-    const common = { id: idOf(key), branchId: bid, cost: { type: 'points', amount: 1 }, requires: [], levelReq: TIER_LVL[Math.min(tier, 5)], x, y, notable: false };
+    const { x, y } = radialXY(90, corr, sub, tier);
+    const common = { id: idOf(key), branchId: bid, cost: { type: 'points', amount: 1 }, requires: [], levelReq: lvlAt(tier), x, y, notable: false };
     if (kind === 'a' && aq.length) {
       const src = aq.shift();
       const a = { ...src.effect.active, resource: meta.res };
       delete a.attackTypes; delete a.damageKinds; delete a.weaponClasses; delete a.hands; // класс-скиллы — любым оружием
-      node = { ...common, kind: 'active', name: src.name, description: src.description || `Активный скилл: ${src.name}.`, maxRank: src.maxRank ?? 20, effect: { active: a } };
+      // Описание берём ИЗ ЧИСЕЛ, а не из легаси-файла: там лежало «Активный скилл: <имя>».
+      node = { ...common, kind: 'active', name: src.name, description: describeAbility(a), maxRank: src.maxRank ?? 20, effect: { active: a } };
+    } else if (kind === 'i' && cIns.length) {
+      const ins = cIns.shift();
+      node = { ...common, kind: 'passive', name: ins.name, description: describeInsertNode(ins), maxRank: 10, effect: { grantsInsert: ins.id } };
     } else if (pq.length) {
       const src = pq.shift();
-      node = { ...common, kind: 'passive', name: src.name, description: src.description || '', maxRank: src.maxRank ?? 4, effect: { modifiers: src.effect.modifiers } };
+      node = { ...common, kind: 'passive', name: src.name, description: describePassive(src.effect.modifiers, src.description), maxRank: src.maxRank ?? 4, effect: { modifiers: src.effect.modifiers } };
     } else continue;
     placed[key] = node.id;
     nodes.push(node);
@@ -357,6 +598,9 @@ Object.entries(CLASS_META).forEach(([classId, meta]) => {
   branches.push({ id: bid, name: meta.name, group: 'class', classId, resource: meta.res, entryNode: entryId });
 });
 
+// Раскладка проверяется ДО записи: лучше упасть, чем положить в репозиторий кашу.
+const worst = assertNoOverlap(nodes, branches);
 writeFileSync(out, JSON.stringify({ branches, entryNodes, edges, nodes }, null, 2) + '\n');
 const classCount = branches.filter((b) => b.classId).length;
 console.log(`Веток: ${branches.length} (класс: ${classCount}), узлов: ${nodes.length}, рёбер: ${edges.length} → ${out}`);
+console.log(`Минимальный зазор: ${worst.d.toFixed(1)} ед. (${worst.a} ↔ ${worst.b}, набор «${worst.set}»), порог ${MIN_GAP}`);

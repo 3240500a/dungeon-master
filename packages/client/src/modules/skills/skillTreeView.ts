@@ -8,6 +8,8 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 
 /** Состояние вида (пан/зум) сохраняется между перерисовками панели. */
 const view = { scale: 0, tx: 0, ty: 0, inited: false };
+/** Стартовый масштаб: на нём пассив в 10 единиц читается как 8 пикселей. */
+const START_SCALE = 0.8;
 
 function svg<K extends keyof SVGElementTagNameMap>(
   tag: K,
@@ -61,7 +63,8 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
   const header = mk('div', 'margin-bottom:8px;font-size:13px');
   header.innerHTML =
     `Очки скиллов: <b style="color:${COLORS.gold}">${state.save.unspentSkillPoints}</b> · ` +
-    `<span style="color:${COLORS.dim}">колесо — зум, перетаскивание — панорама, клик по доступному узлу — вложить очко</span>`;
+    `<span style="color:${COLORS.dim}">колесо — зум, перетаскивание — панорама, клик по доступному узлу — вложить очко · ` +
+    `<b style="color:${COLORS.accent}">ромб</b> — вставка для сборки скилов</span>`;
   body.appendChild(header);
 
   // Сброс дерева скилов за золото: возвращает ВСЕ очки скиллов, берёт комиссию (за вложенное очко).
@@ -81,7 +84,7 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
   body.appendChild(reset);
 
   const wrap = mk('div',
-    `position:relative;width:100%;height:460px;background:${COLORS.panel2};` +
+    `position:relative;width:100%;height:min(70vh,720px);background:${COLORS.panel2};` +
     `border:1px solid ${COLORS.border};border-radius:8px;overflow:hidden;cursor:grab`);
 
   // Ярлыки сторон (оверлей поверх холста, не двигаются при пане/зуме).
@@ -102,21 +105,19 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
   wrap.appendChild(root);
   body.appendChild(wrap);
 
-  // Инициализация вида: вписать граф по bbox видимых узлов (один раз на сессию).
+  /**
+   * Стартовый вид — ЧИТАЕМЫЙ МАСШТАБ У ЦЕНТРА, а не «вписать всё дерево».
+   *
+   * Раньше граф ужимался в 760×460, и на 32 ветках это давало масштаб 0.5: иконка в 15 единиц
+   * превращалась в 8 пикселей. Причём расширение дерева этого НЕ лечило, а усугубляло — чем шире
+   * мир, тем сильнее ужимает. Дерево смотрят через пан и зум, как карту, а не целиком.
+   */
   if (!view.inited && nodes.length) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const n of nodes) {
-      minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
-      minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
-    }
-    const pad = 50;
-    const w = maxX - minX + pad * 2;
-    const h = maxY - minY + pad * 2;
     const boxW = wrap.clientWidth || 760;
-    const boxH = 460;
-    view.scale = Math.min(boxW / w, boxH / h);
-    view.tx = boxW / 2 - ((minX + maxX) / 2) * view.scale;
-    view.ty = boxH / 2 - ((minY + maxY) / 2) * view.scale;
+    const boxH = wrap.clientHeight || 640;
+    view.scale = START_SCALE;
+    view.tx = boxW / 2;                      // центр дерева (0,0) — в центре холста
+    view.ty = boxH / 2;
     view.inited = true;
   }
 
@@ -146,8 +147,13 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
     const isActive = !!n.effect.active;
     const notable = !!n.notable;
     const br = visBranch.get(n.branchId)!;
-    const accent = isActive ? elementColor(elementOf(n)) : sideColor(br.resource, br.group);
-    const size = notable ? 22 : isActive ? 18 : 15;
+    // Узел-вставка — РОМБ цвета своего типа: в дереве его надо отличать с одного взгляда,
+    // иначе вставка неотличима от обычной процентной пассивки и игрок её не ищет.
+    const insId = n.effect.grantsInsert;
+    const ins = insId ? app.config.get('skill-inserts').find((x) => x.id === insId) : undefined;
+    const insColor = ins ? app.config.get('skill-insert-types').find((t) => t.id === ins.type)?.color : undefined;
+    const accent = insColor ?? (isActive ? elementColor(elementOf(n)) : sideColor(br.resource, br.group));
+    const size = notable ? 16 : isActive || ins ? 13 : 10;
 
     let fill = '#141821';
     let stroke = '#333a48';
@@ -161,21 +167,26 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
     }
     if (entrySet.has(n.id) && !alloc) stroke = COLORS.gold; // вход ветки — золотой контур
 
-    const rect = svg('rect', {
-      x: n.x - size / 2, y: n.y - size / 2, width: size, height: size,
-      rx: notable ? 6 : 4, fill, stroke, 'stroke-width': sw,
-    });
+    const half = size / 2;
+    const rect = ins
+      ? svg('polygon', {
+        points: `${n.x},${n.y - half} ${n.x + half},${n.y} ${n.x},${n.y + half} ${n.x - half},${n.y}`,
+        fill, stroke, 'stroke-width': sw,
+      })
+      : svg('rect', {
+        x: n.x - half, y: n.y - half, width: size, height: size,
+        rx: notable ? 5 : 3, fill, stroke, 'stroke-width': sw,
+      });
     if (avail || alloc) rect.style.cursor = 'pointer';
 
     attachTooltip(rect, () => {
-      const kindLbl = isActive ? 'Активный скилл' : 'Пассивный скилл';
+      const kindLbl = isActive ? 'Активный скилл' : ins ? 'Вставка для сборки скилов' : 'Пассивный скилл';
       const elLine = isActive
         ? `<div style="color:${elementColor(elementOf(n))}">Стихия: ${elementLabel(elementOf(n))}</div>` : '';
       const costLine = rank >= n.maxRank ? 'макс. ранг' : `след. ранг: ${n.cost.amount} очк.`;
       const lvlLine = state.save.level < n.levelReq
         ? `<div style="color:#d89b7c">требуется уровень ${n.levelReq}</div>` : '';
       // Узел-донор: ранг здесь открывает вставку для сборки скилов — иначе игрок её не найдёт.
-      const ins = n.effect.grantsInsert ? app.config.get('skill-inserts').find((x) => x.id === n.effect.grantsInsert) : undefined;
       const insLine = ins
         ? `<div style="color:${COLORS.accent};margin-top:3px">\u25C6 Открывает вставку: ${ins.name}</div>` +
           `<div style="color:#c4bca8">${ins.description}</div>` : '';
@@ -192,17 +203,7 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
     });
     g.appendChild(rect);
 
-    // Узел-донор помечен ромбиком: без метки вставки в дереве не найти — они не отличались бы
-    // от обычных процентных пассивок, и вся сборка осталась бы для игрока невидимой.
-    if (n.effect.grantsInsert) {
-      const cx = n.x + size / 2, cy = n.y - size / 2, d = 4.5;
-      const dot = svg('polygon', {
-        points: `${cx},${cy - d} ${cx + d},${cy} ${cx},${cy + d} ${cx - d},${cy}`,
-        fill: alloc ? '#f2d792' : COLORS.accent, stroke: '#0e1117', 'stroke-width': 1,
-      });
-      dot.style.pointerEvents = 'none';
-      g.appendChild(dot);
-    }
+
   }
 
   // ── Подписи веток у внешнего края (цвет — по стороне) ──
@@ -216,12 +217,12 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
       if (d > fd) { fd = d; far = n; }
     }
     const len = Math.max(1, Math.hypot(far.x, far.y));
-    const lx = far.x + (far.x / len) * 26;
-    const ly = far.y + (far.y / len) * 26;
+    const lx = far.x + (far.x / len) * 44;
+    const ly = far.y + (far.y / len) * 44;
     const anchor = lx < -20 ? 'end' : lx > 20 ? 'start' : 'middle';
     const t = svg('text', {
       x: lx, y: ly, 'text-anchor': anchor, 'dominant-baseline': 'central',
-      'font-size': 15, fill: sideColor(br.resource, br.group), 'fill-opacity': 0.92,
+      'font-size': 13, fill: sideColor(br.resource, br.group), 'fill-opacity': 0.92,
     });
     t.textContent = br.name;
     g.appendChild(t);
