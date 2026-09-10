@@ -50,10 +50,9 @@ function usableAttackNode(r: ConfigRegistry, save: ReturnType<typeof newBotSave>
   return n!.id;
 }
 
-/** Открыть вставку игроку: подставляем донора в дерево этого реестра и вкладываем в него ранг. */
+/** Открыть вставку игроку: вкладываем ранг в её узел-донор из дерева. */
 function unlock(r: ConfigRegistry, save: { skills: Record<string, number> }, insertId: string): void {
-  const donor = r.get('skill-tree').nodes.find((n) => !n.effect.active && !n.effect.grantsInsert)!;
-  donor.effect.grantsInsert = insertId;
+  const donor = r.get('skill-tree').nodes.find((n) => n.effect.grantsInsert === insertId)!;
   save.skills[donor.id] = 1;
 }
 

@@ -22,11 +22,11 @@ function saveWith(nodeId: string, rank: number, sockets: (string | null)[] = [],
   const s = newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Hero', 'c1');
   s.skills[nodeId] = rank;
   if (sockets.length) s.sockets = { [nodeId]: sockets };
-  // Открываем вставки, подставляя доноров прямо в дерево этого реестра (данных-доноров ещё нет).
+  // Открываем вставки, вкладывая очко в НАСТОЯЩИЙ узел-донор из дерева.
   const tree = cfg.get('skill-tree');
   for (const id of unlock) {
-    const donor = tree.nodes.find((n) => !n.effect.active && !n.effect.grantsInsert);
-    if (donor) { donor.effect.grantsInsert = id; s.skills[donor.id] = 1; }
+    const donor = tree.nodes.find((n) => n.effect.grantsInsert === id);
+    if (donor) s.skills[donor.id] = 1;
   }
   return s;
 }
@@ -153,5 +153,49 @@ describe('открытость считается по дереву', () => {
     const save = saveWith(nodeWithActive('attack'), 20, [], ['ins-thrift']);
     expect(insertUnlocked(cfg, save, 'ins-thrift')).toBe(true);
     expect(insertUnlocked(cfg, save, 'ins-ward'), 'чужая — закрыта').toBe(false);
+  });
+});
+
+/**
+ * РАЗДАЧА ПО ДЕРЕВУ. Механика без доноров мертва: вставки существуют, а открыть их нечем.
+ * Это и проверяется — не «функция работает», а «до неё можно дотянуться из игры».
+ */
+describe('вставки достижимы из дерева', () => {
+  const donors = (): { node: string; insert: string; branch: string }[] =>
+    cfg.get('skill-tree').nodes
+      .filter((n) => n.effect.grantsInsert)
+      .map((n) => ({ node: n.id, insert: n.effect.grantsInsert!, branch: n.branchId }));
+
+  it('у КАЖДОЙ вставки ровно один донор, и лишних доноров нет', () => {
+    const list = cfg.get('skill-inserts').map((i) => i.id).sort();
+    const granted = donors().map((d) => d.insert).sort();
+    expect(granted).toEqual(list);   // равенство МАССИВОВ ловит и пропуск, и дубль
+  });
+
+  it('доноры — пассивные узлы БЕСКЛАССОВЫХ веток', () => {
+    const tree = cfg.get('skill-tree');
+    for (const d of donors()) {
+      const node = tree.nodes.find((n) => n.id === d.node)!;
+      // Активка-донор означала бы «узел даёт скил И вставку» — лишняя связность там, где её не ждут.
+      expect(node.effect.active, d.node).toBeUndefined();
+      // Классовая ветка сделала бы вставку недостижимой для остальных классов — дыра в раздаче.
+      expect(tree.branches.find((b) => b.id === d.branch)!.classId, d.node).toBeUndefined();
+    }
+  });
+
+  it('СКВОЗНО: вложил очко в донора — вставка встала в скил', () => {
+    const tree = cfg.get('skill-tree');
+    for (const d of donors()) {
+      const ins = insertById(cfg, d.insert)!;
+      // Носитель — узел, в который эта вставка вообще влезает по категории.
+      const carrier = tree.nodes.find((n) => n.effect.active && insertFits(ins, n.effect.active))!;
+      const save = newCharacterSave(cfg, cfg.get('classes')[0]!.id, 'Hero', 'c1');
+      save.skills[carrier.id] = 20;
+      expect(insertUnlocked(cfg, save, d.insert), `${d.insert}: без очка в ${d.node} закрыта`).toBe(false);
+      save.skills[d.node] = 1;
+      expect(insertUnlocked(cfg, save, d.insert), `${d.insert}: с очком в ${d.node} открыта`).toBe(true);
+      save.sockets = { [carrier.id]: [d.insert] };
+      expect(resolveActive(cfg, save, carrier.id)!.applied.map((i) => i.id), d.insert).toEqual([d.insert]);
+    }
   });
 });

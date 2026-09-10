@@ -174,11 +174,9 @@ describe('socketInsert / socketClear (авторитетная сборка ск
     const b = tree().branches.find((x) => x.classId === 'mage')!.id;
     return tree().nodes.find((n) => n.branchId === b && n.effect.active)!.id;
   };
-  /** Открыть вставку: подставляем донора в дерево и вкладываем в него ранг (данных-доноров ещё нет). */
+  /** Открыть вставку: вкладываем ранг в её узел-донор из дерева. */
   const unlock = (save: SaveState, id: string): void => {
-    const donor = tree().nodes.find((n) => !n.effect.active && !n.effect.grantsInsert)!;
-    donor.effect.grantsInsert = id;
-    save.skills[donor.id] = 1;
+    save.skills[tree().nodes.find((n) => n.effect.grantsInsert === id)!.id] = 1;
   };
   /** Воин с выученным до максимума узлом (все гнёзда открыты) и открытыми вставками. */
   const hero = (nodeId: string, rank = 20, unlocks: string[] = []): SaveState => {

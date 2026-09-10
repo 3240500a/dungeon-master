@@ -3111,7 +3111,7 @@
     {
       "id": "b-mace1h-p3",
       "name": "Оглушение",
-      "description": "+5% к наложению статусов за ранг.",
+      "description": "+5% к наложению статусов за ранг. Открывает вставку «Подсечка».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -3126,7 +3126,8 @@
             "kind": "flat",
             "value": 0.05
           }
-        ]
+        ],
+        "grantsInsert": "ins-sweep"
       },
       "x": -150,
       "y": -179,
@@ -3536,7 +3537,7 @@
     {
       "id": "b-dagger-p2",
       "name": "Глубокая рана",
-      "description": "+6% к наложению статусов за ранг.",
+      "description": "+6% к наложению статусов за ранг. Открывает вставку «Зазубрины».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -3551,7 +3552,8 @@
             "kind": "flat",
             "value": 0.06
           }
-        ]
+        ],
+        "grantsInsert": "ins-serrated"
       },
       "x": -124,
       "y": -125,
@@ -3970,7 +3972,7 @@
     {
       "id": "b-sword2h-p1",
       "name": "Сила размаха",
-      "description": "+5% ко всему урону за ранг.",
+      "description": "+5% ко всему урону за ранг. Открывает вставку «Широкий размах».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -3985,7 +3987,8 @@
             "kind": "flat",
             "value": 0.05
           }
-        ]
+        ],
+        "grantsInsert": "ins-wide-arc"
       },
       "x": -131,
       "y": -121,
@@ -4985,7 +4988,7 @@
     {
       "id": "b-mace2h-p1",
       "name": "Мощь",
-      "description": "+5% ко всему урону за ранг.",
+      "description": "+5% ко всему урону за ранг. Открывает вставку «Тяжёлый удар».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -5000,7 +5003,8 @@
             "kind": "flat",
             "value": 0.05
           }
-        ]
+        ],
+        "grantsInsert": "ins-heavy-blow"
       },
       "x": -168,
       "y": -60,
@@ -7169,7 +7173,7 @@
     {
       "id": "b-crossbow-p4",
       "name": "Бронебойность",
-      "description": "+6% к пробою брони цели за ранг.",
+      "description": "+6% к пробою брони цели за ранг. Открывает вставку «Пробойник».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -7184,7 +7188,8 @@
             "kind": "flat",
             "value": 0.06
           }
-        ]
+        ],
+        "grantsInsert": "ins-piercing"
       },
       "x": -189,
       "y": 134,
@@ -7495,7 +7500,7 @@
     {
       "id": "b-dual-p1",
       "name": "Скорость",
-      "description": "+5% к скорости атаки за ранг.",
+      "description": "+5% к скорости атаки за ранг. Открывает вставку «Череда».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -7510,7 +7515,8 @@
             "kind": "increased",
             "value": 0.05
           }
-        ]
+        ],
+        "grantsInsert": "ins-flurry"
       },
       "x": -141,
       "y": 109,
@@ -9026,7 +9032,7 @@
     {
       "id": "b-fire-p2",
       "name": "Испепеление",
-      "description": "+5% к урону огнём за ранг.",
+      "description": "+5% к урону огнём за ранг. Открывает вставку «Пламенное лезвие».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -9041,7 +9047,8 @@
             "kind": "flat",
             "value": 0.05
           }
-        ]
+        ],
+        "grantsInsert": "ins-flame-edge"
       },
       "x": 151,
       "y": -91,
@@ -9104,7 +9111,7 @@
     {
       "id": "b-fire-p3",
       "name": "Поджог",
-      "description": "+6% к наложению статусов за ранг.",
+      "description": "+6% к наложению статусов за ранг. Открывает вставку «Растопка».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -9119,7 +9126,8 @@
             "kind": "flat",
             "value": 0.06
           }
-        ]
+        ],
+        "grantsInsert": "ins-kindling"
       },
       "x": 184,
       "y": -144,
@@ -9539,7 +9547,7 @@
     {
       "id": "b-cold-p2",
       "name": "Оледенение",
-      "description": "+5% к урону холодом за ранг.",
+      "description": "+5% к урону холодом за ранг. Открывает вставку «Морозная кромка».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -9554,7 +9562,8 @@
             "kind": "flat",
             "value": 0.05
           }
-        ]
+        ],
+        "grantsInsert": "ins-frost-edge"
       },
       "x": 172,
       "y": -36,
@@ -9617,7 +9626,7 @@
     {
       "id": "b-cold-p3",
       "name": "Обморожение",
-      "description": "+6% к наложению статусов за ранг.",
+      "description": "+6% к наложению статусов за ранг. Открывает вставку «Иней».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -9632,7 +9641,8 @@
             "kind": "flat",
             "value": 0.06
           }
-        ]
+        ],
+        "grantsInsert": "ins-hoarfrost"
       },
       "x": 221,
       "y": -75,
@@ -9851,7 +9861,7 @@
     {
       "id": "b-cold-p8",
       "name": "Всплеск",
-      "description": "+6% к множителю крита за ранг.",
+      "description": "+6% к множителю крита за ранг. Открывает вставку «Волна холода».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -9866,7 +9876,8 @@
             "kind": "flat",
             "value": 0.06
           }
-        ]
+        ],
+        "grantsInsert": "ins-cold-wave"
       },
       "x": 337,
       "y": -70,
@@ -10364,7 +10375,7 @@
     {
       "id": "b-lightning-p8",
       "name": "Всплеск",
-      "description": "+6% к множителю крита за ранг.",
+      "description": "+6% к множителю крита за ранг. Открывает вставку «Дуговой разряд».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -10379,7 +10390,8 @@
             "kind": "flat",
             "value": 0.06
           }
-        ]
+        ],
+        "grantsInsert": "ins-arc-burst"
       },
       "x": 341,
       "y": 46,
@@ -11468,7 +11480,7 @@
     {
       "id": "b-aura-p1",
       "name": "Поток маны",
-      "description": "+6% к регену маны за ранг.",
+      "description": "+6% к регену маны за ранг. Открывает вставку «Бережливость».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -11483,7 +11495,8 @@
             "kind": "increased",
             "value": 0.06
           }
-        ]
+        ],
+        "grantsInsert": "ins-thrift"
       },
       "x": 46,
       "y": 172,
@@ -12127,7 +12140,7 @@
     {
       "id": "b-stance-p5",
       "name": "Готовность",
-      "description": "+2% к скорости атаки за ранг.",
+      "description": "+2% к скорости атаки за ранг. Открывает вставку «Скорая рука».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -12142,7 +12155,8 @@
             "kind": "increased",
             "value": 0.02
           }
-        ]
+        ],
+        "grantsInsert": "ins-quickening"
       },
       "x": -175,
       "y": 231,
@@ -12455,7 +12469,7 @@
     {
       "id": "b-armor-light-p2",
       "name": "Свобода движений",
-      "description": "+3% к скорости атаки за ранг.",
+      "description": "+3% к скорости атаки за ранг. Открывает вставку «Лёгкий шаг».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -12470,7 +12484,8 @@
             "kind": "increased",
             "value": 0.03
           }
-        ]
+        ],
+        "grantsInsert": "ins-swiftness"
       },
       "x": -18,
       "y": 175,
@@ -12975,7 +12990,7 @@
     {
       "id": "b-armor-plate-p2",
       "name": "Прикрытие",
-      "description": "+3% к блоку за ранг.",
+      "description": "+3% к блоку за ранг. Открывает вставку «Оберег».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -12990,7 +13005,8 @@
             "kind": "increased",
             "value": 0.03
           }
-        ]
+        ],
+        "grantsInsert": "ins-ward"
       },
       "x": 54,
       "y": 167,
@@ -13326,7 +13342,7 @@
     {
       "id": "b-shield-p3",
       "name": "Упор",
-      "description": "+5% к стойкости к прерыванию за ранг.",
+      "description": "+5% к стойкости к прерыванию за ранг. Открывает вставку «Толчок».",
       "cost": {
         "type": "points",
         "amount": 1
@@ -13341,7 +13357,8 @@
             "kind": "flat",
             "value": 0.05
           }
-        ]
+        ],
+        "grantsInsert": "ins-shove"
       },
       "x": -53,
       "y": 228,
