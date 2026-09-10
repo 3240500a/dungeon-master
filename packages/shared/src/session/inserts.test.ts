@@ -31,6 +31,17 @@ function saveWith(nodeId: string, rank: number, sockets: (string | null)[] = [],
   return s;
 }
 
+/** Тот же сейв, но с ЗАДАННЫМ рангом узлов-доноров — ради проверки роста вставки от ранга. */
+function saveAtRank(nodeId: string, sockets: string[], insRank: number): SaveState {
+  const s = saveWith(nodeId, 20, sockets, sockets);
+  const tree = cfg.get('skill-tree');
+  for (const id of sockets) {
+    const donor = tree.nodes.find((n) => n.effect.grantsInsert === id);
+    if (donor) s.skills[donor.id] = insRank;
+  }
+  return s;
+}
+
 beforeAll(() => { cfg = new ConfigRegistry(); cfg.loadAll(); });
 
 describe('гнёзда открываются рангом', () => {
@@ -90,7 +101,7 @@ describe('вставки меняют носителя', () => {
   it('ОДНА ВСТАВКА КАЖДОГО ТИПА: вторая того же типа отбрасывается, другого — принимается', () => {
     const id = nodeWithActive('attack');
     const same = ['ins-flame-edge', 'ins-frost-edge'];          // обе типа damage
-    expect(resolveActive(cfg, saveWith(id, 20, same, same), id)!.applied.map((i) => i.id)).toEqual(['ins-flame-edge']);
+    expect(resolveActive(cfg, saveWith(id, 20, same, same), id)!.applied.map((a) => a.insert.id)).toEqual(['ins-flame-edge']);
     const diff = ['ins-flame-edge', 'ins-kindling'];            // damage + ailment
     expect(resolveActive(cfg, saveWith(id, 20, diff, diff), id)!.applied.length).toBe(2);
   });
@@ -99,7 +110,7 @@ describe('вставки меняют носителя', () => {
     const id = nodeWithActive('attack');
     const ids = ['ins-flame-edge', 'ins-kindling', 'ins-wide-arc'];
     const r = resolveActive(cfg, saveWith(id, 1, ids, ids), id)!;   // ранг 1 → одно гнездо
-    expect(r.applied.map((i) => i.id)).toEqual(['ins-flame-edge']);
+    expect(r.applied.map((a) => a.insert.id)).toEqual(['ins-flame-edge']);
   });
 
   it('НЕОТКРЫТАЯ вставка не работает, даже если лежит в сейве', () => {
@@ -195,7 +206,7 @@ describe('вставки достижимы из дерева', () => {
       save.skills[d.node] = 1;
       expect(insertUnlocked(cfg, save, d.insert), `${d.insert}: с очком в ${d.node} открыта`).toBe(true);
       save.sockets = { [carrier.id]: [d.insert] };
-      expect(resolveActive(cfg, save, carrier.id)!.applied.map((i) => i.id), d.insert).toEqual([d.insert]);
+      expect(resolveActive(cfg, save, carrier.id)!.applied.map((a) => a.insert.id), d.insert).toEqual([d.insert]);
     }
   });
 });
@@ -221,5 +232,84 @@ describe('DoT-вставки: mag — доля урона удара, а не ф
       checked++;
     }
     expect(checked, 'DoT-вставки вообще есть — иначе тест зелен от пустоты').toBeGreaterThan(0);
+  });
+});
+
+/**
+ * РАНГ ВСТАВКИ. Узел-донор прокачиваемый, и ранг обязан менять СИЛУ, а не только доступ.
+ * Первый тест здесь — регрессионный: на ранге 1 числа должны остаться ровно прежними, иначе
+ * поедет весь существующий контент.
+ */
+describe('ранг узла-донора усиливает вставку', () => {
+  /**
+   * Носитель с СОБСТВЕННЫМ откатом > 0. `nodeWithActive('attack')` отдаёт первую попавшуюся атаку,
+   * а у неё откат нулевой — тогда надбавку к откату мерить не на чем, и тест зелен от пустоты.
+   */
+  const id = (): string => cfg.get('skill-tree').nodes.find((n) => {
+    const a = n.effect.active;
+    return a?.category === 'attack' && a.cooldown > 0 && a.manaCost > 0;
+  })!.id;
+  const baseOf = (nid: string) => cfg.get('skill-tree').nodes.find((n) => n.id === nid)!.effect.active!;
+
+  it('РАНГ 1 = сегодняшние числа (регресс)', () => {
+    const nid = id(), base = baseOf(nid);
+    const r = resolveActive(cfg, saveAtRank(nid, ['ins-flame-edge'], 1), nid)!;
+    const ins = insertById(cfg, 'ins-flame-edge')!;
+    expect(off(r.active).addElementPct).toBeCloseTo(ins.tune!.addElementPct!, 6);
+    expect(r.active.manaCost).toBeCloseTo(off(base).manaCost * ins.costMult, 2);
+    expect(r.active.cooldown).toBeCloseTo(off(base).cooldown * ins.cooldownMult, 2);
+  });
+
+  it('РАНГ 10: прибавка выросла, цена выросла, надбавка к откату почти ушла', () => {
+    const nid = id(), base = baseOf(nid);
+    const lo = resolveActive(cfg, saveAtRank(nid, ['ins-flame-edge'], 1), nid)!;
+    const hi = resolveActive(cfg, saveAtRank(nid, ['ins-flame-edge'], 10), nid)!;
+
+    expect(off(hi.active).addElementPct).toBeGreaterThan(off(lo.active).addElementPct);
+    expect(hi.active.manaCost).toBeGreaterThan(lo.active.manaCost);
+    // Надбавка к откату — это то, что СВЕРХ базового отката носителя. Она обязана убывать.
+    const surchargeLo = lo.active.cooldown - off(base).cooldown;
+    const surchargeHi = hi.active.cooldown - off(base).cooldown;
+    expect(surchargeHi, 'откат на высоком ранге ближе к голому').toBeLessThan(surchargeLo);
+    expect(surchargeHi).toBeGreaterThanOrEqual(0);
+  });
+
+  it('ШТРАФ ОСТАЁТСЯ ШТРАФОМ: множитель ниже единицы с рангом только УГЛУБЛЯЕТСЯ', () => {
+    // Ради этого и заведён `mulAt`. «Широкий размах» даёт дугу ×1.6 ценой урона ×0.85; наивное
+    // умножение на ранг превратило бы 0.85 в 8.5, то есть штраф — в главный источник урона.
+    const nid = id(), base = off(baseOf(nid));
+    const lo = off(resolveActive(cfg, saveAtRank(nid, ['ins-wide-arc'], 1), nid)!.active);
+    const hi = off(resolveActive(cfg, saveAtRank(nid, ['ins-wide-arc'], 10), nid)!.active);
+    expect(lo.damageMult).toBeLessThan(base.damageMult);
+    expect(hi.damageMult, 'на десятом ранге штраф глубже, а не наоборот').toBeLessThan(lo.damageMult);
+    expect(hi.damageMult).toBeGreaterThan(0);
+  });
+
+  it('ВЫБОР рангом не масштабируется: стихия и пробитие те же', () => {
+    const nid = id();
+    const hi = off(resolveActive(cfg, saveAtRank(nid, ['ins-flame-edge'], 10), nid)!.active);
+    expect(hi.element).toBe('fire');
+    const p10 = resolveActive(cfg, saveAtRank(nid, ['ins-piercing'], 10), nid)!;
+    // Вставка могла не влезть по оружию — тогда проверять нечего, и это тоже надо знать.
+    if (p10.applied.length) expect((p10.active as { pierce?: boolean }).pierce).toBe(true);
+  });
+
+  it('ПРОК растёт вместе со вставкой', () => {
+    const nid = id();
+    const lo = resolveActive(cfg, saveAtRank(nid, ['ins-cold-wave'], 1), nid)!;
+    const hi = resolveActive(cfg, saveAtRank(nid, ['ins-cold-wave'], 10), nid)!;
+    expect(lo.procs.length).toBe(1);
+    const dmg = (r: typeof lo): number => (r.procs[0]!.ability as { damageMult: number }).damageMult;
+    expect(dmg(hi), 'волна на десятом ранге бьёт сильнее').toBeGreaterThan(dmg(lo));
+    // Исходная способность вставки НЕ мутирована — иначе рост копился бы между вызовами.
+    expect(insertById(cfg, 'ins-cold-wave')!.proc!.ability).toEqual(lo.procs[0]!.ability);
+  });
+
+  it('applied несёт ранг — интерфейсу есть что показать', () => {
+    const nid = id();
+    const r = resolveActive(cfg, saveAtRank(nid, ['ins-flame-edge'], 7), nid)!;
+    expect(r.applied).toHaveLength(1);
+    expect(r.applied[0]!.rank).toBe(7);
+    expect(r.applied[0]!.insert.id).toBe('ins-flame-edge');
   });
 });

@@ -15,13 +15,13 @@ const CARRIER = 'b-shield-a1';
 const RANK = 12;                                   // при порогах 1/6/12 — три гнезда
 
 /** Сейв игрока, собранный так, как это происходит в игре: ранги в дереве + команды socketInsert. */
-function playerSave(ids: readonly string[]): SaveState {
+function playerSave(ids: readonly string[], insRank = 1): SaveState {
   const s = newCharacterSave(cfg, 'warrior', 'Hero', 'c1');
   s.skills[CARRIER] = RANK;
   // Ранг в узлах-донорах — то же, что игрок сделал бы очками; сами вставки открывает уже дерево.
   for (const id of ids) {
     const donor = cfg.get('skill-tree').nodes.find((n) => n.effect.grantsInsert === id);
-    if (donor) s.skills[donor.id] = 1;
+    if (donor) s.skills[donor.id] = insRank;
   }
   ids.forEach((id, i) => socketInsert(cfg, s, CARRIER, i, id));
   return s;
@@ -33,8 +33,8 @@ describe('предпросмотр сборки = то, что посчитае�
     const server = resolveActive(cfg, playerSave(ids), CARRIER)!;
     const editor = previewBuild(cfg, CARRIER, RANK, ids)!.resolved;
 
-    expect(server.applied.map((i) => i.id), 'сервер принял все три').toEqual(ids);
-    expect(editor.applied.map((i) => i.id)).toEqual(server.applied.map((i) => i.id));
+    expect(server.applied.map((a) => a.insert.id), 'сервер принял все три').toEqual(ids);
+    expect(editor.applied.map((a) => a.insert.id)).toEqual(server.applied.map((a) => a.insert.id));
     expect(editor.active).toEqual(server.active);          // глубокое равенство: числа сходятся
     expect(editor.procs).toEqual(server.procs);
   });
@@ -44,7 +44,7 @@ describe('предпросмотр сборки = то, что посчитае�
     const server = resolveActive(cfg, playerSave(ids), CARRIER)!;
     const editor = previewBuild(cfg, CARRIER, RANK, ids)!.resolved;
     expect(server.applied.length, 'вторая того же типа не встала').toBe(1);
-    expect(editor.applied.map((i) => i.id)).toEqual(server.applied.map((i) => i.id));
+    expect(editor.applied.map((a) => a.insert.id)).toEqual(server.applied.map((a) => a.insert.id));
     expect(editor.active).toEqual(server.active);
   });
 
@@ -57,7 +57,7 @@ describe('предпросмотр сборки = то, что посчитае�
     const server = resolveActive(cfg, s, CARRIER)!;
     const editor = previewBuild(cfg, CARRIER, 1, ids)!.resolved;
     expect(server.applied.length).toBe(1);
-    expect(editor.applied.map((i) => i.id)).toEqual(server.applied.map((i) => i.id));
+    expect(editor.applied.map((a) => a.insert.id)).toEqual(server.applied.map((a) => a.insert.id));
   });
 
   it('голый носитель — ТОТ ЖЕ объект: предпросмотр не подменяет способность', () => {
@@ -98,7 +98,7 @@ describe('авторинг: вставка без донора всё равно
     expect(previewBuild(reg, CARRIER, RANK, ['ins-flame-edge'])!.resolved.applied, 'без раздачи — пусто').toEqual([]);
 
     ensureDonors(reg);
-    expect(previewBuild(reg, CARRIER, RANK, ['ins-flame-edge'])!.resolved.applied.map((i) => i.id))
+    expect(previewBuild(reg, CARRIER, RANK, ['ins-flame-edge'])!.resolved.applied.map((a) => a.insert.id))
       .toEqual(['ins-flame-edge']);
   });
 
@@ -109,5 +109,29 @@ describe('авторинг: вставка без донора всё равно
     ensureDonors(reg);
     const after = reg.get('skill-tree').nodes.filter((n) => n.effect.grantsInsert).map((n) => `${n.id}=${n.effect.grantsInsert}`);
     expect(after).toEqual(before);   // все вставки уже розданы — добавлять нечего
+  });
+});
+
+describe('ранг вставок в предпросмотре = ранг в игре', () => {
+  /**
+   * Ручка «ранг вставок» в редакторе обязана давать те же числа, что игрок с таким же рангом
+   * узла-донора. Иначе дизайнер настроит кривую роста по одним числам, а игра сыграет по другим —
+   * ровно та беда, ради которой предпросмотр и считает общим `resolveActive`.
+   */
+  it('на ранге 7 сходится с сейвом, собранным командами', () => {
+    const ids = ['ins-flame-edge', 'ins-cold-wave'];
+    const server = resolveActive(cfg, playerSave(ids, 7), CARRIER)!;
+    const editor = previewBuild(cfg, CARRIER, RANK, ids, 7)!.resolved;
+    expect(server.applied.map((a) => a.rank), 'сервер видит ранг 7').toEqual([7, 7]);
+    expect(editor.applied.map((a) => a.rank)).toEqual(server.applied.map((a) => a.rank));
+    expect(editor.active).toEqual(server.active);
+    expect(editor.procs).toEqual(server.procs);
+  });
+
+  it('ранг действительно меняет числа — иначе сверка выше ничего не стоит', () => {
+    const ids = ['ins-flame-edge'];
+    const lo = previewBuild(cfg, CARRIER, RANK, ids, 1)!.resolved.active;
+    const hi = previewBuild(cfg, CARRIER, RANK, ids, 10)!.resolved.active;
+    expect(hi).not.toEqual(lo);
   });
 });

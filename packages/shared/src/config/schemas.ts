@@ -1599,6 +1599,21 @@ const insertProcSchema = z.object({
   ability: activeAbilitySchema,
 });
 
+/**
+ * РОСТ ОТ РАНГА УЗЛА-ДОНОРА. Вставка — не тумблер «есть/нет», а прокачиваемый узел дерева:
+ * вложенные в него очки усиливают прибавку. Цена растёт вместе с ней, а вот НАДБАВКА К ОТКАТУ
+ * УБЫВАЕТ — на высоком ранге вставка почти не удлиняет носителя. Это и делает прокачку желанной:
+ * иначе качать вставку было бы невыгодно, раз она дорожает.
+ */
+const insertPerRankSchema = z.object({
+  /** Прибавка × (1 + gain·(ранг−1)). 0.12 — та же цифра, что у `abilityRankMult` для активок. */
+  gain: z.number().min(0).default(0.12),
+  /** Надбавка к стоимости × (1 + cost·(ранг−1)). */
+  cost: z.number().min(0).default(0.06),
+  /** Надбавка к откату × (1 − cooldownDecay·(ранг−1)), не ниже нуля. */
+  cooldownDecay: z.number().min(0).max(1).default(0.10),
+}).default({});
+
 export const skillInsertsSchema = z.array(
   z.object({
     id: z.string(),
@@ -1607,6 +1622,7 @@ export const skillInsertsSchema = z.array(
     /** id из `skill-insert-types`. Одна вставка каждого типа на скил. */
     type: z.string(),
     fits: insertFitsSchema,
+    perRank: insertPerRankSchema,
     /**
      * ЦЕНА СБОРКИ. Множители перемножаются по всем вставкам скила: три вставки ≈ ×2.2 к стоимости.
      * Без этого «ставь всё» было бы единственной стратегией — голый скил обязан оставаться

@@ -1,5 +1,5 @@
 import type { App } from '../../core/app.js';
-import { socketsOpen, insertById, insertUnlocked, insertFits, resolveActive, type SkillTreeNode } from '@dm/shared';
+import { socketsOpen, insertById, insertRank, insertUnlocked, insertFits, resolveActive, type SkillTreeNode } from '@dm/shared';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { elementColor, elementOf } from './skillIcon.js';
 
@@ -63,14 +63,17 @@ export function renderSockets(app: App, body: HTMLElement): void {
     const ins = cur ? insertById(cfg, cur) : undefined;
     const cell = mk('div', `${CARD};min-width:150px;padding:6px 8px;cursor:pointer;` +
       `border-color:${ins ? elementColor(elementOf(node)) : COLORS.border}`);
+    // Ранг вставки — это ранг её узла в дереве: качается там же, где всё остальное.
+    const rk = ins ? insertRank(cfg, save, ins.id) : 0;
     cell.append(mk('div', `font-size:10px;color:${COLORS.dim}`, ins ? typeName(ins.type) : `Гнездо ${i + 1}`));
-    cell.append(mk('div', `font-size:12px;color:${ins ? COLORS.text : COLORS.dim}`, ins ? ins.name : '— пусто —'));
+    cell.append(mk('div', `font-size:12px;color:${ins ? COLORS.text : COLORS.dim}`,
+      ins ? `${ins.name} · ${rk}` : '— пусто —'));
     if (ins) {
       attachTooltip(cell, () => `<div style="color:${COLORS.text};font-weight:bold">${ins.name}</div>` +
-        `<div style="color:#9aa">${typeName(ins.type)}</div>` +
+        `<div style="color:#9aa">${typeName(ins.type)} · ранг ${rk}</div>` +
         `<div style="color:#c4bca8">${ins.description}</div>` +
         `<div style="color:#9aa;margin-top:3px">стоимость ×${ins.costMult} · откат ×${ins.cooldownMult}</div>` +
-        `<div style="color:${COLORS.dim};margin-top:3px">клик — заменить или вынуть</div>`);
+        `<div style="color:${COLORS.dim};margin-top:3px">ранг растёт от очков в узле-доноре · клик — заменить или вынуть</div>`);
     }
     cell.addEventListener('click', () => openPicker(app, cell, node, i, cur));
     grid.append(cell);
@@ -91,7 +94,7 @@ export function renderSockets(app: App, body: HTMLElement): void {
     body.append(line);
   }
   body.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-top:4px`,
-    'Вставки открываются узлами дерева (в подсказке узла написано, какую). Вынуть можно бесплатно.'));
+    'Вставки открываются узлами дерева и УСИЛИВАЮТСЯ его рангом. Вынуть можно бесплатно.'));
 }
 
 /** Выпадающий выбор вставки для гнезда. Показываем ТОЛЬКО то, что реально можно поставить. */

@@ -14,6 +14,7 @@ import { ConfigRegistry, resolveActive, socketsOpen, insertById, insertFits, act
 
 let nodeId = '';
 let rank = 12;
+let insRank = 1;
 let weaponClass = '';
 let slots: string[] = [];
 
@@ -65,18 +66,18 @@ export function ensureDonors(reg: ConfigRegistry): void {
  * Открывать всех доноров разом — не поблажка: раздача проверяется отдельно (`insertReachable`),
  * а здесь считается БАЛАНС сборки, и мешать одно с другим значит прятать обе проблемы.
  */
-export function previewSave(reg: ConfigRegistry, carrier: string, carrierRank: number, ids: readonly string[]): SaveState {
+export function previewSave(reg: ConfigRegistry, carrier: string, carrierRank: number, ids: readonly string[], insRank = 1): SaveState {
   const skills: Record<string, number> = { [carrier]: carrierRank };
-  for (const n of reg.get('skill-tree').nodes) if (n.effect.grantsInsert) skills[n.id] = 1;
+  for (const n of reg.get('skill-tree').nodes) if (n.effect.grantsInsert) skills[n.id] = insRank;
   return { skills, sockets: { [carrier]: [...ids] } } as unknown as SaveState;
 }
 
 /** Предпросмотр сборки: «до» (голый носитель) и «после» (с вставками) — оба из общего шва. */
-export function previewBuild(reg: ConfigRegistry, carrier: string, carrierRank: number, ids: readonly string[]):
+export function previewBuild(reg: ConfigRegistry, carrier: string, carrierRank: number, ids: readonly string[], insRank = 1):
   { base: NonNullable<ReturnType<typeof activeAbilityOf>>; resolved: ResolvedActive } | undefined {
   const base = activeAbilityOf(reg, carrier);
   if (!base) return undefined;
-  const resolved = resolveActive(reg, previewSave(reg, carrier, carrierRank, ids), carrier);
+  const resolved = resolveActive(reg, previewSave(reg, carrier, carrierRank, ids, insRank), carrier);
   return resolved ? { base, resolved } : undefined;
 }
 
@@ -152,6 +153,12 @@ export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unk
   rankInp.style.cssText = INP + ';width:70px';
   rankInp.addEventListener('change', () => { rank = Math.max(1, Math.min(20, Number(rankInp.value) || 1)); renderSkillBuildPage(page, data); });
   bar.appendChild(field('Ранг носителя', rankInp));
+  // Ранг вставок отдельной ручкой: дизайнеру надо видеть и первый ранг, и десятый, не трогая носителя.
+  const insInp = document.createElement('input');
+  insInp.type = 'number'; insInp.min = '1'; insInp.max = '10'; insInp.value = String(insRank);
+  insInp.style.cssText = INP + ';width:70px';
+  insInp.addEventListener('change', () => { insRank = Math.max(1, Math.min(10, Number(insInp.value) || 1)); renderSkillBuildPage(page, data); });
+  bar.appendChild(field('Ранг вставок', insInp));
   const wclasses = [...new Set(tree.branches.flatMap((b) => b.weaponClasses ?? []))].sort();
   bar.appendChild(field('Оружие в руках', sel(weaponClass,
     [['', '— неизвестно —'], ...wclasses.map((w) => [w, w] as [string, string])],
@@ -179,7 +186,7 @@ export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unk
   wrap.appendChild(socketRow);
 
   const chosen = slots.filter(Boolean);
-  const pv = previewBuild(reg, nodeId, rank, chosen);
+  const pv = previewBuild(reg, nodeId, rank, chosen, insRank);
   if (!pv) { page.appendChild(wrap); return; }
 
   // Недостижимые вставки — ошибка РАЗДАЧИ, а не сборки: показываем отдельно и явно.
@@ -227,7 +234,7 @@ export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unk
   }
 
   // Что реально применилось: тихо отброшенное (дубль типа, гнездо сверх ранга) видно сразу.
-  const appliedIds = pv.resolved.applied.map((i) => i.id);
+  const appliedIds = pv.resolved.applied.map((a) => a.insert.id);
   const dropped = chosen.filter((id) => !appliedIds.includes(id));
   wrap.appendChild(h('div', `font-size:12px;color:${dropped.length ? '#e8c08a' : '#9aa'}`,
     `Применилось ${appliedIds.length} из ${chosen.length}${dropped.length ? ` — отброшено: ${dropped.join(', ')}` : ''}`));
