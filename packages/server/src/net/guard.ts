@@ -49,6 +49,8 @@ const SCOPE: Record<TownCommand['cmd'], CmdScope> = {
   respecSkills: 'any',
   allocPassive: 'any',
   allocSkill: 'any',
+  socketInsert: 'any',
+  socketClear: 'any',
   acceptQuest: 'any',
   turnInQuest: 'any',
   equip: 'any',

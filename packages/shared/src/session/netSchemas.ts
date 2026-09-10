@@ -48,6 +48,8 @@ const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('respecSkills') }),
   z.object({ cmd: z.literal('allocPassive'), nodeId: z.string().max(64) }),
   z.object({ cmd: z.literal('allocSkill'), nodeId: z.string().max(64) }),
+  z.object({ cmd: z.literal('socketInsert'), nodeId: z.string().max(64), slot: z.number().int().min(0).max(15), insertId: z.string().max(64) }),
+  z.object({ cmd: z.literal('socketClear'), nodeId: z.string().max(64), slot: z.number().int().min(0).max(15) }),
   z.object({ cmd: z.literal('useConsumable'), uid: z.string().max(64) }),
   z.object({ cmd: z.literal('moveBelt'), uid: z.string().max(64) }),
   z.object({ cmd: z.literal('moveItem'), uid: z.string().max(64), x: z.number().int().min(0).max(64), y: z.number().int().min(0).max(64) }),

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll } from './townActions.js';
+import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, socketInsert, socketClear } from './townActions.js';
+import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
 import type { Item, SaveState } from '../types/index.js';
 
@@ -152,5 +153,110 @@ describe('входы дерева мастерства — все доступн
     const tree = reg.get('mastery-tree');
     expect(passiveEntriesFor(reg, nobody)).toEqual(tree.entryNodes);
     expect(allocPassive(reg, nobody, tree.entryNodes[0]!).ok).toBe(true);
+  });
+});
+
+/**
+ * ГНЁЗДА МОДУЛЬНЫХ СКИЛОВ — авторитетная сторона. Клиент шлёт намерение, и всё, что он мог бы
+ * соврать, обязано отбиваться ЗДЕСЬ: чужая ветка, неоткрытая вставка, гнездо сверх ранга,
+ * второй экземпляр одного типа. Резолв (`session/inserts.ts`) негодное просто игнорирует —
+ * этого мало: сейв не должен принимать в себя мусор вообще.
+ */
+describe('socketInsert / socketClear (авторитетная сборка скила)', () => {
+  const tree = () => reg.get('skill-tree');
+  /** Узел с активкой в ветке БЕЗ класса — доступен любому персонажу. */
+  const freeNode = (): string => {
+    const free = tree().branches.filter((b) => !b.classId).map((b) => b.id);
+    return tree().nodes.find((n) => free.includes(n.branchId) && n.effect.active)!.id;
+  };
+  /** Узел с активкой в ветке ЧУЖОГО класса. */
+  const mageNode = (): string => {
+    const b = tree().branches.find((x) => x.classId === 'mage')!.id;
+    return tree().nodes.find((n) => n.branchId === b && n.effect.active)!.id;
+  };
+  /** Открыть вставку: подставляем донора в дерево и вкладываем в него ранг (данных-доноров ещё нет). */
+  const unlock = (save: SaveState, id: string): void => {
+    const donor = tree().nodes.find((n) => !n.effect.active && !n.effect.grantsInsert)!;
+    donor.effect.grantsInsert = id;
+    save.skills[donor.id] = 1;
+  };
+  /** Воин с выученным до максимума узлом (все гнёзда открыты) и открытыми вставками. */
+  const hero = (nodeId: string, rank = 20, unlocks: string[] = []): SaveState => {
+    const s = newCharacterSave(reg, 'warrior', 'Hero', 'c1');
+    s.skills[nodeId] = rank;
+    for (const id of unlocks) unlock(s, id);
+    return s;
+  };
+
+  it('вставляет и вынимает — сейв меняется только через эти команды', () => {
+    const id = freeNode();
+    const save = hero(id, 20, ['ins-flame-edge']);
+    expect(socketInsert(reg, save, id, 0, 'ins-flame-edge').ok).toBe(true);
+    expect(save.sockets![id]![0]).toBe('ins-flame-edge');
+    expect(socketClear(reg, save, id, 0).ok).toBe(true);
+    expect(save.sockets![id]![0]).toBeNull();
+    expect(socketClear(reg, save, id, 0).ok, 'вынуть из пустого — отказ').toBe(false);
+  });
+
+  it('НЕОТКРЫТУЮ вставку не берёт, даже существующую', () => {
+    const id = freeNode();
+    const save = hero(id);                                    // доноров нет вовсе
+    const r = socketInsert(reg, save, id, 0, 'ins-flame-edge');
+    expect(r.ok).toBe(false);
+    expect(save.sockets?.[id]?.[0] ?? null, 'в сейв ничего не легло').toBeNull();
+  });
+
+  it('НЕСУЩЕСТВУЮЩУЮ вставку не берёт', () => {
+    const id = freeNode();
+    expect(socketInsert(reg, hero(id), id, 0, 'ins-нет-такой').ok).toBe(false);
+  });
+
+  it('ЧУЖОЙ КЛАСС: ни вставить, ни вынуть', () => {
+    const id = mageNode();
+    const save = hero(id, 20, ['ins-flame-edge']);             // воин с прокачанным магическим узлом
+    expect(socketInsert(reg, save, id, 0, 'ins-flame-edge').ok).toBe(false);
+    // Симметрия важнее самой проверки: «вынуть» слабее «вставить» — это и есть дыра.
+    expect(socketClear(reg, save, id, 0).ok).toBe(false);
+  });
+
+  it('ГНЕЗДО СВЕРХ РАНГА и невыученный узел — отказ', () => {
+    const id = freeNode();
+    const ranks = reg.get('balance').skillSocketRanks;
+    // ОБЕ вставки открыты и разного типа: единственная причина для отказа — само гнездо.
+    // (Первая версия открывала только одну, и отказ приходил от «вставка не открыта» —
+    // снятие проверки диапазона тест не роняло, мутация это и показала.)
+    const low = hero(id, ranks[0]!, ['ins-flame-edge', 'ins-kindling']);   // ранг открывает ровно одно гнездо
+    expect(socketInsert(reg, low, id, 0, 'ins-flame-edge').ok).toBe(true);
+    expect(socketInsert(reg, low, id, 1, 'ins-kindling').ok, 'второго гнезда ещё нет').toBe(false);
+    expect(low.sockets![id]!.length, 'фантомного гнезда в сейве не появилось').toBe(1);
+    const none = hero(id, 0, ['ins-flame-edge']);
+    expect(socketInsert(reg, none, id, 0, 'ins-flame-edge').ok, 'скил не выучен').toBe(false);
+  });
+
+  it('ОДИН ТИП НА СКИЛ: вторая вставка того же типа отбита, другого — принята', () => {
+    const id = freeNode();
+    const save = hero(id, 20, ['ins-flame-edge', 'ins-frost-edge', 'ins-kindling']);
+    expect(socketInsert(reg, save, id, 0, 'ins-flame-edge').ok).toBe(true);
+    expect(socketInsert(reg, save, id, 1, 'ins-frost-edge').ok, 'обе damage').toBe(false);
+    expect(socketInsert(reg, save, id, 1, 'ins-kindling').ok, 'ailment — другой тип').toBe(true);
+    // Заменить вставку В ТОМ ЖЕ гнезде тип не мешает — иначе перекладывать пришлось бы в два шага.
+    expect(socketInsert(reg, save, id, 0, 'ins-frost-edge').ok).toBe(true);
+  });
+
+  it('ОРУЖИЕ учитывается: лучная вставка не лезет в руки с мечом', () => {
+    const id = freeNode();
+    const save = hero(id, 20, ['ins-piercing']);
+    expect(save.equipment.weapon?.weaponClass, 'воин стартует НЕ с луком — иначе тест ничего не проверяет')
+      .not.toBe('bow');
+    expect(socketInsert(reg, save, id, 0, 'ins-piercing').ok).toBe(false);
+  });
+
+  it('РЕСПЕК СКИЛОВ вычищает и гнёзда — иначе вставки повисли бы на сброшенных узлах', () => {
+    const id = freeNode();
+    const save = hero(id, 20, ['ins-flame-edge']);
+    save.gold = 1_000_000;
+    expect(socketInsert(reg, save, id, 0, 'ins-flame-edge').ok).toBe(true);
+    expect(respecSkills(reg, save).ok).toBe(true);
+    expect(save.sockets).toEqual({});
   });
 });

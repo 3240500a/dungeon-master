@@ -4,7 +4,7 @@ import {
   GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
-  buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
+  buyItem, sellItem, forgeUpgrade, forgeReroll, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
   stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
   isDifficultyUnlocked, applyDeathPenalty,
@@ -403,6 +403,8 @@ export class Room implements Tickable {
       case 'respecSkills': r = respecSkills(this.cfg, save); break;
       case 'allocPassive': r = allocPassive(this.cfg, save, command.nodeId); break;
       case 'allocSkill': r = allocActive(this.cfg, save, command.nodeId); break;
+      case 'socketInsert': r = socketInsert(this.cfg, save, command.nodeId, command.slot, command.insertId); break;
+      case 'socketClear': r = socketClear(this.cfg, save, command.nodeId, command.slot); break;
       case 'moveBelt': r = moveToBelt(save, command.uid); break;
       case 'moveItem': r = moveInventoryItem(this.cfg, save, command.uid, command.x, command.y); break;
       case 'stashOpen': await this.sendStash(pid); r = { ok: true }; break;

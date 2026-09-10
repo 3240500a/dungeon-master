@@ -8,6 +8,7 @@ import { rollAffixes } from '../formulas/itemgen.js';
 import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
+import { socketsOpen, insertById, insertUnlocked, insertFits } from '../session/inserts.js';
 
 /**
  * АВТОРИТЕТНЫЕ операции города над `SaveState` (магазин/экип/распределение) — чистые,
@@ -232,6 +233,65 @@ export function allocActive(reg: ConfigRegistry, save: SaveState, nodeId: string
   return { ok: true };
 }
 
+// ── Гнёзда активных скилов (модульные скилы) ──────────────────────────────────
+/**
+ * ПРОВЕРКА ОДНА НА ОБЕ КОМАНДЫ: что узел вообще можно оснащать и что гнездо существует.
+ * Вынесена отдельно, чтобы «вынуть» не оказалось слабее «вставить»: дыры любят именно асимметрию.
+ */
+function socketTarget(reg: ConfigRegistry, save: SaveState, nodeId: string, slot: number):
+  { ok: true; slots: (string | null)[] } | { ok: false; reason: string } {
+  const tree = reg.get('skill-tree');
+  const node = tree.nodes.find((n) => n.id === nodeId);
+  if (!node) return { ok: false, reason: 'Узел не найден' };
+  if (!node.effect.active) return { ok: false, reason: 'У этого узла нет активного скила' };
+  const branch = tree.branches.find((b) => b.id === node.branchId);
+  if (branch?.classId && branch.classId !== save.classId) return { ok: false, reason: 'Ветка другого класса' };
+  const open = socketsOpen(reg, save.skills[nodeId] ?? 0);
+  if (open === 0) return { ok: false, reason: 'Скил не выучен' };
+  if (slot < 0 || slot >= open) return { ok: false, reason: `Гнездо ещё не открыто (есть ${open})` };
+  save.sockets ??= {};
+  const slots = (save.sockets[nodeId] ??= []);
+  while (slots.length < open) slots.push(null);   // выравниваем под число открытых гнёзд
+  return { ok: true, slots };
+}
+
+/**
+ * ВСТАВИТЬ вставку в гнездо. Авторитетно: клиент шлёт намерение, решает сервер.
+ *
+ * Резолв (`session/inserts.ts`) и так игнорирует негодное, но молча — и это правильно для случая
+ * «конфиг поменялся под собранным скилом». Но ПРИ ВСТАВКЕ молчание недопустимо: игрок должен
+ * узнать ПОЧЕМУ не влезло, а не видеть пустое гнездо без объяснений.
+ */
+export function socketInsert(reg: ConfigRegistry, save: SaveState, nodeId: string, slot: number, insertId: string): ActionResult {
+  const t = socketTarget(reg, save, nodeId, slot);
+  if (!t.ok) return { ok: false, reason: t.reason };
+  const ins = insertById(reg, insertId);
+  if (!ins) return { ok: false, reason: 'Вставка не найдена' };
+  if (!insertUnlocked(reg, save, insertId)) return { ok: false, reason: 'Вставка не открыта в дереве' };
+  const active = reg.get('skill-tree').nodes.find((n) => n.id === nodeId)!.effect.active!;
+  // Оружие берём из экипировки: вставка вроде «пробойника» осмысленна только с луком в руках.
+  if (!insertFits(ins, active, save.equipment.weapon?.weaponClass)) return { ok: false, reason: 'Этой вставке здесь не место' };
+  // ОДНА ВСТАВКА КАЖДОГО ТИПА — главное правило системы: именно оно делает сборку выбором.
+  for (let i = 0; i < t.slots.length; i++) {
+    if (i === slot) continue;
+    const other = t.slots[i];
+    if (other && insertById(reg, other)?.type === ins.type) {
+      return { ok: false, reason: `Вставка этого типа уже стоит в другом гнезде` };
+    }
+  }
+  t.slots[slot] = insertId;
+  return { ok: true };
+}
+
+/** ВЫНУТЬ вставку из гнезда. Без пошлины: вставка открыта деревом и не тратится — терять нечего. */
+export function socketClear(reg: ConfigRegistry, save: SaveState, nodeId: string, slot: number): ActionResult {
+  const t = socketTarget(reg, save, nodeId, slot);
+  if (!t.ok) return { ok: false, reason: t.reason };
+  if (!t.slots[slot]) return { ok: false, reason: 'Гнездо и так пусто' };
+  t.slots[slot] = null;
+  return { ok: true };
+}
+
 /** Комиссия сброса дерева скилов: `skillRespecCostPerPoint` × суммарно вложенных очков. */
 export function skillRespecFee(reg: ConfigRegistry, save: SaveState): number {
   let ranks = 0;
@@ -253,6 +313,9 @@ export function respecSkills(reg: ConfigRegistry, save: SaveState): ActionResult
   save.gold -= fee;
   save.unspentSkillPoints += ranks;
   save.skills = {};
+  // Гнёзда живут рангами узлов, а рангов больше нет — оставлять вставки значит копить мусор,
+  // который оживёт сам собой, если игрок перевложится в тот же узел.
+  save.sockets = {};
   // Сброшенные скиллы больше нельзя держать в биндах.
   if (save.mouseLeft && save.mouseLeft !== 'attack') save.mouseLeft = 'attack';
   if (save.mouseRight && save.mouseRight !== 'attack') save.mouseRight = null;

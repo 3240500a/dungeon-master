@@ -155,6 +155,9 @@ export type TownCommand =
   | { cmd: 'respecSkills' }
   | { cmd: 'allocPassive'; nodeId: string }
   | { cmd: 'allocSkill'; nodeId: string }
+  // Гнёзда модульных скилов: вставить/вынуть. Слот — индекс гнезда, открытость считает сервер по рангу.
+  | { cmd: 'socketInsert'; nodeId: string; slot: number; insertId: string }
+  | { cmd: 'socketClear'; nodeId: string; slot: number }
   | { cmd: 'useConsumable'; uid: string }
   | { cmd: 'moveBelt'; uid: string }
   | { cmd: 'moveItem'; uid: string; x: number; y: number }

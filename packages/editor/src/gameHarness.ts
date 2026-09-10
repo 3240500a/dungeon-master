@@ -1,4 +1,4 @@
-import { allocAttr, equip, unequip, allocActive, allocPassive, respec, respecSkills, respecPassives, moveInventoryItem, moveToBelt, debuffLabel, type SaveState, type TownCommand } from '@dm/shared';
+import { allocAttr, equip, unequip, allocActive, allocPassive, socketInsert, socketClear, respec, respecSkills, respecPassives, moveInventoryItem, moveToBelt, debuffLabel, type SaveState, type TownCommand } from '@dm/shared';
 import { App } from '@dm/client/core/app.js';
 import { GameState } from '@dm/client/core/gameState.js';
 import { setItemLabelResolvers } from '@dm/client/modules/inventory/itemView.js';
@@ -30,6 +30,8 @@ function applyCmd(app: App, gs: GameState, cmd: TownCommand): void {
     case 'equip': equip(reg, s, cmd.uid); break;
     case 'unequip': unequip(reg, s, cmd.slot); break;
     case 'allocSkill': allocActive(reg, s, cmd.nodeId); break;
+    case 'socketInsert': socketInsert(reg, s, cmd.nodeId, cmd.slot, cmd.insertId); break;
+    case 'socketClear': socketClear(reg, s, cmd.nodeId, cmd.slot); break;
     case 'allocPassive': allocPassive(reg, s, cmd.nodeId); break;
     case 'respec': respec(reg, s); break;
     case 'respecSkills': respecSkills(reg, s); break;
