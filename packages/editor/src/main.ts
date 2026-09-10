@@ -12,6 +12,7 @@ import { renderMonsterGenPage } from './monsterGen.js';
 import { renderCalcPage } from './calc.js';
 import { renderSkillBuildPage } from './skillBuild.js';
 import { devFetch } from '@dm/client/devAuth.js';   // инструментальные роуты требуют роли admin
+import { renderRoadmapPage } from './roadmap.js';
 import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
@@ -144,8 +145,8 @@ let current: ConfigKey = 'balance';
 let selectedIndex = 0;
 let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' = 'config';
 // Верхняя секция редактора: Игра (конфиги+инструменты) / 3D-эдитор (поз-редактор) / Документация (описания механик).
-type Section = 'game' | 'pose' | 'docs';
-let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' ? s : 'game'; } catch { return 'game'; } })();
+type Section = 'game' | 'pose' | 'docs' | 'roadmap';
+let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' || s === 'roadmap' ? s : 'game'; } catch { return 'game'; } })();
 const setSection = (s: Section): void => { section = s; try { localStorage.setItem('editor_section', s); } catch { /* */ } render(); };
 /** Активная подветка balance (её страница-срез). */
 let balanceGroup: string = balanceGroupsFull[0]!.title;
@@ -600,6 +601,7 @@ function render(): void {
     { id: 'game', label: '🎮 Игра' },
     { id: 'pose', label: '🧍 3D-эдитор' },
     { id: 'docs', label: '📖 Документация' },
+    { id: 'roadmap', label: '📍 Роадмап' },
   ];
   for (const s of SECTIONS) {
     const b = document.createElement('button');
@@ -616,6 +618,7 @@ function render(): void {
   app.appendChild(body);
   if (section === 'pose') renderPose(body);
   else if (section === 'docs') renderDocs(body, { gotoConfig });
+  else if (section === 'roadmap') renderRoadmapPage(body, data);
   else renderGame(body);
 }
 

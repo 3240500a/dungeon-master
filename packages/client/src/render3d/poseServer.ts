@@ -23,9 +23,13 @@
  * из offline-first — CRDT тут не нужен: автор один, конфликт редкий, но терять его молча нельзя.
  *
  * API сервера: `GET /api/pose` (тела), `GET /api/pose/rev` (ревизии), `POST /api/dev/pose` (DEV-only).
+ *
+ * ⚠ `pe_roadmap` — трекер вех проекта (вкладка «Роадмап» в конфиг-редакторе). Он тут, а НЕ в игровом
+ * конфиге, намеренно: `ConfigRegistry.loadAll()` бросает исключение на невалидном ключе, то есть
+ * опечатка в задаче проекта уронила бы игровой сервер. Здесь запись и так DEV-only, а связи с игрой нет.
  */
 import { devFetch } from '../devAuth.js';   // публикация — инструментальный роут: нужен токен админа
-export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield', 'pe_twist', 'pe_models', 'pe_grip', 'pe_ui', 'pe_gripposes', 'pe_morph', 'pe_morph_range', 'pe_poselib', 'pe_ai', 'pe_bonemaps'] as const;
+export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield', 'pe_twist', 'pe_models', 'pe_grip', 'pe_ui', 'pe_gripposes', 'pe_morph', 'pe_morph_range', 'pe_poselib', 'pe_ai', 'pe_bonemaps', 'pe_roadmap'] as const;
 export type PoseKey = typeof POSE_KEYS[number];
 
 /** Состояние синка (ЛИЧНОЕ, на сервер не уходит): на какой ревизии основана рабочая копия и что в ней правлено. */

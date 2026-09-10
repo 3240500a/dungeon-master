@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
+import { existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
 import { ConfigRegistry, configSchemas, newCharacterSave } from '@dm/shared';
 import { configKeyForFile } from './configFiles.js';
 import { hashPassword, verifyPassword } from './auth/password.js';
@@ -397,6 +397,37 @@ app.use('/assets', express.static(ASSETS_DIR, {
 // Нет такого файла → честный 404 (перехват ДО общего catch-all, иначе отсутствующий ассет отдавал HTML-заглушку со
 // статусом 200, и игра парсила её как GLB/PNG). Заодно чистка битых ссылок в редакторе может достоверно определить «нет файла».
 app.use('/assets', (_req, res) => { res.status(404).json({ error: 'asset not found' }); });
+/**
+ * СТАТИСТИКА ФАЙЛОВ АССЕТОВ — для вкладки «Роадмап» в редакторе: сколько моделей, текстур и звуков
+ * реально лежит на сервере. Это позволяет пунктам роадмапа СЧИТАТЬ СЕБЯ САМИМ («звуков 0 из 200»),
+ * вместо ручных галок, которые устаревают.
+ *
+ * Роут ЧИТАЮЩИЙ и без авторизации — в отличие от загрузки (`POST /api/dev/assets`): он отдаёт только
+ * агрегаты (счётчики и суммарный объём), без имён файлов и содержимого.
+ */
+function assetStats(): { byExt: Record<string, number>; byDir: Record<string, number>; bytes: number } {
+  const byExt: Record<string, number> = {};
+  const byDir: Record<string, number> = {};
+  let bytes = 0;
+  const walk = (abs: string, rel: string): void => {
+    let entries: string[];
+    try { entries = readdirSync(abs); } catch { return; }        // папку могли удалить между вызовами — не 500-им из-за этого
+    for (const name of entries) {
+      const full = join(abs, name);
+      let st;
+      try { st = statSync(full); } catch { continue; }
+      if (st.isDirectory()) { walk(full, rel ? rel + '/' + name : name); continue; }
+      const ext = (name.split('.').pop() ?? '').toLowerCase();
+      byExt[ext] = (byExt[ext] ?? 0) + 1;
+      if (rel) byDir[rel] = (byDir[rel] ?? 0) + 1;
+      bytes += st.size;
+    }
+  };
+  walk(ASSETS_DIR, '');
+  return { byExt, byDir, bytes };
+}
+app.get('/api/assets/stats', (_req, res) => { res.json(assetStats()); });
+
 // Content-Type → расширение файла. GLB (модели) и PNG/JPG (текстуры). Прочее → .bin.
 const ASSET_EXT: Record<string, string> = { 'model/gltf-binary': 'glb', 'application/octet-stream': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 // Обработчик стал асинхронным вместе с `devGuard` (проверка роли ходит в базу) — отсюда `ah`.
