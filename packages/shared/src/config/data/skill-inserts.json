@@ -379,5 +379,27 @@
         ]
       }
     }
+  },
+  {
+    "id": "ins-blood-rhythm",
+    "name": "Кровавый ритм",
+    "type": "hunt",
+    "description": "Чем больше вокруг кровоточащих, тем быстрее удары: +8% скорости за каждого, до пяти.",
+    "fits": {
+      "categories": [
+        "attack"
+      ]
+    },
+    "costMult": 1.2,
+    "cooldownMult": 1.1,
+    "tune": {
+      "when": {
+        "kind": "bleedingNearby",
+        "radius": 260,
+        "maxStacks": 5,
+        "speedPer": 0.08,
+        "damagePer": 0
+      }
+    }
   }
 ]

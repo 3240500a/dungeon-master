@@ -139,6 +139,31 @@ function scaleAilment<T extends { chance: number; mag: number; mag2?: number }>(
 }
 
 /**
+ * СЛИЯНИЕ СТАТУСА ВСТАВКИ СО СТАТУСОМ НОСИТЕЛЯ.
+ *
+ * Раньше статус вставки просто ЗАМЕЩАЛ носителя — и замер поймал следствие: «Зазубрины»
+ * (кровотечение 35%) на «Секущих ранах» (80%) роняли ДПС на 38%, потому что подменяли сильное
+ * кровотечение слабым. Вставка не должна делать скил ХУЖЕ: за неё платят гнездом и ценой.
+ *
+ * Тот же вид статуса — складываем как два независимых источника: `1 − (1−a)(1−b)`. Это честнее
+ * и суммы шансов (которая дала бы больше 100%), и максимума (который просто игнорировал бы
+ * второй источник). Сила и длительность — по максимуму: два кровотечения не режут глубже, чем
+ * более глубокое из них. Другой вид — замена: игрок СОЗНАТЕЛЬНО поменял статус скила.
+ */
+function mergeAilment<T extends { kind?: string; chance: number; mag: number; mag2?: number; durationMs: number; maxStacks: number }>(
+  base: T | undefined, add: T,
+): T {
+  if (!base || !base.kind || base.kind !== add.kind) return add;
+  const out = structuredClone(add);
+  out.chance = Math.min(1, 1 - (1 - base.chance) * (1 - add.chance));
+  out.mag = Math.max(base.mag, add.mag);
+  if (base.mag2 !== undefined || add.mag2 !== undefined) out.mag2 = Math.max(base.mag2 ?? 0, add.mag2 ?? 0);
+  out.durationMs = Math.max(base.durationMs, add.durationMs);
+  out.maxStacks = Math.max(base.maxStacks, add.maxStacks);
+  return out;
+}
+
+/**
  * Прибавка вставки на её ранге. Масштаб ОДИН на все поля, но применяется по-разному — см. ниже.
  * Ранг 1 обязан давать РОВНО исходные числа (`k = 1`), иначе поедет весь существующий контент.
  */
@@ -182,7 +207,7 @@ function applyInserts(active: ActiveAbility, list: readonly AppliedInsert[]): Ac
       if (t.knockbackAdd !== undefined) off.knockback += addAt(t.knockbackAdd, k);
       if (t.stunSecAdd !== undefined) off.stunSec += addAt(t.stunSecAdd, k);
       if (t.knockdownChanceAdd !== undefined) off.knockdownChance = Math.min(1, off.knockdownChance + addAt(t.knockdownChanceAdd, k));
-      if (t.ailment !== undefined) off.ailment = scaleAilment(t.ailment, k);
+      if (t.ailment !== undefined) off.ailment = mergeAilment(off.ailment, scaleAilment(t.ailment, k));
     }
     if (a.category === 'attack') {
       if (t.speedMul !== undefined) a.speed *= mulAt(t.speedMul, k);
@@ -195,7 +220,7 @@ function applyInserts(active: ActiveAbility, list: readonly AppliedInsert[]): Ac
       if (t.pierce !== undefined) a.pierce = t.pierce;
     }
     if (a.category === 'cast' && t.radiusMul !== undefined) a.radius *= mulAt(t.radiusMul, k);
-    if (a.category === 'curse' && t.ailment !== undefined) a.ailment = scaleAilment(t.ailment, k);
+    if (a.category === 'curse' && t.ailment !== undefined) a.ailment = mergeAilment(a.ailment, scaleAilment(t.ailment, k));
   }
   a.manaCost = r2(a.manaCost * cost);
   a.cooldown = r2(a.cooldown * cd);

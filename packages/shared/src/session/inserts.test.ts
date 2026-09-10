@@ -313,3 +313,44 @@ describe('ранг узла-донора усиливает вставку', () 
     expect(r.applied[0]!.insert.id).toBe('ins-flame-edge');
   });
 });
+
+describe('вставка-статус НЕ ДОЛЖНА ухудшать носителя', () => {
+  /**
+   * Замер поймал это на живом бою: «Зазубрины» (кровотечение 35%) на «Секущих ранах» (80%)
+   * роняли ДПС на 38% — статус вставки ЗАМЕЩАЛ статус носителя, подменяя сильное кровотечение
+   * слабым. За вставку платят гнездом, очками и ценой каста; сделать скил хуже она не вправе.
+   */
+  const bleeder = () => cfg.get('skill-tree').nodes
+    .find((n) => n.effect.active?.category === 'attack' && (n.effect.active as { ailment?: { kind?: string; chance: number } }).ailment?.kind === 'bleed'
+      && ((n.effect.active as { ailment: { chance: number } }).ailment.chance ?? 0) >= 0.7)!;
+
+  it('тот же вид статуса складывается как два источника, а не замещается', () => {
+    const carrier = bleeder();
+    const base = carrier.effect.active as { ailment: { chance: number; mag: number; durationMs: number } };
+    const ins = insertById(cfg, 'ins-serrated')!;
+    expect(ins.tune!.ailment!.kind, 'вставка тоже про кровотечение').toBe('bleed');
+    expect(ins.tune!.ailment!.chance, 'и она СЛАБЕЕ носителя — иначе тест ничего не ловит')
+      .toBeLessThan(base.ailment.chance);
+
+    const r = resolveActive(cfg, saveAtRank(carrier.id, ['ins-serrated'], 1), carrier.id)!;
+    const got = (r.active as { ailment: { chance: number; mag: number; durationMs: number } }).ailment;
+    expect(got.chance, 'шанс вырос, а не упал').toBeGreaterThan(base.ailment.chance);
+    expect(got.chance).toBeLessThanOrEqual(1);
+    expect(got.mag, 'сила — не меньше носителя').toBeGreaterThanOrEqual(base.ailment.mag);
+    expect(got.durationMs).toBeGreaterThanOrEqual(base.ailment.durationMs);
+  });
+
+  it('ДРУГОЙ вид статуса замещает — это осознанный выбор игрока', () => {
+    const carrier = bleeder();
+    const r = resolveActive(cfg, saveAtRank(carrier.id, ['ins-kindling'], 1), carrier.id)!;
+    expect((r.active as { ailment: { kind?: string } }).ailment.kind, 'поджиг вместо кровотечения').toBe('burn');
+  });
+
+  it('носителю БЕЗ статуса вставка просто даёт свой', () => {
+    const plain = cfg.get('skill-tree').nodes.find((n) => n.effect.active?.category === 'attack'
+      && !(n.effect.active as { ailment?: unknown }).ailment)!;
+    const r = resolveActive(cfg, saveAtRank(plain.id, ['ins-serrated'], 1), plain.id)!;
+    const ins = insertById(cfg, 'ins-serrated')!;
+    expect((r.active as { ailment: { chance: number } }).ailment.chance).toBeCloseTo(ins.tune!.ailment!.chance, 5);
+  });
+});

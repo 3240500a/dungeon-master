@@ -636,7 +636,11 @@ export class GameSession {
     // способности — именно поэтому вся система стоит на одном шве, а не на десятке правок.
     const res = resolveActive(this.cfg, p.save, nodeId);
     if (!res) return;
-    const active = res.active;
+    // Условная часть нужна УЖЕ ЗДЕСЬ: `active.speed` у атаки потребляется прямо в этом кадре —
+    // из него считается `attackCd` (ниже). Надбавка к скорости, применённая только на ударе,
+    // не доехала бы никуда. Поэтому правило такое: СКОРОСТЬ решается в начале замаха, а УРОН —
+    // в момент попадания (`executeResolved` пересчитывает условие ещё раз, уже по свежему миру).
+    const active = this.withConditional(p, res);
     if (!this.nodeUsable(p.save, nodeId)) return;      // класс-ветка чужого класса — недоступна
     const rank = p.save.skills[nodeId] ?? 1;     // выученный ранг (клиент биндит только выученное)
 
@@ -768,8 +772,49 @@ export class GameSession {
    * Порядок важен: волна холода должна добивать после удара, а не вместо него.
    */
   private executeResolved(p: PlayerEntity, snap: PlayerSnapshot, res: ResolvedActive, rank: number): void {
-    this.executeAbility(p, snap, res.active, rank);
+    this.executeAbility(p, snap, this.withConditional(p, res), rank);
     if (res.procs.length) this.fireInsertProcs(p, snap, res.procs, rank);
+  }
+
+  /**
+   * УСЛОВНАЯ ЧАСТЬ ВСТАВОК. `resolveActive` — чистая функция и мира не видит, поэтому надбавку
+   * вроде «скорость растёт с числом кровоточащих рядом» считаем здесь, в момент удара.
+   *
+   * Зовётся ДВАЖДЫ и намеренно: на касте (оттуда берётся `attackCd`, то есть скорость замаха)
+   * и на ударе (там решается урон — за время замаха картина вокруг успевает поменяться).
+   *
+   * Цену и откат условие НЕ трогает: они списываются один раз на касте, и менять их задним
+   * числом нечестно по отношению к игроку.
+   */
+  private withConditional(p: PlayerEntity, res: ResolvedActive): ActiveAbility {
+    let out = res.active;
+    for (const { insert, rank } of res.applied) {
+      const w = insert.tune?.when;
+      if (!w) continue;
+      const stacks = Math.min(w.maxStacks, this.countCondition(p, w));
+      if (stacks <= 0) continue;
+      // Клонируем ТОЛЬКО когда условие сработало: иначе поехал бы инвариант «пустые гнёзда
+      // возвращают тот же объект», на котором стоят все существующие активки.
+      if (out === res.active) out = structuredClone(res.active) as ActiveAbility;
+      const k = 1 + insert.perRank.gain * (Math.max(1, rank) - 1);   // ранг усиливает и условную часть
+      if (out.category === 'attack' && w.speedPer) out.speed *= 1 + w.speedPer * k * stacks;
+      if ((out.category === 'attack' || out.category === 'cast') && w.damagePer) {
+        out.damageMult *= 1 + w.damagePer * k * stacks;
+      }
+    }
+    return out;
+  }
+
+  /** Сколько «стаков» условия набралось прямо сейчас. */
+  private countCondition(p: PlayerEntity, w: { kind: string; radius: number }): number {
+    if (w.kind === 'lowHp') return p.hp / Math.max(1, this.snaps.get(p.id)?.derived.maxHp ?? 1) <= 0.35 ? 1 : 0;
+    const kind = w.kind === 'burningNearby' ? 'burn' : 'bleed';
+    let n = 0;
+    for (const m of this.world.monsters) {
+      if (!m.alive || !m.debuffs[kind]) continue;
+      if (vecLen(m.pos.x - p.pos.x, m.pos.y - p.pos.y) <= w.radius) n++;
+    }
+    return n;
   }
 
   /**

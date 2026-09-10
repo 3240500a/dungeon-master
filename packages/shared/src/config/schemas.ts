@@ -1583,6 +1583,19 @@ const insertTuneSchema = z.object({
   pierce: z.boolean().optional(),
   /** Накладываемый статус — заменяет статус носителя целиком (складывать шансы нечестно). */
   ailment: ailmentApplySchema.optional(),
+  /**
+   * УСЛОВНАЯ НАДБАВКА — то, ради чего заведён тип «Охота». Считается НЕ в резолве, а в момент
+   * удара: резолв — чистая функция без мира, а условие смотрит именно на мир («сколько рядом
+   * кровоточащих»). Прибавка идёт ЗА КАЖДЫЙ засчитанный стак и упирается в `maxStacks`.
+   */
+  when: z.object({
+    kind: z.enum(['bleedingNearby', 'burningNearby', 'lowHp']),
+    radius: z.number().min(0).default(260),
+    maxStacks: z.number().int().min(1).default(5),
+    /** Прибавки за стак: скорость и урон — множителями (`поле *= 1 + per·стаки`). */
+    speedPer: z.number().default(0),
+    damagePer: z.number().default(0),
+  }).optional(),
 });
 
 /**

@@ -347,39 +347,27 @@
     ],
     [
       "b-sword1h-a2",
-      "b-sword1h-a3"
+      "b-sword1h-i2"
     ],
     [
       "b-sword1h-p3",
       "b-sword1h-p4"
     ],
     [
-      "b-sword1h-a3",
-      "b-sword1h-a4"
+      "b-sword1h-i2",
+      "b-sword1h-a3"
     ],
     [
       "b-sword1h-p4",
       "b-sword1h-p5"
     ],
     [
-      "b-sword1h-a4",
-      "b-sword1h-a5"
-    ],
-    [
-      "b-sword1h-p5",
+      "b-sword1h-a3",
       "b-sword1h-p6"
     ],
     [
-      "b-sword1h-a5",
+      "b-sword1h-p6",
       "b-sword1h-p7"
-    ],
-    [
-      "b-sword1h-p7",
-      "b-sword1h-p8"
-    ],
-    [
-      "b-sword1h-p8",
-      "b-sword1h-p9"
     ],
     [
       "b-axe1h-e",
@@ -1956,14 +1944,14 @@
       "y": -187,
       "notable": false,
       "kind": "passive",
-      "name": "Заточка",
-      "description": "+5% к физ. урону за ранг.",
+      "name": "Фехтование",
+      "description": "+5% к скорости атаки за ранг.",
       "maxRank": 4,
       "effect": {
         "modifiers": [
           {
-            "stat": "physPct",
-            "kind": "flat",
+            "stat": "attackSpeed",
+            "kind": "increased",
             "value": 0.05
           }
         ]
@@ -1982,20 +1970,22 @@
       "y": -262,
       "notable": false,
       "kind": "active",
-      "name": "Рубящий удар",
-      "description": "Удар оружием ×1.3 к урону. 40% наложить кровотечение на 3 с, до 5 стаков. Цена: 5 выносливости.",
+      "name": "Град ударов",
+      "description": "Удар оружием ×0.45 к урону, 3 удара подряд, скорость ×2. 30% наложить кровотечение на 3 с, до 5 стаков. Цена: 7 выносливости, откат 1 с.",
       "maxRank": 20,
       "effect": {
         "active": {
           "category": "attack",
-          "abilityId": "sword-slash",
-          "manaCost": 5,
-          "cooldown": 0,
-          "damageMult": 1.3,
+          "abilityId": "sword-hail",
+          "manaCost": 7,
+          "cooldown": 1,
+          "speed": 2,
+          "damageMult": 0.45,
+          "hits": 3,
           "ailment": {
             "kind": "bleed",
-            "chance": 0.4,
-            "mag": 4,
+            "chance": 0.3,
+            "mag": 0.04,
             "maxStacks": 5,
             "durationMs": 3000
           },
@@ -2020,15 +2010,15 @@
       "y": -300,
       "notable": false,
       "kind": "passive",
-      "name": "Фехтование",
-      "description": "+4% к скорости атаки за ранг.",
+      "name": "Глубокий порез",
+      "description": "+6% к наложению статусов за ранг.",
       "maxRank": 4,
       "effect": {
         "modifiers": [
           {
-            "stat": "attackSpeed",
-            "kind": "increased",
-            "value": 0.04
+            "stat": "ailmentPct",
+            "kind": "flat",
+            "value": 0.06
           }
         ]
       }
@@ -2066,14 +2056,14 @@
       "y": -392,
       "notable": false,
       "kind": "passive",
-      "name": "Верный глаз",
-      "description": "+5% к шансу крита за ранг.",
+      "name": "Заточка",
+      "description": "+5% к физ. урону за ранг.",
       "maxRank": 4,
       "effect": {
         "modifiers": [
           {
-            "stat": "critChance",
-            "kind": "increased",
+            "stat": "physPct",
+            "kind": "flat",
             "value": 0.05
           }
         ]
@@ -2092,23 +2082,23 @@
       "y": -451,
       "notable": false,
       "kind": "active",
-      "name": "Парирующий выпад",
-      "description": "Удар оружием ×1.4 к урону, дуга ×0.8. 50% наложить кровотечение на 3 с, до 5 стаков. Цена: 6 выносливости, откат 1 с.",
+      "name": "Секущие раны",
+      "description": "Удар оружием ×1.15 к урону, скорость ×0.8. 80% наложить кровотечение на 4 с, до 5 стаков. Цена: 6 выносливости, откат 1.2 с.",
       "maxRank": 20,
       "effect": {
         "active": {
           "category": "attack",
-          "abilityId": "sword-riposte",
+          "abilityId": "sword-rend",
           "manaCost": 6,
-          "cooldown": 1,
-          "damageMult": 1.4,
-          "arcMult": 0.8,
+          "cooldown": 1.2,
+          "speed": 0.8,
+          "damageMult": 1.15,
           "ailment": {
             "kind": "bleed",
-            "chance": 0.5,
-            "mag": 5,
+            "chance": 0.8,
+            "mag": 0.09,
             "maxStacks": 5,
-            "durationMs": 3000
+            "durationMs": 4000
           },
           "resource": "stamina",
           "weaponClasses": [
@@ -2129,6 +2119,52 @@
       "levelReq": 18,
       "x": -113,
       "y": -485,
+      "notable": false,
+      "kind": "passive",
+      "name": "Верный глаз",
+      "description": "+5% к шансу крита за ранг.",
+      "maxRank": 4,
+      "effect": {
+        "modifiers": [
+          {
+            "stat": "critChance",
+            "kind": "increased",
+            "value": 0.05
+          }
+        ]
+      }
+    },
+    {
+      "id": "b-sword1h-i2",
+      "branchId": "b-sword1h",
+      "cost": {
+        "type": "points",
+        "amount": 1
+      },
+      "requires": [],
+      "levelReq": 24,
+      "x": -64,
+      "y": -545,
+      "notable": false,
+      "kind": "passive",
+      "name": "Кровавый ритм",
+      "description": "Открывает вставку «Кровавый ритм» (Охота). Чем больше вокруг кровоточащих, тем быстрее удары: +8% скорости за каждого, до пяти. Носитель платит: стоимость ×1.2, откат ×1.1. Ранг узла усиливает вставку.",
+      "maxRank": 10,
+      "effect": {
+        "grantsInsert": "ins-blood-rhythm"
+      }
+    },
+    {
+      "id": "b-sword1h-p4",
+      "branchId": "b-sword1h",
+      "cost": {
+        "type": "points",
+        "amount": 1
+      },
+      "requires": [],
+      "levelReq": 24,
+      "x": -134,
+      "y": -577,
       "notable": false,
       "kind": "passive",
       "name": "Смертельный росчерк",
@@ -2152,68 +2188,10 @@
         "amount": 1
       },
       "requires": [],
-      "levelReq": 24,
-      "x": -64,
-      "y": -545,
-      "notable": false,
-      "kind": "active",
-      "name": "Размашистый удар",
-      "description": "Удар оружием ×1.2 к урону, дуга ×1.6. Цена: 8 выносливости, откат 1.2 с.",
-      "maxRank": 20,
-      "effect": {
-        "active": {
-          "category": "attack",
-          "abilityId": "sword-cleave",
-          "manaCost": 8,
-          "cooldown": 1.2,
-          "damageMult": 1.2,
-          "arcMult": 1.6,
-          "resource": "stamina",
-          "weaponClasses": [
-            "sword"
-          ],
-          "hands": "one"
-        }
-      }
-    },
-    {
-      "id": "b-sword1h-p4",
-      "branchId": "b-sword1h",
-      "cost": {
-        "type": "points",
-        "amount": 1
-      },
-      "requires": [],
-      "levelReq": 24,
-      "x": -134,
-      "y": -577,
-      "notable": false,
-      "kind": "passive",
-      "name": "Глубокий порез",
-      "description": "+5% к наложению статусов за ранг.",
-      "maxRank": 4,
-      "effect": {
-        "modifiers": [
-          {
-            "stat": "ailmentPct",
-            "kind": "flat",
-            "value": 0.05
-          }
-        ]
-      }
-    },
-    {
-      "id": "b-sword1h-a4",
-      "branchId": "b-sword1h",
-      "cost": {
-        "type": "points",
-        "amount": 1
-      },
-      "requires": [],
       "levelReq": 30,
       "x": -78,
       "y": -639,
-      "notable": false,
+      "notable": true,
       "kind": "active",
       "name": "Пронзающий меч",
       "description": "Удар оружием ×1.5 к урону, пробивает насквозь. Цена: 7 выносливости, откат 0.8 с.",
@@ -2247,65 +2225,6 @@
       "y": -671,
       "notable": false,
       "kind": "passive",
-      "name": "Сила удара",
-      "description": "+4% ко всему урону за ранг.",
-      "maxRank": 4,
-      "effect": {
-        "modifiers": [
-          {
-            "stat": "damagePct",
-            "kind": "flat",
-            "value": 0.04
-          }
-        ]
-      }
-    },
-    {
-      "id": "b-sword1h-a5",
-      "branchId": "b-sword1h",
-      "cost": {
-        "type": "points",
-        "amount": 1
-      },
-      "requires": [],
-      "levelReq": 30,
-      "x": -95,
-      "y": -733,
-      "notable": true,
-      "kind": "active",
-      "name": "Клинковый шквал",
-      "description": "Удар оружием ×0.6 к урону, 2 удара подряд, скорость ×1.3. Цена: 9 выносливости, откат 1.2 с.",
-      "maxRank": 20,
-      "effect": {
-        "active": {
-          "category": "attack",
-          "abilityId": "sword-flurry",
-          "manaCost": 9,
-          "cooldown": 1.2,
-          "speed": 1.3,
-          "damageMult": 0.6,
-          "hits": 2,
-          "resource": "stamina",
-          "weaponClasses": [
-            "sword"
-          ],
-          "hands": "one"
-        }
-      }
-    },
-    {
-      "id": "b-sword1h-p6",
-      "branchId": "b-sword1h",
-      "cost": {
-        "type": "points",
-        "amount": 1
-      },
-      "requires": [],
-      "levelReq": 30,
-      "x": -169,
-      "y": -764,
-      "notable": false,
-      "kind": "passive",
       "name": "Точность",
       "description": "+5% к меткости за ранг.",
       "maxRank": 4,
@@ -2320,7 +2239,7 @@
       }
     },
     {
-      "id": "b-sword1h-p7",
+      "id": "b-sword1h-p6",
       "branchId": "b-sword1h",
       "cost": {
         "type": "points",
@@ -2328,8 +2247,8 @@
       },
       "requires": [],
       "levelReq": 30,
-      "x": -148,
-      "y": -842,
+      "x": -132,
+      "y": -748,
       "notable": false,
       "kind": "passive",
       "name": "Парирование",
@@ -2346,7 +2265,7 @@
       }
     },
     {
-      "id": "b-sword1h-p8",
+      "id": "b-sword1h-p7",
       "branchId": "b-sword1h",
       "cost": {
         "type": "points",
@@ -2354,34 +2273,8 @@
       },
       "requires": [],
       "levelReq": 30,
-      "x": -165,
-      "y": -936,
-      "notable": false,
-      "kind": "passive",
-      "name": "Закалка",
-      "description": "+5% к выносливости за ранг.",
-      "maxRank": 4,
-      "effect": {
-        "modifiers": [
-          {
-            "stat": "maxStamina",
-            "kind": "increased",
-            "value": 0.05
-          }
-        ]
-      }
-    },
-    {
-      "id": "b-sword1h-p9",
-      "branchId": "b-sword1h",
-      "cost": {
-        "type": "points",
-        "amount": 1
-      },
-      "requires": [],
-      "levelReq": 30,
-      "x": -181,
-      "y": -1029,
+      "x": -148,
+      "y": -842,
       "notable": false,
       "kind": "passive",
       "name": "Дыхание боя",

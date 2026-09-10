@@ -156,13 +156,18 @@ const C = {
     atk('dagger-venom', 'Отравленный клинок', 5, 0, { element: 'poison', damageMult: 1.1, ailment: ail('poison', 0.7, 4, 4000, 6) }),
     atk('dagger-lunge', 'Пронзающий выпад', 9, 1.2, { arcMult: 0.4, rangeMult: 1.6, pierce: true, damageMult: 1.4 }),
   ], pas: [p('critChance', 'increased', 0.05, 'Отточенность'), p('critMultiplier', 'flat', 0.06, 'Смертельная точность'), p('ailmentPct', 'flat', 0.06, 'Глубокая рана'), p('attackSpeed', 'increased', 0.04, 'Молниеносность'), p('armorPen', 'flat', 0.05, 'Пробой брони'), p('physPct', 'flat', 0.05, 'Мастерство клинка'), p('moveSpeed', 'increased', 0.03, 'Проворство'), p('evade', 'increased', 0.04, 'Скользящий шаг'), p('staminaRegen', 'increased', 0.06, 'Второе дыхание'), p('maxStamina', 'increased', 0.05, 'Закалка')] },
+  // ЭТАЛОННАЯ ВЕТКА. Тема одна и внятная: СКОРОСТЬ и КРОВОТЕЧЕНИЕ (меч — режущий подтип,
+  // `phys-subtypes.json`: slashing → bleed). Было пять активок, из которых «Клинковый шквал»
+  // дословно повторял «Град ударов», а «Размашистый удар» — «Широкий взмах» двуручных.
+  // Разнообразие переезжает во вставки, а ветка получает три РАЗНЫХ приёма:
+  //   «Град ударов»     — много быстрых слабых ударов (танцующий бой),
+  //   «Секущие раны»    — медленный и слабее, зато режет почти наверняка,
+  //   «Пронзающий меч»  — одиночный тяжёлый пробивающий (капстоун).
   sword1h: { act: [
-    atk('sword-slash', 'Рубящий удар', 5, 0, { damageMult: 1.3, ailment: ail('bleed', 0.4, 4, 3000, 5) }),
-    atk('sword-riposte', 'Парирующий выпад', 6, 1.0, { damageMult: 1.4, arcMult: 0.8, ailment: ail('bleed', 0.5, 5, 3000, 5) }),
-    atk('sword-cleave', 'Размашистый удар', 8, 1.2, { damageMult: 1.2, arcMult: 1.6 }),
+    atk('sword-hail', 'Град ударов', 7, 1.0, { speed: 2.0, damageMult: 0.45, hits: 3, ailment: ail('bleed', 0.3, 0.04, 3000, 5) }),
+    atk('sword-rend', 'Секущие раны', 6, 1.2, { speed: 0.8, damageMult: 1.15, ailment: ail('bleed', 0.8, 0.09, 4000, 5) }),
     atk('sword-thrust', 'Пронзающий меч', 7, 0.8, { damageMult: 1.5, pierce: true }),
-    atk('sword-flurry', 'Клинковый шквал', 9, 1.2, { speed: 1.3, damageMult: 0.6, hits: 2 }),
-  ], pas: [p('physPct', 'flat', 0.05, 'Заточка'), p('attackSpeed', 'increased', 0.04, 'Фехтование'), p('critChance', 'increased', 0.05, 'Верный глаз'), p('critMultiplier', 'flat', 0.06, 'Смертельный росчерк'), p('ailmentPct', 'flat', 0.05, 'Глубокий порез'), p('damagePct', 'flat', 0.04, 'Сила удара'), p('accuracy', 'increased', 0.05, 'Точность'), p('evade', 'increased', 0.04, 'Парирование'), p('maxStamina', 'increased', 0.05, 'Закалка'), p('staminaRegen', 'increased', 0.06, 'Дыхание боя')] },
+  ], pas: [p('attackSpeed', 'increased', 0.05, 'Фехтование'), p('ailmentPct', 'flat', 0.06, 'Глубокий порез'), p('physPct', 'flat', 0.05, 'Заточка'), p('critChance', 'increased', 0.05, 'Верный глаз'), p('critMultiplier', 'flat', 0.06, 'Смертельный росчерк'), p('accuracy', 'increased', 0.05, 'Точность'), p('evade', 'increased', 0.04, 'Парирование'), p('staminaRegen', 'increased', 0.06, 'Дыхание боя')] },
   axe1h: { act: [
     atk('axe-chop', 'Рубка', 6, 0, { damageMult: 1.4, ailment: ail('sunder', 0.5, 0.05, 4000, 5) }),
     atk('axe-rend', 'Раскол доспеха', 8, 1.2, { damageMult: 1.3, ailment: ail('sunder', 0.7, 0.07, 4000, 5) }),
@@ -322,7 +327,7 @@ function elemPas(elStat, names) {
  * собиралась из одного места; сам контент вставки — в `skill-inserts.json`.
  */
 const BRANCH_INS = {
-  'b-sword1h': ['ins-serrated'],
+  'b-sword1h': ['ins-serrated', 'ins-blood-rhythm'],
   'b-mace1h': ['ins-sweep'],
   'b-sword2h': ['ins-wide-arc'],
   'b-mace2h': ['ins-heavy-blow'],
