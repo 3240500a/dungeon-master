@@ -392,28 +392,56 @@ function buildTemplate(nAct, nIns, nPas) {
     if (i < nAct) spicy.push(['a', i]);
     if (i < nIns) spicy.push(['i', i]);
   }
-  let pas = 0, tier = 1, prevTier = ['e'];
+  // ДВЕ НИТИ ИЗ ВХОДА: слева приёмы и вставки, справа проценты. Каждый узел цепляется к своей
+  // нити, а не к «кому-нибудь из предыдущего яруса». Иначе пассив мог повиснуть на вставке —
+  // и уровень по цепочке падал (вставка на 12-м, пассив под ней на 11-м), то есть до узла
+  // всё равно было не дотянуться, когда обещано.
+  let pas = 0, tier = 1, lastSpicy = 'e', lastPas = 'e';
   while (spicy.length || pas < nPas) {
-    const slots = [];
-    if (spicy.length) slots.push(spicy.shift());
-    if (pas < nPas) slots.push(['p', pas++]);
-    else if (spicy.length) slots.push(spicy.shift());
-    const keys = [];
-    slots.forEach(([kind, idx], j) => {
-      const sub = slots.length === 1 ? 0 : (j === 0 ? -1 : 1);
+    if (spicy.length) {
+      const [kind, idx] = spicy.shift();
       const key = `${kind}${idx + 1}`;
-      rows.push([key, kind, sub, tier, prevTier[Math.min(j, prevTier.length - 1)]]);
-      keys.push(key);
-    });
-    prevTier = keys;
+      rows.push([key, kind, -1, tier, lastSpicy]);
+      lastSpicy = key;
+    }
+    if (pas < nPas) {
+      const key = `p${pas + 1}`;
+      rows.push([key, 'p', 1, tier, lastPas]);
+      lastPas = key;
+      pas++;
+    }
     tier++;
   }
   return rows;
 }
 
-/** Уровень по ярусу. Дальше от центра — позже открывается; за шестым ярусом упирается в 30. */
-const TIER_LVL = [1, 6, 12, 18, 24, 30];
-const lvlAt = (tier) => TIER_LVL[Math.min(tier, TIER_LVL.length - 1)];
+/**
+ * УРОВНИ ОТКРЫТИЯ — от РОЛИ узла, а не от яруса.
+ *
+ * По ярусу выходило криво: ярус — это про геометрию (как далеко от центра), а игрок ждёт другого —
+ * что боевые приёмы приходят редкими заметными вехами, а проценты подтягиваются ровно и постоянно.
+ * Раньше и то и другое сидело на общей лестнице 1/6/12/18/24/30, и первая активка ждала шестого
+ * уровня, пока рядом открывались проценты.
+ *
+ * Активки — пять вех: 2, 7, 15, 25, 40. Вставки — между ними: вставку некуда девать, пока нет
+ * скила-носителя. Пассивы — ровная лестница от 1 до 40, СКОЛЬКО БЫ ИХ НИ БЫЛО В ВЕТКЕ: шаг
+ * считается от их числа, поэтому любая ветка заканчивается ровно на 40, а не «где придётся».
+ */
+const ACT_LVL = [2, 7, 15, 25, 40];
+const INS_LVL = [5, 12, 20, 32, 40];
+const LVL_CAP = 40;
+const pasLvl = (j, total) => (total <= 1 ? 1 : Math.round(1 + (LVL_CAP - 1) * (j / (total - 1))));
+/**
+ * Уровень узла по его ключу. Ключи 1-БАЗОВЫЕ ('a1' — первая активка), а вехи в массивах
+ * 0-базовые — отсюда `n - 1`. У пассивов иначе: вход 'e' это НУЛЕВАЯ ступень лестницы, 'p1' —
+ * первая, поэтому номер берётся как есть.
+ */
+const roleLvl = (kind, key, pasTotal) => {
+  const n = key === 'e' ? 0 : Number(key.slice(1)) || 0;
+  return kind === 'a' ? (ACT_LVL[n - 1] ?? LVL_CAP)
+    : kind === 'i' ? (INS_LVL[n - 1] ?? LVL_CAP)
+      : pasLvl(n, pasTotal);
+};
 
 // ── Радиальная раскладка ЕДИНОГО древа (как пассивка): из центра ветви расходятся во все стороны.
 // Лево = боевые (выносливость), право = магия (мана), низ = броня (none), верх = классовые.
@@ -517,12 +545,16 @@ B.forEach((br) => {
     return ins;
   });
   const tpl = buildTemplate(acts.length, inserts.length, pas.length);
+  // Снимаем ДО цикла: очередь пассивов по ходу пустеет через `shift()`, и лестница, посчитанная
+  // от её текущей длины, взлетала — последний пассив ветки оказывался на 352-м уровне.
+  // Плюс единицу НЕ добавляем: ВХОД ветки тоже берётся из этой очереди и он же нулевая ступень.
+  const pasTotal = pas.length;
   const lastAct = `a${acts.length}`, lastPas = `p${pas.length}`;
 
   for (const [key, kind, sub, tier, parent] of tpl) {
     let node;
     const { x, y } = radialXY(angle, corr, sub, tier);
-    const common = { id: idOf(key), branchId: br.id, cost: { type: 'points', amount: 1 }, requires: [], levelReq: lvlAt(tier), x, y, notable: key === lastAct || key === lastPas };
+    const common = { id: idOf(key), branchId: br.id, cost: { type: 'points', amount: 1 }, requires: [], levelReq: roleLvl(kind, key, pasTotal), x, y, notable: key === lastAct || key === lastPas };
     if (kind === 'a' && acts.length) {
       const ab = acts.shift();
       ab.a = { ...ab.a, resource, ...abilityGate(br.gate) };
@@ -563,8 +595,11 @@ try { oldActive = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta
 Object.entries(CLASS_META).forEach(([classId, meta]) => {
   const tree = oldActive.find((t) => t.classId === classId);
   if (!tree) return;
-  const aq = tree.nodes.filter((n) => n.effect && n.effect.active).slice(0, 6);
-  const pq = tree.nodes.filter((n) => n.effect && n.effect.modifiers && !n.effect.active).slice(0, 4);
+  // Пять активок — ровно по числу вех (2/7/15/25/40), шестая садилась бы на 40 вторым дублем.
+  // Семь пассивов, а не четыре: на четырёх ступенях лестница от 1 до 40 идёт шагом в 13 уровней,
+  // то есть никакого «плавного подъёма» — в легаси-дереве их 13-21, брать есть откуда.
+  const aq = tree.nodes.filter((n) => n.effect && n.effect.active).slice(0, 5);
+  const pq = tree.nodes.filter((n) => n.effect && n.effect.modifiers && !n.effect.active).slice(0, 7);
   const bid = `b-class-${classId}`;
   const idOf = (k) => `${bid}-${k}`;
   const placed = {};
@@ -576,11 +611,12 @@ Object.entries(CLASS_META).forEach(([classId, meta]) => {
     return ins;
   });
   const tpl = buildTemplate(aq.length, cIns.length, pq.length);
+  const pasTotal = pq.length;   // вход ветки — нулевая ступень той же лестницы
   for (const [key, kind, sub, tier, parent] of tpl) {
     let node;
     // Класс — верхний сектор (угол 90°). В игре виден только свой класс, поэтому все классы делят вершину.
     const { x, y } = radialXY(90, corr, sub, tier);
-    const common = { id: idOf(key), branchId: bid, cost: { type: 'points', amount: 1 }, requires: [], levelReq: lvlAt(tier), x, y, notable: false };
+    const common = { id: idOf(key), branchId: bid, cost: { type: 'points', amount: 1 }, requires: [], levelReq: roleLvl(kind, key, pasTotal), x, y, notable: false };
     if (kind === 'a' && aq.length) {
       const src = aq.shift();
       const a = { ...src.effect.active, resource: meta.res };
@@ -603,8 +639,25 @@ Object.entries(CLASS_META).forEach(([classId, meta]) => {
   branches.push({ id: bid, name: meta.name, group: 'class', classId, resource: meta.res, entryNode: entryId });
 });
 
+/**
+ * УРОВЕНЬ ПО ЦЕПОЧКЕ НЕ ПАДАЕТ. Узлы берутся только по смежности (`townActions.allocActive`),
+ * поэтому ребёнок с уровнем НИЖЕ родителя — обещание, которого игра не сдержит: до него всё равно
+ * не дотянуться раньше родителя. Молча такое не пропускаем.
+ */
+function assertLevelsRise(nodes, edges) {
+  const by = new Map(nodes.map((n) => [n.id, n]));
+  for (const [a, b] of edges) {
+    const pa = by.get(a), ch = by.get(b);
+    if (!pa || !ch) continue;
+    if (ch.levelReq < pa.levelReq) {
+      throw new Error(`Уровень падает по цепочке: ${a} (ур.${pa.levelReq}) → ${b} (ур.${ch.levelReq})`);
+    }
+  }
+}
+
 // Раскладка проверяется ДО записи: лучше упасть, чем положить в репозиторий кашу.
 const worst = assertNoOverlap(nodes, branches);
+assertLevelsRise(nodes, edges);
 writeFileSync(out, JSON.stringify({ branches, entryNodes, edges, nodes }, null, 2) + '\n');
 const classCount = branches.filter((b) => b.classId).length;
 console.log(`Веток: ${branches.length} (класс: ${classCount}), узлов: ${nodes.length}, рёбер: ${edges.length} → ${out}`);

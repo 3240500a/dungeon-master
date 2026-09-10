@@ -77,3 +77,64 @@ describe('описания собраны из чисел, а не «Актив�
     }
   });
 });
+
+describe('лестница уровней: вехи для приёмов, ровный подъём для процентов', () => {
+  /**
+   * Раньше уровень считался ПО ЯРУСУ — то есть по геометрии, как далеко узел от центра. Выходило
+   * криво: первая активка ждала шестого уровня, пока рядом открывались проценты. Теперь уровень
+   * зависит от РОЛИ узла: приёмы приходят редкими вехами, проценты подтягиваются ровно.
+   */
+  const nodesOf = (pred: (n: { effect: { active?: unknown; grantsInsert?: string } }) => boolean) =>
+    cfg.get('skill-tree').nodes.filter(pred);
+
+  it('активки открываются только на 2, 7, 15, 25 и 40', () => {
+    const actives = nodesOf((n) => !!n.effect.active);
+    expect(actives.length).toBeGreaterThan(50);
+    const levels = [...new Set(actives.map((n) => n.levelReq))].sort((a, b) => a - b);
+    expect(levels).toEqual([2, 7, 15, 25, 40]);
+  });
+
+  it('вставки стоят МЕЖДУ активками — вставку некуда девать без скила-носителя', () => {
+    const donors = nodesOf((n) => !!n.effect.grantsInsert);
+    expect(donors.length).toBeGreaterThan(0);
+    for (const d of donors) {
+      expect(d.levelReq, d.id).toBeGreaterThanOrEqual(5);
+      expect(d.levelReq, d.id).toBeLessThanOrEqual(40);
+    }
+  });
+
+  it('КАЖДАЯ ветка доходит ровно до 40 и начинается с 1', () => {
+    const tree = cfg.get('skill-tree');
+    for (const b of tree.branches) {
+      const ns = tree.nodes.filter((n) => n.branchId === b.id);
+      if (!ns.length) continue;
+      const lv = ns.map((n) => n.levelReq);
+      expect(Math.min(...lv), `${b.id}: вход на первом уровне`).toBe(1);
+      expect(Math.max(...lv), `${b.id}: последний узел на 40-м`).toBe(40);
+    }
+  });
+
+  it('подъём РОВНЫЙ: между соседними ступенями пассивов не больше 8 уровней', () => {
+    const tree = cfg.get('skill-tree');
+    for (const b of tree.branches) {
+      const lv = tree.nodes
+        .filter((n) => n.branchId === b.id && !n.effect.active && !n.effect.grantsInsert)
+        .map((n) => n.levelReq).sort((x, y) => x - y);
+      for (let i = 1; i < lv.length; i++) {
+        expect(lv[i]! - lv[i - 1]!, `${b.id}: провал между ур.${lv[i - 1]} и ур.${lv[i]}`).toBeLessThanOrEqual(8);
+      }
+    }
+  });
+
+  it('УРОВЕНЬ ПО ЦЕПОЧКЕ НЕ ПАДАЕТ', () => {
+    // Узлы берутся по смежности, поэтому ребёнок с уровнем ниже родителя — обещание, которого
+    // игра не сдержит: до него всё равно не дотянуться раньше родителя.
+    const tree = cfg.get('skill-tree');
+    const by = new Map(tree.nodes.map((n) => [n.id, n]));
+    for (const [a, b] of tree.edges) {
+      const pa = by.get(a), ch = by.get(b);
+      if (!pa || !ch) continue;
+      expect(ch.levelReq, `${a} (ур.${pa.levelReq}) → ${b}`).toBeGreaterThanOrEqual(pa.levelReq);
+    }
+  });
+});
