@@ -199,3 +199,27 @@ describe('вставки достижимы из дерева', () => {
     }
   });
 });
+
+/**
+ * ЛОВУШКА, НА КОТОРУЮ Я УЖЕ НАСТУПИЛ. У DoT-статусов (кровотечение/поджиг/яд) поле `ailment.mag`
+ * едет в движок как `magPerDamage` — ДОЛЯ урона удара в секунду за стак (`session.skillExtraOpts`),
+ * а у прочих остаётся флэтом. Первые «Зазубрины» были записаны как mag: 5 — то есть впятеро урона
+ * удара в секунду; замер показал +960% ДПС от одной вставки. Ошибка тихая: схема пропускает,
+ * тесты резолва пропускают, видно только в бою.
+ */
+describe('DoT-вставки: mag — доля урона удара, а не флэт', () => {
+  const DOT = ['bleed', 'burn', 'poison'];
+  it('не крупнее утроенного оружейного значения того же статуса', () => {
+    const debuffs = cfg.get('debuffs');
+    let checked = 0;
+    for (const ins of cfg.get('skill-inserts')) {
+      const a = ins.tune?.ailment;
+      if (!a?.kind || !DOT.includes(a.kind)) continue;
+      const ref = debuffs.find((d) => d.id === a.kind)?.weapon.magPerDamage ?? 0;
+      expect(ref, `в debuffs есть эталон для ${a.kind}`).toBeGreaterThan(0);
+      expect(a.mag, `${ins.id}: ${a.kind} mag=${a.mag} против оружейного ${ref}`).toBeLessThanOrEqual(ref * 3);
+      checked++;
+    }
+    expect(checked, 'DoT-вставки вообще есть — иначе тест зелен от пустоты').toBeGreaterThan(0);
+  });
+});

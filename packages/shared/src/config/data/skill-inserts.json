@@ -69,7 +69,7 @@
       "ailment": {
         "kind": "burn",
         "chance": 0.35,
-        "mag": 6,
+        "mag": 0.14,
         "maxStacks": 3,
         "durationMs": 4000
       }
@@ -114,7 +114,7 @@
       "ailment": {
         "kind": "bleed",
         "chance": 0.35,
-        "mag": 5,
+        "mag": 0.09,
         "maxStacks": 3,
         "durationMs": 5000
       }
