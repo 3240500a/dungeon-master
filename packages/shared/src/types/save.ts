@@ -25,6 +25,12 @@ export interface SaveState {
   /** Нераспределённые очки пассивных навыков (пассивы тратят их + золото). */
   unspentMasteryPoints: number;
   skills: SkillAllocation;
+  /**
+   * ВСТАВКИ В ГНЁЗДАХ активных скилов: id узла → вставки по гнёздам (`null` — гнездо пусто).
+   * Необязательное намеренно: старые сейвы читаются как есть, без миграции — нет поля значит
+   * «гнёзда пусты», а пустые гнёзда обязаны давать ровно прежнюю способность (`session/inserts.ts`).
+   */
+  sockets?: Record<string, (string | null)[]>;
   masteries: SkillAllocation;
   /** Экипировка по слотам. */
   equipment: Partial<Record<EquipSlot, Item>>;

@@ -31,6 +31,8 @@ import rarities from './data/rarities.json' with { type: 'json' };
 import rareNames from './data/rare-names.json' with { type: 'json' };
 import masteryTree from './data/mastery-tree.json' with { type: 'json' };
 import skillTree from './data/skill-tree.json' with { type: 'json' };
+import skillInsertTypes from './data/skill-insert-types.json' with { type: 'json' };
+import skillInserts from './data/skill-inserts.json' with { type: 'json' };
 import questsMain from './data/quests-main.json' with { type: 'json' };
 import questsRandom from './data/quests-random.json' with { type: 'json' };
 import roomPrefabs from './data/room-prefabs.json' with { type: 'json' };
@@ -75,6 +77,8 @@ export const defaultConfigData: Record<string, unknown> = {
   'rare-names': rareNames,
   'mastery-tree': masteryTree,
   'skill-tree': skillTree,
+  'skill-insert-types': skillInsertTypes,
+  'skill-inserts': skillInserts,
   'quests.main': questsMain,
   'quests.random': questsRandom,
   'room-prefabs': roomPrefabs,

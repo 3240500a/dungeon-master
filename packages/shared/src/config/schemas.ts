@@ -100,6 +100,11 @@ export const balanceSchema = z.object({
   passiveRespecCostPct: z.number().min(0).default(0.5),
   /** Сброс дерева скилов: золото за каждое вложенное очко скилла. */
   skillRespecCostPerPoint: z.number().int().min(0).default(100),
+  /**
+   * ГНЁЗДА АКТИВНОГО СКИЛА — на каких рангах открывается очередное. Длина массива = потолок гнёзд.
+   * В конфиге, а не в коде: это главная ручка глубины сборки, её крутит дизайнер.
+   */
+  skillSocketRanks: z.array(z.number().int().min(1)).default([1, 6, 12]),
   /** Размер сетки инвентаря в клетках. */
   inventory: z
     .object({ cols: z.number().int().min(4), rows: z.number().int().min(4) })
@@ -1512,6 +1517,109 @@ export const activeAbilitySchema = z.discriminatedUnion('category', [
   attackAbilitySchema, castAbilitySchema, curseAbilitySchema, auraAbilitySchema, stanceAbilitySchema, buffAbilitySchema,
 ]);
 
+// ── ВСТАВКИ В АКТИВНЫЕ СКИЛЫ (модульные скилы) ──────────────────────────────────────────────
+/**
+ * ЗАЧЕМ. Вместо того чтобы выдумывать отдельный скил на каждую идею, игрок собирает скил сам:
+ * у активного узла есть ГНЁЗДА (открываются рангом), в них ставятся ВСТАВКИ, открытые в ветках.
+ * Разнообразие берётся из комбинаций, а не из нового контента.
+ *
+ * ТИП — ОСЬ ВЫБОРА, а не ярлык: в одном скиле не больше одной вставки каждого типа. Гнёзд три,
+ * типов больше, поэтому взять всё нельзя и сборка становится решением. Гнёзда СВОБОДНЫЕ —
+ * какие типы занять, решает игрок.
+ *
+ * Типы — ДАННЫЕ, а не enum в коде: движку от типа нужно ровно одно правило (исключение),
+ * поэтому новый тип заводится в редакторе, без правки кода.
+ */
+export const skillInsertTypesSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().default(''),
+    /** Цвет метки в интерфейсе (гнездо/значок вставки). */
+    color: z.string().default('#8fb7ff'),
+    /** Порядок в списках редактора и панели скилов. */
+    order: z.number().int().default(0),
+    enabled: z.boolean().default(true),
+  }),
+);
+
+/**
+ * Куда вставка влезает. Пусто → куда угодно. Отсекает бессмыслицу («веер снарядов» в мили-удар,
+ * «волна вокруг» в ауру) ДО того, как игрок потратит на это гнездо.
+ */
+const insertFitsSchema = z.object({
+  categories: z.array(z.enum(['attack', 'cast', 'curse'])).optional(),
+  shapes: z.array(z.enum(['dash', 'leap', 'nova', 'ground', 'meteor', 'boomerang'])).optional(),
+  /** Только для этих классов оружия у носителя (пусто — любое). */
+  weaponClasses: z.array(z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff'])).optional(),
+}).default({});
+
+/**
+ * ПРАВКА ПОЛЕЙ НОСИТЕЛЯ. Всё необязательное: заданное — применяется, незаданное — не трогается.
+ * Множители перемножаются с полем носителя, добавки складываются, «жёсткие» значения (стихия,
+ * статус) заменяют. Разделение важно: `damageMult` у скила уже есть, и вставка должна его
+ * УСИЛИВАТЬ, а не затирать.
+ */
+const insertTuneSchema = z.object({
+  damageMultMul: z.number().min(0).optional(),
+  speedMul: z.number().min(0).optional(),
+  arcMultMul: z.number().min(0).optional(),
+  rangeMultMul: z.number().min(0).optional(),
+  radiusMul: z.number().min(0).optional(),
+  /** Стихия скила: задаётся вместе с конверсией/добавкой, иначе менять состав нечем. */
+  element: damageTypeEnum.optional(),
+  /** Абсолютные значения долей 0..1 — их складывать бессмысленно, поэтому заменяют. */
+  convertPct: z.number().min(0).max(1).optional(),
+  addElementPct: z.number().min(0).optional(),
+  multScope: z.enum(['base', 'all']).optional(),
+  /** Добавки к контролю (складываются с полем носителя). */
+  knockbackAdd: z.number().optional(),
+  stunSecAdd: z.number().optional(),
+  knockdownChanceAdd: z.number().optional(),
+  /** Охват: +снаряды/+удары/пробитие. */
+  countAdd: z.number().int().optional(),
+  spreadAdd: z.number().optional(),
+  hitsAdd: z.number().int().optional(),
+  pierce: z.boolean().optional(),
+  /** Накладываемый статус — заменяет статус носителя целиком (складывать шансы нечестно). */
+  ailment: ailmentApplySchema.optional(),
+});
+
+/**
+ * ДОПОЛНИТЕЛЬНЫЙ ЭФФЕКТ при событии. Способность встроена ЦЕЛИКОМ, а не ссылкой на узел дерева:
+ * иначе на каждую вставку пришлось бы заводить узел-призрак, которого нет в интерфейсе.
+ *
+ * `on: 'cast'` — при использовании носителя. `on: 'hit'` пока НЕ реализован: снаряды бьют позже
+ * кадра запуска, и узел-источник надо протаскивать через `world.projectiles`. Поле оставлено,
+ * чтобы формат не переделывать, когда дойдут руки.
+ */
+const insertProcSchema = z.object({
+  on: z.enum(['cast', 'hit']).default('cast'),
+  chance: z.number().min(0).max(1).default(1),
+  ability: activeAbilitySchema,
+});
+
+export const skillInsertsSchema = z.array(
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().default(''),
+    /** id из `skill-insert-types`. Одна вставка каждого типа на скил. */
+    type: z.string(),
+    fits: insertFitsSchema,
+    /**
+     * ЦЕНА СБОРКИ. Множители перемножаются по всем вставкам скила: три вставки ≈ ×2.2 к стоимости.
+     * Без этого «ставь всё» было бы единственной стратегией — голый скил обязан оставаться
+     * дешёвым и спамным, а собранный бить реже и дороже.
+     */
+    costMult: z.number().min(0.1).default(1.3),
+    cooldownMult: z.number().min(0.1).default(1.15),
+    tune: insertTuneSchema.optional(),
+    proc: insertProcSchema.optional(),
+    enabled: z.boolean().default(true),
+  }),
+);
+
 const skillEffectSchema = z.object({
   modifiers: z.array(statModifierSchema).optional(),
   /** Реактивные триггеры мастерства (условные эффекты на удар/получение урона). */
@@ -1529,6 +1637,12 @@ const skillEffectSchema = z.object({
     .optional(),
   /** Активная способность (v2): дискриминированная по `category` (attack/cast/aura/stance/buff). */
   active: activeAbilitySchema.optional(),
+  /**
+   * Узел ОТКРЫВАЕТ вставку (id из `skill-inserts`). Ранг узла = сила вставки — так ранги
+   * перестают быть только цифрами урона. Проверка «открыта ли вставка» идёт по этому полю,
+   * поэтому чужую вставку в гнездо не положить.
+   */
+  grantsInsert: z.string().optional(),
 });
 
 const skillNodeBase = {
@@ -1874,6 +1988,8 @@ export const configSchemas = {
   'rare-names': rareNamesSchema,
   'mastery-tree': skillsPassiveSchema,
   'skill-tree': skillTreeSchema,
+  'skill-insert-types': skillInsertTypesSchema,
+  'skill-inserts': skillInsertsSchema,
   'quests.main': questsMainSchema,
   'quests.random': questsRandomSchema,
   'room-prefabs': roomPrefabsSchema,

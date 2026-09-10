@@ -58,6 +58,8 @@ const LABELS: Record<ConfigKey, string> = {
   'rare-names': 'Имена rare',
   'mastery-tree': 'Дерево мастерства',
   'skill-tree': 'Древо скилов',
+  'skill-insert-types': 'Вставки: типы',
+  'skill-inserts': 'Вставки в скилы',
   'quests.main': 'Квесты: основные',
   'quests.random': 'Квесты: случайные',
   'room-prefabs': 'Комнаты (префабы)',
@@ -88,7 +90,7 @@ const NAV_GROUPS: NavGroup[] = [
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'rarities', 'affixes', 'uniques', 'rare-names'] },
   { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-item-affixes', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'objects', 'environment', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
-  { title: 'Скиллы', keys: ['skill-tree', 'mastery-tree'] },
+  { title: 'Скиллы', keys: ['skill-tree', 'skill-inserts', 'skill-insert-types', 'mastery-tree'] },
   { title: 'Квесты', keys: ['quests.main', 'quests.random'] },
   { title: '🧊 3D-ассеты', keys: ['models', 'materials', 'textures'] },
 ];
@@ -97,7 +99,7 @@ const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => 
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
   'item-tiers': 'Тиры', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'depth-tiers': 'Тиры глубины', 'monster-derive': 'Деривация', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
-  'skill-tree': 'Древо скилов', 'mastery-tree': 'Мастерства',
+  'skill-tree': 'Древо скилов', 'skill-inserts': 'Вставки', 'skill-insert-types': 'Типы вставок', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
   'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',
   'rare-names': 'Имена rare',
@@ -264,6 +266,9 @@ fieldEnumSources.stat = () => allStatKeys();
 // skillId (у прока «шанс каста при ударе») — выпадашка активных узлов дерева скилов.
 fieldEnumSources.skillId = () => ((data['skill-tree'] as { nodes?: { id: string; kind?: string }[] } | undefined)?.nodes ?? []).filter((n) => n.kind === 'active').map((n) => n.id);
 // biomeId (в этажах) — выпадашка из конфига биомов.
+// Вставки: тип и id — выбором из списка, а не руками: опечатка в id — это молча неработающая вставка.
+fieldEnumSources.type = () => ((data['skill-insert-types'] as { id: string }[]) ?? []).map((t) => t.id);
+fieldEnumSources.grantsInsert = () => ((data['skill-inserts'] as { id: string }[]) ?? []).map((i) => i.id);
 fieldEnumSources.biomeId = () => ((data['biomes'] as { id: string }[]) ?? []).map((b) => b.id);
 // role (у монстра и в составе пачки) — выпадашка из конфига ролей монстров.
 fieldEnumSources.role = () => ((data['monster-roles'] as { id: string }[]) ?? []).map((r) => r.id);

@@ -1,0 +1,383 @@
+[
+  {
+    "id": "ins-flame-edge",
+    "name": "Пламенное лезвие",
+    "type": "damage",
+    "description": "Треть урона скила добавляется огнём сверх обычного состава.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.25,
+    "cooldownMult": 1.1,
+    "tune": {
+      "element": "fire",
+      "addElementPct": 0.35
+    }
+  },
+  {
+    "id": "ins-frost-edge",
+    "name": "Морозная кромка",
+    "type": "damage",
+    "description": "Треть урона скила добавляется холодом сверх обычного состава.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.25,
+    "cooldownMult": 1.1,
+    "tune": {
+      "element": "cold",
+      "addElementPct": 0.35
+    }
+  },
+  {
+    "id": "ins-heavy-blow",
+    "name": "Тяжёлый удар",
+    "type": "damage",
+    "description": "Урон ×1.4, но скил заметно дороже и медленнее в откате.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.5,
+    "cooldownMult": 1.35,
+    "tune": {
+      "damageMultMul": 1.4
+    }
+  },
+  {
+    "id": "ins-kindling",
+    "name": "Растопка",
+    "type": "ailment",
+    "description": "Треть попаданий поджигает цель.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.2,
+    "cooldownMult": 1.1,
+    "tune": {
+      "ailment": {
+        "kind": "burn",
+        "chance": 0.35,
+        "mag": 6,
+        "maxStacks": 3,
+        "durationMs": 4000
+      }
+    }
+  },
+  {
+    "id": "ins-hoarfrost",
+    "name": "Иней",
+    "type": "ailment",
+    "description": "Треть попаданий сковывает холодом — цель двигается медленнее.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.2,
+    "cooldownMult": 1.1,
+    "tune": {
+      "ailment": {
+        "kind": "freeze",
+        "chance": 0.35,
+        "mag": 0.25,
+        "maxStacks": 2,
+        "durationMs": 3000
+      }
+    }
+  },
+  {
+    "id": "ins-serrated",
+    "name": "Зазубрины",
+    "type": "ailment",
+    "description": "Треть попаданий оставляет кровотечение.",
+    "fits": {
+      "categories": [
+        "attack"
+      ]
+    },
+    "costMult": 1.2,
+    "cooldownMult": 1.1,
+    "tune": {
+      "ailment": {
+        "kind": "bleed",
+        "chance": 0.35,
+        "mag": 5,
+        "maxStacks": 3,
+        "durationMs": 5000
+      }
+    }
+  },
+  {
+    "id": "ins-wide-arc",
+    "name": "Широкий размах",
+    "type": "area",
+    "description": "Дуга шире и дальше, но каждый удар слабее.",
+    "fits": {
+      "categories": [
+        "attack"
+      ]
+    },
+    "costMult": 1.25,
+    "cooldownMult": 1.15,
+    "tune": {
+      "arcMultMul": 1.6,
+      "rangeMultMul": 1.15,
+      "damageMultMul": 0.85
+    }
+  },
+  {
+    "id": "ins-flurry",
+    "name": "Череда",
+    "type": "area",
+    "description": "Два удара вместо одного, каждый вполсилы.",
+    "fits": {
+      "categories": [
+        "attack"
+      ]
+    },
+    "costMult": 1.35,
+    "cooldownMult": 1.2,
+    "tune": {
+      "hitsAdd": 1,
+      "damageMultMul": 0.6
+    }
+  },
+  {
+    "id": "ins-piercing",
+    "name": "Пробойник",
+    "type": "area",
+    "description": "Снаряд проходит сквозь цель и летит дальше.",
+    "fits": {
+      "categories": [
+        "attack"
+      ],
+      "weaponClasses": [
+        "bow",
+        "crossbow",
+        "wand",
+        "staff"
+      ]
+    },
+    "costMult": 1.3,
+    "cooldownMult": 1.15,
+    "tune": {
+      "pierce": true,
+      "damageMultMul": 0.9
+    }
+  },
+  {
+    "id": "ins-shove",
+    "name": "Толчок",
+    "type": "control",
+    "description": "Отбрасывает задетых назад.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.2,
+    "cooldownMult": 1.1,
+    "tune": {
+      "knockbackAdd": 90
+    }
+  },
+  {
+    "id": "ins-sweep",
+    "name": "Подсечка",
+    "type": "control",
+    "description": "Заметный шанс сбить цель с ног.",
+    "fits": {
+      "categories": [
+        "attack"
+      ]
+    },
+    "costMult": 1.35,
+    "cooldownMult": 1.25,
+    "tune": {
+      "knockdownChanceAdd": 0.25
+    }
+  },
+  {
+    "id": "ins-cold-wave",
+    "name": "Волна холода",
+    "type": "companion",
+    "description": "При использовании расходится волна холода и сковывает всех рядом.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.4,
+    "cooldownMult": 1.25,
+    "proc": {
+      "on": "cast",
+      "chance": 1,
+      "ability": {
+        "category": "cast",
+        "abilityId": "insert-cold-wave",
+        "shape": "nova",
+        "manaCost": 0,
+        "resource": "mana",
+        "cooldown": 0,
+        "castTimeSec": 0,
+        "element": "cold",
+        "convertPct": 1,
+        "damageMult": 0.45,
+        "radius": 165,
+        "ailment": {
+          "kind": "freeze",
+          "chance": 0.5,
+          "mag": 0.25,
+          "maxStacks": 2,
+          "durationMs": 2500
+        }
+      }
+    }
+  },
+  {
+    "id": "ins-arc-burst",
+    "name": "Дуговой разряд",
+    "type": "companion",
+    "description": "При использовании бьёт разрядом всех, кто стоит вплотную.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.4,
+    "cooldownMult": 1.25,
+    "proc": {
+      "on": "cast",
+      "chance": 1,
+      "ability": {
+        "category": "cast",
+        "abilityId": "insert-arc-burst",
+        "shape": "nova",
+        "manaCost": 0,
+        "resource": "mana",
+        "cooldown": 0,
+        "castTimeSec": 0,
+        "element": "lightning",
+        "convertPct": 1,
+        "damageMult": 0.6,
+        "radius": 110
+      }
+    }
+  },
+  {
+    "id": "ins-quickening",
+    "name": "Скорая рука",
+    "type": "tempo",
+    "description": "Откат короче почти на треть — ценой урона.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.0,
+    "cooldownMult": 0.7,
+    "tune": {
+      "damageMultMul": 0.8
+    }
+  },
+  {
+    "id": "ins-thrift",
+    "name": "Бережливость",
+    "type": "tempo",
+    "description": "Скил заметно дешевле — ценой урона.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 0.7,
+    "cooldownMult": 1.0,
+    "tune": {
+      "damageMultMul": 0.85
+    }
+  },
+  {
+    "id": "ins-ward",
+    "name": "Оберег",
+    "type": "sigil",
+    "description": "При использовании накрывает бронёй на несколько секунд.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.3,
+    "cooldownMult": 1.2,
+    "proc": {
+      "on": "cast",
+      "chance": 1,
+      "ability": {
+        "category": "buff",
+        "abilityId": "insert-ward",
+        "manaCost": 0,
+        "resource": "mana",
+        "cooldown": 0,
+        "durationSec": 4,
+        "buffMods": [
+          {
+            "stat": "armor",
+            "kind": "increased",
+            "value": 0.4
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "ins-swiftness",
+    "name": "Лёгкий шаг",
+    "type": "sigil",
+    "description": "При использовании ускоряет на несколько секунд.",
+    "fits": {
+      "categories": [
+        "attack",
+        "cast"
+      ]
+    },
+    "costMult": 1.25,
+    "cooldownMult": 1.2,
+    "proc": {
+      "on": "cast",
+      "chance": 1,
+      "ability": {
+        "category": "buff",
+        "abilityId": "insert-swiftness",
+        "manaCost": 0,
+        "resource": "mana",
+        "cooldown": 0,
+        "durationSec": 3,
+        "buffMods": [
+          {
+            "stat": "moveSpeed",
+            "kind": "increased",
+            "value": 0.25
+          }
+        ]
+      }
+    }
+  }
+]

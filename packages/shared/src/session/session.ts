@@ -23,6 +23,7 @@ import { moveWithCollision, type Vec2 } from '../world/movement.js';
 import { resolveEntityCollisions, type CollisionBody } from '../world/separation.js';
 import { playerWeight, type WeightTables } from '../formulas/stats.js';
 import { activeAbilityOf, reservedFrac, effectivePool, toggleBuffMods } from './toggles.js';
+import { resolveActive, type InsertProc, type ResolvedActive } from './inserts.js';
 import { isBlockedCell, worldToCell, Cell } from '../world/grid.js';
 import type { Grid } from '../world/grid.js';
 import { hasLineOfSight } from '../world/lineOfSight.js';
@@ -631,8 +632,11 @@ export class GameSession {
   }
 
   private castSkill(p: PlayerEntity, snap: PlayerSnapshot, nodeId: string): void {
-    const active = this.activeById(p.save, nodeId);
-    if (!active) return;
+    // СО ВСТАВКАМИ: дальше всё (ресурс, КД, оружие, замах, исполнение) работает на ЭФФЕКТИВНОЙ
+    // способности — именно поэтому вся система стоит на одном шве, а не на десятке правок.
+    const res = resolveActive(this.cfg, p.save, nodeId);
+    if (!res) return;
+    const active = res.active;
     if (!this.nodeUsable(p.save, nodeId)) return;      // класс-ветка чужого класса — недоступна
     const rank = p.save.skills[nodeId] ?? 1;     // выученный ранг (клиент биндит только выученное)
 
@@ -663,7 +667,7 @@ export class GameSession {
         const windup = this.windupSec(p.attackCd, active.windupSec);
         this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0), p.attackCd);
         if (windup > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: windup }; return; }
-        this.executeAbility(p, snap, active, rank);
+        this.executeResolved(p, snap, res, rank);
         return;
       }
       // Каст/проклятие: тайминг от скорости КАСТА (Интеллект), личный КД, НЕ делит attack-лок (lockMs=0).
@@ -678,7 +682,7 @@ export class GameSession {
         const castTime = active.castTimeSec / Math.max(0.2, snap.derived.castSpeed);
         this.emitSwing(p, nodeId, castTime, Math.max(castTime, p.skillCd[nodeId] ?? 0), 0);
         if (castTime > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: castTime }; return; }
-        this.executeAbility(p, snap, active, rank);
+        this.executeResolved(p, snap, res, rank);
         return;
       }
     }
@@ -702,8 +706,8 @@ export class GameSession {
     if (wu.remaining <= 0) {
       p.windup = null;
       if (wu.kind === 'attack') { this.executeBasicAttack(p, snap); return; }
-      const a = this.activeById(p.save, wu.nodeId);
-      if (a) this.executeAbility(p, snap, a, wu.rank);
+      const r = resolveActive(this.cfg, p.save, wu.nodeId);
+      if (r) this.executeResolved(p, snap, r, wu.rank);
     }
   }
 
@@ -739,6 +743,12 @@ export class GameSession {
     if (p.toggles.length === 0 && Object.keys(p.skillBuffs).length === 0) return [];
     const mods = toggleBuffMods(this.cfg, p.toggles);
     for (const id of Object.keys(p.skillBuffs)) {
+      // Баффы вставок (тип «Печать») узла в дереве не имеют — ищем их в конфиге вставок.
+      if (id.startsWith('ins:')) {
+        const ab = this.cfg.get('skill-inserts').find((x) => x.id === id.slice(4))?.proc?.ability;
+        if (ab?.category === 'buff') mods.push(...(ab.buffMods ?? []));
+        continue;
+      }
       const a = this.activeById(p.save, id);
       if (a && (a.category === 'buff' || a.category === 'aura' || a.category === 'stance')) mods.push(...(a.buffMods ?? []));
     }
@@ -751,6 +761,37 @@ export class GameSession {
 
   private weights(): ConfigShapes['weapon-weights'] {
     return this.cfg.get('weapon-weights');
+  }
+
+  /**
+   * Исполнить способность СО ВСТАВКАМИ: сперва сам скил, потом доп. эффекты вставок.
+   * Порядок важен: волна холода должна добивать после удара, а не вместо него.
+   */
+  private executeResolved(p: PlayerEntity, snap: PlayerSnapshot, res: ResolvedActive, rank: number): void {
+    this.executeAbility(p, snap, res.active, rank);
+    if (res.procs.length) this.fireInsertProcs(p, snap, res.procs, rank);
+  }
+
+  /**
+   * ДОП. ЭФФЕКТЫ ВСТАВОК при использовании — тот же механизм и тот же гард, что у проков
+   * аффиксов (`rollHitProcs`): без `procActive` волна с проком вызвала бы сама себя.
+   *
+   * `on: 'hit'` здесь НЕ срабатывает осознанно: снаряды бьют позже кадра запуска, и узел-источник
+   * надо протаскивать через `world.projectiles` — это отдельный заход.
+   */
+  private fireInsertProcs(p: PlayerEntity, snap: PlayerSnapshot, procs: readonly InsertProc[], rank: number): void {
+    if (this.procActive) return;
+    this.procActive = true;
+    try {
+      for (const pr of procs) {
+        if (pr.on !== 'cast') continue;
+        if (pr.chance < 1 && !this.rng.chance(pr.chance)) continue;
+        // Печать (бафф на себя) не проходит через `executeAbility`: тот бьёт по миру, а бафф —
+        // состояние игрока. Ключ с префиксом `ins:` — чтобы не столкнуться с id узлов дерева.
+        if (pr.ability.category === 'buff') { p.skillBuffs['ins:' + pr.insertId] = pr.ability.durationSec; continue; }
+        this.executeAbility(p, snap, pr.ability, rank);
+      }
+    } finally { this.procActive = false; }
   }
 
   /** Диспетчер активной способности по категории (после списания маны/КД/замаха). */
