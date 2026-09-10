@@ -3,6 +3,7 @@ import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { COLORS, mk } from '../../ui/kit.js';
 import { buildBindBar } from '../../ui/bindBar.js';
 import { renderSkillTree } from './skillTreeView.js';
+import { renderSockets } from './socketsView.js';
 
 /** Панель биндов (D2) внизу окна скиллов — та же, что в HUD. */
 function renderBinds(app: App, body: HTMLElement): void {
@@ -25,7 +26,9 @@ export const skillsPanel: PanelFactory = (app) => {
       const wrap = mk('div', 'display:flex;flex-direction:column;max-height:82vh');
       renderSkillTree(app, wrap);
 
+      // Сборка скила и бинды — обе под холстом: обе про то, ЧЕМ игрок будет бить.
       const footer = mk('div', `flex:0 0 auto;border-top:1px solid ${COLORS.border};margin-top:8px;padding-top:4px`);
+      renderSockets(app, footer);
       renderBinds(app, footer);
       wrap.append(footer);
 

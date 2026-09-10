@@ -10,6 +10,7 @@ import { renderRunGenPage } from './runGen.js';
 import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
 import { renderCalcPage } from './calc.js';
+import { renderSkillBuildPage } from './skillBuild.js';
 import { devFetch } from '@dm/client/devAuth.js';   // инструментальные роуты требуют роли admin
 import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
@@ -141,7 +142,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'sweep' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' = 'config';
 // Верхняя секция редактора: Игра (конфиги+инструменты) / 3D-эдитор (поз-редактор) / Документация (описания механик).
 type Section = 'game' | 'pose' | 'docs';
 let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' ? s : 'game'; } catch { return 'game'; } })();
@@ -663,6 +664,13 @@ function renderGame(host: HTMLElement): void {
   calcBtn.addEventListener('click', () => { view = 'calc'; render(); });
   nav.appendChild(calcBtn);
 
+  // Отдельная вкладка-инструмент: предпросмотр модульного скила (носитель + вставки).
+  const buildBtn = document.createElement('button');
+  buildBtn.textContent = '🧩 Сборка скила';
+  buildBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'skillbuild' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  buildBtn.addEventListener('click', () => { view = 'skillbuild'; render(); });
+  nav.appendChild(buildBtn);
+
   // Отдельная вкладка-инструмент: свипы баланса (хитмап ударов-до-смерти).
   const sweepBtn = document.createElement('button');
   sweepBtn.textContent = '🔥 Свипы';
@@ -735,6 +743,7 @@ function renderGame(host: HTMLElement): void {
   else if (view === 'itemgen') renderItemGenPage(page, data);
   else if (view === 'monstergen') renderMonsterGenPage(page, data);
   else if (view === 'calc') renderCalcPage(page, data);
+  else if (view === 'skillbuild') renderSkillBuildPage(page, data);
   else if (view === 'sweep') renderSweepPage(page, data);
   else renderPage(page);
 

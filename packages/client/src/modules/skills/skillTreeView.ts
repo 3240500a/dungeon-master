@@ -174,10 +174,15 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
       const costLine = rank >= n.maxRank ? 'макс. ранг' : `след. ранг: ${n.cost.amount} очк.`;
       const lvlLine = state.save.level < n.levelReq
         ? `<div style="color:#d89b7c">требуется уровень ${n.levelReq}</div>` : '';
+      // Узел-донор: ранг здесь открывает вставку для сборки скилов — иначе игрок её не найдёт.
+      const ins = n.effect.grantsInsert ? app.config.get('skill-inserts').find((x) => x.id === n.effect.grantsInsert) : undefined;
+      const insLine = ins
+        ? `<div style="color:${COLORS.accent};margin-top:3px">\u25C6 Открывает вставку: ${ins.name}</div>` +
+          `<div style="color:#c4bca8">${ins.description}</div>` : '';
       return `<div style="color:${notable ? COLORS.gold : COLORS.text};font-weight:bold">${n.name}</div>` +
         `<div style="color:#9aa">${kindLbl} · ${br.name}</div>` +
         `<div style="color:#c4bca8">${n.description}</div>` + elLine +
-        `<div style="color:#9aa;margin-top:3px">ранг ${rank}/${n.maxRank} · ${costLine}</div>` + lvlLine;
+        `<div style="color:#9aa;margin-top:3px">ранг ${rank}/${n.maxRank} · ${costLine}</div>` + lvlLine + insLine;
     });
 
     rect.addEventListener('click', (e) => {
@@ -186,6 +191,18 @@ export function renderSkillTree(app: App, body: HTMLElement): void {
       app.sendCmd({ cmd: 'allocSkill', nodeId: n.id });
     });
     g.appendChild(rect);
+
+    // Узел-донор помечен ромбиком: без метки вставки в дереве не найти — они не отличались бы
+    // от обычных процентных пассивок, и вся сборка осталась бы для игрока невидимой.
+    if (n.effect.grantsInsert) {
+      const cx = n.x + size / 2, cy = n.y - size / 2, d = 4.5;
+      const dot = svg('polygon', {
+        points: `${cx},${cy - d} ${cx + d},${cy} ${cx},${cy + d} ${cx - d},${cy}`,
+        fill: alloc ? '#f2d792' : COLORS.accent, stroke: '#0e1117', 'stroke-width': 1,
+      });
+      dot.style.pointerEvents = 'none';
+      g.appendChild(dot);
+    }
   }
 
   // ── Подписи веток у внешнего края (цвет — по стороне) ──
