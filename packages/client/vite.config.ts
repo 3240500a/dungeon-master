@@ -24,12 +24,19 @@ export default defineConfig({
       '@dm/shared': resolve(__dirname, '../shared/src/index.ts'),
     },
   },
-  // Мультистраничная сборка: 2D-клиент (index), 3D-онлайн-клиент (game3d), редактор поз (pose-editor).
-  // Каждая страница — свой entry; иначе `vite build` соберёт только index.html.
+  /**
+   * Мультистраничная сборка. Каждая страница — свой entry; иначе `vite build` соберёт только index.html.
+   *
+   * ⚠ 2D-КЛИЕНТА (index.html) ЗДЕСЬ НАМЕРЕННО НЕТ. Игровой клиент теперь Unity, и 2D не должен
+   * уезжать на арендованный сервер и занимать там место и трафик. Код при этом НИКУДА НЕ УДАЛЁН:
+   * он лежит в репозитории и полностью работает в дев-режиме (`npm run dev` → localhost:5173),
+   * потому что Vite отдаёт в дев-режиме любой html из корня, независимо от этого списка.
+   * Веб-3D остаётся в сборке как ТЕСТОВЫЙ СТЕНД (графика в него больше не добавляется),
+   * поз-редактор — как рабочий инструмент, он ходит на серверный /api/pose с обеих машин.
+   */
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'index.html'),
         game3d: resolve(__dirname, 'game3d.html'),
         poseEditor: resolve(__dirname, 'pose-editor.html'),
       },

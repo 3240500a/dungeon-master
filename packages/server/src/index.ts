@@ -610,16 +610,20 @@ const CLIENT_DIST = process.env.CLIENT_DIST ?? join(dirname(fileURLToPath(import
 // мегабайт. Правильный ответ это CDN; переменная нужна, чтобы отделить игру от раздачи уже
 // сегодня, не дожидаясь CDN (второй процесс с тем же CLIENT_DIST).
 const SERVE_STATIC = process.env.DM_SERVE_STATIC !== 'off';
+// ⚠ Корневую страницу НЕЛЬЗЯ прибивать к index.html: 2D-клиент больше не собирается в продакшен
+// (см. `client/vite.config.ts`), и жёсткая ссылка на него выключила бы раздачу целиком — вместе
+// с 3D-стендом и поз-редактором. Берём первую существующую страницу, порядок = приоритет.
+const ENTRY = ['game3d.html', 'index.html'].find((f) => existsSync(join(CLIENT_DIST, f)));
 if (!SERVE_STATIC) {
   console.log('[dm-server] раздача статики выключена (DM_SERVE_STATIC=off)');
-} else if (existsSync(join(CLIENT_DIST, 'index.html'))) {
+} else if (ENTRY) {
   app.use(express.static(CLIENT_DIST));
-  // SPA-фолбэк: любой не-/api GET → index.html (deep links). /api/* уходит в 404 выше по стеку.
+  // SPA-фолбэк: любой не-/api GET → корневая страница (deep links). /api/* уходит в 404 выше по стеку.
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
-    res.sendFile(join(CLIENT_DIST, 'index.html'));
+    res.sendFile(join(CLIENT_DIST, ENTRY));
   });
-  console.log(`[dm-server] отдаю клиент из ${CLIENT_DIST}`);
+  console.log(`[dm-server] отдаю клиент из ${CLIENT_DIST}, корневая страница — ${ENTRY}`);
 } else {
   console.log('[dm-server] client/dist не найден — статику не отдаю (dev: клиент на Vite :5173)');
 }
