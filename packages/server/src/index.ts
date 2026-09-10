@@ -4,8 +4,9 @@ import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
-import { ConfigRegistry, newCharacterSave } from '@dm/shared';
+import { existsSync, writeFileSync, readFileSync, mkdirSync, watch } from 'node:fs';
+import { ConfigRegistry, configSchemas, newCharacterSave } from '@dm/shared';
+import { configKeyForFile } from './configFiles.js';
 import { hashPassword, verifyPassword } from './auth/password.js';
 import {
   createUser, getUserByName, createSession, deleteSession, getSession, countRecentRegistrations,
@@ -39,13 +40,18 @@ const config = new ConfigRegistry();
 
 /** Накатывает сохранённые оверрайды поверх дефолтов (устойчиво к невалидным — пропускает). */
 async function applyConfigOverrides(): Promise<void> {
-  for (const [key, value] of Object.entries(await getConfigOverrides())) {
+  const all = await getConfigOverrides();
+  for (const [key, value] of Object.entries(all)) {
     try {
       config.reload({ [key]: value });
     } catch (e) {
       console.warn(`[dm-server] пропущен невалидный оверрайд конфига "${key}": ${e instanceof Error ? e.message : e}`);
     }
   }
+  // ГОВОРИМ ВСЛУХ, что перекрыто. Оверрайд из редактора живёт в БД и переживает рестарт, поэтому
+  // «правлю файл, а везде старое» выглядит как мистика, пока не увидишь эту строчку.
+  const keys = Object.keys(all);
+  if (keys.length) console.log(`[dm-server] поверх файлов лежат оверрайды редактора: ${keys.join(', ')}`);
 }
 /** Полная пересборка живого конфига: дефолты + персистентные оверрайды (комнаты держат ссылку). */
 async function rebuildConfig(): Promise<void> {
@@ -65,6 +71,8 @@ async function boot(): Promise<void> {
 
   // Рестарт сервера = чистый лист забегов: сбрасываем все НЕЗАВЕРШЁННЫЕ забеги (save.run) у всех
   // персонажей. Иначе спуск из города РЕЗЮМИТ старый забег (старый биом/сид) и игнорит алтарь.
+  watchConfigFiles();   // правки data/*.json должны быть видны в редакторе и в игре без рестарта
+
   const wiped = await clearAllRuns();
   if (wiped) console.log(`[dm-server] сброшено незавершённых забегов: ${wiped}`);
 
@@ -267,6 +275,59 @@ app.post('/api/dev/config-file', ah(async (req, res) => {
 }));
 
 // Сброс ключа к встроенному дефолту (удаляет персистентный оверрайд).
+/**
+ * ЖИВОЕ ПЕРЕЧИТЫВАНИЕ `data/*.json` С ДИСКА.
+ *
+ * ЗАЧЕМ. Редактор конфигов и оба клиента (веб-3D и Unity) берут конфиг с сервера, а сервер держит
+ * его В ПАМЯТИ: дефолты приходят ESM-импортом `defaults.ts` в момент старта. Значит правка файла —
+ * генератором, руками, `git pull` — не доезжала НИКУДА до перезапуска процесса, и человек честно
+ * видел старое дерево, старый баланс, старые числа. `tsx watch` эти файлы игнорирует намеренно
+ * (иначе каждая правка из редактора роняла бы процесс), так что сам себя он тоже не спасал.
+ *
+ * Поэтому следим за папкой данных здесь: файл поменялся → перечитали с диска → провалидировали →
+ * положили в живой реестр. Комнаты держат ССЫЛКУ на реестр, поэтому подхватывают без реконнекта.
+ *
+ * ФАЙЛ ГЛАВНЕЕ ОВЕРРАЙДА, и устаревший оверрайд снимается. Иначе выходит ровно та ловушка, на
+ * которой мы и попались: один раз нажатое в редакторе «Применить на сервере» кладёт снимок в
+ * `config_overrides`, и дальше он НАВСЕГДА перекрывает файл — сколько ни правь данные, и редактор,
+ * и оба клиента показывают старое. Правка файла — осознанное авторское действие (генератор, руки,
+ * `git pull`), она и должна побеждать; «Применить и записать в файл» пишет оба места разом, так что
+ * согласованность не страдает.
+ */
+function watchConfigFiles(): void {
+  if (process.env.NODE_ENV === 'production' || process.env.DM_WATCH_CONFIG === '0') return;
+  const pending = new Map<string, NodeJS.Timeout>();
+  try {
+    watch(DATA_DIR, (_ev, file) => {
+      if (!file || !file.endsWith('.json')) return;
+      clearTimeout(pending.get(file));
+      // Дребезг: запись файла редактором/генератором прилетает несколькими событиями подряд.
+      pending.set(file, setTimeout(() => { pending.delete(file); void applyFileChange('', file); }, 200));
+    });
+    console.log(`[dm-server] слежу за ${DATA_DIR} — правки data/*.json подхватываются на лету`);
+  } catch (e) {
+    console.warn(`[dm-server] не удалось следить за конфигами: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+async function applyFileChange(_key: string, file: string): Promise<void> {
+  const real = configKeyForFile(file, Object.keys(configSchemas));
+  if (!real) return;
+  try {
+    const value = JSON.parse(readFileSync(join(DATA_DIR, file), 'utf8'));
+    config.reload({ [real]: value });                       // сперва валидация: невалидный файл сюда не пройдёт
+    if (Object.prototype.hasOwnProperty.call(await getConfigOverrides(), real)) {
+      await deleteConfigOverride(real);                     // снимаем устаревший снимок, иначе он переживёт рестарт
+      console.log(`[dm-server] снят устаревший оверрайд «${real}» — теперь главенствует файл`);
+    }
+    rebuildConfigCache();
+    console.log(`[dm-server] конфиг перечитан с диска: ${real}`);
+  } catch (e) {
+    // Файл могли поймать на середине записи или он реально невалиден — живой конфиг не трогаем.
+    console.warn(`[dm-server] ${file} не применён: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 app.delete('/api/dev/config/:key', ah<{ key: string }>(async (req, res) => {
   if (!await devGuard(req, res)) return;
   await deleteConfigOverride(req.params.key);
