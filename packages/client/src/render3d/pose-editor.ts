@@ -3901,6 +3901,8 @@ function morphSection(): void {
 
 // Вкладка БЕГ — 2D бленд-дерево локомоции (Unity-стиль): узлы-клипы на VelX/VelZ, красная точка-семпл, превью на месте
 const PAD = 240, PADM = 24;
+/** Якоря скорости на паде: центр→ходьба, край→бег. Те же числа у 16 точек плант-сетки и у переключателя режима. */
+const PAD_WALK = 0.34, PAD_RUN = 0.95;
 const velToPad = (vx: number, vz: number): [number, number] => [PAD / 2 + vx * (PAD / 2 - PADM), PAD / 2 - vz * (PAD / 2 - PADM)];
 const padToVel = (px: number, py: number): [number, number] => [clamp((px - PAD / 2) / (PAD / 2 - PADM), -1, 1), clamp(-(py - PAD / 2) / (PAD / 2 - PADM), -1, 1)];
 function drawPad(cv: HTMLCanvasElement): void {
@@ -3912,7 +3914,7 @@ function drawPad(cv: HTMLCanvasElement): void {
   ctx.fillStyle = '#5a6478'; ctx.font = '9px monospace'; ctx.fillText('вперёд', PAD / 2 + 3, PADM + 9); ctx.fillText('назад', PAD / 2 + 3, PAD - PADM - 3); ctx.fillText('П', PAD - PADM - 8, PAD / 2 - 3); ctx.fillText('Л', PADM + 2, PAD / 2 - 3);
   if (editPlant) {   // 16 точек-ячеек плантов: внешнее кольцо (mag .95) = БЕГ, внутреннее (.34) = ХОДЬБА; активная подсвечена
     for (const run of [false, true]) for (let i = 0; i < 8; i++) {
-      const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; const [px, py] = velToPad(Math.sin(th) * mag, Math.cos(th) * mag);
+      const th = i * DIR_STEP, mag = run ? PAD_RUN : PAD_WALK; const [px, py] = velToPad(Math.sin(th) * mag, Math.cos(th) * mag);
       const on = i === plantDirSel && run === plantSpeedRun;
       ctx.beginPath(); ctx.arc(px, py, on ? 6 : 4, 0, 7); ctx.fillStyle = on ? '#ffd24a' : run ? '#46d07a' : '#357a52'; ctx.fill();
       if (on) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke(); }
@@ -3926,11 +3928,11 @@ function renderLoco(): void {
   const cv = document.createElement('canvas'); cv.width = PAD; cv.height = PAD; cv.style.cssText = 'width:100%;max-width:250px;display:block;border:1px solid #39415a;border-radius:6px;touch-action:none;cursor:crosshair'; body.append(cv);
   const redraw = (): void => drawPad(cv); redraw();
   // Выбор ЯЧЕЙКИ планта = клик по одной из 16 точек на квадрате (8 внешних = бег, 8 внутренних = ходьба).
-  const goDir = (i: number, run: boolean): void => { gaitFaceMove = false; gaitYawManual = 0; const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; locoVz = Math.cos(th) * mag; locoVx = Math.sin(th) * mag; plantDirSel = i; plantSpeedRun = run; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); } renderLoco(); };
+  const goDir = (i: number, run: boolean): void => { gaitFaceMove = false; gaitYawManual = 0; const th = i * DIR_STEP, mag = run ? PAD_RUN : PAD_WALK; locoVz = Math.cos(th) * mag; locoVx = Math.sin(th) * mag; plantDirSel = i; plantSpeedRun = run; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); } renderLoco(); };
   const hitPlantPoint = (ev: PointerEvent): boolean => {
     const r = cv.getBoundingClientRect(); const mx = (ev.clientX - r.left) / r.width * PAD, my = (ev.clientY - r.top) / r.height * PAD;
     let best = -1, bestRun = true, bestD = 15;   // порог попадания в точку, px
-    for (const run of [false, true]) for (let i = 0; i < 8; i++) { const th = i * DIR_STEP, mag = run ? 0.95 : 0.34; const [px, py] = velToPad(Math.sin(th) * mag, Math.cos(th) * mag); const d = Math.hypot(mx - px, my - py); if (d < bestD) { bestD = d; best = i; bestRun = run; } }
+    for (const run of [false, true]) for (let i = 0; i < 8; i++) { const th = i * DIR_STEP, mag = run ? PAD_RUN : PAD_WALK; const [px, py] = velToPad(Math.sin(th) * mag, Math.cos(th) * mag); const d = Math.hypot(mx - px, my - py); if (d < bestD) { bestD = d; best = i; bestRun = run; } }
     if (best >= 0) { goDir(best, bestRun); return true; }
     return false;
   };
@@ -4046,9 +4048,14 @@ function renderGaitTune(): void {
 
   // ── Режим ───────────────────────────────────────────────────────────────────────────────────────
   const modeRow = el('div', 'display:flex;gap:4px;align-items:center'); box.append(modeRow);
+  // Переключить режим = И правим его ползунки, И персонаж в кадре реально идёт/бежит: точка на паде
+  // встаёт на ту же скорость, ячейка плант-сетки — тоже, превью включается, если было выключено.
+  // Иначе крутишь «бег», а перед тобой стоит идл — и непонятно, что ты вообще настроил.
   const setMode = (run: boolean): void => {
     gaitEditRun = run;
-    if (locoOn) { locoVx = 0; locoVz = (run ? GAIT.speedRun : GAIT.speedWalk) / GAIT_MAXSPD; }   // превью на ту скорость, что правим
+    locoVx = 0; locoVz = run ? PAD_RUN : PAD_WALK;     // те же якоря, что у 16 точек плант-сетки
+    plantSpeedRun = run;
+    if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); }
     renderLoco();
   };
   modeRow.append(pbtn('ХОДЬБА', () => setMode(false), !gaitEditRun), pbtn('БЕГ', () => setMode(true), gaitEditRun));
@@ -4069,31 +4076,39 @@ function renderGaitTune(): void {
     const key = gaitEditRun && kr ? kr : kw;
     const base = +obj[key]!;
     const pair = gaitAsym[key];
-    const row = el('div', 'display:flex;align-items:center;gap:5px;margin-top:3px');
-    const nm = el('span', 'flex:1 0 128px;font-size:11px'); nm.textContent = label; row.append(nm);
-    if (pair) { const mk = el('span', 'color:#ffd24a;font-size:10px'); mk.textContent = 'Л≠П'; nm.append(' '); nm.append(mk); }
-    const one = (i: 0 | 1, col: string): void => {
-      const sl = el('input', 'flex:1 1 74px;min-width:52px;accent-color:' + col) as HTMLInputElement;
+    const head = el('div', 'display:flex;align-items:baseline;gap:6px;margin-top:6px');
+    const nm = el('span', 'font-size:11px;color:#cfd3e0'); nm.textContent = label; head.append(nm);
+    if (pair) { const mk = el('span', 'color:#ffd24a;font-size:10px'); mk.textContent = 'Л≠П'; head.append(mk); }
+    box.append(head);
+    /** Одна строка ручки: ползунок ВО ВСЮ ШИРИНУ + поле, куда можно вбить точное число. */
+    const one = (i: 0 | 1, col: string, tag: string): void => {
+      const row = el('div', 'display:flex;align-items:center;gap:5px;margin-top:2px');
+      if (tag) { const t = el('span', `width:12px;font-size:10px;color:${col}`); t.textContent = tag; row.append(t); }
+      const sl = el('input', 'flex:1 1 auto;min-width:0;accent-color:' + col) as HTMLInputElement;
       sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step);
       sl.value = String(pair ? pair[i] : base);
-      const v = el('span', `width:40px;text-align:right;font-size:10px;color:${col}`); v.textContent = (+sl.value).toFixed(2);
-      sl.oninput = () => {
-        const nv = parseFloat(sl.value); v.textContent = nv.toFixed(2);
+      // Поле-число: у широких диапазонов ползунком в точное значение не попасть, а вбить — всегда.
+      const num = el('input', `width:54px;background:#0e1016;color:${col};border:1px solid #39415a;border-radius:3px;font:10px monospace;text-align:right`) as HTMLInputElement;
+      num.type = 'number'; num.min = String(min); num.max = String(max); num.step = String(step); num.value = sl.value;
+      const put = (nv: number): void => {
         if (gaitLinkLR) { obj[key] = nv; delete gaitAsym[key]; }
         else { const cur = gaitAsym[key] ?? [base, base]; cur[i] = nv; gaitAsym[key] = cur; }
         saveGaitCfg();
-        if (gaitLinkLR && pair) renderLoco();      // связали поверх разведённого — перерисуем, чтобы вторая сторона догнала
       };
-      row.append(sl, v);
+      sl.oninput = () => { const nv = parseFloat(sl.value); num.value = sl.value; put(nv); };
+      num.oninput = () => { const nv = parseFloat(num.value); if (!Number.isFinite(nv)) return; sl.value = String(nv); put(nv); };
+      row.append(sl, num); box.append(row);
     };
-    one(0, '#5aa0ff'); one(1, '#ff6a6a');          // Л синим, П красным — как планты стоп в сцене
-    box.append(row);
+    // Связаны — ОДИН длинный ползунок на всю ширину (стороны всё равно равны). Развели — два, и каждый
+    // всё равно во всю ширину, просто в своей строке: ход важнее экономии высоты.
+    if (gaitLinkLR && !pair) one(0, '#9ae6a0', '');
+    else { one(0, '#5aa0ff', 'Л'); one(1, '#ff6a6a', 'П'); }
   };
   /** Ползунок БЕЗ сторон и без режима — то, чего у тела ровно одно. */
   const one1 = (label: string, obj: NumRec, key: string, min: number, max: number, step: number): void => {
     const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
-    const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = label; row.append(nm);
-    const sl = el('input', 'flex:2') as HTMLInputElement; sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(obj[key]);
+    const nm = el('span', 'flex:0 0 138px;font-size:11px'); nm.textContent = label; row.append(nm);
+    const sl = el('input', 'flex:1 1 auto;min-width:0') as HTMLInputElement; sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(obj[key]);
     const v = el('span', 'width:42px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = (+obj[key]!).toFixed(2);
     sl.oninput = () => { obj[key] = parseFloat(sl.value); v.textContent = obj[key]!.toFixed(2); saveGaitCfg(); };
     row.append(sl, v); box.append(row);
@@ -4103,40 +4118,40 @@ function renderGaitTune(): void {
   box.append(hint);
 
   grp('поза (ретаргет)');
-  row2('руки вниз', GXo, 'armDown', 'armDownRun', 0.6, 1.8, 0.01);
-  row2('сгиб локтя', GXo, 'elbowBend', 'elbowBendRun', 0, 1.2, 0.02);
+  row2('руки вниз', GXo, 'armDown', 'armDownRun', 0, 3, 0.01);
+  row2('сгиб локтя', GXo, 'elbowBend', 'elbowBendRun', 0, 2.6, 0.01);
   grp('руки (мах)');
-  row2('база плеча', POSEo, 'armSh', 'armShRun', -0.8, 0.4, 0.02);
-  row2('база локтя', POSEo, 'armEl', 'armElRun', 0, 1.4, 0.02);
-  row2('амплитуда маха', POSEo, 'armSwing', 'armSwingRun', 0, 1.2, 0.02);
-  row2('добавка локтя на ходу', POSEo, 'armElWalk', null, 0, 0.8, 0.02);
+  row2('база плеча (− вперёд / + назад)', POSEo, 'armSh', 'armShRun', -1.6, 1.6, 0.01);
+  row2('база локтя', POSEo, 'armEl', 'armElRun', 0, 2.6, 0.01);
+  row2('амплитуда маха', POSEo, 'armSwing', 'armSwingRun', 0, 3, 0.01);
+  row2('добавка локтя на ходу', POSEo, 'armElWalk', null, 0, 2, 0.01);
   grp('плечи (ключицы)');
-  row2('подъём плеча', POSEo, 'shoUp', 'shoUpRun', -0.5, 0.5, 0.01);
-  row2('вынос вперёд', POSEo, 'shoFwd', 'shoFwdRun', -0.5, 0.5, 0.01);
-  row2('скрутка', POSEo, 'shoTw', 'shoTwRun', -0.5, 0.5, 0.01);
-  row2('качание за рукой', POSEo, 'shoSwing', 'shoSwingRun', 0, 1, 0.02);
-  row2('подъём за рукой', POSEo, 'shoLift', 'shoLiftRun', 0, 1, 0.02);
+  row2('подъём плеча', POSEo, 'shoUp', 'shoUpRun', -1.2, 1.2, 0.01);
+  row2('вынос вперёд', POSEo, 'shoFwd', 'shoFwdRun', -1.2, 1.2, 0.01);
+  row2('скрутка', POSEo, 'shoTw', 'shoTwRun', -1.2, 1.2, 0.01);
+  row2('качание за рукой', POSEo, 'shoSwing', 'shoSwingRun', 0, 3, 0.01);
+  row2('подъём за рукой', POSEo, 'shoLift', 'shoLiftRun', 0, 3, 0.01);
   const sn = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
   sn.textContent = 'Нули — прежнее поведение (пояс неподвижен). Качание и подъём идут от маха СВОЕЙ руки.';
   box.append(sn);
   grp('ноги / посадка');
-  row2('присед (мин. таз)', GAITo, 'pelvisMin', 'pelvisMinRun', 16, 34, 0.5);
-  row2('длина шага', GAITo, 'stepWalk', 'stepRun', 10, 70, 1);
-  row2('боб таза ×', GAITo, 'bobWalk', 'bobRun', 0, 2, 0.05);
-  row2('подъём стопы', GAITo, 'liftWalk', 'liftRun', 2, 20, 0.5);
-  row2('доля опоры', GAITo, 'dutyWalk', 'dutyRun', 0.1, 0.5, 0.01);
-  row2('потолок бедра', GAITo, 'hipFwdLim', 'hipFwdLimRun', 0.4, 1.4, 0.02);
-  row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -6, 14, 0.5);
-  row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 1.5, 0.05);
+  row2('присед (мин. таз)', GAITo, 'pelvisMin', 'pelvisMinRun', 6, 40, 0.25);
+  row2('длина шага', GAITo, 'stepWalk', 'stepRun', 2, 140, 0.5);
+  row2('боб таза ×', GAITo, 'bobWalk', 'bobRun', 0, 5, 0.02);
+  row2('подъём стопы', GAITo, 'liftWalk', 'liftRun', 0, 45, 0.25);
+  row2('доля опоры', GAITo, 'dutyWalk', 'dutyRun', 0.05, 0.9, 0.005);
+  row2('потолок бедра', GAITo, 'hipFwdLim', 'hipFwdLimRun', 0.1, 2.2, 0.01);
+  row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -20, 30, 0.25);
+  row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 3, 0.02);
   row2('предел кроссовера', GAITo, 'crossClamp', 'crossClampRun', 0, 99, 1);
   grp('общее (одно на тело)');
-  one1('скорость анимации бега (антискольз.)', GAITo, 'cadence', 0.5, 2, 0.05);
-  one1('порог ходьбы (u/с)', GAITo, 'speedWalk', 10, 90, 1);
-  one1('порог бега (u/с)', GAITo, 'speedRun', 60, 200, 1);
+  one1('скорость анимации бега (антискольз.)', GAITo, 'cadence', 0.2, 4, 0.02);
+  one1('порог ходьбы (u/с)', GAITo, 'speedWalk', 5, 150, 1);
+  one1('порог бега (u/с)', GAITo, 'speedRun', 20, 400, 1);
   grp('резкая смена направления');
-  one1('усреднение направления (с)', GAITo, 'planSmooth', 0, 0.5, 0.01);
+  one1('усреднение направления (с)', GAITo, 'planSmooth', 0, 1.2, 0.01);
   one1('запас выноса до «пора шагать»', GAITo, 'stepSlack', 0.1, 1.2, 0.05);
-  one1('ускорение просроченного шага', GAITo, 'stepUrge', 0, 10, 0.5);
+  one1('ускорение просроченного шага', GAITo, 'stepUrge', 0, 30, 0.5);
   const fn = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
   fn.textContent = 'Нули = старое поведение: нога вылетает на полную длину, если попасть падом в такт шага.';
   box.append(fn);
@@ -4756,7 +4771,10 @@ function stepGait(dt: number): void {
     plantDirSel = (Math.round(a) % 8 + 8) % 8; plantSpeedRun = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1) >= 0.5;
   }
   if (gaitReadout && gaitReadout.isConnected) {              // живой индикатор скорости + режим ходьба↔бег
-    const mode = spd < 5 ? 'стоит' : spd < GAIT.speedWalk ? 'ходьба' : 'бег';
+    // Режим — по РЕАЛЬНОМУ блену (sb), а не по «спид ≥ порога ходьбы»: на якоре ходьбы (41 u/с при
+    // пороге 40) старая формула писала «бег», хотя параметры там ещё целиком ходьбы.
+    const sbNow = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
+    const mode = spd < 5 ? 'стоит' : sbNow < 0.12 ? 'ходьба' : sbNow > 0.88 ? 'бег' : `ходьба→бег ${Math.round(sbNow * 100)}%`;
     gaitReadout.textContent = `скорость: ${spd.toFixed(0)} u/с · ${mode}` + (gaitFaceMove ? '' : ` · страйф ${Math.round(gaitYaw * 180 / Math.PI)}°`);
   }
 }
