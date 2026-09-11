@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, sideLerp, foldElbow, type PoseTargets } from './pose.js';
-import { resolveStancePose, stancePoseAt } from './poseLayers.js';
+import { resolveStancePose, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
 import { readAnimCfg } from './animConfig.js';
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
@@ -22,6 +22,47 @@ import { WPN_KEYS, WPN_POS } from './clipModel.js';
 import { maskBones, boneWeight, type BoneMask } from './boneMask.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
 export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
+
+/**
+ * ЧТО СЕЙЧАС ИГРАЕТ И С КАКИМ ВЕСОМ — одна строка на слой, за текущий кадр.
+ *
+ * Зачем вообще: слоёв пять, веса считаются в трёх разных местах, и на вопрос «почему персонаж
+ * выглядит так» ответа не было НИГДЕ — ни в редакторе, ни в игре. В Unreal ровно эту дырку закрывает
+ * дорожка Blend Weights в Animation Insights, в Unity — подсветка активного состояния в окне Animator.
+ *
+ * ⚠ ЗАПОЛНЯЕТСЯ ТАМ ЖЕ, ГДЕ СЧИТАЕТСЯ ВЕС. Соблазн собрать эти числа заново на стороне окна большой и
+ * ошибочный: это вторая правда, и разойдётся она молча — врать начнёт именно окно отладки, которому
+ * верят. Поэтому строки пишет сам рантайм, а окно их только рисует.
+ *
+ * Выключено по умолчанию: пока `on` = false, в кадре не собирается ни одной строки и мусора нет.
+ */
+export interface TraceRow {
+  /** Слой стека: «НОГИ / ТАЗ», «ПОЗА ВЕРХА», «ГЛАВНАЯ РУКА», «ДЕЙСТВИЕ»… */
+  layer: string;
+  /** Кто его сейчас наполняет: имя клипа, «планировщик шагов», «нет». */
+  src: string;
+  /** Вес 0..1 — с ним слой и лёг. */
+  w: number;
+  /** Подробность в одну фразу: приоритет, замок, владение ногами. */
+  note?: string;
+}
+export interface LayerTrace {
+  on: boolean;
+  /** Метка последнего заполнения (мс) — по ней видно, живая трасса или застывшая. */
+  t: number;
+  speed: number; sb: number; st: number; moveMag: number; legMag: number; combat: number;
+  /** Скрутка корпуса: от походки (в такт шагу) и от прицела (torso-lead) — разные вещи, путать нельзя. */
+  twistGait: number; twistAim: number;
+  rows: TraceRow[];
+  items: StanceLayerInfo[];
+}
+export const layerTrace: LayerTrace = {
+  on: false, t: 0, speed: 0, sb: 0, st: 0, moveMag: 0, legMag: 0, combat: 0,
+  twistGait: 0, twistAim: 0, rows: [], items: [],
+};
+const traceRow = (layer: string, src: string, w: number, note?: string): void => {
+  if (layerTrace.on) layerTrace.rows.push({ layer, src, w, note });
+};
 export interface GXKnobs { armDown: number; elbowBend: number; armDownRun?: number; elbowBendRun?: number }   // *Run — раздельно для бега (интерп по sb); нет → = ходьба. legWidth убран (дубль stanceWidth)
 /**
  * Скрутка корпуса (torso-lead): голова/плечи ведут за ПРИЦЕЛОМ, таз догоняет прицел. ОДНА система стоя и на бегу.
@@ -290,6 +331,12 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   // Ключицы: своя поза из гейта вместо прежнего «сводим в ноль».
   const shoL: [number, number, number] = [t.shoLX, t.shoLY, t.shoLZ];
   const shoR: [number, number, number] = [t.shoRX, t.shoRY, t.shoRZ];
+  traceRow('ПОЗА ВЕРХА', up ? (combat > 0.001 ? `стойка (бой ${(combat * 100) | 0}%)` : 'стойка') : 'нет — чистый мах',
+    up ? clamp(1 - up.swing * moveMag, 0, 1) : 0, up ? undefined : 'авторской стойки для этого оружия нет');
+  for (const it of layerTrace.items) {
+    traceRow(it.hand === 'main' ? 'ГЛАВНАЯ РУКА' : 'ВТОРАЯ РУКА', it.item, it.weight,
+      it.kind === 'override' ? 'замена верха целиком (двуручное)' : 'дельта к безоружной базе');
+  }
   if (!up) {   // нет idle-позы → полный мах гейта
     gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, eDownL);
     gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, eDownR);
@@ -313,6 +360,7 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   // ПЛЕЧЕВОЙ ПОЯС — поверх всего, что легло на ключицу (авторская стойка или ноль), по мере хода:
   // стоим → ровно авторская стойка, разгоняемся → проступают настройки походки. Нули = ничего не делает.
   const shoW = clamp(moveMag, 0, 1);
+  traceRow('ПОЯС И СКРУТКА', 'походка (в такт шагу)', shoW, 'поверх авторской стойки, по мере хода');
   // СКРУТКА КОРПУСА В ТАКТ ШАГУ кладётся ЗДЕСЬ, а не в `blendBone('Spine')`, по одной причине: цикл
   // `UPPER_BONES` выше принудительно ставит Chest/UpperChest в авторскую стойку (или в ноль), поэтому
   // всё, что легло на них раньше, было бы стёрто. Аддитивно и по мере хода — стоим, значит ровно
@@ -327,6 +375,13 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   const legsOf = (a: AttackState): number =>
     a.legs === 'never' ? 0 : a.legs === 'always' ? 1 : clamp(1 - moveMag, 0, 1);
   const legW = legsOf(atk);
+  if (layerTrace.on) {
+    const env = atk.clip && atk.t >= 0 ? attackEnv(atk.t, clipDur(atk.clip) || 0.001) : 0;
+    const mode = atk.legs === 'never' ? 'только верх' : atk.legs === 'always' ? 'всегда низ' : 'ноги по скорости';
+    traceRow('ДЕЙСТВИЕ', atk.clip ? atk.clip.name : 'пусто', env,
+      atk.clip ? `${mode} · низ ${(legW * 100) | 0}%${atk.lock ? ' · ЗАМОК' : ''}${atk.prio ? ` · prio ${atk.prio}` : ''}` : undefined);
+    if (fade && fade.atk.clip && fade.w > 0.001) traceRow('↳ уходящее', fade.atk.clip.name, fade.w, 'кроссфейд цепочки');
+  }
   if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w, legsOf(fade.atk));
   if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk, 1, legW);   // удар поверх idle/маха
 }
@@ -362,6 +417,9 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   human.reset();
   const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   const m = legMag;
+  // Трасса собирается СНИЗУ ВВЕРХ, в порядке наложения слоёв — так же, как её показывает корень графа.
+  if (layerTrace.on) { layerTrace.rows.length = 0; layerTrace.t = Date.now(); }
+  traceRow('НОГИ / ТАЗ', 'планировщик шагов', m, m < 0.99 ? 'остальное — ноги из стойки' : undefined);
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
   blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL], idle, m);
   blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR], idle, m);
@@ -514,7 +572,8 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
         return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом, однокадровая держит кадр
       };
       const pose = resolveStancePose(look, weapon, combat,
-        { weight: (it) => anim.weightOf(it), kind: (it) => anim.kindOf(it), hand: (it) => anim.handOf(it) }, t);
+        { weight: (it) => anim.weightOf(it), kind: (it) => anim.kindOf(it), hand: (it) => anim.handOf(it),
+          trace: layerTrace.on ? layerTrace.items : undefined }, t);
       if (!pose) return null;
       const full = stance(weapon);
       return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)) };
@@ -1062,7 +1121,14 @@ export class PosePlayer {
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
     this.idleT += dt;
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT);
+    const tg = this.driver.update(dt);
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT);
+    if (layerTrace.on) {
+      layerTrace.speed = Math.hypot(this.vx, this.vz);
+      layerTrace.sb = tg.sb ?? 0; layerTrace.st = tg.st ?? 0;
+      layerTrace.moveMag = this.moveMag; layerTrace.legMag = this.legMag; layerTrace.combat = this.combat;
+      layerTrace.twistGait = tg.twist; layerTrace.twistAim = tw;
+    }
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
     // ТАЗ УДАРА ГАСНЕТ ЛОКОМОЦИЕЙ. Удар — слой ВЕРХА, низом владеет походка (в Unreal такой слой кладут
     // `Layered blend per bone` с исключённым тазом, в Unity — маской слоя). Наша маска удара таз и так не

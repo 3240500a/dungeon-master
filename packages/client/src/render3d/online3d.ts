@@ -13,6 +13,7 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
+import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { resolveBodyProfile, resolveBoneScale, resolveBoneOffsets } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -221,6 +222,17 @@ export async function startOnline3d(): Promise<void> {
     if (e.code === 'Space' || e.code === 'Tab' || e.code === 'AltLeft' || e.code === 'AltRight') e.preventDefault();
   });
   addEventListener('keyup', (e) => keys.delete(e.code));
+  // ИНСПЕКТОР СЛОЁВ (F9) — ТОТ ЖЕ модуль, что в редакторе. Смотреть на разные цифры в двух местах —
+  // ровно та беда, ради которой он и заводится: разошлись бы не только числа, но и выводы по ним.
+  let traceView: LayerTraceView | null = null;
+  addEventListener('keydown', (e) => {
+    if (e.code !== 'F9') return;
+    e.preventDefault();
+    if (traceView) { traceView.dispose(); traceView = null; return; }
+    traceView = createLayerTraceView();
+    traceView.el.style.cssText += ';position:fixed;left:10px;bottom:10px;z-index:40';
+    document.body.append(traceView.el);
+  });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) lmb = true; if (e.button === 2) rmb = true; });
   addEventListener('pointerup', (e) => { if (e.button === 0) lmb = false; if (e.button === 2) rmb = false; });
@@ -1058,6 +1070,7 @@ export async function startOnline3d(): Promise<void> {
   let physAcc = 0, tsec = 0, fps = 60, miniAcc = 0;
   let msWorld = 0, msPhys = 0, msRender = 0;   // профайлер фаз кадра (мс, сглажено) — в DBG-инфо: во что упираемся
   function frame(dt: number): void {
+    traceView?.update();   // трасса заполняется в шаге куклы — здесь только рисуем
     tsec += dt;
     fps += (1 / Math.max(dt, 1e-3) - fps) * 0.1;
     // Адаптивное разрешение: раз в 0.6с шаг по лестнице pixelRatio (FPS сглажён EMA выше → «устойчивый» замер).

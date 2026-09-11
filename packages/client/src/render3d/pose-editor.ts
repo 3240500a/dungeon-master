@@ -48,6 +48,7 @@ import { savePoseKey } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
 import { createAnimGraphPanel } from './animGraphPanel.js';
+import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
@@ -2466,6 +2467,25 @@ const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => 
 const modeB = mkBtn('', () => { uiPro = !uiPro; ui.pro = uiPro; saveUi(); syncModeB(); refreshAll(); });
 function syncModeB(): void { modeB.textContent = uiPro ? '⚙ Про' : '○ Простой'; modeB.title = uiPro ? 'Про: все настройки (лимиты, моторы, физика, тюнинг походки)' : 'Простой: только позинг и клипы — инженерные панели скрыты (их значения действуют)'; modeB.classList.toggle('on', uiPro); }
 const manB = mkBtn('манекен: скелет', () => { manView = manView === 'skel' ? 'solid' : manView === 'solid' ? 'hidden' : 'skel'; setPref('mannequin', manView); setManView(); });
+/**
+ * ИНСПЕКТОР СЛОЁВ — накладка поверх вьюпорта, а не вкладка.
+ *
+ * Вкладкой он был бы бесполезен: вопрос «почему персонаж выглядит так» возникает в тот момент, когда
+ * ты крутишь ручку и смотришь на куклу, — то есть смотреть надо ОДНОВРЕМЕННО, а не переключаться.
+ * Поэтому он виден на любой вкладке и не занимает колонку настроек.
+ */
+let traceView: LayerTraceView | null = null;
+const traceHost = document.createElement('div');
+traceHost.style.cssText = 'grid-area:2 / 1 / 3 / 2;align-self:end;justify-self:start;margin:0 0 10px 10px;z-index:6;pointer-events:none;display:none';
+document.body.append(traceHost);
+const traceB = mkBtn('◫ слои', () => {
+  if (traceView) { traceView.dispose(); traceView = null; traceHost.style.display = 'none'; }
+  else { traceView = createLayerTraceView(); traceHost.append(traceView.el); traceHost.style.display = 'block'; }
+  setPref('layerTrace', !!traceView);
+  traceB.classList.toggle('on', !!traceView);
+});
+traceB.title = 'Что играет сейчас и с каким весом: ноги, стойка, предметы в руках, слот действия. Видно на любой вкладке.';
+if (getPref('layerTrace', false)) { traceView = createLayerTraceView(); traceHost.append(traceView.el); traceHost.style.display = 'block'; traceB.classList.add('on'); }
 // Ф13.3/13.4: режим хвата и точка серверной позиции — ОБА видны всегда, без привязки к Про.
 const gripB = mkBtn('✋ хват', () => cycleGrip());
 gripB.title = 'Правка хвата: камера на кисть, кликабельны ТОЛЬКО фаланги. Клики: правая → левая → выкл.';
@@ -2488,7 +2508,7 @@ const pubBtn = createPublishButton({ extraDirty: () => configDirtyKeys(), publis
 
 bar.append(personaB, document.createTextNode('Персонаж'), charSel, document.createTextNode('Оружие'), wpnSel, document.createTextNode('офф'), offSel, sep(), ikB, gazeB, hipsB, sep(),
   mkBtn('зеркало L→R', () => histPose('зеркало L→R', mirrorLR)), mkBtn('T-поза', () => histPose('T-поза', () => { human.reset(); if (ikOn) captureRig(); })), sep(),
-  mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, gripB, posB, sep(), pubBtn.el, modeB);
+  mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, gripB, posB, traceB, sep(), pubBtn.el, modeB);
 
 // ── Панель-вкладки (Анимация = клипы+кадры+поза; Бег = 2D бленд локомоции; Персонаж = setup) ──
 // РЕЖИМ ИНТЕРФЕЙСА (Ф1.5). Не два разных UI, а один с прогрессивным раскрытием: «Про» ДОБАВЛЯЕТ инженерные
@@ -5478,6 +5498,7 @@ function loop(): void {
   // не сбленжено к позе по `match`, поэтому оверлей висел ниже призрака на 1.15u и стоял
   // под своим углом (1.2–14.8°) — жалоба «бокс вертикальный, а кость под углом».
   if (showBoxes && ragdoll) ragdoll.poseShapes(physOn && ghostHuman ? ghostHuman : human);
+  traceView?.update();   // трасса заполняется в шаге куклы выше — здесь только рисуем
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   ungroundView?.();                              // …и ТУТ ЖЕ возвращаем — авторская поза не тронута
   requestAnimationFrame(loop);

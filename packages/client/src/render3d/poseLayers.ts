@@ -184,7 +184,15 @@ export interface StanceOpts {
   kind?: (item: string) => LayerKind;
   /** Рука предмета, если задана ЯВНО (факел в левой при пустой правой). Нет → по позиции в ключе. */
   hand?: (item: string) => 'main' | 'off' | undefined;
+  /**
+   * Куда сложить РЕАЛЬНЫЙ состав стойки — для инспектора слоёв. Массив очищается и заполняется здесь,
+   * потому что пересчитывать состав на стороне инспектора значит завести вторую правду: она разойдётся
+   * с первой ровно в тот день, когда правила сборки поменяются, и врать будет именно окно отладки.
+   */
+  trace?: StanceLayerInfo[];
 }
+/** Один подмешанный предмет: что, в какую руку, чем и с какой силой. */
+export interface StanceLayerInfo { item: string; hand: 'main' | 'off'; kind: LayerKind; weight: number }
 
 export function resolveStancePose(
   find: StanceLookup,
@@ -194,6 +202,7 @@ export function resolveStancePose(
   t = 0,
 ): Pose | null {
   const weightOf = opts.weight ?? ((): number => 1);
+  if (opts.trace) opts.trace.length = 0;
   const kindOf = (i: string): LayerKind => opts.kind?.(i) ?? (isTwoHanded(i) ? 'override' : 'additive');
   const one = (kind: 'idle' | 'combat_idle'): Pose | null => {
     const exact = find(kind, weapon, t);
@@ -217,12 +226,18 @@ export function resolveStancePose(
       const off = !two && mHand === 'off';
       layers.push({ pose: off ? asOffHandPose(mp) : mp, base: off ? asOffHandPose(ref) : ref,
         mask: two ? UPPER_ALL_MASK : off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(m), kind: mKind });
+      // Трассу пишем только на спокойном проходе: `one()` зовётся дважды (relax + combat), состав тот же.
+      if (opts.trace && kind === 'idle') opts.trace.push({ item: m, hand: off ? 'off' : 'main', kind: mKind, weight: weightOf(m) });
     }
     if (!two && o !== 'none') {
       const op = at(kind, o, t);
       const off = (opts.hand?.(o) ?? 'off') === 'off';
-      if (op) layers.push({ pose: off ? asOffHandPose(op) : op, base: off ? asOffHandPose(ref) : ref,
-        mask: off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(o), kind: kindOf(o) === 'override' ? 'additive' : kindOf(o) });
+      if (op) {
+        const k2: LayerKind = kindOf(o) === 'override' ? 'additive' : kindOf(o);
+        layers.push({ pose: off ? asOffHandPose(op) : op, base: off ? asOffHandPose(ref) : ref,
+          mask: off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(o), kind: k2 });
+        if (opts.trace && kind === 'idle') opts.trace.push({ item: o, hand: off ? 'off' : 'main', kind: k2, weight: weightOf(o) });
+      }
     }
     return layers.length ? composeStance(base, layers) : base;   // 2. сборка (нет предметов → чистая база)
   };

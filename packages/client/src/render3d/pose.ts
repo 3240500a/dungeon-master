@@ -31,6 +31,8 @@ export interface PoseTargets {
   wLX: number; wLY: number; wLZ: number; wRX: number; wRY: number; wRZ: number;
   /** Блен ходьба(0)↔бег(1) — для раздельных рук walk/run (armDown/elbowBend блендятся по нему в poseRuntime). */
   sb?: number;
+  /** Боковитость хода 0..1 (страйф-колонка) — наружу для инспектора слоёв и для ретаргета. */
+  st?: number;
 }
 
 const ATTACK_DUR = 0.62;   // взмах небыстрый: мотор рук физически не развернёт большой мах за 0.1с (иначе рука «зависает»)
@@ -830,6 +832,7 @@ export class PoseDriver {
     o.sb = sb;
     // Боковитость хода: у монстров планировщика нет — им страйф-колонка не положена (st = 0 = как было).
     const st = this.planner?.st ?? 0;
+    o.st = st;
     // Руки — на сторону (ASYM/STRAFE пусты → оба значения одинаковы и это ровно прежние числа).
     const armSh = (i: 0 | 1): number => sideLerp3('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, sb, st);
     const armEl = (i: 0 | 1): number => sideLerp3('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, sb, st);
