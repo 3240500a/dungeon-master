@@ -9,6 +9,8 @@ import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
 import { socketsOpen, insertById, insertUnlocked, insertFits } from '../session/inserts.js';
+import { canSalvage, salvageFromItem, type SalvageRng } from '../formulas/salvage.js';
+import { addMaterials } from './materials.js';
 
 /**
  * АВТОРИТЕТНЫЕ операции города над `SaveState` (магазин/экип/распределение) — чистые,
@@ -124,6 +126,74 @@ export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, r
     { minAffixes: rDef?.minAffixes ?? 1, maxAffixes: rDef?.maxAffixes ?? 1, maxPrefix: rDef?.maxPrefix ?? 3, maxSuffix: rDef?.maxSuffix ?? 3 },
     item.itemLevel, rng);
   return { ok: true };
+}
+
+/**
+ * РАЗБОР У КУЗНЕЦА — полный выход материалов (docs/ECONOMY.md, Ч3). Полевой разбор той же
+ * формулой, но с долей `balance.salvage.fieldYield`, живёт в сессии: там есть мир и позиция.
+ * ⚠ Отказ ДО списания: разбор уничтожает вещь, и «правила нет» не должно съедать её впустую.
+ */
+export function forgeSalvage(reg: ConfigRegistry, save: SaveState, uid: string, rng: SalvageRng): ActionResult {
+  const idx = save.inventory.findIndex((i) => i.uid === uid);
+  if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
+  const item = save.inventory[idx]!;
+  const gains = salvageYield(reg, item, rng, false);
+  if (!gains.ok) return gains;
+  save.inventory.splice(idx, 1);
+  addMaterials(save, gains.gains);
+  return { ok: true };
+}
+
+/**
+ * РАЗБОР НА МЕСТЕ, прямо в подземелье: та же формула, но выход `balance.salvage.fieldYield`.
+ * Ни верстака, ни возврата в город — выделил трофей и переработал. Мира и позиции не требует,
+ * поэтому живёт здесь, рядом с кузнечным близнецом, а не в сессии.
+ */
+export function fieldSalvage(reg: ConfigRegistry, save: SaveState, uid: string, rng: SalvageRng): ActionResult {
+  const idx = save.inventory.findIndex((i) => i.uid === uid);
+  if (idx < 0) return { ok: false, reason: 'Предмет не в инвентаре' };
+  const out = salvageYield(reg, save.inventory[idx]!, rng, true);
+  if (!out.ok) return out;
+  save.inventory.splice(idx, 1);
+  addMaterials(save, out.gains);
+  return { ok: true };
+}
+
+/**
+ * Общий расчёт разбора для кузницы и поля: находит правило, проверяет допустимость и катает выход.
+ * Один шов — чтобы «что даст разбор» в подсказке и то, что реально начислится, не разошлись.
+ */
+export function salvageYield(
+  reg: ConfigRegistry,
+  item: Item,
+  rng: SalvageRng,
+  inField: boolean,
+): ActionResult & { gains: Record<string, number> } {
+  const can = canSalvageItem(reg, item, inField);
+  if (!can.ok) return { ...can, gains: {} };
+  const rules = reg.get('salvage-rules');
+  const tuning = reg.get('balance').salvage;
+  const mats = reg.get('craft-materials');
+  const gains = salvageFromItem(item, weaponClassOf(reg, item), rules, tuning, rng, {
+    inField,
+    knownMaterial: (id) => mats.some((c) => c.id === id && c.enabled),
+  });
+  if (!Object.keys(gains).length) return { ok: false, reason: 'Разбор ничего не дал бы', gains: {} };
+  return { ok: true, gains };
+}
+
+/**
+ * МОЖНО ЛИ РАЗОБРАТЬ — ОДИН ответ для кнопки в UI и для отказа сервера. Если развести их по
+ * двум местам, кнопка будет предлагать то, что сервер отклоняет.
+ */
+export function canSalvageItem(reg: ConfigRegistry, item: Item, inField: boolean): ActionResult {
+  return canSalvage(item, weaponClassOf(reg, item), reg.get('salvage-rules'), reg.get('balance').salvage, inField);
+}
+
+/** Класс оружия живёт на БАЗЕ предмета, а не в самом предмете — правилам разбора он нужен. */
+function weaponClassOf(reg: ConfigRegistry, item: Item): string | undefined {
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  return base && base.kind === 'weapon' ? base.weaponClass : undefined;
 }
 
 // ── Экипировка ───────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, socketInsert, socketClear } from './townActions.js';
+import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, fieldSalvage, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
 import type { Item, SaveState } from '../types/index.js';
@@ -256,5 +256,52 @@ describe('socketInsert / socketClear (авторитетная сборка ск
     expect(socketInsert(reg, save, id, 0, 'ins-flame-edge').ok).toBe(true);
     expect(respecSkills(reg, save).ok).toBe(true);
     expect(save.sockets).toEqual({});
+  });
+});
+
+describe('разбор вещи на материалы (Ч3)', () => {
+  /** Оружие с настоящей базой: правилам разбора нужен класс оружия, а он живёт на базе. */
+  function axe(uid = 'a', rarity: Item['rarity'] = 'normal'): Item {
+    const base = reg.get('items.base').find((b) => b.kind === 'weapon' && b.weaponClass === 'axe')!;
+    return { uid, baseId: base.id, name: uid, kind: 'weapon', slot: 'weapon', rarity, itemLevel: 1,
+      requirements: {}, affixes: [], baseStats: [], gridW: 1, gridH: 1, pos: { x: 0, y: 0 } };
+  }
+  const save = (...items: Item[]): SaveState =>
+    ({ inventory: items, materials: {} } as unknown as SaveState);
+
+  it('кузница: вещь исчезает, материалы приходят в кошелёк', () => {
+    const s = save(axe());
+    expect(forgeSalvage(reg, s, 'a', createRng(1)).ok).toBe(true);
+    expect(s.inventory).toHaveLength(0);
+    expect(Object.values(s.materials!).reduce((x, y) => x + y, 0)).toBeGreaterThan(0);
+  });
+
+  it('⭐ поле даёт меньше кузницы на том же предмете и том же сиде', () => {
+    const sum = (m: Record<string, number>): number => Object.values(m).reduce((x, y) => x + y, 0);
+    let forge = 0;
+    let field = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const f = save(axe());
+      forgeSalvage(reg, f, 'a', createRng(seed));
+      forge += sum(f.materials!);
+      const g = save(axe());
+      fieldSalvage(reg, g, 'a', createRng(seed));
+      field += sum(g.materials!);
+    }
+    expect(field).toBeGreaterThan(0);            // иначе разбирать в поле бессмысленно
+    expect(field).toBeLessThan(forge * 0.6);     // и донести должно быть заметно выгоднее
+  });
+
+  it('⚠ отказ НЕ съедает вещь: уник остаётся в сумке', () => {
+    const s = save(axe('u', 'unique'));
+    const r = forgeSalvage(reg, s, 'u', createRng(1));
+    expect(r.ok).toBe(false);
+    expect(s.inventory).toHaveLength(1);
+    expect(s.materials).toEqual({});
+  });
+
+  it('чужой uid — отказ', () => {
+    expect(forgeSalvage(reg, save(axe()), 'нет', createRng(1)).ok).toBe(false);
+    expect(fieldSalvage(reg, save(axe()), 'нет', createRng(1)).ok).toBe(false);
   });
 });

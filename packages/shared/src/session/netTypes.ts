@@ -150,6 +150,10 @@ export type TownCommand =
   | { cmd: 'sell'; uid: string }
   | { cmd: 'forgeUpgrade'; uid: string }
   | { cmd: 'forgeReroll'; uid: string }
+  /** Разбор у кузнеца: полный выход материалов. */
+  | { cmd: 'forgeSalvage'; uid: string }
+  /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
+  | { cmd: 'salvage'; uid: string }
   | { cmd: 'equip'; uid: string }
   | { cmd: 'unequip'; slot: string }
   | { cmd: 'allocAttr'; attr: string }

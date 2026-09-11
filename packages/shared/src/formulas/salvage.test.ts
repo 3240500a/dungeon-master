@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { salvageFromMonster, piecesDropped, shiftTier, type SalvageableGear } from './salvage.js';
+import {
+  salvageFromMonster, piecesDropped, shiftTier, salvageRuleFor, salvageMult, canSalvage, salvageFromItem,
+  type SalvageableGear, type SalvageableItem,
+} from './salvage.js';
 import type { MonsterGearRoll } from '../types/world.js';
 
 /**
@@ -67,9 +70,11 @@ describe('ступень материала растёт с глубиной', (
     expect(shiftTier('iron-1', 2, known)).toBe('iron-3');
   });
 
-  it('⚠ несуществующая ступень НЕ выдаётся — иначе материал молча пропал бы', () => {
-    expect(shiftTier('iron-1', 5, known)).toBe('iron-1');
+  it('⚠ прыжок за потолок СПУСКАЕТСЯ до верхней ступени, а не падает к первой', () => {
+    // Иначе глубина 24+ роняла бы iron-1 — хуже, чем глубина 16.
+    expect(shiftTier('iron-1', 5, known)).toBe('iron-3');
     expect(shiftTier('iron-3', 1, known)).toBe('iron-3');
+    expect(shiftTier('strange', 1, () => false)).toBe('strange');
   });
 
   it('без сдвига и на странном id ничего не портится', () => {
@@ -113,5 +118,95 @@ describe('⭐ ПРАВИЛО №1: убийство продолжает пла�
     const byGear = (id: string): SalvageableGear | undefined => reg.get('monster-gear').find((g) => g.id === id);
     const got = salvageFromMonster([roll('u-axe1h')], byGear, midRng);
     expect(Object.keys(got).sort()).toEqual(['iron-1', 'wood-1']);
+  });
+});
+
+describe('⭐ разбор вещи: поле дешевле, кузница полнее', () => {
+  const reg = new ConfigRegistry();
+  reg.loadAll();
+  const rules = reg.get('salvage-rules');
+  const tuning = reg.get('balance').salvage;
+
+  /** Щедрый детерминированный бросок: верх диапазона и остаток всегда в плюс. */
+  const rich = { int: (_lo: number, hi: number) => hi, chance: () => true };
+  const item = (over: Partial<SalvageableItem> = {}): SalvageableItem =>
+    ({ kind: 'weapon', rarity: 'normal', itemLevel: 1, ...over });
+
+  it('правило находится по классу оружия, а класс берётся с БАЗЫ', () => {
+    expect(salvageRuleFor(item(), 'axe', rules)?.id).toBe('w-axe');
+    expect(salvageRuleFor(item(), 'bow', rules)?.id).toBe('w-bow');
+    // класс не передан — ни одно оружейное правило не подходит
+    expect(salvageRuleFor(item(), undefined, rules)).toBeUndefined();
+  });
+
+  it('правило брони — по классу, а количество правит слот', () => {
+    const chest = item({ kind: 'armor', slot: 'chest', armorClass: 'plate' });
+    const gloves = item({ kind: 'armor', slot: 'gloves', armorClass: 'plate' });
+    expect(salvageRuleFor(chest, undefined, rules)?.id).toBe('a-plate');
+    expect(salvageMult(chest, tuning, false)).toBeGreaterThan(salvageMult(gloves, tuning, false));
+  });
+
+  it('⭐ ГЛАВНОЕ: в поле выходит МЕНЬШЕ, чем у кузнеца, но не ноль', () => {
+    const axe = item({ itemLevel: 1 });
+    const forge = salvageFromItem(axe, 'axe', rules, tuning, rich, {});
+    const field = salvageFromItem(axe, 'axe', rules, tuning, rich, { inField: true });
+    const sum = (m: Record<string, number>): number => Object.values(m).reduce((a, b) => a + b, 0);
+    expect(sum(forge)).toBeGreaterThan(sum(field));
+    expect(sum(field)).toBeGreaterThan(0); // иначе нести было бы незачем... и разбирать тоже
+  });
+
+  it('⚠ уникальные не разбираются НИГДЕ — нашёл как есть (решение В2)', () => {
+    const uniq = item({ rarity: 'unique' });
+    expect(canSalvage(uniq, 'axe', rules, tuning, false).ok).toBe(false);
+    expect(canSalvage(uniq, 'axe', rules, tuning, true).ok).toBe(false);
+    expect(salvageFromItem(uniq, 'axe', rules, tuning, rich, {})).toEqual({});
+  });
+
+  it('⚠ вещь без правила не разбирается — иначе разбор съел бы её впустую', () => {
+    const potion = item({ kind: 'consumable' });
+    expect(canSalvage(potion, undefined, rules, tuning, false).ok).toBe(false);
+  });
+
+  it('редкость поднимает выход', () => {
+    expect(salvageMult(item({ rarity: 'rare' }), tuning, false))
+      .toBeGreaterThan(salvageMult(item({ rarity: 'normal' }), tuning, false));
+  });
+
+  it('ступень материала растёт с уровнем вещи и не вылезает за конфиг', () => {
+    const deep = salvageFromItem(item({ itemLevel: 99 }), 'sword', rules, tuning, rich, {
+      knownMaterial: (id) => reg.get('craft-materials').some((c) => c.id === id),
+    });
+    expect(Object.keys(deep)).toEqual(['iron-3']); // выше третьей ступени железа в конфиге нет
+  });
+
+  it('дробный выход округляется вероятностно: не «всегда ноль» и не «всегда единица»', () => {
+    const one = { kind: 'weapon', rarity: 'normal', itemLevel: 1 } as SalvageableItem;
+    const never = { int: (_lo: number, hi: number) => hi, chance: () => false };
+    const always = { int: (_lo: number, hi: number) => hi, chance: () => true };
+    // 3 доски × 0.3 = 0.9 → целая часть 0, остаток 0.9 решает бросок
+    expect(salvageFromItem(one, 'wand', rules, tuning, never, { inField: true })).toEqual({});
+    expect(salvageFromItem(one, 'wand', rules, tuning, always, { inField: true })['wood-1']).toBe(1);
+  });
+
+  it('все правила ссылаются на существующие материалы и осмысленный диапазон', () => {
+    const mats = new Set(reg.get('craft-materials').map((c) => c.id));
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) {
+      expect(r.yields.length, `${r.id} без выхода`).toBeGreaterThan(0);
+      for (const y of r.yields) {
+        expect(mats.has(y.materialId), `${r.id} → неизвестный материал ${y.materialId}`).toBe(true);
+        expect(y.min).toBeLessThanOrEqual(y.max);
+      }
+    }
+  });
+
+  it('у КАЖДОГО носимого предмета из конфига есть чем разбираться', () => {
+    for (const b of reg.get('items.base')) {
+      if (b.kind === 'consumable') continue; // зелья не разбираются, и это нормально
+      const it: SalvageableItem = { kind: b.kind, slot: b.slot, rarity: 'normal', itemLevel: 1,
+        armorClass: b.kind === 'armor' ? b.armorClass : undefined };
+      const wc = b.kind === 'weapon' ? b.weaponClass : undefined;
+      expect(salvageRuleFor(it, wc, rules)?.yields?.length ?? 0, `${b.id} нечем разбирать`).toBeGreaterThan(0);
+    }
   });
 });

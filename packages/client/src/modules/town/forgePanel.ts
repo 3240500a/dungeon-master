@@ -1,4 +1,4 @@
-import { shopBuyPrice } from '@dm/shared';
+import { shopBuyPrice, canSalvageItem } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, mk, button, itemSlot, attachTooltip, tabsBar } from '../../ui/kit.js';
@@ -55,7 +55,8 @@ export const forgePanel: PanelFactory = (app) => {
       };
 
       const drawUpgrade = (): void => {
-        body.append(mk('div', `font-size:12px;color:${COLORS.dim};margin:2px 0 6px`, 'Улучшение усиливает базовые статы (+20%), реролл перекатывает аффиксы.'));
+        body.append(mk('div', `font-size:12px;color:${COLORS.dim};margin:2px 0 6px`,
+          'Улучшение усиливает базовые статы (+20%), реролл перекатывает аффиксы, а разбор даёт ПОЛНЫЙ выход материалов — в подземелье он меньше.'));
         if (state.save.inventory.length === 0) { body.append(mk('div', 'color:#666', 'Нет предметов в инвентаре для работы.')); return; }
         const list = mk('div', 'max-height:56vh;overflow-y:auto;padding-right:4px');
         for (const item of state.save.inventory) {
@@ -67,7 +68,13 @@ export const forgePanel: PanelFactory = (app) => {
             () => app.sendCmd({ cmd: 'forgeUpgrade', uid: item.uid }), 'default', state.save.gold < prices.upgradeTier);
           const rr = button(`Реролл (${prices.rerollAffix})`,
             () => app.sendCmd({ cmd: 'forgeReroll', uid: item.uid }), 'default', state.save.gold < prices.rerollAffix);
-          row.append(cell, name, up, rr);
+          // Разбор УНИЧТОЖАЕТ вещь, поэтому кнопка гаснет ТЕМ ЖЕ правилом, которым отказывает сервер
+          // (`canSalvageItem`): иначе кнопка предлагала бы то, что сервер отклонит.
+          const can = canSalvageItem(app.config, item, false);
+          const sv = button('Разобрать',
+            () => app.sendCmd({ cmd: 'forgeSalvage', uid: item.uid }), 'default', !can.ok);
+          if (!can.ok && can.reason) attachTooltip(sv, () => can.reason!);
+          row.append(cell, name, up, rr, sv);
           list.appendChild(row);
         }
         body.appendChild(list);

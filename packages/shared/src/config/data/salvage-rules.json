@@ -1,0 +1,268 @@
+[
+  {
+    "id": "w-dagger",
+    "enabled": true,
+    "name": "Кинжалы",
+    "kind": "weapon",
+    "weaponClass": "dagger",
+    "yields": [
+      {
+        "materialId": "iron-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "id": "w-sword",
+    "enabled": true,
+    "name": "Мечи",
+    "kind": "weapon",
+    "weaponClass": "sword",
+    "yields": [
+      {
+        "materialId": "iron-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "w-axe",
+    "enabled": true,
+    "name": "Топоры",
+    "kind": "weapon",
+    "weaponClass": "axe",
+    "yields": [
+      {
+        "materialId": "iron-1",
+        "min": 2,
+        "max": 3
+      },
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "w-mace",
+    "enabled": true,
+    "name": "Булавы",
+    "kind": "weapon",
+    "weaponClass": "mace",
+    "yields": [
+      {
+        "materialId": "iron-1",
+        "min": 2,
+        "max": 3
+      },
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 1
+      }
+    ]
+  },
+  {
+    "id": "w-spear",
+    "enabled": true,
+    "name": "Копья",
+    "kind": "weapon",
+    "weaponClass": "spear",
+    "yields": [
+      {
+        "materialId": "iron-1",
+        "min": 1,
+        "max": 2
+      },
+      {
+        "materialId": "wood-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "w-halberd",
+    "enabled": true,
+    "name": "Алебарды",
+    "kind": "weapon",
+    "weaponClass": "halberd",
+    "yields": [
+      {
+        "materialId": "iron-1",
+        "min": 2,
+        "max": 3
+      },
+      {
+        "materialId": "wood-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "w-bow",
+    "enabled": true,
+    "name": "Луки",
+    "kind": "weapon",
+    "weaponClass": "bow",
+    "yields": [
+      {
+        "materialId": "wood-1",
+        "min": 3,
+        "max": 4
+      }
+    ]
+  },
+  {
+    "id": "w-crossbow",
+    "enabled": true,
+    "name": "Арбалеты",
+    "kind": "weapon",
+    "weaponClass": "crossbow",
+    "yields": [
+      {
+        "materialId": "wood-1",
+        "min": 2,
+        "max": 3
+      },
+      {
+        "materialId": "iron-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "id": "w-wand",
+    "enabled": true,
+    "name": "Жезлы",
+    "kind": "weapon",
+    "weaponClass": "wand",
+    "yields": [
+      {
+        "materialId": "wood-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "id": "w-staff",
+    "enabled": true,
+    "name": "Посохи",
+    "kind": "weapon",
+    "weaponClass": "staff",
+    "yields": [
+      {
+        "materialId": "wood-1",
+        "min": 3,
+        "max": 4
+      }
+    ]
+  },
+  {
+    "id": "a-quilted",
+    "enabled": true,
+    "name": "Стёганая броня",
+    "kind": "armor",
+    "armorClass": "quilted",
+    "yields": [
+      {
+        "materialId": "cloth-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "a-leather",
+    "enabled": true,
+    "name": "Кожаная броня",
+    "kind": "armor",
+    "armorClass": "leather",
+    "yields": [
+      {
+        "materialId": "hide-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "a-chain",
+    "enabled": true,
+    "name": "Кольчуга",
+    "kind": "armor",
+    "armorClass": "chain",
+    "yields": [
+      {
+        "materialId": "plate-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "a-segmented",
+    "enabled": true,
+    "name": "Сегментная броня",
+    "kind": "armor",
+    "armorClass": "segmented",
+    "yields": [
+      {
+        "materialId": "plate-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "a-plate",
+    "enabled": true,
+    "name": "Латы",
+    "kind": "armor",
+    "armorClass": "plate",
+    "yields": [
+      {
+        "materialId": "plate-1",
+        "min": 2,
+        "max": 3
+      }
+    ]
+  },
+  {
+    "id": "shield",
+    "enabled": true,
+    "name": "Щиты",
+    "kind": "shield",
+    "yields": [
+      {
+        "materialId": "wood-1",
+        "min": 2,
+        "max": 3
+      },
+      {
+        "materialId": "iron-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  },
+  {
+    "id": "jewelry",
+    "enabled": true,
+    "name": "Украшения",
+    "kind": "jewelry",
+    "yields": [
+      {
+        "materialId": "iron-1",
+        "min": 1,
+        "max": 2
+      }
+    ]
+  }
+]

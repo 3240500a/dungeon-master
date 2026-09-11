@@ -41,8 +41,11 @@ const SCOPE: Record<TownCommand['cmd'], CmdScope> = {
   sell: 'town',
   forgeUpgrade: 'town',
   forgeReroll: 'town',
+  forgeSalvage: 'town',
   stashOpen: 'town',
   stashMove: 'town',
+  // Разбор НА МЕСТЕ — смысл именно в том, чтобы не возвращаться в город (выход меньше, docs/ECONOMY.md ч3).
+  salvage: 'any',
   // Везде: панели открываются горячей клавишей, запрет ломал бы честного игрока.
   respec: 'any',
   respecPassives: 'any',

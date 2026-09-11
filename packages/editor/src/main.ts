@@ -51,6 +51,7 @@ const LABELS: Record<ConfigKey, string> = {
   'run-templates': 'Шаблоны забега',
   'item-tiers': 'Предметы: тиры',
   'craft-materials': 'Предметы: материалы крафта',
+  'salvage-rules': 'Предметы: правила разбора',
   'armor-classes': 'Классы брони',
   'phys-subtypes': 'Физ. подтипы',
   'weapon-weights': 'Веса оружия',
@@ -90,7 +91,7 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Состояния', keys: ['debuffs'] },
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
-  { title: 'Предметы', keys: ['items.base', 'item-tiers', 'craft-materials', 'rarities', 'affixes', 'uniques', 'rare-names'] },
+  { title: 'Предметы', keys: ['items.base', 'item-tiers', 'craft-materials', 'salvage-rules', 'rarities', 'affixes', 'uniques', 'rare-names'] },
   { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-item-affixes', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'objects', 'environment', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'skill-inserts', 'skill-insert-types', 'mastery-tree'] },
@@ -101,7 +102,7 @@ const NAV_GROUPS: NavGroup[] = [
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', 'craft-materials': 'Материалы', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'depth-tiers': 'Тиры глубины', 'monster-derive': 'Деривация', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
+  'item-tiers': 'Тиры', 'craft-materials': 'Материалы', 'salvage-rules': 'Разбор', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'depth-tiers': 'Тиры глубины', 'monster-derive': 'Деривация', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'skill-inserts': 'Вставки', 'skill-insert-types': 'Типы вставок', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
   'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',

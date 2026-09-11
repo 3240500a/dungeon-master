@@ -9,6 +9,8 @@ import { rarityHex } from '../loot/rarity.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { GLYPH, getHeld, beginHold, clearHeld, resolveHeldOnClose, setLastPointer } from './heldItem.js';
 import { renderGrid, showContextMenu } from './gridView.js';
+import { materialsView } from './materialsView.js';
+import { canSalvageItem } from '@dm/shared';
 
 /**
  * Инвентарь + пупсик экипировки. Раскладка (item.pos) АВТОРИТЕТНА НА СЕРВЕРЕ: клиент только
@@ -29,7 +31,7 @@ export const inventoryPanel: PanelFactory = (app) => ({
 
     const layout = mk('div', 'display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start');
     layout.append(paperdoll(app, msg), gridView(app, dims));
-    body.append(layout, msg);
+    body.append(layout, msg, materialsView(app));
     body.append(mk('div', 'font-size:11px;color:#666;margin-top:8px',
       'Клик — взять на курсор, клик — положить (обмен, если под следом один предмет). ' +
       'Клик в мир — выбросить. ПКМ — меню.'));
@@ -140,6 +142,13 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
         { label: 'Надеть', run: () => app.sendCmd({ cmd: 'equip', uid: item.uid }) },
       ];
   actions.push({ label: 'Выбросить', run: () => app.sendCmd({ cmd: 'drop', uid: item.uid }) });
+  // Разбор НА МЕСТЕ: выход меньше, чем у кузнеца, зато нести ничего не надо и при смерти
+  // не потеряешь. В городе пункта нет — там кузница выгоднее всегда (docs/ECONOMY.md, ч3).
+  if (app.state!.area !== 'town') {
+    const can = canSalvageItem(app.config, item, true);
+    const pct = Math.round(app.config.get('balance').salvage.fieldYield * 100);
+    if (can.ok) actions.push({ label: `Разобрать здесь (${pct} %)`, run: () => app.sendCmd({ cmd: 'salvage', uid: item.uid }) });
+  }
   showContextMenu(x, y, actions);
 }
 

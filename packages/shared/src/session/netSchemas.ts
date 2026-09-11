@@ -40,6 +40,8 @@ const townCommandSchema = z.discriminatedUnion('cmd', [
   z.object({ cmd: z.literal('sell'), uid: z.string().max(64) }),
   z.object({ cmd: z.literal('forgeUpgrade'), uid: z.string().max(64) }),
   z.object({ cmd: z.literal('forgeReroll'), uid: z.string().max(64) }),
+  z.object({ cmd: z.literal('forgeSalvage'), uid: z.string().max(64) }),
+  z.object({ cmd: z.literal('salvage'), uid: z.string().max(64) }),
   z.object({ cmd: z.literal('equip'), uid: z.string().max(64) }),
   z.object({ cmd: z.literal('unequip'), slot: z.string().max(32) }),
   z.object({ cmd: z.literal('allocAttr'), attr: z.string().max(32) }),

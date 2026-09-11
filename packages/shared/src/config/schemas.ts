@@ -234,6 +234,41 @@ export const balanceSchema = z.object({
         .default({ bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 }),
     })
     .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140, shadow3d: { bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 } }),
+  /** Разбор вещей на материалы: где сколько выходит (docs/ECONOMY.md, Ч3). */
+  salvage: z
+    .object({
+      /**
+       * ⭐ ДОЛЯ ВЫХОДА ПРИ РАЗБОРЕ В ПОЛЕ. У кузнеца выход полный (1.0), в подземелье — эта доля.
+       * Здесь весь смысл части Ч3: переработал на месте — гарантировал себе меньшее и ничего
+       * не несёшь; донёс целиком — получил всё, но рискуешь половиной сумки при смерти.
+       * ⚠ 0.3, а не 0.6: при 0.6 проще ВСЕГДА разбирать сразу, чем возиться с упаковкой сумки,
+       * и выбор исчезает вместе со смыслом смерти (docs/ECONOMY.md, правило Р4).
+       */
+      fieldYield: z.number().min(0).max(1).default(0.3),
+      /** Множитель выхода по редкости вещи. */
+      rarityMult: z
+        .object({
+          normal: z.number().min(0).default(1),
+          magic: z.number().min(0).default(1.4),
+          rare: z.number().min(0).default(2),
+          /** ⚠ 0 — уникальные НЕ разбираются вовсе: нашёл как есть, лишний уходит торговцу (В2). */
+          unique: z.number().min(0).default(0),
+        })
+        .default({}),
+      /** Множитель выхода по слоту брони: нагрудник целый, перчатки — мелочь. */
+      armorSlotMult: z
+        .object({
+          chest: z.number().min(0).default(1),
+          helm: z.number().min(0).default(0.6),
+          boots: z.number().min(0).default(0.6),
+          gloves: z.number().min(0).default(0.4),
+          belt: z.number().min(0).default(0.4),
+        })
+        .default({}),
+      /** Через сколько уровней предмета ступень материала растёт на единицу (0 — никогда). */
+      tierUpEveryItemLevel: z.number().int().min(0).default(8),
+    })
+    .default({}),
   /**
    * ЧТО ПОДБИРАЕТСЯ САМО при проходе рядом; остальное лежит и берётся по клику или [E].
    * ⚠ Раньше это был массив редкостей, который НЕ ЧИТАЛА НИ ОДНА СТРОКА КОДА. Ключ ожил вместе
@@ -778,6 +813,36 @@ export const monsterGearSchema = z.array(
       salvageTo: salvageToSchema,
     }),
   ]),
+);
+
+// ── salvage-rules ─────────────────────────────────────────────────────────────
+/**
+ * ИЗ ЧЕГО СДЕЛАНА ВЕЩЬ — то и получишь при разборе (docs/ECONOMY.md, Ч3).
+ *
+ * Правила, а не таблица на каждую из 84 баз: совпадение ищется сверху вниз, первое подошедшее
+ * и работает. Пустое поле условия не проверяется вовсе, поэтому «все щиты» — это одна строка.
+ * ⚠ Количество здесь — для НАГРУДНИКА и обычной редкости; слот и редкость домножают его
+ * (`balance.salvage`), иначе пришлось бы держать 25 строк только на броню.
+ */
+export const salvageRulesSchema = z.array(
+  z.object({
+    id: z.string(),
+    /** Выключенное правило пропускается, будто его нет. */
+    enabled: z.boolean().default(true),
+    name: z.string(),
+    /** Условие: вид предмета. Пусто — любой. */
+    kind: z.enum(['weapon', 'armor', 'shield', 'jewelry', 'consumable']).optional(),
+    /** Условие: класс оружия (берётся с БАЗЫ предмета — в самом предмете его нет). */
+    weaponClass: z.string().optional(),
+    /** Условие: класс брони. */
+    armorClass: z.string().optional(),
+    /** Условие: слот экипировки. */
+    slot: z.string().optional(),
+    /** Что и сколько выходит. Ступень материала поднимает уровень предмета (`balance.salvage`). */
+    yields: z
+      .array(z.object({ materialId: z.string(), min: z.number().int().min(0), max: z.number().int().min(0) }))
+      .default([]),
+  }),
 );
 
 // ── craft-materials ───────────────────────────────────────────────────────────
@@ -2084,6 +2149,7 @@ export const configSchemas = {
   'run-templates': runTemplatesSchema,
   'item-tiers': itemTiersSchema,
   'craft-materials': craftMaterialsSchema,
+  'salvage-rules': salvageRulesSchema,
   'armor-classes': armorClassesSchema,
   'phys-subtypes': physSubtypesSchema,
   'weapon-weights': weaponWeightsSchema,
