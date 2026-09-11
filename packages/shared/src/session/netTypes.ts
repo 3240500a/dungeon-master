@@ -1,7 +1,7 @@
 import type { Item } from '../types/items.js';
 import type { QuestDef } from '../types/quest.js';
 import type { DamageType } from '../types/combat.js';
-import type { ScaledMonster } from '../types/world.js';
+import type { DropPayload, ScaledMonster } from '../types/world.js';
 import type { SaveState } from '../types/save.js';
 import type { DebuffState } from '../world/debuffs.js';
 import type { Grid } from '../world/grid.js';
@@ -104,12 +104,7 @@ export interface ProjView {
   /** Радиус коллизии (debug-draw). */
   r: number;
 }
-export interface DropView {
-  id: number;
-  x: number;
-  y: number;
-  item: Item;
-}
+export type DropView = { id: number; x: number; y: number } & DropPayload;
 
 
 /** Область комнаты и её геометрия (шлётся один раз при входе). */

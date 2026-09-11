@@ -1,6 +1,22 @@
 import type { Attributes, HpManaScaling } from './attributes.js';
 import type { DamageType } from './combat.js';
-import type { PhysSubtype } from './items.js';
+import type { Item, PhysSubtype } from './items.js';
+
+/**
+ * ЧТО ЛЕЖИТ НА ЗЕМЛЕ. Вещь занимает клетку инвентаря, золото и материалы идут в кошелёк —
+ * правила подбора у них разные, поэтому тип РАЗМЕЧЕН: забыть разобрать случай не даст компилятор.
+ */
+export type DropPayload =
+  | { kind: 'item'; item: Item }
+  | { kind: 'gold'; gold: number }
+  | { kind: 'materials'; mats: Record<string, number> };
+
+/** Полезная часть дропа без координат: у сущности мира и у её сетевого вида она ОДНА. */
+export function dropPayload(d: DropPayload): DropPayload {
+  if (d.kind === 'item') return { kind: 'item', item: d.item };
+  if (d.kind === 'gold') return { kind: 'gold', gold: d.gold };
+  return { kind: 'materials', mats: d.mats };
+}
 
 /** Фракция монстра — основа аффинити классов (нежить/демоны · звери/монстры). */
 export type MonsterFaction = 'undead' | 'demon' | 'beast' | 'monster';

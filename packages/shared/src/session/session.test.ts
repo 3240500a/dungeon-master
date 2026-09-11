@@ -73,11 +73,45 @@ describe('GameSession — бой/лут/прокачка', () => {
 
     expect(s.monstersAlive).toBe(0);
     expect(all.some((e) => e.type === 'monster-died')).toBe(true);
-    expect(all.some((e) => e.type === 'gold')).toBe(true);
     expect(all.some((e) => e.type === 'xp')).toBe(true);
     expect(all.some((e) => e.type === 'floor-cleared')).toBe(true);
-    expect(save.gold).toBeGreaterThan(goldBefore);
     expect(save.xp).toBeGreaterThan(0);
+
+    // ⭐ Золото ПАДАЕТ, а не начисляется телепортом: на тике убийства кошелёк ещё не тронут,
+    // на земле лежит монета. Раньше здесь ждали событие `gold` прямо с убийства — и это ровно
+    // то, что скрывало отсутствие монеты в мире (docs/ECONOMY.md, Ч2).
+    expect(s.world.drops.some((d) => d.kind === 'gold')).toBe(true);
+    expect(all.some((e) => e.type === 'gold')).toBe(false);
+    expect(save.gold).toBe(goldBefore);
+
+    // ...и приходит автоподбором, когда игрок стоит рядом.
+    for (let i = 0; i < 10; i++) all.push(...s.tick(1 / 30, { p1: idle }));
+    expect(all.some((e) => e.type === 'gold')).toBe(true);
+    expect(save.gold).toBeGreaterThan(goldBefore);
+  });
+
+  it('автоподбор: золото и материалы сами, вещь остаётся лежать', () => {
+    const r = reg();
+    const s = new GameSession(r, 5, 'normal');
+    const save = newBotSave(r, 'warrior');
+    const p = s.addPlayer('p1', save);
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [] });
+
+    const at = { x: p.pos.x + 8, y: p.pos.y + 8 }; // заведомо внутри радиуса автоподбора
+    const item = { uid: 'x1', baseId: 'b', name: 'Хлам', rarity: 'normal', pos: null } as unknown as Item;
+    s.world.drops.push({ id: 901, pos: { ...at }, kind: 'gold', gold: 50 });
+    s.world.drops.push({ id: 902, pos: { ...at }, kind: 'materials', mats: { 'iron-1': 3 } });
+    s.world.drops.push({ id: 903, pos: { ...at }, kind: 'item', item });
+
+    const goldBefore = save.gold;
+    for (let i = 0; i < 5; i++) s.tick(1 / 30, { p1: idle });
+
+    expect(save.gold).toBe(goldBefore + 50);
+    expect(save.materials?.['iron-1']).toBe(3);
+    // ⚠ Вещь НЕ подбирается сама: `autoPickup.rarities` пуст намеренно — выбор «взять или
+    // оставить» и есть добыча. Иначе полевой разбор (Ч3) остался бы без решения игрока.
+    expect(s.world.drops.map((d) => d.id)).toEqual([903]);
+    expect(save.inventory.some((it) => it.uid === 'x1')).toBe(false);
   });
 
   it('этаж без монстров сразу считается зачищенным', () => {

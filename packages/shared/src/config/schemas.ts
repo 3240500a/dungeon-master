@@ -234,10 +234,27 @@ export const balanceSchema = z.object({
         .default({ bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 }),
     })
     .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140, shadow3d: { bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 } }),
-  /** Редкости, которые поднимаются автоматически при проходе рядом. Остальное — по клику. */
+  /**
+   * ЧТО ПОДБИРАЕТСЯ САМО при проходе рядом; остальное лежит и берётся по клику или [E].
+   * ⚠ Раньше это был массив редкостей, который НЕ ЧИТАЛА НИ ОДНА СТРОКА КОДА. Ключ ожил вместе
+   * с физическим дропом золота и материалов: без автоподбора каждая монета требовала бы клика.
+   */
   autoPickup: z
-    .array(z.enum(['normal', 'magic', 'rare', 'unique']))
-    .default(['rare', 'unique']),
+    .object({
+      /** Радиус автоподбора, ед. мира (клетка = 32). Чуть шире ручного подбора (48). */
+      radius: z.number().min(0).default(56),
+      /** Золото поднимается само. */
+      gold: z.boolean().default(true),
+      /** Материалы поднимаются сами: они идут в кошелёк и места в сумке не занимают. */
+      materials: z.boolean().default(true),
+      /**
+       * Редкости ВЕЩЕЙ, которые поднимаются сами. Пусто — ни одна, и это сознательный дефолт:
+       * автоподбора вещей в игре не было никогда (ключ был мёртв), а «взять или оставить» —
+       * это и есть добыча. Кто хочет прежнюю задумку — ставит сюда rare/unique.
+       */
+      rarities: z.array(z.enum(['normal', 'magic', 'rare', 'unique'])).default([]),
+    })
+    .default({}),
   /** Геометрический рост цены пассивного узла за ранг: цена = base × mult^текущий_ранг
    *  (каждый следующий ранг дороже предыдущего в `mult` раз). */
   passiveRankCostMult: z.number().min(1).default(2),

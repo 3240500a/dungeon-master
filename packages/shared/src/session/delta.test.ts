@@ -93,7 +93,7 @@ describe('SnapshotDelta', () => {
 
   it('дропы: только приход и уход, позиции не пересылаются', () => {
     const d = new SnapshotDelta();
-    const drop = { id: 7, x: 1, y: 2, item: { uid: 'i1' } as never };
+    const drop = { id: 7, x: 1, y: 2, kind: 'item' as const, item: { uid: 'i1' } as never };
     d.prime(snap(1, [], [], { drops: [] }));
     const add = d.next(snap(2, [], [], { drops: [drop] }))!;
     expect(add.du).toEqual([drop]);

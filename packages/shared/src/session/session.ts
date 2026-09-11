@@ -2,7 +2,7 @@ import { vecLen, wrapAngle } from '../world/fastMath.js';
 import type { ConfigRegistry } from '../config/registry.js';
 import type { SaveState } from '../types/save.js';
 import type { Item, AttackType } from '../types/items.js';
-import type { ScaledMonster, MonsterFaction } from '../types/world.js';
+import type { DropPayload, ScaledMonster, MonsterFaction } from '../types/world.js';
 import type { CombatStats, DamagePacket, DamageType } from '../types/combat.js';
 import type { StatModifier } from '../types/attributes.js';
 import { emptyPacket, packetTotal } from '../types/combat.js';
@@ -465,6 +465,7 @@ export class GameSession {
       p.vel = { x: 0, y: 0 };
     }
     p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt, this.world.obstacles);
+    if (this.economy) this.autoPickup(p); // прошёл над золотом — подобрал, клик не нужен
 
     if (stunned) return; // оглушён — ни атаки, ни каста, ни зелий
     if (input?.useBelt != null) this.useBeltSlot(p, snap, input.useBelt);
@@ -1413,9 +1414,11 @@ export class GameSession {
 
     const diff = this.currentDifficulty();
     const level = m.def.level;
+    // ⭐ Золото ПАДАЕТ, а не начисляется телепортом: до этого монета не выпадала вовсе — число
+     // в углу экрана просто росло. Физический дроп + автоподбор (`balance.autoPickup`) делают
+     // награду видимой и дают смысл фильтру «что поднимать само, что оставлять лежать».
     const gold = Math.max(1, Math.round(this.rng.int(1, 5 + level * 2) * diff.goldMult));
-    reward.save.gold += gold;
-    this.events.push({ type: 'gold', playerId: reward.id, amount: gold, total: reward.save.gold });
+    this.spawnDrop(m.pos, { kind: 'gold', gold });
 
     const loot = this.cfg.get('balance').loot;
 
@@ -1434,10 +1437,7 @@ export class GameSession {
           knownMaterial: (id) => this.cfg.get('craft-materials').some((c) => c.id === id && c.enabled),
         },
       );
-      if (Object.keys(gains).length) {
-        addMaterials(reward.save, gains);
-        this.events.push({ type: 'materials', playerId: reward.id, gains, x: m.pos.x, y: m.pos.y });
-      }
+      if (Object.keys(gains).length) this.spawnDrop(m.pos, { kind: 'materials', mats: gains });
     }
 
     if (this.rng.chance(loot.dropChance)) {
@@ -1452,13 +1452,38 @@ export class GameSession {
         { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, level + diff.ilvlBonus), tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'), categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement },
         this.rng,
       );
-      const x = m.pos.x + this.rng.int(-8, 8);
-      const y = m.pos.y + this.rng.int(-8, 8);
-      this.world.drops.push({ id: this.world.nextId++, pos: { x, y }, item });
+      const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item });
       this.events.push({ type: 'item-dropped', item, x, y });
     }
 
     this.awardXp(reward, m.def.xp); // опыт монстра уже отскейлен по его уровню
+  }
+
+  /** Кладёт дроп у точки смерти с лёгким разбросом, чтобы три награды не слиплись в одну точку. */
+  private spawnDrop(at: Vec2, payload: DropPayload): { x: number; y: number } {
+    const x = at.x + this.rng.int(-10, 10);
+    const y = at.y + this.rng.int(-10, 10);
+    this.world.drops.push({ id: this.world.nextId++, pos: { x, y }, ...payload });
+    return { x, y };
+  }
+
+  /**
+   * АВТОПОДБОР при проходе рядом. Золото и материалы идут в кошелёк и клеток не занимают —
+   * их незачем собирать руками; вещи по умолчанию НЕ подбираются (`rarities` пуст), потому что
+   * выбор «взять или оставить» — это и есть добыча.
+   * ⚠ До этой правки ключ `balance.autoPickup` не читала НИ ОДНА строка кода: автоподбора в игре
+   * не было вовсе. Пустой список редкостей сохраняет то же наблюдаемое поведение для вещей.
+   */
+  private autoPickup(p: PlayerEntity): void {
+    const f = this.cfg.get('balance').autoPickup;
+    for (let i = this.world.drops.length - 1; i >= 0; i--) {
+      const d = this.world.drops[i]!;
+      if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) > f.radius) continue;
+      const want = d.kind === 'gold' ? f.gold : d.kind === 'materials' ? f.materials : f.rarities.includes(d.item.rarity);
+      if (!want) continue;
+      const took = this.takeDrop(p, i);
+      if (took?.item) this.events.push({ type: 'item-picked', playerId: p.id, item: took.item, x: took.x, y: took.y });
+    }
   }
 
   /** Начисляет XP и обрабатывает левелапы (полностью лечит, выдаёт очки). */
@@ -1486,7 +1511,7 @@ export class GameSession {
       const d = this.world.drops[i]!;
       if (vecLen(d.pos.x - p.pos.x, d.pos.y - p.pos.y) <= 48) {
         const took = this.takeDrop(p, i);
-        if (took) this.events.push({ type: 'item-picked', playerId: p.id, item: took.item, x: took.x, y: took.y });
+        if (took?.item) this.events.push({ type: 'item-picked', playerId: p.id, item: took.item, x: took.x, y: took.y });
         return; // полон — не поднимаем (took === null), но и других в этот тик не берём
       }
     }
@@ -1497,7 +1522,7 @@ export class GameSession {
    * сэмплирования ввода). Возвращает поднятое (item+координаты для лога/сейва) или null, если
    * дропа нет / далеко (>48) / полный инвентарь. Сервер по результату шлёт SaveUpdate + событие.
    */
-  pickupDropById(playerId: string, dropId: number): { item: Item; x: number; y: number } | null {
+  pickupDropById(playerId: string, dropId: number): { item?: Item; x: number; y: number } | null {
     const p = this.world.players[playerId];
     if (!p || !p.alive) return null;
     const i = this.world.drops.findIndex((d) => d.id === dropId);
@@ -1556,16 +1581,33 @@ export class GameSession {
     if (i < 0) return null;
     const item = p.save.inventory.splice(i, 1)[0]!;
     item.pos = null;
-    this.world.drops.push({ id: this.world.nextId++, pos: { x: p.pos.x, y: p.pos.y }, item });
+    this.world.drops.push({ id: this.world.nextId++, kind: 'item', pos: { x: p.pos.x, y: p.pos.y }, item });
     return item;
   }
 
-  /** Кладёт дроп[index] в авторитетную сетку инвентаря игрока. null — если места нет. */
-  private takeDrop(p: PlayerEntity, index: number): { item: Item; x: number; y: number } | null {
+  /**
+   * Забирает дроп[index] игроку: вещь — в авторитетную сетку инвентаря, золото и материалы —
+   * в кошелёк. `null` только у вещи, которой не хватило места: кошелёк не переполняется никогда,
+   * и в этом весь смысл кошелька (docs/ECONOMY.md, Ч1).
+   */
+  private takeDrop(p: PlayerEntity, index: number): { item?: Item; x: number; y: number } | null {
     const d = this.world.drops[index]!;
-    if (!addToInventory(p.save.inventory, d.item, this.cfg.get('balance').inventory)) return null;
+    const x = d.pos.x;
+    const y = d.pos.y;
+    if (d.kind === 'item') {
+      if (!addToInventory(p.save.inventory, d.item, this.cfg.get('balance').inventory)) return null;
+      this.world.drops.splice(index, 1);
+      return { item: d.item, x, y };
+    }
     this.world.drops.splice(index, 1);
-    return { item: d.item, x: d.pos.x, y: d.pos.y };
+    if (d.kind === 'gold') {
+      p.save.gold += d.gold;
+      this.events.push({ type: 'gold', playerId: p.id, amount: d.gold, total: p.save.gold });
+    } else {
+      addMaterials(p.save, d.mats);
+      this.events.push({ type: 'materials', playerId: p.id, gains: d.mats, x, y });
+    }
+    return { x, y };
   }
 
   // ── Помощники ─────────────────────────────────────────────

@@ -430,7 +430,7 @@ export class Room implements Tickable {
       case 'useConsumable': r = this.useConsumable(pid, command.uid); break;
       case 'pickup': {
         const got = this.session.pickupDropById(pid, command.dropId);
-        if (got) this.broadcast({ t: 'events', events: [{ type: 'item-picked', playerId: pid, item: got.item, x: got.x, y: got.y }] });
+        if (got?.item) this.broadcast({ t: 'events', events: [{ type: 'item-picked', playerId: pid, item: got.item, x: got.x, y: got.y }] });
         r = got ? { ok: true } : { ok: false, reason: 'Далеко или инвентарь полон' };
         break;
       }
@@ -751,7 +751,7 @@ export class Room implements Tickable {
     const touched = new Set<string>();
     const quest: SessionEvent[] = [];
     for (const e of events) {
-      if (e.type === 'gold' || e.type === 'xp' || e.type === 'levelup' || e.type === 'item-picked') touched.add(e.playerId);
+      if (e.type === 'gold' || e.type === 'xp' || e.type === 'levelup' || e.type === 'item-picked' || e.type === 'materials') touched.add(e.playerId);
       this.observe(e);   // Ф3.2: наблюдения о поведении, на саму игру не влияют
       if (e.type === 'monster-died' && e.by) this.track(e.by, 'kill', e.def.id, touched, quest);
       else if (e.type === 'item-picked') this.track(e.playerId, 'collect-item', e.item.baseId, touched, quest);

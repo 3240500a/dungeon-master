@@ -1,4 +1,5 @@
 import type { DamagePacket, DamageType } from '../types/combat.js';
+import { dropPayload } from '../types/world.js';
 import type { WorldState } from '../world/state.js';
 import type { DecorObject } from '../dungeon/floorCommon.js';
 import type { FloorInit, WorldSnapshot, PeerInfo } from './netTypes.js';
@@ -74,7 +75,7 @@ export function serializeWorld(w: WorldState): WorldSnapshot {
     projectiles: w.projectiles.map((pr) => ({
       id: pr.id, x: qp(pr.pos.x), y: qp(pr.pos.y), owner: pr.owner, dom: dominantType(pr.packet), r: pr.radius,
     })),
-    drops: w.drops.map((d) => ({ id: d.id, x: qp(d.pos.x), y: qp(d.pos.y), item: d.item })),
+    drops: w.drops.map((d) => ({ ...dropPayload(d), id: d.id, x: qp(d.pos.x), y: qp(d.pos.y) })),
   };
 }
 

@@ -47,7 +47,7 @@ describe('бинарный кадр мира', () => {
       players: [player('p_abc', 100.25), player('p_def', 7.5, { alive: false, inCombat: true, toggles: ['aura'] })],
       monsters: [monster(1, 33.5), monster(70000, 12.25, { aiState: 'chase', stun: true, debuffs: { bleed: { stacks: 2 } } as never })],
       projectiles: [{ id: 5, x: 1.25, y: 2.5, owner: 'player', dom: 'fire', r: 3 }],
-      drops: [{ id: 9, x: 4.75, y: 6, item: { uid: 'it_1', name: 'Меч' } as never }],
+      drops: [{ id: 9, x: 4.75, y: 6, kind: 'item', item: { uid: 'it_1', name: 'Меч' } as never }],
     });
     const buf = encodeWorldFrame({ kind: WIRE_FULL, delta: snapshotToDelta(s), sum: worldChecksum(s) });
     const f = decodeWorldFrame(buf);

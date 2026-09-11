@@ -116,7 +116,10 @@
   "reconnectGraceSec": 3600,
   "loot": {
     "dropChance": 0.1,
-    "materials": { "chance": 0.6, "tierUpEveryDepth": 8 },
+    "materials": {
+      "chance": 0.6,
+      "tierUpEveryDepth": 8
+    },
     "categoryWeights": {
       "weapon": 25,
       "armor": 25,
@@ -201,10 +204,12 @@
       "playerLightDist": 350
     }
   },
-  "autoPickup": [
-    "rare",
-    "unique"
-  ],
+  "autoPickup": {
+    "radius": 56,
+    "gold": true,
+    "materials": true,
+    "rarities": []
+  },
   "passiveRankCostMult": 2,
   "power": {
     "gearRarityWeight": {

@@ -1,6 +1,7 @@
 import type { WorldSnapshot, PlayerView, MonsterView, ProjView, DropView } from './netTypes.js';
 import type { WorldDelta, PlayerPatch, MonsterPatch } from './delta.js';
 import type { Item } from '../types/items.js';
+import { dropPayload, type DropPayload } from '../types/world.js';
 import type { DebuffState } from '../world/debuffs.js';
 
 /**
@@ -227,7 +228,7 @@ export function encodeWorldFrame(f: WireFrame): Uint8Array {
     w.u32(dr.id);
     w.i16(posQ(dr.x));
     w.i16(posQ(dr.y));
-    w.json(dr.item);
+    w.json(dropPayload(dr));
   }
   const dd = d.dd ?? [];
   w.u16(dd.length);
@@ -323,8 +324,7 @@ export function decodeWorldFrame(buf: Uint8Array): WireFrame {
       const id = r.u32();
       const x = posU(r.i16());
       const y = posU(r.i16());
-      const item = r.json<Item>();
-      du.push({ id, x, y, item });
+      du.push({ ...r.json<DropPayload>(), id, x, y });
     }
     d.du = du;
   }

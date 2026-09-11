@@ -266,6 +266,7 @@ export class NetDriver {
     for (const d of snap.drops) {
       seenD.add(d.id);
       if (!this.drops.has(d.id)) {
+        if (d.kind !== 'item') continue; // золото и материалы 2D-клиент не рисует (он заморожен)
         const obj = new DroppedItem(this.scene, d.x, d.y, d.item);
         obj.sprite.setData('dropId', d.id); // клик по спрайту → точечная команда подбора
         this.drops.set(d.id, obj);

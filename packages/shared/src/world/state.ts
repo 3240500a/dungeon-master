@@ -1,7 +1,7 @@
 import type { CombatStats, DamagePacket } from '../types/combat.js';
 import type { Item } from '../types/items.js';
 import type { SaveState } from '../types/save.js';
-import type { ScaledMonster } from '../types/world.js';
+import type { DropPayload, ScaledMonster } from '../types/world.js';
 import type { DebuffApply, DebuffState } from './debuffs.js';
 import { newDebuffState } from './debuffs.js';
 import type { PlayerHitOptions } from './combat.js';
@@ -127,11 +127,7 @@ export interface MonsterEntity {
 }
 
 /** Лежащий на полу предмет. */
-export interface DropEntity {
-  id: number;
-  pos: Vec2;
-  item: Item;
-}
+export type DropEntity = { id: number; pos: Vec2 } & DropPayload;
 
 /** Летящий снаряд (базовая атака дальнобойного оружия или скилл). */
 export interface ProjectileEntity {

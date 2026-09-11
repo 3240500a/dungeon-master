@@ -801,7 +801,9 @@ export async function startOnline3d(): Promise<void> {
     for (const d of latest.drops) {
       seenD.add(d.id);
       if (!dropMeshes.has(d.id)) {
-        const col = 0xdcc060;
+        // Цвет говорит, ЧТО лежит: вещь — латунь, золото — монетное жёлтое, материалы — сталь.
+        // Без этого три разных награды у трупа выглядят одинаково и читаются как одна.
+        const col = d.kind === 'gold' ? 0xffd24a : d.kind === 'materials' ? 0x9aa6b2 : 0xdcc060;
         const g = new THREE.Group();
         // Гем самосветится (emissive) — БЕЗ PointLight: каждый дроп-свет менял число света в сцене → Three.js
         // перекомпилировал ВСЕ материалы (синхронный хитч в главном потоке на каждый спавн/деспаун лута).
