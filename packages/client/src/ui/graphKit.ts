@@ -85,6 +85,31 @@ export function showMenu(clientX: number, clientY: number, items: { label: strin
 // Здесь она не знает НИЧЕГО о содержимом узла: снаружи дают позиции и рисуют начинку сами.
 const SVGNS = 'http://www.w3.org/2000/svg';
 
+/**
+ * СЧЁТЧИК ДВОЙНОГО КЛИКА ПО УЗЛУ.
+ *
+ * Отдельно от DOM по двум причинам. Первая — его можно проверить. Вторая важнее: события `dblclick`
+ * здесь НЕ БЫВАЕТ В ПРИНЦИПЕ, и это надо было где-то записать. Первый клик выделяет узел, выделение
+ * перерисовывает холст, а перерисовка пересоздаёт ВСЕ узлы — значит второй клик приходит уже в другой
+ * элемент, общего предка у пары нет, и браузер `dblclick` не выдаёт. Ловится только живой мышью:
+ * синтетическое событие, посланное прямо на узел, проходит и создаёт ложное ощущение, что всё цело.
+ */
+export interface ClickTracker { hit(id: string, now: number): 'enter' | 'select'; reset(): void }
+export function clickTracker(dblMs = 420): ClickTracker {
+  let last = { id: '', t: -1e9 };
+  return {
+    hit(id, now) {
+      if (last.id === id && now - last.t < dblMs) {
+        last = { id: '', t: -1e9 };   // третий клик подряд — снова выбор, а не второй вход
+        return 'enter';
+      }
+      last = { id, t: now };
+      return 'select';
+    },
+    reset() { last = { id: '', t: -1e9 }; },   // перетащили узел — это не клик
+  };
+}
+
 export interface GraphNodeView { id: string; x: number; y: number; w: number; h: number }
 export interface GraphEdgeView {
   from: string;
@@ -150,6 +175,7 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
 
   let pan = { x: 20, y: 20 }, zoom = 1;
   let nodes: GraphNodeView[] = [], edges: GraphEdgeView[] = [];
+  const clicks = clickTracker();   // «выбор или вход» — см. `clickTracker`, событие dblclick тут бесполезно
   const layers = new Map<string, SVGGElement>();
   const apply = (): void => vp.setAttribute('transform', `translate(${pan.x} ${pan.y}) scale(${zoom})`);
   const toLocal = (cx: number, cy: number): { x: number; y: number } => {
@@ -230,12 +256,13 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
         };
         const up = (): void => {
           window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up);
-          if (moved) opts.onMove?.(n.id, n.x, n.y); else opts.onSelect?.(n.id);
+          if (moved) { opts.onMove?.(n.id, n.x, n.y); clicks.reset(); return; }
+          if (clicks.hit(n.id, performance.now()) === 'enter') opts.onEnter?.(n.id);
+          else opts.onSelect?.(n.id);
         };
         window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
       });
       g.addEventListener('contextmenu', (ev) => { ev.preventDefault(); ev.stopPropagation(); opts.onContext?.(n.id, ev.clientX, ev.clientY); });
-      g.addEventListener('dblclick', (ev) => { ev.preventDefault(); ev.stopPropagation(); opts.onEnter?.(n.id); });
       gNodes.append(g);
     }
     apply();

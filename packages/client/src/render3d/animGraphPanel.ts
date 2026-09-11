@@ -274,16 +274,32 @@ export function createAnimGraphPanel(host: AnimGraphHost, ui: Ui): AnimGraphPane
     };
     const node = model().find((n) => n.id === selected);
     const t = el('div', 'color:#7a869e;font-size:10px;margin-top:6px',
-      why[selected] ?? (node?.enter ? 'Двойной клик по узлу — зайти внутрь слоя.' : 'Служебный узел.'));
+      why[selected] ?? (node?.enter ? 'Внутри слоя — своё содержимое.' : 'Служебный узел.'));
     box.append(t);
+    // Кнопка, а не только двойной клик: вход внутрь должно быть ВИДНО, иначе он существует только
+    // в подсказке. Двойной клик остаётся как привычный из Unity способ.
+    if (node?.enter) {
+      const b = ui.btn(`▸ войти в «${LEVEL_TITLE[node.enter]}»`, () => enter(node.id), true);
+      b.style.marginTop = '6px'; box.append(b);
+    }
   };
 
   // ── Большое поле ─────────────────────────────────────────────────────────────────────────────
   let lastField: HTMLElement | null = null;
   let lastBox: HTMLElement | null = null;
+  let lastBar: HTMLElement | null = null;
   const redraw = (): void => {
     if (lastField) renderField(lastField);
     if (lastBox) { lastBox.innerHTML = ''; renderInspector(lastBox); }
+  };
+  /**
+   * Выбор узла перерисовывает шапку и инспектор, но НЕ холст целиком: полная перерисовка поля
+   * пересоздаёт канвас и сбрасывает пан и зум — граф прыгал бы на каждый клик.
+   */
+  const reselect = (): void => {
+    if (lastBar) { lastBar.innerHTML = ''; fillBar(lastBar); }
+    if (lastBox) { lastBox.innerHTML = ''; renderInspector(lastBox); }
+    paint();
   };
 
   const renderField = (fieldHost: HTMLElement): void => {
@@ -294,27 +310,14 @@ export function createAnimGraphPanel(host: AnimGraphHost, ui: Ui): AnimGraphPane
     fieldHost.style.flexDirection = 'column';
 
     const bar = el('div', 'display:flex;gap:4px;align-items:center;padding:4px 6px;background:#12141c;border-bottom:1px solid #39415a;flex:0 0 auto;flex-wrap:wrap');
-    crumbs(bar);
-    const spacer = el('div', 'flex:1 1 auto'); bar.append(spacer);
-    bar.append(btn('вписать', () => canvas?.fit()));
-    if (cur() === 'action') {
-      bar.append(btn('+ состояние', () => {
-        const nm = prompt('имя состояния (например hit_react_F, cast_release)', 'state');
-        if (!nm) return;
-        stateObj(nm); selected = nm; host.save(); redraw();
-      }));
-    }
-    const hint = el('div', 'color:#7a869e;font-size:10px');
-    hint.textContent = cur() === ''
-      ? 'стек слоёв снизу вверх · двойной клик — зайти внутрь'
-      : cur() === 'action' ? 'зелёные — цепочки, пунктир — «перебьёт»' : 'ребро — «подмешивается к базе»';
-    bar.append(hint);
+    lastBar = bar;
+    fillBar(bar);
     fieldHost.append(bar);
 
     const holder = el('div', 'flex:1 1 auto;min-height:0;position:relative'); fieldHost.append(holder);
     canvas = graphCanvas(holder, {
       selected: () => selected,
-      onSelect: (id) => { selected = id; if (lastBox) { lastBox.innerHTML = ''; renderInspector(lastBox); } paint(); },
+      onSelect: (id) => { selected = id; reselect(); },
       onEnter: (id) => enter(id),
       onMove: (id, x, y) => { graph().layout[layKey(id)] = { x, y }; host.save(); },
     });
@@ -325,6 +328,29 @@ export function createAnimGraphPanel(host: AnimGraphHost, ui: Ui): AnimGraphPane
     foot.textContent = host.active() ? 'сейчас играет действие' : 'слот действия пуст';
     fieldHost.append(foot);
   };
+
+  /** Содержимое шапки: крошки, вход в выбранный слой, кнопки уровня. Пересобирается и на выборе узла. */
+  function fillBar(bar: HTMLElement): void {
+    const { el, btn } = ui;
+    crumbs(bar);
+    const spacer = el('div', 'flex:1 1 auto'); bar.append(spacer);
+    // Вход для выбранного узла — прямо в шапке, рядом с крошками: сюда смотрят, когда ищут «куда нажать».
+    const selNode = selected ? model().find((n) => n.id === selected) : undefined;
+    if (selNode?.enter) bar.append(btn(`▸ войти в «${LEVEL_TITLE[selNode.enter]}»`, () => enter(selNode.id), true));
+    bar.append(btn('вписать', () => canvas?.fit()));
+    if (cur() === 'action') {
+      bar.append(btn('+ состояние', () => {
+        const nm = prompt('имя состояния (например hit_react_F, cast_release)', 'state');
+        if (!nm) return;
+        stateObj(nm); selected = nm; host.save(); redraw();
+      }));
+    }
+    const hint = el('div', 'color:#7a869e;font-size:10px');
+    hint.textContent = cur() === ''
+      ? 'стек слоёв снизу вверх · узел со стрелкой «›» — выбери и нажми «войти» (или двойной клик)'
+      : cur() === 'action' ? 'зелёные — цепочки, пунктир — «перебьёт»' : 'ребро — «подмешивается к базе»';
+    bar.append(hint);
+  }
 
   return {
     renderField,
