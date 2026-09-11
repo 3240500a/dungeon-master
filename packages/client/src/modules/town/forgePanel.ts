@@ -1,4 +1,4 @@
-import { shopBuyPrice, canSalvageItem } from '@dm/shared';
+import { shopBuyPrice, canSalvageItem, upgradeCost, describeCost, canAfford } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, mk, button, itemSlot, attachTooltip, tabsBar } from '../../ui/kit.js';
@@ -64,8 +64,16 @@ export const forgePanel: PanelFactory = (app) => {
           const cell = itemSlot(item, {});
           attachTooltip(cell, () => itemTooltipHtml(item));
           const name = mk('div', 'flex:1;font-size:13px', item.name);
+          // Цена улучшения — золото И материалы. Кнопка гаснет по ТОМУ ЖЕ расчёту, которым
+          // отказывает сервер (`upgradeCost`), а сама цена написана рядом: без этого игрок жмёт
+          // вслепую и узнаёт про нехватку только из текста ошибки.
+          const mats = upgradeCost(app.config, item);
+          const upOk = Object.keys(mats).length > 0 && state.save.gold >= prices.upgradeTier && canAfford(state.save, mats);
           const up = button(`Улучшить (${prices.upgradeTier})`,
-            () => app.sendCmd({ cmd: 'forgeUpgrade', uid: item.uid }), 'default', state.save.gold < prices.upgradeTier);
+            () => app.sendCmd({ cmd: 'forgeUpgrade', uid: item.uid }), 'default', !upOk);
+          attachTooltip(up, () => Object.keys(mats).length
+            ? `Цена: ${prices.upgradeTier} золота<br>${describeCost(app.config, mats)}`
+            : 'Эту вещь кузнец не улучшает');
           const rr = button(`Реролл (${prices.rerollAffix})`,
             () => app.sendCmd({ cmd: 'forgeReroll', uid: item.uid }), 'default', state.save.gold < prices.rerollAffix);
           // Разбор УНИЧТОЖАЕТ вещь, поэтому кнопка гаснет ТЕМ ЖЕ правилом, которым отказывает сервер

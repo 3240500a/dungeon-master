@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, fieldSalvage, socketInsert, socketClear } from './townActions.js';
+import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, fieldSalvage, upgradeCost, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
 import type { Item, SaveState } from '../types/index.js';
@@ -50,28 +50,71 @@ describe('moveInventoryItem (авторитетная перекладка ин�
 
 describe('forgeUpgrade / forgeReroll (авторитетная кузница)', () => {
   const price = reg.get('balance').forgePrices;
-  const weapon = (uid: string): Item => ({
-    uid, baseId: 'b', name: 'Меч', slot: 'weapon', rarity: 'normal', itemLevel: 5,
+  // ⚠ База НАСТОЯЩАЯ: цена улучшения берёт семью материала из правила разбора этой базы,
+  // а правило ищется по классу оружия, которого у выдуманного `baseId` нет.
+  const swordBase = reg.get('items.base').find((b) => b.kind === 'weapon' && b.weaponClass === 'sword')!;
+  const weapon = (uid: string, rarity: Item['rarity'] = 'normal'): Item => ({
+    uid, baseId: swordBase.id, name: 'Меч', kind: 'weapon', slot: 'weapon', rarity, itemLevel: 5,
     requirements: {}, affixes: [], gridW: 1, gridH: 3, pos: null,
     baseStats: [{ kind: 'flat', stat: 'minDamage', value: 10 }, { kind: 'increased', stat: 'attackSpeed', value: 5 }],
   } as unknown as Item);
+  /** Кошелёк, которого заведомо хватает на любое улучшение. */
+  const rich = (): Record<string, number> => ({ 'iron-1': 99, 'iron-2': 99, 'iron-3': 99 });
 
-  it('улучшение: −золото, +20% плоским статам (мин +1), % не тронут, префикс ★', () => {
+  it('улучшение: −золото, −материалы, +20% плоским статам (мин +1), % не тронут, префикс ★', () => {
     const it = weapon('w');
-    const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
+    const save = { gold: 1000, inventory: [it], materials: rich() } as unknown as SaveState;
     expect(forgeUpgrade(reg, save, 'w').ok).toBe(true);
     expect(save.gold).toBe(1000 - price.upgradeTier);
+    expect(save.materials!['iron-1']).toBe(99 - price.upgradeMaterials.tier1);
     expect(it.baseStats[0]).toMatchObject({ kind: 'flat', value: 12 });        // 10 → round(12)
     expect(it.baseStats[1]).toMatchObject({ kind: 'increased', value: 5 });    // %-стат не меняем
     expect(it.name.startsWith('★')).toBe(true);
   });
 
-  it('улучшение: мало золота → отказ, предмет и золото не тронуты', () => {
+  it('улучшение: мало золота → отказ, предмет, золото и материалы не тронуты', () => {
     const it = weapon('w');
-    const save = { gold: price.upgradeTier - 1, inventory: [it] } as unknown as SaveState;
+    const save = { gold: price.upgradeTier - 1, inventory: [it], materials: rich() } as unknown as SaveState;
     expect(forgeUpgrade(reg, save, 'w').ok).toBe(false);
     expect(it.name).toBe('Меч');
     expect(save.gold).toBe(price.upgradeTier - 1);
+    expect(save.materials!['iron-1']).toBe(99);
+  });
+
+  it('⚠ мало материалов → отказ, и ЗОЛОТО ТОЖЕ не списано', () => {
+    const it = weapon('w');
+    const save = { gold: 1000, inventory: [it], materials: { 'iron-1': 1 } } as unknown as SaveState;
+    const r = forgeUpgrade(reg, save, 'w');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('материалов');
+    expect(save.gold).toBe(1000);              // отказ на середине не должен обирать игрока
+    expect(save.materials!['iron-1']).toBe(1);
+    expect(it.name).toBe('Меч');
+  });
+
+  it('⭐ лестница цены: обычная — ржавое, магическая — и чистое, редкая — и калёное', () => {
+    expect(Object.keys(upgradeCost(reg, weapon('a', 'normal')))).toEqual(['iron-1']);
+    expect(Object.keys(upgradeCost(reg, weapon('b', 'magic')))).toEqual(['iron-1', 'iron-2']);
+    expect(Object.keys(upgradeCost(reg, weapon('c', 'rare')))).toEqual(['iron-1', 'iron-2', 'iron-3']);
+    // ⚠ количество первой ступени ОДНО И ТО ЖЕ у всех: ржавое — базовая валюта крафта
+    expect(upgradeCost(reg, weapon('d', 'rare'))['iron-1']).toBe(upgradeCost(reg, weapon('e', 'normal'))['iron-1']);
+  });
+
+  it('⚠ уникальные кузница не улучшает вовсе — и не берёт за это денег', () => {
+    const it = weapon('u', 'unique');
+    const save = { gold: 1000, inventory: [it], materials: rich() } as unknown as SaveState;
+    expect(upgradeCost(reg, it)).toEqual({});
+    expect(forgeUpgrade(reg, save, 'u').ok).toBe(false);
+    expect(save.gold).toBe(1000);
+  });
+
+  it('семья материала идёт от вещи: лук качается деревом, латы — пластинами', () => {
+    const bowBase = reg.get('items.base').find((b) => b.kind === 'weapon' && b.weaponClass === 'bow')!;
+    const bow = { ...weapon('bw', 'magic'), baseId: bowBase.id } as Item;
+    expect(Object.keys(upgradeCost(reg, bow))).toEqual(['wood-1', 'wood-2']);
+    const plateBase = reg.get('items.base').find((b) => b.kind === 'armor' && b.armorClass === 'plate')!;
+    const mail = { ...weapon('pl', 'normal'), baseId: plateBase.id, kind: 'armor', slot: 'chest', armorClass: 'plate' } as unknown as Item;
+    expect(Object.keys(upgradeCost(reg, mail))).toEqual(['plate-1']);
   });
 
   it('реролл: −золото, перекатывает аффиксы (столько же)', () => {

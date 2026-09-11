@@ -9,8 +9,8 @@ import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
 import { socketsOpen, insertById, insertUnlocked, insertFits } from '../session/inserts.js';
-import { canSalvage, salvageFromItem, type SalvageRng } from '../formulas/salvage.js';
-import { addMaterials } from './materials.js';
+import { canSalvage, salvageFromItem, salvageRuleFor, tierOfRarity, type SalvageRng } from '../formulas/salvage.js';
+import { addMaterials, canAfford, missingFor, spendMaterials, type MaterialCost } from './materials.js';
 
 /**
  * АВТОРИТЕТНЫЕ операции города над `SaveState` (магазин/экип/распределение) — чистые,
@@ -100,16 +100,63 @@ export function sellItem(reg: ConfigRegistry, save: SaveState, uid: string): Act
 }
 
 // ── Кузница (авторитетно; раньше мутировал клиент → откатывалось сейвом) ──────
-/** Улучшение: +20% (мин +1) к плоским базовым статам, префикс ★. Цена `forgePrices.upgradeTier`. */
+/**
+ * ЦЕНА УЛУЧШЕНИЯ В МАТЕРИАЛАХ — лестница по редкости вещи (docs/ECONOMY.md, Ч5).
+ *
+ * Обычная просит только ржавое, магическая — ржавое И чистое, редкая — ржавое, чистое И калёное.
+ * Каждая следующая редкость ДОБАВЛЯЕТ ступень: убери среднюю у редких — и чистое железо станет
+ * мусором ровно тогда, когда игрок перерос магические вещи, а приходить не перестанет.
+ *
+ * СЕМЬЯ материала берётся из ПРАВИЛА РАЗБОРА той же вещи: меч чинится железом, лук — деревом,
+ * латы — пластинами. Одна таблица описывает и что вещь даёт, и что она стоит, поэтому разойтись
+ * они не могут. Берётся первая (главная) семья правила: у топора это железо, дерево — довесок.
+ *
+ * Пустая цена (нет правила / редкость с нулевой ступенью) — значит улучшать нечем, и это ОТКАЗ,
+ * а не «бесплатно»: иначе уники чинились бы даром.
+ */
+export function upgradeCost(reg: ConfigRegistry, item: Item): MaterialCost {
+  const rules = reg.get('salvage-rules');
+  const bal = reg.get('balance');
+  const tier = tierOfRarity(item.rarity, bal.salvage.rarityTier);
+  const rule = salvageRuleFor(item, weaponClassOf(reg, item), rules);
+  const first = rule?.yields?.[0]?.materialId;
+  if (tier <= 0 || !first) return {};
+  const family = reg.get('craft-materials').find((m) => m.id === first)?.family;
+  if (!family) return {};
+  const need = [bal.forgePrices.upgradeMaterials.tier1, bal.forgePrices.upgradeMaterials.tier2, bal.forgePrices.upgradeMaterials.tier3];
+  const out: MaterialCost = {};
+  for (let t = 1; t <= Math.min(tier, need.length); t++) {
+    const n = need[t - 1]!;
+    const mat = reg.get('craft-materials').find((m) => m.family === family && m.tier === t && m.enabled);
+    if (n > 0 && mat) out[mat.id] = n;
+  }
+  return out;
+}
+
+/** Улучшение: +20% (мин +1) к плоским базовым статам, префикс ★. Цена — золото + материалы. */
 export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
-  const cost = reg.get('balance').forgePrices.upgradeTier;
-  if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
-  save.gold -= cost;
+  const gold = reg.get('balance').forgePrices.upgradeTier;
+  const mats = upgradeCost(reg, item);
+  if (!Object.keys(mats).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
+  if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
+  if (!canAfford(save, mats)) return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingFor(save, mats))}` };
+  // ⚠ Списываем ОБА ресурса и только потом меняем предмет: иначе отказ на середине оставил бы
+  // игрока без золота и без улучшения.
+  save.gold -= gold;
+  spendMaterials(save, mats);
   item.baseStats = item.baseStats.map((m) => (m.kind === 'flat' ? { ...m, value: Math.max(m.value + 1, Math.round(m.value * 1.2)) } : m));
   if (!item.name.startsWith('★')) item.name = `★ ${item.name}`;
   return { ok: true };
+}
+
+/** «Ржавое железо 12 · Чистое железо 5» — одна подпись для кнопки, тултипа и текста отказа. */
+export function describeCost(reg: ConfigRegistry, cost: MaterialCost): string {
+  const defs = reg.get('craft-materials');
+  return Object.entries(cost)
+    .map(([id, n]) => `${defs.find((m) => m.id === id)?.name ?? id} ${n}`)
+    .join(' · ');
 }
 /** Реролл аффиксов: заново катит столько же аффиксов из пула (rng — от вызывающего). Цена `forgePrices.rerollAffix`. */
 export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng): ActionResult {

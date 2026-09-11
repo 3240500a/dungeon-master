@@ -13,12 +13,24 @@ import { CELL, GAP } from './heldItem.js';
  * что вообще бывает и чего не хватает. Показывай мы только ненулевые — новый персонаж видел бы
  * пустое место и не понял бы, что кошелёк вообще есть.
  *
- * Раскладка — строка на семью, столбец на ступень: видно и «чего у меня нет», и «какая ступень
- * уже пошла с глубины». Клетка ростом с клетку инвентаря (`CELL`), чтобы вкладки не прыгали.
+ * Раскладка — строка на семью, столбец на ступень, и столбец подписан РЕДКОСТЬЮ: ступень материала
+ * задаёт редкость вещи, с которой он падает, и она же решает, какую вещь им можно улучшить.
+ * Клетка ростом с клетку инвентаря (`CELL`), чтобы вкладки не прыгали.
  */
 
 /** Цвет по ступени: 1 — сталь, 2 — синева, 3 — латунь. Пока иконок нет, цвет и есть опознание. */
 const TIER_HEX = ['#9aa6b2', '#7fb6e0', '#d0a24a'];
+
+/**
+ * ⭐ Главное, что подпись обязана объяснить: ступень материала = РЕДКОСТЬ вещи, с которой он падает,
+ * и она же решает, какую вещь этим материалом можно улучшить. Без этой строки склад выглядит
+ * как «три непонятные колонки», и связь «жёлтая вещь → калёная сталь → улучшение жёлтых» не видна.
+ */
+const NEEDED_FOR: Record<number, string> = {
+  1: 'Падает с обычных вещей. Нужен для улучшения ЛЮБЫХ.',
+  2: 'Падает с магических. Нужен для улучшения магических и редких.',
+  3: 'Падает с редких. Нужен для улучшения редких.',
+};
 
 /** Человеческое имя семьи: в конфиге у неё только id. */
 const FAMILY_LABEL: Record<string, string> = {
@@ -44,6 +56,15 @@ export function materialsView(app: App): HTMLElement {
   for (const d of defs) if (!families.includes(d.family)) families.push(d.family);
 
   const grid = mk('div', `display:flex;flex-direction:column;gap:${GAP}px`);
+
+  // Шапка столбцов: она и есть ответ на «почему три колонки» — каждая отвечает своей редкости.
+  const head = mk('div', `display:flex;align-items:center;gap:${GAP}px;margin-bottom:2px`);
+  head.append(mk('div', 'width:72px'));
+  for (const [i, label] of ['обычные', 'магические', 'редкие'].entries()) {
+    head.append(mk('div', `width:72px;text-align:center;font-size:10px;color:${TIER_HEX[i]}99`, label));
+  }
+  grid.append(head);
+
   for (const fam of families) {
     const row = mk('div', `display:flex;align-items:center;gap:${GAP}px`);
     row.append(mk('div', `width:72px;font-size:11px;color:${COLORS.dim};text-align:right;padding-right:4px`,
@@ -59,7 +80,8 @@ export function materialsView(app: App): HTMLElement {
       cell.append(mk('span', `width:9px;height:9px;border-radius:2px;display:inline-block;background:${have > 0 ? hex : '#3a3a3a'}`));
       cell.append(mk('b', '', String(have)));
       attachTooltip(cell, () =>
-        `<b style="color:${hex}">${d.name}</b><br>Ступень ${d.tier} · в кошельке ${have}` +
+        `<b style="color:${hex}">${d.name}</b><br>В кошельке ${have}` +
+        `<br>${NEEDED_FOR[d.tier] ?? ''}` +
         (d.sellPrice > 0 ? `<br>Продажа: ${d.sellPrice} за штуку` : ''));
       row.append(cell);
     }

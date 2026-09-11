@@ -117,8 +117,7 @@
   "loot": {
     "dropChance": 0.1,
     "materials": {
-      "chance": 0.6,
-      "tierUpEveryDepth": 8
+      "chance": 0.6
     },
     "categoryWeights": {
       "weapon": 25,
@@ -134,7 +133,12 @@
   "maxTotalRequirement": 190,
   "forgePrices": {
     "upgradeTier": 200,
-    "rerollAffix": 120
+    "rerollAffix": 120,
+    "upgradeMaterials": {
+      "tier1": 20,
+      "tier2": 5,
+      "tier3": 2
+    }
   },
   "respecCost": 500,
   "passiveRespecCostPct": 0.5,
@@ -206,10 +210,10 @@
   },
   "salvage": {
     "fieldYield": 0.3,
-    "rarityMult": {
+    "rarityTier": {
       "normal": 1,
-      "magic": 1.4,
-      "rare": 2,
+      "magic": 2,
+      "rare": 3,
       "unique": 0
     },
     "armorSlotMult": {
@@ -218,8 +222,7 @@
       "boots": 0.6,
       "gloves": 0.4,
       "belt": 0.4
-    },
-    "tierUpEveryItemLevel": 8
+    }
   },
   "autoPickup": {
     "radius": 56,

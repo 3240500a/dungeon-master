@@ -1426,14 +1426,13 @@ export class GameSession {
     // ⭐ ПРАВИЛО №1: суммарная частота наград не падает, меняется только их ВИД. Вещь роняется
     // редко (10 %), но материалы — часто, и берутся они из ТОГО, ЧТО НА МОНСТРЕ НАДЕТО.
     if (this.rng.chance(loot.materials.chance)) {
-      const per = loot.materials.tierUpEveryDepth;
       const gains = salvageFromMonster(
         m.def.gearRolls,
         (id) => this.cfg.get('monster-gear').find((g) => g.id === id),
         this.rng,
         {
           rarity: m.def.rarity,
-          tierShift: per > 0 ? Math.floor(level / per) : 0,
+          rarityTier: this.cfg.get('balance').salvage.rarityTier,
           knownMaterial: (id) => this.cfg.get('craft-materials').some((c) => c.id === id && c.enabled),
         },
       );
