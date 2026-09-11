@@ -93,6 +93,10 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   const base = (text: string): void => { out.push({ text, affix: false }); };
   const aff = (text: string): void => { out.push({ text, affix: true }); };
 
+  // Сломано — ПЕРВОЙ строкой: это главное, что надо знать о вещи, потому что отменяет
+  // всё остальное — надеть нельзя, пока не починишь.
+  if (item.broken) base('⚠ Сломано — надеть нельзя, почини у кузнеца или разбери');
+
   if (item.attackType) {
     const at = ATTACK_LABEL[item.attackType] ?? item.attackType;
     const dk = item.damageKind ? ` · ${DMGKIND_LABEL[item.damageKind] ?? item.damageKind}` : '';

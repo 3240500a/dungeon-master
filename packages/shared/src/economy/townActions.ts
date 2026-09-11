@@ -115,19 +115,34 @@ export function sellItem(reg: ConfigRegistry, save: SaveState, uid: string): Act
  * а не «бесплатно»: иначе уники чинились бы даром.
  */
 export function upgradeCost(reg: ConfigRegistry, item: Item): MaterialCost {
-  const rules = reg.get('salvage-rules');
+  const u = reg.get('balance').forgePrices.upgradeMaterials;
+  return materialLadder(reg, item, [u.tier1, u.tier2, u.tier3]);
+}
+
+/**
+ * ЛЕСТНИЦА ПО РЕДКОСТИ — общий расчёт цены для улучшения и починки.
+ *
+ * Обычная вещь просит только первую ступень, магическая — первую И вторую, редкая — все три:
+ * каждая следующая редкость ДОБАВЛЯЕТ ступень. Семья материала берётся из ПРАВИЛА РАЗБОРА той же
+ * вещи, поэтому меч чинится железом, лук деревом, латы пластинами — и «что вещь даёт» и «что
+ * она стоит» описаны одной таблицей, разойтись они не могут.
+ *
+ * Пустой результат — «кузнец эту вещь не трогает» (уник либо нет правила), и это ОТКАЗ,
+ * а не «бесплатно».
+ */
+function materialLadder(reg: ConfigRegistry, item: Item, need: readonly number[]): MaterialCost {
   const bal = reg.get('balance');
   const tier = tierOfRarity(item.rarity, bal.salvage.rarityTier);
-  const rule = salvageRuleFor(item, weaponClassOf(reg, item), rules);
+  const rule = salvageRuleFor(item, weaponClassOf(reg, item), reg.get('salvage-rules'));
   const first = rule?.yields?.[0]?.materialId;
   if (tier <= 0 || !first) return {};
-  const family = reg.get('craft-materials').find((m) => m.id === first)?.family;
+  const mats = reg.get('craft-materials');
+  const family = mats.find((m) => m.id === first)?.family;
   if (!family) return {};
-  const need = [bal.forgePrices.upgradeMaterials.tier1, bal.forgePrices.upgradeMaterials.tier2, bal.forgePrices.upgradeMaterials.tier3];
   const out: MaterialCost = {};
   for (let t = 1; t <= Math.min(tier, need.length); t++) {
     const n = need[t - 1]!;
-    const mat = reg.get('craft-materials').find((m) => m.family === family && m.tier === t && m.enabled);
+    const mat = mats.find((m) => m.family === family && m.tier === t && m.enabled);
     if (n > 0 && mat) out[mat.id] = n;
   }
   return out;
@@ -138,6 +153,7 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string):
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
   const gold = reg.get('balance').forgePrices.upgradeTier;
+  if (item.broken) return { ok: false, reason: 'Сперва почини' };
   const mats = upgradeCost(reg, item);
   if (!Object.keys(mats).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
@@ -237,10 +253,44 @@ export function canSalvageItem(reg: ConfigRegistry, item: Item, inField: boolean
   return canSalvage(item, weaponClassOf(reg, item), reg.get('salvage-rules'), reg.get('balance').salvage, inField);
 }
 
-/** Класс оружия живёт на БАЗЕ предмета, а не в самом предмете — правилам разбора он нужен. */
+/**
+ * Класс оружия правилам разбора нужен. Сперва берём его ИЗ САМОГО ПРЕДМЕТА (`buildItem`
+ * копирует его с базы): тогда вещь в сумке остаётся разбираемой, даже если её базу убрали
+ * из конфига. База — запасной путь для старых сейвов, где поля ещё нет.
+ */
 function weaponClassOf(reg: ConfigRegistry, item: Item): string | undefined {
+  if (item.weaponClass) return item.weaponClass;
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   return base && base.kind === 'weapon' ? base.weaponClass : undefined;
+}
+
+/** Цена починки сломанного трофея: та же лестница по редкости, что у улучшения, но дешевле. */
+export function repairCost(reg: ConfigRegistry, item: Item): MaterialCost {
+  const m = reg.get('balance').forgePrices.repairMaterials;
+  return materialLadder(reg, item, [m.tier1, m.tier2, m.tier3]);
+}
+
+/**
+ * ПОЧИНКА СЛОМАННОГО ТРОФЕЯ — золото + материалы. После неё это обычная вещь своего тира,
+ * её можно носить и улучшать.
+ *
+ * ⚠ Чинить дороже, чем даёт разбор той же вещи: иначе разбор не выбирали бы никогда.
+ * Платим за ВЕЩЬ, а не за материалы в ней.
+ */
+export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string): ActionResult {
+  const item = save.inventory.find((i) => i.uid === uid);
+  if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (!item.broken) return { ok: false, reason: 'Вещь цела' };
+  const gold = reg.get('balance').forgePrices.repairBroken;
+  const mats = repairCost(reg, item);
+  if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
+  if (Object.keys(mats).length && !canAfford(save, mats)) {
+    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingFor(save, mats))}` };
+  }
+  save.gold -= gold;
+  spendMaterials(save, mats);
+  delete item.broken;
+  return { ok: true };
 }
 
 // ── Экипировка ───────────────────────────────────────────────────────────────
@@ -249,6 +299,9 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string): Action
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
   if (!item.slot) return { ok: false, reason: 'Нельзя надеть' };
+  // ⚠ Сломанный трофей носить нельзя — сперва к кузнецу (или на разбор). Проверка ЗДЕСЬ, в одной
+  // авторитетной точке экипировки: клиент её только дублирует подсказкой.
+  if (item.broken) return { ok: false, reason: 'Сломано — почини у кузнеца' };
   const slot = item.slot;
   if (!meetsRequirements(item, effectiveAttrs(save, item))) return { ok: false, reason: 'Недостаточно атрибутов' };
 

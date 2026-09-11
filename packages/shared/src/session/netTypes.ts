@@ -150,6 +150,8 @@ export type TownCommand =
   | { cmd: 'sell'; uid: string }
   | { cmd: 'forgeUpgrade'; uid: string }
   | { cmd: 'forgeReroll'; uid: string }
+  /** Починка сломанного трофея: снимает флаг за золото и материалы. */
+  | { cmd: 'forgeRepair'; uid: string }
   /** Разбор у кузнеца: полный выход материалов. */
   | { cmd: 'forgeSalvage'; uid: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */

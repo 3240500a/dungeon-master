@@ -116,6 +116,8 @@
   "reconnectGraceSec": 3600,
   "loot": {
     "dropChance": 0.1,
+    "trophyChance": 0.7,
+    "brokenChance": 1,
     "materials": {
       "chance": 0.6
     },
@@ -134,6 +136,12 @@
   "forgePrices": {
     "upgradeTier": 200,
     "rerollAffix": 120,
+    "repairBroken": 60,
+    "repairMaterials": {
+      "tier1": 6,
+      "tier2": 2,
+      "tier3": 1
+    },
     "upgradeMaterials": {
       "tier1": 20,
       "tier2": 5,

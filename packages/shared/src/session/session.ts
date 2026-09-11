@@ -16,6 +16,7 @@ import { skillWeaponAllowed } from '../formulas/skills.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { salvageFromMonster } from '../formulas/salvage.js';
+import { trophyBaseFor } from '../formulas/trophy.js';
 import { addMaterials } from '../economy/materials.js';
 import { gainXp } from '../economy/progression.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
@@ -1444,13 +1445,27 @@ export class GameSession {
       // и магия дропа всюду считалась по крипте. Без этого «у каждого биома свои материалы» невозможно.
       const biomes = this.cfg.get('biomes');
       const theme = biomes.find((b) => b.id === this.world.biomeId) ?? biomes[0]!;
+      // ⭐ ТРОФЕЙ С ТЕЛА: падает вещь ИГРОКА, похожая на то, что монстр НОСИЛ (`formulas/trophy.ts`).
+      // У монстров свой маленький пул снаряжения, чтобы не плодить вторую гору предметов и моделей,
+      // но надеть игрок может только своё — поэтому носимое переводится в ближайшую базу игрока.
+      // Нечего зеркалить (монстр без гира) — падает обычный случайный дроп, а не ничего.
+      // ⚠ Трофей НЕ всегда: монстры носят только оружие, нагрудник, щит и шлем. Сделай весь дроп
+      // трофейным — и перчатки, сапоги, пояс и украшения не будут падать вообще (замерено).
+      const asTrophy = this.rng.chance(loot.trophyChance);
+      const worn = asTrophy && m.def.gearRolls?.length ? m.def.gearRolls[this.rng.int(0, m.def.gearRolls.length - 1)] : undefined;
+      const gearDef = worn?.gearId ? this.cfg.get('monster-gear').find((g) => g.id === worn.gearId) : undefined;
+      const baseId = gearDef ? trophyBaseFor(gearDef, this.cfg.get('items.base'), this.rng) : undefined;
       const item = generateItem(
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),
         this.cfg.get('uniques'),
-        { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, level + diff.ilvlBonus), tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'), categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement },
+        { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, level + diff.ilvlBonus), baseId, tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'), categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement },
         this.rng,
       );
+      // Снято с трупа — значит в негодном виде: чинить у кузнеца или разбирать (docs/ECONOMY.md, Ч4).
+      // Сломанными падают ТОЛЬКО трофеи: обычная находка не снята с тела и цела, иначе
+      // надеть в забеге было бы нечего вовсе.
+      if (baseId && this.rng.chance(loot.brokenChance)) item.broken = true;
       const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item });
       this.events.push({ type: 'item-dropped', item, x, y });
     }

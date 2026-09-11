@@ -157,7 +157,10 @@ function itemMenu(app: App, item: Item, x: number, y: number): void {
         { label: 'Выпить', run: () => app.sendCmd({ cmd: 'useConsumable', uid: item.uid }) },
         { label: 'В пояс', run: () => app.sendCmd({ cmd: 'moveBelt', uid: item.uid }) },
       ]
-    : [
+    : item.broken
+      // Сломанное не предлагаем надеть вовсе: сервер всё равно откажет, а пункт меню врал бы.
+      ? [{ label: 'Сломано — к кузнецу', run: () => {} }]
+      : [
         { label: 'Надеть', run: () => app.sendCmd({ cmd: 'equip', uid: item.uid }) },
       ];
   actions.push({ label: 'Выбросить', run: () => app.sendCmd({ cmd: 'drop', uid: item.uid }) });

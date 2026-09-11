@@ -4,7 +4,7 @@ import {
   GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
-  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, fieldSalvage, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
+  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
   stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
   isDifficultyUnlocked, applyDeathPenalty,
@@ -396,6 +396,7 @@ export class Room implements Tickable {
       case 'forgeUpgrade': r = forgeUpgrade(this.cfg, save, command.uid); break;
       case 'forgeReroll': r = forgeReroll(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
       case 'forgeSalvage': r = forgeSalvage(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
+      case 'forgeRepair': r = forgeRepair(this.cfg, save, command.uid); break;
       // Разбор на месте разрешён где угодно (`guard` не держит его в городе): смысл в том и есть —
       // переработать трофей, не возвращаясь. В городе им пользоваться незачем, кузница выгоднее.
       case 'salvage': r = fieldSalvage(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;

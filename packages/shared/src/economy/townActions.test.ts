@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, fieldSalvage, upgradeCost, socketInsert, socketClear } from './townActions.js';
+import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, equip, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
 import type { Item, SaveState } from '../types/index.js';
@@ -346,5 +346,76 @@ describe('разбор вещи на материалы (Ч3)', () => {
   it('чужой uid — отказ', () => {
     expect(forgeSalvage(reg, save(axe()), 'нет', createRng(1)).ok).toBe(false);
     expect(fieldSalvage(reg, save(axe()), 'нет', createRng(1)).ok).toBe(false);
+  });
+});
+
+describe('сломанные трофеи и починка (Ч4)', () => {
+  const price = reg.get('balance').forgePrices;
+  const swordBase = reg.get('items.base').find((b) => b.kind === 'weapon' && b.weaponClass === 'sword')!;
+  const broken = (uid = 'b'): Item => ({
+    uid, baseId: swordBase.id, name: 'Меч', kind: 'weapon', weaponClass: 'sword', slot: 'weapon',
+    rarity: 'normal', itemLevel: 5, requirements: {}, affixes: [], baseStats: [],
+    gridW: 1, gridH: 3, pos: { x: 0, y: 0 }, broken: true,
+  } as unknown as Item);
+  const save = (it: Item, gold = 1000): SaveState =>
+    ({ gold, inventory: [it], equipment: {}, belt: [], materials: { 'iron-1': 99 },
+      attributes: { strength: 200, dexterity: 200, intelligence: 200, vitality: 200 },
+      level: 50, skills: {}, masteries: {} } as unknown as SaveState);
+
+  it('⚠ сломанное НАДЕТЬ НЕЛЬЗЯ — это вся суть трофея', () => {
+    const it = broken();
+    const s = save(it);
+    const r = equip(reg, s, 'b');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('Сломано');
+    expect(s.inventory).toHaveLength(1);       // из сумки не пропало
+  });
+
+  it('починка: −золото, −материалы, флаг снят, дальше вещь обычная', () => {
+    const it = broken();
+    const s = save(it);
+    expect(forgeRepair(reg, s, 'b').ok).toBe(true);
+    expect(it.broken).toBeUndefined();
+    expect(s.gold).toBe(1000 - price.repairBroken);
+    expect(s.materials!['iron-1']).toBe(99 - price.repairMaterials.tier1);
+    expect(equip(reg, s, 'b').ok).toBe(true);  // теперь надевается
+  });
+
+  it('чинить целое нечего — отказ, ресурсы не тронуты', () => {
+    const it = broken();
+    delete (it as { broken?: boolean }).broken;
+    const s = save(it);
+    expect(forgeRepair(reg, s, 'b').ok).toBe(false);
+    expect(s.gold).toBe(1000);
+  });
+
+  it('⚠ мало золота → отказ, и материалы не списаны', () => {
+    const it = broken();
+    const s = save(it, price.repairBroken - 1);
+    expect(forgeRepair(reg, s, 'b').ok).toBe(false);
+    expect(it.broken).toBe(true);
+    expect(s.materials!['iron-1']).toBe(99);
+  });
+
+  it('сломанное УЛУЧШАТЬ нельзя — сперва почини', () => {
+    const s = save(broken());
+    const r = forgeUpgrade(reg, s, 'b');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('почини');
+    expect(s.gold).toBe(1000);
+  });
+
+  it('⭐ но РАЗОБРАТЬ сломанное можно — в этом и выбор', () => {
+    const s = save(broken());
+    expect(forgeSalvage(reg, s, 'b', createRng(1)).ok).toBe(true);
+    expect(s.inventory).toHaveLength(0);
+  });
+
+  it('починка дешевле улучшения — иначе чинить не имело бы смысла', () => {
+    const it = broken('x');
+    const rep = repairCost(reg, it);
+    const up = upgradeCost(reg, it);
+    const sum = (m: Record<string, number>): number => Object.values(m).reduce((a, b) => a + b, 0);
+    expect(sum(rep)).toBeLessThan(sum(up));
   });
 });

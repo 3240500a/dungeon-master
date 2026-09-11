@@ -75,6 +75,21 @@ export const balanceSchema = z.object({
        * Уронить это число, не подняв материалы, — значит повторить ошибку PoE 2 (docs/ECONOMY.md).
        */
       dropChance: z.number().min(0).max(1).default(0.1),
+      /**
+       * Доля дропа, которая СНИМАЕТСЯ С ТЕЛА: вещь игрока, похожая на надетое на монстре
+       * (`formulas/trophy.ts`). Остальное — обычная находка со случайной базой.
+       *
+       * ⚠ НЕ 1.0, и это не недоделка. Монстры носят только оружие, нагрудник, щит и шлем —
+       * сделай весь дроп трофейным, и перчатки, сапоги, пояс и украшения перестанут падать
+       * вовсе (замерено: 5 из 9 слотов остаются без источника). Поднимать до 1.0 можно
+       * только когда сундуки (Ч6) закроют остальные слоты.
+       */
+      trophyChance: z.number().min(0).max(1).default(0.7),
+      /**
+       * Доля ТРОФЕЕВ, падающих СЛОМАННЫМИ. 1.0 — все: вещь с трупа зомби целой не бывает.
+       * Обычные находки целы всегда — иначе надеть в забеге было бы нечего вовсе.
+       */
+      brokenChance: z.number().min(0).max(1).default(1),
       /** Материалы с убитого монстра: считаются по ЕГО снаряжению (`monster-gear.salvageTo`). */
       materials: z
         .object({
@@ -118,6 +133,20 @@ export const balanceSchema = z.object({
      * железом, лук — деревом, латы — пластинами. Одна таблица описывает и что вещь даёт,
      * и что она стоит, поэтому разойтись они не могут.
      */
+    /** Починка сломанного трофея: золото. */
+    repairBroken: z.number().int().min(0).default(60),
+    /**
+     * Починка в материалах — та же лестница по редкости, что у улучшения, но дешевле.
+     * ⚠ Дороже, чем даёт разбор той же вещи: иначе чинить было бы выгоднее всегда, и выбор
+     * «починить или разобрать» исчез бы. Платим за ВЕЩЬ, а не за материалы в ней.
+     */
+    repairMaterials: z
+      .object({
+        tier1: z.number().int().min(0).default(6),
+        tier2: z.number().int().min(0).default(2),
+        tier3: z.number().int().min(0).default(1),
+      })
+      .default({}),
     upgradeMaterials: z
       .object({
         /** Сколько материала ПЕРВОЙ ступени. Нужен всем редкостям — это базовая валюта крафта. */
@@ -777,6 +806,9 @@ export const monsterBehaviorsSchema = z.array(
 // дропается в общий пул). Монстр в дефе ссылается на гир по id (weapon/armor/offhand); статы
 // деривятся из атрибутов монстра + этого гира (deriveMonsterStats). Афиксы элиток катаются на гир.
 const mgFaction = z.enum(['undead', 'demon', 'beast', 'monster']);
+/** Явная замена трофея: id базы ИГРОКА, если автоподбор по сходству промахнулся (`formulas/trophy.ts`). */
+const trophyBaseSchema = z.string().optional();
+
 /** Что даёт вещь снаряжения при разборе: сколько какого материала (docs/ECONOMY.md). */
 // ⚠ `.optional()`, а НЕ `.default([])`: с дефолтом поле становится обязательным в выходном типе,
 // и каждый литерал снаряжения в коде и тестах пришлось бы дописывать. Отсутствие поля читается
@@ -808,6 +840,7 @@ export const monsterGearSchema = z.array(
       modelId: z.string().optional(),
       /** Что даёт при разборе — материалы ЭТОЙ вещи (docs/ECONOMY.md, «что носит, то и падает»). */
       salvageTo: salvageToSchema,
+    trophyBase: trophyBaseSchema,
     }),
     z.object({
       kind: z.literal('armor'),
@@ -824,6 +857,7 @@ export const monsterGearSchema = z.array(
       modelId: z.string().optional(),
       /** Что даёт при разборе — материалы ЭТОЙ вещи (docs/ECONOMY.md, «что носит, то и падает»). */
       salvageTo: salvageToSchema,
+    trophyBase: trophyBaseSchema,
     }),
     z.object({
       kind: z.literal('shield'),
@@ -837,6 +871,7 @@ export const monsterGearSchema = z.array(
       modelId: z.string().optional(),
       /** Что даёт при разборе — материалы ЭТОЙ вещи (docs/ECONOMY.md, «что носит, то и падает»). */
       salvageTo: salvageToSchema,
+    trophyBase: trophyBaseSchema,
     }),
   ]),
 );
