@@ -32,17 +32,38 @@ export interface AnimItem {
   combatIdle?: string;
 }
 
+/**
+ * Состояние слота действия — то, что раньше было константами в коде.
+ *
+ * `XFADE_SEC = 0.12` был один на все переходы; приоритет «нокдаун сильнее стана» был зашит порядком
+ * `if`-ов; прервать текущее действие могло ЛЮБОЕ следующее; низом слот владел всегда по `1 − moveMag`.
+ * Теперь это поля, и их можно авторить.
+ */
+export interface AnimState {
+  /** Имя клипа. Нет → имя самого состояния. */
+  clip?: string;
+  /** Кто кого перебивает: больше — сильнее. Нет → 0. */
+  priority?: number;
+  /** Можно ли прервать это состояние до конца. Нет → можно (как было). */
+  interruptible?: boolean;
+  /** Кроссфейд входа, сек. Нет → 0.12 (прежняя константа). */
+  blendSec?: number;
+  /** Владение ногами: `auto` — по скорости (как было), `never` — только верх, `always` — всегда низ. */
+  legs?: 'auto' | 'never' | 'always';
+}
+
 /** Содержимое ключа `pe_anim` — по персонажу. */
 export interface AnimGraph {
   /** Базовые БЕЗОРУЖНЫЕ стойки: от них строится всё. Нет → `idle_none` / `combat_idle_none`. */
   base?: { idle?: string; combatIdle?: string };
   items?: Record<string, AnimItem>;
   /**
-   * Клипы состояний по имени состояния: `stagger`, `knockdown_fall`, `getup`, `hit_react_F`…
-   * Нет записи — берётся клип с тем же именем, что и состояние; нет и его — состояние не
-   * отыгрывается вовсе (и это нормально: пока клип не заавторен, ломаться нечему).
+   * Состояния слота действия: `attack`, `stagger`, `knockdown_fall`, `getup`, `hit_react_F`…
+   * Значение — либо просто имя клипа (короткая форма), либо настройка целиком.
+   * Нет записи — клип с тем же именем, что и состояние; нет и его — состояние не отыгрывается
+   * (и это нормально: пока клип не заавторен, ломаться нечему).
    */
-  states?: Record<string, string>;
+  states?: Record<string, string | AnimState>;
 }
 export type AnimStore = Record<string, AnimGraph>;
 
@@ -60,9 +81,13 @@ export interface AnimCfg {
   has(item: string): boolean;
   /** Имя клипа для состояния (`stagger`, `getup`…). Нет привязки → само имя состояния. */
   stateName(state: string): string;
+  /** Настройка состояния с подставленными умолчаниями. */
+  stateCfg(state: string): Required<Omit<AnimState, 'clip'>> & { clip: string };
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+/** Кроссфейд входа в состояние по умолчанию — та самая прежняя константа `XFADE_SEC`. */
+export const DEF_BLEND_SEC = 0.12;
 /** Имя стойки по конвенции — умолчание, когда привязки нет. */
 export const defaultStanceName = (kind: 'idle' | 'combat_idle', item: string): string => `${kind}_${item}`;
 
@@ -103,9 +128,19 @@ export function readAnimCfg(raw: unknown, charId: string, fallbackId?: string): 
       return typeof w === 'number' && Number.isFinite(w) ? clamp01(w) : 1;
     },
     has: (item) => it(item) !== undefined,
-    stateName(state) {
+    stateName(state) { return this.stateCfg(state).clip; },
+    stateCfg(state) {
       const m = g.states && typeof g.states === 'object' ? (g.states as Record<string, unknown>) : {};
-      return str(m[state]) ?? state;
+      const raw = m[state];
+      const o: AnimState = typeof raw === 'string' ? { clip: raw } : (raw && typeof raw === 'object' ? raw as AnimState : {});
+      const legs = o.legs === 'never' || o.legs === 'always' ? o.legs : 'auto';
+      return {
+        clip: str(o.clip) ?? state,
+        priority: typeof o.priority === 'number' && Number.isFinite(o.priority) ? o.priority : 0,
+        interruptible: o.interruptible !== false,
+        blendSec: typeof o.blendSec === 'number' && Number.isFinite(o.blendSec) && o.blendSec >= 0 ? o.blendSec : DEF_BLEND_SEC,
+        legs,
+      };
     },
   };
 }

@@ -17,7 +17,7 @@ import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, type M
 // обычно на ~60 % клипа, а вайндап сервера — ~35 % окна, то есть хвост обязан уметь РАСТЯГИВАТЬСЯ.
 const WARP_MIN = 0.35, WARP_MAX = 8;
 /** Кроссфейд между ударами цепочки (сек). Короткий: удары должны читаться отдельными, а не смазываться. */
-const XFADE_SEC = 0.12;
+const XFADE_SEC = 0.12;   // умолчание кроссфейда; конкретное состояние может задать своё (`AnimState.blendSec`)
 import { WPN_KEYS, WPN_POS } from './clipModel.js';
 import { maskBones, boneWeight, type BoneMask } from './boneMask.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
@@ -94,9 +94,19 @@ export interface PoseContent {
   shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
   /** Клип состояния (`stagger`, `knockdown_fall`, `getup`…) по привязке из `pe_anim`. Нет клипа → null. */
   stateClip?(state: string): Clip | null;
+  /** Настройка состояния: приоритет, прерываемость, кроссфейд, владение ногами. */
+  stateCfg?(state: string): { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' };
 }
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
-export interface AttackState { clip: Clip | null; t: number }
+export interface AttackState {
+  clip: Clip | null;
+  t: number;
+  /** Владение ногами этим состоянием (Ф1.3a). Нет → `auto` = по скорости, как было. */
+  legs?: 'auto' | 'never' | 'always';
+  /** Приоритет и прерываемость — чтобы следующее состояние знало, можно ли перебить это. */
+  prio?: number;
+  lock?: boolean;
+}
 
 export { WPN_KEYS, WPN_POS } from './clipModel.js';          // спец-ключи позы: поворот/позиция оружия (одна копия — clipModel)
 
@@ -307,8 +317,11 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   addEuler(H.get('RightShoulder'), shoR, shoW);
   // Вес НИЗА у слота действия: стоим — клип владеет ногами целиком, идём — ни на сколько.
   // Тот же множитель, что у таза удара; порог движения там же и описан (`moveMag`, а не `legMag`).
-  const legW = clamp(1 - moveMag, 0, 1);
-  if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w, legW);
+  // `auto` — по скорости (как было); `never` — слот низом не владеет; `always` — владеет всегда.
+  const legsOf = (a: AttackState): number =>
+    a.legs === 'never' ? 0 : a.legs === 'always' ? 1 : clamp(1 - moveMag, 0, 1);
+  const legW = legsOf(atk);
+  if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w, legsOf(fade.atk));
   if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk, 1, legW);   // удар поверх idle/маха
 }
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
@@ -331,7 +344,14 @@ export function applyLegAdduct(human: Humanoid, scale = 1): void {
 // ретаргет (46° доворота от бинда скин не тянет) → требуем экспорт скелета в T-позе. См. render3d/README.
 
 /** Уходящий удар цепочки: его поза подмешивается с весом `w`, пока он не затух. */
-export interface AttackFade { atk: AttackState; w: number; rate: number }
+export interface AttackFade {
+  atk: AttackState;
+  w: number;
+  /** Темп УХОДЯЩЕГО клипа — он продолжает играть, пока гаснет. Не путать с длительностью кроссфейда. */
+  rate: number;
+  /** Длительность кроссфейда, сек. Нет → общее умолчание (`XFADE_SEC`). */
+  fadeSec?: number;
+}
 export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
@@ -496,6 +516,7 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
     /** Клип состояния по привязке (`pe_anim.states`), иначе по имени состояния как есть. */
     stateClip(state: string): Clip | null { return byName(anim.stateName(state)); },
+    stateCfg(state: string) { const c = anim.stateCfg(state); return { priority: c.priority, interruptible: c.interruptible, blendSec: c.blendSec, legs: c.legs }; },
     clipByName(name: string): Clip | null { return byName(name); },
     // Поза скила под экип. оружие: если авторская на другом оружии — ретаргетим семейство (по clip.weapon) на текущее/базовое/главное; иначе авторская как есть.
     resolveAbilityClip(name: string, weapon: string): Clip | null {
@@ -822,6 +843,8 @@ export class PosePlayer {
    * ничего не ломается: это ровно сегодняшнее поведение.
    */
   setState(stunned: boolean, downed: boolean): void {
+    // Порядок здесь — только про то, КАКОЕ событие произошло. Кто кого перебивает, решают приоритеты
+    // состояний (`pe_anim.states[*].priority`), а не последовательность этих `if`-ов.
     if (downed && !this.downed) this.playState('knockdown_fall');
     else if (!downed && this.downed) this.playState('getup');
     else if (stunned && !this.stunned) this.playState('stagger');
@@ -829,9 +852,20 @@ export class PosePlayer {
   }
   get isStunned(): boolean { return this.stunned; }
   get isDowned(): boolean { return this.downed; }
-  private playState(state: string): void {
+  /**
+   * Войти в состояние слота действия.
+   *
+   * Раньше любое новое действие безусловно подменяло текущее. Теперь у состояния есть приоритет и
+   * прерываемость: непрерываемое состояние (например, падение) не перебьётся тем, что слабее, —
+   * и это авторится, а не зашито.
+   */
+  playState(state: string): void {
+    const cfg = this.content.stateCfg?.(state);
     const c = this.content.stateClip?.(state);
-    if (c) this.triggerAttack(c);   // слот действия: огибающая + кроссфейд + владение низом стоя
+    if (!c) return;                                            // клипа нет — состояние не отыгрывается
+    const playing = !!this.atk.clip && this.atk.t >= 0;
+    if (playing && this.atk.lock && (cfg?.priority ?? 0) <= (this.atk.prio ?? 0)) return;   // текущее не перебить
+    this.triggerAttack(c, 0, 0, cfg);
   }
   private noIk = false;   // поза-LOD: пропуск off-hand IK (FOOT-IK пропускает рендер отдельно)
   setNoIk(on: boolean): void { this.noIk = on; }
@@ -877,15 +911,17 @@ export class PosePlayer {
    * ⚠ Пост-импактный отрезок обязан уметь РАСТЯГИВАТЬСЯ: контакт в мокапе обычно на ~60 % клипа, а вайндап
    * сервера — ~35 % окна, поэтому коридор скорости `[0.35, 8]`, а не `max(1, …)`.
    */
-  triggerAttack(clip: Clip | null, windowSec = 0, windupSec = 0): void {
+  triggerAttack(clip: Clip | null, windowSec = 0, windupSec = 0, st?: { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' }): void {
     if (!clip) return;
     // ЦЕПОЧКА (атака зажата): новый свинг пришёл, пока предыдущий ещё играет. Уходящий клип кроссфейдим,
     // а входящий стартуем с ЗАМАХА, минуя idle-вход — это Montage Sections из Unreal, только разметкой внутри
     // клипа, а не резкой клипов. idle-выход при этом играет только ПОСЛЕДНИЙ удар: у прерванных он не наступает.
     const chain = !!this.atk.clip && this.atk.t >= 0;
-    this.fade = chain ? { atk: { clip: this.atk.clip, t: this.atk.t }, w: 1, rate: this.atkRate() } : null;
+    // Уходящее состояние уносит с собой СВОЁ владение ногами, иначе на стыке низ дёрнется.
+    this.fade = chain ? { atk: { clip: this.atk.clip, t: this.atk.t, legs: this.atk.legs }, w: 1, rate: this.atkRate(), fadeSec: st?.blendSec } : null;
     const start = chain ? (markSec(clip, 'windup') ?? (clip.idleEnds ? clip.keys[1]?.t ?? 0 : 0)) : 0;
     this.atk.clip = clip; this.atk.t = start; this.atkPrevT = start; this.warp = null;
+    this.atk.legs = st?.legs; this.atk.prio = st?.priority ?? 0; this.atk.lock = st ? !st.interruptible : false;
     const dur = clipDur(clip);
     const imp = windupSec > 0 ? impactSec(clip) : null;
     if (imp !== null && dur > 0 && windupSec > 0 && imp > start && imp < dur) {
@@ -947,7 +983,7 @@ export class PosePlayer {
     }
     if (this.fade) {                                   // уходящий удар доигрывает и гаснет
       this.fade.atk.t += dt * this.fade.rate;
-      this.fade.w -= dt / XFADE_SEC;
+      this.fade.w -= dt / Math.max(0.01, this.fade.fadeSec ?? XFADE_SEC);   // длительность входа задаёт СОСТОЯНИЕ
       if (this.fade.w <= 0) this.fade = null;
     }
     const cstep = dt / Math.max(0.01, GAIT.combatBlend);   // кроссфейд боевой стойки (линейно за combatBlend сек)

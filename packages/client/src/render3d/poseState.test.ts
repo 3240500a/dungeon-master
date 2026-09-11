@@ -16,9 +16,9 @@ import type { Clip, Pose } from './clipModel.js';
  * Главное требование: пока клип не заавторен, НИЧЕГО не происходит и ничего не ломается.
  */
 const v = (x: number): [number, number, number] => [x, 0, 0];
-const clip = (name: string, arm: number): Clip => ({
+const clip = (name: string, arm: number, dur = 0.6): Clip => ({
   name, character: 'warrior', weapon: 'none', loop: false,
-  keys: [{ pose: { RightUpperArm: v(0) } as Pose, t: 0 }, { pose: { RightUpperArm: v(arm) } as Pose, t: 0.3 }, { pose: { RightUpperArm: v(0) } as Pose, t: 0.6 }],
+  keys: [{ pose: { RightUpperArm: v(0) } as Pose, t: 0 }, { pose: { RightUpperArm: v(arm) } as Pose, t: dur / 2 }, { pose: { RightUpperArm: v(0) } as Pose, t: dur }],
 });
 
 const setLS = (clips: Clip[], anim: unknown): void => {
@@ -95,5 +95,83 @@ describe('стан и нокдаун доезжают до куклы', () => {
     for (let i = 0; i < 60; i++) p.step(1 / 60);
     p.setState(true, false);
     expect(p.attacking).toBe(false);
+  });
+});
+
+describe('состояния слота — настройка, а не константы (Ф1.3a)', () => {
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
+  const mk = (): PosePlayer =>
+    new PosePlayer(buildHumanoid({}), () => [], localStorageContent('warrior'), 'none', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+
+  it('НЕПРЕРЫВАЕМОЕ состояние не перебивается тем, что слабее', () => {
+    // ⚠ Длины РАЗНЫЕ: с одинаковыми цепочка не меняет суммарное время, и тест ничего не ловит
+    // (мутация «убрать проверку приоритета» проходила незамеченной).
+    setLS([clip('knockdown_fall', 1.2, 0.6), clip('stagger', 0.9, 2.4)], {
+      warrior: { states: {
+        knockdown_fall: { priority: 10, interruptible: false },
+        stagger: { priority: 1 },
+      } },
+    });
+    const p = mk(); p.setYaw(0); p.setVel(0, 0);
+    for (let i = 0; i < 60; i++) p.step(1 / 60);
+    p.setState(false, true);                  // упал — играет падение, прервать нельзя
+    p.playState('stagger');                   // стаггер слабее → должен быть проигнорирован
+    // Если бы стаггер вошёл, он стартовал бы с нуля и доиграл позже; проверяем по длительности.
+    let frames = 0; while (p.attacking && frames < 600) { p.step(1 / 60); frames++; }
+    const aloneFrames = ((): number => {
+      const q = mk(); q.setYaw(0); q.setVel(0, 0);
+      for (let i = 0; i < 60; i++) q.step(1 / 60);
+      q.setState(false, true);
+      let n = 0; while (q.attacking && n < 600) { q.step(1 / 60); n++; }
+      return n;
+    })();
+    expect(frames, 'длительность как у одного падения — стаггер не влез').toBe(aloneFrames);
+  });
+
+  it('приоритет ВЫШЕ перебивает даже непрерываемое', () => {
+    setLS([clip('stagger', 0.9), clip('knockdown_fall', 1.2)], {
+      warrior: { states: { stagger: { priority: 1, interruptible: false }, knockdown_fall: { priority: 10 } } },
+    });
+    const p = mk(); p.setYaw(0); p.setVel(0, 0);
+    for (let i = 0; i < 60; i++) p.step(1 / 60);
+    // Меряем по ДЛИТЕЛЬНОСТИ: вошедшее состояние продлевает проигрывание, проигнорированное — нет.
+    const play = (cut: boolean): number => {
+      const q = mk(); q.setYaw(0); q.setVel(0, 0);
+      for (let i = 0; i < 60; i++) q.step(1 / 60);
+      q.playState('stagger');
+      let n = 0;
+      while (q.attacking && n < 900) { q.step(1 / 60); n++; if (cut && n === 10) q.playState('knockdown_fall'); }
+      return n;
+    };
+    expect(play(true), 'сильное состояние влезло и продлило слот').toBeGreaterThan(play(false));
+  });
+
+  it('`legs: never` — состояние не трогает ноги даже стоя', () => {
+    const legClip: Clip = { name: 'stagger', character: 'warrior', weapon: 'none', loop: false,
+      keys: [{ pose: { LeftUpperLeg: v(0) } as Pose, t: 0 }, { pose: { LeftUpperLeg: v(1.1) } as Pose, t: 0.3 }, { pose: { LeftUpperLeg: v(0) } as Pose, t: 0.6 }] };
+    const run = (legs: 'auto' | 'never'): number => {
+      setLS([legClip], { warrior: { states: { stagger: { legs } } } });
+      const h = buildHumanoid({});
+      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+      p.setYaw(0); p.setVel(0, 0);
+      for (let i = 0; i < 60; i++) p.step(1 / 60);
+      const base = h.bones.get('LeftUpperLeg')!.rotation.x;
+      p.playState('stagger');
+      let worst = 0;
+      for (let i = 0; i < 60; i++) { p.step(1 / 60); worst = Math.max(worst, Math.abs(h.bones.get('LeftUpperLeg')!.rotation.x - base)); }
+      return worst;
+    };
+    expect(run('auto'), 'по умолчанию стоя ноги у клипа').toBeGreaterThan(0.3);
+    expect(run('never'), 'а с `never` — нет').toBeLessThan(0.02);
+  });
+
+  it('умолчания без конфига = прежнее поведение', () => {
+    setLS([clip('stagger', 0.9)], {});
+    const p = mk(); p.setYaw(0); p.setVel(0, 0);
+    for (let i = 0; i < 60; i++) p.step(1 / 60);
+    p.playState('stagger');
+    expect(p.attacking).toBe(true);
+    p.playState('stagger');                   // прерываемо по умолчанию → перезапуск разрешён
+    expect(p.attacking).toBe(true);
   });
 });
