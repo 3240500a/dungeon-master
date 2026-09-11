@@ -76,6 +76,18 @@ export const GAIT = {
   // strafeReach: множитель ТОЛЬКО боковой компоненты выноса (1 = как есть; <1 = нога меньше улетает вбок при страйфе).
   // crossClamp: предел захода стопы за среднюю линию тела (u; 99 = без ограничения).
   stanceWidth: 0, strafeReach: 1, crossClamp: 99,
+  // РЕЗКАЯ СМЕНА НАПРАВЛЕНИЯ (перекладка пада влево-вправо) — две ручки против «шагает неестественно
+  // широко» и «шагает на скрещенных ногах». Обе подобраны так, чтобы РОВНЫЙ ход не менялся ВООБЩЕ
+  // (сторож — `stepFlip.test.ts`: кадр в кадр на всех скоростях), а срабатывали только на развороте.
+  // planSmooth (сек) — постоянная сглаживания НАПРАВЛЕНИЯ, под которое ставится стопа (не скорости!).
+  //   Стопу ставят под усреднённый ход, а не под мгновенный: у мечущегося вектора среднее само
+  //   сжимается к нулю, и стопа встаёт ПОД ТАЗ, а не улетает туда, откуда тело уже ушло. 0 = как было.
+  // stepSlack — запас сверх штатного выноса планта (`lead`), после которого шаг считается просроченным.
+  //   В ровном ходе вынос доходит ровно до `lead` в любом направлении, так что запас нужен только на
+  //   обход стоп (`footClear`) и дискретность фазы; 0.5 — минимум, при котором ровный ход не задет
+  //   НИ НА ОДНОЙ скорости и НИ В ОДНОМ направлении (сторож — `stepFlip.test.ts`, сверка кадр в кадр).
+  // stepUrge — во столько раз ускоряется фаза при просроченном шаге (маховая садится раньше). 0 = выкл.
+  planSmooth: 0.2, stepSlack: 0.5, stepUrge: 14,
   // ДОВОРОТ ТАЗА ПОД ДВИЖЕНИЕ (orientation warping — так делает индустрия, в UE5 это узел Pose Warping).
   // Низ разворачивается К НАПРАВЛЕНИЮ ХОДА и играет «вперёд», верх продолжает целиться. Тогда диагональ
   // перестаёт быть отдельной анимацией: восемь направлений на скорость схлопываются в четыре.
@@ -178,6 +190,20 @@ class StepPlanner {
   sb = 0;                    // блен ходьба(0)↔бег(1) — читает PoseDriver для раздельных рук walk/run
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
+  private mAvgX = 0; private mAvgZ = 0; private mAvgOn = false;   // сглаженный вектор хода (направление планта)
+  /**
+   * Масштаб РИГА к масштабу планировщика, измеренный планировщиком по себе же.
+   *
+   * Планировщик считает в своих единицах (нога `LEG` 28.5, полутаз `HIP_DX` 3.6), а фактические стопы
+   * приходят фидбэком из рига (`setFeet`) — у модели с телосложением нога длиннее и таз шире (замер на
+   * воине: 33.6 и 6.2). Сравнивать их напрямую нельзя. Поэтому в момент приземления сравниваем
+   * НАМЕРЕНИЕ и ФАКТ от одного и того же бедра — их отношение и есть масштаб; копим скользящим средним.
+   * 1 = риг ровно наш (юнит-тесты, монстры без телосложения) → пороги ровно как были.
+   */
+  private rigK = 1;
+  /** Диагностика (редактор/тесты): масштаб рига и во сколько раз сейчас ускорена фаза. */
+  get debugUrge(): [number, number] { return [this.rigK, this.lastUrge]; }
+  private lastUrge = 1;
   /** ФАКТИЧЕСКОЕ положение щиколоток из физики (мир). Плантуем туда, где нога реально стоит. */
   private actual: [[number, number], [number, number]] = [[0, 0], [0, 0]];
   /** Фаза походки (рад): π = один шаг. Ей же машем руками, чтобы они шли в такт ногам. */
@@ -234,6 +260,41 @@ class StepPlanner {
     return [this.bodyX + grx * lat + gfx * fwd, this.bodyZ + grz * lat + gfz * fwd];
   }
 
+  /**
+   * СРОЧНОСТЬ ШАГА: множитель к скорости фазы, когда ОПОРНАЯ нога вынеслась дальше, чем должна.
+   *
+   * Зачем. Фаза едет от пройденного пути, и в ровном ходе этого достаточно: стопа ставится на `lead`
+   * впереди бедра, за окно опоры тело проезжает ровно два `lead`, и нога уходит на столько же назад —
+   * вынос симметричен. Но на РЕЗКОЙ СМЕНЕ НАПРАВЛЕНИЯ тело уезжает в сторону, которую нога не
+   * предполагала, и весь проезд ложится в одну сторону: вынос удваивается, упирается в длину ноги,
+   * IK выпрямляет её в палку — это и есть «шагает неестественно широко».
+   *
+   * Разворот предсказать нельзя, поэтому подстраивается ТАЙМИНГ: маховая обязана приземлиться раньше
+   * и снять нагрузку с растянутой опорной. В робототехнике это step timing adaptation и стоит рядом с
+   * выбором точки постановки (capture point); в анимации ту же работу делает отдельный клип pivot,
+   * который обрывает текущий шаг.
+   *
+   * Порог ОТНОСИТЕЛЬНЫЙ (доля от `lead`), а не геометрический: в нашей настройке нога и в ровном беге
+   * идёт почти на пределе длины, так что от геометрии триггер срабатывал бы всегда.
+   */
+  private urgency(px: number, pz: number, rx: number, rz: number, lead: number): number {
+    if (GAIT.stepUrge <= 0) return 1;
+    // Мера — вынос ОПОРНОЙ стопы от своего бедра. В ровном ходе он не выходит за `lead`: стопа приходит
+    // на `lead` впереди и уходит на столько же назад. На развороте тело уезжает прочь от планта, и вынос
+    // растёт без предела — вот это и ловим. Порог масштабируется на `rigK`, потому что стопа приходит
+    // из рига: без этого у модели с длинной ногой триггер срабатывал бы всегда.
+    const lim = Math.max(1, this.rigK * lead * (1 + GAIT.stepSlack));
+    let over = 0;
+    for (let i = 0; i < 2; i++) {
+      const l = this.legs[i]!;
+      if (l.sw > 0) continue;                               // маховая вес не держит — её вынос не в счёт
+      const s = (i === 0 ? HIP_DX : -HIP_DX) * this.rigK;
+      over = Math.max(over, Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) / lim);
+    }
+    this.lastUrge = 1 + clamp(over - 1, 0, 1) * GAIT.stepUrge;
+    return this.lastUrge;
+  }
+
   private reset(px: number, pz: number, fx: number, fz: number, rx: number, rz: number, yaw: number): void {
     for (let i = 0; i < 2; i++) {
       const lat = i === 0 ? this.stanceLatL : this.stanceLatR, fwd = i === 0 ? this.stanceFwdL : this.stanceFwdR;
@@ -267,8 +328,22 @@ class StepPlanner {
     if (dt > 0) this.moveAmt += (clamp(speed / GAIT.speedWalk, 0, 1.4) - this.moveAmt) * Math.min(1, dt * 8);
     const moving = speed > MOVE_EPS;
     const mx = moving ? vx / speed : 0, mz = moving ? vz / speed : 0;
+    // НАПРАВЛЕНИЕ, ПОД КОТОРОЕ СТАВИТСЯ СТОПА, — усреднённое, а не мгновенное (см. GAIT.planSmooth).
+    // Сглаживаем ВЕКТОР, а не угол: у мечущегося направления средний вектор сам сжимается к нулю, и
+    // плант съезжает под таз — ровно то, что нужно. На первом кадре хода берём как есть, чтобы старт
+    // с места не отличался от прежнего ни на градус.
+    if (!moving) this.mAvgOn = false;
+    else if (!this.mAvgOn) { this.mAvgX = mx; this.mAvgZ = mz; this.mAvgOn = true; }
+    else {
+      const k = GAIT.planSmooth > 1e-4 ? Math.min(1, dt / GAIT.planSmooth) : 1;
+      this.mAvgX += (mx - this.mAvgX) * k; this.mAvgZ += (mz - this.mAvgZ) * k;
+    }
+    const pmx = this.mAvgOn ? this.mAvgX : mx, pmz = this.mAvgOn ? this.mAvgZ : mz;
     const stepLen = lerp(GAIT.stepWalk, GAIT.stepRun, sb) / Math.max(0.1, GAIT.cadence);   // длина шага ходьба↔бег; cadence>1 → короче/чаще (путь px не трогаем)
     const lift = lerp(GAIT.liftWalk, GAIT.liftRun, sb);   // подъём маховой стопы ходьба↔бег
+    const duty = lerp(GAIT.dutyWalk, GAIT.dutyRun, sb);   // доля опоры ходьба↔бег (sb уже в [0,1])
+    // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
+    const lead = stepLen * duty + stepLen * GAIT.aheadMul + speed * GAIT.predictSec;
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
@@ -282,7 +357,7 @@ class StepPlanner {
     if (moving) {
       this.settled = false;
       this.sideT[0] = 0; this.sideT[1] = 0;                     // ход перебивает приставные шаги
-      this.phase += (speed * dt / stepLen) * Math.PI;
+      this.phase += (speed * dt / stepLen) * Math.PI * this.urgency(px, pz, rx, rz, lead);
     } else {
       // СТОИМ. Планты (дом стопы отн. ТАЗА) крутятся с yaw; стопа прибита к миру. Шаг — когда стопа отъехала на ПРЕДЕЛ
       // (по ДИСТАНЦИИ turnStepDist ИЛИ по УГЛУ turnLimitDeg — тумблер turnLimitByAngle). Внутренняя нога (в сторону
@@ -341,9 +416,6 @@ class StepPlanner {
 
     // 2. ОКНА ОПОРЫ по доле. У ноги i опора отцентрована на фазе i·π и занимает 2π·duty цикла; остальное —
     //    перенос. duty<0.5 → между опорами обе ноги в воздухе (фаза полёта) — это и есть бег.
-    const duty = lerp(GAIT.dutyWalk, GAIT.dutyRun, sb);   // доля опоры ходьба↔бег (sb уже в [0,1])
-    // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
-    const lead = stepLen * duty + stepLen * GAIT.aheadMul + speed * GAIT.predictSec;
     // Анти-столкновение стоп: если цель ноги i ближе footClear к ДРУГОЙ стопе — увести цель ВПЕРЁД
     // (обойти спереди), а не влезать в неё. Так приставной шаг перестаёт «врезаться нога в ногу».
     const avoid = (l: Leg, oi: number): void => {
@@ -360,7 +432,7 @@ class StepPlanner {
     // Плант-цель ноги: вынос раскладываем на продольную/боковую компоненты по осям facing → форма стойки
     // (stanceWidth/strafeReach) + авторский offset (plantOff). Нейтрально при дефолтах: ортонормир. базис даёт
     // fx·(reach·mFwd) + rx·(reach·mLat) = reach·mx (и аналогично z) = прежняя цель hx + mx·reach.
-    const mFwd = mx * fx + mz * fz, mLat = mx * rx + mz * rz;
+    const mFwd = pmx * fx + pmz * fz, mLat = pmx * rx + pmz * rz;
     const plant = (l: Leg, i: number, hx: number, hz: number, reach: number): void => {
       const off = this.plantOff[i]!, side = i === 0 ? 1 : -1;   // нога 0 = ЛЕВАЯ на +X (см. якорь бедра)
       const fwdAmt = reach * mFwd + off[0];
@@ -377,6 +449,10 @@ class StepPlanner {
       if (c < half || c > TAU - half) {              // ОПОРА
         if (l.sw > 0) {                              // приземление: плантуем ТУДА, ГДЕ НОГА РЕАЛЬНО СТОИТ
           const a = this.actual[i]!;                 // (плант «по расчёту» тащил отстающую ногу рывком)
+          // Тот же миг, то же бедро: отношение ФАКТА к НАМЕРЕНИЮ = во сколько раз риг крупнее нашего.
+          const s0 = i === 0 ? HIP_DX : -HIP_DX, hx0 = px + rx * s0, hz0 = pz + rz * s0;
+          const inten = Math.hypot(l.tx - hx0, l.tz - hz0), act = Math.hypot(a[0] - hx0, a[1] - hz0);
+          if (inten > 1) this.rigK += (clamp(act / inten, 0.5, 3) - this.rigK) * 0.25;
           l.px = a[0]; l.pz = a[1];
         }
         l.sw = 0;
@@ -493,6 +569,8 @@ export class PoseDriver {
   get stepping(): boolean { return this.planner ? this.planner.stepping : false; }
   /** Какие ноги в переносе [левая, правая] — для тестов/отладки порядка приставных шагов. */
   get swingLegs(): [boolean, boolean] { return this.planner ? this.planner.swing : [false, false]; }
+  /** [масштаб рига, текущее ускорение фазы] — диагностика срочности шага. */
+  get debugUrge(): [number, number] { return this.planner ? this.planner.debugUrge : [1, 1]; }
   attack(power = 1): void { if (!this.dead) { this.attackT = ATTACK_DUR; this.attackPow = power; } }
   setDead(d: boolean): void { this.dead = d; }
   get isDead(): boolean { return this.dead; }

@@ -25,6 +25,7 @@ interface CaseSpec {
   yaw0?: number; yawRate?: number;      // рыск: старт + прирост/кадр
   goalYaw?: number | null;              // прицел (курсор) — если задан, шлём каждый кадр
   settle?: number;                      // префикс: N кадров стоя (v=0) для устаканивания стойки
+  flipEvery?: number;                   // перекладка: каждые N кадров скорость меняет знак (резкая смена направления)
   stance?: Partial<GoldenStance>;
 }
 
@@ -44,8 +45,12 @@ function runCase(spec: CaseSpec): GoldenCase {
   const total = settle + spec.n;
   for (let i = 0; i < total; i++) {
     const active = i >= settle;
-    const vx = active ? (spec.vx ?? 0) : 0;
-    const vz = active ? (spec.vz ?? 0) : 0;
+    // Перекладка направления: знак скорости переворачивается каждые `flipEvery` кадров. Это РЕЖИМ,
+    // а не помеха — именно на нём живут срочность шага и сглаживание планта (`stepFlip.test.ts`),
+    // и именно его C#-порт обязан повторить, иначе разворот в Unity поедет иначе, чем в вебе.
+    const sgn = spec.flipEvery && active && Math.floor((i - settle) / spec.flipEvery) % 2 ? -1 : 1;
+    const vx = active ? (spec.vx ?? 0) * sgn : 0;
+    const vz = active ? (spec.vz ?? 0) * sgn : 0;
     if (active && spec.yawRate) yaw += spec.yawRate;
     x += vx * dt; z += vz * dt;
     const goalYaw = spec.goalYaw ?? null;
@@ -86,6 +91,11 @@ const SPECS: CaseSpec[] = [
   { name: 'turn_slow', n: 300, settle: 40, yawRate: 0.006, stance: { latL: 9, latR: -9 } },
   // ход + доворот (движение и StandTurn не пересекаются, но проверяет переход)
   { name: 'walk_turn', n: 160, vz: 60, yawRate: 0.02 },
+  // Перекладка направления — три частоты вокруг длительности шага (на беге шаг ~0.38 с = 23 кадра).
+  { name: 'flip_strafe_fast', n: 240, vx: 110, flipEvery: 9 },
+  { name: 'flip_strafe_beat', n: 240, vx: 110, flipEvery: 20 },
+  { name: 'flip_fwdback', n: 240, vz: 110, flipEvery: 20 },
+  { name: 'flip_walk', n: 240, vx: 60, flipEvery: 30 },
 ];
 
 /** Снимок актуальных GAIT-параметров (для сверки, что Unity гоняет теми же). */
@@ -94,7 +104,7 @@ function paramSnapshot(): Record<string, number> {
   const keys = ['standY', 'pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence',
     'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget',
     'footClear', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime',
-    'stanceWidth', 'strafeReach', 'crossClamp'];
+    'stanceWidth', 'strafeReach', 'crossClamp', 'planSmooth', 'stepSlack', 'stepUrge'];
   const out: Record<string, number> = {};
   for (const k of keys) out[k] = g[k]!;
   return out;
