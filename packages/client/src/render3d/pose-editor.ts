@@ -22,7 +22,7 @@ import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { solveTwoBone, elbowGoal, perpTo, LIMB_SOFT } from './limbIk.js';
 import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type TimelinePanel } from './timelinePanel.js';
-import { MARK_TRACK, type MarkType } from './clipModel.js';
+import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType } from './clipModel.js';
 import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
 import { trajectorySamples, polylineLength, arcRatio, excursion } from './trajectory.js';                                          // Ф10: траектория кости
 import { requestGeneration, checkHealth, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
@@ -1714,9 +1714,44 @@ gizmo.addEventListener('objectChange', () => {
 
 // ── Позы / клипы / undo ── (типы, blendTwo/clipPoseAt/migrateClip — из clipModel.ts)
 function loadLib(): Clip[] { try { const s = localStorage.getItem('pe_clips'); if (!s) return []; return (JSON.parse(s) as unknown[]).map(migrateClip); } catch { return []; } }
+/** Ключ клипа в библиотеке. Игра ищет ровно по этой тройке (`localStorageContent.find`). */
+const clipKey = (c: { name: string; character: string; weapon: string }): string => `${c.name}|${c.character}|${c.weapon}`;
+/** Индекс клипа с такой же тройкой (−1 = свободно). */
+const clipIndexOf = (c: { name: string; character: string; weapon: string }): number =>
+  library.findIndex((x) => x.name === c.name && x.character === c.character && x.weapon === c.weapon);
+/** Свободное имя для тройки: `имя`, `имя_2`, `имя_3`… — в пределах того же персонажа и оружия. */
+function freeClipName(nm: string, character: string, weapon: string): string {
+  let n = nm;
+  for (let i = 2; clipIndexOf({ name: n, character, weapon }) >= 0; i++) n = nm + '_' + i;
+  return n;
+}
+/**
+ * ЕДИНСТВЕННЫЙ ШОВ ЗАПИСИ КЛИПА В БИБЛИОТЕКУ.
+ *
+ * Раньше `library.push` стоял в дюжине мест, и у каждого была своя проверка на существующий клип —
+ * или никакой. Отсюда дубли: в опубликованных данных `idle_dual` лежит в восьми экземплярах,
+ * `hit_dual` тоже. Дедупа на чтении нет, игра берёт ПЕРВОЕ совпадение — значит семь копий из восьми
+ * мёртвые, а редактор при этом может править совсем не ту, что читает игра.
+ *
+ * Режимы столкновения: `replace` — перезаписать молча (запекания, «взять за основу»);
+ * `rename` — рядом под свободным именем (импорт, дубликат); `ask` — спросить, отказ = ничего не делать.
+ * Возвращает записанный клип либо null, если пользователь отказался.
+ */
+function putClip(c: Clip, onExisting: 'replace' | 'rename' | 'ask' = 'ask'): Clip | null {
+  const i = clipIndexOf(c);
+  if (i < 0) { library.push(c); return c; }
+  if (onExisting === 'rename') { c.name = freeClipName(c.name, c.character, c.weapon); library.push(c); return c; }
+  if (onExisting === 'ask' && !confirm(`Клип «${c.name}» (${c.character} · ${c.weapon}) уже есть — перезаписать?`)) return null;
+  library[i] = c;
+  return c;
+}
 function saveLib(): void {
   // Превью импорта живёт В БИБЛИОТЕКЕ (чтобы даром получить скраб/таймлайн/призрака), но наружу его пускать нельзя.
   const out = library.filter((c) => c.name !== IMPORT_PREVIEW);
+  // СТОРОЖ ДУБЛЕЙ. Сохранять не мешаем — иначе уже накопленные копии заблокировали бы работу целиком,
+  // а чистит их автор сам. Но молчать нельзя: дубль означает, что правишь не тот клип, который читает игра.
+  const dups = duplicateClipKeys(out);
+  if (dups.length) console.warn('[pe_clips] ДУБЛИ (игра возьмёт первый, остальные мертвы):', dups.join(', '));
   try { localStorage.setItem('pe_clips', JSON.stringify(out)); savePoseKey('pe_clips'); } catch { /* */ }
 }
 let library: Clip[] = loadLib();
@@ -3058,7 +3093,7 @@ function setImportPreview(c: Clip | null): void {
     if (!importPrevSel) importPrevSel = { clip: clipIdx, frame: frameIdx };
     // `loop: true` НАСИЛЬНО: превью надо СМОТРЕТЬ в цикле, а не ловить один прогон. Это выброшенная копия —
     // в библиотеку уходит `last.clip` из панели, у него свой честный флаг цикла.
-    library.push({ ...c, name: IMPORT_PREVIEW, character: curCharId, weapon, loop: true });
+    putClip({ ...c, name: IMPORT_PREVIEW, character: curCharId, weapon, loop: true }, 'replace');
     clipIdx = clipsHere().findIndex((x) => x.name === IMPORT_PREVIEW);
     frameIdx = 0;
     // ⚠ Превью бега ГЛУШИТ проигрывание клипа: в цикле кадра стоит `if (locoOn) stepGait(...) else if (playing)`.
@@ -3106,12 +3141,11 @@ async function showImportPanel(file: File): Promise<void> {
     saveBoneMap: (sig, map) => { boneMaps[sig] = map; saveBoneMaps(); },
     commit: (clip) => {
       histLib('импорт анимации', () => {
-        let nm = (clip.name || 'anim').replace(/[^\w\u0430-\u044f\u0410-\u042f0-9:+._-]/g, '_'); const base = nm;
-        for (let i = 2; library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon); i++) nm = base + '_' + i;
-        clip.name = nm; clip.character = curCharId; clip.weapon = weapon;
+        clip.name = (clip.name || 'anim').replace(/[^\w\u0430-\u044f\u0410-\u042f0-9:+._-]/g, '_');
+        clip.character = curCharId; clip.weapon = weapon;
         if (clip.idleEnds) syncAttackEnds(clip);   // концы = актуальная стойка (единый источник), дальше синкаются при правке стойки
-        library.push(clip); saveLib();
-        clipIdx = clipsHere().findIndex((x) => x.name === nm); frameIdx = 0; refreshAll();
+        putClip(clip, 'rename'); saveLib();        // импорт НИКОГДА не затирает — встаёт рядом под свободным именем
+        clipIdx = clipsHere().findIndex((x) => x.name === clip.name); frameIdx = 0; refreshAll();
       });
     },
   });
@@ -3577,20 +3611,19 @@ function clipSection(): void {
     else if (taken(name) && !confirm('Клип «' + name + '» на «' + weapon + '» уже есть — перезаписать?')) return;
     const nc: Clip = { name, character: curCharId, weapon, loop: clipBuf.loop, keys: clipBuf.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) };
     histLib('вставить клип', () => {
-      const i = library.findIndex((x) => x.name === name && x.character === curCharId && x.weapon === weapon);
-      if (i >= 0) library[i] = nc; else library.push(nc);
+      putClip(nc, 'replace');   // столкновение уже разрулено выше (nameFree / отдельный confirm)
       if (clipBufWasAtk) { const arr = ((atkCfgs[curCharId] ??= {})[weapon] ??= []); if (!arr.includes(name)) { arr.push(name); saveAtk(); } }
       saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === name)); frameIdx = 0; refreshAll();
     });
   };
-  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; histLib('новый клип', () => { library.push({ name: nameFree(nm), character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }); }));
+  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; histLib('новый клип', () => { putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }, 'rename'); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }); }));
   row1.append(pbtn('📥 из FBX/BVH', () => openImportAnimModal()));   // импорт мокап/AI-анимации → наш клип (запекатель)
   if (clipBuf) row1.append(pbtn('⎘ вставить: ' + retargetClipName(clipBuf.name, clipBuf.weapon, weapon), pasteHere));   // буфер переживает смену оружия/персонажа
   const c = curClip();
   if (c) {
     row1.append(
       pbtn('⎘ копир', () => { clipBuf = { name: c.name, character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }; clipBufWasAtk = atkList().includes(c.name); refreshAll(); }),
-      pbtn('дубл', () => histLib('дублировать клип', () => { library.push({ name: nameFree(c.name + '_copy'), character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }); saveLib(); refreshAll(); })),
+      pbtn('дубл', () => histLib('дублировать клип', () => { putClip({ name: c.name + '_copy', character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }, 'rename'); saveLib(); refreshAll(); })),
       pbtn('переим', () => {
         const nm = prompt('имя клипа', c.name); if (!nm || nm === c.name) return;
         if (library.some((x) => x !== c && x.name === nm && x.character === curCharId && x.weapon === weapon)) { alert('Клип «' + nm + '» на этом оружии уже есть — выберите другое имя.'); return; }
@@ -3647,7 +3680,7 @@ function clipSection(): void {
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); eh.textContent = 'ЭКСПОРТ / ИМПОРТ'; body.append(eh);
   const ta = el('textarea', 'width:100%;height:70px;background:#0e1016;color:#9ae6a0;border:1px solid #39415a;border-radius:4px;font:10px monospace') as HTMLTextAreaElement; body.append(ta);
   const er = el('div', ''); body.append(er);
-  er.append(pbtn('клип', () => { if (c) ta.value = JSON.stringify(c); }), pbtn('всё', () => { ta.value = JSON.stringify(library); }), pbtn('копир клипы', () => navigator.clipboard?.writeText(ta.value)), pbtn('импорт клипы', () => histLib('импорт JSON', () => { try { const d = JSON.parse(ta.value); const arr = Array.isArray(d) ? d : [d]; const cl = arr.map(migrateClip); if (Array.isArray(d)) library = cl; else library.push(...cl); saveLib(); refreshAll(); } catch { /* */ } })));
+  er.append(pbtn('клип', () => { if (c) ta.value = JSON.stringify(c); }), pbtn('всё', () => { ta.value = JSON.stringify(library); }), pbtn('копир клипы', () => navigator.clipboard?.writeText(ta.value)), pbtn('импорт клипы', () => histLib('импорт JSON', () => { try { const d = JSON.parse(ta.value); const arr = Array.isArray(d) ? d : [d]; const cl = arr.map(migrateClip); if (Array.isArray(d)) library = cl; else for (const c of cl) putClip(c, 'ask'); saveLib(); refreshAll(); } catch { /* */ } })));
 }
 
 // Сохранение внешности персонажа: конфиг-персонаж/фракция (builtin) → серверный pe_appearance (ростер-СПИСОК остаётся
@@ -3731,7 +3764,7 @@ async function aiResultToClip(data: string | ArrayBuffer, label: string): Promis
   const name = generatedClipName(label, library.filter((c) => c.character === curCharId && c.weapon === weapon).map((c) => c.name));
   try {
     const r = await bakeAnimationToClip(file, { character: curCharId, weapon, name, idlePose: idle, anchorIdle: !!idle });
-    histLib('ИИ: добавить клип', () => { library.push(r.clip); clipIdx = clipsHere().length - 1; frameIdx = 0; saveLib(); });
+    histLib('ИИ: добавить клип', () => { putClip(r.clip, 'rename'); clipIdx = clipsHere().length - 1; frameIdx = 0; saveLib(); });
     aiStatus = `✓ «${r.clip.name}»: ${r.frames} кадров → ${r.keys} ключей`;
   } catch (e) { aiStatus = '✗ ' + String(e); }
   refreshAll();
@@ -3791,7 +3824,7 @@ function renderAi(): void {
     aiStatus = '… запрос'; refreshAll();
     void requestGeneration(aiCfg, { prompt: pr.value, seconds: aiCfg.seconds, character: curCharId, weapon }, aiKey()).then(async (r) => {
       if (r.error) { aiStatus = '✗ ' + r.error; refreshAll(); return; }
-      if (r.clip) { histLib('ИИ: добавить клип', () => { library.push(migrateClip(r.clip)); saveLib(); }); aiStatus = '✓ клип принят'; refreshAll(); return; }
+      if (r.clip) { histLib('ИИ: добавить клип', () => { putClip(migrateClip(r.clip), 'rename'); saveLib(); }); aiStatus = '✓ клип принят'; refreshAll(); return; }
       await aiResultToClip(r.glb ?? r.bvh ?? '', pr.value);
     });
   });
@@ -4017,10 +4050,7 @@ function bakeGaitSection(): void {
     const out = bakeGaitSet(player, human, { character: curCharId, weapon, readPose: defaultReadPose(human) });
     const ms = performance.now() - t0;
     histLib('запечь походку', () => {
-      for (const r of out) {
-        const i = library.findIndex((x) => x.name === r.clip.name && x.character === curCharId && x.weapon === weapon);
-        if (i >= 0) library[i] = r.clip; else library.push(r.clip);
-      }
+      for (const r of out) putClip(r.clip, 'replace');   // перезапекание набора — это осознанная перезапись
       saveLib();
     });
     const keys = out.reduce((a, r) => a + r.keys, 0), frames = out.reduce((a, r) => a + r.frames, 0);
@@ -4497,13 +4527,12 @@ function syncAttackEnds(c: Clip): void {
 function syncAllAttackEnds(): void { for (const c of library) if (c.character === curCharId && (isAttackClip(c) || c.idleEnds)) syncAttackEnds(c); }
 function captureUpper(nm: string = stanceName(weapon)): void {   // снять ВСЮ позу манекена (ноги+торс+верх+оружие) → клип-стойка (idle_ или combat_idle_)
   if (locoOn || playing) { alert('Идёт превью/воспроизведение — сначала останови (⏸), иначе схватишь кадр бега, а не стойку.'); return; }
-  const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon);
-  if (i >= 0 && !confirm(`Перезаписать «${nm}» текущей позой манекена?`)) return;   // защита от случайной перезаписи idle
+  const exists = clipIndexOf({ name: nm, character: curCharId, weapon }) >= 0;
+  if (exists && !confirm(`Перезаписать «${nm}» текущей позой манекена?`)) return;   // защита от случайной перезаписи idle
   // Структурная правка: перезаписывает клип-стойку И концы ВСЕХ её ударов → откат должен вернуть всю библиотеку.
   histLib('захватить стойку', () => {
     const pose = readPoseFull();
-    const clip: Clip = { name: nm, character: curCharId, weapon, loop: false, keys: [{ pose, t: 0 }] };
-    if (i >= 0) library[i] = clip; else library.push(clip);
+    putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose, t: 0 }] }, 'replace');
     syncAllAttackEnds();   // стойка изменилась → концы всех её ударов подхватывают
     saveLib();
   });
@@ -4608,7 +4637,7 @@ function buildWarriorSeed(): { stances: Clip[]; attacks: Clip[]; sway: Record<st
 }
 function seedWarrior(forceStances: boolean): void {   // сид Волкодава: удары ВСЕГДА пересобрать (6 кадров), стойки — добавить недостающие (force=перезаписать)
   const s = buildWarriorSeed();
-  const put = (c: Clip, replace: boolean): void => { const i = library.findIndex((x) => x.name === c.name && x.character === 'warrior' && x.weapon === c.weapon); if (i >= 0) { if (replace) library[i] = c; } else library.push(c); };
+  const put = (c: Clip, replace: boolean): void => { if (replace || clipIndexOf(c) < 0) putClip(c, 'replace'); };
   for (const c of s.stances) put(c, forceStances);
   for (const c of s.attacks) put(c, true);   // удары — в 6-кадровую структуру
   swayCfg.warrior = forceStances ? s.sway : { ...s.sway, ...(swayCfg.warrior ?? {}) }; saveSway();
@@ -4654,13 +4683,13 @@ function renderUpperPanel(): void {   // панель idle-стойки по о�
   {   // взять стойку с другого ОРУЖИЯ — единый список оружия (как в тулбаре); копирование в себя = no-op
     const r1 = el('div', 'display:flex;gap:2px;margin-top:4px'); const sel = el('select', 'flex:1;background:#20242f;color:#cfe;border:1px solid #39415a;border-radius:4px;font-size:11px') as HTMLSelectElement;
     WEAPONS.forEach((w) => { const o = document.createElement('option'); o.value = w; o.textContent = w; sel.append(o); });
-    r1.append(sel, pbtn('основа: оружие', () => { if (sel.value === weapon) return; const src = stanceClip(sel.value); if (src) { const nm = stanceName(weapon); const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon); const nc: Clip = { name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: clonePose(src.keys[0]!.pose), t: 0 }] }; if (i >= 0) library[i] = nc; else library.push(nc); (swayCfg[curCharId] ??= {})[weapon] = swayCfg[curCharId]?.[sel.value] ?? 0.2; saveLib(); saveSway(); renderLoco(); } })); box.append(r1);
+    r1.append(sel, pbtn('основа: оружие', () => { if (sel.value === weapon) return; const src = stanceClip(sel.value); if (src) { const nm = stanceName(weapon); const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon); putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: clonePose(src.keys[0]!.pose), t: 0 }] }, 'replace'); (swayCfg[curCharId] ??= {})[weapon] = swayCfg[curCharId]?.[sel.value] ?? 0.2; saveLib(); saveSway(); renderLoco(); } })); box.append(r1);
   }
   const srcC = allChars().filter((c) => c.id !== curCharId && library.some((cl) => cl.character === c.id && cl.name.startsWith('idle_')));
   if (srcC.length) {   // взять ВЕСЬ набор (стойки+удары) с другого КЛАССА
     const r2 = el('div', 'display:flex;gap:2px;margin-top:4px'); const sel = el('select', 'flex:1;background:#20242f;color:#cfe;border:1px solid #39415a;border-radius:4px;font-size:11px') as HTMLSelectElement;
     srcC.forEach((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; sel.append(o); });
-    r2.append(sel, pbtn('основа: класс (весь верх)', () => { const src = sel.value; for (const cl of library.filter((c) => c.character === src && (c.name.startsWith('idle_') || c.name.startsWith('hit_') || c.name.startsWith('s_hit_')))) { const i = library.findIndex((c) => c.character === curCharId && c.name === cl.name && c.weapon === cl.weapon); const nc = cloneClipTo(cl, curCharId); if (i >= 0) library[i] = nc; else library.push(nc); } swayCfg[curCharId] = { ...(swayCfg[src] ?? {}) }; atkCfgs[curCharId] = JSON.parse(JSON.stringify(atkCfgs[src] ?? {})); saveLib(); saveSway(); saveAtk(); renderLoco(); })); box.append(r2);
+    r2.append(sel, pbtn('основа: класс (весь верх)', () => { const src = sel.value; for (const cl of library.filter((c) => c.character === src && (c.name.startsWith('idle_') || c.name.startsWith('hit_') || c.name.startsWith('s_hit_')))) putClip(cloneClipTo(cl, curCharId), 'replace'); swayCfg[curCharId] = { ...(swayCfg[src] ?? {}) }; atkCfgs[curCharId] = JSON.parse(JSON.stringify(atkCfgs[src] ?? {})); saveLib(); saveSway(); saveAtk(); renderLoco(); })); box.append(r2);
   }
   body.append(box);
 }
@@ -5079,7 +5108,7 @@ async function bakeCurrentClip(): Promise<void> {
     simT += dt; step++;
   }
   histLib('запечь физику', () => {
-    library.push({ name: c.name + '_baked', character: curCharId, weapon, loop: c.loop, keys: baked });
+    putClip({ name: c.name + '_baked', character: curCharId, weapon, loop: c.loop, keys: baked }, 'replace');   // перезапёк ту же физику — заменяем, а не плодим
     clipIdx = clipsHere().length - 1; frameIdx = 0; saveLib(); refreshAll();
   });
 }

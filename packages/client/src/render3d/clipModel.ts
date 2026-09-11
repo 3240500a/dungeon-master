@@ -282,6 +282,27 @@ export function flipPose(p: Pose): Pose {
 // ── Миграции формата ──────────────────────────────────────────────────────────────────────────────
 /** Старый формат (`keys: Pose[]` без времени) → кадры с временем; `__hipsY` → `__hipsP` (Ф1.4).
  *  Применяется ПРИ ЧТЕНИИ, чтобы весь накопленный на сервере контент работал без разрушительной миграции. */
+/** Ключ клипа в библиотеке: игра ищет стойку/удар РОВНО по этой тройке (`localStorageContent.find`). */
+export const clipKey = (c: { name: string; character: string; weapon: string }): string => `${c.name}|${c.character}|${c.weapon}`;
+/**
+ * Тройки, встречающиеся в библиотеке больше одного раза.
+ *
+ * Дубль — это не «лишняя запись», а тихая порча: чтение берёт ПЕРВОЕ совпадение, поэтому вторая и
+ * дальше копии недостижимы, а редактор может править как раз их. Пусто = библиотека чистая.
+ */
+export function duplicateClipKeys(list: readonly { name: string; character: string; weapon: string }[]): string[] {
+  const seen = new Set<string>(), dup = new Set<string>();
+  for (const c of list) { const k = clipKey(c); if (seen.has(k)) dup.add(k); else seen.add(k); }
+  return [...dup];
+}
+/** Свободное имя в пределах персонажа и оружия: `имя`, `имя_2`, `имя_3`… */
+export function freeClipNameIn(list: readonly { name: string; character: string; weapon: string }[], nm: string, character: string, weapon: string): string {
+  const taken = (n: string): boolean => list.some((x) => x.name === n && x.character === character && x.weapon === weapon);
+  let n = nm;
+  for (let i = 2; taken(n); i++) n = nm + '_' + i;
+  return n;
+}
+
 export function migrateClip(c0: unknown): Clip {
   const c = c0 as Clip & { keys: (Keyframe | Pose)[] };
   const keys: Keyframe[] = (c.keys ?? []).map((k, i) => {
