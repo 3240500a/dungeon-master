@@ -106,6 +106,8 @@ export interface GraphCanvasOpts {
   onMove?(id: string, x: number, y: number): void;
   onContext?(id: string | null, clientX: number, clientY: number): void;
   selected?(): string | null;
+  /** Двойной клик по узлу — ЗАЙТИ внутрь него (подмашина состояний в Unity открывается так же). */
+  onEnter?(id: string): void;
 }
 
 /**
@@ -119,10 +121,32 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
   svg.style.cssText = 'display:block;cursor:grab;touch-action:none;background:#12151d;border:1px solid #39415a;border-radius:6px';
+  // СЕТКА. На большом холсте без неё не видно ни пана, ни зума: узлы просто «прыгают» в пустоте.
+  // Живёт в defs как паттерн и не входит в мировые координаты — иначе её пришлось бы перерисовывать.
+  const defs = document.createElementNS(SVGNS, 'defs');
+  const mkGrid = (id: string, step: number, color: string, w: string): SVGPatternElement => {
+    const p = document.createElementNS(SVGNS, 'pattern');
+    p.setAttribute('id', id); p.setAttribute('width', String(step)); p.setAttribute('height', String(step));
+    p.setAttribute('patternUnits', 'userSpaceOnUse');
+    const path = document.createElementNS(SVGNS, 'path');
+    path.setAttribute('d', `M${step} 0 L0 0 0 ${step}`);
+    path.setAttribute('fill', 'none'); path.setAttribute('stroke', color); path.setAttribute('stroke-width', w);
+    p.append(path); return p;
+  };
+  const gridS = mkGrid('gk-grid-s', 16, '#1a1f2c', '1');
+  const gridL = mkGrid('gk-grid-l', 128, '#222939', '1');
+  defs.append(gridS, gridL);
+  const bgS = document.createElementNS(SVGNS, 'rect');
+  const bgL = document.createElementNS(SVGNS, 'rect');
+  for (const [r, f] of [[bgS, 'url(#gk-grid-s)'], [bgL, 'url(#gk-grid-l)']] as const) {
+    r.setAttribute('x', '-100000'); r.setAttribute('y', '-100000');
+    r.setAttribute('width', '200000'); r.setAttribute('height', '200000');
+    r.setAttribute('fill', f);
+  }
   const vp = document.createElementNS(SVGNS, 'g');
   const gEdges = document.createElementNS(SVGNS, 'g');
   const gNodes = document.createElementNS(SVGNS, 'g');
-  vp.append(gEdges, gNodes); svg.append(vp); host.appendChild(svg);
+  vp.append(bgS, bgL, gEdges, gNodes); svg.append(defs, vp); host.appendChild(svg);
 
   let pan = { x: 20, y: 20 }, zoom = 1;
   let nodes: GraphNodeView[] = [], edges: GraphEdgeView[] = [];
@@ -132,11 +156,25 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
     const r = svg.getBoundingClientRect();
     return { x: (cx - r.left - pan.x) / zoom, y: (cy - r.top - pan.y) / zoom };
   };
-  /** Ребро — кубическая кривая вбок: прямые между близкими узлами сливаются в кашу. */
-  const edgePath = (a: GraphNodeView, b: GraphNodeView): string => {
-    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
+  /**
+   * Ребро — кубическая кривая, и она обязана выходить С ТОЙ СТОРОНЫ узла, куда идёт.
+   *
+   * Раньше выход был всегда правый, а вход всегда левый. Для горизонтального графа это верно, а для
+   * СТОЛБИКА (стек слоёв) кривая уходила вправо и возвращалась влево, огибая узел петлёй — читалось
+   * как ошибка. Направление выбираем по тому, что больше: разбег по вертикали или по горизонтали.
+   * Возвращаем и точку подписи: у вертикального ребра она сбоку от середины, а не над ней.
+   */
+  const edgeGeom = (a: GraphNodeView, b: GraphNodeView): { d: string; lx: number; ly: number } => {
+    const cxA = a.x + a.w / 2, cyA = a.y + a.h / 2, cxB = b.x + b.w / 2, cyB = b.y + b.h / 2;
+    if (Math.abs(cyB - cyA) > Math.abs(cxB - cxA) * 1.2) {
+      const up = cyB < cyA;
+      const y1 = up ? a.y : a.y + a.h, y2 = up ? b.y + b.h : b.y;
+      const k = Math.max(24, Math.abs(y2 - y1) * 0.5) * (up ? -1 : 1);
+      return { d: `M${cxA} ${y1} C${cxA} ${y1 + k} ${cxB} ${y2 - k} ${cxB} ${y2}`, lx: (cxA + cxB) / 2 + 30, ly: (y1 + y2) / 2 + 3 };
+    }
+    const x1 = a.x + a.w, y1 = cyA, x2 = b.x, y2 = cyB;
     const dx = Math.max(30, Math.abs(x2 - x1) * 0.5);
-    return `M${x1} ${y1} C${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`;
+    return { d: `M${x1} ${y1} C${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`, lx: (x1 + x2) / 2, ly: (y1 + y2) / 2 - 4 };
   };
 
   const draw = (ns: GraphNodeView[], es: GraphEdgeView[]): void => {
@@ -146,8 +184,9 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
     for (const e of es) {
       const a = by.get(e.from), b = by.get(e.to);
       if (!a || !b) continue;
+      const geom = edgeGeom(a, b);
       const p = document.createElementNS(SVGNS, 'path');
-      p.setAttribute('d', edgePath(a, b));
+      p.setAttribute('d', geom.d);
       p.setAttribute('fill', 'none');
       p.setAttribute('stroke', e.color ?? '#4a5680');
       p.setAttribute('stroke-width', '1.5');
@@ -155,8 +194,8 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
       gEdges.append(p);
       if (e.label) {
         const t = document.createElementNS(SVGNS, 'text');
-        t.setAttribute('x', String((a.x + a.w + b.x) / 2));
-        t.setAttribute('y', String((a.y + b.y) / 2 + a.h / 2 - 4));
+        t.setAttribute('x', String(geom.lx));
+        t.setAttribute('y', String(geom.ly));
         t.setAttribute('fill', e.color ?? '#6b7180');
         t.setAttribute('font-size', '9');
         t.setAttribute('font-family', 'monospace');
@@ -196,6 +235,7 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
         window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
       });
       g.addEventListener('contextmenu', (ev) => { ev.preventDefault(); ev.stopPropagation(); opts.onContext?.(n.id, ev.clientX, ev.clientY); });
+      g.addEventListener('dblclick', (ev) => { ev.preventDefault(); ev.stopPropagation(); opts.onEnter?.(n.id); });
       gNodes.append(g);
     }
     apply();
@@ -232,7 +272,10 @@ export function graphCanvas(host: HTMLElement, opts: GraphCanvasOpts = {}): Grap
     const x0 = Math.min(...nodes.map((n) => n.x)), x1 = Math.max(...nodes.map((n) => n.x + n.w));
     const y0 = Math.min(...nodes.map((n) => n.y)), y1 = Math.max(...nodes.map((n) => n.y + n.h));
     zoom = Math.min(2, Math.max(0.2, Math.min((w - 40) / Math.max(1, x1 - x0), (h - 40) / Math.max(1, y1 - y0))));
-    pan = { x: 20 - x0 * zoom, y: 20 - y0 * zoom };
+    // ЦЕНТРИРУЕМ по той оси, где контент уже влез: узкий столбик, прижатый к левому краю огромного
+    // поля, выглядит как обрезанный граф — человек начинает искать, что он не видит.
+    const cw = (x1 - x0) * zoom, ch = (y1 - y0) * zoom;
+    pan = { x: Math.max(20, (w - cw) / 2) - x0 * zoom, y: Math.max(20, (h - ch) / 2) - y0 * zoom };
     apply();
   };
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { graphEdges, graphNodes, graphStates, BUILTIN_STATES } from './animGraphModel.js';
+import { graphEdges, graphNodes, graphStates, levelEdges, levelNodes, BUILTIN_STATES } from './animGraphModel.js';
 import type { AnimStore } from './animConfig.js';
 
 /**
@@ -90,5 +90,60 @@ describe('рёбра', () => {
 
   it('пустой конфиг — только служебные рёбра, ничего тревожного', () => {
     expect(graphEdges({}, 'warrior').every((e) => e.kind === 'from-base')).toBe(true);
+  });
+});
+
+/**
+ * УРОВНИ ГРАФА. Их смысл не косметический: корень показывает СТЕК СЛОЁВ, то есть тот самый контракт
+ * «нижний слой не знает о верхних», ради которого Ф1 и затевалась. Если корень врёт про порядок или
+ * про то, что внутри слоя пусто, — граф перестаёт быть картой системы и становится картинкой.
+ */
+describe('уровни (подмашины)', () => {
+  it('корень — стек слоёв снизу вверх, а не куча состояний', () => {
+    const ids = levelNodes({}, 'warrior', [], '').map((n) => n.id);
+    expect(ids).toEqual(['#loco', '#stance', '#main', '#off', '#action']);
+  });
+
+  it('в корне ребро = «ложится поверх», цепочкой по всему стеку', () => {
+    const es = levelEdges({}, 'warrior', '');
+    expect(es.map((e) => `${e.from}→${e.to}`)).toEqual(['#loco→#stance', '#stance→#main', '#main→#off', '#off→#action']);
+  });
+
+  it('слой пускает внутрь, а локомоция — нет: её ручки на другой вкладке', () => {
+    const ns = levelNodes({}, 'warrior', [], '');
+    expect(ns.find((n) => n.id === '#action')!.enter).toBe('action');
+    expect(ns.find((n) => n.id === '#loco')!.enter, 'планировщик графом не авторится').toBeUndefined();
+  });
+
+  it('счётчик на слое показывает, есть ли внутри что смотреть', () => {
+    const store: AnimStore = { warrior: { items: { sword: { hand: 'main' }, shield: { hand: 'off' } } } };
+    const sub = (id: string): string => levelNodes(store, 'warrior', [], '').find((n) => n.id === id)!.sub!;
+    expect(sub('#main'), 'база + меч').toContain('2');
+    expect(sub('#off'), 'база + щит').toContain('2');
+  });
+
+  it('предмет попадает в СВОЙ слой руки и несёт разобранную настройку', () => {
+    const store: AnimStore = { warrior: { items: { torch: { hand: 'off', kind: 'additive', weight: 0.4 } } } };
+    expect(levelNodes(store, 'warrior', [], 'main').map((n) => n.id), 'факел не в правой').toEqual(['#base']);
+    const n = levelNodes(store, 'warrior', [], 'off').find((x) => x.id === 'torch')!;
+    expect(n.sub).toContain('дельта');
+    expect(n.sub).toContain('0.40');
+  });
+
+  it('в слое руки ребро идёт ОТ безоружной базы — дельта считается от неё', () => {
+    const store: AnimStore = { warrior: { items: { sword: { hand: 'main' } } } };
+    expect(levelEdges(store, 'warrior', 'main').map((e) => `${e.from}→${e.to}`)).toEqual(['#base→sword']);
+  });
+
+  it('битая привязка видна и на уровне стоек', () => {
+    const ns = levelNodes({}, 'warrior', ['idle_none'], 'stance');
+    expect(ns.find((n) => n.id === '#relax')!.missing, 'клип есть').toBe(false);
+    expect(ns.find((n) => n.id === '#incombat')!.missing, 'боевой базы нет').toBe(true);
+  });
+
+  it('уровень действия — ровно тот же граф, что и раньше', () => {
+    const store: AnimStore = { warrior: { states: { attack: { priority: 9 } } } };
+    expect(levelNodes(store, 'warrior', [], 'action')).toEqual(graphNodes(store, 'warrior', []));
+    expect(levelEdges(store, 'warrior', 'action')).toEqual(graphEdges(store, 'warrior'));
   });
 });
