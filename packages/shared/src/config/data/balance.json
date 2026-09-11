@@ -204,6 +204,23 @@
       "playerLightDist": 350
     }
   },
+  "salvage": {
+    "fieldYield": 0.3,
+    "rarityMult": {
+      "normal": 1,
+      "magic": 1.4,
+      "rare": 2,
+      "unique": 0
+    },
+    "armorSlotMult": {
+      "chest": 1,
+      "helm": 0.6,
+      "boots": 0.6,
+      "gloves": 0.4,
+      "belt": 0.4
+    },
+    "tierUpEveryItemLevel": 8
+  },
   "autoPickup": {
     "radius": 56,
     "gold": true,
