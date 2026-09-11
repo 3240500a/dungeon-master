@@ -163,7 +163,7 @@ describe('резолвер стойки под экипировку', () => {
 
   it('вес предмета = сила подмешивания', () => {
     const find = lib({ 'idle|none': BASE, 'idle|sword': SWORD, 'idle|shield': SHIELD });
-    const off = resolveStancePose(find, 'sword+shield', 0, (i) => (i === 'shield' ? 0 : 1))!;
+    const off = resolveStancePose(find, 'sword+shield', 0, { weight: (i) => (i === 'shield' ? 0 : 1) })!;
     near(off['LeftUpperArm']!, BASE['LeftUpperArm']!);       // щит выкручен в ноль — рука базовая
     near(off['RightUpperArm']!, SWORD['RightUpperArm']!);    // меч не тронут
   });
@@ -256,8 +256,8 @@ describe('живая стойка (многокадровый idle)', () => {
       return i === 'sword' ? SWORD : i === 'dagger' ? SHIELD : null;
     };
     // ⚠ Ключ БЕЗ авторской позы — иначе сработает правило «авторская сильнее» и база не понадобится.
-    const a = resolveStancePose(find, 'sword+dagger', 0, undefined, 0)!;
-    const b = resolveStancePose(find, 'sword+dagger', 0, undefined, 1)!;
+    const a = resolveStancePose(find, 'sword+dagger', 0, {}, 0)!;
+    const b = resolveStancePose(find, 'sword+dagger', 0, {}, 1)!;
     expect(Math.abs(a['Chest']![1] - b['Chest']![1]), 'база дышит').toBeGreaterThan(0.1);
     // На нуле (референс = живая база) рука выходит ровно авторским мечом…
     near(a['RightUpperArm']!, SWORD['RightUpperArm']!);

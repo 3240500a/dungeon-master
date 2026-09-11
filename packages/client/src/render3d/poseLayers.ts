@@ -177,13 +177,24 @@ export type StanceLookup = (kind: 'idle' | 'combat_idle', item: string, t: numbe
  *  3. Нет даже безоружной базы — возвращаем то, что найдётся по ключу/базовому оружию, иначе null
  *     (как было до слоёв: полный процедурный мах).
  */
+export interface StanceOpts {
+  /** Сила подмешивания предмета 0..1. Нет → 1. */
+  weight?: (item: string) => number;
+  /** Тип оверлея. Нет → двуручное `override`, остальное `additive`. */
+  kind?: (item: string) => LayerKind;
+  /** Рука предмета, если задана ЯВНО (факел в левой при пустой правой). Нет → по позиции в ключе. */
+  hand?: (item: string) => 'main' | 'off' | undefined;
+}
+
 export function resolveStancePose(
   find: StanceLookup,
   weapon: string,
   combat: number,
-  weightOf: (item: string) => number = () => 1,
+  opts: StanceOpts = {},
   t = 0,
 ): Pose | null {
+  const weightOf = opts.weight ?? ((): number => 1);
+  const kindOf = (i: string): LayerKind => opts.kind?.(i) ?? (isTwoHanded(i) ? 'override' : 'additive');
   const one = (kind: 'idle' | 'combat_idle'): Pose | null => {
     const exact = find(kind, weapon, t);
     if (exact) return exact;                                  // 1. авторская на точный ключ
@@ -196,12 +207,22 @@ export function resolveStancePose(
     // Так же устроен `Make Additive` в Unreal — базовая поза аддитива фиксированная.
     const ref = at(kind, 'none', 0) ?? base;
     const layers: PoseLayer[] = [];
-    const two = isTwoHanded(m);
+    const mKind = m !== 'none' ? kindOf(m) : 'additive';
+    const two = mKind === 'override';                         // override владеет верхом → офф-руки нет
     const mp = m !== 'none' ? at(kind, m, t) : null;
-    if (mp) layers.push({ pose: mp, base: ref, mask: two ? UPPER_ALL_MASK : ARM_MAIN_MASK, weight: weightOf(m), kind: two ? 'override' : 'additive' });
+    // Рука предмета: обычно её задаёт позиция в ключе, но конфиг может сказать иначе (факел «в левой»
+    // при пустой правой — предмет стоит на месте главного, а руку берёт вторую).
+    const mHand = opts.hand?.(m) ?? 'main';
+    if (mp) {
+      const off = !two && mHand === 'off';
+      layers.push({ pose: off ? asOffHandPose(mp) : mp, base: off ? asOffHandPose(ref) : ref,
+        mask: two ? UPPER_ALL_MASK : off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(m), kind: mKind });
+    }
     if (!two && o !== 'none') {
       const op = at(kind, o, t);
-      if (op) layers.push({ pose: asOffHandPose(op), base: asOffHandPose(ref), mask: ARM_OFF_MASK, weight: weightOf(o), kind: 'additive' });
+      const off = (opts.hand?.(o) ?? 'off') === 'off';
+      if (op) layers.push({ pose: off ? asOffHandPose(op) : op, base: off ? asOffHandPose(ref) : ref,
+        mask: off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(o), kind: kindOf(o) === 'override' ? 'additive' : kindOf(o) });
     }
     return layers.length ? composeStance(base, layers) : base;   // 2. сборка (нет предметов → чистая база)
   };

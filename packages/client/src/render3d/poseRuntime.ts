@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, sideLerp, type PoseTargets } from './pose.js';
 import { resolveStancePose, stancePoseAt } from './poseLayers.js';
+import { readAnimCfg } from './animConfig.js';
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
 // Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
@@ -447,11 +448,6 @@ export interface GamePoseContent extends PoseContent {
   /** Все hit_*-клипы данного оружия (для чередования базовой атаки), с фолбэком по оружию/персонажу. */
   attackClips(weapon: string): Clip[];
 }
-/** Сила подмешивания предмета (`pe_overlay[char][item]`). Нет настройки — 1, то есть полная поза предмета. */
-function overlayWeight(cfg: Record<string, Record<string, number>>, charId: string, item: string, fallbackId?: string): number {
-  const v = cfg[charId]?.[item] ?? (fallbackId ? cfg[fallbackId]?.[item] : undefined);
-  return v === undefined ? 1 : Math.max(0, Math.min(1, v));
-}
 /** Главная рука ключа оружия (`sword+shield`→`sword`). */
 const mainWeapon = (w: string): string => w.split('+')[0] ?? w;
 const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as T : fb; } catch { return fb; } };
@@ -466,7 +462,14 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   const combatStance = (w: string): Clip | null => find('combat_idle', charId, w) ?? (fallbackId ? find('combat_idle', fallbackId, w) : null);   // боевая стойка (нет → null → фолбэк на relaxed idle)
   const atk = (w: string): Clip | null => find('hit', charId, w) ?? (fallbackId ? find('hit', fallbackId, w) : null);
   const swayOf = (w: string): number => sway[charId]?.[w] ?? (fallbackId ? sway[fallbackId]?.[w] : undefined) ?? 0.2;
-  const overlay = readJSON<Record<string, Record<string, number>>>('pe_overlay', {});   // сила подмешивания предмета
+  const anim = readAnimCfg(readJSON<unknown>('pe_anim', {}), charId, fallbackId);   // контроллер: предметы + привязки клипов
+  /** Клип стойки ПО ИМЕНИ ИЗ КОНФИГА: привязка сильнее конвенции, поэтому переименовывать ничего не надо. */
+  const bound = (kind: 'idle' | 'combat_idle', item: string): Clip | null => {
+    const nm = anim.clipName(kind, item);
+    const byName = clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) : undefined);
+    if (byName) return byName;
+    return kind === 'idle' ? stance(item) : combatStance(item);   // нет привязки/клипа — конвенция, как было
+  };
   // Клип по имени (нормализуем старое удар_→hit_) — свой персонаж, иначе фолбэк.
   const byName = (name: string): Clip | null => { const nm = migratePoseName(name); return clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) ?? null : null); };
   return {
@@ -479,10 +482,11 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
      */
     resolveUpper(weapon: string, combat = 0, t = 0): UpperPose | null {
       const look = (kind: 'idle' | 'combat_idle', item: string, tt: number): Pose | null => {
-        const c = (kind === 'idle' ? stance(item) : combatStance(item)) ?? (item === weapon ? (kind === 'idle' ? stance(baseWeapon(item)) : combatStance(baseWeapon(item))) : null);
+        const c = bound(kind, item) ?? (item === weapon ? (kind === 'idle' ? stance(baseWeapon(item)) : combatStance(baseWeapon(item))) : null);
         return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом, однокадровая держит кадр
       };
-      const pose = resolveStancePose(look, weapon, combat, (it) => overlayWeight(overlay, charId, it, fallbackId), t);
+      const pose = resolveStancePose(look, weapon, combat,
+        { weight: (it) => anim.weightOf(it), kind: (it) => anim.kindOf(it), hand: (it) => anim.handOf(it) }, t);
       if (!pose) return null;
       const full = stance(weapon);
       return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)) };
