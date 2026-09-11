@@ -31,6 +31,13 @@ export interface SaveState {
    * «гнёзда пусты», а пустые гнёзда обязаны давать ровно прежнюю способность (`session/inserts.ts`).
    */
   sockets?: Record<string, (string | null)[]>;
+  /**
+   * КОШЕЛЁК МАТЕРИАЛОВ КРАФТА: id материала → количество. Сетку инвентаря НЕ занимает —
+   * стекирования в игре нет нигде, и материалы забили бы 10×6 за один забег.
+   * Необязательное по той же причине, что и `sockets`: старый сейв читается как есть,
+   * отсутствие поля значит «кошелёк пуст». Работа с ним — `economy/materials.ts`.
+   */
+  materials?: Record<string, number>;
   masteries: SkillAllocation;
   /** Экипировка по слотам. */
   equipment: Partial<Record<EquipSlot, Item>>;

@@ -735,6 +735,37 @@ export const monsterGearSchema = z.array(
   ]),
 );
 
+// ── craft-materials ───────────────────────────────────────────────────────────
+/**
+ * МАТЕРИАЛЫ КРАФТА — то, что сыплется с монстров вместо хлама (docs/ECONOMY.md).
+ *
+ * ⚠ Ключ `materials` в конфиге ЗАНЯТ PBR-материалами рендера, поэтому секция называется
+ * `craft-materials`. Хранятся материалы КОШЕЛЬКОМ в сейве (`SaveState.materials`), а не
+ * предметами в сетке: стекирования в игре нет нигде, и сетка 10×6 забилась бы за забег.
+ */
+export const craftMaterialsSchema = z.array(
+  z.object({
+    id: z.string(),
+    /** Выключенный материал не падает и не участвует в рецептах. */
+    enabled: z.boolean().default(true),
+    name: z.string(),
+    /** Семья: iron / wood / cloth / hide / plate. Внутри семьи материалы взаимозаменяемы по смыслу. */
+    family: z.string(),
+    /** Ступень качества 1..3. Чем глубже забег, тем выше ступень в дропе. */
+    tier: z.number().int().min(1).max(3),
+    /** Куда идёт: оружие и щиты, броня, или и туда и туда. */
+    usedFor: z.enum(['weapon', 'armor', 'any']).default('any'),
+    /** id иконки (файл в /assets, папка icons). Пусто — рисуем заглушку по семье. */
+    icon: z.string().default(''),
+    /**
+     * Цена продажи торговцу за единицу. ⚠ Держим НИЗКОЙ намеренно: продажа материалов —
+     * главный кран, которым можно случайно обесценить золото, а цель обратная —
+     * золото должно оставаться дефицитным всю игру (docs/ECONOMY.md §1).
+     */
+    sellPrice: z.number().int().min(0).default(0),
+  }),
+);
+
 // ── item-tiers ────────────────────────────────────────────────────────────────
 /** Лестница тиров баз (D2-стиль): по ilvl дропа берётся высший доступный тир. */
 export const itemTiersSchema = z.array(
@@ -2007,6 +2038,7 @@ export const configSchemas = {
   'run-modifiers': runModifiersSchema,
   'run-templates': runTemplatesSchema,
   'item-tiers': itemTiersSchema,
+  'craft-materials': craftMaterialsSchema,
   'armor-classes': armorClassesSchema,
   'phys-subtypes': physSubtypesSchema,
   'weapon-weights': weaponWeightsSchema,

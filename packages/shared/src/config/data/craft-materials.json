@@ -1,0 +1,21 @@
+[
+  { "id": "iron-1", "name": "Ржавое железо", "family": "iron", "tier": 1, "usedFor": "weapon", "sellPrice": 1 },
+  { "id": "iron-2", "name": "Чистое железо", "family": "iron", "tier": 2, "usedFor": "weapon", "sellPrice": 4 },
+  { "id": "iron-3", "name": "Калёная сталь", "family": "iron", "tier": 3, "usedFor": "weapon", "sellPrice": 12 },
+
+  { "id": "wood-1", "name": "Трухлявое древко", "family": "wood", "tier": 1, "usedFor": "weapon", "sellPrice": 1 },
+  { "id": "wood-2", "name": "Крепкое древко", "family": "wood", "tier": 2, "usedFor": "weapon", "sellPrice": 4 },
+  { "id": "wood-3", "name": "Морёный дуб", "family": "wood", "tier": 3, "usedFor": "weapon", "sellPrice": 12 },
+
+  { "id": "cloth-1", "name": "Истлевшая ткань", "family": "cloth", "tier": 1, "usedFor": "armor", "sellPrice": 1 },
+  { "id": "cloth-2", "name": "Плотная ткань", "family": "cloth", "tier": 2, "usedFor": "armor", "sellPrice": 4 },
+  { "id": "cloth-3", "name": "Тканая парча", "family": "cloth", "tier": 3, "usedFor": "armor", "sellPrice": 12 },
+
+  { "id": "hide-1", "name": "Гнилая кожа", "family": "hide", "tier": 1, "usedFor": "armor", "sellPrice": 1 },
+  { "id": "hide-2", "name": "Дублёная кожа", "family": "hide", "tier": 2, "usedFor": "armor", "sellPrice": 4 },
+  { "id": "hide-3", "name": "Клёпаная кожа", "family": "hide", "tier": 3, "usedFor": "armor", "sellPrice": 12 },
+
+  { "id": "plate-1", "name": "Ржавые пластины", "family": "plate", "tier": 1, "usedFor": "armor", "sellPrice": 1 },
+  { "id": "plate-2", "name": "Кованые пластины", "family": "plate", "tier": 2, "usedFor": "armor", "sellPrice": 4 },
+  { "id": "plate-3", "name": "Латные пластины", "family": "plate", "tier": 3, "usedFor": "armor", "sellPrice": 12 }
+]
