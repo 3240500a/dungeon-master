@@ -658,7 +658,7 @@ export async function startOnline3d(): Promise<void> {
   // updateDt — dt для тяжёлого a.d.update (позинг/физика/скин). Обычно = dt; при temporal-LOD (дальние монстры обновляются
   // не каждый кадр) сюда идёт НАКОПЛЕННЫЙ dt, чтобы фаза анимации/сглаживание шли верно, а не в slow-mo. Дешёвые сеттеры
   // (цель/скорость/бой) — каждый кадр (velocity low-pass с per-frame dt), тяжёлый шаг — только на strideFrame.
-  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true, combat = false, updateDt = dt): void {
+  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true, combat = false, updateDt = dt, stun = false, downed = false): void {
     const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
     a.vx += (nvx - a.vx) * 0.25; a.vz += (nvz - a.vz) * 0.25;   // low-pass: гасит 30/60Гц-джиттер (иначе ложный страйф)
     a.lx = x; a.lz = z;
@@ -667,6 +667,7 @@ export async function startOnline3d(): Promise<void> {
     a.d.setMove(Math.min(1, Math.hypot(a.vx, a.vz) / 120));
     a.d.setDead(!alive);
     a.d.setCombat?.(combat);   // боевой айдл (серверный флаг PlayerView.inCombat) — self и пиры одинаково
+    a.d.setState?.(stun, downed);   // оглушён / сбит с ног → клип реакции через слот действия (Ф1.5)
     if (doUpdate) a.d.update(updateDt);
   }
 
@@ -693,7 +694,7 @@ export async function startOnline3d(): Promise<void> {
       else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (fx - smoothX) * k; smoothZ += (fy - smoothZ) * k; }
       // Тело: живое ведём по сглаженному фокусу; труп — по СВОЕЙ позиции (не уезжает вслед за камерой на союзника).
       const bx = mine.alive ? smoothX : mine.x, by = mine.alive ? smoothZ : mine.y;
-      driveActor(self, bx, by, mine.facing, mine.alive, dt, true, !!mine.inCombat);
+      driveActor(self, bx, by, mine.facing, mine.alive, dt, true, !!mine.inCombat, dt, !!mine.stun, false);
       statusFx.sync('self', bx, by, mine.debuffs);   // эффекты статусов на игроке
       orbit.target.set(smoothX, 20, smoothZ);
       if (playerLight) playerLight.position.set(smoothX, 90, smoothZ);
@@ -715,7 +716,7 @@ export async function startOnline3d(): Promise<void> {
         if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }         // пир сменил оружие/щит → пересобрать меш + адаптировать позы удара
         if (a.akey !== ak) { a.akey = ak; a.d.setAppearance?.(appearanceFromModels(pv.armorModels)); }   // сменил броню → пересобрать скин-слой
       }
-      driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt, true, !!pv.inCombat);
+      driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt, true, !!pv.inCombat, dt, !!pv.stun, false);
       if (a.hp) { a.hp.spr.position.set(pv.x, 74, pv.y); a.hp.set(pv.hp / Math.max(1, pv.maxHp)); a.hp.spr.visible = pv.alive; }   // HP пира над головой
     }
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }
@@ -751,7 +752,7 @@ export async function startOnline3d(): Promise<void> {
       const stride = d2 <= ANIM_FULL_R2 ? 1 : d2 <= ANIM_MID_R2 ? 2 : 3;
       const acc = (a.animAcc ?? 0) + dt;
       const strideFrame = active && (stride <= 1 || (animFrame + (mv.id % stride)) % stride === 0);
-      driveActor(a, mv.x, mv.y, mv.facing, true, dt, strideFrame, false, acc);   // dormant/skip → doUpdate=false: setPose держит цель, тяжёлый шаг пропущен
+      driveActor(a, mv.x, mv.y, mv.facing, true, dt, strideFrame, false, acc, mv.stun, mv.downed);   // dormant/skip → doUpdate=false: setPose держит цель, тяжёлый шаг пропущен
       a.animAcc = active && !strideFrame ? acc : 0;   // копим только пока активен и кадр пропущен; сон/апдейт → сброс
       // Есть ли у монстра дебаффы — дёшево, БЕЗ аллокаций (у большинства их нет). Строку иконок и statusFx.sync
       // считаем ТОЛЬКО когда дебаффы есть (или были) — иначе per-frame Object.keys/filter/map × N монстров = мусор → GC-паузы.

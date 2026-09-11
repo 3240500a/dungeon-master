@@ -37,6 +37,12 @@ export interface AnimGraph {
   /** Базовые БЕЗОРУЖНЫЕ стойки: от них строится всё. Нет → `idle_none` / `combat_idle_none`. */
   base?: { idle?: string; combatIdle?: string };
   items?: Record<string, AnimItem>;
+  /**
+   * Клипы состояний по имени состояния: `stagger`, `knockdown_fall`, `getup`, `hit_react_F`…
+   * Нет записи — берётся клип с тем же именем, что и состояние; нет и его — состояние не
+   * отыгрывается вовсе (и это нормально: пока клип не заавторен, ломаться нечему).
+   */
+  states?: Record<string, string>;
 }
 export type AnimStore = Record<string, AnimGraph>;
 
@@ -52,6 +58,8 @@ export interface AnimCfg {
   weightOf(item: string): number;
   /** Есть ли вообще запись про этот предмет (для UI: показывать «настроено» или «по умолчанию»). */
   has(item: string): boolean;
+  /** Имя клипа для состояния (`stagger`, `getup`…). Нет привязки → само имя состояния. */
+  stateName(state: string): string;
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -95,5 +103,9 @@ export function readAnimCfg(raw: unknown, charId: string, fallbackId?: string): 
       return typeof w === 'number' && Number.isFinite(w) ? clamp01(w) : 1;
     },
     has: (item) => it(item) !== undefined,
+    stateName(state) {
+      const m = g.states && typeof g.states === 'object' ? (g.states as Record<string, unknown>) : {};
+      return str(m[state]) ?? state;
+    },
   };
 }

@@ -9,7 +9,7 @@ import type { WorldSnapshot, PlayerView, MonsterView } from './netTypes.js';
  * сравнение должно быть ТОЧНЫМ, а не «примерно равно».
  */
 function player(id: string, x: number, over: Partial<PlayerView> = {}): PlayerView {
-  return { id, x, y: 8, facing: 1.25, hp: 100, mana: 50, stamina: 30, alive: true, inCombat: false, debuffs: {}, toggles: [], ...over };
+  return { id, x, y: 8, facing: 1.25, hp: 100, mana: 50, stamina: 30, alive: true, inCombat: false, stun: false, debuffs: {}, toggles: [], ...over };
 }
 function monster(id: number, x: number, over: Partial<MonsterView> = {}): MonsterView {
   return { id, x, y: 16, facing: 0.5, hp: 40, maxHp: 50, alive: true, stun: false, downed: false, debuffs: {}, r: 12, aiState: 'idle', ...over };

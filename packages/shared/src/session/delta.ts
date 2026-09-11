@@ -85,7 +85,7 @@ export function worldChecksum(s: WorldSnapshot): number {
   let h = (s.players.length * 7919 + s.monsters.length * 104729 + s.drops.length * 31 + s.projectiles.length * 17) | 0;
   for (const p of s.players) {
     h = (h + strHash(p.id) + q(p.x) * 3 + q(p.y) * 5 + q(p.facing) * 9 + q(p.hp) * 7
-      + (p.alive ? 11 : 0) + (p.inCombat ? 13 : 0) + p.toggles.length * 19) | 0;
+      + (p.alive ? 11 : 0) + (p.inCombat ? 13 : 0) + (p.stun ? 17 : 0) + p.toggles.length * 19) | 0;
   }
   for (const m of s.monsters) {
     h = (h + Math.imul(m.id, 2654435761) + q(m.x) * 3 + q(m.y) * 5 + q(m.facing) * 9 + q(m.hp) * 7
@@ -97,7 +97,7 @@ export function worldChecksum(s: WorldSnapshot): number {
 
 interface PlayerBase {
   x: number; y: number; facing: number; hp: number; mana: number; stamina: number;
-  alive: boolean; inCombat: boolean; dSig: string; tSig: string;
+  alive: boolean; inCombat: boolean; stun: boolean; dSig: string; tSig: string;
 }
 interface MonsterBase {
   x: number; y: number; facing: number; hp: number; maxHp: number; alive: boolean;
@@ -164,6 +164,7 @@ export class SnapshotDelta {
       if (p.stamina !== b.stamina) { patch.stamina = p.stamina; changed = true; }
       if (p.alive !== b.alive) { patch.alive = p.alive; changed = true; }
       if (p.inCombat !== b.inCombat) { patch.inCombat = p.inCombat; changed = true; }
+      if (p.stun !== b.stun) { patch.stun = p.stun; changed = true; }
       if (dSig !== b.dSig) { patch.debuffs = p.debuffs; changed = true; }
       if (tSig !== b.tSig) { patch.toggles = p.toggles; changed = true; }
       if (changed) (d.pu ??= []).push(patch);
@@ -215,7 +216,7 @@ export class SnapshotDelta {
     for (const p of snap.players) {
       this.players.set(p.id, {
         x: p.x, y: p.y, facing: p.facing, hp: p.hp, mana: p.mana, stamina: p.stamina,
-        alive: p.alive, inCombat: p.inCombat,
+        alive: p.alive, inCombat: p.inCombat, stun: p.stun,
         dSig: debuffSig(p.debuffs), tSig: p.toggles.length ? p.toggles.join(',') : '',
       });
     }

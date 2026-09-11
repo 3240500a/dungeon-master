@@ -270,6 +270,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     setAppearance(equip) { equipModels = equip; refreshSkin(); },   // C6c: слоты брони (modelId) → пересобрать скин-слой
 
     setCombat(on) { player.setCombat(on); },   // боевой айдл (сервер-авторитетный флаг → боевая стойка)
+    setState(stunned, downed) { player.setState(stunned, downed); },   // стан/нокдаун → клип реакции (Ф1.5)
     update(dt) {
       if (!simEnabled) return;                               // спит (вне окна): физика вынута, меш заморожен в позе — не считаем
       if (dead) {                                            // мёртв — свободный коллапс, рендерим без прижима

@@ -7,7 +7,7 @@ import type { WorldSnapshot, PlayerView, MonsterView } from './netTypes.js';
  * ровно новый снапшот. Всё остальное — про то, чтобы дельта была маленькой.
  */
 function player(id: string, x: number, over: Partial<PlayerView> = {}): PlayerView {
-  return { id, x, y: 0, facing: 0, hp: 100, mana: 50, stamina: 30, alive: true, inCombat: false, debuffs: {}, toggles: [], ...over };
+  return { id, x, y: 0, facing: 0, hp: 100, mana: 50, stamina: 30, alive: true, inCombat: false, stun: false, debuffs: {}, toggles: [], ...over };
 }
 function monster(id: number, x: number, over: Partial<MonsterView> = {}): MonsterView {
   return { id, x, y: 0, facing: 0, hp: 50, maxHp: 50, alive: true, stun: false, downed: false, debuffs: {}, r: 12, aiState: 'idle', ...over };
@@ -124,5 +124,34 @@ describe('SnapshotDelta', () => {
       cur = next;
       sameWorld(applied, cur);
     }
+  });
+});
+
+describe('стан игрока переживает дельту', () => {
+  /**
+   * ⚠ Ровно тот класс бага, что уже ловили на `inCombat`: если флаг не попадает в подпись строки,
+   * «погас» по дельте не доедет, и клиент останется оглушённым навсегда. Замер тогда был
+   * 594 расхождения из 602 сверок — поэтому поле обязательное и сверяется здесь.
+   */
+  it('поднялся и погас — оба перехода доезжают', () => {
+    const d = new SnapshotDelta();
+    const a = snap(1, [player('p', 0)], []);
+    const b = snap(2, [player('p', 0, { stun: true })], []);
+    const c = snap(3, [player('p', 0, { stun: false })], []);
+    d.prime(a);
+    const toB = d.next(b)!;
+    expect(JSON.stringify(toB), 'подъём флага попал в дельту').toContain('stun');
+    sameWorld(applyWorldDelta(a, toB), b);
+    const toC = d.next(c)!;
+    expect(JSON.stringify(toC), 'и падение флага тоже').toContain('stun');
+    sameWorld(applyWorldDelta(b, toC), c);
+  });
+
+  it('флаг не менялся — в дельту не лезет', () => {
+    const d = new SnapshotDelta();
+    const a = snap(1, [player('p', 0, { stun: true })], []);
+    d.prime(a);
+    const same = d.next(snap(2, [player('p', 0, { stun: true })], []));
+    expect(JSON.stringify(same ?? {})).not.toContain('stun');
   });
 });

@@ -146,6 +146,8 @@ export interface RagdollHandle {
   setAppearance?(equip: Record<string, { modelId?: string; materialId?: string } | undefined>): void;
   /** Боевой айдл: on=true → боевая стойка (combat_idle), off → обычная. Кроссфейд плавный (GAIT.combatBlend). */
   setCombat?(on: boolean): void;
+  /** Состояния с сервера: оглушён / сбит с ног. Кукла отыгрывает их клипом через слот действия (Ф1.5). */
+  setState?(stunned: boolean, downed: boolean): void;
   /** Окно-culling: on=false → тела куклы вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап. */
   setSimEnabled?(on: boolean): void;
   /** Debug-режим физики монстра: 'kinematic' = рисовать из позы (тела вон из pw.step), физика лишь транзиентно на удар/смерть; 'physics' = как обычно. */

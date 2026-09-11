@@ -38,7 +38,7 @@ export const WIRE_DELTA = 2;
 
 // Биты маски полей игрока.
 const P_X = 1, P_Y = 2, P_FACING = 4, P_HP = 8, P_MANA = 16, P_STAMINA = 32,
-  P_ALIVE = 64, P_DEBUFFS = 128, P_TOGGLES = 256, P_INCOMBAT = 512;
+  P_ALIVE = 64, P_DEBUFFS = 128, P_TOGGLES = 256, P_INCOMBAT = 512, P_STUN = 1024;
 // Биты маски полей монстра.
 const M_X = 1, M_Y = 2, M_FACING = 4, M_HP = 8, M_MAXHP = 16, M_ALIVE = 32,
   M_R = 64, M_AI = 128, M_DEBUFFS = 256, M_STUN = 512, M_DOWNED = 1024;
@@ -154,6 +154,7 @@ export function encodeWorldFrame(f: WireFrame): Uint8Array {
     if (p.stamina !== undefined) mask |= P_STAMINA;
     if (p.alive !== undefined) mask |= P_ALIVE;
     if (p.inCombat !== undefined) mask |= P_INCOMBAT;
+    if (p.stun !== undefined) mask |= P_STUN;
     if (p.debuffs !== undefined) mask |= P_DEBUFFS;
     if (p.toggles !== undefined) mask |= P_TOGGLES;
     w.u16(mask);
@@ -163,7 +164,8 @@ export function encodeWorldFrame(f: WireFrame): Uint8Array {
     if (mask & P_HP) w.u32(Math.max(0, Math.round(p.hp!)));
     if (mask & P_MANA) w.u32(Math.max(0, Math.round(p.mana!)));
     if (mask & P_STAMINA) w.u32(Math.max(0, Math.round(p.stamina!)));
-    if (mask & (P_ALIVE | P_INCOMBAT)) w.u8((p.alive ? 1 : 0) | (p.inCombat ? 2 : 0));
+    // Три флага живут в ОДНОМ байте: маска говорит, какие из них в этом патче осмысленны.
+    if (mask & (P_ALIVE | P_INCOMBAT | P_STUN)) w.u8((p.alive ? 1 : 0) | (p.inCombat ? 2 : 0) | (p.stun ? 4 : 0));
     if (mask & P_DEBUFFS) w.json(p.debuffs);
     if (mask & P_TOGGLES) w.json(p.toggles);
   }
@@ -254,10 +256,11 @@ export function decodeWorldFrame(buf: Uint8Array): WireFrame {
       if (mask & P_HP) p.hp = r.u32();
       if (mask & P_MANA) p.mana = r.u32();
       if (mask & P_STAMINA) p.stamina = r.u32();
-      if (mask & (P_ALIVE | P_INCOMBAT)) {
+      if (mask & (P_ALIVE | P_INCOMBAT | P_STUN)) {
         const f = r.u8();
         if (mask & P_ALIVE) p.alive = (f & 1) !== 0;
         if (mask & P_INCOMBAT) p.inCombat = (f & 2) !== 0;
+        if (mask & P_STUN) p.stun = (f & 4) !== 0;
       }
       if (mask & P_DEBUFFS) p.debuffs = r.json<DebuffState>();
       if (mask & P_TOGGLES) p.toggles = r.json<string[]>();

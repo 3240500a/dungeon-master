@@ -92,6 +92,8 @@ export const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as c
 export interface PoseContent {
   resolveUpper(weapon: string, combat?: number, t?: number): UpperPose | null;   // combat 0..1 — блендит relaxed idle ↔ combat_idle; t — время живой стойки (сек), 0 = первый кадр
   shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
+  /** Клип состояния (`stagger`, `knockdown_fall`, `getup`…) по привязке из `pe_anim`. Нет клипа → null. */
+  stateClip?(state: string): Clip | null;
 }
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
 export interface AttackState { clip: Clip | null; t: number }
@@ -492,6 +494,8 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
       return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)) };
     },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
+    /** Клип состояния по привязке (`pe_anim.states`), иначе по имени состояния как есть. */
+    stateClip(state: string): Clip | null { return byName(anim.stateName(state)); },
     clipByName(name: string): Clip | null { return byName(name); },
     // Поза скила под экип. оружие: если авторская на другом оружии — ретаргетим семейство (по clip.weapon) на текущее/базовое/главное; иначе авторская как есть.
     resolveAbilityClip(name: string, weapon: string): Clip | null {
@@ -807,6 +811,28 @@ export class PosePlayer {
   combat = 0;                     // боевой айдл 0..1 (сглажен, кроссфейд за GAIT.combatBlend сек)
   private combatTarget = 0;
   setCombat(on: boolean): void { this.combatTarget = on ? 1 : 0; }   // вход/выход боевой стойки (сервер-авторитетный флаг)
+  private stunned = false; private downed = false;
+  /**
+   * СОСТОЯНИЯ С СЕРВЕРА (Ф1.5): оглушён / сбит с ног.
+   *
+   * До этого их не видел никто: у монстров `stun` только рисовал иконку над головой, `downed` не
+   * читался вообще, а у игрока поля стана в снапшоте не было — свой стан анимация не замечала.
+   * Теперь ВХОД в состояние запускает свой клип через тот же слот действия, что и удар: он уже умеет
+   * огибающую, кроссфейд и владение низом тела. Нет клипа — состояние просто не отыгрывается, и
+   * ничего не ломается: это ровно сегодняшнее поведение.
+   */
+  setState(stunned: boolean, downed: boolean): void {
+    if (downed && !this.downed) this.playState('knockdown_fall');
+    else if (!downed && this.downed) this.playState('getup');
+    else if (stunned && !this.stunned) this.playState('stagger');
+    this.stunned = stunned; this.downed = downed;
+  }
+  get isStunned(): boolean { return this.stunned; }
+  get isDowned(): boolean { return this.downed; }
+  private playState(state: string): void {
+    const c = this.content.stateClip?.(state);
+    if (c) this.triggerAttack(c);   // слот действия: огибающая + кроссфейд + владение низом стоя
+  }
   private noIk = false;   // поза-LOD: пропуск off-hand IK (FOOT-IK пропускает рендер отдельно)
   setNoIk(on: boolean): void { this.noIk = on; }
   /** Вес ГЕЙТА в ногах (0 = поза idle-стойки, 1 = шаг планировщика). Сглажен: резкий скачок = дребезг ног. */
