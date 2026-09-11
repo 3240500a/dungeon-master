@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, sideLerp, type PoseTargets } from './pose.js';
+import { resolveStancePose } from './poseLayers.js';
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
 // Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
@@ -432,6 +433,11 @@ export interface GamePoseContent extends PoseContent {
   /** Все hit_*-клипы данного оружия (для чередования базовой атаки), с фолбэком по оружию/персонажу. */
   attackClips(weapon: string): Clip[];
 }
+/** Сила подмешивания предмета (`pe_overlay[char][item]`). Нет настройки — 1, то есть полная поза предмета. */
+function overlayWeight(cfg: Record<string, Record<string, number>>, charId: string, item: string, fallbackId?: string): number {
+  const v = cfg[charId]?.[item] ?? (fallbackId ? cfg[fallbackId]?.[item] : undefined);
+  return v === undefined ? 1 : Math.max(0, Math.min(1, v));
+}
 /** Главная рука ключа оружия (`sword+shield`→`sword`). */
 const mainWeapon = (w: string): string => w.split('+')[0] ?? w;
 const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as T : fb; } catch { return fb; } };
@@ -446,21 +452,26 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   const combatStance = (w: string): Clip | null => find('combat_idle', charId, w) ?? (fallbackId ? find('combat_idle', fallbackId, w) : null);   // боевая стойка (нет → null → фолбэк на relaxed idle)
   const atk = (w: string): Clip | null => find('hit', charId, w) ?? (fallbackId ? find('hit', fallbackId, w) : null);
   const swayOf = (w: string): number => sway[charId]?.[w] ?? (fallbackId ? sway[fallbackId]?.[w] : undefined) ?? 0.2;
+  const overlay = readJSON<Record<string, Record<string, number>>>('pe_overlay', {});   // сила подмешивания предмета
   // Клип по имени (нормализуем старое удар_→hit_) — свой персонаж, иначе фолбэк.
   const byName = (name: string): Clip | null => { const nm = migratePoseName(name); return clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) ?? null : null); };
   return {
     // Idle-стойка: ПОЛНАЯ авторская поза per-оружие (idle_<weapon>) в приоритете — так стойка с щитом/дуалом целиком как в
     // редакторе (оба оружия + грипы). Нет полной → по БАЗОВОМУ оружию (axe+shield → axe) + щит идёт оверлеем.
+    /**
+     * Стойка под экипировку. Авторская поза на точный ключ побеждает всегда; нет её — стойка
+     * СОБИРАЕТСЯ из безоружной базы и дельт предметов по рукам (`resolveStancePose`). Тот же вызов
+     * стоит в редакторе — правило «редактор ≡ игра» держится кодом, а не дисциплиной.
+     */
     resolveUpper(weapon: string, combat = 0): UpperPose | null {
-      const full = stance(weapon); const wk = (full && full.keys.length) ? weapon : baseWeapon(weapon);
-      const c = (full && full.keys.length) ? full : stance(baseWeapon(weapon));
-      if (!c || !c.keys.length) return null;
-      let pose = c.keys[0]!.pose;
-      if (combat > 0.001) {   // блендим к боевой стойке combat_idle_<w> (нет клипа → остаётся relaxed)
-        const cf = combatStance(weapon); const cc = (cf && cf.keys.length) ? cf : combatStance(baseWeapon(weapon));
-        if (cc && cc.keys.length) pose = blendTwo(pose, cc.keys[0]!.pose, combat);
-      }
-      return { pose, swing: swayOf(wk) };
+      const look = (kind: 'idle' | 'combat_idle', item: string): Pose | null => {
+        const c = (kind === 'idle' ? stance(item) : combatStance(item)) ?? (item === weapon ? (kind === 'idle' ? stance(baseWeapon(item)) : combatStance(baseWeapon(item))) : null);
+        return c && c.keys.length ? c.keys[0]!.pose : null;
+      };
+      const pose = resolveStancePose(look, weapon, combat, (it) => overlayWeight(overlay, charId, it, fallbackId));
+      if (!pose) return null;
+      const full = stance(weapon);
+      return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)) };
     },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
     clipByName(name: string): Clip | null { return byName(name); },

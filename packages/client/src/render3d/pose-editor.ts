@@ -45,6 +45,7 @@ import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWea
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
+import { resolveStancePose, splitHands, isTwoHanded } from './poseLayers.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
@@ -4499,6 +4500,10 @@ const editorContent: PoseContent = {
 };
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
 interface UpperPose { pose: Pose; swing: number }
+/** Сила подмешивания предмета (`pe_overlay[char][item]`, 0..1). Нет записи — 1, то есть поза предмета целиком.
+ *  Это и есть та самая ручка «насколько щит/второй меч влияет на стойку». Ползунок — Ф1.3. */
+let overlayCfg: Record<string, Record<string, number>> = (() => { try { return JSON.parse(localStorage.getItem('pe_overlay') || '{}'); } catch { return {}; } })();
+const saveOverlay = (): void => { try { localStorage.setItem('pe_overlay', JSON.stringify(overlayCfg)); savePoseKey('pe_overlay'); } catch { /* */ } };
 const stanceName = (w: string): string => 'idle_' + w;
 function stanceClip(w: string): Clip | null { return library.find((c) => c.name === stanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
 function loadSway(): Record<string, Record<string, number>> { try { return JSON.parse(localStorage.getItem('pe_sway') || '{}') as Record<string, Record<string, number>>; } catch { return {}; } }
@@ -4508,14 +4513,23 @@ const swayOf = (w: string): number => swayCfg[curCharId]?.[w] ?? 0.2;   // ос�
 const combatStanceName = (w: string): string => 'combat_idle_' + w;
 function combatStanceClip(w: string): Clip | null { return library.find((c) => c.name === combatStanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
 let editorCombat = 0;   // превью боевой стойки в редакторе (0/1)
-function resolveUpper(wpn: string, combat = 0): UpperPose | null {   // idle-поза: ПОЛНАЯ per-оружие (idle_<wpn>) в приоритете (щит/дуал целиком), иначе по БАЗОВОМУ + оверлей; combat>0 → блендим к combat_idle
+/** Стойка под экипировку — ТОТ ЖЕ резолвер, что в игре (`resolveStancePose`): авторская на точный
+ *  ключ в приоритете, иначе сборка из безоружной базы и дельт предметов по рукам. */
+function resolveUpper(wpn: string, combat = 0): UpperPose | null {
+  const look = (kind: 'idle' | 'combat_idle', item: string): Pose | null => {
+    const c = kind === 'idle' ? stanceClip(item) : combatStanceClip(item);
+    return c && c.keys[0] ? c.keys[0].pose : null;
+  };
+  const pose = resolveStancePose(look, wpn, combat, (it: string) => overlayCfg[curCharId]?.[it] ?? 1);
+  if (pose) { const wk = stanceClip(wpn) ? wpn : rtBaseWeapon(wpn); return { pose, swing: swayOf(wk) }; }
+  // Сборка не сложилась (нет ни точной позы, ни безоружной базы) — прежний фолбэк по базовому оружию класса.
   let c = stanceClip(wpn); let wk = wpn;
   if (!c) { wk = rtBaseWeapon(wpn); c = stanceClip(wk); }
   if (!c) { const base = rtBaseWeapon(curChar().weapon); if (base !== wk) { c = stanceClip(base); wk = base; } }
   if (!c || !c.keys[0]) return null;
-  let pose = c.keys[0]!.pose;
-  if (combat > 0.001) { const cc = combatStanceClip(wpn) ?? combatStanceClip(rtBaseWeapon(wpn)); if (cc && cc.keys[0]) pose = blendTwo(pose, cc.keys[0]!.pose, combat); }
-  return { pose, swing: swayOf(wk) };
+  let p2 = c.keys[0]!.pose;
+  if (combat > 0.001) { const cc = combatStanceClip(wpn) ?? combatStanceClip(rtBaseWeapon(wpn)); if (cc && cc.keys[0]) p2 = blendTwo(p2, cc.keys[0]!.pose, combat); }
+  return { pose: p2, swing: swayOf(wk) };
 }
 // Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');
@@ -4659,6 +4673,32 @@ function renderUpperPanel(): void {   // панель idle-стойки по о�
   const h = el('div', 'color:#8fb7ff;font-weight:bold;margin-bottom:2px;font-size:11px');
   h.textContent = `IDLE-СТОЙКА · ${weapon}` + (has ? ' (клип «' + stanceName(weapon) + '»)' : ' — не задана (полный мах)'); box.append(h);
   box.append(pbtn(has ? '⟳ перезахватить стойку (в клип)' : '✎ захватить стойку (в клип)', () => { captureUpper(); renderLoco(); }));
+  // ── СИЛА ПОДМЕШИВАНИЯ ПРЕДМЕТА ────────────────────────────────────────────────────────────────
+  // Стойка комбинации собирается из безоружной базы и дельт предметов по рукам; это — вес дельты.
+  // Показываем ТОЛЬКО когда сборка реально работает: есть безоружная база и нет авторской позы на
+  // точный ключ (авторская всегда сильнее, и крутить при ней нечего).
+  {
+    const [mainIt, offIt] = splitHands(weapon);
+    const composing = !has && !!library.find((c) => c.name === 'idle_none' && c.character === curCharId && c.weapon === 'none');
+    const items = composing ? [mainIt, ...(isTwoHanded(mainIt) ? [] : [offIt])].filter((i) => i !== 'none') : [];
+    if (items.length) {
+      const oh = el('div', 'color:#8fb7ff;font-weight:bold;margin:6px 0 2px;font-size:11px');
+      oh.textContent = 'СИЛА ПОДМЕШИВАНИЯ (стойка собрана из безоружной базы)'; box.append(oh);
+      for (const it of items) {
+        const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
+        const nm = el('span', 'flex:0 0 92px;font-size:11px'); nm.textContent = it + (isTwoHanded(it) ? ' (двуруч.)' : ''); row.append(nm);
+        const sl = el('input', 'flex:1 1 auto;min-width:0') as HTMLInputElement;
+        sl.type = 'range'; sl.min = '0'; sl.max = '1'; sl.step = '0.02';
+        sl.value = String(overlayCfg[curCharId]?.[it] ?? 1);
+        const v = el('span', 'width:38px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = (+sl.value).toFixed(2);
+        sl.oninput = () => { const nv = parseFloat(sl.value); v.textContent = nv.toFixed(2); (overlayCfg[curCharId] ??= {})[it] = nv; saveOverlay(); };
+        row.append(sl, v); box.append(row);
+      }
+      const on = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
+      on.textContent = '0 — предмет не влияет на стойку, 1 — поза предмета целиком. Захватишь стойку на этот ключ — ползунки уйдут: авторская сильнее сборки.';
+      box.append(on);
+    }
+  }
   if (curCharId === 'warrior') box.append(pbtn('↺ сид Волкодава (16 стоек + 16 ударов)', () => { if (confirm('Перезаписать все стойки и удары Волкодава примерным сидом?')) { seedWarrior(true); renderLoco(); } }));
   // Боевая стойка (combat_idle): в игре включается в бою (своя атака / монстр целится в тебя). Фолбэк на idle, если не задана.
   const hasC = !!combatStanceClip(weapon);
