@@ -72,6 +72,30 @@ export const sideLerp = (kw: string, kr: string, bw: number, br: number, i: 0 | 
   const w = sideOf(kw, bw, i), r = sideOf(kr, br, i);
   return w + (r - w) * sb;
 };
+/**
+ * СТРАЙФ — ТРЕТЬЯ КОЛОНКА, а не «бег вбок».
+ *
+ * Ходьба и бег интерполируются по скорости (`sb`), и пока движение идёт ВПЕРЁД, двух чисел хватает.
+ * Боковой ход — другая механика (ногу не выносят вперёд, её приставляют), и описывать его теми же
+ * двумя числами нельзя: настраиваешь страйф — ломается бег, потому что это ОДНО И ТО ЖЕ число.
+ * Поэтому у ключа может быть третье значение — «каким он становится при чистом боковом ходе».
+ *
+ * Карта РАЗРЕЖЕННАЯ, и это принципиально: нет записи — ключ про страйф ничего не знает и ведёт себя
+ * ровно как раньше, бит в бит. Уже настроенные персонажи не сдвинулись ни на единицу.
+ */
+export const STRAFE: Record<string, number> = {};
+/** Страйф-значение ключа на сторону: пара в `ASYM[key+'@s']`, иначе общее из `STRAFE`, иначе нет. */
+export const strafeOf = (key: string, i: 0 | 1): number | undefined => ASYM[key + '@s']?.[i] ?? STRAFE[key];
+/**
+ * `sideLerp` + страйф: сперва ходьба→бег по `sb`, затем вперёд→вбок по `st`.
+ * Колонка привязана к ключу ХОДЬБЫ — у страйфа своя скорость не разводится (это одно движение).
+ */
+export const sideLerp3 = (kw: string, kr: string, bw: number, br: number, i: 0 | 1, sb: number, st: number): number => {
+  const v = sideLerp(kw, kr, bw, br, i, sb);
+  if (st <= 0) return v;
+  const sv = strafeOf(kw, i);
+  return sv === undefined ? v : v + (sv - v) * st;
+};
 
 export const GAIT = {
   standY: 30, pelvisMin: 26,                 // посадка таза: стойка / нижний предел приседа (подобрано глазами)
@@ -83,6 +107,13 @@ export const GAIT = {
   dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
   hipFwdLim: 0.95, hipFwdSoft: 0.3,          // мягкий потолок форвардного угла бедра
   hipFwdLimRun: 0.95,                        // потолок бедра на бегу (интерп по скорости)
+  // АМПЛИТУДА БЕДРА: во сколько раз бедро отрабатывает подъём маховой стопы. Подъём IK почти целиком
+  // отдаёт КОЛЕНУ — бедро висит, нога «поджимается в колене и болтается». Больше 1 — бедро идёт выше,
+  // колено догоняет, и высота шага набирается бедром тоже. 1 = прежнее поведение бит в бит.
+  hipSwing: 1, hipSwingRun: 1,
+  // ГРАНИЦЫ СТРАЙФА (°): угол между ходом и осью тела, на котором страйф-колонка начинает и полностью
+  // вступает. До 45° низ доворачивается под движение (Ф0) и это по-прежнему бег вперёд — не страйф.
+  strafeFrom: 45, strafeTo: 80,
   // ВЫНОС СТОПЫ ВПЕРЁД: к базовому шаг·доля добавляем шаг·aheadMul + скорость·predictSec.
   // fixTarget=1 — цель фиксируется в момент отрыва (предсказание), 0 — едет за бедром каждый кадр.
   aheadMul: 0, predictSec: 0, fixTarget: 0,
@@ -143,6 +174,69 @@ export const POSE = {
   // Все пять — с run-двойником и с раздельными Л/П через `ASYM`. Дефолт 0 = ровно прежнее поведение.
   shoUp: 0, shoFwd: 0, shoTw: 0, shoSwing: 0, shoLift: 0,
   shoUpRun: 0, shoFwdRun: 0, shoTwRun: 0, shoSwingRun: 0, shoLiftRun: 0,
+  // ── ФАЗА МАХА ─────────────────────────────────────────────────────────────────────────────────
+  // Множитель: +1 — как есть, 0 — мах выключен, −1 — ЗЕРКАЛЬНО (рука идёт с одноимённой ногой).
+  // Две ручки, а не одна: `armPhase` крутит руку целиком (пояс едет за ней), `shoPhase` разворачивает
+  // ТОЛЬКО пояс относительно своей руки. Знак в риге зависит от авторской стойки и модели, поэтому это
+  // ручка, а не константа: «плечи идут в противофазе» выставляется глазами за секунду, а не спором.
+  armPhase: 1, armPhaseRun: 1,
+  shoPhase: 1, shoPhaseRun: 1,
+  // ── АМПЛИТУДА ЛОКТЯ ───────────────────────────────────────────────────────────────────────────
+  // НЕ фиксированный угол, а КОЛЕБАНИЕ в такт маху: на переднем махе локоть подбирается, на заднем
+  // распрямляется. Средний угол задаёт только база (`armEl`), поэтому мест, где гнётся локоть, ровно
+  // два, а было три (`armElWalk` и `GX.elbowBend` сложены в базу — см. `foldElbow`). 0 = как было.
+  armElAmp: 0, armElAmpRun: 0,
+};
+
+/**
+ * СНИМОК ДЕФОЛТОВ. Нужен затем, что `GAIT`/`POSE` — ГЛОБАЛЬНЫЕ объекты, которые конфиг персонажа
+ * накладывает поверх. Без сброса к дефолтам смена персонажа тащит чужие значения по ключам, которых
+ * в новом конфиге нет, а свёртка локтя (она прибавляет) при каждой пересборке куклы прибавляла бы
+ * ещё раз. Редактор так делает с самого начала — теперь так же делает и игра.
+ */
+export const GAIT_BASE: Record<string, number> = { ...GAIT } as unknown as Record<string, number>;
+export const POSE_BASE: Record<string, number> = { ...POSE };
+
+/** Амплитуда маха в ЯКОРЯХ панели: ходьба (drive 1.0) и бег (drive 1.4) — те скорости, на которых настраивают. */
+const AMP_WALK = walkingAmp(1), AMP_RUN = walkingAmp(1.4);
+
+/**
+ * ТРИ МЕСТА, ГДЕ ГНУЛСЯ ЛОКОТЬ, СКЛАДЫВАЮТСЯ В ОДНУ БАЗУ.
+ *
+ * Итоговый угол был суммой трёх независимых ручек: `GX.elbowBend` (ретаргет), `POSE.armEl` (база) и
+ * `POSE.armElWalk` × амплитуда хода (добавка на ходу). Три ползунка на один угол — это не гибкость,
+ * а невозможность понять, который крутить. Складываем в базу, остаётся две ручки: база и амплитуда.
+ *
+ * ИДЕМПОТЕНТНО: слагаемые обнуляются, поэтому повторный вызов прибавляет ноль. Редактор сохраняет уже
+ * свёрнутое состояние, значит следующая загрузка снова прибавит ноль. Зовётся ОБОИМИ клиентами (игра
+ * `applyGaitConfig`, редактор `applyGaitCfg`) — иначе они разъедутся ровно на этот угол.
+ *
+ * `armElWalk` был помножен на амплитуду хода, а база — нет, поэтому свёртка точна В ЯКОРЯХ панели
+ * (ходьба и бег) и приблизительна между ними: там, где никто не настраивает.
+ */
+export function foldElbow(gx: { elbowBend: number; elbowBendRun?: number }): void {
+  const rd = (k: string, base: number): [number, number] => { const p = ASYM[k]; return p ? [p[0], p[1]] : [base, base]; };
+  const wr = (k: string, v: [number, number]): number => {
+    if (Math.abs(v[0] - v[1]) < 1e-9) { delete ASYM[k]; return v[0]; }
+    ASYM[k] = [v[0], v[1]]; return v[0];
+  };
+  const eb = rd('elbowBend', gx.elbowBend), ebR = rd('elbowBendRun', gx.elbowBendRun ?? gx.elbowBend);
+  const w = rd('armElWalk', POSE.armElWalk);
+  const el = rd('armEl', POSE.armEl), elR = rd('armElRun', POSE.armElRun);
+  POSE.armEl = wr('armEl', [el[0] + eb[0] + w[0] * AMP_WALK, el[1] + eb[1] + w[1] * AMP_WALK]);
+  POSE.armElRun = wr('armElRun', [elR[0] + ebR[0] + w[0] * AMP_RUN, elR[1] + ebR[1] + w[1] * AMP_RUN]);
+  delete ASYM['elbowBend']; delete ASYM['elbowBendRun']; delete ASYM['armElWalk'];
+  gx.elbowBend = 0; if (gx.elbowBendRun !== undefined) gx.elbowBendRun = 0;
+  POSE.armElWalk = 0;
+}
+
+/** Боковитость хода 0..1 по углу между направлением движения и продольной осью тела (`strafeFrom`..`strafeTo`). */
+export const strafeMix = (mFwd: number, mLat: number): number => {
+  const ang = Math.atan2(Math.abs(mLat), Math.abs(mFwd)) * 180 / Math.PI;
+  const a = GAIT.strafeFrom, b = GAIT.strafeTo;
+  if (b - a < 1e-3) return ang >= b ? 1 : 0;
+  const u = clamp((ang - a) / (b - a), 0, 1);
+  return u * u * (3 - 2 * u);
 };
 
 /**
@@ -222,6 +316,7 @@ class StepPlanner {
   private turnLead = -1;     // чья очередь шагать при повороте (внутренняя первой; чередование). -1 = поворот не начат
   private prevYaw = 0;       // рыск прошлого кадра
   sb = 0;                    // блен ходьба(0)↔бег(1) — читает PoseDriver для раздельных рук walk/run
+  st = 0;                    // боковитость 0 (вперёд/назад) … 1 (чистый страйф) — третья колонка настроек
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
   private mAvgX = 0; private mAvgZ = 0; private mAvgOn = false;   // сглаженный вектор хода (направление планта)
@@ -382,6 +477,11 @@ class StepPlanner {
       this.mAvgX += (mx - this.mAvgX) * k; this.mAvgZ += (mz - this.mAvgZ) * k;
     }
     const pmx = this.mAvgOn ? this.mAvgX : mx, pmz = this.mAvgOn ? this.mAvgZ : mz;
+    // БОКОВИТОСТЬ. Считается от СГЛАЖЕННОГО направления и от осей ТАЗА (а не прицела): при включённом
+    // довороте (Ф0) таз уже развёрнут под движение, поэтому диагональ здесь честно читается как ход
+    // вперёд и страйф-колонку не поднимает — ровно так, как показал замер 4-против-8 направлений.
+    this.st = moving ? strafeMix(pmx * fx + pmz * fz, pmx * rx + pmz * rz) : 0;
+    const st = this.st;
     const stepLen = lerp(GAIT.stepWalk, GAIT.stepRun, sb) / Math.max(0.1, GAIT.cadence);   // длина шага ходьба↔бег; cadence>1 → короче/чаще (путь px не трогаем)
     const duty = lerp(GAIT.dutyWalk, GAIT.dutyRun, sb);   // доля опоры ходьба↔бег (sb уже в [0,1])
     // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
@@ -389,11 +489,12 @@ class StepPlanner {
     // ── ТО ЖЕ, НО НА СТОРОНУ. Симметрия (`ASYM` пуст) → числа те же, что выше, бит в бит.
     // Фаза остаётся ОДНА на обе ноги: две независимые фазы — это уже не походка, а два человека.
     // Асимметрия живёт в геометрии шага (длина, подъём, доля опоры, ширина), и этого хватает на хромоту.
-    const sl = (i: 0 | 1): number => sideLerp('stepWalk', 'stepRun', GAIT.stepWalk, GAIT.stepRun, i, sb) / Math.max(0.1, GAIT.cadence);
-    const dutyS = (i: 0 | 1): number => sideLerp('dutyWalk', 'dutyRun', GAIT.dutyWalk, GAIT.dutyRun, i, sb);
-    const liftS = (i: 0 | 1): number => sideLerp('liftWalk', 'liftRun', GAIT.liftWalk, GAIT.liftRun, i, sb);
+    const sl = (i: 0 | 1): number => sideLerp3('stepWalk', 'stepRun', GAIT.stepWalk, GAIT.stepRun, i, sb, st) / Math.max(0.1, GAIT.cadence);
+    const dutyS = (i: 0 | 1): number => sideLerp3('dutyWalk', 'dutyRun', GAIT.dutyWalk, GAIT.dutyRun, i, sb, st);
+    const liftS = (i: 0 | 1): number => sideLerp3('liftWalk', 'liftRun', GAIT.liftWalk, GAIT.liftRun, i, sb, st);
     const leadS = (i: 0 | 1): number => sl(i) * dutyS(i) + sl(i) * GAIT.aheadMul + speed * GAIT.predictSec;
-    const fwdLimS = (i: 0 | 1): number => sideLerp('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, sb);
+    const fwdLimS = (i: 0 | 1): number => sideLerp3('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, sb, st);
+    const hipSwS = (i: 0 | 1): number => sideLerp3('hipSwing', 'hipSwingRun', GAIT.hipSwing, GAIT.hipSwingRun, i, sb, st);
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
@@ -487,9 +588,9 @@ class StepPlanner {
       const off = this.plantOff[i]!, side = i === 0 ? 1 : -1;   // нога 0 = ЛЕВАЯ на +X (см. якорь бедра)
       const fwdAmt = reach * mFwd + off[0];
       const j = i as 0 | 1;
-      const reachK = sideLerp('strafeReach', 'strafeReachRun', GAIT.strafeReach, GAIT.strafeReachRun, j, sb);
-      const width = sideLerp('stanceWidth', 'stanceWidthRun', GAIT.stanceWidth, GAIT.stanceWidthRun, j, sb);
-      const cross = sideLerp('crossClamp', 'crossClampRun', GAIT.crossClamp, GAIT.crossClampRun, j, sb);
+      const reachK = sideLerp3('strafeReach', 'strafeReachRun', GAIT.strafeReach, GAIT.strafeReachRun, j, sb, st);
+      const width = sideLerp3('stanceWidth', 'stanceWidthRun', GAIT.stanceWidth, GAIT.stanceWidthRun, j, sb, st);
+      const cross = sideLerp3('crossClamp', 'crossClampRun', GAIT.crossClamp, GAIT.crossClampRun, j, sb, st);
       let latAmt = reach * mLat * reachK + width * side + off[1];
       if (side * latAmt < -cross) latAmt = -side * cross;   // не заходить за среднюю линию дальше crossClamp
       l.tx = hx + fx * fwdAmt + rx * latAmt; l.tz = hz + fz * fwdAmt + rz * latAmt;
@@ -545,8 +646,8 @@ class StepPlanner {
     const dip = reach - Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz));
     // Боб и нижний предел приседа берём у ОПОРНОЙ ноги: таз проседает на ту ногу, которая держит вес,
     // поэтому хромота — это разный боб на левой и правой опоре, а не два таза.
-    const bobMult = sideLerp('bobWalk', 'bobRun', GAIT.bobWalk, GAIT.bobRun, stanceLeg, sb);
-    const floorY = sideLerp('pelvisMin', 'pelvisMinRun', GAIT.pelvisMin, GAIT.pelvisMinRun, stanceLeg, sb);
+    const bobMult = sideLerp3('bobWalk', 'bobRun', GAIT.bobWalk, GAIT.bobRun, stanceLeg, sb, st);
+    const floorY = sideLerp3('pelvisMin', 'pelvisMinRun', GAIT.pelvisMin, GAIT.pelvisMinRun, stanceLeg, sb, st);
     const wantY = anyStance ? clamp(this.standY - dip * bobMult, floorY, this.standY) : this.standY;
     // Сглаживание: на бегу — всегда (вход/выход из полёта). На ШАГЕ асимметрично: ВНИЗ (ноги разъезжаются,
     // wantY плавно падает по геометрии) берём как есть — иначе таз запаздывает и волочит опорную ногу; а ВВЕРХ
@@ -576,7 +677,18 @@ class StepPlanner {
         }
         wy = FOOT_Y + Math.sin(Math.PI * t) * liftS(i as 0 | 1);
       } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
-      out.push(ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1)));
+      const a = ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
+      // АМПЛИТУДА БЕДРА. Подъём маховой стопы IK отдаёт почти целиком колену: бедро висит, нога
+      // «поджимается и болтается». Сравниваем решение с решением ДЛЯ ТОЙ ЖЕ ТОЧКИ, НО НА ПОЛУ, и
+      // масштабируем разницу — колено берём настоящее, поэтому бедро уводит ногу выше, а колено
+      // догоняет. На отрыве и на приземлении стопа и так на полу → добавка ровно 0: стопа не едет,
+      // опорная не трогается вовсе. hipSwing = 1 → g отбрасывается и числа прежние бит в бит.
+      const k = hipSwS(i as 0 | 1);
+      if (l.sw > 0 && k !== 1) {
+        const g = ik(wx - hx, wz - hz, FOOT_Y - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
+        a.hip = g.hip + (a.hip - g.hip) * k;
+      }
+      out.push(a);
     }
     return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y };   // gaitToHumanoid: 30 + bobY = hipY (актуальная высота таза; bobMult уже в dip)
   }
@@ -683,17 +795,24 @@ export class PoseDriver {
     // Раздельные руки ходьба↔бег: sb (0 ходьба … 1 бег) из планировщика (игрок), у монстра (без планировщика) — из drive.
     const sb = this.planner?.sb ?? clamp((drive - 1) / 0.4, 0, 1);
     o.sb = sb;
-    // Руки — на сторону (ASYM пуст → оба значения одинаковы и это ровно прежние числа).
-    const armSh = (i: 0 | 1): number => sideLerp('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, sb);
-    const armEl = (i: 0 | 1): number => sideLerp('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, sb);
-    const armSwing = (i: 0 | 1): number => sideLerp('armSwing', 'armSwingRun', POSE.armSwing, POSE.armSwingRun, i, sb);
+    // Боковитость хода: у монстров планировщика нет — им страйф-колонка не положена (st = 0 = как было).
+    const st = this.planner?.st ?? 0;
+    // Руки — на сторону (ASYM/STRAFE пусты → оба значения одинаковы и это ровно прежние числа).
+    const armSh = (i: 0 | 1): number => sideLerp3('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, sb, st);
+    const armEl = (i: 0 | 1): number => sideLerp3('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, sb, st);
+    const armSwing = (i: 0 | 1): number => sideLerp3('armSwing', 'armSwingRun', POSE.armSwing, POSE.armSwingRun, i, sb, st);
+    // ФАЗА. `armPhase` крутит саму руку (и пояс едет за ней), `shoPhase` — только пояс относительно
+    // своей руки. −1 переворачивает мах, 0 гасит. Умножаются, а не складываются: это множители фазы.
+    const armPh = (i: 0 | 1): number => sideLerp3('armPhase', 'armPhaseRun', POSE.armPhase, POSE.armPhaseRun, i, sb, st);
+    const shoPh = (i: 0 | 1): number => sideLerp3('shoPhase', 'shoPhaseRun', POSE.shoPhase, POSE.shoPhaseRun, i, sb, st);
+    const elAmp = (i: 0 | 1): number => sideLerp3('armElAmp', 'armElAmpRun', POSE.armElAmp, POSE.armElAmpRun, i, sb, st);
     const eArmSh = armSh(0), eArmEl = armEl(0);   // для веток, где стороны не разводятся (удар/гард)
     // ── КЛЮЧИЦЫ. Плечевой пояс больше не «сводится в ноль» на ходу: у него своя поза и своё качание.
     // dev — отклонение плеча своей руки от базы (<0 = рука ушла вперёд). Пояс идёт за рукой вперёд
     // (shoSwing) и одновременно чуть поднимается (shoLift) — так плечо катится, а не едет по прямой.
     const sPh = Math.sin(this.phase), ampS = walkingAmp(drive);
     for (let i = 0 as 0 | 1; i < 2; i = (i + 1) as 0 | 1) {
-      const dev = (i === 0 ? -1 : 1) * sPh * ampS * armSwing(i);
+      const dev = (i === 0 ? -1 : 1) * sPh * ampS * armSwing(i) * armPh(i) * shoPh(i);
       const up = sideLerp('shoUp', 'shoUpRun', POSE.shoUp, POSE.shoUpRun, i, sb)
         + sideLerp('shoLift', 'shoLiftRun', POSE.shoLift, POSE.shoLiftRun, i, sb) * -dev;
       const fwd = sideLerp('shoFwd', 'shoFwdRun', POSE.shoFwd, POSE.shoFwdRun, i, sb)
@@ -716,9 +835,13 @@ export class PoseDriver {
     } else if (this.attackT <= 0) {
       // ПОЗА РУК (без оружия). База в покое: плечи чуть вперёд (POSE.armSh), локти согнуты (POSE.armEl) — чтобы
       // не висели палками. На ходу машем вокруг базы (анти-фаза ног), локоть добираем сгиб.
-      o.shL = armSh(0) - s * amp * armSwing(0); o.shR = armSh(1) + s * amp * armSwing(1);
-      o.elL = armEl(0) + amp * sideOf('armElWalk', POSE.armElWalk, 0);
-      o.elR = armEl(1) + amp * sideOf('armElWalk', POSE.armElWalk, 1);
+      const swL = s * amp * armSwing(0) * armPh(0), swR = s * amp * armSwing(1) * armPh(1);
+      o.shL = armSh(0) - swL; o.shR = armSh(1) + swR;
+      // ЛОКОТЬ: база + КОЛЕБАНИЕ в такт маху. «Вперёд» у руки — это меньший угол плеча (замер: плечо
+      // −0.5 уводит кисть на +11.2 по Z, и слева, и справа), поэтому вынос вперёд левой = +swL, правой
+      // = −swR. На переднем махе локоть подбирается, на заднем распрямляется — то самое «в какой момент».
+      o.elL = armEl(0) + swL * elAmp(0);
+      o.elR = armEl(1) - swR * elAmp(1);
       o.twist = s * amp * 0.15;
     } else {
       this.attackT -= dt;
