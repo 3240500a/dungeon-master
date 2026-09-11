@@ -313,6 +313,12 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   // ПЛЕЧЕВОЙ ПОЯС — поверх всего, что легло на ключицу (авторская стойка или ноль), по мере хода:
   // стоим → ровно авторская стойка, разгоняемся → проступают настройки походки. Нули = ничего не делает.
   const shoW = clamp(moveMag, 0, 1);
+  // СКРУТКА КОРПУСА В ТАКТ ШАГУ кладётся ЗДЕСЬ, а не в `blendBone('Spine')`, по одной причине: цикл
+  // `UPPER_BONES` выше принудительно ставит Chest/UpperChest в авторскую стойку (или в ноль), поэтому
+  // всё, что легло на них раньше, было бы стёрто. Аддитивно и по мере хода — стоим, значит ровно
+  // авторская стойка. Нули = прежнее поведение (скрутка жила только в пояснице).
+  if (t.twChest) addEuler(H.get('Chest'), [0, t.twChest, 0], shoW);
+  if (t.twUpper) addEuler(H.get('UpperChest'), [0, t.twUpper, 0], shoW);
   addEuler(H.get('LeftShoulder'), shoL, shoW);
   addEuler(H.get('RightShoulder'), shoR, shoW);
   // Вес НИЗА у слота действия: стоим — клип владеет ногами целиком, идём — ни на сколько.

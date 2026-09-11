@@ -4118,8 +4118,30 @@ function renderGaitTune(): void {
    * `kw`/`kr` — ключи ходьбы и бега; какой правится, решает переключатель режима.
    * Связаны — пишем общее число и стираем запись асимметрии; разведены — пишем пару в `ASYM`.
    */
-  const row2 = (label: string, obj: NumRec, kw: string, kr: string | null, min: number, max: number, step: number): void => {
+  /**
+   * Текущее значение ключа С УЧЁТОМ режима и сторон — «а работает ли сейчас эта ручка вообще».
+   * Берём МАКСИМУМ по модулю: одной ненулевой стороны хватает, чтобы множитель было на что множить.
+   */
+  const effAbs = (obj: NumRec, kw: string, kr: string | null): number => {
+    const key = gaitEditMode === 'run' && kr ? kr : kw;
+    const p = gaitAsym[key];
+    const v = p ? Math.max(Math.abs(p[0]), Math.abs(p[1])) : Math.abs(+obj[key]! || 0);
+    const sv = gaitStrafe[kw];
+    return gaitEditMode === 'str' && sv !== undefined ? Math.abs(sv) : v;
+  };
+  /**
+   * Строка-ручка.
+   *
+   * `opts.dep` — ключи АМПЛИТУД, на которые эта ручка множится. Ручка фазы — это множитель, и если
+   * множить нечего, она честно ничего не делает: так и было с «фазой плеч» (качание и подъём пояса
+   * стояли в нуле, и ползунок выглядел сломанным). Поэтому строка сама говорит, чего ей не хватает,
+   * а не молчит. `opts.body` — ручка тела, а не стороны: Л/П у неё не бывает.
+   */
+  const row2 = (label: string, obj: NumRec, kw: string, kr: string | null, min: number, max: number, step: number,
+    opts?: { dep?: [NumRec, string, string | null][]; depLabel?: string; body?: boolean }): void => {
     const str = gaitEditMode === 'str';
+    const dead = !!opts?.dep && opts.dep.every(([o, a, b]) => effAbs(o, a, b) < 1e-9);
+    const solo = gaitLinkLR || !!opts?.body;
     // В режиме страйфа правится РАЗРЕЖЕННАЯ колонка: ключ страйфа хранится отдельно, пары сторон — под
     // суффиксом `@s`. Нет записи → значение НЕ ЗАДАНО, и ползунок показывает то, что реально играет
     // сейчас (беговое), чтобы первое касание ничего не дёрнуло: он создаёт оверрайд с тем же числом.
@@ -4129,8 +4151,9 @@ function renderGaitTune(): void {
     const base = str ? gaitStrafe[kw] ?? seed : +obj[key]!;
     const pair = str ? gaitAsym[kw + '@s'] : gaitAsym[key];
     const head = el('div', 'display:flex;align-items:baseline;gap:6px;margin-top:6px');
-    const nm = el('span', `font-size:11px;color:${str && !setOn ? '#6b7180' : '#cfd3e0'}`); nm.textContent = label; head.append(nm);
+    const nm = el('span', `font-size:11px;color:${dead ? '#6b7180' : str && !setOn ? '#6b7180' : '#cfd3e0'}`); nm.textContent = label; head.append(nm);
     if (pair) { const mk = el('span', 'color:#ffd24a;font-size:10px'); mk.textContent = 'Л≠П'; head.append(mk); }
+    if (dead) { const mk = el('span', 'color:#c08a50;font-size:10px'); mk.textContent = `нечего вращать: ${opts!.depLabel} = 0`; head.append(mk); }
     if (str) { const mk = el('span', `color:${setOn ? '#9ae6a0' : '#6b7180'};font-size:10px`); mk.textContent = setOn ? 'страйф задан' : 'не задан (= бег)'; head.append(mk); }
     box.append(head);
     /** Одна строка ручки: ползунок ВО ВСЮ ШИРИНУ + поле, куда можно вбить точное число. */
@@ -4145,9 +4168,9 @@ function renderGaitTune(): void {
       num.type = 'number'; num.min = String(min); num.max = String(max); num.step = String(step); num.value = sl.value;
       const put = (nv: number): void => {
         if (str) {
-          if (gaitLinkLR) { gaitStrafe[kw] = nv; delete gaitAsym[kw + '@s']; }
+          if (solo) { gaitStrafe[kw] = nv; delete gaitAsym[kw + '@s']; }
           else { const cur = gaitAsym[kw + '@s'] ?? [base, base]; cur[i] = nv; gaitAsym[kw + '@s'] = cur; }
-        } else if (gaitLinkLR) { obj[key] = nv; delete gaitAsym[key]; }
+        } else if (solo) { obj[key] = nv; delete gaitAsym[key]; }
         else { const cur = gaitAsym[key] ?? [base, base]; cur[i] = nv; gaitAsym[key] = cur; }
         saveGaitCfg();
         if (str && !setOn) renderLoco();   // «не задан» → «задан»: перерисовать метку строки
@@ -4158,7 +4181,7 @@ function renderGaitTune(): void {
     };
     // Связаны — ОДИН длинный ползунок на всю ширину (стороны всё равно равны). Развели — два, и каждый
     // всё равно во всю ширину, просто в своей строке: ход важнее экономии высоты.
-    if (gaitLinkLR && !pair) one(0, '#9ae6a0', '');
+    if (solo && !pair) one(0, '#9ae6a0', '');
     else { one(0, '#5aa0ff', 'Л'); one(1, '#ff6a6a', 'П'); }
   };
   /** Ползунок БЕЗ сторон и без режима — то, чего у тела ровно одно. */
@@ -4179,7 +4202,8 @@ function renderGaitTune(): void {
   grp('руки (мах)');
   row2('база плеча (− вперёд / + назад)', POSEo, 'armSh', 'armShRun', -1.6, 1.6, 0.01);
   row2('амплитуда маха', POSEo, 'armSwing', 'armSwingRun', 0, 3, 0.01);
-  row2('фаза маха рук (−1 зеркально)', POSEo, 'armPhase', 'armPhaseRun', -1, 1, 0.05);
+  row2('фаза маха рук (−1 зеркально)', POSEo, 'armPhase', 'armPhaseRun', -1, 1, 0.05,
+    { dep: [[POSEo, 'armSwing', 'armSwingRun']], depLabel: 'амплитуда маха' });
   // ЛОКОТЬ: ровно две ручки вместо трёх. База — средний угол, амплитуда — насколько и КОГДА он гнётся
   // (в такт маху: вперёд подбирается, назад распрямляется). Прежние «сгиб локтя» и «добавка на ходу»
   // сложены в базу при загрузке (`foldElbow`) — угол тот же, ползунков меньше.
@@ -4191,10 +4215,32 @@ function renderGaitTune(): void {
   row2('скрутка', POSEo, 'shoTw', 'shoTwRun', -1.2, 1.2, 0.01);
   row2('качание за рукой', POSEo, 'shoSwing', 'shoSwingRun', 0, 3, 0.01);
   row2('подъём за рукой', POSEo, 'shoLift', 'shoLiftRun', 0, 3, 0.01);
-  row2('фаза плеч (−1 к руке в противофазу)', POSEo, 'shoPhase', 'shoPhaseRun', -1, 1, 0.05);
+  row2('фаза плеч (−1 к руке в противофазу)', POSEo, 'shoPhase', 'shoPhaseRun', -1, 1, 0.05,
+    { dep: [[POSEo, 'shoSwing', 'shoSwingRun'], [POSEo, 'shoLift', 'shoLiftRun']], depLabel: 'качание/подъём за рукой' });
   const sn = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
-  sn.textContent = 'Нули — прежнее поведение (пояс неподвижен). Качание и подъём идут от маха СВОЕЙ руки; ФАЗА разворачивает пояс относительно этой руки (−1 = противофаза).';
+  sn.textContent = '⚠ Эти ручки двигают КАЖДУЮ ключицу отдельно (пожатие плечом). «Одно плечо вперёд, другое назад» — это НЕ здесь, это скрутка корпуса ниже. Фаза — множитель: пока качание и подъём в нуле, крутить ей нечего.';
   box.append(sn);
+  grp('корпус: скрутка в такт шагу');
+  row2('скрутка — поясница', POSEo, 'twistSwing', 'twistSwingRun', -1.2, 1.2, 0.01, { body: true });
+  row2('скрутка — грудь', POSEo, 'twistChest', 'twistChestRun', -1.2, 1.2, 0.01, { body: true });
+  row2('скрутка — ВЕРХНЯЯ грудь (плечи)', POSEo, 'twistUpper', 'twistUpperRun', -1.2, 1.2, 0.01, { body: true });
+  row2('фаза скрутки (−1 зеркально)', POSEo, 'twistPhase', 'twistPhaseRun', -1, 1, 0.05,
+    { body: true, dep: [[POSEo, 'twistSwing', 'twistSwingRun'], [POSEo, 'twistChest', 'twistChestRun'], [POSEo, 'twistUpper', 'twistUpperRun']], depLabel: 'скрутка' });
+  const tn = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
+  tn.textContent = 'ЭТО и есть «рука вперёд → ключица назад»: корпус крутится, плечи разъезжаются. Три яруса — где именно гнётся: поясница крутит всё тело, ВЕРХНЯЯ ГРУДЬ сидит под самыми ключицами и разводит плечи, не трогая талию. Раньше был один зашитый ярус на 8° — потому и «не скручивается».';
+  box.append(tn);
+
+  grp('корпус: наклон и живость');
+  row2('наклон вперёд на ходу', POSEo, 'leanWalk', 'leanWalkRun', -0.6, 0.9, 0.01, { body: true });
+  row2('наклон от скорости', POSEo, 'leanSpeed', 'leanSpeedRun', -0.6, 0.9, 0.01, { body: true });
+  row2('боковое качание', POSEo, 'leanSideSwing', 'leanSideSwingRun', -0.8, 0.8, 0.01, { body: true });
+  one1('наклон стоя', POSEo, 'leanIdle', -0.4, 0.6, 0.01);
+  one1('амплитуда качания: база', POSEo, 'swingBase', 0, 2, 0.01);
+  one1('амплитуда качания: от скорости', POSEo, 'swingSpeed', 0, 2, 0.01);
+  const an = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
+  an.textContent = 'Амплитуда качания множится на ВСЁ сразу — руки, плечи, скрутку, боковое качание. Ею регулируется «живость» походки целиком, не трогая каждую ось.';
+  box.append(an);
+
   grp('ноги / посадка');
   row2('присед (мин. таз)', GAITo, 'pelvisMin', 'pelvisMinRun', 6, 40, 0.25);
   row2('длина шага', GAITo, 'stepWalk', 'stepRun', 2, 140, 0.5);
@@ -4206,6 +4252,11 @@ function renderGaitTune(): void {
   row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -20, 30, 0.25);
   row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 3, 0.02);
   row2('предел кроссовера', GAITo, 'crossClamp', 'crossClampRun', 0, 99, 1);
+  one1('мягкость потолка бедра', GAITo, 'hipFwdSoft', 0.01, 1.2, 0.01);
+  one1('вынос стопы вперёд ×шаг', GAITo, 'aheadMul', -1, 1.5, 0.01);
+  one1('предсказание по скорости (с)', GAITo, 'predictSec', 0, 0.5, 0.005);
+  one1('цель фиксируется на отрыве', GAITo, 'fixTarget', 0, 1, 1);
+  one1('зазор между стопами', GAITo, 'footClear', 0, 24, 0.5);
   grp('общее (одно на тело)');
   one1('скорость анимации бега (антискольз.)', GAITo, 'cadence', 0.2, 4, 0.02);
   one1('порог ходьбы (u/с)', GAITo, 'speedWalk', 5, 150, 1);
@@ -4894,15 +4945,19 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
-  'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+  'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
+  'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
 // читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',
   'shoUp', 'shoFwd', 'shoTw', 'shoSwing', 'shoLift',
   'shoUpRun', 'shoFwdRun', 'shoTwRun', 'shoSwingRun', 'shoLiftRun',
-  'armPhase', 'armPhaseRun', 'shoPhase', 'shoPhaseRun', 'armElAmp', 'armElAmpRun'] as const;
+  'armPhase', 'armPhaseRun', 'shoPhase', 'shoPhaseRun', 'armElAmp', 'armElAmpRun',
+  'twistSwing', 'twistSwingRun', 'twistChest', 'twistChestRun', 'twistUpper', 'twistUpperRun',
+  'twistPhase', 'twistPhaseRun', 'leanIdle', 'leanWalk', 'leanSpeed', 'leanWalkRun', 'leanSpeedRun',
+  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed'] as const;
 const GX_KEYS = ['armDown', 'elbowBend', 'armDownRun', 'elbowBendRun'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };

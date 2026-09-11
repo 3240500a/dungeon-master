@@ -17,6 +17,9 @@ export interface PoseTargets {
   hipLatL: number; hipLatR: number;
   shL: number; shR: number; elL: number; elR: number;
   lean: number; twist: number; bobY: number; splay: number;
+  /** Скрутка ГРУДИ и ВЕРХНЕЙ ГРУДИ в такт шагу (рад, вокруг Y). `twist` крутит поясницу, эти две —
+   *  выше по цепочке, у самых ключиц: именно они разводят плечи «одно вперёд, другое назад». */
+  twChest: number; twUpper: number;
   // Доп. оси суставов (нужны РУЧНОМУ редактору позы; в процедурной ходьбе = 0). Плечо: скрутка (Y),
   // разведение в стороны (Z). Бедро: скрутка (Y). Корпус: наклон вбок (Z). Голова: наклон/поворот/склон.
   shTwL: number; shTwR: number; shSpL: number; shSpR: number;
@@ -34,7 +37,12 @@ const ATTACK_DUR = 0.62;   // взмах небыстрый: мотор рук �
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 /** Амплитуда маха по «доле хода»: 0 стоя, растёт с движением. Одна на руки и на плечевой пояс. */
-const walkingAmp = (drive: number): number => (drive > 0.05 ? 0.45 + drive * 0.4 : 0);
+/**
+ * ОБЩАЯ АМПЛИТУДА МАХА от «доли хода»: база плюс прибавка от скорости. Была зашита числами
+ * `0.45 + drive·0.4`, теперь это две ручки — на неё множится ВСЁ качание (руки, плечи, скрутка),
+ * поэтому ею регулируется «живость» походки целиком, не трогая каждую ось по отдельности.
+ */
+const walkingAmp = (drive: number): number => (drive > 0.05 ? POSE.swingBase + drive * POSE.swingSpeed : 0);
 
 // ── Походка с опорой ───────────────────────────────────────────────────────────
 // Длины костей — строго по риг-таблице BONES: бедро 30→15, голень 15→1.5 (НЕ 15! иначе IK считает ногу
@@ -117,11 +125,9 @@ export const GAIT = {
   // ВЫНОС СТОПЫ ВПЕРЁД: к базовому шаг·доля добавляем шаг·aheadMul + скорость·predictSec.
   // fixTarget=1 — цель фиксируется в момент отрыва (предсказание), 0 — едет за бедром каждый кадр.
   aheadMul: 0, predictSec: 0, fixTarget: 0,
-  idleStep: 11,   // стоя: переступ, только если стопа уехала дальше этого (с гистерезисом) — против «топтания»
   footClear: 8,   // мин. зазор между стопами: цель ближе → уводится ВПЕРЁД, чтобы ноги обходили, а не влезали
   turnStep: 0.45, // поворот на месте: скорость вращения (рад/с) выше этой → считаем, что крутимся
   turnStepDist: 6, // поворот на месте (режим ДИСТАНЦИЯ): стопа отъехала от планта дальше этого (u) → приставной шаг в плант
-  turnLeadBias: 0.6, // (устар., не используется — теперь внутренняя нога ВСЕГДА первой по очерёдности, а не по порогу)
   turnLimitByAngle: 0, // 0 = предел по ДИСТАНЦИИ (turnStepDist), 1 = по УГЛУ (turnLimitDeg) — тумблер в редакторе, сравнить фил
   turnLimitDeg: 35, // поворот на месте (режим УГОЛ): таз повернулся отн. прибитой стопы дальше этого (°) → шаг
   turnSettleTime: 0.8, // сек: таз перестал крутиться, а стопа не в доме → доступить (устаканиться) не дожидаясь предела
@@ -186,6 +192,26 @@ export const POSE = {
   // распрямляется. Средний угол задаёт только база (`armEl`), поэтому мест, где гнётся локоть, ровно
   // два, а было три (`armElWalk` и `GX.elbowBend` сложены в базу — см. `foldElbow`). 0 = как было.
   armElAmp: 0, armElAmpRun: 0,
+  // ── СКРУТКА КОРПУСА В ТАКТ ШАГУ ───────────────────────────────────────────────────────────────
+  // Была ОДНА зашитая цифра: `o.twist = sin(фаза) · амплитуда · 0.15` — 8.6° в пояснице и всё.
+  // Отсюда и жалоба «тело не скручивается»: восемь градусов у пояса на плечах почти не читаются.
+  // Теперь скрутка раскладывается по цепочке, и главная из трёх — `twistUpper`: она сидит У САМЫХ
+  // КЛЮЧИЦ, поэтому именно она разводит плечи «одно вперёд, другое назад».
+  // ЗНАК уже такой, как просили: при положительной скрутке ЛЕВАЯ ключица уходит НАЗАД, а левая рука
+  // в этот же момент идёт ВПЕРЁД (риг зеркальный, Left на +X; поворот вокруг +Y уводит +X в −Z).
+  // `twistPhase` = −1 переворачивает, если на конкретной модели читается наоборот.
+  twistSwing: 0.15, twistSwingRun: 0.15,      // поясница (было зашито 0.15)
+  twistChest: 0, twistChestRun: 0,            // грудь, поверх поясницы
+  twistUpper: 0, twistUpperRun: 0,            // ВЕРХНЯЯ грудь — та самая «ключица вперёд/назад»
+  twistPhase: 1, twistPhaseRun: 1,
+  // ── НАКЛОН КОРПУСА ────────────────────────────────────────────────────────────────────────────
+  // Было `walking ? 0.05 + drive·0.06 : 0.02`. `leanSide` — боковое качание в такт шагу (0 = как было).
+  leanIdle: 0.02, leanWalk: 0.05, leanSpeed: 0.06,
+  leanWalkRun: 0.05, leanSpeedRun: 0.06,
+  leanSideSwing: 0, leanSideSwingRun: 0,
+  // ── ОБЩАЯ АМПЛИТУДА МАХА ──────────────────────────────────────────────────────────────────────
+  // `walkingAmp(drive) = swingBase + drive·swingSpeed`. Множится на ВСЁ качание сразу.
+  swingBase: 0.45, swingSpeed: 0.4,
 };
 
 /**
@@ -197,8 +223,14 @@ export const POSE = {
 export const GAIT_BASE: Record<string, number> = { ...GAIT } as unknown as Record<string, number>;
 export const POSE_BASE: Record<string, number> = { ...POSE };
 
-/** Амплитуда маха в ЯКОРЯХ панели: ходьба (drive 1.0) и бег (drive 1.4) — те скорости, на которых настраивают. */
-const AMP_WALK = walkingAmp(1), AMP_RUN = walkingAmp(1.4);
+/**
+ * Амплитуда маха в ЯКОРЯХ панели: ходьба (drive 1.0) и бег (drive 1.4) — те скорости, на которых
+ * настраивают. ЧИСЛА ЗАМОРОЖЕНЫ НАРОЧНО: свёртка локтя (`foldElbow`) обязана давать один и тот же
+ * результат при любых настройках, иначе она перестанет быть идемпотентной — покрутил амплитуду маха,
+ * перезагрузил конфиг, и база локтя уехала. Это дефолты `swingBase`/`swingSpeed`: 0.45 + 1.0·0.4 и
+ * 0.45 + 1.4·0.4.
+ */
+const AMP_WALK = 0.85, AMP_RUN = 1.01;
 
 /**
  * ТРИ МЕСТА, ГДЕ ГНУЛСЯ ЛОКОТЬ, СКЛАДЫВАЮТСЯ В ОДНУ БАЗУ.
@@ -504,7 +536,8 @@ class StepPlanner {
     // Раньше плант просто телепортировался под таз — это и был рывок «подшагивания» на медленном ходу.
     // ЗАМОРОЗКА СТОЙКИ. При duty<0.5 почти всегда одна нога в воздухе, поэтому «стоя» фаза сама не
     // остановится (окна переноса двух ног сдвинуты на π) — топчется вечно. Нужен явный флаг: стоим и стопы
-    // под тазом → замираем (обе на земле, фаза стоит). Гистерезис ×1.7 против дёрганья у порога. idleStep — в панели.
+    // под тазом → замираем (обе на земле, фаза стоит). Порог переступа стоя — turnStepDist / turnLimitDeg
+    // на вкладке «Повороты» (было ещё поле `idleStep`, но его не читал НИКТО — удалено).
     if (moving) {
       this.settled = false;
       this.sideT[0] = 0; this.sideT[1] = 0;                     // ход перебивает приставные шаги
@@ -706,7 +739,7 @@ export class PoseDriver {
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   readonly out: PoseTargets = {
     hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
-    lean: 0, twist: 0, bobY: 0, splay: 0,
+    lean: 0, twist: 0, bobY: 0, splay: 0, twChest: 0, twUpper: 0,
     shTwL: 0, shTwR: 0, shSpL: 0, shSpR: 0, hipTwL: 0, hipTwR: 0, leanSide: 0, headNod: 0, headTurn: 0, headTilt: 0,
     shoLX: 0, shoLY: 0, shoLZ: 0, shoRX: 0, shoRY: 0, shoRZ: 0,
     wLX: 0, wLY: 0, wLZ: 0, wRX: 0, wRY: 0, wRZ: 0,
@@ -757,6 +790,7 @@ export class PoseDriver {
     const o = this.out;
     // Доп. оси нужны только вооружённому (ГАРД меч+щит) — в процедурке всегда 0 (иначе стухшие значения «прилипнут»).
     o.shTwL = o.shTwR = o.shSpL = o.shSpR = 0; o.hipTwL = o.hipTwR = 0; o.leanSide = 0;
+    o.twChest = o.twUpper = 0;
     o.headNod = o.headTurn = o.headTilt = 0;
     o.wLX = o.wLY = o.wLZ = o.wRX = o.wRY = o.wRZ = 0;
     if (this.dead) {
@@ -789,8 +823,7 @@ export class PoseDriver {
 
     const walking = drive > 0.05;
     const s = Math.sin(this.phase);
-    const amp = walking ? 0.45 + drive * 0.4 : 0;
-    o.lean = walking ? 0.05 + drive * 0.06 : 0.02;
+    const amp = walkingAmp(drive);   // ОДНА формула на всё качание (раньше та же строка стояла дважды)
     o.splay = 0;
     // Раздельные руки ходьба↔бег: sb (0 ходьба … 1 бег) из планировщика (игрок), у монстра (без планировщика) — из drive.
     const sb = this.planner?.sb ?? clamp((drive - 1) / 0.4, 0, 1);
@@ -806,11 +839,18 @@ export class PoseDriver {
     const armPh = (i: 0 | 1): number => sideLerp3('armPhase', 'armPhaseRun', POSE.armPhase, POSE.armPhaseRun, i, sb, st);
     const shoPh = (i: 0 | 1): number => sideLerp3('shoPhase', 'shoPhaseRun', POSE.shoPhase, POSE.shoPhaseRun, i, sb, st);
     const elAmp = (i: 0 | 1): number => sideLerp3('armElAmp', 'armElAmpRun', POSE.armElAmp, POSE.armElAmpRun, i, sb, st);
+    // Ручки ТЕЛА (не стороны): берём сторону 0 — ASYM для них панель не разводит, а страйф-колонка работает.
+    const body = (kw: string, kr: string, bw: number, br: number): number => sideLerp3(kw, kr, bw, br, 0, sb, st);
+    o.lean = walking
+      ? body('leanWalk', 'leanWalkRun', POSE.leanWalk, POSE.leanWalkRun)
+        + drive * body('leanSpeed', 'leanSpeedRun', POSE.leanSpeed, POSE.leanSpeedRun)
+      : POSE.leanIdle;
+    o.leanSide = s * amp * body('leanSideSwing', 'leanSideSwingRun', POSE.leanSideSwing, POSE.leanSideSwingRun);
     const eArmSh = armSh(0), eArmEl = armEl(0);   // для веток, где стороны не разводятся (удар/гард)
     // ── КЛЮЧИЦЫ. Плечевой пояс больше не «сводится в ноль» на ходу: у него своя поза и своё качание.
     // dev — отклонение плеча своей руки от базы (<0 = рука ушла вперёд). Пояс идёт за рукой вперёд
     // (shoSwing) и одновременно чуть поднимается (shoLift) — так плечо катится, а не едет по прямой.
-    const sPh = Math.sin(this.phase), ampS = walkingAmp(drive);
+    const sPh = s, ampS = amp;   // фаза и амплитуда у пояса ТЕ ЖЕ, что у рук — иначе ручка чинит половину
     for (let i = 0 as 0 | 1; i < 2; i = (i + 1) as 0 | 1) {
       const dev = (i === 0 ? -1 : 1) * sPh * ampS * armSwing(i) * armPh(i) * shoPh(i);
       const up = sideLerp('shoUp', 'shoUpRun', POSE.shoUp, POSE.shoUpRun, i, sb)
@@ -842,7 +882,13 @@ export class PoseDriver {
       // = −swR. На переднем махе локоть подбирается, на заднем распрямляется — то самое «в какой момент».
       o.elL = armEl(0) + swL * elAmp(0);
       o.elR = armEl(1) - swR * elAmp(1);
-      o.twist = s * amp * 0.15;
+      // СКРУТКА КОРПУСА тремя ярусами под одной фазой. Поясница — как было (0.15 по умолчанию), грудь и
+      // верхняя грудь — сверху и по нулям, пока их не тронут. Верхняя и есть «ключица вперёд/назад»:
+      // она сидит прямо под ключицами, поэтому разводит плечи, а не гнёт талию.
+      const twA = s * amp * body('twistPhase', 'twistPhaseRun', POSE.twistPhase, POSE.twistPhaseRun);
+      o.twist = twA * body('twistSwing', 'twistSwingRun', POSE.twistSwing, POSE.twistSwingRun);
+      o.twChest = twA * body('twistChest', 'twistChestRun', POSE.twistChest, POSE.twistChestRun);
+      o.twUpper = twA * body('twistUpper', 'twistUpperRun', POSE.twistUpper, POSE.twistUpperRun);
     } else {
       this.attackT -= dt;
       const p = 1 - this.attackT / ATTACK_DUR;                 // 0..1 по ходу взмаха
