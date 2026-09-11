@@ -272,6 +272,15 @@ class StepPlanner {
     this.stanceLatL = latL; this.stanceFwdL = fwdL; this.stanceLatR = latR; this.stanceFwdR = fwdR;
     if (standY !== undefined) { this.standY = standY; this.hipY = standY; }
   }
+  /**
+   * НОГИ ЗАНЯТЫ СЛОТОМ ДЕЙСТВИЯ (удар с места делает подшаг из клипа).
+   *
+   * Пока это так, планировщик не начинает приставной шаг: иначе он потащит стопу «домой» прямо
+   * посреди замаха и будет драться с клипом за ту же ногу. Уже начатый перенос доигрывается —
+   * обрывать его посреди дуги хуже, чем дать закончить.
+   */
+  private legsHeld = false;
+  setLegsHeld(v: boolean): void { this.legsHeld = v; }
   /** Фаза приставного шага КАЖДОЙ ноги (0 = стоит, 0..1 = переносится к планту). */
   private sideT: [number, number] = [0, 0];
   private yawSigned = 0;                          // сглаженная скорость поворота СО ЗНАКОМ (>0 вправо/по часовой, <0 влево)
@@ -434,7 +443,7 @@ class StepPlanner {
         return Math.abs(plantLat) > 0.1 && Math.sign(footLat) !== Math.sign(plantLat) && Math.abs(footLat) > 1;
       };
       const settleReady = this.stableFor > GAIT.turnSettleTime;   // таз стоит → доступить не дожидаясь предела
-      const wantStep = (i: number): boolean => this.legs[i]!.sw <= 0 && (beyondLimit(i) || crossed(i) || (settleReady && homeDist(i) > SETTLE_EPS));
+      const wantStep = (i: number): boolean => !this.legsHeld && this.legs[i]!.sw <= 0 && (beyondLimit(i) || crossed(i) || (settleReady && homeDist(i) > SETTLE_EPS));
       // ПОРЯДОК: очередь turnLead (внутренняя первой), одновременный двойной свинг запрещён, строгое чередование.
       // Латчим ТОЛЬКО когда реально крутимся (yawSigned уже с чётким знаком); стоя латч сброшен, ведущая берётся вживую.
       if (turning && this.turnLead < 0) this.turnLead = inside;
@@ -599,6 +608,8 @@ export class PoseDriver {
   }
   /** Обратная связь от физики: где НА САМОМ ДЕЛЕ стоят щиколотки (мир). Плантуем по факту, а не по расчёту. */
   setFeet(lx: number, lz: number, rx: number, rz: number): void { this.planner?.setFeet(lx, lz, rx, rz); }
+  /** Ноги сейчас ведёт слот действия (подшаг из клипа) — планировщик не возвращает стопу домой. */
+  setLegsHeld(v: boolean): void { this.planner?.setLegsHeld(v); }
   /** Авторский сдвиг плант-цели (body-local fwd/lat) на ногу — для редактора. Дефолт 0 → без эффекта. */
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void { this.planner?.setPlantOffset(lF, lL, rF, rL); }
   /** Точки обвода свинга на ногу (body-local fwd,lat). Пусто → прямой свинг. */

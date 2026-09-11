@@ -113,9 +113,17 @@ const ATK_MASK: BoneMask = { parts: {}, weights: w1(['LeftUpperArm', 'RightUpper
  * держит щит, а локоть/плечо/корпус свободны для маха. Это и есть Blend Mask — просто раньше он был зашит в код.
  */
 const SHIELD_MASK: BoneMask = { parts: {}, weights: { LeftHand: 1, LeftLowerArm: 0.38, LeftUpperArm: 0.22, LeftShoulder: 0.15, UpperChest: 0.1, Chest: 0.07, Spine: 0.04 } };
+/**
+ * НОГИ СЛОТА ДЕЙСТВИЯ (Ф1.4). Удар с места — это не только руки: автор кладёт в клип перенос веса и
+ * ПОДШАГ, и стоя они обязаны играть. На ходу ими владеет локомоция, поэтому вес этого слоя = `1 − moveMag`,
+ * ровно тот же гейт, что уже стоит на тазе удара (`applyAttackPelvis`). Отдельная маска, а не расширение
+ * `ATK_MASK`: у верха и низа РАЗНЫЕ веса, в этом вся суть — руки бьют и на бегу, ноги только стоя.
+ */
+const ATK_LEGS_MASK: BoneMask = { parts: {}, weights: w1(['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes']) };
 const layerBones = (m: BoneMask): string[] => [...maskBones(m)];
 export const UPPER_BONES = layerBones(UPPER_MASK);
 const ATK_BONES = layerBones(ATK_MASK);
+const ATK_LEG_BONES = layerBones(ATK_LEGS_MASK);
 export const SHIELD_BONES = layerBones(SHIELD_MASK);
 const SHIELD_FALLOFF: Record<string, number> = Object.fromEntries(SHIELD_BONES.map((b) => [b, boneWeight(SHIELD_MASK, b)]));
 /** Убрать суффикс '+shield' — позы/удары берём по БАЗОВОМУ оружию, щит идёт отдельным оверлеем. */
@@ -209,13 +217,16 @@ function attackEnv(tt: number, dur: number): number {
   if (tt > dur - AB_OUT) return s((dur - tt) / AB_OUT);
   return 1;
 }
-function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: AttackState, w = 1): void {   // наложить позу удара по времени с огибающей
+function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: AttackState, w = 1, legW = 0): void {   // наложить позу удара по времени с огибающей
   const clip = atk.clip; if (!clip) return;
   const dur = clipDur(clip) || 0.001;
   const ab = attackEnv(atk.t, dur) * w;
   const ap = clipPoseAt(clip, atk.t / dur);
   const H = human.bones;
   for (const nm of ATK_BONES) { const e = ap[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qB); b.quaternion.slerp(_qB, ab); }
+  // НИЗ — своим весом: стоя клип владеет ногами (подшаг), на ходу ими владеет локомоция.
+  const lw = ab * legW;
+  if (lw > 1e-3) for (const nm of ATK_LEG_BONES) { const e = ap[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qB); b.quaternion.slerp(_qB, lw); }
   const ovr = !!ap['__wpnOverride'];   // удар двигает хват ТОЛЬКО если у кадра-удара стоит галка override; иначе хват жёсткий (база)
   if (ovr) weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
@@ -291,8 +302,11 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   const shoW = clamp(moveMag, 0, 1);
   addEuler(H.get('LeftShoulder'), shoL, shoW);
   addEuler(H.get('RightShoulder'), shoR, shoW);
-  if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w);
-  if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk);   // удар поверх idle/маха
+  // Вес НИЗА у слота действия: стоим — клип владеет ногами целиком, идём — ни на сколько.
+  // Тот же множитель, что у таза удара; порог движения там же и описан (`moveMag`, а не `legMag`).
+  const legW = clamp(1 - moveMag, 0, 1);
+  if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w, legW);
+  if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk, 1, legW);   // удар поверх idle/маха
 }
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
  *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
@@ -953,7 +967,14 @@ export class PosePlayer {
     // «оседает» рывком при остановке (ноги морфятся гейт→idle-стойка плавно). Резкое переключение idle↔гейт дребезжит.
     this.legMag += (want - this.legMag) * Math.min(1, dt * (want >= this.legMag ? 6 : 3.5));
     this.human.root.updateMatrixWorld(true);
-    if (this.legMag > 0.5) {                                      // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
+    // НОГИ У СЛОТА ДЕЙСТВИЯ? Стоячий удар авторит подшаг, и пока он играет, стопы ведёт клип.
+    // Тогда фидбэк отключается: иначе планировщик увидит уехавшую стопу, решит, что она «не дома»,
+    // и погонится за ней — то есть подерётся с клипом за ту же ногу.
+    const atkLegW = this.atk.clip && this.atk.t >= 0
+      ? attackEnv(this.atk.t, clipDur(this.atk.clip) || 0.001) * clamp(1 - this.moveMag, 0, 1) : 0;
+    const legsHeld = atkLegW > 0.05;
+    this.driver.setLegsHeld(legsHeld);
+    if (this.legMag > 0.5 && !legsHeld) {                         // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
