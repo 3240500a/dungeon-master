@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, sideLerp, type PoseTargets } from './pose.js';
-import { resolveStancePose } from './poseLayers.js';
+import { resolveStancePose, stancePoseAt } from './poseLayers.js';
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
 // Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
@@ -89,7 +89,7 @@ export const TWIST_BONES = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'] as c
 /** Провайдер контента: даёт idle-стойку (полная поза) + swing по оружию. Редактор — из живой библиотеки; игра — из localStorage.
  *  `shieldOverlay` — отдельная поза щита (левая рука+корпус из `стойка_shield`) + вес подмешивания (авторится в редакторе). */
 export interface PoseContent {
-  resolveUpper(weapon: string, combat?: number): UpperPose | null;   // combat 0..1 — блендит relaxed idle ↔ combat_idle (боевая стойка)
+  resolveUpper(weapon: string, combat?: number, t?: number): UpperPose | null;   // combat 0..1 — блендит relaxed idle ↔ combat_idle; t — время живой стойки (сек), 0 = первый кадр
   shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
 }
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
@@ -250,9 +250,9 @@ export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: nu
     hips.position.x += dz * s + dx * c; hips.position.y += dy; hips.position.z += dz * c - dx * s;
   }
 }
-function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null): void {
+function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0): void {
   const H = human.bones;
-  const up = content.resolveUpper(weapon, combat);
+  const up = content.resolveUpper(weapon, combat, idleT);
   // Раздельные руки ходьба↔бег: armDown/elbowBend блендятся walk→run по t.sb (POSE armSh/armEl/armSwing уже слиты в pose.ts).
   const sb = t.sb ?? 0;
   const eDownB = gx.armDown + ((gx.armDownRun ?? gx.armDown) - gx.armDown) * sb;
@@ -315,9 +315,9 @@ export function applyLegAdduct(human: Humanoid, scale = 1): void {
 
 /** Уходящий удар цепочки: его поза подмешивается с весом `w`, пока он не затух. */
 export interface AttackFade { atk: AttackState; w: number; rate: number }
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null): void {
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0): void {
   human.reset();
-  const idle = content.resolveUpper(weapon, combat)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
+  const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   const m = legMag;
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
   blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL], idle, m);
@@ -335,7 +335,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, armMag);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, armMag);
   blendBone(human, 'Head', [0, 0, 0], idle, armMag);
-  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
+  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade, idleT);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
@@ -463,12 +463,12 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
      * СОБИРАЕТСЯ из безоружной базы и дельт предметов по рукам (`resolveStancePose`). Тот же вызов
      * стоит в редакторе — правило «редактор ≡ игра» держится кодом, а не дисциплиной.
      */
-    resolveUpper(weapon: string, combat = 0): UpperPose | null {
-      const look = (kind: 'idle' | 'combat_idle', item: string): Pose | null => {
+    resolveUpper(weapon: string, combat = 0, t = 0): UpperPose | null {
+      const look = (kind: 'idle' | 'combat_idle', item: string, tt: number): Pose | null => {
         const c = (kind === 'idle' ? stance(item) : combatStance(item)) ?? (item === weapon ? (kind === 'idle' ? stance(baseWeapon(item)) : combatStance(baseWeapon(item))) : null);
-        return c && c.keys.length ? c.keys[0]!.pose : null;
+        return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом, однокадровая держит кадр
       };
-      const pose = resolveStancePose(look, weapon, combat, (it) => overlayWeight(overlay, charId, it, fallbackId));
+      const pose = resolveStancePose(look, weapon, combat, (it) => overlayWeight(overlay, charId, it, fallbackId), t);
       if (!pose) return null;
       const full = stance(weapon);
       return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)) };
@@ -796,6 +796,8 @@ export class PosePlayer {
   private stepHold = 0;   // остаточное удержание «ноги ведёт гейт» после подшага (антидребезг мерцающего settled)
   /** Текущий (сглаженный) доворот таза под направление хода + выбор оси «вперёд/назад». */
   private dirWarp: DirWarp = { ...DIR_WARP0 };
+  /** Часы ЖИВОЙ СТОЙКИ (сек). Многокадровый idle играет по ним циклом; однокадровый их не замечает. */
+  private idleT = 0;
   /** Доворот таза этого кадра — редактору для читаута. */
   get dirWarpDeg(): number { return this.dirWarp.warp * 180 / Math.PI; }
   /** Идём ли спиной вперёд (доворот меряется от хвоста) — редактору для читаута. */
@@ -955,7 +957,8 @@ export class PosePlayer {
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade);
+    this.idleT += dt;
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, this.driver.update(dt), this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT);
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
     // ТАЗ УДАРА ГАСНЕТ ЛОКОМОЦИЕЙ. Удар — слой ВЕРХА, низом владеет походка (в Unreal такой слой кладут
     // `Layered blend per bone` с исключённым тазом, в Unity — маской слоя). Наша маска удара таз и так не

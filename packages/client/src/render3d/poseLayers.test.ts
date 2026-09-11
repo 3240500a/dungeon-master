@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { asOffHandPose, composeStance, resolveStancePose, splitHands, isTwoHanded, type PoseLayer } from './poseLayers.js';
+import { asOffHandPose, composeStance, resolveStancePose, splitHands, isTwoHanded, stancePoseAt, type PoseLayer } from './poseLayers.js';
 import type { Pose } from './clipModel.js';
 import type { BoneMask } from './boneMask.js';
 
@@ -141,7 +141,7 @@ describe('спец-ключи позы', () => {
 
 describe('резолвер стойки под экипировку', () => {
   /** Библиотека-заглушка: `idle_<item>` и `combat_idle_<item>` по ключу предмета. */
-  const lib = (m: Record<string, Pose>): ((k: 'idle' | 'combat_idle', i: string) => Pose | null) =>
+  const lib = (m: Record<string, Pose>): ((k: 'idle' | 'combat_idle', i: string, t: number) => Pose | null) =>
     (k, i) => m[k + '|' + i] ?? null;
 
   it('АВТОРСКАЯ поза на точный ключ сильнее сборки — старые данные не поехали', () => {
@@ -213,8 +213,56 @@ describe('хват предмета в офф-руке', () => {
     const dagger: Pose = { ...SHIELD, __wpnMain: [0, 0.9, 0] };
     const find = (k: 'idle' | 'combat_idle', i: string): Pose | null =>
       ({ 'idle|none': BASE, 'idle|sword': sword, 'idle|dagger': dagger } as Record<string, Pose>)[k + '|' + i] ?? null;
+    void 0;
     const got = resolveStancePose(find, 'sword+dagger', 0)!;
     near(got['__wpnMain']!, [0.5, 0, 0]);     // главная рука — меч
     near(got['__wpnOff']!, [0, 0.9, 0]);      // офф — кинжал, а не второй меч
+  });
+});
+
+describe('живая стойка (многокадровый idle)', () => {
+  const key = (t: number, y: number): { pose: Pose; t: number } => ({ t, pose: { Chest: [0, y, 0] } });
+
+  it('один кадр — держит его, время ни при чём (как было всегда)', () => {
+    const c = { keys: [key(0, 0.5)] };
+    for (const t of [0, 1, 7.3]) near(stancePoseAt(c, t)!['Chest']!, [0, 0.5, 0]);
+  });
+
+  it('несколько кадров — играет и ЗАЦИКЛИВАЕТСЯ', () => {
+    const c = { keys: [key(0, 0), key(1, 1), key(2, 0)] };
+    near(stancePoseAt(c, 0)!['Chest']!, [0, 0, 0]);
+    near(stancePoseAt(c, 1)!['Chest']!, [0, 1, 0]);
+    near(stancePoseAt(c, 2)!['Chest']!, [0, 0, 0], 1e-4);      // конец = начало цикла
+    near(stancePoseAt(c, 3)!['Chest']!, [0, 1, 0], 1e-4);      // пошёл второй круг
+  });
+
+  it('отрицательное и нечисловое время не ломают цикл', () => {
+    const c = { keys: [key(0, 0), key(1, 1), key(2, 0)] };
+    expect(stancePoseAt(c, -1)!['Chest']![1]).toBeCloseTo(1, 4);
+    near(stancePoseAt(c, NaN)!['Chest']!, [0, 0, 0]);
+  });
+
+  it('пустой клип — null, а не падение', () => {
+    expect(stancePoseAt({ keys: [] }, 0)).toBeNull();
+  });
+
+  it('живая база и статичный предмет складываются: стойка дышит, меч на месте', () => {
+    const b0: Pose = { ...BASE, Chest: [0, 0, 0] };
+    const b1: Pose = { ...BASE, Chest: [0, 0.4, 0], RightUpperArm: [-0.35, 0, 0.3] };   // вдох двигает и грудь, и плечо
+    const breath = { keys: [{ pose: b0, t: 0 }, { pose: b1, t: 1 }, { pose: b0, t: 2 }] };
+    const find = (k: 'idle' | 'combat_idle', i: string, t: number): Pose | null => {
+      if (k !== 'idle') return null;
+      if (i === 'none') return stancePoseAt(breath, t);
+      return i === 'sword' ? SWORD : i === 'dagger' ? SHIELD : null;
+    };
+    // ⚠ Ключ БЕЗ авторской позы — иначе сработает правило «авторская сильнее» и база не понадобится.
+    const a = resolveStancePose(find, 'sword+dagger', 0, undefined, 0)!;
+    const b = resolveStancePose(find, 'sword+dagger', 0, undefined, 1)!;
+    expect(Math.abs(a['Chest']![1] - b['Chest']![1]), 'база дышит').toBeGreaterThan(0.1);
+    // На нуле (референс = живая база) рука выходит ровно авторским мечом…
+    near(a['RightUpperArm']!, SWORD['RightUpperArm']!);
+    // …а на вдохе дыхание ПРОСТУПАЕТ сквозь оверлей, а не гасится им.
+    expect(Math.hypot(b['RightUpperArm']![0] - a['RightUpperArm']![0], b['RightUpperArm']![1] - a['RightUpperArm']![1], b['RightUpperArm']![2] - a['RightUpperArm']![2]),
+      'рука с мечом дышит вместе с базой').toBeGreaterThan(0.05);
   });
 });

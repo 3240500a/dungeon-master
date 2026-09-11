@@ -45,7 +45,7 @@ import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWea
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
-import { resolveStancePose, splitHands, isTwoHanded } from './poseLayers.js';
+import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
@@ -4495,7 +4495,7 @@ const GX = { armDown: 1.35, elbowBend: 0.25 };   // legWidth убран (дуб�
 // Живой контент редактора (библиотека + swayCfg). shieldOverlay — поза щита per-оружие (idle_<wk> → фолбэк idle_shield)
 // + вес shieldMixFor(wk) (ползунок), подмешивается ТАК ЖЕ, как в игре: превью '+shield'-оружия показывает микс.
 const editorContent: PoseContent = {
-  resolveUpper: (w, combat) => resolveUpper(w, combat),
+  resolveUpper: (w, combat, t) => resolveUpper(w, combat, t),   // t — часы живой стойки (редактор ≡ игра)
   shieldOverlay: (wk) => { const c = stanceClip(wk) ?? stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMixFor(wk) } : null; },
 };
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
@@ -4515,12 +4515,12 @@ function combatStanceClip(w: string): Clip | null { return library.find((c) => c
 let editorCombat = 0;   // превью боевой стойки в редакторе (0/1)
 /** Стойка под экипировку — ТОТ ЖЕ резолвер, что в игре (`resolveStancePose`): авторская на точный
  *  ключ в приоритете, иначе сборка из безоружной базы и дельт предметов по рукам. */
-function resolveUpper(wpn: string, combat = 0): UpperPose | null {
-  const look = (kind: 'idle' | 'combat_idle', item: string): Pose | null => {
+function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
+  const look = (kind: 'idle' | 'combat_idle', item: string, tt: number): Pose | null => {
     const c = kind === 'idle' ? stanceClip(item) : combatStanceClip(item);
-    return c && c.keys[0] ? c.keys[0].pose : null;
+    return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом — как в игре
   };
-  const pose = resolveStancePose(look, wpn, combat, (it: string) => overlayCfg[curCharId]?.[it] ?? 1);
+  const pose = resolveStancePose(look, wpn, combat, (it: string) => overlayCfg[curCharId]?.[it] ?? 1, t);
   if (pose) { const wk = stanceClip(wpn) ? wpn : rtBaseWeapon(wpn); return { pose, swing: swayOf(wk) }; }
   // Сборка не сложилась (нет ни точной позы, ни безоружной базы) — прежний фолбэк по базовому оружию класса.
   let c = stanceClip(wpn); let wk = wpn;
@@ -5293,7 +5293,7 @@ loop();
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   get player() { return lp(); }, locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
-  captureUpper, get sway() { return swayCfg; }, resolveUpper: (w: string): unknown => resolveUpper(w), get stances() { return library.filter((c) => c.name.startsWith('idle_')); },
+  captureUpper, get sway() { return swayCfg; }, resolveUpper: (w: string, combat = 0, t = 0): unknown => resolveUpper(w, combat, t), get stances() { return library.filter((c) => c.name.startsWith('idle_')); },
   get lgrip() { return lgripMark; }, lgripEnsure: (): unknown => ensureLgripMark(), lgripPreview: (): void => applyLgripPreview(),   // двуручный хват: маркер + off-hand IK превью (дебаг)
   goFrame, writeFramePhys, get frameIdx() { return frameIdx; },   // per-кадр физ (match/pinKp) — дебаг: goFrame читает, writeFramePhys фиксирует
   gaitAttack: (name: string): void => { const c = clipsHere().find((x) => x.name === name) ?? library.find((x) => x.name === name); if (c) triggerAttack(c); }, get attackT() { return lp().atk.t; }, markAttack: (name: string): void => toggleAtk(name),

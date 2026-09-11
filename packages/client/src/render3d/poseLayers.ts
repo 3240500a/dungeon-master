@@ -22,7 +22,7 @@
  * Файл ЧИСТЫЙ (только математика поз и маски) — тестируется в node.
  */
 import * as THREE from 'three';
-import { blendTwo, isAngleKey, type Pose } from './clipModel.js';
+import { blendTwo, clipPoseAt, isAngleKey, type Pose } from './clipModel.js';
 import { boneWeight, type BoneMask } from './boneMask.js';
 
 /** Двуручное держится ОБЕИМИ руками: его поза — не добавка к свободной руке, а другой верх целиком. */
@@ -146,8 +146,25 @@ export function asOffHandPose(pose: Pose): Pose {
   return out;
 }
 
-/** Как достать авторскую позу: вид стойки + ключ предмета («none» = безоружная база). */
-export type StanceLookup = (kind: 'idle' | 'combat_idle', item: string) => Pose | null;
+/**
+ * Поза стойки на момент `t` (сек).
+ *
+ * Один кадр — держим его, как было всегда. Несколько — стойка ЖИВАЯ и играет циклом: дышит,
+ * переминается. Раньше это было физически невозможно — резолвер брал `keys[0]` и на этом всё,
+ * поэтому импортированный из FBX idle показывал ровно первый кадр и выглядел как «создалась
+ * копия в один кадр».
+ */
+export function stancePoseAt(clip: { keys: { pose: Pose; t: number }[] }, t = 0): Pose | null {
+  const n = clip.keys.length;
+  if (!n) return null;
+  const dur = clip.keys[n - 1]!.t;
+  if (n === 1 || dur <= 1e-4 || !Number.isFinite(t)) return clip.keys[0]!.pose;
+  const u = ((t % dur) + dur) % dur / dur;
+  return clipPoseAt(clip as never, u);
+}
+
+/** Как достать авторскую позу: вид стойки + ключ предмета («none» = безоружная база) + время (сек). */
+export type StanceLookup = (kind: 'idle' | 'combat_idle', item: string, t: number) => Pose | null;
 
 /**
  * СТОЙКА ПОД ЭКИПИРОВКУ — одна реализация на игру и редактор (правило «редактор ≡ игра»).
@@ -165,20 +182,26 @@ export function resolveStancePose(
   weapon: string,
   combat: number,
   weightOf: (item: string) => number = () => 1,
+  t = 0,
 ): Pose | null {
   const one = (kind: 'idle' | 'combat_idle'): Pose | null => {
-    const exact = find(kind, weapon);
+    const exact = find(kind, weapon, t);
     if (exact) return exact;                                  // 1. авторская на точный ключ
-    const base = find(kind, 'none') ?? (kind === 'idle' ? null : find('idle', 'none'));
+    const at = (k: 'idle' | 'combat_idle', i: string, tt: number): Pose | null => find(k, i, tt) ?? (k === 'combat_idle' ? find('idle', i, tt) : null);
+    const base = at(kind, 'none', t);
     const [m, o] = splitHands(weapon);
-    if (!base) return find(kind, m);                          // 3. базы нет — старое поведение
+    if (!base) return at(kind, m, t);                         // 3. базы нет — старое поведение
+    // ⚠ РЕФЕРЕНС ДЕЛЬТЫ — БАЗА НА НУЛЕ, а не живая. Если считать дельту от дышащей базы, она будет
+    // ровно компенсировать дыхание, и рука с предметом застынет: на маске оверлея жизнь пропадёт.
+    // Так же устроен `Make Additive` в Unreal — базовая поза аддитива фиксированная.
+    const ref = at(kind, 'none', 0) ?? base;
     const layers: PoseLayer[] = [];
     const two = isTwoHanded(m);
-    const mp = m !== 'none' ? (find(kind, m) ?? find('idle', m)) : null;
-    if (mp) layers.push({ pose: mp, base, mask: two ? UPPER_ALL_MASK : ARM_MAIN_MASK, weight: weightOf(m), kind: two ? 'override' : 'additive' });
+    const mp = m !== 'none' ? at(kind, m, t) : null;
+    if (mp) layers.push({ pose: mp, base: ref, mask: two ? UPPER_ALL_MASK : ARM_MAIN_MASK, weight: weightOf(m), kind: two ? 'override' : 'additive' });
     if (!two && o !== 'none') {
-      const op = find(kind, o) ?? find('idle', o);
-      if (op) layers.push({ pose: asOffHandPose(op), base, mask: ARM_OFF_MASK, weight: weightOf(o), kind: 'additive' });
+      const op = at(kind, o, t);
+      if (op) layers.push({ pose: asOffHandPose(op), base: asOffHandPose(ref), mask: ARM_OFF_MASK, weight: weightOf(o), kind: 'additive' });
     }
     return layers.length ? composeStance(base, layers) : base;   // 2. сборка (нет предметов → чистая база)
   };
