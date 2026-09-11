@@ -3,7 +3,7 @@
 // (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, type PoseTargets } from './pose.js';
+import { PoseDriver, GAIT, POSE, HIP_DX, FOOT_Y, sideLerp, type PoseTargets } from './pose.js';
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
 // Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
@@ -254,28 +254,42 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   const up = content.resolveUpper(weapon, combat);
   // Раздельные руки ходьба↔бег: armDown/elbowBend блендятся walk→run по t.sb (POSE armSh/armEl/armSwing уже слиты в pose.ts).
   const sb = t.sb ?? 0;
-  const eDown = gx.armDown + ((gx.armDownRun ?? gx.armDown) - gx.armDown) * sb;
-  const eBend = gx.elbowBend + ((gx.elbowBendRun ?? gx.elbowBend) - gx.elbowBend) * sb;
+  const eDownB = gx.armDown + ((gx.armDownRun ?? gx.armDown) - gx.armDown) * sb;
+  const eBendB = gx.elbowBend + ((gx.elbowBendRun ?? gx.elbowBend) - gx.elbowBend) * sb;
+  // Те же две ручки на сторону (ASYM пуст → обе = общей, числа прежние).
+  const eDownL = sideLerp('armDown', 'armDownRun', gx.armDown, gx.armDownRun ?? gx.armDown, 0, sb);
+  const eDownR = sideLerp('armDown', 'armDownRun', gx.armDown, gx.armDownRun ?? gx.armDown, 1, sb);
+  const eBendL = sideLerp('elbowBend', 'elbowBendRun', gx.elbowBend, gx.elbowBendRun ?? gx.elbowBend, 0, sb);
+  const eBendR = sideLerp('elbowBend', 'elbowBendRun', gx.elbowBend, gx.elbowBendRun ?? gx.elbowBend, 1, sb);
+  void eDownB; void eBendB;
+  // Ключицы: своя поза из гейта вместо прежнего «сводим в ноль».
+  const shoL: [number, number, number] = [t.shoLX, t.shoLY, t.shoLZ];
+  const shoR: [number, number, number] = [t.shoRX, t.shoRY, t.shoRZ];
   if (!up) {   // нет idle-позы → полный мах гейта
-    gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, eDown);
-    gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, eDown);
+    gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, eDownL);
+    gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, eDownR);
     // Локоть гнётся вокруг ЛОКАЛЬНОЙ Y (лево −Y / право +Y): кисть форерукава лежит на локальной +X, поэтому X =
     // ТВИСТ вдоль кости (кисть не двигается), а сгиб — вокруг Y (замерено; так же в правильных авторских idle_*).
-    H.get('LeftLowerArm')!.rotation.set(0, -(Math.abs(t.elL) + eBend), 0);
-    H.get('RightLowerArm')!.rotation.set(0, Math.abs(t.elR) + eBend, 0);
+    H.get('LeftLowerArm')!.rotation.set(0, -(Math.abs(t.elL) + eBendL), 0);
+    H.get('RightLowerArm')!.rotation.set(0, Math.abs(t.elR) + eBendR, 0);
   } else {
     // sway (остаточный мах) влияет ПО МЕРЕ ДВИЖЕНИЯ: в покое hw=1 → руки ТОЧНО как в авторской idle (стойка = как в редакторе),
     // на бегу hw=1-sway → мах гейта подмешивается. Раньше hw был константой → idle искажался даже стоя.
     const hw = clamp(1 - up.swing * moveMag, 0, 1);
-    blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hw, eDown);
-    blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hw, eDown);
-    blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + eBend), 0], up.pose['LeftLowerArm'], hw);   // локоть = Y (см. выше), не X
-    blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + eBend, 0], up.pose['RightLowerArm'], hw);
-    for (const nm of UPPER_BONES) blendEuler(H.get(nm), [0, 0, 0], up.pose[nm], hw);
+    blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hw, eDownL);
+    blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hw, eDownR);
+    blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + eBendL), 0], up.pose['LeftLowerArm'], hw);   // локоть = Y (см. выше), не X
+    blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + eBendR, 0], up.pose['RightLowerArm'], hw);
+    for (const nm of UPPER_BONES) blendEuler(H.get(nm), ZERO3, up.pose[nm], hw);
     applyWeaponUpper(weaponGroups, up.pose, hw);
   }
   // Кроссфейд цепочки: УХОДЯЩИЙ удар кладём первым с затухающим весом, входящий — поверх него.
   // Без этого второй `triggerAttack` жёстко подменял первый и на стыке комбо был рывок.
+  // ПЛЕЧЕВОЙ ПОЯС — поверх всего, что легло на ключицу (авторская стойка или ноль), по мере хода:
+  // стоим → ровно авторская стойка, разгоняемся → проступают настройки походки. Нули = ничего не делает.
+  const shoW = clamp(moveMag, 0, 1);
+  addEuler(H.get('LeftShoulder'), shoL, shoW);
+  addEuler(H.get('RightShoulder'), shoR, shoW);
   if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w);
   if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk);   // удар поверх idle/маха
 }
@@ -647,6 +661,21 @@ export function bendTorso(human: Humanoid, twist: number, pitch: number, roll: n
     if (pitch && wBend[i]) b.rotateX(pitch * wBend[i]!);
     if (roll && wBend[i]) b.rotateZ(roll * wBend[i]!);
   }
+}
+const ZERO3: [number, number, number] = [0, 0, 0];
+const _addE = new THREE.Euler(), _addQ = new THREE.Quaternion();
+/**
+ * Доложить поворот ПОВЕРХ того, что уже стоит на кости (аддитивно, в локальных осях кости).
+ *
+ * Нужен ключицам. Их базовая поза приходит из АВТОРСКОГО idle-клипа оружия, и заменять её настройками
+ * походки нельзя — стойка перестанет быть той, что нарисовал автор. А раньше было наоборот: гейт клал
+ * туда [0,0,0] с весом хода, то есть пояс просто гасился тем сильнее, чем быстрее бежишь, и настроить
+ * в нём было нечего. Аддитивно — автор задаёт стойку, ползунки добавляют к ней движение.
+ */
+function addEuler(bone: THREE.Object3D | undefined, e: [number, number, number], w: number): void {
+  if (!bone || w <= 1e-4 || (e[0] === 0 && e[1] === 0 && e[2] === 0)) return;
+  _addQ.setFromEuler(_addE.set(e[0] * w, e[1] * w, e[2] * w, 'XYZ'));
+  bone.quaternion.multiply(_addQ);
 }
 const PULL_W_DEF: [number, number, number, number, number] = [0.2, 0.4, 0.4, 0, 0];
 /** Навесить скрутку на риг: таз на rootYaw + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ gaitToHumanoid. */

@@ -40,7 +40,7 @@ import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: ск
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
-import { PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
+import { ASYM, PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
@@ -4029,54 +4029,114 @@ function bakeGaitSection(): void {
   if (bakeStatus) { const st = el('div', 'font-size:10px;margin-top:2px;color:#9ae6a0'); st.textContent = bakeStatus; body.append(st); }
 }
 
+/**
+ * ТЮНИНГ ПОХОДКИ. Три правила, ради которых панель переписана:
+ *  1. Ходьба и бег больше НЕ перемешаны. Вверху переключатель — правишь один режим, видишь его ползунки.
+ *     Переключение ставит и превью на соответствующую скорость, чтобы крутить и сразу смотреть.
+ *  2. У КАЖДОГО ползунка две стороны, Л и П. Совпадают — храним одно число (как раньше); развели —
+ *     пара уезжает в `ASYM`, и это видно по метке «Л≠П» на строке.
+ *  3. Плечевой пояс настраивается. Раньше ключицы на ходу сводились в ноль и жили сами по себе.
+ */
 function renderGaitTune(): void {
   const box = el('div', 'margin-top:8px;border:1px solid #39415a;border-radius:6px;padding:6px');
-  const gsl = (label: string, obj: NumRec, key: string, min: number, max: number, step: number): void => {
+  const grp = (t: string): void => { const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 1px;font-size:11px'); h.textContent = t; box.append(h); };
+  const GXo = GX as unknown as NumRec, POSEo = POSE as unknown as NumRec, GAITo = GAIT as unknown as NumRec;
+  // Run-твины, которых может не быть в старом сохранённом конфиге: садим из ходьбы → поведение не меняется.
+  for (const [r, w] of [['armDownRun', 'armDown'], ['elbowBendRun', 'elbowBend']] as const) if (GXo[r] === undefined) GXo[r] = GXo[w]!;
+
+  // ── Режим ───────────────────────────────────────────────────────────────────────────────────────
+  const modeRow = el('div', 'display:flex;gap:4px;align-items:center'); box.append(modeRow);
+  const setMode = (run: boolean): void => {
+    gaitEditRun = run;
+    if (locoOn) { locoVx = 0; locoVz = (run ? GAIT.speedRun : GAIT.speedWalk) / GAIT_MAXSPD; }   // превью на ту скорость, что правим
+    renderLoco();
+  };
+  modeRow.append(pbtn('ХОДЬБА', () => setMode(false), !gaitEditRun), pbtn('БЕГ', () => setMode(true), gaitEditRun));
+  const linkBtn = pbtn(gaitLinkLR ? 'Л/П: связаны' : 'Л/П: раздельно', () => { gaitLinkLR = !gaitLinkLR; renderLoco(); }, gaitLinkLR);
+  modeRow.append(linkBtn);
+  const asymN = Object.keys(gaitAsym).length;
+  if (asymN) modeRow.append(pbtn(`сброс асимметрии (${asymN})`, () => { for (const k of Object.keys(gaitAsym)) delete gaitAsym[k]; saveGaitCfg(); renderLoco(); }));
+  const mh = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
+  mh.textContent = gaitEditRun ? 'Правишь БЕГ. Между ходьбой и бегом всё интерполируется по скорости.' : 'Правишь ХОДЬБУ. Между ходьбой и бегом всё интерполируется по скорости.';
+  box.append(mh);
+
+  /**
+   * Строка с ДВУМЯ ползунками: левая сторона и правая.
+   * `kw`/`kr` — ключи ходьбы и бега; какой правится, решает переключатель режима.
+   * Связаны — пишем общее число и стираем запись асимметрии; разведены — пишем пару в `ASYM`.
+   */
+  const row2 = (label: string, obj: NumRec, kw: string, kr: string | null, min: number, max: number, step: number): void => {
+    const key = gaitEditRun && kr ? kr : kw;
+    const base = +obj[key]!;
+    const pair = gaitAsym[key];
+    const row = el('div', 'display:flex;align-items:center;gap:5px;margin-top:3px');
+    const nm = el('span', 'flex:1 0 128px;font-size:11px'); nm.textContent = label; row.append(nm);
+    if (pair) { const mk = el('span', 'color:#ffd24a;font-size:10px'); mk.textContent = 'Л≠П'; nm.append(' '); nm.append(mk); }
+    const one = (i: 0 | 1, col: string): void => {
+      const sl = el('input', 'flex:1 1 74px;min-width:52px;accent-color:' + col) as HTMLInputElement;
+      sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step);
+      sl.value = String(pair ? pair[i] : base);
+      const v = el('span', `width:40px;text-align:right;font-size:10px;color:${col}`); v.textContent = (+sl.value).toFixed(2);
+      sl.oninput = () => {
+        const nv = parseFloat(sl.value); v.textContent = nv.toFixed(2);
+        if (gaitLinkLR) { obj[key] = nv; delete gaitAsym[key]; }
+        else { const cur = gaitAsym[key] ?? [base, base]; cur[i] = nv; gaitAsym[key] = cur; }
+        saveGaitCfg();
+        if (gaitLinkLR && pair) renderLoco();      // связали поверх разведённого — перерисуем, чтобы вторая сторона догнала
+      };
+      row.append(sl, v);
+    };
+    one(0, '#5aa0ff'); one(1, '#ff6a6a');          // Л синим, П красным — как планты стоп в сцене
+    box.append(row);
+  };
+  /** Ползунок БЕЗ сторон и без режима — то, чего у тела ровно одно. */
+  const one1 = (label: string, obj: NumRec, key: string, min: number, max: number, step: number): void => {
     const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
     const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = label; row.append(nm);
-    const s = el('input', 'flex:2') as HTMLInputElement; s.type = 'range'; s.min = String(min); s.max = String(max); s.step = String(step); s.value = String(obj[key]);
+    const sl = el('input', 'flex:2') as HTMLInputElement; sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(obj[key]);
     const v = el('span', 'width:42px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = (+obj[key]!).toFixed(2);
-    s.oninput = () => { obj[key] = parseFloat(s.value); v.textContent = obj[key]!.toFixed(2); saveGaitCfg(); };
-    row.append(s, v); box.append(row);
+    sl.oninput = () => { obj[key] = parseFloat(sl.value); v.textContent = obj[key]!.toFixed(2); saveGaitCfg(); };
+    row.append(sl, v); box.append(row);
   };
-  const grp = (t: string): void => { const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:6px 0 1px;font-size:11px'); h.textContent = t; box.append(h); };
-  const GXo = GX as unknown as NumRec, POSEo = POSE as unknown as NumRec, GAITo = GAIT as unknown as NumRec;
-  // Руки РАЗДЕЛЬНО ходьба/бег (интерп по скорости sb, как ноги). Run-твины GX сидим из ходьбы, если ещё не заданы.
-  if (GXo['armDownRun'] === undefined) GXo['armDownRun'] = GXo['armDown'] ?? 1.35;
-  if (GXo['elbowBendRun'] === undefined) GXo['elbowBendRun'] = GXo['elbowBend'] ?? 0.25;
+  const hint = el('div', 'color:#7a869e;font-size:10px;margin-top:4px');
+  hint.textContent = 'В каждой строке два ползунка: СИНИЙ — левая сторона, КРАСНЫЙ — правая.';
+  box.append(hint);
+
   grp('поза (ретаргет)');
-  gsl('руки вниз (ходьба)', GXo, 'armDown', 0.6, 1.8, 0.01);
-  gsl('руки вниз (бег)', GXo, 'armDownRun', 0.6, 1.8, 0.01);
-  gsl('сгиб локтя (ходьба)', GXo, 'elbowBend', 0, 1.2, 0.02);
-  gsl('сгиб локтя (бег)', GXo, 'elbowBendRun', 0, 1.2, 0.02);
+  row2('руки вниз', GXo, 'armDown', 'armDownRun', 0.6, 1.8, 0.01);
+  row2('сгиб локтя', GXo, 'elbowBend', 'elbowBendRun', 0, 1.2, 0.02);
   grp('руки (мах)');
-  gsl('плечо база (ходьба)', POSEo, 'armSh', -0.8, 0.4, 0.02);
-  gsl('плечо база (бег)', POSEo, 'armShRun', -0.8, 0.4, 0.02);
-  gsl('локоть база (ходьба)', POSEo, 'armEl', 0, 1.4, 0.02);
-  gsl('локоть база (бег)', POSEo, 'armElRun', 0, 1.4, 0.02);
-  gsl('амплитуда маха (ходьба)', POSEo, 'armSwing', 0, 1.2, 0.02);
-  gsl('амплитуда маха (бег)', POSEo, 'armSwingRun', 0, 1.2, 0.02);
+  row2('база плеча', POSEo, 'armSh', 'armShRun', -0.8, 0.4, 0.02);
+  row2('база локтя', POSEo, 'armEl', 'armElRun', 0, 1.4, 0.02);
+  row2('амплитуда маха', POSEo, 'armSwing', 'armSwingRun', 0, 1.2, 0.02);
+  row2('добавка локтя на ходу', POSEo, 'armElWalk', null, 0, 0.8, 0.02);
+  grp('плечи (ключицы)');
+  row2('подъём плеча', POSEo, 'shoUp', 'shoUpRun', -0.5, 0.5, 0.01);
+  row2('вынос вперёд', POSEo, 'shoFwd', 'shoFwdRun', -0.5, 0.5, 0.01);
+  row2('скрутка', POSEo, 'shoTw', 'shoTwRun', -0.5, 0.5, 0.01);
+  row2('качание за рукой', POSEo, 'shoSwing', 'shoSwingRun', 0, 1, 0.02);
+  row2('подъём за рукой', POSEo, 'shoLift', 'shoLiftRun', 0, 1, 0.02);
+  const sn = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
+  sn.textContent = 'Нули — прежнее поведение (пояс неподвижен). Качание и подъём идут от маха СВОЕЙ руки.';
+  box.append(sn);
   grp('ноги / посадка');
-  // «высота таза» убрана — база берётся из idle-стойки (measureStancePlants.standY), чтобы бег/подшаг не подскакивали.
-  gsl('присед (мин.таз)', GAITo, 'pelvisMin', 16, 34, 0.5);
-  gsl('длина шага (ходьба)', GAITo, 'stepWalk', 10, 70, 1);
-  gsl('длина шага (бег)', GAITo, 'stepRun', 10, 70, 1);
-  gsl('боб таза × (ходьба)', GAITo, 'bobWalk', 0, 2, 0.05);
-  gsl('боб таза × (бег)', GAITo, 'bobRun', 0, 2, 0.05);
-  gsl('подъём стопы (ходьба)', GAITo, 'liftWalk', 2, 20, 0.5);
-  gsl('подъём стопы (бег)', GAITo, 'liftRun', 2, 20, 0.5);
-  gsl('скорость анимации бега (в игре, антискольз.)', GAITo, 'cadence', 0.5, 2, 0.05);
-  gsl('доля опоры (ходьба)', GAITo, 'dutyWalk', 0.15, 0.5, 0.01);
-  gsl('доля опоры (бег)', GAITo, 'dutyRun', 0.1, 0.35, 0.01);
-  gsl('потолок бедра', GAITo, 'hipFwdLim', 0.4, 1.4, 0.02);
-  gsl('ширина стойки', GAITo, 'stanceWidth', -6, 14, 0.5);
-  gsl('вынос вбок (страйф)', GAITo, 'strafeReach', 0, 1.5, 0.05);
-  gsl('предел кроссовера', GAITo, 'crossClamp', 0, 99, 1);
+  row2('присед (мин. таз)', GAITo, 'pelvisMin', 'pelvisMinRun', 16, 34, 0.5);
+  row2('длина шага', GAITo, 'stepWalk', 'stepRun', 10, 70, 1);
+  row2('боб таза ×', GAITo, 'bobWalk', 'bobRun', 0, 2, 0.05);
+  row2('подъём стопы', GAITo, 'liftWalk', 'liftRun', 2, 20, 0.5);
+  row2('доля опоры', GAITo, 'dutyWalk', 'dutyRun', 0.1, 0.5, 0.01);
+  row2('потолок бедра', GAITo, 'hipFwdLim', 'hipFwdLimRun', 0.4, 1.4, 0.02);
+  row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -6, 14, 0.5);
+  row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 1.5, 0.05);
+  row2('предел кроссовера', GAITo, 'crossClamp', 'crossClampRun', 0, 99, 1);
+  grp('общее (одно на тело)');
+  one1('скорость анимации бега (антискольз.)', GAITo, 'cadence', 0.5, 2, 0.05);
+  one1('порог ходьбы (u/с)', GAITo, 'speedWalk', 10, 90, 1);
+  one1('порог бега (u/с)', GAITo, 'speedRun', 60, 200, 1);
   grp('резкая смена направления');
-  // Обе ручки молчат на ровном ходу и работают только на развороте — см. `stepFlip.test.ts`.
-  gsl('усреднение направления (с)', GAITo, 'planSmooth', 0, 0.5, 0.01);
-  gsl('запас выноса до «пора шагать»', GAITo, 'stepSlack', 0.1, 1.2, 0.05);
-  gsl('ускорение просроченного шага', GAITo, 'stepUrge', 0, 10, 0.5);
+  one1('усреднение направления (с)', GAITo, 'planSmooth', 0, 0.5, 0.01);
+  one1('запас выноса до «пора шагать»', GAITo, 'stepSlack', 0.1, 1.2, 0.05);
+  one1('ускорение просроченного шага', GAITo, 'stepUrge', 0, 10, 0.5);
   const fn = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
   fn.textContent = 'Нули = старое поведение: нога вылетает на полную длину, если попасть падом в такт шага.';
   box.append(fn);
@@ -4311,6 +4371,9 @@ let gaitPx = 0, gaitPz = 0; const GAIT_MAXSPD = 120;   // зеркало тре�
 let gaitMoveMag = 0, gaitLegMag = 0;   // зеркало moveMag/legMag плеера (ридаут/маркеры)
 let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing (прицел): по движению (поворот) / ручной угол (страйф) → в setYaw
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
+let gaitEditRun = true;      // какой режим правим: бег (true) или ходьба. Ползунки больше не идут парами вперемешку
+let gaitLinkLR = true;       // связаны ли стороны: связаны → одно число на обе, иначе пара в ASYM
+const gaitAsym = ASYM;       // ссылка на карту асимметрии рантайма (правим её же, что читает игра)
 let warpReadout: HTMLElement | null = null;                // живой угол доворота таза (Ф0) — глазами его на диагонали не отличить
 let editorRootYaw = 0;                                      // зеркало pelvisYaw плеера (updateTurnTest идёт по тазу)
 let editorTwistStates: TwistStates = TWIST_STATES_DEFAULT();   // 3 профиля скрутки (стой/ходьба/бег) текущего персонажа
@@ -4615,9 +4678,14 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
-const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
-const GX_KEYS = ['armDown', 'elbowBend'] as const;
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
+  'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+// ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
+// читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
+const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',
+  'shoUp', 'shoFwd', 'shoTw', 'shoSwing', 'shoLift',
+  'shoUpRun', 'shoFwdRun', 'shoTwRun', 'shoSwingRun', 'shoLiftRun'] as const;
+const GX_KEYS = ['armDown', 'elbowBend', 'armDownRun', 'elbowBendRun'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
 for (const k of GAIT_KEYS) GAIT_DEF[k] = (GAIT as NumRec)[k]!;
@@ -4637,18 +4705,21 @@ const gaitPlant: PlantGrid = emptyGrid();                       // живая с
 let plantDirSel = 0, plantSpeedRun = true;                     // активная ячейка для правки (направление 0-7, бег/шаг)
 let plantEditDir = 0, plantEditRun = true;                     // замороженная ячейка на время драга маркера
 const activeCell = (): Leg2 => (plantEditRun ? gaitPlant.run : gaitPlant.walk)[plantEditDir]!;
-let gaitCfgs: Record<string, { gait: NumRec; pose: NumRec; gx: NumRec; plant?: PlantStored }> = (() => { try { return JSON.parse(localStorage.getItem('pe_gait') || '{}'); } catch { return {}; } })();
+let gaitCfgs: Record<string, { gait: NumRec; pose: NumRec; gx: NumRec; plant?: PlantStored; asym?: Record<string, [number, number]> }> = (() => { try { return JSON.parse(localStorage.getItem('pe_gait') || '{}'); } catch { return {}; } })();
 function loadPlant(p: PlantStored | undefined): void {          // читаем новый {walk,run} ИЛИ старый {l,r} (→ размазать во все ячейки)
   const g = emptyGrid();
   if (p?.walk && p?.run) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) { const e = p[sp]![i]; if (e) g[sp][i] = { l: [...(e.l ?? [0, 0])] as XY, r: [...(e.r ?? [0, 0])] as XY, lVia: cloneVia(e.lVia), rVia: cloneVia(e.rVia) }; } }
   else if (p?.l && p?.r) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) g[sp][i] = { l: [...p.l] as XY, r: [...p.r] as XY, lVia: [], rVia: [] }; }
   gaitPlant.walk = g.walk; gaitPlant.run = g.run;
 }
-function applyGaitCfg(id: string): void {   // выставить GAIT/POSE/GX/plant под персонажа (или дефолты)
+function applyGaitCfg(id: string): void {   // выставить GAIT/POSE/GX/plant/асимметрию под персонажа (или дефолты)
   const c = gaitCfgs[id];
   Object.assign(GAIT, GAIT_DEF, c?.gait ?? {});
   Object.assign(POSE, POSE_DEF, c?.pose ?? {});
   Object.assign(GX, GX_DEF, c?.gx ?? {});
+  // Асимметрия — тоже пер-персонаж: чистим прошлого и заливаем своего (пусто → симметрия).
+  for (const k of Object.keys(ASYM)) delete ASYM[k];
+  for (const [k, v] of Object.entries(c?.asym ?? {})) if (Array.isArray(v) && v.length === 2) ASYM[k] = [v[0]!, v[1]!];
   loadPlant(c?.plant);
 }
 function saveGaitCfg(): void {
@@ -4657,7 +4728,9 @@ function saveGaitCfg(): void {
   for (const k of POSE_KEYS) pose[k] = (POSE as NumRec)[k]!;
   for (const k of GX_KEYS) gx[k] = (GX as NumRec)[k]!;
   const cp = (arr: Leg2[]): Leg2[] => arr.map((e) => ({ l: [...e.l] as XY, r: [...e.r] as XY, lVia: cloneVia(e.lVia), rVia: cloneVia(e.rVia) }));
-  gaitCfgs[curCharId] = { gait, pose, gx, plant: { walk: cp(gaitPlant.walk), run: cp(gaitPlant.run) } };
+  const asym: Record<string, [number, number]> = {};
+  for (const [k, v] of Object.entries(ASYM)) asym[k] = [v[0], v[1]];   // пусто = стороны одинаковы
+  gaitCfgs[curCharId] = { gait, pose, gx, plant: { walk: cp(gaitPlant.walk), run: cp(gaitPlant.run) }, asym };
   try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ }
 }
 let stanceMeasuredFor = '';   // замеряем ширину стойки один раз на текущее оружие (мутирует human → только на смене)
