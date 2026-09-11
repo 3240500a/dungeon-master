@@ -47,6 +47,7 @@ import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
+import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
@@ -2559,7 +2560,7 @@ function focusHand(): void {
   camera.position.copy(p).add(new THREE.Vector3(gripSide === 'Left' ? 9 : -9, 4, 11));   // ~15u: кисть занимает больше половины кадра
   orbit.update();
 }
-let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' | 'ai' = 'anim';
+let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' | 'ai' | 'graph' = 'anim';
 const tabBar = document.createElement('div'); tabBar.style.cssText = 'display:flex;gap:3px;margin-bottom:6px';
 let body: HTMLElement = document.createElement('div');
 const panelRoot = body;
@@ -2608,13 +2609,13 @@ const tabSwitch = (k: typeof tab): void => {
   if (stop) { locoOn = false; ghostGround.off = 0; goFrame(frameIdx); }
   refreshAll();
 };
-for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
+for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['graph', 'Граф'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
 // Ф15.1 + Ф20.1: риг-источник строится ТЕМ ЖЕ профилем И ТЕМ ЖЕ boneScale, что манекен —
 // иначе кости модели стоят не там, где нарисованы кости редактора (колено расходилось на 2.37u).
 const modelsTab = createModelsTab(scene, () => atlasProfile(), () => morphBoneScale());
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
+function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else if (tab === 'graph') renderGraph(); else modelsTab.render(body); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 /** Пересчитать позу без перерисовки панели — для `oninput` ползунков (перерисовка отобрала бы у мыши захваченный бегунок). */
 function refreshLive(): void { if (ikOn) solveRig(); }
@@ -4675,6 +4676,35 @@ function ensureSeed(): void {   // первый запуск: 16 стоек + 16
   seedWarrior(false);   // новый юзер → всё; старый сид → стойки сохранить, удары пересобрать в 6 кадров
   localStorage.setItem('pe_seeded4', '1');
 }
+/**
+ * Вкладка «Граф» — узловой редактор контроллера (Ф1.3b).
+ *
+ * Панель живёт отдельным модулем и НИЧЕГО не знает про редактор: ей дают персонажа, живой конфиг,
+ * список клипов и способ проиграть состояние. Так её можно будет показать и из игры, если понадобится.
+ */
+const animGraph = createAnimGraphPanel({
+  charId: () => curCharId,
+  store: () => animStore,
+  save: () => saveAnim(),
+  clipNames: () => [...new Set(library.filter((c) => c.character === curCharId).map((c) => c.name))].sort(),
+  trigger: (state) => {
+    const cfg = readAnimCfg(animStore, curCharId).stateCfg(state);
+    const c = library.find((x) => x.name === cfg.clip && x.character === curCharId);
+    if (c) triggerAttack(c); else alert(`Клипа «${cfg.clip}» у персонажа нет — привяжи его в инспекторе.`);
+  },
+  active: () => lp().attacking,
+}, {
+  el: (tag: string, css?: string, text?: string) => { const e = el(tag, css ?? ''); if (text) e.textContent = text; return e; },
+  btn: (label: string, fn: () => void, on = false) => pbtn(label, fn, on),
+});
+function renderGraph(): void {
+  body.innerHTML = '';
+  const info = el('div', 'color:#9ae6a0;margin-bottom:4px');
+  info.textContent = `${curChar().name} · состояния слота действия (стойка и предметы — на вкладке «Бег»)`;
+  body.append(info);
+  animGraph.render(body);
+}
+
 function renderUpperPanel(): void {   // панель idle-стойки по оружию (Феча 2): захват в клип, остаточный мах, «взять за основу»
   const box = el('div', 'margin-top:8px;border:1px solid #39415a;border-radius:6px;padding:6px');
   const st = stanceClip(weapon); const has = !!st;

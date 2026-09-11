@@ -50,6 +50,11 @@ export interface AnimState {
   blendSec?: number;
   /** Владение ногами: `auto` — по скорости (как было), `never` — только верх, `always` — всегда низ. */
   legs?: 'auto' | 'never' | 'always';
+  /**
+   * ЦЕПОЧКА: какие состояния могут пойти ПОСЛЕ этого (комбо). Пока это авторская разметка для графа —
+   * рантайм выбирает следующий удар сам (`attackClips`); связывание придёт вместе с окном комбо.
+   */
+  next?: string[];
 }
 
 /** Содержимое ключа `pe_anim` — по персонажу. */
@@ -64,6 +69,8 @@ export interface AnimGraph {
    * (и это нормально: пока клип не заавторен, ломаться нечему).
    */
   states?: Record<string, string | AnimState>;
+  /** Раскладка узлов графа — тоже авторская работа, поэтому лежит рядом с данными, а не в личных настройках. */
+  layout?: Record<string, { x: number; y: number }>;
 }
 export type AnimStore = Record<string, AnimGraph>;
 
@@ -81,8 +88,8 @@ export interface AnimCfg {
   has(item: string): boolean;
   /** Имя клипа для состояния (`stagger`, `getup`…). Нет привязки → само имя состояния. */
   stateName(state: string): string;
-  /** Настройка состояния с подставленными умолчаниями. */
-  stateCfg(state: string): Required<Omit<AnimState, 'clip'>> & { clip: string };
+  /** Настройка состояния с подставленными умолчаниями (`next` — как записано, цепочки необязательны). */
+  stateCfg(state: string): { clip: string; priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always'; next: string[] };
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -140,6 +147,7 @@ export function readAnimCfg(raw: unknown, charId: string, fallbackId?: string): 
         interruptible: o.interruptible !== false,
         blendSec: typeof o.blendSec === 'number' && Number.isFinite(o.blendSec) && o.blendSec >= 0 ? o.blendSec : DEF_BLEND_SEC,
         legs,
+        next: Array.isArray(o.next) ? o.next.filter((n): n is string => typeof n === 'string') : [],
       };
     },
   };
