@@ -68,8 +68,22 @@ export const balanceSchema = z.object({
   /** Лут: шанс дропа с убитого монстра + веса категорий (× per-item dropWeight). */
   loot: z
     .object({
-      /** Шанс, что убитый монстр вообще что-то роняет. */
-      dropChance: z.number().min(0).max(1).default(0.55),
+      /**
+       * Шанс, что убитый монстр роняет ГОТОВУЮ ВЕЩЬ.
+       * ⚠ 0.10, а не прежние 0.55: основной поток наград теперь материалы (`materials` ниже).
+       * ⭐ ПРАВИЛО №1 экономики: суммарная частота НАГРАД не падает, меняется только их ВИД.
+       * Уронить это число, не подняв материалы, — значит повторить ошибку PoE 2 (docs/ECONOMY.md).
+       */
+      dropChance: z.number().min(0).max(1).default(0.1),
+      /** Материалы с убитого монстра: считаются по ЕГО снаряжению (`monster-gear.salvageTo`). */
+      materials: z
+        .object({
+          /** Доля убийств, дающих материалы. Держим высокой — это замена ушедшему потоку вещей. */
+          chance: z.number().min(0).max(1).default(0.6),
+          /** С какой глубины ступень материала поднимается на единицу (0 — никогда). */
+          tierUpEveryDepth: z.number().int().min(0).default(8),
+        })
+        .default({}),
       /** Вес категории при выборе типа дропа/товара магазина (0 — категория не выпадает). */
       categoryWeights: z
         .object({
@@ -685,6 +699,14 @@ export const monsterBehaviorsSchema = z.array(
 // дропается в общий пул). Монстр в дефе ссылается на гир по id (weapon/armor/offhand); статы
 // деривятся из атрибутов монстра + этого гира (deriveMonsterStats). Афиксы элиток катаются на гир.
 const mgFaction = z.enum(['undead', 'demon', 'beast', 'monster']);
+/** Что даёт вещь снаряжения при разборе: сколько какого материала (docs/ECONOMY.md). */
+// ⚠ `.optional()`, а НЕ `.default([])`: с дефолтом поле становится обязательным в выходном типе,
+// и каждый литерал снаряжения в коде и тестах пришлось бы дописывать. Отсутствие поля читается
+// как «с этой вещи ничего не падает» — ровно тот смысл, который нужен.
+const salvageToSchema = z
+  .array(z.object({ materialId: z.string(), min: z.number().int().min(0), max: z.number().int().min(0) }))
+  .optional();
+
 export const monsterGearSchema = z.array(
   z.discriminatedUnion('kind', [
     z.object({
@@ -706,6 +728,8 @@ export const monsterGearSchema = z.array(
       physSub: z.string().optional(),
       /** id 3D-модели (конфиг models, kind='weapon' с weaponType===weaponClass) для меша оружия монстра. Нет → процедурка. */
       modelId: z.string().optional(),
+      /** Что даёт при разборе — материалы ЭТОЙ вещи (docs/ECONOMY.md, «что носит, то и падает»). */
+      salvageTo: salvageToSchema,
     }),
     z.object({
       kind: z.literal('armor'),
@@ -720,6 +744,8 @@ export const monsterGearSchema = z.array(
       defense: z.number().min(0).default(0),
       /** id 3D-модели (submesh-вариант атласа монстра для этого слота). Нет → базовый вид слота. */
       modelId: z.string().optional(),
+      /** Что даёт при разборе — материалы ЭТОЙ вещи (docs/ECONOMY.md, «что носит, то и падает»). */
+      salvageTo: salvageToSchema,
     }),
     z.object({
       kind: z.literal('shield'),
@@ -731,6 +757,8 @@ export const monsterGearSchema = z.array(
       defense: z.number().min(0).default(0),
       /** id 3D-модели (конфиг models, kind='weapon' weaponType='shield') для меша щита монстра. Нет → процедурка. */
       modelId: z.string().optional(),
+      /** Что даёт при разборе — материалы ЭТОЙ вещи (docs/ECONOMY.md, «что носит, то и падает»). */
+      salvageTo: salvageToSchema,
     }),
   ]),
 );

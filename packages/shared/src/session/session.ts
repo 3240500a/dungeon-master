@@ -15,6 +15,8 @@ import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/
 import { skillWeaponAllowed } from '../formulas/skills.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
+import { salvageFromMonster } from '../formulas/salvage.js';
+import { addMaterials } from '../economy/materials.js';
 import { gainXp } from '../economy/progression.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
 import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, type DebuffApply, type DebuffState } from '../world/debuffs.js';
@@ -108,6 +110,8 @@ export type SessionEvent =
   | { type: 'item-dropped'; item: Item; x: number; y: number }
   | { type: 'item-picked'; playerId: string; item: Item; x: number; y: number }
   | { type: 'gold'; playerId: string; amount: number; total: number }
+  /** Материалы с убитого монстра: id → количество. `x`/`y` — место смерти, чтобы клиент показал их там. */
+  | { type: 'materials'; playerId: string; gains: Record<string, number>; x: number; y: number }
   | { type: 'xp'; playerId: string; amount: number }
   | { type: 'levelup'; playerId: string; level: number }
   | { type: 'player-died'; playerId: string }
@@ -1414,8 +1418,33 @@ export class GameSession {
     this.events.push({ type: 'gold', playerId: reward.id, amount: gold, total: reward.save.gold });
 
     const loot = this.cfg.get('balance').loot;
+
+    // ── Материалы: основной поток наград (docs/ECONOMY.md) ──
+    // ⭐ ПРАВИЛО №1: суммарная частота наград не падает, меняется только их ВИД. Вещь роняется
+    // редко (10 %), но материалы — часто, и берутся они из ТОГО, ЧТО НА МОНСТРЕ НАДЕТО.
+    if (this.rng.chance(loot.materials.chance)) {
+      const per = loot.materials.tierUpEveryDepth;
+      const gains = salvageFromMonster(
+        m.def.gearRolls,
+        (id) => this.cfg.get('monster-gear').find((g) => g.id === id),
+        this.rng,
+        {
+          rarity: m.def.rarity,
+          tierShift: per > 0 ? Math.floor(level / per) : 0,
+          knownMaterial: (id) => this.cfg.get('craft-materials').some((c) => c.id === id && c.enabled),
+        },
+      );
+      if (Object.keys(gains).length) {
+        addMaterials(reward.save, gains);
+        this.events.push({ type: 'materials', playerId: reward.id, gains, x: m.pos.x, y: m.pos.y });
+      }
+    }
+
     if (this.rng.chance(loot.dropChance)) {
-      const theme = this.cfg.get('biomes')[0]!;
+      // ⚠ Биом ЭТАЖА, а не первый из списка: до этого `biomes[0]` игнорировал, где мы находимся,
+      // и магия дропа всюду считалась по крипте. Без этого «у каждого биома свои материалы» невозможно.
+      const biomes = this.cfg.get('biomes');
+      const theme = biomes.find((b) => b.id === this.world.biomeId) ?? biomes[0]!;
       const item = generateItem(
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),

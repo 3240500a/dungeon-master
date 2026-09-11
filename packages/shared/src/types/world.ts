@@ -75,6 +75,8 @@ export interface MonsterAffix {
 /** Гир монстра по слоту с редкостью и афиксами — для отображения (генератор мобов, тултип). */
 export interface MonsterGearRoll {
   slot: 'weapon' | 'armor' | 'helm' | 'shield';
+  /** id записи `monster-gear`. Нужен, чтобы с монстра падали материалы ИМЕННО его снаряжения. */
+  gearId?: string;
   name: string;
   rarity: MonsterRarity;   // normal/magic/rare (редкость конкретного предмета)
   affixes: string[];       // слова-афиксы этого предмета (компактный список)
