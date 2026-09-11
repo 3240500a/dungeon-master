@@ -564,6 +564,56 @@ export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProf
   return { rootYaw: root, residual, turning };
 }
 /**
+ * ДОВОРОТ ТАЗА ПОД НАПРАВЛЕНИЕ ДВИЖЕНИЯ (orientation warping).
+ *
+ * ЗАЧЕМ. Без него диагональ — это отдельная анимация, и библиотека растёт вдвое: восемь направлений
+ * на каждую скорость. С ним низ доворачивается к ходу и играет «вперёд», верх отворачивается обратно
+ * к прицелу — диагоналей как клипов не нужно вовсе.
+ *
+ * ТРИ ОГРАНИЧИТЕЛЯ, и все три обязательны:
+ *  1. БЛИЖАЙШАЯ ОСЬ. Ход спиной — это не «доворот на 180», а обычный шаг назад: угол складывается
+ *     к ближайшей оси (вперёд/назад), доворачивается только остаток. Без этого на беге спиной таз
+ *     уезжал в произвольную сторону и ноги скрещивались — замер на 180°: 0 % перекрёста → 28 %.
+ *  2. ПОТОЛОК `warpMax` — дальше низ читается вывернутым. Остаток сверх потолка никуда не девается:
+ *     он остаётся боковой компонентой выноса, то есть страйфом. Отдельный «порог страйфа» не нужен.
+ *  3. БЮДЖЕТ СКРУТКИ. Верх обязан отвернуться ровно на угол доворота, иначе персонаж перестанет
+ *     целиться туда, куда целится на самом деле, — а прицел в этой игре видимая вещь. Поэтому доворот
+ *     урезается так, чтобы остаточная скрутка влезла в `maxTwist` профиля.
+ *
+ * Чистая функция (только числа) — проверяется в node без сцены. Выбор «вперёд/назад» возвращается
+ * наружу, потому что он с ГИСТЕРЕЗИСОМ: ровно на 90° иначе щёлкает туда-сюда каждый кадр.
+ */
+export type DirWarp = { warp: number; back: boolean };
+export const DIR_WARP0: DirWarp = { warp: 0, back: false };
+/** Полуширина зоны нерешительности вокруг 90°: вошли в «назад» на 102°, вышли на 78°. */
+const BACK_HYST = 12 * Math.PI / 180;
+
+export function stepDirWarp(
+  prev: DirWarp, rootYaw: number, aimYaw: number, vx: number, vz: number,
+  maxTwist: number, dt: number,
+  cfg: { on: number; maxDeg: number; smooth: number },
+): DirWarp {
+  let want = 0, back = prev.back;
+  if (cfg.on > 0.5 && Math.hypot(vx, vz) > MOVE_EPS_WARP) {
+    const d = wrapPi(Math.atan2(vx, vz) - rootYaw);
+    back = Math.abs(d) > Math.PI / 2 + (back ? -BACK_HYST : BACK_HYST);
+    const rel = back ? wrapPi(d - Math.PI) : d;      // «назад» меряем от хвоста, а не от носа
+    const cap = Math.abs(cfg.maxDeg) * Math.PI / 180;
+    want = clamp(rel, -cap, cap);
+    // Бюджет: после доворота верх крутится на (residual − want) и обязан влезть в maxTwist.
+    // Остаток берём УЖЕ подрезанным — ровно то число, что отдаёт `stepTorsoLead` и что реально
+    // ляжет на позвоночник. Считать от сырого значит разрешить доворот, который при отставшем
+    // тазе (прицел дальше предела скрутки) утащит верх за предел.
+    const residual = clamp(wrapPi(aimYaw - rootYaw), -maxTwist, maxTwist);
+    want = clamp(want, residual - maxTwist, residual + maxTwist);
+  }
+  const k = cfg.smooth > 1e-4 ? Math.min(1, dt / cfg.smooth) : 1;
+  return { warp: prev.warp + (want - prev.warp) * k, back };
+}
+/** Ниже этой скорости (u/с) направление хода — шум, доворачивать не по чему. */
+const MOVE_EPS_WARP = 4;
+
+/**
  * ТОЛЬКО АДДИТИВНАЯ скрутка цепочки [Spine..Head] (веса сумм.=1), БЕЗ таза.
  *
  * Отделено от `applyTorsoTwist` ради РУЧНОГО ПОЗИНГА (Ф21.4): в редакторе таз АВТОРСКИЙ,
@@ -704,6 +754,12 @@ export class PosePlayer {
   /** Вес ГЕЙТА в ногах (0 = поза idle-стойки, 1 = шаг планировщика). Сглажен: резкий скачок = дребезг ног. */
   legMag = 0;
   private stepHold = 0;   // остаточное удержание «ноги ведёт гейт» после подшага (антидребезг мерцающего settled)
+  /** Текущий (сглаженный) доворот таза под направление хода + выбор оси «вперёд/назад». */
+  private dirWarp: DirWarp = { ...DIR_WARP0 };
+  /** Доворот таза этого кадра — редактору для читаута. */
+  get dirWarpDeg(): number { return this.dirWarp.warp * 180 / Math.PI; }
+  /** Идём ли спиной вперёд (доворот меряется от хвоста) — редактору для читаута. */
+  get dirWarpBack(): boolean { return this.dirWarp.back; }
   readonly atk: AttackState = { clip: null, t: -1 };
   constructor(
     private human: Humanoid,
@@ -776,8 +832,13 @@ export class PosePlayer {
   get attackPinKp(): number | null { return this.atkPhys('__pinKp'); }
   /** Видимый facing (радианы) = ПРИЦЕЛ (куда целится корпус/голова), не таз. */
   get facing(): number { return this.aimYaw; }
-  /** Текущий yaw таза (лаг) — для отладки/редактора. */
-  get pelvisYaw(): number { return this.rootYaw; }
+  /**
+   * Текущий yaw таза (лаг) — для отладки/редактора И ДЛЯ ЗАПЕКАНИЯ.
+   * Отдаём РЕАЛЬНО ПРИМЕНЁННЫЙ угол, вместе с доворотом: ровно он уходит в `Hips.rotation.y`, и ровно
+   * его вычитает `neutralizeFacing` при запекании клипа. Поле `rootYaw` живёт без доворота по другой
+   * причине (обратная связь `stepTorsoLead`), и отдавать наружу его было бы ложью.
+   */
+  get pelvisYaw(): number { return this.rootYaw + this.dirWarp.warp; }
   /** Пройденный путь тредмила (интеграл скорости) — редактору для скролла пола/оффсета маркеров. */
   get posX(): number { return this.px; }
   get posZ(): number { return this.pz; }
@@ -815,7 +876,17 @@ export class PosePlayer {
     this.aimStableFor = Math.abs(wrapPi(this.aimYaw - this.prevAim)) < 0.01 ? this.aimStableFor + dt : 0;
     this.prevAim = this.aimYaw;
     const tl = stepTorsoLead(this.rootYaw, this.aimYaw, twist, dt, this.turning, this.aimStableFor > twist.relaxTime);
-    const yaw = tl.rootYaw, tw = tl.residual; this.rootYaw = yaw; this.turning = tl.turning;
+    // ⚠ КОПИМ БЕЗ ДОВОРОТА. `stepTorsoLead` получает свой прошлый результат как вход; запиши сюда
+    // доворот — и он на следующем кадре станет базой для нового доворота, то есть закрутится сам.
+    this.rootYaw = tl.rootYaw; this.turning = tl.turning;
+    this.dirWarp = stepDirWarp(this.dirWarp, tl.rootYaw, this.aimYaw, vx, vz, twist.maxTwist, dt,
+      { on: GAIT.warpOn, maxDeg: GAIT.warpMax, smooth: GAIT.warpSmooth });
+    const warp = this.dirWarp.warp;
+    // Таз уезжает к ходу, верх на столько же отворачивается обратно — прицел остаётся на месте.
+    // Подрезка — страховка на ПЕРЕХОДЕ: доворот сглаживается за `warpSmooth`, и если прицел за это
+    // время улетел, сумма успевает вылезти за предел. Шею не выворачиваем ни на кадр.
+    const yaw = tl.rootYaw + warp;
+    const tw = clamp(tl.residual - warp, -twist.maxTwist, twist.maxTwist);
     this.px += vx * dt; this.pz += vz * dt;
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
     this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)

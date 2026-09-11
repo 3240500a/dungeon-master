@@ -3971,6 +3971,30 @@ function renderLoco(): void {
     ys.oninput = () => { gaitYawManual = parseFloat(ys.value) * Math.PI / 180; yv.textContent = ys.value + '°'; }; yr.append(ys, yv); fr.append(yr);
   }
   gaitReadout = el('div', 'color:#8fb7ff;font-size:11px;margin-top:4px'); gaitReadout.textContent = 'скорость: — (пад: центр → шаг, край → бег)'; body.append(gaitReadout);
+  // ДОВОРОТ ТАЗА ПОД ДВИЖЕНИЕ (Ф0, прототип): низ разворачивается к ходу и шагает «вперёд», верх
+  // продолжает целиться. Тумблер живёт ЗДЕСЬ, а не в «Про»-тюнинге: ради него всё и заводится —
+  // включил, поводил точку по паду, выключил, сравнил. Ответ на вопрос «4 направления или 8».
+  const wb = el('div', 'margin-top:6px;border:1px solid #39415a;border-radius:6px;padding:5px'); body.append(wb);
+  const wr = el('div', 'display:flex;gap:6px;align-items:center'); wb.append(wr);
+  wr.append(pbtn(GAIT.warpOn ? 'доворот таза: ВКЛ' : 'доворот таза: выкл',
+    () => { GAIT.warpOn = GAIT.warpOn ? 0 : 1; saveGaitCfg(); renderLoco(); }, !!GAIT.warpOn));
+  warpReadout = el('span', 'color:#9ae6a0;font-size:11px'); warpReadout.textContent = 'таз 0°'; wr.append(warpReadout);
+  if (GAIT.warpOn) {
+    const wsl = (label: string, key: 'warpMax' | 'warpSmooth', max: number, step: number, unit: string): void => {
+      const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
+      const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = label; row.append(nm);
+      const sl = el('input', 'flex:2') as HTMLInputElement;
+      sl.type = 'range'; sl.min = '0'; sl.max = String(max); sl.step = String(step); sl.value = String(GAIT[key]);
+      const v = el('span', 'width:46px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = GAIT[key] + unit;
+      sl.oninput = () => { GAIT[key] = parseFloat(sl.value); v.textContent = GAIT[key] + unit; saveGaitCfg(); };
+      row.append(sl, v); wb.append(row);
+    };
+    wsl('потолок доворота', 'warpMax', 80, 5, '°');
+    wsl('сглаживание', 'warpSmooth', 0.4, 0.01, ' с');
+    const wn = el('div', 'color:#7a869e;font-size:10px;margin-top:3px');
+    wn.textContent = 'Остаток сверх потолка остаётся боковым выносом — это и есть переход на страйф.';
+    wb.append(wn);
+  }
   bakeGaitSection();
   if (uiPro) renderGaitTune();   // тюнинг походки (24 ползунка GAIT/POSE/GX) — только Про
   renderUpperPanel();
@@ -4279,6 +4303,7 @@ let gaitPx = 0, gaitPz = 0; const GAIT_MAXSPD = 120;   // зеркало тре�
 let gaitMoveMag = 0, gaitLegMag = 0;   // зеркало moveMag/legMag плеера (ридаут/маркеры)
 let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing (прицел): по движению (поворот) / ручной угол (страйф) → в setYaw
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
+let warpReadout: HTMLElement | null = null;                // живой угол доворота таза (Ф0) — глазами его на диагонали не отличить
 let editorRootYaw = 0;                                      // зеркало pelvisYaw плеера (updateTurnTest идёт по тазу)
 let editorTwistStates: TwistStates = TWIST_STATES_DEFAULT();   // 3 профиля скрутки (стой/ходьба/бег) текущего персонажа
 const editTwist = (): TwistProfile => editorTwistStates[turnTestMove];   // редактируемый профиль = ВЫБРАННОЕ состояние (кнопка стой/ходьба/бег)
@@ -4582,7 +4607,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLeadBias', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk'] as const;
 const GX_KEYS = ['armDown', 'elbowBend'] as const;
 type NumRec = Record<string, number>;
@@ -4643,6 +4668,7 @@ function stepGait(dt: number): void {
   // Зеркалим состояние плеера для маркеров/скролла пола/ридаута.
   gaitMoveMag = player.moveMag; gaitLegMag = player.legMag;
   gaitPx = player.posX; gaitPz = player.posZ; editorRootYaw = player.pelvisYaw;
+  if (warpReadout && warpReadout.isConnected) warpReadout.textContent = `таз ${player.dirWarpDeg.toFixed(0)}°`;
   if (plantDrag < 0 && spd > 1) {   // активная ячейка плант-сетки следит за падом (body-локальное направление движения)
     const fwdC = vx * Math.sin(editorRootYaw) + vz * Math.cos(editorRootYaw), latC = vx * Math.cos(editorRootYaw) - vz * Math.sin(editorRootYaw);
     let a = Math.atan2(latC, fwdC) / DIR_STEP; a = ((a % 8) + 8) % 8;
