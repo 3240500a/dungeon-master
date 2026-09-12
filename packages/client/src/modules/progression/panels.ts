@@ -1,4 +1,4 @@
-import { ATTRIBUTES, abilityCooldown, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
+import { ATTRIBUTES, abilityCooldown, resolveActive, shapeSkillPacket, type SkillDamageShape, abilityRankMult, activeToggleInfos, deriveStats, effectiveLevel, finalAttributes, xpForLevel, debuffLabel, debuffIcon, weaponDebuffs, elementDebuffs, armorPoise, isDotKind, emptyPacket, PERCENT_STATS, type Attribute, type Attributes, type DamageType, type DerivedStats, type DebuffKind, type DebuffApply, type Item, type StatModifier } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import type { Panel, PanelFactory } from '../../ui/domUi.js';
 import { attackDamageByType } from '../combat/playerStats.js';
@@ -361,8 +361,12 @@ export const characterPanel: PanelFactory = (app, ui) => {
       const attackAilments = (binding: string | null): DebuffApply[] => {
         const weapon = state.save.equipment.weapon;
         const node = (binding && binding !== 'attack') ? skillTree?.nodes.find((n) => n.id === binding) : undefined;
-        const act = node?.effect.active;
-        const el: DamageType = (node ? (elementOf(node) ?? 'physical') : 'physical') as DamageType;
+        // Тот же шов: вставка умеет добавить статус (`tune.ailment`) и сменить стихию.
+        const act = (binding && binding !== 'attack' ? resolvedOf(binding)?.active : undefined) ?? node?.effect.active;
+        // Поле `element` есть только у наступательных категорий — сужаем, прежде чем читать.
+        const actEl = act && (act.category === 'attack' || act.category === 'cast' || act.category === 'curse')
+          ? act.element : undefined;
+        const el: DamageType = (node ? ((actEl ?? elementOf(node)) ?? 'physical') : 'physical') as DamageType;
         // Итоговый состав удара — тот же, что в разбивке урона: скилл через skillByType (scope-множитель +
         // добавка стихии + конверсия), базовая атака — byType. Статусы идут по стихиям этого пакета.
         const pkt = emptyPacket();
@@ -402,23 +406,40 @@ export const characterPanel: PanelFactory = (app, ui) => {
 
       // Разбивка урона скилла по типам (как в движке applySkillDamage): множитель по scope
       // (base — только баз. тип оружия / all — весь пакет) → добавка стихии (addElementPct) → конверсия (convertPct).
+      /**
+       * Урон скилла по типам — ЧЕРЕЗ `shapeSkillPacket`, ту же функцию, которой формирует удар движок.
+       *
+       * ⚠ Здесь стояла СВОЯ копия той же формулы (множитель по scope → добавка стихии → конверсия).
+       * Копия — это второй источник правды: разойдётся с движком на первой же правке, и панель
+       * начнёт обещать не тот урон, который будет нанесён. Гоняем движковую функцию дважды —
+       * по нижней границе и по верхней.
+       */
       const skillByType = (active: { damageMult: number; convertPct?: number; multScope?: 'base' | 'all'; addElementPct?: number }, rank: number, el: DamageType): Record<DamageType, { min: number; max: number }> => {
-        const mult = active.damageMult * abilityRankMult(rank);
-        const baseType = (state.save.equipment.weapon?.damageType ?? 'physical') as DamageType;
+        const shape: SkillDamageShape = {
+          mult: active.damageMult * abilityRankMult(rank),
+          multScope: active.multScope ?? 'base',
+          addElementPct: active.addElementPct ?? 0,
+          convertPct: active.convertPct ?? 0,
+          baseType: (state.save.equipment.weapon?.damageType ?? 'physical') as DamageType,
+          element: el,
+        };
+        const lo = emptyPacket(), hi = emptyPacket();
+        for (const t of DMG_TYPES) { lo[t] = byType[t].min; hi[t] = byType[t].max; }
+        shapeSkillPacket(lo, shape);
+        shapeSkillPacket(hi, shape);
         const bt = {} as Record<DamageType, { min: number; max: number }>;
-        for (const t of DMG_TYPES) bt[t] = { min: byType[t].min, max: byType[t].max };
-        if ((active.multScope ?? 'base') === 'all') { for (const t of DMG_TYPES) { bt[t].min *= mult; bt[t].max *= mult; } }
-        else { bt[baseType].min *= mult; bt[baseType].max *= mult; }
-        const add = active.addElementPct ?? 0;
-        if (add > 0) { bt[el].min += bt[baseType].min * add; bt[el].max += bt[baseType].max * add; }
-        const conv = active.convertPct ?? 0;
-        if (conv > 0) {
-          let cMin = 0, cMax = 0;
-          for (const t of DMG_TYPES) { cMin += bt[t].min * conv; cMax += bt[t].max * conv; bt[t].min *= (1 - conv); bt[t].max *= (1 - conv); }
-          bt[el].min += cMin; bt[el].max += cMax;
-        }
+        for (const t of DMG_TYPES) bt[t] = { min: lo[t], max: hi[t] };
         return bt;
       };
+
+      /**
+       * СПОСОБНОСТЬ С УЧЁТОМ ВСТАВОК — тот же шов `resolveActive`, которым считает сервер.
+       *
+       * ⚠ Панель читала `node.effect.active` СЫРЫМ, то есть прямо из конфига. Вставки в бою
+       * работали, а в стат-листе — нет: игрок ставил «Пламенное лезвие» (+35 % урона стихией),
+       * видел изменившуюся цену и откат в сборке скила и НЕ видел ни одного лишнего очка урона.
+       */
+      const resolvedOf = (nodeId: string): ReturnType<typeof resolveActive> => resolveActive(app.config, state.save, nodeId);
 
       // Два урона (как D2): что назначено на ЛКМ и на ПКМ (атака оружием / скилл).
       const dmgRowFor = (label: string, binding: string | null): HTMLElement => {
@@ -434,10 +455,12 @@ export const characterPanel: PanelFactory = (app, ui) => {
           attachTooltip(row, () => weaponTip() + ailmentTip('attack'));
         } else if (binding) {
           const node = skillTree?.nodes.find((n) => n.id === binding);
-          const active = node?.effect.active;
+          const active = resolvedOf(binding)?.active ?? node?.effect.active;
           if (node && active && (active.category === 'attack' || active.category === 'cast')) {
             const rank = state.save.skills[binding] ?? 1;
-            const el = (elementOf(node) ?? 'physical') as DamageType;
+            // ⚠ Стихию тоже берём из РАЗРЕШЁННОЙ способности: вставка умеет её менять
+            // (`tune.element`), и по сырому узлу «Пламенное лезвие» так и осталось бы физическим.
+            const el = ((active.element ?? elementOf(node)) ?? 'physical') as DamageType;
             const sbt = skillByType(active, rank, el);   // итоговый урон по типам (scope-множитель + добавка + конверсия)
             let sMin = 0, sMax = 0;
             for (const t of DMG_TYPES) { sMin += sbt[t].min; sMax += sbt[t].max; }
