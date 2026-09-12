@@ -100,7 +100,7 @@ describe('без скорости честного ответа нет', () => {
 
 describe('предложения настроек', () => {
   const m = { periodSec: 1, speed: 50, stepLen: 25, footRange: 24, slide: 0.04, duty: 0.3, lift: 9, bob: 2,
-    stanceWidth: 7, armSwing: 0.6, armSh: -0.2, armEl: 0.5, turnRad: null, frames: 60 };
+    stanceWidth: 7, armSwing: 0.6, armSh: -0.2, armEl: 0.5, turnRad: null, steps: 2, frames: 60 };
 
   it('ничего не применяют сами — только «было → стало»', () => {
     const s = gaitSuggestions(m, { stepWalk: 35 }, false);
@@ -117,5 +117,18 @@ describe('предложения настроек', () => {
 
   it('совпавшее значение в список не попадает — незачем показывать «было 25 → стало 25»', () => {
     expect(gaitSuggestions(m, { stepWalk: 25 }, false).find((x) => x.key === 'stepWalk')).toBeUndefined();
+  });
+
+  it('ПРЯМАЯ походка настроек ПОВОРОТА не предлагает — иначе они утонули бы в шуме', () => {
+    const keys = gaitSuggestions({ ...m, turnRad: 0.02 }, {}, false).map((x) => x.key);
+    expect(keys).not.toContain('turnStep');
+    expect(keys).not.toContain('turnLimitDeg');
+  });
+
+  it('ПОВОРОТНЫЙ клип даёт угол на приставной шаг и порог поворота', () => {
+    // Разворот на 90° за 1 с в два приёма → 45° на шаг, средняя скорость π/2 рад/с.
+    const t = gaitSuggestions({ ...m, turnRad: Math.PI / 2, periodSec: 1, steps: 2 }, {}, false);
+    expect(t.find((x) => x.key === 'turnLimitDeg')!.now).toBeCloseTo(45, 1);
+    expect(t.find((x) => x.key === 'turnStep')!.now, 'порог НИЖЕ средней скорости — иначе мигал бы').toBeLessThan(Math.PI / 2);
   });
 });

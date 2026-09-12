@@ -53,6 +53,8 @@ export interface GaitMeasure {
   armEl: number;
   /** Поворот персонажа за клип (рад) — для поворотных клипов. `null`, если корня нет. */
   turnRad: number | null;
+  /** Сколько ШАГОВ в клипе: переходов «стопа оторвалась». Для поворотных — во сколько приёмов разворот. */
+  steps: number;
   frames: number;
 }
 
@@ -153,6 +155,18 @@ export function analyzeGait(clip: Clip, opts: AnalyzeOptions = {}): GaitMeasure 
     }
   }
 
+  // ── ШАГИ: считаем отрывы опорной стопы. Для поворотного клипа это «во сколько приёмов развернулись»,
+  // и без этого числа угол на шаг из клипа не достать — а именно он и настраивает поворот на месте.
+  let steps = 0;
+  for (let leg = 0 as 0 | 1; leg < 2; leg = (leg + 1) as 0 | 1) {
+    let was = false;
+    for (let i = 1; i < n; i++) {
+      const low = footY[leg][i]! <= thr;
+      if (was && !low) steps++;
+      was = low;
+    }
+  }
+
   // ── Размах стопы вдоль тела (диагностика скольжения) ──
   const range = (a: number[]): number => Math.max(...a) - Math.min(...a);
   const footRange = (range(footZ[0]) + range(footZ[1])) / 2;
@@ -174,6 +188,7 @@ export function analyzeGait(clip: Clip, opts: AnalyzeOptions = {}): GaitMeasure 
     armSh: mean(shX),
     armEl: mean(elY),
     turnRad,
+    steps,
     frames: n,
   };
 }
@@ -206,5 +221,14 @@ export function gaitSuggestions(m: GaitMeasure, cur: Record<string, number>, fas
   put(S('armSwing', 'armSwingRun'), 'амплитуда маха', m.armSwing);
   put(S('armSh', 'armShRun'), 'база плеча', m.armSh);
   put(S('armEl', 'armElRun'), 'локоть — база', m.armEl);
+  // ── ПОВОРОТ НА МЕСТЕ (Ф5). Только если клип действительно поворотный: у прямой походки корень почти
+  // не крутится, и подсовывать оттуда «настройки поворота» значило бы испортить их шумом.
+  if (m.turnRad !== null && Math.abs(m.turnRad) > 0.35 && m.periodSec > 1e-3) {
+    const rate = Math.abs(m.turnRad) / m.periodSec;           // средняя скорость доворота, рад/с
+    // Порог «мы крутимся» ставим НИЖЕ средней скорости: на самой средней он срабатывал бы ровно в
+    // половине кадров клипа и мигал. Треть — запас, при котором поворот опознаётся с начала движения.
+    put('turnStep', 'порог поворота (рад/с)', rate * 0.35);
+    if (m.steps > 0) put('turnLimitDeg', 'угол на приставной шаг (°)', Math.abs(m.turnRad) * 180 / Math.PI / m.steps);
+  }
   return out;
 }
