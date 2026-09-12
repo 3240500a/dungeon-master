@@ -6,7 +6,7 @@ import { characterPanel } from '@dm/client/modules/progression/panels.js';
 import { inventoryPanel } from '@dm/client/modules/inventory/inventoryPanel.js';
 import { renderPassiveTree } from '@dm/client/modules/skills-passive/treeView.js';
 import { devFetch } from '@dm/client/devAuth.js';
-import { renderSkillTree } from '@dm/client/modules/skills/skillTreeView.js';
+import { skillsPanel } from '@dm/client/modules/skills/skillsPanel.js';
 
 /**
  * Вкладка «Калькулятор» — планировщик персонажа 1:1 с игрой: реальные панели (стат-лист `characterPanel`,
@@ -37,6 +37,8 @@ let charListLoading = false;
 let harness: App | null = null;
 let hkey = '';
 let charInst: Panel | null = null;
+/** Панель скилов держим рядом с характер-панелью: у неё своё состояние (открытый скил, прокрутка). */
+let skillInst: Panel | null = null;
 let rendering = false;         // анти-реэнтранси: панели/held-item шлют state:changed по ходу рендера
 let renderQueued = false;      // коалесцирование отложенной перерисовки (пакеты команд рисуют один раз, после пакета)
 
@@ -131,6 +133,7 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
     harness.bus.on('state:changed', () => scheduleRender(page, data));
     const uiStub = { refresh: () => renderCalcPage(page, data) } as unknown as DomUi;
     charInst = characterPanel(harness, uiStub);
+    skillInst = skillsPanel(harness, uiStub);
     hkey = key;
   }
   const app = harness;
@@ -164,7 +167,15 @@ function renderCalcInner(page: HTMLElement, data: Record<string, unknown>): void
 
   if (tab === 'gear') left.appendChild(gearPanel(app, () => renderCalcPage(page, data), reg));
   else if (tab === 'mastery') { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:560px;overflow:hidden'); renderPassiveTree(app, box); left.appendChild(box); }
-  else { const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:560px;overflow:hidden'); renderSkillTree(app, box); left.appendChild(box); }
+  else {
+    // ⭐ НАСТОЯЩАЯ панель скилов игры целиком: дерево + СБОРКА СКИЛА (гнёзда и вставки) + бинды.
+    // Раньше здесь рисовалось одно дерево, и собрать скил в планировщике было нечем — а вставки
+    // меняют урон сильнее, чем половина узлов дерева. Панель та же, что видит игрок, поэтому
+    // расхождению «в редакторе одно, в игре другое» взяться неоткуда.
+    const box = h('div', 'border:1px solid #2c2c3a;border-radius:8px;background:#0e0e15;height:560px;overflow:auto');
+    skillInst!.render(box);
+    left.appendChild(box);
+  }
 
   // ── СПРАВА (всегда): полная статистика игры (характер-панель уже включает «Бонусы урона») + монстр/TTK ──
   const statsBox = h('div', '');
