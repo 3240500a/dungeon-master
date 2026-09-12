@@ -473,7 +473,9 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR], idle, m);
   blendBone(human, 'LeftLowerLeg', [t.knL, 0, 0], idle, m);
   blendBone(human, 'RightLowerLeg', [t.knR, 0, 0], idle, m);
-  blendBone(human, 'LeftFoot', [0, 0, 0], idle, m); blendBone(human, 'RightFoot', [0, 0, 0], idle, m);
+  // Стопа. Раньше здесь стоял жёсткий ноль — она не анимировалась ВООБЩЕ, и носок маховой ноги
+  // чиркал по полу. Опорную всё равно перезапишет заземление (`groundFeet`), маховую ведёт поза.
+  blendBone(human, 'LeftFoot', [t.ankL, 0, 0], idle, m); blendBone(human, 'RightFoot', [t.ankR, 0, 0], idle, m);
   blendBone(human, 'LeftToes', [0, 0, 0], idle, m); blendBone(human, 'RightToes', [0, 0, 0], idle, m);
   // Аддукт масштабируем ТОЛЬКО когда idle АВТОРИТ ноги (тогда idle m=0 = авторская ширина, гейт m=1 = компенсирован). Без
   // авторских ног (монстры/процедурка, idle не задаёт LeftUpperLeg) ноги ВСЕГДА реконструкция → аддукт полный (иначе splay бинда).

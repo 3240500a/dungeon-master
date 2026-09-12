@@ -4318,6 +4318,12 @@ function renderGaitTune(): void {
   row2('доля опоры', GAITo, 'dutyWalk', 'dutyRun', 0.05, 0.9, 0.005);
   row2('потолок бедра', GAITo, 'hipFwdLim', 'hipFwdLimRun', 0.1, 2.2, 0.01);
   row2('амплитуда бедра', GAITo, 'hipSwing', 'hipSwingRun', 0.2, 3, 0.01);
+  // ГОЛЕНОСТОП. Правит ТОЛЬКО маховую ногу: опорную забирает заземление и кладёт плоско на пол,
+  // поэтому ручки «носок в опоре» здесь нет — она была бы мёртвой.
+  row2('держать подошву (0 = болтается за голенью)', GAITo, 'ankLevel', 'ankLevelRun', 0, 1.4, 0.01);
+  row2('подъём носка поверх удержания', GAITo, 'toeLift', 'toeLiftRun', 0, 1.2, 0.01);
+  row2('где пик подъёма (0.5 = середина)', GAITo, 'toeLiftPhase', 'toeLiftPhaseRun', 0.05, 0.95, 0.01,
+    { dep: [[GAITo, 'toeLift', 'toeLiftRun']], depLabel: 'подъём носка' });
   row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -20, 30, 0.25);
   row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 3, 0.02);
   row2('предел кроссовера', GAITo, 'crossClamp', 'crossClampRun', 0, 99, 1);
@@ -5198,7 +5204,8 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
 const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
-  'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+  'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
+  'ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
 // читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',

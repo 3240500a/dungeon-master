@@ -15,6 +15,16 @@ export interface PoseTargets {
   hipL: number; hipR: number; knL: number; knR: number;
   /** Боковой вынос бедра (+ = наружу/вправо). Без него приставные шаги вырождаются в топтание. */
   hipLatL: number; hipLatR: number;
+  /**
+   * ГОЛЕНОСТОП, наклон стопы вокруг X. ⚠ ЗНАК ЗАМЕРЕН, а не угадан: МИНУС поднимает носок
+   * (кость пальцев уходит с Y=0 на +2.42 при −0.4 рад), плюс — опускает.
+   *
+   * Заполняется ТОЛЬКО на маховой ноге, и это не упрощение: заземление (`footIk.groundFeet`)
+   * владеет ОПОРНОЙ стопой и кладёт её плоско на пол, а маховую сознательно оставляет позе
+   * («её носок ведёт поза»). Писать сюда что-то для опорной — значит завести ручку, которую
+   * игра немедленно затирает.
+   */
+  ankL: number; ankR: number;
   shL: number; shR: number; elL: number; elR: number;
   lean: number; twist: number; bobY: number; splay: number;
   /** Скрутка ГРУДИ и ВЕРХНЕЙ ГРУДИ в такт шагу (рад, вокруг Y). `twist` крутит поясницу, эти две —
@@ -161,6 +171,18 @@ export const GAIT = {
   liftWalk: 7, liftRun: 15,                  // ПОДЪЁМ маховой стопы на ходьбе / беге (интерп по sb)
   cadence: 1,                                // множитель частоты цикла: длину шага делим на cadence (>1 → короче шаг, чаще семенит). Антискольз-тюн бега В ИГРЕ; движение НЕ меняет.
   dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
+  // ── ГОЛЕНОСТОП В ПЕРЕНОСЕ ──────────────────────────────────────────────────────────────────────
+  // Голеностопа не было ВООБЩЕ: поза жёстко ставила кости стопы ноль, и стопа ехала за голенью как
+  // приваренная. Замер на отрыве: голень наклонена на 54°, стопа вместе с ней, носок уходит на 1.54
+  // НИЖЕ пола (пол = FOOT_Y 1.5) — вот он и чиркал. Наклон стопы = `бедро + колено + константа рига`,
+  // проверено покадрово: расхождение 0.165 рад держится и на отрыве, и на приземлении.
+  //
+  // `ankLevel` — главная ручка: насколько голеностоп ГАСИТ наклон голени и держит подошву в её
+  // посадке. 1 = держит полностью (стопа больше не болтается), 0 = прежнее поведение бит в бит.
+  ankLevel: 1, ankLevelRun: 1,
+  // `toeLift` — добавка НОСКОМ ВВЕРХ поверх удержания: чистый стиль и запас клиренса.
+  toeLift: 0.12, toeLiftRun: 0.2,
+  toeLiftPhase: 0.45, toeLiftPhaseRun: 0.4,   // где пик добавки: 0.5 — середина переноса, меньше — раньше
   hipFwdLim: 0.95, hipFwdSoft: 0.3,          // мягкий потолок форвардного угла бедра
   hipFwdLimRun: 0.95,                        // потолок бедра на бегу (интерп по скорости)
   // АМПЛИТУДА БЕДРА: во сколько раз бедро отрабатывает подъём маховой стопы. Подъём IK почти целиком
@@ -325,6 +347,20 @@ export const strafeMix = (mFwd: number, mLat: number): number => {
 };
 
 /**
+ * ПОДЪЁМ НОСКА В ПЕРЕНОСЕ, 0..1 по доле переноса `t`.
+ *
+ * Ноль на отрыве и ноль на приземлении — иначе стопа дёрнулась бы в обоих концах: на отрыве она
+ * ещё на полу, на приземлении её тут же забирает заземление и кладёт плоско. Пик стоит там, где
+ * скажет `ph`: клиренс нужен не в середине, а там, где стопа реально ближе всего к полу, и у
+ * разной длины шага это разный момент.
+ */
+export const toeCurve = (t: number, ph: number): number => {
+  const p = clamp(ph, 0.05, 0.95);
+  const u = t < p ? (t / p) * 0.5 : 0.5 + ((t - p) / (1 - p)) * 0.5;
+  return Math.sin(Math.PI * clamp(u, 0, 1));
+};
+
+/**
  * «НАЗАДНОСТЬ» 0..1 — единица на чистом ходе спиной, ноль на ходе вперёд и на чистом боку.
  *
  * Считается ЧЕРЕЗ боковитость, а не своим отдельным порогом. Два независимых порога неминуемо
@@ -361,7 +397,7 @@ interface Leg {
   fx: number; fz: number;   // откуда переносим
   tx: number; tz: number;   // куда переносим
 }
-interface LegAngles { hip: number; knee: number; lat: number }
+interface LegAngles { hip: number; knee: number; lat: number; ank: number }
 
 /**
  * 2-костная IK в сагиттальной плоскости тела: вектор от бедра к стопе в мире (dx,dz) + по высоте (dy<0).
@@ -386,7 +422,7 @@ function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: numb
   // (hip>0, отработан идеально) не трогаем.
   const lim = fwdLim, soft = GAIT.hipFwdSoft;
   if (hip < -lim) hip = -(lim + soft * Math.tanh((-hip - lim) / soft));
-  return { hip, knee: Math.PI - beta, lat: Math.atan2(lx, -dy) };
+  return { hip, knee: Math.PI - beta, lat: Math.atan2(lx, -dy), ank: 0 };
 }
 
 /** Catmull-Rom по опорным точкам [x,z] (равномерная, концы продублированы), параметр u∈[0,1]. 2 точки → прямой лерп. */
@@ -603,6 +639,9 @@ class StepPlanner {
     const leadS = (i: 0 | 1): number => sl(i) * dutyS(i) + sl(i) * GAIT.aheadMul + speed * GAIT.predictSec;
     const fwdLimS = (i: 0 | 1): number => locoVal('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, m);
     const hipSwS = (i: 0 | 1): number => locoVal('hipSwing', 'hipSwingRun', GAIT.hipSwing, GAIT.hipSwingRun, i, m);
+    const ankLvlS = (i: 0 | 1): number => locoVal('ankLevel', 'ankLevelRun', GAIT.ankLevel, GAIT.ankLevelRun, i, m);
+    const toeLiftS = (i: 0 | 1): number => locoVal('toeLift', 'toeLiftRun', GAIT.toeLift, GAIT.toeLiftRun, i, m);
+    const toePhS = (i: 0 | 1): number => locoVal('toeLiftPhase', 'toeLiftPhaseRun', GAIT.toeLiftPhase, GAIT.toeLiftPhaseRun, i, m);
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
@@ -796,6 +835,18 @@ class StepPlanner {
         const g = ik(wx - hx, wz - hz, FOOT_Y - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
         a.hip = g.hip + (a.hip - g.hip) * k;
       }
+      // ГОЛЕНОСТОП. Только маховая: опорную забирает заземление и кладёт плоско (см. PoseTargets.ankL).
+      //
+      // Первое слагаемое — УДЕРЖАНИЕ ПОДОШВЫ. Наклон стопы в риге складывается из бедра и колена
+      // (замерено покадрово), поэтому гасим ровно их сумму: подошва перестаёт болтаться вслед за
+      // голенью. Это и убирает чирканье — носок уходил под пол не «мало поднимался», а был жёстко
+      // приварен к голени, наклонённой на отрыве на 54°.
+      //
+      // Второе — добавка носком вверх поверх удержания. Знак МИНУС ЗАМЕРЕН: он поднимает носок.
+      if (l.sw > 0) {
+        a.ank = -(a.hip + a.knee) * ankLvlS(i as 0 | 1)
+          - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1));
+      }
       out.push(a);
     }
     return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y };   // gaitToHumanoid: 30 + bobY = hipY (актуальная высота таза; bobMult уже в dip)
@@ -816,7 +867,7 @@ export class PoseDriver {
   /** Боевое состояние 0..1 — ИЗ ИГРЫ (серверный `inCombat`), тот же, что блендит стойку. */
   setCombat(c: number): void { this.combat = Math.max(0, Math.min(1, c)); if (this.planner) this.planner.combat = this.combat; }
   readonly out: PoseTargets = {
-    hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
+    hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, ankL: 0, ankR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
     lean: 0, twist: 0, bobY: 0, splay: 0, twChest: 0, twUpper: 0,
     shTwL: 0, shTwR: 0, shSpL: 0, shSpR: 0, hipTwL: 0, hipTwR: 0, leanSide: 0, headNod: 0, headTurn: 0, headTilt: 0,
     shoLX: 0, shoLY: 0, shoLZ: 0, shoRX: 0, shoRY: 0, shoRZ: 0,
@@ -885,8 +936,8 @@ export class PoseDriver {
     if (this.planner) {
       const w = this.w;
       const g = this.planner.update(dt, w.x, w.z, w.yaw, w.vx, w.vz);
-      o.hipL = g.l.hip; o.knL = g.l.knee; o.hipLatL = g.l.lat;
-      o.hipR = g.r.hip; o.knR = g.r.knee; o.hipLatR = g.r.lat;
+      o.hipL = g.l.hip; o.knL = g.l.knee; o.hipLatL = g.l.lat; o.ankL = g.l.ank;
+      o.hipR = g.r.hip; o.knR = g.r.knee; o.hipLatR = g.r.lat; o.ankR = g.r.ank;
       o.bobY = g.bobY;
       this.phase = this.planner.phase;
       drive = this.planner.moveAmt;
@@ -899,6 +950,7 @@ export class PoseDriver {
       o.knL = Math.max(0, -s0) * a0 * 1.3 + (walk0 ? 0.12 : 0);
       o.knR = Math.max(0, s0) * a0 * 1.3 + (walk0 ? 0.12 : 0);
       o.bobY = walk0 ? Math.abs(s2) * 2.0 : Math.sin(this.phase) * 0.7;
+      o.ankL = 0; o.ankR = 0;   // без планировщика фазы переноса нет — стопа плоская, как и было
     }
 
     const walking = drive > 0.05;
