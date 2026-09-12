@@ -26,6 +26,9 @@ export interface EditorPrefs {
   solver?: string;           // 'analytic' | 'fabrik'
   balance?: boolean;         // компенсация баланса
   groundFeet?: boolean;      // заземление стоп
+  snap?: boolean;            // шаг гизмо включён
+  snapMove?: number;         // шаг перемещения, ед. мира
+  snapRot?: number;          // шаг поворота, градусы
   floorMannequin?: boolean;  // манекен на полу
   // рабочее место
   tab?: string;              // выбранная вкладка панели

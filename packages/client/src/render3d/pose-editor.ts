@@ -128,13 +128,23 @@ scene.add(grid);
 const axes = new THREE.AxesHelper(20); axes.position.y = 0.03; scene.add(axes);
 
 const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); scene.add(gizmo.getHelper());
-// СНАП: в Простом режиме включён (5° / 1 юнит) — новичку проще попадать в круглые значения;
-// Shift во время драга снап отключает (точная правка). Раньше setTranslationSnap не звался ни разу.
-let snapOn = true;
+/**
+ * ШАГ ГИЗМО (снап). Включён по умолчанию — в круглые значения попадать проще; Shift во время драга
+ * его отключает для точной правки.
+ *
+ * Величины — НАСТРОЙКА РАБОЧЕГО МЕСТА (`pe_prefs`), а не контент: они не меняют того, как выглядит
+ * игра, и на сервер не уезжают (см. шапку `editorPrefs.ts`). Раньше 1 ед и 5° были зашиты числами,
+ * и подобрать шаг под задачу было негде: кость таза и фалангу пальца двигаешь одним шагом.
+ *
+ * Ноль или отрицательное = снап по этой оси выключен: three ждёт `null`, а шаг 0 подвесил бы драг.
+ */
+let snapOn = getPref('snap', true);
+let snapMove = getPref('snapMove', 1);      // ед. мира
+let snapRot = getPref('snapRot', 5);        // градусы
 function applySnap(off = false): void {
   const on = snapOn && !off;
-  gizmo.setTranslationSnap(on ? 1 : null);
-  gizmo.setRotationSnap(on ? THREE.MathUtils.degToRad(5) : null);
+  gizmo.setTranslationSnap(on && snapMove > 0 ? snapMove : null);
+  gizmo.setRotationSnap(on && snapRot > 0 ? THREE.MathUtils.degToRad(snapRot) : null);
 }
 applySnap();
 // ── FK-ГИЗМО ПО ОСЯМ СУСТАВА (локальное, а не мировое): гизмо цепляется к ПРОКСИ, ориентированному по DOF-осям сустава
@@ -2024,7 +2034,7 @@ addEventListener('keydown', (e) => {
     case '.': camFocus(human.hips); break;
     case 'w': case 'W': case 'ц': case 'Ц': gizmo.setMode('translate'); break;
     case 'e': case 'E': case 'у': case 'У': gizmo.setMode('rotate'); break;
-    case 's': case 'S': case 'ы': case 'Ы': snapOn = !snapOn; applySnap(); break;
+    case 's': case 'S': case 'ы': case 'Ы': snapOn = !snapOn; setPref('snap', snapOn); applySnap(); renderAnim(); break;
     // Анимационные клавиши — только на вкладке «Анимация» и только когда есть клип (иначе пробел «проглатывался»
     // на других вкладках, а Del удалял бы кадр там, где кадров вообще нет).
     case ' ': if (!animKeys()) return; togglePlay(); break;
@@ -2810,7 +2820,23 @@ function poseTools(): void {
     }, limitVersion() === 2),
     pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; setPref('groundFeet', footGround); renderAnim(); }, footGround),
     pbtn(manGroundView ? 'манекен на полу: вкл' : 'манекен на полу: выкл', () => { manGroundView = !manGroundView; setPref('floorMannequin', manGroundView); renderAnim(); }, manGroundView),
+    pbtn(snapOn ? 'шаг (S): вкл' : 'шаг (S): выкл', () => { snapOn = !snapOn; setPref('snap', snapOn); applySnap(); renderAnim(); }, snapOn),
   );
+  {   // ШАГ ГИЗМО: своё число на перемещение и на поворот. Shift во время драга снап временно снимает.
+    const srow = el('div', 'display:flex;align-items:center;gap:6px;margin-top:3px;font-size:10px');
+    const num = (label: string, get: () => number, set: (v: number) => void, step: number, max: number): void => {
+      const w = el('label', 'display:flex;align-items:center;gap:3px;color:#9aa3b8'); w.append(label);
+      const i = el('input', `width:56px;background:#0e1016;color:${snapOn ? '#cfd3e0' : '#6b7180'};border:1px solid #39415a;border-radius:3px;font:10px monospace;text-align:right`) as HTMLInputElement;
+      i.type = 'number'; i.min = '0'; i.max = String(max); i.step = String(step); i.value = String(get());
+      i.oninput = () => { const v = parseFloat(i.value); if (!Number.isFinite(v)) return; set(Math.max(0, Math.min(max, v))); applySnap(); };
+      w.append(i); srow.append(w);
+    };
+    num('перемещение, ед', () => snapMove, (v) => { snapMove = v; setPref('snapMove', v); }, 0.1, 50);
+    num('поворот, °', () => snapRot, (v) => { snapRot = v; setPref('snapRot', v); }, 0.5, 90);
+    const h = el('span', 'color:#6b7180'); h.textContent = snapOn ? '0 = без шага по этой оси · Shift снимает' : 'шаг выключен';
+    srow.append(h);
+    body.append(srow);
+  }
   {   // Ф26.2 — ПРОЗРАЧНОСТЬ: скелет перестаёт забивать меш (жалоба «слишком активный»), ручки не рябят
     const arow = (label: string, get: () => number, set: (v: number) => void): void => {
       const row = el('label', 'display:flex;align-items:center;gap:6px');
