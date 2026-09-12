@@ -1,7 +1,7 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import { type Rng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
-import { spawnWeightAt, weightedPickId } from '../formulas/spawnWeight.js';
+import { spawnWeightAt, weightedPickId, rarityAtDepth } from '../formulas/spawnWeight.js';
 import { startChallenge, challengeAtFloor } from '../formulas/power.js';
 import { Cell, cellToWorld } from '../world/grid.js';
 import type { MonsterSpawn } from '../session/session.js';
@@ -106,7 +106,10 @@ export function spawnPacksEl(
         // Редкость монстра по «галкам роли» (шансы magic/rare пачки): rare первым, остаток — обычный.
         // Спец-комнаты (босс/уник) перекрывают → unique (топ-редкость). rng-бросок делаем всегда (стабильный поток).
         const rr = rng.float(0, 1);
-        const rolled: 'normal' | 'magic' | 'rare' = rr < (entry.rareChance ?? 0) ? 'rare' : rr < (entry.rareChance ?? 0) + (entry.magicChance ?? 0) ? 'magic' : 'normal';
+        // ⭐ Глубина поднимает редкость (`loot.depthRarity`) — через неё же растёт ступень сырья
+        // и качество трофеев. До `freeDepth` множитель равен 1, то есть обычные забеги не тронуты.
+        const ch = rarityAtDepth(entry.magicChance ?? 0, entry.rareChance ?? 0, depth, balance.loot.depthRarity);
+        const rolled: 'normal' | 'magic' | 'rare' = rr < ch.rare ? 'rare' : rr < ch.rare + ch.magic ? 'magic' : 'normal';
         const rarity: 'normal' | 'magic' | 'rare' | 'unique' = forceUnique ? 'unique' : rolled;
         const def = generateMonster(monsters, monsterGear, monAffixes, { baseId: id, depth: mDepth, uniqueXpMult, mderive, itemAffixes, rarities, rarity, monsterRarity, monsterUniques }, rng);
         spawns.push({ def, x: w.x, y: w.y });

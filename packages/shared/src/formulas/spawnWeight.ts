@@ -12,6 +12,58 @@ type Monster = ConfigShapes['monsters'][number];
 
 type PowerTier = 'weak' | 'medium' | 'strong' | 'boss';
 
+/** Настройки кривой «глубина → редкость монстров» (`balance.loot.depthRarity`). */
+export interface DepthRarity {
+  freeDepth: number; step: number; k: number; maxBoost: number;
+  maxRare: number; minNormal: number;
+}
+
+/**
+ * ВО СКОЛЬКО РАЗ ГЛУБИНА ПОДНИМАЕТ ШАНС МАГИЧЕСКИХ/РЕДКИХ МОНСТРОВ.
+ *
+ * ⚠ Зачем вообще: ступень сырья задаёт РЕДКОСТЬ надетой на монстре вещи, а глубина в этот расчёт
+ * не входит ни одним слагаемым — замер по этажам 1/5/10/20 даёт один и тот же состав. Значит в
+ * бесконечном забеге глубина 500 платила бы ровно тем же, чем глубина 5, и спускаться было бы незачем.
+ *
+ * ⭐ Двигаем РЕДКОСТЬ, а не ступень сырья напрямую. Правило «редкость → ступень» остаётся
+ * нетронутым и читаемым (цвет имени монстра видно сразу), одна ручка даёт две награды — сырьё
+ * И трофеи, — и объяснять игроку отдельную механику не нужно.
+ *
+ * ⚠ Обычные забеги не трогаем: до `freeDepth` буст равен единице, а самый длинный шаблон доходит
+ * до 15-го этажа. Дальше растёт со степенью `k` (<1) и упирается в `maxBoost` — тот же ручник,
+ * что у ступеней вещей. Замер: на глубине 200 состав 10/30/9 против 40/4/1 на пятой, а ОБЪЁМ
+ * сырья не меняется вовсе (44…49 за этаж на любой глубине). Глубина покупает КАЧЕСТВО, не
+ * количество, — ровно этим Яма в Д4 платит вместо шмота, и ферма «побольше» здесь бессмысленна.
+ */
+export function depthRarityBoost(depth: number, c: DepthRarity): number {
+  const over = depth - c.freeDepth;
+  if (over <= 0 || c.step <= 0) return 1;
+  return 1 + Math.min(c.maxBoost, Math.pow(over / c.step, c.k));
+}
+
+/**
+ * Шансы редкости пачки с учётом глубины.
+ *
+ * ⚠ `minNormal` — НЕ косметика. Перемноженные шансы легко уходят в сумме за единицу, и тогда
+ * обычных монстров не остаётся вовсе; вместе с ними умирает ржавое железо, потому что ступень
+ * сырья задаёт редкость надетой вещи. То есть глубина убила бы НИЖНЮЮ ступень лестницы, а на ней
+ * держится вся починка и первая ступень улучшений. Доля обычных резервируется до всех расчётов,
+ * и если magic+rare в неё не влезают — оба ужимаются ПРОПОРЦИОНАЛЬНО, сохраняя их соотношение.
+ */
+export function rarityAtDepth(
+  magicChance: number, rareChance: number, depth: number, c: DepthRarity,
+): { magic: number; rare: number } {
+  const b = depthRarityBoost(depth, c);
+  let rare = Math.min(c.maxRare, Math.max(0, rareChance) * b);
+  let magic = Math.max(0, magicChance) * b;
+  const room = Math.max(0, 1 - c.minNormal);
+  if (rare + magic > room) {
+    const k = (rare + magic) > 0 ? room / (rare + magic) : 0;
+    rare *= k; magic *= k;
+  }
+  return { magic, rare };
+}
+
 /** 6-точечная (по числу тиров) кривая веса монстра: ручной оверрайд или столбец его силового тира. */
 export function monsterDepthCurve(m: Monster, tiers: DepthTiers): number[] {
   if (Array.isArray(m.spawnCurve) && m.spawnCurve.length === tiers.length) return m.spawnCurve;

@@ -149,6 +149,14 @@
       "softCap": 80,
       "softK": 0.5,
       "hardCap": 95
+    },
+    "depthRarity": {
+      "freeDepth": 15,
+      "step": 12,
+      "k": 0.7,
+      "maxBoost": 7,
+      "maxRare": 0.25,
+      "minNormal": 0.15
     }
   },
   "weaponAttrScaling": 0.5,
