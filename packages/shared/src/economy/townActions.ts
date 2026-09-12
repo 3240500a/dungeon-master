@@ -165,10 +165,14 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
   if (item.broken) return { ok: false, reason: 'Сперва почини' };
-  const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  if (!base) return { ok: false, reason: 'Кузнец не знает такой вещи' };
-  const tier = nextTier(reg.get('item-tiers'), base, item.tier);
-  if (!tier) return { ok: false, reason: 'Лучше эту вещь уже не сделать' };
+  if (!reg.get('items.base').some((b) => b.id === item.baseId)) {
+    return { ok: false, reason: 'Кузнец не знает такой вещи' };
+  }
+  // ⚠ Результат считает `upgradedItem` — ТА ЖЕ функция, которой кузница рисует предпросмотр
+  // «было → станет». Будь здесь своя копия расчёта, скидка на требования или потолок их суммы
+  // разъехались бы молча, и окно обещало бы игроку не то, за что он платит.
+  const next = upgradedItem(reg, item);
+  if (!next) return { ok: false, reason: 'Лучше эту вещь уже не сделать' };
   const gold = reg.get('balance').forgePrices.upgradeTier;
   const mats = upgradeCost(reg, item);
   if (!Object.keys(mats).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
@@ -180,11 +184,7 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
   // игрока без золота и без улучшения.
   save.gold -= gold;
   spendBoth(save.inventory, wallet, mats);
-  const bal = reg.get('balance');
-  Object.assign(item, retierItem(base, item, tier, {
-    reqDiscount: bal.forgePrices.upgradeReqDiscount,
-    maxReqTotal: bal.maxTotalRequirement,
-  }));
+  Object.assign(item, next);
   return { ok: true };
 }
 
@@ -192,6 +192,43 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
 export function nextTierOf(reg: ConfigRegistry, item: Item): { id: string; name: string } | undefined {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   return base ? nextTier(reg.get('item-tiers'), base, item.tier) : undefined;
+}
+
+/**
+ * КАКОЙ СТАНЕТ ВЕЩЬ ПОСЛЕ УЛУЧШЕНИЯ — источник предпросмотра «было → станет» И самого
+ * улучшения (`forgeUpgrade` зовёт эту же функцию). `undefined` — нет базы либо вещь на потолке.
+ */
+export function upgradedItem(reg: ConfigRegistry, item: Item): Item | undefined {
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (!base) return undefined;
+  const tier = nextTier(reg.get('item-tiers'), base, item.tier);
+  if (!tier) return undefined;
+  const bal = reg.get('balance');
+  return retierItem(base, item, tier, {
+    reqDiscount: bal.forgePrices.upgradeReqDiscount,
+    maxReqTotal: bal.maxTotalRequirement,
+  });
+}
+
+/**
+ * СКОЛЬКО ДАСТ РАЗБОР — вилкой «от и до».
+ *
+ * ⚠ Выход случаен, поэтому одно число было бы враньём, а своя формула среднего — вторым
+ * источником правды. Вместо этого дважды зовём НАСТОЯЩИЙ расчёт (`salvageYield`): сперва с
+ * броском, всегда дающим минимум, потом — максимум. Разойтись с реальным разбором он не может.
+ */
+export function salvageRange(
+  reg: ConfigRegistry, item: Item, inField: boolean,
+): ActionResult & { range: Record<string, { min: number; max: number }> } {
+  const lo = salvageYield(reg, item, { int: (a) => a, chance: () => false }, inField);
+  if (!lo.ok) return { ...lo, range: {} };
+  const hi = salvageYield(reg, item, { int: (_a, b) => b, chance: () => true }, inField);
+  const range: Record<string, { min: number; max: number }> = {};
+  for (const id of new Set([...Object.keys(lo.gains), ...Object.keys(hi.gains)])) {
+    const min = lo.gains[id] ?? 0;
+    range[id] = { min, max: Math.max(hi.gains[id] ?? 0, min) };
+  }
+  return { ok: true, range };
 }
 
 /**

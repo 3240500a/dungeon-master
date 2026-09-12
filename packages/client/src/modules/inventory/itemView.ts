@@ -20,6 +20,13 @@ export function setItemLabelResolvers(r: ItemLabelResolvers): void { R = { ...r,
 /** Строки тултипа (только текст) — для обратной совместимости. */
 export function itemLines(item: Item): string[] { return describeItem(item, R).map((l) => l.text); }
 
+/**
+ * Строки С ПРИЗНАКОМ АФФИКСА — для предпросмотра кузницы: он диффит те же строки, что видит
+ * игрок в тултипе, а аффиксы отбрасывает (кузнечное улучшение их не трогает). Свой форматтер
+ * там завёл бы второй источник правды, который разошёлся бы на первой правке describeItem.
+ */
+export function itemDescLines(item: Item): { text: string; affix: boolean }[] { return describeItem(item, R); }
+
 const BASE_COLOR = '#eaeaea';                                    // базовые свойства — белым
 const lineColor = (item: Item, affix: boolean): string => (affix ? rarityHex(item.rarity) : BASE_COLOR); // аффиксы — цветом редкости
 

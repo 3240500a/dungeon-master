@@ -1,32 +1,36 @@
-import { shopBuyPrice, canSalvageItem, upgradeCost, repairCost, describeCost, canAffordBoth, nextTierOf } from '@dm/shared';
+import { shopBuyPrice } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
-import { COLORS, mk, button, itemSlot, attachTooltip, tabsBar } from '../../ui/kit.js';
+import { COLORS, mk, tabsBar } from '../../ui/kit.js';
 import { shopCategory, type ShopCat } from './shopCats.js';
 import { renderShopGrid } from './shopGrid.js';
+import { forgeBench } from './forgeBench.js';
 
 /**
  * Кузница: диалог из двух режимов.
- *  • Улучшить — список предметов инвентаря: улучшение базовых статов / реролл аффиксов (АВТОРИТЕТНО на сервере —
- *    команды `forgeUpgrade`/`forgeReroll`, раньше клиент мутировал локально и это откатывалось сейвом).
+ *  • Работа — ВЕРСТАК (`forgeBench.ts`): одна вещь в слоте, починка/улучшение/реролл/разбор
+ *    карточками с полной ценой и предпросмотром. Все действия АВТОРИТЕТНЫ на сервере.
  *  • Купить — магазин оружия/брони: 3 вкладки (ближний/дальний бой, броня), сетка «как инвентарь» (см. shopGrid).
- * Режим/вкладка живут в замыкании фабрики (переживают перерисовку панели). Зелья — в лавке (shopPanel).
+ * Режим/вкладка/выбранная вещь живут в замыкании фабрики (переживают перерисовку панели).
+ * Зелья — в лавке (shopPanel).
  */
-export const forgePanel: PanelFactory = (app) => {
+export const forgePanel: PanelFactory = (app, ui) => {
   // Сырьё живёт в СУНДУКЕ аккаунта, а его слепок приходит только по запросу: без этой строки
   // кузница, открытая первой, считала бы кошелёк пустым и гасила все кнопки.
   app.sendCmd({ cmd: 'stashOpen' });
-  let mode: 'upgrade' | 'buy' = 'upgrade';
+  // ⭐ Инвентарь открывается ВМЕСТЕ с кузницей: на верстак вещь кладут из сумки, и окно без неё
+  // бесполезно. `DomUi` держит несколько окон одновременно — своего механизма не нужно.
+  ui.openPanel('inventory');
+  let mode: 'work' | 'buy' = 'work';
   let tab: ShopCat = 'melee';
+  // ⚠ Выбранная вещь живёт ЗДЕСЬ, а не в `render`: тело окна перерисовывается на каждое
+  // `state:changed` — то есть на каждую подобранную монету, — и слот очищался бы сам собой.
+  let benchUid: string | null = null;
   return {
     title: 'Кузница',
     render(body) {
       const state = app.state!;
-      // Кузница тратит СУМКУ + СУНДУК — кнопки должны считать так же, иначе они гаснут
-      // при полной сумке сырья. Сундук мог ещё не доехать — тогда считаем только сумку.
-      const stashMats = app.stash?.materials ?? {};
       const rarities = app.config.get('rarities');
-      const prices = app.config.get('balance').forgePrices;
 
       const draw = (): void => {
         body.innerHTML = '';
@@ -35,11 +39,11 @@ export const forgePanel: PanelFactory = (app) => {
         body.appendChild(head);
 
         body.appendChild(tabsBar(
-          [['upgrade', '🔨 Улучшить'], ['buy', '🛒 Купить']] as const,
+          [['work', '🔨 Работа'], ['buy', '🛒 Купить']] as const,
           mode, (k) => { mode = k; draw(); }));
 
         if (mode === 'buy') drawBuy();
-        else drawUpgrade();
+        else body.appendChild(forgeBench(app, { uid: benchUid, setUid: (u) => { benchUid = u; } }));
       };
 
       const drawBuy = (): void => {
@@ -58,60 +62,6 @@ export const forgePanel: PanelFactory = (app) => {
         }));
         body.appendChild(scroll);
         body.append(mk('div', 'font-size:11px;color:#666;margin-top:6px', 'Клик по предмету — купить. Зелья — в лавке.'));
-      };
-
-      const drawUpgrade = (): void => {
-        body.append(mk('div', `font-size:12px;color:${COLORS.dim};margin:2px 0 6px`,
-          'Улучшение усиливает базовые статы (+20%), реролл перекатывает аффиксы, а разбор даёт ПОЛНЫЙ выход материалов — в подземелье он меньше.'));
-        if (state.save.inventory.length === 0) { body.append(mk('div', 'color:#666', 'Нет предметов в инвентаре для работы.')); return; }
-        const list = mk('div', 'max-height:56vh;overflow-y:auto;padding-right:4px');
-        for (const item of state.save.inventory) {
-          const row = mk('div', `display:flex;align-items:center;gap:10px;border:1px solid ${COLORS.border};border-radius:6px;padding:8px;margin:6px 0;background:${COLORS.bg}`);
-          const cell = itemSlot(item, {});
-          attachTooltip(cell, () => itemTooltipHtml(item));
-          const name = mk('div', 'flex:1;font-size:13px', item.name);
-          // Цена улучшения — золото И материалы. Кнопка гаснет по ТОМУ ЖЕ расчёту, которым
-          // отказывает сервер (`upgradeCost`), а сама цена написана рядом: без этого игрок жмёт
-          // вслепую и узнаёт про нехватку только из текста ошибки.
-          // Кнопка называет СЛЕДУЮЩИЙ ТИР: улучшение — шаг по лестнице, и игрок должен
-          // видеть, куда шагает, а не жать «улучшить» вслепую.
-          const mats = upgradeCost(app.config, item);
-          const nt = nextTierOf(app.config, item);
-          const upOk = !!nt && Object.keys(mats).length > 0 && state.save.gold >= prices.upgradeTier
-            && canAffordBoth(state.save.inventory, stashMats, mats);
-          const up = button(nt ? `До «${nt.name}» (${prices.upgradeTier})` : 'На потолке',
-            () => app.sendCmd({ cmd: 'forgeUpgrade', uid: item.uid }), 'default', !upOk || !!item.broken);
-          attachTooltip(up, () => !nt
-            ? 'Лучше эту вещь уже не сделать — потолок её базы'
-            : Object.keys(mats).length
-              ? `Цена: ${prices.upgradeTier} золота<br>${describeCost(app.config, mats)}`
-                + '<br><span style="color:#8a8">Кузнечная вещь требует меньше атрибутов, чем найденная</span>'
-              : 'Эту вещь кузнец не улучшает');
-          // Перекатка конечна — остаток пишем на кнопке, иначе предел обнаружится только отказом.
-          const left = Math.max(0, prices.rerollLimit - (item.rerolls ?? 0));
-          const rr = button(`Реролл ${left}/${prices.rerollLimit} (${prices.rerollAffix})`,
-            () => app.sendCmd({ cmd: 'forgeReroll', uid: item.uid }), 'default',
-            state.save.gold < prices.rerollAffix || left <= 0 || !!item.broken);
-          // Разбор УНИЧТОЖАЕТ вещь, поэтому кнопка гаснет ТЕМ ЖЕ правилом, которым отказывает сервер
-          // (`canSalvageItem`): иначе кнопка предлагала бы то, что сервер отклонит.
-          // Сломанное сначала чинится: улучшать его нельзя, разобрать — можно (в этом и выбор).
-          if (item.broken) {
-            const rc = repairCost(app.config, item);
-            const rOk = state.save.gold >= prices.repairBroken
-              && (!Object.keys(rc).length || canAffordBoth(state.save.inventory, stashMats, rc));
-            const rp = button(`Починить (${prices.repairBroken})`,
-              () => app.sendCmd({ cmd: 'forgeRepair', uid: item.uid }), 'default', !rOk);
-            attachTooltip(rp, () => `Цена: ${prices.repairBroken} золота` + (Object.keys(rc).length ? `<br>${describeCost(app.config, rc)}` : ''));
-            row.append(rp);
-          }
-          const can = canSalvageItem(app.config, item, false);
-          const sv = button('Разобрать',
-            () => app.sendCmd({ cmd: 'forgeSalvage', uid: item.uid }), 'default', !can.ok);
-          if (!can.ok && can.reason) attachTooltip(sv, () => can.reason!);
-          row.append(cell, name, up, rr, sv);
-          list.appendChild(row);
-        }
-        body.appendChild(list);
       };
 
       draw();
