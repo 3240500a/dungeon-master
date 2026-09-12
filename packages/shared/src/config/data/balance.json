@@ -116,16 +116,17 @@
   },
   "reconnectGraceSec": 3600,
   "loot": {
-    "dropChance": 0.1,
+    "dropChance": 0.12,
     "goldChance": 0.5,
     "chestsPerFloor": {
       "min": 1,
       "max": 2
     },
     "trophyChance": 1,
-    "brokenChance": 1,
+    "brokenChance": 0.85,
     "materials": {
-      "chance": 0.6
+      "chance": 0.35,
+      "mult": 1.7
     },
     "categoryWeights": {
       "weapon": 25,
@@ -133,6 +134,10 @@
       "shield": 12,
       "jewelry": 12,
       "consumable": 26
+    },
+    "scatter": {
+      "min": 44,
+      "max": 84
     }
   },
   "weaponAttrScaling": 0.5,

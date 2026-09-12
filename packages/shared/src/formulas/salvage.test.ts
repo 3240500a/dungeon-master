@@ -88,16 +88,26 @@ describe('⭐ ПРАВИЛО №1: убийство продолжает пла�
   reg.loadAll();
   const loot = reg.get('balance').loot;
 
-  it('вещь стала редкой, но материалы заняли её место', () => {
-    expect(loot.dropChance).toBeCloseTo(0.1, 5);
-    expect(loot.materials.chance).toBeGreaterThanOrEqual(0.55);
+  it('вещь осталась РЕДКОЙ наградой, а не вернулась к прежним 55 %', () => {
+    // ⚠ Точное значение НЕ пиним: это ручка баланса, и тест, прибитый к 0.1, ломался бы на
+    // каждой правке, ничего при этом не охраняя. Охраняем смысл: вещь — событие, а не рутина.
+    expect(loot.dropChance).toBeLessThan(0.25);
+    expect(loot.dropChance).toBeGreaterThan(0);
   });
 
-  it('доля убийств хоть с какой-то наградой осталась прежней (~0.6), а не упала к 0.1', () => {
-    // события независимы: шанс «ничего» = (1−вещь)·(1−материалы)
-    const nothing = (1 - loot.dropChance) * (1 - loot.materials.chance);
-    const withReward = 1 - nothing;
-    expect(withReward).toBeGreaterThan(0.55);
+  it('⭐ доля убийств хоть с какой-то наградой не упала', () => {
+    // События независимы: шанс «ничего» = (1−вещь)·(1−материалы)·(1−золото).
+    // ⚠ ЗОЛОТО ВХОДИТ В СЧЁТ. Когда тест писался, монета начислялась телепортом и наградой
+    // на земле не была; теперь она падает как всё остальное, и считать её отдельно — значит
+    // занижать реальную плату за убийство.
+    const nothing = (1 - loot.dropChance) * (1 - loot.materials.chance) * (1 - loot.goldChance);
+    expect(1 - nothing).toBeGreaterThan(0.55);
+  });
+
+  it('⚠ частоту сырья срезали, но не приход: количество за дроп подняли множителем', () => {
+    // Иначе «реже» означало бы «беднее», и вся лестница улучшений поехала бы молча.
+    expect(loot.materials.chance).toBeLessThan(0.6);
+    expect(loot.materials.chance * loot.materials.mult).toBeGreaterThanOrEqual(0.55);
   });
 
   it('всё снаряжение монстров умеет разбираться — иначе часть убийств пустая', () => {
