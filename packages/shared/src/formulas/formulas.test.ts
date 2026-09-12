@@ -78,7 +78,7 @@ describe('itemgen', () => {
     const flat = (it: ReturnType<typeof generateItem>, stat: string) =>
       it.baseStats.filter((m) => m.stat === stat && m.kind === 'flat').reduce((s, m) => s + m.value, 0);
 
-    // Лестница начинается со «Сломанного» (базовый ×1.0): ilvl 1 → Сломанный,
+    // Лестница начинается с «Убогого» (базовый ×1.0): ilvl 1 → Убогий,
     // ilvl 80 → высший «Мифический». Имя всегда с префиксом, согласованным по роду.
     const low = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
       { ...opts, itemLevel: 1, baseId: 'mace' }, createRng(1));
@@ -87,10 +87,19 @@ describe('itemgen', () => {
 
     expect(flat(high, 'maxDamage')).toBeGreaterThan(flat(low, 'maxDamage'));
     expect((high.requirements.strength ?? 0)).toBeGreaterThan(low.requirements.strength ?? 0);
-    // Булава — женский род → «Сломанная»/«Мифическая», а не «Сломанный».
-    expect(low.name).toBe('Сломанная Булава');
+    // Булава — женский род → «Убогая»/«Мифическая», а не «Убогий».
+    expect(low.name).toBe('Убогая Булава');
     expect(high.name.startsWith('Мифическая')).toBe(true);
     expect(high.name.endsWith('Булава')).toBe(true);
+
+    // ⚠ Множественное и средний род — отдельные ветки правила: у основы на г/к/х множественное
+    // «-ие», а не «-ые» («Убогие перчатки», а не «Убогые»). Переименуешь тир — тест скажет, если слово не склоняется.
+    const plural = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+      { ...opts, itemLevel: 1, baseId: 'quilted-gloves' }, createRng(1));
+    expect(plural.name.startsWith('Убогие ')).toBe(true);
+    const neuter = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+      { ...opts, itemLevel: 1, baseId: 'spear' }, createRng(1));
+    expect(neuter.name.startsWith('Убогое ')).toBe(true);
   });
 
   it('щит — отдельный вид (kind=shield, shieldClass), без armorClass', () => {

@@ -93,7 +93,8 @@ export function renderItemGenPage(page: HTMLElement, data: Record<string, unknow
 
   const tierName = (item: Item): string => {
     const b = baseById(item.baseId); if (!b) return '—';
-    return pickTierClamped(tiers, item.itemLevel, b.minTier, b.maxTier)?.name ?? 'Сломанный';
+    // Фолбэк — ПЕРВЫЙ тир конфига, а не строка в коде: имя тира правится данными и уезжало бы.
+    return pickTierClamped(tiers, item.itemLevel, b.minTier, b.maxTier)?.name ?? tiers[0]?.name ?? '—';
   };
 
   // Резолверы имён из живого конфига → единый форматтер describeItem (тот же, что в игре).

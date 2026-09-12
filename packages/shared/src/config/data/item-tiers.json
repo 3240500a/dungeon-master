@@ -1,5 +1,5 @@
 [
-  { "id": "t0", "name": "Сломанный", "minItemLevel": 1, "statMult": 1.0, "reqMult": 1.0 },
+  { "id": "t0", "name": "Убогий", "minItemLevel": 1, "statMult": 1.0, "reqMult": 1.0 },
   { "id": "t1", "name": "Старый", "minItemLevel": 8, "statMult": 1.3, "reqMult": 1.5 },
   { "id": "t2", "name": "Крепкий", "minItemLevel": 18, "statMult": 1.8, "reqMult": 2.2 },
   { "id": "t3", "name": "Отличный", "minItemLevel": 30, "statMult": 2.5, "reqMult": 3.2 },

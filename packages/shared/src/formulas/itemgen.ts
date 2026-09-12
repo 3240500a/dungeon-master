@@ -15,7 +15,7 @@ const TIER_SCALED = new Set(['minDamage', 'maxDamage', 'armor']);
 /**
  * Тир по уровню предмета, зажатый диапазоном [minTier, maxTier] базы. Лестница
  * сортируется по minItemLevel; берётся высший тир ≤ ilvl, но не ниже minTier и не
- * выше maxTier базы. Так «Ржавый нож» не станет Мифическим, а «мифрил» — Сломанным.
+ * выше maxTier базы. Так «Ржавый нож» не станет Мифическим, а «мифрил» — Убогим.
  */
 export function pickTierClamped(
   tiers: ItemTiers | undefined,
@@ -231,7 +231,7 @@ function buildItem(
  */
 export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers): Item {
   const ilvl = baseItemLevel(base, tiers);
-  // Расходники не тирятся (нет префикса «Сломанное зелье» и масштаба урона/брони).
+  // Расходники не тирятся (нет префикса «Убогое зелье» и масштаба урона/брони).
   const tier = base.kind === 'consumable' ? undefined : pickTierClamped(tiers, ilvl, base.minTier, base.maxTier);
   return buildItem(base, {
     rarity: 'normal',
