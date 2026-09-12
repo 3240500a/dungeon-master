@@ -167,6 +167,38 @@ function cardRule1(reg: ConfigRegistry): HTMLElement {
   return box;
 }
 
+/**
+ * ЗОЛОТО ПРОТИВ ФИКСИРОВАННЫХ ЦЕН. Монета масштабируется уровнем монстра
+ * (`rng.int(1, 5 + ур·2)`, среднее = ур + 3), а кузница стоит СТОЛЬКО ЖЕ на любом уровне.
+ * Значит покупательная способность растёт линейно, и таблица показывает это прямо в улучшениях
+ * за этаж — числом, а не ощущением.
+ */
+function cardGold(reg: ConfigRegistry, p: FloorPay, k: Knobs): HTMLElement {
+  const bal = reg.get('balance');
+  const loot = bal.loot;
+  const diff = reg.get('difficulties').find((d) => d.id === k.diffId) ?? reg.get('difficulties')[0]!;
+  const upg = bal.forgePrices.upgradeTier;
+  const mons = Math.max(1, Math.round(p.monsters));
+  const levels = [5, 10, 25, 50, 75, 100, 150];
+  const rows = levels.map((L) => {
+    const perKill = ((1 + 5 + L * 2) / 2) * diff.goldMult;      // среднее той же формулы
+    const perFloor = mons * loot.goldChance * perKill;
+    return [L, n0(perKill), n0(perFloor), (perFloor / Math.max(1, upg)).toFixed(1)];
+  });
+  const near = levels.reduce((b, L) => (Math.abs(L - p.lvlHi) < Math.abs(b - p.lvlHi) ? L : b), levels[0]!);
+  const box = el('div', CSS.card);
+  box.append(el('div', CSS.h, 'Золото: масштабируется уровнем монстра, цены — нет'));
+  box.append(el('div', CSS.sub,
+    `выпадает с ${(loot.goldChance * 100).toFixed(0)} % убийств, сумма 1…(5 + ур·2) × ${diff.goldMult}`
+    + ` · этаж считается по ${mons} монстрам`));
+  box.append(table(['ур. моба', 'за убийство', 'за этаж', 'улучшений за этаж'], rows, (ri) => levels[ri] === near));
+  box.append(el('div', 'font-size:11px;color:#8a8a9a;margin-top:8px',
+    `⚠ Все стоки ФИКСИРОВАННЫЕ: улучшение ${upg}, перекатка ${bal.forgePrices.rerollAffix},`
+    + ` починка ${bal.forgePrices.repairBroken}, сброс ${bal.respecCost}. Приход растёт с уровнем, расход — нет,`
+    + ' поэтому последняя колонка и есть настоящая инфляция золота.'));
+  return box;
+}
+
 /** Распределение ступеней вещи по уровню монстра + ручник. */
 function cardTiers(reg: ConfigRegistry, curLvl: number): HTMLElement {
   const W = reg.get('balance').loot.tierWindow;
@@ -197,6 +229,27 @@ function cardTiers(reg: ConfigRegistry, curLvl: number): HTMLElement {
   return box;
 }
 
+/**
+ * Сырьё по глубине: настоящая генерация на каждую строку, поэтому результат КЭШИРУЕТСЯ.
+ * Пересчитывать восемь глубин на каждое движение ползунка — секунды залипания, а таблица от
+ * ползунков и не зависит: состав решает редкость монстров, а её решает глубина.
+ */
+let depthCache: { rows: (string | number)[][]; power: number } | null = null;
+
+function depthMatRows(reg: ConfigRegistry, power: number): (string | number)[][] {
+  if (depthCache && depthCache.power === power) return depthCache.rows;
+  const c = reg.get('balance').loot.depthRarity;
+  const rows = [5, 15, 25, 50, 100, 200, 400, 1000].map((d) => {
+    const p = measureFloor(reg, { power, depth: d, diffId: 'normal', floors: 3 });
+    const tot = p.mats[1]! + p.mats[2]! + p.mats[3]!;
+    return [d, depthRarityBoost(d, c).toFixed(1),
+      n0(p.mats[1]!), n0(p.mats[2]!), n0(p.mats[3]!), n0(tot),
+      `${tot > 0 ? Math.round((100 * (p.mats[2]! + p.mats[3]!)) / tot) : 0} %`];
+  });
+  depthCache = { rows, power };
+  return rows;
+}
+
 /** Кривая «глубина → редкость монстров», через неё — ступень сырья и трофеев. */
 function cardDepth(reg: ConfigRegistry, curDepth: number): HTMLElement {
   const c = reg.get('balance').loot.depthRarity;
@@ -218,8 +271,31 @@ function cardDepth(reg: ConfigRegistry, curDepth: number): HTMLElement {
     + ` · обычных не меньше ${(c.minNormal * 100).toFixed(0)} %`));
   box.append(table(['глубина', 'буст', 'магических', 'редких', 'обычных'], rows, (ri) => depths[ri] === near));
   box.append(el('div', 'font-size:11px;color:#8a8a9a;margin-top:8px',
-    'Ступень сырья задаёт редкость надетой вещи — поэтому глубина улучшает и сырьё, и трофеи одной ручкой. '
-    + 'ОБЪЁМ сырья при этом не растёт: глубина покупает качество, а не количество.'));
+    'Ступень сырья задаёт редкость надетой вещи — поэтому глубина улучшает и сырьё, и трофеи одной ручкой.'));
+  return box;
+}
+
+/** Сырьё за этаж по глубине — та же кривая, но уже в единицах материалов. */
+function cardDepthMats(reg: ConfigRegistry, power: number, curDepth: number, onRefresh: () => void): HTMLElement {
+  const mats = reg.get('craft-materials');
+  const nameOfTier = (t: number): string => mats.find((m) => m.tier === t)?.name.replace(/\s.*/, '') ?? `т${t}`;
+  const rows = depthMatRows(reg, power);
+  const depths = rows.map((r) => Number(r[0]));
+  const near = depths.reduce((b, d) => (Math.abs(d - curDepth) < Math.abs(b - curDepth) ? d : b), depths[0]!);
+  const box = el('div', CSS.card);
+  const head = el('div', 'display:flex;justify-content:space-between;align-items:baseline;gap:12px');
+  head.append(el('div', CSS.h, 'Сырьё за этаж по глубине'));
+  const btn = el('button', 'font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #2c2c3a;background:#1c1c26;color:#b8b8c8;cursor:pointer', '↻ пересчитать');
+  btn.addEventListener('click', () => { depthCache = null; onRefresh(); });
+  head.append(btn);
+  box.append(head);
+  box.append(el('div', CSS.sub, 'настоящая генерация по 3 этажа на строку, поэтому кэшируется — после правки баланса жми «пересчитать»'));
+  box.append(table(
+    ['глубина', 'буст', nameOfTier(1), nameOfTier(2), nameOfTier(3), 'всего', 'высоких'],
+    rows, (ri) => depths[ri] === near));
+  box.append(el('div', 'font-size:11px;color:#8a8a9a;margin-top:8px',
+    '⭐ Главное здесь — колонка «всего»: она почти не меняется. Глубина покупает КАЧЕСТВО, а не количество, '
+    + 'поэтому фармить её ради «побольше» бессмысленно — это и есть защита бесконечного забега от фермы.'));
   return box;
 }
 
@@ -270,7 +346,9 @@ export function renderLootPage(host: HTMLElement, data: Record<string, unknown>)
   const pay = measureFloor(reg, k);
   wrap.append(cardFloor(reg, pay));
   wrap.append(cardRule1(reg));
+  wrap.append(cardGold(reg, pay, k));
   wrap.append(cardTiers(reg, pay.lvlHi));
   wrap.append(cardDepth(reg, k.depth));
+  wrap.append(cardDepthMats(reg, k.power, k.depth, () => renderLootPage(host, data)));
   host.appendChild(wrap);
 }
