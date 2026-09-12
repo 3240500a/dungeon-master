@@ -6,10 +6,9 @@ import { effectiveAttributes } from './equip.js';
 import { itemsOverlapping, type Dims } from './grid.js';
 import { itemTooltipHtml } from './itemView.js';
 import { rarityHex } from '../loot/rarity.js';
-import { COLORS, mk, attachTooltip, tabsBar } from '../../ui/kit.js';
+import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { GLYPH, getHeld, beginHold, clearHeld, resolveHeldOnClose, setLastPointer } from './heldItem.js';
 import { renderGrid, showContextMenu } from './gridView.js';
-import { materialsView, materialsTotal } from './materialsView.js';
 import { canSalvageItem } from '@dm/shared';
 
 /**
@@ -24,10 +23,6 @@ function itemAtCell(inv: Item[], col: number, row: number): Item | null {
 
 // ── Панель ───────────────────────────────────────────────────────────────────
 export const inventoryPanel: PanelFactory = (app) => {
-  // ⚠ Выбранная вкладка живёт В ЗАМЫКАНИИ ФАБРИКИ, а не в `render`: панель перерисовывается
-  // на каждое `state:changed` — то есть на каждый подобранный материал, — и локальная переменная
-  // выкидывала бы игрока из склада ровно тогда, когда он на него смотрит. Тот же приём, что в forgePanel.
-  let tab: 'inv' | 'mats' = 'inv';
   return {
     title: 'Инвентарь и экипировка',
     render(body) {
@@ -35,24 +30,15 @@ export const inventoryPanel: PanelFactory = (app) => {
       const msg = mk('div', `color:${COLORS.bad};font-size:12px;min-height:16px;margin:4px 0`);
       const hint = mk('div', 'font-size:11px;color:#666;margin-top:8px');
 
-      // Вещи и материалы делят ОДНО место справа от пупсика — панель не растёт в высоту.
-      const right = mk('div');
-      const draw = (): void => {
-        right.innerHTML = '';
-        const total = materialsTotal(app);
-        right.append(tabsBar(
-          [['inv', 'Инвентарь'], ['mats', total > 0 ? `Материалы (${total})` : 'Материалы']] as const,
-          tab, (k) => { tab = k; draw(); }));
-        right.append(tab === 'inv' ? gridView(app, dims) : materialsView(app));
-        hint.textContent = tab === 'inv'
-          ? 'Клик — взять на курсор, клик — положить (обмен, если под следом один предмет). '
-            + 'Клик в мир — выбросить. ПКМ — меню.'
-          : 'Падают с убитых — с того, что на них надето. Места в сумке не занимают и при смерти не теряются.';
-      };
-      draw();
+      // ⚠ Вкладки «Инвентарь / Материалы» здесь БОЛЬШЕ НЕТ. Она имела смысл, пока сырьё было
+      // невидимым кошельком: показать склад было негде. С ч7 сырьё лежит в этой же сетке стеками,
+      // и отдельная вкладка дублировала бы её, а подпись «места не занимают и при смерти не
+      // теряются» стала прямо неверной. Кошелёк аккаунта живёт во вкладке «Ресурсы» сундука.
+      hint.textContent = 'Клик — взять на курсор, клик — положить (обмен, если под следом один предмет). '
+        + 'Клик в мир — выбросить. ПКМ — меню.';
 
       const layout = mk('div', 'display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start');
-      layout.append(paperdoll(app, msg), right);
+      layout.append(paperdoll(app, msg), gridView(app, dims));
       body.append(layout, msg, hint);
     },
     dispose() {
