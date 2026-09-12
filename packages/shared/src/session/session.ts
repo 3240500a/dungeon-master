@@ -1423,13 +1423,17 @@ export class GameSession {
 
     const diff = this.currentDifficulty();
     const level = m.def.level;
-    // ⭐ Золото ПАДАЕТ, а не начисляется телепортом: до этого монета не выпадала вовсе — число
-     // в углу экрана просто росло. Физический дроп + автоподбор (`balance.autoPickup`) делают
-     // награду видимой и дают смысл фильтру «что поднимать само, что оставлять лежать».
-    const gold = Math.max(1, Math.round(this.rng.int(1, 5 + level * 2) * diff.goldMult));
-    this.spawnDrop(m.pos, { kind: 'gold', gold });
-
     const loot = this.cfg.get('balance').loot;
+
+    // ⭐ Золото ПАДАЕТ, а не начисляется телепортом: до этого монета не выпадала вовсе — число
+    // в углу экрана просто росло. Физический дроп + автоподбор (`balance.autoPickup`) делают
+    // награду видимой и дают смысл фильтру «что поднимать само, что оставлять лежать».
+    // Золото падает НЕ С КАЖДОГО: ровный ручеёк мелочи читается хуже редкой кучи
+    // и копится быстрее, чем тратится (`loot.goldChance`).
+    if (this.rng.chance(loot.goldChance)) {
+      const gold = Math.max(1, Math.round(this.rng.int(1, 5 + level * 2) * diff.goldMult));
+      this.spawnDrop(m.pos, { kind: 'gold', gold });
+    }
 
     // ── Материалы: основной поток наград (docs/ECONOMY.md) ──
     // ⭐ ПРАВИЛО №1: суммарная частота наград не падает, меняется только их ВИД. Вещь роняется

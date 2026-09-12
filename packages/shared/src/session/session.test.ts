@@ -51,6 +51,9 @@ describe('GameSession — бой/лут/прокачка', () => {
     const save = newBotSave(r, 'warrior');
     const p = s.addPlayer('p1', save);
 
+    // Здесь проверяется МЕХАНИЗМ дропа золота, а не его частота: шанс жёстко в 1,
+    // иначе тест разваливался бы при каждой правке баланса `loot.goldChance`.
+    (r.get('balance').loot as { goldChance: number }).goldChance = 1;
     const grid = openField(20, 12);
     const spawn = cellToWorld(6, 6);
     // Слабый монстр рядом (переопределяем HP, чтобы гарантированно добить).

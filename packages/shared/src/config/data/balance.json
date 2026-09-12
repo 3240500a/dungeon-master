@@ -116,6 +116,7 @@
   "reconnectGraceSec": 3600,
   "loot": {
     "dropChance": 0.1,
+    "goldChance": 0.5,
     "chestsPerFloor": {
       "min": 1,
       "max": 2
