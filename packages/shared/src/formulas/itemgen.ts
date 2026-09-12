@@ -17,6 +17,53 @@ const TIER_SCALED = new Set(['minDamage', 'maxDamage', 'armor']);
  * сортируется по minItemLevel; берётся высший тир ≤ ilvl, но не ниже minTier и не
  * выше maxTier базы. Так «Ржавый нож» не станет Мифическим, а «мифрил» — Убогим.
  */
+/** Настройки окна, в котором катается СТУПЕНЬ базы (`balance.loot.tierWindow`). */
+export interface TierWindow {
+  low: number; over: number; bias: number;
+  softCap: number; softK: number; hardCap: number;
+}
+
+/**
+ * ЭФФЕКТИВНЫЙ УРОВЕНЬ МОНСТРА ДЛЯ ВЫБОРА СТУПЕНИ — «ручник» против бесконечного забега.
+ *
+ * ⚠ Без него глубина становится краном мифических вещей: у нас уровень монстра растёт от мощи
+ * игрока И от глубины, так что на уровне 150 окно целиком уезжает выше порога верхней ступени,
+ * и она сыплется почти с каждого трупа. В Д4 ту же дыру закрыли жёстко — в Яме уровень предмета
+ * упирается в кап с ПЕРВОГО тира, и двести тиров глубины не покупают ни единицы качества вещей;
+ * платит она материалами мастеринга, а не шмотом.
+ *
+ * Мы берём мягче: выше `softCap` уровень считается со степенью `softK` (<1), то есть растёт
+ * всё медленнее, а `hardCap` обрубает навсегда. Замер: мифические 5 % на уровне 80, 12 % на 150,
+ * 15 % на 200 и 18 % на 300 — дальше не растёт НИКОГДА.
+ */
+export function effTierLevel(monsterLevel: number, w: TierWindow): number {
+  const m = Math.max(1, monsterLevel);
+  const raw = m <= w.softCap ? m : w.softCap + Math.pow(m - w.softCap, w.softK);
+  return Math.min(w.hardCap, raw);
+}
+
+/**
+ * УРОВЕНЬ, ПО КОТОРОМУ ВЫБИРАЕТСЯ СТУПЕНЬ БАЗЫ — бросок в окне вокруг уровня монстра.
+ *
+ * ⚠ Раньше ступень бралась детерминированно: «высшая, у которой minItemLevel ≤ уровня». Броска
+ * не было вовсе, поэтому какой у игрока уровень — такая и ступень, всегда. Найти вещь лучше или
+ * хуже своего уровня было невозможно, и «повезло, выпал Мифический» не существовало как событие.
+ *
+ * Идея окна — из Д2: монстр катает не одну полосу классов сокровищ, а ДИАПАЗОН снизу доверху,
+ * где его уровень лишь верхняя граница. Поэтому высокие базы редки не отдельным броском на
+ * удачу, а тем, что они тонкий ломтик широкого пула.
+ *
+ * `u^bias` при `bias > 1` смещает выборку к НИЖНЕЙ границе: чем выше ступень, тем реже.
+ * ⚠ Это уровень ТОЛЬКО для ступени базы. Аффиксы катаются по настоящему уровню монстра — как
+ * в Д2, где слабая база с высоким ilvl может нести отличные свойства.
+ */
+export function rollTierLevel(monsterLevel: number, w: TierWindow, rng: Rng): number {
+  const eff = effTierLevel(monsterLevel, w);
+  const lo = Math.max(1, Math.round(eff * w.low));
+  const hi = Math.max(lo, eff + w.over);
+  return Math.max(1, Math.round(lo + (hi - lo) * Math.pow(rng.float(0, 1), Math.max(0.01, w.bias))));
+}
+
 export function pickTierClamped(
   tiers: ItemTiers | undefined,
   itemLevel: number,
@@ -469,13 +516,18 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number },
+  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
   // Эффективный itemLevel дропа = уровень вызова (глубина/сложность), но не ниже
   // itemLevel самой базы. Влияет на тир (зажатый диапазоном базы), аффиксы, цену.
   const dropIlvl = Math.max(1, Math.round(opts.itemLevel));
+  // ⚠ СТУПЕНЬ базы и АФФИКСЫ живут на РАЗНЫХ уровнях. `tierLevel` — бросок в окне вокруг уровня
+  // монстра (`rollTierLevel`), и он решает только ступень; аффиксы остаются на `itemLevel`.
+  // Слей их в одно число — и высокоуровневый игрок получал бы не только низкую базу, но и слабые
+  // свойства на ней, то есть просадку силы вдобавок к просадке ступени.
+  const tierIlvl = Math.max(1, Math.round(opts.tierLevel ?? opts.itemLevel));
 
   const uniquePool = uniques.filter((u) => u.enabled !== false); // выключенные уники не выпадают
   if (rarity === 'unique' && uniquePool.length > 0) {
@@ -483,7 +535,7 @@ export function generateItem(
     const base = itemsBase.find((b) => b.id === unique.baseId);
     if (base) {
       const ilvl = Math.max(baseItemLevel(base, opts.tiers), dropIlvl);
-      const tier = pickTierClamped(opts.tiers, ilvl, base.minTier, base.maxTier);
+      const tier = pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, base.maxTier);
       return buildItem(base, {
         rarity: 'unique',
         name: titledName(base.name, base.gender, unique.name), // имя базы + титул уника
@@ -511,7 +563,8 @@ export function generateItem(
   // Расходники (колбы) не роллят редкость/аффиксы/тир — всегда normal.
   const isConsumable = base.kind === 'consumable';
   const ilvl = Math.max(baseItemLevel(base, opts.tiers), dropIlvl);
-  const tier = isConsumable ? undefined : pickTierClamped(opts.tiers, ilvl, base.minTier, base.maxTier);
+  const tier = isConsumable ? undefined
+    : pickTierClamped(opts.tiers, Math.max(baseItemLevel(base, opts.tiers), tierIlvl), base.minTier, base.maxTier);
   const effRarity: Rarity = isConsumable ? 'normal' : rarity === 'unique' ? 'rare' : rarity;
   const rDef = opts.rarities.find((x) => x.id === effRarity);
   const rolled = isConsumable ? [] : rollAffixes(

@@ -141,6 +141,14 @@
     },
     "potions": {
       "chance": 0.06
+    },
+    "tierWindow": {
+      "low": 0.5,
+      "over": 5,
+      "bias": 2.5,
+      "softCap": 80,
+      "softK": 0.5,
+      "hardCap": 95
     }
   },
   "weaponAttrScaling": 0.5,

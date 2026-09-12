@@ -14,7 +14,7 @@ import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formu
 import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/resolveWeapon.js';
 import { skillWeaponAllowed } from '../formulas/skills.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
-import { generateItem, itemFromBase } from '../formulas/itemgen.js';
+import { generateItem, itemFromBase, rollTierLevel } from '../formulas/itemgen.js';
 import { salvageFromMonster } from '../formulas/salvage.js';
 import { monsterTrophyBase } from '../formulas/trophy.js';
 import { giveMaterials } from '../economy/materials.js';
@@ -262,7 +262,12 @@ export class GameSession {
     w.projectiles = [];
     w.tick = 0;
     this.floorCleared = false;
+    // ⭐ Уровень ЭТАЖА = уровень самого сильного монстра на нём. Нужен сундуку: он стоит на
+    // этаже, а не «на глубине», и брать сырую глубину значило выдавать ступень ниже соседнего
+    // зомби. Считается ЗДЕСЬ, потому что дальше монстров убьют и спросить будет некого.
+    w.floorLevel = 0;
     for (const s of layout.monsters) {
+      w.floorLevel = Math.max(w.floorLevel, s.def.level);
       w.monsters.push(makeMonsterEntity(w.nextId++, s.def, { x: s.x, y: s.y }, this.rng.float(0, Math.PI * 2)));
     }
     for (const id of Object.keys(w.players)) {
@@ -1504,7 +1509,19 @@ export class GameSession {
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),
         this.cfg.get('uniques'),
-        { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, level + diff.ilvlBonus), baseId, tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'), categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement },
+        {
+          dropBias: theme.dropBias * diff.magicFind,
+          // ⚠ Сложность БОЛЬШЕ НЕ ПРИБАВЛЯЕТСЯ к уровню вещи напрямую (был `+ diff.ilvlBonus`).
+          // Она и так поднимает уровень МОНСТРОВ (на кошмаре моб 1-й мощи идёт 14–17 против 2–5),
+          // и дроп подтягивается оттуда. Второй прямой канал делал сложность двойной ручкой.
+          itemLevel: Math.max(1, level),
+          // ⭐ Ступень базы — БРОСОК в окне вокруг уровня монстра со смещением вниз; аффиксы
+          // остаются на `itemLevel`. См. `rollTierLevel`.
+          tierLevel: rollTierLevel(level, loot.tierWindow, this.rng),
+          baseId, tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'),
+          categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'),
+          maxReqTotal: this.cfg.get('balance').maxTotalRequirement,
+        },
         this.rng,
       );
       // Снято с трупа — значит в негодном виде: чинить у кузнеца или разбирать (docs/ECONOMY.md, Ч4).
@@ -1601,7 +1618,11 @@ export class GameSession {
         this.cfg.get('uniques'),
         {
           dropBias: theme.dropBias * diff.magicFind * (tier?.dropBias ?? 1),
-          itemLevel: Math.max(1, this.world.depth + diff.ilvlBonus),
+          // ⚠ Уровень МОНСТРОВ этажа, а не сырая глубина. Глубина — маленькое число (5 на пятом
+          // этаже), а монстры там 6–9 уровня: сундук выдавал ступень НИЖЕ соседнего зомби, хотя он
+          // и есть главное событие этажа и единственный источник целых вещей.
+          itemLevel: Math.max(1, this.world.floorLevel || this.world.depth),
+          tierLevel: rollTierLevel(Math.max(1, this.world.floorLevel || this.world.depth), bal.loot.tierWindow, this.rng),
           tiers: this.cfg.get('item-tiers'),
           rarities: this.cfg.get('rarities'),
           // ⚠ Сундук даёт СНАРЯЖЕНИЕ, а не расходники: он и так единственный источник целых

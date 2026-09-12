@@ -169,6 +169,12 @@ export interface ProjectileEntity {
 export interface WorldState {
   seed: number;
   depth: number;
+  /**
+   * Уровень ЭТАЖА = уровень самого сильного монстра на нём. Считается на входе (`enterFloor`),
+   * потому что позже монстров убьют и спросить будет некого. Нужен сундуку: он стоит на этаже,
+   * а глубина — совсем другое число (на пятом этаже монстры 6–9 уровня).
+   */
+  floorLevel: number;
   difficultyId: string;
   /** Накопленное игровое время, мс. */
   timeMs: number;
@@ -240,6 +246,7 @@ export function newWorldState(grid: Grid, seed: number, depth: number, difficult
   return {
     seed,
     depth,
+    floorLevel: 0,
     difficultyId,
     timeMs: 0,
     tick: 0,

@@ -104,7 +104,9 @@ export const difficultyPanel: PanelFactory = (app, ui) => {
       const top = mk('div', 'display:flex;justify-content:space-between;align-items:baseline;gap:10px');
       top.append(mk('b', 'font-size:15px', diff.name));
       top.append(mk('span', `font-size:11px;color:${COLORS.dim}`,
-        `золото ×${diff.goldMult} · лут ${diff.ilvlBonus >= 0 ? '+' : ''}${diff.ilvlBonus} · редкость ×${diff.magicFind}`));
+        // ⚠ Строки «лут +N» больше нет: сложность не прибавляется к уровню вещи напрямую.
+        // Она поднимает уровень МОНСТРОВ, а дроп подтягивается оттуда — и это видно строкой ниже.
+        `золото ×${diff.goldMult} · редкость ×${diff.magicFind}`));
       card.append(top);
       card.append(mk('div', 'font-size:12px;color:#c4bca8;margin:4px 0',
         `Монстры на 1-м этаже ≈ ур. ${startCL}, глубже — сложнее.`));
