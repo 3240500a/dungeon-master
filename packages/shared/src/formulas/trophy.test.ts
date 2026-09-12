@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { trophyBaseFor, trophyScore, type TrophyCandidate } from './trophy.js';
+import { trophyBaseFor, trophyScore, trophyProfile, monsterTrophyBase, type TrophyCandidate } from './trophy.js';
+import { createRng } from './rng.js';
+import type { MonsterGearRoll } from '../types/world.js';
 
 /**
  * ⭐ Смысл всей затеи: у монстров свой маленький пул снаряжения, у игрока свой большой, и падать
@@ -95,5 +97,65 @@ describe('трофей: снаряжение монстра → база игр�
     const sameClass = trophyScore(src, { id: 'a', kind: 'weapon', weaponClass: 'axe', hands: 1 });
     const sameHands = trophyScore(src, { id: 'b', kind: 'weapon', weaponClass: 'sword', hands: 2 });
     expect(sameClass).toBeGreaterThan(sameHands);
+  });
+});
+
+describe('⭐ трофей по ВСЕМ слотам, но в СТИЛЕ монстра', () => {
+  const bases = reg.get('items.base');
+  const gear = (id: string) => reg.get('monster-gear').find((g) => g.id === id);
+  /** Монстр в заданном снаряжении. */
+  const worn = (...ids: string[]): MonsterGearRoll[] =>
+    ids.map((gearId, i) => ({ slot: i === 0 ? 'weapon' : 'armor', gearId, name: gearId, rarity: 'normal', affixes: [], mods: [], base: {} } as MonsterGearRoll));
+
+  it('профиль берёт класс НАГРУДНИКА, а шлем — только запасной вариант', () => {
+    expect(trophyProfile(worn('u-sword1h', 'u-leather', 'u-helm-plate'), gear).armorClass).toBe('leather');
+    expect(trophyProfile(worn('u-sword1h', 'u-helm-plate'), gear).armorClass).toBe('plate');
+    expect(trophyProfile(worn('u-sword1h'), gear).armorClass).toBeUndefined();
+  });
+
+  it('⭐ с кожаного зомби НЕ падают латные перчатки', () => {
+    const rolls = worn('u-sword1h', 'u-leather');
+    const rng = createRng(5);
+    const seen = new Set<string>();
+    for (let i = 0; i < 600; i++) {
+      const id = monsterTrophyBase(rolls, gear, bases, rng, reg.get('balance').loot.categoryWeights);
+      const b = bases.find((x) => x.id === id)!;
+      if (b.kind === 'armor') { seen.add(b.armorClass); }
+    }
+    expect(seen.size).toBeGreaterThan(0);
+    expect([...seen]).toEqual(['leather']);     // ровно его класс, без примесей
+  });
+
+  it('⭐ закрыты ВСЕ слоты, включая те, что монстр не носит', () => {
+    const rolls = worn('u-sword1h', 'u-chain');
+    const rng = createRng(9);
+    const slots = new Set<string>();
+    for (let i = 0; i < 3000; i++) {
+      const id = monsterTrophyBase(rolls, gear, bases, rng, reg.get('balance').loot.categoryWeights);
+      const b = bases.find((x) => x.id === id)!;
+      slots.add('slot' in b && b.slot ? b.slot : '?');
+    }
+    // до этого с монстров падали только weapon/chest/offhand — пяти слотов не было вовсе
+    for (const s of ['weapon', 'chest', 'helm', 'gloves', 'boots', 'belt', 'ring', 'amulet', 'offhand']) {
+      expect(slots.has(s), `слот ${s} не выпадает вовсе`).toBe(true);
+    }
+  });
+
+  it('надетое по-прежнему зеркалится: у лучника падает лук', () => {
+    const rolls = worn('u-bow', 'u-quilted');
+    const rng = createRng(3);
+    const wc = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const id = monsterTrophyBase(rolls, gear, bases, rng, { weapon: 100 });
+      const b = bases.find((x) => x.id === id)!;
+      if (b.kind === 'weapon') wc.add(b.weaponClass);
+    }
+    expect([...wc]).toEqual(['bow']);
+  });
+
+  it('без снаряжения вовсе трофей всё равно есть — просто без стиля', () => {
+    const rng = createRng(1);
+    const id = monsterTrophyBase(undefined, gear, bases, rng, reg.get('balance').loot.categoryWeights);
+    expect(id).toBeTruthy();
   });
 });

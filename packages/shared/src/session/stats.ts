@@ -63,10 +63,29 @@ export interface CurvePoint {
   floor: number;
 }
 
-/** Разбивка лута за забег: по виду предмета и по редкости (сколько выпало). */
+/**
+ * Разбивка добычи за забег — ЧТО и СКОЛЬКО реально выпало.
+ *
+ * Нужна не для красоты: после перевода экономики на материалы «сколько выпало вещей» перестало
+ * описывать поток наград. Здесь видно обе половины сразу — вещи по слотам и редкостям, материалы
+ * по ступеням, и откуда что пришло (труп или сундук).
+ */
 export interface LootBreakdown {
   byType: Record<string, number>;   // weapon/armor/shield/jewelry/consumable
   byRarity: Record<string, number>; // normal/magic/rare/unique/…
+  /** По слоту экипировки — сразу видно, какие слоты остались без источника. */
+  bySlot: Record<string, number>;
+  /** Сколько вещей пришло с трупа и сколько из сундуков. */
+  fromMonsters: number;
+  fromChests: number;
+  /** Сколько вещей выпало СЛОМАННЫМИ (их нельзя надеть до кузнеца). */
+  broken: number;
+  /** Материалы по id: сколько единиц упало за забег. */
+  materials: Record<string, number>;
+  /** Материалы по ступеням 1/2/3 — главная сводка для баланса крафта. */
+  materialsByTier: Record<string, number>;
+  /** Сундуков открыто. */
+  chestsOpened: number;
 }
 
 export interface RunReport {

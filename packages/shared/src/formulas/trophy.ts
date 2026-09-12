@@ -15,6 +15,8 @@
  * контента молча. Считается сходство по полям, а промах лечится явным `trophyBase` в конфиге.
  */
 
+import type { MonsterGearRoll } from '../types/world.js';
+
 /** Что носил монстр — в части, важной для подбора трофея (структурно ⊆ `monster-gear`). */
 export interface TrophySource {
   kind?: string;
@@ -88,4 +90,95 @@ export function trophyBaseFor(
   }
   if (!pool.length) return undefined;
   return pool[rng.int(0, pool.length - 1)]!.id;
+}
+
+// ── Трофей по ВСЕМ слотам, а не только по надетым ────────────────────────────────────────────────
+
+/**
+ * ⭐ С МОНСТРА ПАДАЕТ И ТО, ЧЕГО НА НЁМ НЕ ВИДНО — кольца, амулеты, пояса, перчатки, сапоги.
+ *
+ * Иначе пять слотов из девяти живут только сундуками: монстры носят лишь оружие, нагрудник,
+ * щит и шлем. Но ненадетое выбирается НЕ наугад — оно подчиняется «стилю» монстра: с зомби
+ * в кожаной броне не падают латные перчатки, с латника — тряпичные.
+ *
+ * Так сохраняется главное обещание системы («по виду врага понятно, что с него выпадет»)
+ * и при этом закрываются все слоты.
+ */
+
+/** Во что монстр одет — по классу его брони. Нагрудник главнее шлема: он крупнее и заметнее. */
+export function trophyProfile(
+  rolls: readonly MonsterGearRoll[] | undefined,
+  gearById: (id: string) => TrophySource | undefined,
+): { armorClass?: string } {
+  let fromHelm: string | undefined;
+  for (const r of rolls ?? []) {
+    const g = r.gearId ? gearById(r.gearId) : undefined;
+    if (!g || g.kind !== 'armor' || !g.armorClass) continue;
+    if ((g.slot ?? 'chest') === 'chest') return { armorClass: g.armorClass };
+    fromHelm ??= g.armorClass;
+  }
+  return { armorClass: fromHelm };
+}
+
+/** Слоты брони, по которым раскладывается категория `armor`. */
+const ARMOR_SLOTS = ['chest', 'helm', 'gloves', 'boots', 'belt'] as const;
+
+/**
+ * База трофея с конкретного монстра: категория по весам (`loot.categoryWeights`), затем слот,
+ * затем база. Надетый слот берёт ВЕЩЬ МОНСТРА (через сходство), ненадетый — базу того же класса
+ * брони. Расходники в трофеи не идут: их роняет не труп, а сундук.
+ */
+export function monsterTrophyBase(
+  rolls: readonly MonsterGearRoll[] | undefined,
+  gearById: (id: string) => TrophySource | undefined,
+  bases: readonly TrophyCandidate[],
+  rng: PickRng,
+  categoryWeights: Record<string, number> = {},
+): string | undefined {
+  const usable = bases.filter((b) => b.enabled !== false && b.kind !== 'consumable');
+  if (!usable.length) return undefined;
+  const wornOf = (pred: (g: TrophySource) => boolean): TrophySource | undefined => {
+    for (const r of rolls ?? []) {
+      const g = r.gearId ? gearById(r.gearId) : undefined;
+      if (g && pred(g)) return g;
+    }
+    return undefined;
+  };
+  const pick = <T>(arr: readonly T[]): T | undefined => (arr.length ? arr[rng.int(0, arr.length - 1)] : undefined);
+
+  // Категория — взвешенно. Ноль весов (или все нулевые) → равномерно по тому, что есть.
+  const cats = ['weapon', 'armor', 'shield', 'jewelry'] as const;
+  const have = cats.filter((c) => usable.some((b) => b.kind === c));
+  if (!have.length) return undefined;
+  const total = have.reduce((s, c) => s + Math.max(0, categoryWeights[c] ?? 0), 0);
+  let cat = have[have.length - 1]!;
+  if (total > 0) {
+    let r = rng.int(1, Math.round(total));
+    for (const c of have) { r -= Math.max(0, categoryWeights[c] ?? 0); if (r <= 0) { cat = c; break; } }
+  } else {
+    cat = pick(have)!;
+  }
+
+  if (cat === 'weapon') {
+    const worn = wornOf((g) => g.kind === 'weapon');
+    return worn ? trophyBaseFor(worn, usable, rng) : pick(usable.filter((b) => b.kind === 'weapon'))?.id;
+  }
+  if (cat === 'shield') {
+    const worn = wornOf((g) => g.kind === 'shield');
+    return worn ? trophyBaseFor(worn, usable, rng) : pick(usable.filter((b) => b.kind === 'shield'))?.id;
+  }
+  if (cat === 'jewelry') {
+    // У украшений класса брони нет — стиль монстра на них не влияет, и это нормально.
+    return pick(usable.filter((b) => b.kind === 'jewelry'))?.id;
+  }
+
+  const slot = ARMOR_SLOTS[rng.int(0, ARMOR_SLOTS.length - 1)]!;
+  const worn = wornOf((g) => g.kind === 'armor' && (g.slot ?? 'chest') === slot);
+  if (worn) return trophyBaseFor(worn, usable, rng);
+  // ⚠ Ненадетый слот — в СТИЛЕ монстра: с кожаного зомби не падают латные перчатки.
+  // Нет базы такого класса в этом слоте (контент не полон) — берём любую, но слот держим.
+  const cls = trophyProfile(rolls, gearById).armorClass;
+  const inSlot = usable.filter((b) => b.kind === 'armor' && b.slot === slot);
+  const styled = cls ? inSlot.filter((b) => b.armorClass === cls) : [];
+  return (pick(styled) ?? pick(inSlot))?.id;
 }

@@ -131,6 +131,15 @@ export class BotController {
       const d = Math.hypot(dr.pos.x - p.pos.x, dr.pos.y - p.pos.y);
       if (d < dd) { dd = d; drop = dr; }
     }
+    // Сундуки бот обходит так же, как лут: без этого сим не видит второй половины добычи —
+    // целых вещей и половины слотов, и отчёт врёт в самом интересном месте.
+    let chest: { id: number; pos: Vec2 } | undefined;
+    let cd = Infinity;
+    for (const ch of world.chests) {
+      if (ch.opened) continue;
+      const d = Math.hypot(ch.pos.x - p.pos.x, ch.pos.y - p.pos.y);
+      if (d < cd) { cd = d; chest = ch; }
+    }
 
     let move: Vec2 = { x: 0, y: 0 };
     let facing = p.facing;
@@ -168,6 +177,11 @@ export class BotController {
     } else if (drop && !lowHp && dd <= this.aggro) {
       facing = Math.atan2(drop.pos.y - p.pos.y, drop.pos.x - p.pos.x);
       if (dd > 24) move = this.navigate(world, p, drop.pos, `d${drop.id}`);
+    } else if (chest && !lowHp) {
+      // К сундуку идём с ЛЮБОГО расстояния, в отличие от лута: он один на этаж и гарантированно
+      // платит, а игрок ради такого точно свернёт с дороги.
+      facing = Math.atan2(chest.pos.y - p.pos.y, chest.pos.x - p.pos.x);
+      if (cd > 40) move = this.navigate(world, p, chest.pos, `c${chest.id}`);
     } else if (world.exits && world.exits.length && !lowHp) {
       // рядом ни цели, ни лута — идём к ближайшему выходу (спуск), не зачищая весь этаж (как игрок).
       let ex = world.exits[0]!, ed = Infinity;
@@ -176,7 +190,8 @@ export class BotController {
       if (ed > 20) move = this.navigate(world, p, ex, 'exit');
     }
 
-    if (drop && dd <= 44) interact = true;
+    // [E] у сервера сначала открывает сундук, потом подбирает — боту достаточно одного флага.
+    if ((drop && dd <= 44) || (chest && cd <= 50)) interact = true;
 
     return { move, facing, attack, cast, interact, useBelt };
   }

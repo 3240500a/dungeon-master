@@ -84,6 +84,18 @@ function openDoors(layout: DungeonLayout): void {
   for (const d of layout.doors) for (const c of d.cells) { const row = layout.grid[c.cy]; if (row) row[c.cx] = Cell.Floor; }
 }
 
+/** Материалы по ступеням: для баланса важна ступень, а не пятнадцать отдельных id. */
+function tierSums(reg: ConfigRegistry, mats: Record<string, number>): Record<string, number> {
+  const defs = reg.get('craft-materials');
+  const out: Record<string, number> = {};
+  for (const [id, n] of Object.entries(mats)) {
+    const t = defs.find((d) => d.id === id)?.tier;
+    const key = t ? `ступень ${t}` : 'прочее';
+    out[key] = (out[key] ?? 0) + n;
+  }
+  return out;
+}
+
 export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings): RunReport {
   const dt = settings.dt ?? 1 / 30;
   const floorCap = settings.floorTimeCapSec ?? 240;
@@ -112,6 +124,12 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   let xp = 0;
   const lootByType: Record<string, number> = {};
   const lootByRarity: Record<string, number> = {};
+  const lootBySlot: Record<string, number> = {};
+  const materials: Record<string, number> = {};
+  let fromMonsters = 0;
+  let fromChests = 0;
+  let brokenItems = 0;
+  let chestsOpened = 0;
   let curFloor = 0;
   let deepest = 0;
   let floorsCompleted = 0;
@@ -172,7 +190,10 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     }
 
     // Боевой узел: генерим этаж по floorSpec узла и заселяем пулом/глубиной/плотностью узла (как Room.enterNode).
-    const layout = generateFloor(node.floorSpec, prefabs);
+    // ⚠ Сундуки передаём ЯВНО: без этого бот проходил этажи без них и отчёт показывал бы
+    // ноль целых вещей — то есть врал бы ровно там, где его и смотрят.
+    const layout = generateFloor(node.floorSpec, prefabs, undefined, undefined,
+      { tiers: reg.get('chests'), perFloor: reg.get('balance').loot.chestsPerFloor });
     openDoors(layout);
     const biome = biomes.find((b) => b.id === node!.biomeId) ?? biomes[0]!;
     const pool = resolveMonsterPool(biome, node.depth);
@@ -180,7 +201,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     const frng = createRng((node.floorSpec.seed >>> 0) || 1);
     const monsters = spawnPacksEl(reg, layout, node.depth, settings.difficultyId, frng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     session.enterFloor(node.depth, {
-      grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters,
+      grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, chests: layout.chests,
       runNodeId: node.id, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: node.biomeId,
     });
     bot.syncHotbar(save);
@@ -194,7 +215,18 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
       for (const e of session.tick(dt, { p1: bot.input(session.world, p) })) {
         if (e.type === 'monster-died') kills++;
         else if (e.type === 'gold') gold += e.amount;
-        else if (e.type === 'item-dropped') { items++; const t = e.item.kind ?? 'other'; lootByType[t] = (lootByType[t] ?? 0) + 1; lootByRarity[e.item.rarity] = (lootByRarity[e.item.rarity] ?? 0) + 1; }
+        else if (e.type === 'item-dropped') {
+          items++;
+          const t = e.item.kind ?? 'other';
+          lootByType[t] = (lootByType[t] ?? 0) + 1;
+          lootByRarity[e.item.rarity] = (lootByRarity[e.item.rarity] ?? 0) + 1;
+          const sl = e.item.slot ?? '—';
+          lootBySlot[sl] = (lootBySlot[sl] ?? 0) + 1;
+          if (e.from === 'chest') fromChests++; else fromMonsters++;
+          if (e.item.broken) brokenItems++;
+        } else if (e.type === 'materials') {
+          for (const [id, n] of Object.entries(e.gains)) materials[id] = (materials[id] ?? 0) + n;
+        } else if (e.type === 'chest-opened') chestsOpened++;
         else if (e.type === 'xp') xp += e.amount;
         else if (e.type === 'player-died') deaths++;
       }
@@ -248,7 +280,17 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     killsPerHour: hours > 0 ? Math.round(kills / hours) : 0,
     xpPerHour: hours > 0 ? Math.round(xp / hours) : 0,
     lootPerHour: hours > 0 ? Math.round((items / hours) * 10) / 10 : 0,
-    loot: { byType: lootByType, byRarity: lootByRarity },
+    loot: {
+      byType: lootByType,
+      byRarity: lootByRarity,
+      bySlot: lootBySlot,
+      fromMonsters,
+      fromChests,
+      broken: brokenItems,
+      materials,
+      materialsByTier: tierSums(reg, materials),
+      chestsOpened,
+    },
     levelCurve: curve,
     finalBuild: buildSnapshot(reg, save),
     finalSave: save,

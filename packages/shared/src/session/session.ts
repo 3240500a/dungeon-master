@@ -16,7 +16,7 @@ import { skillWeaponAllowed } from '../formulas/skills.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { salvageFromMonster } from '../formulas/salvage.js';
-import { trophyBaseFor } from '../formulas/trophy.js';
+import { monsterTrophyBase } from '../formulas/trophy.js';
 import { addMaterials } from '../economy/materials.js';
 import { gainXp } from '../economy/progression.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
@@ -110,7 +110,8 @@ export type SessionEvent =
   | { type: 'hit'; target: 'monster' | 'player'; id: string | number; by?: string; x: number; y: number; hit: boolean; blocked: boolean; crit: boolean; amount: number; byType: DamagePacket }
   | { type: 'monster-died'; id: number; def: ScaledMonster; x: number; y: number; by?: string }
   | { type: 'quest'; playerId: string; kind: 'accepted' | 'progress' | 'completed' | 'turned-in'; questId: string; name: string }
-  | { type: 'item-dropped'; item: Item; x: number; y: number }
+  /** `from` — с трупа или из сундука. Без него в отчёте не отличить два потока добычи. */
+  | { type: 'item-dropped'; item: Item; x: number; y: number; from: 'monster' | 'chest' }
   /** Сундук открыт — клиент гасит меш (состояние живёт в мире, а FloorInit шлётся один раз). */
   | { type: 'chest-opened'; id: number; x: number; y: number }
   | { type: 'item-picked'; playerId: string; item: Item; x: number; y: number }
@@ -1456,12 +1457,18 @@ export class GameSession {
       // У монстров свой маленький пул снаряжения, чтобы не плодить вторую гору предметов и моделей,
       // но надеть игрок может только своё — поэтому носимое переводится в ближайшую базу игрока.
       // Нечего зеркалить (монстр без гира) — падает обычный случайный дроп, а не ничего.
-      // ⚠ Трофей НЕ всегда: монстры носят только оружие, нагрудник, щит и шлем. Сделай весь дроп
-      // трофейным — и перчатки, сапоги, пояс и украшения не будут падать вообще (замерено).
+      // ⭐ Трофей покрывает ВСЕ слоты, а не только надетые: кольца, пояса, перчатки и сапоги
+      // монстр не носит, но с трупа они падают — в ЕГО стиле брони (с кожаного не падают латные).
       const asTrophy = this.rng.chance(loot.trophyChance);
-      const worn = asTrophy && m.def.gearRolls?.length ? m.def.gearRolls[this.rng.int(0, m.def.gearRolls.length - 1)] : undefined;
-      const gearDef = worn?.gearId ? this.cfg.get('monster-gear').find((g) => g.id === worn.gearId) : undefined;
-      const baseId = gearDef ? trophyBaseFor(gearDef, this.cfg.get('items.base'), this.rng) : undefined;
+      const baseId = asTrophy
+        ? monsterTrophyBase(
+            m.def.gearRolls,
+            (id) => this.cfg.get('monster-gear').find((g) => g.id === id),
+            this.cfg.get('items.base'),
+            this.rng,
+            loot.categoryWeights,
+          )
+        : undefined;
       const item = generateItem(
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),
@@ -1474,7 +1481,7 @@ export class GameSession {
       // надеть в забеге было бы нечего вовсе.
       if (baseId && this.rng.chance(loot.brokenChance)) item.broken = true;
       const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item });
-      this.events.push({ type: 'item-dropped', item, x, y });
+      this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
     }
 
     this.awardXp(reward, m.def.xp); // опыт монстра уже отскейлен по его уровню
@@ -1549,7 +1556,7 @@ export class GameSession {
       );
       // ⚠ Содержимое сундука ЦЕЛОЕ: сломанным падает только снятое с тела (Ч4).
       const { x, y } = this.spawnDrop(ch.pos, { kind: 'item', item });
-      this.events.push({ type: 'item-dropped', item, x, y });
+      this.events.push({ type: 'item-dropped', item, x, y, from: 'chest' });
     }
     this.events.push({ type: 'chest-opened', id: ch.id, x: ch.pos.x, y: ch.pos.y });
     return true;
