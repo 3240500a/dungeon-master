@@ -6,6 +6,7 @@ import { ALGORITHMS, roomsAlgorithm } from './algorithms/index.js';
 import { selectPrefabs } from './prefab.js';
 import { townFloor } from './townFloor.js';
 import { placeFloorDecor, placeWallProps, type DecorSpec, type PlaceDecorOpts } from './decor.js';
+import { placeChests } from './floorCommon.js';
 import type { FloorSpec } from './run/types.js';
 
 /** Опции сборки этажа поверх «сырого» алгоритма. */
@@ -26,6 +27,8 @@ export interface GenFloorOpts {
   decorSpecs?: DecorSpec[];
   /** Плотность расстановки декора (тюн «пачек»). */
   decorPlace?: PlaceDecorOpts;
+  /** Сундуки этажа (Ч6): тиры из конфига `chests` + сколько ставить. Нет — этаж без сундуков. */
+  chests?: { tiers: readonly { id: string; enabled?: boolean; weight?: number }[]; perFloor: { min: number; max: number } };
 }
 
 /**
@@ -148,11 +151,15 @@ export function generateFloorParams(params: FloorAlgoParams, seed: number, opts:
     placeFloorDecor(result, opts.decorSpecs, createRng(((seed ^ 0xdec0) >>> 0) || 1), opts.decorPlace);
     placeWallProps(result, opts.decorSpecs, createRng(((seed ^ 0x3a11) >>> 0) || 1));
   }
+  // Сундуки — СВОЙ поток rng, как у декора: добавление сундуков не должно сдвигать всё остальное.
+  if (opts.chests && !opts.town) {
+    placeChests(result, createRng(((seed ^ 0xc4e5) >>> 0) || 1), opts.chests.tiers, opts.chests.perFloor);
+  }
   return result;
 }
 
 /** Гарантированно проходимый этаж по FloorSpec (биом/алгоритм/сид/выходы/замок/фичи + библиотека префабов + декор). */
-export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpecs?: DecorSpec[], decorPlace?: PlaceDecorOpts): DungeonLayout {
+export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpecs?: DecorSpec[], decorPlace?: PlaceDecorOpts, chests?: GenFloorOpts['chests']): DungeonLayout {
   return generateFloorParams(spec.algoParams, spec.seed, {
     lock: spec.locked,
     exitCount: spec.exitCount,
@@ -162,5 +169,6 @@ export function generateFloor(spec: FloorSpec, prefabs?: RoomPrefab[], decorSpec
     biomeId: spec.biomeId,
     decorSpecs,
     decorPlace,
+    chests,
   });
 }

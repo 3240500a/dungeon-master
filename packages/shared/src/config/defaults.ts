@@ -23,6 +23,7 @@ import runTemplates from './data/run-templates.json' with { type: 'json' };
 import itemTiers from './data/item-tiers.json' with { type: 'json' };
 import craftMaterials from './data/craft-materials.json' with { type: 'json' };
 import salvageRules from './data/salvage-rules.json' with { type: 'json' };
+import chests from './data/chests.json' with { type: 'json' };
 import armorClasses from './data/armor-classes.json' with { type: 'json' };
 import physSubtypes from './data/phys-subtypes.json' with { type: 'json' };
 import weaponWeights from './data/weapon-weights.json' with { type: 'json' };
@@ -71,6 +72,7 @@ export const defaultConfigData: Record<string, unknown> = {
   'item-tiers': itemTiers,
   'craft-materials': craftMaterials,
   'salvage-rules': salvageRules,
+  chests,
   'armor-classes': armorClasses,
   'phys-subtypes': physSubtypes,
   'weapon-weights': weaponWeights,

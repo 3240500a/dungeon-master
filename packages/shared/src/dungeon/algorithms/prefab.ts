@@ -52,6 +52,6 @@ export function prefabAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorA
     grid, rooms,
     spawn: cellToWorld(spawnC.cx, spawnC.cy),
     stairsDown, exits: exitCells.map((c) => cellToWorld(c.cx, c.cy)),
-    decor, doors: [], levers: [],
+    decor, doors: [], levers: [], chests: [],
   };
 }

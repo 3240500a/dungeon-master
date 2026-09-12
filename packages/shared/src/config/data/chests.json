@@ -1,0 +1,29 @@
+[
+  {
+    "id": "plain",
+    "enabled": true,
+    "name": "Простой сундук",
+    "weight": 70,
+    "dropBias": 1,
+    "itemsMin": 1,
+    "itemsMax": 1
+  },
+  {
+    "id": "magic",
+    "enabled": true,
+    "name": "Окованный сундук",
+    "weight": 25,
+    "dropBias": 2,
+    "itemsMin": 1,
+    "itemsMax": 2
+  },
+  {
+    "id": "rare",
+    "enabled": true,
+    "name": "Древний сундук",
+    "weight": 5,
+    "dropBias": 4,
+    "itemsMin": 2,
+    "itemsMax": 3
+  }
+]

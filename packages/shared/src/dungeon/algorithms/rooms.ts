@@ -77,6 +77,6 @@ export function roomsAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAl
     grid, rooms,
     spawn: cellToWorld(first.cx, first.cy),
     stairsDown, exits: [stairsDown],
-    decor, doors, levers,
+    decor, doors, levers, chests: [],
   };
 }

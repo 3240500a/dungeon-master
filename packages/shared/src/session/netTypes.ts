@@ -128,6 +128,8 @@ export interface FloorInit {
   doors: { id: number; cells: { cx: number; cy: number }[] }[];
   /** Рычаги (мировые координаты) — спрайт + интерактив «[E] Рычаг», открывает свою дверь. */
   levers: { id: number; x: number; y: number; doorId: number }[];
+  /** Сундуки этажа: id, где стоит и какого тира (цвет меша). Открытые не шлём. */
+  chests: { id: number; x: number; y: number; tier: string }[];
 }
 
 /** Снапшот, слитый со статикой пиров — то, с чем работает клиент (Ф1.1). */
@@ -204,6 +206,7 @@ export type ClientFrame =
   | { t: 'arena' }
   | { t: 'return' }
   | { t: 'lever'; leverId: number }
+  | { t: 'chest'; chestId: number }
   | { t: 'vote'; accept: boolean }
   | { t: 'leave' }
   // Замер задержки: клиент шлёт ping с id, сервер сразу эхо-pong тем же id → клиент считает RTT.

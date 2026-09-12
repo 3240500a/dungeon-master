@@ -97,6 +97,8 @@ export interface FloorLayout {
   /** Запертые ворота + рычаги (по модели «дверь ↔ рычаг»). */
   doors?: { id: number; cells: { cx: number; cy: number }[] }[];
   levers?: { id: number; x: number; y: number; doorId: number }[];
+  /** Сундуки этажа (Ч6). */
+  chests?: { id: number; x: number; y: number; tier: string }[];
   /** Суб-тайловые препятствия напольного декора (круг/бокс) — коллизия по форме меша. */
   obstacles?: Obstacle[];
   /** PvP-арена: атаки игроков бьют друг друга (иначе — обычный этаж/город). */
@@ -109,6 +111,8 @@ export type SessionEvent =
   | { type: 'monster-died'; id: number; def: ScaledMonster; x: number; y: number; by?: string }
   | { type: 'quest'; playerId: string; kind: 'accepted' | 'progress' | 'completed' | 'turned-in'; questId: string; name: string }
   | { type: 'item-dropped'; item: Item; x: number; y: number }
+  /** Сундук открыт — клиент гасит меш (состояние живёт в мире, а FloorInit шлётся один раз). */
+  | { type: 'chest-opened'; id: number; x: number; y: number }
   | { type: 'item-picked'; playerId: string; item: Item; x: number; y: number }
   | { type: 'gold'; playerId: string; amount: number; total: number }
   /** Материалы с убитого монстра: id → количество. `x`/`y` — место смерти, чтобы клиент показал их там. */
@@ -248,6 +252,7 @@ export class GameSession {
     w.biomeId = layout.biomeId;
     w.doors = (layout.doors ?? []).map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) }));
     w.levers = (layout.levers ?? []).map((l) => ({ id: l.id, pos: { x: l.x, y: l.y }, doorId: l.doorId, used: false }));
+    w.chests = (layout.chests ?? []).map((c) => ({ id: c.id, pos: { x: c.x, y: c.y }, tier: c.tier, opened: false }));
     w.obstacles = (layout.obstacles ?? []).map((o) => ({ ...o }));   // суб-тайл-препятствия декора (коллизия/LoS)
     w.pvp = layout.pvp ?? false;   // арена включает урон игрок↔игрок; обычный этаж/город — сбрасывает
     w.monsters = [];
@@ -472,7 +477,9 @@ export class GameSession {
     if (input?.useBelt != null) this.useBeltSlot(p, snap, input.useBelt);
     if (input?.attack) this.tryPlayerAttack(p, snap);
     if (input?.cast != null) this.castSkill(p, snap, input.cast);
-    if (input?.interact) this.tryPickup(p);
+    // [E] сперва открывает сундук, и только потом подбирает: иначе, стоя над только что
+    // высыпавшимся содержимым, второе нажатие открывало бы сундук, а не собирало добычу.
+    if (input?.interact && !this.openChest(p.id)) this.tryPickup(p);
   }
 
   /** Выпить расходник из слота пояса: единый эффект `applyConsumable`; расход ТОЛЬКО если сработал
@@ -1498,6 +1505,54 @@ export class GameSession {
       const took = this.takeDrop(p, i);
       if (took?.item) this.events.push({ type: 'item-picked', playerId: p.id, item: took.item, x: took.x, y: took.y });
     }
+  }
+
+  /**
+   * ⭐ ОТКРЫТЬ СУНДУК — второй источник добычи, с ритмом, противоположным монстрам.
+   *
+   * Монстры сыплют материалы постоянно и роняют СЛОМАННЫЕ трофеи только тех слотов, что носят.
+   * Сундук даёт ЦЕЛУЮ вещь гарантированно и любого слота — отсюда приходят перчатки, сапоги,
+   * пояс и украшения, и отсюда же берётся то, что можно надеть прямо в забеге.
+   *
+   * Возвращает true, если сундук был рядом и открылся (тогда подбор в этот тик не делаем).
+   */
+  openChest(playerId: string, chestId?: number): boolean {
+    const p = this.world.players[playerId];
+    if (!p || !p.alive || !this.economy) return false;
+    // Без id — ближайший (клавиша [E] у 2D-клиента и бота), с id — конкретный (команда веб-3D).
+    // Проксимити проверяется В ОБОИХ случаях — анти-чит, как у рычага.
+    const near = (c: { pos: Vec2 }): boolean => vecLen(c.pos.x - p.pos.x, c.pos.y - p.pos.y) <= 56;
+    const ch = this.world.chests.find((c) => !c.opened && near(c) && (chestId == null || c.id === chestId));
+    if (!ch) return false;
+    ch.opened = true;
+    const tier = this.cfg.get('chests').find((t) => t.id === ch.tier);
+    const diff = this.currentDifficulty();
+    const biomes = this.cfg.get('biomes');
+    const theme = biomes.find((b) => b.id === this.world.biomeId) ?? biomes[0]!;
+    const bal = this.cfg.get('balance');
+    const n = tier ? this.rng.int(tier.itemsMin, Math.max(tier.itemsMin, tier.itemsMax)) : 1;
+    for (let i = 0; i < n; i++) {
+      const item = generateItem(
+        this.cfg.get('items.base'),
+        this.cfg.get('affixes'),
+        this.cfg.get('uniques'),
+        {
+          dropBias: theme.dropBias * diff.magicFind * (tier?.dropBias ?? 1),
+          itemLevel: Math.max(1, this.world.depth + diff.ilvlBonus),
+          tiers: this.cfg.get('item-tiers'),
+          rarities: this.cfg.get('rarities'),
+          categoryWeights: bal.loot.categoryWeights,
+          rareNames: this.cfg.get('rare-names'),
+          maxReqTotal: bal.maxTotalRequirement,
+        },
+        this.rng,
+      );
+      // ⚠ Содержимое сундука ЦЕЛОЕ: сломанным падает только снятое с тела (Ч4).
+      const { x, y } = this.spawnDrop(ch.pos, { kind: 'item', item });
+      this.events.push({ type: 'item-dropped', item, x, y });
+    }
+    this.events.push({ type: 'chest-opened', id: ch.id, x: ch.pos.x, y: ch.pos.y });
+    return true;
   }
 
   /** Начисляет XP и обрабатывает левелапы (полностью лечит, выдаёт очки). */

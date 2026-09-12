@@ -514,6 +514,11 @@ export class Room implements Tickable {
     if (doorId != null) this.broadcast({ t: 'doorOpened', doorId });
   }
 
+  /** Игрок открыл сундук: сессия высыпает содержимое на землю (если рядом) → события всем. */
+  openChest(pid: string, chestId: number): void {
+    this.session.openChest(pid, chestId);
+  }
+
   returnTown(pid: string): void {
     if (this.vote || this.area === 'town') return;
     this.vote = { kind: 'town', yes: new Set([pid]), no: new Set() };
@@ -631,7 +636,8 @@ export class Room implements Tickable {
     const biomes = this.cfg.get('biomes');
     const biome = biomes.find((b) => b.id === node.biomeId) ?? biomes[0]!;
     const decorSpecs = decorSpecsFor(this.cfg.get('objects'), this.cfg.get('models'), biome.id);   // напольный декор биома (role decor/prop)
-    const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'), decorSpecs);
+    const layout = generateFloor(node.floorSpec, this.cfg.get('room-prefabs'), decorSpecs, undefined,
+      { tiers: this.cfg.get('chests'), perFloor: this.cfg.get('balance').loot.chestsPerFloor });
     this.decor = layout.decor;
     const obstacles = obstaclesFromDecor(layout.decor, new Map(decorSpecs.map((s) => [s.id, s])));   // суб-тайл-коллизия
     const pool = resolveMonsterPool(biome, node.depth);

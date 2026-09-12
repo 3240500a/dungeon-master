@@ -48,6 +48,6 @@ export function townFloor(exitCount: number, seed: number): DungeonLayout {
     spawn,
     stairsDown: exits[0] ?? spawn,
     exits,
-    decor, doors: [], levers: [],
+    decor, doors: [], levers: [], chests: [],
   };
 }

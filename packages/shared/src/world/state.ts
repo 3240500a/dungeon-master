@@ -127,6 +127,14 @@ export interface MonsterEntity {
 }
 
 /** Лежащий на полу предмет. */
+/** Сундук в мире: где стоит, какого тира и открыт ли уже. */
+export interface WorldChest {
+  id: number;
+  pos: Vec2;
+  tier: string;
+  opened: boolean;
+}
+
 export type DropEntity = { id: number; pos: Vec2 } & DropPayload;
 
 /** Летящий снаряд (базовая атака дальнобойного оружия или скилл). */
@@ -191,6 +199,8 @@ export interface WorldState {
   doors: WorldDoor[];
   /** Рычаги этажа — каждый открывает свою дверь (по `doorId`), `used` после нажатия. */
   levers: WorldLever[];
+  /** Сундуки этажа: открытый остаётся на месте, но больше не даёт ничего. */
+  chests: WorldChest[];
   /** Суб-тайловые препятствия напольного декора (колонны/очаги): круг/бокс, коллизия по форме. */
   obstacles: Obstacle[];
   /** PvP-режим (арена): атаки игроков бьют ДРУГ ДРУГА; смерть без штрафа забега. По умолчанию false. */
@@ -244,6 +254,7 @@ export function newWorldState(grid: Grid, seed: number, depth: number, difficult
     spawn: { x: 0, y: 0 },
     doors: [],
     levers: [],
+    chests: [],
     obstacles: [],
     pvp: false,
   };

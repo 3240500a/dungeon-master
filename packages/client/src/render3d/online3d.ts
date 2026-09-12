@@ -443,6 +443,7 @@ export async function startOnline3d(): Promise<void> {
   let interactables: Interactable[] = [];
   const doorMeshes = new Map<number, THREE.Object3D[]>();
   const leverMeshes = new Map<number, THREE.Object3D>();
+  const chestMeshes = new Map<number, THREE.Object3D>();
   const npcLabels: { spr: THREE.Sprite }[] = [];
   let hudBars: { action: ActionBar; belt: BeltBar } | undefined;   // пояс + панель биндов (D2), создаём в мире
 
@@ -489,7 +490,7 @@ export async function startOnline3d(): Promise<void> {
     for (const m of dropMeshes.values()) actorsGroup.remove(m); dropMeshes.clear();
     for (const n of npcLabels) actorsGroup.remove(n.spr); npcLabels.length = 0;
     statusFx.clear();   // сбросить партикл-эффекты статусов прошлой области
-    doorMeshes.clear(); leverMeshes.clear(); interactables = [];
+    doorMeshes.clear(); leverMeshes.clear(); chestMeshes.clear(); interactables = [];
     clearGroup(floorGroup); clearGroup(corpsesGroup);   // запечённые трупы прошлого этажа — снести (геометрии dispose; общий corpseMat не трогаем)
     area = floor.area;
     areaGrid = floor.grid;   // для DBG-диагностики «монстры вне пола»
@@ -563,6 +564,15 @@ export async function startOnline3d(): Promise<void> {
         const mk = new THREE.Mesh(new THREE.BoxGeometry(8, 22, 8), new THREE.MeshStandardMaterial({ color: 0xdca94b, emissive: 0x604010, emissiveIntensity: 0.5 }));
         mk.position.set(lv.x, 11, lv.y); floorGroup.add(mk); leverMeshes.set(lv.doorId, mk);
         interactables.push({ x: lv.x, y: lv.y, radius: 40, label: 'Рычаг (открыть дверь)', run: () => app.net.send({ t: 'lever', leverId: lv.id }), doorId: lv.doorId });
+      }
+      // Сундуки: цвет говорит о тире, подпись — о том, что он вообще открывается. Открытые
+      // сервер не шлёт вовсе — гасим только те, что открыли при нас (событие `chest-opened`).
+      for (const ch of floor.chests) {
+        const tint = ch.tier === 'rare' ? 0xd0a24a : ch.tier === 'magic' ? 0x7fb6e0 : 0x9a7a52;
+        const box = new THREE.Mesh(new THREE.BoxGeometry(26, 18, 18),
+          new THREE.MeshStandardMaterial({ color: tint, emissive: tint, emissiveIntensity: 0.25 }));
+        box.position.set(ch.x, 9, ch.y); floorGroup.add(box); chestMeshes.set(ch.id, box);
+        interactables.push({ x: ch.x, y: ch.y, radius: 48, label: 'Сундук (открыть)', run: () => app.net.send({ t: 'chest', chestId: ch.id }) });
       }
       app.state!.depth = floor.depth;
     } else {
@@ -829,6 +839,13 @@ export async function startOnline3d(): Promise<void> {
   function onEvents(events: import('@dm/shared').SessionEvent[]): void {
     const bus = app.bus;
     for (const e of events) {
+      // Сундук открыт — убираем меш и подсказку: FloorInit шлётся один раз, и без этого
+      // события пустой сундук висел бы до конца этажа и звал жать [E].
+      if (e.type === 'chest-opened') {
+        const m = chestMeshes.get(e.id); if (m) floorGroup.remove(m); chestMeshes.delete(e.id);
+        interactables = interactables.filter((it) => Math.hypot(it.x - e.x, it.y - e.y) > 1 || it.label !== 'Сундук (открыть)');
+        continue;
+      }
       if (e.type === 'hit') {
         const dom = (['physical', 'fire', 'cold', 'lightning', 'poison'] as const).reduce((b, t) => (e.byType[t] > e.byType[b] ? t : b), 'physical' as DamageType);
         // Боевой фидбэк плавающим текстом (как 2D feedback): промах/блок/число. Видят все.

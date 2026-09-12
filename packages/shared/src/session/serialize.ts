@@ -112,5 +112,6 @@ export function floorInit(area: 'town' | 'dungeon', w: WorldState, decor: DecorO
     decor,
     doors: w.doors.map((d) => ({ id: d.id, cells: d.cells.map((c) => ({ ...c })) })),
     levers: w.levers.filter((l) => !l.used).map((l) => ({ id: l.id, x: l.pos.x, y: l.pos.y, doorId: l.doorId })),
+    chests: w.chests.filter((c) => !c.opened).map((c) => ({ id: c.id, x: c.pos.x, y: c.pos.y, tier: c.tier })),
   };
 }

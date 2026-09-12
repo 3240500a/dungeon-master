@@ -82,7 +82,7 @@ export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgo
     carveRoom(grid, room);
     const c = roomCenter(room);
     const st = cellToWorld(c.cx + 1, c.cy);
-    return { grid, rooms: [room], spawn: cellToWorld(c.cx, c.cy), stairsDown: st, exits: [st], decor: [], doors: [], levers: [] };
+    return { grid, rooms: [room], spawn: cellToWorld(c.cx, c.cy), stairsDown: st, exits: [st], decor: [], doors: [], levers: [] , chests: []};
   }
 
   // Спавн/выход — по режиму (по умолчанию самая дальняя пара: старт не в углу, выход разнесён).
@@ -125,6 +125,6 @@ export function bspAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlgo
     grid, rooms,
     spawn: cellToWorld(first.cx, first.cy),
     stairsDown, exits: [stairsDown],
-    decor, doors, levers,
+    decor, doors, levers, chests: [],
   };
 }

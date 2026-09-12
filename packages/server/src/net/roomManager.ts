@@ -246,6 +246,7 @@ export class RoomManager {
       case 'arena': conn.room.enterArena(conn.pid); break;
       case 'return': conn.room.returnTown(conn.pid); break;
       case 'lever': conn.room.pullLever(conn.pid, frame.leverId); break;
+      case 'chest': conn.room.openChest(conn.pid, frame.chestId); break;
       case 'vote': conn.room.castVote(conn.pid, frame.accept); break;
       case 'leave': this.onClose(ws); break;
     }

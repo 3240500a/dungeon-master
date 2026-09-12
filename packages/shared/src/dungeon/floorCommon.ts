@@ -38,6 +38,19 @@ export interface DecorObject {
   variant?: number;
 }
 
+/**
+ * СУНДУК НА ЭТАЖЕ. До Ч6 сундук был только мешем в декоре (`kind:'chest'`) — открыть его было
+ * нельзя, сокровищница стояла с охраной и без награды. Теперь это сущность со своим тиром,
+ * по образцу рычага: геометрия кладёт координаты, мир хранит состояние «открыт».
+ */
+export interface ChestSpawn {
+  id: number;
+  x: number;
+  y: number;
+  /** id тира из конфига `chests` — он решает редкость и число вещей внутри. */
+  tier: string;
+}
+
 /** Запертые ворота: группа смежных клеток `Cell.Door` одного проёма. */
 export interface Door {
   id: number;
@@ -62,6 +75,8 @@ export interface DungeonLayout {
   decor: DecorObject[];
   doors: Door[];
   levers: Lever[];
+  /** Сундуки этажа (Ч6). Пусто — на этаже их нет. */
+  chests: ChestSpawn[];
 }
 
 export function roomCenter(r: Room): { cx: number; cy: number } {
@@ -536,7 +551,9 @@ export function lockRoom(grid: Grid, room: Room, doors: Door[], levers: Lever[],
 export function decorate(r: Room, out: DecorObject[], rng: Rng, grid: Grid): void {
   const c = roomCenter(r);
   const center = cellToWorld(c.cx, c.cy);
-  if (r.type === 'treasure') { out.push({ ...center, kind: 'chest' }); return; }
+  // ⚠ Сундук здесь БОЛЬШЕ НЕ СТАВИТСЯ: он стал сущностью со своим тиром (`placeChests`),
+  // а декор рисовал бы второй, неоткрываемый. Сокровищница по-прежнему остаётся без колонн.
+  if (r.type === 'treasure') return;
   if (r.type === 'boss') { out.push({ ...center, kind: 'arena' }); }
   if (r.type === 'large' && r.w >= 6 && r.h >= 6) {
     const spots: [number, number][] = [[2, 2], [r.w - 3, 2], [2, r.h - 3], [r.w - 3, r.h - 3]];
@@ -551,6 +568,39 @@ export function decorate(r: Room, out: DecorObject[], rng: Rng, grid: Grid): voi
   const t1x = r.x + 1, t1y = r.y + 1, t2x = r.x + r.w - 2, t2y = r.y + r.h - 2;
   if (rng.chance(0.8) && grid[t1y]?.[t1x] === Cell.Floor) out.push({ ...cellToWorld(t1x, t1y), kind: 'torch' });
   if (rng.chance(0.8) && grid[t2y]?.[t2x] === Cell.Floor) out.push({ ...cellToWorld(t2x, t2y), kind: 'torch' });
+}
+
+/**
+ * РАССТАНОВКА СУНДУКОВ: 1–2 на этаж, тир — взвешенным броском.
+ *
+ * Сокровищница получает сундук ВСЕГДА (иначе комната-награда стоит пустой), остальные
+ * расходятся по случайным комнатам, кроме входа: сундук у входа не заставляет никуда идти.
+ */
+export function placeChests(
+  L: DungeonLayout,
+  rng: Rng,
+  tiers: readonly { id: string; enabled?: boolean; weight?: number }[],
+  count: { min: number; max: number },
+): void {
+  const pool = tiers.filter((t) => t.enabled !== false && (t.weight ?? 0) > 0);
+  if (!pool.length) return;
+  const pickTier = (): string => {
+    const total = pool.reduce((s, t) => s + (t.weight ?? 0), 0);
+    let r = rng.float(0, total);
+    for (const t of pool) { r -= t.weight ?? 0; if (r <= 0) return t.id; }
+    return pool[pool.length - 1]!.id;
+  };
+  const rooms = L.rooms.filter((r) => r.type !== 'entrance');
+  const treasure = rooms.filter((r) => r.type === 'treasure');
+  const rest = rooms.filter((r) => r.type !== 'treasure');
+  for (let i = rest.length - 1; i > 0; i--) { const j = rng.int(0, i); [rest[i], rest[j]] = [rest[j]!, rest[i]!]; }
+  const want = Math.max(0, rng.int(count.min, Math.max(count.min, count.max)));
+  const chosen = [...treasure, ...rest].slice(0, Math.max(treasure.length, want));
+  for (const r of chosen) {
+    const c = roomCenter(r);
+    if (L.grid[c.cy]?.[c.cx] !== Cell.Floor) continue;     // центр нерегулярной комнаты бывает стеной
+    L.chests.push({ id: L.chests.length + 1, ...cellToWorld(c.cx, c.cy), tier: pickTier() });
+  }
 }
 
 /**

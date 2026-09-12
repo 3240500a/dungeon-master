@@ -133,6 +133,6 @@ export function cellularAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: Floo
     grid, rooms,
     spawn: cellToWorld(spawnCell.cx, spawnCell.cy),
     stairsDown, exits: [stairsDown],
-    decor, doors: [], levers: [],
+    decor, doors: [], levers: [], chests: [],
   };
 }

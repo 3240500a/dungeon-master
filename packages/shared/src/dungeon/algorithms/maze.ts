@@ -127,7 +127,7 @@ export function mazeAlgorithm(params: FloorAlgoParams, rng: Rng, opts?: FloorAlg
     grid, rooms,
     spawn: cellToWorld(sx, sy),
     stairsDown, exits: [stairsDown],
-    decor, doors: [], levers: [],
+    decor, doors: [], levers: [], chests: [],
   };
 }
 
