@@ -119,7 +119,7 @@ const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Прогрессия и мощь', keys: ['xpTable', 'attributePointsPerLevel', 'skillPointsPerLevel', 'masteryPointsPerLevel', 'passiveRankCostMult', 'power'] },
   { title: 'Бой и физика', keys: ['melee', 'dodge', 'knockdown', 'weaponAttrScaling', 'twoHandedPowerMult', 'twoHandReqMult', 'maxTotalRequirement', 'affinityDamageBonus', 'moveSpeedBase', 'collision', 'weight'] },
   { title: 'Монстры', keys: ['monsterXpGrowth', 'uniqueXpMult', 'monsterScaling'] },
-  { title: 'Лут', keys: ['loot', 'autoPickup'] },
+  { title: 'Лут', keys: ['loot', 'autoPickup', 'salvage'] },
   { title: 'Экономика', keys: ['forgePrices', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint'] },
   { title: 'Инвентарь и сундук', keys: ['inventory', 'stash'] },
   { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'reconnectGraceSec', 'deathPenalty', 'lighting'] },
