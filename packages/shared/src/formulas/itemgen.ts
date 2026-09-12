@@ -205,7 +205,7 @@ const nextUid = uuidv7;
  */
 function buildItem(
   base: ItemsBase[number],
-  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number },
+  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string },
 ): Item {
   return {
     uid: nextUid(),
@@ -215,12 +215,60 @@ function buildItem(
     ...gearFields(base),
     rarity: o.rarity,
     itemLevel: o.itemLevel,
+    tier: o.tierId,
     requirements: scaleReqs(base.requirements, o.reqMult, o.maxReqTotal),
     baseStats: scaleBaseStats(base.baseStats, o.statMult),
     affixes: o.affixes,
     gridW: base.gridW,
     gridH: base.gridH,
     pos: null,
+  };
+}
+
+/**
+ * СЛЕДУЮЩИЙ ТИР вещи — или `undefined`, если она уже на потолке своей базы.
+ * Потолок задан самой базой (`maxTier`), поэтому «бесконечное улучшение» невозможно
+ * по построению, а не бюджетом: дешёвая база не станет мифической никогда.
+ */
+export function nextTier(
+  tiers: ItemTiers | undefined,
+  base: ItemsBase[number],
+  currentTierId: string | undefined,
+): ItemTiers[number] | undefined {
+  if (!tiers?.length || base.kind === 'consumable') return undefined;
+  const usable = tiers.filter((t) => t.enabled !== false);
+  const sorted = [...(usable.length ? usable : tiers)].sort((a, b) => a.minItemLevel - b.minItemLevel);
+  const hi = sorted.findIndex((t) => t.id === base.maxTier);
+  const cap = hi < 0 ? sorted.length - 1 : hi;
+  const cur = currentTierId ? sorted.findIndex((t) => t.id === currentTierId) : -1;
+  const next = cur + 1;
+  return next <= cap ? sorted[next] : undefined;
+}
+
+/**
+ * ПЕРЕСБОРКА ВЕЩИ НА ДРУГОМ ТИРЕ — статы и требования пересчитываются от БАЗЫ, а приставка
+ * в названии меняется на новую.
+ *
+ * ⚠ Считаем от базы, а не домножаем текущие статы: домножение накапливает ошибку округления
+ * и разъезжается с тем, что даёт генерация того же тира — «Отличный» из кузницы обязан быть
+ * равен «Отличному» с пола, иначе тир перестаёт что-либо значить.
+ *
+ * `reqDiscount` — кузнечная скидка на требования: найденный «Мастерский» меч сильнее, кузнечный
+ * доступнее раньше. Это и есть причина возиться с крафтом, а не ждать удачного дропа.
+ */
+export function retierItem(
+  base: ItemsBase[number],
+  item: Item,
+  tier: ItemTiers[number],
+  opts: { reqDiscount?: number; maxReqTotal?: number } = {},
+): Item {
+  const reqMult = tier.reqMult * (1 - (opts.reqDiscount ?? 0));
+  return {
+    ...item,
+    tier: tier.id,
+    name: item.rarity === 'normal' ? tieredName(tier.name, base.name, base.gender) : item.name,
+    requirements: scaleReqs(base.requirements, reqMult, opts.maxReqTotal),
+    baseStats: scaleBaseStats(base.baseStats, tier.statMult),
   };
 }
 
@@ -239,6 +287,7 @@ export function itemFromBase(base: ItemsBase[number], tiers?: ItemTiers): Item {
     itemLevel: ilvl,
     statMult: tier?.statMult ?? 1,
     reqMult: tier?.reqMult ?? 1,
+    tierId: tier?.id,
     affixes: [],
   });
 }
@@ -403,6 +452,7 @@ export function generateItem(
         itemLevel: ilvl,
         statMult: tier?.statMult ?? 1,
         reqMult: tier?.reqMult ?? 1,
+        tierId: tier?.id,
         affixes: unique.fixedAffixes.map((fa) => ({ affixId: unique.id, kind: fa.kind, modifier: fa.modifier })),
         maxReqTotal: opts.maxReqTotal,
       });
@@ -443,6 +493,7 @@ export function generateItem(
     itemLevel: ilvl,
     statMult: tier?.statMult ?? 1,
     reqMult: tier?.reqMult ?? 1,
+    tierId: tier?.id,
     affixes: rolled,
     maxReqTotal: opts.maxReqTotal,
   });

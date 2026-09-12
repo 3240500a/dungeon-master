@@ -136,6 +136,8 @@
   "forgePrices": {
     "upgradeTier": 200,
     "rerollAffix": 120,
+    "upgradeReqDiscount": 0.2,
+    "rerollLimit": 3,
     "repairBroken": 60,
     "repairMaterials": {
       "tier1": 6,

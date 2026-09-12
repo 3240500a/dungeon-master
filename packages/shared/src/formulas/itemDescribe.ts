@@ -96,6 +96,8 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   // Сломано — ПЕРВОЙ строкой: это главное, что надо знать о вещи, потому что отменяет
   // всё остальное — надеть нельзя, пока не починишь.
   if (item.broken) base('⚠ Сломано — надеть нельзя, почини у кузнеца или разбери');
+  // Перекатки конечны — потраченное показываем рядом с вещью, а не только в кузнице.
+  if (item.rerolls) base(`Перекатано раз: ${item.rerolls}`);
 
   if (item.attackType) {
     const at = ATTACK_LABEL[item.attackType] ?? item.attackType;

@@ -1,4 +1,4 @@
-import { shopBuyPrice, canSalvageItem, upgradeCost, repairCost, describeCost, canAfford } from '@dm/shared';
+import { shopBuyPrice, canSalvageItem, upgradeCost, repairCost, describeCost, canAfford, nextTierOf } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, mk, button, itemSlot, attachTooltip, tabsBar } from '../../ui/kit.js';
@@ -67,15 +67,24 @@ export const forgePanel: PanelFactory = (app) => {
           // Цена улучшения — золото И материалы. Кнопка гаснет по ТОМУ ЖЕ расчёту, которым
           // отказывает сервер (`upgradeCost`), а сама цена написана рядом: без этого игрок жмёт
           // вслепую и узнаёт про нехватку только из текста ошибки.
+          // Кнопка называет СЛЕДУЮЩИЙ ТИР: улучшение — шаг по лестнице, и игрок должен
+          // видеть, куда шагает, а не жать «улучшить» вслепую.
           const mats = upgradeCost(app.config, item);
-          const upOk = Object.keys(mats).length > 0 && state.save.gold >= prices.upgradeTier && canAfford(state.save, mats);
-          const up = button(`Улучшить (${prices.upgradeTier})`,
+          const nt = nextTierOf(app.config, item);
+          const upOk = !!nt && Object.keys(mats).length > 0 && state.save.gold >= prices.upgradeTier && canAfford(state.save, mats);
+          const up = button(nt ? `До «${nt.name}» (${prices.upgradeTier})` : 'На потолке',
             () => app.sendCmd({ cmd: 'forgeUpgrade', uid: item.uid }), 'default', !upOk || !!item.broken);
-          attachTooltip(up, () => Object.keys(mats).length
-            ? `Цена: ${prices.upgradeTier} золота<br>${describeCost(app.config, mats)}`
-            : 'Эту вещь кузнец не улучшает');
-          const rr = button(`Реролл (${prices.rerollAffix})`,
-            () => app.sendCmd({ cmd: 'forgeReroll', uid: item.uid }), 'default', state.save.gold < prices.rerollAffix);
+          attachTooltip(up, () => !nt
+            ? 'Лучше эту вещь уже не сделать — потолок её базы'
+            : Object.keys(mats).length
+              ? `Цена: ${prices.upgradeTier} золота<br>${describeCost(app.config, mats)}`
+                + '<br><span style="color:#8a8">Кузнечная вещь требует меньше атрибутов, чем найденная</span>'
+              : 'Эту вещь кузнец не улучшает');
+          // Перекатка конечна — остаток пишем на кнопке, иначе предел обнаружится только отказом.
+          const left = Math.max(0, prices.rerollLimit - (item.rerolls ?? 0));
+          const rr = button(`Реролл ${left}/${prices.rerollLimit} (${prices.rerollAffix})`,
+            () => app.sendCmd({ cmd: 'forgeReroll', uid: item.uid }), 'default',
+            state.save.gold < prices.rerollAffix || left <= 0 || !!item.broken);
           // Разбор УНИЧТОЖАЕТ вещь, поэтому кнопка гаснет ТЕМ ЖЕ правилом, которым отказывает сервер
           // (`canSalvageItem`): иначе кнопка предлагала бы то, что сервер отклонит.
           // Сломанное сначала чинится: улучшать его нельзя, разобрать — можно (в этом и выбор).

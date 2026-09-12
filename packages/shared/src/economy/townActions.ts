@@ -4,7 +4,7 @@ import type { SaveState } from '../types/save.js';
 import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { finalAttributes, meetsRequirements, modifiersFromItems } from '../formulas/stats.js';
-import { rollAffixes } from '../formulas/itemgen.js';
+import { rollAffixes, nextTier, retierItem } from '../formulas/itemgen.js';
 import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
@@ -148,12 +148,25 @@ function materialLadder(reg: ConfigRegistry, item: Item, need: readonly number[]
   return out;
 }
 
-/** Улучшение: +20% (мин +1) к плоским базовым статам, префикс ★. Цена — золото + материалы. */
+/**
+ * ⭐ УЛУЧШЕНИЕ = ПОДЪЁМ ТИРА на одну ступень (Убогий → Старый → … → потолок базы).
+ *
+ * Раньше здесь была заглушка: статы множились ×1.2 без предела, хотя ключ цены всегда назывался
+ * `upgradeTier`. Причина — у предмета не было поля тира вовсе, и поднимать было нечего.
+ *
+ * Лестница КОНЕЧНА по построению: потолок задаёт сама база (`maxTier`), поэтому «бесконечное
+ * улучшение» невозможно, а не ограничено бюджетом. Статы и требования пересчитываются ОТ БАЗЫ,
+ * так что кузнечный «Отличный» равен найденному «Отличному» — иначе тир перестал бы значить.
+ */
 export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
-  const gold = reg.get('balance').forgePrices.upgradeTier;
   if (item.broken) return { ok: false, reason: 'Сперва почини' };
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (!base) return { ok: false, reason: 'Кузнец не знает такой вещи' };
+  const tier = nextTier(reg.get('item-tiers'), base, item.tier);
+  if (!tier) return { ok: false, reason: 'Лучше эту вещь уже не сделать' };
+  const gold = reg.get('balance').forgePrices.upgradeTier;
   const mats = upgradeCost(reg, item);
   if (!Object.keys(mats).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
@@ -162,9 +175,18 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string):
   // игрока без золота и без улучшения.
   save.gold -= gold;
   spendMaterials(save, mats);
-  item.baseStats = item.baseStats.map((m) => (m.kind === 'flat' ? { ...m, value: Math.max(m.value + 1, Math.round(m.value * 1.2)) } : m));
-  if (!item.name.startsWith('★')) item.name = `★ ${item.name}`;
+  const bal = reg.get('balance');
+  Object.assign(item, retierItem(base, item, tier, {
+    reqDiscount: bal.forgePrices.upgradeReqDiscount,
+    maxReqTotal: bal.maxTotalRequirement,
+  }));
   return { ok: true };
+}
+
+/** Какой тир будет следующим (для подписи кнопки) — или `undefined`, если вещь на потолке. */
+export function nextTierOf(reg: ConfigRegistry, item: Item): { id: string; name: string } | undefined {
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  return base ? nextTier(reg.get('item-tiers'), base, item.tier) : undefined;
 }
 
 /** «Ржавое железо 12 · Чистое железо 5» — одна подпись для кнопки, тултипа и текста отказа. */
@@ -178,9 +200,16 @@ export function describeCost(reg: ConfigRegistry, cost: MaterialCost): string {
 export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, rng: Rng): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
+  if (item.broken) return { ok: false, reason: 'Сперва почини' };
+  // ⚠ ПРЕДЕЛ ПЕРЕКАТОК. Подъём тира ограничен потолком базы сам по себе, а перекатка крутит
+  // случайность: без предела её жмут, пока не выпадет идеал, и редкость аффиксов перестаёт
+  // что-либо значить. Считаем потраченное, чтобы отсутствие поля значило «ни разу».
+  const limit = reg.get('balance').forgePrices.rerollLimit;
+  if ((item.rerolls ?? 0) >= limit) return { ok: false, reason: 'Эту вещь перекатывать больше нельзя' };
   const cost = reg.get('balance').forgePrices.rerollAffix;
   if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
   save.gold -= cost;
+  item.rerolls = (item.rerolls ?? 0) + 1;
   const rDef = reg.get('rarities').find((r) => r.id === item.rarity);
   item.affixes = rollAffixes(
     reg.get('affixes'),

@@ -3,6 +3,7 @@ import { ConfigRegistry } from '../config/registry.js';
 import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, equip, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
+import { generateItem } from '../formulas/itemgen.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
@@ -61,15 +62,56 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
   /** Кошелёк, которого заведомо хватает на любое улучшение. */
   const rich = (): Record<string, number> => ({ 'iron-1': 99, 'iron-2': 99, 'iron-3': 99 });
 
-  it('улучшение: −золото, −материалы, +20% плоским статам (мин +1), % не тронут, префикс ★', () => {
-    const it = weapon('w');
+  /** Настоящий предмет из конвейера генерации — у выдуманного нет ни тира, ни базовых статов. */
+  const rolled = (ilvl: number): Item => generateItem(
+    reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+    { dropBias: 1, itemLevel: ilvl, baseId: swordBase.id, tiers: reg.get('item-tiers'),
+      rarities: reg.get('rarities'), forceRarity: 'normal', maxReqTotal: reg.get('balance').maxTotalRequirement },
+    createRng(1));
+
+  it('⭐ улучшение поднимает ТИР на ступень, а не множит статы', () => {
+    const it = rolled(1);
+    expect(it.tier).toBe('t0');
     const save = { gold: 1000, inventory: [it], materials: rich() } as unknown as SaveState;
-    expect(forgeUpgrade(reg, save, 'w').ok).toBe(true);
+    expect(forgeUpgrade(reg, save, it.uid).ok).toBe(true);
+    expect(it.tier).toBe('t1');
     expect(save.gold).toBe(1000 - price.upgradeTier);
     expect(save.materials!['iron-1']).toBe(99 - price.upgradeMaterials.tier1);
-    expect(it.baseStats[0]).toMatchObject({ kind: 'flat', value: 12 });        // 10 → round(12)
-    expect(it.baseStats[1]).toMatchObject({ kind: 'increased', value: 5 });    // %-стат не меняем
-    expect(it.name.startsWith('★')).toBe(true);
+    // Имя обновилось приставкой нового тира, а не украсилось звёздочкой.
+    const t1 = reg.get('item-tiers').find((t) => t.id === 't1')!;
+    expect(it.name.startsWith(t1.name)).toBe(true);
+  });
+
+  it('⭐ кузнечный тир РАВЕН найденному по статам, но ЛЕГЧЕ по требованиям', () => {
+    const forged = rolled(1);
+    const save = { gold: 1000, inventory: [forged], materials: rich() } as unknown as SaveState;
+    expect(forgeUpgrade(reg, save, forged.uid).ok).toBe(true);
+    const found = rolled(8); // тот же t1, но с пола
+    expect(found.tier).toBe('t1');
+    const dmg = (i: Item): number => i.baseStats.filter((m) => m.kind === 'flat').reduce((a, m) => a + m.value, 0);
+    expect(dmg(forged)).toBe(dmg(found));                    // сила одинаковая — иначе тир ничего не значит
+    const req = (i: Item): number => Object.values(i.requirements).reduce((a, b) => a + (b ?? 0), 0);
+    expect(req(forged)).toBeLessThan(req(found));            // а носится раньше — в этом смысл крафта
+  });
+
+  it('⚠ выше потолка базы не поднять — лестница конечна по построению', () => {
+    const it = rolled(1);
+    const save = { gold: 10_000_000, inventory: [it], materials: { 'iron-1': 9999, 'iron-2': 9999, 'iron-3': 9999 } } as unknown as SaveState;
+    let steps = 0;
+    while (forgeUpgrade(reg, save, it.uid).ok && steps < 50) steps++;
+    expect(steps).toBeGreaterThan(0);
+    expect(steps).toBeLessThan(20);                          // упёрлись, а не крутили бесконечно
+    expect(it.tier).toBe(swordBase.maxTier);
+    expect(forgeUpgrade(reg, save, it.uid).reason).toContain('Лучше');
+  });
+
+  it('⚠ перекатка КОНЕЧНА: предел из конфига', () => {
+    const it = rolled(30);
+    const save = { gold: 1_000_000, inventory: [it] } as unknown as SaveState;
+    let n = 0;
+    while (forgeReroll(reg, save, it.uid, createRng(n + 1)).ok && n < 50) n++;
+    expect(n).toBe(price.rerollLimit);
+    expect(it.rerolls).toBe(price.rerollLimit);
   });
 
   it('улучшение: мало золота → отказ, предмет, золото и материалы не тронуты', () => {
