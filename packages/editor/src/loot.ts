@@ -1,7 +1,7 @@
 import {
   ConfigRegistry, generateRunPlan, generateFloor, resolveMonsterPool, spawnPacksEl, createRng,
   newBotSave, effectiveLevel, rollTierLevel, pickTierClamped, depthRarityBoost, salvageFromMonster,
-  type Rng,
+  forgeGold, type Item, type Rng,
 } from '@dm/shared';
 
 /**
@@ -199,6 +199,43 @@ function cardGold(reg: ConfigRegistry, p: FloorPay, k: Knobs): HTMLElement {
   return box;
 }
 
+/**
+ * ЦЕНЫ КУЗНИЦЫ по ступени и редкости — та же `forgeGold`, которой платит сервер.
+ * В скобках — сколько таких работ оплачивает ОДИН этаж на текущем уровне монстров: именно эта
+ * величина и должна стоять колом по всей лестнице, иначе золото обесценивается к эндгейму.
+ */
+function cardForge(reg: ConfigRegistry, p: FloorPay): HTMLElement {
+  const tiers = [...reg.get('item-tiers')].sort((x, y) => x.minItemLevel - y.minItemLevel);
+  const base = reg.get('items.base').find((b) => b.kind === 'weapon')!;
+  const inc = Math.max(1, p.gold);
+  const mk = (tierId: string, rarity: string): Item =>
+    ({ baseId: base.id, tier: tierId, rarity, baseStats: [], itemLevel: 1 } as unknown as Item);
+  const cell = (tierId: string, rarity: string, op: 'upgrade' | 'repair' | 'reroll'): string => {
+    const c = forgeGold(reg, mk(tierId, rarity), op);
+    return `${c} (${(inc / c).toFixed(1)})`;
+  };
+  const rows = tiers.map((t) => [
+    t.name,
+    cell(t.id, 'normal', 'upgrade'), cell(t.id, 'rare', 'upgrade'),
+    cell(t.id, 'normal', 'repair'), cell(t.id, 'rare', 'repair'),
+    cell(t.id, 'normal', 'reroll'),
+  ]);
+  const box = el('div', CSS.card);
+  box.append(el('div', CSS.h, 'Кузница: цена по ступени и редкости'));
+  box.append(el('div', CSS.sub,
+    'цена = база × reqMult(ступень) × priceMult(редкость) · в скобках — сколько таких работ оплачивает этаж'
+    + ` (доход ${n0(p.gold)})`));
+  box.append(table(
+    ['ступень', 'улучшить об.', 'улучшить редк.', 'починить об.', 'починить редк.', 'перекатать об.'],
+    rows));
+  box.append(el('div', 'font-size:11px;color:#8a8a9a;margin-top:8px',
+    '⭐ Смотреть надо на числа В СКОБКАХ: они должны быть примерно одинаковы по всей лестнице. '
+    + 'Разъедутся — значит золото либо обесценилось к эндгейму, либо стало непосильным в начале. '
+    + '⚠ Сырьё по ступени НЕ масштабируется намеренно: его приход от уровня не зависит вовсе, '
+    + 'а плоский доход требует плоской цены.'));
+  return box;
+}
+
 /** Распределение ступеней вещи по уровню монстра + ручник. */
 function cardTiers(reg: ConfigRegistry, curLvl: number): HTMLElement {
   const W = reg.get('balance').loot.tierWindow;
@@ -347,6 +384,7 @@ export function renderLootPage(host: HTMLElement, data: Record<string, unknown>)
   wrap.append(cardFloor(reg, pay));
   wrap.append(cardRule1(reg));
   wrap.append(cardGold(reg, pay, k));
+  wrap.append(cardForge(reg, pay));
   wrap.append(cardTiers(reg, pay.lvlHi));
   wrap.append(cardDepth(reg, k.depth));
   wrap.append(cardDepthMats(reg, k.power, k.depth, () => renderLootPage(host, data)));

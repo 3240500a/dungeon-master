@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, socketInsert, socketClear } from './townActions.js';
+import { forgeGold, moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
 import { carriedMaterials } from './materials.js';
@@ -80,9 +80,12 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     const it = rolled(1);
     expect(it.tier).toBe('t0');
     const save = { gold: 1000, inventory: [it], materials: rich() } as unknown as SaveState;
+    // ⚠ Цена больше НЕ плоская (база × reqMult ступени × priceMult редкости) и снимается ДО
+    // улучшения: после него `it` уже на следующей ступени, и `forgeGold` вернул бы цену ДРУГОГО шага.
+    const paid = forgeGold(reg, it, 'upgrade');
     expect(forgeUpgrade(reg, save, it.uid, wallet).ok).toBe(true);
     expect(it.tier).toBe('t1');
-    expect(save.gold).toBe(1000 - price.upgradeTier);
+    expect(save.gold).toBe(1000 - paid);
     expect(wallet['iron-1']).toBe(99 - price.upgradeMaterials.tier1);
     // Имя обновилось приставкой нового тира, а не украсилось звёздочкой.
     const t1 = reg.get('item-tiers').find((t) => t.id === 't1')!;
@@ -123,10 +126,11 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
 
   it('улучшение: мало золота → отказ, предмет, золото и материалы не тронуты', () => {
     const it = weapon('w');
-    const save = { gold: price.upgradeTier - 1, inventory: [it], materials: rich() } as unknown as SaveState;
+    const need = forgeGold(reg, it, 'upgrade');
+    const save = { gold: need - 1, inventory: [it], materials: rich() } as unknown as SaveState;
     expect(forgeUpgrade(reg, save, 'w', wallet).ok).toBe(false);
     expect(it.name).toBe('Меч');
-    expect(save.gold).toBe(price.upgradeTier - 1);
+    expect(save.gold).toBe(need - 1);
     expect(wallet['iron-1']).toBe(99);
   });
 
@@ -171,7 +175,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     const it = weapon('w');
     const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
     expect(forgeReroll(reg, save, 'w', createRng(1)).ok).toBe(true);
-    expect(save.gold).toBe(1000 - price.rerollAffix);
+    expect(save.gold).toBe(1000 - forgeGold(reg, it, 'reroll'));
     expect(Array.isArray(it.affixes)).toBe(true);   // пул мог дать 0/1 — но операция прошла и списала золото
   });
 
@@ -509,5 +513,50 @@ describe('⚠ вещь БЕЗ записанного тира (сейв стар
     if (!ring) return;                      // колец в конфиге нет — проверять нечего
     const it: Item = { ...tiered()!, baseId: ring.id, baseStats: [], tier: undefined };
     expect(() => nextTierOf(reg, it)).not.toThrow();
+  });
+});
+
+describe('⭐ forgeGold — цена привязана к СТУПЕНИ и РЕДКОСТИ', () => {
+  // Своя база: хелперы соседних describe в этот блок не видны.
+  const sword = reg.get('items.base').find((b) => b.kind === 'weapon')!;
+  /** Вещь заданной ступени и редкости. Статы настоящие — по ним `inferTierId` и узнаёт ступень. */
+  function at(tierId: string, rarity: string): Item {
+    const base = generateItem(
+      reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+      { dropBias: 1, itemLevel: 5, baseId: sword.id, tiers: reg.get('item-tiers'),
+        rarities: reg.get('rarities'), forceRarity: 'normal', maxReqTotal: reg.get('balance').maxTotalRequirement },
+      createRng(1),
+    );
+    return { ...base, tier: tierId, rarity } as Item;
+  }
+  const tiers = reg.get('item-tiers');
+  const lowId = tiers[0]!.id, highId = tiers[tiers.length - 2]!.id;
+
+  it('выше ступень — дороже работа', () => {
+    for (const op of ['repair', 'reroll'] as const) {
+      expect(forgeGold(reg, at(highId, 'normal'), op)).toBeGreaterThan(forgeGold(reg, at(lowId, 'normal'), op));
+    }
+  });
+
+  it('выше редкость — дороже работа', () => {
+    const n = forgeGold(reg, at(lowId, 'normal'), 'repair');
+    const m = forgeGold(reg, at(lowId, 'magic'), 'repair');
+    const r = forgeGold(reg, at(lowId, 'rare'), 'repair');
+    expect(m).toBeGreaterThan(n);
+    expect(r).toBeGreaterThan(m);
+  });
+
+  it('⚠ улучшение платит за ЦЕЛЕВУЮ ступень, а не за текущую', () => {
+    const it = at(lowId, 'normal');
+    // Улучшение с t0 стоит дороже починки той же вещи в t0: покупаем следующую ступень.
+    const up = forgeGold(reg, it, 'upgrade');
+    const same = Math.round(reg.get('balance').forgePrices.upgradeTier * (tiers[0]!.reqMult));
+    expect(up).toBeGreaterThan(same);
+  });
+
+  it('⚠ цена никогда не ноль — иначе работа стала бы бесплатной на нулевых множителях', () => {
+    for (const op of ['upgrade', 'repair', 'reroll'] as const) {
+      expect(forgeGold(reg, at(lowId, 'normal'), op)).toBeGreaterThanOrEqual(1);
+    }
   });
 });

@@ -1,6 +1,6 @@
 import {
   upgradeCost, repairCost, upgradedItem, salvageRange, canSalvageItem, canAffordBoth,
-  availableMaterials, nextTierOf, type ConfigRegistry, type Item,
+  availableMaterials, nextTierOf, forgeGold, type ConfigRegistry, type Item,
 } from '@dm/shared';
 
 /**
@@ -108,20 +108,24 @@ export function benchActions(
 
   if (item.broken) {
     const cost = repairCost(reg, item);
-    const goldOk = gold >= prices.repairBroken;
+    // ⚠ Цена считается ТОЙ ЖЕ `forgeGold`, которой её считает сервер: она зависит от ступени и
+    // редкости вещи, и своя формула здесь молча разошлась бы с отказом сервера.
+    const price = forgeGold(reg, item, 'repair');
+    const goldOk = gold >= price;
     const matsOk = !Object.keys(cost).length || canAffordBoth(inventory, stashWallet, cost);
     out.push({
       id: 'repair', cmd: 'forgeRepair', title: '🔧 Починить', sub: 'снимет «сломано»',
       primary: true, enabled: goldOk && matsOk,
       lines: [
-        { text: `${prices.repairBroken} золота`, state: goldOk ? 'ok' : 'miss' },
+        { text: `${price} золота`, state: goldOk ? 'ok' : 'miss' },
         ...costLines(cost, have, nameOf),
       ],
     });
   } else {
     const cost = upgradeCost(reg, item);
     const nt = nextTierOf(reg, item);
-    const goldOk = gold >= prices.upgradeTier;
+    const price = forgeGold(reg, item, 'upgrade');
+    const goldOk = gold >= price;
     const known = Object.keys(cost).length > 0;
     out.push({
       id: 'upgrade', cmd: 'forgeUpgrade', title: '🔨 Улучшить',
@@ -131,19 +135,20 @@ export function benchActions(
       tip: nt && known ? 'Кузнечная вещь требует меньше атрибутов, чем найденная того же тира' : undefined,
       lines: !nt ? [{ text: 'лучше уже не сделать', state: 'dim' }]
         : !known ? [{ text: 'эту вещь кузнец не улучшает', state: 'dim' }]
-        : [{ text: `${prices.upgradeTier} золота`, state: goldOk ? 'ok' : 'miss' }, ...costLines(cost, have, nameOf)],
+        : [{ text: `${price} золота`, state: goldOk ? 'ok' : 'miss' }, ...costLines(cost, have, nameOf)],
     });
   }
 
   // Реролл: сервер отказывает сломанному — карточка говорит ПОЧЕМУ, а не просто гаснет.
   const left = Math.max(0, prices.rerollLimit - (item.rerolls ?? 0));
-  const rrGold = gold >= prices.rerollAffix;
+  const rrPrice = forgeGold(reg, item, 'reroll');
+  const rrGold = gold >= rrPrice;
   out.push({
     id: 'reroll', cmd: 'forgeReroll', title: '🎲 Реролл', sub: `осталось ${left} из ${prices.rerollLimit}`,
     primary: false, enabled: !item.broken && left > 0 && rrGold,
     lines: item.broken ? [{ text: 'сперва почини', state: 'dim' }]
       : left <= 0 ? [{ text: 'перекаток больше нет', state: 'dim' }]
-      : [{ text: `${prices.rerollAffix} золота`, state: rrGold ? 'ok' : 'miss' },
+      : [{ text: `${rrPrice} золота`, state: rrGold ? 'ok' : 'miss' },
          { text: 'перекатит аффиксы', state: 'dim' }],
   });
 

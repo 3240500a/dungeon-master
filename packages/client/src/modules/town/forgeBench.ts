@@ -1,4 +1,4 @@
-import { availableMaterials, type Item } from '@dm/shared';
+import { availableMaterials, forgeGold, type Item } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { itemTooltipHtml, itemDescLines } from '../inventory/itemView.js';
@@ -159,7 +159,7 @@ export function forgeBench(app: App, o: BenchOpts): HTMLElement {
 
   // Сделка, которую до этого игрок должен был додумать сам (docs/ECONOMY.md, Ч3/Ч4).
   if (item.broken && actions.some((a) => a.id === 'salvage' && a.enabled)) {
-    const price = app.config.get('balance').forgePrices.repairBroken;
+    const price = forgeGold(app.config, item, 'repair');
     root.append(mk('div',
       `font-size:12px;color:${COLORS.dim};border:1px solid ${COLORS.border};border-radius:6px;` +
       `padding:8px 10px;margin-top:10px;background:${COLORS.panel2}`,

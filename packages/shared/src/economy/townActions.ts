@@ -173,7 +173,7 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
   // разъехались бы молча, и окно обещало бы игроку не то, за что он платит.
   const next = upgradedItem(reg, item);
   if (!next) return { ok: false, reason: 'Лучше эту вещь уже не сделать' };
-  const gold = reg.get('balance').forgePrices.upgradeTier;
+  const gold = forgeGold(reg, item, 'upgrade');
   const mats = upgradeCost(reg, item);
   if (!Object.keys(mats).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
@@ -186,6 +186,41 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
   spendBoth(save.inventory, wallet, mats);
   Object.assign(item, next);
   return { ok: true };
+}
+
+/** Какое действие кузницы считаем. */
+export type ForgeOp = 'upgrade' | 'repair' | 'reroll';
+
+/**
+ * ЦЕНА РАБОТЫ КУЗНЕЦА В ЗОЛОТЕ = база × `reqMult` ступени × `priceMult` редкости.
+ *
+ * ⚠ ЗАЧЕМ. Доход золота растёт с уровнем монстра (`ур + 3` за убийство), а цены были ПЛОСКИМИ:
+ * замер показал 1.0 улучшения за этаж на 5-м уровне и 14.0 на сотом, то есть золото к концу игры
+ * обесценивалось в четырнадцать раз. Со ступенью в цене эта колонка встаёт колом: 1.4 / 0.9 / 0.6
+ * улучшения за этаж (обычная / магическая / редкая) на ВСЕХ ступенях.
+ *
+ * ⭐ Сырьё при этом остаётся плоским по ступени — и это не забывчивость. Приход сырья от уровня НЕ
+ * зависит вовсе (`salvageTo` — фиксированные числа за кусок снаряжения, замер: ~45 единиц за этаж
+ * хоть на пятом этаже, хоть на двухсотом). Плоский доход требует плоской цены; растущий — растущей.
+ * По РЕДКОСТИ сырьё уже масштабируется лестницей, и золото теперь согласовано с ним.
+ *
+ * ⚠ Множители не новые: `item-tiers.reqMult` и `rarities.priceMult` уже есть в конфиге. Заводить
+ * третью колонку значило бы держать три таблицы про одно и то же и следить, чтобы они не разъехались.
+ * `reqMult` выбран, а не `statMult`: он отслеживает рост дохода заметно точнее (проверено замером).
+ *
+ * У улучшения ступень берётся ЦЕЛЕВАЯ — платим за то, что покупаем, а не за то, что имеем.
+ */
+export function forgeGold(reg: ConfigRegistry, item: Item, op: ForgeOp): number {
+  const fp = reg.get('balance').forgePrices;
+  const base = op === 'upgrade' ? fp.upgradeTier : op === 'repair' ? fp.repairBroken : fp.rerollAffix;
+  const tiers = reg.get('item-tiers');
+  const itemsBase = reg.get('items.base');
+  const b = itemsBase.find((x) => x.id === item.baseId);
+  const curId = b ? inferTierId(tiers, b, item) : item.tier;
+  const tierId = op === 'upgrade' && b ? nextTier(tiers, b, curId)?.id ?? curId : curId;
+  const tier = tiers.find((t) => t.id === tierId);
+  const rarity = reg.get('rarities').find((r) => r.id === item.rarity);
+  return Math.max(1, Math.round(base * (tier?.reqMult ?? 1) * (rarity?.priceMult ?? 1)));
 }
 
 /** Какой тир будет следующим (для подписи кнопки) — или `undefined`, если вещь на потолке. */
@@ -264,7 +299,7 @@ export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, r
   // что-либо значить. Считаем потраченное, чтобы отсутствие поля значило «ни разу».
   const limit = reg.get('balance').forgePrices.rerollLimit;
   if ((item.rerolls ?? 0) >= limit) return { ok: false, reason: 'Эту вещь перекатывать больше нельзя' };
-  const cost = reg.get('balance').forgePrices.rerollAffix;
+  const cost = forgeGold(reg, item, 'reroll');
   if (save.gold < cost) return { ok: false, reason: 'Недостаточно золота' };
   save.gold -= cost;
   item.rerolls = (item.rerolls ?? 0) + 1;
@@ -369,7 +404,7 @@ export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, w
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
   if (!item.broken) return { ok: false, reason: 'Вещь цела' };
-  const gold = reg.get('balance').forgePrices.repairBroken;
+  const gold = forgeGold(reg, item, 'repair');
   const mats = repairCost(reg, item);
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
   if (Object.keys(mats).length && !canAffordBoth(save.inventory, wallet, mats)) {
