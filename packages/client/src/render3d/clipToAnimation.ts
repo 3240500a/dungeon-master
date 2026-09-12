@@ -19,11 +19,18 @@
  * Файл ЧИСТЫЙ (THREE + наша математика, без DOM/загрузчиков) — тестируется в node.
  */
 import * as THREE from 'three';
-import { clipPoseAt, clipDur, hipsOffset, setHipsOffset, HIPS_REST_Y, type Clip, type Keyframe, type Pose } from './clipModel.js';
+import { clipPoseAt, clipDur, hipsOffset, setHipsOffset, rootMotion, setRootMotion, HIPS_REST_Y, type Clip, type Keyframe, type Pose } from './clipModel.js';
 import { reduceKeyframes } from './clipBaker.js';
 
 /** Имена дорожек для наших спец-каналов (всё остальное — `<кость>.quaternion`). */
 export const HIPS_POS_TRACK = 'Hips.position';
+/**
+ * КОРЕНЬ — ОТДЕЛЬНЫЙ УЗЕЛ, а не часть таза. Именно так root motion ждёт любой движок: Unreal читает
+ * его с корневой кости и вычитает при проигрывании in-place, Unity — с Root Transform. Складывать
+ * корень в `Hips` нельзя: там уже лежит перенос веса, и на импорте их стало бы не разделить.
+ */
+export const ROOT_POS_TRACK = 'Root.position';
+export const ROOT_ROT_TRACK = 'Root.quaternion';
 
 export interface ToAnimationOptions {
   /** Частота пересемпла, если в клипе есть кривые (по умолч. 30). */
@@ -113,6 +120,21 @@ export function poseClipToAnimationClip(c: Clip, opts: ToAnimationOptions = {}):
     tracks.push(new THREE.VectorKeyframeTrack(rename('Hips') + '.position', times, pos, interp));
   }
 
+  // Корень (Ф2). Пишем, только если клип его несёт: пустых дорожек в выгрузке быть не должно.
+  if (c.rootPos || c.rootYaw) {
+    const pos: number[] = [], rot: number[] = [];
+    let lastP: [number, number, number] = [0, 0, 0], lastY = 0;
+    for (const k of keys) {
+      const r = rootMotion(k.pose);
+      if (r) { lastY = r[0]; lastP = [r[1], 0, r[2]]; }
+      pos.push(lastP[0], lastP[1], lastP[2]);
+      _e.set(0, lastY, 0); _q.setFromEuler(_e);
+      rot.push(_q.x, _q.y, _q.z, _q.w);
+    }
+    if (c.rootPos) tracks.push(new THREE.VectorKeyframeTrack(ROOT_POS_TRACK, times, pos, interp));
+    if (c.rootYaw) tracks.push(new THREE.QuaternionKeyframeTrack(ROOT_ROT_TRACK, times, rot, interp));
+  }
+
   const anim = new THREE.AnimationClip(opts.name ?? c.name, clipDur(c), tracks);
   return anim;
 }
@@ -131,12 +153,22 @@ export interface FromAnimationOptions {
 export function animationClipToPoseClip(anim: THREE.AnimationClip, opts: FromAnimationOptions): Clip {
   const rename = opts.renameBone ?? ((b: string): string => b);
   const byTime = new Map<number, Pose>();
+  const rootY = new Map<number, number>(), rootP = new Map<number, [number, number]>();
   const at = (t: number): Pose => { const key = +t.toFixed(4); let p = byTime.get(key); if (!p) { p = {}; byTime.set(key, p); } return p; };
 
   for (const tr of anim.tracks) {
     const dot = tr.name.lastIndexOf('.');
     const target = rename(tr.name.slice(0, dot)), prop = tr.name.slice(dot + 1);
-    if (prop === 'quaternion') {
+    if (prop === 'quaternion' && target === 'Root') {
+      // Корень читаем ДО общей ветки поворотов: иначе он лёг бы костью `Root` в позу и поехал бы в игру.
+      for (let i = 0; i < tr.times.length; i++) {
+        _q.set(tr.values[i * 4]!, tr.values[i * 4 + 1]!, tr.values[i * 4 + 2]!, tr.values[i * 4 + 3]!);
+        _e.setFromQuaternion(_q, 'YXZ');
+        rootY.set(+tr.times[i]!.toFixed(4), _e.y);
+      }
+    } else if (prop === 'position' && target === 'Root') {
+      for (let i = 0; i < tr.times.length; i++) rootP.set(+tr.times[i]!.toFixed(4), [tr.values[i * 3]!, tr.values[i * 3 + 2]!]);
+    } else if (prop === 'quaternion') {
       for (let i = 0; i < tr.times.length; i++) {
         _q.set(tr.values[i * 4]!, tr.values[i * 4 + 1]!, tr.values[i * 4 + 2]!, tr.values[i * 4 + 3]!);
         _e.setFromQuaternion(_q, 'XYZ');
@@ -150,8 +182,13 @@ export function animationClipToPoseClip(anim: THREE.AnimationClip, opts: FromAni
     }
   }
 
+  for (const [t, p] of byTime) {
+    const y = rootY.get(t), q = rootP.get(t);
+    if (y !== undefined || q) setRootMotion(p, y ?? 0, q ? q[0] : 0, q ? q[1] : 0);
+  }
   const keys: Keyframe[] = [...byTime.entries()].sort((a, b) => a[0] - b[0]).map(([t, pose]) => ({ t, pose }));
-  return { name: anim.name, character: opts.character, weapon: opts.weapon, loop: opts.loop ?? false, keys };
+  return { name: anim.name, character: opts.character, weapon: opts.weapon, loop: opts.loop ?? false, keys,
+    rootYaw: rootY.size ? true : undefined, rootPos: rootP.size ? true : undefined };
 }
 
 // ── Профили имён костей для экспорта (Ф3.1: клип уезжает в чужой движок без ретаргета) ───────────────

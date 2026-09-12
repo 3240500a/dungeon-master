@@ -72,7 +72,21 @@ export interface Keyframe {
    *  едет за ключом при ретайминге и переживает прореживание. */
   marks?: Mark[];
 }
-export interface Clip { name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[]; idleEnds?: boolean }   // idleEnds: первый/последний кадр = idle-стойка (заблокированы в редакторе, синкаются из стойки — как у ударов hit_)
+export interface Clip {
+  name: string; character: string; weapon: string; loop: boolean; keys: Keyframe[];
+  /** Первый/последний кадр = idle-стойка (заблокированы в редакторе, синкаются из стойки — как у `hit_`). */
+  idleEnds?: boolean;
+  /**
+   * КОРЕНЬ (Ф2): клип НЕСЁТ поворот / смещение персонажа в каналах `__rootY` / `__rootP`.
+   *
+   * ⚠ Это ДАННЫЕ, а не привод. Позицию и фейсинг задаёт сервер, и в игре каналы корня не читает
+   * никто — сторож проверяет это проигрыванием. Нужны они трём потребителям: анализатору походки
+   * (длина шага и угол поворота берутся отсюда), экспорту в чужой движок (там это root motion) и
+   * предпросмотру в редакторе, где персонажа можно катить по полу.
+   */
+  rootYaw?: boolean;
+  rootPos?: boolean;
+}
 
 export const DEF_GAP = 0.3;     // дефолт-шаг между кадрами (сек) при миграции старого формата
 
@@ -87,6 +101,28 @@ export const WPN_POS = ['__wpnMainP', '__wpnOffP'];            // позиция
  *  оба вида к дельте, поэтому клип со смешанными кадрами (часть перезаписана) не даёт скачка. */
 export const HIPS_ABS = '__hipsP';
 export const HIPS_DEL = '__hipsD';
+/**
+ * КОРЕНЬ: поворот и смещение САМОГО ПЕРСОНАЖА относительно первого кадра (Ф2).
+ *
+ * `__rootY` — накопленный рыск, `[рад, 0, 0]`. Накопленный, а не свёрнутый в ±π: разворот на 180°+
+ * должен читаться как один непрерывный поворот, иначе анализатор увидит на месте разворота скачок.
+ * Поэтому он интерполируется ЛИНЕЙНО и НЕ входит в `ANGLE_SPECIALS` — slerp свернул бы его обратно.
+ * `__rootP` — смещение по полу, `[x, 0, z]` в юнитах рига.
+ */
+export const ROOT_YAW = '__rootY';
+export const ROOT_POS = '__rootP';
+
+/** Корень кадра: `[yaw, x, z]`. Нет каналов — `null` (клип in-place, как и был до Ф2). */
+export function rootMotion(p: Pose): [number, number, number] | null {
+  const y = p[ROOT_YAW], q = p[ROOT_POS];
+  if (!y && !q) return null;
+  return [y ? y[0] : 0, q ? q[0] : 0, q ? q[2] : 0];
+}
+/** Записать корень кадра. Нулевые каналы всё равно пишем: «канал есть и он ноль» — тоже сведение. */
+export function setRootMotion(p: Pose, yaw: number, x: number, z: number): void {
+  p[ROOT_YAW] = [yaw, 0, 0];
+  p[ROOT_POS] = [x, 0, z];
+}
 /** Rest-высота таза базового профиля (`humanoid.BONES`: Hips.pos = [0,32,0]) — фолбэк, когда профиля нет. */
 export const HIPS_REST_Y = 32;
 
@@ -247,7 +283,7 @@ export function marksInRange(c: Clip, tPrev: number, tNow: number): MarkEvent[] 
 const otherSide = (nm: string): string | null =>
   nm.startsWith('Left') ? 'Right' + nm.slice(4) : nm.startsWith('Right') ? 'Left' + nm.slice(5) : null;
 /** Позиц-ключи, у которых зеркалится X (мир рига: Left = +X). */
-const MIRROR_POS = new Set([...WPN_POS, '__lgripP', HIPS_ABS, HIPS_DEL]);
+const MIRROR_POS = new Set([...WPN_POS, '__lgripP', HIPS_ABS, HIPS_DEL, ROOT_POS]);
 
 /** Отзеркалить ОДНУ сторону на другую: `from='Left'` → правая половина становится отражением левой.
  *  Центральные кости не трогаются (это «подтянуть вторую руку», а не переворот всей позы). */
@@ -273,6 +309,7 @@ export function flipPose(p: Pose): Pose {
     if (dst) { out[dst] = [v[0], -v[1], -v[2]]; continue; }             // кость: на другую сторону + отражение
     if (k[0] !== '_') { out[k] = [v[0], -v[1], -v[2]]; continue; }      // центральная кость: отражение на месте
     if (MIRROR_POS.has(k)) { out[k] = [-v[0], v[1], v[2]]; continue; }  // позиция: зеркало по X
+    if (k === ROOT_YAW) { out[k] = [-v[0], v[1], v[2]]; continue; }     // поворот корня: зеркало меняет сторону разворота
     if (isAngleKey(k)) { out[k] = [v[0], -v[1], -v[2]]; continue; }     // спец-поворот (оружие/грип)
     out[k] = [v[0], v[1], v[2]];                                        // скаляры (__match/__pinKp) — как есть
   }
@@ -312,7 +349,10 @@ export function migrateClip(c0: unknown): Clip {
     migratePose(kf.pose);
     return kf;
   });
-  return { name: c.name, character: c.character, weapon: c.weapon, loop: c.loop ?? false, keys, idleEnds: c.idleEnds };
+  // ⚠ Список полей ЯВНЫЙ, поэтому новое поле клипа надо дописывать И СЮДА — иначе оно молча
+  // теряется на первом же чтении (ровно эта грабля описана у `marks`).
+  return { name: c.name, character: c.character, weapon: c.weapon, loop: c.loop ?? false, keys,
+    idleEnds: c.idleEnds, rootYaw: c.rootYaw, rootPos: c.rootPos };
 }
 
 /** Ин-плейс миграция одной позы: `__hipsY` (только высота) → `__hipsP` (полный офсет таза X/Y/Z).

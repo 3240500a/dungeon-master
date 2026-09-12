@@ -14,9 +14,9 @@ import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { makeBakeRig, autoBoneMap, enforceTPose, FULL_AIM_CHILD, OUR_BONES, OUR_FINGERS, type BakeRig } from './retarget3d.js';
 import { boneWeight, partWeight, setPartWeight, maskFromBody, hasPart, type BoneMask } from './boneMask.js';
 import { rigSignature, isStaticBake, type ImportReport, type BakeStats } from './clipImport.js';
-import { slerpEuler, setHipsOffset } from './clipModel.js';
+import { slerpEuler, setHipsOffset, setRootMotion } from './clipModel.js';
 import { groundBakeOffset } from './footIk.js';
-import { detrendTravel, refPose, readLimbTarget, groundTargets, clampHipsToFeet, lockLimb, limbBones, LIMBS, type Vec3, type FootTarget, type LimbId } from './footLock.js';
+import { detrendTravel, rootTravel, refPose, readLimbTarget, groundTargets, clampHipsToFeet, lockLimb, limbBones, LIMBS, type Vec3, type FootTarget, type LimbId } from './footLock.js';
 import { applyHeadLookAt } from './poseRuntime.js';
 import type { Clip, Keyframe, Pose } from './poseRuntime.js';
 
@@ -160,6 +160,16 @@ export interface BakeOptions {
   hips?: 'none' | 'vertical' | 'full';
   /** Сила переноса веса 0..1: множитель смещения таза. 1 = как в мокапе, 0 = таз стоит. Дефолт 1. */
   hipsWeight?: number;
+  /**
+   * КОРЕНЬ (Ф2): снять перемещение и поворот персонажа в каналы `__rootP` / `__rootY`.
+   *
+   * До этого травел просто выбрасывался — клип обязан быть in-place, потому что позицию задаёт
+   * сервер. Но выбрасывать его рано: из него анализатор достаёт длину шага и угол поворота, а
+   * экспорт отдаёт чужому движку как root motion. ⚠ В ИГРУ канал не едет НИКОГДА, это данные.
+   * Умолчание — выкл: старые импорты не должны внезапно обрасти каналами.
+   */
+  rootPos?: boolean;
+  rootYaw?: boolean;
   /** ЗАЗЕМЛЕНИЕ: каждый кадр приподнять таз так, чтобы нижняя стопа стояла на полу. Дефолт вкл. */
   ground?: boolean;
   /**
@@ -344,6 +354,22 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
   // ── СМЕЩЕНИЕ ТАЗА: снимаем ТРЕНД (перенос персонажа), оставляем осцилляцию (перенос веса) ──
   // Это смещение при ПОЛНОМ весе — от него считаются и финальное (×hipsW), и опорная поза для целей пинов.
   const hipsFull = takeHips ? detrendTravel(rawHips, hipsMode) : rawHips.map(() => [0, 0, 0] as [number, number, number]);
+  // КОРЕНЬ: ровно то, что сняла свёртка травела, плюс рыск таза относительно первого кадра.
+  // Инвариант `detrend + travel = сырое` держит `footLock`, поэтому здесь нет ни нахлёста, ни потери.
+  const wantRoot = !!(opts.rootPos || opts.rootYaw);
+  const travel = opts.rootPos && takeHips ? rootTravel(rawHips, hipsMode) : null;
+  // Рыск НАКАПЛИВАЕМ: развернуться можно и на 180°+, а свёрнутый в ±π угол дал бы на этом месте скачок.
+  const rootYaws: number[] = [];
+  if (opts.rootYaw) {
+    let acc = 0, prev = 0;
+    for (let i = 0; i < poses.length; i++) {
+      const h = poses[i]!['Hips'];
+      const y = h ? h[1] : 0;
+      if (i === 0) { prev = y; rootYaws.push(0); continue; }
+      let d = y - prev; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+      acc += d; prev = y; rootYaws.push(acc);
+    }
+  }
 
   // ── ПРОХОД 2: заземление, голова, опора стоп ──
   // Вес ноги задаёт, сколько смещения таза ей «принадлежит»: нога, взятая из мокапа на 100 %, имеет право
@@ -393,6 +419,13 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
       for (const b of ['Neck', 'Head']) { const g = H.bones.get(b); if (g) pose[b] = [g.rotation.x, g.rotation.y, g.rotation.z]; }
     }
     if (takeHips || ground) setHipsOffset(pose, hipsD);
+    // Канал корня пишем ПОСЛЕ позы: сама поза остаётся in-place, корень лежит рядом отдельными числами.
+    // Рыск при этом ВЫЧИТАЕТСЯ из кости таза — иначе клип и поехал бы, и понёс бы тот же поворот дважды.
+    if (wantRoot) {
+      const ry = rootYaws[i] ?? 0, tr = travel?.[i];
+      if (opts.rootYaw) { const h = pose['Hips']; if (h) pose['Hips'] = [h[0], h[1] - ry, h[2]]; }
+      setRootMotion(pose, ry, tr ? tr[0] : 0, tr ? tr[2] : 0);
+    }
     dense.push({ t: times[i]!, pose });
   }
 
@@ -421,6 +454,7 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
     name: opts.name ?? (anim.name || src.fileName.replace(/\.[^.]+$/, '')),
     character: opts.character, weapon: opts.weapon, loop, keys,
     idleEnds: !!(opts.anchorIdle && base),   // концы = idle → редактор блокирует их и синкает из стойки (как удары)
+    rootYaw: opts.rootYaw || undefined, rootPos: opts.rootPos || undefined,
   };
   const stats: BakeStats = { frames: dense.length, keys: keys.length, maxMoveDeg, worstBone, footMiss: +worstMiss.toFixed(2), hipsRange: hipsSpan(hipsFull.map((h) => [h[0] * hipsW, h[1] * hipsW, h[2] * hipsW])) };
   return { clip, boneMap: src.boneMap, frames: dense.length, keys: keys.length, stats, animations: src.report.animations.map((a) => a.name) };
