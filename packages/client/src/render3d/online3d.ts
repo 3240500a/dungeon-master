@@ -14,6 +14,8 @@ import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, t
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
+import { driveActor } from './driveActor.js';
+import { moveFromKeys, facingFrom, CAM_AZ } from './playerInput.js';
 import { resolveBodyProfile, resolveBoneScale, resolveBoneOffsets } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -213,7 +215,7 @@ export async function startOnline3d(): Promise<void> {
   const mouse = { x: 0, y: 0, set: false };
   // Камера: азимут ФИКСИРОВАН (вращения по ПКМ нет), наклон меняется с зумом — близко угол ниже
   // (камера опускается), далеко топ-даун как на скрине. Зум-аут ограничен ракурсом скрина.
-  const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: -Math.PI / 4 };   // ровно 45° по азимуту (изометрия)
+  const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: CAM_AZ };   // азимут — общая константа (от неё зависит направление WASD)
   const orbit = { target: new THREE.Vector3(), dist: 460 };
   addEventListener('keydown', (e) => {
     const t = document.activeElement;
@@ -667,22 +669,6 @@ export async function startOnline3d(): Promise<void> {
     const ex = (mxx - mnx) * WIN_MARGIN, ez = (mxz - mnz) * WIN_MARGIN;
     winMinX = mnx - ex; winMaxX = mxx + ex; winMinZ = mnz - ez; winMaxZ = mxz + ez;
   }
-  // updateDt — dt для тяжёлого a.d.update (позинг/физика/скин). Обычно = dt; при temporal-LOD (дальние монстры обновляются
-  // не каждый кадр) сюда идёт НАКОПЛЕННЫЙ dt, чтобы фаза анимации/сглаживание шли верно, а не в slow-mo. Дешёвые сеттеры
-  // (цель/скорость/бой) — каждый кадр (velocity low-pass с per-frame dt), тяжёлый шаг — только на strideFrame.
-  function driveActor(a: Actor, x: number, z: number, facing: number, alive: boolean, dt: number, doUpdate = true, combat = false, updateDt = dt, stun = false, downed = false): void {
-    const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
-    a.vx += (nvx - a.vx) * 0.25; a.vz += (nvz - a.vz) * 0.25;   // low-pass: гасит 30/60Гц-джиттер (иначе ложный страйф)
-    a.lx = x; a.lz = z;
-    a.d.setPose(x, z, yaw(facing));
-    a.d.setWorldVel?.(a.vx, a.vz);
-    a.d.setMove(Math.min(1, Math.hypot(a.vx, a.vz) / 120));
-    a.d.setDead(!alive);
-    a.d.setCombat?.(combat);   // боевой айдл (серверный флаг PlayerView.inCombat) — self и пиры одинаково
-    a.d.setState?.(stun, downed);   // оглушён / сбит с ног → клип реакции через слот действия (Ф1.5)
-    if (doUpdate) a.d.update(updateDt);
-  }
-
   function renderWorld(dt: number): void {
     if (!latest || !self) return;
     animFrame++;
@@ -706,7 +692,7 @@ export async function startOnline3d(): Promise<void> {
       else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (fx - smoothX) * k; smoothZ += (fy - smoothZ) * k; }
       // Тело: живое ведём по сглаженному фокусу; труп — по СВОЕЙ позиции (не уезжает вслед за камерой на союзника).
       const bx = mine.alive ? smoothX : mine.x, by = mine.alive ? smoothZ : mine.y;
-      driveActor(self, bx, by, mine.facing, mine.alive, dt, true, !!mine.inCombat, dt, !!mine.stun, false);
+      driveActor(self, bx, by, mine.facing, mine.alive, dt, { combat: !!mine.inCombat, stun: !!mine.stun });
       statusFx.sync('self', bx, by, mine.debuffs);   // эффекты статусов на игроке
       orbit.target.set(smoothX, 20, smoothZ);
       if (playerLight) playerLight.position.set(smoothX, 90, smoothZ);
@@ -728,7 +714,7 @@ export async function startOnline3d(): Promise<void> {
         if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }         // пир сменил оружие/щит → пересобрать меш + адаптировать позы удара
         if (a.akey !== ak) { a.akey = ak; a.d.setAppearance?.(appearanceFromModels(pv.armorModels)); }   // сменил броню → пересобрать скин-слой
       }
-      driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt, true, !!pv.inCombat, dt, !!pv.stun, false);
+      driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt, { combat: !!pv.inCombat, stun: !!pv.stun });
       if (a.hp) { a.hp.spr.position.set(pv.x, 74, pv.y); a.hp.set(pv.hp / Math.max(1, pv.maxHp)); a.hp.spr.visible = pv.alive; }   // HP пира над головой
     }
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }
@@ -764,7 +750,8 @@ export async function startOnline3d(): Promise<void> {
       const stride = d2 <= ANIM_FULL_R2 ? 1 : d2 <= ANIM_MID_R2 ? 2 : 3;
       const acc = (a.animAcc ?? 0) + dt;
       const strideFrame = active && (stride <= 1 || (animFrame + (mv.id % stride)) % stride === 0);
-      driveActor(a, mv.x, mv.y, mv.facing, true, dt, strideFrame, false, acc, mv.stun, mv.downed);   // dormant/skip → doUpdate=false: setPose держит цель, тяжёлый шаг пропущен
+      // dormant/skip → doUpdate=false: setPose держит цель, тяжёлый шаг пропущен
+      driveActor(a, mv.x, mv.y, mv.facing, true, dt, { doUpdate: strideFrame, updateDt: acc, stun: mv.stun, downed: mv.downed });
       a.animAcc = active && !strideFrame ? acc : 0;   // копим только пока активен и кадр пропущен; сон/апдейт → сброс
       // Есть ли у монстра дебаффы — дёшево, БЕЗ аллокаций (у большинства их нет). Строку иконок и statusFx.sync
       // считаем ТОЛЬКО когда дебаффы есть (или были) — иначе per-frame Object.keys/filter/map × N монстров = мусор → GC-паузы.
@@ -1008,19 +995,11 @@ export async function startOnline3d(): Promise<void> {
   function sendInput(): void {
     const s = app.state!.save;
     const mine = latest?.players.find((p) => p.id === myId);
-    let kx = 0, ky = 0;
-    if (keys.has('KeyD') || keys.has('ArrowRight')) kx += 1;
-    if (keys.has('KeyA') || keys.has('ArrowLeft')) kx -= 1;
-    if (keys.has('KeyS') || keys.has('ArrowDown')) ky += 1;
-    if (keys.has('KeyW') || keys.has('ArrowUp')) ky -= 1;
-    // Camera-relative: экран повёрнут на CAM.az, поэтому крутим WASD на −az → W = ровно «вверх по экрану»,
-    // A/D строго вбок, при любом угле/будущем вращении камеры. Мир-вектор шлём серверу (авторитетность не трогаем).
-    const ca = Math.cos(-CAM.az), sa = Math.sin(-CAM.az);
-    const mx = kx * ca - ky * sa, my = kx * sa + ky * ca;
-    let facing = mine?.facing ?? 0;
-    const a = aimWorld();
-    if (mine && a && Math.hypot(a.x - smoothX, a.y - smoothZ) > 10) facing = Math.atan2(a.y - smoothZ, a.x - smoothX);
-    else if (!mouse.set && (mx || my)) facing = Math.atan2(my, mx);
+    // Camera-relative WASD и выбор фейсинга — ОБЩИЕ с вкладкой «Тест» (см. `playerInput.ts`).
+    const mvv = moveFromKeys(keys, CAM.az);
+    const mx = mvv.x, my = mvv.y;
+    const a = mine ? aimWorld() : null;
+    const facing = facingFrom(mine?.facing ?? 0, a, smoothX, smoothZ, mvv, mouse.set);
     // ЛКМ/ПКМ + Shift/Space/Alt = mouseLeft/mouseRight/hotbar[0..2]. Тогл (аура/стойка) — только по фронту нажатия.
     let attack = false, cast: string | null = null;
     const consider = (b: string | null | undefined, held: boolean, src: string): void => {
