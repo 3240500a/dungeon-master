@@ -51,6 +51,7 @@ import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { createTestTab } from './testTab.js';
 import { analyzeGait, gaitSuggestions, type GaitSuggestion } from './gaitAnalyze.js';
+import { buildInventory, inventorySummary } from './animInventory.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
@@ -4928,6 +4929,7 @@ function renderGraph(): void {
   const box = el('div', 'border:1px solid #39415a;border-radius:6px;padding:6px');
   body.append(box);
   animGraph.renderInspector(box);
+  renderInventory(body);
   syncGraphField();
 }
 
@@ -4968,6 +4970,56 @@ function renderTest(): void {
   const hint = el('div', 'color:#7a869e;font-size:10px;margin-top:8px');
   hint.textContent = 'Веса слоёв — тумблер «◫ слои» в тулбаре: он работает и здесь, и в игре.';
   body.append(hint);
+}
+
+/**
+ * ИНВЕНТАРЬ АНИМАЦИЙ (Ф7): что есть, чего не хватает, что задублировано и что ссылается в никуда.
+ *
+ * Стоит ЗДЕСЬ, рядом с графом, потому что именно здесь клипы и привязывают: «чего не хватает» нужно
+ * видеть в момент привязки, а не на отдельной странице, куда надо идти.
+ *
+ * ⚠ И здесь он ЧЕСТНЕЕ, чем в конфиг-редакторе: тот на другом origin и видит только опубликованное
+ * на сервере, а поз-редактор — ЛОКАЛЬНУЮ рабочую копию, то есть то, что ты правишь прямо сейчас.
+ * Считает при этом один и тот же модуль: две правды спорили бы, которая врёт.
+ */
+let invOpen = false;
+function renderInventory(host: HTMLElement): void {
+  const rows = buildInventory({
+    clips: library.map((c) => ({ name: c.name, character: c.character, weapon: c.weapon, keys: c.keys })),
+    anim: animStore as Record<string, { states?: Record<string, unknown> } | undefined>,
+    refs: locoNodes.map((n) => ({ where: 'pe_loco', character: n.character, ref: n.clip })),
+  });
+  const head = el('div', 'margin-top:8px;display:flex;gap:6px;align-items:center');
+  head.append(pbtn(invOpen ? '▾ НАБОР АНИМАЦИЙ' : '▸ НАБОР АНИМАЦИЙ', () => { invOpen = !invOpen; renderGraph(); }, invOpen));
+  const sum = el('span', 'color:#9aa3b8;font-size:10px'); sum.textContent = inventorySummary(rows); head.append(sum);
+  host.append(head);
+  if (!invOpen) return;
+
+  const me = rows.find((r) => r.character === curCharId);
+  const box = el('div', 'margin-top:4px;border:1px solid #39415a;border-radius:6px;padding:6px;font:10px monospace');
+  host.append(box);
+  if (!me) { const e = el('div', 'color:#7a869e'); e.textContent = 'у этого персонажа клипов нет вовсе'; box.append(e); return; }
+
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin-bottom:3px');
+  h.textContent = `${curChar().name}: ${me.done} из ${me.need} · всего клипов ${me.total}`;
+  box.append(h);
+  for (const g of me.groups) {
+    const r = el('div', 'display:flex;gap:6px;margin-top:1px');
+    const n = el('span', 'flex:0 0 150px;color:#cfd3e0'); n.textContent = g.group; r.append(n);
+    const v = el('span', g.missing.length ? 'color:#c08a50' : 'color:#9ae6a0');
+    v.textContent = g.missing.length ? `нет: ${g.missing.join(', ')}` : `все ${g.have.length}`;
+    r.append(v); box.append(r);
+  }
+  const bad = (title: string, items: string[], color: string): void => {
+    if (!items.length) return;
+    const t = el('div', `color:${color};margin-top:4px`);
+    t.textContent = `${title}: ${items.join(' · ')}`;
+    box.append(t);
+  };
+  // Дубли называем числом ЛИШНИХ копий: «idle_dual ×8» это семь мёртвых записей, и живёт только первая.
+  bad('ДУБЛИ (живёт только первая запись)', me.dups.map((d) => `${d.key} ×${d.count}`), '#c05050');
+  bad('ссылки в никуда', me.broken.map((b) => `${b.where} → ${b.ref}`), '#c05050');
+  bad('пустые клипы (кадров нет)', me.empty, '#c08a50');
 }
 
 function renderUpperPanel(): void {   // панель idle-стойки по оружию (Феча 2): захват в клип, остаточный мах, «взять за основу»
