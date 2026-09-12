@@ -14,10 +14,9 @@
  * Комната пустая и это осознанно: меньше движущихся частей — проще доказать, что расхождений нет.
  * Монстр добавляется отдельным шагом, когда база подтвердится.
  */
-import { ConfigRegistry } from '@dm/shared/config/registry.js';
-import { Cell, TILE, makeGrid, cellToWorld, type Grid } from '@dm/shared/world/grid.js';
-import { newBotSave } from '@dm/shared/sim/playerBot.js';
-import { GameSession, type PlayerInput, type SessionEvent } from '@dm/shared/session/session.js';
+// Импорт ТОЛЬКО через бочку `@dm/shared`: глубокие пути работают в tsc и vitest, но `vite build`
+// резолвит алиас в сам index.ts и падает. Один раз наступив, записываем.
+import { ConfigRegistry, Cell, TILE, makeGrid, cellToWorld, newBotSave, GameSession, type Grid, type PlayerInput, type SessionEvent } from '@dm/shared';
 
 /** Тик сервера. Та же цифра, что в `scheduler.ts`; расходиться ей нельзя — от неё зависит вся динамика. */
 export const TEST_TICK_DT = 1 / 30;

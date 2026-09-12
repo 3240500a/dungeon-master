@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 /**
  * ВВОД ИГРОКА → `PlayerInput`. Две функции, которые обязаны быть в одном экземпляре.
  *
@@ -46,4 +47,27 @@ export function facingFrom(
   if (aim && Math.hypot(aim.x - px, aim.y - pz) > dead) return Math.atan2(aim.y - pz, aim.x - px);
   if (!mouseSet && (mv.x || mv.y)) return Math.atan2(mv.y, mv.x);
   return prev;
+}
+
+/**
+ * Точка прицела на полу (y = 0) из положения курсора. Общая, потому что «почти такой же» рейкаст в
+ * другом месте даёт другой прицел при другом FOV — и персонаж в тесте целится не туда, что читается
+ * как ошибка доворота корпуса, хотя корпус ни при чём.
+ *
+ * Временные объекты передаются снаружи: функция зовётся каждый кадр и не имеет права мусорить.
+ */
+export function aimOnGround(
+  tmp: { ray: THREE.Raycaster; ndc: THREE.Vector2; ground: THREE.Plane; hit: THREE.Vector3 },
+  camera: THREE.Camera,
+  rect: { left: number; top: number; width: number; height: number },
+  mx: number, my: number,
+): { x: number; y: number } | null {
+  tmp.ndc.set(((mx - rect.left) / rect.width) * 2 - 1, -((my - rect.top) / rect.height) * 2 + 1);
+  tmp.ray.setFromCamera(tmp.ndc, camera);
+  return tmp.ray.ray.intersectPlane(tmp.ground, tmp.hit) ? { x: tmp.hit.x, y: tmp.hit.z } : null;
+}
+
+/** Готовый набор временных объектов для `aimOnGround` — один на потребителя. */
+export function aimTmp(): { ray: THREE.Raycaster; ndc: THREE.Vector2; ground: THREE.Plane; hit: THREE.Vector3 } {
+  return { ray: new THREE.Raycaster(), ndc: new THREE.Vector2(), ground: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit: new THREE.Vector3() };
 }

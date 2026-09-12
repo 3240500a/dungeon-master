@@ -15,7 +15,7 @@ import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { driveActor } from './driveActor.js';
-import { moveFromKeys, facingFrom, CAM_AZ } from './playerInput.js';
+import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ } from './playerInput.js';
 import { resolveBodyProfile, resolveBoneScale, resolveBoneOffsets } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -240,15 +240,9 @@ export async function startOnline3d(): Promise<void> {
   addEventListener('pointerup', (e) => { if (e.button === 0) lmb = false; if (e.button === 2) rmb = false; });
   canvas.addEventListener('pointermove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.set = true; });
   canvas.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist = Math.max(CAM.minDist, Math.min(CAM.maxDist, orbit.dist * (e.deltaY < 0 ? 0.9 : 1.1))); }, { passive: false });
-  const ray = new THREE.Raycaster(); const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  const ndc = new THREE.Vector2(); const hitPt = new THREE.Vector3();
-  const aimWorld = (): { x: number; y: number } | null => {
-    if (!mouse.set) return null;
-    const r = canvas.getBoundingClientRect();
-    ndc.set(((mouse.x - r.left) / r.width) * 2 - 1, -((mouse.y - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ndc, camera);
-    return ray.ray.intersectPlane(ground, hitPt) ? { x: hitPt.x, y: hitPt.z } : null;
-  };
+  const aimT = aimTmp();   // рейкаст прицела — общий с вкладкой «Тест» (иначе прицел в тесте свой)
+  const aimWorld = (): { x: number; y: number } | null =>
+    (mouse.set ? aimOnGround(aimT, camera, canvas.getBoundingClientRect(), mouse.x, mouse.y) : null);
   const applyCam = (): void => {
     const zt = Math.max(0, Math.min(1, (orbit.dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));   // 0 близко … 1 далеко
     const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;                                           // близко — ниже угол, далеко — топ-даун

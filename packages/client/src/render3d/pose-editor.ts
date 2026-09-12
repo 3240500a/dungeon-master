@@ -49,6 +49,7 @@ import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './pose
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
 import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
+import { createTestTab } from './testTab.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
@@ -2580,7 +2581,7 @@ function focusHand(): void {
   camera.position.copy(p).add(new THREE.Vector3(gripSide === 'Left' ? 9 : -9, 4, 11));   // ~15u: кисть занимает больше половины кадра
   orbit.update();
 }
-let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' | 'ai' | 'graph' = 'anim';
+let tab: 'anim' | 'loco' | 'turn' | 'char' | 'models' | 'ai' | 'graph' | 'test' = 'anim';
 const tabBar = document.createElement('div'); tabBar.style.cssText = 'display:flex;gap:3px;margin-bottom:6px';
 let body: HTMLElement = document.createElement('div');
 const panelRoot = body;
@@ -2629,13 +2630,13 @@ const tabSwitch = (k: typeof tab): void => {
   if (stop) { locoOn = false; ghostGround.off = 0; goFrame(frameIdx); }
   refreshAll();
 };
-for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['graph', 'Граф'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
+for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['graph', 'Граф'], ['test', '▶ Тест'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
 // Вкладка «Модели» (C5): импорт скинед-меша → live-ретаргет нашей позой → экспорт GLB + запись в конфиг.
 // Ф15.1 + Ф20.1: риг-источник строится ТЕМ ЖЕ профилем И ТЕМ ЖЕ boneScale, что манекен —
 // иначе кости модели стоят не там, где нарисованы кости редактора (колено расходилось на 2.37u).
 const modelsTab = createModelsTab(scene, () => atlasProfile(), () => morphBoneScale());
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else if (tab === 'graph') renderGraph(); else modelsTab.render(body); if (tab !== 'graph' && graphField) graphField.style.display = 'none'; refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
+function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else if (tab === 'graph') renderGraph(); else if (tab === 'test') renderTest(); else modelsTab.render(body); if (tab !== 'graph' && graphField) graphField.style.display = 'none'; syncTestTab(); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 /** Пересчитать позу без перерисовки панели — для `oninput` ползунков (перерисовка отобрала бы у мыши захваченный бегунок). */
 function refreshLive(): void { if (ikOn) solveRig(); }
@@ -4835,6 +4836,45 @@ function renderGraph(): void {
   syncGraphField();
 }
 
+/**
+ * ВКЛАДКА «ТЕСТ». Персонаж откликается на ввод ровно как в клиенте: движение — настоящее серверное
+ * ядро, ввод и привод куклы — те же модули, что в игре. Вся склейка живёт в `testTab.ts`, здесь
+ * только монтаж: своя логика в редакторе — это второе поведение, ради отсутствия которого всё и затеяно.
+ */
+const testTab = createTestTab({
+  scene, camera, canvas,
+  physics: async () => { await ensurePhysics(); return pw; },
+  charId: () => curCharId,
+  weapon: () => weapon,
+  setOrbit: (on) => { orbit.enabled = on; },
+});
+/** Вкладка открыта — тест живёт; ушли — он обязан отпустить клавиатуру и убрать куклу. */
+function syncTestTab(): void {
+  if (tab === 'test') { if (!testTab.active) void testTab.start(); }
+  else if (testTab.active) testTab.stop();
+}
+let testStatus: HTMLElement | null = null;
+function renderTest(): void {
+  body.innerHTML = '';
+  const h = el('div', 'color:#9ae6a0;margin-bottom:4px');
+  h.textContent = `${curChar().name} · ${weapon}`;
+  body.append(h);
+  const info = el('div', 'color:#cfd3e0;font-size:11px;line-height:1.5');
+  info.innerHTML = '<b>WASD</b> — ход (относительно экрана)<br><b>мышь</b> — прицел<br><b>ЛКМ</b> — атака'
+    + '<br><b>Пробел</b> — уклонение<br><b>колесо</b> — зум';
+  body.append(info);
+  const note = el('div', 'color:#7a869e;font-size:10px;margin-top:6px');
+  note.textContent = 'Движение считает НАСТОЯЩЕЕ серверное ядро (те же 30 Гц и тот же ввод, что уходит в игре), '
+    + 'кукла — та же, что в бою. Поэтому увиденное здесь и есть то, что будет в клиенте.';
+  body.append(note);
+  testStatus = el('div', 'color:#9ae6a0;font-size:10px;margin-top:6px;font-family:monospace');
+  body.append(testStatus);
+  body.append(pbtn('в центр', () => testTab.rebuild()));
+  const hint = el('div', 'color:#7a869e;font-size:10px;margin-top:8px');
+  hint.textContent = 'Веса слоёв — тумблер «◫ слои» в тулбаре: он работает и здесь, и в игре.';
+  body.append(hint);
+}
+
 function renderUpperPanel(): void {   // панель idle-стойки по оружию (Феча 2): захват в клип, остаточный мах, «взять за основу»
   const box = el('div', 'margin-top:8px;border:1px solid #39415a;border-radius:6px;padding:6px');
   const st = stanceClip(weapon); const has = !!st;
@@ -5457,7 +5497,9 @@ function loop(): void {
   // держат вывод ПРОШЛОГО кадра, и гизмо отставало на кадр при перетаскивании.
   placeLimitGizmo(); parkProxy();   // кольца FK стоят в том же фрейме, что и зона предела
   syncWeaponHost();   // 2B: оружие на кисть ВИДИМОГО атлас-меша (после drive — кисть уже позирована)
-  const hideMan = tab === 'models' && modelsTab.hideMannequin();   // прятать манекен/призрак — виден только импорт
+  // В тесте манекен редактора прячем целиком: в кадре должна быть ИГРОВАЯ кукла и только она,
+  // иначе рядом с ней стоит второй персонаж и сравнивать не с чем.
+  const hideMan = testTab.active || (tab === 'models' && modelsTab.hideMannequin());   // прятать манекен/призрак
   human.root.visible = !hideMan;
   // Ф20.4: ВИД КОСТЕЙ МОДЕЛИ. Пересобираем по ИДЕНТИЧНОСТИ корня атласа: `exportTarget()`
   // аллоцирует НОВУЮ обёртку на каждый вызов, сравнивать её бесполезно. `rebuildAsm` дизпоузит
@@ -5498,6 +5540,10 @@ function loop(): void {
   // не сбленжено к позе по `match`, поэтому оверлей висел ниже призрака на 1.15u и стоял
   // под своим углом (1.2–14.8°) — жалоба «бокс вертикальный, а кость под углом».
   if (showBoxes && ragdoll) ragdoll.poseShapes(physOn && ghostHuman ? ghostHuman : human);
+  if (testTab.active) {
+    testTab.frame(Math.min(dt, 0.1));
+    if (testStatus && testStatus.isConnected) testStatus.textContent = testTab.status();
+  }
   traceView?.update();   // трасса заполняется в шаге куклы выше — здесь только рисуем
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   ungroundView?.();                              // …и ТУТ ЖЕ возвращаем — авторская поза не тронута

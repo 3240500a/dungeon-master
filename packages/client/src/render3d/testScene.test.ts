@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createTestScene, TEST_TICK_DT } from './testScene.js';
 import { moveFromKeys, facingFrom, CAM_AZ } from './playerInput.js';
 import { driveActor, facingToYaw, type DriveState, type DrivenDoll } from './driveActor.js';
-import type { PlayerInput } from '@dm/shared/session/session.js';
+import type { PlayerInput } from '@dm/shared';
 
 /**
  * ВКЛАДКА «ТЕСТ» ОБЯЗАНА ВЕСТИ СЕБЯ 1:1 С КЛИЕНТОМ.
