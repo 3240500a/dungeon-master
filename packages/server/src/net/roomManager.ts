@@ -1,5 +1,5 @@
 import type { GameConn } from './conn.js';
-import { levelForXp, packInventory, applyDeathPenalty, type ConfigRegistry, type ClientFrame, type SaveState } from '@dm/shared';
+import { levelForXp, packInventory, applyDeathPenalty, createRng, type ConfigRegistry, type ClientFrame, type SaveState } from '@dm/shared';
 import { getSession, getCharacter, putCharacter } from '../db/db.js';
 import { Room } from './room.js';
 import { limits } from './rateLimit.js';
@@ -170,7 +170,7 @@ export class RoomManager {
       else {
         const owned = await this.ownedSave(userId, frame.charId);
         if (owned?.save.run) {
-          applyDeathPenalty(owned.save, this.cfg.get('balance').deathPenalty);
+          applyDeathPenalty(owned.save, this.cfg.get('balance').deathPenalty, createRng((Date.now() & 0xffffff) || 1));
           owned.save.run = undefined;
           if (await putCharacter(frame.charId, userId, owned.save, owned.version) === null) {
             console.warn(`[room] отклонён устаревший сейв при abandon ${frame.charId}`);

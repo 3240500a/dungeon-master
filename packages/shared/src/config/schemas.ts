@@ -62,6 +62,12 @@ export const balanceSchema = z.object({
   deathPenalty: z.object({
     goldPercent: z.number().min(0).max(1),
     inventoryDropPercent: z.number().min(0).max(1),
+    /**
+     * Доля СТЕКА сырья, теряемая, если он попал под раздачу. Стек — не «одна вещь»: забирать его
+     * целиком значило бы делать смерть лотереей «весь запас забега или ничего».
+     * ⚠ Накопленное в сундуке не теряется НИКОГДА — под угрозой только улов текущего забега.
+     */
+    materialStackLossPercent: z.number().min(0).max(1).default(0.5),
   }),
   /** Окно реконнекта (сек): пока пусто, комната ждёт возврата игрока; истекло — все погибли. */
   reconnectGraceSec: z.number().int().min(0).default(3600),

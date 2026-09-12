@@ -111,7 +111,8 @@
   "affinityDamageBonus": 0.2,
   "deathPenalty": {
     "goldPercent": 0.25,
-    "inventoryDropPercent": 0.5
+    "inventoryDropPercent": 0.5,
+    "materialStackLossPercent": 0.5
   },
   "reconnectGraceSec": 3600,
   "loot": {
