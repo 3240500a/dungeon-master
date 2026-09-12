@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, GAIT, POSE, ASYM, STRAFE, sideLerp, sideLerp3, strafeMix, foldElbow } from './pose.js';
+import { PoseDriver, GAIT, POSE, ASYM, STRAFE, COMBAT, sideLerp, sideLerp3, sideLerp4, strafeMix, foldElbow } from './pose.js';
 
 /**
  * ЧЕТЫРЕ НОВЫЕ РУЧКИ ПОХОДКИ — и одно требование ко всем четырём.
@@ -17,6 +17,7 @@ const POSE0 = { ...POSE }, GAIT0 = { ...GAIT };
 const clear = (): void => {
   for (const k of Object.keys(ASYM)) delete ASYM[k];
   for (const k of Object.keys(STRAFE)) delete STRAFE[k];
+  for (const k of Object.keys(COMBAT)) delete COMBAT[k];
 };
 afterEach(() => { clear(); Object.assign(POSE, POSE0); Object.assign(GAIT, GAIT0); });
 
@@ -247,5 +248,35 @@ describe('амплитуда бедра', () => {
     const a = still();
     GAIT.hipSwing = 3; GAIT.hipSwingRun = 3;
     expect(maxDiff(still(), a)).toBe(0);
+  });
+});
+
+describe('боевая ось — четвёртая колонка (Ф6)', () => {
+  it('нет записи — бой ничего не меняет, при любом боевом состоянии', () => {
+    for (const ct of [0, 0.5, 1]) expect(sideLerp4('stepWalk', 'stepRun', 35, 44, 0, 0, 0, ct)).toBe(35);
+  });
+
+  it('есть запись — в бою берётся она, а вне боя всё как было', () => {
+    COMBAT['stanceWidth'] = 18;
+    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 0), 'вне боя').toBe(6);
+    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 1), 'в бою').toBe(18);
+    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 0.5), 'на входе в бой — на полпути').toBe(12);
+  });
+
+  it('бой накладывается ПОВЕРХ страйфа, а не вместо него', () => {
+    // Порядок цепочки: ходьба→бег, потом вперёд→вбок, потом мирно→бой. Каждая следующая колонка
+    // перекрывает предыдущую там, где задана, — иначе «боевой страйф» пришлось бы заводить пятой.
+    STRAFE['stepWalk'] = 20;
+    COMBAT['stepWalk'] = 10;
+    expect(sideLerp4('stepWalk', 'stepRun', 35, 44, 0, 0, 1, 0), 'страйф вне боя').toBe(20);
+    expect(sideLerp4('stepWalk', 'stepRun', 35, 44, 0, 0, 1, 1), 'страйф в бою').toBe(10);
+  });
+
+  it('стороны боя разводятся своим ключом и не трогают ни бег, ни страйф', () => {
+    ASYM['stanceWidth'] = [4, 8];
+    ASYM['stanceWidth@c'] = [14, 20];
+    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 1)).toBe(14);
+    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 1, 0, 0, 1)).toBe(20);
+    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 0), 'вне боя — асимметрия ходьбы').toBe(4);
   });
 });

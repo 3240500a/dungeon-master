@@ -107,6 +107,27 @@ export const sideLerp3 = (kw: string, kr: string, bw: number, br: number, i: 0 |
   return sv === undefined ? v : v + (sv - v) * st;
 };
 
+/**
+ * БОЕВАЯ ОСЬ (Ф6) — ЧЕТВЁРТАЯ колонка, устроенная ровно как страйф-колонка.
+ *
+ * Решение плана: боевое состояние — НЕ второй набор ног. Набор ног один, безоружный, а бой меняет
+ * позу верха (`idle_incombat`) и НАСТРОЙКИ: шире стойка, короче шаг, выше каденция. Второй набор ног
+ * означал бы сотни одинаковых клипов и был бы отложен «до первого набора» навсегда.
+ *
+ * Разрежённость та же и по той же причине: нет записи — ключ про бой ничего не знает и ведёт себя
+ * ровно как раньше, бит в бит. Уже настроенные персонажи не сдвинулись ни на единицу.
+ */
+export const COMBAT: Record<string, number> = {};
+/** Боевое значение ключа на сторону: пара в `ASYM[key+'@c']`, иначе общее из `COMBAT`, иначе нет. */
+export const combatOf = (key: string, i: 0 | 1): number | undefined => ASYM[key + '@c']?.[i] ?? COMBAT[key];
+/** Полная цепочка: ходьба→бег по `sb`, вперёд→вбок по `st`, мирно→бой по `ct`. */
+export const sideLerp4 = (kw: string, kr: string, bw: number, br: number, i: 0 | 1, sb: number, st: number, ct: number): number => {
+  const v = sideLerp3(kw, kr, bw, br, i, sb, st);
+  if (ct <= 0) return v;
+  const cv = combatOf(kw, i);
+  return cv === undefined ? v : v + (cv - v) * ct;
+};
+
 export const GAIT = {
   standY: 30, pelvisMin: 26,                 // посадка таза: стойка / нижний предел приседа (подобрано глазами)
   pelvisMinRun: 26,                          // то же на бегу (интерп по скорости; = ходьбе → как было)
@@ -356,6 +377,7 @@ class StepPlanner {
   private prevYaw = 0;       // рыск прошлого кадра
   sb = 0;                    // блен ходьба(0)↔бег(1) — читает PoseDriver для раздельных рук walk/run
   st = 0;                    // боковитость 0 (вперёд/назад) … 1 (чистый страйф) — третья колонка настроек
+  combat = 0;                // мирно(0) ↔ бой(1) — ЧЕТВЁРТАЯ колонка: шире стойка, короче шаг (Ф6)
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
   private mAvgX = 0; private mAvgZ = 0; private mAvgOn = false;   // сглаженный вектор хода (направление планта)
@@ -521,6 +543,7 @@ class StepPlanner {
     // вперёд и страйф-колонку не поднимает — ровно так, как показал замер 4-против-8 направлений.
     this.st = moving ? strafeMix(pmx * fx + pmz * fz, pmx * rx + pmz * rz) : 0;
     const st = this.st;
+    const ct = this.combat;   // боевая ось (Ф6): та же разрежённая колонка, что у страйфа
     const stepLen = lerp(GAIT.stepWalk, GAIT.stepRun, sb) / Math.max(0.1, GAIT.cadence);   // длина шага ходьба↔бег; cadence>1 → короче/чаще (путь px не трогаем)
     const duty = lerp(GAIT.dutyWalk, GAIT.dutyRun, sb);   // доля опоры ходьба↔бег (sb уже в [0,1])
     // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
@@ -528,12 +551,12 @@ class StepPlanner {
     // ── ТО ЖЕ, НО НА СТОРОНУ. Симметрия (`ASYM` пуст) → числа те же, что выше, бит в бит.
     // Фаза остаётся ОДНА на обе ноги: две независимые фазы — это уже не походка, а два человека.
     // Асимметрия живёт в геометрии шага (длина, подъём, доля опоры, ширина), и этого хватает на хромоту.
-    const sl = (i: 0 | 1): number => sideLerp3('stepWalk', 'stepRun', GAIT.stepWalk, GAIT.stepRun, i, sb, st) / Math.max(0.1, GAIT.cadence);
-    const dutyS = (i: 0 | 1): number => sideLerp3('dutyWalk', 'dutyRun', GAIT.dutyWalk, GAIT.dutyRun, i, sb, st);
-    const liftS = (i: 0 | 1): number => sideLerp3('liftWalk', 'liftRun', GAIT.liftWalk, GAIT.liftRun, i, sb, st);
+    const sl = (i: 0 | 1): number => sideLerp4('stepWalk', 'stepRun', GAIT.stepWalk, GAIT.stepRun, i, sb, st, ct) / Math.max(0.1, GAIT.cadence);
+    const dutyS = (i: 0 | 1): number => sideLerp4('dutyWalk', 'dutyRun', GAIT.dutyWalk, GAIT.dutyRun, i, sb, st, ct);
+    const liftS = (i: 0 | 1): number => sideLerp4('liftWalk', 'liftRun', GAIT.liftWalk, GAIT.liftRun, i, sb, st, ct);
     const leadS = (i: 0 | 1): number => sl(i) * dutyS(i) + sl(i) * GAIT.aheadMul + speed * GAIT.predictSec;
-    const fwdLimS = (i: 0 | 1): number => sideLerp3('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, sb, st);
-    const hipSwS = (i: 0 | 1): number => sideLerp3('hipSwing', 'hipSwingRun', GAIT.hipSwing, GAIT.hipSwingRun, i, sb, st);
+    const fwdLimS = (i: 0 | 1): number => sideLerp4('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, sb, st, ct);
+    const hipSwS = (i: 0 | 1): number => sideLerp4('hipSwing', 'hipSwingRun', GAIT.hipSwing, GAIT.hipSwingRun, i, sb, st, ct);
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
@@ -628,9 +651,9 @@ class StepPlanner {
       const off = this.plantOff[i]!, side = i === 0 ? 1 : -1;   // нога 0 = ЛЕВАЯ на +X (см. якорь бедра)
       const fwdAmt = reach * mFwd + off[0];
       const j = i as 0 | 1;
-      const reachK = sideLerp3('strafeReach', 'strafeReachRun', GAIT.strafeReach, GAIT.strafeReachRun, j, sb, st);
-      const width = sideLerp3('stanceWidth', 'stanceWidthRun', GAIT.stanceWidth, GAIT.stanceWidthRun, j, sb, st);
-      const cross = sideLerp3('crossClamp', 'crossClampRun', GAIT.crossClamp, GAIT.crossClampRun, j, sb, st);
+      const reachK = sideLerp4('strafeReach', 'strafeReachRun', GAIT.strafeReach, GAIT.strafeReachRun, j, sb, st, ct);
+      const width = sideLerp4('stanceWidth', 'stanceWidthRun', GAIT.stanceWidth, GAIT.stanceWidthRun, j, sb, st, ct);
+      const cross = sideLerp4('crossClamp', 'crossClampRun', GAIT.crossClamp, GAIT.crossClampRun, j, sb, st, ct);
       let latAmt = reach * mLat * reachK + width * side + off[1];
       if (side * latAmt < -cross) latAmt = -side * cross;   // не заходить за среднюю линию дальше crossClamp
       l.tx = hx + fx * fwdAmt + rx * latAmt; l.tz = hz + fz * fwdAmt + rz * latAmt;
@@ -686,8 +709,8 @@ class StepPlanner {
     const dip = reach - Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz));
     // Боб и нижний предел приседа берём у ОПОРНОЙ ноги: таз проседает на ту ногу, которая держит вес,
     // поэтому хромота — это разный боб на левой и правой опоре, а не два таза.
-    const bobMult = sideLerp3('bobWalk', 'bobRun', GAIT.bobWalk, GAIT.bobRun, stanceLeg, sb, st);
-    const floorY = sideLerp3('pelvisMin', 'pelvisMinRun', GAIT.pelvisMin, GAIT.pelvisMinRun, stanceLeg, sb, st);
+    const bobMult = sideLerp4('bobWalk', 'bobRun', GAIT.bobWalk, GAIT.bobRun, stanceLeg, sb, st, ct);
+    const floorY = sideLerp4('pelvisMin', 'pelvisMinRun', GAIT.pelvisMin, GAIT.pelvisMinRun, stanceLeg, sb, st, ct);
     const wantY = anyStance ? clamp(this.standY - dip * bobMult, floorY, this.standY) : this.standY;
     // Сглаживание: на бегу — всегда (вход/выход из полёта). На ШАГЕ асимметрично: ВНИЗ (ноги разъезжаются,
     // wantY плавно падает по геометрии) берём как есть — иначе таз запаздывает и волочит опорную ногу; а ВВЕРХ
@@ -744,6 +767,9 @@ export class PoseDriver {
   private stanceLatL = HIP_DX; private stanceFwdL = 0; private stanceLatR = -HIP_DX; private stanceFwdR = 0; private standY = GAIT.standY;
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
+  private combat = 0;     // мирно(0) ↔ бой(1): боевая колонка настроек (Ф6). Нет записей — ведёт себя как раньше.
+  /** Боевое состояние 0..1 — ИЗ ИГРЫ (серверный `inCombat`), тот же, что блендит стойку. */
+  setCombat(c: number): void { this.combat = Math.max(0, Math.min(1, c)); if (this.planner) this.planner.combat = this.combat; }
   readonly out: PoseTargets = {
     hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
     lean: 0, twist: 0, bobY: 0, splay: 0, twChest: 0, twUpper: 0,
@@ -840,15 +866,16 @@ export class PoseDriver {
     // Боковитость хода: у монстров планировщика нет — им страйф-колонка не положена (st = 0 = как было).
     const st = this.planner?.st ?? 0;
     o.st = st;
+    const ct = this.combat;
     // Руки — на сторону (ASYM/STRAFE пусты → оба значения одинаковы и это ровно прежние числа).
-    const armSh = (i: 0 | 1): number => sideLerp3('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, sb, st);
-    const armEl = (i: 0 | 1): number => sideLerp3('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, sb, st);
-    const armSwing = (i: 0 | 1): number => sideLerp3('armSwing', 'armSwingRun', POSE.armSwing, POSE.armSwingRun, i, sb, st);
+    const armSh = (i: 0 | 1): number => sideLerp4('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, sb, st, ct);
+    const armEl = (i: 0 | 1): number => sideLerp4('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, sb, st, ct);
+    const armSwing = (i: 0 | 1): number => sideLerp4('armSwing', 'armSwingRun', POSE.armSwing, POSE.armSwingRun, i, sb, st, ct);
     // ФАЗА. `armPhase` крутит саму руку (и пояс едет за ней), `shoPhase` — только пояс относительно
     // своей руки. −1 переворачивает мах, 0 гасит. Умножаются, а не складываются: это множители фазы.
-    const armPh = (i: 0 | 1): number => sideLerp3('armPhase', 'armPhaseRun', POSE.armPhase, POSE.armPhaseRun, i, sb, st);
-    const shoPh = (i: 0 | 1): number => sideLerp3('shoPhase', 'shoPhaseRun', POSE.shoPhase, POSE.shoPhaseRun, i, sb, st);
-    const elAmp = (i: 0 | 1): number => sideLerp3('armElAmp', 'armElAmpRun', POSE.armElAmp, POSE.armElAmpRun, i, sb, st);
+    const armPh = (i: 0 | 1): number => sideLerp4('armPhase', 'armPhaseRun', POSE.armPhase, POSE.armPhaseRun, i, sb, st, ct);
+    const shoPh = (i: 0 | 1): number => sideLerp4('shoPhase', 'shoPhaseRun', POSE.shoPhase, POSE.shoPhaseRun, i, sb, st, ct);
+    const elAmp = (i: 0 | 1): number => sideLerp4('armElAmp', 'armElAmpRun', POSE.armElAmp, POSE.armElAmpRun, i, sb, st, ct);
     // Ручки ТЕЛА (не стороны): берём сторону 0 — ASYM для них панель не разводит, а страйф-колонка работает.
     const body = (kw: string, kr: string, bw: number, br: number): number => sideLerp3(kw, kr, bw, br, 0, sb, st);
     o.lean = walking
