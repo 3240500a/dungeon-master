@@ -919,7 +919,7 @@ export async function startOnline3d(): Promise<void> {
   });
   app.net.on('shop', (f) => { app.shopStock = f.items; app.bus.emit('state:changed', {}); });
   app.net.on('questBoard', (f) => { app.questBoard = f.quests; app.bus.emit('state:changed', {}); });
-  app.net.on('stash', (f) => { app.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount }; app.bus.emit('state:changed', {}); });
+  app.net.on('stash', (f) => { app.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount, materials: f.materials }; app.bus.emit('state:changed', {}); });
   app.net.on('joined', (f) => {
     hideAll(); myId = f.playerId;
     const st = new GameState(f.save); st.restoreFull(); app.state = st;

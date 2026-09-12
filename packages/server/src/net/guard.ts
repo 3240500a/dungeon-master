@@ -43,6 +43,7 @@ const SCOPE: Record<TownCommand['cmd'], CmdScope> = {
   forgeReroll: 'town',
   forgeSalvage: 'town',
   forgeRepair: 'town',
+  depositMaterials: 'town',
   stashOpen: 'town',
   stashMove: 'town',
   // Разбор НА МЕСТЕ — смысл именно в том, чтобы не возвращаться в город (выход меньше, docs/ECONOMY.md ч3).

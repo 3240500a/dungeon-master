@@ -135,6 +135,8 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   let repaired = 0;
   let upgraded = 0;
   let goldOnPassives = 0;
+  /** Сундук аккаунта в симе: сырьё сдаётся сюда в городе и отсюда же тратится кузницей. */
+  const stashWallet: Record<string, number> = {};
   let curFloor = 0;
   let deepest = 0;
   let floorsCompleted = 0;
@@ -182,7 +184,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     allocate();
     for (let k = 0; k < 2; k++) { const r = visitShop(reg, save, save.level, rng, settings.build); goldSpent += r.spent; goldSold += r.sold; itemsBought += r.bought.length; }
     // Кузница ПОСЛЕ магазина: чинить и качать имеет смысл то, что уже отобрано как лучшее.
-    const f = visitForge(reg, save, settings.build);
+    const f = visitForge(reg, save, settings.build, stashWallet);
     goldSpent += f.spent; repaired += f.repaired; upgraded += f.upgraded;
     stockBelt();
   };

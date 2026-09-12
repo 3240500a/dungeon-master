@@ -28,7 +28,7 @@ export class App {
   /** Доска случайных квестов — авторитетная, приходит с сервера (кадр `questBoard`). */
   questBoard: QuestDef[] = [];
   /** Общий (на аккаунт) сундук — авторитетный слепок с сервера (кадр `stash`); null = ещё не пришёл. */
-  stash: { tabs: Item[][]; cols: number; rows: number; tabCount: number } | null = null;
+  stash: { tabs: Item[][]; cols: number; rows: number; tabCount: number; materials: Record<string, number> } | null = null;
   /** Активный забег v2 (граф RunPlan + текущий узел) — авторитетно с сервера (кадр `runPlan`); null = забега нет (город). */
   run: { plan: RunPlan; currentNodeId: string } | null = null;
   /** Сессия аккаунта (токен+userId); null = не вошёл. Персистится в localStorage `dm:auth`. */
@@ -77,7 +77,7 @@ export class App {
     // Авторитетная доска квестов с сервера → перерисовать журнал.
     this.net.on('questBoard', (f) => { this.questBoard = f.quests; this.bus.emit('state:changed', {}); });
     // Авторитетный слепок общего сундука с сервера → перерисовать панель сундука.
-    this.net.on('stash', (f) => { this.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount }; this.bus.emit('state:changed', {}); });
+    this.net.on('stash', (f) => { this.stash = { tabs: f.tabs, cols: f.cols, rows: f.rows, tabCount: f.tabCount, materials: f.materials }; this.bus.emit('state:changed', {}); });
     // Структура активного забега (v2): граф узлов + текущий узел — для карты забега и маппинга выходов на рёбра.
     this.net.on('runPlan', (f) => { this.run = { plan: f.plan, currentNodeId: f.currentNodeId }; this.bus.emit('state:changed', {}); });
   }

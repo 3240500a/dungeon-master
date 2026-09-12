@@ -10,7 +10,8 @@ import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../i
 import type { DebuffState } from '../world/debuffs.js';
 import { socketsOpen, insertById, insertUnlocked, insertFits } from '../session/inserts.js';
 import { canSalvage, salvageFromItem, salvageRuleFor, tierOfRarity, type SalvageRng } from '../formulas/salvage.js';
-import { canAfford, giveMaterials, missingFor, spendMaterials, type MaterialCost } from './materials.js';
+import { canAffordBoth, giveMaterials, missingForBoth, spendBoth, depositCarried,
+  type MaterialCost, type MaterialWallet } from './materials.js';
 import { uuidv7 } from '../formulas/uuid.js';
 
 /**
@@ -160,7 +161,7 @@ function materialLadder(reg: ConfigRegistry, item: Item, need: readonly number[]
  * улучшение» невозможно, а не ограничено бюджетом. Статы и требования пересчитываются ОТ БАЗЫ,
  * так что кузнечный «Отличный» равен найденному «Отличному» — иначе тир перестал бы значить.
  */
-export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string): ActionResult {
+export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
   if (item.broken) return { ok: false, reason: 'Сперва почини' };
@@ -172,11 +173,13 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string):
   const mats = upgradeCost(reg, item);
   if (!Object.keys(mats).length) return { ok: false, reason: 'Эту вещь кузнец не улучшает' };
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
-  if (!canAfford(save, mats)) return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingFor(save, mats))}` };
+  if (!canAffordBoth(save.inventory, wallet, mats)) {
+    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
+  }
   // ⚠ Списываем ОБА ресурса и только потом меняем предмет: иначе отказ на середине оставил бы
   // игрока без золота и без улучшения.
   save.gold -= gold;
-  spendMaterials(save, mats);
+  spendBoth(save.inventory, wallet, mats);
   const bal = reg.get('balance');
   Object.assign(item, retierItem(base, item, tier, {
     reqDiscount: bal.forgePrices.upgradeReqDiscount,
@@ -189,6 +192,16 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string):
 export function nextTierOf(reg: ConfigRegistry, item: Item): { id: string; name: string } | undefined {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   return base ? nextTier(reg.get('item-tiers'), base, item.tier) : undefined;
+}
+
+/**
+ * СДАТЬ ВСЁ СЫРЬЁ ИЗ СУМКИ В СУНДУК. Одной кнопкой намеренно: раскладывать полтора десятка стеков
+ * руками после каждого забега — это не жанровая норма, а лишняя работа (в PoE ровно для этого
+ * и сделана вкладка валюты). Возвращает, сколько единиц ушло.
+ */
+export function depositMaterials(save: SaveState, wallet: MaterialWallet): ActionResult & { moved: number } {
+  const moved = depositCarried(save.inventory, wallet);
+  return moved > 0 ? { ok: true, moved } : { ok: false, reason: 'Сырья в сумке нет', moved: 0 };
 }
 
 /** «Ржавое железо 12 · Чистое железо 5» — одна подпись для кнопки, тултипа и текста отказа. */
@@ -309,18 +322,18 @@ export function repairCost(reg: ConfigRegistry, item: Item): MaterialCost {
  * ⚠ Чинить дороже, чем даёт разбор той же вещи: иначе разбор не выбирали бы никогда.
  * Платим за ВЕЩЬ, а не за материалы в ней.
  */
-export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string): ActionResult {
+export function forgeRepair(reg: ConfigRegistry, save: SaveState, uid: string, wallet: MaterialWallet): ActionResult {
   const item = save.inventory.find((i) => i.uid === uid);
   if (!item) return { ok: false, reason: 'Предмет не в инвентаре' };
   if (!item.broken) return { ok: false, reason: 'Вещь цела' };
   const gold = reg.get('balance').forgePrices.repairBroken;
   const mats = repairCost(reg, item);
   if (save.gold < gold) return { ok: false, reason: 'Недостаточно золота' };
-  if (Object.keys(mats).length && !canAfford(save, mats)) {
-    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingFor(save, mats))}` };
+  if (Object.keys(mats).length && !canAffordBoth(save.inventory, wallet, mats)) {
+    return { ok: false, reason: `Не хватает материалов: ${describeCost(reg, missingForBoth(save.inventory, wallet, mats))}` };
   }
   save.gold -= gold;
-  spendMaterials(save, mats);
+  spendBoth(save.inventory, wallet, mats);
   delete item.broken;
   return { ok: true };
 }

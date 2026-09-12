@@ -154,6 +154,8 @@ export type TownCommand =
   | { cmd: 'forgeReroll'; uid: string }
   /** Починка сломанного трофея: снимает флаг за золото и материалы. */
   | { cmd: 'forgeRepair'; uid: string }
+  /** Сдать всё сырьё из сумки в общий сундук аккаунта. */
+  | { cmd: 'depositMaterials' }
   /** Разбор у кузнеца: полный выход материалов. */
   | { cmd: 'forgeSalvage'; uid: string }
   /** Разбор на месте, в подземелье: выход `balance.salvage.fieldYield`. */
@@ -228,7 +230,8 @@ export type ServerFrame =
   | { t: 'saveUpdate'; save: SaveState }
   | { t: 'shop'; items: Item[] }
   // Полный слепок общего сундука (шлётся на stashOpen и после каждого stashMove).
-  | { t: 'stash'; tabs: Item[][]; cols: number; rows: number; tabCount: number }
+  /** `materials` — сырьё АККАУНТА (общее для всех героев), не вкладка: это счётчики, не предметы. */
+  | { t: 'stash'; tabs: Item[][]; cols: number; rows: number; tabCount: number; materials: Record<string, number> }
   | { t: 'questBoard'; quests: QuestDef[] }
   | { t: 'peerJoined'; peer: PeerInfo }
   // Ф1.1: обновление СТАТИКИ игроков — экипировка, уровень, смена области.

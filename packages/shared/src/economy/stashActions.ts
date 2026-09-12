@@ -32,7 +32,26 @@ export function sanitizeStash(reg: ConfigRegistry, stash: AccountStash): Account
   if (!Array.isArray(stash.tabs)) stash.tabs = [];
   while (stash.tabs.length < need) stash.tabs.push([]);
   for (const tab of stash.tabs) packInventory(tab, dims);
+  if (!stash.materials) stash.materials = {};
   return stash;
+}
+
+/**
+ * ПЕРЕЕЗД СТАРОГО ПЕРСОНАЖНОГО КОШЕЛЬКА В АККАУНТНЫЙ — одноразово, при первом входе героя.
+ *
+ * До этой правки `SaveState.materials` был у КАЖДОГО персонажа свой. Теперь сырьё общее, и всё
+ * накопленное надо влить в аккаунтный кошелёк. ⚠ Поле в сейве после вливания ОБНУЛЯЕТСЯ — иначе
+ * при следующем входе оно влилось бы второй раз и сырьё бы задвоилось. Если у аккаунта несколько
+ * героев со своими кошельками, каждый вольётся ровно один раз, и это ПРАВИЛЬНО: их запасы
+ * складываются в общий.
+ */
+export function migrateWalletToStash(save: SaveState, stash: AccountStash): boolean {
+  const old = save.materials;
+  if (!old || !Object.keys(old).length) return false;
+  const w = stash.materials ?? (stash.materials = {});
+  for (const [id, n] of Object.entries(old)) if (n > 0) w[id] = (w[id] ?? 0) + n;
+  save.materials = {};
+  return true;
 }
 
 /** Пустой сундук (для аккаунта без сохранённого). */

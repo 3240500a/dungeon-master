@@ -4,8 +4,8 @@ import {
   GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
   generateItem, itemFromBaseId, createRng,
-  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
-  stashMove, stashDims, stashTabCount,
+  buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
+  migrateWalletToStash, stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
   isDifficultyUnlocked, applyDeathPenalty,
   PROTOCOL_VERSION,
@@ -233,6 +233,14 @@ export class Room implements Tickable {
       t: 'joined', v: PROTOCOL_VERSION, playerId: pid, roomCode: this.code,
       floor: this.currentFloorInit(), peers: this.peerList(), save,
     });
+    // ⚠ ПЕРЕЕЗД СТАРОГО КОШЕЛЬКА: до ч7 сырьё лежало у каждого персонажа своё, теперь
+    // оно общее на аккаунт. Вливаем ОДИН раз и обнуляем поле в сейве — иначе при следующем
+    // входе влилось бы второй раз. Заодно шлём сундук, чтобы кузница знала кошелёк.
+    void (async () => {
+      const stash = await loadAccountStash(userId, this.cfg);
+      if (migrateWalletToStash(save, stash)) await this.persist(pid, stash);
+      await this.sendStash(pid);
+    })();
     if (this.area === 'town') this.send(ws, { t: 'shop', items: this.shop });
     if (this.runPlan && this.runNodeId) this.send(ws, { t: 'runPlan', plan: this.runPlan, currentNodeId: this.runNodeId });
     this.send(ws, { t: 'questBoard', quests: this.questBoard });
@@ -393,10 +401,14 @@ export class Room implements Tickable {
         break;
       }
       case 'sell': r = sellItem(this.cfg, save, command.uid); break;
-      case 'forgeUpgrade': r = forgeUpgrade(this.cfg, save, command.uid); break;
+      // ⚠ Улучшение и починка ТРАТЯТ сырьё, а оно теперь в сундуке аккаунта — значит те же
+      // гарантии, что у `stashMove`: грузим сундук, действуем, пишем сейв и сундук ОДНОЙ
+      // транзакцией, и откатываем всё в памяти, если запись не прошла.
+      case 'forgeUpgrade': r = await this.withStash(c, pid, (st) => forgeUpgrade(this.cfg, save, command.uid, st)); break;
       case 'forgeReroll': r = forgeReroll(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
       case 'forgeSalvage': r = forgeSalvage(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
-      case 'forgeRepair': r = forgeRepair(this.cfg, save, command.uid); break;
+      case 'forgeRepair': r = await this.withStash(c, pid, (st) => forgeRepair(this.cfg, save, command.uid, st)); break;
+      case 'depositMaterials': r = await this.withStash(c, pid, (st) => depositMaterials(save, st)); break;
       // Разбор на месте разрешён где угодно (`guard` не держит его в городе): смысл в том и есть —
       // переработать трофей, не возвращаясь. В городе им пользоваться незачем, кузница выгоднее.
       case 'salvage': r = fieldSalvage(this.cfg, save, command.uid, createRng(((Date.now() & 0xffffff) >>> 0) || 1)); break;
@@ -512,6 +524,31 @@ export class Room implements Tickable {
   pullLever(pid: string, leverId: number): void {
     const doorId = this.session.openLever(pid, leverId);
     if (doorId != null) this.broadcast({ t: 'doorOpened', doorId });
+  }
+
+  /**
+   * Действие, которое трогает СУНДУК АККАУНТА (сырьё кузницы, сдача): грузим сундук, выполняем,
+   * пишем сейв и сундук одной транзакцией, при неудаче записи откатываем и сейв, и сундук
+   * в памяти. Без отката разъедется оперативное состояние — ровно та ошибка, которую уже
+   * закрывали в `stashMove`.
+   */
+  private async withStash(
+    c: { userId: string },
+    pid: string,
+    act: (wallet: Record<string, number>) => { ok: boolean; reason?: string },
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const save = this.session.world.players[pid]?.save;
+    if (!save) return { ok: false, reason: 'Нет персонажа' };
+    const stash = await loadAccountStash(c.userId, this.cfg);
+    stash.materials ??= {};
+    const beforeSave = JSON.stringify(save);
+    const beforeWallet = JSON.stringify(stash.materials);
+    const r = act(stash.materials);
+    if (!r.ok) return r;
+    if (await this.persist(pid, stash)) { await this.sendStash(pid); return r; }
+    Object.assign(save, JSON.parse(beforeSave) as typeof save);
+    stash.materials = JSON.parse(beforeWallet) as Record<string, number>;
+    return { ok: false, reason: 'Не удалось сохранить, попробуйте ещё раз' };
   }
 
   /** Игрок открыл сундук: сессия высыпает содержимое на землю (если рядом) → события всем. */
@@ -1112,7 +1149,7 @@ export class Room implements Tickable {
     if (!c) return;
     const stash = await loadAccountStash(c.userId, this.cfg);
     const d = stashDims(this.cfg);
-    this.send(c.ws, { t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg) });
+    this.send(c.ws, { t: 'stash', tabs: stash.tabs, cols: d.cols, rows: d.rows, tabCount: stashTabCount(this.cfg), materials: stash.materials ?? {} });
   }
   private broadcastQuestBoard(): void {
     this.broadcast({ t: 'questBoard', quests: this.questBoard });

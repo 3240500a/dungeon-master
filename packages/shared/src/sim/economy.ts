@@ -3,7 +3,7 @@ import { generateItem } from '../formulas/itemgen.js';
 import { meetsRequirements } from '../formulas/stats.js';
 import { createRng } from '../formulas/rng.js';
 import { nextTier, retierItem } from '../formulas/itemgen.js';
-import { totalMaterials } from '../economy/materials.js';
+import { totalMaterials, type MaterialWallet } from '../economy/materials.js';
 import { forgeRepair, forgeUpgrade, fieldSalvage as doFieldSalvage } from '../economy/townActions.js';
 import type { EquipSlot } from '../types/items.js';
 import { estimateAttack } from '../formulas/playerCombat.js';
@@ -176,13 +176,13 @@ export interface ForgeResult { spent: number; repaired: number; upgraded: number
  * золота и материалов. Обе операции — АВТОРИТЕТНЫЕ действия игры, а не копия их логики:
  * иначе цены в симе и в игре разойдутся, и балансировать будет нечего.
  */
-export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPolicy): ForgeResult {
+export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPolicy, wallet: MaterialWallet): ForgeResult {
   const out: ForgeResult = { spent: 0, repaired: 0, upgraded: 0 };
   // 1. Починка принесённого: чиним и надеваем, если лучше текущего.
   for (const item of [...save.inventory]) {
     if (!item.broken || !item.slot) continue;
     const gold0 = save.gold;
-    if (!forgeRepair(reg, save, item.uid).ok) continue;
+    if (!forgeRepair(reg, save, item.uid, wallet).ok) continue;
     out.spent += gold0 - save.gold;
     out.repaired++;
     const cur = save.equipment[item.slot];
@@ -207,7 +207,7 @@ export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPo
     if (!meetsRequirements(after, save.attributes)) continue;
     const gold0 = save.gold;
     save.inventory.push(item);
-    const ok = forgeUpgrade(reg, save, item.uid).ok;
+    const ok = forgeUpgrade(reg, save, item.uid, wallet).ok;
     save.inventory = save.inventory.filter((i) => i.uid !== item.uid);
     if (!ok) continue;
     save.equipment[slot] = item;  // `forgeUpgrade` мутирует объект на месте

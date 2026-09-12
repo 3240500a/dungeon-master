@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, equip, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
@@ -8,6 +8,12 @@ import { generateItem } from '../formulas/itemgen.js';
 import type { Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // сетка 10×6
+/**
+ * Кошелёк СУНДУКА АККАУНТА — с ч7 сырьё живёт здесь, а не в сейве персонажа.
+ * Сбрасывается перед каждым тестом: общий изменяемый объект между тестами — классическая течь.
+ */
+let wallet: Record<string, number> = {};
+beforeEach(() => { wallet = { 'iron-1': 99, 'iron-2': 99, 'iron-3': 99, 'wood-1': 99, 'wood-2': 99, 'plate-1': 99 }; });
 
 function mkItem(uid: string, gridW: number, gridH: number, x: number, y: number): Item {
   return {
@@ -74,10 +80,10 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     const it = rolled(1);
     expect(it.tier).toBe('t0');
     const save = { gold: 1000, inventory: [it], materials: rich() } as unknown as SaveState;
-    expect(forgeUpgrade(reg, save, it.uid).ok).toBe(true);
+    expect(forgeUpgrade(reg, save, it.uid, wallet).ok).toBe(true);
     expect(it.tier).toBe('t1');
     expect(save.gold).toBe(1000 - price.upgradeTier);
-    expect(save.materials!['iron-1']).toBe(99 - price.upgradeMaterials.tier1);
+    expect(wallet['iron-1']).toBe(99 - price.upgradeMaterials.tier1);
     // Имя обновилось приставкой нового тира, а не украсилось звёздочкой.
     const t1 = reg.get('item-tiers').find((t) => t.id === 't1')!;
     expect(it.name.startsWith(t1.name)).toBe(true);
@@ -86,7 +92,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
   it('⭐ кузнечный тир РАВЕН найденному по статам, но ЛЕГЧЕ по требованиям', () => {
     const forged = rolled(1);
     const save = { gold: 1000, inventory: [forged], materials: rich() } as unknown as SaveState;
-    expect(forgeUpgrade(reg, save, forged.uid).ok).toBe(true);
+    expect(forgeUpgrade(reg, save, forged.uid, wallet).ok).toBe(true);
     const found = rolled(8); // тот же t1, но с пола
     expect(found.tier).toBe('t1');
     const dmg = (i: Item): number => i.baseStats.filter((m) => m.kind === 'flat').reduce((a, m) => a + m.value, 0);
@@ -99,11 +105,11 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     const it = rolled(1);
     const save = { gold: 10_000_000, inventory: [it], materials: { 'iron-1': 9999, 'iron-2': 9999, 'iron-3': 9999 } } as unknown as SaveState;
     let steps = 0;
-    while (forgeUpgrade(reg, save, it.uid).ok && steps < 50) steps++;
+    while (forgeUpgrade(reg, save, it.uid, wallet).ok && steps < 50) steps++;
     expect(steps).toBeGreaterThan(0);
     expect(steps).toBeLessThan(20);                          // упёрлись, а не крутили бесконечно
     expect(it.tier).toBe(swordBase.maxTier);
-    expect(forgeUpgrade(reg, save, it.uid).reason).toContain('Лучше');
+    expect(forgeUpgrade(reg, save, it.uid, wallet).reason).toContain('Лучше');
   });
 
   it('⚠ перекатка КОНЕЧНА: предел из конфига', () => {
@@ -118,20 +124,21 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
   it('улучшение: мало золота → отказ, предмет, золото и материалы не тронуты', () => {
     const it = weapon('w');
     const save = { gold: price.upgradeTier - 1, inventory: [it], materials: rich() } as unknown as SaveState;
-    expect(forgeUpgrade(reg, save, 'w').ok).toBe(false);
+    expect(forgeUpgrade(reg, save, 'w', wallet).ok).toBe(false);
     expect(it.name).toBe('Меч');
     expect(save.gold).toBe(price.upgradeTier - 1);
-    expect(save.materials!['iron-1']).toBe(99);
+    expect(wallet['iron-1']).toBe(99);
   });
 
   it('⚠ мало материалов → отказ, и ЗОЛОТО ТОЖЕ не списано', () => {
     const it = weapon('w');
-    const save = { gold: 1000, inventory: [it], materials: { 'iron-1': 1 } } as unknown as SaveState;
-    const r = forgeUpgrade(reg, save, 'w');
+    const save = { gold: 1000, inventory: [it] } as unknown as SaveState;
+    wallet = { 'iron-1': 1 };                   // в сундуке почти пусто, в сумке сырья нет
+    const r = forgeUpgrade(reg, save, 'w', wallet);
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('материалов');
     expect(save.gold).toBe(1000);              // отказ на середине не должен обирать игрока
-    expect(save.materials!['iron-1']).toBe(1);
+    expect(wallet['iron-1']).toBe(1);
     expect(it.name).toBe('Меч');
   });
 
@@ -147,7 +154,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     const it = weapon('u', 'unique');
     const save = { gold: 1000, inventory: [it], materials: rich() } as unknown as SaveState;
     expect(upgradeCost(reg, it)).toEqual({});
-    expect(forgeUpgrade(reg, save, 'u').ok).toBe(false);
+    expect(forgeUpgrade(reg, save, 'u', wallet).ok).toBe(false);
     expect(save.gold).toBe(1000);
   });
 
@@ -170,7 +177,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
 
   it('нет предмета → отказ', () => {
     const save = { gold: 1000, inventory: [] } as unknown as SaveState;
-    expect(forgeUpgrade(reg, save, 'nope').ok).toBe(false);
+    expect(forgeUpgrade(reg, save, 'nope', wallet).ok).toBe(false);
     expect(forgeReroll(reg, save, 'nope', createRng(1)).ok).toBe(false);
   });
 });
@@ -404,7 +411,7 @@ describe('сломанные трофеи и починка (Ч4)', () => {
     gridW: 1, gridH: 3, pos: { x: 0, y: 0 }, broken: true,
   } as unknown as Item);
   const save = (it: Item, gold = 1000): SaveState =>
-    ({ gold, inventory: [it], equipment: {}, belt: [], materials: { 'iron-1': 99 },
+    ({ gold, inventory: [it], equipment: {}, belt: [],
       attributes: { strength: 200, dexterity: 200, intelligence: 200, vitality: 200 },
       level: 50, skills: {}, masteries: {} } as unknown as SaveState);
 
@@ -420,10 +427,10 @@ describe('сломанные трофеи и починка (Ч4)', () => {
   it('починка: −золото, −материалы, флаг снят, дальше вещь обычная', () => {
     const it = broken();
     const s = save(it);
-    expect(forgeRepair(reg, s, 'b').ok).toBe(true);
+    expect(forgeRepair(reg, s, 'b', wallet).ok).toBe(true);
     expect(it.broken).toBeUndefined();
     expect(s.gold).toBe(1000 - price.repairBroken);
-    expect(s.materials!['iron-1']).toBe(99 - price.repairMaterials.tier1);
+    expect(wallet['iron-1']).toBe(99 - price.repairMaterials.tier1);
     expect(equip(reg, s, 'b').ok).toBe(true);  // теперь надевается
   });
 
@@ -431,21 +438,21 @@ describe('сломанные трофеи и починка (Ч4)', () => {
     const it = broken();
     delete (it as { broken?: boolean }).broken;
     const s = save(it);
-    expect(forgeRepair(reg, s, 'b').ok).toBe(false);
+    expect(forgeRepair(reg, s, 'b', wallet).ok).toBe(false);
     expect(s.gold).toBe(1000);
   });
 
   it('⚠ мало золота → отказ, и материалы не списаны', () => {
     const it = broken();
     const s = save(it, price.repairBroken - 1);
-    expect(forgeRepair(reg, s, 'b').ok).toBe(false);
+    expect(forgeRepair(reg, s, 'b', wallet).ok).toBe(false);
     expect(it.broken).toBe(true);
-    expect(s.materials!['iron-1']).toBe(99);
+    expect(wallet['iron-1']).toBe(99);
   });
 
   it('сломанное УЛУЧШАТЬ нельзя — сперва почини', () => {
     const s = save(broken());
-    const r = forgeUpgrade(reg, s, 'b');
+    const r = forgeUpgrade(reg, s, 'b', wallet);
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('почини');
     expect(s.gold).toBe(1000);

@@ -170,3 +170,67 @@ export function giveMaterials(
   }
   return left;
 }
+
+// ── Кошелёк аккаунта + сумка: кузница видит оба источника ────────────────────────────────────────
+
+/** Что есть у игрока на руках И в сундуке — для проверки «хватает ли на крафт». */
+export function availableMaterials(inventory: readonly Item[], stashWallet: MaterialWallet): MaterialWallet {
+  const out: MaterialWallet = { ...stashWallet };
+  for (const [id, n] of Object.entries(carriedMaterials(inventory))) out[id] = (out[id] ?? 0) + n;
+  return out;
+}
+
+/** Хватает ли на цену, считая сумку и сундук вместе. */
+export function canAffordBoth(inventory: readonly Item[], stashWallet: MaterialWallet, cost: MaterialCost): boolean {
+  const have = availableMaterials(inventory, stashWallet);
+  return Object.entries(cost).every(([id, n]) => (have[id] ?? 0) >= n);
+}
+
+/** Чего не хватает, считая сумку и сундук вместе. */
+export function missingForBoth(inventory: readonly Item[], stashWallet: MaterialWallet, cost: MaterialCost): MaterialCost {
+  const have = availableMaterials(inventory, stashWallet);
+  const out: MaterialCost = {};
+  for (const [id, n] of Object.entries(cost)) { const d = n - (have[id] ?? 0); if (d > 0) out[id] = d; }
+  return out;
+}
+
+/**
+ * ТРАТИТ материалы СПЕРВА ИЗ СУМКИ, потом из сундука.
+ *
+ * Порядок не косметический: иначе игрок с полной сумкой сырья упирался бы в «нет материалов»,
+ * потому что не успел переложить — ровно перед тем действием, ради которого сырьё и собирал.
+ * Атомарно: не хватает на всё — не тратим ничего.
+ */
+export function spendBoth(inventory: Item[], stashWallet: MaterialWallet, cost: MaterialCost): boolean {
+  if (!canAffordBoth(inventory, stashWallet, cost)) return false;
+  for (const [id, needed] of Object.entries(cost)) {
+    let left = needed;
+    for (let i = inventory.length - 1; i >= 0 && left > 0; i--) {
+      const it = inventory[i]!;
+      if (it.kind !== 'material' || it.materialId !== id) continue;
+      const take = Math.min(it.count ?? 1, left);
+      it.count = (it.count ?? 1) - take;
+      left -= take;
+      if ((it.count ?? 0) <= 0) inventory.splice(i, 1);
+    }
+    if (left > 0) {
+      stashWallet[id] = (stashWallet[id] ?? 0) - left;
+      if (stashWallet[id]! <= 0) delete stashWallet[id];
+    }
+  }
+  return true;
+}
+
+/** Сдать ВСЁ сырьё из сумки в сундук. Возвращает, сколько единиц ушло. */
+export function depositCarried(inventory: Item[], stashWallet: MaterialWallet): number {
+  let moved = 0;
+  for (let i = inventory.length - 1; i >= 0; i--) {
+    const it = inventory[i]!;
+    if (it.kind !== 'material' || !it.materialId) continue;
+    const n = it.count ?? 1;
+    stashWallet[it.materialId] = (stashWallet[it.materialId] ?? 0) + n;
+    moved += n;
+    inventory.splice(i, 1);
+  }
+  return moved;
+}
