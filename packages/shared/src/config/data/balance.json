@@ -160,7 +160,8 @@
   "skillRespecCostPerPoint": 100,
   "inventory": {
     "cols": 10,
-    "rows": 6
+    "rows": 6,
+    "materialStack": 200
   },
   "stash": {
     "tabs": 2,

@@ -17,7 +17,8 @@ import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { salvageFromMonster } from '../formulas/salvage.js';
 import { monsterTrophyBase } from '../formulas/trophy.js';
-import { addMaterials } from '../economy/materials.js';
+import { giveMaterials } from '../economy/materials.js';
+import { uuidv7 } from '../formulas/uuid.js';
 import { gainXp } from '../economy/progression.js';
 import { resolvePlayerHit, type HitTarget, type PlayerHitOptions } from '../world/combat.js';
 import { debuffMods, addDebuffStack, tickDebuffs, newDebuffState, isDotKind, type DebuffApply, type DebuffState } from '../world/debuffs.js';
@@ -1679,14 +1680,25 @@ export class GameSession {
       this.world.drops.splice(index, 1);
       return { item: d.item, x, y };
     }
-    this.world.drops.splice(index, 1);
     if (d.kind === 'gold') {
+      this.world.drops.splice(index, 1);
       p.save.gold += d.gold;
       this.events.push({ type: 'gold', playerId: p.id, amount: d.gold, total: p.save.gold });
-    } else {
-      addMaterials(p.save, d.mats);
-      this.events.push({ type: 'materials', playerId: p.id, gains: d.mats, x, y });
+      return { x, y };
     }
+    // ⚠ Материалы теперь ЗАНИМАЮТ МЕСТО, поэтому splice только ПОСЛЕ успешной укладки: иначе
+    // при полной сумке куча сырья исчезала бы в никуда. Влезло частично — остаток лежит дальше.
+    const bal = this.cfg.get('balance');
+    const left = giveMaterials(p.save, d.mats, this.cfg.get('craft-materials'), bal.inventory, bal.inventory.materialStack, uuidv7);
+    const took: Record<string, number> = {};
+    for (const [id, n] of Object.entries(d.mats)) {
+      const rest = left[id] ?? 0;
+      if (n - rest > 0) took[id] = n - rest;
+    }
+    if (!Object.keys(took).length) return null;            // не влезло НИЧЕГО — куча остаётся
+    if (Object.keys(left).length) d.mats = left;
+    else this.world.drops.splice(index, 1);
+    this.events.push({ type: 'materials', playerId: p.id, gains: took, x, y });
     return { x, y };
   }
 

@@ -3,6 +3,7 @@ import { ConfigRegistry } from '../config/registry.js';
 import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, equip, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
+import { carriedMaterials } from './materials.js';
 import { generateItem } from '../formulas/itemgen.js';
 import type { Item, SaveState } from '../types/index.js';
 
@@ -354,11 +355,14 @@ describe('разбор вещи на материалы (Ч3)', () => {
   const save = (...items: Item[]): SaveState =>
     ({ inventory: items, materials: {} } as unknown as SaveState);
 
-  it('кузница: вещь исчезает, материалы приходят в кошелёк', () => {
+  it('кузница: вещь исчезает, а на её месте в СУМКЕ появляется сырьё', () => {
     const s = save(axe());
     expect(forgeSalvage(reg, s, 'a', createRng(1)).ok).toBe(true);
-    expect(s.inventory).toHaveLength(0);
-    expect(Object.values(s.materials!).reduce((x, y) => x + y, 0)).toBeGreaterThan(0);
+    expect(s.inventory.some((i) => i.uid === 'a')).toBe(false);       // сама вещь ушла
+    const got = carriedMaterials(s.inventory);
+    expect(Object.values(got).reduce((x, y) => x + y, 0)).toBeGreaterThan(0);
+    // ⭐ И это сжатие: топор занимал несколько клеток, сырьё с него — стеки по одной.
+    for (const it of s.inventory) expect(it.gridW * it.gridH).toBe(1);
   });
 
   it('⭐ поле даёт меньше кузницы на том же предмете и том же сиде', () => {
@@ -368,10 +372,10 @@ describe('разбор вещи на материалы (Ч3)', () => {
     for (let seed = 1; seed <= 200; seed++) {
       const f = save(axe());
       forgeSalvage(reg, f, 'a', createRng(seed));
-      forge += sum(f.materials!);
+      forge += sum(carriedMaterials(f.inventory));
       const g = save(axe());
       fieldSalvage(reg, g, 'a', createRng(seed));
-      field += sum(g.materials!);
+      field += sum(carriedMaterials(g.inventory));
     }
     expect(field).toBeGreaterThan(0);            // иначе разбирать в поле бессмысленно
     expect(field).toBeLessThan(forge * 0.6);     // и донести должно быть заметно выгоднее
@@ -450,7 +454,8 @@ describe('сломанные трофеи и починка (Ч4)', () => {
   it('⭐ но РАЗОБРАТЬ сломанное можно — в этом и выбор', () => {
     const s = save(broken());
     expect(forgeSalvage(reg, s, 'b', createRng(1)).ok).toBe(true);
-    expect(s.inventory).toHaveLength(0);
+    expect(s.inventory.some((i) => i.uid === 'b')).toBe(false);
+    expect(Object.keys(carriedMaterials(s.inventory)).length).toBeGreaterThan(0);
   });
 
   it('починка дешевле улучшения — иначе чинить не имело бы смысла', () => {

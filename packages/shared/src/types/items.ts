@@ -23,7 +23,13 @@ export type AttackType = 'melee' | 'ranged';
 export type DamageKind = 'physical' | 'magical';
 
 /** Вид предмета — дискриминатор базы (совпадает со схемой items.base). */
-export type ItemKind = 'weapon' | 'armor' | 'shield' | 'jewelry' | 'consumable';
+/**
+ * ⚠ `material` — ОТДЕЛЬНЫЙ вид, а не «предмет со стеком». Сделать стек свойством любого предмета
+ * значило бы тянуть количество в продажу, разделение стека, слияние в сундуке, пояс с колбами
+ * и журнал происхождения предметов. Материалу же экипировка, аффиксы, кузница, магазин и леджер
+ * запрещены по построению, поэтому стек живёт только у него и не протекает наружу.
+ */
+export type ItemKind = 'weapon' | 'armor' | 'shield' | 'jewelry' | 'consumable' | 'material';
 
 /** Эффект применения расходника (зелья/колбы). */
 export interface ConsumableUse {
@@ -196,4 +202,12 @@ export interface Item extends WeaponSignature {
    * Необязательное поле: старый сейв читается как есть, отсутствие = вещь целая.
    */
   broken?: boolean;
+  /**
+   * СКОЛЬКО ШТУК В СТЕКЕ — только у `kind:'material'`. У остальных видов поля нет вовсе:
+   * стекирования в игре нет и не планируется (см. комментарий к `ItemKind`).
+   * Отсутствие поля = одна штука, поэтому старые сейвы читаются без миграции.
+   */
+  count?: number;
+  /** id материала из конфига `craft-materials` — только у `kind:'material'`. */
+  materialId?: string;
 }

@@ -10,7 +10,8 @@ import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../i
 import type { DebuffState } from '../world/debuffs.js';
 import { socketsOpen, insertById, insertUnlocked, insertFits } from '../session/inserts.js';
 import { canSalvage, salvageFromItem, salvageRuleFor, tierOfRarity, type SalvageRng } from '../formulas/salvage.js';
-import { addMaterials, canAfford, missingFor, spendMaterials, type MaterialCost } from './materials.js';
+import { canAfford, giveMaterials, missingFor, spendMaterials, type MaterialCost } from './materials.js';
+import { uuidv7 } from '../formulas/uuid.js';
 
 /**
  * АВТОРИТЕТНЫЕ операции города над `SaveState` (магазин/экип/распределение) — чистые,
@@ -60,6 +61,7 @@ export function shopBuyPrice(item: Item, rarities: Rarities): number {
 }
 
 const dimsOf = (reg: ConfigRegistry): Dims => reg.get('balance').inventory;
+const stackOf = (reg: ConfigRegistry): number => reg.get('balance').inventory.materialStack;
 const equippedItems = (save: SaveState): Item[] => Object.values(save.equipment).filter(Boolean) as Item[];
 
 /**
@@ -232,7 +234,8 @@ export function forgeSalvage(reg: ConfigRegistry, save: SaveState, uid: string, 
   const gains = salvageYield(reg, item, rng, false);
   if (!gains.ok) return gains;
   save.inventory.splice(idx, 1);
-  addMaterials(save, gains.gains);
+  // Вещь уже снята с полки — место под сырьё освободилось, и оно почти всегда доливается в стек.
+  giveMaterials(save, gains.gains, reg.get('craft-materials'), dimsOf(reg), stackOf(reg), uuidv7);
   return { ok: true };
 }
 
@@ -247,7 +250,7 @@ export function fieldSalvage(reg: ConfigRegistry, save: SaveState, uid: string, 
   const out = salvageYield(reg, save.inventory[idx]!, rng, true);
   if (!out.ok) return out;
   save.inventory.splice(idx, 1);
-  addMaterials(save, out.gains);
+  giveMaterials(save, out.gains, reg.get('craft-materials'), dimsOf(reg), stackOf(reg), uuidv7);
   return { ok: true };
 }
 

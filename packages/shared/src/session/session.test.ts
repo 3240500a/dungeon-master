@@ -4,6 +4,7 @@ import { createRng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { Cell, TILE, makeGrid, cellToWorld, type Grid } from '../world/grid.js';
 import { newBotSave } from '../sim/playerBot.js';
+import { carriedMaterials } from '../economy/materials.js';
 import type { Item } from '../types/items.js';
 import type { MonsterFaction } from '../types/world.js';
 import { GameSession, type PlayerInput, type SessionEvent, type FloorLayout } from './session.js';
@@ -110,7 +111,8 @@ describe('GameSession — бой/лут/прокачка', () => {
     for (let i = 0; i < 5; i++) s.tick(1 / 30, { p1: idle });
 
     expect(save.gold).toBe(goldBefore + 50);
-    expect(save.materials?.['iron-1']).toBe(3);
+    // ⚠ Материалы теперь ЗАНИМАЮТ МЕСТО и приходят в сумку стеком, а не в кошелёк.
+    expect(carriedMaterials(save.inventory)['iron-1']).toBe(3);
     // ⚠ Вещь НЕ подбирается сама: `autoPickup.rarities` пуст намеренно — выбор «взять или
     // оставить» и есть добыча. Иначе полевой разбор (Ч3) остался бы без решения игрока.
     expect(s.world.drops.map((d) => d.id)).toEqual([903]);

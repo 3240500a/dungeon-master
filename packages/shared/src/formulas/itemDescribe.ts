@@ -89,6 +89,11 @@ export interface ItemLine { text: string; affix: boolean }
 /** Описание предмета строками с пометкой affix (база=false → белый, аффикс=true → цвет редкости). */
 export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   if (item.kind === 'consumable') return consumableLines(item).map((text) => ({ text, affix: false }));
+  // Материал: ни статов, ни требований — только сколько и на что годится.
+  if (item.kind === 'material') {
+    return [{ text: `Сырьё · в стеке ${item.count ?? 1}`, affix: false },
+            { text: 'Сдаётся в сундук, тратится у кузнеца', affix: false }];
+  }
   const out: ItemLine[] = [];
   const base = (text: string): void => { out.push({ text, affix: false }); };
   const aff = (text: string): void => { out.push({ text, affix: true }); };

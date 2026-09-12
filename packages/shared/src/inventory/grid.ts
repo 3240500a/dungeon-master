@@ -55,8 +55,45 @@ export function packInventory(items: Item[], dims: Dims): void {
   }
 }
 
-/** Добавляет предмет в первую свободную клетку. false — если места нет. */
-export function addToInventory(items: Item[], item: Item, dims: Dims): boolean {
+/**
+ * Добавляет предмет в первую свободную клетку. false — если места нет.
+ *
+ * ⭐ СТЕК МАТЕРИАЛА СЛИВАЕТСЯ с уже лежащим: сперва доливаем в существующие стеки того же
+ * материала до `stackMax`, и только остаток занимает новую клетку. Ради этого материалы и
+ * переехали в сумку — кольчуга занимает 6 клеток, а пластины с неё доливаются в ноль.
+ *
+ * Возвращает false, ТОЛЬКО если не поместилось НИЧЕГО. Частичный долив (влезло 40 из 137)
+ * считается успехом, а остаток остаётся в `item.count` — зовущая сторона решает, что с ним
+ * делать: подбор с земли оставляет остаток лежать, а не уничтожает его.
+ */
+export function addToInventory(items: Item[], item: Item, dims: Dims, stackMax = 0): boolean {
+  if (item.kind === 'material' && item.materialId && stackMax > 0) {
+    let left = item.count ?? 1;
+    for (const it of items) {
+      if (left <= 0) break;
+      if (it.kind !== 'material' || it.materialId !== item.materialId) continue;
+      const room = stackMax - (it.count ?? 1);
+      if (room <= 0) continue;
+      const add = Math.min(room, left);
+      it.count = (it.count ?? 1) + add;
+      left -= add;
+    }
+    if (left <= 0) { item.count = 0; return true; }   // всё ушло в существующие стеки
+    // Остаток кладём НОВЫМИ стеками, пока есть клетки. ⚠ Сам `item` в сумку не попадает никогда:
+    // он остаётся «носителем остатка», и его `count` — ровно то, что НЕ влезло. Если класть его
+    // самого, финальная строка обнулила бы count уже уложенному стеку.
+    let placed = 0;
+    while (left > 0) {
+      const f = findFree(items, item.gridW, item.gridH, dims);
+      if (!f) break;
+      const chunk = Math.min(stackMax, left);
+      items.push({ ...item, uid: `${item.uid}_${placed}`, pos: { x: f.x, y: f.y }, count: chunk });
+      left -= chunk;
+      placed++;
+    }
+    item.count = left;                                 // что не влезло — остаётся у зовущего
+    return placed > 0;
+  }
   const f = findFree(items, item.gridW, item.gridH, dims);
   if (!f) return false;
   item.pos = { x: f.x, y: f.y };
@@ -64,7 +101,11 @@ export function addToInventory(items: Item[], item: Item, dims: Dims): boolean {
   return true;
 }
 
-/** Есть ли место под предмет w×h. */
+/**
+ * Есть ли место под предмет w×h.
+ * ⚠ Про стеки НЕ знает намеренно: её читают покупка и экипировка, а туда стек не попадает.
+ * Для материалов правду говорит только `addToInventory` (место может найтись в недобитом стеке).
+ */
 export function hasSpace(items: Item[], w: number, h: number, dims: Dims): boolean {
   return findFree(items, w, h, dims) !== null;
 }

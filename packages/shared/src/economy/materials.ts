@@ -1,4 +1,6 @@
 import type { SaveState } from '../types/save.js';
+import type { Item } from '../types/items.js';
+import { addToInventory, type Dims } from '../inventory/grid.js';
 
 /**
  * КОШЕЛЁК МАТЕРИАЛОВ — счётчики по id, а НЕ предметы в сетке инвентаря.
@@ -84,3 +86,87 @@ export function missingFor(save: SaveState, cost: MaterialCost): MaterialCost {
 /** Общее число единиц в кошельке — для строки «материалов: N» в интерфейсе. */
 export const totalMaterials = (save: SaveState): number =>
   Object.values(walletOf(save)).reduce((a, b) => a + b, 0);
+
+
+// ── Материал как ПЕРЕНОСИМЫЙ предмет (Ч7: сырьё едет в сумке, а не сразу в кошелёк) ──────────────
+
+/** Запись материала в части, важной для стека (структурно ⊆ конфига `craft-materials`). */
+export interface MaterialDef {
+  id: string;
+  name: string;
+  family: string;
+  tier: number;
+}
+
+/**
+ * СТЕК МАТЕРИАЛА В СУМКЕ.
+ *
+ * Сырьё падает в инвентарь, а не в кошелёк: тогда под угрозой смерти оказывается улов ТЕКУЩЕГО
+ * забега, а накопленное за десятки забегов лежит в сундуке и не теряется. И тогда же у разбора
+ * появляется вторая причина существовать — он СЖИМАЕТ место: кольчуга занимает 6 клеток,
+ * а пластины с неё доливаются в существующий стек и не занимают ничего.
+ *
+ * Предмет намеренно «пустой»: без слота, аффиксов и статов — его нельзя надеть, продать в кузнице
+ * и он не попадает в журнал предметов. Всё это отсекается уже существующими проверками.
+ */
+export function materialItem(def: MaterialDef, count: number, uid: string): Item {
+  return {
+    uid,
+    baseId: def.id,
+    materialId: def.id,
+    kind: 'material',
+    name: def.name,
+    rarity: 'normal',
+    itemLevel: 1,
+    count: Math.max(1, Math.round(count)),
+    requirements: {},
+    affixes: [],
+    baseStats: [],
+    gridW: 1,
+    gridH: 1,
+    pos: null,
+  };
+}
+
+/** Тот же материал? Стеки сливаются только по id — разные ступени не смешиваются. */
+export function sameMaterial(a: Item, b: Item): boolean {
+  return a.kind === 'material' && b.kind === 'material' && !!a.materialId && a.materialId === b.materialId;
+}
+
+/** Сколько единиц материала лежит в сумке (по всем стекам). */
+export function carriedMaterials(inventory: readonly Item[]): MaterialWallet {
+  const out: MaterialWallet = {};
+  for (const it of inventory) {
+    if (it.kind !== 'material' || !it.materialId) continue;
+    out[it.materialId] = (out[it.materialId] ?? 0) + (it.count ?? 1);
+  }
+  return out;
+}
+
+/**
+ * КЛАДЁТ МАТЕРИАЛЫ В СУМКУ стеками и возвращает ОСТАТОК, который не поместился.
+ *
+ * Пустой остаток — всё влезло. Непустой значит «сумка полна»: зовущая сторона обязана оставить
+ * этот остаток лежать на земле, а не потерять его молча. Именно это и создаёт момент «пора домой»,
+ * ради которого материалы и переехали из кошелька в сумку.
+ */
+export function giveMaterials(
+  save: SaveState,
+  gains: MaterialCost,
+  defs: readonly MaterialDef[],
+  dims: Dims,
+  stackMax: number,
+  uid: () => string,
+): MaterialCost {
+  const left: MaterialCost = {};
+  for (const [id, n] of Object.entries(gains)) {
+    if (n <= 0) continue;
+    const def = defs.find((d) => d.id === id);
+    if (!def) continue;                                   // материал выключен/удалён — молча мимо
+    const carrier = materialItem(def, n, uid());
+    addToInventory(save.inventory, carrier, dims, stackMax);
+    // `addToInventory` оставляет в `count` носителя ровно то, что не влезло.
+    if ((carrier.count ?? 0) > 0) left[id] = carrier.count!;
+  }
+  return left;
+}

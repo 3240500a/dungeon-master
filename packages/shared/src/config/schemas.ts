@@ -195,8 +195,18 @@ export const balanceSchema = z.object({
   skillSocketRanks: z.array(z.number().int().min(1)).default([1, 6, 12]),
   /** Размер сетки инвентаря в клетках. */
   inventory: z
-    .object({ cols: z.number().int().min(4), rows: z.number().int().min(4) })
-    .default({ cols: 10, rows: 6 }),
+    .object({
+      cols: z.number().int().min(4),
+      rows: z.number().int().min(4),
+      /**
+       * ⭐ РАЗМЕР СТЕКА МАТЕРИАЛА. Замер бота: в потоке 7 видов сырья, ~43 за этаж,
+       * и «пол» в 7 клеток (по стеку на вид) от размера стека НЕ зависит вовсе: 50 против 500
+       * отличаются на 3–5 клеток. Поэтому щедрый: меньше почти ничего не экономит,
+       * а тесноты добавляет. Сырьё съедает ~7–10 клеток из 60; станет тесно — дешевле добавить `rows`.
+       */
+      materialStack: z.number().int().min(1).default(200),
+    })
+    .default({ cols: 10, rows: 6, materialStack: 200 }),
   /** Городской сундук (ОБЩИЙ на аккаунт): число вкладок и размер каждой вкладки в клетках. */
   stash: z
     .object({

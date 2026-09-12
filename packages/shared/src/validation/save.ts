@@ -16,7 +16,13 @@ const item = z.object({
   uid: z.string(),
   baseId: z.string(),
   name: z.string(),
-  slot: z.string(),
+  // ⚠ Слот ЕСТЬ НЕ У ВСЕХ: его нет у расходников и у материалов — схема их отвергала.
+  slot: z.string().optional(),
+  kind: z.string().optional(),
+  // ⚠ zod СРЕЗАЕТ неизвестные ключи: без этих полей стек материала молча
+  // превратился бы в одну безымянную штуку при первой же валидации сейва.
+  count: z.number().int().min(1).optional(),
+  materialId: z.string().optional(),
   attackType: z.enum(['melee', 'ranged']).optional(),
   damageKind: z.enum(['physical', 'magical']).optional(),
   damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).optional(),
