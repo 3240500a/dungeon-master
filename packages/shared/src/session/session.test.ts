@@ -88,8 +88,24 @@ describe('GameSession — бой/лут/прокачка', () => {
     expect(all.some((e) => e.type === 'gold')).toBe(false);
     expect(save.gold).toBe(goldBefore);
 
-    // ...и приходит автоподбором, когда игрок стоит рядом.
+    // ⭐ И МОНЕТА ЛЕЖИТ НЕ ПОД НОГАМИ. Разброс был ±10 (треть клетки): в ближнем бою награда
+    // падала на убийцу и исчезала автоподбором в том же кадре — игрок видел растущее число
+    // в углу, но не видел, что вообще что-то выпало. Теперь бросок идёт ПРОЧЬ от убийцы.
+    const coin = s.world.drops.find((d) => d.kind === 'gold')!;
+    const sc = r.get('balance').loot.scatter;
+    const fromCorpse = Math.hypot(coin.pos.x - mpos.x, coin.pos.y - mpos.y);
+    expect(fromCorpse).toBeGreaterThanOrEqual(sc.min - 0.001);
+    expect(fromCorpse).toBeLessThanOrEqual(sc.max + 0.001);
+    // Прежний разброс не мог унести монету дальше 10 от трупа — этот порог и есть регрессия.
+    expect(Math.hypot(coin.pos.x - p.pos.x, coin.pos.y - p.pos.y)).toBeGreaterThan(TILE + 10);
+
+    // Стоим на месте — монета так и лежит (её надо дойти и поднять).
     for (let i = 0; i < 10; i++) all.push(...s.tick(1 / 30, { p1: idle }));
+    expect(save.gold).toBe(goldBefore);
+
+    // ...и приходит автоподбором, когда игрок ДОШЁЛ.
+    p.pos.x = coin.pos.x; p.pos.y = coin.pos.y;
+    all.push(...s.tick(1 / 30, { p1: idle }));
     expect(all.some((e) => e.type === 'gold')).toBe(true);
     expect(save.gold).toBeGreaterThan(goldBefore);
   });

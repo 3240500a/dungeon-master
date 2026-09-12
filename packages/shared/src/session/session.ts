@@ -1433,7 +1433,7 @@ export class GameSession {
     // и копится быстрее, чем тратится (`loot.goldChance`).
     if (this.rng.chance(loot.goldChance)) {
       const gold = Math.max(1, Math.round(this.rng.int(1, 5 + level * 2) * diff.goldMult));
-      this.spawnDrop(m.pos, { kind: 'gold', gold });
+      this.spawnDrop(m.pos, { kind: 'gold', gold }, reward.pos);
     }
 
     // ── Материалы: основной поток наград (docs/ECONOMY.md) ──
@@ -1450,7 +1450,22 @@ export class GameSession {
           knownMaterial: (id) => this.cfg.get('craft-materials').some((c) => c.id === id && c.enabled),
         },
       );
-      if (Object.keys(gains).length) this.spawnDrop(m.pos, { kind: 'materials', mats: gains });
+      // ⭐ Реже, но КРУПНЕЕ: частота срезана с 0.6 до 0.35, а количество за дроп поднято
+      // множителем — суммарный приход тот же (~50 единиц за зачищенный этаж), но событий
+      // вдвое меньше. Тридцать подборов сырья за этаж читались как шум, а не как награда.
+      // ⚠ Округление ВЕРОЯТНОСТНОЕ, как в `salvageFromItem`. Обычное `round` на типичном
+      // выходе в 1-2 единицы превращает множитель в ступеньку: 1.35 не меняет ничего вовсе,
+      // а 1.5 удваивает (замер: 38 против 55 единиц за этаж на соседних значениях ручки).
+      const mult = loot.materials.mult;
+      if (mult !== 1) {
+        for (const id of Object.keys(gains)) {
+          const raw = gains[id]! * mult;
+          const whole = Math.floor(raw);
+          const n = whole + (this.rng.chance(raw - whole) ? 1 : 0);
+          if (n > 0) gains[id] = n; else delete gains[id];
+        }
+      }
+      if (Object.keys(gains).length) this.spawnDrop(m.pos, { kind: 'materials', mats: gains }, reward.pos);
     }
 
     if (this.rng.chance(loot.dropChance)) {
@@ -1485,17 +1500,42 @@ export class GameSession {
       // Сломанными падают ТОЛЬКО трофеи: обычная находка не снята с тела и цела, иначе
       // надеть в забеге было бы нечего вовсе.
       if (baseId && this.rng.chance(loot.brokenChance)) item.broken = true;
-      const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item });
+      const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, reward.pos);
       this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
     }
 
     this.awardXp(reward, m.def.xp); // опыт монстра уже отскейлен по его уровню
   }
 
-  /** Кладёт дроп у точки смерти с лёгким разбросом, чтобы три награды не слиплись в одну точку. */
-  private spawnDrop(at: Vec2, payload: DropPayload): { x: number; y: number } {
-    const x = at.x + this.rng.int(-10, 10);
-    const y = at.y + this.rng.int(-10, 10);
+  /**
+   * Кладёт награду НА ОТЛЁТЕ от точки смерти.
+   *
+   * ⚠ Раньше разброс был ±10 — треть клетки. Дерёшься вплотную, значит награда падает ровно
+   * под ноги, а радиус автоподбора (56) снимает её в том же кадре: число в углу растёт, а что
+   * именно выпало, игрок не видит вовсе. Поэтому бросок идёт НА ДИСТАНЦИЮ (`loot.scatter`)
+   * и ПРОЧЬ от того, кто убил, — награда успевает полежать на виду.
+   *
+   * ⚠ Клетку проверяем: без этого половина добычи улетала бы в стену, где её не поднять.
+   * Не нашли проходимого направления за несколько проб — кладём вплотную, как раньше.
+   */
+  private spawnDrop(at: Vec2, payload: DropPayload, awayFrom?: Vec2): { x: number; y: number } {
+    const sc = this.cfg.get('balance').loot.scatter;
+    // Направление «прочь от игрока»; игрок ровно в точке смерти (или его нет) — берём любое.
+    let baseAng = this.rng.float(0, Math.PI * 2);
+    if (awayFrom) {
+      const dx = at.x - awayFrom.x, dy = at.y - awayFrom.y;
+      if (dx * dx + dy * dy > 1) baseAng = Math.atan2(dy, dx);
+    }
+    let x = at.x, y = at.y;
+    for (let i = 0; i < 6; i++) {
+      // Разлёт в пределах полусферы «от игрока»: строго по лучу три награды легли бы стопкой.
+      const ang = baseAng + this.rng.float(-Math.PI / 2, Math.PI / 2);
+      const dist = this.rng.float(sc.min, Math.max(sc.min, sc.max));
+      const nx = at.x + Math.cos(ang) * dist;
+      const ny = at.y + Math.sin(ang) * dist;
+      const c = worldToCell(nx, ny);
+      if (!isBlockedCell(this.world.grid, c.cx, c.cy)) { x = nx; y = ny; break; }
+    }
     this.world.drops.push({ id: this.world.nextId++, pos: { x, y }, ...payload });
     return { x, y };
   }
@@ -1560,7 +1600,7 @@ export class GameSession {
         this.rng,
       );
       // ⚠ Содержимое сундука ЦЕЛОЕ: сломанным падает только снятое с тела (Ч4).
-      const { x, y } = this.spawnDrop(ch.pos, { kind: 'item', item });
+      const { x, y } = this.spawnDrop(ch.pos, { kind: 'item', item }, p.pos);
       this.events.push({ type: 'item-dropped', item, x, y, from: 'chest' });
     }
     this.events.push({ type: 'chest-opened', id: ch.id, x: ch.pos.x, y: ch.pos.y });
