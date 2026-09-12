@@ -118,6 +118,22 @@ describe('Room — жизненный цикл забега v2 (сервер, he
    * Корень: возврат после вайпа идёт через `enterTown`, а забег чистил только `finishRun`
    * (финал). Значит `save.run` переживал смерть и персистился со старым узлом.
    */
+  it('⭐ сундуки этажа ДОЕЗЖАЮТ до игрока: этаж их генерил, а сессия не получала', () => {
+    // ⚠ Ровно этот баг: `generateFloor` расставлял сундуки, но `enterFloor` звался без них,
+    // и `world.chests` оставался пустым. В симе бота сундуки были (он передавал их явно), то
+    // есть отчёты по экономике выглядели верными, а в игре за два этажа не встречалось ни одного.
+    // Ловится только со стороны КАДРА: сама генерация работала правильно.
+    const counts: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const { room, ws, pid } = makeRoom();
+      room.descend(pid);
+      counts.push(ws.last('areaChanged')!.floor.chests.length);
+    }
+    const min = cfg.get('balance').loot.chestsPerFloor.min;
+    expect(min, 'тест имеет смысл, только пока сундуки вообще включены').toBeGreaterThan(0);
+    expect(counts.every((n) => n >= min), `сундуков по этажам: ${counts.join(', ')}`).toBe(true);
+  });
+
   it('вАЙП ЗАВЕРШАЕТ ЗАБЕГ: после смерти соло `save.run` пуст, продолжать нечего', () => {
     const { room, ws, pid } = makeRoom();
     room.descend(pid);

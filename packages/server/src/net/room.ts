@@ -683,7 +683,11 @@ export class Room implements Tickable {
     const rng = createRng((node.floorSpec.seed >>> 0) || 1);
     const monsters = spawnPacksEl(this.cfg, layout, node.depth, this.difficultyId, rng, el, pool, node.floorSpec.packDensity, node.floorSpec.floorId);
     this.session.enterFloor(node.depth, {
+      // ⚠ `chests` ОБЯЗАТЕЛЬНО: этаж их генерил, но сессия их не получала — и сундуков в живой
+      // игре не было вовсе (в симе были, он передавал их явно). Это же убивало и весь ЦЕЛЫЙ дроп:
+      // с тела падают только сломанные трофеи, а надеть в забеге было нечего.
       grid: layout.grid, spawn: layout.spawn, exits: layout.exits, monsters, obstacles,
+      chests: layout.chests,
       doors: layout.doors, levers: layout.levers,
       runNodeId: nodeId, runNodeType: node.type, floorModifiers: node.floorSpec.modifiers, biomeId: biome.id,
     });
