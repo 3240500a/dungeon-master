@@ -7,6 +7,7 @@ import { mountFloorPreview } from './floorPreview.js';
 import { renderRoomEditor, type RoomPrefab } from './roomEditor.js';
 import { renderSimPage } from './sim.js';
 import { renderRunGenPage } from './runGen.js';
+import { renderLootPage } from './loot.js';
 import { renderItemGenPage } from './itemGen.js';
 import { renderMonsterGenPage } from './monsterGen.js';
 import { renderCalcPage } from './calc.js';
@@ -146,7 +147,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' | 'loot' = 'config';
 // Верхняя секция редактора: Игра (конфиги+инструменты) / 3D-эдитор (поз-редактор) / Документация (описания механик).
 type Section = 'game' | 'pose' | 'docs' | 'roadmap';
 let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' || s === 'roadmap' ? s : 'game'; } catch { return 'game'; } })();
@@ -649,6 +650,13 @@ function renderGame(host: HTMLElement): void {
   runBtn.addEventListener('click', () => { view = 'rungen'; render(); });
   nav.appendChild(runBtn);
 
+  // Отдельная вкладка-инструмент: таблицы дропа (что, где и сколько выпадает).
+  const lootBtn = document.createElement('button');
+  lootBtn.textContent = '🎁 Дроп';
+  lootBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'loot' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  lootBtn.addEventListener('click', () => { view = 'loot'; render(); });
+  nav.appendChild(lootBtn);
+
   // Отдельная вкладка-инструмент: генератор предметов (песочница дропа).
   const itemGenBtn = document.createElement('button');
   itemGenBtn.textContent = '🎲 Генератор предметов';
@@ -746,6 +754,7 @@ function renderGame(host: HTMLElement): void {
   page.style.cssText = 'flex:1;min-width:0;min-height:0;overflow-y:auto;padding-right:6px';
   if (view === 'sim') renderSimPage(page, data);
   else if (view === 'rungen') renderRunGenPage(page, data);
+  else if (view === 'loot') renderLootPage(page, data);
   else if (view === 'itemgen') renderItemGenPage(page, data);
   else if (view === 'monstergen') renderMonsterGenPage(page, data);
   else if (view === 'calc') renderCalcPage(page, data);

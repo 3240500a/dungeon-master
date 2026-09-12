@@ -4,6 +4,11 @@ export * from './stats.js';
 export * from './combat.js';
 export * from './xp.js';
 export * from './itemgen.js';
+// ⚠ Разбор и трофеи нужны НЕ только сессии: редактор строит по ним таблицы дропа, и считать
+// их там своей формулой значило бы завести второй источник правды (правило «редактор и игра
+// видят одно и то же»).
+export * from './salvage.js';
+export * from './trophy.js';
 export * from './itemReq.js';
 export * from './itemDescribe.js';
 export * from './monstergen.js';
