@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { stashMove, sanitizeStash, emptyStash } from './stashActions.js';
+import { stashMove, sanitizeStash, emptyStash, migrateWalletToStash } from './stashActions.js';
+import { availableMaterials, spendBoth } from './materials.js';
 import type { AccountStash, Item, SaveState } from '../types/index.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })(); // инв 10×6, сундук 2×(20×12)
@@ -84,5 +85,50 @@ describe('stashMove', () => {
 
   it('нет такого предмета — отказ', () => {
     expect(stashMove(reg, saveWith(), emptyStash(reg), 'nope', 0, 0, 0).ok).toBe(false);
+  });
+});
+
+describe('кошелёк сырья живёт на АККАУНТЕ', () => {
+  const heroWith = (mats: Record<string, number>): SaveState =>
+    ({ inventory: [], materials: mats } as unknown as SaveState);
+
+  it('⭐ два героя одного аккаунта видят ОДИН запас, и трата одним видна другому', () => {
+    const stash = emptyStash(reg);
+    stash.materials = { 'iron-1': 100 };
+    const a = heroWith({});
+    const b = heroWith({});
+
+    expect(availableMaterials(a.inventory, stash.materials)['iron-1']).toBe(100);
+    expect(availableMaterials(b.inventory, stash.materials)['iron-1']).toBe(100);
+
+    // Герой A кует. Кошелёк один, поэтому у героя B запас обязан УМЕНЬШИТЬСЯ.
+    expect(spendBoth(a.inventory, stash.materials, { 'iron-1': 30 })).toBe(true);
+    expect(availableMaterials(b.inventory, stash.materials)['iron-1']).toBe(70);
+  });
+
+  it('⚠ старый персонажный кошелёк вливается РОВНО ОДИН раз', () => {
+    const stash = emptyStash(reg);
+    const save = heroWith({ 'iron-1': 40, 'wood-2': 5 });
+
+    expect(migrateWalletToStash(save, stash)).toBe(true);
+    expect(stash.materials).toEqual({ 'iron-1': 40, 'wood-2': 5 });
+
+    // Повторный вход в игру не должен задваивать: сейв уже опустошён.
+    expect(migrateWalletToStash(save, stash)).toBe(false);
+    expect(migrateWalletToStash(save, stash)).toBe(false);
+    expect(stash.materials).toEqual({ 'iron-1': 40, 'wood-2': 5 });
+    expect(save.materials).toEqual({});
+  });
+
+  it('второй герой аккаунта доливает в тот же кошелёк, а не затирает его', () => {
+    const stash = emptyStash(reg);
+    migrateWalletToStash(heroWith({ 'iron-1': 40 }), stash);
+    migrateWalletToStash(heroWith({ 'iron-1': 7, 'wood-1': 3 }), stash);
+    expect(stash.materials).toEqual({ 'iron-1': 47, 'wood-1': 3 });
+  });
+
+  it('пустой кошелёк не считается миграцией (иначе запись в БД на каждый вход)', () => {
+    expect(migrateWalletToStash(heroWith({}), emptyStash(reg))).toBe(false);
+    expect(migrateWalletToStash({ inventory: [] } as unknown as SaveState, emptyStash(reg))).toBe(false);
   });
 });

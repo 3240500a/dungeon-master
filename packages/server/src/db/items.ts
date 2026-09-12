@@ -41,19 +41,32 @@ export const LOC_WORLD = 'world';
 export const LOC_REVOKED = 'revoked';
 export const locOfChar = (charId: string): ItemLoc => `char:${charId}`;
 
+/**
+ * ⚠ СЫРЬЁ — НЕ ВЕЩЬ ДЛЯ ЛЕДЖЕРА. Стек материалов живёт в сумке как предмет, но леджер строится
+ * на «одна вещь = один вечный uid»: стеки сливаются, делятся пополам при смерти и тратятся
+ * кузницей до нуля. Каждая такая правка выглядела бы в леджере как рождение и пропажа вещи, а
+ * ночной аудит записывал бы её в инциденты. Кошелёк сырья в сундуке аккаунта по той же причине
+ * лежит отдельным полем, а не вкладкой `tabs`.
+ *
+ * Проверять надо ИМЕННО вид предмета: сейчас стек получает uid `<uuid>_0`, который не проходит
+ * `isUuid` ниже и отсеивается сам собой — но это совпадение, а не правило. Оно рассыплется от
+ * любой правки генерации uid, и рассыплется молча.
+ */
+const forLedger = (it: Item): boolean => it.kind !== 'material';
+
 /** Все вещи персонажа: экипировка + инвентарь + пояс. Сундук сюда НЕ входит. */
 export function itemsOfSave(save: SaveState): Item[] {
   const out: Item[] = [];
-  for (const it of Object.values(save.equipment)) if (it) out.push(it);
-  for (const it of save.inventory) out.push(it);
-  for (const it of save.belt) if (it) out.push(it);
+  for (const it of Object.values(save.equipment)) if (it && forLedger(it)) out.push(it);
+  for (const it of save.inventory) if (forLedger(it)) out.push(it);
+  for (const it of save.belt) if (it && forLedger(it)) out.push(it);
   return out;
 }
 
 /** Все вещи сундука аккаунта (по всем вкладкам). */
 export function itemsOfStash(stash: AccountStash): Item[] {
   const out: Item[] = [];
-  for (const tab of stash.tabs) for (const it of tab) out.push(it);
+  for (const tab of stash.tabs) for (const it of tab) if (forLedger(it)) out.push(it);
   return out;
 }
 

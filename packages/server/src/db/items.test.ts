@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ConfigRegistry, newCharacterSave, emptyStash, uuidv7, type SaveState, type AccountStash, type Item } from '@dm/shared';
+import { ConfigRegistry, newCharacterSave, emptyStash, uuidv7, materialItem, type SaveState, type AccountStash, type Item } from '@dm/shared';
+import { itemsOfSave, itemsOfStash } from './items.js';
 
 /**
  * Леджер предметов и журнал происхождения (Ф2) — против НАСТОЯЩЕЙ базы.
@@ -214,5 +215,38 @@ describe.runIf(process.env.DM_SKIP_PG !== '1')('леджер предметов'
     item.name = `${item.name} (перекован)`;
     await db.putCharacter(charId, userId, save, 1, 'cmd:forgeUpgrade');
     expect((await events(item.uid)).map((e) => e.kind)).toEqual(['created', 'changed']);
+  });
+});
+
+describe('леджер не видит сырьё (чистая проверка, базы не требует)', () => {
+  const IRON = { id: 'iron-1', name: 'Ржавое железо', family: 'iron', tier: 1 };
+
+  it('⭐ стеки материалов не попадают в леджер, обычные вещи попадают', () => {
+    const sword: Item = {
+      uid: uuidv7(), baseId: 'b', name: 'Меч', slot: 'weapon', rarity: 'normal', itemLevel: 1,
+      requirements: {}, affixes: [], baseStats: [], gridW: 1, gridH: 1, pos: { x: 0, y: 0 },
+    };
+    const save = {
+      equipment: {}, belt: [],
+      inventory: [sword, materialItem(IRON, 200, uuidv7()), materialItem(IRON, 40, uuidv7())],
+    } as unknown as SaveState;
+
+    // ⚠ Отсекать обязано ПРАВИЛО (kind), а не формат uid: uid здесь — настоящий UUID,
+    // то есть случайная защита через `isUuid` тут не срабатывает вовсе.
+    expect(itemsOfSave(save).map((i) => i.uid)).toEqual([sword.uid]);
+  });
+
+  it('и в сундуке тоже — если стек туда всё же попадёт, леджер его не подхватит', () => {
+    const stash = { version: 1, tabs: [[materialItem(IRON, 10, uuidv7())]] } as unknown as AccountStash;
+    expect(itemsOfStash(stash)).toEqual([]);
+  });
+
+  it('пояс и экипировка фильтруются тем же правилом', () => {
+    const save = {
+      equipment: { weapon: materialItem(IRON, 5, uuidv7()) },
+      belt: [materialItem(IRON, 5, uuidv7()), null],
+      inventory: [],
+    } as unknown as SaveState;
+    expect(itemsOfSave(save)).toEqual([]);
   });
 });
