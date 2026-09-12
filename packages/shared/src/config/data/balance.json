@@ -164,6 +164,7 @@
   "respecCost": 500,
   "passiveRespecCostPct": 0.5,
   "skillRespecCostPerPoint": 100,
+  "skillSocketRanks": [1, 6, 12],
   "inventory": {
     "cols": 10,
     "rows": 6,
@@ -227,7 +228,9 @@
       "torchIntensity": 4000,
       "torchDist": 400,
       "playerLightIntensity": 3500,
-      "playerLightDist": 350
+      "playerLightDist": 350,
+      "playerLightHeight": 90,
+      "playerLightToCam": 30
     }
   },
   "salvage": {
