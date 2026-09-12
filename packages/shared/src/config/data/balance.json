@@ -138,6 +138,9 @@
     "scatter": {
       "min": 44,
       "max": 84
+    },
+    "potions": {
+      "chance": 0.06
     }
   },
   "weaponAttrScaling": 0.5,

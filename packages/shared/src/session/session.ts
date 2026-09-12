@@ -14,7 +14,7 @@ import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formu
 import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/resolveWeapon.js';
 import { skillWeaponAllowed } from '../formulas/skills.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
-import { generateItem } from '../formulas/itemgen.js';
+import { generateItem, itemFromBase } from '../formulas/itemgen.js';
 import { salvageFromMonster } from '../formulas/salvage.js';
 import { monsterTrophyBase } from '../formulas/trophy.js';
 import { giveMaterials } from '../economy/materials.js';
@@ -1468,6 +1468,17 @@ export class GameSession {
       if (Object.keys(gains).length) this.spawnDrop(m.pos, { kind: 'materials', mats: gains }, reward.pos);
     }
 
+    // ⭐ Расходники своим каналом: трофей с тела их исключает (`monsterTrophyBase`), а при
+    // `trophyChance` = 1.0 трофеями становится ВЕСЬ дроп с монстров — колбам взяться было неоткуда.
+    if (this.rng.chance(loot.potions.chance)) {
+      const pots = this.cfg.get('items.base').filter((b) => b.kind === 'consumable' && b.enabled !== false);
+      if (pots.length) {
+        const item = itemFromBase(this.rng.pick(pots));
+        const { x, y } = this.spawnDrop(m.pos, { kind: 'item', item }, reward.pos);
+        this.events.push({ type: 'item-dropped', item, x, y, from: 'monster' });
+      }
+    }
+
     if (this.rng.chance(loot.dropChance)) {
       // ⚠ Биом ЭТАЖА, а не первый из списка: до этого `biomes[0]` игнорировал, где мы находимся,
       // и магия дропа всюду считалась по крипте. Без этого «у каждого биома свои материалы» невозможно.
@@ -1593,7 +1604,10 @@ export class GameSession {
           itemLevel: Math.max(1, this.world.depth + diff.ilvlBonus),
           tiers: this.cfg.get('item-tiers'),
           rarities: this.cfg.get('rarities'),
-          categoryWeights: bal.loot.categoryWeights,
+          // ⚠ Сундук даёт СНАРЯЖЕНИЕ, а не расходники: он и так единственный источник целых
+          // вещей и половины слотов (Ч6), и колба вместо них тратила бы впустую всё событие.
+          // У расходников свой канал с монстров (`loot.potions`).
+          categoryWeights: { ...bal.loot.categoryWeights, consumable: 0 },
           rareNames: this.cfg.get('rare-names'),
           maxReqTotal: bal.maxTotalRequirement,
         },

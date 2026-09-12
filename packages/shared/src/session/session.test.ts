@@ -46,6 +46,37 @@ describe('GameSession — движение', () => {
 });
 
 describe('GameSession — бой/лут/прокачка', () => {
+  it('⭐ КОЛБЫ ПАДАЮТ СВОИМ КАНАЛОМ, а не через дроп вещей', () => {
+    const r = reg();
+    const s = new GameSession(r, 555, 'normal');
+    const save = newBotSave(r, 'warrior');
+    const p = s.addPlayer('p1', save);
+
+    // ⚠ Дроп вещей и золото ВЫКЛЮЧЕНЫ: проверяем именно канал расходников. Он и появился из-за
+    // того, что трофей с тела исключает `kind: 'consumable'`, а `trophyChance` = 1.0 —
+    // то есть колбам взяться было неоткуда вовсе.
+    const loot = r.get('balance').loot as { dropChance: number; goldChance: number; potions: { chance: number }; materials: { chance: number } };
+    loot.dropChance = 0; loot.goldChance = 0; loot.materials.chance = 0; loot.potions.chance = 1;
+
+    const mrng = createRng(4);
+    const baseId = r.get('biomes')[0]!.monsterPool[0]!;
+    const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'), { baseId, depth: 1 }, mrng);
+    def.hp = 1; def.armor = 0;
+    const mpos = cellToWorld(7, 6);
+    s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [{ def, x: mpos.x, y: mpos.y }] });
+
+    for (let i = 0; i < 300 && s.monstersAlive > 0; i++) {
+      const m = s.world.monsters[0]!;
+      const facing = Math.atan2(m.pos.y - p.pos.y, m.pos.x - p.pos.x);
+      s.tick(1 / 30, { p1: { ...idle, facing, attack: true } });
+    }
+    expect(s.monstersAlive).toBe(0);
+
+    const drops = s.world.drops.filter((d) => d.kind === 'item');
+    expect(drops.length).toBe(1);
+    expect(drops[0]!.kind === 'item' && drops[0]!.item.kind).toBe('consumable');
+  });
+
   it('убийство монстра даёт события смерти, золота, опыта и зачистки этажа', () => {
     const r = reg();
     const s = new GameSession(r, 777, 'normal');
