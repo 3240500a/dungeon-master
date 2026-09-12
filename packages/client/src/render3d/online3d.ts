@@ -16,7 +16,7 @@ import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { driveActor } from './driveActor.js';
 import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ } from './playerInput.js';
-import { resolveBodyProfile, resolveBoneScale, resolveBoneOffsets } from './modelSkin.js';
+import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
 import { charFor, monsterCharId } from './chars3d.js';
@@ -451,16 +451,12 @@ export async function startOnline3d(): Promise<void> {
   const markDead = (a: Actor): void => { if (a.dead != null) return; a.dormant = false; a.d.setDead(true); a.dead = 1.1; if (a.hp) a.hp.spr.visible = false; };   // регдолл-коллапс на смерти (setDead будит уснувшего)
   const clearGroup = (g: THREE.Object3D): void => { for (let i = g.children.length - 1; i >= 0; i--) { const c = g.children[i]!; c.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.()); g.remove(c); } };
 
-  // Модульные пропорции персонажа-атласа из конфига (kind:'character') ПО КЛАССУ (броня per-персонажна: у каждого
-  // класса свой атлас → свои body/boneScale/boneOffsets; фолбэк — глобальный атлас без classId).
-  // Читаем синхронно из уже загруженного реестра (app.config). body = слайдеры-морф; boneScale = пропорции ФБХ (физ-скелет 1:1).
-  function bodyProfile(classId?: string): BodyProfile | undefined { return resolveBodyProfile({ models: app.config.get('models'), materials: [], textures: [] }, classId); }
-  function bodyScale(classId?: string): BoneScale | undefined { return resolveBoneScale({ models: app.config.get('models'), materials: [], textures: [] }, classId); }
-  function bodyOffsets(classId?: string): Record<string, number[]> | undefined { return resolveBoneOffsets({ models: app.config.get('models'), materials: [], textures: [] }, classId); }
-  // Базовый 3D-вид класса (submesh пустых слотов: причёска/голова/руки/броня/сапоги) из конфига классов.
-  function baseAppearanceOf(classId: string): { hair?: string; head?: string; hands?: string; body?: string; feet?: string } | undefined {
-    return (app.config.get('classes') as { id: string; baseAppearance?: { hair?: string; head?: string; hands?: string; body?: string; feet?: string } }[]).find((c) => c.id === classId)?.baseAppearance;
-  }
+  // Внешность куклы (пропорции атласа + базовый вид пустых слотов) — ОБЩИМ швом с вкладкой «Тест»
+  // поз-редактора. Источник у нас свой (живой реестр `app.config`), разбор — один: `resolvePlayerLook`.
+  // Пропустить хоть один из четырёх входов = получить скелет по встроенным числам под модельным мешем.
+  const playerLook = (classId: string): ReturnType<typeof resolvePlayerLook> =>
+    resolvePlayerLook({ models: app.config.get('models'), materials: [], textures: [] },
+      app.config.get('classes') as unknown as ClassLook[], classId);
   // Базовый вид МОНСТРА (пустые слоты) — из его АТЛАСА семьи (models kind='character', classId===atlasKey). Аналог классового,
   // но на атласе: у игрока base в classes, у монстра — на модели семьи. Нет атласа/поля → undefined (все submesh слота).
   function atlasBaseAppearanceOf(atlasKey?: string): { hair?: string; head?: string; hands?: string; body?: string; feet?: string } | undefined {
@@ -507,7 +503,7 @@ export async function startOnline3d(): Promise<void> {
     const classId = app.state!.save.classId;
     selfWeaponKey = weaponKeyFromSave(app.state!.save);
     if (!self) {
-      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save, app.config.get('items.base')), baseAppearance: baseAppearanceOf(classId), x: floor.spawn.x, z: floor.spawn.y, profile: bodyProfile(classId), boneScale: bodyScale(classId), boneOffsets: bodyOffsets(classId) });
+      const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save, app.config.get('items.base')), x: floor.spawn.x, z: floor.spawn.y, ...playerLook(classId) });
       actorsGroup.add(d.group);
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
       const sh = app.config.get('balance').lighting.shadow3d;
@@ -709,7 +705,7 @@ export async function startOnline3d(): Promise<void> {
       const wk = weaponKeyFromView(pv);   // реальное оружие пира из снапшота (иначе класс-дефолт)
       const ak = JSON.stringify(pv.armorModels ?? {});   // C7: ключ внешности брони пира (детект смены экипа)
       if (!a) {
-        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, baseAppearance: baseAppearanceOf(pv.classId), x: pv.x, z: pv.y, profile: bodyProfile(pv.classId), boneScale: bodyScale(pv.classId), boneOffsets: bodyOffsets(pv.classId) }); actorsGroup.add(d.group);
+        const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, ...playerLook(pv.classId) }); actorsGroup.add(d.group);
         d.setAppearance?.(appearanceFromModels(pv.armorModels));   // C7: скин-слой пира (базы слотов + надетая броня)
         const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
         a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, hp }; peers.set(pv.id, a);

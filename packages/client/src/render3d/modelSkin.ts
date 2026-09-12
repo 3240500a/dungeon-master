@@ -176,6 +176,45 @@ export function resolveBoneOffsets(cfg: AssetConfig, classId?: string): Record<s
   return o && Object.keys(o).length ? o : undefined;
 }
 
+/** Базовый 3D-вид пустых слотов (нет экипа): причёска / лицо / кисти / броня / сапоги. */
+export interface BaseAppearance { hair?: string; head?: string; hands?: string; body?: string; feet?: string }
+/** Класс глазами внешности — большего кукле от конфига классов не нужно. */
+export interface ClassLook { id: string; baseAppearance?: BaseAppearance }
+
+/** Четыре входа, которыми кукла отличается от голой процедурки. */
+export interface PlayerLook {
+  profile?: BodyProfile;
+  boneScale?: BoneScale;
+  boneOffsets?: Record<string, number[]>;
+  baseAppearance?: BaseAppearance;
+}
+
+/**
+ * ВНЕШНОСТЬ ИГРОКА ДЛЯ КУКЛЫ — ОДИН шов на игру и на вкладку «Тест».
+ *
+ * ⚠ Геометрия скелета БЕРЁТСЯ ИЗ МОДЕЛИ, а не из кода — это правило всего рига. Поэтому пропустить
+ * `boneOffsets` не значит «получить чуть другие пропорции»: кости встанут по встроенным числам, а меш
+ * останется модельным — и скин потянет ноги туда, где их нет. Ровно так вкладка «Тест» и коробила ноги.
+ *
+ * Функция ЧИСТАЯ и принимает уже разобранный конфиг именно потому, что источники у хостов РАЗНЫЕ и такими
+ * должны остаться: игра читает живой реестр (`app.config`), редактор — ЛОКАЛЬНУЮ рабочую копию с
+ * неопубликованными правками. Общим обязан быть РАЗБОР, а не источник.
+ */
+export function resolvePlayerLook(cfg: AssetConfig, classes: readonly ClassLook[], classId: string): PlayerLook {
+  return {
+    profile: resolveBodyProfile(cfg, classId),
+    boneScale: resolveBoneScale(cfg, classId),
+    boneOffsets: resolveBoneOffsets(cfg, classId),
+    baseAppearance: classes.find((c) => c.id === classId)?.baseAppearance,
+  };
+}
+
+/** Классы глазами РЕДАКТОРА: кэш серверного конфига плюс неопубликованные правки. */
+export function editorClasses(): ClassLook[] {
+  const c = (mergedConfig() as { classes?: unknown }).classes;
+  return Array.isArray(c) ? (c as ClassLook[]) : [];
+}
+
 /** Ф3: свап процедурных мешей оружия на импортные GLB (kind:'weapon'). Группы (из attachWeapons) с
  *  `userData.weaponModelId` → грузим модель, заменяем ВИЗУАЛЬНЫХ детей группы на GLB. Трансформ/хват группы
  *  (baseRot/basePos, pe_grip) и хост-синк не трогаем — статичный меш крепится к кисти как процедурный. Оружие

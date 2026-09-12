@@ -8,10 +8,17 @@
  * Поэтому здесь НЕТ своей логики. Движение — `testScene` (настоящий `GameSession`, то же ядро, что у
  * сервера, теми же тиками). Ввод — `playerInput` (те же функции, что шлют input в игре). Снапшот в
  * куклу — `driveActor` (тот же привод). Кукла — `makeGamePlayerDoll` (та же, что в игре, а не манекен
- * редактора). Своё тут только камера и склейка — то есть ровно то, что на позу не влияет.
+ * редактора), и ВНЕШНОСТЬ ей даёт тот же `resolvePlayerLook`. Своё тут только камера и склейка — то есть
+ * ровно то, что на позу не влияет.
+ *
+ * ⚠ Урок, купленный жалобой «ноги покоробило»: одной общей функции построения МАЛО, если её зовут с
+ * разными входами. Кукла собиралась без `boneOffsets`/`boneScale`/`profile` — кости вставали по
+ * встроенным числам, а меш оставался модельным, и скин тянул ноги туда, где их нет. Входы — такая же
+ * часть шва, как и код.
  */
 import * as THREE from 'three';
 import { makeGamePlayerDoll } from './gamePlayerDoll.js';
+import { loadAssetConfig, resolvePlayerLook, editorClasses } from './modelSkin.js';
 import type { RagdollHandle, PhysWorld } from './ragdoll.js';
 import { createTestScene, TEST_TICK_DT, type TestScene } from './testScene.js';
 import { driveActor, type DriveState } from './driveActor.js';
@@ -113,8 +120,13 @@ export function createTestTab(host: TestTabHost): TestTab {
     teardown();
     const pw = await host.physics();
     if (!pw || !want) return;            // ушли с вкладки, пока грузилась физика — куклу не плодим
-    scene = createTestScene(host.charId());
-    doll = makeGamePlayerDoll(pw, { x: scene.view.x, z: scene.view.z, weapon: host.weapon(), classId: host.charId() });
+    const classId = host.charId();
+    // Тот же разбор, что в игре. Источник свой — локальная рабочая копия конфига: редактор обязан
+    // показывать то, что правят ПРЯМО СЕЙЧАС, а не последнее опубликованное.
+    const look = resolvePlayerLook(await loadAssetConfig(), editorClasses(), classId);
+    if (!want) return;                   // ушли с вкладки, пока грузился конфиг
+    scene = createTestScene(classId);
+    doll = makeGamePlayerDoll(pw, { x: scene.view.x, z: scene.view.z, weapon: host.weapon(), classId, ...look });
     host.scene.add(doll.group);
     room = makeRoom(scene.bounds.w, scene.bounds.h);
     host.scene.add(room);
