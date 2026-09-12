@@ -3,7 +3,7 @@
 // (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, sideLerp, foldElbow, type PoseTargets } from './pose.js';
+import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets } from './pose.js';
 import { resolveStancePose, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipName, locoDir, locoPhaseU, stepLocoSection, sectionClipTime, type LocoSectionState } from './locoBlend.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
@@ -669,7 +669,7 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     shieldOverlay(weaponKey: string): { pose: Pose; mix: number } | null { const c = stance(weaponKey) ?? stance('shield'); if (!c || !c.keys.length) return null; const cfg = shieldCfg[charId] ?? (fallbackId ? shieldCfg[fallbackId] : undefined); const mix = cfg?.perWeapon?.[weaponKey] ?? cfg?.mix ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
   };
 }
-type GaitCfg = { gait?: Record<string, number>; pose?: Record<string, number>; gx?: Record<string, number>; plant?: Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] }; asym?: Record<string, [number, number]>; strafe?: Record<string, number> };
+type GaitCfg = { gait?: Record<string, number>; pose?: Record<string, number>; gx?: Record<string, number>; plant?: Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] }; asym?: Record<string, [number, number]>; strafe?: Record<string, number>; back?: Record<string, number>; combat?: Record<string, number> };
 /** Загрузить тюн бега класса (pe_gait[charId]) в ГЛОБАЛЬНЫЕ GAIT/POSE и переданный gx; вернуть плант-сетку. Для ИГРОКА. */
 export function applyGaitConfig(charId: string, gx: GXKnobs): PlantGrid {
   const cfgs = readJSON<Record<string, GaitCfg>>('pe_gait', {});
@@ -686,12 +686,16 @@ export function applyGaitConfig(charId: string, gx: GXKnobs): PlantGrid {
     if (c.pose['armSwingRun'] === undefined) POSE.armSwingRun = POSE.armSwing;
   }
   if (c?.gx) Object.assign(gx, c.gx);
-  // АСИММЕТРИЯ И СТРАЙФ — ровно те же разреженные карты, что правит редактор. Раньше игра их не читала
-  // вовсе: стороны и боковой ход в редакторе настраивались, а в игру не доезжали.
+  // АСИММЕТРИЯ И КОЛОНКИ НАПРАВЛЕНИЯ — ровно те же разреженные карты, что правит редактор.
+  // ⚠ Загружать их ВСЕ обязательно: боевая колонка (Ф6) здесь отсутствовала, и настройка боя жила
+  // только в редакторе — в игру не доезжала вовсе. Правило простое: карта есть в редакторе → она
+  // грузится здесь, иначе редактор показывает одно, а игрок видит другое.
   for (const k of Object.keys(ASYM)) delete ASYM[k];
   for (const [k, v] of Object.entries(c?.asym ?? {})) if (Array.isArray(v) && v.length === 2) ASYM[k] = [v[0]!, v[1]!];
-  for (const k of Object.keys(STRAFE)) delete STRAFE[k];
-  for (const [k, v] of Object.entries(c?.strafe ?? {})) if (typeof v === 'number') STRAFE[k] = v;
+  for (const [map, src] of [[STRAFE, c?.strafe], [BACK, c?.back], [COMBAT, c?.combat]] as const) {
+    for (const k of Object.keys(map)) delete map[k];
+    for (const [k, v] of Object.entries(src ?? {})) if (typeof v === 'number') map[k] = v;
+  }
   // Три места сгиба локтя → одна база. Тот же вызов в редакторе — иначе игра и редактор разъедутся.
   foldElbow(gx);
   return loadPlantGrid(c?.plant);

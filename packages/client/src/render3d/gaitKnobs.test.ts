@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, GAIT, POSE, ASYM, STRAFE, COMBAT, sideLerp, sideLerp3, sideLerp4, strafeMix, foldElbow } from './pose.js';
+import { PoseDriver, GAIT, POSE, ASYM, STRAFE, BACK, COMBAT, sideLerp, locoVal, strafeMix, backMix, foldElbow, type LocoMix } from './pose.js';
+
+/** Смесь кадра одной строкой — в тестах читается лучше, чем четыре позиционных аргумента. */
+const mix = (sb: number, st = 0, bt = 0, ct = 0): LocoMix => ({ sb, st, bt, ct });
 
 /**
  * ЧЕТЫРЕ НОВЫЕ РУЧКИ ПОХОДКИ — и одно требование ко всем четырём.
@@ -88,22 +91,22 @@ describe('свёртка трёх сгибов локтя в один', () => {
 
 describe('страйф — третья колонка', () => {
   it('нет записи — ровно прежнее число, при любой боковитости', () => {
-    for (const st of [0, 0.5, 1]) expect(sideLerp3('stepWalk', 'stepRun', 35, 44, 0, 0.5, st)).toBe(sideLerp('stepWalk', 'stepRun', 35, 44, 0, 0.5));
+    for (const st of [0, 0.5, 1]) expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(0.5, st))).toBe(sideLerp('stepWalk', 'stepRun', 35, 44, 0, 0.5));
   });
 
   it('есть запись — на чистом боку берётся она, а бег остаётся нетронутым', () => {
     STRAFE['stepWalk'] = 12;
-    expect(sideLerp3('stepWalk', 'stepRun', 35, 44, 0, 1, 0), 'боковитости нет → бег как настроен').toBe(44);
-    expect(sideLerp3('stepWalk', 'stepRun', 35, 44, 0, 1, 1), 'чистый бок → страйф-значение').toBe(12);
-    expect(sideLerp3('stepWalk', 'stepRun', 35, 44, 0, 1, 0.5), 'между — линейно').toBe(28);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(1, 0)), 'боковитости нет → бег как настроен').toBe(44);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(1, 1)), 'чистый бок → страйф-значение').toBe(12);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(1, 0.5)), 'между — линейно').toBe(28);
   });
 
   it('стороны страйфа разводятся своим ключом и не трогают асимметрию бега', () => {
     ASYM['stepWalk'] = [30, 40];
     ASYM['stepWalk@s'] = [5, 9];
-    expect(sideLerp3('stepWalk', 'stepRun', 35, 44, 0, 0, 1)).toBe(5);
-    expect(sideLerp3('stepWalk', 'stepRun', 35, 44, 1, 0, 1)).toBe(9);
-    expect(sideLerp3('stepWalk', 'stepRun', 35, 44, 0, 0, 0), 'без боковитости — асимметрия ходьбы').toBe(30);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(0, 1))).toBe(5);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 1, mix(0, 1))).toBe(9);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(0, 0)), 'без боковитости — асимметрия ходьбы').toBe(30);
   });
 
   it('боковитость: ход вперёд и ход НАЗАД одинаково не страйф, чистый бок — страйф', () => {
@@ -253,14 +256,14 @@ describe('амплитуда бедра', () => {
 
 describe('боевая ось — четвёртая колонка (Ф6)', () => {
   it('нет записи — бой ничего не меняет, при любом боевом состоянии', () => {
-    for (const ct of [0, 0.5, 1]) expect(sideLerp4('stepWalk', 'stepRun', 35, 44, 0, 0, 0, ct)).toBe(35);
+    for (const ct of [0, 0.5, 1]) expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(0, 0, 0, ct))).toBe(35);
   });
 
   it('есть запись — в бою берётся она, а вне боя всё как было', () => {
     COMBAT['stanceWidth'] = 18;
-    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 0), 'вне боя').toBe(6);
-    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 1), 'в бою').toBe(18);
-    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 0.5), 'на входе в бой — на полпути').toBe(12);
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 0)), 'вне боя').toBe(6);
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 1)), 'в бою').toBe(18);
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 0.5)), 'на входе в бой — на полпути').toBe(12);
   });
 
   it('бой накладывается ПОВЕРХ страйфа, а не вместо него', () => {
@@ -268,15 +271,15 @@ describe('боевая ось — четвёртая колонка (Ф6)', () =
     // перекрывает предыдущую там, где задана, — иначе «боевой страйф» пришлось бы заводить пятой.
     STRAFE['stepWalk'] = 20;
     COMBAT['stepWalk'] = 10;
-    expect(sideLerp4('stepWalk', 'stepRun', 35, 44, 0, 0, 1, 0), 'страйф вне боя').toBe(20);
-    expect(sideLerp4('stepWalk', 'stepRun', 35, 44, 0, 0, 1, 1), 'страйф в бою').toBe(10);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(0, 1, 0, 0)), 'страйф вне боя').toBe(20);
+    expect(locoVal('stepWalk', 'stepRun', 35, 44, 0, mix(0, 1, 0, 1)), 'страйф в бою').toBe(10);
   });
 
   it('стороны боя разводятся своим ключом и не трогают ни бег, ни страйф', () => {
     ASYM['stanceWidth'] = [4, 8];
     ASYM['stanceWidth@c'] = [14, 20];
-    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 1)).toBe(14);
-    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 1, 0, 0, 1)).toBe(20);
-    expect(sideLerp4('stanceWidth', 'stanceWidthRun', 6, 6, 0, 0, 0, 0), 'вне боя — асимметрия ходьбы').toBe(4);
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 1))).toBe(14);
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 1, mix(0, 0, 0, 1))).toBe(20);
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 0)), 'вне боя — асимметрия ходьбы').toBe(4);
   });
 });

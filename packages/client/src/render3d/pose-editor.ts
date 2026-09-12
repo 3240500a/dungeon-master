@@ -40,7 +40,7 @@ import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: ск
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
-import { ASYM, STRAFE, COMBAT, foldElbow, PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
+import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
@@ -4107,30 +4107,49 @@ function renderGaitTune(): void {
   // Переключить режим = И правим его ползунки, И персонаж в кадре реально идёт/бежит: точка на паде
   // встаёт на ту же скорость, ячейка плант-сетки — тоже, превью включается, если было выключено.
   // Иначе крутишь «бег», а перед тобой стоит идл — и непонятно, что ты вообще настроил.
-  const setMode = (m: 'walk' | 'run' | 'str' | 'cbt'): void => {
-    gaitEditMode = m;
-    // СТРАЙФ показываем честно: тело смотрит ВПЕРЁД, а едет ВБОК (иначе «лицом по движению» превращает
-    // страйф в обычный бег и настраивать нечего). Скорость — беговая: боком ходят в бою, а не гуляют.
-    if (m === 'str') { gaitFaceMove = false; gaitYawManual = 0; locoVx = PAD_RUN; locoVz = 0; plantSpeedRun = true; plantDirSel = 2; }
-    else { locoVx = 0; locoVz = m === 'walk' ? PAD_WALK : PAD_RUN; plantSpeedRun = m !== 'walk'; plantDirSel = 0; }
+  // Смена любой из осей = И правим её ползунки, И персонаж в кадре реально так идёт: точка на паде
+  // встаёт на ту же скорость и то же направление, ячейка плант-сетки — тоже, превью включается, если
+  // было выключено. Иначе крутишь «бег назад», а перед тобой стоит идл — и непонятно, что настроил.
+  const applyView = (): void => {
+    const v = gaitSpeed === 'walk' ? PAD_WALK : PAD_RUN;
+    // СТРАЙФ и НАЗАД показываем честно: тело смотрит ВПЕРЁД, а едет вбок или спиной. Иначе «лицом по
+    // движению» разворачивает персонажа, и оба режима превращаются в обычный бег вперёд.
+    if (gaitDir === 'str') { gaitFaceMove = false; gaitYawManual = 0; locoVx = v; locoVz = 0; plantDirSel = 2; }
+    else if (gaitDir === 'back') { gaitFaceMove = false; gaitYawManual = 0; locoVx = 0; locoVz = -v; plantDirSel = 4; }
+    else { locoVx = 0; locoVz = v; plantDirSel = 0; }
+    plantSpeedRun = gaitSpeed === 'run';
     // Бой — это НЕ второй набор ног, а те же ноги с другими числами. Поэтому вьюпорт просто уходит в
     // боевую стойку: смотреть надо на ту же походку, а не на другую.
-    editorCombat = m === 'cbt' ? 1 : 0;
+    editorCombat = gaitDir === 'cbt' ? 1 : 0;
     if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); }
     renderLoco();
   };
-  modeRow.append(pbtn('ХОДЬБА', () => setMode('walk'), gaitEditMode === 'walk'),
-    pbtn('БЕГ', () => setMode('run'), gaitEditMode === 'run'),
-    pbtn('СТРАЙФ', () => setMode('str'), gaitEditMode === 'str'),
-    pbtn('БОЙ', () => setMode('cbt'), gaitEditMode === 'cbt'));
+  const setSpeed = (v: 'walk' | 'run'): void => { gaitSpeed = v; applyView(); };
+  const setDir = (d: 'fwd' | 'back' | 'str' | 'cbt'): void => { gaitDir = d; applyView(); };
+  const sp = el('span', 'color:#7a869e;font-size:10px'); sp.textContent = 'скорость';
+  modeRow.append(sp,
+    pbtn('ХОДЬБА', () => setSpeed('walk'), gaitSpeed === 'walk'),
+    pbtn('БЕГ', () => setSpeed('run'), gaitSpeed === 'run'));
+  const dv = el('span', 'color:#7a869e;font-size:10px;margin-left:8px'); dv.textContent = 'направление';
+  modeRow.append(dv,
+    pbtn('ВПЕРЁД', () => setDir('fwd'), gaitDir === 'fwd'),
+    pbtn('НАЗАД', () => setDir('back'), gaitDir === 'back'),
+    pbtn('СТРАЙФ', () => setDir('str'), gaitDir === 'str'),
+    pbtn('БОЙ', () => setDir('cbt'), gaitDir === 'cbt'));
   const linkBtn = pbtn(gaitLinkLR ? 'Л/П: связаны' : 'Л/П: раздельно', () => { gaitLinkLR = !gaitLinkLR; renderLoco(); }, gaitLinkLR);
   modeRow.append(linkBtn);
-  const asymN = Object.keys(gaitAsym).filter((k) => !k.endsWith('@s')).length;
-  if (asymN) modeRow.append(pbtn(`сброс асимметрии (${asymN})`, () => { for (const k of Object.keys(gaitAsym)) if (!k.endsWith('@s')) delete gaitAsym[k]; saveGaitCfg(); renderLoco(); }));
+  const asymN = Object.keys(gaitAsym).filter((k) => !COL_SFX.some((x) => k.endsWith(x))).length;
+  if (asymN) modeRow.append(pbtn(`сброс асимметрии (${asymN})`, () => { for (const k of Object.keys(gaitAsym)) if (!COL_SFX.some((x) => k.endsWith(x))) delete gaitAsym[k]; saveGaitCfg(); renderLoco(); }));
   const strN = Object.keys(gaitStrafe).length + Object.keys(gaitAsym).filter((k) => k.endsWith('@s')).length;
   if (strN) modeRow.append(pbtn(`сброс страйфа (${strN})`, () => {
     for (const k of Object.keys(gaitStrafe)) delete gaitStrafe[k];
     for (const k of Object.keys(gaitAsym)) if (k.endsWith('@s')) delete gaitAsym[k];
+    saveGaitCfg(); renderLoco();
+  }));
+  const bckN = Object.keys(gaitBack).length + Object.keys(gaitAsym).filter((k) => k.endsWith('@b')).length;
+  if (bckN) modeRow.append(pbtn(`сброс «назад» (${bckN})`, () => {
+    for (const k of Object.keys(gaitBack)) delete gaitBack[k];
+    for (const k of Object.keys(gaitAsym)) if (k.endsWith('@b')) delete gaitAsym[k];
     saveGaitCfg(); renderLoco();
   }));
   const cbtN = Object.keys(gaitCombat).length + Object.keys(gaitAsym).filter((k) => k.endsWith('@c')).length;
@@ -4140,12 +4159,14 @@ function renderGaitTune(): void {
     saveGaitCfg(); renderLoco();
   }));
   const mh = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
-  mh.textContent = gaitEditMode === 'str'
-    ? 'Правишь СТРАЙФ. Это ТРЕТЬЯ колонка: она подмешивается по боковитости хода и бег не трогает. Ползунок, который ты не тронул, у страйфа не задан — там работает бег.'
-    : gaitEditMode === 'cbt'
-      ? 'Правишь БОЙ. Набор ног ОДИН — бой не второй набор, а те же ноги с другими числами: шире стойка, короче шаг. Подмешивается по боевому состоянию; не тронул ползунок — в бою он как вне боя.'
-      : gaitEditMode === 'run' ? 'Правишь БЕГ. Между ходьбой и бегом всё интерполируется по скорости.'
-        : 'Правишь ХОДЬБУ. Между ходьбой и бегом всё интерполируется по скорости.';
+  const spName = gaitSpeed === 'run' ? 'БЕГ' : 'ХОДЬБУ';
+  mh.textContent = gaitDir === 'fwd'
+    ? `Правишь ${spName} ВПЕРЁД — это база. Между ходьбой и бегом всё интерполируется по скорости.`
+    : gaitDir === 'str'
+      ? `Правишь ${spName} ВБОК. Отдельная колонка: подмешивается по боковитости хода и ход вперёд не трогает. Ползунок, который ты не тронул, здесь не задан — работает значение «вперёд».`
+      : gaitDir === 'back'
+        ? `Правишь ${spName} НАЗАД. Отдельная колонка — затем и заведена, что наклон корпуса вперёд при ходе спиной складывается с посадкой тела и персонаж горбится. Не тронул ползунок — работает значение «вперёд».`
+        : `Правишь БОЙ (${gaitSpeed === 'run' ? 'бег' : 'ходьба'}). Набор ног ОДИН — бой не второй набор, а те же ноги с другими числами: шире стойка, короче шаг. Подмешивается по боевому состоянию поверх направления; не тронул ползунок — в бою он как вне боя.`;
   box.append(mh);
 
   /**
@@ -4158,11 +4179,12 @@ function renderGaitTune(): void {
    * Берём МАКСИМУМ по модулю: одной ненулевой стороны хватает, чтобы множитель было на что множить.
    */
   const effAbs = (obj: NumRec, kw: string, kr: string | null): number => {
-    const key = gaitEditMode === 'run' && kr ? kr : kw;
+    const key = gaitSpeed === 'run' && kr ? kr : kw;
     const p = gaitAsym[key];
     const v = p ? Math.max(Math.abs(p[0]), Math.abs(p[1])) : Math.abs(+obj[key]! || 0);
-    const sv = (gaitEditMode === 'cbt' ? gaitCombat : gaitStrafe)[kw];
-    return (gaitEditMode === 'str' || gaitEditMode === 'cbt') && sv !== undefined ? Math.abs(sv) : v;
+    if (gaitDir === 'fwd') return v;
+    const sv = colMapOf(gaitDir)[key];
+    return sv !== undefined ? Math.abs(sv) : v;
   };
   /**
    * Строка-ручка.
@@ -4174,28 +4196,32 @@ function renderGaitTune(): void {
    */
   const row2 = (label: string, obj: NumRec, kw: string, kr: string | null, min: number, max: number, step: number,
     opts?: { dep?: [NumRec, string, string | null][]; depLabel?: string; body?: boolean }): void => {
-    const str = gaitEditMode === 'str' || gaitEditMode === 'cbt';
-    const sparse: NumRec = gaitEditMode === 'cbt' ? gaitCombat : gaitStrafe;   // какую разрежённую колонку правим
+    const onCol = gaitDir !== 'fwd';                 // правим колонку, а не базу («вперёд» — это база)
+    const sparse: NumRec = colMapOf(gaitDir);       // какую разрежённую колонку правим
     //  ⚠ НЕ `col`: так зовётся цвет ползунка в строке ниже, и затенение прошло бы молча.
-    const sfx = gaitEditMode === 'cbt' ? '@c' : '@s';
+    const sfx = colSfxOf(gaitDir);
     const dead = !!opts?.dep && opts.dep.every(([o, a, b]) => effAbs(o, a, b) < 1e-9);
     const solo = gaitLinkLR || !!opts?.body;
     // В режиме страйфа правится РАЗРЕЖЕННАЯ колонка: ключ страйфа хранится отдельно, пары сторон — под
     // суффиксом `@s`. Нет записи → значение НЕ ЗАДАНО, и ползунок показывает то, что реально играет
     // сейчас (беговое), чтобы первое касание ничего не дёрнуло: он создаёт оверрайд с тем же числом.
-    const key = str ? kw : gaitEditMode === 'run' && kr ? kr : kw;
-    const seed = +obj[kr ?? kw]!;
-    const setOn = str && (sparse[kw] !== undefined || gaitAsym[kw + sfx] !== undefined);
-    const base = str ? sparse[kw] ?? seed : +obj[key]!;
-    const pair = str ? gaitAsym[kw + sfx] : gaitAsym[key];
+    // ⭐ Ключ пары выбирает СКОРОСТЬ — и для базы, и для колонки. Отсюда «шесть конфигов»: у страйфа
+    // и у «назад» появились своя ходьба и свой бег вместо одного числа на обе скорости.
+    const key = gaitSpeed === 'run' && kr ? kr : kw;
+    // Затравка = то, что РЕАЛЬНО играет сейчас: колонка не задана → значение «вперёд» на той же
+    // скорости. Первое касание ползунка тогда ничего не дёргает — оно лишь создаёт оверрайд тем же числом.
+    const seed = +obj[key]!;
+    const setOn = onCol && (sparse[key] !== undefined || gaitAsym[key + sfx] !== undefined);
+    const base = onCol ? sparse[key] ?? seed : seed;
+    const pair = gaitAsym[onCol ? key + sfx : key];
     const head = el('div', 'display:flex;align-items:baseline;gap:6px;margin-top:6px');
-    const nm = el('span', `font-size:11px;color:${dead ? '#6b7180' : str && !setOn ? '#6b7180' : '#cfd3e0'}`); nm.textContent = label; head.append(nm);
+    const nm = el('span', `font-size:11px;color:${dead ? '#6b7180' : onCol && !setOn ? '#6b7180' : '#cfd3e0'}`); nm.textContent = label; head.append(nm);
     if (pair) { const mk = el('span', 'color:#ffd24a;font-size:10px'); mk.textContent = 'Л≠П'; head.append(mk); }
     if (dead) { const mk = el('span', 'color:#c08a50;font-size:10px'); mk.textContent = `нечего вращать: ${opts!.depLabel} = 0`; head.append(mk); }
-    if (str) {
-      const what = gaitEditMode === 'cbt' ? 'бой' : 'страйф';
+    if (onCol) {
+      const what = gaitDir === 'cbt' ? 'бой' : gaitDir === 'back' ? 'назад' : 'страйф';
       const mk = el('span', `color:${setOn ? '#9ae6a0' : '#6b7180'};font-size:10px`);
-      mk.textContent = setOn ? `${what} задан` : `не задан (= вне ${what === 'бой' ? 'боя' : 'страйфа'})`;
+      mk.textContent = setOn ? `${what} задан` : 'не задан (= как вперёд)';
       head.append(mk);
     }
     box.append(head);
@@ -4210,13 +4236,13 @@ function renderGaitTune(): void {
       const num = el('input', `width:54px;background:#0e1016;color:${col};border:1px solid #39415a;border-radius:3px;font:10px monospace;text-align:right`) as HTMLInputElement;
       num.type = 'number'; num.min = String(min); num.max = String(max); num.step = String(step); num.value = sl.value;
       const put = (nv: number): void => {
-        if (str) {
-          if (solo) { sparse[kw] = nv; delete gaitAsym[kw + sfx]; }
-          else { const cur: [number, number] = gaitAsym[kw + sfx] ?? [base, base]; cur[i] = nv; gaitAsym[kw + sfx] = cur; }
+        if (onCol) {
+          if (solo) { sparse[key] = nv; delete gaitAsym[key + sfx]; }
+          else { const cur: [number, number] = gaitAsym[key + sfx] ?? [base, base]; cur[i] = nv; gaitAsym[key + sfx] = cur; }
         } else if (solo) { obj[key] = nv; delete gaitAsym[key]; }
         else { const cur = gaitAsym[key] ?? [base, base]; cur[i] = nv; gaitAsym[key] = cur; }
         saveGaitCfg();
-        if (str && !setOn) renderLoco();   // «не задан» → «задан»: перерисовать метку строки
+        if (onCol && !setOn) renderLoco();   // «не задан» → «задан»: перерисовать метку строки
       };
       sl.oninput = () => { const nv = parseFloat(sl.value); num.value = sl.value; put(nv); };
       num.oninput = () => { const nv = parseFloat(num.value); if (!Number.isFinite(nv)) return; sl.value = String(nv); put(nv); };
@@ -4351,7 +4377,7 @@ function renderGaitTune(): void {
       if (!c) { learnInfo = 'клип не найден'; learnList = null; renderLoco(); return; }
       const m = analyzeGait(c, { human, speed: learnSpeed > 0 ? learnSpeed : undefined });
       const cur: NumRec = { ...(GAIT as unknown as NumRec), ...(POSE as unknown as NumRec) };
-      learnList = gaitSuggestions(m, cur, gaitEditMode === 'run');
+      learnList = gaitSuggestions(m, cur, gaitSpeed === 'run');
       learnInfo = `период ${m.periodSec.toFixed(2)} с · шаг ${m.stepLen === null ? '—' : m.stepLen.toFixed(1)}`
         + ` · опора ${(m.duty * 100) | 0}% · подъём ${m.lift.toFixed(1)}`
         + (m.slide === null ? '' : ` · скольжение ${(m.slide * 100) | 0}%`)
@@ -4614,7 +4640,18 @@ let gaitYaw = 0, gaitYawManual = 0, gaitFaceMove = true;   // facing (прице
 let gaitReadout: HTMLElement | null = null;                // живой индикатор скорости/режима (ходьба↔бег)
 // Какой режим правим. Страйф — ТРЕТИЙ, а не «бег вбок»: у него своя разреженная колонка (см. `STRAFE`),
 // потому что раньше страйф и бег делили одни числа, и настройка одного ломала другое.
-let gaitEditMode: 'walk' | 'run' | 'str' | 'cbt' = 'run';
+/**
+ * ЧТО ИМЕННО ПРАВИМ — ДВЕ НЕЗАВИСИМЫЕ ОСИ, а не один ряд кнопок.
+ *
+ * Раньше «ходьба / бег / страйф / бой» стояли в одном ряду, и это путало: первые две — СКОРОСТЬ,
+ * вторые две — КОЛОНКА. Из-за склейки у страйфа не было своей ходьбы и своего бега: одно число
+ * работало на обе скорости, и настроить бег назад отдельно от шага назад было негде.
+ *
+ * Теперь скорость выбирается отдельно от направления: 2 × 3 = ШЕСТЬ конфигов локомоции
+ * (вперёд/назад/страйф × ходьба/бег), плюс бой — четвёртая колонка поверх любого из них.
+ */
+let gaitSpeed: 'walk' | 'run' = 'run';
+let gaitDir: 'fwd' | 'back' | 'str' | 'cbt' = 'fwd';
 // Обучение на клипе (Ф3): что меряем, с какой скоростью, и что намерили. Ничего не применяется само.
 let learnClip = '';
 let learnSpeed = 50;
@@ -4623,7 +4660,13 @@ let learnInfo = '';
 let gaitLinkLR = true;       // связаны ли стороны: связаны → одно число на обе, иначе пара в ASYM
 const gaitAsym = ASYM;       // ссылка на карту асимметрии рантайма (правим её же, что читает игра)
 const gaitStrafe = STRAFE;   // ссылка на страйф-колонку рантайма (та же, что читает игра)
+const gaitBack = BACK;       // колонка хода спиной — устроена так же и живёт там же
 const gaitCombat = COMBAT;   // боевая колонка (Ф6) — устроена так же и живёт там же
+/** Суффиксы сторон у КОЛОНОК: всё остальное в `ASYM` — асимметрия базы (хода вперёд). */
+const COL_SFX = ['@s', '@b', '@c'] as const;
+/** Карта и суффикс колонки по направлению. «Вперёд» колонки не имеет — это и есть база. */
+const colMapOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): NumRec => (d === 'cbt' ? gaitCombat : d === 'back' ? gaitBack : gaitStrafe);
+const colSfxOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): string => (d === 'cbt' ? '@c' : d === 'back' ? '@b' : '@s');
 let warpReadout: HTMLElement | null = null;                // живой угол доворота таза (Ф0) — глазами его на диагонали не отличить
 let editorRootYaw = 0;                                      // зеркало pelvisYaw плеера (updateTurnTest идёт по тазу)
 let editorTwistStates: TwistStates = TWIST_STATES_DEFAULT();   // 3 профиля скрутки (стой/ходьба/бег) текущего персонажа
@@ -5185,7 +5228,7 @@ const gaitPlant: PlantGrid = emptyGrid();                       // живая с
 let plantDirSel = 0, plantSpeedRun = true;                     // активная ячейка для правки (направление 0-7, бег/шаг)
 let plantEditDir = 0, plantEditRun = true;                     // замороженная ячейка на время драга маркера
 const activeCell = (): Leg2 => (plantEditRun ? gaitPlant.run : gaitPlant.walk)[plantEditDir]!;
-let gaitCfgs: Record<string, { gait: NumRec; pose: NumRec; gx: NumRec; plant?: PlantStored; asym?: Record<string, [number, number]>; strafe?: NumRec; combat?: NumRec }> = (() => { try { return JSON.parse(localStorage.getItem('pe_gait') || '{}'); } catch { return {}; } })();
+let gaitCfgs: Record<string, { gait: NumRec; pose: NumRec; gx: NumRec; plant?: PlantStored; asym?: Record<string, [number, number]>; strafe?: NumRec; back?: NumRec; combat?: NumRec }> = (() => { try { return JSON.parse(localStorage.getItem('pe_gait') || '{}'); } catch { return {}; } })();
 function loadPlant(p: PlantStored | undefined): void {          // читаем новый {walk,run} ИЛИ старый {l,r} (→ размазать во все ячейки)
   const g = emptyGrid();
   if (p?.walk && p?.run) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) { const e = p[sp]![i]; if (e) g[sp][i] = { l: [...(e.l ?? [0, 0])] as XY, r: [...(e.r ?? [0, 0])] as XY, lVia: cloneVia(e.lVia), rVia: cloneVia(e.rVia) }; } }
@@ -5203,6 +5246,8 @@ function applyGaitCfg(id: string): void {   // выставить GAIT/POSE/GX/p
   // Страйф-колонка — тоже пер-персонаж и тоже разреженная (пусто → страйф ведёт себя как бег).
   for (const k of Object.keys(STRAFE)) delete STRAFE[k];
   for (const [k, v] of Object.entries(c?.strafe ?? {})) if (typeof v === 'number') STRAFE[k] = v;
+  for (const k of Object.keys(BACK)) delete BACK[k];
+  for (const [k, v] of Object.entries(c?.back ?? {})) if (typeof v === 'number') BACK[k] = v;
   for (const k of Object.keys(COMBAT)) delete COMBAT[k];
   for (const [k, v] of Object.entries(c?.combat ?? {})) if (typeof v === 'number') COMBAT[k] = v;
   // Три места сгиба локтя → одна база. Тот же вызов в игре (`applyGaitConfig`) — иначе клиенты разъедутся.
@@ -5218,8 +5263,9 @@ function saveGaitCfg(): void {
   const asym: Record<string, [number, number]> = {};
   for (const [k, v] of Object.entries(ASYM)) asym[k] = [v[0], v[1]];   // пусто = стороны одинаковы
   const strafe: NumRec = { ...STRAFE };                                // пусто = страйф не настраивали
+  const back: NumRec = { ...BACK };                                    // пусто = ход спиной как ход вперёд
   const combat: NumRec = { ...COMBAT };                                // пусто = бой ничего не меняет
-  gaitCfgs[curCharId] = { gait, pose, gx, plant: { walk: cp(gaitPlant.walk), run: cp(gaitPlant.run) }, asym, strafe, combat };
+  gaitCfgs[curCharId] = { gait, pose, gx, plant: { walk: cp(gaitPlant.walk), run: cp(gaitPlant.run) }, asym, strafe, back, combat };
   try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ }
 }
 let stanceMeasuredFor = '';   // замеряем ширину стойки один раз на текущее оружие (мутирует human → только на смене)

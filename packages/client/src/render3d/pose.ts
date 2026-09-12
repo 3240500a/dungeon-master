@@ -31,6 +31,8 @@ export interface PoseTargets {
   wLX: number; wLY: number; wLZ: number; wRX: number; wRY: number; wRZ: number;
   /** Блен ходьба(0)↔бег(1) — для раздельных рук walk/run (armDown/elbowBend блендятся по нему в poseRuntime). */
   sb?: number;
+  /** Назадность хода 0..1 (колонка «назад») — наружу для инспектора слоёв. */
+  bt?: number;
   /** Боковитость хода 0..1 (страйф-колонка) — наружу для инспектора слоёв и для ретаргета. */
   st?: number;
 }
@@ -83,49 +85,72 @@ export const sideLerp = (kw: string, kr: string, bw: number, br: number, i: 0 | 
   return w + (r - w) * sb;
 };
 /**
- * СТРАЙФ — ТРЕТЬЯ КОЛОНКА, а не «бег вбок».
+ * НАПРАВЛЕНИЕ ХОДА — РАЗРЕЖЁННЫЕ КОЛОНКИ ПОВЕРХ ПАРЫ «ХОДЬБА/БЕГ».
  *
  * Ходьба и бег интерполируются по скорости (`sb`), и пока движение идёт ВПЕРЁД, двух чисел хватает.
- * Боковой ход — другая механика (ногу не выносят вперёд, её приставляют), и описывать его теми же
- * двумя числами нельзя: настраиваешь страйф — ломается бег, потому что это ОДНО И ТО ЖЕ число.
- * Поэтому у ключа может быть третье значение — «каким он становится при чистом боковом ходе».
+ * Боковой ход — другая механика (ногу не выносят вперёд, её приставляют). Ход спиной — третья:
+ * корпус там нельзя наклонять вперёд, иначе наклон складывается с посадкой физ-тела и персонаж
+ * горбится. Описывать всё это одними и теми же двумя числами нельзя — настраиваешь одно, ломается
+ * другое, потому что это ОДНО И ТО ЖЕ число.
  *
- * Карта РАЗРЕЖЕННАЯ, и это принципиально: нет записи — ключ про страйф ничего не знает и ведёт себя
- * ровно как раньше, бит в бит. Уже настроенные персонажи не сдвинулись ни на единицу.
+ * Колонок три:
+ *   `STRAFE` (`@s`) — чистый боковой ход;
+ *   `BACK`   (`@b`) — чистый ход спиной;
+ *   `COMBAT` (`@c`) — боевое состояние. Это НЕ направление, а отдельная ось поверх направлений:
+ *                     драться можно и приставным шагом, и отступая.
+ *
+ * ⭐ У КОЛОНКИ СВОЯ ПАРА ХОДЬБА/БЕГ. В карте лежат ОБА ключа пары (`stepWalk` и `stepRun`), и внутри
+ * колонки они интерполируются тем же `sb`. Отсюда и берутся ШЕСТЬ конфигов локомоции: вперёд, назад
+ * и страйф — каждый со своей ходьбой и своим бегом. Раньше у колонки было одно число на обе скорости,
+ * и настроить бег назад отдельно от шага назад было попросту негде.
+ *
+ * Карты РАЗРЕЖЁННЫЕ, и это принципиально: нет записи — ключ про это направление ничего не знает и
+ * ведёт себя ровно как раньше, бит в бит. Есть только запись ходьбы — она работает на обеих скоростях,
+ * то есть ровно прежнее поведение одноколоночного страйфа. Уже настроенные персонажи не сдвинулись.
  */
 export const STRAFE: Record<string, number> = {};
-/** Страйф-значение ключа на сторону: пара в `ASYM[key+'@s']`, иначе общее из `STRAFE`, иначе нет. */
-export const strafeOf = (key: string, i: 0 | 1): number | undefined => ASYM[key + '@s']?.[i] ?? STRAFE[key];
+export const BACK: Record<string, number> = {};
+export const COMBAT: Record<string, number> = {};
+
+/** Значение ключа в колонке на сторону: пара в `ASYM[key+sfx]`, иначе общее из карты, иначе нет. */
+const colOf = (map: Record<string, number>, sfx: string, key: string, i: 0 | 1): number | undefined =>
+  ASYM[key + sfx]?.[i] ?? map[key];
 /**
- * `sideLerp` + страйф: сперва ходьба→бег по `sb`, затем вперёд→вбок по `st`.
- * Колонка привязана к ключу ХОДЬБЫ — у страйфа своя скорость не разводится (это одно движение).
+ * Значение колонки с ЕЁ СОБСТВЕННОЙ интерполяцией ходьба→бег.
+ * Задана только одна из двух записей — она и работает на обеих скоростях (прежнее поведение).
  */
-export const sideLerp3 = (kw: string, kr: string, bw: number, br: number, i: 0 | 1, sb: number, st: number): number => {
-  const v = sideLerp(kw, kr, bw, br, i, sb);
-  if (st <= 0) return v;
-  const sv = strafeOf(kw, i);
-  return sv === undefined ? v : v + (sv - v) * st;
+const colLerp = (map: Record<string, number>, sfx: string, kw: string, kr: string, i: 0 | 1, sb: number): number | undefined => {
+  const w = colOf(map, sfx, kw, i), r = colOf(map, sfx, kr, i);
+  if (w === undefined) return r;
+  if (r === undefined) return w;
+  return w + (r - w) * sb;
 };
 
+/** Страйф-значение ключа на сторону (одиночная запись, без пары — для панели и тестов). */
+export const strafeOf = (key: string, i: 0 | 1): number | undefined => colOf(STRAFE, '@s', key, i);
+/** Значение ключа при ходе спиной. */
+export const backOf = (key: string, i: 0 | 1): number | undefined => colOf(BACK, '@b', key, i);
+/** Боевое значение ключа. */
+export const combatOf = (key: string, i: 0 | 1): number | undefined => colOf(COMBAT, '@c', key, i);
+
+/** Сколько чего подмешано в этом кадре: скорость, боковитость, назадность, бой. */
+export interface LocoMix { sb: number; st: number; bt: number; ct: number }
+/** Смесь «стоим вперёд мирно» — ею считается всё, у чего нет планировщика (монстры, превью). */
+export const MIX0: LocoMix = { sb: 0, st: 0, bt: 0, ct: 0 };
+
 /**
- * БОЕВАЯ ОСЬ (Ф6) — ЧЕТВЁРТАЯ колонка, устроенная ровно как страйф-колонка.
+ * ПОЛНАЯ ЦЕПОЧКА: ходьба→бег по `sb`, затем колонки направления и боя.
  *
- * Решение плана: боевое состояние — НЕ второй набор ног. Набор ног один, безоружный, а бой меняет
- * позу верха (`idle_incombat`) и НАСТРОЙКИ: шире стойка, короче шаг, выше каденция. Второй набор ног
- * означал бы сотни одинаковых клипов и был бы отложен «до первого набора» навсегда.
- *
- * Разрежённость та же и по той же причине: нет записи — ключ про бой ничего не знает и ведёт себя
- * ровно как раньше, бит в бит. Уже настроенные персонажи не сдвинулись ни на единицу.
+ * Порядок — страйф, назад, бой. Страйф и «назад» по построению не спорят (`backMix` гаснет ровно
+ * там, где `strafeMix` набирает силу), а бой стоит последним именно потому, что он ортогонален
+ * направлению и обязан перекрывать то, что выбрало направление.
  */
-export const COMBAT: Record<string, number> = {};
-/** Боевое значение ключа на сторону: пара в `ASYM[key+'@c']`, иначе общее из `COMBAT`, иначе нет. */
-export const combatOf = (key: string, i: 0 | 1): number | undefined => ASYM[key + '@c']?.[i] ?? COMBAT[key];
-/** Полная цепочка: ходьба→бег по `sb`, вперёд→вбок по `st`, мирно→бой по `ct`. */
-export const sideLerp4 = (kw: string, kr: string, bw: number, br: number, i: 0 | 1, sb: number, st: number, ct: number): number => {
-  const v = sideLerp3(kw, kr, bw, br, i, sb, st);
-  if (ct <= 0) return v;
-  const cv = combatOf(kw, i);
-  return cv === undefined ? v : v + (cv - v) * ct;
+export const locoVal = (kw: string, kr: string, bw: number, br: number, i: 0 | 1, m: LocoMix): number => {
+  let v = sideLerp(kw, kr, bw, br, i, m.sb);
+  if (m.st > 0) { const c = colLerp(STRAFE, '@s', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.st; }
+  if (m.bt > 0) { const c = colLerp(BACK, '@b', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.bt; }
+  if (m.ct > 0) { const c = colLerp(COMBAT, '@c', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.ct; }
+  return v;
 };
 
 export const GAIT = {
@@ -300,6 +325,23 @@ export const strafeMix = (mFwd: number, mLat: number): number => {
 };
 
 /**
+ * «НАЗАДНОСТЬ» 0..1 — единица на чистом ходе спиной, ноль на ходе вперёд и на чистом боку.
+ *
+ * Считается ЧЕРЕЗ боковитость, а не своим отдельным порогом. Два независимых порога неминуемо
+ * разошлись бы, и на границе колонки либо перекрыли друг друга, либо обе молчали; здесь же сумма
+ * честная по построению — чем боковее ход, тем больше распоряжается страйф-колонка.
+ *
+ * Второй множитель (продольность) нужен ради НЕПРЕРЫВНОСТИ у самой границы бока: без него при
+ * странно выставленных порогах (`strafeTo` за 90°) на переходе вперёд↔назад была бы ступенька,
+ * а ступенька в настройках позы читается как рывок корпуса.
+ */
+export const backMix = (mFwd: number, mLat: number): number => {
+  if (mFwd >= 0) return 0;
+  const lon = Math.abs(mFwd) / Math.max(1e-6, Math.hypot(mFwd, mLat));
+  return Math.min(1 - strafeMix(mFwd, mLat), lon);
+};
+
+/**
  * ЖИВАЯ боевая idle-СТОЙКА «меч+щит» (только для вооружённого — `PoseDriver.setArmed`, монстры без неё).
  * Держится и в покое, и на ходу (щит/меч не болтаются). Крутится панелью G. X впер/наз, Z вбок, Y скрутка.
  * Левая — ЩИТ (вверх-вперёд гардом), правая — МЕЧ (отведена, клинок вперёд). Ноги-стойка — позже (планировщик).
@@ -376,7 +418,8 @@ class StepPlanner {
   private turnLead = -1;     // чья очередь шагать при повороте (внутренняя первой; чередование). -1 = поворот не начат
   private prevYaw = 0;       // рыск прошлого кадра
   sb = 0;                    // блен ходьба(0)↔бег(1) — читает PoseDriver для раздельных рук walk/run
-  st = 0;                    // боковитость 0 (вперёд/назад) … 1 (чистый страйф) — третья колонка настроек
+  st = 0;                    // боковитость 0 (вперёд/назад) … 1 (чистый страйф) — колонка страйфа
+  bt = 0;                    // назадность 0 (вперёд/вбок) … 1 (чистый ход спиной) — колонка «назад»
   combat = 0;                // мирно(0) ↔ бой(1) — ЧЕТВЁРТАЯ колонка: шире стойка, короче шаг (Ф6)
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
@@ -541,9 +584,12 @@ class StepPlanner {
     // БОКОВИТОСТЬ. Считается от СГЛАЖЕННОГО направления и от осей ТАЗА (а не прицела): при включённом
     // довороте (Ф0) таз уже развёрнут под движение, поэтому диагональ здесь честно читается как ход
     // вперёд и страйф-колонку не поднимает — ровно так, как показал замер 4-против-8 направлений.
-    this.st = moving ? strafeMix(pmx * fx + pmz * fz, pmx * rx + pmz * rz) : 0;
-    const st = this.st;
-    const ct = this.combat;   // боевая ось (Ф6): та же разрежённая колонка, что у страйфа
+    const mFwd = pmx * fx + pmz * fz, mLat = pmx * rx + pmz * rz;
+    this.st = moving ? strafeMix(mFwd, mLat) : 0;
+    // НАЗАДНОСТЬ — по тем же осям таза и через ту же боковитость, поэтому колонки не спорят.
+    // Стоим — обе нули: у стояния направления нет, и подмешивать ему «назад» не за что.
+    this.bt = moving ? backMix(mFwd, mLat) : 0;
+    const m: LocoMix = { sb, st: this.st, bt: this.bt, ct: this.combat };
     const stepLen = lerp(GAIT.stepWalk, GAIT.stepRun, sb) / Math.max(0.1, GAIT.cadence);   // длина шага ходьба↔бег; cadence>1 → короче/чаще (путь px не трогаем)
     const duty = lerp(GAIT.dutyWalk, GAIT.dutyRun, sb);   // доля опоры ходьба↔бег (sb уже в [0,1])
     // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
@@ -551,12 +597,12 @@ class StepPlanner {
     // ── ТО ЖЕ, НО НА СТОРОНУ. Симметрия (`ASYM` пуст) → числа те же, что выше, бит в бит.
     // Фаза остаётся ОДНА на обе ноги: две независимые фазы — это уже не походка, а два человека.
     // Асимметрия живёт в геометрии шага (длина, подъём, доля опоры, ширина), и этого хватает на хромоту.
-    const sl = (i: 0 | 1): number => sideLerp4('stepWalk', 'stepRun', GAIT.stepWalk, GAIT.stepRun, i, sb, st, ct) / Math.max(0.1, GAIT.cadence);
-    const dutyS = (i: 0 | 1): number => sideLerp4('dutyWalk', 'dutyRun', GAIT.dutyWalk, GAIT.dutyRun, i, sb, st, ct);
-    const liftS = (i: 0 | 1): number => sideLerp4('liftWalk', 'liftRun', GAIT.liftWalk, GAIT.liftRun, i, sb, st, ct);
+    const sl = (i: 0 | 1): number => locoVal('stepWalk', 'stepRun', GAIT.stepWalk, GAIT.stepRun, i, m) / Math.max(0.1, GAIT.cadence);
+    const dutyS = (i: 0 | 1): number => locoVal('dutyWalk', 'dutyRun', GAIT.dutyWalk, GAIT.dutyRun, i, m);
+    const liftS = (i: 0 | 1): number => locoVal('liftWalk', 'liftRun', GAIT.liftWalk, GAIT.liftRun, i, m);
     const leadS = (i: 0 | 1): number => sl(i) * dutyS(i) + sl(i) * GAIT.aheadMul + speed * GAIT.predictSec;
-    const fwdLimS = (i: 0 | 1): number => sideLerp4('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, sb, st, ct);
-    const hipSwS = (i: 0 | 1): number => sideLerp4('hipSwing', 'hipSwingRun', GAIT.hipSwing, GAIT.hipSwingRun, i, sb, st, ct);
+    const fwdLimS = (i: 0 | 1): number => locoVal('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, m);
+    const hipSwS = (i: 0 | 1): number => locoVal('hipSwing', 'hipSwingRun', GAIT.hipSwing, GAIT.hipSwingRun, i, m);
 
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
@@ -646,14 +692,13 @@ class StepPlanner {
     // Плант-цель ноги: вынос раскладываем на продольную/боковую компоненты по осям facing → форма стойки
     // (stanceWidth/strafeReach) + авторский offset (plantOff). Нейтрально при дефолтах: ортонормир. базис даёт
     // fx·(reach·mFwd) + rx·(reach·mLat) = reach·mx (и аналогично z) = прежняя цель hx + mx·reach.
-    const mFwd = pmx * fx + pmz * fz, mLat = pmx * rx + pmz * rz;
     const plant = (l: Leg, i: number, hx: number, hz: number, reach: number): void => {
       const off = this.plantOff[i]!, side = i === 0 ? 1 : -1;   // нога 0 = ЛЕВАЯ на +X (см. якорь бедра)
       const fwdAmt = reach * mFwd + off[0];
       const j = i as 0 | 1;
-      const reachK = sideLerp4('strafeReach', 'strafeReachRun', GAIT.strafeReach, GAIT.strafeReachRun, j, sb, st, ct);
-      const width = sideLerp4('stanceWidth', 'stanceWidthRun', GAIT.stanceWidth, GAIT.stanceWidthRun, j, sb, st, ct);
-      const cross = sideLerp4('crossClamp', 'crossClampRun', GAIT.crossClamp, GAIT.crossClampRun, j, sb, st, ct);
+      const reachK = locoVal('strafeReach', 'strafeReachRun', GAIT.strafeReach, GAIT.strafeReachRun, j, m);
+      const width = locoVal('stanceWidth', 'stanceWidthRun', GAIT.stanceWidth, GAIT.stanceWidthRun, j, m);
+      const cross = locoVal('crossClamp', 'crossClampRun', GAIT.crossClamp, GAIT.crossClampRun, j, m);
       let latAmt = reach * mLat * reachK + width * side + off[1];
       if (side * latAmt < -cross) latAmt = -side * cross;   // не заходить за среднюю линию дальше crossClamp
       l.tx = hx + fx * fwdAmt + rx * latAmt; l.tz = hz + fz * fwdAmt + rz * latAmt;
@@ -709,8 +754,8 @@ class StepPlanner {
     const dip = reach - Math.sqrt(Math.max(0, reach * reach - maxLz * maxLz));
     // Боб и нижний предел приседа берём у ОПОРНОЙ ноги: таз проседает на ту ногу, которая держит вес,
     // поэтому хромота — это разный боб на левой и правой опоре, а не два таза.
-    const bobMult = sideLerp4('bobWalk', 'bobRun', GAIT.bobWalk, GAIT.bobRun, stanceLeg, sb, st, ct);
-    const floorY = sideLerp4('pelvisMin', 'pelvisMinRun', GAIT.pelvisMin, GAIT.pelvisMinRun, stanceLeg, sb, st, ct);
+    const bobMult = locoVal('bobWalk', 'bobRun', GAIT.bobWalk, GAIT.bobRun, stanceLeg, m);
+    const floorY = locoVal('pelvisMin', 'pelvisMinRun', GAIT.pelvisMin, GAIT.pelvisMinRun, stanceLeg, m);
     const wantY = anyStance ? clamp(this.standY - dip * bobMult, floorY, this.standY) : this.standY;
     // Сглаживание: на бегу — всегда (вход/выход из полёта). На ШАГЕ асимметрично: ВНИЗ (ноги разъезжаются,
     // wantY плавно падает по геометрии) берём как есть — иначе таз запаздывает и волочит опорную ногу; а ВВЕРХ
@@ -863,21 +908,24 @@ export class PoseDriver {
     // Раздельные руки ходьба↔бег: sb (0 ходьба … 1 бег) из планировщика (игрок), у монстра (без планировщика) — из drive.
     const sb = this.planner?.sb ?? clamp((drive - 1) / 0.4, 0, 1);
     o.sb = sb;
-    // Боковитость хода: у монстров планировщика нет — им страйф-колонка не положена (st = 0 = как было).
-    const st = this.planner?.st ?? 0;
-    o.st = st;
-    const ct = this.combat;
+    // Направление хода: у монстров планировщика нет — им колонки направления не положены
+    // (st = bt = 0, то есть ровно прежнее поведение).
+    const st = this.planner?.st ?? 0, bt = this.planner?.bt ?? 0;
+    o.st = st; o.bt = bt;
+    const m: LocoMix = { sb, st, bt, ct: this.combat };
     // Руки — на сторону (ASYM/STRAFE пусты → оба значения одинаковы и это ровно прежние числа).
-    const armSh = (i: 0 | 1): number => sideLerp4('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, sb, st, ct);
-    const armEl = (i: 0 | 1): number => sideLerp4('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, sb, st, ct);
-    const armSwing = (i: 0 | 1): number => sideLerp4('armSwing', 'armSwingRun', POSE.armSwing, POSE.armSwingRun, i, sb, st, ct);
+    const armSh = (i: 0 | 1): number => locoVal('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, m);
+    const armEl = (i: 0 | 1): number => locoVal('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, m);
+    const armSwing = (i: 0 | 1): number => locoVal('armSwing', 'armSwingRun', POSE.armSwing, POSE.armSwingRun, i, m);
     // ФАЗА. `armPhase` крутит саму руку (и пояс едет за ней), `shoPhase` — только пояс относительно
     // своей руки. −1 переворачивает мах, 0 гасит. Умножаются, а не складываются: это множители фазы.
-    const armPh = (i: 0 | 1): number => sideLerp4('armPhase', 'armPhaseRun', POSE.armPhase, POSE.armPhaseRun, i, sb, st, ct);
-    const shoPh = (i: 0 | 1): number => sideLerp4('shoPhase', 'shoPhaseRun', POSE.shoPhase, POSE.shoPhaseRun, i, sb, st, ct);
-    const elAmp = (i: 0 | 1): number => sideLerp4('armElAmp', 'armElAmpRun', POSE.armElAmp, POSE.armElAmpRun, i, sb, st, ct);
-    // Ручки ТЕЛА (не стороны): берём сторону 0 — ASYM для них панель не разводит, а страйф-колонка работает.
-    const body = (kw: string, kr: string, bw: number, br: number): number => sideLerp3(kw, kr, bw, br, 0, sb, st);
+    const armPh = (i: 0 | 1): number => locoVal('armPhase', 'armPhaseRun', POSE.armPhase, POSE.armPhaseRun, i, m);
+    const shoPh = (i: 0 | 1): number => locoVal('shoPhase', 'shoPhaseRun', POSE.shoPhase, POSE.shoPhaseRun, i, m);
+    const elAmp = (i: 0 | 1): number => locoVal('armElAmp', 'armElAmpRun', POSE.armElAmp, POSE.armElAmpRun, i, m);
+    // Ручки ТЕЛА (не стороны): берём сторону 0 — ASYM для них панель не разводит.
+    // ⚠ Раньше здесь стоял вызов БЕЗ боевой колонки, и семь ручек (весь наклон и вся скрутка)
+    // в бою читались мирными: панель их писала, рантайм не читал. Теперь цепочка одна на всех.
+    const body = (kw: string, kr: string, bw: number, br: number): number => locoVal(kw, kr, bw, br, 0, m);
     o.lean = walking
       ? body('leanWalk', 'leanWalkRun', POSE.leanWalk, POSE.leanWalkRun)
         + drive * body('leanSpeed', 'leanSpeedRun', POSE.leanSpeed, POSE.leanSpeedRun)
