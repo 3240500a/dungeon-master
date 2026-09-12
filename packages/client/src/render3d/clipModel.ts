@@ -39,7 +39,14 @@ export type MarkType =
   | 'swing'       // ОТРЕЗОК: свист клинка + след меча
   | 'combo'       // ОТРЕЗОК: окно ветвления цепочки ударов
   | 'windup'      // начало замаха (секция для цепочки)
-  | 'recover';    // конец отработки (секция для цепочки)
+  | 'recover'     // конец отработки (секция для цепочки)
+  // ── СЕКЦИИ ЛОКОМОЦИИ (Ф5б): старт, цикл и остановка ОДНИМ клипом ──
+  // Та же модель, что у ударов (и что у Montage Sections в Unreal): разметка ВНУТРИ клипа, а не
+  // резка на файлы. Шов авторится один раз и не зависит от длительности кроссфейда, библиотека
+  // втрое короче, а старт и остановка гарантированно совпадают по фазе ноги с циклом — при
+  // отдельных клипах это приходится ловить кроссфейдом заново на каждой паре.
+  | 'loop_start'  // здесь кончается разгон и начинается цикл
+  | 'loop_end';   // здесь цикл кончается и начинается остановка
 export type MarkTrack = 'gameplay' | 'audio' | 'vfx' | 'camera';
 export interface Mark {
   type: MarkType;
@@ -56,6 +63,7 @@ export interface Mark {
 /** Дорожка типа — только для отрисовки в таймлайне (`impact` рисуем на геймплейной, значки звука/эффекта рядом). */
 export const MARK_TRACK: Readonly<Record<MarkType, MarkTrack>> = {
   impact: 'gameplay', combo: 'gameplay', windup: 'gameplay', recover: 'gameplay',
+  loop_start: 'gameplay', loop_end: 'gameplay',
   sfx: 'audio', footstep: 'audio', swing: 'audio', vfx: 'vfx', camshake: 'camera',
 };
 /** Типы, которые ОБЯЗАНЫ быть отрезком (у них `dur` есть всегда). */
@@ -242,6 +250,34 @@ export function clipPoseAt(c: Clip, t01: number): Pose {
   const seg = clipSegmentAt(c, clamp01(t01) * (clipDur(c) || 1));
   if (!seg) return {};
   return seg.a === seg.b ? seg.a.pose : blendTwo(seg.a.pose, seg.b.pose, seg.u);
+}
+
+/**
+ * Секции клипа локомоции (Ф5б). Границы в секундах.
+ *
+ * НЕТ МЕТОК — ВЕСЬ КЛИП ЦИКЛ, ровно как было до Ф5б. Это не «деградация», а основной случай:
+ * у обычного зацикленного `run_fwd` разгона и остановки нет, и заставлять их размечать было бы
+ * издевательством.
+ */
+export interface ClipSections {
+  /** Конец разгона = начало цикла. 0 — разгона нет. */
+  loopStart: number;
+  /** Конец цикла = начало остановки. = длительность, если остановки нет. */
+  loopEnd: number;
+  /** Есть ли вообще что играть на разгоне / остановке. */
+  hasStart: boolean;
+  hasStop: boolean;
+}
+export function clipSections(c: Clip): ClipSections {
+  const dur = clipDur(c);
+  const a = markSec(c, 'loop_start'), b = markSec(c, 'loop_end');
+  const loopStart = a ?? 0;
+  const loopEnd = b ?? dur;
+  return {
+    loopStart, loopEnd: Math.max(loopStart, loopEnd),
+    hasStart: a !== null && a > 1e-4,
+    hasStop: b !== null && b < dur - 1e-4,
+  };
 }
 
 // ── Метки: чтение ────────────────────────────────────────────────────────────────────────────────

@@ -44,3 +44,58 @@ export function locoDir(fwd: number, lat: number, strafeDeg: number): LocoDir {
 export function locoClipName(dir: LocoDir, fast: boolean): string {
   return `${fast ? 'run' : 'walk'}_${dir}`;
 }
+
+// ── СЕКЦИИ: старт → цикл → остановка (Ф5б) ───────────────────────────────────────────────────────
+
+/** Что именно играет слой локомоции прямо сейчас. */
+export type LocoSection = 'start' | 'loop' | 'stop' | 'idle';
+
+export interface LocoSectionState {
+  section: LocoSection;
+  /** Собственное время секции (сек). У цикла его нет — им правит фаза планировщика. */
+  t: number;
+}
+
+/**
+ * Шаг машины секций. Чистая: ей дают состояние, «двигаемся ли», dt и границы — она возвращает новое.
+ *
+ * ⚠ РАЗГОН И ОСТАНОВКА ИДУТ ПО СВОЕМУ ВРЕМЕНИ, а цикл — по фазе планировщика, и это не
+ * непоследовательность. У разгона нет «фазы шага»: он и есть выход на неё из нуля, и привязать его к
+ * фазе значило бы растянуть или сжать его до неузнаваемости на каждой скорости. У цикла наоборот:
+ * своё время сделало бы его неперетаймливаемым, и настройки персонажа перестали бы на него влиять.
+ *
+ * Возврат из остановки сразу в разгон (передумал на полпути) намеренно НЕ делается: доигрывать нечего,
+ * персонаж уже поехал — уходим в разгон с нуля, это честнее, чем прыгнуть в середину цикла.
+ */
+export interface SectionBounds { loopStart: number; loopEnd: number; dur: number; hasStart: boolean; hasStop: boolean }
+
+export function stepLocoSection(st: LocoSectionState, moving: boolean, dt: number, sec: SectionBounds): LocoSectionState {
+  const t = st.t + dt;
+  if (moving) {
+    switch (st.section) {
+      case 'loop': return { section: 'loop', t: 0 };
+      case 'start': return t >= sec.loopStart ? { section: 'loop', t: 0 } : { section: 'start', t };
+      // Из покоя и из остановки — на разгон с нуля. Возврат из остановки в середину цикла намеренно
+      // НЕ делается: доигрывать там нечего, а прыжок в середину читается как рывок.
+      default: return sec.hasStart ? { section: 'start', t: 0 } : { section: 'loop', t: 0 };
+    }
+  }
+  switch (st.section) {
+    case 'loop': return sec.hasStop ? { section: 'stop', t: 0 } : { section: 'idle', t: 0 };
+    case 'stop': return t >= Math.max(0, sec.dur - sec.loopEnd) ? { section: 'idle', t: 0 } : { section: 'stop', t };
+    case 'start': return { section: 'idle', t: 0 };   // отпустили на разгоне — доигрывать нечего
+    default: return { section: 'idle', t: 0 };
+  }
+}
+
+/**
+ * Время внутри клипа для текущей секции (сек).
+ *
+ * Цикл берёт фазу планировщика (см. `locoPhaseU`) и растягивается ровно на секцию цикла, разгон и
+ * остановка — своё время, обрезанное по границам секции.
+ */
+export function sectionClipTime(st: LocoSectionState, plannerU: number, sec: { loopStart: number; loopEnd: number }, dur: number): number {
+  if (st.section === 'start') return Math.min(st.t, sec.loopStart);
+  if (st.section === 'stop') return Math.min(sec.loopEnd + st.t, dur);
+  return sec.loopStart + plannerU * Math.max(0, sec.loopEnd - sec.loopStart);
+}

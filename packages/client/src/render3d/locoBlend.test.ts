@@ -3,9 +3,10 @@ import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, type PoseContent } from './poseRuntime.js';
 import { GAIT } from './pose.js';
-import { locoClipName, locoDir, locoPhaseU } from './locoBlend.js';
+import { locoClipName, locoDir, locoPhaseU, stepLocoSection, sectionClipTime } from './locoBlend.js';
 import { bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
-import type { Clip } from './clipModel.js';
+import { clipSections, type Clip } from './clipModel.js';
+import { stitchLocoClip } from './clipImport.js';
 
 /**
  * ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4).
@@ -199,5 +200,85 @@ describe('смешивание в рантайме', () => {
     }
     expect(seen, 'опорные кадры под углом были — иначе проверка пустая').toBeGreaterThan(20);
     expect(worst, `под углом отставание ${worst.toFixed(1)} за ${seen} кадров`).toBeLessThan(0.5);
+  });
+});
+
+describe('секции: старт → цикл → остановка одним клипом (Ф5б)', () => {
+  const mk = (dur: number, marks: { t: number; type: 'loop_start' | 'loop_end' }[]): Clip => ({
+    name: 'run_fwd', character: 'w', weapon: 'none', loop: false,
+    keys: [0, dur / 2, dur].map((t) => ({
+      t, pose: { Hips: [0, 0, 0] },
+      marks: marks.filter((m) => Math.abs(m.t - t) < 1e-6).map((m) => ({ type: m.type })),
+    })),
+  });
+
+  it('МЕТОК НЕТ — весь клип цикл, то есть ровно прежнее поведение', () => {
+    const s = clipSections(mk(2, []));
+    expect(s.loopStart).toBe(0);
+    expect(s.loopEnd).toBe(2);
+    expect(s.hasStart).toBe(false);
+    expect(s.hasStop).toBe(false);
+  });
+
+  it('метки задают границы', () => {
+    const s = clipSections(mk(2, [{ t: 1, type: 'loop_start' }, { t: 2, type: 'loop_end' }]));
+    expect(s.loopStart).toBe(1);
+    expect(s.hasStart).toBe(true);
+    expect(s.hasStop, 'метка на самом конце — остановки нет').toBe(false);
+  });
+
+  const sec = { loopStart: 0.5, loopEnd: 1.5, dur: 2, hasStart: true, hasStop: true };
+
+  it('из покоя идём через РАЗГОН, а не сразу в цикл', () => {
+    expect(stepLocoSection({ section: 'idle', t: 0 }, true, 1 / 60, sec).section).toBe('start');
+  });
+
+  it('разгон доигрывает СВОЁ время и переходит в цикл', () => {
+    let st = stepLocoSection({ section: 'idle', t: 0 }, true, 1 / 60, sec);
+    for (let i = 0; i < 10 && st.section === 'start'; i++) st = stepLocoSection(st, true, 0.1, sec);
+    expect(st.section).toBe('loop');
+  });
+
+  it('разгона не заавторено — сразу цикл, а не пустая пауза', () => {
+    expect(stepLocoSection({ section: 'idle', t: 0 }, true, 0.1, { ...sec, hasStart: false }).section).toBe('loop');
+  });
+
+  it('остановились — доигрываем ХВОСТ и только потом покой', () => {
+    let st = stepLocoSection({ section: 'loop', t: 0 }, false, 0.1, sec);
+    expect(st.section).toBe('stop');
+    for (let i = 0; i < 10 && st.section === 'stop'; i++) st = stepLocoSection(st, false, 0.1, sec);
+    expect(st.section).toBe('idle');
+  });
+
+  it('остановки не заавторено — из цикла сразу в покой', () => {
+    expect(stepLocoSection({ section: 'loop', t: 0 }, false, 0.1, { ...sec, hasStop: false }).section).toBe('idle');
+  });
+
+  it('отпустили на разгоне — доигрывать нечего', () => {
+    expect(stepLocoSection({ section: 'start', t: 0.1 }, false, 0.1, sec).section).toBe('idle');
+  });
+
+  it('передумал на остановке — уходим в РАЗГОН с нуля, а не прыгаем в середину цикла', () => {
+    expect(stepLocoSection({ section: 'stop', t: 0.1 }, true, 0.1, sec).section).toBe('start');
+  });
+
+  it('ЦИКЛ тянется фазой планировщика, разгон и остановка — своим временем', () => {
+    expect(sectionClipTime({ section: 'loop', t: 0 }, 0, sec, 2), 'начало цикла').toBeCloseTo(0.5, 9);
+    expect(sectionClipTime({ section: 'loop', t: 0 }, 1, sec, 2), 'конец цикла').toBeCloseTo(1.5, 9);
+    expect(sectionClipTime({ section: 'start', t: 0.2 }, 0.9, sec, 2), 'разгон фазу игнорирует').toBeCloseTo(0.2, 9);
+    expect(sectionClipTime({ section: 'start', t: 9 }, 0, sec, 2), 'и не вылезает за свою границу').toBeCloseTo(0.5, 9);
+    expect(sectionClipTime({ section: 'stop', t: 0.2 }, 0, sec, 2), 'остановка идёт от конца цикла').toBeCloseTo(1.7, 9);
+  });
+
+  it('сшивка трёх источников: времена подряд, границы помечены', () => {
+    const one = (name: string, dur: number): Clip => ({ name, character: 'w', weapon: 'none', loop: false,
+      keys: [{ t: 0, pose: { Hips: [0, 0, 0] } }, { t: dur, pose: { Hips: [0, 0.1, 0] } }] });
+    const c = stitchLocoClip(one('start', 0.4), one('loop', 1), one('stop', 0.6), 'run_fwd');
+    expect(c.keys[0]!.t).toBe(0);
+    expect(c.keys.at(-1)!.t, 'общая длительность — сумма').toBeCloseTo(2, 4);
+    const s = clipSections(c);
+    expect(s.loopStart, 'цикл начинается там, где кончился разгон').toBeCloseTo(0.4, 4);
+    expect(s.loopEnd, 'и кончается там, где началась остановка').toBeCloseTo(1.4, 4);
+    expect(s.hasStart && s.hasStop).toBe(true);
   });
 });

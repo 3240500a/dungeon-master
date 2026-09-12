@@ -5,14 +5,15 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, sideLerp, foldElbow, type PoseTargets } from './pose.js';
 import { resolveStancePose, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipName, locoDir, locoPhaseU } from './locoBlend.js';
+import { locoClipName, locoDir, locoPhaseU, stepLocoSection, sectionClipTime, type LocoSectionState } from './locoBlend.js';
+import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
 // Здесь только ре-экспорт, чтобы прежние импортёры (`from './poseRuntime.js'`) не переписывать.
 export type { Pose, Keyframe, Clip, Interp, Mark, MarkType, MarkTrack, MarkEvent } from './clipModel.js';
-export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
+export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, clipSections, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
 import { hipsOffset } from './clipModel.js';   // Ф12: офсет таза читаем только через него (дельта + терпимость к легаси-абсолюту)
 import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, type MarkEvent } from './clipModel.js';
 // Коридор скорости тайм-варпа удара. Нижняя граница НИЖЕ единицы осознанно: контакт в мокапе
@@ -1021,6 +1022,8 @@ export class PosePlayer {
   private dirWarp: DirWarp = { ...DIR_WARP0 };
   /** Часы ЖИВОЙ СТОЙКИ (сек). Многокадровый idle играет по ним циклом; однокадровый их не замечает. */
   private idleT = 0;
+  /** Секция локомоции (Ф5б): разгон / цикл / остановка. Меток в клипе нет — всегда цикл. */
+  private locoSec: LocoSectionState = { section: 'idle', t: 0 };
   /** Доворот таза этого кадра — редактору для читаута. */
   get dirWarpDeg(): number { return this.dirWarp.warp * 180 / Math.PI; }
   /** Идём ли спиной вперёд (доворот меряется от хвоста) — редактору для читаута. */
@@ -1201,7 +1204,14 @@ export class PosePlayer {
       const fy = Math.sin(yaw), fz2 = Math.cos(yaw), rx2 = Math.cos(yaw), rz2 = -Math.sin(yaw);
       const fwd = this.vx * fy + this.vz * fz2, lat = this.vx * rx2 + this.vz * rz2;
       const c = this.content.locoClip(locoClipName(locoDir(fwd, lat, GAIT.strafeFrom), (tg.sb ?? 0) > 0.5));
-      if (c && c.keys.length) locoPose = clipPoseAt(c, locoPhaseU(this.driver.gaitPhase));
+      if (c && c.keys.length) {
+        // СЕКЦИИ (Ф5б): разгон → цикл → остановка одним клипом. Меток нет — весь клип цикл, то есть
+        // ровно прежнее поведение; размечать обычный зацикленный `run_fwd` никто не обязан.
+        const dur = clipDur(c) || 1;
+        const sc = clipSections(c);
+        this.locoSec = stepLocoSection(this.locoSec, this.moveMag > 0.05, dt, { ...sc, dur });
+        locoPose = clipPoseAt(c, sectionClipTime(this.locoSec, locoPhaseU(this.driver.gaitPhase), sc, dur) / dur);
+      }
     }
     gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix);
     if (layerTrace.on) {

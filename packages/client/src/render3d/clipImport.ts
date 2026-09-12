@@ -9,7 +9,7 @@
  * Ни загрузчиков, ни DOM → тестируется в node.
  */
 import * as THREE from 'three';
-import { clipDur, clipSegmentAt, blendTwo, type Clip, type Keyframe, type Pose } from './clipModel.js';
+import { clipDur, clipSegmentAt, blendTwo, type Clip, type Keyframe, type MarkType, type Pose } from './clipModel.js';
 import { pasteIntoInterval } from './poseLibrary.js';
 
 const RAD2DEG = 180 / Math.PI;
@@ -126,4 +126,39 @@ export function closeLoopSeam(c: Clip, blendSec: number): Clip {
   while (from > 0 && keys[from - 1]!.t >= dur - blendSec) from--;
   pasteIntoInterval(keys, from, keys.length - 1, first, 'bezier');
   return { ...c, keys };
+}
+
+/**
+ * СШИВКА ТРЁХ ИСТОЧНИКОВ В ОДИН КЛИП (Ф5б): разгон + цикл + остановка.
+ *
+ * Почему одним клипом, а не тремя. Шов авторится ОДИН раз и не зависит от длительности кроссфейда;
+ * библиотека втрое короче; и главное — старт и остановка гарантированно совпадают по фазе ноги с
+ * циклом, потому что лежат с ним в одном файле. При трёх отдельных клипах это приходится ловить
+ * кроссфейдом заново на каждой паре, и промах виден именно на стыке, где и так тяжелее всего.
+ *
+ * Границы помечаются метками `loop_start` / `loop_end` — та же модель, что у Montage Sections в
+ * Unreal: разметка ВНУТРИ клипа, а не резка на файлы.
+ *
+ * ⚠ Шов между секциями — СТЫК, а не кроссфейд, и это правильно: разгон авторится непрерывным
+ * продолжением цикла. Требование к паку: он должен быть записан именно так. Не сошлось — остаются
+ * три клипа, граф это умеет.
+ */
+export function stitchLocoClip(start: Clip | null, loop: Clip, stop: Clip | null, name = loop.name): Clip {
+  const keys: Keyframe[] = [];
+  let t = 0;
+  const push = (c: Clip, mark?: MarkType): void => {
+    const d = clipDur(c);
+    c.keys.forEach((k, i) => {
+      const kf: Keyframe = { ...k, t: +(t + k.t).toFixed(4), pose: { ...k.pose } };
+      if (mark && i === 0) kf.marks = [...(k.marks ?? []), { type: mark }];
+      keys.push(kf);
+    });
+    t += d;
+  };
+  if (start && start.keys.length) push(start);
+  // Метку начала цикла вешаем на ПЕРВЫЙ кадр цикла, конца — на первый кадр остановки: так границы
+  // читаются одинаково и когда разгона нет, и когда нет остановки.
+  push(loop, 'loop_start');
+  if (stop && stop.keys.length) push(stop, 'loop_end');
+  return { ...loop, name, keys, loop: false };
 }
