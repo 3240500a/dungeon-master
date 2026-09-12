@@ -162,6 +162,65 @@ export const LEG_COUNT = IK_LEGS.length;
 /** Высота кости стопы над полом при подошве на полу — публично, чтобы цели пинов можно было заземлить. */
 export const FOOT_SOLE = SOLE;
 
+/**
+ * САМАЯ НИЗКАЯ ТОЧКА СКИНА среди вершин, взвешенных на нужные кости (мировые координаты).
+ *
+ * ⚠ `Box3.setFromObject` здесь НЕ ГОДИТСЯ: у скиннед-меша он считается от БИНД-позы и врёт — ровно
+ * на эти грабли уже наступили в Unity-клиенте («SkinnedMesh.bounds врут бинд-позой», отчего
+ * персонаж парил). Поэтому вершины гоняются через `applyBoneTransform` + `matrixWorld`: так не надо
+ * угадывать ни бинд-матрицы, ни масштаб импорта — ретаргет и так ведёт кости модели на наши.
+ *
+ * ⚠ И берём НЕ низ всей модели, а только вершины СТОПЫ. У мага пола плаща висит ниже подошвы, и
+ * «низ модели» поднял бы персонажа в воздух на длину полы.
+ *
+ * `keep` решает, считается ли кость стопой; вызывающий сам поднимается по родителям (у CC/UE-ригов
+ * скин висит на твист-костях, которых в карте нет).
+ */
+export function lowestSkinY(meshes: readonly THREE.SkinnedMesh[], keep: (bone: THREE.Object3D) => boolean): number | null {
+  const v = new THREE.Vector3();
+  let lo = Infinity, seen = 0;
+  for (const m of meshes) {
+    const pos = m.geometry.getAttribute('position');
+    const si = m.geometry.getAttribute('skinIndex'), sw = m.geometry.getAttribute('skinWeight');
+    if (!pos || !si || !sw) continue;
+    m.updateMatrixWorld(true);
+    for (let i = 0; i < pos.count; i++) {
+      // Доминирующая кость вершины — по наибольшему весу; скелет берём ЭТОГО меша (после дедупа
+      // у меша может быть свой `Skeleton` поверх общих костей, глобального индекса нет).
+      let bw = sw.getX(i), bi = si.getX(i);
+      if (sw.getY(i) > bw) { bw = sw.getY(i); bi = si.getY(i); }
+      if (sw.getZ(i) > bw) { bw = sw.getZ(i); bi = si.getZ(i); }
+      if (sw.getW(i) > bw) { bw = sw.getW(i); bi = si.getW(i); }
+      if (bw <= 0) continue;
+      const bone = m.skeleton.bones[bi]; if (!bone || !keep(bone)) continue;
+      v.fromBufferAttribute(pos, i); m.applyBoneTransform(i, v); v.applyMatrix4(m.matrixWorld);
+      if (v.y < lo) lo = v.y;
+      seen++;
+    }
+  }
+  return seen > 0 && Number.isFinite(lo) ? lo : null;
+}
+
+/**
+ * ОФСЕТ ЗАЗЕМЛЕНИЯ (`pe_phys.footLift`) ПО ЗАМЕРУ, а не на глаз.
+ *
+ * Заземление целит кость лодыжки в `пол + SOLE + footLift`. Значит чтобы ПОДОШВА МЕША легла на пол,
+ * офсет обязан равняться «высота лодыжки над её собственной подошвой» минус наш процедурный `SOLE`.
+ * У импортного атласа лодыжка сидит выше нашей — без офсета меш тонет.
+ *
+ * Мерить надо В ПОКОЕ (T-поза): в шаге стопа поднята, и замер поехал бы вместе с ней.
+ */
+export function measureFootLift(mesh: Humanoid, soleY: number): number | null {
+  let ankle = Infinity;
+  for (const L of IK_LEGS) {
+    const fb = mesh.bones.get(L.f); if (!fb) continue;
+    fb.updateMatrixWorld(true);
+    ankle = Math.min(ankle, fb.getWorldPosition(new THREE.Vector3()).y);
+  }
+  if (!Number.isFinite(ankle)) return null;
+  return (ankle - soleY) - SOLE;
+}
+
 const _gbFoot = new THREE.Vector3();
 /**
  * ЗАЗЕМЛЕНИЕ ДЛЯ ЗАПЕКАНИЯ: на сколько ЮНИТОВ поднять таз, чтобы НИЖНЯЯ стопа встала на пол `floorY`.

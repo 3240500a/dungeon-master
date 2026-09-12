@@ -34,7 +34,7 @@ import { findGrip, gripToPose, resolveGripPose, effectiveWeaponGrip, applyGripPo
 registerExtraLimits((b) => extraLimitView(b, fingerAxes()));   // до первого limitViewForBone; Ф14.4 — оси из ЭТОГО рига
 import { deriveFingerAxes, bindCurlReport, type FingerAxes } from './fingerAxes.js';
 import { fitCollider, type BodyPoint } from './colliderFit.js';   // Ф28.3: обжатие по вершинам — чистая математика, node-тест
-import { groundFeet } from './footIk.js';   // Ф20.5: заземление попадает в ЗАПИСАННУЮ позу — ОБЩИЙ код с игрой
+import { groundFeet, lowestSkinY, measureFootLift } from './footIk.js';   // Ф20.5: заземление попадает в ЗАПИСАННУЮ позу — ОБЩИЙ код с игрой
 import { parentOfOur } from './retarget3d.js';   // НАШа канон-топология: вид скелета строится по ней, а не по иерархии модели
 import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: скелет по НАСТОЯЩИМ костям модели   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
 import { makeLimitGizmo } from './poseLimitGizmo.js';
@@ -2874,6 +2874,19 @@ function poseTools(): void {
       saveFootLift(); renderAnim();
     };
     row.append(s, v); body.append(row);
+    // ЗАМЕР вместо подбора глазами. Кнопка, а не молчаливая автоподстановка при каждом открытии:
+    // офсет мог быть доведён руками, и затирать чужую правку замером — хуже, чем не замерять.
+    const mrow = el('div', 'display:flex;align-items:center;gap:6px;margin-top:2px;font-size:10px');
+    mrow.append(pbtn('замерить по модели', () => {
+      const m = measureSoleOffset();
+      if (m === null) { alert('Модель не загружена или вершин стопы не нашлось — офсет оставлен как есть.'); return; }
+      physFootLift = +m.toFixed(2);
+      human.footLift = physFootLift; if (ghostHuman) ghostHuman.footLift = physFootLift;
+      stanceMeasuredFor = ''; saveFootLift(); renderAnim();
+    }));
+    const mh = el('span', 'color:#6b7180');
+    const got = soleShown; mh.textContent = got === null ? 'считается по подошве меша, а не по низу модели' : `замер даёт ${got.toFixed(2)}`;
+    mrow.append(mh); body.append(mrow);
   }
   // Сустав выбранной кости: сначала физ-риг, иначе без-физический (фаланги — у них тела нет и не будет).
   const canon = (tab === 'anim' && selected) ? (canonOfHuman(selected) ?? limitViewForBone(selected)?.canon ?? null) : null;
@@ -5357,6 +5370,56 @@ function saveGaitCfg(): void {
   try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ }
 }
 let stanceMeasuredFor = '';   // замеряем ширину стойки один раз на текущее оружие (мутирует human → только на смене)
+/**
+ * ЗАМЕР ОФСЕТА ЗАЗЕМЛЕНИЯ ПО ЗАГРУЖЕННОЙ МОДЕЛИ.
+ *
+ * Раньше офсет подбирался глазами ползунком, хотя он ИЗМЕРИМ: это «высота лодыжки над её
+ * собственной подошвой» минус наш процедурный `SOLE`. Возвращает null, если атласа нет или
+ * вершин стопы не нашлось — тогда ползунок остаётся как был, молча ничего не портя.
+ *
+ * ⚠ Берём вершины ТОЛЬКО стопы: у мага пола плаща висит ниже подошвы, и «низ модели» поднял бы
+ * персонажа в воздух на длину полы. Кость вершины резолвим ВВЕРХ ПО РОДИТЕЛЯМ — у CC/UE-ригов
+ * скин висит на твист-костях, которых в нашей карте нет.
+ */
+const FOOT_OUR = new Set(['LeftFoot', 'RightFoot', 'LeftToes', 'RightToes']);
+function measureSoleOffset(): number | null {
+  const ex = modelsTab.exportTarget(); if (!ex) return null;
+  const ourOf: Record<string, string> = {};
+  for (const our in ex.boneMap) ourOf[ex.boneMap[our]!] = our;
+  const meshes: THREE.SkinnedMesh[] = [];
+  ex.root.traverse((o) => { const m = o as THREE.SkinnedMesh; if (m.isSkinnedMesh && m.geometry.getAttribute('skinWeight')) meshes.push(m); });
+  if (!meshes.length) return null;
+  const isFoot = (b: THREE.Object3D): boolean => {
+    let our = ourOf[b.name], up: THREE.Object3D | null = b;
+    while (!our && up) { up = up.parent; if (up) our = ourOf[up.name]; }
+    return !!our && FOOT_OUR.has(our);
+  };
+  const soleY = lowestSkinY(meshes, isFoot);
+  // ⚠ Лодыжку берём С ТОГО ЖЕ РИГА, что ВЕДЁТ МЕШ: при включённой физике это ПРИЗРАК, а не манекен
+  // (`modelsTab.drive(physOn && ghostHuman ? ghostHuman : human)` в кадре). Смешать их — значит
+  // сравнить подошву одного скелета с лодыжкой другого, и офсет уедет на их расхождение.
+  const driver = (physOn && ghostHuman) ? ghostHuman : human;
+  return soleY === null ? null : measureFootLift(driver, soleY);
+}
+
+/**
+ * АВТОЗАСЕВ ОФСЕТА ЗАЗЕМЛЕНИЯ. Один раз на персонажа и ТОЛЬКО если в `pe_phys` его ещё нет:
+ * замер — это стартовое значение, а не хозяин ползунка. Доведённое руками число не трогаем никогда.
+ */
+let soleSeededFor = '';
+let soleShown: number | null = null;   // последний замер — показываем рядом с кнопкой
+function seedSoleOffset(): void {
+  if (soleSeededFor === curCharId) return;
+  const m = measureSoleOffset();
+  if (m === null) return;                       // атлас ещё грузится — попробуем на следующем кадре
+  soleSeededFor = curCharId; soleShown = m;
+  let saved: number | undefined;
+  try { saved = (JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { footLift?: number }>)[curCharId]?.footLift; } catch { /* */ }
+  if (saved !== undefined) return;              // офсет уже задан — замер только показываем
+  physFootLift = +m.toFixed(2);
+  human.footLift = physFootLift; if (ghostHuman) ghostHuman.footLift = physFootLift;
+  stanceMeasuredFor = ''; saveFootLift(); renderAnim();
+}
 function stepGait(dt: number): void {
   const player = lp();
   // Живые правки редактора → в плеер (ТЕ ЖЕ ссылки, что читает игра): gx/plant/twist/скорость удара/боевая — ползунки между кадрами.
@@ -5819,6 +5882,7 @@ function loop(): void {
   if (onModelBones()) scaleJointsToScreen(boneView, camera, canvas.clientHeight || 1, JOINT_PX);
   else if (curHumanStyle === 'skeleton' && human.root.visible) scaleJointsToScreen(human, camera, canvas.clientHeight || 1, JOINT_PX);
   outline.selectedObjects = selMesh ? [selMesh] : [];   // Ф5: обводка выбранной кости
+  seedSoleOffset();   // атлас грузится асинхронно — засеваем офсет, как только появились вершины
   const ungroundView = groundManikinForView();   // Ф27.5: рисуем ЗАЗЕМЛЁННЫЙ манекен…
   // Ф27.6: боксы физ-тел — НА ТОМ ЖЕ СКЕЛЕТЕ, что виден. Сырое физ-состояние не заземлено и
   // не сбленжено к позе по `match`, поэтому оверлей висел ниже призрака на 1.15u и стоял
