@@ -348,10 +348,21 @@ export const balanceSchema = z.object({
           playerLightIntensity: z.number().min(0).default(6000),
           /** Радиус/дальность света героя (3D, ед. мира). */
           playerLightDist: z.number().min(0).default(620),
+          /** Высота света героя над ним (3D, ед. мира). Было зашито числом 90. */
+          playerLightHeight: z.number().min(0).default(90),
+          /**
+           * Сдвиг света героя ПО ГОРИЗОНТАЛИ В СТОРОНУ КАМЕРЫ (3D, ед. мира).
+           *
+           * Ноль = ровно над головой: тогда освещены темя и плечи, а обращённая к игроку сторона
+           * персонажа остаётся в тени — именно это и было видно. Сдвиг к камере разворачивает свет
+           * на ту сторону, которую игрок вообще видит. Направление берётся из АЗИМУТА КАМЕРЫ, а не
+           * зашивается: развернём камеру — свет поедет за ней сам.
+           */
+          playerLightToCam: z.number().min(-400).max(400).default(60),
         })
-        .default({ bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 }),
+        .default({ bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620, playerLightHeight: 90, playerLightToCam: 60 }),
     })
-    .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140, shadow3d: { bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620 } }),
+    .default({ ambient: 0.8, perDepth: 0.015, ambientMax: 0.92, playerRadius: 160, torchRadius: 140, shadow3d: { bias: -0.004, torchCasters: 2, torchIntensity: 1500, torchDist: 380, playerLightIntensity: 6000, playerLightDist: 620, playerLightHeight: 90, playerLightToCam: 60 } }),
   /** Разбор вещей на материалы: где сколько выходит (docs/ECONOMY.md, Ч3). */
   salvage: z
     .object({

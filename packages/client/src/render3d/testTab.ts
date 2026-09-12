@@ -22,7 +22,7 @@ import { loadAssetConfig, resolvePlayerLook, editorClasses } from './modelSkin.j
 import type { RagdollHandle, PhysWorld } from './ragdoll.js';
 import { createTestScene, TEST_TICK_DT, type TestScene } from './testScene.js';
 import { driveActor, type DriveState } from './driveActor.js';
-import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ } from './playerInput.js';
+import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
 import type { PlayerInput } from '@dm/shared';
 
 export interface TestTabHost {
@@ -93,11 +93,8 @@ export function createTestTab(host: TestTabHost): TestTab {
     const zt = Math.max(0, Math.min(1, (dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));
     const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;
     target.set(x, 30, z);
-    host.camera.position.set(
-      target.x + dist * Math.cos(el) * Math.sin(CAM.az),
-      target.y + dist * Math.sin(el),
-      target.z + dist * Math.cos(el) * Math.cos(CAM.az),
-    );
+    const dir = camDirXZ(CAM.az), hor = dist * Math.cos(el);   // тот же шов, что в игре
+    host.camera.position.set(target.x + dir.x * hor, target.y + dist * Math.sin(el), target.z + dir.z * hor);
     host.camera.lookAt(target);
   };
 

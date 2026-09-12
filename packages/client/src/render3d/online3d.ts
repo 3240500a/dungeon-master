@@ -15,7 +15,7 @@ import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { driveActor } from './driveActor.js';
-import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ } from './playerInput.js';
+import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
 import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -216,6 +216,9 @@ export async function startOnline3d(): Promise<void> {
   // Камера: азимут ФИКСИРОВАН (вращения по ПКМ нет), наклон меняется с зумом — близко угол ниже
   // (камера опускается), далеко топ-даун как на скрине. Зум-аут ограничен ракурсом скрина.
   const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: CAM_AZ };   // азимут — общая константа (от неё зависит направление WASD)
+  // Горизонтальное направление ОТ игрока К КАМЕРЕ — общий шов с самой постановкой камеры (`camDirXZ`),
+  // а не вторая копия формулы: развернём камеру — свет поедет за ней сам.
+  const TO_CAM = camDirXZ(CAM.az);
   const orbit = { target: new THREE.Vector3(), dist: 460 };
   addEventListener('keydown', (e) => {
     const t = document.activeElement;
@@ -246,7 +249,8 @@ export async function startOnline3d(): Promise<void> {
   const applyCam = (): void => {
     const zt = Math.max(0, Math.min(1, (orbit.dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));   // 0 близко … 1 далеко
     const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;                                           // близко — ниже угол, далеко — топ-даун
-    camera.position.set(orbit.target.x + orbit.dist * Math.cos(el) * Math.sin(CAM.az), orbit.target.y + orbit.dist * Math.sin(el), orbit.target.z + orbit.dist * Math.cos(el) * Math.cos(CAM.az));
+    const hor = orbit.dist * Math.cos(el);   // горизонтальный вынос камеры; направление — общий `TO_CAM`
+    camera.position.set(orbit.target.x + TO_CAM.x * hor, orbit.target.y + orbit.dist * Math.sin(el), orbit.target.z + TO_CAM.z * hor);
     camera.lookAt(orbit.target);
   };
 
@@ -695,7 +699,12 @@ export async function startOnline3d(): Promise<void> {
       driveActor(self, bx, by, mine.facing, mine.alive, dt, { combat: !!mine.inCombat, stun: !!mine.stun });
       statusFx.sync('self', bx, by, mine.debuffs);   // эффекты статусов на игроке
       orbit.target.set(smoothX, 20, smoothZ);
-      if (playerLight) playerLight.position.set(smoothX, 90, smoothZ);
+      if (playerLight) {
+        // Свет героя стоял РОВНО НАД ГОЛОВОЙ: освещены темя и плечи, а обращённая к игроку сторона —
+        // в тени. Сдвигаем по горизонтали в сторону камеры, то есть на ту сторону, которую видно.
+        const lt = app.config.get('balance').lighting.shadow3d;
+        playerLight.position.set(smoothX + TO_CAM.x * lt.playerLightToCam, lt.playerLightHeight, smoothZ + TO_CAM.z * lt.playerLightToCam);
+      }
     }
     // пиры
     const seenP = new Set<string>();
