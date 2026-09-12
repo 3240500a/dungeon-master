@@ -1,4 +1,4 @@
-import type { SkillNode } from '@dm/shared';
+import { abilityElementOf, type SkillNode } from '@dm/shared';
 import { dmgColor, dmgName } from '../../core/damageTypes.js';
 
 /** Подписи клавиш слотов хотбара (слоты 0..3). */
@@ -17,17 +17,19 @@ export function elementLabel(el: string): string {
   return el === 'mastery' ? 'Мастерство' : dmgName(el);
 }
 
-/** Стихия способности (для цвета иконки). Явная `element` приоритетнее, иначе — по имени. Мастерства — 'mastery'. */
+/**
+ * Стихия способности (для цвета иконки). Явная `element` приоритетнее, иначе — по имени.
+ * Мастерства — 'mastery'.
+ *
+ * ⚠ Угадывание по имени берём из `abilityElementOf` — ТОЙ ЖЕ функции, которой движок выбирает
+ * стихию удара. Здесь стояла её копия, и копия уже разошлась: `nova` движок считает холодом,
+ * а копия — физикой. То есть иконка и панель показывали одно, а бил скилл другим.
+ */
 export function elementOf(node: SkillNode): string {
   const active = node.effect.active;
   if (!active) return 'mastery';
   if ((active.category === 'attack' || active.category === 'cast' || active.category === 'curse') && active.element) return active.element;
-  const id = active.abilityId;
-  if (/fire|flame|meteor/.test(id)) return 'fire';
-  if (/frost|ice|cold|blizzard/.test(id)) return 'cold';
-  if (/shock|lightning|storm/.test(id)) return 'lightning';
-  if (/poison|venom/.test(id)) return 'poison';
-  return 'physical';
+  return abilityElementOf(active.abilityId);
 }
 
 export function abbrev(name: string): string {

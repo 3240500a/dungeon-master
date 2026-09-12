@@ -1,4 +1,9 @@
-import { ConfigRegistry, resolveActive, socketsOpen, insertById, insertFits, activeAbilityOf, type SaveState, type ResolvedActive } from '@dm/shared';
+import {
+  ConfigRegistry, resolveActive, socketsOpen, insertById, insertFits, activeAbilityOf,
+  newBotSave, playerSnapshot, attackByType, shapeSkillPacket, abilityElementOf, abilityRankMult,
+  itemFromBase, retierItem, emptyPacket, DAMAGE_TYPES,
+  type SaveState, type ResolvedActive, type Item, type DamageType,
+} from '@dm/shared';
 
 /**
  * Вкладка «Сборка скила» — предпросмотр модульного скила: носитель + вставки → что вышло.
@@ -15,7 +20,10 @@ import { ConfigRegistry, resolveActive, socketsOpen, insertById, insertFits, act
 let nodeId = '';
 let rank = 12;
 let insRank = 1;
-let weaponClass = '';
+/** Конкретное оружие в руках: по нему считается УРОН, а не только «влезает ли вставка». */
+let weaponBaseId = '';
+let weaponTier = '';
+let charLevel = 30;
 let slots: string[] = [];
 
 const h = (tag: string, css: string, txt = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (txt) e.textContent = txt; return e; };
@@ -115,6 +123,67 @@ function diffRows(base: unknown, after: unknown): { key: string; a: string; b: s
     .sort((x, y) => (ALWAYS.indexOf(x.key) + 1 || 9) - (ALWAYS.indexOf(y.key) + 1 || 9) || x.key.localeCompare(y.key));
 }
 
+// ── Урон: считается ТЕМИ ЖЕ функциями, что и бой ─────────────────────────────
+/**
+ * Сборка синтетического героя с выбранным оружием. Уровень нужен ради атрибутов: урон оружия
+ * масштабируется ими (`attackByType`), и без этого «Тесак на 30-м» показывал бы числа новичка.
+ */
+function heroWith(reg: ConfigRegistry, weapon: Item | undefined, level: number): SaveState {
+  const save = newBotSave(reg, reg.get('classes')[0]!.id);
+  save.level = Math.max(1, level);
+  // Очки уровней раскидываем в ВЕДУЩИЙ атрибут класса (самый крупный на старте) — иначе герой
+  // 30-го уровня стоял бы с единицами, и урон оружия вышел бы как у новичка.
+  const start = reg.get('classes')[0]!.startAttributes;
+  const main = (Object.keys(start) as (keyof typeof start)[])
+    .reduce((a, b) => (start[b] > start[a] ? b : a));
+  save.attributes[main] += (save.level - 1) * 3;
+  save.equipment.weapon = weapon;
+  return save;
+}
+
+/** Урон скилла по типам: базовый пакет оружия → форма скилла (`shapeSkillPacket`, как в движке). */
+function skillDamage(
+  reg: ConfigRegistry, save: SaveState, weapon: Item | undefined,
+  active: NonNullable<ReturnType<typeof activeAbilityOf>>, carrierRank: number,
+): { byType: Record<DamageType, { min: number; max: number }>; min: number; max: number; dps: number; rate: string } {
+  const snap = playerSnapshot(save, reg);
+  const bal = reg.get('balance');
+  const base = attackByType(snap.derived, snap.attrs, weapon, bal.weaponAttrScaling, reg.get('weapon-weights'));
+  const out = {} as Record<DamageType, { min: number; max: number }>;
+  for (const t of DAMAGE_TYPES) out[t] = { min: base[t].min, max: base[t].max };
+  let min = 0, max = 0, dps = 0, rate = '—';
+
+  if (active.category === 'attack' || active.category === 'cast') {
+    // ⚠ Стихию берём как движок: явная у способности, иначе — по имени (`abilityElementOf`).
+    const el = active.element ?? abilityElementOf(active.abilityId);
+    const shape = {
+      mult: active.damageMult * abilityRankMult(carrierRank),
+      multScope: active.multScope,
+      addElementPct: active.addElementPct,
+      convertPct: active.convertPct,
+      baseType: (weapon?.damageType ?? 'physical') as DamageType,
+      element: el as DamageType,
+    };
+    const lo = emptyPacket(), hi = emptyPacket();
+    for (const t of DAMAGE_TYPES) { lo[t] = base[t].min; hi[t] = base[t].max; }
+    shapeSkillPacket(lo, shape);
+    shapeSkillPacket(hi, shape);
+    for (const t of DAMAGE_TYPES) out[t] = { min: lo[t], max: hi[t] };
+    const avg = (x: number, y: number): number => (x + y) / 2;
+    for (const t of DAMAGE_TYPES) { min += out[t].min; max += out[t].max; }
+    if (active.category === 'attack') {
+      const r = Math.max(0.2, snap.derived.attackSpeed * active.speed);
+      dps = avg(min, max) * r;
+      rate = `${(1 / r).toFixed(2)} с/удар`;
+    } else {
+      const ct = active.castTimeSec / Math.max(0.2, snap.derived.castSpeed);
+      dps = ct > 0 ? avg(min, max) / ct : avg(min, max);
+      rate = `каст ${ct.toFixed(2)} с`;
+    }
+  }
+  return { byType: out, min, max, dps, rate };
+}
+
 // ── Страница ─────────────────────────────────────────────────────────────────
 export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unknown>): void {
   page.textContent = '';
@@ -159,10 +228,33 @@ export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unk
   insInp.style.cssText = INP + ';width:70px';
   insInp.addEventListener('change', () => { insRank = Math.max(1, Math.min(10, Number(insInp.value) || 1)); renderSkillBuildPage(page, data); });
   bar.appendChild(field('Ранг вставок', insInp));
-  const wclasses = [...new Set(tree.branches.flatMap((b) => b.weaponClasses ?? []))].sort();
-  bar.appendChild(field('Оружие в руках', sel(weaponClass,
-    [['', '— неизвестно —'], ...wclasses.map((w) => [w, w] as [string, string])],
-    (v) => { weaponClass = v; renderSkillBuildPage(page, data); })));
+  // ⭐ Оружие выбирается КОНКРЕТНОЕ, а не классом: по нему считается настоящий урон, а класс
+  // для фильтра вставок берётся из самой вещи — одна ручка вместо двух рассогласованных.
+  const weaponBases = reg.get('items.base').filter((b) => b.kind === 'weapon' && b.enabled !== false);
+  if (weaponBaseId && !weaponBases.some((b) => b.id === weaponBaseId)) weaponBaseId = '';
+  bar.appendChild(field('Оружие в руках', sel(weaponBaseId,
+    [['', '— без оружия —'], ...weaponBases.map((b) => [b.id, b.name] as [string, string])],
+    (v) => { weaponBaseId = v; renderSkillBuildPage(page, data); }, '220px')));
+  const tiersAll = [...reg.get('item-tiers')].sort((x, y) => x.minItemLevel - y.minItemLevel);
+  bar.appendChild(field('Ступень оружия', sel(weaponTier,
+    [['', '— по уровню —'], ...tiersAll.map((t) => [t.id, t.name] as [string, string])],
+    (v) => { weaponTier = v; renderSkillBuildPage(page, data); })));
+  const lvlInp = document.createElement('input');
+  lvlInp.type = 'number'; lvlInp.min = '1'; lvlInp.max = '100'; lvlInp.value = String(charLevel);
+  lvlInp.style.cssText = INP + ';width:70px';
+  lvlInp.addEventListener('change', () => { charLevel = Math.max(1, Math.min(100, Number(lvlInp.value) || 1)); renderSkillBuildPage(page, data); });
+  bar.appendChild(field('Уровень героя', lvlInp));
+
+  // Само оружие: база + ступень. Редкость намеренно обычная — аффиксы случайны, и их разброс
+  // превратил бы сравнение «до/после» в гадание вместо замера.
+  const wBase = weaponBases.find((b) => b.id === weaponBaseId);
+  let weapon: Item | undefined;
+  if (wBase) {
+    weapon = itemFromBase(wBase, reg.get('item-tiers'));
+    const wt = tiersAll.find((t) => t.id === weaponTier);
+    if (wt) weapon = retierItem(wBase, weapon, wt, { maxReqTotal: reg.get('balance').maxTotalRequirement });
+  }
+  const weaponClass = weapon?.weaponClass ?? '';
   bar.appendChild(h('div', 'color:#9aa;font-size:12px;padding-bottom:6px', `гнёзд открыто: ${open} (пороги ${reg.get('balance').skillSocketRanks.join('/')})`));
   wrap.appendChild(bar);
 
@@ -216,6 +308,59 @@ export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unk
     });
   }
   wrap.appendChild(table);
+
+  // ── УРОН: то, ради чего вставку и ставят ──────────────────────────────────
+  // Таблица полей выше показывает `damageMult` и `addElementPct` — это ВХОДЫ. Дизайнеру нужен
+  // выход: сколько урона выйдет из конкретного оружия. Считается теми же функциями, что и бой.
+  {
+    const hero = heroWith(reg, weapon, charLevel);
+    const before = skillDamage(reg, hero, weapon, pv.base, rank);
+    const after = skillDamage(reg, hero, weapon, pv.resolved.active, rank);
+    const dmgBox = h('div', 'display:flex;flex-direction:column;gap:6px');
+    dmgBox.appendChild(h('div', 'font-size:13px;color:#cfcfe0;font-weight:600', 'Урон'));
+    if (!weapon) {
+      dmgBox.appendChild(h('div', 'font-size:12px;color:#9aa', 'Выбери оружие — урон считается от него.'));
+    } else if (pv.base.category !== 'attack' && pv.base.category !== 'cast') {
+      dmgBox.appendChild(h('div', 'font-size:12px;color:#9aa', 'У этой способности прямого урона нет (аура/стойка/бафф/проклятие).'));
+    } else {
+      const t = document.createElement('table');
+      t.style.cssText = 'border-collapse:collapse;font-size:13px;min-width:520px';
+      const hd = t.insertRow();
+      for (const c of ['', 'Голый скил', 'Со вставками', 'Разница']) {
+        const th = document.createElement('th');
+        th.textContent = c;
+        th.style.cssText = 'text-align:left;padding:5px 10px;border-bottom:1px solid #2c2c3a;color:#9aa;font-weight:600';
+        hd.appendChild(th);
+      }
+      const r2 = (x: number): string => String(Math.round(x));
+      const row = (name: string, a: number, b: number, strong = false): void => {
+        const tr = t.insertRow();
+        const d = b - a;
+        const cells = [name, r2(a), r2(b), d === 0 ? '—' : `${d > 0 ? '+' : ''}${r2(d)}`];
+        cells.forEach((txt, i) => {
+          const td = tr.insertCell();
+          td.textContent = txt;
+          const good = i === 3 && d > 0, bad = i === 3 && d < 0;
+          td.style.cssText = `padding:4px 10px;border-bottom:1px solid #23232f;`
+            + `${i === 0 ? 'color:#cfcfe0;' : ''}${strong ? 'font-weight:600;' : ''}`
+            + `${good ? 'color:#8fd08f;font-weight:600' : bad ? 'color:#e88;font-weight:600' : ''}`;
+        });
+      };
+      row('Урон, среднее', (before.min + before.max) / 2, (after.min + after.max) / 2, true);
+      row('ДПС', before.dps, after.dps, true);
+      for (const dt of DAMAGE_TYPES) {
+        const a = (before.byType[dt].min + before.byType[dt].max) / 2;
+        const b = (after.byType[dt].min + after.byType[dt].max) / 2;
+        if (a < 0.5 && b < 0.5) continue;             // пустые стихии не засоряют таблицу
+        row(`  ${dt}`, a, b);
+      }
+      dmgBox.appendChild(t);
+      dmgBox.appendChild(h('div', 'font-size:11px;color:#9aa',
+        `${weapon.name} · ${before.rate} · герой ${charLevel} ур. Редкость оружия обычная: аффиксы случайны,`
+        + ' и их разброс превратил бы сравнение «до/после» в гадание вместо замера.'));
+    }
+    wrap.appendChild(dmgBox);
+  }
 
   // Проки — отдельные способности, они не видны в таблице полей носителя.
   if (pv.resolved.procs.length) {
