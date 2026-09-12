@@ -4387,6 +4387,8 @@ function renderGaitTune(): void {
   grp('руки (мах)');
   row2('база плеча (− вперёд / + назад)', POSEo, 'armSh', 'armShRun', -1.6, 1.6, 0.01);
   row2('амплитуда маха', POSEo, 'armSwing', 'armSwingRun', 0, 3, 0.01);
+  // ⚠ Потолок = предел сустава плеча (±1.7…1.9). Выше π рука заворачивается и «скачет назад».
+  one1('потолок маха плеча (предел сустава)', POSEo, 'armSwingMax', 0.2, 3.1, 0.01);
   row2('фаза маха рук (−1 зеркально)', POSEo, 'armPhase', 'armPhaseRun', -1, 1, 0.05,
     { dep: [[POSEo, 'armSwing', 'armSwingRun']], depLabel: 'амплитуда маха' });
   // ЛОКОТЬ: ровно две ручки вместо трёх. База — средний угол, амплитуда — насколько и КОГДА он гнётся
@@ -5332,7 +5334,7 @@ const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armEl
   'armPhase', 'armPhaseRun', 'shoPhase', 'shoPhaseRun', 'armElAmp', 'armElAmpRun',
   'twistSwing', 'twistSwingRun', 'twistChest', 'twistChestRun', 'twistUpper', 'twistUpperRun',
   'twistPhase', 'twistPhaseRun', 'leanIdle', 'leanWalk', 'leanSpeed', 'leanWalkRun', 'leanSpeedRun',
-  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed'] as const;
+  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax'] as const;
 const GX_KEYS = ['armDown', 'elbowBend', 'armDownRun', 'elbowBendRun'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
