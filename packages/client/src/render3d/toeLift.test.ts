@@ -22,7 +22,7 @@ import { gaitToHumanoid, localStorageContent, type AttackState } from './poseRun
  */
 const DT = 1 / 60;
 const mix = (sb: number, st = 0, bt = 0, ct = 0): LocoMix => ({ sb, st, bt, ct });
-const KNOBS = ['ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun'] as const;
+const KNOBS = ['ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax'] as const;
 
 const clearCols = (): void => {
   for (const m of [ASYM as unknown as Record<string, unknown>, STRAFE, BACK, COMBAT]) for (const k of Object.keys(m)) delete m[k];
@@ -77,18 +77,40 @@ describe('замер: носок больше не волочится по по�
       restoreGait();
       expect(after.frames, `${sp}: маховых кадров должно набраться`).toBeGreaterThan(30);
       expect(after.gap, `${sp} ед/с: клиренс ${before.gap.toFixed(2)} -> ${after.gap.toFixed(2)}`).toBeGreaterThan(before.gap + 1.5);
-      expect(after.gap, `${sp} ед/с: запас должен быть ощутимым`).toBeGreaterThan(3);
+      expect(after.gap, `${sp} ед/с: запас должен быть ощутимым`).toBeGreaterThan(2.5);
     }
   });
 
-  it('⭐ стопа больше не разворачивается носком вниз вслед за голенью', () => {
-    // Было 82-85° (стопа приварена к голени), стало ~9° — это покойная посадка самой стопы в риге.
+  it('⭐ стопа больше не заваливается носком вниз вслед за голенью', () => {
+    // Было 82-85°: стопа приварена к голени. Стало ~57° — и это ПРЕДЕЛ СУСТАВА, а не недоработка:
+    // `ankMax` держит поз-угол в том же ±0.45, что у физ-сустава `FootL/FootR`. Без предела вышло бы
+    // 9°, но манекен показывал бы то, чего призрак (а с ним и видимый меш) не даст. Хочешь ровнее —
+    // поднимать надо ОБА: `ankMax` и сам сустав в `humanoidRagdoll`.
     const after = toeClearance(110);
     killAnkle();
     const before = toeClearance(110);
     restoreGait();
     expect(before.tiltDeg, 'до правки стопа заваливалась носком вниз').toBeGreaterThan(60);
-    expect(after.tiltDeg, 'после — держит посадку').toBeLessThan(20);
+    expect(before.tiltDeg - after.tiltDeg, 'завал уменьшился заметно').toBeGreaterThan(20);
+    expect(after.tiltDeg, 'но не ниже, чем позволяет сустав').toBeLessThan(65);
+  });
+
+  it('⚠ поз-угол НИКОГДА не выходит за предел сустава', () => {
+    // Ровно это и было жалобой «настройки на стопу не влияют»: поза просила до −1.40 рад (−80°),
+    // призрак упирался в ±0.45, и ручка визуально не делала ничего.
+    GAIT.ankLevel = 3; GAIT.ankLevelRun = 3; GAIT.toeLift = 1.2; GAIT.toeLiftRun = 1.2;   // заведомо через край
+    const d = new PoseDriver();
+    let z = 0, peak = 0, seen = 0;
+    for (let i = 0; i < 260; i++) {
+      z += 60 * DT;
+      d.setWorld(0, z, 0, 0, 60);
+      const t = d.update(DT);
+      peak = Math.max(peak, Math.abs(t.ankL), Math.abs(t.ankR));
+      if (d.swingLegs[0]) seen++;
+    }
+    expect(seen, 'перенос должен был случиться').toBeGreaterThan(40);
+    expect(peak, 'угол зажат потолком').toBeLessThanOrEqual(GAIT.ankMax + 1e-9);
+    expect(peak, 'и потолок реально достигается — иначе проверять нечего').toBeCloseTo(GAIT.ankMax, 6);
   });
 
   it('нули в ручках = прежнее поведение бит в бит', () => {

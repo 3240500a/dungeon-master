@@ -1804,12 +1804,21 @@ function applyLgripPreview(): void {
  */
 const LEG_BONES = ['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot'];
 const _manGround = newGhostGround();
-function groundManikin(): (() => void) | null {
+/**
+ * ⚠ `support` ОБЯЗАТЕЛЕН В ЛОКО. Без него `groundFeet` угадывает опорность по высоте стопы
+ * (`PLANT_MAX = 6`), а маховая стопа поднимается по синусу до `liftWalk = 7` — то есть В НАЧАЛЕ И
+ * В КОНЦЕ ПЕРЕНОСА она ниже порога, признаётся опорной и КЛАДЁТСЯ ПЛОСКО. Замер: угол голеностопа
+ * 0.144 → 0.187 и −0.941 → −0.719, и стирается он ровно в тех кадрах, где подъём носка и нужен.
+ *
+ * Призрак рядом (`renderRagdollGhost`) опорность передаёт всегда — из-за этого манекен показывал
+ * НЕ ТО, что игра, то есть ровно то, ради чего редактор и существует.
+ */
+function groundManikin(support?: [boolean, boolean]): (() => void) | null {
   if (!footGround) return null;
   const save = LEG_BONES.map((n) => human.bones.get(n)?.quaternion.clone() ?? null);
   const rootY = human.root.position.y;
   _manGround.off = 0;                                   // одноразовый шаг: интегратор с нуля…
-  groundFeet(human, human.hipsWorldY(), _manGround, 1e3, () => 0);   // …и большой dt → полное схождение за один вызов
+  groundFeet(human, human.hipsWorldY(), _manGround, 1e3, () => 0, support);   // …и большой dt → полное схождение за один вызов
   return () => {
     LEG_BONES.forEach((n, i) => { const b = human.bones.get(n), q = save[i]; if (b && q) b.quaternion.copy(q); });
     human.root.position.y = rootY; human.root.updateMatrixWorld(true);
@@ -1839,7 +1848,10 @@ let manGroundView = getPref('floorMannequin', true);
 function groundManikinForView(): (() => void) | null {
   if (!manGroundView || !physOn || !ghostHuman) return null;
   const y0 = human.root.position.y;
-  const un = groundManikin(); if (!un) return null;
+  // ⚠ `lp()` в конструкторе зовёт measureStance → human.reset() и сбил бы позу в Позы/Анимации,
+  // поэтому спрашиваем опорность ТОЛЬКО в локо — тот же гейт, что у призрака.
+  const sw = locoOn ? lp().driver.swingLegs : null;
+  const un = groundManikin(sw ? [!sw[0], !sw[1]] : undefined); if (!un) return null;
   const dy = human.root.position.y - y0;
   // РУЧКИ ЦЕЛЕЙ ЕДУТ ВМЕСТЕ С КОСТЬЮ: они стоят на `e.target` в АВТОРСКОМ пространстве,
   // и без этого сдвига синяя ручка оторвалась бы от кисти на те же 1.4u. Полюсные и плечевые НЕ трогаем:
@@ -1850,7 +1862,8 @@ function groundManikinForView(): (() => void) | null {
 }
 
 function readPoseFull(): Pose {
-  const ungroundManikin = groundManikin();   // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу, потом возвращаем манекен как был
+  const swR = locoOn ? lp().driver.swingLegs : null;   // запись кадра в локо — та же опорность, что на экране
+  const ungroundManikin = groundManikin(swR ? [!swR[0], !swR[1]] : undefined);   // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу, потом возвращаем манекен как был
   const p = human.readPose();
   delete p['LeftBreast']; delete p['RightBreast'];           // jiggle груди — рантайм, не пишем в позу
 
@@ -4324,6 +4337,8 @@ function renderGaitTune(): void {
   row2('подъём носка поверх удержания', GAITo, 'toeLift', 'toeLiftRun', 0, 1.2, 0.01);
   row2('где пик подъёма (0.5 = середина)', GAITo, 'toeLiftPhase', 'toeLiftPhaseRun', 0.05, 0.95, 0.01,
     { dep: [[GAITo, 'toeLift', 'toeLiftRun']], depLabel: 'подъём носка' });
+  // ⚠ Потолок = предел сустава физ-рига (±0.45). Выше — манекен покажет то, чего призрак не даст.
+  one1('потолок голеностопа (предел сустава)', GAITo, 'ankMax', 0.05, 1.2, 0.01);
   row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -20, 30, 0.25);
   row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 3, 0.02);
   row2('предел кроссовера', GAITo, 'crossClamp', 'crossClampRun', 0, 99, 1);
@@ -5205,7 +5220,7 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
-  'ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+  'ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
 // читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',
