@@ -1,4 +1,4 @@
-import { shopBuyPrice, canSalvageItem, upgradeCost, repairCost, describeCost, canAfford, nextTierOf } from '@dm/shared';
+import { shopBuyPrice, canSalvageItem, upgradeCost, repairCost, describeCost, canAffordBoth, nextTierOf } from '@dm/shared';
 import type { PanelFactory } from '../../ui/domUi.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
 import { COLORS, mk, button, itemSlot, attachTooltip, tabsBar } from '../../ui/kit.js';
@@ -13,12 +13,18 @@ import { renderShopGrid } from './shopGrid.js';
  * Режим/вкладка живут в замыкании фабрики (переживают перерисовку панели). Зелья — в лавке (shopPanel).
  */
 export const forgePanel: PanelFactory = (app) => {
+  // Сырьё живёт в СУНДУКЕ аккаунта, а его слепок приходит только по запросу: без этой строки
+  // кузница, открытая первой, считала бы кошелёк пустым и гасила все кнопки.
+  app.sendCmd({ cmd: 'stashOpen' });
   let mode: 'upgrade' | 'buy' = 'upgrade';
   let tab: ShopCat = 'melee';
   return {
     title: 'Кузница',
     render(body) {
       const state = app.state!;
+      // Кузница тратит СУМКУ + СУНДУК — кнопки должны считать так же, иначе они гаснут
+      // при полной сумке сырья. Сундук мог ещё не доехать — тогда считаем только сумку.
+      const stashMats = app.stash?.materials ?? {};
       const rarities = app.config.get('rarities');
       const prices = app.config.get('balance').forgePrices;
 
@@ -71,7 +77,8 @@ export const forgePanel: PanelFactory = (app) => {
           // видеть, куда шагает, а не жать «улучшить» вслепую.
           const mats = upgradeCost(app.config, item);
           const nt = nextTierOf(app.config, item);
-          const upOk = !!nt && Object.keys(mats).length > 0 && state.save.gold >= prices.upgradeTier && canAfford(state.save, mats);
+          const upOk = !!nt && Object.keys(mats).length > 0 && state.save.gold >= prices.upgradeTier
+            && canAffordBoth(state.save.inventory, stashMats, mats);
           const up = button(nt ? `До «${nt.name}» (${prices.upgradeTier})` : 'На потолке',
             () => app.sendCmd({ cmd: 'forgeUpgrade', uid: item.uid }), 'default', !upOk || !!item.broken);
           attachTooltip(up, () => !nt
@@ -90,7 +97,8 @@ export const forgePanel: PanelFactory = (app) => {
           // Сломанное сначала чинится: улучшать его нельзя, разобрать — можно (в этом и выбор).
           if (item.broken) {
             const rc = repairCost(app.config, item);
-            const rOk = state.save.gold >= prices.repairBroken && (!Object.keys(rc).length || canAfford(state.save, rc));
+            const rOk = state.save.gold >= prices.repairBroken
+              && (!Object.keys(rc).length || canAffordBoth(state.save.inventory, stashMats, rc));
             const rp = button(`Починить (${prices.repairBroken})`,
               () => app.sendCmd({ cmd: 'forgeRepair', uid: item.uid }), 'default', !rOk);
             attachTooltip(rp, () => `Цена: ${prices.repairBroken} золота` + (Object.keys(rc).length ? `<br>${describeCost(app.config, rc)}` : ''));

@@ -282,7 +282,7 @@ export class Room implements Tickable {
     if (info) {
       // ШТРАФ ТОЛЬКО ЗА БРОШЕННЫЙ ЗАБЕГ. Стоять в городе и отключиться — не преступление;
       // без этой проверки уже погибший игрок платил бы второй раз за ту же смерть.
-      if (info.save.run) applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty);
+      if (info.save.run) applyDeathPenalty(info.save, this.cfg.get('balance').deathPenalty, createRng((Date.now() & 0xffffff) || 1));
       info.save.run = undefined;   // «Завершить» обязано завершать: иначе модалка выскакивала снова
       void this.persistDisconnected(charId, info);
       this.disconnected.delete(charId);
@@ -330,7 +330,7 @@ export class Room implements Tickable {
   private finalizeDisconnectedAsDead(): void {
     const penalty = this.cfg.get('balance').deathPenalty;
     for (const [charId, info] of this.disconnected) {
-      if (info.save.run) applyDeathPenalty(info.save, penalty);   // только за брошенный забег, см. `abandonAsDead`
+      if (info.save.run) applyDeathPenalty(info.save, penalty, createRng((Date.now() & 0xffffff) || 1));   // только за брошенный забег, см. `abandonAsDead`
       info.save.run = undefined;   // погиб → забег окончен; без этого следующий вход снова предлагал «продолжить»
       void this.persistDisconnected(charId, info);
       this.hooks.onUngrace(charId);
@@ -819,7 +819,7 @@ export class Room implements Tickable {
     const p = this.session.world.players[pid];
     const c = this.clients.get(pid);
     if (!p || !c) return;
-    const summary = applyDeathPenalty(p.save, this.cfg.get('balance').deathPenalty);
+    const summary = applyDeathPenalty(p.save, this.cfg.get('balance').deathPenalty, createRng((Date.now() & 0xffffff) || 1));
     touched.add(pid); // отправить урезанные золото/инвентарь через saveUpdate
 
     // Соло = «вайп» на 1 игрока. Вайп → авто-возврат в город ЧЕРЕЗ таймер (окно смерти видно ~4с;

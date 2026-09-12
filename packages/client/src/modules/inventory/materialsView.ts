@@ -1,6 +1,7 @@
 import type { App } from '../../core/app.js';
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { CELL, GAP } from './heldItem.js';
+import { carriedMaterials } from '@dm/shared';
 
 /**
  * СКЛАД МАТЕРИАЛОВ — вторая вкладка панели инвентаря, В ТОМ ЖЕ месте, что и сетка вещей.
@@ -41,8 +42,13 @@ const FAMILY_LABEL: Record<string, string> = {
   plate: 'Пластины',
 };
 
-export function materialsView(app: App): HTMLElement {
-  const wallet = app.state!.save.materials ?? {};
+/**
+ * @param stashWallet сырьё СУНДУКА аккаунта (общее для всех героев). Не передано — показываем
+ *        только то, что игрок несёт в сумке: панель инвентаря в забеге сундука не видит.
+ */
+export function materialsView(app: App, stashWallet?: Record<string, number>): HTMLElement {
+  const wallet = stashWallet ?? {};
+  const carried = carriedMaterials(app.state!.save.inventory);
   const defs = app.config.get('craft-materials').filter((d) => d.enabled);
 
   const box = mk('div');
@@ -70,7 +76,11 @@ export function materialsView(app: App): HTMLElement {
     row.append(mk('div', `width:72px;font-size:11px;color:${COLORS.dim};text-align:right;padding-right:4px`,
       FAMILY_LABEL[fam] ?? fam));
     for (const d of defs.filter((x) => x.family === fam).sort((a, b) => a.tier - b.tier)) {
-      const have = wallet[d.id] ?? 0;
+      // ⭐ Две цифры в клетке: сколько лежит в сундуке и сколько НЕСЁШЬ. Несомое под угрозой
+      // смерти, и игрок должен видеть это, не открывая инвентарь.
+      const inStash = wallet[d.id] ?? 0;
+      const onHand = carried[d.id] ?? 0;
+      const have = inStash + onHand;
       const hex = TIER_HEX[Math.min(TIER_HEX.length, Math.max(1, d.tier)) - 1]!;
       const cell = mk('div',
         `width:72px;height:${CELL}px;box-sizing:border-box;border-radius:6px;` +
@@ -78,9 +88,11 @@ export function materialsView(app: App): HTMLElement {
         `background:${COLORS.panel2};border:1px solid ${have > 0 ? `${hex}88` : COLORS.border};` +
         `color:${have > 0 ? hex : '#4a4a4a'}`);
       cell.append(mk('span', `width:9px;height:9px;border-radius:2px;display:inline-block;background:${have > 0 ? hex : '#3a3a3a'}`));
-      cell.append(mk('b', '', String(have)));
+      cell.append(mk('b', '', String(inStash)));
+      if (onHand > 0) cell.append(mk('span', 'font-size:10px;color:#7fd07f', `+${onHand}`));
       attachTooltip(cell, () =>
-        `<b style="color:${hex}">${d.name}</b><br>В кошельке ${have}` +
+        `<b style="color:${hex}">${d.name}</b><br>В сундуке ${inStash}`
+        + (onHand > 0 ? `<br><span style="color:#7fd07f">В сумке ${onHand} — потеряешь часть при смерти</span>` : '') +
         `<br>${NEEDED_FOR[d.tier] ?? ''}` +
         (d.sellPrice > 0 ? `<br>Продажа: ${d.sellPrice} за штуку` : ''));
       row.append(cell);
@@ -93,6 +105,6 @@ export function materialsView(app: App): HTMLElement {
 
 /** Сколько всего материалов в кошельке — для подписи на вкладке. */
 export function materialsTotal(app: App): number {
-  const wallet = app.state!.save.materials ?? {};
-  return Object.values(wallet).reduce((a, b) => a + b, 0);
+  // С ч7 сырьё в сейве больше не хранится: считаем ТО, ЧТО ИГРОК НЕСЁТ в сумке.
+  return Object.values(carriedMaterials(app.state!.save.inventory)).reduce((a, b) => a + b, 0);
 }

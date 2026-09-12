@@ -62,6 +62,13 @@ function itemEl(item: Item, h: GridHandlers): HTMLElement {
     `background:${COLORS.panel};display:flex;align-items:center;justify-content:center;text-align:center;` +
     `font-size:12px;font-weight:500;cursor:pointer;line-height:1.1;overflow:hidden;padding:2px;position:relative`);
   el.textContent = glyphOf(item);
+  // ⚠ Количество стека — в ВЕРХНЕМ углу: нижний занят ценой магазина (`badge`), и в одной
+  // ячейке они бы столкнулись.
+  if (item.kind === 'material' && (item.count ?? 1) > 1) {
+    el.append(mk('div',
+      'position:absolute;right:1px;top:0;font-size:9.5px;color:#d8d8e0;' +
+      'background:rgba(7,9,13,0.72);padding:0 3px;border-radius:3px;pointer-events:none', String(item.count)));
+  }
   const b = h.badge?.(item);
   if (b) {
     el.append(mk('div',

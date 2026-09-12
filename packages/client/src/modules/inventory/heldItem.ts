@@ -41,6 +41,8 @@ export function setLastPointer(x: number, y: number): void { lastPointer = { x, 
 
 /** Глиф-подпись предмета в клетке/гхосте: имя для широких (≥2), иначе тип/зелье. */
 export function glyphOf(item: Item): string {
+  // Стек подписан количеством — иначе взятый на курсор визуально «теряет» его.
+  if (item.kind === 'material') return `${item.count ?? 1}`;
   if (item.gridW >= 2) return item.name;
   return item.kind === 'consumable' ? '🧪' : item.slot ? GLYPH[item.slot] ?? '·' : '·';
 }

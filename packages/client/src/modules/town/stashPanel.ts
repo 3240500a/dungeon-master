@@ -5,7 +5,9 @@ import { itemsOverlapping, type Dims } from '../inventory/grid.js';
 import { renderGrid } from '../inventory/gridView.js';
 import { getHeld, beginHold, clearHeld, resolveHeldOnClose } from '../inventory/heldItem.js';
 import { itemTooltipHtml } from '../inventory/itemView.js';
-import { COLORS, mk, tabsBar } from '../../ui/kit.js';
+import { COLORS, mk, button, tabsBar } from '../../ui/kit.js';
+import { materialsView } from '../inventory/materialsView.js';
+import { carriedMaterials } from '@dm/shared';
 
 /**
  * Панель ОБЩЕГО (на аккаунт) сундука: вкладки + сетка активной вкладки. Раскладка авторитетна
@@ -14,7 +16,9 @@ import { COLORS, mk, tabsBar } from '../../ui/kit.js';
  * Сундук доступен всем героям аккаунта (перенос шмота между персонажами).
  */
 export const stashPanel: PanelFactory = (app) => {
-  let activeTab = 0;
+  // ⚠ Ключ вкладки теперь НЕ только число: у ресурсов он строковый и живёт ВНЕ `tabCount`,
+  // иначе сервер выделил бы под неё пустую сетку, а `stashMove dst:N` стал бы валиден для неё.
+  let activeTab: number | 'mats' = 0;
   app.sendCmd({ cmd: 'stashOpen' }); // запросить актуальный слепок при открытии
 
   return {
@@ -23,16 +27,36 @@ export const stashPanel: PanelFactory = (app) => {
       const s = app.stash;
       if (!s) { body.append(mk('div', `color:${COLORS.dim};font-size:13px`, 'Загрузка сундука…')); return; }
       const tabCount = s.tabCount || s.tabs.length || 1;
-      if (activeTab >= tabCount) activeTab = 0;
+      if (typeof activeTab === 'number' && activeTab >= tabCount) activeTab = 0;
 
-      const tabs = Array.from({ length: tabCount }, (_, i) => [String(i), `Вкладка ${i + 1}`] as const);
-      body.append(tabsBar(tabs, String(activeTab), (key) => { activeTab = Number(key); app.bus.emit('state:changed', {}); }));
+      const carried = Object.values(carriedMaterials(app.state!.save.inventory)).reduce((a, b) => a + b, 0);
+      const tabs = [
+        ...Array.from({ length: tabCount }, (_, i) => [String(i), `Вкладка ${i + 1}`] as const),
+        ['mats', carried > 0 ? `Ресурсы (+${carried})` : 'Ресурсы'] as const,
+      ];
+      body.append(tabsBar(tabs, String(activeTab), (key) => {
+        activeTab = key === 'mats' ? 'mats' : Number(key);
+        app.bus.emit('state:changed', {});
+      }));
+
+      if (activeTab === 'mats') {
+        body.append(materialsView(app, s.materials));
+        // ⭐ Сдача ОДНОЙ кнопкой: раскладывать полтора десятка стеков руками после каждого забега —
+        // это не жанровая норма, а лишняя работа (в PoE ровно для этого сделана вкладка валюты).
+        const row = mk('div', 'margin-top:10px');
+        row.append(button(carried > 0 ? `Сдать всё сырьё (${carried})` : 'В сумке сырья нет',
+          () => app.sendCmd({ cmd: 'depositMaterials' }), 'primary', carried <= 0));
+        body.append(row);
+        body.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-top:8px`,
+          'Сырьё общее для всех твоих героев. Кузница тратит сперва из сумки, потом отсюда.'));
+        return;
+      }
 
       const dims: Dims = { cols: s.cols, rows: s.rows };
       const items = s.tabs[activeTab] ?? [];
       body.append(renderGrid(items, dims, {
-        onPick: (col, row) => pick(app, items, col, row, activeTab),
-        onPlace: (col, row) => place(app, dims, col, row, activeTab),
+        onPick: (col, row) => pick(app, items, col, row, activeTab as number),
+        onPlace: (col, row) => place(app, dims, col, row, activeTab as number),
         tooltip: (item) => itemTooltipHtml(item),
       }));
       body.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-top:8px`,
