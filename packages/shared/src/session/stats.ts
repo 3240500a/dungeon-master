@@ -86,6 +86,8 @@ export interface LootBreakdown {
   materialsByTier: Record<string, number>;
   /** Сундуков открыто. */
   chestsOpened: number;
+  /** Единиц материалов, полученных РАЗБОРОМ в поле (остальное — с монстров). */
+  salvagedInField: number;
 }
 
 export interface RunReport {
@@ -103,6 +105,11 @@ export interface RunReport {
   goldSpent: number;    // потрачено в магазине
   itemsBought: number;  // куплено в магазине
   itemsFound: number;
+  /** Починено сломанных трофеев у кузнеца — и сколько раз поднят тир. Главные стоки золота. */
+  itemsRepaired: number;
+  itemsUpgraded: number;
+  /** Золото, вложенное в пассивные узлы (цена растёт геометрически) — крупный тихий сток. */
+  goldOnPassives: number;
   xpEarned: number;
   killsPerHour: number;
   xpPerHour: number;

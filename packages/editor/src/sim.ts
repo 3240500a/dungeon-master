@@ -224,9 +224,12 @@ function renderRunReport(r: RunReport, ms: number, rarities: { id: string; color
     <div style="font-size:12px;color:#8a8a9a;margin:2px 0">по слоту <span style="color:#666">(пустой слот = источника нет)</span>:</div><div style="margin-bottom:6px">${chips(r.loot.bySlot)}</div>
     <div style="font-size:12px;color:#8a8a9a;margin:2px 0">откуда:</div><div style="margin-bottom:6px">${chips({
       'с трупа': r.loot.fromMonsters, 'из сундуков': r.loot.fromChests, 'сломанных': r.loot.broken, 'сундуков открыто': r.loot.chestsOpened })}</div>
+    <div style="font-size:12px;color:#8a8a9a;margin:2px 0">кузница <span style="color:#666">(главный сток золота)</span>:</div><div style="margin-bottom:6px">${chips({
+      'починено': r.itemsRepaired, 'поднято тиров': r.itemsUpgraded, 'золота в пассивки': r.goldOnPassives })}</div>
     <div style="border-top:1px solid #2c2c3a;margin:12px 0 8px;padding-top:8px;color:#b8b8c8;font-weight:bold">Материалы за забег</div>
     <div style="font-size:12px;color:#8a8a9a;margin:2px 0">по ступеням:</div><div style="margin-bottom:6px">${chips(r.loot.materialsByTier)}</div>
-    <div style="font-size:12px;color:#8a8a9a;margin:2px 0">по видам:</div><div>${chips(r.loot.materials)}</div>
+    <div style="font-size:12px;color:#8a8a9a;margin:2px 0">по видам:</div><div style="margin-bottom:6px">${chips(r.loot.materials)}</div>
+    <div style="font-size:12px;color:#8a8a9a">из них разбором в поле: <b>${r.loot.salvagedInField}</b> <span style="color:#666">(остальное — с монстров)</span></div>
     <div style="border-top:1px solid #2c2c3a;margin:12px 0 8px;padding-top:8px;color:#b8b8c8;font-weight:bold">Финальный билд</div>
     <div style="font-size:13px;margin:4px 0">${attrRow}</div>
     ${derived}

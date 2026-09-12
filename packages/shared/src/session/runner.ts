@@ -14,8 +14,9 @@ import type { RunConfig, RunNode, RunPlan } from '../dungeon/run/types.js';
 import type { DungeonLayout } from '../dungeon/floorCommon.js';
 import { applyDeathPenalty } from '../economy/death.js';
 import { itemFromBaseId } from '../formulas/itemgen.js';
+import type { Item } from '../types/items.js';
 import { newBotSave, classProfileAttr, allocateAttributes } from '../sim/playerBot.js';
-import { considerDrop, visitShop, allocateSkillsAndPassives } from '../sim/economy.js';
+import { considerDrop, visitShop, visitForge, allocateSkillsAndPassives } from '../sim/economy.js';
 import type { BuildPolicy } from '../sim/types.js';
 import { GameSession } from './session.js';
 import { BotController, type BotTier, type BotStyle } from './bot.js';
@@ -130,6 +131,10 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   let fromChests = 0;
   let brokenItems = 0;
   let chestsOpened = 0;
+  let matsGained = 0;   // единиц материалов с РАЗБОРА в поле (с монстров считается по событиям)
+  let repaired = 0;
+  let upgraded = 0;
+  let goldOnPassives = 0;
   let curFloor = 0;
   let deepest = 0;
   let floorsCompleted = 0;
@@ -139,8 +144,20 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const stop = (): boolean =>
     save.level >= settings.targetLevel || totalTime >= settings.maxHours * 3600 || deaths >= maxDeaths;
 
+  /**
+   * Разбор сумки на ходу. ⚠ Сломанный АПГРЕЙД не перерабатываем: его несут к кузнецу,
+   * и именно за это платят золотом — без этого главный сток экономики в симе не работает.
+   */
   const drainInventory = (): void => {
-    while (save.inventory.length) goldSold += considerDrop(reg, save, save.inventory.pop()!, settings.build).sold;
+    const keep: Item[] = [];
+    while (save.inventory.length) {
+      const it = save.inventory.pop()!;
+      const r = considerDrop(reg, save, it, settings.build);
+      goldSold += r.sold;
+      matsGained += r.salvaged ?? 0;
+      if (r.kept) keep.push(it);
+    }
+    save.inventory = keep;
   };
   const sampleCurve = (): void => {
     if (totalTime - lastCurveT >= 60) {
@@ -151,7 +168,11 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   /** Распределение очков за уровни (атрибуты + скиллы/пассивы) — дёшево, зовём после каждого этажа. */
   const allocate = (): void => {
     allocateAttributes(save, profile, settings.build, rng);
+    // ⚠ Пассивки покупаются ЗА ЗОЛОТО (цена узла растёт геометрически), и до этого их трата
+    // нигде не учитывалась: отчёт показывал, будто бот копит золото, хотя он его тратит.
+    const before = save.gold;
     allocateSkillsAndPassives(reg, save, settings.build, rng);
+    goldOnPassives += Math.max(0, before - save.gold);
   };
   const itemsBase = reg.get('items.base');
   /** Пополняет пояс лечебными зельями (у реального игрока пояс всегда полон перед вылазкой). */
@@ -160,6 +181,9 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
   const doTown = (): void => {
     allocate();
     for (let k = 0; k < 2; k++) { const r = visitShop(reg, save, save.level, rng, settings.build); goldSpent += r.spent; goldSold += r.sold; itemsBought += r.bought.length; }
+    // Кузница ПОСЛЕ магазина: чинить и качать имеет смысл то, что уже отобрано как лучшее.
+    const f = visitForge(reg, save, settings.build);
+    goldSpent += f.spent; repaired += f.repaired; upgraded += f.upgraded;
     stockBelt();
   };
 
@@ -276,6 +300,9 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
     goldSpent,
     itemsBought,
     itemsFound: items,
+    itemsRepaired: repaired,
+    itemsUpgraded: upgraded,
+    goldOnPassives,
     xpEarned: xp,
     killsPerHour: hours > 0 ? Math.round(kills / hours) : 0,
     xpPerHour: hours > 0 ? Math.round(xp / hours) : 0,
@@ -290,6 +317,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
       materials,
       materialsByTier: tierSums(reg, materials),
       chestsOpened,
+      salvagedInField: matsGained,
     },
     levelCurve: curve,
     finalBuild: buildSnapshot(reg, save),

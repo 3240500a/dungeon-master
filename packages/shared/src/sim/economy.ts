@@ -1,6 +1,11 @@
 import { ConfigRegistry } from '../config/registry.js';
 import { generateItem } from '../formulas/itemgen.js';
 import { meetsRequirements } from '../formulas/stats.js';
+import { createRng } from '../formulas/rng.js';
+import { nextTier, retierItem } from '../formulas/itemgen.js';
+import { totalMaterials } from '../economy/materials.js';
+import { forgeRepair, forgeUpgrade, fieldSalvage as doFieldSalvage } from '../economy/townActions.js';
+import type { EquipSlot } from '../types/items.js';
 import { estimateAttack } from '../formulas/playerCombat.js';
 import type { Rng } from '../formulas/rng.js';
 import type { StatModifier } from '../types/attributes.js';
@@ -92,7 +97,14 @@ export function scoreItem(reg: ConfigRegistry, save: SaveState, item: Item, poli
 }
 
 /** Итог рассмотрения дропа: надет ли + сколько золота выручено с продажи (для отчёта забега). */
-export interface DropResult { equipped: boolean; sold: number; }
+export interface DropResult {
+  equipped: boolean;
+  sold: number;
+  /** Оставлено в сумке (сломанный апгрейд — понесём чинить в город). */
+  kept?: boolean;
+  /** Сколько единиц материалов вышло при разборе на месте. */
+  salvaged?: number;
+}
 
 /**
  * Рассматривает подобранный предмет: если по скору лучше надетого и проходит
@@ -100,20 +112,109 @@ export interface DropResult { equipped: boolean; sold: number; }
  */
 export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, policy: BuildPolicy): DropResult {
   const rarities = reg.get('rarities');
+  const better = (it: Item): boolean => {
+    if (!it.slot) return false;
+    const cur = save.equipment[it.slot];
+    return scoreItem(reg, save, it, policy) > (cur ? scoreItem(reg, save, cur, policy) : -Infinity);
+  };
+
+  // ⚠ СЛОМАННОЕ НАДЕТЬ НЕЛЬЗЯ (Ч4). Раньше бот его спокойно «экипировал» — сим завышал силу
+  // персонажа и не тратил ни золота, ни материалов на починку, то есть врал в обе стороны.
+  if (item.broken) {
+    // Стоящее — несём домой чинить (в городе `visitForge`), остальное перерабатываем НА МЕСТЕ.
+    if (item.slot && meetsRequirements(item, save.attributes) && better(item)) {
+      return { equipped: false, sold: 0, kept: true };
+    }
+    return { equipped: false, sold: 0, salvaged: fieldSalvage(reg, save, item) };
+  }
+
   // Расходники бот не экипирует — сразу в золото (нет слота).
   if (!item.slot || !meetsRequirements(item, save.attributes)) {
     const sold = sellValue(item, rarities); save.gold += sold;
     return { equipped: false, sold };
   }
-  const cur = save.equipment[item.slot];
-  const curScore = cur ? scoreItem(reg, save, cur, policy) : -Infinity;
-  if (scoreItem(reg, save, item, policy) > curScore) {
-    const sold = cur ? sellValue(cur, rarities) : 0; if (cur) save.gold += sold;
+  if (better(item)) {
+    const cur = save.equipment[item.slot];
+    // ⚠ Заменённую вещь НЕ продаём вслепую: разобрать её на месте выгоднее по смыслу игры
+    // (материалы дефицитны, золото — нет), а уники разбору не поддаются вовсе.
+    const sold = cur ? sellOrSalvage(reg, save, cur) : 0;
     save.equipment[item.slot] = item;
     return { equipped: true, sold };
   }
-  const sold = sellValue(item, rarities); save.gold += sold;
-  return { equipped: false, sold };
+  return { equipped: false, sold: sellOrSalvage(reg, save, item) };
+}
+
+/**
+ * ⭐ Ненужная вещь идёт В РАЗБОР, а не в продажу — это и есть задуманная петля: «проще разобрать
+ * сразу, чем тащить хлам домой». Продаём только то, что разобрать нельзя (уники, расходники):
+ * иначе бот копил бы золото, которого в игре и так избыток, и не копил бы материалы.
+ * Возвращает выручку золотом (0, если ушло в материалы).
+ */
+function sellOrSalvage(reg: ConfigRegistry, save: SaveState, item: Item): number {
+  if (fieldSalvage(reg, save, item) > 0) return 0;
+  const sold = sellValue(item, reg.get('rarities'));
+  save.gold += sold;
+  return sold;
+}
+
+/** Разбор на месте через АВТОРИТЕТНОЕ действие: цены и правила одни с игрой. Сколько единиц вышло. */
+function fieldSalvage(reg: ConfigRegistry, save: SaveState, item: Item): number {
+  const before = totalMaterials(save);
+  save.inventory.push(item);
+  const r = doFieldSalvage(reg, save, item.uid, createRng(((item.uid.length * 2654435761) ^ save.gold) >>> 0 || 1));
+  if (!r.ok) { save.inventory = save.inventory.filter((i) => i.uid !== item.uid); return 0; }
+  return totalMaterials(save) - before;
+}
+
+/** Итог похода в кузницу: сколько золота и материалов ушло, что починено и улучшено. */
+export interface ForgeResult { spent: number; repaired: number; upgraded: number; }
+
+/**
+ * ⭐ КУЗНИЦА — главный сток золота новой экономики, и до этого бот в неё не заходил вовсе.
+ *
+ * Сперва чиним принесённое (сломанное надеть нельзя), потом качаем тир надетого, пока хватает
+ * золота и материалов. Обе операции — АВТОРИТЕТНЫЕ действия игры, а не копия их логики:
+ * иначе цены в симе и в игре разойдутся, и балансировать будет нечего.
+ */
+export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPolicy): ForgeResult {
+  const out: ForgeResult = { spent: 0, repaired: 0, upgraded: 0 };
+  // 1. Починка принесённого: чиним и надеваем, если лучше текущего.
+  for (const item of [...save.inventory]) {
+    if (!item.broken || !item.slot) continue;
+    const gold0 = save.gold;
+    if (!forgeRepair(reg, save, item.uid).ok) continue;
+    out.spent += gold0 - save.gold;
+    out.repaired++;
+    const cur = save.equipment[item.slot];
+    if (scoreItem(reg, save, item, policy) > (cur ? scoreItem(reg, save, cur, policy) : -Infinity)) {
+      save.inventory = save.inventory.filter((i) => i.uid !== item.uid);
+      save.equipment[item.slot] = item;
+      if (cur) sellOrSalvage(reg, save, cur);
+    }
+  }
+  // 2. Подъём тира надетого — по одному шагу на слот за визит (как сделал бы игрок).
+  for (const [slot, item] of Object.entries(save.equipment) as [EquipSlot, Item | undefined][]) {
+    if (!item) continue;
+    const base = reg.get('items.base').find((b) => b.id === item.baseId);
+    const tier = base ? nextTier(reg.get('item-tiers'), base, item.tier) : undefined;
+    if (!base || !tier) continue;
+    // ⚠ Проверяем НОСИБЕЛЬНОСТЬ ДО улучшения: требования растут с тиром, и «прокачал и снял»
+    // было бы чистым убытком. Скидка кузницы уже учтена в `retierItem`.
+    const after = retierItem(base, item, tier, {
+      reqDiscount: reg.get('balance').forgePrices.upgradeReqDiscount,
+      maxReqTotal: reg.get('balance').maxTotalRequirement,
+    });
+    if (!meetsRequirements(after, save.attributes)) continue;
+    const gold0 = save.gold;
+    save.inventory.push(item);
+    const ok = forgeUpgrade(reg, save, item.uid).ok;
+    save.inventory = save.inventory.filter((i) => i.uid !== item.uid);
+    if (!ok) continue;
+    save.equipment[slot] = item;  // `forgeUpgrade` мутирует объект на месте
+    out.spent += gold0 - save.gold;
+    out.upgraded++;
+  }
+  return out;
 }
 
 /** Итог похода в магазин: потрачено на покупки / выручено с продажи заменённого / что куплено. */
