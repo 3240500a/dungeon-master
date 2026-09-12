@@ -41,7 +41,7 @@ import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey } from './poseServer.js';
@@ -3636,9 +3636,49 @@ function clipList(list: Clip[]): void {
 let clipFilter = '';
 let clipKindF: 'все' | ClipKind = (ui.clipKind as 'все' | ClipKind) ?? 'все';
 let clipSort: 'name' | 'kind' | 'len' = (ui.clipSort as 'name' | 'kind' | 'len') ?? 'name';
+/**
+ * ЧТО ИГРА РЕАЛЬНО СЫГРАЕТ НА ЭТОМ КЛЮЧЕ ОРУЖИЯ.
+ *
+ * Жалоба, из которой это выросло: «сделал стойку и удар мечом, взял щит — удар пропадает». Он не
+ * пропадал: игра ищет удары по ЦЕПОЧКЕ `sword+shield → sword` и находит их там же. Пустым был
+ * СПИСОК В РЕДАКТОРЕ — он фильтровал строго по точному ключу, и автор видел ноль клипов.
+ *
+ * ⚠ Наследование ВСЁ-ИЛИ-НИЧЕГО: есть хоть один свой `hit_` на точном ключе — игра берёт ТОЛЬКО
+ * их, а унаследованные не подмешивает. Поэтому «добавлю один удар со щитом» тихо отключает
+ * остальные, и об этом здесь написано прямо.
+ */
+function inheritedHits(): { from: string; clips: Clip[] } | null {
+  const mine = library.filter((c) => c.character === curCharId && c.weapon === weapon && c.name.startsWith('hit_'));
+  if (mine.length) return null;                       // свои есть → игра возьмёт их, наследовать нечего
+  for (const cand of weaponChain(weapon).slice(1)) {
+    const set = library.filter((c) => c.character === curCharId && c.weapon === cand && c.name.startsWith('hit_'));
+    if (set.length) return { from: cand, clips: set.slice().sort((a, b) => a.name.localeCompare(b.name)) };
+  }
+  return null;
+}
+
 function clipSection(): void {
   const list = clipsHere();
   const info = el('div', 'color:#9ae6a0;margin-bottom:4px'); info.textContent = `${curChar().name} · ${weapon} · клипов: ${list.length}`; body.append(info);
+  const inh = inheritedHits();
+  if (inh) {
+    const b = el('div', 'margin:2px 0 6px;padding:4px 6px;border:1px solid #3f5a33;border-radius:4px;background:#1a2016;font-size:10px;color:#9ae6a0');
+    const t = el('div', ''); t.textContent = `Удары НАСЛЕДУЮТСЯ от «${inh.from}»: ${inh.clips.map((c) => c.name).join(', ')}`;
+    const h = el('div', 'color:#7a869e;margin-top:2px');
+    h.textContent = 'Своих ударов на этом ключе нет — игра сыграет эти. Щит/вторая рука подмешиваются поверх, переписывать удары не нужно.';
+    b.append(t, h);
+    b.append(pbtn('сделать свои копии (отвяжет от «' + inh.from + '»)', () => {
+      if (!confirm(`Скопировать ${inh.clips.length} удар(ов) на «${weapon}»?\n\nПосле этого игра перестанет брать удары «${inh.from}» — правки там сюда доезжать НЕ БУДУТ.`)) return;
+      histLib('копии ударов на ' + weapon, () => {
+        for (const c of inh.clips) {
+          const nm = retargetClipName(c.name, c.weapon, weapon);
+          putClip({ name: nm, character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }, 'replace');
+        }
+        saveLib(); refreshAll();
+      });
+    }));
+    body.append(b);
+  }
   const row1 = el('div', ''); body.append(row1);
   const nameFree = (nm: string): string => { let n = nm, i = 2; while (library.some((x) => x.name === n && x.character === curCharId && x.weapon === weapon)) n = nm + '_' + i++; return n; };
   // Вставить позу из буфера в ТЕКУЩЕЕ оружие: глубокий клон кадров + ретаргет имени (idle_меч→idle_топор). Игра подхватит.

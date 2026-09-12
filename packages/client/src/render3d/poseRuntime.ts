@@ -606,6 +606,22 @@ export interface GamePoseContent extends PoseContent {
 }
 /** Главная рука ключа оружия (`sword+shield`→`sword`). */
 const mainWeapon = (w: string): string => w.split('+')[0] ?? w;
+
+/**
+ * ЦЕПОЧКА НАСЛЕДОВАНИЯ КЛЮЧА ОРУЖИЯ — от точного к общему.
+ *
+ * `sword+shield` → `sword`: удары со щитом авторить НЕ НАДО, играют те же, что без щита, а щит
+ * подмешивается отдельным оверлеем. Именно это правило и делает библиотеку конечной — иначе на
+ * каждую пару рук пришлось бы заводить свой набор ударов.
+ *
+ * Вынесено отдельно, потому что по ней ищет ИГРА, а показывать её обязан РЕДАКТОР: без этого
+ * список клипов на `sword+shield` пуст, и автор считает, что удары пропали (так и было).
+ */
+export const weaponChain = (w: string): string[] => {
+  const out: string[] = [];
+  for (const c of [w, baseWeapon(w), mainWeapon(w)]) if (!out.includes(c)) out.push(c);
+  return out;
+};
 const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as T : fb; } catch { return fb; } };
 /** Контент (стойка/удар/sway) по charId; если у него нет клипа — берём у fallbackId (монстры → Волкодав). */
 export function localStorageContent(charId: string, fallbackId?: string): GamePoseContent {
@@ -664,7 +680,7 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     },
     // Базовая атака: ВСЕ hit_*-клипы оружия (стабильный цикл по имени), фолбэк по оружию (экип→база→главная) и персонажу.
     attackClips(weapon: string): Clip[] {
-      const pick = (id: string): Clip[] => { for (const cand of [weapon, baseWeapon(weapon), mainWeapon(weapon)]) { const set = clips.filter((c) => c.character === id && c.weapon === cand && c.name.startsWith('hit_')); if (set.length) return set.slice().sort((a, b) => a.name.localeCompare(b.name)); } return []; };
+      const pick = (id: string): Clip[] => { for (const cand of weaponChain(weapon)) { const set = clips.filter((c) => c.character === id && c.weapon === cand && c.name.startsWith('hit_')); if (set.length) return set.slice().sort((a, b) => a.name.localeCompare(b.name)); } return []; };
       const own = pick(charId); return own.length ? own : (fallbackId ? pick(fallbackId) : []);
     },
     // Поза щита per-оружие: idle_<weaponKey> (фолбэк idle_shield) + вес (perWeapon[wk] ?? базовый mix). Нет клипа — нет оверлея.
