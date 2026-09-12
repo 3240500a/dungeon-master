@@ -271,7 +271,7 @@ export function runSessionSim(reg: ConfigRegistry, settings: SessionSimSettings)
 
     if (!p.alive) {
       // Смерть: авторитетный штраф (золото + часть инвентаря), возврат в город, возрождение.
-      applyDeathPenalty(save, deathPenalty);
+      applyDeathPenalty(save, deathPenalty, rng);
       reviveFull(p, save, reg);
       node = null; // новый забег с города
       totalTime += townTripSec;

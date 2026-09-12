@@ -5,6 +5,7 @@ import { createRng } from '../formulas/rng.js';
 import { nextTier, retierItem } from '../formulas/itemgen.js';
 import { totalMaterials, type MaterialWallet } from '../economy/materials.js';
 import { forgeRepair, forgeUpgrade, fieldSalvage as doFieldSalvage } from '../economy/townActions.js';
+import { depositCarried } from '../economy/materials.js';
 import type { EquipSlot } from '../types/items.js';
 import { estimateAttack } from '../formulas/playerCombat.js';
 import type { Rng } from '../formulas/rng.js';
@@ -118,6 +119,10 @@ export function considerDrop(reg: ConfigRegistry, save: SaveState, item: Item, p
     return scoreItem(reg, save, it, policy) > (cur ? scoreItem(reg, save, cur, policy) : -Infinity);
   };
 
+  // ⚠ СТЕК СЫРЬЯ НЕСЁМ ДОМОЙ. Без этой ветки бот продавал бы его как вещь без слота — сим
+  // показывал бы нулевой приход материалов и лишнее золото, то есть врал в обе стороны.
+  if (item.kind === 'material') return { equipped: false, sold: 0, kept: true };
+
   // ⚠ СЛОМАННОЕ НАДЕТЬ НЕЛЬЗЯ (Ч4). Раньше бот его спокойно «экипировал» — сим завышал силу
   // персонажа и не тратил ни золота, ни материалов на починку, то есть врал в обе стороны.
   if (item.broken) {
@@ -167,7 +172,7 @@ function fieldSalvage(reg: ConfigRegistry, save: SaveState, item: Item): number 
 }
 
 /** Итог похода в кузницу: сколько золота и материалов ушло, что починено и улучшено. */
-export interface ForgeResult { spent: number; repaired: number; upgraded: number; }
+export interface ForgeResult { spent: number; repaired: number; upgraded: number; deposited?: number; }
 
 /**
  * ⭐ КУЗНИЦА — главный сток золота новой экономики, и до этого бот в неё не заходил вовсе.
@@ -178,6 +183,9 @@ export interface ForgeResult { spent: number; repaired: number; upgraded: number
  */
 export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPolicy, wallet: MaterialWallet): ForgeResult {
   const out: ForgeResult = { spent: 0, repaired: 0, upgraded: 0 };
+  // ⭐ Сперва СДАЁМ сырьё в сундук — так игрок и делает, вернувшись из забега: сумка пустеет,
+  // а запас становится общим и перестаёт быть под угрозой смерти.
+  out.deposited = depositCarried(save.inventory, wallet);
   // 1. Починка принесённого: чиним и надеваем, если лучше текущего.
   for (const item of [...save.inventory]) {
     if (!item.broken || !item.slot) continue;
