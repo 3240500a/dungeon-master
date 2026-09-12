@@ -2016,6 +2016,30 @@ function camView(dir: [number, number, number]): void {
   camera.position.set(t.x + dir[0] * d, t.y + dir[1] * d, t.z + dir[2] * d);
   camera.lookAt(t); orbit.update();
 }
+/**
+ * СТАРТОВОЕ КАДРИРОВАНИЕ: смотрим на ГОЛОВУ и чуть ВПЕРЁД, а не в таз.
+ *
+ * Было зашито `orbit.target.set(0, 34, 0)` — высота таза. Орбита крутилась вокруг низа фигуры:
+ * персонаж уезжал в верх кадра, а под ним оставалось полэкрана пустого пола.
+ *
+ * Высота берётся С КОСТИ ГОЛОВЫ, а не числом: у персонажей разный рост (морф, профиль атласа), и
+ * зашитая цифра для кого-то снова оказалась бы «под персонажем». Нет кости — остаёмся на прежней
+ * высоте, то есть ровно как было.
+ *
+ * `FWD` — сдвиг к камере (наш манекен смотрит в +Z, камера тоже стоит по +Z): взгляд попадает
+ * перед лицом, а не в затылок сквозь голову.
+ */
+const CAM_FWD = 14;      // насколько точка выносится вперёд от головы, ед.
+const CAM_BACK = 150;    // отлёт камеры от точки
+const CAM_UP = 10;       // подъём камеры над точкой — фигура ложится в кадр ниже центра
+function frameOnHead(): void {
+  const head = human?.bones.get('Head');
+  const p = head ? head.getWorldPosition(V()) : new THREE.Vector3(0, 34, 0);
+  orbit.target.set(p.x, p.y, p.z + CAM_FWD);
+  camera.position.set(orbit.target.x, orbit.target.y + CAM_UP, orbit.target.z + CAM_BACK);
+  orbit.update();
+}
+
 function camFocus(obj?: THREE.Object3D | null): void {
   const o = obj ?? (selected ? viewBone(selected) : null) ?? viewRig().hips;   // Ф20.2: летим к ВИДИМОЙ кости
   const p = o.getWorldPosition(V());
@@ -5776,6 +5800,7 @@ function jiggle(dt: number): void {
 // ── Цикл ──
 ensureSeed();   // первый запуск: залить примерный контент Волкодава (idle-стойки + удары по оружию)
 applyChar(curCharId); setIk(true); tab = 'anim'; syncModeB(); setManView(); refreshAll();   // setManView: применить
+frameOnHead();   // стартовый взгляд — ПОСЛЕ applyChar: до него рига ещё нет и высоту головы брать негде
 // запомненный вид манекена (личная настройка) — кнопка создаётся с дефолтной подписью, а состояние приходит из `pe_prefs`
 void ensurePhysics().then(() => setPhys(getPref('phys', true), false));   // дефолт — физ-силуэт вокруг скелета; выбор юзера помнится
                                                                           // (`byUser=false` — не перебивает ручное выключение в те ~2 c, пока грузится WASM)
