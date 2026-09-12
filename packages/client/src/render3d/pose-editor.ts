@@ -50,6 +50,7 @@ import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimS
 import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { createTestTab } from './testTab.js';
+import { analyzeGait, gaitSuggestions, type GaitSuggestion } from './gaitAnalyze.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
@@ -4291,6 +4292,62 @@ function renderGaitTune(): void {
   const fn = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
   fn.textContent = 'Нули = старое поведение: нога вылетает на полную длину, если попасть падом в такт шага.';
   box.append(fn);
+  // ── ОБУЧЕНИЕ НА КЛИПЕ (Ф3) ──────────────────────────────────────────────────────────────────────
+  // Ставится ЗДЕСЬ, а не в панели импорта, ровно по одной причине: оно правит эти самые ползунки,
+  // и «было → стало» надо видеть рядом с ними. Ничего не применяется молча — сперва список, потом кнопка.
+  grp('обучить на клипе');
+  {
+    const mine = [...new Set(library.filter((c) => c.character === curCharId).map((c) => c.name))].sort();
+    const row = el('div', 'display:flex;gap:4px;align-items:center;margin-top:3px');
+    const sel = el('select', 'flex:1 1 auto;min-width:0;background:#0e1016;color:#cfd3e0;border:1px solid #39415a;border-radius:3px;font:10px monospace') as HTMLSelectElement;
+    for (const n of mine) { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.append(o); }
+    if (learnClip && mine.includes(learnClip)) sel.value = learnClip;
+    sel.onchange = () => { learnClip = sel.value; };
+    row.append(sel); box.append(row);
+    const spRow = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
+    const spN = el('span', 'flex:0 0 138px;font-size:11px'); spN.textContent = 'скорость клипа (ед/с)'; spRow.append(spN);
+    const spI = el('input', 'width:64px;background:#0e1016;color:#9ae6a0;border:1px solid #39415a;border-radius:3px;font:10px monospace;text-align:right') as HTMLInputElement;
+    spI.type = 'number'; spI.step = '1'; spI.value = String(learnSpeed);
+    spI.oninput = () => { learnSpeed = parseFloat(spI.value) || 0; };
+    spRow.append(spI); box.append(spRow);
+    const sn2 = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
+    sn2.textContent = 'Клип in-place и сам о скорости не знает. Есть канал корня (галка при импорте) — она берётся оттуда, иначе укажи здесь.';
+    box.append(sn2);
+    box.append(pbtn('замерить', () => {
+      const c = library.find((x) => x.name === (learnClip || sel.value) && x.character === curCharId);
+      if (!c) { learnInfo = 'клип не найден'; learnList = null; renderLoco(); return; }
+      const m = analyzeGait(c, { human, speed: learnSpeed > 0 ? learnSpeed : undefined });
+      const cur: NumRec = { ...(GAIT as unknown as NumRec), ...(POSE as unknown as NumRec) };
+      learnList = gaitSuggestions(m, cur, gaitEditMode === 'run');
+      learnInfo = `период ${m.periodSec.toFixed(2)} с · шаг ${m.stepLen === null ? '—' : m.stepLen.toFixed(1)}`
+        + ` · опора ${(m.duty * 100) | 0}% · подъём ${m.lift.toFixed(1)}`
+        + (m.slide === null ? '' : ` · скольжение ${(m.slide * 100) | 0}%`)
+        + (m.turnRad ? ` · поворот ${(m.turnRad * 180 / Math.PI).toFixed(0)}°` : '');
+      renderLoco();
+    }));
+    if (learnInfo) { const i2 = el('div', 'color:#9ae6a0;font-size:10px;margin-top:3px;font-family:monospace'); i2.textContent = learnInfo; box.append(i2); }
+    if (learnList) {
+      if (!learnList.length) { const e2 = el('div', 'color:#7a869e;font-size:10px;margin-top:3px'); e2.textContent = 'всё уже совпадает — менять нечего'; box.append(e2); }
+      for (const g of learnList) {
+        const r2 = el('div', 'display:flex;gap:6px;font:10px monospace;margin-top:1px');
+        const n2 = el('span', 'flex:1 1 auto;color:#cfd3e0'); n2.textContent = g.label;
+        const w2 = el('span', 'color:#7a869e'); w2.textContent = g.was.toFixed(2);
+        const a2 = el('span', 'color:#6b7180'); a2.textContent = '→';
+        const v2 = el('span', 'color:#9ae6a0'); v2.textContent = g.now.toFixed(2);
+        r2.append(n2, w2, a2, v2); box.append(r2);
+      }
+      if (learnList.length) {
+        box.append(pbtn('применить всё', () => {
+          for (const g of learnList!) {
+            if (g.key in (GAIT as unknown as NumRec)) (GAIT as unknown as NumRec)[g.key] = g.now;
+            else (POSE as unknown as NumRec)[g.key] = g.now;
+          }
+          saveGaitCfg(); learnList = null; learnInfo = 'применено'; renderLoco();
+        }, true));
+      }
+    }
+  }
+
   box.append(pbtn('сброс настроек бега', () => { delete gaitCfgs[curCharId]; try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ } applyGaitCfg(curCharId); renderLoco(); }));
   const twNote = el('div', 'color:#7a869e;font-size:10px;margin-top:6px'); twNote.textContent = 'Скрутка корпуса и приставной шаг при повороте — на вкладке «Повороты».'; box.append(twNote);
   // Экспорт/импорт настроек бега ВСЕХ персонажей (pe_gait) — портируемый артефакт (бэкап + вход для Ф5).
@@ -4525,6 +4582,11 @@ let gaitReadout: HTMLElement | null = null;                // живой инд�
 // Какой режим правим. Страйф — ТРЕТИЙ, а не «бег вбок»: у него своя разреженная колонка (см. `STRAFE`),
 // потому что раньше страйф и бег делили одни числа, и настройка одного ломала другое.
 let gaitEditMode: 'walk' | 'run' | 'str' = 'run';
+// Обучение на клипе (Ф3): что меряем, с какой скоростью, и что намерили. Ничего не применяется само.
+let learnClip = '';
+let learnSpeed = 50;
+let learnList: GaitSuggestion[] | null = null;
+let learnInfo = '';
 let gaitLinkLR = true;       // связаны ли стороны: связаны → одно число на обе, иначе пара в ASYM
 const gaitAsym = ASYM;       // ссылка на карту асимметрии рантайма (правим её же, что читает игра)
 const gaitStrafe = STRAFE;   // ссылка на страйф-колонку рантайма (та же, что читает игра)
