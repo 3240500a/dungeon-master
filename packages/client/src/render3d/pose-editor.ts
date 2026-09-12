@@ -5515,9 +5515,28 @@ let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Human
 /** Сколько кадров назад/вперёд показывать призраками. Больше 1 нужно на быстрых замахах: соседний кадр там
  *  почти совпадает с текущим, и «след» движения виден только через 2-3 ключа. */
 let onionSpan = 1;
+/**
+ * ПРИЗРАК СОСЕДНЕГО КАДРА.
+ *
+ * ⚠ С ЗАГРУЖЕННЫМ АТЛАСОМ РИСУЕМ СКЕЛЕТОМ, а не телом. Раньше онионы при атласе просто ГАСИЛИСЬ
+ * (`aad37c2`, по жалобе «куча ненужных скелетов, оставить только скелет и модель»): два
+ * полупрозрачных процедурных ТЕЛА поверх меша действительно мешали. Но с тех пор манекен и сам стал
+ * скелетом, и тонкие октаэдры соседних кадров меш уже не загораживают — гасить нечего, а инструмент
+ * возвращается. Тумблер включён, а призраков нет — это читается как поломка, и читалось.
+ *
+ * Сквозь меш рисуем намеренно (`depthTest = false`): призрак внутри модели не виден, то есть
+ * бесполезен. `renderOrder` ниже манекена (998) — текущая поза обязана оставаться поверх соседних.
+ */
 function mkOnion(tint: number): Humanoid {
-  const h = stampRig(buildHumanoid({ ...rigRecipe(), limb: tint, body: tint, head: tint }));
-  for (const m of h.meshes) { const mat = m.material as THREE.MeshStandardMaterial; mat.transparent = true; mat.opacity = 0.32; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25; }
+  const skel = !!atlasBS();
+  const h = stampRig(buildHumanoid({ ...rigRecipe(), style: skel ? 'skeleton' : undefined, limb: tint, body: tint, head: tint }));
+  for (const m of h.meshes) {
+    const mat = m.material as THREE.MeshStandardMaterial;
+    mat.transparent = true; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25;
+    // Скелет тоньше тела: на 0.32 октаэдры почти не читались, поэтому ему своя прозрачность.
+    mat.opacity = skel ? 0.45 : 0.32;
+    if (skel) { mat.depthTest = false; m.renderOrder = 996; }
+  }
   scene.add(h.root); h.root.visible = false; return h;
 }
 function disposeOnion(): void {
@@ -5687,7 +5706,6 @@ function updateTrajectory(): void {
   if (trajBtn) trajBtn.textContent = trajLabel();
 }
 function updateOnion(): void {
-  if (atlasBS()) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; return; }   // атлас → только скелет+модель
   const c = onionOn && tab === 'anim' ? curClip() : null;
   if (!c || c.keys.length < 2) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; return; }
   if (!onionPrev) { onionPrev = mkOnion(0x4a8cff); onionNext = mkOnion(0xff8c3a); }
