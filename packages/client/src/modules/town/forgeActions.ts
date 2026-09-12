@@ -41,14 +41,36 @@ export function benchTarget(reg: ConfigRegistry, item: Item): Item | undefined {
  *
  * Работает на готовых строках, а не на статах, намеренно — предпросмотр обязан говорить ровно
  * теми же словами, что тултип вещи, иначе окно спорит само с собой.
+ *
+ * ⚠ Выравнивание по LCS, а НЕ построчно по индексу. Строки не только меняются, но и ИСЧЕЗАЮТ:
+ * у починки пропадает «⚠ Сломано», и сравнение по индексу сдвигало бы весь хвост — предпросмотр
+ * показывал бы «Сломано → Урон», то есть чистый мусор. Совпавшие строки служат якорями, а
+ * несовпавшие между ними спариваются по порядку («Урон: 9–22» → «Урон: 13–31»).
  */
 export function diffStrings(a: readonly string[], b: readonly string[]): { was: string; will: string }[] {
-  const out: { was: string; will: string }[] = [];
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const was = a[i] ?? '';
-    const will = b[i] ?? '';
-    if (was !== will) out.push({ was, will });
+  const n = a.length, m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
   }
+  const out: { was: string; will: string }[] = [];
+  let was: string[] = [];
+  let will: string[] = [];
+  const flush = (): void => {
+    for (let t = 0; t < Math.max(was.length, will.length); t++) {
+      out.push({ was: was[t] ?? '', will: will[t] ?? '' });
+    }
+    was = []; will = [];
+  };
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { flush(); i++; j++; }
+    else if (j < m && (i >= n || dp[i]![j + 1]! >= dp[i + 1]![j]!)) { will.push(b[j]!); j++; }
+    else { was.push(a[i]!); i++; }
+  }
+  flush();
   return out;
 }
 

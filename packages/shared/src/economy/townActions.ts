@@ -4,7 +4,7 @@ import type { SaveState } from '../types/save.js';
 import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { finalAttributes, meetsRequirements, modifiersFromItems } from '../formulas/stats.js';
-import { rollAffixes, nextTier, retierItem } from '../formulas/itemgen.js';
+import { rollAffixes, nextTier, inferTierId, retierItem } from '../formulas/itemgen.js';
 import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
@@ -191,7 +191,9 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
 /** Какой тир будет следующим (для подписи кнопки) — или `undefined`, если вещь на потолке. */
 export function nextTierOf(reg: ConfigRegistry, item: Item): { id: string; name: string } | undefined {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  return base ? nextTier(reg.get('item-tiers'), base, item.tier) : undefined;
+  if (!base) return undefined;
+  const tiers = reg.get('item-tiers');
+  return nextTier(tiers, base, inferTierId(tiers, base, item));
 }
 
 /**
@@ -201,7 +203,11 @@ export function nextTierOf(reg: ConfigRegistry, item: Item): { id: string; name:
 export function upgradedItem(reg: ConfigRegistry, item: Item): Item | undefined {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   if (!base) return undefined;
-  const tier = nextTier(reg.get('item-tiers'), base, item.tier);
+  const tiers = reg.get('item-tiers');
+  // ⚠ Тир БЕРЁТСЯ ИЗ ВЕЩИ, а при отсутствии поля — ВОССТАНАВЛИВАЕТСЯ по статам (`inferTierId`).
+  // Без этого вещь из старого сейва считалась стоящей ниже первой ступени, «улучшалась» до t0
+  // и становилась слабее: замер — алебарда 14–30 → 11–23 за 200 золота и сырьё.
+  const tier = nextTier(tiers, base, inferTierId(tiers, base, item));
   if (!tier) return undefined;
   const bal = reg.get('balance');
   return retierItem(base, item, tier, {

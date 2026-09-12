@@ -230,6 +230,44 @@ function buildItem(
  * Потолок задан самой базой (`maxTier`), поэтому «бесконечное улучшение» невозможно
  * по построению, а не бюджетом: дешёвая база не станет мифической никогда.
  */
+/**
+ * КАКОГО ТИРА ВЕЩЬ НА САМОМ ДЕЛЕ — когда поле `tier` не записано.
+ *
+ * ⚠ ЗАЧЕМ ЭТО НУЖНО. Поле `tier` появилось только в Ч5; вещи из сейвов старше него приходят без
+ * него. А `nextTier` без текущего тира считал вещь стоящей НИЖЕ первой ступени и предлагал
+ * «улучшить» до t0 — то есть пересобрать статы с множителем ×1.0. Замер: алебарда 14–30 после
+ * такого «улучшения» становилась 11–23, и игрок платил за это золотом и сырьём.
+ *
+ * Тир восстанавливаем ПО СТАТАМ, а не по уровню предмета: статы — это след, который тир оставил
+ * на вещи физически, и он верен даже если базу с тех пор правили или вещь перековали в кузнице.
+ * Уровень предмета — лишь то, из чего тир КОГДА-ТО выбирали, и после перековки он уже врёт.
+ * Базы без шкалируемых статов (кольца, амулеты) следа не оставляют — там падаем на уровень.
+ */
+export function inferTierId(
+  tiers: ItemTiers | undefined,
+  base: ItemsBase[number],
+  item: { tier?: string; baseStats: StatModifier[]; itemLevel: number },
+): string | undefined {
+  if (item.tier) return item.tier;
+  if (!tiers?.length) return undefined;
+  const usable = tiers.filter((t) => t.enabled !== false);
+  const pool = usable.length ? usable : tiers;
+  // Сравнивать можно только то, что тир вообще масштабирует (`scaleBaseStats`), и только `flat`.
+  const pairs = base.baseStats
+    .filter((b) => b.kind === 'flat' && TIER_SCALED.has(b.stat) && b.value !== 0)
+    .map((b) => ({ b, cur: item.baseStats.find((m) => m.stat === b.stat && m.kind === 'flat') }))
+    .filter((p): p is { b: StatModifier; cur: StatModifier } => !!p.cur);
+  if (!pairs.length) return pickTierClamped(tiers, item.itemLevel, base.minTier, base.maxTier)?.id;
+  let best: ItemTiers[number] | undefined;
+  let bestErr = Infinity;
+  for (const t of pool) {
+    let err = 0;
+    for (const p of pairs) err += Math.abs(p.cur.value - Math.round(p.b.value * t.statMult)) / Math.abs(p.b.value);
+    if (err < bestErr) { bestErr = err; best = t; }
+  }
+  return best?.id;
+}
+
 export function nextTier(
   tiers: ItemTiers | undefined,
   base: ItemsBase[number],

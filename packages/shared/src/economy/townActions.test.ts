@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, equip, socketInsert, socketClear } from './townActions.js';
+import { moveInventoryItem, allocPassive, respecPassives, passiveInvestedGold, passiveRespecFee, passiveEntriesFor, allocActive, respecSkills, skillRespecFee, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, upgradeCost, repairCost, upgradedItem, nextTierOf, equip, socketInsert, socketClear } from './townActions.js';
 import { newCharacterSave } from './newCharacter.js';
 import { createRng } from '../formulas/rng.js';
 import { carriedMaterials } from './materials.js';
@@ -471,5 +471,43 @@ describe('сломанные трофеи и починка (Ч4)', () => {
     const up = upgradeCost(reg, it);
     const sum = (m: Record<string, number>): number => Object.values(m).reduce((a, b) => a + b, 0);
     expect(sum(rep)).toBeLessThan(sum(up));
+  });
+});
+
+describe('⚠ вещь БЕЗ записанного тира (сейв старше Ч5)', () => {
+  /** Реальная вещь с ненулевым тиром и незапертым потолком — на ней и ломалось. */
+  function tiered(): Item | null {
+    for (let seed = 1; seed <= 200; seed++) {
+      const it = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'),
+        { dropBias: 1, itemLevel: 12, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'),
+          categoryWeights: reg.get('balance').loot.categoryWeights, rareNames: reg.get('rare-names'),
+          maxReqTotal: reg.get('balance').maxTotalRequirement }, createRng(seed));
+      if (it.tier && it.tier !== 't0' && upgradedItem(reg, it)
+        && it.baseStats.some((m) => m.stat === 'maxDamage' && m.kind === 'flat')) return it;
+    }
+    return null;
+  }
+
+  it('⭐ улучшается ТУДА ЖЕ, куда и вещь с полем: тир восстанавливается ПО СТАТАМ', () => {
+    const it = tiered()!;
+    expect(it).toBeTruthy();
+    const legacy: Item = { ...it, tier: undefined };
+    expect(nextTierOf(reg, legacy)?.id).toBe(nextTierOf(reg, it)?.id);
+    expect(upgradedItem(reg, legacy)).toEqual(upgradedItem(reg, it));
+  });
+
+  it('⚠ и НЕ СЛАБЕЕТ от улучшения — прежде её тянуло на t0 (×1.0)', () => {
+    const it = tiered()!;
+    const dmg = (x: Item): number => x.baseStats.find((m) => m.stat === 'maxDamage')?.value ?? 0;
+    // Замер до правки: алебарда 14–30 «улучшалась» до 11–23 за 200 золота и сырьё.
+    const up = upgradedItem(reg, { ...it, tier: undefined })!;
+    expect(dmg(up)).toBeGreaterThan(dmg(it));
+  });
+
+  it('база без шкалируемых статов (украшения) следа не оставляет — падаем на уровень предмета', () => {
+    const ring = reg.get('items.base').find((b) => 'slot' in b && b.slot === 'ring');
+    if (!ring) return;                      // колец в конфиге нет — проверять нечего
+    const it: Item = { ...tiered()!, baseId: ring.id, baseStats: [], tier: undefined };
+    expect(() => nextTierOf(reg, it)).not.toThrow();
   });
 });
