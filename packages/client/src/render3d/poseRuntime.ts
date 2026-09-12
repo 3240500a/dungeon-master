@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, sideLerp, foldElbow, type PoseTargets } from './pose.js';
 import { resolveStancePose, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
+import { locoClipName, locoDir, locoPhaseU } from './locoBlend.js';
+import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
 
 // Модель клипа (типы + интерполяция) живёт в ОДНОМ месте — clipModel.ts (Ф1.1): и игра, и редактор берут её оттуда.
@@ -135,6 +137,8 @@ export interface PoseContent {
   shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
   /** Клип состояния (`stagger`, `knockdown_fall`, `getup`…) по привязке из `pe_anim`. Нет клипа → null. */
   stateClip?(state: string): Clip | null;
+  /** Клип локомоции по имени конвенции (`run_fwd`, `walk_strafe_L`…). Нет — ползунок Ф4 просто молчит. */
+  locoClip?(name: string): Clip | null;
   /** Настройка состояния: приоритет, прерываемость, кроссфейд, владение ногами. */
   stateCfg?(state: string): { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' };
 }
@@ -385,6 +389,38 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w, legsOf(fade.atk));
   if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk, 1, legW);   // удар поверх idle/маха
 }
+const _wsP = new THREE.Vector3(), _wsT = new THREE.Vector3(), _wsPole = new THREE.Vector3();
+const _wsQ = new THREE.Quaternion(), _wsFace = new THREE.Quaternion(), _wsFwd = new THREE.Vector3();
+const _WS_UP = new THREE.Vector3(0, 1, 0);
+/**
+ * STRIDE WARPING: ОПОРНУЮ стопу тянем к планту планировщика весом `mix` (Ф4).
+ *
+ * Без этого ползунок «процедурно ↔ клип» кончился бы скольжением: у чужого клипа своя длина шага, и
+ * на единице стопа поехала бы по полу. Планты ставит планировщик, поэтому подтягивать надо к ним.
+ *
+ * ⚠ ТОЛЬКО ОПОРНУЮ. Маховую планировщик ведёт К её будущему планту, и притягивать её туда посреди
+ * переноса — значит выпрямить дугу шага в прямую и убить ровно ту форму, ради которой клип и брали.
+ */
+export function warpStanceFeet(human: Humanoid, target: readonly [readonly [number, number], readonly [number, number]], swing: readonly [boolean, boolean], mix: number): void {
+  if (mix <= 0.001) return;
+  for (let i = 0; i < LEG_COUNT; i++) {
+    if (swing[i]) continue;
+    const leg = legBones(i);
+    const ub = human.bones.get(leg.u), lb = human.bones.get(leg.l), fb = human.bones.get(leg.f);
+    if (!ub || !lb || !fb) continue;
+    fb.getWorldPosition(_wsP);
+    const t = target[i]!;
+    // Высоту не трогаем: её держат поза и заземление. Тянем только по полу, и на долю `mix`.
+    _wsT.set(_wsP.x + (t[0] - _wsP.x) * mix, _wsP.y, _wsP.z + (t[1] - _wsP.z) * mix);
+    ub.getWorldQuaternion(_wsQ); _wsPole.set(0, 0, 1).applyQuaternion(_wsQ); _wsPole.y = 0;
+    if (_wsPole.lengthSq() < 1e-6) _wsPole.set(0, 0, 1); else _wsPole.normalize();
+    fb.getWorldQuaternion(_wsQ); _wsFwd.set(0, 0, 1).applyQuaternion(_wsQ);
+    if (_wsFwd.x * _wsFwd.x + _wsFwd.z * _wsFwd.z < 1e-8) _wsFace.copy(_wsQ);
+    else _wsFace.setFromAxisAngle(_WS_UP, Math.atan2(_wsFwd.x, _wsFwd.z));
+    legGroundIK(ub, lb, fb, _wsT, _wsPole, _wsFace, legGeomFor(human, i));
+  }
+}
+
 /** Полный ретаргет вывода гейта на humanoid: ноги/торс блендятся idle-стойка↔гейт по legMag (сглажен), верх — idle+мах+удар
  *  по armMag (мгновенная скорость: в покое = 0 → руки ТОЧНО idle; иначе — legMag). Раздельно, т.к. legMag оседает медленно. */
 /** Компенсация A-стойки бинда ФБХ для ПРОЦЕДУРНОЙ реконструкции: её ik() считает «поворот бедра 0 = нога прямо вниз», а бинд
@@ -413,7 +449,18 @@ export interface AttackFade {
   /** Длительность кроссфейда, сек. Нет → общее умолчание (`XFADE_SEC`). */
   fadeSec?: number;
 }
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0): void {
+/**
+ * Кости, которые берёт на себя слой локомоции: ноги, таз и позвоночник. Руки и ключицы СОЗНАТЕЛЬНО
+ * не входят — ими владеют стойка и предметы (слои 2–4), и клип локомоции не имеет права их трогать,
+ * иначе меч в руке заживёт чужой жизнью.
+ */
+export const LOCO_BONES = [
+  'Hips', 'Spine', 'Chest', 'UpperChest',
+  'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes',
+  'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes',
+] as const;
+
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   const m = legMag;
@@ -436,6 +483,26 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, armMag);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, armMag);
   blendBone(human, 'Head', [0, 0, 0], idle, armMag);
+  // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
+  // Кладётся ЗДЕСЬ: ноги и торс уже процедурные, а верх (стойка, предметы, слот действия) идёт ниже
+  // и ложится ПОВЕРХ — то есть ровно в том порядке, что и в стеке слоёв. Положи раньше — затрут ноги;
+  // позже — клип съест стойку с оружием, и меч в руке начнёт жить чужой жизнью.
+  if (locoMix > 0.001 && locoPose) {
+    for (const nm of LOCO_BONES) {
+      const b = human.bones.get(nm); const want = locoPose[nm];
+      if (!b || !want) continue;
+      _euH.set(b.rotation.x, b.rotation.y, b.rotation.z); _qA.setFromEuler(_euH);
+      _euH.set(want[0], want[1], want[2]); _qB.setFromEuler(_euH);
+      b.quaternion.copy(_qA).slerp(_qB, locoMix);
+    }
+    const hd = hipsOffset(locoPose, human.hipsRest.y);
+    if (hd) {
+      const hp = human.bones.get('Hips')!.position;
+      hp.set(hp.x + (human.hipsRest.x + hd[0] - hp.x) * locoMix,
+        hp.y + (human.hipsRest.y + hd[1] - hp.y) * locoMix,
+        hp.z + (human.hipsRest.z + hd[2] - hp.z) * locoMix);
+    }
+  }
   applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade, idleT);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
@@ -581,6 +648,8 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
     /** Клип состояния по привязке (`pe_anim.states`), иначе по имени состояния как есть. */
     stateClip(state: string): Clip | null { return byName(anim.stateName(state)); },
+    /** Клип локомоции (Ф4). Через ту же привязку `pe_anim`, что и состояния: имя — лишь умолчание. */
+    locoClip(name: string): Clip | null { return byName(anim.stateName(name)); },
     stateCfg(state: string) { const c = anim.stateCfg(state); return { priority: c.priority, interruptible: c.interruptible, blendSec: c.blendSec, legs: c.legs }; },
     clipByName(name: string): Clip | null { return byName(name); },
     // Поза скила под экип. оружие: если авторская на другом оружии — ретаргетим семейство (по clip.weapon) на текущее/базовое/главное; иначе авторская как есть.
@@ -1122,7 +1191,19 @@ export class PosePlayer {
     }
     this.idleT += dt;
     const tg = this.driver.update(dt);
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT);
+    // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
+    // Клип берём по направлению В КАДРЕ ТЕЛА и по режиму (ходьба/бег), а сэмплируем ФАЗОЙ
+    // ПЛАНИРОВЩИКА: у клипа не должно быть своего таймера, иначе настройки персонажа перестанут на
+    // него влиять и «из двух паков много вариантов» не получится.
+    const mix = clamp(GAIT.locoMix, 0, 1);
+    let locoPose: Pose | null = null;
+    if (mix > 0.001 && this.content.locoClip) {
+      const fy = Math.sin(yaw), fz2 = Math.cos(yaw), rx2 = Math.cos(yaw), rz2 = -Math.sin(yaw);
+      const fwd = this.vx * fy + this.vz * fz2, lat = this.vx * rx2 + this.vz * rz2;
+      const c = this.content.locoClip(locoClipName(locoDir(fwd, lat, GAIT.strafeFrom), (tg.sb ?? 0) > 0.5));
+      if (c && c.keys.length) locoPose = clipPoseAt(c, locoPhaseU(this.driver.gaitPhase));
+    }
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix);
     if (layerTrace.on) {
       layerTrace.speed = Math.hypot(this.vx, this.vz);
       layerTrace.sb = tg.sb ?? 0; layerTrace.st = tg.st ?? 0;
@@ -1130,6 +1211,15 @@ export class PosePlayer {
       layerTrace.twistGait = tg.twist; layerTrace.twistAim = tw;
     }
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
+    if (locoPose) {
+      // ⚠ ПОСЛЕ `applyTorsoTwist`, А НЕ ДО. Он ставит тазу фейсинг, то есть ПОВОРАЧИВАЕТ ВЕСЬ РИГ, и
+      // подтяжка, сделанная раньше, была бы посчитана в другом кадре и уехала бы вместе с поворотом.
+      // Планты у планировщика в МИРЕ, риг локальный → вычитаем позицию персонажа.
+      const p0 = this.driver.plantTarget(0), p1 = this.driver.plantTarget(1);
+      warpStanceFeet(this.human,
+        [[p0[0] - this.px, p0[1] - this.pz], [p1[0] - this.px, p1[1] - this.pz]],
+        this.driver.swingLegs, mix);
+    }
     // ТАЗ УДАРА ГАСНЕТ ЛОКОМОЦИЕЙ. Удар — слой ВЕРХА, низом владеет походка (в Unreal такой слой кладут
     // `Layered blend per bone` с исключённым тазом, в Unity — маской слоя). Наша маска удара таз и так не
     // содержит (`Hips` нет в `ATK_BONES`), но `applyAttackPelvis` добавляет его ОТДЕЛЬНО — ради маха таза

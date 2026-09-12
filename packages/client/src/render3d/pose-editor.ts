@@ -4295,6 +4295,18 @@ function renderGaitTune(): void {
   // ── ОБУЧЕНИЕ НА КЛИПЕ (Ф3) ──────────────────────────────────────────────────────────────────────
   // Ставится ЗДЕСЬ, а не в панели импорта, ровно по одной причине: оно правит эти самые ползунки,
   // и «было → стало» надо видеть рядом с ними. Ничего не применяется молча — сперва список, потом кнопка.
+  // ── ПРОЦЕДУРНО ↔ КЛИП (Ф4) ──────────────────────────────────────────────────────────────────────
+  grp('процедурно ↔ клип');
+  one1('доля клипа локомоции', GAITo, 'locoMix', 0, 1, 0.01);
+  {
+    const n2 = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
+    n2.textContent = '0 — только процедурная походка (ровно как было, бит в бит). К 1 подмешивается клип '
+      + '`walk_fwd` / `run_strafe_L` и т.п. по направлению и режиму. ⚠ Планировщик остаётся ЧАСАМИ: клип '
+      + 'сэмплируется его фазой, поэтому длина шага, доля опоры и каденция продолжают на него влиять — '
+      + 'это и есть «из купленного пака много вариантов». Опорная стопа подтягивается к планту, чтобы не скользила.';
+    box.append(n2);
+  }
+
   grp('обучить на клипе');
   {
     const mine = [...new Set(library.filter((c) => c.character === curCharId).map((c) => c.name))].sort();
@@ -5070,7 +5082,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
 const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
-  'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+  'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
 // читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',
