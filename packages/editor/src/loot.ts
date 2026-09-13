@@ -1,7 +1,7 @@
 import {
   ConfigRegistry, generateRunPlan, generateFloor, resolveMonsterPool, spawnPacksEl, createRng,
   newBotSave, effectiveLevel, rollTierLevel, pickTierClamped, depthRarityBoost, salvageFromMonster,
-  forgeGold, type Item, type Rng,
+  forgeGold, nextTierOf, type Item, type Rng,
 } from '@dm/shared';
 
 /**
@@ -204,27 +204,63 @@ function cardGold(reg: ConfigRegistry, p: FloorPay, k: Knobs): HTMLElement {
  * В скобках — сколько таких работ оплачивает ОДИН этаж на текущем уровне монстров: именно эта
  * величина и должна стоять колом по всей лестнице, иначе золото обесценивается к эндгейму.
  */
-function cardForge(reg: ConfigRegistry, p: FloorPay): HTMLElement {
+/**
+ * Уровень монстров, на котором ступень занимает хотя бы десятую долю дропа, — то есть она УЖЕ
+ * в руках. Нужен ценам: сравнивать стоимость «Мифического» с доходом этажа, где ходят монстры
+ * пятого уровня, бессмысленно — такую вещь там просто неоткуда взять.
+ */
+function levelForTier(reg: ConfigRegistry, tierId: string): number {
+  const W = reg.get('balance').loot.tierWindow;
   const tiers = [...reg.get('item-tiers')].sort((x, y) => x.minItemLevel - y.minItemLevel);
-  const base = reg.get('items.base').find((b) => b.kind === 'weapon')!;
-  const inc = Math.max(1, p.gold);
+  for (let L = 5; L <= 300; L += 5) {
+    const rng = createRng(L * 13 + 1);
+    let hit = 0;
+    const N = 1500;
+    for (let i = 0; i < N; i++) if (pickTierClamped(tiers, rollTierLevel(L, W, rng), 't0', 't6')!.id === tierId) hit++;
+    if (hit / N >= 0.1) return L;
+  }
+  return 300;
+}
+
+function cardForge(reg: ConfigRegistry, p: FloorPay, k: Knobs): HTMLElement {
+  const tiers = [...reg.get('item-tiers')].sort((x, y) => x.minItemLevel - y.minItemLevel);
+  // ⚠ База берётся с ПОЛНОЙ лестницей. Первое попавшееся оружие не годится: ровно у одной базы
+  // в конфиге срезан `maxTier`, и попадись она — `nextTier` упирался бы в потолок, цены верхних
+  // ступеней задваивались с предыдущими, а таблица тихо врала (так и случилось при первой проверке).
+  const topId = tiers[tiers.length - 1]!.id;
+  const weapons = reg.get('items.base').filter((b) => b.kind === 'weapon' && b.enabled !== false);
+  const base = weapons.find((b) => b.maxTier === topId) ?? weapons[0]!;
+  const diff = reg.get('difficulties').find((d) => d.id === k.diffId) ?? reg.get('difficulties')[0]!;
+  const mons = Math.max(1, Math.round(p.monsters));
+  /** Доход этажа ТАМ, где эта ступень ходовая, — иначе «сколько работ оплачивает этаж» не сравнить. */
+  const incomeFor = (tierId: string): number => {
+    const L = levelForTier(reg, tierId);
+    return Math.max(1, mons * reg.get('balance').loot.goldChance * ((1 + 5 + L * 2) / 2) * diff.goldMult);
+  };
   const mk = (tierId: string, rarity: string): Item =>
     ({ baseId: base.id, tier: tierId, rarity, baseStats: [], itemLevel: 1 } as unknown as Item);
-  const cell = (tierId: string, rarity: string, op: 'upgrade' | 'repair' | 'reroll'): string => {
-    const c = forgeGold(reg, mk(tierId, rarity), op);
+  const cell = (tierId: string, rarity: string, op: 'upgrade' | 'repair' | 'reroll', inc: number): string => {
+    const item = mk(tierId, rarity);
+    // ⚠ У верхней ступени улучшения НЕТ: `forgeGold` вернул бы цену за несуществующий шаг, и
+    // таблица показывала бы прайс на действие, которое сервер отклоняет.
+    if (op === 'upgrade' && !nextTierOf(reg, item)) return '—';
+    const c = forgeGold(reg, item, op);
     return `${c} (${(inc / c).toFixed(1)})`;
   };
-  const rows = tiers.map((t) => [
-    t.name,
-    cell(t.id, 'normal', 'upgrade'), cell(t.id, 'rare', 'upgrade'),
-    cell(t.id, 'normal', 'repair'), cell(t.id, 'rare', 'repair'),
-    cell(t.id, 'normal', 'reroll'),
-  ]);
+  const rows = tiers.map((t) => {
+    const inc = incomeFor(t.id);
+    return [
+      `${t.name} · ур.${levelForTier(reg, t.id)}`,
+      cell(t.id, 'normal', 'upgrade', inc), cell(t.id, 'rare', 'upgrade', inc),
+      cell(t.id, 'normal', 'repair', inc), cell(t.id, 'rare', 'repair', inc),
+      cell(t.id, 'normal', 'reroll', inc),
+    ];
+  });
   const box = el('div', CSS.card);
   box.append(el('div', CSS.h, 'Кузница: цена по ступени и редкости'));
   box.append(el('div', CSS.sub,
     'цена = база × reqMult(ступень) × priceMult(редкость) · в скобках — сколько таких работ оплачивает этаж'
-    + ` (доход ${n0(p.gold)})`));
+    + ' ТАМ, где ступень уже в руках (уровень монстров указан в первой колонке)'));
   box.append(table(
     ['ступень', 'улучшить об.', 'улучшить редк.', 'починить об.', 'починить редк.', 'перекатать об.'],
     rows));
@@ -384,7 +420,7 @@ export function renderLootPage(host: HTMLElement, data: Record<string, unknown>)
   wrap.append(cardFloor(reg, pay));
   wrap.append(cardRule1(reg));
   wrap.append(cardGold(reg, pay, k));
-  wrap.append(cardForge(reg, pay));
+  wrap.append(cardForge(reg, pay, k));
   wrap.append(cardTiers(reg, pay.lvlHi));
   wrap.append(cardDepth(reg, k.depth));
   wrap.append(cardDepthMats(reg, k.power, k.depth, () => renderLootPage(host, data)));
