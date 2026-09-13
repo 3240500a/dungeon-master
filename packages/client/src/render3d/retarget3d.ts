@@ -201,6 +201,25 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   // ЗНАКО-ЗАВИСИМЫЙ доворот к Y-up: +Z-up→−90°X, −Z-up→+90°X (CC/AccuRIG обычно −Z, иначе замер вверх ногами), перевёрнутый Y→180°X.
   if (hip0 && head0) { const dy = head0.y - hip0.y, dz = head0.z - hip0.z; const ax = Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }
   const hip = w('Hips'), head = w('Head'), foot = w('LeftFoot');
+  // ⚠ КОРЕНЬ АРМАТУРЫ = ПОЛ. У ригов CC/AccuRIG (и везде, где художник кладёт рут в ноль) самый
+  // верхний узел скелета стоит ровно на полу — по нему и заземляем, вместо того чтобы подгонять таз
+  // под лодыжку НАШЕГО базового рига. Замер на knight_05: рут 0.00, низшая вершина меша −0.00,
+  // таз 34.91 — а подгонка давала 33.00, и меш тонул ровно на эти 1.9.
+  //
+  // ⚠ ИЩЕМ ПО СМЫСЛУ, А НЕ ПО ФЛАГУ `isBone`: в glTF узел становится костью, только если он входит
+  // в суставы скина, а служебный рут туда не входит — после нашего же экспорта он приезжает обычным
+  // узлом. Поэтому корень арматуры = самый верхний предок таза, В ПОДДЕРЕВЕ КОТОРОГО НЕТ МЕШЕЙ.
+  // У ригов без отдельного рута (Mixamo: выше таза сразу сцена с мешами) подъём не случится вовсе,
+  // и мы честно уйдём в фолбэк.
+  const hipsBone = byName.get(boneMap['Hips'] ?? '');
+  const hasMesh = (o: THREE.Object3D): boolean => {
+    let found = false;
+    o.traverse((c) => { if ((c as THREE.Mesh).isMesh) found = true; });
+    return found;
+  };
+  let rootBone: THREE.Object3D | null = hipsBone ?? null;
+  while (rootBone?.parent && rootBone.parent !== loaded && !hasMesh(rootBone.parent)) rootBone = rootBone.parent;
+  const rootY = rootBone && rootBone !== hipsBone ? rootBone.getWorldPosition(new THREE.Vector3()).y : null;
   const fbxH = (head && foot) ? (head.y - foot.y) : 0;
   // Нормировка к РАЗМАХУ БАЗОВОГО РИГА (голова→лодыжка), а не к литералу 57: 57 — это Y головы, а размах
   // базы = 56, и любой импорт получался на 1.8% крупнее базы. Пропорции модели нормировка сохраняет
@@ -208,6 +227,17 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   const scale = fbxH > 1e-3 ? baseSpanY() / fbxH : 1;
   const out: Record<string, [number, number, number]> = {};
   const legDrop = (hip && foot) ? (hip.y - foot.y) * scale : 32;
+  /**
+   * ВЫСОТА ТАЗА НАД ПОЛОМ. Берём из модели: рут-кость стоит на полу, значит высота таза = `таз − рут`.
+   * Фолбэк (рига без отдельного рута — например Mixamo, где верхняя кость и есть Hips) — прежняя
+   * формула «дроп ноги + лодыжка базового рига»; она подгоняет модель под нашу геометрию и потому
+   * годится только когда спросить у модели нечего.
+   *
+   * ⚠ Проверяем на вменяемость: рут ОБЯЗАН быть ниже таза и не выше лодыжки. Кривой рут (в центре
+   * тела, под потолком) встречается, и молча заземлять по нему — хуже, чем честный фолбэк.
+   */
+  const rootOk = rootY !== null && hip !== null && foot !== null && hip.y - rootY > 1e-3 && rootY <= foot.y + 1e-3;
+  const hipsAboveFloor = rootOk && hip ? (hip.y - rootY!) * scale : legDrop + baseAnkleY();
   const chain = [...OUR_BONES, ...OUR_FINGERS] as string[];
 
   // ── ШАГ 1: мировые позиции СМАПЛЕННЫХ костей в нормированном масштабе ────────────────────────────
@@ -241,7 +271,7 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   // Ф14.2: пальцы ЗАМЕРЯЕМ (позиции и длины — из модели), но НЕ выпрямляем и не конформим.
   const baseAnkle = baseAnkleY();
   for (const our of chain) {
-    if (our === 'Hips') { out['Hips'] = [0, +(legDrop + baseAnkle).toFixed(2), 0]; continue; }   // высота таза = дроп ноги + высота лодыжки базы
+    if (our === 'Hips') { out['Hips'] = [0, +hipsAboveFloor.toFixed(2), 0]; continue; }   // высота таза НАД ПОЛОМ — из модели (см. выше)
     const p = parentOfOur(our); if (!p) continue;
     const c = pos.get(our), pp = pos.get(p);
     if (c && pp) out[our] = [+((c.x - pp.x)).toFixed(2), +((c.y - pp.y)).toFixed(2), +((c.z - pp.z)).toFixed(2)].map(Number) as [number, number, number];

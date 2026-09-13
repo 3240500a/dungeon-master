@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { readFileSync, existsSync } from 'node:fs';
 import { parseModel, exportGLB } from './modelAssets.js';
 import { glbSkinReport } from './glbCheck.js';
+import { autoBoneMap, measureBoneOffsets } from './retarget3d.js';
 
 /**
  * СКВОЗНОЙ ПРОГОН НАСТОЯЩЕГО ИСХОДНИКА: FBX → наш импорт → наш экспорт → наш импорт.
@@ -25,6 +26,7 @@ class NodeFileReader {
 }
 (globalThis as unknown as { FileReader: unknown }).FileReader ??= NodeFileReader;
 
+const boneNames = (root: THREE.Object3D): string[] => { const out: string[] = []; root.traverse((o) => { if ((o as THREE.Bone).isBone) out.push(o.name); }); return out; };
 const read = (p: string): ArrayBuffer => { const b = readFileSync(p); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer; };
 interface Look { bones: number; skinned: number; skeletons: number; detached: number }
 function look(root: THREE.Object3D): Look {
@@ -58,6 +60,28 @@ describe.runIf(existsSync(FBX))('FBX художника проходит имп�
     expect(rep.skins, 'один скелет — ОДИН скин, а не по скину на каждую часть').toBe(1);
     expect(rep.bones, 'кости в файле').toBeGreaterThan(50);
     expect(rep.meshes, 'и все части').toBeGreaterThan(30);
+  });
+
+  it('⭐ ЗАЗЕМЛЕНИЕ ЕДЕТ ИЗ МОДЕЛИ: высота таза = «таз − рут-кость», и круг её сохраняет', async () => {
+    // Автор: «в максе есть рут-кость, она в нуле — по ней и заземляйте, ничего не подкручивая».
+    // Так и делаем: рут стоит на полу, значит высота таза над полом берётся прямо из файла.
+    // Замер knight_05: рут 0.00, низшая вершина меша −0.00, таз 34.91 — а подгонка под лодыжку
+    // НАШЕГО базового рига давала 33.00, и меш тонул ровно на эти 1.9.
+    const fromFbx = await parseModel(read(FBX), 'fbx');
+    const hipsFbx = measureBoneOffsets(fromFbx, autoBoneMap(boneNames(fromFbx)))['Hips']![1];
+    expect(hipsFbx, 'таз стоит на своей высоте из модели').toBeCloseTo(34.91, 1);
+
+    // И ЭТО ЖЕ ЧИСЛО обязано получиться из нашего собственного экспорта — иначе переимпорт уже
+    // нашего GLB дал бы другую модель. Рут-кость для этого должна пережить экспорт.
+    const glb = await exportGLB(await parseModel(read(FBX), 'fbx'));
+    const back = await parseModel(glb, 'glb');
+    // ⚠ Корень арматуры ищем не по флагу кости: в glTF он приезжает обычным узлом (в суставы скина
+    // он не входит), поэтому и замер ищет его по смыслу — «предок таза без мешей внутри».
+    let names: string[] = [];
+    back.traverse((o) => { if (/BoneRoot|^Root$/i.test(o.name)) names.push(o.name); });
+    expect(names.length, 'корень арматуры обязан пережить экспорт').toBeGreaterThan(0);
+    const hipsGlb = measureBoneOffsets(back, autoBoneMap(boneNames(back)))['Hips']![1];
+    expect(hipsGlb, 'круг не меняет геометрию рига').toBeCloseTo(hipsFbx, 1);
   });
 
   it('⭐ и он грузится обратно — круг замкнут, схлопывать на загрузке уже нечего', async () => {
