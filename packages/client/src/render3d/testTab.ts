@@ -22,6 +22,7 @@ import { loadAssetConfig, resolvePlayerLook, editorClasses } from './modelSkin.j
 import type { RagdollHandle, PhysWorld } from './ragdoll.js';
 import { createTestScene, TEST_TICK_DT, type TestScene } from './testScene.js';
 import { driveActor, type DriveState } from './driveActor.js';
+import { makeStageOwner } from './stageOwner.js';
 import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
 import type { PlayerInput } from '@dm/shared';
 
@@ -43,6 +44,12 @@ export interface TestTab {
   /** Кадр. Зовётся всегда; молчит, пока вкладка не активна. */
   frame(dt: number): void;
   readonly active: boolean;
+  /**
+   * Вкладка ОТКРЫТА (кукла может ещё собираться). ⚠ Гейтить снаружи надо этим, а не `active`:
+   * между «нажали Тест» и готовой куклой лежат физика + конфиг + GLB, и в этом окне `active`
+   * ещё false — значит «уйти с вкладки» было некому, и сборка доезжала уже на чужой вкладке.
+   */
+  readonly wanted: boolean;
   /** Строка состояния для панели: где стоим, с какой скоростью. */
   status(): string;
   /** Пересобрать куклу (сменили персонажа или оружие). */
@@ -53,14 +60,15 @@ export interface TestTab {
 const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: CAM_AZ };
 const IDLE: PlayerInput = { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
 
+/** Всё, что вкладка положила в сцену за одну сборку. ОДНИМ объектом — чтобы снималось тоже одним. */
+interface Built { doll: RagdollHandle; room: THREE.LineSegments; scene: TestScene; drive: DriveState }
+
 export function createTestTab(host: TestTabHost): TestTab {
-  let scene: TestScene | null = null;
-  let doll: RagdollHandle | null = null;
-  let drive: DriveState | null = null;
-  let room: THREE.LineSegments | null = null;
+  // ⚠ Текущая сборка — ОДНА ссылка, и её выставляет ТОЛЬКО победившая сборка (устаревшая до этой
+  // строки не доходит: `alive()` проверяется после каждого await). Снятие идёт не отсюда, а через
+  // владельца — см. `stageOwner.ts`, там же и разбор жалобы «появился ещё один меш».
+  let cur: Built | null = null;
   let dist = 300;
-  let active = false;
-  let want = false;   // вкладка открыта, но кукла ещё собирается (физика грузится асинхронно)
   const keys = new Set<string>();
   const mouse = { x: 0, y: 0, set: false };
   let lmb = false;
@@ -74,16 +82,16 @@ export function createTestTab(host: TestTabHost): TestTab {
     return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
   };
   const onDown = (e: KeyboardEvent): void => {
-    if (!active || typing()) return;
+    if (!cur || typing()) return;
     keys.add(e.code);
     if (e.code === 'Space') e.preventDefault();
   };
   const onUp = (e: KeyboardEvent): void => { keys.delete(e.code); };
   const onMove = (e: PointerEvent): void => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.set = true; };
-  const onBtnDown = (e: PointerEvent): void => { if (active && e.button === 0) lmb = true; };
+  const onBtnDown = (e: PointerEvent): void => { if (cur && e.button === 0) lmb = true; };
   const onBtnUp = (e: PointerEvent): void => { if (e.button === 0) lmb = false; };
   const onWheel = (e: WheelEvent): void => {
-    if (!active) return;
+    if (!cur) return;
     e.preventDefault();
     dist = Math.max(CAM.minDist, Math.min(CAM.maxDist, dist * (e.deltaY < 0 ? 0.9 : 1.1)));
   };
@@ -107,37 +115,9 @@ export function createTestTab(host: TestTabHost): TestTab {
     return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x5a6480 }));
   };
 
-  const teardown = (): void => {
-    if (doll) { host.scene.remove(doll.group); doll.dispose(); doll = null; }
-    if (room) { host.scene.remove(room); room.geometry.dispose(); (room.material as THREE.Material).dispose(); room = null; }
-    scene = null; drive = null;
-  };
-
-  const build = async (): Promise<void> => {
-    teardown();
-    const pw = await host.physics();
-    if (!pw || !want) return;            // ушли с вкладки, пока грузилась физика — куклу не плодим
-    const classId = host.charId();
-    // Тот же разбор, что в игре. Источник свой — локальная рабочая копия конфига: редактор обязан
-    // показывать то, что правят ПРЯМО СЕЙЧАС, а не последнее опубликованное.
-    const look = resolvePlayerLook(await loadAssetConfig(), editorClasses(), classId);
-    if (!want) return;                   // ушли с вкладки, пока грузился конфиг
-    scene = createTestScene(classId);
-    doll = makeGamePlayerDoll(pw, { x: scene.view.x, z: scene.view.z, weapon: host.weapon(), classId, ...look });
-    host.scene.add(doll.group);
-    room = makeRoom(scene.bounds.w, scene.bounds.h);
-    host.scene.add(room);
-    drive = { d: doll, vx: 0, vz: 0, lx: scene.view.x, lz: scene.view.z };
-    dist = 300;
-    applyCam(scene.view.x, scene.view.z);
-    active = true;
-  };
-
-  return {
-    get active() { return active; },
-
-    async start(): Promise<void> {
-      want = true;
+  const stage = makeStageOwner<Built>({
+    // Захват общих ресурсов редактора: клавиатура/мышь уходят в игру, орбита выключается.
+    on: () => {
       addEventListener('keydown', onDown);
       addEventListener('keyup', onUp);
       host.canvas.addEventListener('pointermove', onMove);
@@ -145,11 +125,10 @@ export function createTestTab(host: TestTabHost): TestTab {
       addEventListener('pointerup', onBtnUp);
       host.canvas.addEventListener('wheel', onWheel, { passive: false });
       host.setOrbit(false);
-      await build();
     },
-
-    stop(): void {
-      want = false; active = false;
+    // ⚠ Зовётся И тогда, когда собраться не успели: иначе уход во время загрузки оставлял бы
+    // редактор без орбиты, а стрелки продолжали бы ехать «в тест».
+    off: () => {
       removeEventListener('keydown', onDown);
       removeEventListener('keyup', onUp);
       host.canvas.removeEventListener('pointermove', onMove);
@@ -158,13 +137,46 @@ export function createTestTab(host: TestTabHost): TestTab {
       host.canvas.removeEventListener('wheel', onWheel);
       keys.clear(); lmb = false;
       host.setOrbit(true);
-      teardown();
     },
 
-    rebuild(): void { if (want) void build(); },
+    async build(alive) {
+      const pw = await host.physics();
+      if (!pw || !alive()) return null;   // ушли с вкладки, пока грузилась физика — куклу не плодим
+      const classId = host.charId();
+      // Тот же разбор, что в игре. Источник свой — локальная рабочая копия конфига: редактор обязан
+      // показывать то, что правят ПРЯМО СЕЙЧАС, а не последнее опубликованное.
+      const look = resolvePlayerLook(await loadAssetConfig(), editorClasses(), classId);
+      if (!alive()) return null;          // ушли с вкладки, пока грузился конфиг
+      const sc = createTestScene(classId);
+      const doll = makeGamePlayerDoll(pw, { x: sc.view.x, z: sc.view.z, weapon: host.weapon(), classId, ...look });
+      host.scene.add(doll.group);
+      const room = makeRoom(sc.bounds.w, sc.bounds.h);
+      host.scene.add(room);
+      const built: Built = { doll, room, scene: sc, drive: { d: doll, vx: 0, vz: 0, lx: sc.view.x, lz: sc.view.z } };
+      cur = built;
+      dist = 300;
+      applyCam(sc.view.x, sc.view.z);
+      return built;
+    },
+
+    drop(b) {
+      if (cur === b) cur = null;          // чужую (актуальную) сборку не обнуляем — см. `cur` выше
+      host.scene.remove(b.doll.group); b.doll.dispose();
+      host.scene.remove(b.room); b.room.geometry.dispose(); (b.room.material as THREE.Material).dispose();
+    },
+  });
+
+  return {
+    get active() { return stage.active; },
+    get wanted() { return stage.wanted; },
+
+    start(): Promise<void> { return stage.start(); },
+    stop(): void { stage.stop(); },
+    rebuild(): void { void stage.rebuild(); },
 
     frame(dt: number): void {
-      if (!active || !scene || !drive) return;
+      const c = cur; if (!c) return;
+      const { scene, drive } = c;
       const mv = moveFromKeys(keys, CAM.az);
       const aim = mouse.set ? aimOnGround(aimT, host.camera, host.canvas.getBoundingClientRect(), mouse.x, mouse.y) : null;
       const facing = facingFrom(scene.view.facing, aim, scene.view.x, scene.view.z, mv, mouse.set);
@@ -181,7 +193,7 @@ export function createTestTab(host: TestTabHost): TestTab {
 
       for (const e of scene.step(dt, input)) {
         // Удар отыгрывает КУКЛА по серверному событию — с тем же окном и вайндапом, что в игре.
-        if (e.type === 'swing') doll?.attack(undefined, e.lockMs / 1000, e.windupMs / 1000);
+        if (e.type === 'swing') c.doll.attack(undefined, e.lockMs / 1000, e.windupMs / 1000);
       }
       driveActor(drive, scene.view.x, scene.view.z, scene.view.facing, scene.view.alive, dt,
         { combat: scene.view.inCombat, stun: scene.view.stun });
@@ -189,8 +201,10 @@ export function createTestTab(host: TestTabHost): TestTab {
     },
 
     status(): string {
-      if (!scene) return active ? 'собираем куклу…' : 'вкладка не активна';
-      const v = drive ? Math.hypot(drive.vx, drive.vz) : 0;
+      const c = cur;
+      if (!c) return stage.wanted ? 'собираем куклу…' : 'вкладка не активна';
+      const { scene, drive } = c;
+      const v = Math.hypot(drive.vx, drive.vz);
       return `${v.toFixed(0)} ед/с · ${scene.view.x.toFixed(0)}, ${scene.view.z.toFixed(0)}`
         + (scene.view.inCombat ? ' · в бою' : '') + ` · тик ${(1 / TEST_TICK_DT) | 0} Гц`;
     },

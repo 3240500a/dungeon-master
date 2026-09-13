@@ -5121,10 +5121,18 @@ const testTab = createTestTab({
   weapon: () => weapon,
   setOrbit: (on) => { orbit.enabled = on; },
 });
-/** Вкладка открыта — тест живёт; ушли — он обязан отпустить клавиатуру и убрать куклу. */
+/**
+ * Вкладка открыта — тест живёт; ушли — он обязан отпустить клавиатуру и убрать куклу.
+ *
+ * ⚠ ГЕЙТ ПО `wanted`, А НЕ ПО `active`. `active` поднимается в КОНЦЕ сборки куклы (физика + конфиг +
+ * GLB — это секунды), поэтому раньше здесь было две дыры сразу: уход с вкладки во время загрузки не
+ * звал `stop()` вовсе (условие `else if (testTab.active)` было ложным), а любая перерисовка панели в
+ * том же окне запускала ВТОРУЮ сборку. Обе оставляли в сцене лишнюю куклу — белую, в бинд-позе,
+ * в начале координат. Жалоба «после того как нажал тест, появился ещё один меш» — это она.
+ */
 function syncTestTab(): void {
-  if (tab === 'test') { if (!testTab.active) void testTab.start(); }
-  else if (testTab.active) testTab.stop();
+  if (tab === 'test') { if (!testTab.wanted) void testTab.start(); }
+  else if (testTab.wanted) testTab.stop();
 }
 let testStatus: HTMLElement | null = null;
 function renderTest(): void {

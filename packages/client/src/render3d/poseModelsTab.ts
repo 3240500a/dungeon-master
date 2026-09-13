@@ -324,7 +324,12 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       for (const mesh of submeshes) { const mid = entry.submeshMaterials[mesh.name]; if (mid) applyMaterial(mesh, mid); }   // восстановить материалы
       const mapped = Object.values(entry.boneMap).filter(Boolean).length;
       status = `загружено: ${submeshes.length} сабмеш(ей), карта костей ${mapped}/${OUR_BONES.length + OUR_FINGERS.length}, масштаб ${entry.scale}`;
-    } catch (e) { status = 'ошибка: ' + (e as Error).message; loaded = null; rig = null; }
+    } catch (e) {
+      // ⚠ Снимаем СО СЦЕНЫ, а не просто обнуляем ссылку: иначе недособранный превью-риг остаётся висеть
+      // в сцене навсегда, в бинд-позе и без привода — тот же класс, что сиротская кукла вкладки «Тест».
+      status = 'ошибка: ' + (e as Error).message; loaded = null;
+      if (rig) { scene.remove(rig.root); rig.dispose(); rig = null; }
+    }
     renderBody();
   }
 
@@ -647,6 +652,6 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       asmMeshes, asmVisible: { ...asmVisible }, asmProfile: { ...asmProfile }, asmSkinCount: asmSkin ? asmSkin.count() : 0,
       configModels: cfg.models.map((m) => `${m.id}:${m.kind}`),
     }),
-    dispose() { if (asmSkin) asmSkin.dispose(); if (asmSrc) scene.remove(asmSrc.root); },
+    dispose() { if (asmSkin) asmSkin.dispose(); if (asmSrc) scene.remove(asmSrc.root); if (rig) { scene.remove(rig.root); rig.dispose(); rig = null; } },
   };
 }
