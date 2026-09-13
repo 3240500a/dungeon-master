@@ -1601,7 +1601,13 @@ canvas.addEventListener('pointerdown', (ev) => {
   // РУЧКИ СНАЧАЛА (Ф21.1). Один пикинг вместо двух веток: ручки проверяем первыми,
   // потому что они мельче костей и рисуются поверх (depthTest:false) — по картинке они сверху,
   // значит и в пикинге должны быть сверху. Невидимые (IK выкл) не ловятся — `visible` уважает raycast.
-  {
+  //
+  // ⚠ В РЕЖИМЕ ХВАТА РУЧЕК НЕТ ВОВСЕ, и это не придирка. Ручка-эффектор руки сидит РОВНО НА КИСТИ,
+  // камера в хвате подлетает к кисти вплотную, а ручки рисуются поверх всего и ПОСТОЯННОГО ЭКРАННОГО
+  // размера — то есть вблизи закрывают собой всю кисть. Каждый клик попадал в ручку, ветка выходила
+  // сразу (`return`), и фаланги «не реагировали никак» — ровно то, на что жалоба. По дизайну Ф13.3 в
+  // хвате кликаются ТОЛЬКО кости кисти, значит конкурировать за клик тут нечему.
+  if (!gripMode) {
     const list: THREE.Object3D[] = [rig.hipsHandle, gazeHandle];
     for (const k in shoulderHandles) list.push(shoulderHandles[k]!);
     for (const e of effList()) list.push(e.handle, e.poleHandle);
@@ -3073,8 +3079,13 @@ function gripSection(): void {
     );
   };
   {
-    const t = el('div', 'color:#6b7180;font-size:10px;margin:1px 0 2px');
-    t.textContent = 'крути фаланги FK и снимай концы — слайдер пойдёт между ними';
+    // Фаланги кликаются по ВИДИМОМУ ригу: с атласом это кости МОДЕЛИ, и если в её карте костей
+    // пальцев нет, нажимать физически не по чему. Молчать про это нельзя — снаружи неотличимо от поломки.
+    const pickableFingers = boneMeshes().filter((m) => isHandBone(m.userData.bone as string | undefined ?? '')).length;
+    const t = el('div', `color:${pickableFingers ? '#6b7180' : '#e0a05a'};font-size:10px;margin:1px 0 2px`);
+    t.textContent = pickableFingers
+      ? 'крути фаланги FK и снимай концы — слайдер пойдёт между ними'
+      : '⚠ фаланг на видимом скелете нет — кликать нечего. У модели не размечены кости пальцев (переимпортируй атлас) либо выключен вид костей.';
     body.append(t);
   }
   hand('R', 'правая'); hand('L', 'левая');
@@ -3769,12 +3780,20 @@ function clipSection(): void {
       pbtn('переим', () => {
         const nm = prompt('имя клипа', c.name); if (!nm || nm === c.name) return;
         if (library.some((x) => x !== c && x.name === nm && x.character === curCharId && x.weapon === weapon)) { alert('Клип «' + nm + '» на этом оружии уже есть — выберите другое имя.'); return; }
-        const wasConv = ['idle_', 'hit_', 's_hit_'].some((p) => c.name === p + weapon), stillConv = ['idle_', 'hit_', 's_hit_'].some((p) => nm === p + weapon);
-        if (wasConv && !stillConv && !confirm('«' + c.name + '» — конвенционное имя, игра ищет позу по нему. Переименование отвяжет её от оружия. Продолжить?')) return;
+        // ⚠ СТОЙКА ПЕРЕИМЕНОВАНИЯ НЕ БОИТСЯ: если клип был назначен ролью, привязка едет за новым именем
+        // (ниже). Предупреждаем только про УДАРЫ — их рантайм по-прежнему ищет сканом префикса `hit_`.
+        const wasHit = ['hit_', 's_hit_'].some((p) => c.name === p + weapon), stillHit = ['hit_', 's_hit_'].some((p) => nm === p + weapon);
+        if (wasHit && !stillHit && !confirm('«' + c.name + '» — конвенционное имя удара, игра ищет удары по префиксу «hit_». Переименование уберёт клип из набора ударов. Продолжить?')) return;
+        const wasIdle = stanceName(weapon) === c.name, wasCombat = combatStanceName(weapon) === c.name;
         histLib('переименовать клип', () => { const old = c.name; c.name = nm; const arr = atkCfgs[curCharId]?.[weapon]; if (arr) { const j = arr.indexOf(old); if (j >= 0) { arr[j] = nm; saveAtk(); } }
+        if (wasIdle) setStanceRole('idle', nm); if (wasCombat) setStanceRole('combat_idle', nm);   // роль едет за именем
         saveLib(); refreshAll(); });
       }),
       pbtn('удалить', () => { if (confirm('Удалить клип «' + c.name + '»?')) delClip(c); }),
+      // РОЛЬ КЛИПА. Игра ищет стойку по ПРИВЯЗКЕ, а не по имени, поэтому назначить ролью можно любой
+      // клип как угодно названный — и делается это здесь, где его и называют, а не на другой вкладке.
+      roleBtn(c, 'idle', '🧍 спокойная'),
+      roleBtn(c, 'combat_idle', '⚔ боевая'),
       pbtn(c.loop ? '↻ луп' : '→ 1 раз', () => histLib('луп клипа', () => { c.loop = !c.loop; saveLib(); refreshAll(); }), c.loop),
       pbtn('⚙ запечь физику', () => { void bakeCurrentClip(); }),
     );
@@ -4724,6 +4743,15 @@ function refreshTimeline(): void {
  * (`human.reset()` НЕ трогает `Root` — см. `humanoid.ts`). Нет клипа/кадра (сменили оружие на вкладке «Бег») —
  * тем более надо снять высоту: именно там раньше был ранний `return` и персонаж оставался в гейт-позе.
  */
+/** Кнопка «этот клип — такая-то стойка». Горит, когда клип и есть текущая роль (по привязке ИЛИ по имени). */
+function roleBtn(c: Clip, kind: 'idle' | 'combat_idle', label: string): HTMLElement {
+  const on = (kind === 'idle' ? stanceName(weapon) : combatStanceName(weapon)) === c.name;
+  const b = pbtn(label, () => { setStanceRole(kind, on ? undefined : c.name); refreshAll(); }, on);
+  b.title = on
+    ? `«${c.name}» сейчас ${kind === 'idle' ? 'спокойная' : 'боевая'} стойка для «${weapon}». Снять — если имя конвенционное, роль останется за ним по имени.`
+    : `назначить «${c.name}» ${kind === 'idle' ? 'спокойной' : 'боевой'} стойкой для «${weapon}» (привязка по ссылке — имя любое)`;
+  return b;
+}
 function goFrame(i: number): void {
   ghostGround.off = 0; human.root.position.y = 0;
   const c = curClip(); if (!c) return;
@@ -4887,13 +4915,32 @@ const saveAnim = (): void => { try { localStorage.setItem('pe_anim', JSON.string
 /** Запись предмета текущего персонажа (создаётся по требованию — пустой конфиг = поведение по умолчанию). */
 const animItem = (item: string): AnimItem => (((animStore[curCharId] ??= {}).items ??= {})[item] ??= {});
 const animCfg = (): AnimCfg => readAnimCfg(animStore, curCharId);
-const stanceName = (w: string): string => 'idle_' + w;
+/**
+ * ИМЯ КЛИПА-СТОЙКИ — ИЗ ПРИВЯЗКИ, а не из конвенции.
+ *
+ * Жалоба: «сделай чтобы не было хардкода имён, что я назначил — то и цепляется». Привязка в
+ * рантайме была с самого Ф1.2 (`pe_anim` → `clipName`, конвенция лишь фолбэк), а редактор всё равно
+ * лез за именем в `'idle_' + оружие` — поэтому «захватить стойку» создавала НОВЫЙ `idle_none` рядом
+ * с авторским клипом, как бы тот ни назывался.
+ *
+ * ⚠ Через эти две функции идут ВСЕ пути редактора: захват и перезахват, сброс, «основа: оружие»,
+ * синк концов ударов, заголовок панели, сид. Поэтому хватает одного шва — и «что назначил, то и
+ * цепляется» работает везде разом, а не в том месте, где вспомнили.
+ */
+const stanceName = (w: string): string => animCfg().clipName('idle', w);
+/** Назначить клип ролью стойки (или снять привязку, `undefined` → снова конвенция). */
+function setStanceRole(kind: 'idle' | 'combat_idle', clip: string | undefined, item = weapon): void {
+  // Безоружная база живёт отдельным полем: от неё строятся стойки ВСЕХ комбинаций (сборка по рукам).
+  if (item === 'none') { const b = ((animStore[curCharId] ??= {}).base ??= {}); if (kind === 'idle') b.idle = clip; else b.combatIdle = clip; }
+  else { const c = animItem(item); if (kind === 'idle') c.idle = clip; else c.combatIdle = clip; }
+  saveAnim();
+}
 function stanceClip(w: string): Clip | null { return library.find((c) => c.name === stanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
 function loadSway(): Record<string, Record<string, number>> { try { return JSON.parse(localStorage.getItem('pe_sway') || '{}') as Record<string, Record<string, number>>; } catch { return {}; } }
 let swayCfg: Record<string, Record<string, number>> = loadSway();
 function saveSway(): void { try { localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); } catch { /* */ } }
 const swayOf = (w: string): number => swayCfg[curCharId]?.[w] ?? 0.2;   // остаточный мах поверх idle (физпокачивание)
-const combatStanceName = (w: string): string => 'combat_idle_' + w;
+const combatStanceName = (w: string): string => animCfg().clipName('combat_idle', w);
 function combatStanceClip(w: string): Clip | null { return library.find((c) => c.name === combatStanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
 let editorCombat = 0;   // превью боевой стойки в редакторе (0/1)
 /** Стойка под экипировку — ТОТ ЖЕ резолвер, что в игре (`resolveStancePose`): авторская на точный
@@ -5233,11 +5280,7 @@ function renderUpperPanel(): void {   // панель idle-стойки по о�
       for (const n of mine) { const o = document.createElement('option'); o.value = n; o.textContent = n + (n === conv ? '  ✓' : ''); sel.append(o); }
       const cur = cfg.clipName(kind, item);
       sel.value = cur === conv && !cfg.has(item) ? '' : cur;
-      sel.onchange = () => {
-        if (item === 'none') { const b = ((animStore[curCharId] ??= {}).base ??= {}); if (kind === 'idle') b.idle = sel.value || undefined; else b.combatIdle = sel.value || undefined; }
-        else { const c = animItem(item); if (kind === 'idle') c.idle = sel.value || undefined; else c.combatIdle = sel.value || undefined; }
-        saveAnim(); renderLoco();
-      };
+      sel.onchange = () => { setStanceRole(kind, sel.value || undefined, item); renderLoco(); };
       // Привязали к несуществующему клипу — это ошибка данных, и молчать про неё нельзя.
       if (sel.value && !mine.includes(sel.value)) { sel.style.borderColor = '#c05050'; nm.title = 'клипа с таким именем у персонажа нет'; }
       row.append(sel); box.append(row);
