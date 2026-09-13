@@ -7,6 +7,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { autoBoneMap, enforceTPose, measureBoneOffsets, measureBoneScales } from './retarget3d.js';
 import { buildHumanoid } from './humanoid.js';
 import { dedupeSkeletons } from './skeletonDedupe.js';
+import { lowestSkinY, measureFootLift } from './footIk.js';
+import { FOOT_Y } from './pose.js';
 import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
 
 /**
@@ -89,6 +91,50 @@ describe.runIf(existsSync(GLB))('импорт рыцаря повторяет м
     }
     // Свести замер к одному месту: приведение ног считается ИЗ МОДЕЛИ, а не назначено нами.
     expect(h.legAdduct * DEG, 'legAdduct = splay бедра САМОЙ МОДЕЛИ').toBeCloseTo(src.thigh, 1);
+  });
+
+  it('⭐ подошва модели встаёт НА ПОЛ только с замеренным подъёмом стопы', async () => {
+    // Жалоба: «в максе он идеально заземлён, а у нас импортируется с ногами чуть под землёй».
+    // Это не глазомер: у рыцаря подошва ниже лодыжки на 2.90 ед, а наш риг ставит лодыжку на 1.01 —
+    // без подъёма меш уходит под пол на 1.89. Подъём (`footLift`) замеряется ПО МЕШУ, и он же
+    // обязан обнуляться при переимпорте модели: геометрия другая — старое число протухло.
+    const root = await load();
+    dedupeSkeletons(root);
+    const names: string[] = [];
+    root.traverse((o) => { if ((o as THREE.Bone).isBone) names.push(o.name); });
+    const map = autoBoneMap(names);
+    const by = new Map<string, THREE.Object3D>();
+    root.traverse((o) => { if (!by.has(o.name)) by.set(o.name, o); });
+    const wp = (n: string): THREE.Vector3 => by.get(map[n] ?? '')!.getWorldPosition(new THREE.Vector3());
+    root.updateMatrixWorld(true);
+    const hip = wp('Hips'), head = wp('Head');
+    const ax = Math.abs(head.z - hip.z) > Math.abs(head.y - hip.y) ? (head.z - hip.z > 0 ? -Math.PI / 2 : Math.PI / 2) : (head.y - hip.y < 0 ? Math.PI : 0);
+    root.rotation.set(ax, 0, 0);
+    root.traverse((o) => { const sm = o as THREE.SkinnedMesh; if (sm.isSkinnedMesh && sm.skeleton) sm.skeleton.pose(); });
+    root.updateMatrixWorld(true);
+    const off = measureBoneOffsets(root, map), bs = measureBoneScales(root, map);
+    // Нормируем модель тем же множителем, что и замер офсетов (базовый размах / рост модели).
+    const base0 = buildHumanoid({});
+    const span = base0.bones.get('Head')!.getWorldPosition(new THREE.Vector3()).y - base0.bones.get('LeftFoot')!.getWorldPosition(new THREE.Vector3()).y;
+    root.scale.setScalar(span / (wp('Head').y - wp('LeftFoot').y));
+    root.updateMatrixWorld(true);
+    const meshes: THREE.SkinnedMesh[] = [];
+    root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshes.push(o as THREE.SkinnedMesh); });
+    const footBones = new Set(['LeftFoot', 'RightFoot', 'LeftToes', 'RightToes'].map((n) => map[n]).filter(Boolean));
+    const sole = lowestSkinY(meshes, (b) => footBones.has(b.name));
+    expect(sole, 'подошву обязаны найти по вершинам').not.toBeNull();
+    const soleBelowAnkle = wp('LeftFoot').y - sole!;
+    expect(soleBelowAnkle, 'у рыцаря толстые сабатоны — подошва далеко под лодыжкой').toBeCloseTo(2.90, 1);
+
+    const h = buildHumanoid({ boneOffsets: off, boneScale: bs, fingers: true });
+    h.root.updateMatrixWorld(true);
+    const ourAnkle = h.bones.get('LeftFoot')!.getWorldPosition(new THREE.Vector3()).y;
+    expect(ourAnkle - soleBelowAnkle, '⚠ без подъёма подошва УХОДИТ ПОД ПОЛ').toBeLessThan(-1.5);
+    // Тот самый замер, который делает редактор: подошву кладём туда, где она у модели.
+    const lift = measureFootLift(h, ourAnkle - soleBelowAnkle);
+    expect(lift, 'подъём обязан замериться').not.toBeNull();
+    expect(lift!, 'и он заметно больше нуля — ноль и есть «ноги под землёй»').toBeGreaterThan(1);
+    expect(FOOT_Y + lift!, 'с подъёмом лодыжка встаёт ровно так, чтобы подошва легла на пол').toBeCloseTo(soleBelowAnkle, 2);
   });
 
   it('⚠ замеры в конфиге не отстали от файла (перезалил GLB — переимпортируй)', async () => {

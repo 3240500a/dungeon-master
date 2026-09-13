@@ -5492,15 +5492,26 @@ function measureSoleOffset(): number | null {
  * замер — это стартовое значение, а не хозяин ползунка. Доведённое руками число не трогаем никогда.
  */
 let soleSeededFor = '';
+let soleRev = 0;                 // `importRev` вкладки «Модели», под который замерен подъём стопы
 let soleShown: number | null = null;   // последний замер — показываем рядом с кнопкой
+/**
+ * ⚠ ПЕРЕИМПОРТ МОДЕЛИ ОБНУЛЯЕТ СТАРЫЙ ЗАМЕР. Подъём стопы замерен ПО ГЕОМЕТРИИ: у рыцаря подошва
+ * ниже лодыжки на 2.90 ед при норме 1.5, то есть без замера меш тонет на 1.4 ед («ноги чуть-чуть
+ * под землёй»). Раньше сохранённое значение побеждало ВСЕГДА — поэтому после импорта новой модели
+ * оставалось число от старой, и заземление молча врало. Ручная настройка живёт до СЛЕДУЮЩЕГО
+ * импорта; обычная загрузка из конфига `importRev` не двигает и настройку не трогает.
+ */
 function seedSoleOffset(): void {
-  if (soleSeededFor === curCharId) return;
+  const rev = modelsTab.importRev();
+  const key = curCharId + '#' + rev;
+  if (soleSeededFor === key) return;
   const m = measureSoleOffset();
   if (m === null) return;                       // атлас ещё грузится — попробуем на следующем кадре
-  soleSeededFor = curCharId; soleShown = m;
+  const reimported = rev !== soleRev;           // атлас только что импортировали → замер старой модели протух
+  soleSeededFor = key; soleRev = rev; soleShown = m;
   let saved: number | undefined;
   try { saved = (JSON.parse(localStorage.getItem('pe_phys') || '{}') as Record<string, { footLift?: number }>)[curCharId]?.footLift; } catch { /* */ }
-  if (saved !== undefined) return;              // офсет уже задан — замер только показываем
+  if (saved !== undefined && !reimported) return;   // офсет задан руками — замер только показываем
   physFootLift = +m.toFixed(2);
   human.footLift = physFootLift; if (ghostHuman) ghostHuman.footLift = physFootLift;
   stanceMeasuredFor = ''; saveFootLift(); renderAnim();

@@ -33,6 +33,8 @@ interface ModelEntry {
 interface AssetCfg { models: ModelEntry[]; materials: MaterialCfg[]; textures: TextureCfg[] }
 
 export interface ModelsTabHandle {
+  /** Сколько раз атлас импортировали ЯВНО. Меняется — значит замеры по модели надо переснять. */
+  importRev(): number;
   render(body: HTMLElement): void;         // отрисовать UI вкладки в панель
   drive(source: Humanoid): void;           // per-кадр из loop(): наша поза ведёт импортный скелет
   hideMannequin(): boolean;                 // прятать ли манекен/призрак (чтобы виден был импорт)
@@ -107,6 +109,10 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
   let asmMeshes: string[] = [];                  // имена сабмешей атласа (для UI)
   const asmVisible: Record<string, string> = {}; // слот → выбранный сабмеш ('' = скрыть; НЕТ ключа = показать все)
   let asmStatus = '';
+  // Счётчик ЯВНЫХ импортов атласа. Нужен снаружи: после импорта ГЕОМЕТРИЯ ДРУГАЯ, и всё, что было
+  // ЗАМЕРЕНО по прежней модели (подъём стопы), протухло. Обычная загрузка из конфига его не двигает —
+  // иначе ручная настройка сбрасывалась бы при каждом открытии редактора.
+  let importRev = 0;
   let asmKey = '';                               // ключ атласа при импорте: пусто=игрок, для монстра=фракция ('undead' и т.п.)
   let wpnStatus = '';                            // статус импорта оружия (один FBX → GLB на каждое)
 
@@ -194,6 +200,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       const bodyJson = JSON.stringify({ models });
       saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
       cfg.models = models; asmAtlas = e;
+      importRev++;   // геометрия другая → всё, что замерено ПО МОДЕЛИ (подъём стопы), протухло
       rebuildAsm();   // ВСЕГДА пересобираем скин: setAtlas дедуплицирует по URL, а переимпорт того же файла URL не меняет → иначе превью зависло бы на старом GLB
       asmStatus = `атлас «${id}» [${key ?? 'игрок'}]: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`;
     } catch (err) { asmStatus = 'ошибка: ' + (err as Error).message; }
@@ -638,6 +645,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     drive(source) { driveAsm(source); },
     hideMannequin: () => false,   // показываем И скелет-манекен, И меш (позинг импортного персонажа: кости поверх модели)
     importUrl: (url) => importAtlas(() => loadModelUrl(url), url.split('/').pop() ?? 'character'),   // тест/дебаг: импорт атласа
+    importRev: () => importRev,               // растёт на КАЖДОМ явном импорте атласа (замеры по модели протухли)
     boneScale: () => curAtlas()?.boneScale,   // пропорции ФБХ текущего атласа для манекена/призрака редактора
     boneOffsets: () => curAtlas()?.boneOffsets,   // полные rest-офсеты ФБХ для манекена/призрака (приоритет)
     profile: () => curAtlas()?.body,          // профиль тела атласа (как игра: solid/target с profile) → редактор строит тело им
