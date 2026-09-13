@@ -78,6 +78,8 @@ const KNOBS: Knob[] = [
   { label: 'локоть — база (бег)', obj: PS, key: 'armElRun', to: 1.2 },
   { label: 'локоть — амплитуда', obj: PS, key: 'armElAmp', to: 0.8 },
   { label: 'локоть — амплитуда (бег)', obj: PS, key: 'armElAmpRun', to: 0.8 },
+  { label: 'разворот локтя', obj: PS, key: 'elbowDir', to: 0.5, move: 'walk' },
+  { label: 'разворот локтя (бег)', obj: PS, key: 'elbowDirRun', to: 0.5 },
   // плечи (ключицы)
   { label: 'подъём плеча', obj: PS, key: 'shoUp', to: 0.4 },
   { label: 'подъём плеча (бег)', obj: PS, key: 'shoUpRun', to: 0.4 },
@@ -125,6 +127,10 @@ const KNOBS: Knob[] = [
   { label: 'потолок бедра (бег)', obj: G, key: 'hipFwdLimRun', to: 0.4 },
   { label: 'амплитуда бедра', obj: G, key: 'hipSwing', to: 2.2, move: 'walk' },
   { label: 'амплитуда бедра (бег)', obj: G, key: 'hipSwingRun', to: 2.2 },
+  { label: 'разворот колена', obj: G, key: 'kneeDir', to: 0.5, move: 'walk' },
+  { label: 'разворот колена (бег)', obj: G, key: 'kneeDirRun', to: 0.5 },
+  // Потолок виден только тогда, когда сам разворот в него упирается — иначе ручка честно молчит.
+  { label: 'потолок разворота колена', obj: G, key: 'kneeDirMax', to: 0.2, move: 'run', pre: () => { GAIT.kneeDir = 0.6; GAIT.kneeDirRun = 0.6; } },
   { label: 'ширина стойки', obj: G, key: 'stanceWidth', to: 16, move: 'walk' },
   { label: 'ширина стойки (бег)', obj: G, key: 'stanceWidthRun', to: 16 },
   { label: 'вынос вбок (страйф)', obj: G, key: 'strafeReach', to: 2, move: 'strafeWalk' },

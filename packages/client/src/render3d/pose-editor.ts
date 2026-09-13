@@ -4396,6 +4396,9 @@ function renderGaitTune(): void {
   // сложены в базу при загрузке (`foldElbow`) — угол тот же, ползунков меньше.
   row2('локоть — база', POSEo, 'armEl', 'armElRun', 0, 3.2, 0.01);
   row2('локоть — амплитуда', POSEo, 'armElAmp', 'armElAmpRun', -2, 2, 0.01);
+  // НАПРАВЛЕНИЕ сгиба (полюс), а не величина: крутит плечо вдоль кости — локти «крыльями» или прижаты.
+  // Потолка нет осознанно: сустав плеча по твисту свободен (±π), упираться не во что — в отличие от колена.
+  row2('разворот локтя (+ наружу / − внутрь)', POSEo, 'elbowDir', 'elbowDirRun', -1.6, 1.6, 0.01);
   grp('плечи (ключицы)');
   row2('подъём плеча', POSEo, 'shoUp', 'shoUpRun', -1.2, 1.2, 0.01);
   row2('вынос вперёд', POSEo, 'shoFwd', 'shoFwdRun', -1.2, 1.2, 0.01);
@@ -4444,6 +4447,10 @@ function renderGaitTune(): void {
     { dep: [[GAITo, 'toeLift', 'toeLiftRun']], depLabel: 'подъём носка' });
   // ⚠ Потолок = предел сустава физ-рига (±0.45). Выше — манекен покажет то, чего призрак не даст.
   one1('потолок голеностопа (предел сустава)', GAITo, 'ankMax', 0.05, 1.2, 0.01);
+  // НАПРАВЛЕНИЕ сгиба колена (полюс): крутит бедро вдоль кости, стопа едет за ним («носки врозь»).
+  row2('разворот колена (+ наружу / − внутрь)', GAITo, 'kneeDir', 'kneeDirRun', -0.9, 0.9, 0.01);
+  // ⚠ Потолок = твист-предел сустава бедра (±0.7). Выше — манекен покажет то, чего призрак не даст.
+  one1('потолок разворота колена (предел сустава)', GAITo, 'kneeDirMax', 0.05, 1.2, 0.01);
   row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -20, 30, 0.25);
   row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 3, 0.02);
   row2('предел кроссовера', GAITo, 'crossClamp', 'crossClampRun', 0, 99, 1);
@@ -5325,7 +5332,8 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
-  'ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+  'ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax',
+  'kneeDir', 'kneeDirRun', 'kneeDirMax'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
 // читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',
@@ -5334,7 +5342,7 @@ const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armEl
   'armPhase', 'armPhaseRun', 'shoPhase', 'shoPhaseRun', 'armElAmp', 'armElAmpRun',
   'twistSwing', 'twistSwingRun', 'twistChest', 'twistChestRun', 'twistUpper', 'twistUpperRun',
   'twistPhase', 'twistPhaseRun', 'leanIdle', 'leanWalk', 'leanSpeed', 'leanWalkRun', 'leanSpeedRun',
-  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax'] as const;
+  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax', 'elbowDir', 'elbowDirRun'] as const;
 const GX_KEYS = ['armDown', 'elbowBend', 'armDownRun', 'elbowBendRun'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
