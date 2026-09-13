@@ -2290,7 +2290,12 @@ function rigDelta(): { ghost: number; ground: number; pose: number; mesh: number
     const mb = modelsTab.atlasBone(nm);
     // СЧЁТЧИК СРАВНЁННЫХ КОСТЕЙ ОБЯЗАТЕЛЕН: без него метрика врёт самым опасным способом —
     // показывает бодрый 0.00u там, где модель просто не загружена и сравнивать не с чем (поймано контрольным замером).
-    if (mb) { n++; m = Math.max(m, (gb ?? a).getWorldPosition(V()).distanceTo(mb.getWorldPosition(V()))); }
+    //
+    // ⚠ СРАВНИВАЕМ С ТЕМ РИГОМ, КОТОРЫЙ МЕШ И ВЕДЁТ (`modelsTab.drive(physOn && ghost ? ghost : human)`),
+    // а не «с призраком, если он есть». При выключенной физике меш ведёт МАНЕКЕН, а призрак стоит
+    // непозированным — и метрика показывала его расхождение как «меш уехал». Ровно на это я и купился.
+    const drv = (physOn && gb) ? gb : a;
+    if (mb) { n++; m = Math.max(m, drv.getWorldPosition(V()).distanceTo(mb.getWorldPosition(V()))); }
   }
   return { ghost: +g.toFixed(2), ground: +gy.toFixed(2), pose: +ps.toFixed(2), mesh: n ? +m.toFixed(2) : null, bones: n };
 }
@@ -2939,6 +2944,19 @@ function poseTools(): void {
     const mh = el('span', 'color:#6b7180');
     const got = soleShown; mh.textContent = got === null ? 'считается по подошве меша, а не по низу модели' : `замер даёт ${got.toFixed(2)}`;
     mrow.append(mh); body.append(mrow);
+    // ⭐ ГЛАВНОЕ ЧИСЛО: стоит ли он НА ПОЛУ. Всё остальное в этом блоке — средства, а это результат.
+    {
+      const now = soleHeightNow();
+      const r2 = el('div', 'font-size:10px;margin-top:1px');
+      if (now === null) { r2.style.color = '#6b7180'; r2.textContent = 'подошва: модель не загружена'; }
+      else {
+        const ok = Math.abs(now) < 0.25;
+        r2.style.color = ok ? '#9ae6a0' : '#e0a05a';
+        r2.textContent = `подошва сейчас: ${now >= 0 ? '+' : ''}${now.toFixed(2)} `
+          + (ok ? '— на полу' : now > 0 ? '— ПАРИТ над полом' : '— ТОНЕТ под полом');
+      }
+      body.append(r2);
+    }
   }
   // Сустав выбранной кости: сначала физ-риг, иначе без-физический (фаланги — у них тела нет и не будет).
   const canon = (tab === 'anim' && selected) ? (canonOfHuman(selected) ?? limitViewForBone(selected)?.canon ?? null) : null;
@@ -5489,24 +5507,51 @@ let stanceMeasuredFor = '';   // замеряем ширину стойки од
  * скин висит на твист-костях, которых в нашей карте нет.
  */
 const FOOT_OUR = new Set(['LeftFoot', 'RightFoot', 'LeftToes', 'RightToes']);
-function measureSoleOffset(): number | null {
+/**
+ * ГДЕ ПОДОШВА МЕША ПРЯМО СЕЙЧАС, в мировых единицах: 0 = стоит на полу, + = парит, − = тонет.
+ *
+ * ⚠ Это ЕДИНСТВЕННОЕ число, которое отвечает на вопрос «он на полу?» — и его не было видно нигде.
+ * Спор «ноги под землёй / ноги над землёй» шёл по скриншотам, а на скриншоте не различить пол
+ * редактора и дальний край плоскости. Теперь оно всегда в панели, рядом с ползунком офсета.
+ */
+function soleHeightNow(): number | null {
+  const meshes = atlasFootMeshes();
+  return meshes ? lowestSkinY(meshes.list, meshes.isFoot) : null;
+}
+/** Меши атласа + предикат «кость стопы» — общая часть замера подошвы. */
+function atlasFootMeshes(): { list: THREE.SkinnedMesh[]; isFoot: (b: THREE.Object3D) => boolean } | null {
   const ex = modelsTab.exportTarget(); if (!ex) return null;
   const ourOf: Record<string, string> = {};
   for (const our in ex.boneMap) ourOf[ex.boneMap[our]!] = our;
-  const meshes: THREE.SkinnedMesh[] = [];
-  ex.root.traverse((o) => { const m = o as THREE.SkinnedMesh; if (m.isSkinnedMesh && m.geometry.getAttribute('skinWeight')) meshes.push(m); });
-  if (!meshes.length) return null;
+  const list: THREE.SkinnedMesh[] = [];
+  ex.root.traverse((o) => { const m = o as THREE.SkinnedMesh; if (m.isSkinnedMesh && m.geometry.getAttribute('skinWeight')) list.push(m); });
+  if (!list.length) return null;
   const isFoot = (b: THREE.Object3D): boolean => {
     let our = ourOf[b.name], up: THREE.Object3D | null = b;
     while (!our && up) { up = up.parent; if (up) our = ourOf[up.name]; }
     return !!our && FOOT_OUR.has(our);
   };
-  const soleY = lowestSkinY(meshes, isFoot);
-  // ⚠ Лодыжку берём С ТОГО ЖЕ РИГА, что ВЕДЁТ МЕШ: при включённой физике это ПРИЗРАК, а не манекен
-  // (`modelsTab.drive(physOn && ghostHuman ? ghostHuman : human)` в кадре). Смешать их — значит
-  // сравнить подошву одного скелета с лодыжкой другого, и офсет уедет на их расхождение.
-  const driver = (physOn && ghostHuman) ? ghostHuman : human;
-  return soleY === null ? null : measureFootLift(driver, soleY);
+  return { list, isFoot };
+}
+function measureSoleOffset(): number | null {
+  const mm = atlasFootMeshes(); if (!mm) return null;
+  // ⚠⚠ ЗАМЕР ИДЁТ ПО ПОКОЮ, А НЕ ПО ТЕКУЩЕЙ ПОЗЕ. Офсет — свойство ГЕОМЕТРИИ («насколько лодыжка
+  // выше собственной подошвы»), но меряется он по вершинам, а вершины едут за позой. Замер
+  // чувствительности: поворот стопы на 10° двигает результат на +1.12, на 20° — на +2.2. То есть
+  // замеренный на позе с опущенным носком офсет задирает персонажа над полом, и это читается как
+  // «он парит». Ровно это и было: в панели стояло 2.15 там, где геометрия даёт 1.34.
+  //
+  // Поэтому на время замера кладём манекен в ПОКОЙ, ведём им меш, меряем — и возвращаем всё назад.
+  // Манекен, а не призрак: призрака ведёт физика, его в покой не поставить, а геометрия у них одна.
+  const saved = readPoseFull();
+  const y0 = human.root.position.y;
+  human.reset(); human.root.position.y = 0; human.root.updateMatrixWorld(true);
+  modelsTab.drive(human);
+  const soleY = lowestSkinY(mm.list, mm.isFoot);
+  const lift = soleY === null ? null : measureFootLift(human, soleY);
+  applyPose(saved); human.root.position.y = y0; human.root.updateMatrixWorld(true);
+  modelsTab.drive((physOn && ghostHuman) ? ghostHuman : human);   // вернуть кадр как был
+  return lift;
 }
 
 /**

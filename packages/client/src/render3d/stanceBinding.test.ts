@@ -61,3 +61,17 @@ describe('и сама модель ведёт себя как обещано', (
     expect(bare.clipName('idle', 'none'), 'пустой конфиг = прежнее поведение').toBe('idle_none');
   });
 });
+
+describe('офсет заземления меряется по покою', () => {
+  it('⭐ measureSoleOffset кладёт манекен в покой и возвращает позу назад', () => {
+    // Поведенческого теста тут не построить (замер работает на живой сцене редактора), но
+    // «меряем в покое» — свойство КОДА, и именно его отсутствие дало 2.15 вместо 1.34:
+    // замер на позе с опущенным носком задирает офсет, и персонаж парит над полом.
+    const from = SRC.indexOf('function measureSoleOffset(');
+    expect(from, 'функция должна существовать').toBeGreaterThan(0);
+    const body = SRC.slice(from, SRC.indexOf('\n}', from));
+    expect(body, 'поза сохраняется').toContain('readPoseFull()');
+    expect(body, 'манекен кладётся в покой').toContain('human.reset()');
+    expect(body, 'и поза возвращается').toContain('applyPose(saved)');
+  });
+});

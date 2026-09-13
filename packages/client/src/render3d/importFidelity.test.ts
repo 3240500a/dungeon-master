@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { autoBoneMap, enforceTPose, measureBoneOffsets, measureBoneScales } from './retarget3d.js';
+import { autoBoneMap, enforceTPose, measureBoneOffsets, measureBoneScales, makeRetargetRig } from './retarget3d.js';
 import { buildHumanoid } from './humanoid.js';
 import { dedupeSkeletons } from './skeletonDedupe.js';
 import { lowestSkinY, measureFootLift } from './footIk.js';
@@ -139,6 +139,45 @@ describe.runIf(existsSync(GLB))('импорт рыцаря повторяет м
       expect(lift, 'подъём обязан замериться').not.toBeNull();
       expect(FOOT_Y + lift!, 'цель заземления = высота лодыжки модели').toBeCloseTo(soleBelowAnkle, 2);
     })();
+  });
+
+  it('⚠ ЗАМЕР ПОДОШВЫ ЗАВИСИТ ОТ ПОЗЫ — поэтому мерить его можно ТОЛЬКО в покое', async () => {
+    // Жалоба «ноги над полом» с офсетом 2.15 в панели при геометрии 1.34. Разница — ровно поза:
+    // вершины стопы едут за костью, и замер «лодыжка минус подошва» вместе с ними.
+    const root = await load();
+    dedupeSkeletons(root);
+    const names: string[] = [];
+    root.traverse((o) => { if ((o as THREE.Bone).isBone) names.push(o.name); });
+    const map = autoBoneMap(names);
+    const by = new Map<string, THREE.Object3D>();
+    root.traverse((o) => { if (!by.has(o.name)) by.set(o.name, o); });
+    const wp = (n: string): THREE.Vector3 => by.get(map[n] ?? '')!.getWorldPosition(new THREE.Vector3());
+    root.updateMatrixWorld(true);
+    const hip = wp('Hips'), head = wp('Head');
+    const ax = Math.abs(head.z - hip.z) > Math.abs(head.y - hip.y) ? (head.z - hip.z > 0 ? -Math.PI / 2 : Math.PI / 2) : (head.y - hip.y < 0 ? Math.PI : 0);
+    root.rotation.set(ax, 0, 0);
+    root.traverse((o) => { const sm = o as THREE.SkinnedMesh; if (sm.isSkinnedMesh && sm.skeleton) sm.skeleton.pose(); });
+    root.updateMatrixWorld(true);
+    const source = buildHumanoid({ boneOffsets: measureBoneOffsets(root, map), boneScale: measureBoneScales(root, map), fingers: true });
+    const bb = new THREE.Box3(); root.traverse((o) => { if ((o as THREE.Bone).isBone) bb.expandByPoint(o.getWorldPosition(new THREE.Vector3())); });
+    const sb = new THREE.Box3(); for (const b of source.bones.values()) sb.expandByPoint(b.getWorldPosition(new THREE.Vector3()));
+    const rig = makeRetargetRig(root, map, (sb.max.y - sb.min.y) / Math.max(1e-3, bb.max.y - bb.min.y), source);
+    const meshes: THREE.SkinnedMesh[] = [];
+    root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshes.push(o as THREE.SkinnedMesh); });
+    const footBones = new Set(['LeftFoot', 'RightFoot', 'LeftToes', 'RightToes'].map((n) => map[n]).filter(Boolean));
+
+    const at = (deg: number): number => {
+      for (const n of ['LeftFoot', 'RightFoot']) source.bones.get(n)!.rotation.x = deg * Math.PI / 180;
+      source.root.updateMatrixWorld(true);
+      rig.drive(source);
+      root.updateMatrixWorld(true);
+      return measureFootLift(source, lowestSkinY(meshes, (b) => footBones.has(b.name))!)!;
+    };
+    const rest = at(0);
+    expect(rest, 'в покое замер = геометрия модели').toBeCloseTo(1.34, 1);
+    expect(at(10) - rest, '⚠ 10° носком вниз — и замер уехал больше чем на юнит').toBeGreaterThan(1);
+    expect(at(20) - rest, 'на 20° — больше двух').toBeGreaterThan(2);
+    at(0);
   });
 
   it('⚠ замеры в конфиге не отстали от файла (перезалил GLB — переимпортируй)', async () => {
