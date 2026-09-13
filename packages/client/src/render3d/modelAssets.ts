@@ -11,6 +11,7 @@ import { BVHLoader } from 'three/addons/loaders/BVHLoader.js';
 import { devFetch } from '../devAuth.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { dedupeSkeletons, type DedupeReport } from './skeletonDedupe.js';
+import { assertGlbUsable } from './glbCheck.js';
 
 /** Отчёт схлопывания по последней разобранной модели (для панели «Модели» — там видно, чем выгнали ассет). */
 let _lastDedupe: DedupeReport | null = null;
@@ -28,6 +29,10 @@ async function parseModel(buf: ArrayBuffer, ext: string): Promise<THREE.Group> {
     : await new Promise<THREE.Group>((resolve, reject) =>
       new GLTFLoader().parse(buf, '', (g) => resolve(g.scene as unknown as THREE.Group), reject));
   _lastDedupe = dedupeSkeletons(root);
+  // ⚠ КОСТЬ НЕ ИМЕЕТ ПРАВА БЫТЬ НЕВИДИМОЙ. Из FBX скелет часто приходит скрытым (его прячут в максе).
+  // Кость сама ничего не рисует, зато невидимость выкидывает её из экспорта (`onlyVisible`) и из
+  // рейкаста. Правим ЗДЕСЬ — это единственная точка, через которую модель попадает и в редактор, и в игру.
+  root.traverse((o) => { if ((o as THREE.Bone).isBone && !o.visible) o.visible = true; });
   if (_lastDedupe.skins > 1) {
     console.warn(`[модель] пришла с ${_lastDedupe.skins} скелетами → схлопнуто в 1 `
       + `(костей ${_lastDedupe.bonesBefore} → ${_lastDedupe.bonesAfter}). Перевыгоняйте с ОБЩИМ скелетом: `
@@ -89,10 +94,23 @@ export async function loadModelUrl(url: string): Promise<THREE.Group> {
  *  Вторым аргументом — анимации (Ф2.3): GLTFExporter кладёт их в тот же файл, и клип уезжает
  *  в Unity/Unreal/Blender как обычная анимация — без нашего кода. Имена дорожек должны совпадать
  *  с именами УЗЛОВ экспортируемого графа, иначе экспортер тихо выбросит дорожку (частая грабля). */
-export function exportGLB(obj: THREE.Object3D, animations?: THREE.AnimationClip[]): Promise<ArrayBuffer> {
-  return new Promise<ArrayBuffer>((resolve, reject) =>
+/**
+ * Выгрузить объект в GLB.
+ *
+ * ⚠ `onlyVisible: false` — НЕ УБИРАТЬ. По умолчанию `GLTFExporter` пропускает ноды с `visible === false`,
+ * но ссылки на них в скине всё равно пишет. Скелет приезжает скрытым штатно (в максе его прячут, и FBX
+ * несёт этот флаг), поэтому экспорт молча отдавал файл с `joints: [null × 100]` и НУЛЁМ костей —
+ * такой GLB не грузится ничем, а выглядит это как «модель не отображается, атлас не распознаётся».
+ * Для АССЕТА видимость — вопрос вьюпорта, а не данных: выгружаем всё.
+ *
+ * И проверяем РЕЗУЛЬТАТ, а не факт «экспорт не бросил»: заливка битого файла проходила успешно.
+ */
+export async function exportGLB(obj: THREE.Object3D, animations?: THREE.AnimationClip[]): Promise<ArrayBuffer> {
+  const buf = await new Promise<ArrayBuffer>((resolve, reject) =>
     new GLTFExporter().parse(obj, (res) => resolve(res as ArrayBuffer), (e) => reject(e),
-      animations && animations.length ? { binary: true, animations } : { binary: true }));
+      animations && animations.length ? { binary: true, animations, onlyVisible: false } : { binary: true, onlyVisible: false }));
+  assertGlbUsable(buf);
+  return buf;
 }
 
 /** Залить бинарь (GLB/PNG/JPG) на сервер под id → { url }. DEV-only (в проде 403). contentType задаёт расширение. */
