@@ -11,7 +11,7 @@
  *  • `⟳ на сервере новее` — кто-то (вторая вкладка/машина) опубликовал раньше нас; жать не обязательно,
  *    но видно СРАЗУ, а не постфактум по пропавшему клипу.
  */
-import { dirtyKeys, serverAheadKeys, publish, pullFromServer, refreshServerRevs, onSyncChange } from './poseServer.js';
+import { dirtyKeys, serverAheadKeys, publish, pullFromServer, refreshServerRevs, onSyncChange, wipeAll } from './poseServer.js';
 
 /** Человеческие имена ключей: «pe_clips» ничего не говорит, «клипы и кадры» — говорит. */
 const LABEL: Record<string, string> = {
@@ -152,6 +152,41 @@ function showDialog(online: boolean, refresh: () => void, opts: { publishExtra?:
     const cancel = document.createElement('button'); cancel.style.cssText = CSS.btn; cancel.textContent = 'закрыть';
     cancel.onclick = close; row.append(cancel);
     box.append(row);
+    // ── ЧИСТЫЙ ЛИСТ ───────────────────────────────────────────────────────────────────────────
+    // Настройки копятся в десятке ключей, живут в трёх местах и переживают удаление модели — поэтому
+    // «загрузил заново, а садится как раньше» выглядит мистикой. Отдельной кнопки для этого не было,
+    // а вручную по ключу вычистить нельзя: их не видно. Стоит ВНИЗУ и спрашивает дважды.
+    const danger = document.createElement('div');
+    danger.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid #4a3040';
+    const db = document.createElement('button');
+    db.style.cssText = CSS.btn + ';background:#4a2230;border-color:#7a3a4a;color:#e8cdd4';
+    db.textContent = '🗑 чистый лист (стереть весь контент)';
+    db.onclick = () => {
+      const what = [
+        'СТЕРЕТЬ ВЕСЬ АВТОРСКИЙ КОНТЕНТ?', '',
+        'Уйдут: все клипы и кадры, походка, хват, физика, настройки',
+        'контроллера, свои персонажи И список 3D-моделей — и в рабочей',
+        'копии, и НА СЕРВЕРЕ.', '',
+        'Личные настройки инструмента (вид панелей) останутся.',
+      ].join('\n');
+      if (!confirm(what)) return;
+      if (!confirm('Это необратимо. Точно стираем?')) return;
+      void (async (): Promise<void> => {
+        db.disabled = true; db.textContent = '… стираю';
+        const r = await wipeAll();
+        opts.onDone?.();
+        alert(['Стёрто.', `рабочая копия: ${r.local.length} ключей`, `сервер: ${r.server.length} ключей`,
+          ...(r.failed.length ? [`НЕ УДАЛОСЬ: ${r.failed.join(', ')}`] : []),
+          '', 'Страница сейчас перезагрузится — редактор начнёт с чистого листа.'].join('\n'));
+        location.reload();
+      })();
+    };
+    danger.append(db);
+    const dh = document.createElement('div');
+    dh.style.cssText = 'color:#7a869e;font-size:10px;margin-top:3px';
+    dh.textContent = 'после этого: загрузить модель → выбрать, чей это атлас → настраивать с нуля';
+    danger.append(dh);
+    box.append(danger);
     refresh();
   };
 

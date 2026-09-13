@@ -178,6 +178,45 @@ export interface PublishResult {
 }
 
 /**
+ * ЧИСТЫЙ ЛИСТ: снести ВЕСЬ авторский контент — и рабочую копию, и опубликованное.
+ *
+ * Зачем такая кнопка вообще. Настройки копятся в десятке ключей (`pe_gait`, `pe_grip`, `pe_phys`,
+ * `pe_anim`…), живут в трёх местах (рабочая копия, сервер, правки конфига) и переживают удаление
+ * модели — поэтому «загрузил модель заново, а она садится как раньше» выглядит мистикой, хотя это
+ * просто старые числа из прошлой жизни. Ручная чистка по ключу нереальна: их не видно.
+ *
+ * ⚠ Операция НЕОБРАТИМАЯ и спрашивается дважды в UI. Здесь только механика.
+ *
+ * Что сносится: все ключи `pe_*` в рабочей копии (кроме ЛИЧНЫХ `pe_prefs`/`pe_sync` — это настройки
+ * инструмента, а не контент), все ключи на сервере и оверрайд секции `models` в конфиге (иначе
+ * список моделей вернётся с сервера при первой же загрузке).
+ */
+export async function wipeAll(): Promise<{ local: string[]; server: string[]; failed: string[] }> {
+  const server: string[] = [], failed: string[] = [];
+  let revs: Record<string, number> = {};
+  try { const r = await fetch('/api/pose/rev'); if (r.ok) revs = await r.json() as Record<string, number>; } catch { /* сервера нет — чистим локальное */ }
+  for (const k of Object.keys(revs)) {
+    try {
+      const r = await devFetch('/api/dev/pose/' + encodeURIComponent(k), { method: 'DELETE' });
+      if (r.ok) server.push(k); else failed.push(k + ' (' + r.status + ')');
+    } catch { failed.push(k + ' (сеть)'); }
+  }
+  // Оверрайд конфига: сбрасываем секцию моделей к дефолту — иначе модели приедут обратно с сервера.
+  try { const r = await devFetch('/api/dev/config/models', { method: 'DELETE' }); if (!r.ok) failed.push('config:models (' + r.status + ')'); } catch { failed.push('config:models (сеть)'); }
+
+  const local: string[] = [];
+  try {
+    const keep = new Set(['pe_prefs', SYNC_KEY]);            // личные настройки инструмента — не контент
+    const all: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('pe_') && !keep.has(k)) all.push(k); }
+    for (const k of all) { localStorage.removeItem(k); local.push(k); }
+    writeSync({ base: {}, dirty: {}, seen: {} });            // синк начинается с нуля
+  } catch { /* приватный режим — нечего чистить */ }
+  notify();
+  return { local, server, failed };
+}
+
+/**
  * ПОДГОТОВКА ЗНАЧЕНИЯ К ОТПРАВКЕ. Рабочая копия и то, что уезжает в игру, — не всегда одно и то же:
  * есть каналы, которые в редакторе живут ОТДЕЛЬНО (чтобы их можно было править), а наружу обязаны
  * уехать ЗАПЕЧЁННЫМИ в данные. Так решено по хвату: «из редактора будут отправляться готовые
