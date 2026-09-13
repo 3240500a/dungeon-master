@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { savePoseKey, dirtyKeys, serverAheadKeys, publish, pullFromServer, syncPoseFromServer, refreshServerRevs, setPublishPrepare } from './poseServer.js';
+import { savePoseKey, dirtyKeys, serverAheadKeys, publish, pullFromServer, syncPoseFromServer, refreshServerRevs, setPublishPrepare, wipeAll } from './poseServer.js';
 import { saveConfigSection, configEdits, configDirtyKeys, mergedConfig, publishConfigEdits } from './configEdits.js';
 
 /** Мини-localStorage: тесты гоняют РЕАЛЬНУЮ логику хранения, поэтому подделка должна вести себя как настоящий. */
@@ -42,6 +42,11 @@ function fakeServer(init: Record<string, unknown> = {}) {
       const out: Record<string, number> = {};
       for (const k of keys) { data[k] = body[k]; out[k] = rev[k] = ++clock; }
       return { ok: true, status: 200, json: async () => ({ ok: true, saved: keys, rev: out }) } as Response;
+    }
+    if (url.startsWith('/api/dev/pose/') && opts?.method === 'DELETE') {
+      const k = decodeURIComponent(url.slice('/api/dev/pose/'.length));
+      delete data[k]; delete rev[k];
+      return { ok: true, status: 200, json: async () => ({ ok: true, deleted: k }) } as Response;
     }
     if (url.startsWith('/api/dev/config')) return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response;
     return { ok: false, status: 404, json: async () => ({}) } as Response;
@@ -249,5 +254,61 @@ describe('конфиг моделей: правки живут локально'
     const r = await publishConfigEdits();
     expect(r.ok).toBe(false);
     expect(configDirtyKeys()).toEqual(['pe_config:models']);       // не опубликовано → и не потеряно
+  });
+});
+
+
+/**
+ * ЧИСТЫЙ ЛИСТ. Жалоба: «нажал — а настройки и модели остались».
+ *
+ * ⚠ Причина была не в самой чистке (сервер она вычищала), а в ТРЁХ местах, откуда контент
+ * возвращался сам: сид сервера (`pose-seed.json`), `models.json` в памяти процесса и АВТОПОСЕВ
+ * в редакторе по флагу `pe_seeded4` — флаг лежал в тех же `pe_*`, сносился вместе с ними, и
+ * редактор считал себя новым. Здесь проверяется механика самой чистки; автопосев убран в
+ * `pose-editor.ts` (сид остался кнопкой).
+ */
+describe('чистый лист', () => {
+  beforeEach(() => { G.localStorage = fakeLS(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('⭐ сносит рабочую копию И сервер, а личное и вход не трогает', async () => {
+    const { state, fetchMock } = fakeServer({ pe_clips: [{ name: 'старый' }], pe_gait: { warrior: {} } });
+    G.fetch = fetchMock as unknown as typeof fetch;
+    localStorage.setItem('pe_clips', '[]');
+    localStorage.setItem('pe_gait', '{}');
+    localStorage.setItem('pe_prefs', '{"aSkel":0.3}');     // личные настройки инструмента
+    localStorage.setItem('dm:auth', 'token');              // вход — не контент
+
+    const r = await wipeAll();
+
+    expect(r.server.sort(), 'ключи сервера удалены').toEqual(['pe_clips', 'pe_gait']);
+    expect(Object.keys(state.rev), 'на сервере пусто').toEqual([]);
+    expect(r.failed, 'без тихих осечек').toEqual([]);
+    expect(localStorage.getItem('pe_clips'), 'рабочая копия очищена').toBeNull();
+    expect(localStorage.getItem('pe_gait')).toBeNull();
+    expect(localStorage.getItem('pe_prefs'), '⚠ личные настройки остаются').toBe('{"aSkel":0.3}');
+    expect(localStorage.getItem('dm:auth'), '⚠ вход не трогаем — иначе выкинет из редактора').toBe('token');
+  });
+
+  it('⭐ моделям пишется ПУСТОЙ оверрайд, а не сброс к дефолту', async () => {
+    // Сброс к дефолту вернул бы `models.json`, который запущенный сервер держит в памяти.
+    const { fetchMock } = fakeServer({});
+    G.fetch = fetchMock as unknown as typeof fetch;
+    await wipeAll();
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).startsWith('/api/dev/config'));
+    expect(call, 'конфиг моделей обязан быть тронут').toBeTruthy();
+    expect(String(call![0]), 'именно POST на секцию, а не DELETE').toBe('/api/dev/config');
+    expect(JSON.parse(String((call![1] as RequestInit).body)), 'список моделей пуст').toEqual({ models: [] });
+  });
+
+  it('⚠ если на сервере что-то осталось — говорим об этом, а не молчим', async () => {
+    // Иначе редактор при следующей загрузке притащит остаток обратно, и чистка выглядит несработавшей.
+    const { fetchMock } = fakeServer({ pe_clips: [] });
+    const guarded = vi.fn(async (url: string, opts?: RequestInit) => (
+      String(url).startsWith('/api/dev/pose/') ? { ok: false, status: 403, json: async () => ({}) } as Response
+        : fetchMock(url, opts)));
+    G.fetch = guarded as unknown as typeof fetch;
+    const r = await wipeAll();
+    expect(r.failed.join(' '), 'в отчёте видно и отказ, и остаток').toMatch(/403|осталось/);
   });
 });

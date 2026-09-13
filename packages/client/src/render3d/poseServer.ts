@@ -201,8 +201,13 @@ export async function wipeAll(): Promise<{ local: string[]; server: string[]; fa
       if (r.ok) server.push(k); else failed.push(k + ' (' + r.status + ')');
     } catch { failed.push(k + ' (сеть)'); }
   }
-  // Оверрайд конфига: сбрасываем секцию моделей к дефолту — иначе модели приедут обратно с сервера.
-  try { const r = await devFetch('/api/dev/config/models', { method: 'DELETE' }); if (!r.ok) failed.push('config:models (' + r.status + ')'); } catch { failed.push('config:models (сеть)'); }
+  // ⚠ МОДЕЛИ: пишем ПУСТОЙ оверрайд, а не удаляем его. Удаление возвращает секцию к ДЕФОЛТУ, а дефолт
+  // — это `models.json`, который запущенный сервер держит В ПАМЯТИ (файл перечитается только при
+  // рестарте процесса). То есть «сбросить к дефолту» возвращало ровно тот список, который сносим.
+  try {
+    const r = await devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models: [] }) });
+    if (!r.ok) failed.push('config:models (' + r.status + ')');
+  } catch { failed.push('config:models (сеть)'); }
 
   const local: string[] = [];
   try {
@@ -212,6 +217,12 @@ export async function wipeAll(): Promise<{ local: string[]; server: string[]; fa
     for (const k of all) { localStorage.removeItem(k); local.push(k); }
     writeSync({ base: {}, dirty: {}, seen: {} });            // синк начинается с нуля
   } catch { /* приватный режим — нечего чистить */ }
+  // ПРОВЕРКА, А НЕ НАДЕЖДА: если на сервере что-то осталось, редактор при следующей же загрузке
+  // притащит это обратно (`syncPoseFromServer` тянет всё, чего нет локально). Молчать про такое нельзя.
+  try {
+    const r = await fetch('/api/pose/rev');
+    if (r.ok) { const left = Object.keys(await r.json() as Record<string, number>); if (left.length) failed.push('на сервере осталось: ' + left.join(', ')); }
+  } catch { /* сервера нет — проверять нечего */ }
   notify();
   return { local, server, failed };
 }
