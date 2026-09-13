@@ -574,7 +574,19 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
 
     // Части по слотам — тумблер видимости (вариант / все / скрыть)
     const slotsBox = el('div', boxCss);
-    slotsBox.append(el('div', headCss, 'Части по слотам (что показывать):'));
+    slotsBox.append(el('div', headCss, 'Части по слотам (слот = ПРЕФИКС имени детали):'));
+    // ⚠ НЕОПОЗНАННЫЕ ДЕТАЛИ НЕ ПРОПАДАЮТ МОЛЧА. Слот берётся строго из префикса (`helm_`, `head_`,
+    // `chest_`, `gloves_`, `boots_`), а деталь без слота не показывается вовсе — значит «часть
+    // исчезла» обязано читаться как «имя не по конвенции», а не как поломка импорта.
+    {
+      const unknown = bySlot[''] ?? [];
+      if (unknown.length) {
+        const w = el('div', 'color:#e0a05a;font-size:10px;margin:2px 0 4px');
+        w.textContent = `не опознано по имени: ${unknown.length} — ${unknown.slice(0, 6).join(', ')}`
+          + (unknown.length > 6 ? ' …' : '') + '. Префиксы: helm_ head_ chest_ gloves_ boots_';
+        slotsBox.append(w);
+      }
+    }
     for (const slot of BODY_SLOTS) {
       const parts = bySlot[slot] ?? [];
       const r = el('div', rowFlex);
@@ -583,6 +595,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       const cur = asmVisible[slot] === '' ? '(скрыть)' : (asmVisible[slot] ?? '(все)');
       const sel = mkSelect(opts, cur, (v) => { if (v === '(все)') delete asmVisible[slot]; else asmVisible[slot] = (v === '(скрыть)' ? '' : v); void applyAsm(); });
       sel.style.flex = '1'; r.append(sel); slotsBox.append(r);
+      if (!parts.length) r.style.opacity = '0.55';   // пустой слот — сразу видно, что имён с таким префиксом нет
     }
     body.append(slotsBox);
 

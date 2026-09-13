@@ -21,16 +21,31 @@ export interface SlotModel { slot: string; url: string; boneMap: Record<string, 
 export const BODY_SLOTS = ['helm', 'head', 'chest', 'gloves', 'boots'] as const;
 export type BodySlot = typeof BODY_SLOTS[number];
 
-/** Классификация сабмеша атласа по ИМЕНИ объекта → слот тела ('' = не опознан, скрыть/назначить вручную).
- *  Порядок проверок важен: armor→chest раньше, чем hand→gloves; hair→helm раньше head. */
+/**
+ * СЛОТ САБМЕША ОПРЕДЕЛЯЕТСЯ ПРЕФИКСОМ ИМЕНИ. Точка.
+ *
+ *   helm_...   head_...   chest_...   gloves_...   boots_...
+ *
+ * Всё остальное — НЕ ОПОЗНАНО и слота не получает. Это договорённость с художником, а не догадка
+ * движка, и в этом весь смысл: имя детали задаёт её роль, и переименование — единственный способ
+ * эту роль поменять.
+ *
+ * ⚠ РАНЬШЕ ЗДЕСЬ БЫЛА ЭВРИСТИКА по десятку подстрок (armor|plate|torso|body|cloth — в грудь,
+ * hand|glove|gaunt|wrist — в перчатки, и так далее), да ещё с оговоркой «порядок проверок важен».
+ * Она угадывала — и ошибалась молча: деталь могла уехать не в тот слот, а почему — видно не было.
+ * Просьба автора прямая: «смотреть только на префиксы, остальное игнорировать».
+ *
+ * Разделитель после префикса — любой НЕ-буквенный символ или конец имени: `helm_01`, `helm-2`,
+ * `helm.001`, просто `helm`. А `helmet_01` не подойдёт СОЗНАТЕЛЬНО: это не префикс из списка,
+ * и увидеть «не опознано» полезнее, чем получить молчаливую догадку.
+ */
 export function classifySubmesh(name: string): BodySlot | '' {
-  const n = name.toLowerCase();
-  if (/hair/.test(n)) return 'helm';                                   // волосы = база слота шлема
-  if (/helm|hood|\bcap\b|crown|tiara|\bhat\b|coif/.test(n)) return 'helm';
-  if (/armor|plate|chest|torso|\bbody\b|cloth|shirt|coat|jacket|tunic|robe|vest|cuirass/.test(n)) return 'chest';
-  if (/hand|glove|gaunt|heand|wrist|mitt/.test(n)) return 'gloves';
-  if (/\bleg|boot|foot|pant|greave|shoe|trous|calf|thigh|feet/.test(n)) return 'boots';
-  if (/head|face|skin/.test(n)) return 'head';
+  const n = name.trim().toLowerCase();
+  for (const s of BODY_SLOTS) {
+    if (!n.startsWith(s)) continue;
+    const c = n.charAt(s.length);
+    if (c === '' || !/[a-z]/.test(c)) return s;
+  }
   return '';
 }
 /** Авто-карта сабмеш→слот для всех мешей атласа (правится в редакторе). */
