@@ -44,7 +44,7 @@ import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, type Pos
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
-import { savePoseKey } from './poseServer.js';
+import { savePoseKey, setPublishPrepare } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
 import { createAnimGraphPanel } from './animGraphPanel.js';
@@ -2421,6 +2421,28 @@ function applyGripOver(_p?: Pose): void {
  * с манекеном на 5.8°, кончик — на 1.1u, и это НЕ зависело от `PHYS.match` (при match = 1 то же самое).
  * Со стороны это выглядело как «включаю физику — меш съезжает, а кости стоят».
  */
+/**
+ * ⭐ ХВАТ УЕЗЖАЕТ В ИГРУ ЗАПЕЧЁННЫМ В КЛИПЫ — решение автора: «из редактора будут отправляться
+ * готовые анимации».
+ *
+ * До этого канал хвата был ЧИСТО РЕДАКТОРСКИМ: `resolveGripPose` звал только поз-редактор, а игра
+ * фаланг не трогала вовсе — в клипах их обычно нет, и кисть оставалась в БИНДЕ модели. То есть кисть
+ * была единственным местом, где редактор рисовал не то, что игра.
+ *
+ * Запекаем НА ПУБЛИКАЦИИ, а не в рабочую копию: канал должен остаться правимым (ползунок «ладонь ↔
+ * хват», снятые концы), поэтому локальные клипы чистые, а наружу уезжает результат. `bakeGripIntoClip`
+ * заполняет только ПУСТЫЕ фаланги — поза, выставленная руками в кадре, сильнее.
+ *
+ * ⚠ Изменил хват — опубликуй заново: в игре живёт запечённое, а не живой канал.
+ */
+setPublishPrepare((key, value) => {
+  if (key !== 'pe_clips' || !Array.isArray(value)) return value;
+  const axes = fingerAxes();
+  return (value as Clip[]).map((c) => bakeGripIntoClip(
+    { ...c, keys: (c.keys ?? []).map((k) => ({ ...k, pose: clonePose(k.pose) })) },
+    resolveGripPose(gripCfg, c.character, c.weapon, axes)));
+});
+
 function applyGripToGhost(): void {
   if (ghostHuman && wantFingers()) applyGripPose(ghostHuman.bones, curGripPose());
 }   // выбранный пресет пределов скелета (Ф3.3)

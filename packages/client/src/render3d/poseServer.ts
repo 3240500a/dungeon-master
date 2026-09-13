@@ -178,6 +178,16 @@ export interface PublishResult {
 }
 
 /**
+ * ПОДГОТОВКА ЗНАЧЕНИЯ К ОТПРАВКЕ. Рабочая копия и то, что уезжает в игру, — не всегда одно и то же:
+ * есть каналы, которые в редакторе живут ОТДЕЛЬНО (чтобы их можно было править), а наружу обязаны
+ * уехать ЗАПЕЧЁННЫМИ в данные. Так решено по хвату: «из редактора будут отправляться готовые
+ * анимации». Локальную копию преобразование не трогает — только тело запроса.
+ */
+type PublishPrepare = (key: string, value: unknown) => unknown;
+let prepare: PublishPrepare | null = null;
+export function setPublishPrepare(fn: PublishPrepare | null): void { prepare = fn; }
+
+/**
  * Опубликовать рабочую копию на сервер. Без аргумента — всё изменённое.
  * Шлём `__baseRev`, поэтому сервер отвергает публикацию поверх более новой чужой правки (409) вместо того,
  * чтобы молча её потерять.
@@ -190,7 +200,10 @@ export async function publish(keys?: readonly string[]): Promise<PublishResult> 
   const body: Record<string, unknown> = { __baseRev: {} as Record<string, number> };
   const baseRev = body.__baseRev as Record<string, number>;
   for (const k of list) {
-    try { body[k] = JSON.parse(readLS(k) ?? 'null'); } catch { continue; }
+    try {
+      const raw: unknown = JSON.parse(readLS(k) ?? 'null');
+      body[k] = prepare ? prepare(k, raw) : raw;
+    } catch { continue; }
     baseRev[k] = s.base[k] ?? 0;
   }
 

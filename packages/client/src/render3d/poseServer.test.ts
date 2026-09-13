@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { savePoseKey, dirtyKeys, serverAheadKeys, publish, pullFromServer, syncPoseFromServer, refreshServerRevs } from './poseServer.js';
+import { savePoseKey, dirtyKeys, serverAheadKeys, publish, pullFromServer, syncPoseFromServer, refreshServerRevs, setPublishPrepare } from './poseServer.js';
 import { saveConfigSection, configEdits, configDirtyKeys, mergedConfig, publishConfigEdits } from './configEdits.js';
 
 /** Мини-localStorage: тесты гоняют РЕАЛЬНУЮ логику хранения, поэтому подделка должна вести себя как настоящий. */
@@ -113,6 +113,31 @@ describe('публикация и замок от затирания', () => {
     expect(r.saved).toEqual(['pe_clips']);
     expect(state.data.pe_clips).toEqual([{ name: 'новый' }]);
     expect(dirtyKeys()).toEqual([]);
+  });
+
+  it('⭐ наружу уезжает ПОДГОТОВЛЕННОЕ значение, локальная копия не тронута', async () => {
+    // Решение автора по хвату: «из редактора будут отправляться готовые анимации». Канал хвата
+    // остаётся правимым в редакторе, а в игру клипы уезжают с ЗАПЕЧЁННЫМИ пальцами — значит между
+    // рабочей копией и телом запроса должен быть шов. Вот он.
+    const { state, fetchMock } = fakeServer({ pe_clips: [] });
+    G.fetch = fetchMock as unknown as typeof fetch;
+    await syncPoseFromServer();
+    localStorage.setItem('pe_clips', JSON.stringify([{ name: 'idle_none', keys: [{ pose: {} }] }]));
+    localStorage.setItem('pe_sway', JSON.stringify({ warrior: {} }));
+    savePoseKey('pe_clips'); savePoseKey('pe_sway');
+
+    setPublishPrepare((key, value) => (key === 'pe_clips'
+      ? (value as { keys: { pose: Record<string, number[]> }[] }[]).map((c) => ({ ...c, keys: c.keys.map((k) => ({ pose: { ...k.pose, LeftIndexProximal: [0.1, 0, 0] } })) }))
+      : value));
+    try {
+      const r = await publish();
+      expect(r.ok).toBe(true);
+      const sent = state.data.pe_clips as { keys: { pose: Record<string, number[]> }[] }[];
+      expect(sent[0]!.keys[0]!.pose.LeftIndexProximal, 'на сервер уехало запечённое').toEqual([0.1, 0, 0]);
+      expect(state.data.pe_sway, 'чужие ключи преобразование не трогает').toEqual({ warrior: {} });
+      const local = JSON.parse(localStorage.getItem('pe_clips')!) as { keys: { pose: Record<string, number[]> }[] }[];
+      expect(local[0]!.keys[0]!.pose.LeftIndexProximal, '⚠ рабочая копия ОСТАЛАСЬ ЧИСТОЙ — канал ещё правится').toBeUndefined();
+    } finally { setPublishPrepare(null); }
   });
 
   it('⭐ ПРОПАЖА hit_axe: вкладка со старым снимком получает 409 и НИЧЕГО не затирает', async () => {
