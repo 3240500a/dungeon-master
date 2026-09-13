@@ -84,6 +84,33 @@ describe('skeletonDedupe — копии скелета схлопываются 
     }
   });
 
+  it('⭐ СЛУЖЕБНЫЙ КОРЕНЬ СКЕЛЕТА НЕ УНОСИТ ВСЮ АРМАТУРУ', () => {
+    // Ровно эта форма пришла из AccuRIG/CC: верхний узел `RL_BoneRoot` — КОСТЬ, но в суставы скина
+    // НЕ входит. Решение о сносе принималось по одному корню поддерева («сам не нужен, внутри одни
+    // кости»), и снос уносил ВСЮ арматуру вместе с канон-копией: на knight_05.fbx 3801 кость → 0,
+    // все 3800 повисли ВНЕ дерева. Дальше меш вёл скелет, которого нет в сцене, а экспорт писал
+    // суставы, которых нет в файле, — и GLB не грузился ничем.
+    const root = new THREE.Group();
+    const armature = new THREE.Bone(); armature.name = 'RL_BoneRoot';   // кость, но НЕ сустав скина
+    root.add(armature);
+    const canon = makeSkeleton();
+    armature.add(canon.root);                                          // вся арматура — под служебным корнем
+    const copies = [addCopy(canon.bones, '_1'), addCopy(canon.bones, '_2')];
+    const meshes = [makeSkinned('body', canon.bones), makeSkinned('helm', copies[0]!), makeSkinned('legs', copies[1]!)];
+    for (const m of meshes) root.add(m);
+    root.updateMatrixWorld(true);
+
+    const rep = dedupeSkeletons(root);
+    const inTree = new Set<THREE.Object3D>(); root.traverse((o) => inTree.add(o));
+    expect(rep.skins, 'копий было три').toBe(3);
+    expect(inTree.has(armature), 'служебный корень остался — под ним живые кости').toBe(true);
+    for (const b of canon.bones) expect(inTree.has(b), `кость ${b.name} обязана остаться в дереве`).toBe(true);
+    for (const m of meshes) for (const b of m.skeleton.bones) {
+      expect(inTree.has(b), `⚠ ${m.name}: кость ${b.name} ведёт меш, но выпала из дерева`).toBe(true);
+    }
+    expect(rep.bonesAfter, 'дубли ушли, канон и его корень целы').toBe(canon.bones.length + 1);
+  });
+
   it('модель с ОДНИМ скелетом не трогается', () => {
     const root = new THREE.Group();
     const canon = makeSkeleton(); root.add(canon.root);

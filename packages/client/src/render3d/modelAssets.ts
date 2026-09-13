@@ -12,6 +12,7 @@ import { devFetch } from '../devAuth.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { dedupeSkeletons, type DedupeReport } from './skeletonDedupe.js';
 import { assertGlbUsable } from './glbCheck.js';
+import { mergeIdenticalSkins } from './glbNormalize.js';
 
 /** Отчёт схлопывания по последней разобранной модели (для панели «Модели» — там видно, чем выгнали ассет). */
 let _lastDedupe: DedupeReport | null = null;
@@ -23,15 +24,15 @@ export function lastDedupeReport(): DedupeReport | null { return _lastDedupe; }
  * приезжал с 38 копиями по 100 суставов (см. `skeletonDedupe.ts`). Делать это надо ЗДЕСЬ — единственная точка,
  * через которую модель попадает и в редактор, и в игру.
  */
-async function parseModel(buf: ArrayBuffer, ext: string): Promise<THREE.Group> {
+export async function parseModel(buf: ArrayBuffer, ext: string): Promise<THREE.Group> {
   const root = ext === 'fbx'
     ? (new FBXLoader().parse(buf, '') as unknown as THREE.Group)
     : await new Promise<THREE.Group>((resolve, reject) =>
       new GLTFLoader().parse(buf, '', (g) => resolve(g.scene as unknown as THREE.Group), reject));
   _lastDedupe = dedupeSkeletons(root);
-  // ⚠ КОСТЬ НЕ ИМЕЕТ ПРАВА БЫТЬ НЕВИДИМОЙ. Из FBX скелет часто приходит скрытым (его прячут в максе).
-  // Кость сама ничего не рисует, зато невидимость выкидывает её из экспорта (`onlyVisible`) и из
-  // рейкаста. Правим ЗДЕСЬ — это единственная точка, через которую модель попадает и в редактор, и в игру.
+  // ⚠ КОСТЬ НЕ ИМЕЕТ ПРАВА БЫТЬ НЕВИДИМОЙ: сама она ничего не рисует, зато невидимость выкидывает её
+  // из экспорта (`onlyVisible`) и из рейкаста (клик по кости). Из FBX такое приходит. Правим ЗДЕСЬ —
+  // это единственная точка, через которую модель попадает и в редактор, и в игру.
   root.traverse((o) => { if ((o as THREE.Bone).isBone && !o.visible) o.visible = true; });
   if (_lastDedupe.skins > 1) {
     console.warn(`[модель] пришла с ${_lastDedupe.skins} скелетами → схлопнуто в 1 `
@@ -95,22 +96,26 @@ export async function loadModelUrl(url: string): Promise<THREE.Group> {
  *  в Unity/Unreal/Blender как обычная анимация — без нашего кода. Имена дорожек должны совпадать
  *  с именами УЗЛОВ экспортируемого графа, иначе экспортер тихо выбросит дорожку (частая грабля). */
 /**
- * Выгрузить объект в GLB.
+ * Выгрузить объект в GLB — и отдать файл, который ПРАВИЛЬНО УСТРОЕН, а не просто получился.
  *
- * ⚠ `onlyVisible: false` — НЕ УБИРАТЬ. По умолчанию `GLTFExporter` пропускает ноды с `visible === false`,
- * но ссылки на них в скине всё равно пишет. Скелет приезжает скрытым штатно (в максе его прячут, и FBX
- * несёт этот флаг), поэтому экспорт молча отдавал файл с `joints: [null × 100]` и НУЛЁМ костей —
- * такой GLB не грузится ничем, а выглядит это как «модель не отображается, атлас не распознаётся».
- * Для АССЕТА видимость — вопрос вьюпорта, а не данных: выгружаем всё.
+ * Три вещи, и каждая куплена поломкой:
  *
- * И проверяем РЕЗУЛЬТАТ, а не факт «экспорт не бросил»: заливка битого файла проходила успешно.
+ * 1. `onlyVisible: false`. Для АССЕТА видимость — вопрос вьюпорта, а не данных: невидимую ноду
+ *    экспортёр пропустит, а ссылку на неё в скине всё равно напишет.
+ * 2. ОДИН СКИН НА ОДИН СКЕЛЕТ (`mergeIdenticalSkins`). `GLTFExporter` заводит скин на КАЖДЫЙ
+ *    `SkinnedMesh`, даже когда все сидят на общем `THREE.Skeleton`: у рыцаря выходило 38 скинов по
+ *    100 суставов. Из такого файла при загрузке снова рождается 38 скелетов — то есть схлопывание на
+ *    загрузке кормило само себя, и файл оставался неправильным сколько его ни переэкспортируй.
+ * 3. ПРОВЕРКА РЕЗУЛЬТАТА, а не факта «экспорт не бросил»: заливка битого файла проходила успешно —
+ *    ломаться было нечему, файл как файл.
  */
 export async function exportGLB(obj: THREE.Object3D, animations?: THREE.AnimationClip[]): Promise<ArrayBuffer> {
-  const buf = await new Promise<ArrayBuffer>((resolve, reject) =>
+  const raw = await new Promise<ArrayBuffer>((resolve, reject) =>
     new GLTFExporter().parse(obj, (res) => resolve(res as ArrayBuffer), (e) => reject(e),
       animations && animations.length ? { binary: true, animations, onlyVisible: false } : { binary: true, onlyVisible: false }));
-  assertGlbUsable(buf);
-  return buf;
+  const { out } = mergeIdenticalSkins(raw);
+  assertGlbUsable(out);
+  return out;
 }
 
 /** Залить бинарь (GLB/PNG/JPG) на сервер под id → { url }. DEV-only (в проде 403). contentType задаёт расширение. */

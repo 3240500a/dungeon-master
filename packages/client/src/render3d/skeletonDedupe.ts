@@ -36,11 +36,26 @@ export interface DedupeReport {
 /** Имя без хвоста-номера копии (`..._7`). Номер В ИМЕНИ кости (`Twist01`, `Index1`) не трогаем — там нет `_`. */
 const base = (n: string): string => n.replace(/_\d+$/, '');
 const isBone = (o: THREE.Object3D): boolean => (o as THREE.Bone).isBone === true;
-/** В поддереве нет ничего, кроме костей → его можно снять целиком. */
+/** В поддереве нет ничего, кроме костей → снять его нечему повредить (меши внутрь не попадут). */
 function bonesOnly(o: THREE.Object3D): boolean {
   if (!isBone(o)) return false;
   for (const c of o.children) if (!bonesOnly(c)) return false;
   return true;
+}
+/**
+ * Есть ли В ПОДДЕРЕВЕ хоть одна НУЖНАЯ кость.
+ *
+ * ⚠ РАДИ ЭТОГО И ЗАВЕДЕНО. Раньше решение принималось по ОДНОМУ корню поддерева: «сам не нужен и
+ * внутри одни кости → снести». У CC/AccuRIG верхний узел скелета — `RL_BoneRoot`: он КОСТЬ, но в
+ * суставы скина НЕ входит, поэтому «не нужен» — и снос уносил ВЕСЬ скелет вместе с канон-копией.
+ * Замер на knight_05.fbx: 3801 кость → 0, и все 3800 остались висеть ВНЕ дерева. Дальше меш ведёт
+ * скелет, которого нет в сцене (значит, он не обновляется), а экспорт пишет суставы, которых нет в
+ * файле (`joints: [null…]`) — такой GLB не грузится ничем.
+ */
+function hasKept(o: THREE.Object3D, keep: ReadonlySet<THREE.Object3D>): boolean {
+  if (keep.has(o)) return true;
+  for (const c of o.children) if (hasKept(c, keep)) return true;
+  return false;
 }
 const depthOf = (o: THREE.Object3D): number => { let d = 0, p = o.parent; while (p) { d++; p = p.parent; } return d; };
 
@@ -83,7 +98,9 @@ export function dedupeSkeletons(root: THREE.Object3D): DedupeReport {
   const removed: string[] = [];
   const sweep = (o: THREE.Object3D): void => {
     for (const c of [...o.children]) {
-      if (isBone(c) && !keep.has(c) && bonesOnly(c)) { o.remove(c); removed.push(c.name); continue; }
+      // Снимаем поддерево, только если НИ ОДНА кость внутри не нужна. Проверять один корень мало:
+      // у скелета есть служебный верхний узел, которого нет в суставах скина (см. `hasKept`).
+      if (isBone(c) && bonesOnly(c) && !hasKept(c, keep)) { o.remove(c); removed.push(c.name); continue; }
       sweep(c);
     }
   };

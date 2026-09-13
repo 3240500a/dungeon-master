@@ -59,8 +59,11 @@ export function glbSkinReport(buf: ArrayBuffer): GlbSkinReport {
 export function assertGlbUsable(buf: ArrayBuffer): GlbSkinReport {
   const r = glbSkinReport(buf);
   if (r.badJoints > 0) {
-    throw new Error(`скелет не попал в GLB: ${r.badJoints} висячих ссылок на суставы при ${r.bones} костях в файле. `
-      + 'Обычно это скрытый скелет в исходнике (в максе его прячут) — экспорт обязан идти с onlyVisible=false.');
+    // ⚠ Сообщаем ФАКТЫ и не гадаем о причине: причин минимум две (кости не попали в экспортируемое
+    // дерево — например их снесло схлопывание скелетов; либо нода была невидимой), и догадка в тексте
+    // ошибки однажды уже увела не туда.
+    throw new Error(`скелет не попал в GLB: ${r.badJoints} висячих ссылок на суставы, костей в файле ${r.bones}, `
+      + `мешей ${r.meshes}. Кости, на которые ссылается скин, обязаны быть В ЭКСПОРТИРУЕМОМ ДЕРЕВЕ.`);
   }
   if (r.skins > 0 && r.bones === 0) throw new Error('в GLB есть скины, но нет костей — файл нерабочий');
   return r;
