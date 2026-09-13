@@ -1,0 +1,115 @@
+import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { autoBoneMap, enforceTPose, measureBoneOffsets, measureBoneScales } from './retarget3d.js';
+import { buildHumanoid } from './humanoid.js';
+import { dedupeSkeletons } from './skeletonDedupe.js';
+import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
+
+/**
+ * ИМПОРТ НЕ ИМЕЕТ ПРАВА МЕНЯТЬ МОДЕЛЬ.
+ *
+ * Вопрос автора: «сделал скрин из макса — ноги вместе, пальцы выпрямлены; посмотри, когда он
+ * заезжает к нам, там всё так же?». Отвечать на такое надо числом, а не «должно быть так же»,
+ * поэтому здесь настоящий ассет прогоняется через настоящий импорт и сверяется с самим собой.
+ *
+ * Что проверяется:
+ *  1) наш риг ПОВТОРЯЕТ бинд модели — бедро, голень, рука, фаланга (допуск 0.3°);
+ *  2) `enforceTPose` не трогает НИЧЕГО, кроме рук (по умолчанию `AIM_CHILD` — только они);
+ *  3) замеры, лежащие в конфиге, СОВПАДАЮТ с замерами живого файла.
+ *
+ * ⚠ Пункт 3 — про грабли, а не про код: геометрия рига берётся из `boneOffsets`, СОХРАНЁННЫХ
+ * В КОНФИГ при импорте, а не меряется с GLB на каждой загрузке. Перезалил модель, но не
+ * переимпортировал во вкладке «Модели» — редактор и игра продолжают строить скелет по старым
+ * числам, и это выглядит как «модель приехала другой». Тест это ловит.
+ */
+const HERE = dirname(fileURLToPath(import.meta.url));
+const GLB = join(HERE, '../../../server/assets/knight_05_modular_rig.glb');
+const DEG = 180 / Math.PI;
+const ENTRY = (MODELS as { id: string; url?: string; boneOffsets?: Record<string, [number, number, number]> }[])
+  .find((m) => m.id === 'knight_05_modular_rig');
+
+function load(): Promise<THREE.Group> {
+  const buf = readFileSync(GLB);
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+  return new Promise((res, rej) => new GLTFLoader().parse(ab, '', (g) => res(g.scene as unknown as THREE.Group), rej));
+}
+/** Угол между направлениями двух звеньев, градусы. */
+const between = (a: THREE.Vector3, b: THREE.Vector3): number => Math.acos(Math.max(-1, Math.min(1, a.dot(b)))) * DEG;
+
+describe.runIf(existsSync(GLB))('импорт рыцаря повторяет модель', () => {
+  it('⭐ риг встаёт в бинд модели: бедро, голень, рука и фаланга — с точностью до 0.3°', async () => {
+    const root = await load();
+    dedupeSkeletons(root);                                  // CC-экспорт даёт 38 копий скелета — как в рантайме
+    root.updateMatrixWorld(true);
+    const names: string[] = [];
+    root.traverse((o) => { if ((o as THREE.Bone).isBone) names.push(o.name); });
+    const map = autoBoneMap(names);
+    const by = new Map<string, THREE.Object3D>();
+    root.traverse((o) => { if (!by.has(o.name)) by.set(o.name, o); });
+    const wp = (our: string): THREE.Vector3 => by.get(map[our] ?? '')!.getWorldPosition(new THREE.Vector3());
+    const dir = (a: string, b: string): THREE.Vector3 => wp(b).clone().sub(wp(a)).normalize();
+
+    // Файл Z-up: тот же доворот, что делает импорт (`detectUpFixX`), иначе «вертикаль» не вертикаль.
+    const hip = wp('Hips'), head = wp('Head');
+    const ax = Math.abs(head.z - hip.z) > Math.abs(head.y - hip.y) ? (head.z - hip.z > 0 ? -Math.PI / 2 : Math.PI / 2) : (head.y - hip.y < 0 ? Math.PI : 0);
+    root.rotation.set(ax, 0, 0); root.updateMatrixWorld(true);
+    // БИНД: кости по inverseBindMatrices — именно её меряет импорт, а не позу нод.
+    root.traverse((o) => { const sm = o as THREE.SkinnedMesh; if (sm.isSkinnedMesh && sm.skeleton) sm.skeleton.pose(); });
+    root.updateMatrixWorld(true);
+
+    const legBefore = between(dir('LeftUpperLeg', 'LeftLowerLeg'), new THREE.Vector3(0, -1, 0));
+    enforceTPose(root, map);
+    root.updateMatrixWorld(true);
+    const src = {
+      thigh: between(dir('LeftUpperLeg', 'LeftLowerLeg'), new THREE.Vector3(0, -1, 0)),
+      shin: between(dir('LeftLowerLeg', 'LeftFoot'), new THREE.Vector3(0, -1, 0)),
+      arm: between(dir('LeftUpperArm', 'LeftLowerArm'), new THREE.Vector3(1, 0, 0)),
+      finger: between(dir('LeftIndexProximal', 'LeftIndexIntermediate'), dir('LeftHand', 'LeftIndexProximal')),
+    };
+    // enforceTPose по умолчанию целит ТОЛЬКО руки — ноги обязаны остаться как в файле.
+    expect(src.thigh, 'enforceTPose не имеет права трогать ноги').toBeCloseTo(legBefore, 3);
+    expect(src.arm, 'а руку — обязан поставить горизонтально').toBeLessThan(0.5);
+
+    const h = buildHumanoid({ boneOffsets: measureBoneOffsets(root, map), boneScale: measureBoneScales(root, map), fingers: true });
+    h.root.updateMatrixWorld(true);
+    const hw = (n: string): THREE.Vector3 => h.bones.get(n)!.getWorldPosition(new THREE.Vector3());
+    const hdir = (a: string, b: string): THREE.Vector3 => hw(b).clone().sub(hw(a)).normalize();
+    const our = {
+      thigh: between(hdir('LeftUpperLeg', 'LeftLowerLeg'), new THREE.Vector3(0, -1, 0)),
+      shin: between(hdir('LeftLowerLeg', 'LeftFoot'), new THREE.Vector3(0, -1, 0)),
+      arm: between(hdir('LeftUpperArm', 'LeftLowerArm'), new THREE.Vector3(1, 0, 0)),
+      finger: between(hdir('LeftIndexProximal', 'LeftIndexIntermediate'), hdir('LeftHand', 'LeftIndexProximal')),
+    };
+    for (const k of ['thigh', 'shin', 'arm', 'finger'] as const) {
+      expect(our[k], `${k}: наш риг обязан повторить модель (модель ${src[k].toFixed(2)}°)`).toBeCloseTo(src[k], 0.3);
+    }
+    // Свести замер к одному месту: приведение ног считается ИЗ МОДЕЛИ, а не назначено нами.
+    expect(h.legAdduct * DEG, 'legAdduct = splay бедра САМОЙ МОДЕЛИ').toBeCloseTo(src.thigh, 1);
+  });
+
+  it('⚠ замеры в конфиге не отстали от файла (перезалил GLB — переимпортируй)', async () => {
+    expect(ENTRY, 'запись рыцаря должна быть в models.json').toBeTruthy();
+    const stored = ENTRY!.boneOffsets ?? {};
+    expect(Object.keys(stored).length, 'офсеты должны быть замерены').toBeGreaterThan(20);
+    const root = await load();
+    dedupeSkeletons(root);
+    const names: string[] = [];
+    root.traverse((o) => { if ((o as THREE.Bone).isBone) names.push(o.name); });
+    const map = autoBoneMap(names);
+    root.traverse((o) => { const sm = o as THREE.SkinnedMesh; if (sm.isSkinnedMesh && sm.skeleton) sm.skeleton.pose(); });
+    enforceTPose(root, map);
+    const fresh = measureBoneOffsets(root, map);
+    const bad: string[] = [];
+    for (const k of Object.keys(stored)) {
+      const a = stored[k]!, b = fresh[k];
+      if (!b) { bad.push(`${k}: в файле нет`); continue; }
+      for (let i = 0; i < 3; i++) if (Math.abs(a[i]! - b[i]!) > 0.02) { bad.push(`${k}: конфиг ${a.join()} ≠ файл ${b.map((v) => +v.toFixed(2)).join()}`); break; }
+    }
+    expect(bad.slice(0, 6).join(' | '),
+      'геометрия рига берётся из конфига, а не из GLB: расхождение = модель обновили, а импорт не переделали').toBe('');
+  });
+});
