@@ -130,6 +130,15 @@ export interface Humanoid {
    * 3.355, а `FOOT_Y + footLift` остался 2.900. Разница 0.455 — персонаж уезжал в пол ровно на неё.
    */
   ankleRest: number | null;
+  /**
+   * ⭐ РАЗМЕРЫ НОГИ ЭТОГО РИГА (юниты, покой) — чтобы планировщик шагов ничего о теле не предполагал.
+   *
+   * `null` у процедурного рига: там свои давние константы (`L_THIGH/L_SHIN/HIP_DX`), и на них стоят
+   * замеры походки. У рига из модели — измеренные значения, они же едут за телосложением.
+   * ЗАМЕР на рыцаре (морф нейтральный): бедро 14.088 против зашитых 15, голень 14.421 против 13.5,
+   * полутаз 3.867 против 3.6. Длина ноги при этом совпала (28.509 против 28.5) — расходится РАЗБИВКА.
+   */
+  legRest: { thigh: number; shin: number; hipHalfW: number; hipDropY: number } | null;
 }
 
 /**
@@ -138,6 +147,23 @@ export interface Humanoid {
  * ⚠ `restPos` хранит ЛОКАЛЬНЫЕ офсеты (у стопы это −14.4 — длина голени, а не высота над полом).
  * Взять его напрямую — ровно та ошибка, на которой я один раз и попался: пол уехал бы на −14.
  */
+/**
+ * ГЕОМЕТРИЯ НОГИ ПО САМОМУ РИГУ (офсеты уже с моделью и морфом).
+ *
+ * ⚠ `hipDropY` — не мелочь. СУСТАВ БЕДРА НЕ СОВПАДАЕТ С НАЧАЛОМ ТАЗА: у рыцаря он на
+ * **3.67 ниже**. Планировщик якорит ногу в тазе, и без этой поправки он просит ногу длиной 28.51
+ * покрыть 32.16 (замер: ТАЗ 35.049 → ЛОДЫЖКА 2.892) — не достаёт **3.648**, и IK каждый кадр
+ * упирается в предел вытяжения. Оттуда «половина ползунков перестала реагировать»: их вклад
+ * съедал упор. У процедурного манекена `legRest` = `null` → поправка 0, поведение бит в бит прежнее.
+ */
+function legRestOf(restPos: Map<string, THREE.Vector3>): { thigh: number; shin: number; hipHalfW: number; hipDropY: number } | null {
+  const up = restPos.get('LeftUpperLeg'), lo = restPos.get('LeftLowerLeg'), ft = restPos.get('LeftFoot');
+  if (!up || !lo || !ft) return null;
+  const thigh = lo.length(), shin = ft.length();
+  if (!(thigh > 1e-3) || !(shin > 1e-3)) return null;
+  return { thigh, shin, hipHalfW: Math.abs(up.x), hipDropY: up.y };
+}
+
 function ankleRestY(restPos: Map<string, THREE.Vector3>): number | null {
   const hips = restPos.get('Hips'); if (!hips) return null;
   let y = hips.y;
@@ -376,6 +402,7 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
     // У процедурного рига своя давняя конвенция `FOOT_Y = 1.5` (его собственный рест — 1.0, меш стопы
     // свисает ниже кости), и её тут менять нельзя: на ней стоят замеры походки. Поэтому фолбэк.
     ankleRest: opts.boneOffsets ? ankleRestY(restPos) : null,
+    legRest: opts.boneOffsets ? legRestOf(restPos) : null,
     readPose() {
       const out: Record<string, [number, number, number]> = {};
       for (const [nm, g] of bones) { const e = g.rotation; out[nm] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }

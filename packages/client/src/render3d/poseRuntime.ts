@@ -952,10 +952,11 @@ const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.V
 /** Плант ноги = ТОЧНАЯ позиция стопы в idle-стойке отн. таза (body-local, yaw 0): lat (X, + = сторона своей кости) + fwd (Z).
  *  Позируем ноги авторской стойкой, читаем мировые стопы отн. таза → по каждой ноге СВОЙ (lat, fwd) СО ЗНАКОМ (не усредняем).
  *  Планировщик (setStance) при повороте держит стопы В ЭТИХ точках и переступает ровно в них (idl-стойка в новом фейсинге).
- *  Нет клипа стойки → фолбэк ±полуширина таза (нога 0/левая на +X — под её кость LeftUpperLeg, см. [[humanoid-rig-mirror]]).
+ *  Нет клипа стойки → фолбэк ±полуширина таза РИГА (нога 0/левая на +X — под её кость LeftUpperLeg, см. [[humanoid-rig-mirror]]).
  *  Мутирует human (reset + поза ног) — зови вне кадра рендера (спавн/смена оружия); следующий полный step перепозирует. */
 export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number; standY: number } {
-  if (!idle) return { latL: HIP_DX, fwdL: 0, latR: -HIP_DX, fwdR: 0, standY: GAIT.standY };
+  const hw = human.legRest?.hipHalfW ?? HIP_DX;   // полутаз — из рига; HIP_DX остаётся только процедурному манекену
+  if (!idle) return { latL: hw, fwdL: 0, latR: -hw, fwdR: 0, standY: GAIT.standY };
   human.reset();
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
@@ -1188,6 +1189,7 @@ export class PosePlayer {
     // рига встала на 3.355, а `FOOT_Y + footLift` остался 2.900 — персонаж уезжал в пол на 0.455.
     // `ankleRest` считается по САМОМУ ригу, поэтому следует и за моделью, и за телосложением.
     this.driver.footFloor = this.human.ankleRest ?? (FOOT_Y + (this.human.footLift ?? 0));
+    this.driver.legRest = this.human.legRest;   // длины бедра/голени и полутаз — из рига, не из констант
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
     this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
     const fwdC = vx * Math.sin(yaw) + vz * Math.cos(yaw), latC = vx * Math.cos(yaw) - vz * Math.sin(yaw);

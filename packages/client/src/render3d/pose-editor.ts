@@ -40,7 +40,7 @@ import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: ск
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
-import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
+import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
@@ -4885,7 +4885,9 @@ function saveTwistCfg(): void { twistCfgs[curCharId] = { stand: editorTwistState
 // Левая нога — СИНИЙ, правая — КРАСНЫЙ. via — те же цвета, поменьше. Живой индикатор (жёлтый мелкий) ездит по факту (динамика).
 let editPlant = false;
 let viaLeg: 0 | 1 = 0;                                          // какую ногу авторим кнопками + / − обвод
-const PLANT_BLUE = 0x4aa0ff, PLANT_RED = 0xff5a4a, MAX_VIA = 3, HIP_DXE = 3.6, MARK_Y = 1.5;
+const PLANT_BLUE = 0x4aa0ff, PLANT_RED = 0xff5a4a, MAX_VIA = 3, MARK_Y = 1.5;
+/** Полуширина таза ДЛЯ МАРКЕРОВ — та же, что у планировщика (`StepPlanner.hipHalf`), иначе точка рисуется не там, куда идёт нога. */
+const hipDxE = (): number => human?.legRest?.hipHalfW ?? HIP_DX;
 const plantMarks = [mkHandle(PLANT_BLUE, 3, true), mkHandle(PLANT_RED, 3, true)];   // [0]=L плант, [1]=R плант (авторские)
 const viaMarks: THREE.Mesh[][] = [[], []];
 for (let i = 0; i < 2; i++) for (let k = 0; k < MAX_VIA; k++) viaMarks[i]!.push(mkHandle(i === 0 ? PLANT_BLUE : PLANT_RED, 2, false));
@@ -4905,10 +4907,11 @@ let plantDrag = -1; let dragMark: AuthMark | null = null; const plantGrab = V();
 let gaitSpd = 0;   // фактическая скорость гейта (для точного референса планта — маркер совпадает с ногой)
 const selCell = (): Leg2 => (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel]!;   // ВЫБРАННАЯ ячейка (панель)
 const setXZ = (m: THREE.Mesh, x: number, z: number): void => { m.position.set(x, MARK_Y, z); };
-/** Стационарный body-референс: forward=(sin yaw,cos yaw), right=(cos yaw,−sin yaw); хип ноги на ±HIP_DXE вбок.
+/** Стационарный body-референс: forward=(sin yaw,cos yaw), right=(cos yaw,−sin yaw); хип ноги на ±полутаз РИГА вбок.
  *  Точно совпадает с плант-целью планировщика: tx−gaitPx == refPos(foot, fwdAmt, latAmt). */
 function refPos(foot: 0 | 1, fwd: number, lat: number): [number, number] {
-  const s = Math.sin(gaitYaw), c = Math.cos(gaitYaw), side = foot === 0 ? HIP_DXE : -HIP_DXE;
+  const hx = hipDxE();
+  const s = Math.sin(gaitYaw), c = Math.cos(gaitYaw), side = foot === 0 ? hx : -hx;
   return [c * side + s * fwd + c * lat, -s * side + c * fwd - s * lat];
 }
 /** Референс-позиция ПЛАНТА выбранной ячейки = РЕАЛЬНАЯ плант-цель (как в pose.ts plant()): hip + fwd·(lead·mFwd+off) +

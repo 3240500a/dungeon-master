@@ -61,8 +61,10 @@ const walkingAmp = (drive: number): number => (drive > 0.05 ? POSE.swingBase + d
 // ── Походка с опорой ───────────────────────────────────────────────────────────
 // Длины костей — строго по риг-таблице BONES: бедро 30→15, голень 15→1.5 (НЕ 15! иначе IK считает ногу
 // длиннее, чем она есть, и стопа не достаёт до пола).
+// ⚠ Это размеры ПРОЦЕДУРНОГО манекена и только его. У модели длины берутся из рига
+// (`Humanoid.legRest` → `StepPlanner.legRest`), см. `thighL`/`shinL`/`hipHalf` ниже.
 const L_THIGH = 15, L_SHIN = 13.5, LEG = L_THIGH + L_SHIN;
-export const HIP_DX = 3.6;   // полуширина таза
+export const HIP_DX = 3.6;   // полуширина таза процедурного манекена
 export const FOOT_Y = 1.5;   // высота центра стопы, стоящей на полу
 /**
  * Высота таза в стойке. КРИТИЧНО: заметно МЕНЬШЕ длины ноги (30). При таз=30 нога выпрямлена в струну,
@@ -456,13 +458,14 @@ interface LegAngles { hip: number; knee: number; lat: number; ank: number }
  * Боковую составляющую игнорируем — бедро в риге машет только вокруг X (вперёд-назад), боковой баланс
  * будет отдельным этапом.
  */
-function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: number, rz: number, fwdLim: number): LegAngles {
+function ik(dx: number, dz: number, dy: number, fx: number, fz: number, rx: number, rz: number, fwdLim: number,
+            th: number = L_THIGH, sh: number = L_SHIN): LegAngles {
   const lz = dx * fx + dz * fz;                         // вперёд-назад в теле
   const lx = dx * rx + dz * rz;                         // вбок в теле (+ = вправо)
-  const d = clamp(Math.hypot(lz, lx, dy), 8, LEG - 0.6);   // не даём ноге «переразогнуться»
+  const d = clamp(Math.hypot(lz, lx, dy), 8, th + sh - 0.6);   // не даём ноге «переразогнуться»
   const thFoot = Math.atan2(lz, -dy);                   // куда смотрит стопа от бедра (0 = прямо вниз)
-  const alpha = Math.acos(clamp((L_THIGH * L_THIGH + d * d - L_SHIN * L_SHIN) / (2 * L_THIGH * d), -1, 1));
-  const beta = Math.acos(clamp((L_THIGH * L_THIGH + L_SHIN * L_SHIN - d * d) / (2 * L_THIGH * L_SHIN), -1, 1));
+  const alpha = Math.acos(clamp((th * th + d * d - sh * sh) / (2 * th * d), -1, 1));
+  const beta = Math.acos(clamp((th * th + sh * sh - d * d) / (2 * th * sh), -1, 1));
   // Колено (сустав) при сгибе уходит ВПЕРЁД, а голень — назад (пятка к заду). Значит бедро отклонено от
   // линии «бедро→стопа» вперёд: θ_бедра = θ_стопы + α. Положительный hip уводит кость назад (−Z) →
   // hip = −θ_бедра. Проверка: стопа под бедром (d=25) → hip=−0.586, колено 1.17 → стопа ровно в цели.
@@ -513,17 +516,22 @@ class StepPlanner {
   private hipY = STAND_Y;
   private mAvgX = 0; private mAvgZ = 0; private mAvgOn = false;   // сглаженный вектор хода (направление планта)
   /**
-   * Масштаб РИГА к масштабу планировщика, измеренный планировщиком по себе же.
+   * РАЗМЕРЫ НОГИ РИГА — бедро, голень, полуширина таза. Ставит рантайм из `Humanoid.legRest`
+   * (замер рест-позы модели); `null` = процедурный манекен → прежние константы бит в бит.
    *
-   * Планировщик считает в своих единицах (нога `LEG` 28.5, полутаз `HIP_DX` 3.6), а фактические стопы
-   * приходят фидбэком из рига (`setFeet`) — у модели с телосложением нога длиннее и таз шире (замер на
-   * воине: 33.6 и 6.2). Сравнивать их напрямую нельзя. Поэтому в момент приземления сравниваем
-   * НАМЕРЕНИЕ и ФАКТ от одного и того же бедра — их отношение и есть масштаб; копим скользящим средним.
-   * 1 = риг ровно наш (юнит-тесты, монстры без телосложения) → пороги ровно как были.
+   * ⚠ Раньше здесь стоял ЗАМЕРЕННЫЙ коэффициент `rigK`: планировщик считал в своих единицах
+   * (нога 28.5, полутаз 3.6), а стопы приходили фидбэком из рига, и он подгонял одно под другое
+   * отношением «факт/намерение» на каждом приземлении. Теперь подгонять нечего — обе стороны в
+   * мире модели, и второй масштаб поверх настоящих длин считал бы поправку ДВАЖДЫ.
    */
-  private rigK = 1;
-  /** Диагностика (редактор/тесты): масштаб рига и во сколько раз сейчас ускорена фаза. */
-  get debugUrge(): [number, number] { return [this.rigK, this.lastUrge]; }
+  legRest: { thigh: number; shin: number; hipHalfW: number; hipDropY: number } | null = null;
+  private get thighL(): number { return this.legRest?.thigh ?? L_THIGH; }
+  private get shinL(): number { return this.legRest?.shin ?? L_SHIN; }
+  private get hipHalf(): number { return this.legRest?.hipHalfW ?? HIP_DX; }
+  /** Сустав бедра ниже начала таза (у рыцаря −3.67). Без неё нога просится на 3.6 длиннее, чем есть. */
+  private get hipDrop(): number { return this.legRest?.hipDropY ?? 0; }
+  /** Диагностика (редактор/тесты): во сколько раз сейчас ускорена фаза (`urgency`). */
+  get debugUrge(): number { return this.lastUrge; }
   private lastUrge = 1;
   /** ФАКТИЧЕСКОЕ положение щиколоток из физики (мир). Плантуем туда, где нога реально стоит. */
   private actual: [[number, number], [number, number]] = [[0, 0], [0, 0]];
@@ -551,12 +559,14 @@ class StepPlanner {
   private plantVia: [[number, number][], [number, number][]] = [[], []];
   setPlantVia(lVia: [number, number][], rVia: [number, number][]): void { this.plantVia[0] = lVia; this.plantVia[1] = rVia; }
   /** ПЛАНТ каждой ноги = ТОЧКА стопы в idle-стойке отн. таза (body-local): lat (X, знак = своя сторона) + fwd (Z).
-   *  Дефолт = ±полуширина таза (нога 0/левая на +X — под её кость). Стоя стопы В ЭТИХ точках, поворот переступает в них. */
-  private stanceLatL = HIP_DX; private stanceFwdL = 0; private stanceLatR = -HIP_DX; private stanceFwdR = 0;
+   *  Дефолт = ±полуширина таза РИГА (нога 0/левая на +X — под её кость). Стоя стопы В ЭТИХ точках, поворот переступает в них. */
+  private latL: number | null = null; private stanceFwdL = 0; private latR: number | null = null; private stanceFwdR = 0;
+  private get stanceLatL(): number { return this.latL ?? this.hipHalf; }
+  private get stanceLatR(): number { return this.latR ?? -this.hipHalf; }
   /** Базовая высота таза = высота таза в idle-стойке (замер). Гейт/подшаг НЕ поднимают таз выше неё → нет подскока. */
   private standY = GAIT.standY;
   setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number): void {
-    this.stanceLatL = latL; this.stanceFwdL = fwdL; this.stanceLatR = latR; this.stanceFwdR = fwdR;
+    this.latL = latL; this.stanceFwdL = fwdL; this.latR = latR; this.stanceFwdR = fwdR;
     if (standY !== undefined) { this.standY = standY; this.hipY = standY; }
   }
   /**
@@ -611,14 +621,14 @@ class StepPlanner {
     if (GAIT.stepUrge <= 0) return 1;
     // Мера — вынос ОПОРНОЙ стопы от своего бедра. В ровном ходе он не выходит за `lead`: стопа приходит
     // на `lead` впереди и уходит на столько же назад. На развороте тело уезжает прочь от планта, и вынос
-    // растёт без предела — вот это и ловим. Порог масштабируется на `rigK`, потому что стопа приходит
-    // из рига: без этого у модели с длинной ногой триггер срабатывал бы всегда.
-    const lim = Math.max(1, this.rigK * lead * (1 + GAIT.stepSlack));
+    // растёт без предела — вот это и ловим. Второго масштаба здесь НЕ нужно: `lead` считается из длины
+    // шага и скорости, а якорь бедра — из `hipHalf` рига, то есть обе стороны уже в мире модели.
+    const lim = Math.max(1, lead * (1 + GAIT.stepSlack));
     let over = 0;
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       if (l.sw > 0) continue;                               // маховая вес не держит — её вынос не в счёт
-      const s = (i === 0 ? HIP_DX : -HIP_DX) * this.rigK;
+      const s = i === 0 ? this.hipHalf : -this.hipHalf;
       over = Math.max(over, Math.hypot(l.px - (px + rx * s), l.pz - (pz + rz * s)) / lim);
     }
     this.lastUrge = 1 + clamp(over - 1, 0, 1) * GAIT.stepUrge;
@@ -819,17 +829,13 @@ class StepPlanner {
       if (c < half || c > TAU - half) {              // ОПОРА
         if (l.sw > 0) {                              // приземление: плантуем ТУДА, ГДЕ НОГА РЕАЛЬНО СТОИТ
           const a = this.actual[i]!;                 // (плант «по расчёту» тащил отстающую ногу рывком)
-          // Тот же миг, то же бедро: отношение ФАКТА к НАМЕРЕНИЮ = во сколько раз риг крупнее нашего.
-          const s0 = i === 0 ? HIP_DX : -HIP_DX, hx0 = px + rx * s0, hz0 = pz + rz * s0;
-          const inten = Math.hypot(l.tx - hx0, l.tz - hz0), act = Math.hypot(a[0] - hx0, a[1] - hz0);
-          if (inten > 1) this.rigK += (clamp(act / inten, 0.5, 3) - this.rigK) * 0.25;
           l.px = a[0]; l.pz = a[1];
         }
         l.sw = 0;
       } else {                                       // ПЕРЕНОС
         if (l.sw === 0) {                             // отрыв
           l.fx = l.px; l.fz = l.pz;
-          const s = i === 0 ? HIP_DX : -HIP_DX;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
+          const s = i === 0 ? this.hipHalf : -this.hipHalf;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
           const hx = px + rx * s, hz = pz + rz * s;
           // fixTarget: цель фиксируется здесь. Прибавляем пролёт тела за перенос (1−доля)·2·шаг — к касанию
           // бедро будет там, стопа приземлится на `lead` впереди. Иначе цель едет за бедром (пересчёт ниже).
@@ -848,11 +854,11 @@ class StepPlanner {
       if (l.sw > 0) continue;                        // маховая нога вес не держит
       if (!anyStance) stanceLeg = i as 0 | 1;
       anyStance = true;
-      const s = i === 0 ? HIP_DX : -HIP_DX;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
+      const s = i === 0 ? this.hipHalf : -this.hipHalf;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
       const hx = px + rx * s, hz = pz + rz * s;
       maxLz = Math.max(maxLz, Math.abs((l.px - hx) * fx + (l.pz - hz) * fz));
     }
-    const reach = LEG * 0.97;
+    const reach = (this.thighL + this.shinL) * 0.97;
     // База таза = this.standY (высота стойки idle = где юзер поставил таз). ПРОСАДКА привязана к standY, а НЕ к абсолютной
     // геометрии ног (было `FOOT_Y + sqrt(reach²−maxLz²)` → потолок ~29 НЕЗАВИСИМО от standY → бег систематически ниже idle).
     // dip = насколько нога-`reach` просела бы при разножке стоп на maxLz вперёд (0 когда стопы под тазом). bobMult масштабирует
@@ -873,7 +879,7 @@ class StepPlanner {
     const out: LegAngles[] = [];
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
-      const s = i === 0 ? HIP_DX : -HIP_DX;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
+      const s = i === 0 ? this.hipHalf : -this.hipHalf;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
       const hx = px + rx * s, hz = pz + rz * s;
       let wx: number, wz: number, wy: number;
       if (l.sw > 0) {
@@ -891,7 +897,7 @@ class StepPlanner {
         }
         wy = this.footFloor + Math.sin(Math.PI * t) * liftS(i as 0 | 1);
       } else { wx = l.px; wz = l.pz; wy = this.footFloor; }    // опорная: прибита к полу
-      const a = ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
+      const a = ik(wx - hx, wz - hz, wy - (hipY + this.hipDrop), fx, fz, rx, rz, fwdLimS(i as 0 | 1), this.thighL, this.shinL);
       // АМПЛИТУДА БЕДРА. Подъём маховой стопы IK отдаёт почти целиком колену: бедро висит, нога
       // «поджимается и болтается». Сравниваем решение с решением ДЛЯ ТОЙ ЖЕ ТОЧКИ, НО НА ПОЛУ, и
       // масштабируем разницу — колено берём настоящее, поэтому бедро уводит ногу выше, а колено
@@ -899,7 +905,7 @@ class StepPlanner {
       // опорная не трогается вовсе. hipSwing = 1 → g отбрасывается и числа прежние бит в бит.
       const k = hipSwS(i as 0 | 1);
       if (l.sw > 0 && k !== 1) {
-        const g = ik(wx - hx, wz - hz, this.footFloor - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
+        const g = ik(wx - hx, wz - hz, this.footFloor - (hipY + this.hipDrop), fx, fz, rx, rz, fwdLimS(i as 0 | 1), this.thighL, this.shinL);
         a.hip = g.hip + (a.hip - g.hip) * k;
       }
       // ГОЛЕНОСТОП. Только маховая: опорную забирает заземление и кладёт плоско (см. PoseTargets.ankL).
@@ -929,13 +935,15 @@ export class PoseDriver {
   private attackPow = 1;
   private dead = false;
   private planner: StepPlanner | null = null;
-  private stanceLatL = HIP_DX; private stanceFwdL = 0; private stanceLatR = -HIP_DX; private stanceFwdR = 0; private standY = GAIT.standY;
+  private stanceLatL: number | null = null; private stanceFwdL = 0; private stanceLatR = 0; private stanceFwdR = 0; private standY = GAIT.standY;
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   private combat = 0;     // мирно(0) ↔ бой(1): боевая колонка настроек (Ф6). Нет записей — ведёт себя как раньше.
   /** Боевое состояние 0..1 — ИЗ ИГРЫ (серверный `inCombat`), тот же, что блендит стойку. */
   /** Высота кости-лодыжки при подошве на полу — из рига (см. `StepPlanner.footFloor`). */
   footFloor = FOOT_Y;
+  /** Размеры ноги рига (см. `StepPlanner.legRest`). `null` — процедурный манекен, прежние константы. */
+  legRest: { thigh: number; shin: number; hipHalfW: number; hipDropY: number } | null = null;
   setCombat(c: number): void { this.combat = Math.max(0, Math.min(1, c)); if (this.planner) this.planner.combat = this.combat; }
   readonly out: PoseTargets = {
     hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, ankL: 0, ankR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
@@ -948,8 +956,13 @@ export class PoseDriver {
   setMove(s: number): void { this.move = Math.max(0, Math.min(1.4, s)); }
   /** Включает походку с опорой: позиция/рыск/скорость тела в мире (юниты, u/с). */
   setWorld(x: number, z: number, yaw: number, vx: number, vz: number): void {
-    if (!this.planner) { this.planner = new StepPlanner(); this.planner.setStance(this.stanceLatL, this.stanceFwdL, this.stanceLatR, this.stanceFwdR, this.standY); }
+    if (!this.planner) {
+      this.planner = new StepPlanner();
+      // Стойку передаём ТОЛЬКО замеренную: иначе планировщик возьмёт полутаз рига, а не нашу константу.
+      if (this.stanceLatL !== null) this.planner.setStance(this.stanceLatL, this.stanceFwdL, this.stanceLatR, this.stanceFwdR, this.standY);
+    }
     this.planner.footFloor = this.footFloor;   // пол для лодыжки — из рига, см. `StepPlanner.footFloor`
+    this.planner.legRest = this.legRest;       // длины бедра/голени и полутаз — из рига, не из констант
     this.w.x = x; this.w.z = z; this.w.yaw = yaw; this.w.vx = vx; this.w.vz = vz;
   }
   /** Обратная связь от физики: где НА САМОМ ДЕЛЕ стоят щиколотки (мир). Плантуем по факту, а не по расчёту. */
@@ -979,8 +992,8 @@ export class PoseDriver {
   get stepping(): boolean { return this.planner ? this.planner.stepping : false; }
   /** Какие ноги в переносе [левая, правая] — для тестов/отладки порядка приставных шагов. */
   get swingLegs(): [boolean, boolean] { return this.planner ? this.planner.swing : [false, false]; }
-  /** [масштаб рига, текущее ускорение фазы] — диагностика срочности шага. */
-  get debugUrge(): [number, number] { return this.planner ? this.planner.debugUrge : [1, 1]; }
+  /** Во сколько раз сейчас ускорена фаза — диагностика срочности шага. */
+  get debugUrge(): number { return this.planner ? this.planner.debugUrge : 1; }
   attack(power = 1): void { if (!this.dead) { this.attackT = ATTACK_DUR; this.attackPow = power; } }
   setDead(d: boolean): void { this.dead = d; }
   get isDead(): boolean { return this.dead; }
