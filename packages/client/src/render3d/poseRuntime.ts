@@ -459,6 +459,34 @@ export function applyHipSplay(human: Humanoid, l: number, r: number): void {
   if (lu) lu.rotation.z += l; if (ll) ll.rotation.z -= l;
   if (ru) ru.rotation.z -= r; if (rl) rl.rotation.z += r;
 }
+/**
+ * КРЕН И НАКЛОН ТАЗА НЕ ТАЩАТ ЗА СОБОЙ КОРПУС И НОГИ.
+ *
+ * `Hips` — корневая кость, `Spine` и оба бедра её прямые дети, поэтому поворот таза наследуется
+ * телом один в один (ЗАМЕР: крен 0.3 → грудь тоже 34.7°, колено гуляет на 8.86). Компенсация —
+ * вычесть тот же угол у прямых детей: корпус остаётся вертикальным и живёт своим «боковым
+ * качанием», ноги держат направление, которое им дал IK.
+ *
+ * ⚠ Ставится ПОСЛЕ `blendBone`, а не внутрь него: бленд с авторской стойкой разбавил бы компенсацию,
+ * а таз повёрнут жёстко. Тот же приём, что у `applyLegAdduct` и `applyHipSplay`.
+ * ⚠ `twistTorso` ниже по потоку работает через `rotateY` (композиция), поэтому наш X/Z переживает её.
+ * ⚠ Смещение самих ТАЗОБЕДРЕННЫХ СУСТАВОВ этим не убрать (2.73 ед при крене 0.3) — это и есть крен;
+ * его отрабатывают ноги, стопу переставляет заземление.
+ */
+export function applyHipsTiltHold(human: Humanoid, roll: number, pitch: number): void {
+  const hb = clamp(POSE.hipsTiltHoldBody, 0, 1), hl = clamp(POSE.hipsTiltHoldLegs, 0, 1);
+  const bz = roll * hb, bx = pitch * hb, lz = roll * hl, lx = pitch * hl;
+  if (Math.abs(bz) > 1e-6 || Math.abs(bx) > 1e-6) {
+    const sp = human.bones.get('Spine');
+    if (sp) { sp.rotation.z -= bz; sp.rotation.x -= bx; }
+  }
+  if (Math.abs(lz) > 1e-6 || Math.abs(lx) > 1e-6) {
+    for (const n of ['LeftUpperLeg', 'RightUpperLeg']) {
+      const b = human.bones.get(n);
+      if (b) { b.rotation.z -= lz; b.rotation.x -= lx; }
+    }
+  }
+}
 // Приведение РУК в рантайме НЕ делаем: модели биндятся в T-позе (руки горизонт = поза покоя клипов). A-позный бинд корёжит
 // ретаргет (46° доворота от бинда скин не тянет) → требуем экспорт скелета в T-позе. См. render3d/README.
 
@@ -512,6 +540,10 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // legMag (=1 на подшаге) — иначе спина разгибалась/клонило назад при развороте. При движении (armMag→1) — гейт-наклон. Скрутка
   // к прицелу (applyTorsoTwist) и head-look-at идут ОТДЕЛЬНО поверх этого.
   blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, armMag);
+  // ⚠ ДЕРЖИМ КОРПУС И НОГИ ПРИ КРЕНЕ/НАКЛОНЕ ТАЗА — и именно ЗДЕСЬ, ПОСЛЕ бленда, а не внутри его
+  // тройки. `blendBone` подмешивает авторскую стойку весом `armMag`, а таз повёрнут ЖЁСТКО: вычитание
+  // внутри тройки разбавилось бы вместе со стойкой, и стоя корпус всё равно кренился бы.
+  applyHipsTiltHold(human, t.hipsRoll, t.hipsPitch);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, armMag);
   blendBone(human, 'Head', [0, 0, 0], idle, armMag);
   // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──

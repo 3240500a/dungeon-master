@@ -4554,6 +4554,10 @@ function renderGaitTune(): void {
   row2('качание таза вбок (юниты)', POSEo, 'hipSway', 'hipSwayRun', -4, 4, 0.05, { body: true });
   row2('крен таза (вбок)', POSEo, 'hipsRollSwing', 'hipsRollSwingRun', -0.5, 0.5, 0.01, { body: true });
   row2('наклон таза (вперёд/назад)', POSEo, 'hipsPitchSwing', 'hipsPitchSwingRun', -0.5, 0.5, 0.01, { body: true });
+  // Крен/наклон таза наследуются ВСЕМ телом (Hips — корневая кость). Эти две ручки держат корпус
+  // вертикальным и не дают ногам гулять за тазом. 1 = держим, 0 = наследует как есть.
+  one1('при крене таза: держать КОРПУС вертикально', POSEo, 'hipsTiltHoldBody', 0, 1, 0.05);
+  one1('при крене таза: держать НОГИ', POSEo, 'hipsTiltHoldLegs', 0, 1, 0.05);
   // ПЛАВНОСТЬ БОБА. Числа были зашиты (14 / 10 / без фильтра), причём «вниз на ходьбе» шло БЕЗ
   // фильтра вовсе, а порог `speedWalk` переключал скорость скачком. Теперь это обычная пара ходьба/бег.
   row2('плавность боба ↑ (меньше = мягче)', GAITo, 'bobLagUp', 'bobLagUpRun', 1, 60, 0.5, { body: true });
@@ -5529,7 +5533,8 @@ const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armEl
   'twistPhase', 'twistPhaseRun', 'leanIdle', 'leanWalk', 'leanSpeed', 'leanWalkRun', 'leanSpeedRun',
   'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax', 'elbowMax', 'elbowDir', 'elbowDirRun',
   'footTurn', 'footTurnRun', 'hipSplay', 'hipSplayRun',
-  'hipSway', 'hipSwayRun', 'hipsRollSwing', 'hipsRollSwingRun', 'hipsPitchSwing', 'hipsPitchSwingRun'] as const;
+  'hipSway', 'hipSwayRun', 'hipsRollSwing', 'hipsRollSwingRun', 'hipsPitchSwing', 'hipsPitchSwingRun',
+  'hipsTiltHoldBody', 'hipsTiltHoldLegs'] as const;
 const GX_KEYS = ['armDown', 'elbowBend', 'armDownRun', 'elbowBendRun'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
