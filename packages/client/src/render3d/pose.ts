@@ -36,6 +36,15 @@ export interface PoseTargets {
   /** Ключицы (плечевой пояс), эйлер XYZ на сторону — своя поза, а не «сводим в ноль». */
   shoLX: number; shoLY: number; shoLZ: number; shoRX: number; shoRY: number; shoRZ: number;
   hipTwL: number; hipTwR: number; leanSide: number;
+  /** РЫСК СТОПЫ (носок наружу/внутрь), рад. Локальная Y кости стопы: у неё раньше стоял жёсткий ноль,
+   *  поэтому носок было нечем развернуть — регулировалось только колено (`kneeDir`, твист бедра). */
+  ankYawL: number; ankYawR: number;
+  /** РАЗВОД БЁДЕР (колени наружу/внутрь при НЕПОДВИЖНОЙ стопе), рад. Кладётся не в решение IK, а
+   *  ОТДЕЛЬНЫМ доворотом бедро/голень — как `legAdduct`, иначе стопа уезжает с планта (замер: 19 ед). */
+  hipSplayL: number; hipSplayR: number;
+  /** ТАЗ: боковое смещение (в кадре ТЕЛА, не мира), крен вбок и наклон вперёд/назад. Всё — колебание
+   *  в такт шагу; раньше таз умел только подниматься/опускаться (`bobY`). */
+  bobX: number; hipsRoll: number; hipsPitch: number;
   headNod: number; headTurn: number; headTilt: number;
   // Запястья (кисти-кости): X сгиб, Y скрутка (крутит меч вокруг оси руки), Z вбок. Нужны вооружённому/редактору.
   wLX: number; wLY: number; wLZ: number; wRX: number; wRY: number; wRZ: number;
@@ -172,6 +181,15 @@ export const GAIT = {
   pelvisMinRun: 26,                          // то же на бегу (интерп по скорости; = ходьбе → как было)
   stepWalk: 35, stepRun: 44,                 // ДЛИНА ШАГА на ходьбе / беге (интерп по скорости sb) — раздельно
   bobWalk: 1, bobRun: 1,                     // множитель БОБА таза на ходьбе / беге (интерп по sb)
+  /**
+   * ⭐ ПРОСАДКА ТАЗА ОТНОСИТЕЛЬНО IDLE, юниты (0 = как было).
+   *
+   * Высота таза на ходу отсчитывается от `standY` — высоты АВТОРСКОЙ СТОЙКИ. А стойка обычно
+   * авторится почти на прямых ногах, и бег получается «на ходулях»: присесть было нечем — `pelvisMin`
+   * только НИЖНИЙ предел, он не опускает, а `bobWalk/bobRun` масштабируют лишь просадку от разножки.
+   * Эта ручка опускает саму базу и множится на `moveAmt`, поэтому СТОЯ таз не трогает вовсе.
+   */
+  crouchWalk: 0, crouchRun: 0,
   // ── ПЛАВНОСТЬ БОБА ТАЗА ────────────────────────────────────────────────────────────────────────
   // ⚠ Раньше эти три числа были ЗАШИТЫ одной строкой: `speed > speedWalk ? dt*14 : rising ? dt*10 : 1`.
   // Ветка со значением 1 — это «без фильтра вообще»: на ходьбе таз падал в цель ЗА ОДИН КАДР
@@ -349,6 +367,23 @@ export const POSE = {
   leanIdle: 0.02, leanWalk: 0.05, leanSpeed: 0.06,
   leanWalkRun: 0.05, leanSpeedRun: 0.06,
   leanSideSwing: 0, leanSideSwingRun: 0,
+  // ── РАЗВОРОТЫ НОГИ: КОЛЕНО (было) · СТОПА · БЕДРО ─────────────────────────────────────────────
+  // `kneeDir` крутит БЕДРО (полюс колена), и вместе с ним уезжает вся нога — стопу отдельно было не
+  // поставить, а «носок наружу» это первое, что правят в походке. Теперь три независимые оси:
+  //   `kneeDir`   — куда смотрит КОЛЕНО (твист бедра, Y) — было;
+  //   `footTurn`  — куда смотрит НОСОК (рыск стопы, Y) — рантайм клал сюда жёсткий 0;
+  //   `hipSplay`  — РАЗВЕДЕНИЕ БЁДЕР (боковой угол бедра, Z) поверх решения IK.
+  // Знак у всех трёх один: + наружу, − внутрь (риг зеркальный, см. [[humanoid-rig-mirror]]).
+  footTurn: 0, footTurnRun: 0,
+  hipSplay: 0, hipSplayRun: 0,
+  // ── ТАЗ: КАЧАНИЕ И НАКЛОНЫ В ДВУХ ПЛОСКОСТЯХ ──────────────────────────────────────────────────
+  // Таз умел только вверх-вниз (`bobY`). У живого бега он ещё и переваливается на опорную ногу вбок,
+  // кренится и качает тазом вперёд-назад. Всё три — колебание под ТОЙ ЖЕ фазой, что мах рук.
+  // ⚠ Боковое смещение считается в кадре ТЕЛА (как перенос веса у удара), иначе на повороте уедет
+  // в мировые оси.
+  hipSway: 0, hipSwayRun: 0,                 // вбок, юниты
+  hipsRollSwing: 0, hipsRollSwingRun: 0,     // крен вбок, рад
+  hipsPitchSwing: 0, hipsPitchSwingRun: 0,   // наклон вперёд/назад, рад
   // ── ОБЩАЯ АМПЛИТУДА МАХА ──────────────────────────────────────────────────────────────────────
   // `walkingAmp(drive) = swingBase + drive·swingSpeed`. Множится на ВСЁ качание сразу.
   /**
@@ -954,8 +989,11 @@ class StepPlanner {
     // ФАЗА ПОЛЁТА. Опорной нет → раньше цель прыгала на полный рост стоя (`standY`) и срывалась вниз
     // в кадр касания. `bobFlight` говорит, НАСКОЛЬКО тянуть к стойке: 1 = как было, 0 = держать ту
     // высоту, с которой оторвались (тогда разрыва в касании нет вовсе).
-    const stanceY = clamp(this.standY - dip * bobMult, floorY, this.standY);
-    const wantY = anyStance ? stanceY : this.hipY + (this.standY - this.hipY) * clamp(GAIT.bobFlight, 0, 1);
+    // ПРОСАДКА: опускаем саму базу (не предел), и только по мере хода — стоя таз остаётся в стойке.
+    const crouch = locoVal('crouchWalk', 'crouchRun', GAIT.crouchWalk, GAIT.crouchRun, stanceLeg, m) * clamp(this.moveAmt, 0, 1);
+    const baseY = this.standY - crouch;
+    const stanceY = clamp(baseY - dip * bobMult, floorY, baseY);
+    const wantY = anyStance ? stanceY : this.hipY + (baseY - this.hipY) * clamp(GAIT.bobFlight, 0, 1);
     // Сглаживание: вверх и вниз своими скоростями, и у каждой — своя пара ходьба/бег.
     // ⚠ Раньше здесь стоял ПОРОГ `speed > GAIT.speedWalk`: 39.9 → 40.1 переключало скорость скачком.
     // `locoVal` блендит по `sb` (та же ось, что у длины шага и подъёма стопы) — разрыва нет.
@@ -1038,6 +1076,7 @@ export class PoseDriver {
     hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, ankL: 0, ankR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
     lean: 0, twist: 0, bobY: 0, splay: 0, twChest: 0, twUpper: 0,
     shTwL: 0, shTwR: 0, shSpL: 0, shSpR: 0, hipTwL: 0, hipTwR: 0, leanSide: 0, headNod: 0, headTurn: 0, headTilt: 0,
+    ankYawL: 0, ankYawR: 0, hipSplayL: 0, hipSplayR: 0, bobX: 0, hipsRoll: 0, hipsPitch: 0,
     shoLX: 0, shoLY: 0, shoLZ: 0, shoRX: 0, shoRY: 0, shoRZ: 0,
     wLX: 0, wLY: 0, wLZ: 0, wRX: 0, wRY: 0, wRZ: 0,
   };
@@ -1099,6 +1138,7 @@ export class PoseDriver {
     const o = this.out;
     // Доп. оси нужны только вооружённому (ГАРД меч+щит) — в процедурке всегда 0 (иначе стухшие значения «прилипнут»).
     o.shTwL = o.shTwR = o.shSpL = o.shSpR = 0; o.hipTwL = o.hipTwR = 0; o.leanSide = 0;
+    o.ankYawL = o.ankYawR = 0; o.hipSplayL = o.hipSplayR = 0; o.bobX = 0; o.hipsRoll = 0; o.hipsPitch = 0;
     o.twChest = o.twUpper = 0;
     o.headNod = o.headTurn = o.headTilt = 0;
     o.wLX = o.wLY = o.wLZ = o.wRX = o.wRY = o.wRZ = 0;
@@ -1167,6 +1207,16 @@ export class PoseDriver {
     const kneeDir = (i: 0 | 1): number => clamp(locoVal('kneeDir', 'kneeDirRun', GAIT.kneeDir, GAIT.kneeDirRun, i, m), -knMax, knMax);
     const elbowDir = (i: 0 | 1): number => clamp(locoVal('elbowDir', 'elbowDirRun', POSE.elbowDir, POSE.elbowDirRun, i, m), -elMax, elMax);
     o.hipTwL = kneeDir(0); o.hipTwR = -kneeDir(1);
+    // Носок и разведение бедра — те же колонки настроек и то же зеркало, что у колена.
+    const footTurn = (i: 0 | 1): number => locoVal('footTurn', 'footTurnRun', POSE.footTurn, POSE.footTurnRun, i, m);
+    const hipSplay = (i: 0 | 1): number => locoVal('hipSplay', 'hipSplayRun', POSE.hipSplay, POSE.hipSplayRun, i, m);
+    // ⚠ ЗНАК ЗАМЕРЕН ПО ПАЛЬЦУ, А НЕ ПО УГЛУ. Угол кости читается неочевидно, поэтому мерили ВЫНОС
+    // ПАЛЬЦА ОТ ЛОДЫЖКИ по X у ЛЕВОЙ стопы: база +2.06, при −кнопке +4.42 (наружу), при +кнопке −1.00 (внутрь).
+    // Значит для «+ = наружу» (как у `kneeDir`) нужен ПРЯМОЙ знак слева и зеркало справа.
+    o.ankYawL = footTurn(0); o.ankYawR = -footTurn(1);
+    // Развод бёдер идёт ОТДЕЛЬНЫМ каналом, а не прибавкой к решению IK: прибавка уводила стопу
+    // с планта на 19 ед (замер), то есть ломала походку вместо разведения колен.
+    o.hipSplayL = hipSplay(0); o.hipSplayR = hipSplay(1);
     // Локти — ДО веток: боевой ГАРД ниже перезапишет твист своей авторской стойкой, и это верно.
     o.shTwL = -elbowDir(0); o.shTwR = elbowDir(1);
     // Ручки ТЕЛА (не стороны): берём сторону 0 — ASYM для них панель не разводит.
@@ -1178,6 +1228,10 @@ export class PoseDriver {
         + drive * body('leanSpeed', 'leanSpeedRun', POSE.leanSpeed, POSE.leanSpeedRun)
       : POSE.leanIdle;
     o.leanSide = s * amp * body('leanSideSwing', 'leanSideSwingRun', POSE.leanSideSwing, POSE.leanSideSwingRun);
+    // ТАЗ. Та же фаза `s * amp`, что у рук и скрутки корпуса: перевал на опорную ногу идёт в такт шагу.
+    o.bobX = s * amp * body('hipSway', 'hipSwayRun', POSE.hipSway, POSE.hipSwayRun);
+    o.hipsRoll = s * amp * body('hipsRollSwing', 'hipsRollSwingRun', POSE.hipsRollSwing, POSE.hipsRollSwingRun);
+    o.hipsPitch = s * amp * body('hipsPitchSwing', 'hipsPitchSwingRun', POSE.hipsPitchSwing, POSE.hipsPitchSwingRun);
     const eArmSh = armSh(0), eArmEl = armEl(0);   // для веток, где стороны не разводятся (удар/гард)
     // ── КЛЮЧИЦЫ. Плечевой пояс больше не «сводится в ноль» на ходу: у него своя поза и своё качание.
     // dev — отклонение плеча своей руки от базы (<0 = рука ушла вперёд). Пояс идёт за рукой вперёд

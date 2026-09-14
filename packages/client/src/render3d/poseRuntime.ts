@@ -438,6 +438,27 @@ export function applyLegAdduct(human: Humanoid, scale = 1): void {
   if (lu) lu.rotation.z -= at; if (ru) ru.rotation.z += at;   // бедро: Left splay +X → −Z сводит вертикально (риг: Left на +X, см. [[humanoid-rig-mirror]])
   if (ll) ll.rotation.z += kc; if (rl) rl.rotation.z -= kc;   // колено: голень ∥ бедру → нога вертикальна В ЛЮБОМ сгибе колена
 }
+/**
+ * РАЗВОД БЁДЕР: колени наружу (+) или внутрь (−) при НЕПОДВИЖНОЙ стопе.
+ *
+ * БОКОВАЯ ось бедра (Z) — НЕ то же, что `kneeDir` (твист бедра, Y). Голень доворачиваем обратно,
+ * чтобы нога разводилась КАК ЦЕЛОЕ, а не ломалась в колене.
+ *
+ * ⚠ СТОПА ПРИ ЭТОМ УЕЗЖАЕТ — и это неизбежно: с прибитой стопой любой доворот бедра — это полюс
+ * колена, то есть `kneeDir`. ЗАМЕР: компенсация голени сокращает смещение стопы с 19.0 до 9.6 ед
+ * при 0.4 рад и делает ногу прямой. Сам `kneeDir` ведёт себя так же (замер: +0.6 → стопа 3.09 → −2.58).
+ *
+ * ⚠ Первая версия просто прибавляла угол к решению IK (`hipLat`) — ЗАМЕР: стопа уезжала с планта
+ * на 19 ед при 0.4 рад, то есть ручка ломала походку вместо того, чтобы менять её форму.
+ * Знаки зеркала — как у аддукта: у ЛЕВОГО бедра +Z наружу (риг: Left на +X, см. [[humanoid-rig-mirror]]).
+ */
+export function applyHipSplay(human: Humanoid, l: number, r: number): void {
+  if (Math.abs(l) < 1e-4 && Math.abs(r) < 1e-4) return;
+  const lu = human.bones.get('LeftUpperLeg'), ru = human.bones.get('RightUpperLeg');
+  const ll = human.bones.get('LeftLowerLeg'), rl = human.bones.get('RightLowerLeg');
+  if (lu) lu.rotation.z += l; if (ll) ll.rotation.z -= l;
+  if (ru) ru.rotation.z -= r; if (rl) rl.rotation.z += r;
+}
 // Приведение РУК в рантайме НЕ делаем: модели биндятся в T-позе (руки горизонт = поза покоя клипов). A-позный бинд корёжит
 // ретаргет (46° доворота от бинда скин не тянет) → требуем экспорт скелета в T-позе. См. render3d/README.
 
@@ -469,17 +490,24 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   if (layerTrace.on) { layerTrace.rows.length = 0; layerTrace.t = Date.now(); }
   traceRow('НОГИ / ТАЗ', 'планировщик шагов', m, m < 0.99 ? 'остальное — ноги из стойки' : undefined);
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
+  // КРЕН И НАКЛОН ТАЗА (две плоскости). Ставим ДО `applyTorsoTwist` — он трогает только `.y` (рыск),
+  // поэтому X и Z переживают его нетронутыми. Боковое смещение `bobX` кладётся отдельно, в кадре ТЕЛА.
+  { const hb = human.bones.get('Hips')!; hb.rotation.x = t.hipsPitch; hb.rotation.z = t.hipsRoll; }
   blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL], idle, m);
   blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR], idle, m);
   blendBone(human, 'LeftLowerLeg', [t.knL, 0, 0], idle, m);
   blendBone(human, 'RightLowerLeg', [t.knR, 0, 0], idle, m);
   // Стопа. Раньше здесь стоял жёсткий ноль — она не анимировалась ВООБЩЕ, и носок маховой ноги
   // чиркал по полу. Опорную всё равно перезапишет заземление (`groundFeet`), маховую ведёт поза.
-  blendBone(human, 'LeftFoot', [t.ankL, 0, 0], idle, m); blendBone(human, 'RightFoot', [t.ankR, 0, 0], idle, m);
+  // ⚠ У СТОПЫ БЫЛ ЖЁСТКИЙ НОЛЬ ПО Y — носок нечем было развернуть, и «наружу/внутрь» правилось только
+  // коленом (твист бедра), который уводит ВСЮ ногу. Теперь рыск стопы — свой канал (`POSE.footTurn`).
+  // Заземление его НЕ съедает: `groundFeet` берёт рыск опорной стопы ИЗ ПОЗЫ (см. footIk.ts).
+  blendBone(human, 'LeftFoot', [t.ankL, t.ankYawL, 0], idle, m); blendBone(human, 'RightFoot', [t.ankR, t.ankYawR, 0], idle, m);
   blendBone(human, 'LeftToes', [0, 0, 0], idle, m); blendBone(human, 'RightToes', [0, 0, 0], idle, m);
   // Аддукт масштабируем ТОЛЬКО когда idle АВТОРИТ ноги (тогда idle m=0 = авторская ширина, гейт m=1 = компенсирован). Без
   // авторских ног (монстры/процедурка, idle не задаёт LeftUpperLeg) ноги ВСЕГДА реконструкция → аддукт полный (иначе splay бинда).
   applyLegAdduct(human, (idle && idle['LeftUpperLeg']) ? m : 1);
+  applyHipSplay(human, t.hipSplayL * m, t.hipSplayR * m);   // развод бёдер — поверх аддукта, тем же приёмом
   // ТОРС/ШЕЯ держат idle-стойку при ПОВОРОТЕ НА МЕСТЕ: блендим к гейту по МГНОВЕННОЙ скорости (armMag=0 стоя/крутясь), а не по
   // legMag (=1 на подшаге) — иначе спина разгибалась/клонило назад при развороте. При движении (armMag→1) — гейт-наклон. Скрутка
   // к прицелу (applyTorsoTwist) и head-look-at идут ОТДЕЛЬНО поверх этого.
@@ -1253,6 +1281,13 @@ export class PosePlayer {
       layerTrace.twistGait = tg.twist; layerTrace.twistAim = tw;
     }
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
+    // КАЧАНИЕ ТАЗА ВБОК — В КАДРЕ ТЕЛА, и именно ЗДЕСЬ, а не в `gaitToHumanoid`. `Hips.position` живёт в кадре
+    // РОДИТЕЛЯ и рыском самой кости НЕ поворачивается — без доворота на `yaw` качание уехало бы в мировые оси
+    // (та же грабля, что у переноса веса в `applyAttackPelvis`). Правая ось тела = (cos yaw, −sin yaw).
+    if (tg.bobX !== 0) {
+      const hb = this.human.bones.get('Hips')!;
+      hb.position.x += tg.bobX * Math.cos(yaw); hb.position.z += -tg.bobX * Math.sin(yaw);
+    }
     if (locoPose) {
       // ⚠ ПОСЛЕ `applyTorsoTwist`, А НЕ ДО. Он ставит тазу фейсинг, то есть ПОВОРАЧИВАЕТ ВЕСЬ РИГ, и
       // подтяжка, сделанная раньше, была бы посчитана в другом кадре и уехала бы вместе с поворотом.

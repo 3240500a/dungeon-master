@@ -4547,6 +4547,13 @@ function renderGaitTune(): void {
   row2('присед (мин. таз)', GAITo, 'pelvisMin', 'pelvisMinRun', 6, 40, 0.25);
   row2('длина шага', GAITo, 'stepWalk', 'stepRun', 2, 140, 0.5);
   row2('боб таза ×', GAITo, 'bobWalk', 'bobRun', 0, 5, 0.02);
+  // ПРОСАДКА. Высота таза на ходу отсчитывается от АВТОРСКОЙ СТОЙКИ, а её авторят почти на
+  // прямых ногах — бег выходил «на ходулях». `присед` ниже — только ПРЕДЕЛ, он не опускает.
+  row2('просадка таза от стойки (на ходу)', GAITo, 'crouchWalk', 'crouchRun', 0, 8, 0.05, { body: true });
+  // ТАЗ В ДВУХ ПЛОСКОСТЯХ + боковой перевал. Раньше таз умел только вверх-вниз.
+  row2('качание таза вбок (юниты)', POSEo, 'hipSway', 'hipSwayRun', -4, 4, 0.05, { body: true });
+  row2('крен таза (вбок)', POSEo, 'hipsRollSwing', 'hipsRollSwingRun', -0.5, 0.5, 0.01, { body: true });
+  row2('наклон таза (вперёд/назад)', POSEo, 'hipsPitchSwing', 'hipsPitchSwingRun', -0.5, 0.5, 0.01, { body: true });
   // ПЛАВНОСТЬ БОБА. Числа были зашиты (14 / 10 / без фильтра), причём «вниз на ходьбе» шло БЕЗ
   // фильтра вовсе, а порог `speedWalk` переключал скорость скачком. Теперь это обычная пара ходьба/бег.
   row2('плавность боба ↑ (меньше = мягче)', GAITo, 'bobLagUp', 'bobLagUpRun', 1, 60, 0.5, { body: true });
@@ -4578,6 +4585,10 @@ function renderGaitTune(): void {
   row2('разворот колена (+ наружу / − внутрь)', GAITo, 'kneeDir', 'kneeDirRun', -0.9, 0.9, 0.01);
   // ⚠ Потолок = твист-предел сустава бедра (±0.7). Выше — манекен покажет то, чего призрак не даст.
   one1('потолок разворота колена (предел сустава)', GAITo, 'kneeDirMax', 0.05, 1.2, 0.01);
+  // ТРИ НЕЗАВИСИМЫЕ ОСИ «НАРУЖУ/ВНУТРЬ». Раньше была одна — колено, а оно крутит бедро,
+  // то есть уводит ВСЮ ногу вместе со стопой. Теперь носок и развод бёдер правятся отдельно.
+  row2('разворот СТОПЫ / носок (+ наружу / − внутрь)', POSEo, 'footTurn', 'footTurnRun', -0.9, 0.9, 0.01);
+  row2('развод БЁДЕР — вся нога от бедра (+ наружу)', POSEo, 'hipSplay', 'hipSplayRun', -0.5, 0.5, 0.01);
   row2('ширина стойки', GAITo, 'stanceWidth', 'stanceWidthRun', -20, 30, 0.25);
   row2('вынос вбок (страйф)', GAITo, 'strafeReach', 'strafeReachRun', 0, 3, 0.02);
   row2('предел кроссовера', GAITo, 'crossClamp', 'crossClampRun', 0, 99, 1);
@@ -5504,7 +5515,7 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
   'ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax',
-  'kneeDir', 'kneeDirRun', 'kneeDirMax',
+  'kneeDir', 'kneeDirRun', 'kneeDirMax', 'crouchWalk', 'crouchRun',
   // Плавность боба таза и окно заземления (см. «БОБ ТАЗА И ЗАЗЕМЛЕНИЕ» в render3d/README.md).
   'bobLagUp', 'bobLagUpRun', 'bobLagDown', 'bobLagDownRun', 'bobFlight',
   'gndLag', 'gndIn', 'gndInRun', 'gndOut', 'gndOutRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
@@ -5516,7 +5527,9 @@ const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armEl
   'armPhase', 'armPhaseRun', 'shoPhase', 'shoPhaseRun', 'armElAmp', 'armElAmpRun',
   'twistSwing', 'twistSwingRun', 'twistChest', 'twistChestRun', 'twistUpper', 'twistUpperRun',
   'twistPhase', 'twistPhaseRun', 'leanIdle', 'leanWalk', 'leanSpeed', 'leanWalkRun', 'leanSpeedRun',
-  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax', 'elbowMax', 'elbowDir', 'elbowDirRun'] as const;
+  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax', 'elbowMax', 'elbowDir', 'elbowDirRun',
+  'footTurn', 'footTurnRun', 'hipSplay', 'hipSplayRun',
+  'hipSway', 'hipSwayRun', 'hipsRollSwing', 'hipsRollSwingRun', 'hipsPitchSwing', 'hipsPitchSwingRun'] as const;
 const GX_KEYS = ['armDown', 'elbowBend', 'armDownRun', 'elbowBendRun'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
