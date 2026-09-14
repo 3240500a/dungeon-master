@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type RequestHandler } from 'express';
+import { configEtagOf } from './configEtag.js';
 import cors from 'cors';
 import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
@@ -178,11 +179,7 @@ let configBody = '';
 let configEtag = '';
 function rebuildConfigCache(): void {
   configBody = JSON.stringify(config.snapshot());
-  // Слабый ETag по длине и дешёвой контрольной сумме тела: считать sha по 436 КБ на каждой
-  // правке незачем, а от случайного совпадения этого достаточно.
-  let h = 0;
-  for (let i = 0; i < configBody.length; i += 64) h = (h * 31 + configBody.charCodeAt(i)) | 0;
-  configEtag = `W/"${configBody.length.toString(36)}-${(h >>> 0).toString(36)}"`;
+  configEtag = configEtagOf(configBody);   // по ВСЕМУ телу — см. `configEtag.ts`, там разобрано, чем стоила выборка
 }
 
 

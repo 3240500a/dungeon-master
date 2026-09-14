@@ -16,7 +16,7 @@ const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая п�
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
 import { DEFAULT_PROFILE, type BodyProfile, type BoneScale } from './bodyProfile.js';
-import { saveConfigSection } from './configEdits.js';
+import { saveConfigSection, mergedConfig } from './configEdits.js';
 
 /** Запись меша в конфиге (зеркало modelsSchema; истина — config-секция `models`). character = атлас (один GLB + slots). */
 interface ModelEntry {
@@ -287,17 +287,30 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     for (const k of Object.keys(DEFAULT_PROFILE) as (keyof BodyProfile)[]) asmProfile[k] = b[k] ?? DEFAULT_PROFILE[k];
   }
 
-  // ── Загрузка эффективного конфига (истина — /api/config: дефолты + правки редактора) ──
+  // ── Загрузка эффективного конфига ──
+  //
+  // ⚠ СЕРВЕРНЫЙ ОТВЕТ + ЛОКАЛЬНАЯ РАБОЧАЯ КОПИЯ, а не голый `/api/config`. Здесь стоял сырой ответ
+  // сервера, а ИГРА тот же ответ пропускает через `mergedConfig` (modelSkin.ts) — то есть импортнул
+  // атлас, он лёг в неопубликованные правки, и дальше вкладка «Модели» его НЕ ВИДИТ, а игра видит.
+  // Один браузер, один origin, два разных списка моделей. Это буквально жалоба «в редакторе моделей
+  // нет, а в клиенте есть».
+  //
+  // ⚠ И ОТКАЗ СЕТИ БОЛЬШЕ НЕ ОБНУЛЯЕТ КОНФИГ. Было `if (!r.ok) return;` + пустой `catch`, и при 500
+  // (перезапуск tsx-watch) или офлайне `cfg` оставался пустым: вкладка честно писала «пока пусто —
+  // импортни атлас», материалы тоже пустели, и модель становилась БЕЛОЙ. `mergedConfig()` без
+  // аргумента читает последний удачный снимок с диска браузера — берём его.
   async function fetchCfg(): Promise<void> {
+    let merged: Record<string, unknown>;
     try {
-      const r = await fetch('/api/config'); if (!r.ok) return;
-      const d = await r.json() as Record<string, unknown>;
-      cfg = {
-        models: Array.isArray(d.models) ? d.models as ModelEntry[] : [],
-        materials: Array.isArray(d.materials) ? d.materials as MaterialCfg[] : [],
-        textures: Array.isArray(d.textures) ? d.textures as TextureCfg[] : [],
-      };
-    } catch { /* сервер недоступен — пустой конфиг */ }
+      const r = await fetch('/api/config');
+      merged = r.ok ? mergedConfig(await r.json() as Record<string, unknown>) as Record<string, unknown>
+        : mergedConfig() as Record<string, unknown>;
+    } catch { merged = mergedConfig() as Record<string, unknown>; }   // сервер недоступен — последний снимок + правки
+    cfg = {
+      models: Array.isArray(merged.models) ? merged.models as ModelEntry[] : [],
+      materials: Array.isArray(merged.materials) ? merged.materials as MaterialCfg[] : [],
+      textures: Array.isArray(merged.textures) ? merged.textures as TextureCfg[] : [],
+    };
   }
 
   /**
