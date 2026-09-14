@@ -96,10 +96,26 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
  * раньше опорность была БУЛЕВОЙ, и в кадр касания стопа падала на пол рывком (замер: 3.655 → 1.710
  * за один кадр). `lag` — скорость схождения сдвига таза (умолчание `GROUND_LAG`).
  */
-export interface GroundOpts { w?: [number, number]; lag?: number }
+export interface GroundOpts { w?: [number, number]; lag?: number; straight?: number }
+/**
+ * ⭐ ЗАПАС ДО ПОЛНОГО ВЫПРЯМЛЕНИЯ ДЛЯ ЗАЗЕМЛЕНИЯ.
+ *
+ * Штатный `legGeom` держит `max = thigh + shin − 0.5` — «чтобы колено в ИГРЕ не встало в замок».
+ * Для заземления это ЯД: рест-нога рига выпрямлена практически на всю длину, и кламп физически не
+ * даёт солверу воспроизвести позу. ЗАМЕР на рыцаре (T-поза, пол ровный, рут на нуле):
+ * сустав бедра 31.379, лодыжка 2.892 → фактический пролёт **28.4866**, а потолок `28.509 − 0.5 = 28.009`.
+ * Кламп режет **0.4775**, и стопа поднимается ровно на столько же (замер 0.4681, остаток — боковая
+ * составляющая), а колено гнётся на **18.3°**. Глазами: «включаю заземление — ноги отрываются от
+ * земли и сгибаются колени», подошва меша −0.021 → +0.439.
+ *
+ * ⚠ Ровно это уже было найдено для ЗАПЕКАНИЯ (`legGeomFor`, запас 0.02, «стопа в покое уезжала бы на
+ * полюнита каждый кадр — замерено падающим тестом»), но игровой и редакторский путь чинить забыли.
+ */
+const GROUND_STRAIGHT = 0.02;
 export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery, support?: [boolean, boolean], opts?: GroundOpts): void {
   const hips = mesh.bones.get('Hips'); if (!hips) return;
   const lagK = opts?.lag !== undefined && opts.lag > 0 ? opts.lag : GROUND_LAG;
+  const straight = opts?.straight !== undefined && opts.straight >= 0 ? opts.straight : GROUND_STRAIGHT;
   const wOf = (i: number): number => clamp(opts?.w?.[i] ?? 1, 0, 1);
   // ⚠ ЦЕЛЬ — СОБСТВЕННАЯ ВЫСОТА ЛОДЫЖКИ РИГА, а не константа плюс сохранённое число.
   // `SOLE + footLift` не ехал за морфом: рост 1.16 поднимал риг, а цель оставалась прежней, и
@@ -147,7 +163,7 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     // ВЕС ОКНА: цель едет от текущей высоты стопы к полу на долю `w`. w=1 → ровно как раньше;
     // на краях опоры стопа подходит к полу и уходит с него ПЛАВНО, а не защёлкивается за кадр.
     const w = wOf(i), ey = _iFoot.y + (ty - _iFoot.y) * w;
-    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ey, _iFoot.z), _iPole, _iFace, legGeom(mesh, i));
+    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ey, _iFoot.z), _iPole, _iFace, legGeomFor(mesh, i, straight));
   }
 }
 

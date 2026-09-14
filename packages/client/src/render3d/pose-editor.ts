@@ -2912,7 +2912,12 @@ function poseTools(): void {
   // Офсет заземления стоп (per-персонаж, pe_phys.footLift): цель foot-IK = пол + SOLE + офсет. + поднять (стопы тонут под пол),
   // − опустить (парят над полом). Живо, per-персонаж, держится после бега. Тот же офсет читает игра (loadFootLift).
   {
-    const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px'); row.innerHTML = `<span style="flex:1;color:#9ae6a0">офсет заземл. стоп (± под/над пол)</span>`;
+    // ⚠ ПОЛЗУНОК — ФОЛБЭК, А НЕ ГЛАВНАЯ РУЧКА. Все пять читателей берут `mesh.ankleRest ?? (SOLE + footLift)`
+    // — это `??`, а не сумма: как только риг собран по модели (есть `boneOffsets`), `ankleRest` ЗАТЕНЯЕТ и
+    // `SOLE`, и офсет целиком. Раньше строка об этом молчала, и ползунок выглядел сломанным.
+    const rigFloor = (ghostHuman ?? human).ankleRest;
+    const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
+    row.innerHTML = `<span style="flex:1;color:${rigFloor === null ? '#9ae6a0' : '#6b7180'}">офсет заземл. стоп (± под/над пол)${rigFloor === null ? '' : ' — НЕ ДЕЙСТВУЕТ'}</span>`;
     const s = el('input', 'width:120px') as HTMLInputElement; s.type = 'range'; s.min = '-4'; s.max = '8'; s.step = '0.1'; s.value = String(physFootLift);
     const v = el('span', 'width:44px;text-align:right;color:#9ae6a0'); v.textContent = physFootLift.toFixed(1);
     s.oninput = () => {
@@ -2935,6 +2940,13 @@ function poseTools(): void {
     const mh = el('span', 'color:#6b7180');
     const got = soleShown; mh.textContent = got === null ? 'считается по подошве меша, а не по низу модели' : `замер даёт ${got.toFixed(2)}`;
     mrow.append(mh); body.append(mrow);
+    // ОТКУДА ВЗЯТ ПОЛ НА САМОМ ДЕЛЕ. Без этой строки «ползунок 1.4 / замер даёт 2.57» читается как
+    // поломка, хотя оба числа просто не участвуют: пол берёт риг.
+    if (rigFloor !== null) {
+      const rr = el('div', 'font-size:10px;margin-top:1px;color:#8fb3d9');
+      rr.textContent = `пол лодыжки берётся ИЗ РИГА: ankleRest = ${rigFloor.toFixed(3)} (замер рест-позы модели). Офсет выше — фолбэк для ригов без замера.`;
+      body.append(rr);
+    }
     // ⭐ ГЛАВНОЕ ЧИСЛО: стоит ли он НА ПОЛУ. Всё остальное в этом блоке — средства, а это результат.
     {
       const now = soleHeightNow();
