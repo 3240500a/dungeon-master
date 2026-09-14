@@ -200,8 +200,16 @@ export function measureBoneScales(loaded: THREE.Object3D, boneMap: Record<string
 export function upAxisAngle(loaded: THREE.Object3D, boneMap: Record<string, string>): number {
   const byName = boneIndex(loaded);
   const w = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
-  const hip = w('Hips'), head = w('Head');
-  if (!hip || !head) return 0;
+  // Верх позвоночника: голова, а нет её — шея, нет и шеи — грудь. Так умела копия из `modelSkin`,
+  // и это важно для ОТДЕЛЬНЫХ САБМЕШЕЙ: в куске брони головы может не быть вовсе.
+  const hip = w('Hips'), head = w('Head') ?? w('Neck') ?? w('Chest');
+  if (!hip || !head) {
+    // Костей не нашли — знак определить нечем; судим по габариту: вытянут по Z → это Z-up.
+    const bb = new THREE.Box3(); const v = new THREE.Vector3();
+    loaded.traverse((o) => { if ((o as THREE.Bone).isBone) bb.expandByPoint(o.getWorldPosition(v)); });
+    if (bb.isEmpty()) return 0;
+    return (bb.max.z - bb.min.z) > (bb.max.y - bb.min.y) ? -Math.PI / 2 : 0;
+  }
   const dy = head.y - hip.y, dz = head.z - hip.z;
   return Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0);
 }
@@ -352,8 +360,30 @@ function baseDist(a: string, b: string): number {
 // «Enforce T-pose» — какую кость к какому ребёнку прицеливаем. По умолчанию ТОЛЬКО руки (главный источник A-позы в
 // AccuRIG/CC; ноги/спину атласа не трогаем — там точная геометрия под конформ, канонизация коленей их бы поехала).
 const AIM_CHILD: Partial<Record<OurBone, OurBone>> = {
-  LeftShoulder: 'LeftUpperArm', LeftUpperArm: 'LeftLowerArm', LeftLowerArm: 'LeftHand',
-  RightShoulder: 'RightUpperArm', RightUpperArm: 'RightLowerArm', RightLowerArm: 'RightHand',
+  // ⚠ КЛЮЧИЦЫ УБРАНЫ. Ни одно определение T-позы их не выпрямляет: у VRM 1.0 сказано «плечи расслаблены
+  // и опущены», у человека ключица идёт вверх-наружу градусов на 13, и ровно на эти 13.3° наше приведение
+  // и уводило руку (замер: 3.3 единицы сдвига). Unity в «Enforce T-Pose» ключицу тоже не трогает.
+  LeftUpperArm: 'LeftLowerArm', LeftLowerArm: 'LeftHand',
+  RightUpperArm: 'RightLowerArm', RightLowerArm: 'RightHand',
+};
+
+/**
+ * КАНОН-НАПРАВЛЕНИЯ T-ПОЗЫ — В МИРОВЫХ ОСЯХ, А НЕ «КАК У НАШЕЙ БОЛВАНКИ».
+ *
+ * ⚠ РАДИ ЭТОГО И ЗАВЕДЕНО. Раньше целью служило направление кости в `baseHumanoid()` — нашем ПРОЦЕДУРНОМ
+ * манекене-заглушке. То есть скелет художника гнули под пропорции болванки, а не под T-позу: у уже T-позной
+ * модели рука «отклонялась» на 15.8° просто потому, что у болванки предплечье смотрит чуть иначе.
+ *
+ * Определение берём индустриальное (VRM 1.0 `tpose.md`, Definition 1.4): «руки вытянуты вдоль оси X и
+ * параллельны земле». Ноги — вниз, позвоночник — вверх. Чего в таблице нет, у того цель по-прежнему
+ * берётся из базового рига (так целятся, например, стопы, у которых мировой оси не назначишь).
+ */
+const CANON_DIR: Partial<Record<OurBone, [number, number, number]>> = {
+  LeftUpperArm: [1, 0, 0], LeftLowerArm: [1, 0, 0],
+  RightUpperArm: [-1, 0, 0], RightLowerArm: [-1, 0, 0],
+  LeftUpperLeg: [0, -1, 0], LeftLowerLeg: [0, -1, 0],
+  RightUpperLeg: [0, -1, 0], RightLowerLeg: [0, -1, 0],
+  Spine: [0, 1, 0], Chest: [0, 1, 0], UpperChest: [0, 1, 0], Neck: [0, 1, 0],
 };
 /** Полная цепочка (руки+ноги+спина) — для ЗАПЕКАТЕЛЯ КЛИПОВ: приводим ЛЮБУЮ начальную позу источника анимации к канон-T
  *  перед снятием rest (иначе обратный ретаргет считает дельты от кадра-0/A-позы → «тело в T, руки/ноги мельницей»). Hips
@@ -372,7 +402,17 @@ export const FULL_AIM_CHILD: Partial<Record<OurBone, OurBone>> = {
  *  локальные повороты костей — up-axis/меш/скин не трогаем. Зовётся при импорте (poseModelsTab) ПОСЛЕ skeleton.pose() и ДО
  *  measureBoneOffsets/exportGLB → экспортный GLB несёт T-позу в нодах, замеры читают T, рантайм грузит уже T (как рыцарь).
  *  По умолчанию правим руки (AIM_CHILD). Локальные повороты инвариантны к ориентации корня → up-axis остаётся как был. */
-export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, string>, aimChild: Partial<Record<OurBone, OurBone>> = AIM_CHILD): void {
+/**
+ * ПОРОГ ПРИВЕДЕНИЯ, градусы. Кость, уже стоящую верно, НЕ трогаем вовсе.
+ *
+ * Взят из Godot (`retarget/rest_fixer/fix_silhouette/threshold`, дефолт 15): без порога доворот
+ * применяется ВСЕГДА, даже на расхождении 0.0001°, и генерирует шум ровно того порядка, на который
+ * жалуется автор. Наш эталон при этом показывает 13.3° по ключице — то есть при пороге 15° приведение
+ * этот файл не тронет ВООБЩЕ, даже если галку включить по ошибке.
+ */
+export const TPOSE_THRESHOLD_DEG = 15;
+
+export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, string>, aimChild: Partial<Record<OurBone, OurBone>> = AIM_CHILD, thresholdDeg = TPOSE_THRESHOLD_DEG): void {
   const r0 = loaded.rotation.clone();
   loaded.rotation.set(0, 0, 0); loaded.updateMatrixWorld(true);
   const byName = boneIndex(loaded);
@@ -389,7 +429,10 @@ export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, str
     if (!ob || !cb || !sb || !scb) continue;
     loaded.updateMatrixWorld(true);
     cur.copy(cb.getWorldPosition(b)).sub(ob.getWorldPosition(a)); if (cur.lengthSq() < 1e-9) continue; cur.normalize();   // текущее мир-направление кости
-    can.copy(scb.getWorldPosition(b)).sub(sb.getWorldPosition(a)).normalize();                                          // канон-направление (эталон)
+    const cd = CANON_DIR[our];
+    if (cd) can.set(cd[0], cd[1], cd[2]);                                                                              // канон T-позы в МИРОВЫХ осях
+    else can.copy(scb.getWorldPosition(b)).sub(sb.getWorldPosition(a)).normalize();                                    // запасной вариант — базовый риг
+    if (cur.angleTo(can) * 180 / Math.PI < thresholdDeg) continue;   // уже стоит верно — не трогаем (порог Godot)
     qw.setFromUnitVectors(cur, can);                       // мир-доворот cur→can
     ob.getWorldQuaternion(curW); qw.multiply(curW);        // qw = новый мировой кватернион кости
     (ob.parent ? ob.parent.getWorldQuaternion(pw) : pw.identity());

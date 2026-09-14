@@ -64,7 +64,11 @@ describe.runIf(existsSync(GLB))('импорт рыцаря повторяет м
     root.updateMatrixWorld(true);
 
     const legBefore = between(dir('LeftUpperLeg', 'LeftLowerLeg'), new THREE.Vector3(0, -1, 0));
-    enforceTPose(root, map);
+    const armBefore = between(dir('LeftUpperArm', 'LeftLowerArm'), new THREE.Vector3(1, 0, 0));
+    // ⚠ ПОРОГ. С дефолтным порогом (15°, как у Godot) приведение НЕ ТРОГАЕТ кость, которая и так стоит
+    // верно: у этого файла рука отклонена на 6°, и это авторская T-поза, а не A-поза. Здесь порог снят
+    // (0), потому что тест проверяет САМ ДОВОРОТ; поведение «не трогать» проверяется ниже отдельно.
+    enforceTPose(root, map, undefined, 0);
     root.updateMatrixWorld(true);
     const src = {
       thigh: between(dir('LeftUpperLeg', 'LeftLowerLeg'), new THREE.Vector3(0, -1, 0)),
@@ -74,7 +78,8 @@ describe.runIf(existsSync(GLB))('импорт рыцаря повторяет м
     };
     // enforceTPose по умолчанию целит ТОЛЬКО руки — ноги обязаны остаться как в файле.
     expect(src.thigh, 'enforceTPose не имеет права трогать ноги').toBeCloseTo(legBefore, 3);
-    expect(src.arm, 'а руку — обязан поставить горизонтально').toBeLessThan(0.5);
+    expect(src.arm, 'а руку при снятом пороге — обязан поставить горизонтально').toBeLessThan(0.5);
+    expect(armBefore, 'исходный файл и так почти в T-позе — 6°').toBeLessThan(10);
 
     const h = buildHumanoid({ boneOffsets: measureBoneOffsets(root, map), boneScale: measureBoneScales(root, map), fingers: true });
     h.root.updateMatrixWorld(true);

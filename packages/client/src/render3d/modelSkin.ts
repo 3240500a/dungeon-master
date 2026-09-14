@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { loadModelUrl, skeletonBoneNames } from './modelAssets.js';
-import { makeRetargetRig, autoBoneMap, type RetargetRig } from './retarget3d.js';
+import { makeRetargetRig, autoBoneMap, upAxisAngle, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { mergedConfig } from './configEdits.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
@@ -75,23 +75,20 @@ function skeletonBox(obj: THREE.Object3D): THREE.Box3 {
   obj.traverse((o) => { if ((o as THREE.Bone).isBone) box.expandByPoint(o.getWorldPosition(v)); });
   return box;
 }
-/** Доворот X для приведения оси «вверх» к +Y по вектору Hips→Head (позвоночник). ЗНАКО-ЗАВИСИМО: Z-up бывает +Z (голова к +Z)
- *  → −90°X, и −Z (голова к −Z, Character Creator/AccuRIG) → +90°X (иначе модель ВВЕРХ НОГАМИ). Перевёрнутый Y (голова вниз) → 180°X.
- *  Y-up → 0. Возвращает угол (рад) для obj.rotation.x. Надёжно для любого сабмеша. */
-function detectUpFixX(obj: THREE.Object3D, boneMap: Record<string, string>): number {
+/**
+ * Доворот X к Y-up — ОДНО правило на весь проект (`retarget3d.upAxisAngle`).
+ *
+ * ⚠ Здесь жила ТРЕТЬЯ копия этой формулы (ещё две были в `measureBoneOffsets` и `enforceTPose`).
+ * Разъехавшись, копии дали бы разные системы координат на одном файле — а цена такой рассинхронизации
+ * уже измерена: пальцы приезжали повёрнутыми на 81°. Новые модели приходят уже Y-up (импорт нормализует
+ * ось и запекает её), поэтому здесь обычно 0; вызов оставлен для СТАРЫХ GLB, загруженных до этой правки.
+ */
+const detectUpFixX = (obj: THREE.Object3D, boneMap: Record<string, string>): number => {
   const r = obj.rotation.clone(); obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
-  const byName = new Map<string, THREE.Bone>(); obj.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o as THREE.Bone); });
-  const hips = byName.get(boneMap.Hips ?? ''); const top = byName.get(boneMap.Head ?? '') ?? byName.get(boneMap.Neck ?? '') ?? byName.get(boneMap.Chest ?? '');
-  let ax = 0;
-  if (hips && top) {
-    const a = hips.getWorldPosition(new THREE.Vector3()), b = top.getWorldPosition(new THREE.Vector3());
-    const dy = b.y - a.y, dz = b.z - a.z;
-    if (Math.abs(dz) > Math.abs(dy)) ax = dz > 0 ? -Math.PI / 2 : Math.PI / 2;   // Z-up: +Z→−90°X, −Z→+90°X (CC/AccuRIG обычно −Z)
-    else if (dy < 0) ax = Math.PI;                                              // перевёрнутый Y-up (голова вниз) → 180°X
-  } else { const bb = skeletonBox(obj); if ((bb.max.z - bb.min.z) > (bb.max.y - bb.min.y)) ax = -Math.PI / 2; }   // без костей — знак не определить, дефолт +Z
+  const ax = upAxisAngle(obj, boneMap);
   obj.rotation.copy(r); obj.updateMatrixWorld(true);
   return ax;
-}
+};
 /** Высота источника (наш Humanoid): его «кости» — THREE.Group (не Bone), меряем по карте bones. */
 function humanoidHeight(h: Humanoid): number {
   const box = new THREE.Box3(); const v = new THREE.Vector3();

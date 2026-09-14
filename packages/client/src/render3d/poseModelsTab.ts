@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig } from './retarget3d.js';
+import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, upAxisAngle, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig } from './retarget3d.js';
 const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая проверка «это фаланга?» для само-лечения замеров
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
@@ -283,21 +283,16 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     } catch { /* сервер недоступен — пустой конфиг */ }
   }
 
-  // ── Ось «вверх» → доворот X к +Y. ЗНАКО-ЗАВИСИМО по костям (Hips→Head): +Z→−90°, −Z→+90° (CC/AccuRIG обычно −Z, иначе вверх
-  //    ногами), перевёрнутый Y→180°. Без костей — bbox-эвристика «лежит» с дефолтом +Z. Возвращает угол (рад). ──
+  /**
+   * Доворот X к Y-up — ОДНО правило на весь проект (`retarget3d.upAxisAngle`).
+   *
+   * ⚠ Здесь жила ЧЕТВЁРТАЯ копия этой формулы (ещё три — в `measureBoneOffsets`, `enforceTPose`,
+   * `modelSkin`). Копии и разъехались: у одной был bbox-фолбэк с множителем 1.4, у другой без. Цена
+   * рассинхронизации уже измерена — пальцы приезжали повёрнутыми на 81°.
+   */
   function detectUpFixX(obj: THREE.Object3D, boneMap?: Record<string, string>): number {
     obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
-    const byName = new Map<string, THREE.Object3D>(); obj.traverse((o) => { if ((o as THREE.Bone).isBone) byName.set(o.name, o); });
-    const hips = boneMap ? byName.get(boneMap.Hips ?? '') : undefined;
-    const top = boneMap ? (byName.get(boneMap.Head ?? '') ?? byName.get(boneMap.Neck ?? '') ?? byName.get(boneMap.Chest ?? '')) : undefined;
-    if (hips && top) {
-      const a = hips.getWorldPosition(new THREE.Vector3()), b = top.getWorldPosition(new THREE.Vector3());
-      const dy = b.y - a.y, dz = b.z - a.z;
-      if (Math.abs(dz) > Math.abs(dy)) return dz > 0 ? -Math.PI / 2 : Math.PI / 2;
-      return dy < 0 ? Math.PI : 0;
-    }
-    const box = new THREE.Box3().setFromObject(obj);
-    return (box.max.z - box.min.z) > 1.4 * (box.max.y - box.min.y) ? -Math.PI / 2 : 0;
+    return upAxisAngle(obj, boneMap ?? {});
   }
   // ── Оценка масштаба: высота bbox (при текущем довороте) → к высоте манекена (TILE=32u=1м, гуманоид ~58u) ──
   function autoScale(obj: THREE.Object3D): number {
