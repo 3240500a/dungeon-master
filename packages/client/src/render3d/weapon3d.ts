@@ -52,6 +52,47 @@ export function makeWeaponMesh(kind: string): THREE.Group {
  *  `models` (опц.) — id 3D-моделей оружия (kind:'weapon') на main/off руки: тегаем `g.userData.weaponModelId`, а
  *  ВИЗУАЛЬНЫЕ дети процедурного меша позже свапаются на GLB (`applyWeaponModels`, modelSkin) — группа/хват/хост-синк
  *  остаются те же. Нет модели → остаётся процедурный меш (фолбэк). Оружие ОБЩЕЕ на всех (per-char только хват pe_grip). */
+/**
+ * ⭐ ПОВЕСИТЬ ОРУЖИЕ НА КИСТЬ ВИДИМОГО МЕША, СОХРАНИВ СИСТЕМУ КООРДИНАТ АВТОРСКОЙ КИСТИ.
+ *
+ * Хват авторится относительно кисти НАШЕГО рига, а рисовать оружие надо на кисти атлас-меша — иначе оно
+ * плавает относительно модели покадрово. `.add()` сохраняет ЛОКАЛЬ, то есть при смене родителя мировая
+ * ориентация меняется ровно на разницу бинд-поворотов двух кистей. ЗАМЕР на живой модели: кисти стоят
+ * в ОДНОЙ точке (расстояние 0.000), а ориентации расходятся на **83.8°**. Отсюда «щит лежит плашмя»
+ * и «молот висит сбоку»: авторский хват был верным, его разворачивал сам перенос.
+ *
+ * Ставим между ними узел-посредник: он повторяет ОРИЕНТАЦИЮ и МАСШТАБ авторской кисти, оставаясь
+ * в ПОЗИЦИИ атласной. Всё, что настроено в редакторе, и анимация хвата поверх едут без правок.
+ * Масштаб компенсировался и раньше — поворот забыли, хотя природа одна.
+ *
+ * ⚠ ОДИН ШОВ НА ИГРУ И РЕДАКТОР. Этот код жил двумя копиями (`gamePlayerDoll`, `pose-editor`), и стоило
+ * починить одну — редактор и игра показывали бы разный хват, а это прямое нарушение правила проекта.
+ */
+export function hostWeaponOnHand(g: THREE.Group, atlasHand: THREE.Object3D | null, fallback: THREE.Object3D | null): void {
+  if (!atlasHand || !fallback) {                       // атласа нет — вешаем на манекен, как раньше
+    const t = atlasHand ?? fallback;
+    if (t && g.parent !== t) t.add(g);
+    if (g.scale.x !== 1) g.scale.set(1, 1, 1);
+    return;
+  }
+  let host = g.userData.host as THREE.Object3D | undefined;
+  if (!host || host.parent !== atlasHand) { host = new THREE.Object3D(); host.name = 'weaponHost'; atlasHand.add(host); g.userData.host = host; }
+  if (g.parent !== host) host.add(g);
+  atlasHand.updateWorldMatrix(true, false); fallback.updateWorldMatrix(true, false);
+  atlasHand.getWorldQuaternion(_hqA); fallback.getWorldQuaternion(_hqF);
+  host.quaternion.copy(_hqA).invert().multiply(_hqF);   // ориентация авторской кисти
+  atlasHand.getWorldScale(_hsA); fallback.getWorldScale(_hsF);
+  if (_hsA.x > 1e-6 && _hsA.y > 1e-6 && _hsA.z > 1e-6) host.scale.set(_hsF.x / _hsA.x, _hsF.y / _hsA.y, _hsF.z / _hsA.z);
+  if (g.scale.x !== 1) g.scale.set(1, 1, 1);            // масштаб теперь на посреднике
+}
+/** Снять посредник вместе с группой (иначе копится при каждой смене оружия). */
+export function dropWeaponHost(g: THREE.Group): void {
+  const h = g.userData.host as THREE.Object3D | undefined;
+  h?.parent?.remove(h); g.userData.host = undefined;
+}
+const _hqA = new THREE.Quaternion(), _hqF = new THREE.Quaternion();
+const _hsA = new THREE.Vector3(), _hsF = new THREE.Vector3();
+
 export function attachWeapons(human: Humanoid, weapon: string, models?: { main?: string; off?: string }): THREE.Group[] {
   const groups: THREE.Group[] = [];
   const attach = (kind: string, boneName: string, modelId?: string): void => {

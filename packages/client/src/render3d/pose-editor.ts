@@ -42,7 +42,7 @@ import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } fr
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
-import { WEAPONS, OFFHANDS, attachWeapons } from './weapon3d.js';
+import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
@@ -357,23 +357,12 @@ function saveGripBase(): void {
     applyBaseGrip(weaponGroups, curCharId, weapon);   // база в userData обновлена → все позы без override берут её
   } catch { /* */ }
 }
-/** 2B: КАЖДЫЙ кадр переносим оружие на кисть ВИДИМОГО атлас-меша (asmSkin, физ-ведомый) — иначе оно на манекене и плавает
- *  относительно модели покадрово. `.add` сохраняет локаль (авторский хват), меняет мир. Нет атласа/не загружен → на призраке. */
-const _wsA = new THREE.Vector3(), _wsF = new THREE.Vector3();
+/** 2B: КАЖДЫЙ кадр оружие висит на кисти ВИДИМОГО атлас-меша. Вся логика — в `weapon3d.hostWeaponOnHand`,
+ *  ОДНА на игру и редактор: раньше это были две копии, и починка одной развела бы хват редактора с игрой. */
 function syncWeaponHost(): void {
   for (const g of weaponGroups) {
     const hn = g.userData.handBone as string | undefined; if (!hn) continue;
-    const fallback = (ghostHuman ?? human).bones.get(hn) ?? human.bones.get(hn);
-    const atlasHand = modelsTab.handBone(hn);
-    const target = atlasHand ?? fallback;
-    if (target && g.parent !== target) target.add(g);
-    // Компенсация масштаба: кисть атласа несёт импорт-скейл (ФБХ ~0.35×) → оружие мельчало. Держим размер как на манекене:
-    // локаль-скейл = мир-скейл манекен-кисти / мир-скейл атлас-кисти (мир-размер оружия = как на физ-теле).
-    if (atlasHand && fallback) {
-      atlasHand.updateWorldMatrix(true, false); fallback.updateWorldMatrix(true, false);
-      atlasHand.getWorldScale(_wsA); fallback.getWorldScale(_wsF);
-      if (_wsA.x > 1e-6 && _wsA.y > 1e-6 && _wsA.z > 1e-6) g.scale.set(_wsF.x / _wsA.x, _wsF.y / _wsA.y, _wsF.z / _wsA.z);
-    } else if (g.scale.x !== 1) g.scale.set(1, 1, 1);
+    hostWeaponOnHand(g, modelsTab.handBone(hn), (ghostHuman ?? human).bones.get(hn) ?? human.bones.get(hn) ?? null);
   }
 }
 
