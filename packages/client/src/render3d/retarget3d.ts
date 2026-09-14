@@ -615,3 +615,28 @@ export function makeBakeRig(loaded: THREE.Object3D, boneMap: Record<string, stri
   }
   return { boneMap, restW, sampleInto, sampleHipsDelta };
 }
+
+/**
+ * НАСКОЛЬКО БИНД-ПОЗА РАСХОДИТСЯ С ПОЗОЙ УЗЛОВ (макс. сдвиг кости, в единицах файла).
+ *
+ * У аккуратного файла это ноль: узлы и `inverseBindMatrices` описывают одну позу. Расхождение
+ * означает, что скелет двигали после привязки, — и тогда важно, ПО КАКОЙ из двух мерить риг.
+ * Мерим по узлам (её показывает любой DCC и её автор считает правильной), а это число печатаем,
+ * чтобы «файл странный» было видно, а не приходилось выяснять по кривому результату.
+ * Ничего не меняет: бинд-позу снимает на копии скелета и возвращает как было.
+ */
+export function nodeVsBindGap(root: THREE.Object3D): number {
+  root.updateMatrixWorld(true);
+  const node = new Map<THREE.Object3D, THREE.Vector3>();
+  root.traverse((o) => { if ((o as THREE.Bone).isBone) node.set(o, o.getWorldPosition(new THREE.Vector3())); });
+  if (!node.size) return 0;
+  const saved = new Map<THREE.Object3D, THREE.Matrix4>();
+  for (const b of node.keys()) saved.set(b, b.matrix.clone());
+  root.traverse((o) => { const s = (o as THREE.SkinnedMesh).skeleton; if (s) s.pose(); });
+  root.updateMatrixWorld(true);
+  let worst = 0;
+  for (const [b, p] of node) worst = Math.max(worst, p.distanceTo(b.getWorldPosition(new THREE.Vector3())));
+  for (const [b, m] of saved) { m.decompose(b.position, b.quaternion, b.scale); }
+  root.updateMatrixWorld(true);
+  return worst;
+}

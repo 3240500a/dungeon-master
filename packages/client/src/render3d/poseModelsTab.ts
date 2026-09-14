@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, upAxisAngle, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig } from './retarget3d.js';
+import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, upAxisAngle, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig , nodeVsBindGap} from './retarget3d.js';
 const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая проверка «это фаланга?» для само-лечения замеров
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
@@ -204,7 +204,23 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       const meshNames: string[] = []; g.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshNames.push(o.name); });
       const slots = classifyAtlas(meshNames);
       const _map = autoBoneMap(skeletonBoneNames(g));
-      g.traverse((o) => { const s = (o as THREE.SkinnedMesh).skeleton; if (s) s.pose(); });   // → чистая bind-поза ДО правки
+      // ⚠ РЕСТ-ПОЗА — ЭТО ПОЗА УЗЛОВ ФАЙЛА, А НЕ БИНД-МАТРИЦЫ.
+      //
+      // Здесь стоял `skeleton.pose()`, то есть скелет насильно ставился в позу, зашитую в
+      // `inverseBindMatrices`. Для аккуратного файла это одно и то же, а у нашего рыцаря — РАЗНОЕ,
+      // и замер шёл по неверной. ЗАМЕР (сырые мировые позиции, без единого доворота):
+      //     кость        узлы файла                бинд
+      //     Hip          [0, 95.97, 0]   Y-вверх    [0, 0, −94.95]   Z-вверх
+      //     Calf         [10.61, 47.36, 0.39]       [10.61, 0.39, −47.36]
+      //     Foot         [8.93, 7.92, −0.78]        [23.02, −3.11, −7.92]
+      // В узлах стопа стоит ПОД КОЛЕНОМ (нога прямая, ровно как в Максе), в бинде отъезжает вбок
+      // на 14 единиц. Габарит меша ног: узлы 45×104.5 (узкие, вертикальные), бинд 68.7×103.5.
+      // Отсюда росли и «ноги шире стоят», и «риг кривой», и наша вера, что CC отдаёт Z-up:
+      // Z-up был только у БИНДА, а сам файл авторски Y-up.
+      //
+      // Поза узлов — это то, что показывает любой DCC и что автор считает правильным. Бинд-матрицы
+      // нужны скиннингу, а не геометрии рига. Берём узлы; расхождение печатаем в статус импорта.
+      const bindGap = nodeVsBindGap(g);
       // ⭐ ЕДИНСТВЕННОЕ, ЧТО ИМПОРТ МЕНЯЕТ САМ, — ОСЬ «ВВЕРХ». glTF по спецификации Y-up, а CC/AccuRIG отдают Z-up.
       // Раньше доворот был ВРЕМЕННЫМ (замерили — вернули), файл оставался в своей системе, а в нашу его затаскивал
       // покостный позиционный привод. Что привод не тащит — оставалось в чужой системе: пальцы приезжали на 81° мимо.
@@ -232,6 +248,7 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       importRev++;   // геометрия другая → всё, что замерено ПО МОДЕЛИ (подъём стопы), протухло
       rebuildAsm();   // ВСЕГДА пересобираем скин: setAtlas дедуплицирует по URL, а переимпорт того же файла URL не меняет → иначе превью зависло бы на старом GLB
       asmStatus = `атлас «${id}» [${key ?? 'игрок'}]: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`
+        + (bindGap > 1 ? ` · ⚠ бинд-поза расходится с позой файла на ${bindGap.toFixed(1)} ед (взята поза файла)` : '')
         + ` · руки от горизонтали ${dev.toFixed(1)}°` + (forceT ? ' (приведено к T)' : dev > 25 ? ' — похоже на A-позу, включите приведение к T' : ' — файл в T-позе, взят как есть');
     } catch (err) { asmStatus = 'ошибка: ' + (err as Error).message; }
     renderBody();

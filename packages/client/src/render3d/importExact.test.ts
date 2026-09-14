@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { readFileSync, existsSync } from 'node:fs';
 import { parseModel, exportGLB } from './modelAssets.js';
-import { autoBoneMap, measureBoneOffsets, normalizeUpAxis, upAxisAngle, tPoseDeviation, enforceTPose, TPOSE_THRESHOLD_DEG, boneIndex, makeRetargetRig, parentOfOur, OUR_BONES, OUR_FINGERS } from './retarget3d.js';
+import { autoBoneMap, measureBoneOffsets, normalizeUpAxis, upAxisAngle, tPoseDeviation, enforceTPose, TPOSE_THRESHOLD_DEG, nodeVsBindGap, boneIndex, makeRetargetRig, parentOfOur, OUR_BONES, OUR_FINGERS } from './retarget3d.js';
 import { buildHumanoid } from './humanoid.js';
 
 /**
@@ -49,7 +49,13 @@ function spanOf(idx: Map<string, THREE.Object3D>, m: Record<string, string>): nu
 const ourSpan = (h: { bones: Map<string, THREE.Object3D> }): number =>
   h.bones.get('Hips')!.getWorldPosition(new THREE.Vector3()).distanceTo(h.bones.get('Head')!.getWorldPosition(new THREE.Vector3()));
 
-const pose = (o: THREE.Object3D): void => { o.traverse((c) => { const s = (c as THREE.SkinnedMesh).skeleton; if (s) s.pose(); }); };
+/**
+ * ⚠ РЕСТ — ЭТО ПОЗА УЗЛОВ, а не бинд. Раньше здесь стоял `skeleton.pose()` (и в импорте тоже), и
+ * замер шёл по позе из `inverseBindMatrices`. У этого файла они РАЗНЫЕ: в узлах стопа под коленом
+ * (нога прямая, как в Максе), в бинде отъезжает вбок на 14 единиц, и «вверх» там вообще другая ось.
+ * Ничего не делаем — берём файл как есть, ровно как теперь делает импорт.
+ */
+const pose = (_o: THREE.Object3D): void => { /* позу файла не трогаем */ };
 
 describe.runIf(existsSync(SRC))('ИМПОРТ 1:1 С ФАЙЛОМ', () => {
   it('⭐ каждая кость приходит туда, где её поставил художник', async () => {
@@ -153,43 +159,39 @@ describe.runIf(existsSync(SRC))('ИМПОРТ 1:1 С ФАЙЛОМ', () => {
     expect(worst / H * 100, '⚠ меш поехал относительно файла').toBeLessThan(1e-3);
   });
 
-  it('ось «вверх» нормализуется ОДИН РАЗ и повторный вызов уже ничего не делает', async () => {
-    const g = await parseModel(read(SRC), 'fbx'); pose(g);
+  it('⭐ файл АВТОРСКИ Y-UP и в идеальной T-позе — приведению тут делать нечего', async () => {
+    // Мы годы считали, что CC отдаёт Z-up и A-позу, и чинили это доворотом и приведением. Оказалось,
+    // так выглядела только БИНД-поза, в которую мы сами же ставили скелет. Поза узлов (авторская,
+    // её показывает Макс) — Y-up и ровная T. ЗАМЕРЫ: доворот оси 0°, отклонение рук от горизонтали
+    // 0.04° (было 15.78°). Значит ни нормализация, ни приведение этот файл НЕ ТРОГАЮТ.
+    const g = await parseModel(read(SRC), 'fbx');
     const map = autoBoneMap([...boneIndex(g).keys()]);
-    expect(Math.abs(normalizeUpAxis(g, map)), 'файл CC приезжает Z-up — доворот нужен').toBeGreaterThan(1);
-    expect(upAxisAngle(g, map), 'после нормализации модель уже Y-up').toBe(0);
-    expect(normalizeUpAxis(g, map), 'идемпотентно').toBe(0);
-  });
+    expect(upAxisAngle(g, map), 'файл уже Y-up').toBe(0);
+    expect(normalizeUpAxis(g, map), 'нормализация ничего не делает').toBe(0);
+    expect(tPoseDeviation(g, map), 'руки уже горизонтальны').toBeLessThan(1);
 
-  it('⭐ приведение к T-позе трогает ТОЛЬКО кость, которая реально отклонена (порог Godot 15°)', async () => {
-    // Без порога доворот применялся ВСЕГДА — даже на расхождении 0.0001°, и это генератор шума ровно того
-    // порядка, на который жалуется автор. Godot ставит порог 15°; проверяем контракт буквально: кость с
-    // отклонением НИЖЕ порога обязана остаться нетронутой, ВЫШЕ — доворачивается.
-    //
-    // Замер по этому файлу: плечо отклонено от оси X на 6°, запястье — на 15.8°. То есть при включённой
-    // галке приведения тронется ровно запястье, а плечи — нет. Раньше двигалось и то, и другое.
-    const g = await parseModel(read(SRC), 'fbx'); pose(g);
-    const map = autoBoneMap([...boneIndex(g).keys()]);
-    normalizeUpAxis(g, map);
     const idx = boneIndex(g); g.updateMatrixWorld(true);
-    const devOf = (a2: string, b2: string, axis: THREE.Vector3): number => {
-      const p1 = idx.get(map[a2] ?? '')!.getWorldPosition(new THREE.Vector3());
-      const p2 = idx.get(map[b2] ?? '')!.getWorldPosition(new THREE.Vector3());
-      return p2.sub(p1).normalize().angleTo(axis) * D;
-    };
-    const X = new THREE.Vector3(1, 0, 0);
-    const armDev = devOf('LeftUpperArm', 'LeftLowerArm', X), wristDev = devOf('LeftLowerArm', 'LeftHand', X);
-    expect(armDev, 'плечо уже почти по оси X').toBeLessThan(TPOSE_THRESHOLD_DEG);
-    expect(wristDev, 'запястье отклонено сильнее порога').toBeGreaterThan(TPOSE_THRESHOLD_DEG);
-
     const snap = new Map<string, THREE.Quaternion>();
     for (const [nm, o] of idx) snap.set(nm, o.quaternion.clone());
-    enforceTPose(g, map);
-    const moved = (nm: string): number => snap.get(nm)!.angleTo(idx.get(nm)!.quaternion) * D;
-    expect(moved(map['LeftUpperArm']!), '⚠ плечо ниже порога — трогать НЕЛЬЗЯ').toBeLessThan(1e-9);
-    expect(moved(map['LeftLowerArm']!), 'запястье выше порога — доворачивается').toBeGreaterThan(1);
-    // И ключицу не трогаем НИКОГДА: ни одно определение T-позы её не выпрямляет (у VRM «плечи опущены»).
-    expect(moved(map['LeftShoulder']!), '⚠ ключица не входит в T-позу').toBeLessThan(1e-9);
+    enforceTPose(g, map);                                 // с дефолтным порогом Godot (15°)
+    let worst = 0;
+    for (const [nm, o] of idx) worst = Math.max(worst, snap.get(nm)!.angleTo(o.quaternion) * D);
+    expect(worst, '⚠ приведение тронуло кость, которая и так стоит верно').toBeLessThan(1e-4);   // 1e-4° — машинный ноль, глазами не существует
+    expect(TPOSE_THRESHOLD_DEG).toBe(15);
+  });
+
+  it('⭐ бинд-поза этого файла НЕ СОВПАДАЕТ с авторской — и мы это видим, а не угадываем', async () => {
+    // Ровно то, что два дня читалось как «риг кривой»: в узлах стопа под коленом (нога прямая),
+    // в бинде уезжает вбок. Замер обязан быть заметным, иначе сторож ничего не стережёт.
+    const g = await parseModel(read(SRC), 'fbx');
+    const gap = nodeVsBindGap(g);
+    expect(gap, 'расхождение поз у этого файла велико и должно быть видно').toBeGreaterThan(10);
+    // И проверка, что замер НЕ ПОРТИТ модель: после него поза узлов на месте.
+    const map = autoBoneMap([...boneIndex(g).keys()]);
+    const idx = boneIndex(g); g.updateMatrixWorld(true);
+    const foot = idx.get(map['LeftFoot'] ?? '')!.getWorldPosition(new THREE.Vector3());
+    const knee = idx.get(map['LeftLowerLeg'] ?? '')!.getWorldPosition(new THREE.Vector3());
+    expect(Math.abs(foot.x - knee.x), 'стопа под коленом — нога прямая, как в Максе').toBeLessThan(4);
   });
 
   it('замер «T-поза или A-поза» честно говорит, что этот файл в T-позе', async () => {
