@@ -1181,6 +1181,11 @@ export class PosePlayer {
     const yaw = tl.rootYaw + warp;
     const tw = clamp(tl.residual - warp, -twist.maxTwist, twist.maxTwist);
     this.px += vx * dt; this.pz += vz * dt;
+    // ⚠ ОДИН ПОЛ НА ПЛАНИРОВЩИК И ЗАЗЕМЛЕНИЕ. Заземление целит лодыжку в `SOLE + footLift`, и
+    // планировщик обязан плантовать ТУДА ЖЕ, иначе они спорят каждый кадр (замер на рыцаре: 1.5
+    // против 2.916 — «ходьба дёргается вверх-вниз», нога почти всё время в упоре, и половина ручек
+    // походки перестаёт что-либо менять). Ставим КАЖДЫЙ кадр: `footLift` правится живьём ползунком.
+    this.driver.footFloor = FOOT_Y + (this.human.footLift ?? 0);
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
     this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
     const fwdC = vx * Math.sin(yaw) + vz * Math.cos(yaw), latC = vx * Math.cos(yaw) - vz * Math.sin(yaw);

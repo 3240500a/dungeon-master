@@ -636,6 +636,21 @@ class StepPlanner {
   }
 
 
+  /**
+   * ⚠ ВЫСОТА КОСТИ-ЛОДЫЖКИ, КОГДА ПОДОШВА НА ПОЛУ — ЧИСЛО РИГА, А НЕ КОНСТАНТА.
+   *
+   * Здесь стоял голый `FOOT_Y = 1.5` — высота лодыжки ПРОЦЕДУРНОГО манекена. У модели она своя:
+   * ЗАМЕР на рыцаре — лодыжка стоит на 2.916 над собственной подошвой. Заземление (`footIk.groundFeet`)
+   * это учитывало (`SOLE + footLift`), а планировщик шагов — НЕТ: он прибивал опорную стопу к 1.5,
+   * заземление тянуло её к 2.916, и каждый кадр они спорили на 1.4 единицы. Глазами — «ходьба дёргается
+   * вверх-вниз», а нога при этом почти всё время в упоре, из-за чего половина ручек походки переставала
+   * что-либо менять.
+   *
+   * Ставится рантаймом из рига (`PoseDriver.footFloor`); у процедурного персонажа равно `FOOT_Y`,
+   * и тогда всё считается бит в бит как раньше.
+   */
+  footFloor = FOOT_Y;
+
   update(dt: number, px: number, pz: number, yaw: number, vx: number, vz: number): { l: LegAngles; r: LegAngles; bobY: number } {
     // Оси тела в мире: вперёд = локальный +Z, вправо = локальный +X.
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
@@ -874,8 +889,8 @@ class StepPlanner {
           ctrl.push([l.tx, l.tz]);
           const p = crAt(ctrl, e); wx = p[0]; wz = p[1];
         }
-        wy = FOOT_Y + Math.sin(Math.PI * t) * liftS(i as 0 | 1);
-      } else { wx = l.px; wz = l.pz; wy = FOOT_Y; }    // опорная: прибита к полу
+        wy = this.footFloor + Math.sin(Math.PI * t) * liftS(i as 0 | 1);
+      } else { wx = l.px; wz = l.pz; wy = this.footFloor; }    // опорная: прибита к полу
       const a = ik(wx - hx, wz - hz, wy - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
       // АМПЛИТУДА БЕДРА. Подъём маховой стопы IK отдаёт почти целиком колену: бедро висит, нога
       // «поджимается и болтается». Сравниваем решение с решением ДЛЯ ТОЙ ЖЕ ТОЧКИ, НО НА ПОЛУ, и
@@ -884,7 +899,7 @@ class StepPlanner {
       // опорная не трогается вовсе. hipSwing = 1 → g отбрасывается и числа прежние бит в бит.
       const k = hipSwS(i as 0 | 1);
       if (l.sw > 0 && k !== 1) {
-        const g = ik(wx - hx, wz - hz, FOOT_Y - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
+        const g = ik(wx - hx, wz - hz, this.footFloor - hipY, fx, fz, rx, rz, fwdLimS(i as 0 | 1));
         a.hip = g.hip + (a.hip - g.hip) * k;
       }
       // ГОЛЕНОСТОП. Только маховая: опорную забирает заземление и кладёт плоско (см. PoseTargets.ankL).
@@ -919,6 +934,8 @@ export class PoseDriver {
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   private combat = 0;     // мирно(0) ↔ бой(1): боевая колонка настроек (Ф6). Нет записей — ведёт себя как раньше.
   /** Боевое состояние 0..1 — ИЗ ИГРЫ (серверный `inCombat`), тот же, что блендит стойку. */
+  /** Высота кости-лодыжки при подошве на полу — из рига (см. `StepPlanner.footFloor`). */
+  footFloor = FOOT_Y;
   setCombat(c: number): void { this.combat = Math.max(0, Math.min(1, c)); if (this.planner) this.planner.combat = this.combat; }
   readonly out: PoseTargets = {
     hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, ankL: 0, ankR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
@@ -932,6 +949,7 @@ export class PoseDriver {
   /** Включает походку с опорой: позиция/рыск/скорость тела в мире (юниты, u/с). */
   setWorld(x: number, z: number, yaw: number, vx: number, vz: number): void {
     if (!this.planner) { this.planner = new StepPlanner(); this.planner.setStance(this.stanceLatL, this.stanceFwdL, this.stanceLatR, this.stanceFwdR, this.standY); }
+    this.planner.footFloor = this.footFloor;   // пол для лодыжки — из рига, см. `StepPlanner.footFloor`
     this.w.x = x; this.w.z = z; this.w.yaw = yaw; this.w.vx = vx; this.w.vz = vz;
   }
   /** Обратная связь от физики: где НА САМОМ ДЕЛЕ стоят щиколотки (мир). Плантуем по факту, а не по расчёту. */
