@@ -275,7 +275,15 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       ragdoll.hit('Torso', dx, 0.12, dz, 0.5);   // мягкий толчок верха назад → валится ОТ атакующего (не «взрыв»)
     },
     setWeapon(key, models) {   // сменить оружие/щит: снести старые меши, собрать новые, обновить PosePlayer (стойка/удар по оружию)
-      if (key === weapon) return;
+      // ⚠ МОДЕЛИ ЧИТАЕМ ДО РАННЕГО ВЫХОДА, И ВЫХОДИМ ТОЛЬКО ЕСЛИ НЕ ИЗМЕНИЛОСЬ НИЧЕГО.
+      //
+      // Было `if (key === weapon) return;` СТРОКОЙ ВЫШЕ присваивания — а ключ строится из КЛАССА оружия
+      // и числа рук (`weapon3dKeyFromEquipment`), то есть у всех одноручных мечей он один: `sword`.
+      // Сменил меч на другой меч (другая база → другой `modelId`, обычное дело в лутовой игре) — ключ
+      // прежний, функция выходила, и на персонаже оставалась модель ПРЕДЫДУЩЕГО клинка до конца сессии.
+      // То же на офф-руке: сменил щит при том же мече — ключ `sword+shield` не менялся.
+      const sameModels = models === undefined || JSON.stringify(models) === JSON.stringify(weaponModels);
+      if (key === weapon && sameModels) return;
       if (models !== undefined) weaponModels = models;   // Ф3: новые id GLB-моделей оружия (self); пиры — undefined (нужна сеть)
       for (const g of weaponGroups) { g.userData.stale = true; g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
       weapon = key; weaponGroups = attachWeapons(solid, weapon, weaponModels); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback); player.setWeapon(weapon);

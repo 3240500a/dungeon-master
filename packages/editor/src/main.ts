@@ -1262,7 +1262,10 @@ async function runValidation(): Promise<void> {
 
 /** Просит сервер удалить оверрайд ключа (сброс к встроенному дефолту, персистентно). */
 function resetOnServer(key: string): void {
-  sendConfig(() => fetch(`/api/dev/config/${encodeURIComponent(key)}`, { method: 'DELETE' }), 'Сброшено к дефолту на сервере.');
+  // ⚠ `devFetch`, а не голый `fetch`: инструментальные роуты требуют роли admin. Это был ЕДИНСТВЕННЫЙ
+  // вызов `/api/dev/*` в обход токена во всём проекте — то есть кнопка «Сбросить к дефолту» не работала
+  // НИКОГДА, отвечая 401, а сообщение об ошибке списывало это на недоступный сервер.
+  sendConfig(() => devFetch(`/api/dev/config/${encodeURIComponent(key)}`, { method: 'DELETE' }), 'Сброшено к дефолту на сервере.');
 }
 
 function exportJson(): void {

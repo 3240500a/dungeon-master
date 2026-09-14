@@ -923,7 +923,11 @@ export async function startOnline3d(): Promise<void> {
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;
-    if (self) { const k = weaponKeyFromSave(f.save); if (k !== selfWeaponKey) { selfWeaponKey = k; self.d.setWeapon?.(k, weaponModelsFromSave(f.save, app.config.get('items.base'))); } self.d.setAppearance?.(appearanceFromSave(f.save, app.config.get('items.base'))); }   // сменил оружие/щит → меши; сменил броню → скин-слой (свап дешёвый: диф по ключу)
+    // ⚠ ЗОВЁМ БЕЗ ГЕЙТА ПО КЛЮЧУ. Ключ — это КЛАСС оружия и число рук, поэтому у всех одноручных мечей
+    // он один (`sword`): гейт «ключ не изменился — не звать» означал, что смена меча на другой меч вообще
+    // не доезжала до куклы, и на персонаже до конца сессии висела модель предыдущего клинка. Дешевизну
+    // держит сам `setWeapon`: он выходит сразу, если не изменились НИ ключ, НИ список моделей.
+    if (self) { const k = weaponKeyFromSave(f.save); selfWeaponKey = k; self.d.setWeapon?.(k, weaponModelsFromSave(f.save, app.config.get('items.base'))); self.d.setAppearance?.(appearanceFromSave(f.save, app.config.get('items.base'))); }   // сменил оружие/щит/броню → меши и скин-слой
     app.bus.emit('state:changed', {});
   });
   app.net.on('shop', (f) => { app.shopStock = f.items; app.bus.emit('state:changed', {}); });

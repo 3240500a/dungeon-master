@@ -266,7 +266,11 @@ app.post('/api/dev/config-file', ah(async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: `Не удалось записать файл: ${e instanceof Error ? e.message : String(e)}` });
   }
-  rebuildConfig();
+  // ⚠ `await`. Здесь стоял голый вызов АСИНХРОННОЙ `rebuildConfig()`, и это два дефекта разом:
+  //  • сервер отвечал «ок» ДО пересборки — редактор тут же перечитывал `/api/config` и получал СТАРОЕ
+  //    тело, то есть «сохранил, а не применилось» на ровном месте;
+  //  • отказ внутри (валидация, база) становился НЕОБРАБОТАННЫМ reject, а он в Node роняет процесс.
+  await rebuildConfig();
   console.log(`[dm-server] конфиг записан в ФАЙЛ (+БД): ${written.join(', ') || '—'}`);
   res.json({ ok: true, written });
 }));
