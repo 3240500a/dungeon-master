@@ -4470,12 +4470,31 @@ function renderGaitTune(): void {
   {
     const st = stanceClip(weapon);
     if (st) {
-      const sw = swayOf(weapon);
-      const note = el('div', 'font-size:10px;margin:2px 0 4px;color:' + (sw < 0.35 ? '#e0a05a' : '#7a869e'));
-      note.textContent = '⚠ руками владеет авторская стойка «' + st.name + '» на ' + Math.round((1 - sw) * 100)
-        + ' %, ползункам ниже остаётся ' + Math.round(sw * 100) + ' % хода (и то лишь на полном ходу — стоя стойка владеет целиком). '
-        + 'Долю задаёт «остаточный мах» = ' + sw.toFixed(2) + ' на вкладке «Анимация».';
+      const note = el('div', 'font-size:10px;margin:2px 0 3px');
+      const say = (sw: number): void => {
+        note.style.color = sw < 0.35 ? '#e0a05a' : '#7a869e';
+        note.textContent = '⚠ руками владеет авторская стойка «' + st.name + '» на ' + Math.round((1 - sw) * 100)
+          + ' %, ползункам ниже остаётся ' + Math.round(sw * 100) + ' % хода (на полном ходу; стоя стойка владеет целиком). '
+          + 'Видимый угол = ' + sw.toFixed(2) + '·гейт + ' + (1 - sw).toFixed(2) + '·стойка.';
+      };
+      say(swayOf(weapon));
       box.append(note);
+      // ⭐ ДОЛЯ ГЕЙТА НАД РУКАМИ — ЗДЕСЬ, А НЕ ТОЛЬКО НА «АНИМАЦИИ». Это ТОТ ЖЕ `pe_sway`, не копия:
+      // ручка живёт там, где ею пользуются. Без неё «локоть на максимуме, а согнут чуть-чуть» не лечится
+      // вообще ничем на этой вкладке — потолок ставит не ползунок локтя, а вес стойки.
+      // ЗАМЕР (рыцарь+топор, обе скорости на максимуме): sway 0.30 → сгиб 63.2°, ход ручки 41.3°.
+      const swRow = el('label', 'display:flex;align-items:center;gap:6px;margin:0 0 5px');
+      swRow.innerHTML = '<span style="flex:1;font-size:11px;color:#9ae6a0">доля гейта над руками (остаточный мах)</span>';
+      const swS = el('input', 'width:120px') as HTMLInputElement;
+      swS.type = 'range'; swS.min = '0'; swS.max = '1'; swS.step = '0.05'; swS.value = String(swayOf(weapon));
+      const swV = el('span', 'width:34px;text-align:right;color:#9ae6a0;font-size:11px');
+      swV.textContent = swayOf(weapon).toFixed(2);
+      swS.oninput = () => {
+        const nv = parseFloat(swS.value);
+        (swayCfg[curCharId] ??= {})[weapon] = nv;
+        swV.textContent = nv.toFixed(2); say(nv); saveSway();
+      };
+      swRow.append(swS, swV); box.append(swRow);
     }
   }
   row2('база плеча (− вперёд / + назад)', POSEo, 'armSh', 'armShRun', -1.6, 1.6, 0.01);
