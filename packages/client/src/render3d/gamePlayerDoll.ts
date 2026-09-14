@@ -204,19 +204,42 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // 2B: оружие крепим к кисти ВИДИМОГО атлас-меша (skin.atlasBone), не к solid — иначе offset ретаргета (solid≠атлас).
   // `.add` сохраняет локаль (авторский хват). Нет атласа/не загружен → на solid (как было). Зовём после skin.update().
   const _wsA = new THREE.Vector3(), _wsF = new THREE.Vector3();
+  const _qA = new THREE.Quaternion(), _qF = new THREE.Quaternion();
+  /**
+   * ⚠ ОРУЖИЕ ВИСИТ НА КИСТИ АТЛАСА, НО В СИСТЕМЕ КООРДИНАТ НАШЕЙ КИСТИ.
+   *
+   * Хват авторится в поз-редакторе относительно НАШЕЙ кисти (`solid`), а в игре группа переезжает на
+   * кисть видимого меша (`CC_Base_R_Hand`), чтобы не отлипать от модели. `.add()` сохраняет ЛОКАЛЬ —
+   * то есть при смене родителя меняется мировая ориентация ровно на разницу бинд-поворотов двух кистей.
+   * ЗАМЕР на живой модели: кисти стоят в ОДНОЙ точке (расстояние 0.000), а ориентации расходятся на
+   * **83.8°**. Отсюда «щит лежит плашмя» и «молот висит сбоку»: авторский хват был верным, его
+   * разворачивал сам перенос.
+   *
+   * Компенсируем узлом-посредником под кистью атласа: он повторяет ОРИЕНТАЦИЮ и МАСШТАБ нашей кисти,
+   * оставаясь в её ПОЗИЦИИ. Тогда всё, что настроено в редакторе (и вся анимация хвата поверх), едет
+   * без единой правки, а оружие держится за видимый меш. Раньше так же компенсировался только масштаб —
+   * поворот забыли, хотя это ровно та же природа.
+   */
   function syncWeaponHost(): void {
     for (const g of weaponGroups) {
       const hn = g.userData.handBone as string | undefined; if (!hn) continue;
       const fallback = solid.bones.get(hn);
       const atlasHand = skin?.atlasBone(hn) ?? null;
-      const target = atlasHand ?? fallback;
-      if (target && g.parent !== target) target.add(g);
-      // Компенсация масштаба: кисть атласа несёт импорт-скейл → оружие мельчает. Держим размер как на solid.
-      if (atlasHand && fallback) {
-        atlasHand.updateWorldMatrix(true, false); fallback.updateWorldMatrix(true, false);
-        atlasHand.getWorldScale(_wsA); fallback.getWorldScale(_wsF);
-        if (_wsA.x > 1e-6 && _wsA.y > 1e-6 && _wsA.z > 1e-6) g.scale.set(_wsF.x / _wsA.x, _wsF.y / _wsA.y, _wsF.z / _wsA.z);
-      } else if (g.scale.x !== 1) g.scale.set(1, 1, 1);
+      if (!atlasHand || !fallback) {                      // атласа нет — вешаем на манекен, как раньше
+        const t = atlasHand ?? fallback;
+        if (t && g.parent !== t) t.add(g);
+        if (g.scale.x !== 1) g.scale.set(1, 1, 1);
+        continue;
+      }
+      let host = g.userData.host as THREE.Object3D | undefined;
+      if (!host || host.parent !== atlasHand) { host = new THREE.Object3D(); host.name = 'weaponHost'; atlasHand.add(host); g.userData.host = host; }
+      if (g.parent !== host) host.add(g);
+      atlasHand.updateWorldMatrix(true, false); fallback.updateWorldMatrix(true, false);
+      atlasHand.getWorldQuaternion(_qA); fallback.getWorldQuaternion(_qF);
+      host.quaternion.copy(_qA).invert().multiply(_qF);   // ориентация нашей кисти
+      atlasHand.getWorldScale(_wsA); fallback.getWorldScale(_wsF);
+      if (_wsA.x > 1e-6 && _wsA.y > 1e-6 && _wsA.z > 1e-6) host.scale.set(_wsF.x / _wsA.x, _wsF.y / _wsA.y, _wsF.z / _wsA.z);
+      if (g.scale.x !== 1) g.scale.set(1, 1, 1);          // масштаб теперь на посреднике
     }
   }
 
@@ -285,7 +308,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       const sameModels = models === undefined || JSON.stringify(models) === JSON.stringify(weaponModels);
       if (key === weapon && sameModels) return;
       if (models !== undefined) weaponModels = models;   // Ф3: новые id GLB-моделей оружия (self); пиры — undefined (нужна сеть)
-      for (const g of weaponGroups) { g.userData.stale = true; g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
+      for (const g of weaponGroups) { g.userData.stale = true; g.parent?.remove(g); const h = g.userData.host as THREE.Object3D | undefined; h?.parent?.remove(h); g.userData.host = undefined; g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
       weapon = key; weaponGroups = attachWeapons(solid, weapon, weaponModels); applyBaseGrip(weaponGroups, gripChar, weapon, opts.gaitFallback); player.setWeapon(weapon);
       syncWeaponModels();
     },
