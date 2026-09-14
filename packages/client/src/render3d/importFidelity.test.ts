@@ -204,9 +204,9 @@ describe.runIf(existsSync(GLB))('импорт рыцаря повторяет м
     const names: string[] = [];
     root.traverse((o) => { if ((o as THREE.Bone).isBone) names.push(o.name); });
     const map = autoBoneMap(names);
-    root.traverse((o) => { const sm = o as THREE.SkinnedMesh; if (sm.isSkinnedMesh && sm.skeleton) sm.skeleton.pose(); });
-    // ⚠ БЕЗ `enforceTPose` — импорт его больше НЕ делает (поза файла берётся как есть). Оставь мы его
-    // здесь, сверка ловила бы расхождение с тем, чего импорт не выполняет, и врала бы на ровном месте.
+    // ⚠ НИ `skeleton.pose()`, НИ `enforceTPose` — импорт не делает НИ ТОГО, НИ ДРУГОГО. Сверка обязана
+    // мерить ТУ ЖЕ позу, что и боевой путь: рест — это поза УЗЛОВ файла, а не бинд-матрицы. С `pose()`
+    // здесь тест ловил бы расхождение с тем, чего импорт не выполняет, и врал бы «замеры отстали».
     normalizeUpAxis(root, map);
     const fresh = measureBoneOffsets(root, map);
     const bad: string[] = [];

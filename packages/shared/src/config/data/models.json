@@ -1,1 +1,393 @@
-[]
+[
+  {
+    "id": "knight_06_modular_rig",
+    "name": "knight_06_modular_rig.fbx",
+    "url": "/assets/knight_06_modular_rig.glb",
+    "kind": "character",
+    "slots": {
+      "helm_barbute_01": "helm",
+      "helm_barbute_02": "helm",
+      "helm_bascinet_01": "helm",
+      "helm_bascinet_02": "helm",
+      "helm_bascinet_03": "helm",
+      "chest_behterets_01": "chest",
+      "chest_body_01": "chest",
+      "chest_body_02": "chest",
+      "chest_briga_01": "chest",
+      "chest_briga_02": "chest",
+      "boots_brigant_legs_01": "boots",
+      "chest_chain_mail_01": "chest",
+      "boots_chainmail_legs_01": "boots",
+      "boots_chainmail_legs_02": "boots",
+      "boots_chainmail_legs_03": "boots",
+      "helm_cuman_helmet_01": "helm",
+      "chest_djawshan_01": "chest",
+      "helm_hair_01": "helm",
+      "helm_hair_02": "helm",
+      "chest_hauberk_01": "chest",
+      "head_01": "head",
+      "gloves_heand_01": "gloves",
+      "chest_laminae_armor_01": "chest",
+      "chest_leather_jacket_01": "chest",
+      "boots_legs_01": "boots",
+      "boots_legs_02": "boots",
+      "helm_norman_helmet_01": "helm",
+      "helm_norman_helmet_02": "helm",
+      "helm_norman_helmet_03": "helm",
+      "chest_plate_armor_01": "chest",
+      "gloves_plate_gloves_01": "gloves",
+      "boots_plate_legs_01": "boots",
+      "helm_salade_01": "helm",
+      "helm_salade_02": "helm",
+      "chest_scale_mail_01": "chest",
+      "helm_sugarloaf_01": "helm",
+      "helm_tophelm_01": "helm",
+      "helm_tophelm_02": "helm"
+    },
+    "body": {
+      "height": 1,
+      "arm": 1,
+      "leg": 1,
+      "torso": 1,
+      "girth": 1
+    },
+    "boneScale": {
+      "Spine": 1.381,
+      "Chest": 0.959,
+      "Head": 1.209,
+      "LeftUpperArm": 1.558,
+      "LeftLowerArm": 0.822,
+      "LeftHand": 1.137,
+      "RightUpperArm": 1.558,
+      "RightLowerArm": 0.822,
+      "RightHand": 1.137,
+      "LeftUpperLeg": 1.444,
+      "LeftLowerLeg": 1.137,
+      "LeftFoot": 1.247,
+      "LeftToes": 1.098,
+      "RightUpperLeg": 1.444,
+      "RightLowerLeg": 1.137,
+      "RightFoot": 1.247,
+      "RightToes": 1.098
+    },
+    "boneOffsets": {
+      "Hips": [
+        0,
+        35.04905860907464,
+        0
+      ],
+      "Spine": [
+        -0.00001782042760326863,
+        5.673582053574151,
+        0.5813148458886107
+      ],
+      "Chest": [
+        3.102974040908313e-11,
+        4.738607151731735,
+        0.33886050751891983
+      ],
+      "UpperChest": [
+        1.3893478883267578e-9,
+        4.801927317422319,
+        -0.5290328852671585
+      ],
+      "Neck": [
+        1.389347888330146e-9,
+        4.801927317422319,
+        -0.5290328852671585
+      ],
+      "Head": [
+        -7.764546994183837e-13,
+        3.8272814649520583,
+        1.143278195375929
+      ],
+      "LeftShoulder": [
+        3.4143344055588294,
+        2.3627752750589863,
+        -2.1895176954757973
+      ],
+      "LeftUpperArm": [
+        5.009086008485875,
+        -0.032027491243781014,
+        -1.186696810177971
+      ],
+      "LeftLowerArm": [
+        8.83020462195787,
+        0.008716758875564778,
+        -0.015477975262217836
+      ],
+      "LeftHand": [
+        10.328654831092535,
+        0.0026946282022208834,
+        0.0074519119657563415
+      ],
+      "RightShoulder": [
+        -3.4143335953372977,
+        2.3627877297344,
+        -2.189517152004793
+      ],
+      "RightUpperArm": [
+        -5.009088986506381,
+        -0.03204405037384106,
+        -1.1866898370826067
+      ],
+      "RightLowerArm": [
+        -8.830207068412314,
+        0.008679033882224019,
+        -0.01529463099917372
+      ],
+      "RightHand": [
+        -10.328656087040287,
+        0.0027063045333477476,
+        0.007631283375994169
+      ],
+      "LeftUpperLeg": [
+        3.867279985032949,
+        -3.6700484978905834,
+        -0.14986631845796153
+      ],
+      "LeftLowerLeg": [
+        0.00736949617615501,
+        -14.08472129659113,
+        0.2937019786686619
+      ],
+      "LeftFoot": [
+        -0.6144927800232711,
+        -14.401904900415706,
+        -0.4284081958506005
+      ],
+      "LeftToes": [
+        2.088764946478546,
+        -1.7950476619535671,
+        4.779421576752844
+      ],
+      "RightUpperLeg": [
+        -3.8672452347279145,
+        -3.6700900821087252,
+        -0.14986579239592157
+      ],
+      "RightLowerLeg": [
+        -0.00742992517675134,
+        -14.08470788831172,
+        0.29427634688855653
+      ],
+      "RightFoot": [
+        0.6144337594286147,
+        -14.401956402137339,
+        -0.426947475251084
+      ],
+      "RightToes": [
+        -2.0889501551744125,
+        -1.7949654567691247,
+        4.779364429607473
+      ],
+      "LeftThumbProximal": [
+        0.6939785339188447,
+        -0.1350400634933564,
+        1.2489751532368638
+      ],
+      "LeftThumbIntermediate": [
+        1.2191324648075685,
+        -0.016142301914179313,
+        1.270172305301595
+      ],
+      "LeftThumbDistal": [
+        0.9977105161556139,
+        0.0008300755037566887,
+        0.49335497077075363
+      ],
+      "LeftIndexProximal": [
+        3.7477871027365346,
+        -0.07764764814409375,
+        1.7424267503886095
+      ],
+      "LeftIndexIntermediate": [
+        1.3318801758831391,
+        -0.023848862845945007,
+        0.006786962870046764
+      ],
+      "LeftIndexDistal": [
+        1.1481130565272721,
+        -0.021624134961044206,
+        0.010914472229510697
+      ],
+      "LeftMiddleProximal": [
+        3.9403961163584533,
+        0.11472121700853677,
+        0.9289615861437115
+      ],
+      "LeftMiddleIntermediate": [
+        1.5771168435718117,
+        -0.02914011268828176,
+        0.005035641231649013
+      ],
+      "LeftMiddleDistal": [
+        1.181439381286168,
+        -0.022049541401536032,
+        -0.0009152851803615469
+      ],
+      "LeftRingProximal": [
+        3.9241081206997457,
+        0.05598332989059429,
+        -0.15659615588443332
+      ],
+      "LeftRingIntermediate": [
+        1.3707989485415588,
+        -0.021174201752160116,
+        -0.020274893991829135
+      ],
+      "LeftRingDistal": [
+        1.0883363439851124,
+        -0.01819074041763713,
+        -0.02542998718734868
+      ],
+      "LeftLittleProximal": [
+        3.754747716887511,
+        -0.07749513744862924,
+        -1.1432927443540652
+      ],
+      "LeftLittleIntermediate": [
+        0.9701064757237212,
+        -0.016188621903296507,
+        -0.00680738338630249
+      ],
+      "LeftLittleDistal": [
+        0.9204184526040677,
+        -0.015383463926092134,
+        -0.02314804265756365
+      ],
+      "RightThumbProximal": [
+        -0.7305177288795051,
+        0.045192161933009345,
+        0.970258292915112
+      ],
+      "RightThumbIntermediate": [
+        -1.3340098022085662,
+        -0.017716215473477348,
+        1.3899210351324385
+      ],
+      "RightThumbDistal": [
+        -0.941901551344408,
+        0.0007868833128839015,
+        0.46574456771338935
+      ],
+      "RightIndexProximal": [
+        -3.9097923785652178,
+        0.20879276203797303,
+        1.8460896548735077
+      ],
+      "RightIndexIntermediate": [
+        -1.3033676838124464,
+        -0.023361912854568345,
+        0.00666418834541016
+      ],
+      "RightIndexDistal": [
+        -0.9877778605426357,
+        -0.018552685667593494,
+        0.00940945758977807
+      ],
+      "RightMiddleProximal": [
+        -4.132968825953576,
+        0.2310716943121136,
+        0.8683283568895459
+      ],
+      "RightMiddleIntermediate": [
+        -1.3221589997537642,
+        -0.02441395891059983,
+        0.00424313227704598
+      ],
+      "RightMiddleDistal": [
+        -1.2376274200767057,
+        -0.023106222199572812,
+        -0.00094901008480619
+      ],
+      "RightRingProximal": [
+        -4.006665191157534,
+        0.05712615139982091,
+        -0.15982224370426845
+      ],
+      "RightRingIntermediate": [
+        -1.3272231600597664,
+        -0.02038957121244067,
+        -0.019626711009039344
+      ],
+      "RightRingDistal": [
+        -1.0194052836239749,
+        -0.017078010405640498,
+        -0.02374602988672425
+      ],
+      "RightLittleProximal": [
+        -3.963037942710258,
+        0.20962665610930742,
+        -1.1528905019457443
+      ],
+      "RightLittleIntermediate": [
+        -1.1225585244014304,
+        -0.018801211100566206,
+        -0.00789824741173284
+      ],
+      "RightLittleDistal": [
+        -0.7945639733722345,
+        -0.01331356726350208,
+        -0.01996332907780296
+      ]
+    },
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {
+      "Hips": "CC_Base_Hip",
+      "LeftUpperLeg": "CC_Base_L_Thigh",
+      "LeftLowerLeg": "CC_Base_L_Calf",
+      "LeftFoot": "CC_Base_L_Foot",
+      "LeftToes": "CC_Base_L_ToeBaseShareBone",
+      "RightUpperLeg": "CC_Base_R_Thigh",
+      "RightLowerLeg": "CC_Base_R_Calf",
+      "RightFoot": "CC_Base_R_Foot",
+      "RightToes": "CC_Base_R_ToeBase",
+      "Spine": "CC_Base_Spine01",
+      "Chest": "CC_Base_Spine02",
+      "Neck": "CC_Base_NeckTwist01",
+      "Head": "CC_Base_Head",
+      "LeftShoulder": "CC_Base_L_Clavicle",
+      "LeftUpperArm": "CC_Base_L_Upperarm",
+      "LeftLowerArm": "CC_Base_L_Forearm",
+      "LeftHand": "CC_Base_L_Hand",
+      "RightShoulder": "CC_Base_R_Clavicle",
+      "RightUpperArm": "CC_Base_R_Upperarm",
+      "RightLowerArm": "CC_Base_R_Forearm",
+      "RightHand": "CC_Base_R_Hand",
+      "LeftMiddleProximal": "CC_Base_L_Mid1",
+      "LeftMiddleIntermediate": "CC_Base_L_Mid2",
+      "LeftMiddleDistal": "CC_Base_L_Mid3",
+      "LeftIndexProximal": "CC_Base_L_Index1",
+      "LeftIndexIntermediate": "CC_Base_L_Index2",
+      "LeftIndexDistal": "CC_Base_L_Index3",
+      "LeftRingProximal": "CC_Base_L_Ring1",
+      "LeftRingIntermediate": "CC_Base_L_Ring2",
+      "LeftRingDistal": "CC_Base_L_Ring3",
+      "LeftLittleProximal": "CC_Base_L_Pinky1",
+      "LeftLittleIntermediate": "CC_Base_L_Pinky2",
+      "LeftLittleDistal": "CC_Base_L_Pinky3",
+      "LeftThumbProximal": "CC_Base_L_Thumb1",
+      "LeftThumbIntermediate": "CC_Base_L_Thumb2",
+      "LeftThumbDistal": "CC_Base_L_Thumb3",
+      "RightMiddleProximal": "CC_Base_R_Mid1",
+      "RightMiddleIntermediate": "CC_Base_R_Mid2",
+      "RightMiddleDistal": "CC_Base_R_Mid3",
+      "RightRingProximal": "CC_Base_R_Ring1",
+      "RightRingIntermediate": "CC_Base_R_Ring2",
+      "RightRingDistal": "CC_Base_R_Ring3",
+      "RightThumbProximal": "CC_Base_R_Thumb1",
+      "RightThumbIntermediate": "CC_Base_R_Thumb2",
+      "RightThumbDistal": "CC_Base_R_Thumb3",
+      "RightIndexProximal": "CC_Base_R_Index1",
+      "RightIndexIntermediate": "CC_Base_R_Index2",
+      "RightIndexDistal": "CC_Base_R_Index3",
+      "RightLittleProximal": "CC_Base_R_Pinky1",
+      "RightLittleIntermediate": "CC_Base_R_Pinky2",
+      "RightLittleDistal": "CC_Base_R_Pinky3"
+    },
+    "submeshMaterials": {}
+  }
+]
