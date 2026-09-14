@@ -348,6 +348,40 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
       });
       const hasVariant = new Set<string>();   // слоты, где запрошенный вариант реально присутствует
       for (const { mesh, slot } of subs) { if (slot && visible[slot] && visible[slot] === mesh.name) hasVariant.add(slot); }
+      /**
+       * ⚠ ИМЯ НЕ НАШЛОСЬ — ПОКАЗЫВАЕМ ОДНУ ДЕТАЛЬ, А НЕ ВСЕ.
+       *
+       * Здесь было «вариант не нашёлся → показать ВЕСЬ слот», и это единственная строка, которая
+       * превращала персонажа в ком. ЗАМЕР в живой игре: видимых сабмешей 38 из 38 — 16 шлемов на одной
+       * голове, 12 нагрудников, 7 сапог.
+       *
+       * ПОЧЕМУ ИМЯ НЕ НАХОДИЛОСЬ: базовый вид класса в конфиге остался от СТАРЫХ имён, до того как автор
+       * переименовал сабмеши по префиксам слотов. Проверено по данным: `body_01` → в атласе `chest_body_01`,
+       * `legs_01` → `boots_legs_01`, `hair_01` → `helm_hair_01`, `heand_01` → `gloves_heand_01`
+       * (совпал только `head_01`, у которого префикс был и раньше).
+       *
+       * Надеть шестнадцать шлемов нельзя ни при каких данных, поэтому «все» — не разумное умолчание НИКОГДА.
+       * Чиним по возрастанию догадки: точное имя → то же имя с добавленным префиксом слота (ровно то
+       * переименование, которое сделал художник) → первая деталь слота по алфавиту (устойчиво к порядку
+       * ключей в конфиге). О подмене говорим вслух — это признак устаревшего конфига, а не норма.
+       */
+      const pickFallback = (slot: string, want: string): string | undefined => {
+        const inSlot = subs.filter((x) => x.slot === slot).map((x) => x.mesh.name).sort();
+        if (!inSlot.length) return undefined;
+        return inSlot.find((n) => n === `${slot}_${want}`) ?? inSlot[0];
+      };
+      const healed = new Map<string, string>();   // слот → чем подменили
+      for (const slot of Object.keys(visible)) {
+        const want = visible[slot];
+        if (!want || hasVariant.has(slot)) continue;                        // пусто = явное скрытие; нашлось = нечего лечить
+        const alt = pickFallback(slot, want);
+        if (alt) { healed.set(slot, alt); hasVariant.add(slot); }
+      }
+      if (healed.size) {
+        console.warn('[атлас] в конфиге имена деталей устарели — подставлены существующие: '
+          + [...healed].map(([s, n]) => `${s}: «${visible[s]}» → «${n}»`).join(', ')
+          + '. Поправьте базовый вид класса, иначе персонаж зависит от алфавита.');
+      }
       // Проход 2: видимость + материалы.
       for (const { mesh, slot } of subs) {
         let show = !!slot;
@@ -355,7 +389,7 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
           const v = visible[slot];
           if (v !== undefined) {
             if (v === '') show = false;                                    // явное скрытие слота
-            else show = hasVariant.has(slot) ? (v === mesh.name) : true;   // вариант есть → только он; нет (незнакомый modelId) → все
+            else { const want = healed.get(slot) ?? v; show = hasVariant.has(slot) ? (want === mesh.name) : true; }   // вариант (или его замена) → только он
           }
           if (show && hideHair && /hair/i.test(mesh.name)) show = false;   // шлем надет → волосы прочь
         }

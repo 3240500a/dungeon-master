@@ -105,12 +105,26 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // (setAtlas variant-safe: покажет все сабмеши слота). Волосы прячет ТОЛЬКО показ реальной модели шлема (=выбор
   // helm-варианта в атласе), а НЕ сам факт надетого шлема-предмета — иначе стат-шлем без модели балдил бы голову
   // (и расходился с редактором, где волосы всегда видны в базе).
-  function atlasVisible(): Record<string, string> {
+  function atlasVisible(atlas?: { slots?: Record<string, string> }): Record<string, string> {
     const visible: Record<string, string> = {};
-    // Пустой слот → базовый submesh-вид класса (baseAppearance); надетый предмет (modelId) перекрывает; нет ни того ни
-    // другого → ключ не задаём (setAtlas покажет все submesh слота, как раньше). hair→helm-слот (причёска без шлема).
+    // Пустой слот → базовый submesh-вид класса (baseAppearance); надетый предмет (modelId) перекрывает.
     const baseBySlot: Record<string, string | undefined> = baseApp ? { helm: baseApp.hair, head: baseApp.head, gloves: baseApp.hands, chest: baseApp.body, boots: baseApp.feet } : {};
-    for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) { const id = equipModels?.[slot]?.modelId ?? baseBySlot[slot]; if (id) visible[slot] = id; }
+    // ⚠ А ЕСЛИ ВЫБОРА НЕТ ВООБЩЕ — БЕРЁМ ПЕРВУЮ ДЕТАЛЬ СЛОТА, А НЕ ВСЕ.
+    //
+    // Здесь стояло «ключ не задаём → setAtlas покажет все submesh слота, как раньше». На атласе из двух-трёх
+    // деталей это было незаметно, а на живом (38 частей) даёт кашу: ЗАМЕР в игре — видимых сабмешей 38 из 38,
+    // из них 16 шлемов на одной голове, 12 нагрудников, 7 сапог. Глазами это «какая-то непонятная модель»:
+    // белый ком вместо рыцаря. Надеть шестнадцать шлемов нельзя ни при каких данных, поэтому «все» — не
+    // разумное умолчание ни для одного слота. Порядок берём СТАБИЛЬНЫЙ (сортировка по имени), иначе вид
+    // персонажа менялся бы от загрузки к загрузке вместе с порядком ключей в конфиге.
+    const firstOf = (slot: string): string | undefined => {
+      const sl = atlas?.slots; if (!sl) return undefined;
+      return Object.keys(sl).filter((n) => sl[n] === slot).sort()[0];
+    };
+    for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) {
+      const id = equipModels?.[slot]?.modelId ?? baseBySlot[slot] ?? firstOf(slot);
+      if (id) visible[slot] = id;
+    }
     return visible;
   }
   // Пер-предметный материал по слоту (materialByClass надетого предмета) → override материала сабмеша атласа.
@@ -124,7 +138,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     void loadAssetConfig().then((cfg) => {
       const assets = { materials: cfg.materials, textures: cfg.textures };
       const char = resolveCharacterModel(cfg, atlasKey, !atlasStrict);   // E3: атлас по ключу (класс/семья); монстр строго (нет→процедурка)
-      if (char) { void skin.setAtlas(char, atlasVisible(), assets, { matBySlot: atlasMaterials() }); return; }   // = превью редактора (без hideHair) + пер-предметный материал
+      if (char) { void skin.setAtlas(char, atlasVisible(char), assets, { matBySlot: atlasMaterials() }); return; }   // = превью редактора (без hideHair) + пер-предметный материал
       if (atlasStrict) return;   // монстр без своего атласа → процедурный меш (не подмешивать легаси base-парты)
       void skin.set(resolveSlotModels(cfg, equipModels), assets);   // легаси: послотные GLB
     });

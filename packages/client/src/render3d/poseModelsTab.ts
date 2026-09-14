@@ -139,10 +139,27 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     asmSkin = createModelSkin(scene, asmSrc);     // новый скин на НОВЫЙ источник (конформ к профилю с нуля)
     void applyAsm();
   }
+  /**
+   * ⚠ УМОЛЧАНИЕ ПРЕВЬЮ — ПО ОДНОЙ ДЕТАЛИ НА СЛОТ, А НЕ «ВСЕ».
+   *
+   * Пустая карта означала «(все)», и на живом атласе из 38 частей превью показывало 16 шлемов на одной
+   * голове и 12 нагрудников разом — фигура выходила бугристой, и это читалось как «модель импортнулась
+   * криво». Игра при этом рисует по одной детали, то есть редактор и игра показывали РАЗНОЕ — прямое
+   * нарушение главного правила проекта. «(все)» остаётся выбором в выпадающем списке, но не умолчанием.
+   */
+  function seedVisible(atlas: ModelEntry): void {
+    const sl = atlas.slots ?? {};
+    for (const slot of ['helm', 'head', 'chest', 'gloves', 'boots']) {
+      if (asmVisible[slot] !== undefined) continue;                     // автор уже выбрал — не трогаем
+      const first = Object.keys(sl).filter((n) => sl[n] === slot).sort()[0];
+      if (first) asmVisible[slot] = first;
+    }
+  }
   async function applyAsm(): Promise<void> {
     if (!asmSkin) return;
     const atlas = curAtlas();
     if (!atlas) return;
+    seedVisible(atlas);
     asmMeshes = await asmSkin.setAtlas(atlas, asmVisible, { materials: cfg.materials, textures: cfg.textures });
     await healFingerOffsets(atlas);
   }
