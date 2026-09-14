@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { limitLocalV2, limitSwing, limitTwist, limit1DOF, forgetHinge } from './jointLimitV2.js';
+import { limitLocalV2, limitSwing, limitTwist, limit1DOF, forgetDrag } from './jointLimitV2.js';
 import type { LimitView } from './humanoidRagdoll.js';
 
 // РЕАЛЬНЫЕ оси/пределы из humanoidRagdoll:
@@ -106,7 +106,7 @@ describe('jointLimitV2 — шарнир (локоть): ровно одна ос
   });
 
   it('свободное вращение через ПОЛНЫЙ оборот — предел не отпускает (накопитель FinalIK)', () => {
-    const key = {}; forgetHinge(key);
+    const key = {}; forgetDrag(key);
     let q = new THREE.Quaternion();
     const ax = new THREE.Vector3(0, 1, 0);
     const step = (deg: number): number => {
@@ -124,7 +124,7 @@ describe('jointLimitV2 — шарнир (локоть): ровно одна ос
   });
 
   it('обратный ход отпускает и доходит до переразгиба', () => {
-    const key = {}; forgetHinge(key);
+    const key = {}; forgetDrag(key);
     let q = new THREE.Quaternion();
     const ax = new THREE.Vector3(0, 1, 0);
     const ang = (x: THREE.Quaternion): number => 2 * Math.atan2(new THREE.Vector3(x.x, x.y, x.z).dot(ax), x.w) * D;
@@ -135,7 +135,7 @@ describe('jointLimitV2 — шарнир (локоть): ровно одна ос
   });
 
   it('накопитель ПОКОСТНЫЙ: соседний сустав не влияет', () => {
-    const a = {}, b = {}; forgetHinge(a); forgetHinge(b);
+    const a = {}, b = {}; forgetDrag(a); forgetDrag(b);
     const ax = new THREE.Vector3(0, 1, 0);
     const ang = (x: THREE.Quaternion): number => 2 * Math.atan2(new THREE.Vector3(x.x, x.y, x.z).dot(ax), x.w) * D;
     let qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
@@ -143,5 +143,74 @@ describe('jointLimitV2 — шарнир (локоть): ровно одна ос
     for (let i = 0; i < 90; i++) qb = limitLocalV2(Q(ax, -1).multiply(qb), EL, b);
     expect(ang(qa)).toBeCloseTo(-137.5, 0);
     expect(ang(qb)).toBeCloseTo(-90, 0);
+  });
+});
+
+/**
+ * ТВИСТ ПОД ПРОТЯЖКОЙ — та же болезнь, что лечил накопитель у шарнира, только у свинга её не лечили.
+ *
+ * Жалоба: «опять могу перекрутить руку». У кватерниона нет «дальше 180°»: тянешь кольцо дальше — сырой угол
+ * перескакивает с +π на −π, и предел послушно зажимает к ПРОТИВОПОЛОЖНОЙ границе. ЗАМЕР на плече (предел ±97°)
+ * ДО правки: 200° → −97°, 258° → −97°, а 344° проходил ВООБЩЕ без клэмпа (−16° попадает внутрь). То есть рука
+ * на полуобороте скачком уходила в зеркальную скрутку — ровно то, что видно глазами.
+ *
+ * ⚠ Драг здесь воспроизведён ТАК, КАК ЕГО ВЕДЁТ РЕДАКТОР: сырой поворот каждый кадр пересчитывается ОТ НАЧАЛА
+ * протяжки (`deltaWorld · boneWorld0`), а не накручивается на уже зажатый результат. Иначе тест проверял бы не тот путь.
+ */
+describe('jointLimitV2 — твист под протяжкой кольца', () => {
+  const twistOf = (q: THREE.Quaternion): number => {
+    const n = bone(q);                                   // ось кости после поворота
+    const t0 = P.clone().applyQuaternion(new THREE.Quaternion().setFromUnitVectors(T, n));
+    const t1 = P.clone().applyQuaternion(q);
+    t0.addScaledVector(n, -n.dot(t0)).normalize(); t1.addScaledVector(n, -n.dot(t1)).normalize();
+    return Math.atan2(t0.clone().cross(t1).dot(n), t0.dot(t1)) * D;
+  };
+  const drag = (key: object, toDeg: number, stepDeg = 10): number[] => {
+    const out: number[] = [];
+    const n = Math.round(Math.abs(toDeg) / stepDeg), sgn = Math.sign(toDeg);
+    for (let i = 0; i <= n; i++) out.push(twistOf(limitLocalV2(Q(T, sgn * i * stepDeg), SH, key)));
+    return out;
+  };
+
+  it('⭐ два полных оборота кольца — рука стоит на упоре и НИ РАЗУ не выворачивается в зеркало', () => {
+    const key = {}; forgetDrag(key);
+    const got = drag(key, 720);
+    const lim = 1.6 * D;
+    expect(Math.max(...got), 'выше упора не пускает').toBeLessThan(lim + 0.5);
+    expect(Math.min(...got), '⚠ и НЕ прыгает на противоположный упор').toBeGreaterThan(-0.5);
+    expect(got[got.length - 1], 'в конце протяжки стоит ровно на упоре').toBeCloseTo(lim, 0);
+  });
+
+  it('⭐ ровно на 180° твиста кость не кувыркается (опора вырождалась)', () => {
+    // Тангенсы там АНТИПАРАЛЛЕЛЬНЫ, и `setFromUnitVectors` брал ось ПРОИЗВОЛЬНО. Замер до правки:
+    // на 180° и 540° твист падал в 0° при упоре 97° — то есть рука на ровном месте распрямлялась.
+    const key = {}; forgetDrag(key);
+    const got = drag(key, 720, 5);
+    // Сверяем с момента, когда протяжка УЖЕ прошла упор (до него кость законно идёт за кольцом).
+    let checked = 0;
+    for (const [i, v] of got.entries()) { if (i * 5 <= 1.6 * D) continue; checked++; expect(v, `шаг ${i * 5}°`).toBeGreaterThan(1.6 * D - 1); }
+    expect(checked, 'проверено шагов за упором').toBeGreaterThan(100);
+  });
+
+  it('обратный ход отпускает упор сразу, а не через оборот', () => {
+    const key = {}; forgetDrag(key);
+    drag(key, 360);
+    const back = [0, -30, -60, -90].map((d) => twistOf(limitLocalV2(Q(T, 360 + d), SH, key)));
+    expect(back[0], 'стоим на упоре').toBeCloseTo(1.6 * D, 0);
+    expect(back[3], 'ушли на 90° назад — ровно на 90° и уехали').toBeCloseTo(1.6 * D - 90, 0);
+  });
+
+  it('накопитель ПОКОСТНЫЙ и у твиста тоже', () => {
+    const a = {}, b = {}; forgetDrag(a); forgetDrag(b);
+    drag(a, 720);
+    const qb = limitLocalV2(Q(T, 40), SH, b);
+    expect(twistOf(qb), 'соседний сустав не знает о чужой протяжке').toBeCloseTo(40, 0);
+  });
+
+  it('БЕЗ ключа (солверы) — клэмп ПО ДУГЕ, а не численный', () => {
+    // Солвер зовёт предел по нескольку раз за проход, накопителю его итерации мерещились бы движениями мыши.
+    // Но и там численный клэмп врал: 170° он кидал к −92°, хотя по дуге ближе +92°.
+    expect(twistOf(limitLocalV2(Q(T, 170), SH)), 'ближняя по дуге граница').toBeCloseTo(1.6 * D, 0);
+    expect(twistOf(limitLocalV2(Q(T, -170), SH)), 'и симметрично').toBeCloseTo(-1.6 * D, 0);
   });
 });

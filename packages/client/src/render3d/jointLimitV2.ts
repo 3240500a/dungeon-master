@@ -98,7 +98,7 @@ export function limitSwing(q: THREE.Quaternion, view: LimitView): THREE.Quaterni
  * ОПОРА ЗДЕСЬ — рест-тангенс, перенесённый МИНИМАЛЬНОЙ ДУГОЙ `rest → текущая ось` (это и есть параллельный перенос
  * вдоль геодезической, то же, что даёт swing-twist разложение). Вырождение только при свинге 180° — недостижимо.
  */
-export function limitTwist(q: THREE.Quaternion, view: LimitView): THREE.Quaternion {
+export function limitTwist(q: THREE.Quaternion, view: LimitView, key?: object): THREE.Quaternion {
   const axis = V(view.twist, [1, 0, 0]), ortho = V(view.plane, [0, 1, 0]);
   const lo = view.twistMin ?? 0, hi = view.twistMax ?? 0;
   _n.copy(axis).applyQuaternion(q);
@@ -106,10 +106,14 @@ export function limitTwist(q: THREE.Quaternion, view: LimitView): THREE.Quaterni
   _t1.copy(ortho).applyQuaternion(_q1); orthoNormalize(_n, _t1); // опора: перенесённый рест-тангенс
   _t2.copy(ortho).applyQuaternion(q); orthoNormalize(_n, _t2);   // rotatedOrthoTangent (как у них)
   const ang = signedAngle(_t1, _t2, _n);
-  const cl = clamp(ang, lo, hi);
+  const cl = accumulate(twistMem, key, ang, lo, hi);
   if (Math.abs(cl - ang) < 1e-9) return q.clone();
-  const fixed = new THREE.Quaternion().setFromUnitVectors(_t2, _t1).multiply(q);   // FinalIK fixedRotation
-  return new THREE.Quaternion().setFromAxisAngle(_n, cl).multiply(fixed);
+  // ⚠ КОРРЕКЦИЯ — ПОВОРОТ ВОКРУГ ОСИ КОСТИ, А НЕ `setFromUnitVectors(_t2, _t1)`.
+  // Оба тангенса лежат в плоскости ⊥ `_n`, и знаковый угол между ними — ровно `ang`; значит перенос
+  // `_t2 → _t1` это поворот вокруг `_n` на `−ang`, а вся правка — на `cl − ang`. Математически то же самое,
+  // но БЕЗ ВЫРОЖДЕНИЯ: при твисте ровно 180° тангенсы антипараллельны, и `setFromUnitVectors` берёт ось
+  // ПРОИЗВОЛЬНО — кость там кувыркалась. ЗАМЕР протяжки кольца: на 180° и 540° твист падал в 0° при упоре 97°.
+  return new THREE.Quaternion().setFromAxisAngle(_n, cl - ang).multiply(q);
 }
 
 /** `RotationLimit.Limit1DOF` — выбросить всё, кроме вращения вокруг `axis`. */
@@ -117,14 +121,42 @@ export function limit1DOF(q: THREE.Quaternion, axis: THREE.Vector3): THREE.Quate
   return new THREE.Quaternion().setFromUnitVectors(axis.clone().applyQuaternion(q), axis).multiply(q);
 }
 
-/** Состояние шарнира (их `lastAngle`/`lastRotation`) — по кости. Даёт накопление за 360° и упор без перескока. */
-interface HingeMem { lastAngle: number; lastRaw: number }
-const hingeMem = new WeakMap<object, HingeMem>();
-/** Забыть накопитель шарнира (смена клипа/сброс позы). */
-export function forgetHinge(key: object): void { hingeMem.delete(key); }
+/** Состояние драга (их `lastAngle`/`lastRotation`) — по кости. Даёт накопление за 360° и упор без перескока. */
+interface DragMem { lastAngle: number; lastRaw: number }
+const hingeMem = new WeakMap<object, DragMem>();
+const twistMem = new WeakMap<object, DragMem>();
+/** Забыть накопители драга на этой кости (смена клипа/сброс позы). */
+export function forgetDrag(key: object): void { hingeMem.delete(key); twistMem.delete(key); }
 
 const TAU = Math.PI * 2;
 const wrapPi = (a: number): number => { const x = (a + Math.PI) % TAU; return (x < 0 ? x + TAU : x) - Math.PI; };
+/**
+ * НАКОПИТЕЛЬ ПРОТЯЖКИ: превращает свёрнутый в (−π, π] угол в непрерывный и держит упор.
+ *
+ * ⚠ БЕЗ НЕГО КЛЭМП НЕ ОСТАНАВЛИВАЕТ, А ВЫВОРАЧИВАЕТ. У кватерниона нет «дальше 180°»: тянешь кольцо
+ * дальше — сырой угол перескакивает с +π на −π, и предел послушно зажимает к ПРОТИВОПОЛОЖНОЙ границе.
+ * ЗАМЕР на плече (предел ±97°): 200° → −97°, 258° → −97°, а 344° проходил ВООБЩЕ без клэмпа (−16°
+ * попадает внутрь предела). Для руки это и есть «опять могу перекрутить»: на полуобороте она скачком
+ * уходит в зеркальную скрутку. У шарнира накопитель был с самого начала — поэтому локоть держал, а плечо нет.
+ *
+ * Шаг — РАЗВЁРТКА сырого угла (кратчайший шаг от прошлого сырого), а НЕ `Angle(identity, addR)` как у
+ * FinalIK: тот угол всегда ≤180° и на обороте ввода МЕНЯЕТ ЗНАК — при перекруте локтя на 300° в один
+ * драг сустав разворачивался обратно и уезжал с упора −137.5° до −77.5°. Развёртка устойчива, пока кадровый шаг < 180°;
+ * мышь столько за кадр не проходит. `key` — сама кость; без ключа накопителя нет и берётся клэмп ПО ДУГЕ
+ * (солверы зовут предел по нескольку раз за проход, и их итерации накопителю мерещились бы движениями мыши).
+ */
+function accumulate(mem: WeakMap<object, DragMem>, key: object | undefined, raw: number, lo: number, hi: number): number {
+  const m = key ? mem.get(key) : undefined;
+  if (!m) {
+    const a = clampArc(raw, lo, hi);
+    if (key) mem.set(key, { lastAngle: a, lastRaw: raw });
+    return a;
+  }
+  const a = clamp(m.lastAngle + wrapPi(raw - m.lastRaw), lo, hi);
+  m.lastAngle = a; m.lastRaw = raw;
+  return a;
+}
+
 /** Ближайшая по ДУГЕ граница (Blender `clamp_angle`) — фолбэк, когда накопителя нет (не-интерактивные вызовы). */
 function clampArc(a: number, lo: number, hi: number): number {
   if (a >= lo && a <= hi) return a;
@@ -146,20 +178,7 @@ export function limitHinge(q: THREE.Quaternion, view: LimitView, key?: object): 
   _t1.copy(sec); _n.copy(axis); orthoNormalize(_n, _t1);
   _t2.copy(sec).applyQuaternion(free); _n.copy(axis); orthoNormalize(_n, _t2);
   const raw = signedAngle(_t1, _t2, axis);
-  const mem = key ? hingeMem.get(key) : undefined;
-  if (!mem) {
-    const a = clampArc(raw, lo, hi);
-    if (key) hingeMem.set(key, { lastAngle: a, lastRaw: raw });
-    return new THREE.Quaternion().setFromAxisAngle(axis, a);
-  }
-  // ⚠ ОТЛИЧИЕ ОТ ОРИГИНАЛА, куплено замером. FinalIK берёт шаг как `Angle(identity, free1DOF · lastRotation⁻¹)`,
-  // а этот угол всегда ≤180° и на обороте ввода МЕНЯЕТ ЗНАК: при перекруте локтя на 300° в один драг сустав
-  // разворачивался обратно и уезжал с упора −137.5° до −77.5°. Шаг считаем РАЗВЁРТКОЙ сырого угла (кратчайший
-  // шаг от прошлого сырого) — это устойчиво, пока кадровый шаг < 180°, а мышь столько за кадр не проходит.
-  const step = wrapPi(raw - mem.lastRaw);
-  const a = clamp(mem.lastAngle + step, lo, hi);
-  mem.lastAngle = a; mem.lastRaw = raw;
-  return new THREE.Quaternion().setFromAxisAngle(axis, a);
+  return new THREE.Quaternion().setFromAxisAngle(axis, accumulate(hingeMem, key, raw, lo, hi));
 }
 
 /**
@@ -168,5 +187,5 @@ export function limitHinge(q: THREE.Quaternion, view: LimitView, key?: object): 
  */
 export function limitLocalV2(q: THREE.Quaternion, view: LimitView, key?: object): THREE.Quaternion {
   if (view.kind === 'hinge') return limitHinge(q, view, key);
-  return limitTwist(limitSwing(q, view), view);
+  return limitTwist(limitSwing(q, view), view, key);
 }
