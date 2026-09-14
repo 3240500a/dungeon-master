@@ -204,11 +204,19 @@ export function upAxisAngle(loaded: THREE.Object3D, boneMap: Record<string, stri
   // и это важно для ОТДЕЛЬНЫХ САБМЕШЕЙ: в куске брони головы может не быть вовсе.
   const hip = w('Hips'), head = w('Head') ?? w('Neck') ?? w('Chest');
   if (!hip || !head) {
-    // Костей не нашли — знак определить нечем; судим по габариту: вытянут по Z → это Z-up.
-    const bb = new THREE.Box3(); const v = new THREE.Vector3();
-    loaded.traverse((o) => { if ((o as THREE.Bone).isBone) bb.expandByPoint(o.getWorldPosition(v)); });
-    if (bb.isEmpty()) return 0;
-    return (bb.max.z - bb.min.z) > (bb.max.y - bb.min.y) ? -Math.PI / 2 : 0;
+    // Костей-ориентиров нет — знак определить нечем, судим по габариту: вытянут по Z → это Z-up.
+    //
+    // ⚠ СНАЧАЛА ПО КОСТЯМ, А ЕСЛИ КОСТЕЙ НЕТ ВООБЩЕ — ПО МЕШАМ. Именно этим и различались две копии
+    // этого правила, которые я сводил: одна мерила облако костей (куски брони — там кости есть, а головы
+    // нет), другая габарит мешей с запасом 1.4 (ОРУЖИЕ — у него костей нет ни одной). Сведя всё на костную
+    // ветку, я сломал импорт оружия: пустая коробка давала 0, и молот приезжал лежащим на боку.
+    const bones = new THREE.Box3(); const v = new THREE.Vector3();
+    loaded.traverse((o) => { if ((o as THREE.Bone).isBone) bones.expandByPoint(o.getWorldPosition(v)); });
+    if (!bones.isEmpty()) return (bones.max.z - bones.min.z) > (bones.max.y - bones.min.y) ? -Math.PI / 2 : 0;
+    const box = new THREE.Box3().setFromObject(loaded);
+    if (box.isEmpty()) return 0;
+    // Запас 1.4 — из ветки оружия: без костей сигнал слабее, и разворачивать стоит только явно лежащее.
+    return (box.max.z - box.min.z) > 1.4 * (box.max.y - box.min.y) ? -Math.PI / 2 : 0;
   }
   const dy = head.y - hip.y, dz = head.z - hip.z;
   return Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0);

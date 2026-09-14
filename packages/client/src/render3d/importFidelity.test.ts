@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { autoBoneMap, enforceTPose, measureBoneOffsets, measureBoneScales, makeRetargetRig } from './retarget3d.js';
+import { autoBoneMap, enforceTPose, normalizeUpAxis, measureBoneOffsets, measureBoneScales, makeRetargetRig } from './retarget3d.js';
 import { buildHumanoid } from './humanoid.js';
 import { dedupeSkeletons } from './skeletonDedupe.js';
 import { lowestSkinY, measureFootLift } from './footIk.js';
@@ -29,13 +29,22 @@ import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
  * числам, и это выглядит как «модель приехала другой». Тест это ловит.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
+// ⚠ ДВА РАЗНЫХ ФАЙЛА, И ЭТО ОСОЗНАННО. Числа в замерах ниже (88.81°, 2.9, 1.34) сняты С КОНКРЕТНОЙ
+// модели — значит геометрические тесты обязаны грузить ИМЕННО ЕЁ. А сверка «конфиг против файла» обязана
+// брать ту модель, которая РЕАЛЬНО лежит в конфиге: там живёт последняя импортированная (сейчас knight_06),
+// и сверять её замеры с чужим GLB — значит врать про «замеры отстали».
 const GLB = join(HERE, '../../../server/assets/knight_05_modular_rig.glb');
 const DEG = 180 / Math.PI;
-const ENTRY = (MODELS as { id: string; url?: string; boneOffsets?: Record<string, [number, number, number]> }[])
-  .find((m) => m.id === 'knight_05_modular_rig');
+// ⚠ `as unknown as`, а не прямой каст. JSON-импорт выводит массивы как `number[]`, и прямое приведение
+// к кортежу `[number, number, number]` — ошибка типов. Пока `models.json` был ПУСТ, его тип выводился как
+// `never[]` и каст молча проходил; первая же реальная запись в конфиге уронила бы сборку на ровном месте.
+const ENTRY = (MODELS as unknown as { id: string; url?: string; boneOffsets?: Record<string, [number, number, number]> }[])
+  .find((m) => m.id.startsWith('knight_'));   // в конфиге живёт последняя импортированная модель
+/** GLB ИМЕННО ТОЙ записи конфига — для сверки «замеры не отстали от файла». */
+const ENTRY_GLB = join(HERE, `../../../server/assets/${ENTRY?.id ?? '-'}.glb`);
 
-function load(): Promise<THREE.Group> {
-  const buf = readFileSync(GLB);
+function load(file = GLB): Promise<THREE.Group> {
+  const buf = readFileSync(file);
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
   return new Promise((res, rej) => new GLTFLoader().parse(ab, '', (g) => res(g.scene as unknown as THREE.Group), rej));
 }
@@ -187,16 +196,18 @@ describe.runIf(existsSync(GLB))('импорт рыцаря повторяет м
 
   // ⚠ `runIf`: после «чистого листа» записи в конфиге нет — и это НОРМАЛЬНО, сверять просто нечего.
   // Тест оживёт сам, как только модель импортируют заново (импорт и пишет замеры в конфиг).
-  it.runIf(ENTRY?.boneOffsets)('⚠ замеры в конфиге не отстали от файла (перезалил GLB — переимпортируй)', async () => {
+  it.runIf(ENTRY?.boneOffsets && existsSync(ENTRY_GLB))('⚠ замеры в конфиге не отстали от файла (перезалил GLB — переимпортируй)', async () => {
     const stored = ENTRY!.boneOffsets ?? {};
     expect(Object.keys(stored).length, 'офсеты должны быть замерены').toBeGreaterThan(20);
-    const root = await load();
+    const root = await load(ENTRY_GLB);
     dedupeSkeletons(root);
     const names: string[] = [];
     root.traverse((o) => { if ((o as THREE.Bone).isBone) names.push(o.name); });
     const map = autoBoneMap(names);
     root.traverse((o) => { const sm = o as THREE.SkinnedMesh; if (sm.isSkinnedMesh && sm.skeleton) sm.skeleton.pose(); });
-    enforceTPose(root, map);
+    // ⚠ БЕЗ `enforceTPose` — импорт его больше НЕ делает (поза файла берётся как есть). Оставь мы его
+    // здесь, сверка ловила бы расхождение с тем, чего импорт не выполняет, и врала бы на ровном месте.
+    normalizeUpAxis(root, map);
     const fresh = measureBoneOffsets(root, map);
     const bad: string[] = [];
     for (const k of Object.keys(stored)) {
