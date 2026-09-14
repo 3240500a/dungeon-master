@@ -111,6 +111,50 @@ describe('skeletonDedupe — копии скелета схлопываются 
     expect(rep.bonesAfter, 'дубли ушли, канон и его корень целы').toBe(canon.bones.length + 1);
   });
 
+  it('⭐ ЧАСТИЧНЫЕ СКИНЫ (форма из макса): у каждого меша СВОЙ набор костей', () => {
+    // knight_05 приехал из AccuRIG полными копиями скелета. Тот же файл, открытый в максе и
+    // пересохранённый, приезжает иначе: 38 скинов по 6…36 костей — каждый меш скинится ТОЛЬКО на
+    // нужные ему кости. Прежний алгоритм назначал каноном ОДИН скин и требовал, чтобы остальные
+    // целиком в него влезли; скин из шести костей не мог принять меш из тридцати шести, поэтому не
+    // схлопывалось НИЧЕГО (замер: 584 кости, 38 скелетов), меш ехал на случайной копии и разлетался.
+    const root = new THREE.Group();
+    const canon = makeSkeleton();
+    root.add(canon.root);
+    const copy = addCopy(canon.bones, '_1');
+    // Меш А сидит на ВЕРХНИХ двух костях канона, меш Б — на НИЖНИХ двух, но из КОПИИ.
+    // ⚠ Свой конструктор: у общего `makeSkinned` индексы весов жёстко 0/1/2 под три кости, а здесь
+    // их ДВЕ — вершина с индексом 2 смотрела бы в пустоту (поймано падением на первом же замере).
+    const part = (name: string, bones: THREE.Bone[]): THREE.SkinnedMesh => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+      const idx: number[] = [], w: number[] = [];
+      for (let i = 0; i < 3; i++) { idx.push(i % bones.length, 0, 0, 0); w.push(1, 0, 0, 0); }
+      g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
+      g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(w, 4));
+      const m = new THREE.SkinnedMesh(g, new THREE.MeshBasicMaterial());
+      m.name = name; m.bind(new THREE.Skeleton(bones));
+      return m;
+    };
+    const a = part('a', [canon.bones[0]!, canon.bones[1]!]);
+    const b = part('b', [copy[1]!, copy[2]!]);
+    root.add(a, b);
+    root.updateMatrixWorld(true);
+    const before = [skinnedPoints(a), skinnedPoints(b)];
+
+    const r = dedupeSkeletons(root);
+
+    expect(r.skins, 'скинов было два').toBe(2);
+    const skels = new Set([a.skeleton, b.skeleton]);
+    expect(skels.size, '⭐ на выходе ОДИН скелет на обоих').toBe(1);
+    expect(a.skeleton.bones.length, 'и в нём объединение наборов').toBe(3);
+    const inTree = new Set<THREE.Object3D>(); root.traverse((o) => inTree.add(o));
+    for (const bone of a.skeleton.bones) expect(inTree.has(bone), `${bone.name} в дереве`).toBe(true);
+    expect(r.bonesAfter, 'дубли ушли').toBe(3);
+    // ГЛАВНОЕ: картинка не поехала. Перенумерация `skinIndex` — самое опасное место этой правки.
+    expect(skinnedPoints(a), 'меш А на месте').toEqual(before[0]);
+    expect(skinnedPoints(b), 'меш Б на месте').toEqual(before[1]);
+  });
+
   it('модель с ОДНИМ скелетом не трогается', () => {
     const root = new THREE.Group();
     const canon = makeSkeleton(); root.add(canon.root);
@@ -125,15 +169,20 @@ describe('skeletonDedupe — копии скелета схлопываются 
 
   it('ЧУЖОЙ скелет (не копия) не схлопывается — имена не сходятся', () => {
     const root = new THREE.Group();
-    const canon = makeSkeleton(); root.add(canon.root);
-    root.add(makeSkinned('m0', canon.bones));
+    // ⚠ ЧУЖОЙ КЛАДЁТСЯ ПЕРВЫМ СПЕЦИАЛЬНО: арматура выбирается по РАЗМЕРУ поддерева, а не «первое
+    // попавшееся». Положи чужого вторым — и подмена правила осталась бы незамеченной (проверено мутацией).
     const other = { bones: ['Root2', 'Mid2'].map((n, i) => { const b = new THREE.Bone(); b.name = n; b.position.set(i ? 5 : 0, 0, 0); return b; }) };
     other.bones[0]!.add(other.bones[1]!);
     root.add(other.bones[0]!);
     root.add(makeSkinned('m1', other.bones));
+    const canon = makeSkeleton(); root.add(canon.root);
+    const dup = addCopy(canon.bones, '_1');               // дубль — чтобы схлопывать было что
+    root.add(makeSkinned('m0', canon.bones), makeSkinned('m2', dup));
     const r = dedupeSkeletons(root);
-    expect(r.rebound).toBe(0);
-    expect(r.bonesAfter).toBe(5);                        // 3 канона + 2 чужих остались
+    expect(r.rebound, 'схлопнулся только дубль канона').toBe(1);
+    expect(r.bonesAfter, '3 канона + 2 чужих остались').toBe(5);
+    const m1 = root.children.find((c) => c.name === 'm1') as THREE.SkinnedMesh;
+    expect(m1.skeleton.bones.map((b) => b.name), '⭐ чужой скелет не тронут').toEqual(['Root2', 'Mid2']);
   });
 
   it('поддерево с МЕШЕМ внутри костей не удаляется', () => {

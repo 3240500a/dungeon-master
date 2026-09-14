@@ -71,29 +71,91 @@ export function dedupeSkeletons(root: THREE.Object3D): DedupeReport {
   const bonesBefore = countBones();
   if (skels.length < 2) return { skins: skels.length, rebound: 0, bonesBefore, bonesAfter: bonesBefore, removed: [] };
 
-  // КАНОН — самый ВНЕШНИЙ скелет: копии вложены внутрь него, и ретаргет ведёт именно его
-  // (`retarget3d.boneIndex` резолвит кость С ДЕТЬМИ, то есть тоже внешнюю).
-  const canon = skels.reduce((a, b) => (depthOf(b.bones[0]!) < depthOf(a.bones[0]!) ? b : a));
+  // ⭐ КАНОН СОБИРАЕТСЯ ИЗ ИЕРАРХИИ, А НЕ ИЗ КАКОГО-ТО ОДНОГО СКИНА.
+  //
+  // Раньше каноном назначался самый внешний СКИН, и от остальных требовалось, чтобы все их кости
+  // нашлись в нём. Это работает, только когда копии ПОЛНЫЕ. Замер на knight_06: 38 скинов по 6…36
+  // костей — каждый меш скинится ТОЛЬКО на те кости, которые ему нужны. Канон-скин из шести костей
+  // не мог принять меш из тридцати шести, поэтому не схлопывалось НИЧЕГО: 584 кости, 38 скелетов,
+  // меш ехал на случайной копии — и модель разлеталась.
+  //
+  // Берём по каждому ИМЕНИ самый ВНЕШНИЙ экземпляр из дерева. Копии вложены внутрь оригиналов
+  // (замерено: 650 узлов на 100 уникальных имён), поэтому внешние образуют связную иерархию — ту
+  // самую, которую ведёт ретаргет (`boneIndex` тоже резолвит кость С ДЕТЬМИ, то есть внешнюю).
+  //
+  // ⚠ Схлопывать по имени БЕЗОПАСНО, и это проверено на файле, а не предположено: одноимённые кости
+  // стоят в ОДНОЙ мировой точке (расхождение 0.0000) и имеют идентичные обратные бинд-матрицы
+  // (0.000000). Если бы расходились — схлопывание сдвинуло бы меш.
+  //
+  // ⚠ И только В ПРЕДЕЛАХ ОДНОЙ АРМАТУРЫ. Костных поддеревьев в сцене может быть несколько (в файле
+  // это редкость, а вот в тесте — норма), и сливать РАЗНЫЕ скелеты в один нельзя: это уже не
+  // схлопывание дублей, а склейка двух персонажей. Берём самое большое поддерево, остальные не трогаем.
+  const tops: THREE.Bone[] = [];
+  root.traverse((o) => { if (isBone(o) && !(o.parent && isBone(o.parent))) tops.push(o as THREE.Bone); });
+  const sizeOf = (o: THREE.Object3D): number => { let n = 0; o.traverse((c) => { if (isBone(c)) n++; }); return n; };
+  const armature = tops.reduce<THREE.Bone | null>((a, b) => (!a || sizeOf(b) > sizeOf(a) ? b : a), null);
   const canonByName = new Map<string, THREE.Bone>();
-  for (const b of canon.bones) canonByName.set(base(b.name), b);
+  armature?.traverse((o) => {
+    if (!isBone(o)) return;
+    const k = base(o.name), prev = canonByName.get(k);
+    if (!prev || depthOf(o) < depthOf(prev)) canonByName.set(k, o as THREE.Bone);
+  });
+
+  // ── ОДИН СКЕЛЕТ НА ВСЕХ. ──────────────────────────────────────────────────────────────────────
+  // Мало посадить меши на общие КОСТИ: если у каждого свой набор (как после макса — от 6 до 36),
+  // то и `Skeleton` у каждого свой, и в экспорт уедет по скину на меш — ровно то, от чего уходим.
+  // Поэтому строим ОБЩИЙ набор (объединение по иерархии, порядок обхода — устойчивый) и
+  // ПЕРЕНУМEРОВЫВАЕМ `skinIndex` каждого меша под него. Это и есть норма индустрии: одна арматура,
+  // много мешей, один skin.
+  const fit: { m: THREE.SkinnedMesh; mapped: THREE.Bone[] }[] = [];
+  for (const m of meshes) {
+    const mapped = m.skeleton.bones.map((b) => canonByName.get(base(b.name)));
+    if (mapped.some((b) => !b)) continue;                    // чужой скелет (не копия) — не трогаем
+    fit.push({ m, mapped: mapped as THREE.Bone[] });
+  }
+  const used = new Set<THREE.Bone>();
+  for (const f of fit) for (const b of f.mapped) used.add(b);
+  const union: THREE.Bone[] = [];
+  root.traverse((o) => { if (isBone(o) && used.has(o as THREE.Bone)) union.push(o as THREE.Bone); });   // порядок = обход дерева
+  const slot = new Map<THREE.Bone, number>();
+  union.forEach((b, i) => slot.set(b, i));
+
+  // Обратные бинд-матрицы общего скелета: берём у любого меша, который эту кость использует
+  // (одноимённые совпадают бит-в-бит — замерено выше).
+  const inv: THREE.Matrix4[] = union.map(() => new THREE.Matrix4());
+  const invSet = new Set<number>();
+  for (const f of fit) {
+    f.mapped.forEach((b, i) => { const s = slot.get(b)!; if (!invSet.has(s)) { inv[s]!.copy(f.m.skeleton.boneInverses[i]!); invSet.add(s); } });
+  }
+  // Если чей-то скелет УЖЕ ровно этот набор в том же порядке — берём его, а не плодим новый:
+  // иначе «пере-привязано» считало бы работой то, что и так сделано.
+  const same = (s: THREE.Skeleton): boolean => s.bones.length === union.length && s.bones.every((b, i) => b === union[i]);
+  const shared = union.length ? (fit.map((f) => f.m.skeleton).find(same) ?? new THREE.Skeleton(union, inv)) : null;
 
   let rebound = 0;
-  for (const m of meshes) {
-    if (m.skeleton === canon) continue;
-    const src = m.skeleton.bones;
-    const mapped = src.map((b) => canonByName.get(base(b.name)));
-    if (mapped.some((b) => !b)) continue;                    // чужой скелет (не копия) — не трогаем
-    const sameOrder = mapped.every((b, i) => b === canon.bones[i]);
-    // Порядок совпал → сажаем на ОБЩИЙ скелет (одна матрица-палитра на всех мешей, максимум выигрыша).
-    // Не совпал → свой `Skeleton` поверх ТЕХ ЖЕ костей: палитра своя, но дубли костей всё равно уходят.
-    m.bind(sameOrder ? canon : new THREE.Skeleton(mapped as THREE.Bone[], m.skeleton.boneInverses.slice()), m.bindMatrix);
+  for (const f of fit) {
+    if (!shared) break;
+    if (f.m.skeleton === shared) continue;
+    // ПЕРЕНУМЕРАЦИЯ ВЕСОВ: `skinIndex` указывает в СВОЙ массив костей, а массив теперь общий.
+    const si = f.m.geometry.getAttribute('skinIndex');
+    if (si) {
+      for (let v = 0; v < si.count; v++) {
+        for (let k = 0; k < 4; k++) {
+          const old = si.getComponent(v, k);
+          const b = f.mapped[old];
+          si.setComponent(v, k, b ? slot.get(b)! : 0);
+        }
+      }
+      si.needsUpdate = true;
+    }
+    f.m.bind(shared, f.m.bindMatrix);
     rebound++;
   }
 
   // Снять поддеревья костей, которые больше никому не нужны. Дубли вложены друг в друга, поэтому снятие
   // самого внешнего уносит все внутренние; меши внутри костей не лежат (проверено на файле), но на всякий
   // случай трогаем только те поддеревья, где ОДНИ КОСТИ.
-  const keep = new Set<THREE.Object3D>(canon.bones);
+  const keep = new Set<THREE.Object3D>(canonByName.values());
   for (const m of meshes) for (const b of m.skeleton.bones) keep.add(b);
   const removed: string[] = [];
   const sweep = (o: THREE.Object3D): void => {
