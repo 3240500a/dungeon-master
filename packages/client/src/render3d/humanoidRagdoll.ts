@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { TILE } from '@dm/shared';
 import { jolt, type PhysWorld, type JoltNS } from './ragdoll.js';
 import type { Humanoid } from './humanoid.js';   // только тип (без цикла: humanoid не импортирует рэгдолл)
-import { groundFeet, type GroundQuery } from './footIk.js';
+import { groundFeet, type GroundQuery, type GroundOpts } from './footIk.js';
 import { resolvePhysSet, presetBodies, matchPhysPreset, physCost, type PhysNode } from './physRig.js';   // Ф11: набор тел = данные
 import { FINGER_GEO, FINGER_SEG } from './humanoid.js';                                                   // геометрия фаланг — ОДНА на меш и физику
 import { EXTRA_JOINTS } from './jointLimits.js';                                                          // пределы пальцев — тоже ОДНИ
@@ -812,7 +812,11 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       if (!dead) pw.bi.MoveKinematic(ids[0]!, kPos, kRot, dt);
       sync();
     },
-    bodyPos(name) { const i = RAG_INDEX[name]!; const p = pw.bi.GetPosition(ids[i]!); return [+p.GetX().toFixed(1), +p.GetY().toFixed(1), +p.GetZ().toFixed(1)]; },
+    // ⚠ БЕЗ ОКРУГЛЕНИЯ. Было `toFixed(1)` — и это ловушка: функция задумывалась «дебаг/тест», но
+    // `renderRagdollGhost` строит на ней МИРОВУЮ ВЫСОТУ ТАЗА призрака, то есть того, что видит игрок.
+    // ЗАМЕР на бегу: таз призрака принимал 6 РАЗНЫХ значений на 181 кадр (манекен — 176), то есть боб
+    // шёл лестницей по 0.1 ед. Это и читалось как «боб происходит резко».
+    bodyPos(name) { const i = RAG_INDEX[name]!; const p = pw.bi.GetPosition(ids[i]!); return [p.GetX(), p.GetY(), p.GetZ()]; },
     readBakedPose() {
       const out: Record<string, [number, number, number]> = {};
       for (let i = 0; i < B.length; i++) { const r = pw.bi.GetRotation(ids[i]!); wq[i]!.set(r.GetX(), r.GetY(), r.GetZ(), r.GetW()); }
@@ -860,7 +864,7 @@ export const newGhostGround = (): GhostGround => ({ off: 0 });
 export function renderRagdollGhost(
   mesh: Humanoid, rag: HumanoidRagdoll, gs: GhostGround, dt: number, floorY = 0, ground = true,
   targetPose: Record<string, [number, number, number]> | null = null, match = 0, groundAt?: GroundQuery,
-  support?: [boolean, boolean], footIk = true,
+  support?: [boolean, boolean], footIk = true, gOpts?: GroundOpts,
 ): void {
   const gnd = groundAt ?? ((): number => floorY);
   const bp = rag.readBakedPose(); mesh.reset();
@@ -884,7 +888,7 @@ export function renderRagdollGhost(
   if (!ground) gs.off += (0 - gs.off) * Math.min(1, dt * 8);         // смерть/полёт: прижим затухает
   mesh.setHipsWorld(hp[0], hp[1] + gs.off, hp[2]);   // Root ≠ таз: физика задаёт положение ТАЗА, корень вычисляется из него
   mesh.root.updateMatrixWorld(true);
-  if (ground && footIk) groundFeet(mesh, hp[1], gs, dt, gnd, support);   // FOOT-IK: заземляем ОПОРНЫЕ стопы (poseLod дальних → пропуск)
+  if (ground && footIk) groundFeet(mesh, hp[1], gs, dt, gnd, support, gOpts);   // FOOT-IK: заземляем ОПОРНЫЕ стопы (poseLod дальних → пропуск)
 }
 
 /**
@@ -895,11 +899,11 @@ export function renderRagdollGhost(
  */
 export function renderKinematicPose(
   mesh: Humanoid, targetPose: Record<string, [number, number, number]>, hipWorld: THREE.Vector3,
-  gs: GhostGround, dt: number, gnd: GroundQuery, support?: [boolean, boolean], footIk = true,
+  gs: GhostGround, dt: number, gnd: GroundQuery, support?: [boolean, boolean], footIk = true, gOpts?: GroundOpts,
 ): void {
   mesh.reset();
   for (const nm in targetPose) { const b = mesh.bones.get(nm); if (b) b.rotation.set(targetPose[nm]![0], targetPose[nm]![1], targetPose[nm]![2]); }
   mesh.setHipsWorld(hipWorld.x, hipWorld.y + gs.off, hipWorld.z);   // то же для кинематической ветки (без физики)
   mesh.root.updateMatrixWorld(true);
-  if (footIk) groundFeet(mesh, hipWorld.y, gs, dt, gnd, support);   // FOOT-IK (poseLod дальних → пропуск: детали стоп не видно)
+  if (footIk) groundFeet(mesh, hipWorld.y, gs, dt, gnd, support, gOpts);   // FOOT-IK (poseLod дальних → пропуск: детали стоп не видно)
 }

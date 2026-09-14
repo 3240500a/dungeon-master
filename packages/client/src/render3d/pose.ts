@@ -149,6 +149,8 @@ export const combatOf = (key: string, i: 0 | 1): number | undefined => colOf(COM
 export interface LocoMix { sb: number; st: number; bt: number; ct: number }
 /** Смесь «стоим вперёд мирно» — ею считается всё, у чего нет планировщика (монстры, превью). */
 export const MIX0: LocoMix = { sb: 0, st: 0, bt: 0, ct: 0 };
+/** Сглаженная ступенька 0..1 (smoothstep): нулевая производная на обоих концах — вход в опору без рывка. */
+const smooth01 = (t: number): number => t * t * (3 - 2 * t);
 
 /**
  * ПОЛНАЯ ЦЕПОЧКА: ходьба→бег по `sb`, затем колонки направления и боя.
@@ -170,6 +172,39 @@ export const GAIT = {
   pelvisMinRun: 26,                          // то же на бегу (интерп по скорости; = ходьбе → как было)
   stepWalk: 35, stepRun: 44,                 // ДЛИНА ШАГА на ходьбе / беге (интерп по скорости sb) — раздельно
   bobWalk: 1, bobRun: 1,                     // множитель БОБА таза на ходьбе / беге (интерп по sb)
+  // ── ПЛАВНОСТЬ БОБА ТАЗА ────────────────────────────────────────────────────────────────────────
+  // ⚠ Раньше эти три числа были ЗАШИТЫ одной строкой: `speed > speedWalk ? dt*14 : rising ? dt*10 : 1`.
+  // Ветка со значением 1 — это «без фильтра вообще»: на ходьбе таз падал в цель ЗА ОДИН КАДР
+  // (замер: ступенька цели 3.85 ед. при v=35, и она же упиралась в `pelvisMin`). Плюс порог
+  // `speedWalk` давал РАЗРЫВ: 39.9 → 40.1 переключало скорость сглаживания скачком. Теперь это
+  // обычная пара ходьба/бег через `locoVal`, то есть переход плавный, а числа — в редакторе.
+  // Умолчания: вверх 10 (ходьба) → 14 (бег), вниз 14 везде.
+  // ⚠ ВНИЗ НАМЕРЕННО НЕ 60. Соблазн поставить 60 (чтобы на 60 fps вышло ровно прежнее
+  // «лаг = 1») заманчив, но ВРЕДЕН: старое «мгновенно» действовало ТОЛЬКО до `speedWalk`, а бленд по `sb`
+  // протащил бы его в полосу между ходьбой и бегом: на v=60 вышло бы 47.7 вместо прежних 14, то есть таз стал бы
+  // падать РЕЗЧЕ, чем был (поймано golden-вектором `walk_fwd`). 14 совпадает со старым выше `speedWalk`
+  // и честно сглаживает ходьбу, где фильтра не было вовсе.
+  bobLagUp: 10, bobLagUpRun: 14,             // скорость подъёма таза (1/с): меньше → мягче
+  bobLagDown: 14, bobLagDownRun: 14,         // скорость просадки таза (1/с)
+  // ⚠ ФАЗА ПОЛЁТА — ГЛАВНАЯ ПРИЧИНА «РЕЗКОГО БОБА». Когда обе стопы в переносе, опорной нет, и
+  // цель высоты таза прыгала на ПОЛНЫЙ рост стоя (`standY`), а в кадр касания срывалась вниз на всю
+  // просадку. ЗАМЕР на бегу: верх дуги таза = 34.757 при росте стоя 34.769 — то есть таз в полёте
+  // тянулся ровно к стойке; в кадр приземления он падал на 0.223 ЗА КАДР. Доля полёта растёт со
+  // скоростью (0.107 → 0.507), и размах боба растёт ВМЕСТЕ с ней (0 → 0.761) при неизменной разножке
+  // стоп — то есть это был не боб, а артефакт полёта.
+  // 1 = прежнее поведение (тянуть к стойке), 0 = держать высоту, с которой оторвались.
+  bobFlight: 1,
+  // ── ЗАЗЕМЛЕНИЕ (footIk.groundFeet) ────────────────────────────────────────────────────────────
+  // `gndLag` — скорость схождения сдвига таза к полу (было зашито `GROUND_LAG = 8`). Это ВТОРОЙ,
+  // невидимый в редакторе боб: ЗАМЕР на бегу — таз призрака гуляет 1.282, из них 0.793 даёт именно
+  // `gs.off`, а манекен редактора показывает только 0.424.
+  // `gndIn`/`gndOut` — ОКНО опоры, в котором заземление работает, в долях фазы опоры (0 = касание,
+  // 1 = отрыв). Вес поднимается на [0, gndIn] и падает на [gndOut, 1] сглаженной ступенькой.
+  // ⚠ Умолчания 0 и 1 = вес 1 на всей опоре = прежнее поведение бит в бит. Раньше окна не было
+  // вовсе: опорность — БУЛЕВ флаг, и в кадр касания стопа падала на пол рывком (замер: 3.655 → 1.710
+  // за один кадр).
+  gndLag: 8, gndIn: 0, gndOut: 1,
+  gndInRun: 0, gndOutRun: 1,
   liftWalk: 7, liftRun: 15,                  // ПОДЪЁМ маховой стопы на ходьбе / беге (интерп по sb)
   cadence: 1,                                // множитель частоты цикла: длину шага делим на cadence (>1 → короче шаг, чаще семенит). Антискольз-тюн бега В ИГРЕ; движение НЕ меняет.
   dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
@@ -543,6 +578,24 @@ class StepPlanner {
   get stepping(): boolean { return !this.settled; }
   /** Какие ноги сейчас в переносе (для тестов/отладки порядка приставных шагов). */
   get swing(): [boolean, boolean] { return [this.legs[0]!.sw > 0, this.legs[1]!.sw > 0]; }
+  /**
+   * ДОЛЯ ПРОЙДЕННОЙ ОПОРНОЙ ФАЗЫ каждой ноги: 0 = только что коснулась, 1 = вот-вот оторвётся.
+   *
+   * Заземлению нужен НЕПРЕРЫВНЫЙ вес, а `swing` — булев: в кадр его переключения стопа падала на пол
+   * рывком. Фаза считается из того же `c`, по которому решается сама опорность (см. цикл ниже), так
+   * что окно заземления и окно опоры — ОДНО И ТО ЖЕ, а не два разъезжающихся порога.
+   * ⚠ Вне гейта (стоим, приставной шаг) цикла нет — отдаём 1: стоять надо твёрдо, на полном весе.
+   */
+  private supPhase: [number, number] = [1, 1];
+  get supportPhase(): [number, number] { return [this.supPhase[0], this.supPhase[1]]; }
+  /**
+   * ВЕС ЗАЗЕМЛЕНИЯ на ногу 0..1 — окно опоры `GAIT.gndIn`/`gndOut` в долях опорной фазы.
+   * Считается ЗДЕСЬ, а не у заземлителя, потому что здесь и фаза опоры, и колонки настроек
+   * (`locoVal`: ходьба/бег, страйф, назад, бой) — иначе окно разъехалось бы с самой походкой.
+   * Маховая нога — строго 0. Умолчания 0 и 1 дают вес 1 на всей опоре = прежнее поведение.
+   */
+  private gndW: [number, number] = [1, 1];
+  get groundWeights(): [number, number] { return [this.gndW[0], this.gndW[1]]; }
 
   setFeet(lx: number, lz: number, rx: number, rz: number): void {
     this.actual[0][0] = lx; this.actual[0][1] = lz;
@@ -821,7 +874,7 @@ class StepPlanner {
       avoid(l, 1 - i);
     };
     const TAU = Math.PI * 2;
-    if (!moving) { /* стоим: ноги ведёт стационарная логика выше (стойка / приставной шаг) — sw уже выставлен */ }
+    if (!moving) { this.supPhase[0] = 1; this.supPhase[1] = 1; /* стоим: ноги ведёт стационарная логика выше — sw уже выставлен, опора полная */ }
     else for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       const half = Math.PI * dutyS(i as 0 | 1);      // своя доля опоры → одна нога может стоять дольше другой
@@ -832,6 +885,8 @@ class StepPlanner {
           l.px = a[0]; l.pz = a[1];
         }
         l.sw = 0;
+        // Опора идёт через 0: сначала хвост [TAU−half, TAU), потом голова [0, half). Склеиваем в 0..1.
+        this.supPhase[i] = c > half ? (c - (TAU - half)) / (2 * half) : (c + half) / (2 * half);
       } else {                                       // ПЕРЕНОС
         if (l.sw === 0) {                             // отрыв
           l.fx = l.px; l.fz = l.pz;
@@ -843,6 +898,7 @@ class StepPlanner {
           plant(l, i, hx, hz, leadS(i as 0 | 1) + fly);
         }
         l.sw = clamp((c - half) / (TAU - 2 * half), 0.001, 1);
+        this.supPhase[i] = 1;   // в переносе опоры нет — вес заземления возьмёт 0 по `sw`
       }
     }
 
@@ -868,13 +924,31 @@ class StepPlanner {
     // поэтому хромота — это разный боб на левой и правой опоре, а не два таза.
     const bobMult = locoVal('bobWalk', 'bobRun', GAIT.bobWalk, GAIT.bobRun, stanceLeg, m);
     const floorY = locoVal('pelvisMin', 'pelvisMinRun', GAIT.pelvisMin, GAIT.pelvisMinRun, stanceLeg, m);
-    const wantY = anyStance ? clamp(this.standY - dip * bobMult, floorY, this.standY) : this.standY;
-    // Сглаживание: на бегу — всегда (вход/выход из полёта). На ШАГЕ асимметрично: ВНИЗ (ноги разъезжаются,
-    // wantY плавно падает по геометрии) берём как есть — иначе таз запаздывает и волочит опорную ногу; а ВВЕРХ
-    // (смена опорной — wantY скачком растёт) сглаживаем, иначе резкий дёрг таза вверх при ходьбе.
+    // ВЕС ЗАЗЕМЛЕНИЯ: сглаженная ступенька на входе в опору и на выходе из неё.
+    for (let i = 0; i < 2; i++) {
+      const j = i as 0 | 1;
+      if (this.legs[i]!.sw > 0) { this.gndW[i] = 0; continue; }          // маховую не заземляем вовсе
+      const inK = clamp(locoVal('gndIn', 'gndInRun', GAIT.gndIn, GAIT.gndInRun, j, m), 0, 1);
+      const outK = clamp(locoVal('gndOut', 'gndOutRun', GAIT.gndOut, GAIT.gndOutRun, j, m), 0, 1);
+      const u = clamp(this.supPhase[i]!, 0, 1);
+      const rise = inK <= 1e-4 ? 1 : smooth01(clamp(u / inK, 0, 1));      // вход: 0 → gndIn
+      const fall = outK >= 1 - 1e-4 ? 1 : smooth01(clamp((1 - u) / (1 - outK), 0, 1));   // выход: gndOut → 1
+      this.gndW[i] = rise * fall;
+    }
+
+    // ФАЗА ПОЛЁТА. Опорной нет → раньше цель прыгала на полный рост стоя (`standY`) и срывалась вниз
+    // в кадр касания. `bobFlight` говорит, НАСКОЛЬКО тянуть к стойке: 1 = как было, 0 = держать ту
+    // высоту, с которой оторвались (тогда разрыва в касании нет вовсе).
+    const stanceY = clamp(this.standY - dip * bobMult, floorY, this.standY);
+    const wantY = anyStance ? stanceY : this.hipY + (this.standY - this.hipY) * clamp(GAIT.bobFlight, 0, 1);
+    // Сглаживание: вверх и вниз своими скоростями, и у каждой — своя пара ходьба/бег.
+    // ⚠ Раньше здесь стоял ПОРОГ `speed > GAIT.speedWalk`: 39.9 → 40.1 переключало скорость скачком.
+    // `locoVal` блендит по `sb` (та же ось, что у длины шага и подъёма стопы) — разрыва нет.
     const rising = wantY > this.hipY;
-    const lag = speed > GAIT.speedWalk ? Math.min(1, dt * 14) : rising ? Math.min(1, dt * 10) : 1;
-    this.hipY += (wantY - this.hipY) * lag;
+    const rate = rising
+      ? locoVal('bobLagUp', 'bobLagUpRun', GAIT.bobLagUp, GAIT.bobLagUpRun, stanceLeg, m)
+      : locoVal('bobLagDown', 'bobLagDownRun', GAIT.bobLagDown, GAIT.bobLagDownRun, stanceLeg, m);
+    this.hipY += (wantY - this.hipY) * Math.min(1, dt * Math.max(0, rate));
     const hipY = this.hipY;
     const out: LegAngles[] = [];
     for (let i = 0; i < 2; i++) {
@@ -992,6 +1066,10 @@ export class PoseDriver {
   get stepping(): boolean { return this.planner ? this.planner.stepping : false; }
   /** Какие ноги в переносе [левая, правая] — для тестов/отладки порядка приставных шагов. */
   get swingLegs(): [boolean, boolean] { return this.planner ? this.planner.swing : [false, false]; }
+  /** Доля пройденной опорной фазы каждой ноги 0..1 (см. `StepPlanner.supportPhase`) — для окна заземления. */
+  get supportPhase(): [number, number] { return this.planner ? this.planner.supportPhase : [1, 1]; }
+  /** ВЕС заземления на ногу 0..1 — ОДИН шов на игру и редактор (см. `StepPlanner.groundWeights`). */
+  get groundWeights(): [number, number] { return this.planner ? this.planner.groundWeights : [1, 1]; }
   /** Во сколько раз сейчас ускорена фаза — диагностика срочности шага. */
   get debugUrge(): number { return this.planner ? this.planner.debugUrge : 1; }
   attack(power = 1): void { if (!this.dead) { this.attackT = ATTACK_DUR; this.attackPow = power; } }

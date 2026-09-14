@@ -33,7 +33,7 @@ function legGeom(mesh: Humanoid, i: number): LegGeom {
   return all[i]!;
 }
 const PLANT_MAX = 6;                 // стопа выше своего пола меньше этого → ОПОРНАЯ (планти на пол); выше → маховая (не трогаем)
-const GROUND_LAG = 8;                // скорость сглаживания сдвига таза к полу (меньше → мягче/плавнее боб)
+const GROUND_LAG = 8;                // скорость сглаживания сдвига таза к полу по умолчанию (ручка — `GAIT.gndLag`)
 const IK_LEGS = [{ u: 'LeftUpperLeg', l: 'LeftLowerLeg', f: 'LeftFoot' }, { u: 'RightUpperLeg', l: 'RightLowerLeg', f: 'RightFoot' }];
 const _DOWN = new THREE.Vector3(0, -1, 0), _UP = new THREE.Vector3(0, 1, 0);
 const _iH = new THREE.Vector3(), _iT = new THREE.Vector3(), _iK = new THREE.Vector3(), _iDir = new THREE.Vector3();
@@ -89,8 +89,18 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
  * плющится в воздухе на спуске). Опора = `support[i]` из позы (driver.swingLegs → !swing); нет позы → эвристика по высоте.
  * baseY = физ-Y таза; gs.off — сглаж. сдвиг корня.
  */
-export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery, support?: [boolean, boolean]): void {
+/**
+ * Тонкая настройка заземления. Пусто → поведение бит в бит прежнее.
+ * `w` — ВЕС заземления на ногу 0..1 (окно опоры, см. `GAIT.gndIn`/`gndOut`): 1 = как раньше,
+ * 0 = ногу не трогаем вовсе. Промежуточные значения делают вход в опору и выход из неё плавными —
+ * раньше опорность была БУЛЕВОЙ, и в кадр касания стопа падала на пол рывком (замер: 3.655 → 1.710
+ * за один кадр). `lag` — скорость схождения сдвига таза (умолчание `GROUND_LAG`).
+ */
+export interface GroundOpts { w?: [number, number]; lag?: number }
+export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery, support?: [boolean, boolean], opts?: GroundOpts): void {
   const hips = mesh.bones.get('Hips'); if (!hips) return;
+  const lagK = opts?.lag !== undefined && opts.lag > 0 ? opts.lag : GROUND_LAG;
+  const wOf = (i: number): number => clamp(opts?.w?.[i] ?? 1, 0, 1);
   // ⚠ ЦЕЛЬ — СОБСТВЕННАЯ ВЫСОТА ЛОДЫЖКИ РИГА, а не константа плюс сохранённое число.
   // `SOLE + footLift` не ехал за морфом: рост 1.16 поднимал риг, а цель оставалась прежней, и
   // персонаж уезжал в пол (замер: риг 3.355 против цели 2.900). `ankleRest` считается по ригу.
@@ -100,9 +110,9 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     const fb = mesh.bones.get(IK_LEGS[i]!.f); if (!fb) { tgt.push(NaN); sup.push(false); continue; }
     fb.getWorldPosition(_iFoot);
     const ty = gnd(_iFoot.x, _iFoot.z) + sole; tgt.push(ty);
-    const isSup = support ? support[i]! : (_iFoot.y - ty < PLANT_MAX);   // опора из позы (маховую не заземляем); фолбэк — по высоте
+    const isSup = (support ? support[i]! : (_iFoot.y - ty < PLANT_MAX)) && wOf(i) > 1e-3;   // опора из позы (маховую не заземляем); фолбэк — по высоте
     sup.push(isSup);
-    if (isSup) worst = Math.max(worst, ty - _iFoot.y);
+    if (isSup) worst = Math.max(worst, (ty - _iFoot.y) * wOf(i));   // вес окна: на краю опоры таз тянется слабее
   }
   // НЕТ ОПОРНОЙ СТОПЫ → СДВИГ ЗАТУХАЕТ (Ф26.1). Было: весь блок коррекции просто пропускался, а `gs.off`
   // продолжал прибавляться в `renderRagdollGhost` КАЖДЫЙ КАДР — и это САМОЗАПИРАЮЩИЙСЯ режим: чем выше
@@ -111,13 +121,13 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
   // опоры тоже нет — и там затухание ВЕРНОЕ: без опоры прижимать к полу нечего (так же ведёт себя ветка смерти,
   // `humanoidRagdoll.ts` — `if (!ground) gs.off += (0 - gs.off) * …`).
   if (!Number.isFinite(worst)) {
-    gs.off += (0 - gs.off) * Math.min(1, dt * GROUND_LAG);
+    gs.off += (0 - gs.off) * Math.min(1, dt * lagK);
     mesh.setHipsWorldY(baseY + gs.off); mesh.root.updateMatrixWorld(true);
   }
   if (Number.isFinite(worst)) {
     // Сдвиг корня СГЛАЖЕН в обе стороны (мягкий боб): даже если таз догоняет медленно, per-foot IK ниже плантит опорную
     // стопу коленом → она НЕ проваливается, пока таз плавно едет. Раньше был мгновенный рывок вверх на провале — дёрганый боб.
-    gs.off += (worst - 0) * Math.min(1, dt * GROUND_LAG);
+    gs.off += (worst - 0) * Math.min(1, dt * lagK);
     mesh.setHipsWorldY(baseY + gs.off); mesh.root.updateMatrixWorld(true);   // Root ≠ таз: целимся в МИРОВУЮ высоту ТАЗА, корень едет под него
   }
   for (let i = 0; i < IK_LEGS.length; i++) {                        // планти+кладём ТОЛЬКО опорные стопы; маховую ведёт поза
@@ -134,7 +144,10 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     if (_iFtFwd.x * _iFtFwd.x + _iFtFwd.z * _iFtFwd.z < 1e-8) _iFace.copy(_ipq);              // стопа вертикально → берём как есть
     else _iFace.setFromAxisAngle(_UP, Math.atan2(_iFtFwd.x, _iFtFwd.z));                      // плоско по полу, носок по позе-рыску
     fb.getWorldPosition(_iFoot);
-    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ty, _iFoot.z), _iPole, _iFace, legGeom(mesh, i));
+    // ВЕС ОКНА: цель едет от текущей высоты стопы к полу на долю `w`. w=1 → ровно как раньше;
+    // на краях опоры стопа подходит к полу и уходит с него ПЛАВНО, а не защёлкивается за кадр.
+    const w = wOf(i), ey = _iFoot.y + (ty - _iFoot.y) * w;
+    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ey, _iFoot.z), _iPole, _iFace, legGeom(mesh, i));
   }
 }
 
