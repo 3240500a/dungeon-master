@@ -113,20 +113,30 @@ export function dedupeSkeletons(root: THREE.Object3D): DedupeReport {
     if (mapped.some((b) => !b)) continue;                    // чужой скелет (не копия) — не трогаем
     fit.push({ m, mapped: mapped as THREE.Bone[] });
   }
-  const used = new Set<THREE.Bone>();
-  for (const f of fit) for (const b of f.mapped) used.add(b);
+  // ⚠ В ОБЩИЙ НАБОР ИДЁТ ВСЯ АРМАТУРА, А НЕ ТОЛЬКО КОСТИ С ВЕСАМИ.
+  //
+  // Соблазн взять «только те, что кто-то использует» стоил сломанных рук. У этой модели скин руки
+  // сидит на ТВИСТАХ (`UpperarmTwist01/02`, `ForearmTwist01/02`), а сами `Upperarm`/`Forearm` весов
+  // не несут — из 100 костей вес имеет 61. Выкинув остальные, мы выкинули их и из ЭКСПОРТА, а в glTF
+  // костью при загрузке становится ТОЛЬКО сустав скина: `CC_Base_L_Upperarm` приезжал обычным узлом,
+  // `autoBoneMap` его не находил, ретаргет руку не вёл — рука оставалась в бинде (замер: joints 61
+  // против 100 у прежней модели).
+  //
+  // Лишние суставы в скине ничего не стоят, а скелет обязан приехать целиком.
   const union: THREE.Bone[] = [];
-  root.traverse((o) => { if (isBone(o) && used.has(o as THREE.Bone)) union.push(o as THREE.Bone); });   // порядок = обход дерева
+  armature?.traverse((o) => { if (isBone(o) && canonByName.get(base(o.name)) === o) union.push(o as THREE.Bone); });
   const slot = new Map<THREE.Bone, number>();
   union.forEach((b, i) => slot.set(b, i));
 
-  // Обратные бинд-матрицы общего скелета: берём у любого меша, который эту кость использует
-  // (одноимённые совпадают бит-в-бит — замерено выше).
+  // Обратные бинд-матрицы: у кости с весами берём готовую (одноимённые совпадают бит-в-бит —
+  // замерено), у кости без весов считаем из бинд-позы, как это делает сам `Skeleton`.
   const inv: THREE.Matrix4[] = union.map(() => new THREE.Matrix4());
   const invSet = new Set<number>();
   for (const f of fit) {
-    f.mapped.forEach((b, i) => { const s = slot.get(b)!; if (!invSet.has(s)) { inv[s]!.copy(f.m.skeleton.boneInverses[i]!); invSet.add(s); } });
+    f.mapped.forEach((b, i) => { const s = slot.get(b); if (s !== undefined && !invSet.has(s)) { inv[s]!.copy(f.m.skeleton.boneInverses[i]!); invSet.add(s); } });
   }
+  root.updateMatrixWorld(true);
+  union.forEach((b, i) => { if (!invSet.has(i)) inv[i]!.copy(b.matrixWorld).invert(); });
   // Если чей-то скелет УЖЕ ровно этот набор в том же порядке — берём его, а не плодим новый:
   // иначе «пере-привязано» считало бы работой то, что и так сделано.
   const same = (s: THREE.Skeleton): boolean => s.bones.length === union.length && s.bones.every((b, i) => b === union[i]);

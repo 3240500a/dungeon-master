@@ -196,4 +196,45 @@ describe('skeletonDedupe — копии скелета схлопываются 
     expect(r.rebound).toBe(1);                           // меш пере-привязан
     expect(r.removed).not.toContain('Head_1');           // ветку с навесным объектом не сняли
   });
+
+  it('⭐ КОСТЬ БЕЗ ВЕСОВ ОСТАЁТСЯ В СКЕЛЕТЕ — общий набор это ВСЯ арматура', () => {
+    // «Стало лучше, но поломались руки». Общий набор собирался из костей, У КОТОРЫХ ЕСТЬ ВЕСА.
+    // На живой модели это девять ведущих костей в мусор: скин руки сидит на `UpperarmTwist01/02`,
+    // ноги — на `ThighTwist`, а сами `Upperarm`/`Forearm`/`Thigh`/`Calf` не несут ни одной вершины
+    // (замер по файлу: из 100 костей весят 61). В glTF костью становится ТОЛЬКО сустав скина —
+    // значит выброшенная кость приезжала обратно обычным узлом, `autoBoneMap` её не находил, и
+    // ретаргет просто переставал вести руку (экспорт: joints 61 против 100).
+    //
+    // Здесь та же форма в четырёх костях: веса есть у `Hips` и `SpineTwist`, а `Spine` и `Head`
+    // между ними — «пустые». Они обязаны остаться: без `Spine` рука и висла.
+    const root = new THREE.Group();
+    const names = ['Hips', 'Spine', 'SpineTwist', 'Head'];
+    const bones = names.map((n, i) => { const b = new THREE.Bone(); b.name = n; b.position.set(i ? 10 : 0, 0, 0); return b; });
+    for (let i = 1; i < bones.length; i++) bones[i - 1]!.add(bones[i]!);
+    root.add(bones[0]!);
+    const part = (name: string, bs: THREE.Bone[]): THREE.SkinnedMesh => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+      const idx: number[] = [], w: number[] = [];
+      for (let i = 0; i < 3; i++) { idx.push(i % bs.length, 0, 0, 0); w.push(1, 0, 0, 0); }
+      g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
+      g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(w, 4));
+      const m = new THREE.SkinnedMesh(g, new THREE.MeshBasicMaterial());
+      m.name = name; m.bind(new THREE.Skeleton(bs));
+      return m;
+    };
+    const a = part('a', [bones[0]!]);              // только таз
+    const b = part('b', [bones[2]!]);              // только твист
+    root.add(a, b);
+    root.updateMatrixWorld(true);
+    const before = [skinnedPoints(a), skinnedPoints(b)];
+
+    dedupeSkeletons(root);
+
+    expect(a.skeleton, 'скелет один на обоих').toBe(b.skeleton);
+    const got = a.skeleton.bones.map((x) => x.name).sort();
+    expect(got, '⭐ в скине ВСЯ арматура, включая кости без единого веса').toEqual([...names].sort());
+    expect(skinnedPoints(a), 'меш А не поехал').toEqual(before[0]);
+    expect(skinnedPoints(b), 'меш Б не поехал').toEqual(before[1]);
+  });
 });

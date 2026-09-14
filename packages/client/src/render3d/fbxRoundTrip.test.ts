@@ -18,6 +18,8 @@ import { autoBoneMap, measureBoneOffsets } from './retarget3d.js';
  * (он живёт вне репозитория) — на машине, где ведётся работа, он есть, и это главное.
  */
 const FBX = 'C:/work/Games_Art/Games_Art/top_down/model_ai/char/knight_01/Modular_01/fbx/knight_05_modular_rig.fbx';
+/** Тот же рыцарь, пересохранённый Максом: скины ЧАСТИЧНЫЕ (6…36 костей на меш) — другая форма файла. */
+const FBX_MAX = FBX.replace('knight_05', 'knight_06');
 
 class NodeFileReader {
   result: ArrayBuffer | null = null;
@@ -91,4 +93,35 @@ describe.runIf(existsSync(FBX))('FBX художника проходит имп�
     expect(l.detached).toBe(0);
     expect(l.skinned).toBeGreaterThan(30);
   });
+
+  it('⭐ КОСТЬ БЕЗ ВЕСОВ — ВСЁ РАВНО КОСТЬ: скин экспорта = ВСЯ арматура, а не только весящее', async () => {
+    // Жалоба: «стало лучше, но поломались руки». Общий скелет собирался из костей, У КОТОРЫХ ЕСТЬ
+    // ВЕСА, — а у CC/AccuRIG скин сидит на ТВИСТАХ (`UpperarmTwist01/02`, `ForearmTwist01/02`), и
+    // сами `Upperarm`/`Forearm` не несут ни одной вершины. Замер ниже: таких ведущих костей ДЕВЯТЬ —
+    // обе руки, обе ноги, пальцы ноги. В glTF костью становится ТОЛЬКО сустав скина, поэтому
+    // выброшенные кости приезжали обратно обычными узлами, `autoBoneMap` их не находил, и ретаргет
+    // просто переставал вести руку. Экспорт 05 давал 100 суставов, 06 — 61.
+    for (const f of [FBX, FBX_MAX].filter((x) => existsSync(x))) await one(f);
+  });
+
+  async function one(file: string): Promise<void> {
+    const src = await parseModel(read(file), 'fbx');
+    const weighted = new Set<string>();
+    src.traverse((o) => {
+      const m = o as THREE.SkinnedMesh; if (!m.isSkinnedMesh) return;
+      const si = m.geometry.getAttribute('skinIndex'), sw = m.geometry.getAttribute('skinWeight');
+      for (let v = 0; v < si.count; v++) for (let k = 0; k < 4; k++) {
+        if ((sw.getComponent(v, k) as number) > 1e-6) weighted.add(m.skeleton.bones[si.getComponent(v, k) as number]?.name ?? '');
+      }
+    });
+    const before = autoBoneMap(boneNames(src));
+    const driven = Object.values(before).filter((n): n is string => !!n);
+    const dead = driven.filter((n) => !weighted.has(n));
+    expect(dead.length, 'иначе тест пустой: у этой модели все ведущие кости и так весят').toBeGreaterThan(0);
+
+    const back = await parseModel(await exportGLB(src), 'glb');
+    const after = new Set(boneNames(back));
+    const lost = driven.filter((n) => !after.has(n));
+    expect(lost, `⚠ ${file.split('/').pop()}: ведущие кости пропали из скина: ${lost.join(', ')}`).toEqual([]);
+  }
 });
