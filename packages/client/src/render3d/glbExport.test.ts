@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-import { glbSkinReport } from './glbCheck.js';
+import { glbSkinReport, assertGlbUsable } from './glbCheck.js';
 import { mergeIdenticalSkins } from './glbNormalize.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -131,5 +131,52 @@ describe('проверка GLB ловит битый файл', () => {
     const ok = glbSkinReport(await save(scene(false), false));
     expect(ok).toMatchObject({ skins: 1, bones: 2, badJoints: 0 });
     expect(() => glbSkinReport(new ArrayBuffer(4))).toThrow();   // не GLB — не молчим
+  });
+});
+
+/**
+ * ТИХИЕ ПОРЧИ, КОТОРЫЕ НЕ ДАЮТ НИ ОШИБКИ, НИ ВИДИМОГО СБОЯ.
+ *
+ * Обе найдены аудитом импорта по чек-листу Khronos: файл формально грузится, модель формально
+ * отображается — и выглядит «немного не так». Искать такое по виду невозможно, поэтому проверяем.
+ */
+describe('проверки файла: расхождение бинд-матриц ловится', () => {
+  /** Переписать JSON-чанк GLB, не трогая бинарный: ровно так его портит кривой экспортёр. */
+  function patchGlbJson(buf: ArrayBuffer, fix: (js: Record<string, unknown>) => void): ArrayBuffer {
+    const dv = new DataView(buf);
+    const len = dv.getUint32(12, true);                      // длина JSON-чанка
+    const js = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, len))) as Record<string, unknown>;
+    fix(js);
+    let txt = JSON.stringify(js);
+    while (txt.length % 4 !== 0) txt += ' ';                 // чанк выравнивается пробелами
+    const body = new Uint8Array(buf, 20 + len);              // всё после JSON — как было
+    const out = new Uint8Array(20 + txt.length + body.length);
+    const odv = new DataView(out.buffer);
+    out.set(new Uint8Array(buf, 0, 20));
+    odv.setUint32(8, out.length, true); odv.setUint32(12, txt.length, true);
+    out.set(new TextEncoder().encode(txt), 20);
+    out.set(body, 20 + txt.length);
+    return out.buffer;
+  }
+
+  it('⭐ число обратных бинд-матриц обязано совпасть с числом суставов', async () => {
+    const root = new THREE.Group();
+    const b0 = bone('Hips', 0), b1 = bone('Spine', 1);
+    b0.add(b1); root.add(b0);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0], 4));
+    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], 4));
+    const m = new THREE.SkinnedMesh(geo, new THREE.MeshStandardMaterial());
+    m.name = 'body_01'; root.add(m); m.bind(new THREE.Skeleton([b0, b1]));
+    root.updateMatrixWorld(true);
+    const good = await save(root, false);
+    const bad = patchGlbJson(good, (js) => {
+      const acc = (js.accessors as { count: number }[])[(js.skins as { inverseBindMatrices: number }[])[0]!.inverseBindMatrices]!;
+      acc.count -= 1;
+    });
+    expect(glbSkinReport(good).ibmMismatch, 'нормальный файл чист').toBe(0);
+    expect(glbSkinReport(bad).ibmMismatch, '⚠ расхождение видно').toBe(1);
+    expect(() => assertGlbUsable(bad)).toThrow(/бинд-матриц/);
   });
 });

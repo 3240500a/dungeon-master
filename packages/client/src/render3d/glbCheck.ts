@@ -20,6 +20,15 @@ export interface GlbSkinReport {
   badJoints: number;
   /** Сколько мешей. Ноль при непустом файле — тоже подозрительно. */
   meshes: number;
+  /**
+   * Скинов, у которых число обратных бинд-матриц НЕ РАВНО числу суставов.
+   *
+   * ⚠ Это тихая порча, а не ошибка: `THREE.Skeleton.init()` при таком расхождении печатает
+   * предупреждение и МОЛЧА ставит все матрицы единичными — меш встаёт в бинд-позу и выглядит
+   * «немного не так», а причину по виду не найти. Проверка чисто по JSON, буфер читать не надо.
+   * Отсутствие аксессора вовсе — ЗАКОННО (спека: это единичные матрицы), и оно сюда не считается.
+   */
+  ibmMismatch: number;
 }
 
 /** JSON-чанк GLB. Бросает, если это не GLB — молчаливое «ок» на мусоре хуже ошибки. */
@@ -52,7 +61,16 @@ export function glbSkinReport(buf: ArrayBuffer): GlbSkinReport {
       else badJoints++;                                          // null/мимо диапазона = висячая ссылка
     }
   }
-  return { skins: skins.length, bones: used.size, badJoints, meshes };
+  // Обратные бинд-матрицы: их count обязан совпасть с числом суставов скина.
+  const accs = Array.isArray(js.accessors) ? (js.accessors as { count?: number }[]) : [];
+  let ibmMismatch = 0;
+  for (const s2 of skins as { joints?: unknown[]; inverseBindMatrices?: unknown }[]) {
+    const ai = s2.inverseBindMatrices;
+    if (typeof ai !== 'number') continue;                        // нет аксессора — законно (единичные)
+    const cnt = accs[ai]?.count;
+    if (typeof cnt !== 'number' || cnt !== (s2.joints?.length ?? 0)) ibmMismatch++;
+  }
+  return { skins: skins.length, bones: used.size, badJoints, meshes, ibmMismatch };
 }
 
 /** Бросить понятную ошибку, если файл заливать нельзя. Возвращает отчёт — его удобно показать в статусе. */
@@ -66,5 +84,9 @@ export function assertGlbUsable(buf: ArrayBuffer): GlbSkinReport {
       + `мешей ${r.meshes}. Кости, на которые ссылается скин, обязаны быть В ЭКСПОРТИРУЕМОМ ДЕРЕВЕ.`);
   }
   if (r.skins > 0 && r.bones === 0) throw new Error('в GLB есть скины, но нет костей — файл нерабочий');
+  if (r.ibmMismatch > 0) {
+    throw new Error(`у ${r.ibmMismatch} скинов число обратных бинд-матриц не совпадает с числом суставов `
+      + `(${r.bones}). three молча заменит их единичными, и меш встанет в бинд-позу без единой ошибки.`);
+  }
   return r;
 }

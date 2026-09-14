@@ -34,12 +34,52 @@ export async function parseModel(buf: ArrayBuffer, ext: string): Promise<THREE.G
   // из экспорта (`onlyVisible`) и из рейкаста (клик по кости). Из FBX такое приходит. Правим ЗДЕСЬ —
   // это единственная точка, через которую модель попадает и в редактор, и в игру.
   root.traverse((o) => { if ((o as THREE.Bone).isBone && !o.visible) o.visible = true; });
+  checkSkinSanity(root, ext);
   if (_lastDedupe.skins > 1) {
     console.warn(`[модель] пришла с ${_lastDedupe.skins} скелетами → схлопнуто в 1 `
       + `(костей ${_lastDedupe.bonesBefore} → ${_lastDedupe.bonesAfter}). Перевыгоняйте с ОБЩИМ скелетом: `
       + `все меши должны ссылаться на один skin.`);
   }
   return root;
+}
+
+/**
+ * ПРОВЕРКА СКИНА НА ВХОДЕ — две тихие порчи, каждая из которых не даёт ни ошибки, ни видимого сбоя.
+ *
+ * 1) `THREE.Skeleton.init()` при `bones.length !== boneInverses.length` печатает предупреждение и МОЛЧА
+ *    ставит ВСЕ обратные бинд-матрицы единичными. Модель после этого встаёт в бинд-позу и выглядит просто
+ *    «немного не так» — найти причину по виду невозможно. Проверяем и говорим вслух.
+ *
+ * 2) ВЕСА НОРМИРУЕТ ТОЛЬКО glTF-путь. `GLTFLoader` зовёт `normalizeSkinWeights()` сам (их комментарий:
+ *    «normalize skin weights to fix malformed assets»), а `FBXLoader` — НЕ зовёт никто. Ненормированные
+ *    веса тянут вершины к началу координат или раздувают их, и опять же без единой ошибки.
+ *    Порог взят из спецификации glTF: 2e-7 на каждое ненулевое влияние.
+ *
+ * Чиним только то, что чинится безопасно (нормировка), про остальное — сообщаем.
+ */
+function checkSkinSanity(root: THREE.Object3D, ext: string): void {
+  let fixed = 0, checked = 0;
+  root.traverse((o) => {
+    const m = o as THREE.SkinnedMesh;
+    if (!m.isSkinnedMesh || !m.skeleton) return;
+    const sk = m.skeleton;
+    if (sk.bones.length !== sk.boneInverses.length) {
+      console.warn(`[модель] у «${m.name}» костей ${sk.bones.length}, а обратных бинд-матриц `
+        + `${sk.boneInverses.length} — three МОЛЧА заменит их единичными, и меш встанет в бинд-позу.`);
+    }
+    const sw = m.geometry.getAttribute('skinWeight');
+    if (!sw || ext !== 'fbx') return;                 // glTF-путь нормирует `GLTFLoader` сам
+    checked++;
+    const n = sw.itemSize;
+    let bad = false;
+    for (let v = 0; v < sw.count && !bad; v++) {
+      let sum = 0, nz = 0;
+      for (let k = 0; k < n; k++) { const w = sw.getComponent(v, k) as number; sum += w; if (w > 0) nz++; }
+      if (Math.abs(sum - 1) > 2e-7 * Math.max(1, nz)) bad = true;
+    }
+    if (bad) { fixed++; m.normalizeSkinWeights(); }   // ⚠ метод у SkinnedMesh, не у геометрии
+  });
+  if (fixed) console.warn(`[модель] веса скина не нормированы (${fixed} из ${checked} частей) — нормировано на загрузке.`);
 }
 
 /** Загрузить модель из выбранного файла (.fbx / .glb / .gltf) → корневой Object3D (со скелетом/скиннед-мешами). */
