@@ -192,14 +192,66 @@ export function measureBoneScales(loaded: THREE.Object3D, boneMap: Record<string
  *  наш скелет строится ИМИ (buildHumanoid.boneOffsets) и повторяет геометрию ФБХ 1:1 (в отличие от boneScale-скаляра,
  *  который искажал направление: узкий-вниз хип-джойнт ФБХ превращался в широкий). ФБХ риганы в T-позе → офсеты
  *  переносятся в наши T-позные без миграции. Авто-детект Z-up (CC/AccuRIG) → доворот. Hips = высота таза (заземление). */
+/**
+ * УГОЛ ДОВОРОТА К Y-UP по скелету (таз→голова). Одно правило на всех, кто его применял ПО СВОЕЙ КОПИИ
+ * (`measureBoneOffsets`, `enforceTPose`) — разъехавшись, они дали бы разные системы координат на одном файле.
+ * Знако-зависимо: +Z-up→−90°X, −Z-up→+90°X (CC/AccuRIG обычно −Z), перевёрнутый Y→180°X. 0 — уже Y-up.
+ */
+export function upAxisAngle(loaded: THREE.Object3D, boneMap: Record<string, string>): number {
+  const byName = boneIndex(loaded);
+  const w = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
+  const hip = w('Hips'), head = w('Head');
+  if (!hip || !head) return 0;
+  const dy = head.y - hip.y, dz = head.z - hip.z;
+  return Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0);
+}
+
+/**
+ * ⭐ ПРИВЕСТИ МОДЕЛЬ К Y-UP ОДИН РАЗ И НАВСЕГДА (зовётся при импорте, ДО замеров и экспорта).
+ *
+ * Раньше доворот к Y-up был ВРЕМЕННЫМ: замер поднимал модель, мерил и клал обратно. В итоге файл жил
+ * в своей системе (CC отдаёт Z-up), а в нашу его затаскивал ПОЗИЦИОННЫЙ ПРИВОД — покостно, каждый кадр.
+ * Что привод не тащит, то и оставалось в чужой системе: ЗАМЕР — пальцы приезжали повёрнутыми на 81°
+ * (направление фаланги оказывалось эталоном, повёрнутым ровно на 90° вокруг X). Отсюда «пальцы согнуты в T-позе».
+ *
+ * И это не наша прихоть: **glTF по спецификации Y-up**, так что Z-up GLB мы и экспортировали неверным.
+ * Поворот кладём на корень — валидный glTF-узел; локальные повороты костей к нему инвариантны, меш и скин не трогаем.
+ */
+export function normalizeUpAxis(loaded: THREE.Object3D, boneMap: Record<string, string>): number {
+  const ax = upAxisAngle(loaded, boneMap);
+  if (ax) { loaded.rotation.x += ax; loaded.updateMatrixWorld(true); }
+  return ax;
+}
+
+/**
+ * НАСКОЛЬКО РУКИ ОТКЛОНЕНЫ ОТ ГОРИЗОНТАЛИ (градусы, максимум по двум рукам) — МЕРА «T-поза или A-поза».
+ *
+ * Нужна, чтобы решение «приводить ли к T» принималось по ЗАМЕРУ и автором, а не автоматикой по догадке.
+ * Считается в Y-up-фрейме по направлению плечо→предплечье: 0° — идеальная T, ~45° — типичная A-поза.
+ * Ничего не меняет.
+ */
+export function tPoseDeviation(loaded: THREE.Object3D, boneMap: Record<string, string>): number {
+  const r0 = loaded.rotation.clone();
+  const ax = upAxisAngle(loaded, boneMap);
+  if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); }
+  const byName = boneIndex(loaded);
+  const w = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
+  let worst = 0;
+  for (const [a, b, sgn] of [['LeftUpperArm', 'LeftLowerArm', 1], ['RightUpperArm', 'RightLowerArm', -1]] as [string, string, number][]) {
+    const pa = w(a), pb = w(b); if (!pa || !pb) continue;
+    const d = pb.clone().sub(pa); if (d.lengthSq() < 1e-9) continue;
+    worst = Math.max(worst, d.normalize().angleTo(new THREE.Vector3(sgn, 0, 0)) * 180 / Math.PI);
+  }
+  loaded.rotation.copy(r0); loaded.updateMatrixWorld(true);
+  return worst;
+}
+
 export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<string, string>): Record<string, [number, number, number]> {
   const r0 = loaded.rotation.clone();
   loaded.rotation.set(0, 0, 0); loaded.updateMatrixWorld(true);
   const byName = boneIndex(loaded);
   const w = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
-  const hip0 = w('Hips'), head0 = w('Head');
-  // ЗНАКО-ЗАВИСИМЫЙ доворот к Y-up: +Z-up→−90°X, −Z-up→+90°X (CC/AccuRIG обычно −Z, иначе замер вверх ногами), перевёрнутый Y→180°X.
-  if (hip0 && head0) { const dy = head0.y - hip0.y, dz = head0.z - hip0.z; const ax = Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }
+  { const ax = upAxisAngle(loaded, boneMap); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }   // доворот к Y-up — ОДНО правило (`upAxisAngle`)
   const hip = w('Hips'), head = w('Head'), foot = w('LeftFoot');
   // ⚠ КОРЕНЬ АРМАТУРЫ = ПОЛ. У ригов CC/AccuRIG (и везде, где художник кладёт рут в ноль) самый
   // верхний узел скелета стоит ровно на полу — по нему и заземляем, вместо того чтобы подгонять таз
@@ -271,10 +323,13 @@ export function measureBoneOffsets(loaded: THREE.Object3D, boneMap: Record<strin
   // Ф14.2: пальцы ЗАМЕРЯЕМ (позиции и длины — из модели), но НЕ выпрямляем и не конформим.
   const baseAnkle = baseAnkleY();
   for (const our of chain) {
-    if (our === 'Hips') { out['Hips'] = [0, +hipsAboveFloor.toFixed(2), 0]; continue; }   // высота таза НАД ПОЛОМ — из модели (см. выше)
+    // ⚠ БЕЗ ОКРУГЛЕНИЯ. Округление до сотых выглядит безобидно, но это ЕДИНСТВЕННЫЙ источник
+    // расхождения, который остаётся после починки позы и оси: фаланга длиной 1.4 теряет на нём до
+    // 0.4 % длины. ЗАМЕР сквозного аудита: с округлением 4.3e-1 %, без него 6.2e-7 % — машинный ноль.
+    if (our === 'Hips') { out['Hips'] = [0, hipsAboveFloor, 0]; continue; }   // высота таза НАД ПОЛОМ — из модели (см. выше)
     const p = parentOfOur(our); if (!p) continue;
     const c = pos.get(our), pp = pos.get(p);
-    if (c && pp) out[our] = [+((c.x - pp.x)).toFixed(2), +((c.y - pp.y)).toFixed(2), +((c.z - pp.z)).toFixed(2)].map(Number) as [number, number, number];
+    if (c && pp) out[our] = [c.x - pp.x, c.y - pp.y, c.z - pp.z];
   }
   loaded.rotation.copy(r0); loaded.updateMatrixWorld(true);
   return out;
@@ -323,8 +378,7 @@ export function enforceTPose(loaded: THREE.Object3D, boneMap: Record<string, str
   const byName = boneIndex(loaded);
   const wp = (our: string): THREE.Vector3 | null => { const b = byName.get(boneMap[our] ?? ''); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
   // Временный up-fix к Y-up (та же логика, что в measureBoneOffsets) — чтобы канон-направления совпали по осям. Восстановим в конце.
-  const hip0 = wp('Hips'), head0 = wp('Head');
-  if (hip0 && head0) { const dy = head0.y - hip0.y, dz = head0.z - hip0.z; const ax = Math.abs(dz) > Math.abs(dy) ? (dz > 0 ? -Math.PI / 2 : Math.PI / 2) : (dy < 0 ? Math.PI : 0); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }
+  { const ax = upAxisAngle(loaded, boneMap); if (ax) { loaded.rotation.set(ax, 0, 0); loaded.updateMatrixWorld(true); } }   // то же правило
   const base = baseHumanoid();
   const cur = new THREE.Vector3(), can = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
   const qw = new THREE.Quaternion(), curW = new THREE.Quaternion(), pw = new THREE.Quaternion();

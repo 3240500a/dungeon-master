@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, OUR_BONES, OUR_FINGERS, type RetargetRig } from './retarget3d.js';
+import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig } from './retarget3d.js';
 const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая проверка «это фаланга?» для само-лечения замеров
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
@@ -177,6 +177,9 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
   }
 
   /** Импорт АТЛАСА: FBX/GLB (скелет + все части) → авто-классификация сабмешей → ОДИН GLB → конфиг character → превью. */
+  /** Приводить скелет файла к нашей канон-T. ВЫКЛ по умолчанию: файл берётся как есть, бит в бит. */
+  let forceT = false;
+
   async function importAtlas(get: () => Promise<THREE.Group>, name: string, atlasKey = ''): Promise<void> {
     asmStatus = 'импорт атласа…'; renderBody();
     try {
@@ -185,7 +188,16 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       const slots = classifyAtlas(meshNames);
       const _map = autoBoneMap(skeletonBoneNames(g));
       g.traverse((o) => { const s = (o as THREE.SkinnedMesh).skeleton; if (s) s.pose(); });   // → чистая bind-поза ДО правки
-      enforceTPose(g, _map);   // «Enforce T-pose» (как Unity): доворот рук в канон-T, из ЛЮБОЙ позы источника (A/T/гуляющий скелет AccuRIG) → как рыцарь
+      // ⭐ ЕДИНСТВЕННОЕ, ЧТО ИМПОРТ МЕНЯЕТ САМ, — ОСЬ «ВВЕРХ». glTF по спецификации Y-up, а CC/AccuRIG отдают Z-up.
+      // Раньше доворот был ВРЕМЕННЫМ (замерили — вернули), файл оставался в своей системе, а в нашу его затаскивал
+      // покостный позиционный привод. Что привод не тащит — оставалось в чужой системе: пальцы приезжали на 81° мимо.
+      normalizeUpAxis(g, _map);
+      // ПОЗУ ФАЙЛА НЕ ТРОГАЕМ. `enforceTPose` целил кости художника в направления НАШЕЙ процедурной болванки
+      // (`baseHumanoid()`), а не в анатомическую T-позу, — и уводил уже T-позную модель на 13.3° по ключице и плечу
+      // (замер: руки уезжали на 3.3 единицы). Это ровно то, что видно как «в максе не так». Приведение осталось
+      // РУЧНЫМ, для источников в A-позе, и панель показывает ЗАМЕРЕННОЕ отклонение, а не догадку.
+      const dev = tPoseDeviation(g, _map);
+      if (forceT) enforceTPose(g, _map);
       const boneScale = measureBoneScales(g, _map);   // ДЛИНЫ костей ФБХ (пропорции) → скелет масштабируется ими
       const boneOffsets = measureBoneOffsets(g, _map);   // rest-офсеты (Y-up) уже в T-позе (руки горизонт) → скелет и клипы совпадают, без A-косяка
       const id = (name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '') || 'character');
@@ -202,7 +214,8 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       cfg.models = models; asmAtlas = e;
       importRev++;   // геометрия другая → всё, что замерено ПО МОДЕЛИ (подъём стопы), протухло
       rebuildAsm();   // ВСЕГДА пересобираем скин: setAtlas дедуплицирует по URL, а переимпорт того же файла URL не меняет → иначе превью зависло бы на старом GLB
-      asmStatus = `атлас «${id}» [${key ?? 'игрок'}]: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`;
+      asmStatus = `атлас «${id}» [${key ?? 'игрок'}]: ${meshNames.length} частей → ${meshNames.map((n) => (slots[n] || '?')).join('/')}`
+        + ` · руки от горизонтали ${dev.toFixed(1)}°` + (forceT ? ' (приведено к T)' : dev > 25 ? ' — похоже на A-позу, включите приведение к T' : ' — файл в T-позе, взят как есть');
     } catch (err) { asmStatus = 'ошибка: ' + (err as Error).message; }
     renderBody();
   }
@@ -514,6 +527,15 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     imp.append(el('div', lblCss, 'Ключ атласа (класс/фракция)'), keyIn);
     // Поза источника (A/T) обрабатывается САМА: скелет строится канонически, поза бинда живёт в R_restTarget меш-ретаргета
     // (как Unity Humanoid). Никакого поля угла/выпрямления при импорте не нужно — любой скелет отображается правильно.
+    // Приведение к T — РУЧНОЕ и выключено. Файл в T-позе (наш случай) от него только портится: замер показал
+    // увод ключицы и плеча на 13.3°. Нужно оно лишь источникам в A-позе — статус импорта печатает замеренный угол.
+    {
+      const lab = document.createElement('label'); lab.style.cssText = lblCss + ';display:flex;gap:5px;align-items:center;margin:3px 0;cursor:pointer';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = forceT;
+      cb.onchange = () => { forceT = cb.checked; };
+      lab.append(cb, document.createTextNode('привести к T-позе (только для источников в A-позе)'));
+      imp.append(lab);
+    }
     const file = document.createElement('input'); file.type = 'file'; file.accept = '.fbx,.glb,.gltf'; file.style.display = 'none';
     file.onchange = () => { const f = file.files?.[0]; if (f) void importAtlas(() => loadModelFile(f), f.name, keyIn.value); };
     const urlIn = document.createElement('input'); urlIn.type = 'text'; urlIn.value = '/assets/knight_02_modular_rig.fbx'; urlIn.style.cssText = css.input + ';width:100%;margin:3px 0';

@@ -98,8 +98,24 @@ function humanoidHeight(h: Humanoid): number {
   for (const b of h.bones.values()) box.expandByPoint(b.getWorldPosition(v));
   return box.max.y - box.min.y;
 }
-/** Масштаб: подгон высоты скелета импорта (THREE.Bone) под рост куклы-источника (solid) — модель точно в рост. */
-function scaleToSource(obj: THREE.Object3D, source: Humanoid): number {
+/**
+ * Масштаб: подгон скелета импорта под рост куклы-источника.
+ *
+ * ⚠ ПО ПРОЛЁТУ ТАЗ→ГОЛОВА, А НЕ ПО ГАБАРИТУ ОБЛАКА КОСТЕЙ. Габарит считался по ВСЕМ костям модели, а у
+ * модели есть кости, которых у нашего рига нет вовсе (волосы, служебные CC поверх макушки) — и верх коробки
+ * у них разный. Масштаб выходил приблизительным, а дальше его молча добирал конформ длин, причём НЕРОВНО:
+ * промежуточные кости попадали в чужие отношения. ЗАМЕР сквозного аудита: таз уезжал на 0.375 % длины,
+ * бедро на 0.011°. Пролёт таз→голова есть у ОБОИХ ригов и у обоих снят с одной и той же модели — отношение
+ * получается точным. Габарит остаётся запасным вариантом, если каких-то костей не нашлось.
+ */
+function scaleToSource(obj: THREE.Object3D, source: Humanoid, boneMap?: Record<string, string>): number {
+  if (boneMap) {
+    const byName = new Map<string, THREE.Object3D>(); obj.traverse((o) => { if ((o as THREE.Bone).isBone && !byName.has(o.name)) byName.set(o.name, o); });
+    const v = new THREE.Vector3(), w = new THREE.Vector3();
+    const ih = byName.get(boneMap['Hips'] ?? '')?.getWorldPosition(v).distanceTo(byName.get(boneMap['Head'] ?? '')?.getWorldPosition(w) ?? v);
+    const sh = source.bones.get('Hips')?.getWorldPosition(v).distanceTo(source.bones.get('Head')?.getWorldPosition(w) ?? v);
+    if (ih && sh && ih > 1e-6 && sh > 1e-6) return sh / ih;
+  }
   const imp = skeletonBox(obj); const ih = imp.max.y - imp.min.y; const sh = humanoidHeight(source);
   return (sh > 1e-3 && ih > 1e-3) ? sh / ih : 1;
 }
@@ -291,7 +307,7 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
         const map = resolveBoneMap(g, spec.boneMap);
         g.rotation.set(detectUpFixX(g, map), 0, 0); g.updateMatrixWorld(true);
         // конформ длин звеньев к source (наш риг с профилем) → повороты 1:1, меш морфится, стопы/кисти совпадают
-        const rig = makeRetargetRig(g, map, scaleToSource(g, source), source);
+        const rig = makeRetargetRig(g, map, scaleToSource(g, source, map), source);
         g.traverse((o) => {
           if (!(o as THREE.SkinnedMesh).isSkinnedMesh) return;
           const mid = spec.submeshMaterials?.[o.name]; if (!mid) return;
@@ -325,7 +341,7 @@ export function createModelSkin(parent: THREE.Object3D, source: Humanoid): {
       if (my !== gen) { g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); return []; }
       const map = resolveBoneMap(g, model.boneMap ?? {});
       g.rotation.set(detectUpFixX(g, map), 0, 0); g.updateMatrixWorld(true);
-      const rig = makeRetargetRig(g, map, scaleToSource(g, source), source);
+      const rig = makeRetargetRig(g, map, scaleToSource(g, source, map), source);
       // Проход 1: собрать сабмеши со слотами. Variant-safe требует знать, ЕСТЬ ли в слоте запрошенный вариант.
       const subs: { mesh: THREE.Mesh; slot: string }[] = [];
       g.traverse((o) => {
