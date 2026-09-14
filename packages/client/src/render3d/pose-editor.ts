@@ -4463,6 +4463,21 @@ function renderGaitTune(): void {
   grp('поза (ретаргет)');
   row2('руки вниз', GXo, 'armDown', 'armDownRun', 0, 3, 0.01);
   grp('руки (мах)');
+  // ⚠ ПОЧЕМУ РУЧКИ РУК «МАЛО РЕАГИРУЮТ». Если у оружия есть авторская idle-стойка, верх тела
+  // блендится к ней с весом `hw = 1 − sway·moveMag` (`poseRuntime.applyUpper`), и гейту остаётся РОВНО
+  // `sway·moveMag`. При sway 0.2 это пятая часть хода ползунка (ЗАМЕР: «локоть — база» край→край даёт
+  // 183.3° без стойки и всего 36.7° с ней). Раньше об этом нигде не говорилось, и ручка выглядела сломанной.
+  {
+    const st = stanceClip(weapon);
+    if (st) {
+      const sw = swayOf(weapon);
+      const note = el('div', 'font-size:10px;margin:2px 0 4px;color:' + (sw < 0.35 ? '#e0a05a' : '#7a869e'));
+      note.textContent = '⚠ руками владеет авторская стойка «' + st.name + '» на ' + Math.round((1 - sw) * 100)
+        + ' %, ползункам ниже остаётся ' + Math.round(sw * 100) + ' % хода (и то лишь на полном ходу — стоя стойка владеет целиком). '
+        + 'Долю задаёт «остаточный мах» = ' + sw.toFixed(2) + ' на вкладке «Анимация».';
+      box.append(note);
+    }
+  }
   row2('база плеча (− вперёд / + назад)', POSEo, 'armSh', 'armShRun', -1.6, 1.6, 0.01);
   row2('амплитуда маха', POSEo, 'armSwing', 'armSwingRun', 0, 3, 0.01);
   // ⚠ Потолок = предел сустава плеча (±1.7…1.9). Выше π рука заворачивается и «скачет назад».
@@ -4472,7 +4487,7 @@ function renderGaitTune(): void {
   // ЛОКОТЬ: ровно две ручки вместо трёх. База — средний угол, амплитуда — насколько и КОГДА он гнётся
   // (в такт маху: вперёд подбирается, назад распрямляется). Прежние «сгиб локтя» и «добавка на ходу»
   // сложены в базу при загрузке (`foldElbow`) — угол тот же, ползунков меньше.
-  row2('локоть — база', POSEo, 'armEl', 'armElRun', 0, 3.2, 0.01);
+  row2('локоть — база', POSEo, 'armEl', 'armElRun', 0, 2.4, 0.01);   // 2.4 = предел шарнира ForeL/ForeR, см. POSE.elbowMax
   row2('локоть — амплитуда', POSEo, 'armElAmp', 'armElAmpRun', -2, 2, 0.01);
   // НАПРАВЛЕНИЕ сгиба (полюс), а не величина: крутит плечо вдоль кости — локти «крыльями» или прижаты.
   // Потолка нет осознанно: сустав плеча по твисту свободен (±π), упираться не во что — в отличие от колена.
@@ -5482,7 +5497,7 @@ const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armEl
   'armPhase', 'armPhaseRun', 'shoPhase', 'shoPhaseRun', 'armElAmp', 'armElAmpRun',
   'twistSwing', 'twistSwingRun', 'twistChest', 'twistChestRun', 'twistUpper', 'twistUpperRun',
   'twistPhase', 'twistPhaseRun', 'leanIdle', 'leanWalk', 'leanSpeed', 'leanWalkRun', 'leanSpeedRun',
-  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax', 'elbowDir', 'elbowDirRun'] as const;
+  'leanSideSwing', 'leanSideSwingRun', 'swingBase', 'swingSpeed', 'armSwingMax', 'elbowMax', 'elbowDir', 'elbowDirRun'] as const;
 const GX_KEYS = ['armDown', 'elbowBend', 'armDownRun', 'elbowBendRun'] as const;
 type NumRec = Record<string, number>;
 const GAIT_DEF: NumRec = {}, POSE_DEF: NumRec = {}, GX_DEF = { ...GX };
