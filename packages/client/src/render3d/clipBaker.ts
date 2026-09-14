@@ -15,7 +15,7 @@ import { makeBakeRig, autoBoneMap, enforceTPose, FULL_AIM_CHILD, OUR_BONES, OUR_
 import { boneWeight, partWeight, setPartWeight, maskFromBody, hasPart, type BoneMask } from './boneMask.js';
 import { rigSignature, isStaticBake, type ImportReport, type BakeStats } from './clipImport.js';
 import { slerpEuler, setHipsOffset, setRootMotion } from './clipModel.js';
-import { groundBakeOffset } from './footIk.js';
+import { groundBakeOffset , FOOT_SOLE} from './footIk.js';
 import { detrendTravel, rootTravel, refPose, readLimbTarget, groundTargets, clampHipsToFeet, lockLimb, limbBones, LIMBS, type Vec3, type FootTarget, type LimbId } from './footLock.js';
 import { applyHeadLookAt } from './poseRuntime.js';
 import type { Clip, Keyframe, Pose } from './poseRuntime.js';
@@ -397,7 +397,9 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
     }
     // Заземляем ЦЕЛИ СТОП, а не таз: с пинами лифт таза бессмыслен — ноги всё равно вернут стопы в цели.
     const feet: (FootTarget | null)[] = [targets.get('LF') ?? null, targets.get('RF') ?? null];
-    if (ground && feetHeld) groundTargets(feet, H.footLift ?? 0);
+    // Пол — тот же, что у планировщика/заземления: собственная высота лодыжки рига (`ankleRest`).
+    // `groundTargets` прибавляет его к своей константе, поэтому передаём РАЗНИЦУ.
+    if (ground && feetHeld) groundTargets(feet, (H.ankleRest ?? (FOOT_SOLE + (H.footLift ?? 0))) - FOOT_SOLE);
 
     applyPoseTo(H, pose, hipsD);
     if (ground && !feetHeld) hipsD[1] += groundBakeOffset(H);     // стопы не держим → заземление прежнее, лифтом таза

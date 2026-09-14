@@ -104,7 +104,10 @@ describe('footIk — длины ноги берутся с рига, а не и�
     const u = h.bones.get('LeftUpperLeg')!, l = h.bones.get('LeftLowerLeg')!, f = h.bones.get('LeftFoot')!;
     const hip = u.getWorldPosition(V(0, 0, 0));
     const target = V(hip.x, hip.y - 14, hip.z + 1);
-    groundFeet(h, 20, { off: 0 }, 1, () => target.y - 1.5, [true, true]);
+    // ⚠ Пол считаем от СОБСТВЕННОЙ высоты лодыжки рига (`ankleRest`), а не от константы 1.5: у рига,
+    // построенного из офсетов, она своя, и заземление целит именно в неё. Смысл теста прежний —
+    // солвер обязан взять длины ЭТОГО рига, а не 15-юнитовое бедро.
+    groundFeet(h, 20, { off: 0 }, 1, () => target.y - (h.ankleRest ?? 1.5), [true, true]);
     h.root.updateMatrixWorld(true);
     expect(f.getWorldPosition(V(0, 0, 0)).y).toBeCloseTo(target.y, 0);
     // Бедро могло уехать вместе с корнем (заземление двигает root) — меряем от НОВОГО положения бедра.

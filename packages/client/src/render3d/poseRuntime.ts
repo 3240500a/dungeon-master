@@ -971,7 +971,7 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   // (Старые ключи `__hipsY`/`__hipsP` приводятся к дельте в `hipsOffset` — оттого здесь прибавляется rest-высота.)
   // Фолбэк (позы вообще без офсета таза): расчёт из стоп — таз так, чтобы стопы idle стояли на полу (FOOT_Y + footLift).
   const authored = hipsOffset(idle, human.hipsRest.y);
-  const standY = authored ? human.hipsRest.y + authored[1] : (FOOT_Y + (human.footLift ?? 0)) + (h.y - (fl.y + fr.y) / 2);
+  const standY = authored ? human.hipsRest.y + authored[1] : (human.ankleRest ?? (FOOT_Y + (human.footLift ?? 0))) + (h.y - (fl.y + fr.y) / 2);   // пол — из рига (`ankleRest`), см. poseRuntime.update
   return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
 }
 
@@ -1181,11 +1181,13 @@ export class PosePlayer {
     const yaw = tl.rootYaw + warp;
     const tw = clamp(tl.residual - warp, -twist.maxTwist, twist.maxTwist);
     this.px += vx * dt; this.pz += vz * dt;
-    // ⚠ ОДИН ПОЛ НА ПЛАНИРОВЩИК И ЗАЗЕМЛЕНИЕ. Заземление целит лодыжку в `SOLE + footLift`, и
-    // планировщик обязан плантовать ТУДА ЖЕ, иначе они спорят каждый кадр (замер на рыцаре: 1.5
-    // против 2.916 — «ходьба дёргается вверх-вниз», нога почти всё время в упоре, и половина ручек
-    // походки перестаёт что-либо менять). Ставим КАЖДЫЙ кадр: `footLift` правится живьём ползунком.
-    this.driver.footFloor = FOOT_Y + (this.human.footLift ?? 0);
+    // ⚠ ОДИН ПОЛ НА ПЛАНИРОВЩИК, ЗАЗЕМЛЕНИЕ И СТОЙКУ — И БЕРЁТСЯ ОН ИЗ РИГА (`ankleRest`).
+    //
+    // Было `FOOT_Y + footLift`: константа процедурного манекена плюс сохранённое число. Оба НЕ едут
+    // за морфом. ЗАМЕР в живом редакторе: рост 1.16 поднял таз 35.05 → 40.66 и всю цепь ноги, лодыжка
+    // рига встала на 3.355, а `FOOT_Y + footLift` остался 2.900 — персонаж уезжал в пол на 0.455.
+    // `ankleRest` считается по САМОМУ ригу, поэтому следует и за моделью, и за телосложением.
+    this.driver.footFloor = this.human.ankleRest ?? (FOOT_Y + (this.human.footLift ?? 0));
     this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
     this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
     const fwdC = vx * Math.sin(yaw) + vz * Math.cos(yaw), latC = vx * Math.cos(yaw) - vz * Math.sin(yaw);

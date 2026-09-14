@@ -91,7 +91,10 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
  */
 export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, dt: number, gnd: GroundQuery, support?: [boolean, boolean]): void {
   const hips = mesh.bones.get('Hips'); if (!hips) return;
-  const sole = SOLE + (mesh.footLift ?? 0);   // подъём цели: кость-лодыжка выше на footLift → ПОДОШВА МЕША атласа на полу (не тонет)
+  // ⚠ ЦЕЛЬ — СОБСТВЕННАЯ ВЫСОТА ЛОДЫЖКИ РИГА, а не константа плюс сохранённое число.
+  // `SOLE + footLift` не ехал за морфом: рост 1.16 поднимал риг, а цель оставалась прежней, и
+  // персонаж уезжал в пол (замер: риг 3.355 против цели 2.900). `ankleRest` считается по ригу.
+  const sole = mesh.ankleRest ?? (SOLE + (mesh.footLift ?? 0));   // фолбэк: риг без замера (тесты/урезанные скелеты)
   const tgt: number[] = [], sup: boolean[] = []; let worst = -Infinity;
   for (let i = 0; i < IK_LEGS.length; i++) {
     const fb = mesh.bones.get(IK_LEGS[i]!.f); if (!fb) { tgt.push(NaN); sup.push(false); continue; }
@@ -229,7 +232,7 @@ const _gbFoot = new THREE.Vector3();
  * Отрицательный результат (обе стопы висят) тоже возвращаем: клип с прыжком не должен «прилипать» к полу.
  */
 export function groundBakeOffset(mesh: Humanoid, floorY = 0): number {
-  const sole = SOLE + (mesh.footLift ?? 0);
+  const sole = mesh.ankleRest ?? (SOLE + (mesh.footLift ?? 0));   // тот же пол, что у планировщика и стойки
   let worst = -Infinity;
   for (const L of IK_LEGS) {
     const fb = mesh.bones.get(L.f); if (!fb) continue;

@@ -121,8 +121,32 @@ export interface Humanoid {
    *  У атласа лодыжка выше процедурной (FOOT_Y=1.5) → без подъёма стопы меша тонут. Per-персонаж из pe_phys.footLift;
    *  читают measureStancePlants (standY) и footIk.groundFeet (цель = пол + SOLE + footLift) → редактор ≡ игра. 0 у процедурных. */
   footLift: number;
+  /**
+   * ⭐ ВЫСОТА КОСТИ-ЛОДЫЖКИ В ПОКОЕ — СОБСТВЕННОЕ ЧИСЛО РИГА, и единственное, по которому считается пол.
+   *
+   * Риг строится из офсетов модели И морфа, поэтому это число само едет за телосложением. Константа
+   * `FOOT_Y = 1.5` (высота лодыжки процедурного манекена) плюс сохранённый `footLift` за морфом НЕ едут:
+   * ЗАМЕР в живом редакторе — рост 1.16 поднял таз 35.05 → 40.66 и всю цепь ноги, лодыжка встала на
+   * 3.355, а `FOOT_Y + footLift` остался 2.900. Разница 0.455 — персонаж уезжал в пол ровно на неё.
+   */
+  ankleRest: number | null;
 }
 
+/**
+ * МИРОВАЯ высота кости-лодыжки в покое = таз + вся цепь вниз.
+ *
+ * ⚠ `restPos` хранит ЛОКАЛЬНЫЕ офсеты (у стопы это −14.4 — длина голени, а не высота над полом).
+ * Взять его напрямую — ровно та ошибка, на которой я один раз и попался: пол уехал бы на −14.
+ */
+function ankleRestY(restPos: Map<string, THREE.Vector3>): number | null {
+  const hips = restPos.get('Hips'); if (!hips) return null;
+  let y = hips.y;
+  for (const n of ['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot']) {
+    const o = restPos.get(n); if (!o) return null;
+    y += o.y;
+  }
+  return y;
+}
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Цилиндр-сегмент от (0,0,0) до `to` (лок.), радиус r. */
@@ -347,6 +371,11 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
   return {
     root, bones, meshes, joints, boneNames: table.map((b) => b.name), restQuat, legAdduct, legAdductKnee, footLift: 0, hips,
     hipsRest: restPos.get('Hips')!.clone(),
+    // ⚠ СОБСТВЕННАЯ ВЫСОТА — ТОЛЬКО У РИГА ИЗ МОДЕЛИ. Там подошва модели стоит на нуле по построению
+    // (высота таза замерена от рут-кости), поэтому мировая высота кости-лодыжки И ЕСТЬ искомый пол.
+    // У процедурного рига своя давняя конвенция `FOOT_Y = 1.5` (его собственный рест — 1.0, меш стопы
+    // свисает ниже кости), и её тут менять нельзя: на ней стоят замеры походки. Поэтому фолбэк.
+    ankleRest: opts.boneOffsets ? ankleRestY(restPos) : null,
     readPose() {
       const out: Record<string, [number, number, number]> = {};
       for (const [nm, g] of bones) { const e = g.rotation; out[nm] = [+e.x.toFixed(3), +e.y.toFixed(3), +e.z.toFixed(3)]; }
