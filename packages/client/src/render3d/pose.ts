@@ -1201,6 +1201,16 @@ class StepPlanner {
     const hipY = this.hipY;
     const out: LegAngles[] = [];
     const toeCurl: [number, number] = [0, 0];
+    /**
+     * ⭐ ГЕЙТ «ЭТО ШАГ ПОХОДКИ». Подъём носка и загиб носка настраиваются ПОД ФАЗУ ШАГА, но на
+     * ПРИСТАВНОМ ШАГЕ (поворот на месте) нога тоже считается маховой — и обе ручки ехали в доворот,
+     * которого они не описывают: «носки поднимает при повороте, а я настраивал их только для бега».
+     *
+     * ⚠ Не жёсткий 0/1 и не полный `moveAmt`: порог даёт щелчок на старте, а полная доля хода
+     * урезала бы ручки на медленной ходьбе (moveAmt 0.5 → подъём вдвое меньше, чего никто не просил).
+     * Полная сила уже при `moveAmt` 0.2 — то есть на любом реальном ходе.
+     */
+    const gaitStep = clamp(this.moveAmt / 0.2, 0, 1);
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       const s = i === 0 ? this.hipHalf : -this.hipHalf;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
@@ -1261,14 +1271,14 @@ class StepPlanner {
           // ОДИНАКОВО на обеих ногах. Зеркалить сторону НЕ НАДО: `LeftToes` и `RightToes` у нас с одним
           // локальным базисом ([0,−1,6] обе) — жалоба «правая гнётся вниз» была про ОБЩИЙ знак, а левая
           // не двигалась вовсе по другой причине (карта костей вела вспомогалку `*ShareBone`, см. retarget3d).
-          toeCurl[i] = -amt * Math.sin(Math.PI * tt);          // горб: ноль на обоих концах окна
+          toeCurl[i] = -amt * Math.sin(Math.PI * tt) * gaitStep;   // горб: ноль на обоих концах окна; вне ходьбы — 0
         }
       }
       const hold = -(a.hip + a.knee) * ankLvlS(i as 0 | 1);   // удержание подошвы (без носка)
       if (l.sw > 0) {
         // ⚠ ОКНО — только на УДЕРЖАНИЕ. У подъёма носка своя фаза (`toeLiftPhase`), и мешать их нельзя:
         // удержание гасит наклон ГОЛЕНИ, а подъём носка — это стиль поверх него.
-        const want = hold * ankHoldS(l.sw, i as 0 | 1) - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1));
+        const want = hold * ankHoldS(l.sw, i as 0 | 1) - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1)) * gaitStep;
         // Зажимаем В ПРЕДЕЛ СУСТАВА: см. `ankMax`. Манекен не должен просить того, чего физика не даст.
         a.ank = clamp(want, -GAIT.ankMax, GAIT.ankMax);
       } else if (this.plantW[i]! < 1) {
@@ -1452,9 +1462,14 @@ export class PoseDriver {
     // (у рук числа не строго равны: мах в противофазе, и полюс зависит от текущего сгиба локтя.)
     const knMax = Math.min(Math.abs(GAIT.kneeDirMax), Math.PI - 1e-3);
     const elMax = Math.PI - 1e-3;   // потолок-ручки нет (сустав свободен) — только страховка от заворота
+    /** Тот же гейт «это шаг походки», что в планировщике: полная сила уже на любом реальном ходе. */
+    const gaitStepD = clamp((this.planner ? this.planner.moveAmt : this.move) / 0.2, 0, 1);
     const kneeDir = (i: 0 | 1): number => clamp(locoVal('kneeDir', 'kneeDirRun', GAIT.kneeDir, GAIT.kneeDirRun, i, m), -knMax, knMax);
     const elbowDir = (i: 0 | 1): number => clamp(locoVal('elbowDir', 'elbowDirRun', POSE.elbowDir, POSE.elbowDirRun, i, m), -elMax, elMax);
-    o.hipTwL = kneeDir(0); o.hipTwR = -kneeDir(1);
+    // ⭐ СТОЯ НИЧЕГО НЕ ДОБАВЛЯЕМ К НОГАМ. Полюс колена — ручка ПОХОДКИ; на приставном шаге (поворот
+    // на месте) её незачем класть поверх авторской стойки: «эталонная стойка при прокрутке на месте
+    // должна быть idle 1:1». Тот же гейт, что у носка (`gaitStepD`).
+    o.hipTwL = kneeDir(0) * gaitStepD; o.hipTwR = -kneeDir(1) * gaitStepD;
     // Носок и разведение бедра — те же колонки настроек и то же зеркало, что у колена.
     const footTurn = (i: 0 | 1): number => locoVal('footTurn', 'footTurnRun', POSE.footTurn, POSE.footTurnRun, i, m);
     const hipSplay = (i: 0 | 1): number => locoVal('hipSplay', 'hipSplayRun', POSE.hipSplay, POSE.hipSplayRun, i, m);
@@ -1471,7 +1486,7 @@ export class PoseDriver {
     o.ankL += this.stanceFoot.pitchL * (1 - mv); o.ankR += this.stanceFoot.pitchR * (1 - mv);
     // Развод бёдер идёт ОТДЕЛЬНЫМ каналом, а не прибавкой к решению IK: прибавка уводила стопу
     // с планта на 19 ед (замер), то есть ломала походку вместо разведения колен.
-    o.hipSplayL = hipSplay(0); o.hipSplayR = hipSplay(1);
+    o.hipSplayL = hipSplay(0) * gaitStepD; o.hipSplayR = hipSplay(1) * gaitStepD;   // развод бёдер — тоже ходовая ручка (см. `gaitStepD`)
     // Локти — ДО веток: боевой ГАРД ниже перезапишет твист своей авторской стойкой, и это верно.
     o.shTwL = -elbowDir(0); o.shTwR = elbowDir(1);
     // Ручки ТЕЛА (не стороны): берём сторону 0 — ASYM для них панель не разводит.
