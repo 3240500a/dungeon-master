@@ -471,11 +471,19 @@ export class GameSession {
     const moveMult = stunned ? 0 : attacking ? snap.derived.attackMoveMult : 1;   // per-класс замедление при атаке (из класс-scaling)
     if (input && !stunned) p.facing = input.facing;
     const len = input ? vecLen(input.move.x, input.move.y) : 0;
+    let want = { x: 0, y: 0 };
     if (input && moveMult > 0 && len > 0) {
       const speed = snap.derived.moveSpeed * pm.moveMult * moveMult;
-      p.vel = { x: (input.move.x / len) * speed, y: (input.move.y / len) * speed };
-    } else {
-      p.vel = { x: 0, y: 0 };
+      want = { x: (input.move.x / len) * speed, y: (input.move.y / len) * speed };
+    }
+    // ⭐ ИНЕРЦИЯ (`balance.moveInertia`): скорость едет к желаемой с ускорением, а не прыгает.
+    // ⚠ СТАН УКОРЕНЯЕТ МГНОВЕННО и мимо инерции: «оглушён» не должен проезжать ещё полметра.
+    const inr = this.cfg.get('balance').moveInertia;
+    if (!inr.enabled || stunned) p.vel = want;
+    else {
+      const rate = (want.x !== 0 || want.y !== 0) ? inr.accel : inr.decel;   // трогаемся быстрее, чем тормозим
+      const dx = want.x - p.vel.x, dy = want.y - p.vel.y, d = vecLen(dx, dy), step = rate * dt;
+      p.vel = d <= step || d < 1e-6 ? want : { x: p.vel.x + (dx / d) * step, y: p.vel.y + (dy / d) * step };
     }
     p.pos = moveWithCollision(p.pos, p.vel, p.radius, this.world.grid, dt, this.world.obstacles);
     if (this.economy) this.autoPickup(p); // прошёл над золотом — подобрал, клик не нужен

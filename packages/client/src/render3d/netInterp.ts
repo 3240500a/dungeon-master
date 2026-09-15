@@ -53,6 +53,20 @@ export interface NetInterp {
   push(id: string, x: number, z: number, t: number): void;
   /** Что рисовать в момент `t` (сек): позиция с экстраполяцией и гашением ошибки + серверная скорость. */
   at(id: string, t: number): ActorAt;
+  /**
+   * ⭐⭐ ПОГАСИТЬ ПРЕДСКАЗАНИЕ СКОРОСТИ — для СВОЕГО игрока, когда он отпустил кнопку.
+   *
+   * Клиент узнаёт об остановке РАНЬШЕ сервера: это его собственный ввод, ждать подтверждения незачем.
+   * Пока ждали, предсказание уезжало вперёд, а потом разницу приходилось отдавать — персонаж заметно
+   * «сдавал назад» (ЗАМЕР: перелёт 4.5 ед и 1.3 с отката). С гашением по вводу перелёт 0.9, откат 0.18.
+   *
+   * `rate` — ед/с²: столько же, сколько тормозит сервер (`balance.moveInertia.decel`), либо
+   * `Infinity`, если инерции нет и сервер встаёт мгновенно.
+   *
+   * ⚠ ГАСИМ, А НЕ СНАПИМ: уже нарисованное уходит в ошибку и рассасывается той же экспонентой.
+   * Обнулить скорость «в лоб» значило бы дёрнуть картинку назад на весь перелёт разом.
+   */
+  brake(id: string, rate: number, t: number, dt: number): void;
   /** Забыть актёра (ушёл из снапшота). */
   drop(id: string): void;
   /** Сколько актёров отслеживается — для отладки и тестов. */
@@ -92,6 +106,15 @@ export function makeNetInterp(): NetInterp {
       const b = base(k, t);
       const decay = Math.exp(-Math.max(0, t - k.et) / ERR_TAU);
       return { x: b.x + k.ex * decay, z: b.z + k.ez * decay, vx: k.vx, vz: k.vz };
+    },
+    brake(id, rate, t, dt) {
+      const k = map.get(id); if (!k) return;
+      const s = Math.hypot(k.vx, k.vz); if (s <= 1e-6) return;
+      const drawn = this.at(id, t);
+      const f = Math.max(0, s - rate * dt) / s;
+      k.vx *= f; k.vz *= f;
+      const b = base(k, t);                       // непрерывность: разницу забирает ошибка
+      k.ex = drawn.x - b.x; k.ez = drawn.z - b.z; k.et = t;
     },
     drop(id) { map.delete(id); },
     get size() { return map.size; },

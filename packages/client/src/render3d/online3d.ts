@@ -696,6 +696,16 @@ export async function startOnline3d(): Promise<void> {
     // рисовались на ОДИН момент времени: иначе свой игрок и монстры разъезжаются на доли кадра.
     const nowSec = performance.now() / 1000;
     feedInterp();
+    // ⭐⭐ ОТПУСТИЛ КНОПКУ — ГАСИМ ПРЕДСКАЗАНИЕ, не дожидаясь сервера. Свой ввод клиент знает в тот же
+    // кадр, а снапшот об остановке придёт через полпинга: всё это время предсказание уезжало бы вперёд,
+    // и разницу пришлось бы отдавать движением НАЗАД. Темп гашения — тот же, с каким тормозит сервер.
+    if (myId) {
+      const mv = moveFromKeys(keys, CAM.az);
+      if (mv.x === 0 && mv.y === 0) {
+        const inr = app.config.get('balance').moveInertia;
+        interp.brake('p' + myId, inr.enabled ? inr.decel : Infinity, nowSec, dt);
+      }
+    }
     if (!latest || !self) return;
     animFrame++;
     computeActiveWindow();   // AABB видимого окна (+запас) — гейт активности физики монстров ниже

@@ -96,6 +96,7 @@
   "skillPointsPerLevel": 1,
   "masteryPointsPerLevel": 2,
   "moveSpeedBase": 80,
+  "moveInertia": { "enabled": false, "accel": 900, "decel": 300 },
   "monsterXpGrowth": 0.2,
   "uniqueXpMult": 3,
   "monsterScaling": {

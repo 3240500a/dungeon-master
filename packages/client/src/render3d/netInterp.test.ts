@@ -101,6 +101,61 @@ describe('интерполяция снапшотов', () => {
     expect(mk()).toBeCloseTo(SPEED, 1);
   });
 
+  it('⭐⭐ ГАШЕНИЕ ПО СВОЕМУ ВВОДУ УБИРАЕТ ПЕРЕЛЁТ', () => {
+    // Жалоба: «отпускаешь бег — он останавливается и чуть назад двигается». Клиент предсказывал бег,
+    // пока сервер не подтвердил остановку, и разницу приходилось отдавать движением НАЗАД.
+    // ⚠ Мутация «не гасить по вводу» валит это: перелёт возвращается впятеро.
+    const mk = (brake: boolean): { over: number; back: number } => {
+      const ip = makeNetInterp();
+      let srv = 0, next = 0, t = 0, over = 0, back = 0, prev = 0;
+      ip.push('a', 0, 0, 0);
+      const STOP = 1.2, RTT = 0.03;
+      for (let k = 0; k < 150; k++) {
+        t += FRAME;
+        if (brake && t >= STOP) ip.brake('a', Infinity, t, FRAME);       // отпустил кнопку
+        while (t >= next + TICK) { next += TICK; if (next < STOP + RTT) srv += SPEED * TICK; ip.push('a', 0, srv, next); }
+        const z = ip.at('a', t).z;
+        if (k) { over = Math.max(over, z - srv); back = Math.min(back, z - prev); }
+        prev = z;
+      }
+      return { over, back };
+    };
+    const off = mk(false), on = mk(true);
+    // ЗАМЕР в этом прогоне: 4.7 → 2.0 (в живой модели с реальным пингом было 4.5 → 0.9).
+    expect(on.over, `⚠ перелёт не уменьшился: было ${off.over.toFixed(1)}, стало ${on.over.toFixed(1)}`).toBeLessThan(off.over * 0.5);
+    expect(-on.back, '⚠ откат назад не уменьшился').toBeLessThan(-off.back);
+  });
+
+  it('⚠ ГАСИМ, А НЕ СНАПИМ — картинка не дёргается в момент гашения', () => {
+    // ⚠ Мутация «обнулить скорость без записи ошибки» валит это: кадр гашения дал бы скачок назад
+    // на весь накопленный перелёт.
+    const ip = makeNetInterp();
+    ip.push('a', 0, 0, 0); ip.push('a', 0, 4, TICK); ip.push('a', 0, 8, 2 * TICK);
+    const t = 2 * TICK + 0.02;
+    const before = ip.at('a', t).z;
+    ip.brake('a', Infinity, t, FRAME);
+    expect(ip.at('a', t).z, '⚠ СКАЧОК в момент гашения').toBeCloseTo(before, 9);
+  });
+
+  it('⭐ темп гашения уважается: с инерцией скорость падает постепенно', () => {
+    const ip = makeNetInterp();
+    ip.push('a', 0, 0, 0); ip.push('a', 0, 4, TICK); ip.push('a', 0, 8, 2 * TICK);
+    const v0 = ip.at('a', 2 * TICK).vz;
+    ip.brake('a', 300, 2 * TICK, FRAME);
+    const v1 = ip.at('a', 2 * TICK).vz;
+    expect(v1, '⚠ скорость не упала').toBeLessThan(v0);
+    expect(v1, '⚠ скорость обнулилась вместо плавного гашения').toBeGreaterThan(0);
+    expect(v0 - v1, '⚠ гасим не с заданным ускорением').toBeCloseTo(300 * FRAME, 6);
+  });
+
+  it('гашение стоящего актёра — ноль работы', () => {
+    const ip = makeNetInterp();
+    ip.push('a', 0, 0, 0); ip.push('a', 0, 0, TICK);
+    const z = ip.at('a', 2 * TICK).z;
+    ip.brake('a', Infinity, 2 * TICK, FRAME);
+    expect(ip.at('a', 2 * TICK).z).toBe(z);
+  });
+
   it('незнакомый актёр — нули, а не падение', () => {
     expect(makeNetInterp().at('нет такого', 1)).toEqual({ x: 0, z: 0, vx: 0, vz: 0 });
   });
