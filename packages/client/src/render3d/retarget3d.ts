@@ -34,6 +34,17 @@ export const OUR_FINGERS: readonly string[] = allFingerBones();
 /** Порядок ведения ретаргета: родитель раньше ребёнка (фаланги — дети кисти, поэтому после). */
 const DRIVE_ORDER: readonly string[] = [...OUR_BONES, ...OUR_FINGERS];
 const IS_FINGER = new Set<string>(OUR_FINGERS);
+/**
+ * ⚠⚠ КОСТИ, У КОТОРЫХ БЕРЁМ ТОЛЬКО ПОВОРОТ — ни конформа длины, ни позиц-ведения.
+ *
+ * НОСОК. Его офсет в нашем риге — ДЕФОЛТ БОЛВАНКИ `[0, −1, 6]` (длина 6.083), а не замер с модели:
+ * профиль тела носок не мерит. Пока `LeftToes` по ошибке вёл кость-пустышку `*ShareBone`, конформ
+ * настоящий носок не трогал; как только карта починилась, он потянул носок модели под НАШУ ДОГАДКУ —
+ * ЗАМЕР: левая стопа→носок 5.553 → **6.698** при правой 5.553, то есть левая стопа стала на 20 %
+ * длиннее правой. Ровно то же соображение уже записано у фаланг кисти: «веер ладони у каждой модели
+ * свой». Поворот носка при этом ведётся как раньше — ради него всё и чинилось.
+ */
+const ROT_ONLY = new Set<string>(['LeftToes', 'RightToes']);
 
 /**
  * Родитель фаланги в НАШЕЙ цепи (Ф14.2). Нужен ровно для одного — замера офсетов по модели.
@@ -505,6 +516,7 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
     // модели — замерено: тело сходилось ×1.000, а пальцы оставались ×1.06. Наша геометрия фаланг больше
     // не «прикидка» (Ф14.2 замеряет её с модели), поэтому конформить их безопасно и нужно.
     for (const our of [...OUR_BONES, ...OUR_FINGERS] as string[]) {
+      if (ROT_ONLY.has(our)) continue;                 // длину носка НЕ конформим: наша — дефолт болванки (см. ROT_ONLY)
       const p = parentOfOur(our); if (!p) continue;
       const cb = byName.get(boneMap[our] ?? ''), pb = byName.get(boneMap[p] ?? '');
       const sc2 = source.bones.get(our), sp = source.bones.get(p);
@@ -553,7 +565,7 @@ export function makeRetargetRig(loaded: THREE.Object3D, boneMap: Record<string, 
       // Пальцам позиц-ведение НЕ даём: длины фаланг уже сконформлены (Ф15.1), а позиц-ведение сверху
       // тянуло бы суставы кисти на НАШ разброс пальцев (веер ладони у каждой модели свой).
       // Пальцы только вращаются — раскладка кисти остаётся родной.
-      if (posDrive && tb.parent && !IS_FINGER.has(our)) { sb.getWorldPosition(_wp); _m.copy(tb.parent.matrixWorld).invert(); tb.position.copy(_wp).applyMatrix4(_m); }
+      if (posDrive && tb.parent && !IS_FINGER.has(our) && !ROT_ONLY.has(our)) { sb.getWorldPosition(_wp); _m.copy(tb.parent.matrixWorld).invert(); tb.position.copy(_wp).applyMatrix4(_m); }
       tb.updateMatrixWorld(false);                     // дети прочитают верный parentWorld
     }
     // ⚠ ПОСЛЕ основных костей: оборот сегмента растягивается по твист-костям, иначе меш скручивает «фантиком»

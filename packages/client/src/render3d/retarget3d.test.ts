@@ -105,6 +105,61 @@ describe('retarget3d — авто-карта костей', () => {
   });
 });
 
+/**
+ * ⚠⚠ КОНФОРМ ДЛИН НЕ ДОЛЖЕН ТРОГАТЬ НОСОК. Офсет носка в нашем риге — ДЕФОЛТ болванки `[0,−1,6]`
+ * (длина 6.083), профиль тела его не мерит. Пока `LeftToes` по ошибке вёл кость-пустышку
+ * `*ShareBone`, конформ настоящий носок не трогал; как только карта починилась, он потянул носок
+ * модели под нашу догадку — ЗАМЕР на живом рыцаре: левая стопа→носок 5.553 → **6.698** при правой
+ * 5.553, то есть левая стопа стала на 20 % длиннее правой (юзер увидел это глазами сразу).
+ */
+describe('retarget3d — конформ длин обходит носок', () => {
+  /** Модель: Calf → Foot → Toe, у всех своя длина. */
+  const model = (): THREE.Object3D => {
+    const bone = (n: string, y: number, z = 0): THREE.Bone => { const b = new THREE.Bone(); b.name = n; b.position.set(0, y, z); return b; };
+    const root = new THREE.Object3D();
+    const hip = bone('hip', 30), thigh = bone('thigh_l', -2), calf = bone('calf_l', -10), foot = bone('foot_l', -10), toe = bone('toe_l', 0, 4);
+    toe.add(bone('bigtoe_l', 0, 1));                      // носок с ребёнком — как у CC
+    foot.add(toe); calf.add(foot); thigh.add(calf); hip.add(thigh); root.add(hip);
+    root.updateMatrixWorld(true);
+    return root;
+  };
+  const MAP = { Hips: 'hip', LeftUpperLeg: 'thigh_l', LeftLowerLeg: 'calf_l', LeftFoot: 'foot_l', LeftToes: 'toe_l' } as Record<string, string>;
+  const len = (root: THREE.Object3D, a: string, b: string): number => {
+    const f = (n: string): THREE.Object3D => { let r: THREE.Object3D | null = null; root.traverse((o) => { if (o.name === n) r = o; }); return r!; };
+    root.updateMatrixWorld(true);
+    return f(a).getWorldPosition(new THREE.Vector3()).distanceTo(f(b).getWorldPosition(new THREE.Vector3()));
+  };
+
+  it('⭐ длина носка остаётся МОДЕЛЬНОЙ, а голень конформится к нашей', () => {
+    const src = buildHumanoid({});
+    const g = model();
+    const toeBefore = len(g, 'foot_l', 'toe_l'), calfBefore = len(g, 'calf_l', 'foot_l');
+    const rig = makeRetargetRig(g, { ...MAP }, 1, src);
+    const ourCalf = len(src.root, 'LeftLowerLeg', 'LeftFoot');
+    expect(len(g, 'foot_l', 'toe_l'), '⚠ КОНФОРМ ТЯНЕТ НОСОК ПОД НАШУ ДОГАДКУ — стопа модели деформируется').toBeCloseTo(toeBefore, 5);
+    // ⚠ И ПОСЛЕ ДРАЙВА ТОЖЕ: позиц-ведение (`posDrive`) утащило бы сустав носка на НАШ офсет — тот же
+    // урон, только каждый кадр. Ловится только замером ПОСЛЕ `drive`, до него длина ещё модельная.
+    rig.drive(src);
+    expect(len(g, 'foot_l', 'toe_l'), '⚠ ПОЗИЦ-ВЕДЕНИЕ ТЯНЕТ НОСОК — стопа модели деформируется на каждом кадре').toBeCloseTo(toeBefore, 5);
+    expect(calfBefore, 'подстраховка теста: голень изначально ДРУГОЙ длины').not.toBeCloseTo(ourCalf, 1);
+    expect(len(g, 'calf_l', 'foot_l'), '⚠ конформ перестал работать вообще').toBeCloseTo(ourCalf, 3);
+  });
+
+  it('⭐ но ПОВОРОТ носка по-прежнему ведётся', () => {
+    const src = buildHumanoid({});
+    const g = model();
+    const rig = makeRetargetRig(g, { ...MAP }, 1, src);
+    const f = (n: string): THREE.Object3D => { let r: THREE.Object3D | null = null; g.traverse((o) => { if (o.name === n) r = o; }); return r!; };
+    rig.drive(src);
+    const y0 = f('bigtoe_l').getWorldPosition(new THREE.Vector3()).y;
+    src.bones.get('LeftToes')!.rotation.x = -0.8;
+    src.root.updateMatrixWorld(true);
+    rig.drive(src);
+    g.updateMatrixWorld(true);
+    expect(f('bigtoe_l').getWorldPosition(new THREE.Vector3()).y - y0, '⚠ носок перестал вестись — ради поворота всё и чинилось').toBeGreaterThan(0.1);
+  });
+});
+
 describe('retarget3d — драйв', () => {
   it('поворот нашей кости → цель поворачивается так же (rest цели = identity)', () => {
     const src = buildHumanoid();
