@@ -395,6 +395,16 @@ function applyAlpha(): void {
 }
 const rig = {
   hipsPos: V(), hipsQuat: Q(), hipsHandle: mkHandle(0xf0c020, 2.3, true),
+  /**
+   * ⭐ ГДЕ РУЧКА ТАЗА БЫЛА В ПРОШЛОМ КАДРЕ — опора для дельты драга.
+   *
+   * Раньше дельта считалась от `hipsPos` (ЖЕЛАНИЕ), а рисовалась ручка тоже по нему. Но помощь
+   * баланса (`applyBalance`, до **9 единиц** вбок) двигает КОСТЬ и не трогает желание — значит ручка
+   * оставалась на авторском месте, а таз уезжал: «хелпер улетает в бок». Теперь ручка рисуется НА
+   * КОСТИ, а драг считает дельту от её же прошлого положения — тогда он верен при любом сдвиге
+   * (баланс, кламп по пинам, гейт), а «желание» остаётся отдельной величиной для математики.
+   */
+  hipsHandleAt: V(),
   eff: {
     LH: { root: 'LeftUpperArm', mid: 'LeftLowerArm', end: 'LeftHand', pole: new THREE.Vector3(0, -1, -0.4), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 1.7), poleHandle: mkHandle(0xff8c3a, 1.3), viewOff: V() },
     RH: { root: 'RightUpperArm', mid: 'RightLowerArm', end: 'RightHand', pole: new THREE.Vector3(0, -1, -0.4), swivel: 0, bodyApplied: [0, 0, 0] as [number, number, number], keepRot: false, isFoot: false, pin: false, ik: true, target: V(), prev: V(), footQuat: Q(), handle: mkHandle(0x4a8cff, 1.7), poleHandle: mkHandle(0xff8c3a, 1.3), viewOff: V() },
@@ -1717,7 +1727,10 @@ gizmo.addEventListener('objectChange', () => {
   }
   if (!ikOn && activeKey !== 'hips') return;   // тумблер выкл: ручки спрятаны, но таз — нет; его ветка ниже работает всегда
   if (activePole) { const e = rig.eff[activePole]!; const rp = human.bones.get(e.root)!.getWorldPosition(V()); const pv = e.poleHandle.position.clone().sub(rp); if (pv.lengthSq() > 1e-6) e.pole.copy(pv.normalize()); return; }   // угол свивеля снимется в solveElbowEffector по ФАКТУ
-  if (activeKey === 'hips') { if (hipsMode === 'translate') moveHips(rig.hipsHandle.position.clone().sub(rig.hipsPos), null); else rig.hipsQuat.copy(rig.hipsHandle.quaternion); }
+  if (activeKey === 'hips') {
+    if (hipsMode === 'translate') { moveHips(rig.hipsHandle.position.clone().sub(rig.hipsHandleAt), null); rig.hipsHandleAt.copy(rig.hipsHandle.position); }
+    else rig.hipsQuat.copy(rig.hipsHandle.quaternion);
+  }
   else {
     // Ф21.4: ТЯГА КИСТИ БОЛЬШЕ НЕ ДВИГАЕТ ТАЗ. Здесь стояло `moveHips(дельта × bodyFollow)` — КАЖДЫЙ
     // кадр драга весь персонаж ехал на 0.45 смещения руки, а запиненные стопы держали — это и есть
@@ -2723,7 +2736,17 @@ const pbtn = (label: string, fn: () => void, on = false): HTMLButtonElement => {
 const tabSwitch = (k: typeof tab): void => {
   const stop = locoOn && k !== 'turn' && k !== 'loco';
   tab = k;                                                   // СНАЧАЛА переключаем вкладку, ПОТОМ гасим превью — см. ниже
-  if (stop) { locoOn = false; ghostGround.off = 0; goFrame(frameIdx); }
+  if (stop) {
+    locoOn = false; ghostGround.off = 0; goFrame(frameIdx);
+    // ⚠⚠ ПЕРЕСНЯТЬ ТАЗ ПОСЛЕ ПРЕВЬЮ. Гейт двигает КОСТЬ таза каждый кадр (`30 + bobY`, боковое
+    // качание `bobX`), а `rig.hipsPos` — ЖЕЛАНИЕ, куда тянут, — остаётся прежним. `goFrame` спасает
+    // только когда есть выбранный клип: без него поза не восстанавливается вовсе, и расхождение
+    // переживает возврат на вкладку. ЗАМЕР: после пробежки кость (−0.17, 30.7, 0) против ручки
+    // (0, 32, 0) — 1.31 ед., и ручка так и висела сбоку, а драг считал дельту от мёртвого желания.
+    const hp = human.bones.get('Hips')!;
+    if (ikOn) captureRig();
+    else { rig.hipsPos.copy(hp.position).sub(balanceOff); rig.hipsQuat.copy(hp.quaternion); }
+  }
   refreshAll();
 };
 for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn', 'Повороты'], ['graph', 'Граф'], ['test', '▶ Тест'], ['char', 'Персонаж'], ['models', 'Модели'], ['ai', 'ИИ']] as const) { const b = document.createElement('button'); b.textContent = lbl; b.style.cssText = 'flex:1;padding:4px;background:#20242f;color:#cfd3e0;border:1px solid #39415a;border-radius:4px;cursor:pointer;font:11px monospace'; b.onclick = () => tabSwitch(k); b.dataset.tab = k; tabBar.append(b); }
@@ -6209,7 +6232,9 @@ function loop(): void {
     else if (!gizmo.dragging) syncHandles();
     const active = gizmo.dragging ? gizmo.object : null;
     if (gazeHandle !== active) gazeHandle.position.copy(gazeTarget);
-    if (rig.hipsHandle !== active) rig.hipsHandle.position.copy(rig.hipsPos);
+    // ⭐ РУЧКА ТАЗА — НА САМОМ ТАЗЕ. Рисовать её по «желанию» значило показывать не то, чем она
+    // управляет: помощь баланса уводит КОСТЬ до 9 ед. вбок, и ручка оставалась висеть в стороне.
+    if (rig.hipsHandle !== active) { human.bones.get('Hips')!.getWorldPosition(rig.hipsHandle.position); rig.hipsHandleAt.copy(rig.hipsHandle.position); }
     for (const e of effList()) { handleViewOff(e, e.viewOff); if (e.handle !== active) e.handle.position.copy(e.target).add(e.viewOff); if (e.poleHandle !== active) e.poleHandle.position.copy((viewBone(e.mid) ?? human.bones.get(e.mid)!).getWorldPosition(V())); }
     for (const k in shoulderHandles) { const h = shoulderHandles[k]!; if (h !== active) h.position.copy((viewBone(rig.eff[k]!.root) ?? human.bones.get(rig.eff[k]!.root)!).getWorldPosition(V())); }
     if (gazeLine.visible) { const hd = viewBone('Head') ?? human.bones.get('Head'); if (hd) (gazeLine.geometry as THREE.BufferGeometry).setFromPoints([hd.getWorldPosition(V()), gazeTarget]); }
