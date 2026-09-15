@@ -1826,7 +1826,8 @@ function groundManikin(support?: [boolean, boolean]): (() => void) | null {
   // ⚠ ВЕС ОКНА — ТОТ ЖЕ, что у призрака и в игре: иначе манекен снова покажет НЕ ТО, ради чего редактор и живёт.
   groundFeet(human, human.hipsWorldY(), _manGround, 1e3, () => 0, support,
     { w: locoOn ? lp().driver.groundWeights : undefined,
-      flat: locoOn ? lp().driver.plantWeights : undefined });   // …и большой dt → полное схождение за один вызов
+      flat: locoOn ? lp().driver.plantWeights : undefined,
+      still: locoOn ? lp().moveMag < 0.02 : true });   // …и большой dt → полное схождение за один вызов
   return () => {
     LEG_BONES.forEach((n, i) => { const b = human.bones.get(n), q = save[i]; if (b && q) b.quaternion.copy(q); });
     human.root.position.y = rootY; human.root.updateMatrixWorld(true);
@@ -6055,7 +6056,8 @@ function stepPhysics(dt: number): void {
     // lp() ТОЛЬКО в локо: его конструктор зовёт measureStance→human.reset() (мутирует манекен) — в Позы/Анимации это сбило бы позу.
     const sw = locoOn ? lp().driver.swingLegs : ([false, false] as [boolean, boolean]);
     const gOpts = { w: locoOn ? lp().driver.groundWeights : undefined, lag: GAIT.gndLag,
-      flat: locoOn ? lp().driver.plantWeights : undefined };   // окно/плавность/укладка — те же, что в игре
+      flat: locoOn ? lp().driver.plantWeights : undefined,
+      still: locoOn ? lp().moveMag < 0.02 : true };   // окно/плавность/укладка/«стоим» — те же, что в игре
     const rMatch = physDead ? 0 : (locoOn ? renderMatchWeight(physMatchBase, lp().attackWeight, lp().attackMatch) : PHYS.match);
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
       rMatch > 0.001 ? human.readPose() : null, rMatch, undefined, locoOn ? [!sw[0], !sw[1]] : undefined, footGround, gOpts);
