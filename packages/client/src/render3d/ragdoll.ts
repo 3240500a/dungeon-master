@@ -130,8 +130,10 @@ export interface RagdollHandle {
   /** `windupSec` — вайндап сервера: размеченный кадр `impact` садится ровно на момент урона. */
   attack(clips?: string[], windowSec?: number, windupSec?: number): void;
   /** Метки кадров играющего клипа (удар/звук/VFX/шаг/тряска). Клип говорит ЧТО и КОГДА, обработчик — КАК.
-   *  Подписчиков пока нет (ассетов звука/VFX не существует) — шов готов, чтобы подключать их не трогая куклу. */
+   *  Звук уже подписан (`animSfx.markSfx`); VFX/тряска — свободные места на том же шве. */
   onMark?: ((e: MarkEvent) => void) | null;
+  /** Атака ЗАЖАТА: пока true, конец размеченного окна `combo` начинает следующий удар цепочки, а не стойку. */
+  setAttackHold?(on: boolean): void;
   setDead(d: boolean): void;
   /** Дёрг при попадании: импульс в верх тела (dx,dz — направление отбрасывания, ед. вектор; power — сила ×). */
   hitReact(dx: number, dz: number, power?: number): void;

@@ -225,9 +225,13 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       const pool = (clips && clips.length)
         ? clips.map((n) => content.resolveAbilityClip(n, weapon)).filter((c): c is NonNullable<typeof c> => !!c)
         : content.attackClips(weapon);
+      // ⭐ ТОТ ЖЕ ПУЛ отдаём автосцепке по окну комбо: чередование ударов — дело куклы, а не проигрывателя.
+      player.comboNext = pool.length ? () => pool[atkClipIdx++ % pool.length] ?? null : null;
       if (pool.length) { player.triggerAttack(pool[atkClipIdx % pool.length]!, windowSec, windupSec); atkClipIdx++; }
       else player.triggerAttack(content.attackClip(weapon), windowSec, windupSec);   // ничего не авторено → прежний фолбэк
     },
+    /** Атака зажата: пока true, удар на конце окна комбо переходит в следующий, а не в стойку. */
+    setAttackHold(on) { player.attackHold = on; },
     /** Метки кадров — просто пробрасываем наружу: кукла не знает ни про звук, ни про VFX. */
     get onMark() { return player.onMark; },
     set onMark(fn) { player.onMark = fn ?? null; },

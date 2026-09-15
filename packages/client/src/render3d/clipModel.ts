@@ -297,6 +297,26 @@ export function markSec(c: Clip, type: MarkType): number | null {
   for (const k of c.keys) if (k.marks?.some((m) => m.type === type)) return k.t;
   return null;
 }
+/**
+ * ⭐⭐ ОКНО КОМБО — ОТРЕЗОК, ВНУТРИ КОТОРОГО УДАР МОЖЕТ ПЕРЕЙТИ В СЛЕДУЮЩИЙ.
+ *
+ * До этого метку `combo` не читал НИКТО — ни клиент, ни сервер (проверено поиском): разметка была,
+ * поведения не было. Теперь это граница, в которой живёт зажатая атака: конец окна не отпускает в
+ * стойку, а начинает следующий удар цепочки.
+ *
+ * Берём ПЕРВУЮ метку: два окна комбо в одном клипе — это авторская ошибка, и гадать за автора,
+ * какое из них главное, нельзя. Точечная (без `dur`) метка окном не является — окна нулевой длины
+ * не бывает, и трактовать её как «весь остаток клипа» значило бы придумывать за автора.
+ */
+export function comboWindow(c: Clip | null | undefined): { start: number; end: number } | null {
+  if (!c) return null;
+  for (const k of c.keys) {
+    const m = k.marks?.find((x) => x.type === 'combo' && x.dur !== undefined && x.dur > 0);
+    if (m) return { start: k.t, end: k.t + m.dur! };
+  }
+  return null;
+}
+
 export interface MarkEvent {
   mark: Mark; phase: 'point' | 'begin' | 'end'; t: number;
   /** Клип, из которого метка. Нужен подписчику, чтобы видеть СОСЕДНИЕ метки (звук замаха молчит,

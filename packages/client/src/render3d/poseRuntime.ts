@@ -15,7 +15,7 @@ import { readAnimCfg } from './animConfig.js';
 export type { Pose, Keyframe, Clip, Interp, Mark, MarkType, MarkTrack, MarkEvent } from './clipModel.js';
 export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, clipSections, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
 import { hipsOffset } from './clipModel.js';   // Ф12: офсет таза читаем только через него (дельта + терпимость к легаси-абсолюту)
-import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, type MarkEvent } from './clipModel.js';
+import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, comboWindow, type MarkEvent } from './clipModel.js';
 // Коридор скорости тайм-варпа удара. Нижняя граница НИЖЕ единицы осознанно: контакт в мокапе
 // обычно на ~60 % клипа, а вайндап сервера — ~35 % окна, то есть хвост обязан уметь РАСТЯГИВАТЬСЯ.
 const WARP_MIN = 0.35, WARP_MAX = 8;
@@ -332,6 +332,8 @@ function applyWeaponUpper(weaponGroups: THREE.Group[], pose: Pose, hw: number): 
     else if (bp) g.position.copy(bp);
   });
 }
+/** Сколько свинг сервера считается «тем же самым», что наша автосцепка по окну комбо (сек). */
+const COMBO_REGRAB = 0.2;
 function attackEnv(tt: number, dur: number): number {
   const s = (x: number): number => { const c = clamp(x, 0, 1); return c * c * (3 - 2 * c); };
   if (tt < AB_IN) return s(tt / AB_IN);
@@ -1163,6 +1165,16 @@ export class PosePlayer {
   private atkPrevT = 0;   // время клипа на прошлом кадре — по этому интервалу ищем метки
   /** Куда уходят метки кадров (звук/VFX/тряска/шаги). Клип говорит ЧТО и КОГДА, обработчик решает КАК. */
   onMark: ((e: MarkEvent) => void) | null = null;
+  /**
+   * ⭐⭐ АТАКА ЗАЖАТА. Пока true, конец окна комбо НЕ отпускает удар в стойку, а начинает следующий
+   * (`comboNext`). Нет метки `combo` или не зажато — поведение прежнее бит в бит.
+   */
+  attackHold = false;
+  /** Кто даёт следующий клип цепочки. Ставит кукла: пул ударов и чередование — её дело, не наше. */
+  comboNext: (() => Clip | null) | null = null;
+  private atkWindow = 0; private atkWindup = 0;          // тайминг последнего свинга — автосцепка продолжает с ним же
+  private atkState: { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' } | undefined;
+  private atkAuto = -1;                                   // сек с момента АВТОСЦЕПКИ (<0 — её не было)
   combat = 0;                     // боевой айдл 0..1 (сглажен, кроссфейд за GAIT.combatBlend сек)
   private combatTarget = 0;
   setCombat(on: boolean): void { this.combatTarget = on ? 1 : 0; }   // вход/выход боевой стойки (сервер-авторитетный флаг)
@@ -1264,15 +1276,38 @@ export class PosePlayer {
    */
   triggerAttack(clip: Clip | null, windowSec = 0, windupSec = 0, st?: { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' }): void {
     if (!clip) return;
+    // ⚠ СВИНГ, ПРИШЕДШИЙ СРАЗУ ПОСЛЕ АВТОСЦЕПКИ, НЕ ПЕРЕЗАПУСКАЕТ КЛИП. Пока атака зажата, работают ДВА
+    // источника: наша сцепка по концу окна комбо и настоящий свинг сервера. Разнести их по времени нельзя
+    // (темп атаки — серверный), а перезапуск на 0.1 с позже собственной сцепки читается как лишний рывок.
+    // Поэтому свинг в этом окне только УТОЧНЯЕТ ТЕМП уже играющего удара — момент урона всё равно садится
+    // на размеченный `impact`.
+    if (this.atkAuto >= 0 && this.atkAuto < COMBO_REGRAB && this.atk.clip) {
+      this.atkWindow = windowSec; this.atkWindup = windupSec;
+      this.retime(this.atk.clip, this.atk.t, windowSec, windupSec);
+      return;
+    }
     // ЦЕПОЧКА (атака зажата): новый свинг пришёл, пока предыдущий ещё играет. Уходящий клип кроссфейдим,
     // а входящий стартуем с ЗАМАХА, минуя idle-вход — это Montage Sections из Unreal, только разметкой внутри
     // клипа, а не резкой клипов. idle-выход при этом играет только ПОСЛЕДНИЙ удар: у прерванных он не наступает.
     const chain = !!this.atk.clip && this.atk.t >= 0;
     // Уходящее состояние уносит с собой СВОЁ владение ногами, иначе на стыке низ дёрнется.
     this.fade = chain ? { atk: { clip: this.atk.clip, t: this.atk.t, legs: this.atk.legs }, w: 1, rate: this.atkRate(), fadeSec: st?.blendSec } : null;
-    const start = chain ? (markSec(clip, 'windup') ?? (clip.idleEnds ? clip.keys[1]?.t ?? 0 : 0)) : 0;
-    this.atk.clip = clip; this.atk.t = start; this.atkPrevT = start; this.warp = null;
+    // ⚠ ПОРЯДОК ЗАПАСНЫХ ВАРИАНТОВ ВАЖЕН. `windup` — явная авторская точка «отсюда стартует второй и
+    // следующие удары», она и главнее. Нет её — входим в НАЧАЛО ОКНА КОМБО: тогда зажатая атака живёт
+    // ровно внутри размеченной границы и не выходит из неё ни входом, ни выходом.
+    const start = chain ? (markSec(clip, 'windup') ?? comboWindow(clip)?.start ?? (clip.idleEnds ? clip.keys[1]?.t ?? 0 : 0)) : 0;
+    this.atk.clip = clip; this.atk.t = start; this.atkPrevT = start;
     this.atk.legs = st?.legs; this.atk.prio = st?.priority ?? 0; this.atk.lock = st ? !st.interruptible : false;
+    this.atkWindow = windowSec; this.atkWindup = windupSec; this.atkState = st; this.atkAuto = -1;
+    this.retime(clip, start, windowSec, windupSec);
+  }
+  /**
+   * Пересчитать темп клипа от точки `start`: с меткой `impact` — двумя отрезками, чтобы контакт пришёлся
+   * ровно на вайндап сервера. Вынесено из `triggerAttack`, потому что зовётся ещё и при ПЕРЕХВАТЕ
+   * автосцепки (см. `COMBO_REGRAB`): там клип уже играет, и перезапускать его нельзя, а уточнить темп надо.
+   */
+  private retime(clip: Clip, start: number, windowSec: number, windupSec: number): void {
+    this.warp = null;
     const dur = clipDur(clip);
     const imp = windupSec > 0 ? impactSec(clip) : null;
     if (imp !== null && dur > 0 && windupSec > 0 && imp > start && imp < dur) {
@@ -1290,6 +1325,10 @@ export class PosePlayer {
     return (w ? (this.atk.t < w.impact ? w.pre : w.post) : this.atkSpeed) * this.atkTempo;
   }
   get attacking(): boolean { return !!this.atk.clip; }
+  /** Имя играющего клипа удара — окну слоёв и сторожам цепочки. null = удара нет. */
+  get attackClipName(): string | null { return this.atk.clip?.name ?? null; }
+  /** Время внутри клипа удара (сек). −1 = удара нет. */
+  get attackTime(): number { return this.atk.t; }
   /** Вес авторской позы удара в кадре (огибающая attackEnv): 0 в покое, 1 на пике замаха. Для буста match-веса рендера —
    *  физика одна не доводит быстрый замах до конечных кадров, поэтому во время удара видимый меш сильнее тянем к позе-цели. */
   get attackWeight(): number { return this.atk.clip && this.atk.t >= 0 ? attackEnv(this.atk.t, clipDur(this.atk.clip) || 0.001) : 0; }
@@ -1330,7 +1369,18 @@ export class PosePlayer {
       // Метки ищем ПО ПРОЙДЕННОМУ ИНТЕРВАЛУ (на сжатом клипе кадр между вызовами проскакивает целиком),
       // а на первом кадре — включая саму ноль, иначе метка на t=0 не сработала бы никогда.
       if (this.onMark) for (const e of marksInRange(clip, this.atkPrevT > 0 ? this.atkPrevT : -1e-9, this.atk.t)) this.onMark(e);
-      if (this.atk.t > clipDur(clip)) { this.atk.clip = null; this.atk.t = -1; this.warp = null; }
+      if (this.atkAuto >= 0) this.atkAuto += dt;
+      // ⭐⭐ КОНЕЦ ОКНА КОМБО ПРИ ЗАЖАТОЙ АТАКЕ = НАЧАЛО СЛЕДУЮЩЕГО УДАРА. Это и есть branch point:
+      // отпускаем — доигрывает хвост и уходит в стойку, держим — цепочка идёт дальше, а хвост не наступает.
+      const cw = comboWindow(clip);
+      if (cw && this.attackHold && this.atkPrevT < cw.end && this.atk.t >= cw.end) {
+        const nxt = this.comboNext?.() ?? null;
+        if (nxt) {
+          this.triggerAttack(nxt, this.atkWindow, this.atkWindup, this.atkState);
+          this.atkAuto = 0;                     // отметка: этот удар начат НАМИ, а не свингом сервера
+        }
+      }
+      if (this.atk.clip && this.atk.t > clipDur(this.atk.clip)) { this.atk.clip = null; this.atk.t = -1; this.warp = null; this.atkAuto = -1; }
     }
     if (this.fade) {                                   // уходящий удар доигрывает и гаснет
       this.fade.atk.t += dt * this.fade.rate;

@@ -193,6 +193,7 @@ export function createTestTab(host: TestTabHost): TestTab {
       };
       prevSpace = space;
 
+      c.doll.setAttackHold?.(lmb);        // зажатая ЛКМ держит цепочку внутри окна комбо — ровно как в игре
       for (const e of scene.step(dt, input)) {
         // Удар отыгрывает КУКЛА по серверному событию — с тем же окном и вайндапом, что в игре.
         if (e.type === 'swing') c.doll.attack(undefined, e.lockMs / 1000, e.windupMs / 1000);

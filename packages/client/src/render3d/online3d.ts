@@ -1044,6 +1044,8 @@ export async function startOnline3d(): Promise<void> {
     const spaceDown = keys.has('Space');
     const dodge = spaceDown && !(wasHeld['dodge'] ?? false);
     wasHeld['dodge'] = spaceDown;
+    // ⭐ Кукла должна знать, что атака ЗАЖАТА: на конце окна комбо она продолжит цепочку, а не встанет в стойку.
+    self?.d.setAttackHold?.(attack);
     const input: PlayerInput = { move: { x: mx, y: my }, facing, attack, cast, interact: keys.has('KeyE'), dodge };
     app.net.send({ t: 'input', seq: seq++, input });
   }
