@@ -17,7 +17,17 @@ function oneHandKey(weaponClass: string | undefined): string | null {
  * и клиента (рендер 3D).
  */
 export function weapon3dKeyFromEquipment(weapon: Weaponish | undefined, offhand: Weaponish | undefined): string | null {
-  if (!weapon) return null;
+  // ⭐⭐ ГЛАВНАЯ РУКА ПУСТА, А ОФФ-РУКА ЗАНЯТА — это `none+<предмет>`, а НЕ «оружия нет».
+  //
+  // Жалоба: «в игре снимаешь оружие — щит тоже пропадает с модели». Именно отсюда: функция
+  // возвращала `null` («ключа нет»), клиент подставлял КЛАСС-ДЕФОЛТ, и получалось оружие, которого
+  // на игроке нет, и щит, который на нём есть, — оба мимо. Удар при этом честно уходит в безоружный:
+  // `weaponChain('none+shield')` даёт `none`, то есть бьём правой рукой и без ничего.
+  if (!weapon) {
+    if (offhand?.kind === 'shield') return 'none+shield';
+    if (offhand?.kind === 'weapon' && (offhand.hands ?? 1) < 2) { const ob = oneHandKey(offhand.weaponClass); if (ob) return 'none+' + ob; }
+    return null;
+  }
   const two = (weapon.hands ?? 1) >= 2;
   let base: string;
   switch (weapon.weaponClass) {

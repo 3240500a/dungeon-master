@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
-import { resolveStancePose, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
+import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipName, locoDir, locoPhaseU, stepLocoSection, sectionClipTime, type LocoSectionState } from './locoBlend.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
@@ -935,8 +935,24 @@ type GripSlot = { r: [number, number, number]; p: [number, number, number] };
  *  Поза с флагом `__wpnOverride` может доредактировать хват поверх базы (галка в редакторе); без флага — жёстко база. */
 export function loadGrip(charId: string, weapon: string, fallbackId?: string): (GripSlot | null)[] {
   const cfg = readJSON<Record<string, Record<string, { main?: GripSlot; off?: GripSlot }>>>('pe_grip', {});
-  const g = cfg[charId]?.[weapon] ?? (fallbackId ? cfg[fallbackId]?.[weapon] : undefined);
-  return [g?.main ?? null, g?.off ?? null];
+  const slot = (k: string): { main?: GripSlot; off?: GripSlot } | undefined =>
+    cfg[charId]?.[k] ?? (fallbackId ? cfg[fallbackId]?.[k] : undefined);
+  const exact = slot(weapon);
+  // ⭐⭐ ХВАТ РУКИ НАСЛЕДУЕТСЯ С ТОГО КЛЮЧА, ГДЕ ЭТА РУКА НАСТРОЕНА ОДНА — ровно как стойка предмета.
+  //
+  // Жалоба: «настроил хват щита для idle со щитом без оружия, а в игре с мечом щит висит криво».
+  // Хват ключевался ПОЛНЫМ ключом (`sword+shield`), и настройка, сделанная на `none+shield`, не
+  // находилась. Теперь: нет записи на точный ключ — берём с «меч один» для главной руки и со
+  // «щит один» (`none+shield`) для второй.
+  const [m, o] = splitHands(weapon);
+  const mainAlone = m !== 'none' ? slot(m) : undefined;
+  const offAlone = o !== 'none' ? slot('none+' + o) : undefined;
+  return [
+    exact?.main ?? mainAlone?.main ?? null,
+    // ⚠ `offAlone?.main` — ЛЕГАСИ: пока пустая рука не занимала свой слот, щит при пустой главной
+    // записывался в `main`. Читаем обе записи, чтобы уже сделанные настройки не пропали.
+    exact?.off ?? offAlone?.off ?? offAlone?.main ?? null,
+  ];
 }
 /** Поставить базовый хват pe_grip на `g.userData.baseRot/basePos` групп оружия (поверх weapon-type дефолта из attachWeapons).
  *  Зови ПОСЛЕ attachWeapons и при смене оружия. Нет базы в конфиге → остаётся weapon-type дефолт. */

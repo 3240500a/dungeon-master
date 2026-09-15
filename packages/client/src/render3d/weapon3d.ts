@@ -95,8 +95,17 @@ const _hsA = new THREE.Vector3(), _hsF = new THREE.Vector3();
 
 export function attachWeapons(human: Humanoid, weapon: string, models?: { main?: string; off?: string }): THREE.Group[] {
   const groups: THREE.Group[] = [];
+  /**
+   * ⚠⚠ ПУСТАЯ РУКА ВСЁ РАВНО ЗАНИМАЕТ СВОЙ СЛОТ. Номер группы — это КОНТРАКТ: 0 = главная рука,
+   * 1 = вторая. По нему адресуются и каналы позы (`__wpnMain`/`__wpnOff`), и хват (`pe_grip.main/off`),
+   * и массы рук. Раньше пустая рука просто не создавала группу, и щит при пустой главной уезжал на
+   * место главной: авторский хват щита записывался как `main`, а в паре «меч+щит» тот же щит был уже
+   * `off` — то есть настройка не находилась и щит висел криво.
+   *
+   * Пустая группа ничего не рисует и ничего не весит: это просто держатель номера.
+   */
   const attach = (kind: string, boneName: string, modelId?: string): void => {
-    if (kind === 'none') return;
+    if (kind === 'none') { groups.push(new THREE.Group()); return; }
     const g = makeWeaponMesh(kind); const bone = human.bones.get(boneName);
     if (!bone) return;
     if (kind === 'shield') { g.rotation.set(Math.PI / 2, 0, 0); g.position.set(0, 0, 0); }   // диск лицом вперёд, в кулаке
