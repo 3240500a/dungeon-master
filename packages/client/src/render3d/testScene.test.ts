@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createTestScene, TEST_TICK_DT } from './testScene.js';
 import { moveFromKeys, facingFrom, CAM_AZ } from './playerInput.js';
-import { driveActor, facingToYaw, type DriveState, type DrivenDoll } from './driveActor.js';
+import { driveActor, facingToYaw, VEL_TAU, type DriveState, type DrivenDoll } from './driveActor.js';
 import type { PlayerInput } from '@dm/shared';
 
 /**
@@ -129,7 +129,33 @@ describe('привод куклы', () => {
     const a: DriveState = { d, vx: 0, vz: 0, lx: 0, lz: 0 };
     driveActor(a, 0, 0, 0, true, 1 / 30, {});
     driveActor(a, 30, 0, 0, true, 1 / 30, {});   // мгновенный скачок на 30 ед
-    expect(a.vx, 'в позу ушла четверть скачка, а не весь').toBeCloseTo(30 * 30 * 0.25, 6);
+    expect(a.vx, 'весь рывок в позу уходить не должен').toBeLessThan(30 * 30 * 0.6);
+    expect(a.vx, 'гасится ровно по постоянной времени').toBeCloseTo(30 * 30 * (1 - Math.exp(-(1 / 30) / VEL_TAU)), 6);
+  });
+
+  it('⭐⭐ ФИЛЬТР СКОРОСТИ НЕ ЗАВИСИТ ОТ ЧАСТОТЫ КАДРОВ', () => {
+    // ⚠ Было «0.25 НА КАДР» — и на 144 fps рябь скорости выходила вчетверо больше, чем на 60
+    // (замер: 0.11 против 0.026 от полной). Мутация «вернуть постоянную на кадр» валит этот тест.
+    const after = (fps: number): number => {
+      const { d } = doll();
+      const a: DriveState = { d, vx: 0, vz: 0, lx: 0, lz: 0 };
+      const dt = 1 / fps;
+      // ⚠ Частоты подобраны так, чтобы 0.2 с укладывались ЦЕЛЫМ числом кадров: иначе сравнивались бы
+      // разные отрезки времени, и «расхождение» было бы артефактом округления, а не фильтра.
+      for (let i = 1; i <= Math.round(0.2 * fps); i++) driveActor(a, i * 120 * dt, 0, 0, true, dt, {});
+      return a.vx;
+    };
+    for (const fps of [30, 120, 240]) expect(after(fps), `⚠ ответ фильтра зависит от fps (${fps})`).toBeCloseTo(after(60), 6);
+  });
+
+  it('⭐ ИЗВЕСТНАЯ СКОРОСТЬ ПОБЕЖДАЕТ РАЗНОСТЬ ПОЗИЦИЙ', () => {
+    // Интерполятор снапшотов считает её по интервалу между снапшотами — выдумывать её из кадровой
+    // разности после этого незачем. ⚠ Мутация «игнорировать opts.vel» валит это.
+    const { d, log } = doll();
+    const a: DriveState = { d, vx: 0, vz: 0, lx: 0, lz: 0 };
+    driveActor(a, 0, 0, 0, true, 1 / 60, { vel: { x: 90, z: 0 } });
+    expect(a.vx).toBe(90);
+    expect(log.move.at(-1), 'доля хода считается от неё же').toBeCloseTo(90 / 120, 6);
   });
 
   it('сцена и привод стыкуются: пробежка даёт кукле ненулевой ход', () => {

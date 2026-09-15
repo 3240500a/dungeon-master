@@ -334,6 +334,8 @@ function applyWeaponUpper(weaponGroups: THREE.Group[], pose: Pose, hw: number): 
 }
 /** Сколько свинг сервера считается «тем же самым», что наша автосцепка по окну комбо (сек). */
 const COMBO_REGRAB = 0.2;
+/** Гистерезис затвора «ноги у клипа удара»: включаем выше `ON`, выключаем ниже `OFF`. */
+const LEGS_HOLD_ON = 0.15, LEGS_HOLD_OFF = 0.05;
 function attackEnv(tt: number, dur: number): number {
   const s = (x: number): number => { const c = clamp(x, 0, 1); return c * c * (3 - 2 * c); };
   if (tt < AB_IN) return s(tt / AB_IN);
@@ -1175,6 +1177,7 @@ export class PosePlayer {
   private atkWindow = 0; private atkWindup = 0;          // тайминг последнего свинга — автосцепка продолжает с ним же
   private atkState: { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' } | undefined;
   private atkAuto = -1;                                   // сек с момента АВТОСЦЕПКИ (<0 — её не было)
+  private legsHeld = false;                               // затвор «ноги у клипа удара» (с гистерезисом, см. `step`)
   combat = 0;                     // боевой айдл 0..1 (сглажен, кроссфейд за GAIT.combatBlend сек)
   private combatTarget = 0;
   setCombat(on: boolean): void { this.combatTarget = on ? 1 : 0; }   // вход/выход боевой стойки (сервер-авторитетный флаг)
@@ -1330,6 +1333,8 @@ export class PosePlayer {
   get attackClipName(): string | null { return this.atk.clip?.name ?? null; }
   /** Время внутри клипа удара (сек). −1 = удара нет. */
   get attackTime(): number { return this.atk.t; }
+  /** Затвор «ноги принадлежат клипу удара» — окну слоёв и сторожу дребезга. */
+  get attackLegsHeld(): boolean { return this.legsHeld; }
   /** Вес авторской позы удара в кадре (огибающая attackEnv): 0 в покое, 1 на пике замаха. Для буста match-веса рендера —
    *  физика одна не доводит быстрый замах до конечных кадров, поэтому во время удара видимый меш сильнее тянем к позе-цели. */
   get attackWeight(): number { return this.atk.clip && this.atk.t >= 0 ? attackEnv(this.atk.t, clipDur(this.atk.clip) || 0.001) : 0; }
@@ -1453,7 +1458,12 @@ export class PosePlayer {
     // и погонится за ней — то есть подерётся с клипом за ту же ногу.
     const atkLegW = this.atk.clip && this.atk.t >= 0
       ? attackEnv(this.atk.t, clipDur(this.atk.clip) || 0.001) * clamp(1 - this.moveMag, 0, 1) : 0;
-    const legsHeld = atkLegW > 0.05;
+    // ⚠⚠ ГИСТЕРЕЗИС, А НЕ ОДИН ПОРОГ. Затвор двоичный, а вход у него — шумная скорость: на одном
+    // пороге он дребезжит. ЗАМЕР при ударе на ходу (60 fps, скорость у самой границы) — **107
+    // переключений за 1.8 с**: планировщик то отпускал ногу, то забирал, и ноги дёргались.
+    // Разные пороги на вход и выход — это не «магия», а стандартный способ развязать дребезг.
+    this.legsHeld = this.legsHeld ? atkLegW > LEGS_HOLD_OFF : atkLegW > LEGS_HOLD_ON;
+    const legsHeld = this.legsHeld;
     this.driver.setLegsHeld(legsHeld);
     if (this.legMag > 0.5 && !legsHeld) {                         // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);

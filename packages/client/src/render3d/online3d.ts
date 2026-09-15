@@ -15,6 +15,7 @@ import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { markSfx, shakeForMark, burstForMark } from './animSfx.js';   // ⭐ метки клипа наконец звучат: удар и вжух (см. `animSfx`)
 import { makeCamShake } from './camShake.js';
+import { makeNetInterp } from './netInterp.js';   // ⭐ снапшот 30 Гц → гладкий кадр (экстраполяция + гашение ошибки)
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { driveActor } from './driveActor.js';
 import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
@@ -372,6 +373,11 @@ export async function startOnline3d(): Promise<void> {
     }),
   });
   let smoothX = 0, smoothZ = 0, hasSmooth = false;
+  // ⭐⭐ ИНТЕРПОЛЯТОР СНАПШОТОВ. Позиция и скорость КАЖДОГО актёра считаются по интервалу между
+  // снапшотами, а не по разности за кадр: иначе производная лесенки рябит и походка дрожит (замер —
+  // до 0.11 полной скорости на 144 fps), а сама позиция идёт рывками (вторая разность 0.37 шага).
+  const interp = makeNetInterp();
+  let snapSeq = 0, seenSeq = -1, snapAt = 0;   // когда пришёл последний снапшот (сек) и сколько их было
   // Наблюдение: когда локальный игрок мёртв — id живого союзника, за которым ведём камеру (Tab циклит).
   let spectateId: string | null = null;
   let spectHint: HTMLDivElement | null = null;
@@ -686,6 +692,10 @@ export async function startOnline3d(): Promise<void> {
     winMinX = mnx - ex; winMaxX = mxx + ex; winMinZ = mnz - ez; winMaxZ = mxz + ez;
   }
   function renderWorld(dt: number): void {
+    // ⭐ ЕДИНЫЕ ЧАСЫ КАДРА и раздача снапшота интерполятору — до всех приводов, чтобы все актёры
+    // рисовались на ОДИН момент времени: иначе свой игрок и монстры разъезжаются на доли кадра.
+    const nowSec = performance.now() / 1000;
+    feedInterp();
     if (!latest || !self) return;
     animFrame++;
     computeActiveWindow();   // AABB видимого окна (+запас) — гейт активности физики монстров ниже
@@ -704,11 +714,18 @@ export async function startOnline3d(): Promise<void> {
           fx = tgt.x; fy = tgt.y; showSpectateHint(tgt.name || 'союзник');
         } else { fx = smoothX; fy = smoothZ; hideSpectateHint(); }
       } else { spectateId = null; hideSpectateHint(); }
-      if (!hasSmooth || Math.hypot(fx - smoothX, fy - smoothZ) > 120) { smoothX = fx; smoothZ = fy; hasSmooth = true; }
-      else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (fx - smoothX) * k; smoothZ += (fy - smoothZ) * k; }
+      // ⭐ СВОЯ позиция идёт из интерполятора — она УЖЕ гладкая, и догонять её фильтром значит только
+      // добавить лаг. Фильтр остаётся для НАБЛЮДЕНИЯ: там меняется сам объект слежения (переезд камеры
+      // к союзнику), и мягкий переезд к нему — это осознанное поведение, а не борьба с лесенкой.
+      const focus = mine.alive ? 'p' + myId : spectateId ? 'p' + spectateId : null;
+      const ip = focus ? interp.at(focus, nowSec) : null;
+      const tX = ip ? ip.x : fx, tZ = ip ? ip.z : fy;
+      if (!hasSmooth || Math.hypot(tX - smoothX, tZ - smoothZ) > 120) { smoothX = tX; smoothZ = tZ; hasSmooth = true; }
+      else if (mine.alive) { smoothX = tX; smoothZ = tZ; }
+      else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (tX - smoothX) * k; smoothZ += (tZ - smoothZ) * k; }
       // Тело: живое ведём по сглаженному фокусу; труп — по СВОЕЙ позиции (не уезжает вслед за камерой на союзника).
       const bx = mine.alive ? smoothX : mine.x, by = mine.alive ? smoothZ : mine.y;
-      driveActor(self, bx, by, mine.facing, mine.alive, dt, { combat: !!mine.inCombat, stun: !!mine.stun });
+      driveActor(self, bx, by, mine.facing, mine.alive, dt, { combat: !!mine.inCombat, stun: !!mine.stun, vel: ip ? { x: ip.vx, z: ip.vz } : undefined });
       statusFx.sync('self', bx, by, mine.debuffs);   // эффекты статусов на игроке
       orbit.target.set(smoothX, 20, smoothZ);
       if (playerLight) {
@@ -736,7 +753,8 @@ export async function startOnline3d(): Promise<void> {
         if (a.wkey !== wk) { a.wkey = wk; a.d.setWeapon?.(wk); }         // пир сменил оружие/щит → пересобрать меш + адаптировать позы удара
         if (a.akey !== ak) { a.akey = ak; a.d.setAppearance?.(appearanceFromModels(pv.armorModels)); }   // сменил броню → пересобрать скин-слой
       }
-      driveActor(a, pv.x, pv.y, pv.facing, pv.alive, dt, { combat: !!pv.inCombat, stun: !!pv.stun });
+      const pp = interp.at('p' + pv.id, nowSec);
+      driveActor(a, pp.x, pp.z, pv.facing, pv.alive, dt, { combat: !!pv.inCombat, stun: !!pv.stun, vel: { x: pp.vx, z: pp.vz } });
       if (a.hp) { a.hp.spr.position.set(pv.x, 74, pv.y); a.hp.set(pv.hp / Math.max(1, pv.maxHp)); a.hp.spr.visible = pv.alive; }   // HP пира над головой
     }
     for (const [id, a] of peers) if (!seenP.has(id)) { disposeActor(a); peers.delete(id); }
@@ -773,7 +791,8 @@ export async function startOnline3d(): Promise<void> {
       const acc = (a.animAcc ?? 0) + dt;
       const strideFrame = active && (stride <= 1 || (animFrame + (mv.id % stride)) % stride === 0);
       // dormant/skip → doUpdate=false: setPose держит цель, тяжёлый шаг пропущен
-      driveActor(a, mv.x, mv.y, mv.facing, true, dt, { doUpdate: strideFrame, updateDt: acc, stun: mv.stun, downed: mv.downed });
+      const mp = interp.at('m' + mv.id, nowSec);
+      driveActor(a, mp.x, mp.z, mv.facing, true, dt, { doUpdate: strideFrame, updateDt: acc, stun: mv.stun, downed: mv.downed, vel: { x: mp.vx, z: mp.vz } });
       a.animAcc = active && !strideFrame ? acc : 0;   // копим только пока активен и кадр пропущен; сон/апдейт → сброс
       // Есть ли у монстра дебаффы — дёшево, БЕЗ аллокаций (у большинства их нет). Строку иконок и statusFx.sync
       // считаем ТОЛЬКО когда дебаффы есть (или были) — иначе per-frame Object.keys/filter/map × N монстров = мусор → GC-паузы.
@@ -932,7 +951,7 @@ export async function startOnline3d(): Promise<void> {
 
   // ── Сетевые обработчики (данные + жизненный цикл) ────────────────────────────
   // Ф1.4: дельты применяет транспорт (`netClient`) — сюда приходит уже собранный мир.
-  app.net.on('snapshot', (f) => { latest = mergeSnapshot(f.snap); });
+  app.net.on('snapshot', (f) => { latest = mergeSnapshot(f.snap); snapAt = performance.now() / 1000; snapSeq++; });
   app.net.on('events', (f) => onEvents(f.events));
   app.net.on('saveUpdate', (f) => {
     app.state!.save = f.save;
@@ -1083,6 +1102,17 @@ export async function startOnline3d(): Promise<void> {
   // ── Кадр (вынесен, чтобы гнать вручную в фоновой вкладке — rAF там заморожен) ──
   let physAcc = 0, tsec = 0, fps = 60, miniAcc = 0;
   let msWorld = 0, msPhys = 0, msRender = 0;   // профайлер фаз кадра (мс, сглажено) — в DBG-инфо: во что упираемся
+  /** Один раз на снапшот: раздать позиции актёров интерполятору и забыть ушедших. */
+  function feedInterp(): void {
+    if (!latest || snapSeq === seenSeq) return;
+    seenSeq = snapSeq;
+    const live = new Set<string>();
+    for (const p of latest.players) { const k = 'p' + p.id; live.add(k); interp.push(k, p.x, p.y, snapAt); }
+    for (const m of latest.monsters) { const k = 'm' + m.id; live.add(k); interp.push(k, m.x, m.y, snapAt); }
+    for (const k of interpKeys) if (!live.has(k)) interp.drop(k);
+    interpKeys = live;
+  }
+  let interpKeys = new Set<string>();
   function frame(dt: number): void {
     traceView?.update();   // трасса заполняется в шаге куклы — здесь только рисуем
     tsec += dt;

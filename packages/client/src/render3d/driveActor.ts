@@ -30,12 +30,26 @@ export interface DriveState {
 /** Серверный `facing` (0 = +X, против часовой) → yaw куклы (0 = +Z). Одна копия на оба клиента. */
 export const facingToYaw = (facing: number): number => Math.PI / 2 - facing;
 
-/** Низкочастотный фильтр скорости: без него 30-герцевый снапшот на 60 кадрах даёт ложный страйф. */
-export const VEL_LOWPASS = 0.25;
+/**
+ * Постоянная сглаживания скорости (СЕК, не «на кадр»).
+ *
+ * ⚠ БЫЛО «0.25 НА КАДР» — и это зависимость от fps: замер на ровном ходу дал рябь `moveMag` 0.026
+ * на 60 fps и **0.11 на 144 fps**, то есть на быстрой машине походка дрожала вчетверо сильнее.
+ * Через τ фильтр ведёт себя одинаково при любой частоте кадров.
+ */
+export const VEL_TAU = 0.06;
 /** Скорость, на которой «доля хода» достигает единицы (ед/с). */
 export const MOVE_FULL = 120;
 
 export interface DriveOpts {
+  /**
+   * ⭐ ИЗВЕСТНАЯ скорость актёра (ед/с) — из интерполятора снапшотов (`netInterp`).
+   *
+   * Разность позиций ЗА КАДР для этого не годится: снапшоты идут реже кадров, и производная
+   * сглаженной лесенки рябит (замер — до 0.11 полной скорости на 144 fps). Интерполятор же считает
+   * скорость по интервалу МЕЖДУ СНАПШОТАМИ, и она не зависит ни от fps, ни от фазы кадра.
+   */
+  vel?: { x: number; z: number };
   /** Тяжёлый шаг куклы (позинг/физика/скин). false — только дешёвые сеттеры (temporal-LOD дальних). */
   doUpdate?: boolean;
   /** Боевой айдл — серверный флаг, self и пиры одинаково. */
@@ -56,8 +70,12 @@ export interface DriveOpts {
  * снапшоты идут реже кадров. Ровно из неё живёт вся походка: направление шага, ходьба↔бег, страйф.
  */
 export function driveActor(a: DriveState, x: number, z: number, facing: number, alive: boolean, dt: number, opts: DriveOpts = {}): void {
-  const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
-  a.vx += (nvx - a.vx) * VEL_LOWPASS; a.vz += (nvz - a.vz) * VEL_LOWPASS;
+  if (opts.vel) { a.vx = opts.vel.x; a.vz = opts.vel.z; }        // ⭐ скорость известна — не выдумываем её из позиции
+  else {
+    const nvx = (x - a.lx) / Math.max(dt, 1e-3), nvz = (z - a.lz) / Math.max(dt, 1e-3);
+    const k = 1 - Math.exp(-Math.max(dt, 1e-4) / VEL_TAU);          // ⚠ от ВРЕМЕНИ, а не от номера кадра
+    a.vx += (nvx - a.vx) * k; a.vz += (nvz - a.vz) * k;
+  }
   a.lx = x; a.lz = z;
   a.d.setPose(x, z, facingToYaw(facing));
   a.d.setWorldVel?.(a.vx, a.vz);
