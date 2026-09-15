@@ -1825,7 +1825,8 @@ function groundManikin(support?: [boolean, boolean]): (() => void) | null {
   _manGround.off = 0;                                   // одноразовый шаг: интегратор с нуля…
   // ⚠ ВЕС ОКНА — ТОТ ЖЕ, что у призрака и в игре: иначе манекен снова покажет НЕ ТО, ради чего редактор и живёт.
   groundFeet(human, human.hipsWorldY(), _manGround, 1e3, () => 0, support,
-    { w: locoOn ? lp().driver.groundWeights : undefined });   // …и большой dt → полное схождение за один вызов
+    { w: locoOn ? lp().driver.groundWeights : undefined,
+      flat: locoOn ? lp().driver.plantWeights : undefined });   // …и большой dt → полное схождение за один вызов
   return () => {
     LEG_BONES.forEach((n, i) => { const b = human.bones.get(n), q = save[i]; if (b && q) b.quaternion.copy(q); });
     human.root.position.y = rootY; human.root.updateMatrixWorld(true);
@@ -4570,6 +4571,8 @@ function renderGaitTune(): void {
   one1('плавность заземления (меньше = мягче)', GAITo, 'gndLag', 1, 40, 0.5);
   row2('окно: вход в опору (доля фазы)', GAITo, 'gndIn', 'gndInRun', 0, 0.9, 0.01, { body: true });
   row2('окно: выход из опоры (доля фазы)', GAITo, 'gndOut', 'gndOutRun', 0.1, 1, 0.01, { body: true });
+  // ⭐ ОТДЕЛЬНО ОТ ОКНА: то правит ВЫСОТУ, а это — УГОЛ («стопа приколачивается к полу»).
+  row2('мягкость постановки стопы (доля фазы)', GAITo, 'footPlant', 'footPlantRun', 0, 0.45, 0.01, { body: true });
   const gndNote = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
   gndNote.textContent = '0 = касание, 1 = отрыв. Заземление набирает силу на отрезке [0 … вход] и отпускает на [выход … 1]. Вход 0 и выход 1 = как было: опора БУЛЕВА, и стопа падала на пол за один кадр (замер: 3.655 → 1.710). Подними вход и опусти выход — стопа будет подходить к полу и уходить с него плавно.';
   box.append(gndNote);
@@ -5522,7 +5525,7 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'kneeDir', 'kneeDirRun', 'kneeDirMax', 'crouchWalk', 'crouchRun',
   // Плавность боба таза и окно заземления (см. «БОБ ТАЗА И ЗАЗЕМЛЕНИЕ» в render3d/README.md).
   'bobLagUp', 'bobLagUpRun', 'bobLagDown', 'bobLagDownRun', 'bobFlight',
-  'gndLag', 'gndIn', 'gndInRun', 'gndOut', 'gndOutRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+  'gndLag', 'gndIn', 'gndInRun', 'gndOut', 'gndOutRun', 'footPlant', 'footPlantRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
 // читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',
@@ -6009,7 +6012,8 @@ function stepPhysics(dt: number): void {
   if (ghostHuman) {
     // lp() ТОЛЬКО в локо: его конструктор зовёт measureStance→human.reset() (мутирует манекен) — в Позы/Анимации это сбило бы позу.
     const sw = locoOn ? lp().driver.swingLegs : ([false, false] as [boolean, boolean]);
-    const gOpts = { w: locoOn ? lp().driver.groundWeights : undefined, lag: GAIT.gndLag };   // окно/плавность — те же, что в игре
+    const gOpts = { w: locoOn ? lp().driver.groundWeights : undefined, lag: GAIT.gndLag,
+      flat: locoOn ? lp().driver.plantWeights : undefined };   // окно/плавность/укладка — те же, что в игре
     const rMatch = physDead ? 0 : (locoOn ? renderMatchWeight(physMatchBase, lp().attackWeight, lp().attackMatch) : PHYS.match);
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
       rMatch > 0.001 ? human.readPose() : null, rMatch, undefined, locoOn ? [!sw[0], !sw[1]] : undefined, footGround, gOpts);

@@ -223,6 +223,19 @@ export const GAIT = {
   // за один кадр).
   gndLag: 8, gndIn: 0, gndOut: 1,
   gndInRun: 0, gndOutRun: 1,
+  /**
+   * ⭐ МЯГКОСТЬ ПОСТАНОВКИ СТОПЫ — доля опорной фазы, за которую стопа ЛОЖИТСЯ на пол (0 = мгновенно).
+   *
+   * Отдельно от `gndIn`/`gndOut`: те правят ВЫСОТУ (насколько заземление тянет лодыжку), а эта —
+   * УГОЛ, то есть «стопа приколачивается к полу». Причин у рывка было ДВЕ, и обе мгновенные:
+   *   1. ПОЗА: голеностоп держит подошву ровно ТОЛЬКО в переносе (`if (l.sw > 0)`), а на касании
+   *      отпускает за кадр — стопа наследует наклон голени. ЗАМЕР на бегу: наклон подошвы
+   *      **0.19° → 12.93° ЗА ОДИН КАДР**, худший скачок за прогон **23.39°**;
+   *   2. ЗАЗЕМЛЕНИЕ: `legGroundIK` кладёт стопу плашмя на 100 % в тот же кадр, без всякого веса.
+   * Ручка гасит обе: голеностоп отпускает подошву постепенно, а заземление ровно так же постепенно
+   * её подхватывает.
+   */
+  footPlant: 0, footPlantRun: 0,
   liftWalk: 7, liftRun: 15,                  // ПОДЪЁМ маховой стопы на ходьбе / беге (интерп по sb)
   cadence: 1,                                // множитель частоты цикла: длину шага делим на cadence (>1 → короче шаг, чаще семенит). Антискольз-тюн бега В ИГРЕ; движение НЕ меняет.
   dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
@@ -659,6 +672,13 @@ class StepPlanner {
    */
   private gndW: [number, number] = [1, 1];
   get groundWeights(): [number, number] { return [this.gndW[0], this.gndW[1]]; }
+  /**
+   * ВЕС ПОСТАНОВКИ СТОПЫ 0..1: 0 = только коснулась (подошву ещё держит голеностоп), 1 = лежит на
+   * полу целиком. Ramp длиной `GAIT.footPlant` от начала опорной фазы; 0 = мгновенно, как было.
+   * Маховая нога — 1 (её заземление не трогает вовсе, а голеностоп ведёт своей формулой).
+   */
+  private plantW: [number, number] = [1, 1];
+  get plantWeights(): [number, number] { return [this.plantW[0], this.plantW[1]]; }
 
   setFeet(lx: number, lz: number, rx: number, rz: number): void {
     this.actual[0][0] = lx; this.actual[0][1] = lz;
@@ -937,7 +957,7 @@ class StepPlanner {
       avoid(l, 1 - i);
     };
     const TAU = Math.PI * 2;
-    if (!moving) { this.supPhase[0] = 1; this.supPhase[1] = 1; /* стоим: ноги ведёт стационарная логика выше — sw уже выставлен, опора полная */ }
+    if (!moving) { this.supPhase[0] = 1; this.supPhase[1] = 1; this.plantW[0] = 1; this.plantW[1] = 1; /* стоим: ноги ведёт стационарная логика выше — sw уже выставлен, опора полная */ }
     else for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       const half = Math.PI * dutyS(i as 0 | 1);      // своя доля опоры → одна нога может стоять дольше другой
@@ -990,13 +1010,22 @@ class StepPlanner {
     // ВЕС ЗАЗЕМЛЕНИЯ: сглаженная ступенька на входе в опору и на выходе из неё.
     for (let i = 0; i < 2; i++) {
       const j = i as 0 | 1;
-      if (this.legs[i]!.sw > 0) { this.gndW[i] = 0; continue; }          // маховую не заземляем вовсе
+      if (this.legs[i]!.sw > 0) { this.gndW[i] = 0; this.plantW[i] = 1; continue; }   // маховую не заземляем вовсе
       const inK = clamp(locoVal('gndIn', 'gndInRun', GAIT.gndIn, GAIT.gndInRun, j, m), 0, 1);
       const outK = clamp(locoVal('gndOut', 'gndOutRun', GAIT.gndOut, GAIT.gndOutRun, j, m), 0, 1);
       const u = clamp(this.supPhase[i]!, 0, 1);
       const rise = inK <= 1e-4 ? 1 : smooth01(clamp(u / inK, 0, 1));      // вход: 0 → gndIn
       const fall = outK >= 1 - 1e-4 ? 1 : smooth01(clamp((1 - u) / (1 - outK), 0, 1));   // выход: gndOut → 1
       this.gndW[i] = rise * fall;
+      // МЯГКОСТЬ ПОСТАНОВКИ — своя рампа: она про УГОЛ стопы, а не про высоту (см. `GAIT.footPlant`).
+      // ⚠ СИММЕТРИЧНАЯ: растёт на касании И спадает к отрыву. Первая версия рампила только вход — и почти
+      // ничего не дала: ХУДШИЙ СКАЧОК ОКАЗАЛСЯ НА ОТРЫВЕ (замер: `ank` 0 → −0.45 за кадр,
+      // наклон подошвы −29.98° → −6.6°, то есть 23.38°), а не на касании. Стопа обязана и ОТПУСКАТЬСЯ
+      // заранее — это и есть перекат «пятка → плашмя → носок».
+      // Потолок 0.45: выше вход и выход начали бы перекрываться и стопа не ложилась бы вовсе.
+      const pl = clamp(locoVal('footPlant', 'footPlantRun', GAIT.footPlant, GAIT.footPlantRun, j, m), 0, 0.45);
+      this.plantW[i] = pl <= 1e-4 ? 1
+        : smooth01(clamp(u / pl, 0, 1)) * smooth01(clamp((1 - u) / pl, 0, 1));
     }
 
     // ФАЗА ПОЛЁТА. Опорной нет → раньше цель прыгала на полный рост стоя (`standY`) и срывалась вниз
@@ -1056,11 +1085,17 @@ class StepPlanner {
       // приварен к голени, наклонённой на отрыве на 54°.
       //
       // Второе — добавка носком вверх поверх удержания. Знак МИНУС ЗАМЕРЕН: он поднимает носок.
+      const hold = -(a.hip + a.knee) * ankLvlS(i as 0 | 1);   // удержание подошвы (без носка)
       if (l.sw > 0) {
-        const want = -(a.hip + a.knee) * ankLvlS(i as 0 | 1)
-          - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1));
+        const want = hold - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1));
         // Зажимаем В ПРЕДЕЛ СУСТАВА: см. `ankMax`. Манекен не должен просить того, чего физика не даст.
         a.ank = clamp(want, -GAIT.ankMax, GAIT.ankMax);
+      } else if (this.plantW[i]! < 1) {
+        // ⭐ ОТПУСКАЕМ ПОДОШВУ НЕ ЗА КАДР. Раньше на касании удержание пропадало мгновенно и стопа
+        // наследовала наклон голени (замер: 0.19° → 12.93° за кадр). Теперь голеностоп отдаёт её
+        // заземлению за `GAIT.footPlant` опорной фазы. При footPlant = 0 вес сразу 1 → ветка не
+        // выполняется, и числа прежние бит в бит.
+        a.ank = clamp(hold * (1 - this.plantW[i]!), -GAIT.ankMax, GAIT.ankMax);
       }
       out.push(a);
     }
@@ -1137,6 +1172,8 @@ export class PoseDriver {
   get supportPhase(): [number, number] { return this.planner ? this.planner.supportPhase : [1, 1]; }
   /** ВЕС заземления на ногу 0..1 — ОДИН шов на игру и редактор (см. `StepPlanner.groundWeights`). */
   get groundWeights(): [number, number] { return this.planner ? this.planner.groundWeights : [1, 1]; }
+  /** ВЕС ПОСТАНОВКИ стопы на ногу 0..1 (см. `StepPlanner.plantWeights`) — мягкость укладки подошвы. */
+  get plantWeights(): [number, number] { return this.planner ? this.planner.plantWeights : [1, 1]; }
   /** Во сколько раз сейчас ускорена фаза — диагностика срочности шага. */
   get debugUrge(): number { return this.planner ? this.planner.debugUrge : 1; }
   attack(power = 1): void { if (!this.dead) { this.attackT = ATTACK_DUR; this.attackPow = power; } }

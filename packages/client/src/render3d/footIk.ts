@@ -39,6 +39,7 @@ const _DOWN = new THREE.Vector3(0, -1, 0), _UP = new THREE.Vector3(0, 1, 0);
 const _iH = new THREE.Vector3(), _iT = new THREE.Vector3(), _iK = new THREE.Vector3(), _iDir = new THREE.Vector3();
 const _iThigh = new THREE.Vector3(), _iShin = new THREE.Vector3(), _iBend = new THREE.Vector3(), _iPole = new THREE.Vector3(), _iFoot = new THREE.Vector3();
 const _ipq = new THREE.Quaternion(), _iwq = new THREE.Quaternion(), _iFace = new THREE.Quaternion(), _iAxis = new THREE.Vector3(), _iFtFwd = new THREE.Vector3();
+const _iFtQ = new THREE.Quaternion();   // поза стопы ДО укладки — для частичного `flat`
 const _fFwdL = new THREE.Vector3(), _fThirdL = new THREE.Vector3(), _fDir = new THREE.Vector3(), _fFwdW = new THREE.Vector3(), _fThirdW = new THREE.Vector3();
 const _mL = new THREE.Matrix4(), _mW = new THREE.Matrix4(), _FWD_L = new THREE.Vector3(0, 0, 1);
 
@@ -63,7 +64,7 @@ function aimBoneFrame(bone: THREE.Object3D, child: THREE.Object3D | null, dir: T
 /** Аналитический 2-костный IK ноги: гнём бедро+колено так, чтобы кость стопы встала в targetWorld.
  *  pole — направление сгиба колена (вперёд). Стопу ВЫРАВНИВАЕМ по faceQuat (плоско + носок по фейсингу тела): иначе
  *  твист от aimBoneDown не задан и стопа висит в фикс. мировой стороне. Длины костей фиксированы, кламп разгиба. */
-export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: THREE.Object3D, targetWorld: THREE.Vector3, pole: THREE.Vector3, faceQuat: THREE.Quaternion, geom?: LegGeom): void {
+export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: THREE.Object3D, targetWorld: THREE.Vector3, pole: THREE.Vector3, faceQuat: THREE.Quaternion, geom?: LegGeom, flat = 1): void {
   const g = geom ?? { thigh: 15, shin: 14, max: 28.5, min: 1.5 };
   upper.getWorldPosition(_iH);
   _iDir.subVectors(targetWorld, _iH);
@@ -77,8 +78,16 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
   _iK.copy(_iH).addScaledVector(_iThigh, g.thigh);     // колено в мире
   _iShin.subVectors(targetWorld, _iK).normalize();
   aimBoneFrame(lower, foot, _iShin, pole); lower.updateMatrixWorld(true);     // голень: тот же pole → без паразитного твиста
-  lower.getWorldQuaternion(_ipq);                      // выровнять СТОПУ: мир-ориентация = faceQuat (плоско, носок по телу)
-  foot.quaternion.copy(_ipq).invert().multiply(faceQuat);
+  // ВЫРОВНЯТЬ СТОПУ: мир-ориентация = faceQuat (плоско, носок по телу).
+  // ⚠ `flat` — ВЕС укладки. Раньше стопа клалась плашмя на 100 % в тот же кадр, как нога стала
+  // опорной, и это читалось как «стопа приколачивается к полу». `flat < 1` оставляет ей часть
+  // авторского наклона; 1 = прежнее поведение бит в бит.
+  // ⚠ ЦЕЛЬ СЧИТАЕМ В ОТДЕЛЬНЫЙ КВАТЕРНИОН, а не в `foot.quaternion`: первая версия писала «плашмя»
+  // прямо в кость, потом копировала поверх позу и слерпила ЦЕЛЬ САМУ В СЕБЯ — вес не действовал вовсе
+  // (сторож поймал: половинный вес совпадал с нулевым бит в бит). `flat = 1` → slerp копирует цель точно.
+  lower.getWorldQuaternion(_ipq);
+  _iFtQ.copy(_ipq).invert().multiply(faceQuat);       // «плашмя» в локали стопы
+  foot.quaternion.slerp(_iFtQ, clamp(flat, 0, 1));    // от авторской позы к плашмя
   foot.updateMatrixWorld(true);
 }
 
@@ -96,7 +105,7 @@ export function legGroundIK(upper: THREE.Object3D, lower: THREE.Object3D, foot: 
  * раньше опорность была БУЛЕВОЙ, и в кадр касания стопа падала на пол рывком (замер: 3.655 → 1.710
  * за один кадр). `lag` — скорость схождения сдвига таза (умолчание `GROUND_LAG`).
  */
-export interface GroundOpts { w?: [number, number]; lag?: number; straight?: number }
+export interface GroundOpts { w?: [number, number]; lag?: number; straight?: number; flat?: [number, number] }
 /**
  * ⭐ ЗАПАС ДО ПОЛНОГО ВЫПРЯМЛЕНИЯ ДЛЯ ЗАЗЕМЛЕНИЯ.
  *
@@ -163,7 +172,7 @@ export function groundFeet(mesh: Humanoid, baseY: number, gs: { off: number }, d
     // ВЕС ОКНА: цель едет от текущей высоты стопы к полу на долю `w`. w=1 → ровно как раньше;
     // на краях опоры стопа подходит к полу и уходит с него ПЛАВНО, а не защёлкивается за кадр.
     const w = wOf(i), ey = _iFoot.y + (ty - _iFoot.y) * w;
-    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ey, _iFoot.z), _iPole, _iFace, legGeomFor(mesh, i, straight));
+    legGroundIK(ub, lb, fb, _iT.set(_iFoot.x, ey, _iFoot.z), _iPole, _iFace, legGeomFor(mesh, i, straight), opts?.flat?.[i] ?? 1);
   }
 }
 
