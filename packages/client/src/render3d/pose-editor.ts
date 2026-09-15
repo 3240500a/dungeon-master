@@ -4743,6 +4743,33 @@ function renderTurn(): void {
   for (const k of ['stand', 'walk', 'run'] as const) mv.append(pbtn(lblMv[k], () => { turnTestMove = k; renderTurn(); }, turnTestMove === k));
   mv.append(pbtn(showTurnPlants ? '👣 планты вкл' : '👣 планты выкл', () => { showTurnPlants = !showTurnPlants; renderTurn(); }, showTurnPlants));
 
+  // ── СТОЙКА: спокойная ↔ боевая ────────────────────────────────────────────────────────────────
+  // Та же ручка, что у превью на вкладке «Бег» (`editorCombat` → `player.setCombat`), поэтому
+  // переключение видно и в походке, и здесь. Смотреть надо именно ЗДЕСЬ: боевая стойка НИЖЕ и ШИРЕ,
+  // и пока планировщик мерил её как спокойную, поворот на месте ПОДНИМАЛ таз к спокойной высоте.
+  const stRow = el('div', 'display:flex;gap:4px;margin:2px 0 4px;align-items:center'); box.append(stRow);
+  stRow.append(
+    pbtn('спокойная', () => { editorCombat = 0; renderTurn(); }, !editorCombat),
+    pbtn('боевая', () => { editorCombat = 1; renderTurn(); }, !!editorCombat),
+  );
+  {
+    // ЖИВОЙ ЗАМЕР той самой стойки, которую получает планировщик — чтобы «работает ли» читалось
+    // числом, а не на глаз. Это ровно `PosePlayer.measureStance()`: тот же резолвер, тот же combat.
+    const p0 = measureStancePlants(human, resolveUpper(weapon, 0, 0)?.pose ?? null);
+    const p1 = measureStancePlants(human, resolveUpper(weapon, 1, 0)?.pose ?? null);
+    const cur = editorCombat ? p1 : p0;
+    const num = (v: number): string => v.toFixed(2);
+    const line = el('div', 'color:#9ae6a0;font-size:10px;margin-bottom:6px');
+    line.innerHTML = `стойка сейчас: таз <b>${num(cur.standY)}</b> · стопы ${num(cur.latL)} / ${num(cur.latR)}`
+      + `<span style="color:#7a869e"> &nbsp;(спокойная ${num(p0.standY)} · ${num(p0.latL)}/${num(p0.latR)}`
+      + ` &nbsp;боевая ${num(p1.standY)} · ${num(p1.latL)}/${num(p1.latR)})</span>`;
+    box.append(line);
+    const hint = el('div', 'color:#7a869e;font-size:10px;margin-bottom:6px');
+    hint.textContent = 'Крутись на месте (веди курсором вокруг) и смотри на таз: он обязан держаться на высоте ТЕКУЩЕЙ стойки. '
+      + 'Раньше планировщик всегда получал спокойную — и в бою таз на повороте подскакивал.';
+    box.append(hint);
+  }
+
   const R2D = 180 / Math.PI;
   const grpT = (t: string): void => { const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 1px;font-size:11px'); h.textContent = t; box.append(h); };
   const sl = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step: number, save: () => void, fmt: (v: number) => string = (v) => v.toFixed(2)): void => {
