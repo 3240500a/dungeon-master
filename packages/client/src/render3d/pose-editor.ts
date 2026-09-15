@@ -19,6 +19,7 @@ import { PHYS_PRESETS, presetBodies } from './physRig.js';
 import { scaleJointsToScreen } from './humanoid.js';                       // Ф13.1: суставы постоянного экранного размера
 import { PLAYER_RADIUS, MONSTER_RADIUS } from '@dm/shared';                // Ф13.4: тот же радиус, что у сервера   // Ф11: набор физ-тел настраивается в редакторе
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
+import { solveBalance, type BalanceProbe } from './balanceSolve.js';   // Ф26.6в: перенос веса решается от АВТОРСКОЙ позы
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { solveTwoBone, elbowGoal, perpTo, LIMB_SOFT } from './limbIk.js';
 import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type TimelinePanel } from './timelinePanel.js';
@@ -900,10 +901,13 @@ function supportRect(): { x0: number; x1: number; z0: number; z1: number } | nul
 }
 const SOLE_STAND = 4;      // выше этого над полом стопа считается поднятой
 const FOOT_HALF = 3;       // полуширина стопы в плане
-const BAL_MARGIN = 0.75;   // целимся не в край опоры, а внутрь неё
-const BAL_TRANSFER = 0.65; // доля массы выше таза: сдвинув таз на X, центр масс едет примерно на 0.65X
-const BAL_MAX = 9;         // дальше таз не едет — это уже шаг, а не перенос веса
-const balanceOff = V();    // текущий сдвиг таза от баланса (НЕ авторский! см. `syncHandles`)
+const balanceOff = V();    // ВЕСЬ сдвиг таза, сделанный помощью (НЕ авторский! см. `syncHandles`)
+/** Как решатель переноса веса видит сцену (`balanceSolve.ts` — там же замеры и обе причины «улетает в бок»). */
+const BAL_PROBE: BalanceProbe = {
+  com: () => { const { p } = massCenter(); return { x: p.x, z: p.z }; },
+  sup: () => supportRect(),
+  move: (dx, dz) => { human.hips.position.x += dx; human.hips.position.z += dz; human.root.updateMatrixWorld(true); },
+};
 let balanceOn = getPref('balance', true), weightShift = 0.6;
 /**
  * ПЕРЕНОС ВЕСА (Ф26.6б) — таз сдвигается так, чтобы проекция центра масс оставалась над опорой.
@@ -914,21 +918,17 @@ let balanceOn = getPref('balance', true), weightShift = 0.6;
  * каждый кадр и персонаж уползал (та же утечка, что была у доворота таза в Ф26.7).
  */
 function applyBalance(): void {
-  balanceOff.set(0, 0, 0);
+  // ⭐⭐ РЕШАЕМ ОТ АВТОРСКОЙ ПОЗЫ, А НЕ ОТ ПРОШЛОГО ПРОМАХА. Прошлый сдвиг снимается ВНУТРИ
+  // (`solveBalance`), поэтому звать надо и с ВЫКЛЮЧЕННОЙ помощью — иначе выключатель ничего не
+  // выключит. Замеры («таз уезжает по 1.74 за каждую правку», «опора едет вместе с тазом») — в `balanceSolve.ts`.
+  const off = solveBalance(BAL_PROBE, balanceOn ? weightShift : 0, { x: balanceOff.x, z: balanceOff.z });
+  balanceOff.set(off.x, 0, off.z);
   if (!balanceOn || weightShift <= 0) return;
-  const sup = supportRect(); if (!sup) return;
-  for (let it = 0; it < 2; it++) {
-    const { p } = massCenter();
-    const tx = clamp(p.x, sup.x0 + (sup.x1 - sup.x0) * (1 - BAL_MARGIN) * 0.5, sup.x1 - (sup.x1 - sup.x0) * (1 - BAL_MARGIN) * 0.5);
-    const tz = clamp(p.z, sup.z0 + (sup.z1 - sup.z0) * (1 - BAL_MARGIN) * 0.5, sup.z1 - (sup.z1 - sup.z0) * (1 - BAL_MARGIN) * 0.5);
-    const dx = (tx - p.x) / BAL_TRANSFER * weightShift, dz = (tz - p.z) / BAL_TRANSFER * weightShift;
-    if (Math.hypot(dx, dz) < 0.05) break;
-    const nx = clamp(balanceOff.x + dx, -BAL_MAX, BAL_MAX), nz = clamp(balanceOff.z + dz, -BAL_MAX, BAL_MAX);
-    human.hips.position.x += nx - balanceOff.x; human.hips.position.z += nz - balanceOff.z;
-    balanceOff.set(nx, 0, nz);
-    human.root.updateMatrixWorld(true);
-  }
+  const bx = human.hips.position.x, bz = human.hips.position.z;
   clampHipsToPins();                                                            // таз не уедет туда, откуда ноги не дотянутся (Ф22.2)
+  // ⚠ КЛАМП — ТОЖЕ РАБОТА ПОМОЩИ, и он обязан попасть в запись: иначе на следующей правке его не снимут,
+  // «желание = кость − запись» недовычтет, и он въестся в авторскую позу — ровно та же утечка.
+  balanceOff.x += human.hips.position.x - bx; balanceOff.z += human.hips.position.z - bz;
 }
 const LIMB_PREFER_ARM = new THREE.Vector3(0, -1, -0.4);   // локоть назад-вниз (UE PBIK «preferred angle»)
 const LIMB_PREFER_LEG = new THREE.Vector3(0, 0, 1);       // колено вперёд
