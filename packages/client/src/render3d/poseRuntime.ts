@@ -180,6 +180,29 @@ const SHIELD_MASK: BoneMask = { parts: {}, weights: { LeftHand: 1, LeftLowerArm:
  */
 const ATK_LEGS_MASK: BoneMask = { parts: {}, weights: w1(['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes']) };
 const layerBones = (m: BoneMask): string[] => [...maskBones(m)];
+/**
+ * ⭐⭐ ХВАТ (ФАЛАНГИ) — СВОЙ СЛОЙ, ВЕСОМ 1, ПОВЕРХ ВСЕГО.
+ *
+ * Хват уезжает в игру ЗАПЕЧЁННЫМ В КЛИПЫ (запекание на публикации, см. поз-редактор), и запекание
+ * работает: ЗАМЕР опубликованных клипов — по **30 фаланг в кадре**. А в игре пальцы всё равно
+ * прямые, и причин было ДВЕ:
+ *  • у игровой куклы НЕ БЫЛО КОСТЕЙ ПАЛЬЦЕВ (`buildHumanoid` без `fingers`) — каналу некуда
+ *    приземляться, `bones.get(...)` отдаёт `undefined`, и канал молча теряется;
+ *  • слои позы и удара идут по ЯВНЫМ спискам костей (`UPPER_BONES` — ровно 6 штук, `ATK_BONES` — 11),
+ *    и фаланг в них нет.
+ *
+ * ⚠ ВЕС 1, А НЕ ВЕС СЛОЯ: хват — статичная поза кисти, а не мах. Блендить его к нулю по ходу значило
+ * бы РАСПРЯМЛЯТЬ пальцы на бегу тем сильнее, чем быстрее бежишь.
+ */
+const FINGER_RE = /^(Left|Right)(Thumb|Index|Middle|Ring|Little)(Proximal|Intermediate|Distal)$/;
+function applyGripChannels(human: Humanoid, pose: Pose | null | undefined): void {
+  if (!pose) return;
+  for (const nm in pose) {
+    if (nm.charCodeAt(0) === 95 || !FINGER_RE.test(nm)) continue;   // `__hipsP` и прочие спец-ключи мимо
+    const b = human.bones.get(nm); const v = pose[nm];
+    if (b && v) b.rotation.set(v[0], v[1], v[2]);
+  }
+}
 export const UPPER_BONES = layerBones(UPPER_MASK);
 const ATK_BONES = layerBones(ATK_MASK);
 const ATK_LEG_BONES = layerBones(ATK_LEGS_MASK);
@@ -286,6 +309,7 @@ function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: Attack
   // НИЗ — своим весом: стоя клип владеет ногами (подшаг), на ходу ими владеет локомоция.
   const lw = ab * legW;
   if (lw > 1e-3) for (const nm of ATK_LEG_BONES) { const e = ap[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qB); b.quaternion.slerp(_qB, lw); }
+  applyGripChannels(human, ap);   // ⭐ ХВАТ УДАРА поверх хвата стойки (см. `applyGripChannels`): вес 1, не бленд
   const ovr = !!ap['__wpnOverride'];   // удар двигает хват ТОЛЬКО если у кадра-удара стоит галка override; иначе хват жёсткий (база)
   if (ovr) weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
@@ -358,6 +382,7 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
     blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + eBendL), 0], up.pose['LeftLowerArm'], hw);   // локоть = Y (см. выше), не X
     blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + eBendR, 0], up.pose['RightLowerArm'], hw);
     for (const nm of UPPER_BONES) blendEuler(H.get(nm), ZERO3, up.pose[nm], hw);
+    applyGripChannels(human, up.pose);   // ⭐ ХВАТ СТОЙКИ: фаланг нет ни в одном слое-списке (см. `applyGripChannels`)
     applyWeaponUpper(weaponGroups, up.pose, hw);
   }
   // Кроссфейд цепочки: УХОДЯЩИЙ удар кладём первым с затухающим весом, входящий — поверх него.

@@ -161,9 +161,17 @@ export interface WeaponGrip { L?: string; R?: string; openL?: string; openR?: st
 export interface GripConfig {
   custom: Record<string, CustomGrip>;                        // id → свой хват
   byWeapon: Record<string, Record<string, WeaponGrip>>;      // персонаж → ключ оружия → привязка
+  /**
+   * ⭐ ХВАТ НА ОТДЕЛЬНЫЙ КЛИП: персонаж → имя клипа → привязка. Поверх уровня оружия, по полям.
+   *
+   * Зачем: хват ключевался ТОЛЬКО оружием, поэтому «настроил для релакс-idle, потом для incombat —
+   * а он применился ко всему». Спокойная и боевая стойка (и каждый удар) вправе держать оружие
+   * по-своему. Нет записи на клип — действует уровень оружия, как и было.
+   */
+  byClip?: Record<string, Record<string, WeaponGrip>>;
 }
 
-export const EMPTY_GRIP_CONFIG = (): GripConfig => ({ custom: {}, byWeapon: {} });
+export const EMPTY_GRIP_CONFIG = (): GripConfig => ({ custom: {}, byWeapon: {}, byClip: {} });
 
 /** Разумный хват по умолчанию для ключа оружия — чтобы «из коробки» руки не были растопырены. */
 export function defaultWeaponGrip(weaponKey: string): WeaponGrip {
@@ -185,19 +193,22 @@ export function defaultWeaponGrip(weaponKey: string): WeaponGrip {
  * сохранили руками. Раньше выбор из списка ЗАМОРАЖИВАЛСЯ в конфиг при первом же показе панели,
  * и дальше смена оружия уже ничего не меняла. Теперь база всегда пересчитывается от ключа оружия.
  */
-export function effectiveWeaponGrip(cfg: GripConfig, charId: string, weaponKey: string): Required<Pick<WeaponGrip, 'closeL' | 'closeR'>> & WeaponGrip {
+export function effectiveWeaponGrip(cfg: GripConfig, charId: string, weaponKey: string, clipName?: string): Required<Pick<WeaponGrip, 'closeL' | 'closeR'>> & WeaponGrip {
   const auto = defaultWeaponGrip(weaponKey);
   const ov = cfg.byWeapon[charId]?.[weaponKey];
+  // ⭐ ЦЕПОЧКА ПО ПОЛЯМ: КЛИП → ОРУЖИЕ → АВТО. По полям, а не целиком записью: клип, у которого
+  // снята только правая кисть, не должен терять настройку левой, сделанную на уровне оружия.
+  const cl = clipName ? cfg.byClip?.[charId]?.[clipName] : undefined;
   return {
-    L: ov?.L ?? auto.L, R: ov?.R ?? auto.R,
-    openL: ov?.openL, openR: ov?.openR,          // открытый конец авто-дефолта не имеет: нет снятого → выпрямленная кисть
-    closeL: ov?.closeL ?? auto.closeL ?? 1, closeR: ov?.closeR ?? auto.closeR ?? 1,
+    L: cl?.L ?? ov?.L ?? auto.L, R: cl?.R ?? ov?.R ?? auto.R,
+    openL: cl?.openL ?? ov?.openL, openR: cl?.openR ?? ov?.openR,   // открытый конец авто-дефолта не имеет: нет снятого → выпрямленная кисть
+    closeL: cl?.closeL ?? ov?.closeL ?? auto.closeL ?? 1, closeR: cl?.closeR ?? ov?.closeR ?? auto.closeR ?? 1,
   };
 }
 
 /** Итоговая поза пальцев для персонажа+оружия (учитывая свои хваты и привязку). */
-export function resolveGripPose(cfg: GripConfig, charId: string, weaponKey: string, axes?: Record<string, FingerAxes> | null): Pose {
-  const bind = effectiveWeaponGrip(cfg, charId, weaponKey);
+export function resolveGripPose(cfg: GripConfig, charId: string, weaponKey: string, axes?: Record<string, FingerAxes> | null, clipName?: string): Pose {
+  const bind = effectiveWeaponGrip(cfg, charId, weaponKey, clipName);
   /** Кости ОДНОЙ кисти из сохранённой позы. */
   const pick = (p: Pose, s: 'Left' | 'Right'): Pose => {
     const out: Pose = {};

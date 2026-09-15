@@ -2369,10 +2369,26 @@ function saveGrips(): void { try { localStorage.setItem('pe_gripposes', JSON.str
 // Действующий хват считает `effectiveWeaponGrip` — всегда от КЛЮЧА ОРУЖИЯ, поверх — только явно сохранённое.
 const weaponGripBind = (): WeaponGrip =>
   (gripCfg.byWeapon[curCharId] ??= {})[weapon] ??= {};
-/** Что действует сейчас (авто по оружию + оверрайды). */
-const gripNow = (): ReturnType<typeof effectiveWeaponGrip> => effectiveWeaponGrip(gripCfg, curCharId, weapon);
-/** Поза пальцев для текущего персонажа/оружия. */
-const curGripPose = (): Pose => resolveGripPose(gripCfg, curCharId, weapon, fingerAxes());
+/**
+ * ⭐ УРОВЕНЬ ПРАВКИ ХВАТА: «клип» (умолчание) или «оружие».
+ *
+ * Хват ключевался ТОЛЬКО оружием — отсюда жалоба «настроил для релакс-idle, потом для incombat, а он
+ * применился ко всему». Спокойная и боевая стойка (и каждый удар) держат оружие по-разному, и это
+ * нормально. Уровень оружия остаётся как ОБЩАЯ база: цепочка клип → оружие → авто, по полям.
+ */
+let gripScope: 'clip' | 'weapon' = 'clip';
+/** Имя клипа, на который сейчас пишем/читаем хват (null — правим уровень оружия). */
+const gripClipName = (): string | null => (gripScope === 'clip' ? (curClip()?.name ?? null) : null);
+/** Запись хвата на ТОТ уровень, который выбран. */
+const gripBind = (): WeaponGrip => {
+  const nm = gripClipName();
+  if (!nm) return weaponGripBind();
+  return ((gripCfg.byClip ??= {})[curCharId] ??= {})[nm] ??= {};
+};
+/** Что действует сейчас (авто по оружию + оверрайды оружия + оверрайды клипа). */
+const gripNow = (): ReturnType<typeof effectiveWeaponGrip> => effectiveWeaponGrip(gripCfg, curCharId, weapon, curClip()?.name);
+/** Поза пальцев для текущего персонажа/оружия/КЛИПА. */
+const curGripPose = (): Pose => resolveGripPose(gripCfg, curCharId, weapon, fingerAxes(), curClip()?.name);
 /**
  * СНЯТЬ КОНЕЦ СЛАЙДЕРА С ЖИВОЙ КИСТИ (Ф18): что выставили руками — то и будет на 0 или на 1.
  *
@@ -2387,14 +2403,14 @@ function saveHandEnd(side: 'Left' | 'Right', end: 'open' | 'fist'): void {
   for (const nmb of human.boneNames) if (isHandBone(nmb) && nmb.startsWith(side)) { const r = human.bones.get(nmb)!.rotation; pose[nmb] = [+r.x.toFixed(4), +r.y.toFixed(4), +r.z.toFixed(4)]; }
   if (!Object.keys(pose).length) return;
   gripCfg.custom[id] = { id, label: `${weapon} ${sfx} ${end === 'open' ? 'ладонь' : 'кулак'}`, pose };
-  const b = weaponGripBind();
+  const b = gripBind();
   if (end === 'open') { if (side === 'Left') b.openL = id; else b.openR = id; }
   else { if (side === 'Left') b.L = id; else b.R = id; }
   saveGrips(); goFrame(frameIdx); refreshAll();
 }
 /** Вернуть кисть на авто: оба конца снова считаются (выпрямленная ладонь ↔ пресет по оружию). */
 function resetHandEnds(side: 'Left' | 'Right'): void {
-  const b = weaponGripBind();
+  const b = gripBind();
   if (side === 'Left') { delete b.L; delete b.openL; } else { delete b.R; delete b.openR; }
   saveGrips(); goFrame(frameIdx); refreshAll();
 }
@@ -2443,7 +2459,7 @@ setPublishPrepare((key, value) => {
   const axes = fingerAxes();
   return (value as Clip[]).map((c) => bakeGripIntoClip(
     { ...c, keys: (c.keys ?? []).map((k) => ({ ...k, pose: clonePose(k.pose) })) },
-    resolveGripPose(gripCfg, c.character, c.weapon, axes)));
+    resolveGripPose(gripCfg, c.character, c.weapon, axes, c.name)));   // ⭐ хват КЛИПА (см. `GripConfig.byClip`)
 });
 
 function applyGripToGhost(): void {
@@ -3087,8 +3103,20 @@ function gripSection(): void {
     hint.textContent = 'пальцы выключены — включаются автоматически для модели с пальцами (или кнопкой ✋ в Про)';
     body.append(hint); return;
   }
-  const bind = weaponGripBind();
+  const bind = gripBind();
   const eff = gripNow();
+  {
+    // ⚠ ВИДНО, НА ЧТО ПИШЕМ. Молчаливый уровень — ровно то, из-за чего хват «применялся ко всему».
+    const nm = gripClipName();
+    const sc = el('div', 'display:flex;align-items:center;gap:5px;margin:2px 0 4px'); body.append(sc);
+    sc.append(pbtn(nm ? `правим хват КЛИПА «${nm}»` : `правим хват ОРУЖИЯ «${weapon}» (общая база)`,
+      () => { gripScope = gripScope === 'clip' ? 'weapon' : 'clip'; renderAnim(); }, gripScope === 'clip'));
+    const hint = el('div', 'color:#7a869e;font-size:10px;margin-bottom:4px');
+    hint.textContent = nm
+      ? 'клип перекрывает оружие по полям; не тронутое поле берётся с уровня оружия'
+      : 'общая база для всех клипов этого оружия — клипы могут перекрыть её каждый своим';
+    body.append(hint);
+  }
   const hand = (side: 'L' | 'R', label: string): void => {
     // Ф17: СПИСКА ПРЕСЕТОВ НЕТ. Хват выводится из ключа оружия (`defaultWeaponGrip`), потому что
     // редактор и так знает, что в руках. Список был не просто лишним: открытие панели ЗАМОРАЖИВАЛО

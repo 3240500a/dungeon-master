@@ -359,6 +359,10 @@ export function buildHumanoid(opts: { limb?: number; body?: number; head?: numbe
       }
       continue;
     }
+    // ⚠ ФАЛАНГАМ МЕШ НЕ СТРОИМ в solid-стиле: в игре они нужны как КОСТИ (на них садится запечённый
+    // хват), а геометрия кисти приходит с модели. Иначе на руках повисли бы процедурные сегменты —
+    // их никто не прячет региональной картой слотов.
+    if (b.finger) continue;
     let mesh: THREE.Mesh | null = null;
     if (b.shape === 'pelvis') { mesh = new THREE.Mesh(new THREE.BoxGeometry(9 * s, 5, 5 * s), matBody); mesh.position.y = -1; }
     else if (b.shape === 'head') { mesh = new THREE.Mesh(makeHeadGeometry(b.r * s), matHead); mesh.position.y = b.r * 0.7; }

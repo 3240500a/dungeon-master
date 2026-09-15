@@ -70,7 +70,11 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const boneOffsets = opts.boneOffsets;   // ПОЛНЫЕ rest-офсеты из ФБХ (приоритет) — точная геометрия скелета
   const group = new THREE.Group();
   // solid — ВИДИМЫЙ humanoid-меш, ведём результатом физики (как призрак в редакторе). Оружие на кистях.
-  const solid = buildHumanoid({ gender, build, body: col.body ?? 0x8a93ad, limb: col.limb ?? 0x6f7690, head: col.head, profile, boneScale, boneOffsets });
+  // ⭐ `fingers: true` ОБЯЗАТЕЛЕН: хват приезжает ЗАПЕЧЁННЫМ В КЛИПЫ (30 каналов фаланг в кадре), но
+  // без КОСТЕЙ ему некуда приземляться — `bones.get(...)` отдаёт undefined, и канал молча теряется.
+  // Раньше здесь стояло «в игре пальцы не нужны, хват впечён в клип» — впечён, да только в пустоту.
+  // Мешей у фаланг в solid-стиле нет (см. `buildHumanoid`), так что это +30 пустых групп, не геометрия.
+  const solid = buildHumanoid({ gender, build, body: col.body ?? 0x8a93ad, limb: col.limb ?? 0x6f7690, head: col.head, profile, boneScale, boneOffsets, fingers: true });
   if (opts.scale && opts.scale !== 1) solid.root.scale.setScalar(opts.scale);   // визуальный масштаб (физика базовая)
   solid.root.traverse((o) => { if (o instanceof THREE.Mesh) o.castShadow = true; });   // тени от факелов (вкл. по тумблеру) — актёр отбрасывает
   group.add(solid.root);
@@ -81,7 +85,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const syncWeaponModels = (): void => { if (!(weaponModels?.main || weaponModels?.off)) return; void loadAssetConfig().then((cfg) => applyWeaponModels(weaponGroups, cfg, { materials: cfg.materials, textures: cfg.textures })); };
   syncWeaponModels();
   // target — НЕВИДИМЫЙ манекен-источник позы: PosePlayer его позирует, с него кормим физику (цель + пины).
-  const target = buildHumanoid({ gender, build, profile, boneScale, boneOffsets });
+  const target = buildHumanoid({ gender, build, profile, boneScale, boneOffsets, fingers: true });   // цель позы — тот же набор костей, что у solid
   target.root.visible = false; group.add(target.root);
   // Подъём стопы per-персонаж (pe_phys.footLift): поднимает цель стойки (standY) и заземления → подошва МЕША атласа на полу
   // (лодыжка выше FOOT_Y, иначе тонет). solid грунтится footIk, target даёт standY через PosePlayer → оба должны совпадать.
