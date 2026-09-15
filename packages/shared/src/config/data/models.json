@@ -157,9 +157,9 @@
         -0.4284081958506005
       ],
       "LeftToes": [
-        2.088764946478546,
-        -1.7950476619535671,
-        4.779421576752844
+        2.0889493505376104,
+        -1.7949739839857601,
+        4.779363400678761
       ],
       "RightUpperLeg": [
         -3.8672452347279145,
@@ -340,7 +340,7 @@
       "LeftUpperLeg": "CC_Base_L_Thigh",
       "LeftLowerLeg": "CC_Base_L_Calf",
       "LeftFoot": "CC_Base_L_Foot",
-      "LeftToes": "CC_Base_L_ToeBaseShareBone",
+      "LeftToes": "CC_Base_L_ToeBase",
       "RightUpperLeg": "CC_Base_R_Thigh",
       "RightLowerLeg": "CC_Base_R_Calf",
       "RightFoot": "CC_Base_R_Foot",
