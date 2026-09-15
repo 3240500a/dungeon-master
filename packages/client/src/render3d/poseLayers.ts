@@ -36,6 +36,23 @@ export function splitHands(weapon: string): [string, string] {
   return i > 0 ? [w.slice(0, i), w.slice(i + 1)] : [w, 'none'];
 }
 
+/**
+ * ⭐⭐ КЛЮЧ «ПРЕДМЕТ В СЛОТЕ ОФФ-РУКИ, ГЛАВНАЯ ПУСТА»: `shield` → `none+shield`.
+ *
+ * Жалоба: «сделал два idle щиту без оружия, а к мечу не прицепилось». Причин оказалось ДВЕ, и обе
+ * про одно — под каким ключом и на какой руке лежит авторская работа:
+ *
+ *  1. ⚠ КЛЮЧ. Панель собирает его из двух слотов и при пустой главной руке пишет `none+shield`,
+ *     а слой предметов, разобрав `sword+shield`, искал офф-руку по ключу `shield`. Не находил.
+ *  2. ⚠⚠ И ГЛАВНОЕ — ФОЛБЭК, УБИВАВШИЙ ВСЮ СБОРКУ. Поиск «нет позы на точный ключ — возьми БАЗОВОЕ
+ *     оружие» (`sword+shield` → `sword`) отвечал на самый первый вопрос резолвера («есть авторская
+ *     на точный ключ?»), и тот возвращал чистую стойку меча, не дойдя до слоёв. То есть щит не
+ *     подмешивался НИКОГДА, если у меча была своя стойка, — под каким бы ключом он ни лежал.
+ *     Фолбэк убран: у сборки он уже есть и правильный (нет безоружной базы → стойка главной руки),
+ *     и там он не мешает подмешать офф-руку.
+ */
+export const offSlotKey = (item: string): string => 'none+' + item;
+
 export type LayerKind = 'additive' | 'override';
 export interface PoseLayer {
   /** Авторская поза предмета (полная). */
@@ -230,10 +247,17 @@ export function resolveStancePose(
       if (opts.trace && kind === 'idle') opts.trace.push({ item: m, hand: off ? 'off' : 'main', kind: mKind, weight: weightOf(m) });
     }
     if (!two && o !== 'none') {
-      const op = at(kind, o, t);
+      // ⭐⭐ СНАЧАЛА ИЩЕМ РАБОТУ, СДЕЛАННУЮ В СЛОТЕ ОФФ-РУКИ (`none+щит`): она УЖЕ на левой руке,
+      // и переносить её нельзя. Нет такой — берём предмет из главного слота и зеркалим, как раньше.
+      // Так «настроил щит без оружия» само едет ко ВСЕМ оружиям, а точная настройка на пару
+      // (`sword+shield`) по-прежнему бьёт сборку целиком, выше по функции.
+      const op = at(kind, offSlotKey(o), t) ?? at(kind, o, t);
       const off = (opts.hand?.(o) ?? 'off') === 'off';
       if (op) {
         const k2: LayerKind = kindOf(o) === 'override' ? 'additive' : kindOf(o);
+        // ⚠ Отдельная ветка «не переносить, раз уже офф-рука» НЕ НУЖНА: `asOffHandPose` переименовывает
+        // только ключи оружия и сразу выходит, если предмет уже заавторен как офф. Кости она не трогает
+        // вовсе — маска и так берёт левую руку. Проверено мутацией: ветка ничего не меняла.
         layers.push({ pose: off ? asOffHandPose(op) : op, base: off ? asOffHandPose(ref) : ref,
           mask: off ? ARM_OFF_MASK : ARM_MAIN_MASK, weight: weightOf(o), kind: k2 });
         if (opts.trace && kind === 'idle') opts.trace.push({ item: o, hand: off ? 'off' : 'main', kind: k2, weight: weightOf(o) });

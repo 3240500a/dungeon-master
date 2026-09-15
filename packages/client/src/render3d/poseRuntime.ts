@@ -810,8 +810,17 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
      * стоит в редакторе — правило «редактор ≡ игра» держится кодом, а не дисциплиной.
      */
     resolveUpper(weapon: string, combat = 0, t = 0): UpperPose | null {
+      // ⚠⚠ ЗДЕСЬ СТОЯЛ ФОЛБЭК «нет позы на точный ключ — возьми БАЗОВОЕ оружие» (`sword+shield` →
+      // `sword`), и он УБИВАЛ ВСЮ СБОРКУ СЛОЯМИ. Резолвер спрашивает точный ключ ПЕРВЫМ и, получив
+      // ответ, возвращает его сразу — то есть на `sword+shield` приходила чистая стойка меча, и щит
+      // не подмешивался НИКОГДА, если у меча была своя стойка. Жалоба «сделал idle щиту, а к мечу не
+      // прицепилось» — ровно про это.
+      //
+      // Фолбэк не нужен: у сборки он уже есть и правильный — нет безоружной базы, берётся стойка
+      // предмета главной руки (ветка 3 в `resolveStancePose`). Разница в том, что там он НЕ мешает
+      // подмешать офф-руку.
       const look = (kind: 'idle' | 'combat_idle', item: string, tt: number): Pose | null => {
-        const c = bound(kind, item) ?? (item === weapon ? (kind === 'idle' ? stance(baseWeapon(item)) : combatStance(baseWeapon(item))) : null);
+        const c = bound(kind, item);
         return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом, однокадровая держит кадр
       };
       const pose = resolveStancePose(look, weapon, combat,
