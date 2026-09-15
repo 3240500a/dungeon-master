@@ -1124,10 +1124,25 @@ export class PosePlayer {
     public plant: PlantGrid,
     public twistStates: TwistStates = TWIST_STATES_DEFAULT(),
   ) { this.measureStance(); }
-  /** Замерить планты стоп из idle-стойки текущего оружия и отдать планировщику (подшаг при повороте идёт в эти точки). */
+  /** Combat, при котором мерили стойку: −1 = ещё не мерили (первый замер в конструкторе). */
+  private stanceCombat = -1;
+  /**
+   * Замерить планты стоп и высоту таза из idle-стойки текущего оружия и отдать планировщику
+   * (подшаг при повороте идёт в эти точки).
+   *
+   * ⭐ МЕРИМ НА ТЕКУЩЕЙ БОЕВОЙ ОСИ. Раньше `resolveUpper(weapon)` звался БЕЗ `combat`, то есть с
+   * умолчанием 0 — планировщик всегда получал РЕЛАКС-стойку. ЗАМЕР на топоре: релакс даёт таз
+   * **31.72** и стойку 3.86 / −3.27, бой — **30.72** и 6.74 / −5.62. Пока ноги ведёт сама поза,
+   * расхождение не видно; но на ПОВОРОТЕ НА МЕСТЕ ноги забирает планировщик (`legMag` → 1) — и таз
+   * поднимался ровно на эту единицу, а стопы сводились. Жалоба была именно такой.
+   *
+   * ⚠ Время живой стойки берём 0, а не `idleT`: `standY` — БАЗА для планировщика, и дышащий
+   * многокадровый idle не должен перенастраивать её каждый кадр.
+   */
   measureStance(): void {
-    const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon)?.pose ?? null);
+    const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null);
     this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY);
+    this.stanceCombat = this.combat;
   }
   setWeapon(w: string): void { this.weapon = w; this.measureStance(); }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
@@ -1223,6 +1238,10 @@ export class PosePlayer {
     const cstep = dt / Math.max(0.01, GAIT.combatBlend);   // кроссфейд боевой стойки (линейно за combatBlend сек)
     this.combat += clamp(this.combatTarget - this.combat, -cstep, cstep);
     this.driver.setCombat(this.combat);   // боевая колонка настроек (Ф6) — тот же плавный combat, что блендит стойку
+    // ⭐ …и СТОЙКА ПЛАНИРОВЩИКА следует за той же осью: иначе поворот на месте в бою поднимал бы таз
+    // на релакс-высоту (см. `measureStance`). Порог 0.02 — чтобы не мерить каждый кадр кроссфейда:
+    // замер зовёт `human.reset()`, а поза всё равно собирается заново в `gaitToHumanoid`.
+    if (Math.abs(this.combat - this.stanceCombat) > 0.02) this.measureStance();
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
     const twist = blendTwist(this.twistStates, spd);   // скрутка корпуса по состоянию (стой/ходьба/бег), плавно по скорости
