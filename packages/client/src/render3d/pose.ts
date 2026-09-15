@@ -372,6 +372,7 @@ export const GAIT = {
   turnLimitByAngle: 0, // 0 = предел по ДИСТАНЦИИ (turnStepDist), 1 = по УГЛУ (turnLimitDeg) — тумблер в редакторе, сравнить фил
   turnLimitDeg: 35, // поворот на месте (режим УГОЛ): таз повернулся отн. прибитой стопы дальше этого (°) → шаг
   turnSettleTime: 0.8, // сек: таз перестал крутиться, а стопа не в доме → доступить (устаканиться) не дожидаясь предела
+  stepCommit: 0.5,     // доля переноса, после которой шаг ДОНОСИТСЯ до своей цели; раньше неё — перецеливается из текущего положения (см. `swGait`)
   turnIdleTime: 0.5, // сек: обе стопы дома + не крутимся → через это время ноги в чистую idle-позу (не мгновенно)
   /**
    * ⭐ УХОД В IDLE-ПОЗУ. 1 = как было (постояли — ноги отдаются АВТОРСКОЙ стойке), 0 = ноги остаются
@@ -870,6 +871,21 @@ class StepPlanner {
     return this.lastUrge;
   }
 
+  /**
+   * ⭐⭐ ЧЕЙ ЭТО ПЕРЕНОС: начат ПОХОДКОЙ (true) или приставным шагом (false).
+   *
+   * Без этого флага смена режима «идём → стоим» не может отличить ногу, летящую по дуге походки, от
+   * ноги, которую стоячая логика уже ведёт сама, — и перезапускала ПЕРВУЮ с нуля.
+   */
+  private swGait: [boolean, boolean] = [false, false];
+  /**
+   * ⭐ ТЕМП ПЕРЕНОСА КАЖДОЙ НОГИ (доля дуги в секунду). У приставного шага он постоянный
+   * (`1 / SIDESTEP_DUR`), а у походки зависит от скорости — и на ДОНЕСЕННОМ шаге надо сохранить
+   * именно походочный, иначе стопа на переходе ускоряется скачком. ЗАМЕР до правки: 8.7 ед/кадр
+   * против штатных 4.3, то есть ровно вдвое.
+   */
+  private sideRate: [number, number] = [1 / SIDESTEP_DUR, 1 / SIDESTEP_DUR];
+  private swRate: [number, number] = [0, 0];
   private reset(px: number, pz: number, fx: number, fz: number, rx: number, rz: number, yaw: number): void {
     for (let i = 0; i < 2; i++) {
       const lat = i === 0 ? this.stanceLatL : this.stanceLatR, fwd = i === 0 ? this.stanceFwdL : this.stanceFwdR;
@@ -970,6 +986,25 @@ class StepPlanner {
     const toeLiftS = (i: 0 | 1): number => locoVal('toeLift', 'toeLiftRun', GAIT.toeLift, GAIT.toeLiftRun, i, m);
     const toePhS = (i: 0 | 1): number => locoVal('toeLiftPhase', 'toeLiftPhaseRun', GAIT.toeLiftPhase, GAIT.toeLiftPhaseRun, i, m);
 
+    /**
+     * ⭐ ГДЕ МАХОВАЯ СТОПА СЕЙЧАС — ОДНА ФОРМУЛА НА КАДР. Её читает и передача шага между режимами
+     * (ниже), и решатель ног в конце `update`. Вторая копия здесь была бы прямой дорогой к расхождению:
+     * передача поставила бы ногу в одну точку, а нарисовалась бы она в другой — то есть к тому же
+     * рывку, который мы и чиним.
+     */
+    const swingXZ = (i: number): [number, number] => {
+      const l = this.legs[i]!;
+      const s = i === 0 ? this.hipHalf : -this.hipHalf;
+      const hx = px + rx * s, hz = pz + rz * s;
+      const t = l.sw, e = t * t * (3 - 2 * t);
+      const via = this.plantVia[i]!;
+      if (via.length === 0) return [l.fx + (l.tx - l.fx) * e, l.fz + (l.tz - l.fz) * e];
+      const ctrl: [number, number][] = [[l.fx, l.fz]];
+      for (const v of via) ctrl.push([hx + fx * v[0] + rx * v[1], hz + fz * v[0] + rz * v[1]]);
+      ctrl.push([l.tx, l.tz]);
+      return crAt(ctrl, e);
+    };
+
     // 1. РИТМ. Фаза едет от ПРОЙДЕННОГО ПУТИ: π = один шаг. Ноги чередуются строго по фазе.
     //    Раньше шаг запускался по накопленному отставанию — и пока одна нога в переносе, вторая ждала
     //    очереди и уезжала назад на весь шаг: нога плантовалась на +16, а уходила на −31, центр шага
@@ -998,14 +1033,48 @@ class StepPlanner {
       const turning = this.yawRate > GAIT.turnStep;
       const inside = this.yawSigned >= 0 ? 0 : 1;               // нога в сторону вращения (ведущая)
       this.stableFor = this.yawRate < 0.02 ? this.stableFor + dt : 0;   // таз ПРАКТИЧЕСКИ стоит (~1°/с) → плант стабилен (медленный поворот НЕ считается стоянием)
+      // ⭐⭐ ПЕРЕДАЧА ШАГА ИЗ ПОХОДКИ В СТОЯЧИЙ РЕЖИМ — «точка невозврата».
+      //
+      // ЖАЛОБА: «бежишь, резко встал — нога, летевшая к своему планту, дёргается назад и падает под
+      // тело». ЗАМЕР: стопа за ОДИН кадр уезжала назад на **35 единиц** при том, что её максимальная
+      // штатная скорость переноса — 4.3 ед/кадр, то есть в ВОСЕМЬ раз больше всего, что бывает в
+      // движении. Причина: стоячая ветка начинала перенос со счётчика `sideT`, который ходовая ветка
+      // обнуляет КАЖДЫЙ кадр («ход перебивает приставные шаги»). Нога, прошедшая полдуги, получала
+      // `sw ≈ 0.006`, а позиция в переносе считается от точки ОТРЫВА — значит рисовалась почти там,
+      // откуда оторвалась. Смена режима не передавала состояние, а перезапускала его.
+      //
+      // ЛЕЧЕНИЕ (приём индустрии — окно коммита + retarget от ТЕКУЩЕЙ позиции):
+      //  • прошли меньше `stepCommit` — ПЕРЕЦЕЛИВАЕМ: началом дуги становится ТЕКУЩАЯ позиция стопы,
+      //    целью — плант стойки. Нога уходит туда, где встанет, без лишнего шага;
+      //  • прошли больше — ДОНОСИМ: цель и дуга те же, на таймлайн приставного шага переносится
+      //    ПРОГРЕСС. Нога доигрывает шаг и приземляется впереди, а домой её штатно доводит подшаг.
+      //
+      // ⚠ ГЛАВНЫЙ ИНВАРИАНТ ОБОИХ ПУТЕЙ: начало дуги — это всегда точка, где стопа НАРИСОВАНА СЕЙЧАС.
+      // Ни один переход не имеет права отматывать её назад.
+      for (let i = 0; i < 2; i++) {
+        const l = this.legs[i]!;
+        if (l.sw <= 0 || !this.swGait[i]) continue;
+        this.swGait[i] = false;
+        if (l.sw >= clamp(GAIT.stepCommit, 0, 1)) {
+          // ДОНОСИМ: цель и дуга те же, переносим ПРОГРЕСС и — обязательно — ТЕМП. Без темпа остаток
+          // дуги проигрывается за длительность приставного шага, и стопа на переходе ускоряется.
+          this.sideT[i] = l.sw;
+          this.sideRate[i] = Math.max(this.swRate[i]!, 0.2);
+          continue;
+        }
+        const cur = swingXZ(i);                                                          // ПЕРЕЦЕЛИВАЕМ: дуга с текущего места
+        l.fx = cur[0]; l.fz = cur[1];
+        l.tx = stanceX(i); l.tz = stanceZ(i);
+        this.sideT[i] = 0; l.sw = 0.001; this.sideRate[i] = 1 / SIDESTEP_DUR;
+      }
       for (let i = 0; i < 2; i++) {                            // двигаем текущие переносы к планту; на приземлении фиксируем plantYaw
         const l = this.legs[i]!;
         if (l.sw <= 0) continue;
-        let st = this.sideT[i]! + dt / SIDESTEP_DUR;
+        let st = this.sideT[i]! + dt * this.sideRate[i]!;
         if (st >= 1) { l.px = l.tx; l.pz = l.tz; l.sw = 0; st = 0; this.plantYaw[i] = gy; } else l.sw = clamp(st, 0.001, 1);   // приземлилась на гол-фейсинге → угловой предел мерит от него
         this.sideT[i] = st;
       }
-      const startStep = (i: number): void => { const l = this.legs[i]!; l.fx = l.px; l.fz = l.pz; l.tx = stanceX(i); l.tz = stanceZ(i); this.sideT[i] = 0; l.sw = 0.001; };
+      const startStep = (i: number): void => { const l = this.legs[i]!; l.fx = l.px; l.fz = l.pz; l.tx = stanceX(i); l.tz = stanceZ(i); this.sideT[i] = 0; l.sw = 0.001; this.swGait[i] = false; this.sideRate[i] = 1 / SIDESTEP_DUR; };
       const homeDist = (i: number): number => Math.hypot(this.legs[i]!.px - stanceX(i), this.legs[i]!.pz - stanceZ(i));
       const angleOver = (i: number): boolean => Math.abs(Math.atan2(Math.sin(gy - this.plantYaw[i]!), Math.cos(gy - this.plantYaw[i]!))) > GAIT.turnLimitDeg * Math.PI / 180;   // разворот ПРИЦЕЛА отн. приземления стопы
       // ПРЕДЕЛ переступа: по УГЛУ разворота таза отн. прибитой стопы ИЛИ по ДИСТАНЦИИ отъезда — берём ОБА (что раньше сработает).
@@ -1104,7 +1173,7 @@ class StepPlanner {
         this.supPhase[i] = c > half ? (c - (TAU - half)) / (2 * half) : (c + half) / (2 * half);
       } else {                                       // ПЕРЕНОС
         if (l.sw === 0) {                             // отрыв
-          l.fx = l.px; l.fz = l.pz;
+          l.fx = l.px; l.fz = l.pz; this.swGait[i] = true;   // перенос НАЧАТ ПОХОДКОЙ (см. передачу шага выше)
           const s = i === 0 ? this.hipHalf : -this.hipHalf;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
           const hx = px + rx * s, hz = pz + rz * s;
           // fixTarget: цель фиксируется здесь. Прибавляем пролёт тела за перенос (1−доля)·2·шаг — к касанию
@@ -1112,7 +1181,9 @@ class StepPlanner {
           const fly = GAIT.fixTarget ? sl(i as 0 | 1) * (1 - dutyS(i as 0 | 1)) * 2 : 0;
           plant(l, i, hx, hz, leadS(i as 0 | 1) + fly);
         }
-        l.sw = clamp((c - half) / (TAU - 2 * half), 0.001, 1);
+        const nsw = clamp((c - half) / (TAU - 2 * half), 0.001, 1);
+        this.swRate[i] = dt > 1e-6 ? Math.max(0, (nsw - l.sw) / dt) : this.swRate[i]!;   // темп походки — пригодится при передаче шага
+        l.sw = nsw;
         this.supPhase[i] = 1;   // в переносе опоры нет — вес заземления возьмёт 0 по `sw`
       }
     }
@@ -1225,15 +1296,8 @@ class StepPlanner {
         // Маховая. При fixTarget цель зафиксирована на отрыве (выше). Иначе — едет за бедром: держится
         // на `lead` впереди ТЕКУЩЕГО бедра (пересчёт каждый кадр).
         if (!GAIT.fixTarget && moving) plant(l, i, hx, hz, leadS(i as 0 | 1));   // стоя приставной шаг держит зафиксированную цель (слот стойки)
-        const t = l.sw, e = t * t * (3 - 2 * t);
-        const via = this.plantVia[i]!;
-        if (via.length === 0) { wx = l.fx + (l.tx - l.fx) * e; wz = l.fz + (l.tz - l.fz) * e; }   // прямой свинг (нейтрально)
-        else {   // ОБВОД: маховая летит liftoff → via (body-local fwd,lat от бедра) → плант, огибая опорную ногу
-          const ctrl: [number, number][] = [[l.fx, l.fz]];
-          for (const v of via) ctrl.push([hx + fx * v[0] + rx * v[1], hz + fz * v[0] + rz * v[1]]);
-          ctrl.push([l.tx, l.tz]);
-          const p = crAt(ctrl, e); wx = p[0]; wz = p[1];
-        }
+        const t = l.sw;
+        const p = swingXZ(i); wx = p[0]; wz = p[1];   // ⭐ ТА ЖЕ формула, что у передачи шага (см. `swingXZ`)
         wy = this.footFloor + Math.sin(Math.PI * t) * liftS(i as 0 | 1);
       } else {
         // ОПОРНАЯ: прибита к полу. ⭐ В ПОКОЕ — на АВТОРСКОЙ высоте (`StanceFoot.lift`): автор ставит
