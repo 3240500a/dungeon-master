@@ -334,8 +334,23 @@ function applyWeaponUpper(weaponGroups: THREE.Group[], pose: Pose, hw: number): 
 }
 /** Сколько свинг сервера считается «тем же самым», что наша автосцепка по окну комбо (сек). */
 const COMBO_REGRAB = 0.2;
-/** Гистерезис затвора «ноги у клипа удара»: включаем выше `ON`, выключаем ниже `OFF`. */
-const LEGS_HOLD_ON = 0.15, LEGS_HOLD_OFF = 0.05;
+/**
+ * ⭐⭐ КОМУ ПРИНАДЛЕЖАТ НОГИ ВО ВРЕМЯ УДАРА. Правило ДВОИЧНОЕ, а не пропорция:
+ * **стоим и не крутимся — ноги у анимации; идём или крутимся — ноги живут своей жизнью.**
+ *
+ * Было `1 − moveMag`, то есть ПЛАВНАЯ доля. На шаге (moveMag ≈ 0.5) это давало ровно половину
+ * статичной позы клипа поверх шагающей походки: ноги «то шаг делают, то резко улетают». А затвор
+ * планировщика при этом стоял на TRUE — тот переставал возвращать стопу домой, и в конце удара
+ * догонял разом. Полумеры тут не бывает: нога либо идёт по клипу, либо по планировщику.
+ *
+ * ⚠ ПОВОРОТ НА МЕСТЕ — ЭТО ТОЖЕ «НОГИ ЗАНЯТЫ». `moveMag` его не видит (скорость нулевая), и клип
+ * забирал ноги, пока планировщик пытался переступать: подшагов нет, стопы ПЛЫВУТ за тазом. Признак
+ * поворота уже есть — защёлка torso-lead (`turning`), у неё свой порог входа и выхода.
+ *
+ * ⚠ И НЕ ОТБИРАЕМ НОГУ ПОСРЕДИ ШАГА: пока планировщик несёт стопу (свинг), она его.
+ */
+const STILL_ON = 0.06, STILL_OFF = 0.16;   // гистерезис «стоим»: войти ниже ON, выйти выше OFF
+const LEGS_FADE = 0.12;                     // за сколько секунд поза ног клипа гаснет/проступает
 function attackEnv(tt: number, dur: number): number {
   const s = (x: number): number => { const c = clamp(x, 0, 1); return c * c * (3 - 2 * c); };
   if (tt < AB_IN) return s(tt / AB_IN);
@@ -388,7 +403,7 @@ export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: nu
     hips.position.x += dz * s + dx * c; hips.position.y += dy; hips.position.z += dz * c - dx * s;
   }
 }
-function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0): void {
+function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0, atkLegs?: number): void {
   const H = human.bones;
   const up = content.resolveUpper(weapon, combat, idleT);
   // Раздельные руки ходьба↔бег: armDown/elbowBend блендятся walk→run по t.sb (POSE armSh/armEl/armSwing уже слиты в pose.ts).
@@ -448,8 +463,11 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   // Вес НИЗА у слота действия: стоим — клип владеет ногами целиком, идём — ни на сколько.
   // Тот же множитель, что у таза удара; порог движения там же и описан (`moveMag`, а не `legMag`).
   // `auto` — по скорости (как было); `never` — слот низом не владеет; `always` — владеет всегда.
+  // ⚠ ВЕС СЧИТАЕТ ПРОИГРЫВАТЕЛЬ (`PosePlayer.atkLegsW`), а не эта функция: правило двоичное и с
+  // защёлками (стоим / крутимся / несём стопу), а здесь нет ни истории, ни поворота. Вызов без веса
+  // (редакторский манекен, тесты) ведёт себя как раньше — по доле скорости.
   const legsOf = (a: AttackState): number =>
-    a.legs === 'never' ? 0 : a.legs === 'always' ? 1 : clamp(1 - moveMag, 0, 1);
+    a.legs === 'never' ? 0 : a.legs === 'always' ? 1 : (atkLegs ?? clamp(1 - moveMag, 0, 1));
   const legW = legsOf(atk);
   if (layerTrace.on) {
     const env = atk.clip && atk.t >= 0 ? attackEnv(atk.t, clipDur(atk.clip) || 0.001) : 0;
@@ -582,7 +600,7 @@ export const LOCO_BONES = [
   'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes',
 ] as const;
 
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0): void {
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   const m = legMag;
@@ -641,7 +659,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
         hp.z + (human.hipsRest.z + hd[2] - hp.z) * locoMix);
     }
   }
-  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade, idleT);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
+  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade, idleT, atkLegs);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
@@ -1177,7 +1195,9 @@ export class PosePlayer {
   private atkWindow = 0; private atkWindup = 0;          // тайминг последнего свинга — автосцепка продолжает с ним же
   private atkState: { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' } | undefined;
   private atkAuto = -1;                                   // сек с момента АВТОСЦЕПКИ (<0 — её не было)
-  private legsHeld = false;                               // затвор «ноги у клипа удара» (с гистерезисом, см. `step`)
+  private legsHeld = false;                               // ноги сейчас у клипа удара (см. `step`)
+  private still = false;                                  // защёлка «стоим» (гистерезис STILL_ON/OFF)
+  private atkLegsW = 0;                                   // плавный вес позы ног клипа (авторитет — мгновенный, поза — нет)
   combat = 0;                     // боевой айдл 0..1 (сглажен, кроссфейд за GAIT.combatBlend сек)
   private combatTarget = 0;
   setCombat(on: boolean): void { this.combatTarget = on ? 1 : 0; }   // вход/выход боевой стойки (сервер-авторитетный флаг)
@@ -1456,14 +1476,20 @@ export class PosePlayer {
     // НОГИ У СЛОТА ДЕЙСТВИЯ? Стоячий удар авторит подшаг, и пока он играет, стопы ведёт клип.
     // Тогда фидбэк отключается: иначе планировщик увидит уехавшую стопу, решит, что она «не дома»,
     // и погонится за ней — то есть подерётся с клипом за ту же ногу.
-    const atkLegW = this.atk.clip && this.atk.t >= 0
-      ? attackEnv(this.atk.t, clipDur(this.atk.clip) || 0.001) * clamp(1 - this.moveMag, 0, 1) : 0;
-    // ⚠⚠ ГИСТЕРЕЗИС, А НЕ ОДИН ПОРОГ. Затвор двоичный, а вход у него — шумная скорость: на одном
-    // пороге он дребезжит. ЗАМЕР при ударе на ходу (60 fps, скорость у самой границы) — **107
-    // переключений за 1.8 с**: планировщик то отпускал ногу, то забирал, и ноги дёргались.
-    // Разные пороги на вход и выход — это не «магия», а стандартный способ развязать дребезг.
-    this.legsHeld = this.legsHeld ? atkLegW > LEGS_HOLD_OFF : atkLegW > LEGS_HOLD_ON;
-    const legsHeld = this.legsHeld;
+    // ⭐⭐ ПРАВИЛО ВЛАДЕНИЯ НОГАМИ (см. `STILL_ON`): стоим и не крутимся — ноги у клипа удара;
+    // идём, крутимся или несём стопу — у планировщика.
+    // ⚠ Гистерезис на «стоим» обязателен: скорость шумит (снапшоты реже кадров), и один порог
+    // дребезжал — ЗАМЕР давал 107–119 переключений за пару секунд.
+    this.still = this.still ? this.moveMag < STILL_OFF : this.moveMag < STILL_ON;
+    const sw = this.driver.swingLegs;
+    const busy = !this.still || this.turning || sw[0] || sw[1];
+    const legsHeld = !!this.atk.clip && this.atk.t >= 0
+      && (this.atk.legs === 'always' || (this.atk.legs !== 'never' && !busy));
+    this.legsHeld = legsHeld;
+    // ⚠ АВТОРИТЕТ ОТДАЁМ МГНОВЕННО, А ПОЗУ ГАСИМ ПЛАВНО. Планировщик должен получить ногу в тот же
+    // кадр, когда пошёл поворот (иначе подшаг опоздает), а вот поза ног обязана перетечь — иначе
+    // на каждом входе-выходе был бы щелчок.
+    this.atkLegsW += ((legsHeld ? 1 : 0) - this.atkLegsW) * Math.min(1, dt / LEGS_FADE);
     this.driver.setLegsHeld(legsHeld);
     if (this.legMag > 0.5 && !legsHeld) {                         // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
@@ -1490,7 +1516,7 @@ export class PosePlayer {
         locoPose = clipPoseAt(c, sectionClipTime(this.locoSec, locoPhaseU(this.driver.gaitPhase), sc, dur) / dur);
       }
     }
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix);
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix, this.atkLegsW);
     if (layerTrace.on) {
       layerTrace.speed = Math.hypot(this.vx, this.vz);
       layerTrace.sb = tg.sb ?? 0; layerTrace.st = tg.st ?? 0;
