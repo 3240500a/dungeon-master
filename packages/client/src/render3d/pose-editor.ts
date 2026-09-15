@@ -4804,6 +4804,10 @@ function renderTurn(): void {
   if (GAITo['turnLimitByAngle']) sl('предел: угол таза (°)', () => GAITo['turnLimitDeg']!, (v) => { GAITo['turnLimitDeg'] = v; }, 10, 90, 1, saveGaitCfg, deg);
   else sl('предел: дистанция (u)', () => GAITo['turnStepDist']!, (v) => { GAITo['turnStepDist'] = v; }, 2, 16, 0.5, saveGaitCfg);
   sl('доступить, таз стоит (с)', () => GAITo['turnSettleTime']!, (v) => { GAITo['turnSettleTime'] = v; }, 0.1, 3, 0.1, saveGaitCfg);
+  // ⭐ ТУМБЛЕР «УХОД В IDLE». Выключенным видно походку БЕЗ перехода планировщик→авторская стойка —
+  // того самого, который читается как «доступил, а потом раздвигается и ступни скручиваются».
+  box.append(pbtn(GAITo['idleSettle'] ? '✔ уход в idle-позу: вкл' : '✖ уход в idle-позу: выкл',
+    () => { GAITo['idleSettle'] = GAITo['idleSettle'] ? 0 : 1; saveGaitCfg(); renderTurn(); }, !!GAITo['idleSettle']));
   sl('уход в idle, стоя (с)', () => GAITo['turnIdleTime']!, (v) => { GAITo['turnIdleTime'] = v; }, 0, 2, 0.1, saveGaitCfg);
   box.append(pbtn(`сброс скрутки (${lblMv[turnTestMove]})`, () => { editorTwistStates[turnTestMove] = TWIST_DEFAULT(); saveTwistCfg(); renderTurn(); }));
 }
@@ -5557,7 +5561,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',

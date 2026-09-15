@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { PoseDriver } from './pose.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { PoseDriver, GAIT, GAIT_BASE } from './pose.js';
 
 /**
  * ⭐ ПРИБИТАЯ СТОПА НЕ ДВИГАЕТСЯ. ТОЧКА.
@@ -119,5 +119,64 @@ describe('поворот на месте: доводка шагом, без те
 
   it('стойка не менялась — не переступает вовсе', () => {
     expect(restance(0).steps, '⚠ топчется на ровном месте').toBe(0);
+  });
+});
+
+/**
+ * ⭐ ТУМБЛЕР «УХОД В IDLE-ПОЗУ» (`GAIT.idleSettle`).
+ *
+ * Жалоба: «даже если он доступил куда надо, потом в idle-позу раздвигается, ступни скручиваются —
+ * выглядит не очень; сделай галку, чтобы отключить и посмотреть».
+ *
+ * Доводка ставит стопу ТУДА, ГДЕ ЕЁ ЖДЁТ ПЛАНИРОВЩИК, а idle-поза — ДРУГАЯ поза целиком (свои углы
+ * бедра, свой рыск стопы, свой аддукт). Переход между ними и читается как «раздвигается». Гейт
+ * ОДИН: `settled` правит `stepping` → `legMag`, то есть КТО ведёт ноги.
+ */
+describe('тумблер ухода в idle-позу', () => {
+  const saved: Record<string, number> = {};
+  const set = (k: string, v: number): void => {
+    const g = GAIT as unknown as Record<string, number>;
+    if (!(k in saved)) saved[k] = g[k]!;
+    g[k] = v;
+  };
+  afterEach(() => {
+    const g = GAIT as unknown as Record<string, number>;
+    for (const k in saved) g[k] = saved[k]!;
+    for (const k in saved) delete saved[k];
+  });
+
+  /** Постоять на месте и сказать, отдал ли планировщик ноги позе. */
+  const stand = (): boolean => {
+    const d = new PoseDriver();
+    d.setStance(8, 5.3, -7.4, -2.4, 33.4);
+    d.setMove(0);
+    d.setWorld(0, 0, 0, 0, 0); d.setGoalYaw(0);
+    for (let i = 0; i < 400; i++) d.update(1 / 60);
+    return !d.stepping;                                  // stepping === !settled
+  };
+
+  it('умолчание — уход в idle включён (как было)', () => {
+    expect(GAIT_BASE.idleSettle).toBe(1);
+    expect(stand(), '⚠ постояли, а ноги позе так и не отдали').toBe(true);
+  });
+
+  it('⭐ тумблер СНИМАЕТ уже установленное состояние, а не только не пускает в него', () => {
+    // ⚠ Поймано ЖИВОЙ проверкой: подпись кнопки менялась, а `settled` оставался с прошлого раза —
+    // ноги так и висели на авторской стойке, пока что-нибудь не сбросит состояние.
+    const d = new PoseDriver();
+    d.setStance(8, 5.3, -7.4, -2.4, 33.4);
+    d.setMove(0);
+    d.setWorld(0, 0, 0, 0, 0); d.setGoalYaw(0);
+    for (let i = 0; i < 400; i++) d.update(1 / 60);
+    expect(d.stepping, 'подстраховка: сперва ноги ушли в позу').toBe(false);
+    set('idleSettle', 0);                                 // выключаем ПОСЛЕ того, как уже успокоились
+    for (let i = 0; i < 10; i++) d.update(1 / 60);
+    expect(d.stepping, '⚠ ТУМБЛЕР НЕ СНИМАЕТ состояние — выключил, а ничего не поменялось').toBe(true);
+  });
+
+  it('⭐ выключенный тумблер НЕ отдаёт ноги позе — видно походку без перехода', () => {
+    set('idleSettle', 0);
+    // ⚠ Мутация «игнорировать тумблер» валит именно это.
+    expect(stand(), '⚠ ТУМБЛЕР НЕ ДЕЙСТВУЕТ: ноги всё равно ушли в авторскую стойку').toBe(false);
   });
 });
