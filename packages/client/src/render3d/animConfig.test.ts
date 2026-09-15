@@ -20,11 +20,26 @@ import type { Pose } from './clipModel.js';
 describe('умолчания: пустой конфиг = как было', () => {
   const cfg = readAnimCfg({}, 'warrior');
 
-  it('имена стоек — по конвенции', () => {
-    expect(cfg.clipName('idle', 'none')).toBe('idle_none');
-    expect(cfg.clipName('idle', 'sword')).toBe('idle_sword');
-    expect(cfg.clipName('combat_idle', 'axe')).toBe('combat_idle_axe');
-    expect(defaultStanceName('idle', 'shield')).toBe('idle_shield');
+  it('⭐ имена стоек — `действие_оружие_состояние`', () => {
+    // ⚠ КОНВЕНЦИЯ СМЕНЕНА ПО ПРОСЬБЕ АВТОРА: было `idle_<оружие>` / `combat_idle_<оружие>`, стало
+    // `idle_<оружие>_relax` / `idle_<оружие>_incombat` — спокойная и боевая это одно действие в двух
+    // состояниях, и так они лежат рядом в списке. Удары конвенции не касаются: они по умолчанию
+    // боевые и собираются префиксом `hit_`.
+    expect(cfg.clipName('idle', 'none')).toBe('idle_none_relax');
+    expect(cfg.clipName('idle', 'sword')).toBe('idle_sword_relax');
+    expect(cfg.clipName('combat_idle', 'axe')).toBe('idle_axe_incombat');
+    expect(defaultStanceName('idle', 'shield')).toBe('idle_shield_relax');
+  });
+
+  it('⚠ ИСТОРИЧЕСКИЕ ИМЕНА ПРОДОЛЖАЮТ НАХОДИТЬСЯ — смена конвенции не обнуляет чужую работу', () => {
+    expect(cfg.clipNames('idle', 'sword')).toEqual(['idle_sword_relax', 'idle_sword']);
+    expect(cfg.clipNames('combat_idle', 'axe')).toEqual(['idle_axe_incombat', 'combat_idle_axe']);
+  });
+
+  it('⚠ ПРИВЯЗКА БЬЁТ ЛЮБУЮ КОНВЕНЦИЮ и идёт первой', () => {
+    const b = readAnimCfg({ warrior: { items: { sword: { idle: 'моя_стойка' } } } }, 'warrior');
+    expect(b.clipNames('idle', 'sword')[0]).toBe('моя_стойка');
+    expect(b.clipNames('idle', 'sword')).toContain('idle_sword_relax');
   });
 
   it('тип оверлея — по типу предмета', () => {
@@ -62,7 +77,7 @@ describe('привязка клипа по ссылке — без переим�
   });
 
   it('предмет без записи всё равно идёт по конвенции', () => {
-    expect(cfg.clipName('idle', 'sword')).toBe('idle_sword');
+    expect(cfg.clipName('idle', 'sword')).toBe('idle_sword_relax');
   });
 });
 
@@ -98,7 +113,7 @@ describe('битые данные не роняют анимацию', () => {
   it('мусор вместо конфига читается как пустой', () => {
     for (const raw of [null, undefined, 42, 'нет', [], { warrior: 7 }]) {
       const c = readAnimCfg(raw, 'warrior');
-      expect(c.clipName('idle', 'sword')).toBe('idle_sword');
+      expect(c.clipName('idle', 'sword')).toBe('idle_sword_relax');
       expect(c.weightOf('sword')).toBe(1);
     }
   });

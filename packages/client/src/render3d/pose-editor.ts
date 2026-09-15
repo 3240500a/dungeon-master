@@ -5210,13 +5210,20 @@ function setStanceRole(kind: 'idle' | 'combat_idle', clip: string | undefined, i
   else { const c = animItem(item); if (kind === 'idle') c.idle = clip; else c.combatIdle = clip; }
   saveAnim();
 }
-function stanceClip(w: string): Clip | null { return library.find((c) => c.name === stanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
+// ⚠ ПО ВСЕМ КАНДИДАТАМ ИМЕНИ (привязка → нынешняя конвенция → историческая) — тот же порядок, что в игре.
+function stanceClip(w: string): Clip | null {
+  for (const nm of animCfg().clipNames('idle', w)) { const c = library.find((x) => x.name === nm && x.character === curCharId && x.weapon === w); if (c) return c; }
+  return null;
+}
 function loadSway(): Record<string, Record<string, number>> { try { return JSON.parse(localStorage.getItem('pe_sway') || '{}') as Record<string, Record<string, number>>; } catch { return {}; } }
 let swayCfg: Record<string, Record<string, number>> = loadSway();
 function saveSway(): void { try { localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); } catch { /* */ } }
 const swayOf = (w: string): number => swayCfg[curCharId]?.[w] ?? 0.2;   // остаточный мах поверх idle (физпокачивание)
 const combatStanceName = (w: string): string => animCfg().clipName('combat_idle', w);
-function combatStanceClip(w: string): Clip | null { return library.find((c) => c.name === combatStanceName(w) && c.character === curCharId && c.weapon === w) ?? null; }
+function combatStanceClip(w: string): Clip | null {
+  for (const nm of animCfg().clipNames('combat_idle', w)) { const c = library.find((x) => x.name === nm && x.character === curCharId && x.weapon === w); if (c) return c; }
+  return null;
+}
 let editorCombat = 0;   // превью боевой стойки в редакторе (0/1)
 /** Стойка под экипировку — ТОТ ЖЕ резолвер, что в игре (`resolveStancePose`): авторская на точный
  *  ключ в приоритете, иначе сборка из безоружной базы и дельт предметов по рукам. */

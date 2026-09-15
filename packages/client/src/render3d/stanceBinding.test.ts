@@ -58,7 +58,7 @@ describe('и сама модель ведёт себя как обещано', (
     expect(bound.clipName('idle', 'none'), 'назначено — цепляется назначенное').toBe('моя_стойка');
     expect(bound.clipName('combat_idle', 'none'), 'не назначено — конвенция').toBe(defaultStanceName('combat_idle', 'none'));
     const bare = readAnimCfg({}, 'hero');
-    expect(bare.clipName('idle', 'none'), 'пустой конфиг = прежнее поведение').toBe('idle_none');
+    expect(bare.clipName('idle', 'none'), 'пустой конфиг = конвенция').toBe('idle_none_relax');
   });
 });
 

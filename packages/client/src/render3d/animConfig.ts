@@ -78,6 +78,8 @@ export type AnimStore = Record<string, AnimGraph>;
 export interface AnimCfg {
   /** Имя клипа стойки для предмета (`none` = безоружная база). */
   clipName(kind: 'idle' | 'combat_idle', item: string): string;
+  /** Имена для ПОИСКА в порядке приоритета: привязка (если есть) → нынешняя конвенция → историческая. */
+  clipNames(kind: 'idle' | 'combat_idle', item: string): string[];
   /** Тип оверлея предмета. */
   kindOf(item: string): LayerKind;
   /** Рука предмета, если задана явно (иначе решает позиция в ключе оружия). */
@@ -96,7 +98,26 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 /** Кроссфейд входа в состояние по умолчанию — та самая прежняя константа `XFADE_SEC`. */
 export const DEF_BLEND_SEC = 0.12;
 /** Имя стойки по конвенции — умолчание, когда привязки нет. */
-export const defaultStanceName = (kind: 'idle' | 'combat_idle', item: string): string => `${kind}_${item}`;
+/**
+ * ⭐⭐ КОНВЕНЦИЯ ИМЁН СТОЕК: **`idle_<оружие>_relax`** и **`idle_<оружие>_incombat`**.
+ *
+ * Схема автора: `действие_оружие_состояние`. Спокойная и боевая стойки — это ОДНО действие в двух
+ * состояниях, поэтому состояние стоит суффиксом, а не отдельным префиксом: имена лежат рядом в
+ * списке, и видно, что у оружия есть обе, а не две разные записи в разных концах алфавита.
+ *
+ * ⚠ УДАРЫ ЭТОЙ КОНВЕНЦИИ НЕ КАСАЮТСЯ: они по умолчанию боевые, и суффикс состояния им не нужен.
+ * Их по-прежнему собирает префикс `hit_` (`attackClips`), а не это правило.
+ *
+ * ⚠ ИСТОРИЧЕСКИЕ ИМЕНА (`idle_<оружие>` / `combat_idle_<оружие>`) ПРОДОЛЖАЮТ НАХОДИТЬСЯ — см.
+ * `stanceNameCandidates`. Создаём новые по новой схеме, ищем по обеим: смена конвенции не должна
+ * обнулять чужую работу.
+ */
+export const defaultStanceName = (kind: 'idle' | 'combat_idle', item: string): string =>
+  kind === 'idle' ? `idle_${item}_relax` : `idle_${item}_incombat`;
+
+/** Имена-кандидаты при ПОИСКЕ стойки: сперва нынешняя конвенция, затем историческая. */
+export const stanceNameCandidates = (kind: 'idle' | 'combat_idle', item: string): string[] =>
+  [defaultStanceName(kind, item), `${kind}_${item}`];
 
 /**
  * Прочитать конфиг персонажа. `raw` — сырое содержимое `pe_anim` (что угодно из localStorage),
@@ -121,6 +142,13 @@ export function readAnimCfg(raw: unknown, charId: string, fallbackId?: string): 
       const c = it(item);
       const nm = kind === 'idle' ? str(c?.idle) : str(c?.combatIdle);
       return nm ?? defaultStanceName(kind, item);
+    },
+    clipNames(kind, item) {
+      // ⚠ Привязка ПЕРВОЙ: она явный выбор автора и должна бить любую конвенцию.
+      const bound = this.clipName(kind, item);
+      const out = [bound];
+      for (const n of stanceNameCandidates(kind, item)) if (!out.includes(n)) out.push(n);
+      return out;
     },
     kindOf(item) {
       const k = it(item)?.kind;

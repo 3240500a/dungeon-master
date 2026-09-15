@@ -794,9 +794,12 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   const AXES_NONE: Record<string, FingerAxes> = {};   // ключ мемо для «осей нет»
   /** Клип стойки ПО ИМЕНИ ИЗ КОНФИГА: привязка сильнее конвенции, поэтому переименовывать ничего не надо. */
   const bound = (kind: 'idle' | 'combat_idle', item: string): Clip | null => {
-    const nm = anim.clipName(kind, item);
-    const byName = clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) : undefined);
-    if (byName) return byName;
+    // ⚠ ПО ВСЕМ КАНДИДАТАМ: привязка → нынешняя конвенция (`idle_<оружие>_relax`) → историческая.
+    // Смена конвенции не должна обнулять уже сделанное.
+    for (const nm of anim.clipNames(kind, item)) {
+      const byName = clips.find((c) => c.name === nm && c.character === charId) ?? (fallbackId ? clips.find((c) => c.name === nm && c.character === fallbackId) : undefined);
+      if (byName) return byName;
+    }
     return kind === 'idle' ? stance(item) : combatStance(item);   // нет привязки/клипа — конвенция, как было
   };
   // Клип по имени (нормализуем старое удар_→hit_) — свой персонаж, иначе фолбэк.

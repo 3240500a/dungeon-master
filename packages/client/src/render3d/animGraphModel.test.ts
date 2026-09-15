@@ -136,7 +136,7 @@ describe('уровни (подмашины)', () => {
   });
 
   it('битая привязка видна и на уровне стоек', () => {
-    const ns = levelNodes({}, 'warrior', ['idle_none'], 'stance');
+    const ns = levelNodes({}, 'warrior', ['idle_none_relax'], 'stance');   // конвенция: действие_оружие_состояние
     expect(ns.find((n) => n.id === '#relax')!.missing, 'клип есть').toBe(false);
     expect(ns.find((n) => n.id === '#incombat')!.missing, 'боевой базы нет').toBe(true);
   });
