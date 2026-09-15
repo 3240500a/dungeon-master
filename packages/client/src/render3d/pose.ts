@@ -658,6 +658,13 @@ function crAt(pts: [number, number][], u: number): [number, number] {
 
 const SIDESTEP_DUR = 0.18;   // сек: длительность приставного шага (перенос стопы дугой к слоту стойки при повороте на месте)
 const SETTLE_EPS = 2;        // u: стопы ближе этого к своим плантам → замираем (idle-поза); иначе footlock (стопа прибита к миру)
+/**
+ * ⭐ ДОСТУПАТЬ ШАГОМ ВСЁ, ЧТО ЗАМЕТНО. Раньше доводка шла по `SETTLE_EPS` = 2 u: стопа ближе двух
+ * юнитов к планту просто ТЕЛЕПОРТИРОВАЛАСЬ в idle-стойку (`l.px = stanceX(i)`), и этот рывок до
+ * двух единиц читался как «останавливаешься, а он доезжает ногами в стойку». Теперь всё дальше
+ * четверти юнита доводится НАСТОЯЩИМ приставным шагом, а прибитая стопа не двигается вовсе.
+ */
+const SETTLE_STEP_EPS = 0.25;
 const MAX_GOAL_LEAD = Math.PI * 0.4;   // рад (~72°): максимум, на сколько подшаг целит ВПЕРЁД таза к прицелу — флик курсора не даёт стопе скачок-прыжок
 
 class StepPlanner {
@@ -769,6 +776,13 @@ class StepPlanner {
   setLegsHeld(v: boolean): void { this.legsHeld = v; }
   /** Фаза приставного шага КАЖДОЙ ноги (0 = стоит, 0..1 = переносится к планту). */
   private sideT: [number, number] = [0, 0];
+  /**
+   * ⚠ ДОВОДКА — ОДИН РАЗ ЗА ПОВОРОТ. Защёлка на ногу: доступили — больше не доступаем, пока таз
+   * снова не начнёт крутиться. Без неё порог доводки в четверть юнита превращается в ТОПТАНИЕ:
+   * шаг сажает стопу домой, таз доворачивает на градус, порог снова пройден — и так вечно
+   * (ровно та беда, от которой в коде стоит «заморозка стойки»).
+   */
+  private settleStepped: [boolean, boolean] = [false, false];
   private yawSigned = 0;                          // сглаженная скорость поворота СО ЗНАКОМ (>0 вправо/по часовой, <0 влево)
   private goalYaw: number | null = null;          // фейсинг ПРИЦЕЛА (куда доворачивает таз): подшаг целит стопу в идл-стойку НА НЁМ, не в промежуточный таз. null → текущий yaw
   private bodyX = 0; private bodyZ = 0; private curYaw = 0;   // последняя позиция/поворот таза — для stanceAtGoal (целевые маркеры редактора)
@@ -968,23 +982,37 @@ class StepPlanner {
         return Math.abs(plantLat) > 0.1 && Math.sign(footLat) !== Math.sign(plantLat) && Math.abs(footLat) > 1;
       };
       const settleReady = this.stableFor > GAIT.turnSettleTime;   // таз стоит → доступить не дожидаясь предела
-      const wantStep = (i: number): boolean => !this.legsHeld && this.legs[i]!.sw <= 0 && (beyondLimit(i) || crossed(i) || (settleReady && homeDist(i) > SETTLE_EPS));
+      if (turning) { this.settleStepped[0] = false; this.settleStepped[1] = false; }   // снова крутимся → доводка опять разрешена
+      // ⚠ ДОВОДКА ЖДЁТ, ПОКА ТАЗ ВСТАНЕТ (`settleReady`). Пробовал отпустить её на «не крутимся
+      // быстро» — чтобы доводка работала и в медленном повороте: тогда она СРАБАТЫВАЕТ РАНЬШЕ
+      // угловогo предела, golden поехал уже в ТРЁХ поворотных кейсах и упал сторож «шаг при
+      // повороте таза примерно на turnLimitDeg». Пределы угла и дистанции ведут поворот, доводка —
+      // только его конец.
+      const wantSettle = (i: number): boolean => settleReady && !this.settleStepped[i] && homeDist(i) > SETTLE_STEP_EPS;
+      const wantStep = (i: number): boolean => !this.legsHeld && this.legs[i]!.sw <= 0 && (beyondLimit(i) || crossed(i) || wantSettle(i));
       // ПОРЯДОК: очередь turnLead (внутренняя первой), одновременный двойной свинг запрещён, строгое чередование.
       // Латчим ТОЛЬКО когда реально крутимся (yawSigned уже с чётким знаком); стоя латч сброшен, ведущая берётся вживую.
       if (turning && this.turnLead < 0) this.turnLead = inside;
       if (!turning) this.turnLead = -1;
       const lead = this.turnLead >= 0 ? this.turnLead : inside, other = lead === 0 ? 1 : 0;
-      if (wantStep(lead) && this.legs[other]!.sw <= 0) { startStep(lead); if (this.turnLead >= 0) this.turnLead = other; }
-      else if (wantStep(other) && this.legs[lead]!.sw <= 0 && homeDist(lead) <= SETTLE_EPS) { startStep(other); if (this.turnLead >= 0) this.turnLead = lead; }
+      if (wantStep(lead) && this.legs[other]!.sw <= 0) { if (wantSettle(lead)) this.settleStepped[lead] = true; startStep(lead); if (this.turnLead >= 0) this.turnLead = other; }
+      else if (wantStep(other) && this.legs[lead]!.sw <= 0 && homeDist(lead) <= SETTLE_STEP_EPS) { if (wantSettle(other)) this.settleStepped[other] = true; startStep(other); if (this.turnLead >= 0) this.turnLead = lead; }
       const anySwing = this.legs[0]!.sw > 0 || this.legs[1]!.sw > 0;
       const maxDist = Math.max(homeDist(0), homeDist(1));
       // УХОД В IDLE ПО ВРЕМЕНИ: обе стопы дома + не крутимся + нет свинга → копим idleFor; через turnIdleTime → idle-поза.
+      // ⚠ ГЕЙТ «УСПОКОИЛИСЬ» ОСТАЁТСЯ НА `SETTLE_EPS`. Он правит `stepping` → `legMag`, то есть КТО
+      // ведёт ноги: планировщик или авторская поза. Сузил его до четверти юнита — и golden-вектор
+      // поехал на 1.44 по тазу в кейсе `turn_slow` (ноги перестали отдаваться позе). Доводку шагом
+      // сужать можно и нужно, а этот гейт — нет.
       if (anySwing || maxDist > SETTLE_EPS || turning) { this.settled = false; this.idleFor = 0; }
       else {
         this.idleFor += dt;
         if (this.idleFor > GAIT.turnIdleTime && !this.settled) {
+          // ⚠ СТОПЫ НЕ ДВИГАЕМ. Раньше здесь был ТЕЛЕПОРТ в idle-стойку — рывок до `SETTLE_EPS` = 2 u
+          // ровно в момент «успокоились». Доводка теперь идёт приставным шагом (см. `SETTLE_STEP_EPS`),
+          // поэтому к этому моменту стопы уже НА стойке: остаётся зафиксировать угол приземления.
           this.settled = true; this.turnLead = -1;
-          for (let i = 0; i < 2; i++) { const l = this.legs[i]!; l.px = stanceX(i); l.pz = stanceZ(i); l.sw = 0; this.plantYaw[i] = yaw; }
+          for (let i = 0; i < 2; i++) { this.legs[i]!.sw = 0; this.plantYaw[i] = yaw; }
         }
       }
     }
