@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { autoBoneMap, mergeBoneMap, makeRetargetRig, measureBoneOffsets, FINGER_PARENT, OUR_BONES } from './retarget3d.js';
+import { autoBoneMap, mergeBoneMap, staleMapKeys, makeRetargetRig, measureBoneOffsets, FINGER_PARENT, OUR_BONES } from './retarget3d.js';
 import { buildHumanoid } from './humanoid.js';
 
 /**
@@ -157,6 +157,23 @@ describe('retarget3d — конформ длин обходит носок', () 
     rig.drive(src);
     g.updateMatrixWorld(true);
     expect(f('bigtoe_l').getWorldPosition(new THREE.Vector3()).y - y0, '⚠ носок перестал вестись — ради поворота всё и чинилось').toBeGreaterThan(0.1);
+  });
+});
+
+describe('retarget3d — замеры, устаревшие вместе с картой', () => {
+  const stored = { LeftToes: 'CC_Base_L_ToeBaseShareBone', RightToes: 'CC_Base_R_ToeBase', LeftFoot: 'CC_Base_L_Foot' };
+  const fixed = { LeftToes: 'CC_Base_L_ToeBase', RightToes: 'CC_Base_R_ToeBase', LeftFoot: 'CC_Base_L_Foot' };
+
+  it('⭐ кость, у которой карта разошлась, идёт на перезамер', () => {
+    expect(staleMapKeys(stored, fixed), '⚠ замеры с пустышки останутся в конфиге навсегда').toEqual(['LeftToes']);
+  });
+
+  it('совпало — перезамерять нечего (ничего лишнего не трогаем)', () => {
+    expect(staleMapKeys(fixed, fixed)).toEqual([]);
+  });
+
+  it('кости, которой в сторе не было, тоже не трогаем — это не «расхождение»', () => {
+    expect(staleMapKeys({}, fixed)).toEqual([]);
   });
 });
 

@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, mergeBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, upAxisAngle, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig , nodeVsBindGap} from './retarget3d.js';
+import { autoBoneMap, mergeBoneMap, staleMapKeys, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, upAxisAngle, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig , nodeVsBindGap} from './retarget3d.js';
 const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая проверка «это фаланга?» для само-лечения замеров
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
@@ -162,6 +162,50 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
     seedVisible(atlas);
     asmMeshes = await asmSkin.setAtlas(atlas, asmVisible, { materials: cfg.materials, textures: cfg.textures });
     await healFingerOffsets(atlas);
+    await healStaleMapOffsets(atlas);
+  }
+
+  /**
+   * ⭐⭐ САМО-ЛЕЧЕНИЕ ЗАМЕРОВ, СНЯТЫХ С НЕВЕРНОЙ КОСТИ.
+   *
+   * Старая авто-карта отдавала слот ПЕРВОЙ подходящей кости, то есть решал порядок в файле. У CC
+   * рядом с настоящей костью лежит вспомогалка скина `*ShareBone` (лист без детей), и у левой ноги
+   * она стоит раньше — `LeftToes` вёл её. Карту мы теперь чиним на лету (`mergeBoneMap`), но
+   * ОФСЕТЫ, снятые с пустышки, уже уехали в конфиг и строят наш риг каждый запуск.
+   *
+   * ЗАМЕР на `knight_06_modular_rig`: в записи лежало `LeftToes [−3.08, −1.81, 5.67]` против
+   * правого `[−2.10, −1.81, 4.81]` — обе стопы смотрели В ОДНУ СТОРОНУ (развал −28.5° и −23.6°
+   * вместо ±23.6°), и левая была на 20 % длиннее. Модель при этом СИММЕТРИЧНА: её собственный
+   * развал ровно +23.61 / −23.61.
+   *
+   * ⚠ Переимпортировать руками не надо — и НЕЛЬЗЯ ЖДАТЬ, что кто-то догадается: пока кость вела
+   * пустышку, кривой замер ничего не двигал и был НЕВИДИМ. Он вылез ровно тогда, когда карту
+   * починили. Лечим ровно те кости, где СОХРАНЁННАЯ карта разошлась с РАЗРЕШЁННОЙ; телесные замеры
+   * остальных костей не трогаем.
+   */
+  async function healStaleMapOffsets(atlas: ModelEntry): Promise<void> {
+    const t = asmSkin?.atlasExport(); if (!t) return;
+    const stored = atlas.boneMap ?? {};
+    const stale = staleMapKeys(stored, t.boneMap);
+    if (!stale.length) return;
+    t.root.traverse((o) => { const sk = (o as THREE.SkinnedMesh).skeleton; if (sk) sk.pose(); });   // замер ПО БИНДУ, как у пальцев
+    t.root.updateMatrixWorld(true);
+    const off = measureBoneOffsets(t.root, t.boneMap);
+    const fix: Record<string, [number, number, number]> = {};
+    for (const k of stale) { const v = off[k]; if (v) fix[k] = v; }
+    atlas.boneMap = { ...stored, ...Object.fromEntries(stale.map((k) => [k, t.boneMap[k]!])) };
+    if (Object.keys(fix).length) atlas.boneOffsets = { ...(atlas.boneOffsets ?? {}), ...fix };
+    asmStatus = `перезамерено по верной кости: ${stale.join(', ')}`;
+    // ⚠ ЗАПИСЫВАТЬ ПО ID, А НЕ ПО ССЫЛКЕ: `curAtlas()` отдаёт `asmAtlas`, и это НЕ обязательно тот же
+    // объект, что лежит в `cfg.models` (замер правился бы только в памяти и пропадал на F5).
+    // Тот же приём, что в `saveAtlas`.
+    try {
+      const models = (cfg.models as ModelEntry[]).map((m) => (m.id === atlas.id ? { ...m, boneMap: atlas.boneMap, boneOffsets: atlas.boneOffsets } : m));
+      cfg.models = models;
+      saveConfigSection('models', models);   // локально сразу; на сервер — кнопкой «Опубликовать»
+    } catch { /* запись локальная; в памяти уже применено */ }
+    rebuildAsm();
+    renderBody();
   }
 
   /**

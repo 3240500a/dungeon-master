@@ -172,6 +172,23 @@ export function mergeBoneMap(auto: Record<string, string>, stored: Record<string
   return out;
 }
 
+/**
+ * ⭐ КОСТИ, ЧЬИ ЗАМЕРЫ УСТАРЕЛИ ВМЕСТЕ С КАРТОЙ. Сохранённая карта разошлась с разрешённой — значит
+ * `boneOffsets` этих костей снимали С ДРУГОЙ КОСТИ, и наш риг строится по мусору.
+ *
+ * ЖИВОЙ СЛУЧАЙ: `knight_06_modular_rig` импортировали со старой авто-картой, где `LeftToes` вёл
+ * вспомогалку скина `CC_Base_L_ToeBaseShareBone`. В конфиге осело `LeftToes [−3.08, −1.81, 5.67]`
+ * против правого `[−2.10, −1.81, 4.81]` — обе стопы смотрели В ОДНУ СТОРОНУ (−28.5° и −23.6°
+ * вместо ±23.6°), левая на 20 % длиннее. Сама модель при этом симметрична (+23.61 / −23.61).
+ *
+ * ⚠ Починки карты МАЛО: карта чинится на лету, а замеры лежат в конфиге и переживают перезагрузку.
+ * И «переимпортируй руками» тут не работает — пока кость вела пустышку, кривой замер НИЧЕГО не
+ * двигал и был невидим; он вылез ровно тогда, когда карту починили.
+ */
+export function staleMapKeys(stored: Record<string, string>, resolved: Record<string, string>): string[] {
+  return Object.keys(resolved).filter((k) => stored[k] && stored[k] !== resolved[k]);
+}
+
 /** Отчёт по покрытию карты — чтобы редактор говорил «смаплено 48/52», а не молча терял кости. */
 export function boneMapReport(map: Record<string, string>): { core: number; coreTotal: number; fingers: number; missing: string[] } {
   const missing = OUR_BONES.filter((b) => !map[b]);
