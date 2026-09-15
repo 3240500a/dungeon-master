@@ -17,6 +17,8 @@ import type * as THREE from 'three';
 import { openBakeSource, bakeFromSource, logSourceReport, type BakeSource, type BakeOptions, type BakeResult } from './clipBaker.js';
 import { isStaticBake, loopSeamGap } from './clipImport.js';
 import { MASK_PARTS, MASK_PRESETS, presetMask, togglePart, setPartWeight, partWeight, maskLabel, PART_OF_BONE, type BoneMask, type MaskPart } from './boneMask.js';
+import { clampClip, clampSummary } from './clipClamp.js';   // ⭐ пределы суставов на импорте, по выбранным частям
+import { limitViewForBone } from './humanoidRagdoll.js';
 import { LIMBS } from './footLock.js';
 import { OUR_BONES } from './retarget3d.js';
 import type { Clip, Pose } from './clipModel.js';
@@ -175,6 +177,41 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
     rows.set(p.id, { chip, sl, val });
   }
   const maskNote = el('div', 'color:#6b7180;font-size:10px;margin:3px 0'); box.append(maskNote);
+
+  // ⭐⭐ ПРЕДЕЛЫ СУСТАВОВ НА ИМПОРТЕ — ПО ЧАСТЯМ.
+  //
+  // Жалоба «на ударе мечом голову ведёт в сторону»: клип авторил шею −52° и голову −38° (вместе ~90°)
+  // при пределе головы ±40°, и НИКТО этого не проверял — редактор клампит только ручной позинг.
+  //
+  // ⚠ Галки, а не «зажать всё»: предел настроен под физику и ручную правку, и на руках-ногах он
+  // вполне может испортить мокап. Части — те же, что у маски: два разных списка тела в одной панели
+  // читались бы как разные вещи.
+  //
+  // ⚠ Умолчание — только ГОЛОВА (шея+голова): это единственное место, где перебор уже пойман
+  // замером. Остальное включается осознанно и смотрится глазами.
+  let clampParts: MaskPart[] = ['head'];
+  const clampBox = el('div', 'margin:4px 0 2px'); box.append(clampBox);
+  const clampHint = el('div', 'color:#6b7180;font-size:10px;margin-bottom:2px',
+    'Зажать пределами суставов (мокап может выходить за анатомию — например шея на замахе).');
+  clampBox.append(clampHint);
+  const clampRow = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); clampBox.append(clampRow);
+  const clampChips = new Map<MaskPart, HTMLElement>();
+  for (const p of MASK_PARTS) {
+    const chip = el('span', css.chip, p.label); chip.style.cssText += ';min-width:64px;text-align:center';
+    chip.onclick = () => {
+      clampParts = clampParts.includes(p.id) ? clampParts.filter((x) => x !== p.id) : [...clampParts, p.id];
+      drawClamp(); rebake();
+    };
+    clampChips.set(p.id, chip); clampRow.append(chip);
+  }
+  const clampNote = el('div', 'color:#6b7180;font-size:10px;margin:3px 0'); clampBox.append(clampNote);
+  let clampText = '';
+  const drawClamp = (): void => {
+    for (const [id, chip] of clampChips) {
+      chip.style.cssText = (clampParts.includes(id) ? css.chipOn : css.chip) + ';min-width:64px;text-align:center';
+    }
+    clampNote.textContent = clampParts.length ? `пределы: ${clampParts.length} част(ей) · ${clampText}` : 'пределы не применяются';
+  };
   const drawMask = (): void => {
     for (const [id, r] of rows) {
       const w = partWeight(mask, id);
@@ -261,6 +298,11 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
       // ⭐ ЗАПОМИНАЕМ, К ЧЕМУ ПРИВЯЗАНЫ КОНЦЫ. Иначе синк концов в редакторе возьмёт обычную стойку,
       // и выбор «боевая» потеряется ровно на сохранении (жалоба: «сохраняется с другой стойкой»).
       if (last.clip.idleEnds) last.clip.idleEndsFrom = baseId;
+      // ⭐ ПРЕДЕЛЫ — ПОСЛЕ запекания и ДО превью: глазами надо видеть уже зажатый результат, иначе
+      // настраивать нечего. Отчёт показываем рядом с галками, потому что правка молча меняет
+      // авторскую работу и её не с чем было бы сопоставить.
+      clampText = clampSummary(clampClip(last.clip, clampParts, limitViewForBone));
+      drawClamp();
       cb.preview(last.clip);
       syncPlay();
       takeBtn.disabled = false;
@@ -338,7 +380,7 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
       const bases = cb.basePoses();
       for (const b of bases) { const op = document.createElement('option'); op.value = b.id; op.textContent = b.label; baseSel.append(op); }
       baseId = bases[0]?.id ?? ''; baseSel.value = baseId;
-      syncTrim(); drawMask(); drawDiag(); drawMapTable(); doBake();
+      syncTrim(); drawMask(); drawClamp(); drawDiag(); drawMapTable(); doBake();
     } catch (e) {
       status.style.color = '#e08080'; status.textContent = 'ошибка чтения: ' + (e as Error).message;
     }
