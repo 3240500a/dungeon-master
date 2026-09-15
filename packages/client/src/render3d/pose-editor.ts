@@ -24,6 +24,8 @@ import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { solveTwoBone, elbowGoal, perpTo, LIMB_SOFT } from './limbIk.js';
 import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type TimelinePanel } from './timelinePanel.js';
 import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType , idleEndsSource } from './clipModel.js';
+import { clampClip, clampSummary } from './clipClamp.js';   // ⭐ пределы суставов: та же функция, что на импорте
+import { MASK_PARTS, type MaskPart } from './boneMask.js';
 import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
 import { trajectorySamples, polylineLength, arcRatio, excursion } from './trajectory.js';                                          // Ф10: траектория кости
 import { requestGeneration, checkHealth, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
@@ -2390,6 +2392,9 @@ const weaponGripBind = (): WeaponGrip =>
  * нормально. Уровень оружия остаётся как ОБЩАЯ база: цепочка клип → оружие → авто, по полям.
  */
 let gripScope: 'clip' | 'weapon' = 'clip';
+/** Части тела для кнопки «зажать пределами» (умолчание — голова, см. панель импорта). */
+let clampSel: MaskPart[] = ['head'];
+let clampNote = '';   // отчёт последнего клампа — переживает перерисовку панели
 /** Имя клипа, на который сейчас пишем/читаем хват (null — правим уровень оружия). */
 const gripClipName = (): string | null => (gripScope === 'clip' ? (curClip()?.name ?? null) : null);
 /** Запись хвата на ТОТ уровень, который выбран. */
@@ -3101,6 +3106,34 @@ function poseLibSection(): void {
       onClip('⇄ зеркало КЛИПА', (c) => mirrorClip(c, 'Left')),
       onClip('↻ фаза +1', (c) => rotateClipPhase(c, 1)),
     );
+    // ⭐⭐ ЗАЖАТЬ ТЕКУЩИЙ КЛИП ПРЕДЕЛАМИ СУСТАВОВ — то же, что делает импорт, но для УЖЕ загруженного.
+    //
+    // Кламп живёт на импорте, и это правильное место для новых клипов; но старые (например `hit_sword_r_01`
+    // с шеей −52° при пределе головы ±40°) переимпортировать ради этого — лишняя работа, а иногда и
+    // невозможная: исходного FBX может уже не быть.
+    //
+    // ⚠ ЧАСТИ ТЕ ЖЕ И ВЫБИРАЮТСЯ ТАК ЖЕ, как в панели импорта: предел настроен под физику и ручной
+    // позинг, и на руках-ногах он вполне может испортить мокап. Умолчание — только голова.
+    {
+      const cr = el('div', 'display:flex;flex-wrap:wrap;align-items:center;margin-top:3px'); body.append(cr);
+      const cap = el('span', 'font-size:10px;color:#9aa3b8;margin-right:4px'); cap.textContent = 'зажать пределами:'; cr.append(cap);
+      const note = el('div', 'font-size:10px;color:#6b7180;margin-top:2px');
+      const redraw = (): void => { refreshAll(); };   // кнопки-тумблеры перерисовываются вместе с панелью
+      for (const mp of MASK_PARTS) {
+        cr.append(pbtn(mp.label, () => { clampSel = clampSel.includes(mp.id) ? clampSel.filter((x) => x !== mp.id) : [...clampSel, mp.id]; redraw(); }, clampSel.includes(mp.id)));
+      }
+      cr.append(pbtn('⊓ применить к клипу', () => {
+        const c = curClip(); if (!c) { clampNote = 'клип не выбран'; note.textContent = clampNote; return; }
+        // ⚠ Через историю: правка молча меняет авторскую работу, откат обязан быть в одно нажатие.
+        histLib('зажать пределами', () => {
+          clampNote = clampSummary(clampClip(c, clampSel, limitViewForBone));
+          note.textContent = clampNote;
+          saveLib(); goFrame(frameIdx);
+        });
+      }));
+      body.append(note);
+      if (clampNote) note.textContent = clampNote;   // отчёт переживает перерисовку панели
+    }
     // «А в игре так же?» — требование «редактор ≡ игра» становится ИЗМЕРИМЫМ, а не на глаз.
     body.append(pbtn('⚖ сверить с физ-призраком', () => {
       if (!ghostHuman) { alert('Включи физику — без призрака сверять не с чем.'); return; }
