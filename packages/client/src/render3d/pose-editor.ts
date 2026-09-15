@@ -591,7 +591,11 @@ function syncHandles(): void {
 function captureRig(): void {
   pullForget(); gazeForget(); girdleForget(); hipsGood = null; pinBase = 0; goodPose.clear();
   for (const e of effList()) { e.bodyApplied[0] = 0; e.bodyApplied[1] = 0; e.bodyApplied[2] = 0; }   // поза заменена — она авторская целиком
-  const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position); rig.hipsQuat.copy(hips.quaternion);
+  // ⚠ ВЫЧИТАЕМ СДВИГ БАЛАНСА, КАК `syncHandles`. Раньше здесь его не было, и `rig.hipsPos` (ЖЕЛАНИЕ)
+  // расходился с ним же на следующем кадре: ЗАМЕР — кость (0, 32, 0), а желание уезжало в (−3, 32, −2)
+  // на «мёртвый» сдвиг от ПРЕДЫДУЩЕЙ позы. Ручка таза прыгала туда же — «улетает в бок», и следом
+  // кривилась поза, потому что желание и есть то, куда тянут таз.
+  const hips = human.bones.get('Hips')!; rig.hipsPos.copy(hips.position).sub(balanceOff); rig.hipsQuat.copy(hips.quaternion);
   human.root.updateMatrixWorld(true);
   for (const e of effList()) syncEff(e);
 }
@@ -1911,12 +1915,13 @@ function applyWeaponPose(p: Pose): void {
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
-function applyPose(p: Pose): void { human.reset(); for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hd = hipsOffset(p, human.hipsRest.y); if (hd) human.hips.position.set(human.hipsRest.x + hd[0], human.hipsRest.y + hd[1], human.hipsRest.z + hd[2]); } applyGripOver(p); applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
+function applyPose(p: Pose): void { human.reset(); balanceOff.set(0, 0, 0);   // ⚠ reset убрал сдвиг баланса ИЗ КОСТИ — значит и запись о нём недействительна (см. `captureRig`)
+   for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hd = hipsOffset(p, human.hipsRest.y); if (hd) human.hips.position.set(human.hipsRest.x + hd[0], human.hipsRest.y + hd[1], human.hipsRest.z + hd[2]); } applyGripOver(p); applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
 // Интерп ПОВОРОТОВ кадров — КВАТЕРНИОННЫЙ SLERP (истинная кратчайшая дуга, без gimbal). Покомпонентный лерп эйлеров
 // (даже с обёрткой углов в [-π,π]) на многоосевых кадрах даёт «прокрутку» руки (эйлеры далеки, хотя поворот близок).
 // slerp учитывает двойное покрытие (q и −q = один поворот) → всегда короткий путь. lerpAng оставлен для скаляров/маркера.
 function lerpPose(a: Pose, b: Pose, t: number): void {
-  human.reset();
+  human.reset(); balanceOff.set(0, 0, 0);   // ⚠ тот же инвариант, что в `applyPose`: сдвига в кости больше нет
   for (const nm of human.boneNames) { const pa = a[nm] ?? [0, 0, 0], pb = b[nm] ?? [0, 0, 0]; slerpEuler(human.bones.get(nm)!.quaternion, pa, pb, t); }
   weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
@@ -4591,6 +4596,17 @@ function renderGaitTune(): void {
   row2('держать: начало окна (0 = отрыв)', GAITo, 'ankHoldFrom', 'ankHoldFromRun', 0, 1, 0.01, { body: true });
   row2('держать: конец окна (1 = касание)', GAITo, 'ankHoldTo', 'ankHoldToRun', 0, 1, 0.01, { body: true });
   row2('держать: плавность краёв окна', GAITo, 'ankHoldEase', 'ankHoldEaseRun', 0, 0.5, 0.01, { body: true });
+  {
+    // ⚠ ЗАКРЫТОЕ ОКНО МОЛЧА ВЫКЛЮЧАЕТ УДЕРЖАНИЕ. Живой случай: `from` 0.08 при `to` 0 — и ручка
+    // «держать подошву», выкрученная в 1.4, не делала ничего. Пишем прямо, а не оставляем гадать.
+    const closed = (GAITo['ankHoldTo'] ?? 1) <= (GAITo['ankHoldFrom'] ?? 0)
+      || (GAITo['ankHoldToRun'] ?? 1) <= (GAITo['ankHoldFromRun'] ?? 0);
+    if (closed) {
+      const warn = el('div', 'color:#e08080;font-size:10px;margin:2px 0 6px');
+      warn.textContent = '⚠ окно удержания ЗАКРЫТО (конец ≤ начала) — «держать подошву» сейчас не действует вовсе.';
+      box.append(warn);
+    }
+  }
   row2('подъём носка поверх удержания', GAITo, 'toeLift', 'toeLiftRun', 0, 1.2, 0.01);
   // ЗАГИБ НОСКА НА ПЕРЕКАТЕ. Отдельно от «подъёма носка»: тот даёт клиренс В ПЕРЕНОСЕ и по
   // построению ноль на отрыве, поэтому провал носка под пол им было не вылечить.

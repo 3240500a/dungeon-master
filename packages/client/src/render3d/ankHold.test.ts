@@ -97,6 +97,21 @@ describe('окно удержания подошвы', () => {
     expect(run().liftJump, '⚠ СТУПЕНЬКА НА ОТРЫВЕ: ветка опоры не знает про окно').toBeLessThan(base + 0.03);
   });
 
+  it('⚠ ЗАКРЫТОЕ ОКНО (конец ≤ начала) выключает удержание — явно, а не случайно', () => {
+    // Живой случай у воина: `from` 0.08 при `to` 0 — и ручка «держать подошву», выкрученная в 1.4,
+    // не делала НИЧЕГО. Семантика оставлена (гадать за автора нельзя), но панель «Бег» теперь
+    // пишет об этом прямо. ⚠ Мутация «убрать проверку `t <= f`» валит этот тест: рампы снаружи
+    // окна дали бы ненулевое удержание кусками.
+    set('ankHoldFrom', 0.08); set('ankHoldFromRun', 0.08);
+    set('ankHoldTo', 0); set('ankHoldToRun', 0);
+    set('ankHoldEase', 0.5); set('ankHoldEaseRun', 0.5);
+    set('ankLevel', 1.4); set('ankLevelRun', 1.4);
+    set('toeLift', 0); set('toeLiftRun', 0);
+    const { ank, swing } = run();
+    const inSwing = ank.filter((_, i) => swing[i]);
+    expect(Math.max(...inSwing.map(Math.abs)), '⚠ при закрытом окне удержание обязано быть нулевым ВЕЗДЕ').toBeLessThan(1e-9);
+  });
+
   it('плавность 0 — край окна жёсткий (ручка честно выключается)', () => {
     set('ankHoldTo', 0.4); set('ankHoldToRun', 0.4);
     set('ankHoldEase', 0); set('ankHoldEaseRun', 0);

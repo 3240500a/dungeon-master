@@ -956,6 +956,11 @@ class StepPlanner {
     const ankHoldS = (sw: number, i: 0 | 1): number => {
       const f = locoVal('ankHoldFrom', 'ankHoldFromRun', GAIT.ankHoldFrom, GAIT.ankHoldFromRun, i, m);
       const t = locoVal('ankHoldTo', 'ankHoldToRun', GAIT.ankHoldTo, GAIT.ankHoldToRun, i, m);
+      // ⚠ ОКНО ЗАКРЫТО (`to` ≤ `from`) = УДЕРЖАНИЕ ВЫКЛЮЧЕНО, и это НЕ опечатка кода, а явная
+      // семантика: иначе пришлось бы гадать, что имел в виду автор. Но молчать об этом нельзя —
+      // живой случай: у воина стояло `from` 0.08 при `to` 0, и выкрученная в 1.4 ручка «держать
+      // подошву» не делала НИЧЕГО. Панель «Бег» теперь пишет об этом прямо под ползунками.
+      if (t <= f) return 0;
       if (sw >= f && sw <= t) return 1;                       // ВНУТРИ окна — ровно 1 (умолчание [0,1] = весь перенос)
       const e = Math.max(0, locoVal('ankHoldEase', 'ankHoldEaseRun', GAIT.ankHoldEase, GAIT.ankHoldEaseRun, i, m));
       if (e <= 1e-4) return 0;                                 // плавность 0 → жёсткий край окна
