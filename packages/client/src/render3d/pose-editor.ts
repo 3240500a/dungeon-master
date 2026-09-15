@@ -4583,6 +4583,10 @@ function renderGaitTune(): void {
   // ГОЛЕНОСТОП. Правит ТОЛЬКО маховую ногу: опорную забирает заземление и кладёт плоско на пол,
   // поэтому ручки «носок в опоре» здесь нет — она была бы мёртвой.
   row2('держать подошву (0 = болтается за голенью)', GAITo, 'ankLevel', 'ankLevelRun', 0, 1.4, 0.01);
+  // ⭐ ОКНО УДЕРЖАНИЯ: держать не весь перенос, а отрезок. Рампы СНАРУЖИ окна → умолчание [0,1] = как было.
+  row2('держать: начало окна (0 = отрыв)', GAITo, 'ankHoldFrom', 'ankHoldFromRun', 0, 1, 0.01, { body: true });
+  row2('держать: конец окна (1 = касание)', GAITo, 'ankHoldTo', 'ankHoldToRun', 0, 1, 0.01, { body: true });
+  row2('держать: плавность краёв окна', GAITo, 'ankHoldEase', 'ankHoldEaseRun', 0, 0.5, 0.01, { body: true });
   row2('подъём носка поверх удержания', GAITo, 'toeLift', 'toeLiftRun', 0, 1.2, 0.01);
   // ЗАГИБ НОСКА НА ПЕРЕКАТЕ. Отдельно от «подъёма носка»: тот даёт клиренс В ПЕРЕНОСЕ и по
   // построению ноль на отрыве, поэтому провал носка под пол им было не вылечить.
@@ -5526,7 +5530,8 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
-  'ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax',
+  'ankLevel', 'ankLevelRun', 'ankHoldFrom', 'ankHoldFromRun', 'ankHoldTo', 'ankHoldToRun', 'ankHoldEase', 'ankHoldEaseRun',
+  'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax',
   'kneeDir', 'kneeDirRun', 'kneeDirMax', 'crouchWalk', 'crouchRun',
   // Плавность боба таза и окно заземления (см. «БОБ ТАЗА И ЗАЗЕМЛЕНИЕ» в render3d/README.md).
   'bobLagUp', 'bobLagUpRun', 'bobLagDown', 'bobLagDownRun', 'bobFlight',

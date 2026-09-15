@@ -271,6 +271,20 @@ export const GAIT = {
   // `ankLevel` — главная ручка: насколько голеностоп ГАСИТ наклон голени и держит подошву в её
   // посадке. 1 = держит полностью (стопа больше не болтается), 0 = прежнее поведение бит в бит.
   ankLevel: 1, ankLevelRun: 1,
+  /**
+   * ⭐ ОКНО УДЕРЖАНИЯ ПО ФАЗЕ ПЕРЕНОСА: **0 = отрыв, 1 = касание**. Жалоба была ровно про это —
+   * «если ручку удержания выкрутить, то НА ОТРЫВЕ нормально, а ПОТОМ уже не очень»: удержание
+   * действовало на ВЕСЬ перенос, а нужно оно в начале, пока голень круто наклонена.
+   *
+   * ⚠ РАМПЫ СНАРУЖИ ОКНА, не внутри. Внутри `[from, to]` вес РОВНО 1, а смягчение живёт в полосе
+   * `ease` ПЕРЕД `from` и ПОСЛЕ `to`. Поэтому умолчание `[0, 1]` даёт вес 1 на всём переносе при
+   * ЛЮБОЙ плавности — прежнее поведение бит в бит, и ползунок плавности можно держать не нулевым
+   * заранее. Рампы внутри окна обнулили бы удержание на самом отрыве, то есть вернули бы ту самую
+   * резкость, от которой всё и затевалось.
+   */
+  ankHoldFrom: 0, ankHoldFromRun: 0,
+  ankHoldTo: 1, ankHoldToRun: 1,
+  ankHoldEase: 0.15, ankHoldEaseRun: 0.15,
   // `toeLift` — добавка НОСКОМ ВВЕРХ поверх удержания: чистый стиль и запас клиренса.
   toeLift: 0.12, toeLiftRun: 0.2,
   toeLiftPhase: 0.45, toeLiftPhaseRun: 0.4,   // где пик подъёма: 0.5 — середина переноса, меньше — раньше
@@ -876,6 +890,16 @@ class StepPlanner {
     const fwdLimS = (i: 0 | 1): number => locoVal('hipFwdLim', 'hipFwdLimRun', GAIT.hipFwdLim, GAIT.hipFwdLimRun, i, m);
     const hipSwS = (i: 0 | 1): number => locoVal('hipSwing', 'hipSwingRun', GAIT.hipSwing, GAIT.hipSwingRun, i, m);
     const ankLvlS = (i: 0 | 1): number => locoVal('ankLevel', 'ankLevelRun', GAIT.ankLevel, GAIT.ankLevelRun, i, m);
+    /** Вес удержания подошвы по фазе ПЕРЕНОСА (0 = отрыв, 1 = касание): плато `[from,to]`, рампы СНАРУЖИ. */
+    const ankHoldS = (sw: number, i: 0 | 1): number => {
+      const f = locoVal('ankHoldFrom', 'ankHoldFromRun', GAIT.ankHoldFrom, GAIT.ankHoldFromRun, i, m);
+      const t = locoVal('ankHoldTo', 'ankHoldToRun', GAIT.ankHoldTo, GAIT.ankHoldToRun, i, m);
+      if (sw >= f && sw <= t) return 1;                       // ВНУТРИ окна — ровно 1 (умолчание [0,1] = весь перенос)
+      const e = Math.max(0, locoVal('ankHoldEase', 'ankHoldEaseRun', GAIT.ankHoldEase, GAIT.ankHoldEaseRun, i, m));
+      if (e <= 1e-4) return 0;                                 // плавность 0 → жёсткий край окна
+      return sw < f ? smooth01(clamp((sw - (f - e)) / e, 0, 1))
+                    : smooth01(clamp(((t + e) - sw) / e, 0, 1));
+    };
     const toeLiftS = (i: 0 | 1): number => locoVal('toeLift', 'toeLiftRun', GAIT.toeLift, GAIT.toeLiftRun, i, m);
     const toePhS = (i: 0 | 1): number => locoVal('toeLiftPhase', 'toeLiftPhaseRun', GAIT.toeLiftPhase, GAIT.toeLiftPhaseRun, i, m);
 
@@ -1129,7 +1153,9 @@ class StepPlanner {
       }
       const hold = -(a.hip + a.knee) * ankLvlS(i as 0 | 1);   // удержание подошвы (без носка)
       if (l.sw > 0) {
-        const want = hold - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1));
+        // ⚠ ОКНО — только на УДЕРЖАНИЕ. У подъёма носка своя фаза (`toeLiftPhase`), и мешать их нельзя:
+        // удержание гасит наклон ГОЛЕНИ, а подъём носка — это стиль поверх него.
+        const want = hold * ankHoldS(l.sw, i as 0 | 1) - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1));
         // Зажимаем В ПРЕДЕЛ СУСТАВА: см. `ankMax`. Манекен не должен просить того, чего физика не даст.
         a.ank = clamp(want, -GAIT.ankMax, GAIT.ankMax);
       } else if (this.plantW[i]! < 1) {
@@ -1137,7 +1163,9 @@ class StepPlanner {
         // наследовала наклон голени (замер: 0.19° → 12.93° за кадр). Теперь голеностоп отдаёт её
         // заземлению за `GAIT.footPlant` опорной фазы. При footPlant = 0 вес сразу 1 → ветка не
         // выполняется, и числа прежние бит в бит.
-        a.ank = clamp(hold * (1 - this.plantW[i]!), -GAIT.ankMax, GAIT.ankMax);
+        // ⚠ ТОТ ЖЕ ВЕС НА ОТРЫВЕ (`sw = 0`), иначе опора кончится полным удержанием, а перенос начнётся
+        // урезанным — ступенька ровно в той точке, которую и чиним.
+        a.ank = clamp(hold * (1 - this.plantW[i]!) * ankHoldS(0, i as 0 | 1), -GAIT.ankMax, GAIT.ankMax);
       }
       out.push(a);
     }
