@@ -85,6 +85,12 @@ export interface Clip {
   /** Первый/последний кадр = idle-стойка (заблокированы в редакторе, синкаются из стойки — как у `hit_`). */
   idleEnds?: boolean;
   /**
+   * ⭐ К КАКОЙ БАЗЕ ПРИВЯЗАНЫ КОНЦЫ (`idle` | `combat` | `clip:<имя>`). Панель импорта даёт выбрать
+   * базовую позу, но синк концов её НЕ ЗНАЛ и всегда брал обычную стойку — поэтому «выбрал боевую,
+   * сохранилось с небоевой». Нет отметки (старые клипы, удары) — прежнее поведение.
+   */
+  idleEndsFrom?: string;
+  /**
    * КОРЕНЬ (Ф2): клип НЕСЁТ поворот / смещение персонажа в каналах `__rootY` / `__rootP`.
    *
    * ⚠ Это ДАННЫЕ, а не привод. Позицию и фейсинг задаёт сервер, и в игре каналы корня не читает
@@ -388,7 +394,21 @@ export function migrateClip(c0: unknown): Clip {
   // ⚠ Список полей ЯВНЫЙ, поэтому новое поле клипа надо дописывать И СЮДА — иначе оно молча
   // теряется на первом же чтении (ровно эта грабля описана у `marks`).
   return { name: c.name, character: c.character, weapon: c.weapon, loop: c.loop ?? false, keys,
-    idleEnds: c.idleEnds, rootYaw: c.rootYaw, rootPos: c.rootPos };
+    idleEnds: c.idleEnds, idleEndsFrom: c.idleEndsFrom, rootYaw: c.rootYaw, rootPos: c.rootPos };
+}
+
+/**
+ * ⭐ ЧЬЕЙ ПОЗОЙ СИНКАТЬ КОНЦЫ КЛИПА. Разбор `idleEndsFrom` вынесен из редактора сюда, чтобы его
+ * можно было проверить тестом: в редакторе он жил бы в DOM-коде и остался бы без сторожа.
+ *
+ * ⚠ Нет отметки — берём обычную стойку, как было всегда: у ударов (`hit_*`) концы и должны быть
+ * idle, и старые клипы не должны поменять поведение.
+ */
+export function idleEndsSource(c: Clip, look: { stance(weapon: string, combat: number): Pose | null; clip(name: string): Pose | null }): Pose | null {
+  const from = c.idleEndsFrom;
+  if (from && from.startsWith('clip:')) return look.clip(from.slice(5));
+  if (from === 'combat') return look.stance(c.weapon, 1);
+  return look.stance(c.weapon, 0);
 }
 
 /** Ин-плейс миграция одной позы: `__hipsY` (только высота) → `__hipsP` (полный офсет таза X/Y/Z).

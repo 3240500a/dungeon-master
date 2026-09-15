@@ -258,6 +258,9 @@ export function openClipImportPanel(file: File, cb: ImportPanelCallbacks): Impor
     const base = cb.basePoses().find((b) => b.id === baseId)?.pose;
     try {
       last = bakeFromSource(src, { ...o, mask, basePose: base });
+      // ⭐ ЗАПОМИНАЕМ, К ЧЕМУ ПРИВЯЗАНЫ КОНЦЫ. Иначе синк концов в редакторе возьмёт обычную стойку,
+      // и выбор «боевая» потеряется ровно на сохранении (жалоба: «сохраняется с другой стойкой»).
+      if (last.clip.idleEnds) last.clip.idleEndsFrom = baseId;
       cb.preview(last.clip);
       syncPlay();
       takeBtn.disabled = false;

@@ -22,7 +22,7 @@ import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { solveTwoBone, elbowGoal, perpTo, LIMB_SOFT } from './limbIk.js';
 import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type TimelinePanel } from './timelinePanel.js';
-import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType } from './clipModel.js';
+import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType , idleEndsSource } from './clipModel.js';
 import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
 import { trajectorySamples, polylineLength, arcRatio, excursion } from './trajectory.js';                                          // Ф10: траектория кости
 import { requestGeneration, checkHealth, looksLikeBvh, generatedClipName, DEFAULT_AI_CONFIG, type AiConfig } from './poseAiTab.js';   // Ф9: хук под AI-генерацию
@@ -5141,9 +5141,20 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
 // Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');
 function syncAttackEnds(c: Clip): void {
-  const st = stanceClip(c.weapon); if (!st || !st.keys[0] || c.keys.length < 2) return;
-  const pose = JSON.parse(JSON.stringify(st.keys[0].pose)) as Pose;
-  c.keys[0]!.pose = pose; c.keys[c.keys.length - 1]!.pose = JSON.parse(JSON.stringify(st.keys[0].pose)) as Pose;
+  // ⭐ БЕРЁМ ТУ БАЗУ, К КОТОРОЙ КЛИП И ПРИВЯЗАЛИ (`idleEndsFrom`). Раньше здесь ВСЕГДА стояла
+  // `stanceClip` — обычная стойка, — и выбор «боевая» в панели импорта терялся на сохранении.
+  const src = idleEndsSource(c, {
+    // ⚠ ДЛЯ ОТМЕЧЕННЫХ КЛИПОВ — ТОТ ЖЕ ИСТОЧНИК, ЧТО ПРЕДЛАГАЛА ПАНЕЛЬ ИМПОРТА (`resolveUpper`,
+    // то есть СОБРАННАЯ стойка с дельтами предметов), иначе «боевая» в панели и «боевая» здесь —
+    // две разные позы. Без отметки (удары, старые клипы) — прежний сырой `stanceClip`, бит в бит.
+    stance: (w, combat) => (c.idleEndsFrom
+      ? (resolveUpper(w, combat > 0.5 ? 1 : 0, 0)?.pose ?? null)
+      : (stanceClip(w)?.keys[0]?.pose ?? null)),
+    clip: (nm) => library.find((x) => x.name === nm && x.character === curCharId)?.keys[0]?.pose ?? null,
+  });
+  if (!src || c.keys.length < 2) return;
+  c.keys[0]!.pose = JSON.parse(JSON.stringify(src)) as Pose;
+  c.keys[c.keys.length - 1]!.pose = JSON.parse(JSON.stringify(src)) as Pose;
 }
 function syncAllAttackEnds(): void { for (const c of library) if (c.character === curCharId && (isAttackClip(c) || c.idleEnds)) syncAttackEnds(c); }
 function captureUpper(nm: string = stanceName(weapon)): void {   // снять ВСЮ позу манекена (ноги+торс+верх+оружие) → клип-стойка (idle_ или combat_idle_)
