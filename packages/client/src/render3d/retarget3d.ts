@@ -107,6 +107,16 @@ export function autoBoneMap(importedBoneNames: string[]): Record<string, string>
   // Иначе любое ложное срабатывание синонима ТИХО выкидывает настоящую кость из основной карты.
   const fingers = mapFingerBones(importedBoneNames);
   const fingerRaw = new Set(Object.values(fingers));
+  // ⚠⚠ ПОБЕЖДАЕТ НЕ ПЕРВЫЙ, А БЛИЖАЙШИЙ К ЯДРУ. Раньше слот занимала ПЕРВАЯ подходящая кость, то есть
+  // всё решал порядок костей В ФАЙЛЕ. У CC рядом с настоящей костью лежит вспомогалка скина `*ShareBone`
+  // (ЛИСТ, детей нет, вести нечего), и у ЛЕВОЙ ноги она стоит в файле РАНЬШЕ настоящей:
+  //   `LeftToes` → `CC_Base_L_ToeBaseShareBone`, а `RightToes` → `CC_Base_R_ToeBase`.
+  // ЗАМЕР: поворот носка на +0.8 рад двигал носок модели СПРАВА и не двигал СЛЕВА ВООБЩЕ (0.0000).
+  // Видно это стало только когда у носка появился свой канал (`GAIT.toeOff`) — до того кость носка
+  // всегда стояла в нуле, и ошибка молчала.
+  // Теперь сравниваем «лишние» символы вокруг ядра: `toebase` → 0 против `toebasesharebone` → 9,
+  // `thigh` → 0 против `thightwist01` → 7. Равенство → первый, то есть прежнее поведение.
+  const pick = new Map<string, { raw: string; slack: number }>();
   for (const raw of importedBoneNames) {
     if (fingerRaw.has(raw)) continue;           // уже разобрана как фаланга
     const side = sideOf(raw); const core = coreOf(raw);
@@ -116,9 +126,38 @@ export function autoBoneMap(importedBoneNames: string[]): Record<string, string>
     if (!best) continue;
     const map = CORE[best]!;
     const our = map.length === 1 ? map[0]! : (side === 'r' ? map[2]! : map[1]!);   // центр / L / R
-    if (our && !out[our]) out[our] = raw;   // первое совпадение выигрывает (двойников избегаем)
+    if (!our) continue;
+    const slack = core.length - best.length;    // сколько символов вокруг ядра: меньше — точнее кость
+    const prev = pick.get(our);
+    if (!prev || slack < prev.slack) pick.set(our, { raw, slack });
   }
+  for (const [our, v] of pick) out[our] = v.raw;
   Object.assign(out, fingers);
+  return out;
+}
+
+/**
+ * Свести АВТО-карту с СОХРАНЁННОЙ (ручная правка в редакторе). Ручной выбор выигрывает — за тем он и
+ * сохраняется, — КРОМЕ одного случая: ⚠ **ЛИСТ НЕ ПОДМЕНЯЕТ КОСТЬ-С-ДЕТЬМИ.** У CC рядом с настоящей
+ * костью лежит вспомогалка скина `*ShareBone` без детей; СТАРАЯ авто-карта (первый-подходящий) её и
+ * выбирала, а редактор потом СОХРАНЯЛ результат — поэтому починки одной эвристики мало: сохранённая
+ * карта вернула бы кость-пустышку обратно (замер на `knight_06_modular_rig`: в конфиге лежало
+ * `LeftToes: CC_Base_L_ToeBaseShareBone`).
+ *
+ * Имя, которого в ЭТОМ скелете нет, пропускается и так: экспорт-GLB суффиксит имена (`CC_Base_Hip_4`).
+ */
+export function mergeBoneMap(auto: Record<string, string>, stored: Record<string, string>, loaded: THREE.Object3D): Record<string, string> {
+  const kids = new Map<string, number>();
+  // ⚠ НЕ `isBone`: у анимаций-ФБХ без скина «кости» — обычные узлы (см. `skeletonBoneNames`). Меши в счёт
+  // детей не идут — кость с одним только мешем в детях остаётся листом.
+  loaded.traverse((o) => { if (o.name) kids.set(o.name, o.children.filter((c) => !(c as THREE.Mesh).isMesh).length); });
+  const out: Record<string, string> = { ...auto };
+  for (const [our, tgt] of Object.entries(stored)) {
+    if (!tgt || !kids.has(tgt)) continue;
+    const a = out[our];
+    if (a && (kids.get(tgt) ?? 0) === 0 && (kids.get(a) ?? 0) > 0) continue;   // лист против кости-с-детьми
+    out[our] = tgt;
+  }
   return out;
 }
 

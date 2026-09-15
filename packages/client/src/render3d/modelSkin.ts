@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { loadModelUrl, skeletonBoneNames } from './modelAssets.js';
-import { makeRetargetRig, autoBoneMap, upAxisAngle, type RetargetRig } from './retarget3d.js';
+import { makeRetargetRig, autoBoneMap, mergeBoneMap, upAxisAngle, type RetargetRig } from './retarget3d.js';
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { mergedConfig } from './configEdits.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
@@ -120,11 +120,7 @@ function scaleToSource(obj: THREE.Object3D, source: Humanoid, boneMap?: Record<s
 /** Карта костей под ФАКТИЧЕСКИ загруженный скелет: авто по именам (нормализует суффиксы экспорта CC_Base_Hip_4) +
  *  сохранённый boneMap как override, если такое имя реально присутствует. Иначе стор с исходными именами не матчится. */
 function resolveBoneMap(g: THREE.Object3D, stored: Record<string, string>): Record<string, string> {
-  const names = skeletonBoneNames(g);
-  const out: Record<string, string> = { ...(autoBoneMap(names) as Record<string, string>) };
-  const have = new Set(names);
-  for (const [our, tgt] of Object.entries(stored)) if (tgt && have.has(tgt)) out[our] = tgt;
-  return out;
+  return mergeBoneMap(autoBoneMap(skeletonBoneNames(g)) as Record<string, string>, stored, g);
 }
 
 let cfgCache: Promise<AssetConfig> | null = null;

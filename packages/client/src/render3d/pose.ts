@@ -39,6 +39,10 @@ export interface PoseTargets {
   /** РЫСК СТОПЫ (носок наружу/внутрь), рад. Локальная Y кости стопы: у неё раньше стоял жёсткий ноль,
    *  поэтому носок было нечем развернуть — регулировалось только колено (`kneeDir`, твист бедра). */
   ankYawL: number; ankYawR: number;
+  /** ЗАГИБ НОСКА ВВЕРХ на перекате через отрыв — УГОЛ КОСТИ `*Toes` (рад, ⚠ МИНУС = вверх, замерено).
+   *  Раньше эта кость ВСЕГДА ставилась в ноль, и носок уходил под пол: ЗАМЕР — до −1.567, ниже нуля
+   *  59 кадров из 300. Стороны НЕ зеркальные: у обеих костей носка один локальный базис. */
+  toeCurlL: number; toeCurlR: number;
   /** РАЗВОД БЁДЕР (колени наружу/внутрь при НЕПОДВИЖНОЙ стопе), рад. Кладётся не в решение IK, а
    *  ОТДЕЛЬНЫМ доворотом бедро/голень — как `legAdduct`, иначе стопа уезжает с планта (замер: 19 ед). */
   hipSplayL: number; hipSplayR: number;
@@ -236,6 +240,25 @@ export const GAIT = {
    * её подхватывает.
    */
   footPlant: 0, footPlantRun: 0,
+  /**
+   * ⭐ ЗАГИБ НОСКА НА ПЕРЕКАТЕ ЧЕРЕЗ ОТРЫВ (кость `*Toes`, рад). 0 = выключено (как было).
+   *
+   * Кость носка в рантайме ВСЕГДА ставилась в ноль (`blendBone('LeftToes', [0,0,0], …)`), поэтому
+   * носок просто следовал за стопой и уходил под пол: ЗАМЕР на бегу — минимум **−1.567**, ниже нуля
+   * **59 кадров из 300** (пятая часть прогона), и всё это в ПОЗДНЕЙ ОПОРЕ, перед самым отрывом.
+   * У живой стопы там ровно наоборот: пятка уходит вверх, и стопа перекатывается ЧЕРЕЗ носок.
+   *
+   * ⚠ ФАЗА СЧИТАЕТСЯ СКВОЗЬ ОТРЫВ, в шкале 0..2: `0` — касание, **`1` — ОТРЫВ**, `2` — следующее
+   * касание. Так окно можно задать «с конца опоры до начала переноса» одним отрезком и не получить
+   * разрыва ровно там, где он и мешал. `toeOffFrom`/`toeOffTo` — концы окна в этой шкале.
+   * Внутри окна — плавный горб (ноль на обоих концах), поэтому стык с `toeLift` гладкий.
+   *
+   * ⚠ НЕ ПУТАТЬ с `toeLift`: тот даёт КЛИРЕНС В ПЕРЕНОСЕ и по построению ноль на отрыве и на
+   * приземлении — именно поэтому им эту беду и нельзя было вылечить.
+   */
+  toeOff: 0, toeOffRun: 0,
+  toeOffFrom: 0.7, toeOffFromRun: 0.7,       // начало окна (1 = отрыв)
+  toeOffTo: 1.3, toeOffToRun: 1.3,           // конец окна
   liftWalk: 7, liftRun: 15,                  // ПОДЪЁМ маховой стопы на ходьбе / беге (интерп по sb)
   cadence: 1,                                // множитель частоты цикла: длину шага делим на cadence (>1 → короче шаг, чаще семенит). Антискольз-тюн бега В ИГРЕ; движение НЕ меняет.
   dutyWalk: 0.34, dutyRun: 0.2, speedWalk: 40, speedRun: 115,   // доля опоры ↔ скорость (бег = мал. доля)
@@ -797,7 +820,7 @@ class StepPlanner {
    */
   footFloor = FOOT_Y;
 
-  update(dt: number, px: number, pz: number, yaw: number, vx: number, vz: number): { l: LegAngles; r: LegAngles; bobY: number } {
+  update(dt: number, px: number, pz: number, yaw: number, vx: number, vz: number): { l: LegAngles; r: LegAngles; bobY: number; toeCurl: [number, number] } {
     // Оси тела в мире: вперёд = локальный +Z, вправо = локальный +X.
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
     const rx = Math.cos(yaw), rz = -Math.sin(yaw);
@@ -1046,6 +1069,7 @@ class StepPlanner {
     this.hipY += (wantY - this.hipY) * Math.min(1, dt * Math.max(0, rate));
     const hipY = this.hipY;
     const out: LegAngles[] = [];
+    const toeCurl: [number, number] = [0, 0];
     for (let i = 0; i < 2; i++) {
       const l = this.legs[i]!;
       const s = i === 0 ? this.hipHalf : -this.hipHalf;   // нога 0 = ЛЕВАЯ, её кость LeftUpperLeg сидит на +X (humanoid.ts) → якорь +X
@@ -1085,6 +1109,24 @@ class StepPlanner {
       // приварен к голени, наклонённой на отрыве на 54°.
       //
       // Второе — добавка носком вверх поверх удержания. Знак МИНУС ЗАМЕРЕН: он поднимает носок.
+      // ЗАГИБ НОСКА. Фаза сквозь отрыв: опора 0..1, отрыв = 1, перенос 1..2 (см. `GAIT.toeOff`).
+      {
+        const j2 = i as 0 | 1;
+        const amt = locoVal('toeOff', 'toeOffRun', GAIT.toeOff, GAIT.toeOffRun, j2, m);
+        if (Math.abs(amt) > 1e-6) {
+          const f = locoVal('toeOffFrom', 'toeOffFromRun', GAIT.toeOffFrom, GAIT.toeOffFromRun, j2, m);
+          const to = locoVal('toeOffTo', 'toeOffToRun', GAIT.toeOffTo, GAIT.toeOffToRun, j2, m);
+          const x = l.sw > 0 ? 1 + clamp(l.sw, 0, 1) : clamp(this.supPhase[i]!, 0, 1);
+          const span = to - f;
+          const tt = span > 1e-4 ? clamp((x - f) / span, 0, 1) : 0;
+          // ⚠ ЗНАК МИНУС ЗАМЕРЕН — ровно как у голеностопа строкой ниже: `+x` на кости носка его ОПУСКАЕТ.
+          // Замер на рест-позе по КОНЧИКУ ПАЛЬЦА (не по углу кости!): ±0.8 рад → −2.869 / +2.869 по Y,
+          // ОДИНАКОВО на обеих ногах. Зеркалить сторону НЕ НАДО: `LeftToes` и `RightToes` у нас с одним
+          // локальным базисом ([0,−1,6] обе) — жалоба «правая гнётся вниз» была про ОБЩИЙ знак, а левая
+          // не двигалась вовсе по другой причине (карта костей вела вспомогалку `*ShareBone`, см. retarget3d).
+          toeCurl[i] = -amt * Math.sin(Math.PI * tt);          // горб: ноль на обоих концах окна
+        }
+      }
       const hold = -(a.hip + a.knee) * ankLvlS(i as 0 | 1);   // удержание подошвы (без носка)
       if (l.sw > 0) {
         const want = hold - toeLiftS(i as 0 | 1) * toeCurve(l.sw, toePhS(i as 0 | 1));
@@ -1099,7 +1141,7 @@ class StepPlanner {
       }
       out.push(a);
     }
-    return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y };   // gaitToHumanoid: 30 + bobY = hipY (актуальная высота таза; bobMult уже в dip)
+    return { l: out[0]!, r: out[1]!, bobY: hipY - RIG_PELVIS_Y, toeCurl };   // gaitToHumanoid: 30 + bobY = hipY (актуальная высота таза; bobMult уже в dip)
   }
 }
 
@@ -1125,6 +1167,7 @@ export class PoseDriver {
     lean: 0, twist: 0, bobY: 0, splay: 0, twChest: 0, twUpper: 0,
     shTwL: 0, shTwR: 0, shSpL: 0, shSpR: 0, hipTwL: 0, hipTwR: 0, leanSide: 0, headNod: 0, headTurn: 0, headTilt: 0,
     ankYawL: 0, ankYawR: 0, hipSplayL: 0, hipSplayR: 0, bobX: 0, hipsRoll: 0, hipsPitch: 0,
+    toeCurlL: 0, toeCurlR: 0,
     shoLX: 0, shoLY: 0, shoLZ: 0, shoRX: 0, shoRY: 0, shoRZ: 0,
     wLX: 0, wLY: 0, wLZ: 0, wRX: 0, wRY: 0, wRZ: 0,
   };
@@ -1189,6 +1232,7 @@ export class PoseDriver {
     // Доп. оси нужны только вооружённому (ГАРД меч+щит) — в процедурке всегда 0 (иначе стухшие значения «прилипнут»).
     o.shTwL = o.shTwR = o.shSpL = o.shSpR = 0; o.hipTwL = o.hipTwR = 0; o.leanSide = 0;
     o.ankYawL = o.ankYawR = 0; o.hipSplayL = o.hipSplayR = 0; o.bobX = 0; o.hipsRoll = 0; o.hipsPitch = 0;
+    o.toeCurlL = o.toeCurlR = 0;
     o.twChest = o.twUpper = 0;
     o.headNod = o.headTurn = o.headTilt = 0;
     o.wLX = o.wLY = o.wLZ = o.wRX = o.wRY = o.wRZ = 0;
@@ -1207,6 +1251,7 @@ export class PoseDriver {
       o.hipL = g.l.hip; o.knL = g.l.knee; o.hipLatL = g.l.lat; o.ankL = g.l.ank;
       o.hipR = g.r.hip; o.knR = g.r.knee; o.hipLatR = g.r.lat; o.ankR = g.r.ank;
       o.bobY = g.bobY;
+      o.toeCurlL = g.toeCurl[0]; o.toeCurlR = g.toeCurl[1];
       this.phase = this.planner.phase;
       drive = this.planner.moveAmt;
     } else {

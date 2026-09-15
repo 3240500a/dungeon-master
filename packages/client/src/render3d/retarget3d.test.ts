@@ -1,7 +1,44 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { autoBoneMap, makeRetargetRig, measureBoneOffsets, FINGER_PARENT, OUR_BONES } from './retarget3d.js';
+import { autoBoneMap, mergeBoneMap, makeRetargetRig, measureBoneOffsets, FINGER_PARENT, OUR_BONES } from './retarget3d.js';
 import { buildHumanoid } from './humanoid.js';
+
+/**
+ * ⚠ СОХРАНЁННАЯ КАРТА МОГЛА БЫ ОТМЕНИТЬ ПОЧИНКУ. Старая эвристика не только ошибалась — редактор её
+ * результат СОХРАНЯЛ: в конфиге модели `knight_06_modular_rig` лежало `LeftToes: CC_Base_L_ToeBaseShareBone`.
+ * Правка одной эвристики до модели бы не доехала, поэтому у свода своё правило: ЛИСТ НЕ ПОДМЕНЯЕТ
+ * КОСТЬ-С-ДЕТЬМИ. Ручной выбор в остальном по-прежнему выигрывает — за тем он и сохраняется.
+ */
+describe('retarget3d — свод авто-карты с сохранённой', () => {
+  /** Скелет: Foot → (ToeBase → Big) + ToeBaseShareBone(лист). */
+  const tree = (): THREE.Object3D => {
+    const bone = (n: string): THREE.Bone => { const b = new THREE.Bone(); b.name = n; return b; };
+    const root = bone('CC_Base_Hip'), foot = bone('CC_Base_L_Foot');
+    const toe = bone('CC_Base_L_ToeBase'), share = bone('CC_Base_L_ToeBaseShareBone');
+    toe.add(bone('CC_Base_L_BigToe1')); foot.add(share, toe); root.add(foot);
+    return root;
+  };
+
+  it('⭐ лист-вспомогалка из СТАРОГО стора не подменяет настоящую кость', () => {
+    const out = mergeBoneMap({ LeftToes: 'CC_Base_L_ToeBase' }, { LeftToes: 'CC_Base_L_ToeBaseShareBone' }, tree());
+    expect(out.LeftToes, '⚠ сохранённая кость-пустышка снова победила — починка карты до модели не доедет').toBe('CC_Base_L_ToeBase');
+  });
+
+  it('обычный ручной override выигрывает (в этом весь смысл стора)', () => {
+    const out = mergeBoneMap({ LeftFoot: 'CC_Base_L_ToeBase' }, { LeftFoot: 'CC_Base_L_Foot' }, tree());
+    expect(out.LeftFoot).toBe('CC_Base_L_Foot');
+  });
+
+  it('имени из стора в ЭТОМ скелете нет — игнорируем (экспорт суффиксит имена)', () => {
+    const out = mergeBoneMap({ LeftToes: 'CC_Base_L_ToeBase' }, { LeftToes: 'CC_Base_L_ToeBase_4' }, tree());
+    expect(out.LeftToes).toBe('CC_Base_L_ToeBase');
+  });
+
+  it('авто-кость сама лист — стору верим (терять нечего)', () => {
+    const out = mergeBoneMap({ LeftToes: 'CC_Base_L_ToeBaseShareBone' }, { LeftToes: 'CC_Base_L_BigToe1' }, tree());
+    expect(out.LeftToes).toBe('CC_Base_L_BigToe1');
+  });
+});
 
 describe('retarget3d — авто-карта костей', () => {
   it('AccuRIG / CC (CC_Base_*)', () => {
@@ -13,6 +50,25 @@ describe('retarget3d — авто-карта костей', () => {
     expect(m.LeftUpperLeg).toBe('CC_Base_L_Thigh');
     expect(m.LeftLowerLeg).toBe('CC_Base_L_Calf');
     expect(m.LeftToes).toBe('CC_Base_L_ToeBase');
+  });
+
+  it('⭐⭐ вспомогалка скина `*ShareBone` НЕ ЗАБИРАЕТ слот настоящей кости', () => {
+    // ⚠ ЖИВОЙ СЛУЧАЙ, а не выдумка: у CC рядом с настоящей костью лежит лист-вспомогалка скина, и порядок
+    // в файле РАЗНЫЙ по сторонам — слева `ShareBone` идёт РАНЬШЕ `ToeBase`, справа позже. Старое правило
+    // «побеждает первый подходящий» отдавало `LeftToes` пустышке без детей, и ЗАМЕР это подтвердил:
+    // поворот кости носка на +0.8 рад двигал носок модели справа и не двигал слева ВООБЩЕ (0.0000).
+    // Видно стало только когда у носка появился свой канал (`GAIT.toeOff`) — до того кость стояла в нуле.
+    const m = autoBoneMap(['CC_Base_Hip', 'CC_Base_L_Thigh', 'CC_Base_L_ThighTwist01', 'CC_Base_L_Calf', 'CC_Base_L_Foot',
+      'CC_Base_L_ToeBaseShareBone', 'CC_Base_L_ToeBase',
+      'CC_Base_R_Thigh', 'CC_Base_R_Calf', 'CC_Base_R_Foot', 'CC_Base_R_ToeBase', 'CC_Base_R_ToeBaseShareBone']);
+    expect(m.LeftToes, '⚠ левый носок снова ведёт вспомогалку скина — правило «первый подходящий» вернулось').toBe('CC_Base_L_ToeBase');
+    expect(m.RightToes).toBe('CC_Base_R_ToeBase');
+    expect(m.LeftUpperLeg, '⚠ твист-кость забрала слот бедра').toBe('CC_Base_L_Thigh');
+  });
+
+  it('карта есть только у вспомогалки — берём её, возможности не теряем', () => {
+    const m = autoBoneMap(['CC_Base_L_Foot', 'CC_Base_L_ToeBaseShareBone']);
+    expect(m.LeftToes).toBe('CC_Base_L_ToeBaseShareBone');
   });
 
   it('Mixamo (mixamorig:*)', () => {

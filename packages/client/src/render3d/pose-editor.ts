@@ -4584,6 +4584,11 @@ function renderGaitTune(): void {
   // поэтому ручки «носок в опоре» здесь нет — она была бы мёртвой.
   row2('держать подошву (0 = болтается за голенью)', GAITo, 'ankLevel', 'ankLevelRun', 0, 1.4, 0.01);
   row2('подъём носка поверх удержания', GAITo, 'toeLift', 'toeLiftRun', 0, 1.2, 0.01);
+  // ЗАГИБ НОСКА НА ПЕРЕКАТЕ. Отдельно от «подъёма носка»: тот даёт клиренс В ПЕРЕНОСЕ и по
+  // построению ноль на отрыве, поэтому провал носка под пол им было не вылечить.
+  row2('загиб носка на отрыве', GAITo, 'toeOff', 'toeOffRun', 0, 1.2, 0.01);
+  row2('загиб: начало окна (1 = отрыв)', GAITo, 'toeOffFrom', 'toeOffFromRun', 0, 2, 0.02, { body: true });
+  row2('загиб: конец окна', GAITo, 'toeOffTo', 'toeOffToRun', 0, 2, 0.02, { body: true });
   row2('где пик подъёма (0.5 = середина)', GAITo, 'toeLiftPhase', 'toeLiftPhaseRun', 0.05, 0.95, 0.01,
     { dep: [[GAITo, 'toeLift', 'toeLiftRun']], depLabel: 'подъём носка' });
   // ⚠ Потолок = предел сустава физ-рига (±0.45). Выше — манекен покажет то, чего призрак не даст.
@@ -5525,7 +5530,8 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'kneeDir', 'kneeDirRun', 'kneeDirMax', 'crouchWalk', 'crouchRun',
   // Плавность боба таза и окно заземления (см. «БОБ ТАЗА И ЗАЗЕМЛЕНИЕ» в render3d/README.md).
   'bobLagUp', 'bobLagUpRun', 'bobLagDown', 'bobLagDownRun', 'bobFlight',
-  'gndLag', 'gndIn', 'gndInRun', 'gndOut', 'gndOutRun', 'footPlant', 'footPlantRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
+  'gndLag', 'gndIn', 'gndInRun', 'gndOut', 'gndOutRun', 'footPlant', 'footPlantRun',
+  'toeOff', 'toeOffRun', 'toeOffFrom', 'toeOffFromRun', 'toeOffTo', 'toeOffToRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
 // читались как «бег = ходьба». Теперь сохраняются вместе с плечевым поясом.
 const POSE_KEYS = ['armSh', 'armEl', 'armSwing', 'armElWalk', 'armShRun', 'armElRun', 'armSwingRun',

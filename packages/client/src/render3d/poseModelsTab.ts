@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { loadModelFile, loadModelUrl, exportGLB, uploadAsset, skeletonBoneNames } from './modelAssets.js';
-import { autoBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, upAxisAngle, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig , nodeVsBindGap} from './retarget3d.js';
+import { autoBoneMap, mergeBoneMap, makeRetargetRig, measureBoneScales, measureBoneOffsets, enforceTPose, normalizeUpAxis, upAxisAngle, tPoseDeviation, OUR_BONES, OUR_FINGERS, type RetargetRig , nodeVsBindGap} from './retarget3d.js';
 const FINGER_SET = new Set<string>(OUR_FINGERS);   // Ф14.2: быстрая проверка «это фаланга?» для само-лечения замеров
 import { getMaterial, type MaterialCfg, type TextureCfg } from './assetCache.js';
 import { createModelSkin, resolveCharacterModel, classifyAtlas, classifySubmesh, BODY_SLOTS, type BodySlot } from './modelSkin.js';
@@ -371,8 +371,10 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
       upFixX = detectUpFixX(loaded, auto);
       loaded.rotation.set(upFixX, 0, 0); loaded.updateMatrixWorld(true);   // измерять масштаб в стоящей позе
       if (preset) {
-        entry = { ...preset, boneMap: { ...preset.boneMap }, submeshMaterials: { ...preset.submeshMaterials } };
-        if (!Object.keys(entry.boneMap).length) entry.boneMap = auto;
+        // ⚠ ТОТ ЖЕ СВОД, ЧТО В ИГРЕ (`modelSkin.resolveBoneMap`): сохранённая карта поверх авто, но ЛИСТ не
+        // подменяет кость-с-детьми. Иначе у вкладки и у игры было бы ДВЕ РАЗНЫЕ карты: игра уже чинила бы
+        // `LeftToes` на настоящую кость, а вкладка показывала и сохраняла бы обратно `*ShareBone`.
+        entry = { ...preset, boneMap: mergeBoneMap(auto, preset.boneMap, loaded), submeshMaterials: { ...preset.submeshMaterials } };
       } else {
         const meshNames: string[] = []; loaded.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshNames.push(o.name); });
         const slot = meshNames.map(slotOfSubmesh).find(Boolean);

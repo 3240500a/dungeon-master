@@ -531,7 +531,10 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // коленом (твист бедра), который уводит ВСЮ ногу. Теперь рыск стопы — свой канал (`POSE.footTurn`).
   // Заземление его НЕ съедает: `groundFeet` берёт рыск опорной стопы ИЗ ПОЗЫ (см. footIk.ts).
   blendBone(human, 'LeftFoot', [t.ankL, t.ankYawL, 0], idle, m); blendBone(human, 'RightFoot', [t.ankR, t.ankYawR, 0], idle, m);
-  blendBone(human, 'LeftToes', [0, 0, 0], idle, m); blendBone(human, 'RightToes', [0, 0, 0], idle, m);
+  // ⚠ У НОСКА ТОЖЕ БЫЛ ЖЁСТКИЙ НОЛЬ — та же беда, что была у рыска стопы. Носок следовал за стопой и
+  // уходил под пол на перекате (замер: до −1.567, ниже нуля 59 кадров из 300). Теперь у него свой
+  // канал (`GAIT.toeOff`), а знак ЗАМЕРЕН по высоте кости, а не выведен.
+  blendBone(human, 'LeftToes', [t.toeCurlL, 0, 0], idle, m); blendBone(human, 'RightToes', [t.toeCurlR, 0, 0], idle, m);
   // Аддукт масштабируем ТОЛЬКО когда idle АВТОРИТ ноги (тогда idle m=0 = авторская ширина, гейт m=1 = компенсирован). Без
   // авторских ног (монстры/процедурка, idle не задаёт LeftUpperLeg) ноги ВСЕГДА реконструкция → аддукт полный (иначе splay бинда).
   applyLegAdduct(human, (idle && idle['LeftUpperLeg']) ? m : 1);
