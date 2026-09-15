@@ -21,12 +21,13 @@ import { makeGamePlayerDoll } from './gamePlayerDoll.js';
 import { markSfx, shakeForMark, burstForMark } from './animSfx.js';   // звук меток — тот же, что в игре (правило «редактор ≡ игра»)
 import { Vfx } from './vfx.js';
 import { makeCamShake } from './camShake.js';
+import { cameraCfg, placeCamera, applyLens, camZoom, CAMERA_FALLBACK, type CameraCfg } from './cameraRig.js';   // ⭐ одна камера на игру и вкладку
 import { loadAssetConfig, resolvePlayerLook, editorClasses } from './modelSkin.js';
 import type { RagdollHandle, PhysWorld } from './ragdoll.js';
 import { createTestScene, TEST_TICK_DT, type TestScene } from './testScene.js';
 import { driveActor, type DriveState } from './driveActor.js';
 import { makeStageOwner } from './stageOwner.js';
-import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
+import { moveFromKeys, facingFrom, aimOnGround, aimTmp } from './playerInput.js';
 import type { PlayerInput } from '@dm/shared';
 
 export interface TestTabHost {
@@ -60,7 +61,12 @@ export interface TestTab {
 }
 
 /** Камера теста — те же числа, что в игре: изометрия 45°, угол подъёма растёт с дистанцией. */
-const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: CAM_AZ };
+/**
+ * ⭐ КАМЕРА ИЗ КОНФИГА, А НЕ ВТОРАЯ КОПИЯ ЧИСЕЛ. Здесь стояла ДОСЛОВНАЯ копия строки из `online3d.ts`
+ * и вторая копия формулы постановки — числа совпадали, но расходятся такие копии молча. Сцены ещё
+ * может не быть (конфиг грузится) — тогда прежние значения из `CAMERA_FALLBACK`.
+ */
+let camCfg: CameraCfg = CAMERA_FALLBACK;
 const IDLE: PlayerInput = { move: { x: 0, y: 0 }, facing: 0, attack: false, cast: null, interact: false };
 
 /** Всё, что вкладка положила в сцену за одну сборку. ОДНИМ объектом — чтобы снималось тоже одним. */
@@ -96,20 +102,16 @@ export function createTestTab(host: TestTabHost): TestTab {
   const onWheel = (e: WheelEvent): void => {
     if (!cur) return;
     e.preventDefault();
-    dist = Math.max(CAM.minDist, Math.min(CAM.maxDist, dist * (e.deltaY < 0 ? 0.9 : 1.1)));
+    dist = camZoom(dist, e.deltaY, camCfg);
   };
 
   const camShake = makeCamShake();
   const vfx = new Vfx(host.scene);   // эффекты меток: во вкладке те же, что в игре
   const applyCam = (x: number, z: number, dt = 0): void => {
-    // Одна формула с игрой: близко — ниже угол, далеко — почти топ-даун.
-    const zt = Math.max(0, Math.min(1, (dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));
-    const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;
     target.set(x, 30, z);
-    const dir = camDirXZ(CAM.az), hor = dist * Math.cos(el);   // тот же шов, что в игре
-    host.camera.position.set(target.x + dir.x * hor, target.y + dist * Math.sin(el), target.z + dir.z * hor);
-    host.camera.lookAt(target);
-    camShake.apply(host.camera, dt);   // тот же шов, что в игре
+    applyLens(host.camera, camCfg);
+    placeCamera(host.camera, target, dist, camCfg);   // ⭐ ТА ЖЕ функция, что в игре
+    camShake.apply(host.camera, dt);
   };
 
   /** Рамка комнаты: без неё непонятно, где кончается пол и почему персонаж встал. */
@@ -154,6 +156,8 @@ export function createTestTab(host: TestTabHost): TestTab {
       const look = resolvePlayerLook(await loadAssetConfig(), editorClasses(), classId);
       if (!alive()) return null;          // ушли с вкладки, пока грузился конфиг
       const sc = createTestScene(classId);
+      camCfg = cameraCfg(sc.balance);   // ⭐ камера — из ТОГО ЖЕ конфига, на котором крутится сцена
+      dist = Math.min(camCfg.maxDist, Math.max(camCfg.minDist, dist));
       const doll = makeGamePlayerDoll(pw, { x: sc.view.x, z: sc.view.z, weapon: host.weapon(), classId, ...look });
       {   // ⭐ разметку взмаха/удара СЛЫШНО и ТРЯСКУ ВИДНО прямо в редакторе — как в игре
         const sfx = markSfx(1);
@@ -191,7 +195,7 @@ export function createTestTab(host: TestTabHost): TestTab {
     frame(dt: number): void {
       const c = cur; if (!c) return;
       const { scene, drive } = c;
-      const mv = moveFromKeys(keys, CAM.az);
+      const mv = moveFromKeys(keys, camCfg.azimuth);   // ⚠ WASD ЗАВЯЗАН НА АЗИМУТ: крутим камеру — едет и «вперёд»
       const aim = mouse.set ? aimOnGround(aimT, host.camera, host.canvas.getBoundingClientRect(), mouse.x, mouse.y) : null;
       const facing = facingFrom(scene.view.facing, aim, scene.view.x, scene.view.z, mv, mouse.set);
       const space = keys.has('Space');

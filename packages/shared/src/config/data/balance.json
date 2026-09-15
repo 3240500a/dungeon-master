@@ -97,6 +97,17 @@
   "masteryPointsPerLevel": 2,
   "moveSpeedBase": 80,
   "moveInertia": { "enabled": false, "accel": 900, "decel": 300 },
+  "camera": {
+    "minDist": 160,
+    "maxDist": 480,
+    "startDist": 460,
+    "elNearDeg": 31.5,
+    "elFarDeg": 54.4,
+    "azimuthDeg": -45,
+    "fovDeg": 52,
+    "farClip": 2600,
+    "zoomStep": 1.1
+  },
   "monsterXpGrowth": 0.2,
   "uniqueXpMult": 3,
   "monsterScaling": {

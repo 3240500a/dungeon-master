@@ -37,6 +37,12 @@ export interface TestScene {
   readonly bounds: { w: number; h: number };
   /** Поставить персонажа в центр и обнулить накопитель. */
   reset(): void;
+  /**
+   * Секция `balance` того же конфига, на котором крутится сцена. Нужна вкладке для КАМЕРЫ: её
+   * настройки живут в конфиге, а второй раз читать и парсить `pe_config` каждый кадр — дорого
+   * и означало бы вторую правду о том, какой конфиг сейчас в силе.
+   */
+  readonly balance: unknown;
 }
 
 /** Открытое поле с бордюром-стеной: в него можно упереться, и это тоже надо уметь посмотреть. */
@@ -94,6 +100,7 @@ export function createTestScene(charId: string): TestScene {
     },
     view,
     bounds: { w: ROOM_W * TILE, h: ROOM_H * TILE },
+    balance: reg.get('balance'),
     reset(): void {
       p.pos.x = spawn.x; p.pos.y = spawn.y; acc = 0;
       sync();

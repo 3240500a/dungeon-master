@@ -15,10 +15,11 @@ import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
 import { markSfx, shakeForMark, burstForMark } from './animSfx.js';   // ⭐ метки клипа наконец звучат: удар и вжух (см. `animSfx`)
 import { makeCamShake } from './camShake.js';
-import { makeNetInterp } from './netInterp.js';   // ⭐ снапшот 30 Гц → гладкий кадр (экстраполяция + гашение ошибки)
+import { makeNetInterp } from './netInterp.js';
+import { cameraCfg, placeCamera, applyLens, camZoom, camDir } from './cameraRig.js';   // ⭐ камера из конфига, одна формула с вкладкой «Тест»   // ⭐ снапшот 30 Гц → гладкий кадр (экстраполяция + гашение ошибки)
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { driveActor } from './driveActor.js';
-import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
+import { moveFromKeys, facingFrom, aimOnGround, aimTmp } from './playerInput.js';
 import { resolvePlayerLook, type ClassLook } from './modelSkin.js';
 import type { BodyProfile, BoneScale } from './bodyProfile.js';
 import { loadRagdollConfig } from './humanoidRagdoll.js';
@@ -216,13 +217,16 @@ export async function startOnline3d(): Promise<void> {
   const keys = new Set<string>();
   let lmb = false, rmb = false;
   const mouse = { x: 0, y: 0, set: false };
-  // Камера: азимут ФИКСИРОВАН (вращения по ПКМ нет), наклон меняется с зумом — близко угол ниже
-  // (камера опускается), далеко топ-даун как на скрине. Зум-аут ограничен ракурсом скрина.
-  const CAM = { minDist: 160, maxDist: 480, elNear: 0.55, elFar: 0.95, az: CAM_AZ };   // азимут — общая константа (от неё зависит направление WASD)
-  // Горизонтальное направление ОТ игрока К КАМЕРЕ — общий шов с самой постановкой камеры (`camDirXZ`),
+  // ⭐ КАМЕРА ЖИВЁТ В КОНФИГЕ (`balance.camera`, страница «Бой и физика»), а не в константе: те же
+  // числа нужны вкладке «Тест» поз-редактора, и две копии расходятся молча. Азимут ФИКСИРОВАН
+  // (вращения по ПКМ нет), наклон меняется с зумом — близко угол ниже, далеко топ-даун.
+  // ⚠ ЧИТАЕМ КАЖДЫЙ КАДР: правка в редакторе обязана быть видна сразу, без пересборки и рестарта.
+  const camConf = (): ReturnType<typeof cameraCfg> => cameraCfg(app.config.get('balance'));
+  let CAM = camConf();
+  // Горизонтальное направление ОТ игрока К КАМЕРЕ — общий шов с самой постановкой камеры,
   // а не вторая копия формулы: развернём камеру — свет поедет за ней сам.
-  const TO_CAM = camDirXZ(CAM.az);
-  const orbit = { target: new THREE.Vector3(), dist: 460 };
+  let TO_CAM = camDir(CAM);
+  const orbit = { target: new THREE.Vector3(), dist: CAM.startDist };
   addEventListener('keydown', (e) => {
     const t = document.activeElement;
     if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;   // ввод в форму — не игровой ключ
@@ -245,17 +249,16 @@ export async function startOnline3d(): Promise<void> {
   canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) lmb = true; if (e.button === 2) rmb = true; });
   addEventListener('pointerup', (e) => { if (e.button === 0) lmb = false; if (e.button === 2) rmb = false; });
   canvas.addEventListener('pointermove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.set = true; });
-  canvas.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist = Math.max(CAM.minDist, Math.min(CAM.maxDist, orbit.dist * (e.deltaY < 0 ? 0.9 : 1.1))); }, { passive: false });
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist = camZoom(orbit.dist, e.deltaY, CAM); }, { passive: false });
   const aimT = aimTmp();   // рейкаст прицела — общий с вкладкой «Тест» (иначе прицел в тесте свой)
   const aimWorld = (): { x: number; y: number } | null =>
     (mouse.set ? aimOnGround(aimT, camera, canvas.getBoundingClientRect(), mouse.x, mouse.y) : null);
   const camShake = makeCamShake();   // тряска по метке `camshake` — только от СВОЕГО удара (ввод пиров нам не виден)
   const applyCam = (dt = 0): void => {
-    const zt = Math.max(0, Math.min(1, (orbit.dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));   // 0 близко … 1 далеко
-    const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;                                           // близко — ниже угол, далеко — топ-даун
-    const hor = orbit.dist * Math.cos(el);   // горизонтальный вынос камеры; направление — общий `TO_CAM`
-    camera.position.set(orbit.target.x + TO_CAM.x * hor, orbit.target.y + orbit.dist * Math.sin(el), orbit.target.z + TO_CAM.z * hor);
-    camera.lookAt(orbit.target);
+    CAM = camConf(); TO_CAM = camDir(CAM);          // ⭐ живой конфиг: правка видна в тот же кадр
+    orbit.dist = Math.min(CAM.maxDist, Math.max(CAM.minDist, orbit.dist));   // сузили пределы — подтянуть текущий зум
+    applyLens(camera, CAM);                         // угол обзора и отсечение — тоже из конфига
+    placeCamera(camera, orbit.target, orbit.dist, CAM);
     camShake.apply(camera, dt);   // ⚠ ПОСЛЕ lookAt и по КАМЕРЕ, а не по цели: иначе поедет прицел вместе с кадром
   };
 
@@ -700,7 +703,7 @@ export async function startOnline3d(): Promise<void> {
     // кадр, а снапшот об остановке придёт через полпинга: всё это время предсказание уезжало бы вперёд,
     // и разницу пришлось бы отдавать движением НАЗАД. Темп гашения — тот же, с каким тормозит сервер.
     if (myId) {
-      const mv = moveFromKeys(keys, CAM.az);
+      const mv = moveFromKeys(keys, CAM.azimuth);
       if (mv.x === 0 && mv.y === 0) {
         const inr = app.config.get('balance').moveInertia;
         interp.brake('p' + myId, inr.enabled ? inr.decel : Infinity, nowSec, dt);
@@ -1058,7 +1061,7 @@ export async function startOnline3d(): Promise<void> {
     const s = app.state!.save;
     const mine = latest?.players.find((p) => p.id === myId);
     // Camera-relative WASD и выбор фейсинга — ОБЩИЕ с вкладкой «Тест» (см. `playerInput.ts`).
-    const mvv = moveFromKeys(keys, CAM.az);
+    const mvv = moveFromKeys(keys, CAM.azimuth);   // ⚠ WASD ЗАВЯЗАН НА АЗИМУТ: крутим камеру — едет и «вперёд»
     const mx = mvv.x, my = mvv.y;
     const a = mine ? aimWorld() : null;
     const facing = facingFrom(mine?.facing ?? 0, a, smoothX, smoothZ, mvv, mouse.set);
