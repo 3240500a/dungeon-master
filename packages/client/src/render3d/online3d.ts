@@ -376,6 +376,21 @@ export async function startOnline3d(): Promise<void> {
     }),
   });
   let smoothX = 0, smoothZ = 0, hasSmooth = false;
+  /**
+   * ⭐⭐ СВОЙ ФЕЙСИНГ — ПРЕДСКАЗАННЫЙ, А НЕ ЭХО СЕРВЕРА.
+   *
+   * Жалоба: «фейсинг странно работает, как будто чуть в сторону от прицела». ЗАМЕР позы это не
+   * подтвердил — в покое таз, грудь и голова смотрят в прицел с точностью 0.00°. Дело в ПУТИ числа:
+   * клиент считает фейсинг, шлёт его 30 раз в секунду, сервер кладёт его к себе КАК ЕСТЬ
+   * (`p.facing = input.facing`) и возвращает в снапшоте — и рисовали мы именно ЭХО. Задержка =
+   * период отправки + пинг + период снапшота, около 100 мс; на быстром ведении мыши это десятки
+   * градусов отставания, и читается это ровно как «смотрит чуть в сторону».
+   *
+   * Предсказание тут ТОЧНОЕ, а не приблизительное: сервер не считает фейсинг, он его принимает.
+   * ⚠ КРОМЕ ОГЛУШЕНИЯ: под станом ввод не проходит (`if (input && !stunned)`), и фейсинг ведёт
+   * сервер — иначе оглушённый крутился бы за мышью.
+   */
+  let myFacing = 0, myFacingInit = false;
   // ⭐⭐ ИНТЕРПОЛЯТОР СНАПШОТОВ. Позиция и скорость КАЖДОГО актёра считаются по интервалу между
   // снапшотами, а не по разности за кадр: иначе производная лесенки рябит и походка дрожит (замер —
   // до 0.11 полной скорости на 144 fps), а сама позиция идёт рывками (вторая разность 0.37 шага).
@@ -738,7 +753,11 @@ export async function startOnline3d(): Promise<void> {
       else { const k = 1 - Math.exp(-dt / 0.045); smoothX += (tX - smoothX) * k; smoothZ += (tZ - smoothZ) * k; }
       // Тело: живое ведём по сглаженному фокусу; труп — по СВОЕЙ позиции (не уезжает вслед за камерой на союзника).
       const bx = mine.alive ? smoothX : mine.x, by = mine.alive ? smoothZ : mine.y;
-      driveActor(self, bx, by, mine.facing, mine.alive, dt, { combat: !!mine.inCombat, stun: !!mine.stun, vel: ip ? { x: ip.vx, z: ip.vz } : undefined });
+      // ⭐ Считаем КАЖДЫЙ КАДР (а не раз в 33 мс вместе с отправкой): кукла доворачивается за мышью
+      // плавно, и это ОДИН источник — `sendInput` ниже отправляет ровно это же число.
+      if (mine.stun || !myFacingInit) { myFacing = mine.facing; myFacingInit = true; }   // под станом ведёт сервер; после — продолжаем с его угла
+      else myFacing = facingFrom(myFacing, aimWorld(), smoothX, smoothZ, moveFromKeys(keys, CAM.azimuth), mouse.set);
+      driveActor(self, bx, by, myFacing, mine.alive, dt, { combat: !!mine.inCombat, stun: !!mine.stun, vel: ip ? { x: ip.vx, z: ip.vz } : undefined });
       statusFx.sync('self', bx, by, mine.debuffs);   // эффекты статусов на игроке
       orbit.target.set(smoothX, 20, smoothZ);
       if (playerLight) {
@@ -1063,8 +1082,9 @@ export async function startOnline3d(): Promise<void> {
     // Camera-relative WASD и выбор фейсинга — ОБЩИЕ с вкладкой «Тест» (см. `playerInput.ts`).
     const mvv = moveFromKeys(keys, CAM.azimuth);   // ⚠ WASD ЗАВЯЗАН НА АЗИМУТ: крутим камеру — едет и «вперёд»
     const mx = mvv.x, my = mvv.y;
-    const a = mine ? aimWorld() : null;
-    const facing = facingFrom(mine?.facing ?? 0, a, smoothX, smoothZ, mvv, mouse.set);
+    // ⭐ ОДИН ИСТОЧНИК: тот же угол, который уже нарисован. Считать его здесь второй раз значило бы
+    // отправлять не то, что видит игрок (кадр и отправка идут с разной частотой).
+    const facing = myFacingInit ? myFacing : facingFrom(mine?.facing ?? 0, mine ? aimWorld() : null, smoothX, smoothZ, mvv, mouse.set);
     // ЛКМ/ПКМ + Shift/Space/Alt = mouseLeft/mouseRight/hotbar[0..2]. Тогл (аура/стойка) — только по фронту нажатия.
     let attack = false, cast: string | null = null;
     const consider = (b: string | null | undefined, held: boolean, src: string): void => {
