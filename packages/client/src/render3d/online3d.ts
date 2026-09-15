@@ -13,6 +13,7 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
+import { markSfx } from './animSfx.js';   // ⭐ метки клипа наконец звучат: удар и вжух (см. `animSfx`)
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { driveActor } from './driveActor.js';
 import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
@@ -509,6 +510,7 @@ export async function startOnline3d(): Promise<void> {
     if (!self) {
       const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save, app.config.get('items.base')), x: floor.spawn.x, z: floor.spawn.y, ...playerLook(classId) });
       actorsGroup.add(d.group);
+      d.onMark = markSfx(1);                 // ⭐ свой удар — в полную громкость
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
       const sh = app.config.get('balance').lighting.shadow3d;
       playerLight = new THREE.PointLight(0xffd7a0, sh.playerLightIntensity, sh.playerLightDist, 2);
@@ -716,6 +718,7 @@ export async function startOnline3d(): Promise<void> {
       if (!a) {
         const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, ...playerLook(pv.classId) }); actorsGroup.add(d.group);
         d.setAppearance?.(appearanceFromModels(pv.armorModels));   // C7: скин-слой пира (базы слотов + надетая броня)
+        d.onMark = markSfx(0.55);                 // ⭐ чужой удар — тише своего, иначе в толпе каша
         const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
         a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, hp }; peers.set(pv.id, a);
       }

@@ -23,8 +23,17 @@ const WARP_MIN = 0.35, WARP_MAX = 8;
 const XFADE_SEC = 0.12;   // умолчание кроссфейда; конкретное состояние может задать своё (`AnimState.blendSec`)
 import { WPN_KEYS, WPN_POS } from './clipModel.js';
 import { maskBones, boneWeight, type BoneMask } from './boneMask.js';
+import { resolveGripPose, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses.js';   // ⭐ ЖИВОЙ хват — тот же резолвер, что у редактора
+import { deriveFingerAxes, type FingerAxes } from './fingerAxes.js';                    // оси сгиба выводятся из геометрии ЭТОГО рига
+import { fingersAnimated } from './clipModel.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
-export interface UpperPose { pose: Pose; swing: number }        // idle-поза верха + остаточный мах (0..1)
+export interface UpperPose {
+  pose: Pose; swing: number;                 // idle-поза верха + остаточный мах (0..1)
+  /** Имя клипа-стойки: по нему берётся хват КЛИПА (`GripConfig.byClip`), если он задан. */
+  clipName?: string;
+  /** У стойки анимированы сами пальцы — тогда живой хват её не перебивает (см. `fingersAnimated`). */
+  fingersAnimated?: boolean;
+}
 
 /**
  * ЧТО СЕЙЧАС ИГРАЕТ И С КАКИМ ВЕСОМ — одна строка на слой, за текущий кадр.
@@ -142,6 +151,8 @@ export interface PoseContent {
   locoClip?(name: string): Clip | null;
   /** Настройка состояния: приоритет, прерываемость, кроссфейд, владение ногами. */
   stateCfg?(state: string): { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' };
+  /** ⭐ ЖИВОЙ ХВАТ из `pe_gripposes` (см. `liveGrip`). Нет метода — хват только запечённый, как раньше. */
+  gripPose?(weapon: string, axes: Record<string, FingerAxes> | null, clipName?: string): Pose | null;
 }
 /** Активный удар: клип + время (сек). Верх наложится поверх idle/маха с огибающей. */
 export interface AttackState {
@@ -202,6 +213,34 @@ function applyGripChannels(human: Humanoid, pose: Pose | null | undefined): void
     const b = human.bones.get(nm); const v = pose[nm];
     if (b && v) b.rotation.set(v[0], v[1], v[2]);
   }
+}
+/**
+ * ⭐⭐ ЖИВОЙ ХВАТ: ИГРА РЕЗОЛВИТ КОНФИГ САМА, а не ждёт запечённого в клип.
+ *
+ * Жалоба «хват так и не появился нигде». ЗАМЕР расставил всё по местам:
+ *  • на СЕРВЕРЕ в каждом клипе по **30 ненулевых каналов фаланг** (запекание на публикации работает);
+ *  • в ЛОКАЛЬНОМ `pe_clips` — **0**;
+ *  • а игра читает клипы ИМЕННО ИЗ localStorage (`localStorageContent` → `readJSON('pe_clips')`).
+ *
+ * То есть запечённый хват физически не доезжал ни до игры, ни до вкладки «Тест»: обе читают локальную
+ * рабочую копию, а запекание живёт только в кнопке «Опубликовать». И протухало бы вдобавок: правка
+ * хвата не появилась бы в игре, пока не опубликуешь заново.
+ *
+ * Поэтому хват резолвится В РАНТАЙМЕ из `pe_gripposes` — тем же `resolveGripPose`, что рисует
+ * редактор. Запекание остаётся для тех, кто умеет читать ТОЛЬКО клипы (Unity, экспорт).
+ */
+const _axCache = new WeakMap<Humanoid, Record<string, FingerAxes>>();
+function fingerAxesOf(human: Humanoid): Record<string, FingerAxes> {
+  let a = _axCache.get(human);
+  if (!a) {
+    a = deriveFingerAxes((b) => { const g = human.bones.get(b); return g ? [g.position.x, g.position.y, g.position.z] : null; });
+    _axCache.set(human, a);
+  }
+  return a;
+}
+/** Поза хвата из живого конфига для этой куклы/оружия/клипа. Контент без метода (тесты, чужой источник) — null. */
+function liveGrip(human: Humanoid, content: PoseContent, weapon: string, clipName?: string): Pose | null {
+  return content.gripPose ? content.gripPose(weapon, fingerAxesOf(human), clipName) : null;
 }
 export const UPPER_BONES = layerBones(UPPER_MASK);
 const ATK_BONES = layerBones(ATK_MASK);
@@ -299,7 +338,7 @@ function attackEnv(tt: number, dur: number): number {
   if (tt > dur - AB_OUT) return s((dur - tt) / AB_OUT);
   return 1;
 }
-function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: AttackState, w = 1, legW = 0): void {   // наложить позу удара по времени с огибающей
+function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: AttackState, w = 1, legW = 0, grip: Pose | null = null): void {   // наложить позу удара по времени с огибающей
   const clip = atk.clip; if (!clip) return;
   const dur = clipDur(clip) || 0.001;
   const ab = attackEnv(atk.t, dur) * w;
@@ -309,7 +348,8 @@ function overlayAttack(human: Humanoid, weaponGroups: THREE.Group[], atk: Attack
   // НИЗ — своим весом: стоя клип владеет ногами (подшаг), на ходу ими владеет локомоция.
   const lw = ab * legW;
   if (lw > 1e-3) for (const nm of ATK_LEG_BONES) { const e = ap[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue; qEuler(e, _qB); b.quaternion.slerp(_qB, lw); }
-  applyGripChannels(human, ap);   // ⭐ ХВАТ УДАРА поверх хвата стойки (см. `applyGripChannels`): вес 1, не бленд
+  applyGripChannels(human, ap);     // ⭐ ХВАТ УДАРА поверх хвата стойки (см. `applyGripChannels`): вес 1, не бленд
+  if (grip) applyGripChannels(human, grip);   // ⚠ живой конфиг СИЛЬНЕЕ запечённого слепка, но не сильнее анимации пальцев (см. `liveGrip`)
   const ovr = !!ap['__wpnOverride'];   // удар двигает хват ТОЛЬКО если у кадра-удара стоит галка override; иначе хват жёсткий (база)
   if (ovr) weaponGroups.forEach((g, i) => {
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
@@ -385,6 +425,8 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
     applyGripChannels(human, up.pose);   // ⭐ ХВАТ СТОЙКИ: фаланг нет ни в одном слое-списке (см. `applyGripChannels`)
     applyWeaponUpper(weaponGroups, up.pose, hw);
   }
+  // ⭐⭐ ЖИВОЙ ХВАТ ПОВЕРХ ЗАПЕЧЁННОГО — и в ветке «стойки нет» тоже: кисть держит оружие всегда.
+  if (!up?.fingersAnimated) applyGripChannels(human, liveGrip(human, content, weapon, up?.clipName));
   // Кроссфейд цепочки: УХОДЯЩИЙ удар кладём первым с затухающим весом, входящий — поверх него.
   // Без этого второй `triggerAttack` жёстко подменял первый и на стыке комбо был рывок.
   // ПЛЕЧЕВОЙ ПОЯС — поверх всего, что легло на ключицу (авторская стойка или ноль), по мере хода:
@@ -412,8 +454,9 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
       atk.clip ? `${mode} · низ ${(legW * 100) | 0}%${atk.lock ? ' · ЗАМОК' : ''}${atk.prio ? ` · prio ${atk.prio}` : ''}` : undefined);
     if (fade && fade.atk.clip && fade.w > 0.001) traceRow('↳ уходящее', fade.atk.clip.name, fade.w, 'кроссфейд цепочки');
   }
-  if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w, legsOf(fade.atk));
-  if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk, 1, legW);   // удар поверх idle/маха
+  const atkGrip = (a: AttackState): Pose | null => (fingersAnimated(a.clip) ? null : liveGrip(human, content, weapon, a.clip?.name));
+  if (fade && fade.atk.clip && fade.w > 0.001) overlayAttack(human, weaponGroups, fade.atk, fade.w, legsOf(fade.atk), atkGrip(fade.atk));
+  if (atk.clip && atk.t >= 0) overlayAttack(human, weaponGroups, atk, 1, legW, atkGrip(atk));   // удар поверх idle/маха
 }
 const _wsP = new THREE.Vector3(), _wsT = new THREE.Vector3(), _wsPole = new THREE.Vector3();
 const _wsQ = new THREE.Quaternion(), _wsFace = new THREE.Quaternion(), _wsFwd = new THREE.Vector3();
@@ -723,6 +766,10 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   const atk = (w: string): Clip | null => find('hit', charId, w) ?? (fallbackId ? find('hit', fallbackId, w) : null);
   const swayOf = (w: string): number => sway[charId]?.[w] ?? (fallbackId ? sway[fallbackId]?.[w] : undefined) ?? 0.2;
   const anim = readAnimCfg(readJSON<unknown>('pe_anim', {}), charId, fallbackId);   // контроллер: предметы + привязки клипов
+  // ⭐ ХВАТ ЖИВЁТ ЗДЕСЬ, А НЕ В КЛИПЕ (см. `liveGrip`). Ключ `pe_gripposes` — тот же, что у редактора.
+  const gripCfg = readJSON<GripConfig>('pe_gripposes', EMPTY_GRIP_CONFIG());
+  const gripMemo = new WeakMap<object, Map<string, Pose>>();
+  const AXES_NONE: Record<string, FingerAxes> = {};   // ключ мемо для «осей нет»
   /** Клип стойки ПО ИМЕНИ ИЗ КОНФИГА: привязка сильнее конвенции, поэтому переименовывать ничего не надо. */
   const bound = (kind: 'idle' | 'combat_idle', item: string): Clip | null => {
     const nm = anim.clipName(kind, item);
@@ -750,7 +797,10 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
           trace: layerTrace.on ? layerTrace.items : undefined }, t);
       if (!pose) return null;
       const full = stance(weapon);
-      return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)) };
+      // Ведущий клип стойки — по нему берётся хват КЛИПА и решается, анимированы ли пальцы.
+      const lead = (combat > 0.5 ? bound('combat_idle', weapon) : bound('idle', weapon)) ?? full;
+      return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)),
+               clipName: lead?.name, fingersAnimated: fingersAnimated(lead) };
     },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
     /** Клип состояния по привязке (`pe_anim.states`), иначе по имени состояния как есть. */
@@ -758,6 +808,15 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     /** Клип локомоции (Ф4). Через ту же привязку `pe_anim`, что и состояния: имя — лишь умолчание. */
     locoClip(name: string): Clip | null { return byName(anim.stateName(name)); },
     stateCfg(state: string) { const c = anim.stateCfg(state); return { priority: c.priority, interruptible: c.interruptible, blendSec: c.blendSec, legs: c.legs }; },
+    /** Живой хват: цепочка клип → оружие → авто (`effectiveWeaponGrip`). Считается один раз на (оси, оружие, клип). */
+    gripPose(weapon: string, axes: Record<string, FingerAxes> | null, clipName?: string): Pose | null {
+      const k: object = axes ?? AXES_NONE;
+      let m = gripMemo.get(k); if (!m) { m = new Map(); gripMemo.set(k, m); }
+      const key = weapon + '|' + (clipName ?? '');
+      let pose = m.get(key);
+      if (!pose) { pose = resolveGripPose(gripCfg, charId, weapon, axes, clipName); m.set(key, pose); }
+      return pose;
+    },
     clipByName(name: string): Clip | null { return byName(name); },
     // Поза скила под экип. оружие: если авторская на другом оружии — ретаргетим семейство (по clip.weapon) на текущее/базовое/главное; иначе авторская как есть.
     resolveAbilityClip(name: string, weapon: string): Clip | null {

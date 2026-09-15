@@ -18,6 +18,7 @@
  */
 import * as THREE from 'three';
 import { makeGamePlayerDoll } from './gamePlayerDoll.js';
+import { markSfx } from './animSfx.js';   // звук меток — тот же, что в игре (правило «редактор ≡ игра»)
 import { loadAssetConfig, resolvePlayerLook, editorClasses } from './modelSkin.js';
 import type { RagdollHandle, PhysWorld } from './ragdoll.js';
 import { createTestScene, TEST_TICK_DT, type TestScene } from './testScene.js';
@@ -149,6 +150,7 @@ export function createTestTab(host: TestTabHost): TestTab {
       if (!alive()) return null;          // ушли с вкладки, пока грузился конфиг
       const sc = createTestScene(classId);
       const doll = makeGamePlayerDoll(pw, { x: sc.view.x, z: sc.view.z, weapon: host.weapon(), classId, ...look });
+      doll.onMark = markSfx(1);           // ⭐ разметку взмаха/удара СЛЫШНО прямо в редакторе
       host.scene.add(doll.group);
       const room = makeRoom(sc.bounds.w, sc.bounds.h);
       host.scene.add(room);

@@ -297,7 +297,12 @@ export function markSec(c: Clip, type: MarkType): number | null {
   for (const k of c.keys) if (k.marks?.some((m) => m.type === type)) return k.t;
   return null;
 }
-export interface MarkEvent { mark: Mark; phase: 'point' | 'begin' | 'end'; t: number }
+export interface MarkEvent {
+  mark: Mark; phase: 'point' | 'begin' | 'end'; t: number;
+  /** Клип, из которого метка. Нужен подписчику, чтобы видеть СОСЕДНИЕ метки (звук замаха молчит,
+   *  если в клипе размечен взмах — иначе свистело бы дважды; см. `animSfx.soundForMark`). */
+  clip?: Clip;
+}
 /**
  * Метки, ПЕРЕСЕЧЁННЫЕ на интервале (tPrev, tNow] времени КЛИПА. Точечные дают `point`, отрезки — `begin`
  * на своём ключе и `end` через `dur`.
@@ -312,10 +317,10 @@ export function marksInRange(c: Clip, tPrev: number, tNow: number): MarkEvent[] 
     if (!k.marks) continue;
     for (const m of k.marks) {
       if (m.dur !== undefined && m.dur > 0) {
-        if (k.t > tPrev && k.t <= tNow) out.push({ mark: m, phase: 'begin', t: k.t });
+        if (k.t > tPrev && k.t <= tNow) out.push({ mark: m, phase: 'begin', t: k.t, clip: c });
         const e = k.t + m.dur;
-        if (e > tPrev && e <= tNow) out.push({ mark: m, phase: 'end', t: e });
-      } else if (k.t > tPrev && k.t <= tNow) out.push({ mark: m, phase: 'point', t: k.t });
+        if (e > tPrev && e <= tNow) out.push({ mark: m, phase: 'end', t: e, clip: c });
+      } else if (k.t > tPrev && k.t <= tNow) out.push({ mark: m, phase: 'point', t: k.t, clip: c });
     }
   }
   return out.sort((a, b) => a.t - b.t);
@@ -418,4 +423,37 @@ export function migratePose(p: Pose): Pose {
   if (y && !p['__hipsP']) p['__hipsP'] = [0, y[0], 0];
   if (y) delete p['__hipsY'];
   return p;
+}
+
+/**
+ * ⭐ ЕСТЬ ЛИ В КЛИПЕ ЖИВАЯ АНИМАЦИЯ ПАЛЬЦЕВ — то есть меняются ли каналы фаланг ОТ КАДРА К КАДРУ.
+ *
+ * Нужно ровно для одного решения: чей хват сильнее. Живой конфиг хвата (`pe_gripposes`) обязан
+ * перебивать ЗАПЕЧЁННЫЙ статичный хват — иначе правка в редакторе не доезжает до игры, потому что в
+ * клипе лежит слепок прошлой настройки. Но АНИМАЦИЮ пальцев он перебивать не имеет права: замер
+ * мокапа со снятыми кистями — это не хват, а движение, и подменять его статичной позой значит терять
+ * работу. Один кадр анимацией не бывает по определению.
+ *
+ * Считается один раз на клип (`WeakMap`) — зовётся каждый кадр.
+ */
+const FINGER_CH = /^(Left|Right)(Thumb|Index|Middle|Ring|Little)(Proximal|Intermediate|Distal)$/;
+const _fingerVary = new WeakMap<object, boolean>();
+export function fingersAnimated(clip: { keys: { pose: Pose }[] } | null | undefined): boolean {
+  if (!clip) return false;
+  const hit = _fingerVary.get(clip); if (hit !== undefined) return hit;
+  let out = false;
+  const keys = clip.keys;
+  if (keys && keys.length > 1) {
+    const first = keys[0]!.pose;
+    outer: for (const nm in first) {
+      if (!FINGER_CH.test(nm)) continue;
+      const a = first[nm]!;
+      for (let i = 1; i < keys.length; i++) {
+        const b = keys[i]!.pose[nm];
+        if (!b || Math.abs(b[0] - a[0]) > 1e-4 || Math.abs(b[1] - a[1]) > 1e-4 || Math.abs(b[2] - a[2]) > 1e-4) { out = true; break outer; }
+      }
+    }
+  }
+  _fingerVary.set(clip, out);
+  return out;
 }
