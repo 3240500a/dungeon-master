@@ -16,7 +16,17 @@
  * `measureStancePlants` вместе с плантами — стойка должна приезжать в планировщик ЦЕЛИКОМ, а не
  * одними точками (иначе стопы доворачиваются на передаче ног позе).
  */
-export interface StanceFoot { pitchL: number; yawL: number; pitchR: number; yawR: number }
+export interface StanceFoot {
+  pitchL: number; yawL: number; pitchR: number; yawR: number;
+  /**
+   * ⭐ ВЫСОТА СТОПЫ АВТОРСКОЙ СТОЙКИ над полом лодыжки (`ankleRest`), на ногу. Планировщик клал ОБЕ
+   * стопы ровно на пол, а автор ставит их по-своему: ЗАМЕР на воине — левая +0.05, правая **−0.29**
+   * (то есть чуть утоплена). Из-за этого у планировщика колено согнуто иначе (правое 0.559 против
+   * авторских 0.435), а на передаче ног позе заземление поднимало всё тело — «выпрямляет колени и
+   * поднимает таз, вставая в idle».
+   */
+  liftL: number; liftR: number;
+}
 
 export interface PoseTargets {
   hipL: number; hipR: number; knL: number; knR: number;
@@ -780,7 +790,10 @@ class StepPlanner {
   private get stanceLatR(): number { return this.latR ?? -this.hipHalf; }
   /** Базовая высота таза = высота таза в idle-стойке (замер). Гейт/подшаг НЕ поднимают таз выше неё → нет подскока. */
   private standY = GAIT.standY;
-  setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number): void {
+  /** Ориентация и ВЫСОТА стопы авторской стойки — планировщику нужна высота (см. `StanceFoot.lift`). */
+  stanceFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0, liftL: 0, liftR: 0 };
+  setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number, foot?: StanceFoot): void {
+    if (foot) this.stanceFoot = foot;
     this.latL = latL; this.stanceFwdL = fwdL; this.latR = latR; this.stanceFwdR = fwdR;
     if (standY !== undefined) { this.standY = standY; this.hipY = standY; }
   }
@@ -1207,7 +1220,13 @@ class StepPlanner {
           const p = crAt(ctrl, e); wx = p[0]; wz = p[1];
         }
         wy = this.footFloor + Math.sin(Math.PI * t) * liftS(i as 0 | 1);
-      } else { wx = l.px; wz = l.pz; wy = this.footFloor; }    // опорная: прибита к полу
+      } else {
+        // ОПОРНАЯ: прибита к полу. ⭐ В ПОКОЕ — на АВТОРСКОЙ высоте (`StanceFoot.lift`): автор ставит
+        // стопы не строго на пол, и пока планировщик клал обе ровно на него, колено выходило иначе
+        // авторского, а заземление на передаче ног позе поднимало тело. Вес гаснет с движением.
+        const lift = i === 0 ? this.stanceFoot.liftL : this.stanceFoot.liftR;
+        wx = l.px; wz = l.pz; wy = this.footFloor + lift * (1 - clamp(this.moveAmt, 0, 1));
+      }
       const a = ik(wx - hx, wz - hz, wy - (hipY + this.hipDrop), fx, fz, rx, rz, fwdLimS(i as 0 | 1), this.thighL, this.shinL);
       // АМПЛИТУДА БЕДРА. Подъём маховой стопы IK отдаёт почти целиком колену: бедро висит, нога
       // «поджимается и болтается». Сравниваем решение с решением ДЛЯ ТОЙ ЖЕ ТОЧКИ, НО НА ПОЛУ, и
@@ -1285,7 +1304,7 @@ export class PoseDriver {
    * ⚠ Вес — `1 − moveAmt`: на ходу стопу ведёт походка (`footTurn`, голеностоп, заземление).
    * Умолчание — нули: `PoseDriver` без `setStance` (golden-харнесс, тесты) бит в бит как раньше.
    */
-  private stanceFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0 };
+  private stanceFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0, liftL: 0, liftR: 0 };
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   private combat = 0;     // мирно(0) ↔ бой(1): боевая колонка настроек (Ф6). Нет записей — ведёт себя как раньше.
@@ -1311,7 +1330,7 @@ export class PoseDriver {
     if (!this.planner) {
       this.planner = new StepPlanner();
       // Стойку передаём ТОЛЬКО замеренную: иначе планировщик возьмёт полутаз рига, а не нашу константу.
-      if (this.stanceLatL !== null) this.planner.setStance(this.stanceLatL, this.stanceFwdL, this.stanceLatR, this.stanceFwdR, this.standY);
+      if (this.stanceLatL !== null) this.planner.setStance(this.stanceLatL, this.stanceFwdL, this.stanceLatR, this.stanceFwdR, this.standY, this.stanceFoot);
     }
     this.planner.footFloor = this.footFloor;   // пол для лодыжки — из рига, см. `StepPlanner.footFloor`
     this.planner.legRest = this.legRest;       // длины бедра/голени и полутаз — из рига, не из констант
@@ -1331,7 +1350,7 @@ export class PoseDriver {
     this.stanceLatL = latL; this.stanceFwdL = fwdL; this.stanceLatR = latR; this.stanceFwdR = fwdR;
     if (foot) this.stanceFoot = foot;
     if (standY !== undefined) this.standY = standY;
-    this.planner?.setStance(latL, fwdL, latR, fwdR, standY);
+    this.planner?.setStance(latL, fwdL, latR, fwdR, standY, foot ?? this.stanceFoot);
   }
   /** Текущая плант-цель ноги i в мире (для наземных маркеров редактора). */
   plantTarget(i: number): [number, number] { return this.planner ? this.planner.getTarget(i) : [0, 0]; }

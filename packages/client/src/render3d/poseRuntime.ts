@@ -1028,7 +1028,7 @@ const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.V
  */
 export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number; standY: number; foot: StanceFoot } {
   const hw = human.legRest?.hipHalfW ?? HIP_DX;   // полутаз — из рига; HIP_DX остаётся только процедурному манекену
-  const noFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0 };
+  const noFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0, liftL: 0, liftR: 0 };
   if (!idle) return { latL: hw, fwdL: 0, latR: -hw, fwdR: 0, standY: GAIT.standY, foot: noFoot };
   human.reset();
   const hips = human.bones.get('Hips')!;
@@ -1047,7 +1047,13 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   const authored = hipsOffset(idle, human.hipsRest.y);
   const standY = authored ? human.hipsRest.y + authored[1] : (human.ankleRest ?? (FOOT_Y + (human.footLift ?? 0))) + (h.y - (fl.y + fr.y) / 2);   // пол — из рига (`ankleRest`), см. poseRuntime.update
   const fL = idle['LeftFoot'], fR = idle['RightFoot'];
-  const foot: StanceFoot = { pitchL: fL?.[0] ?? 0, yawL: fL?.[1] ?? 0, pitchR: fR?.[0] ?? 0, yawR: fR?.[1] ?? 0 };
+  // ⚠ ВЫСОТА — ОТ ПОЛА ЛОДЫЖКИ РИГА (`ankleRest`), а не абсолютная: иначе она поедет за морфом.
+  // Нет замера пола (урезанные скелеты/тесты) — считаем стойку стоящей на полу, то есть подъём 0.
+  const floor = human.ankleRest ?? null;
+  const foot: StanceFoot = {
+    pitchL: fL?.[0] ?? 0, yawL: fL?.[1] ?? 0, pitchR: fR?.[0] ?? 0, yawR: fR?.[1] ?? 0,
+    liftL: floor === null ? 0 : fl.y - floor, liftR: floor === null ? 0 : fr.y - floor,
+  };
   return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY, foot };
 }
 
