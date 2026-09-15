@@ -4546,6 +4546,9 @@ function renderGaitTune(): void {
 
   grp('ноги / посадка');
   row2('присед (мин. таз)', GAITo, 'pelvisMin', 'pelvisMinRun', 6, 40, 0.25);
+  // ⭐ ГЕОМЕТРИЯ, А НЕ СТИЛЬ: таз опускается ровно настолько, чтобы стопа доставала до пола.
+  // Лечит «в боевом idle ноги висят в воздухе»: боевая стойка ШИРЕ, а просадка ширину не видит.
+  row2('таз по досягаемости ног (0 = как было)', GAITo, 'pelvisReach', 'pelvisReachRun', 0, 1, 0.05);
   row2('длина шага', GAITo, 'stepWalk', 'stepRun', 2, 140, 0.5);
   row2('боб таза ×', GAITo, 'bobWalk', 'bobRun', 0, 5, 0.02);
   // ПРОСАДКА. Высота таза на ходу отсчитывается от АВТОРСКОЙ СТОЙКИ, а её авторят почти на
@@ -5557,6 +5560,7 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
+  'pelvisReach', 'pelvisReachRun',
   'ankLevel', 'ankLevelRun', 'ankHoldFrom', 'ankHoldFromRun', 'ankHoldTo', 'ankHoldToRun', 'ankHoldEase', 'ankHoldEaseRun',
   'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax',
   'kneeDir', 'kneeDirRun', 'kneeDirMax', 'crouchWalk', 'crouchRun',
