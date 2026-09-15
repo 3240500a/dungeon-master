@@ -12,6 +12,10 @@
  *  • **вжух** — шум с полосой, ЕДУЩЕЙ вверх и обратно, с нарастанием и спадом громкости. Классический
  *    swoosh: высота «проезжает» мимо слушателя.
  *
+ * ⚠ РЕШЕНИЯ ПО ВСЕМ ДОРОЖКАМ ЖИВУТ ЗДЕСЬ — звук, тряска камеры, эффект. Синтезируется здесь только
+ * звук, остальное отдаётся своим системам; но правило «что делает эта метка» должно читаться В ОДНОМ
+ * МЕСТЕ, иначе на вопрос «а что у нас вообще делают метки» снова не будет ответа.
+ *
  * ⚠ ДЛИТЕЛЬНОСТЬ ВЖУХА БЕРЁТСЯ ИЗ САМОЙ МЕТКИ. `swing` — отрезок («меч пошёл» … «меч встал»), и это
  * ровно то, сколько должен звучать свист. Фиксированная длительность разошлась бы с анимацией на
  * первом же клипе с другим темпом, а тайм-варп удара растягивает `dur` вместе с движением сам.
@@ -23,7 +27,20 @@
 import type { MarkEvent } from './clipModel.js';
 
 /** Что играть: вид, длительность (сек) и относительная громкость. */
-export interface AnimSound { kind: 'hit' | 'whoosh'; dur: number; gain: number }
+export interface AnimSound { kind: 'hit' | 'whoosh' | 'step' | 'clank'; dur: number; gain: number; tone?: number }
+
+/**
+ * ⚠ ЗАГЛУШКА, НО РАЗЛИЧИМАЯ. Метка `sfx` несёт ID звука из конфига — а конфига звуков не
+ * существует, поэтому честного «того самого» звука взять неоткуда. Вместо молчания даём узнаваемый
+ * тембр по знакомым словам (и нейтральный лязг на всё прочее): разметку слышно и её видно в работе,
+ * а подмена библиотекой сэмплов потом сведётся к замене этой таблицы.
+ */
+const SFX_TONE: ReadonlyArray<readonly [RegExp, number]> = [
+  [/(clank|лязг|щит|shield)/i, 1],
+  [/(shout|крик|выкрик|voice)/i, 1.9],
+  [/(rustle|шорох|броня|armor|cloth)/i, 0.55],
+  [/(step|шаг|foot)/i, 0.7],
+];
 
 const clamp = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);
 
@@ -37,6 +54,15 @@ export function soundForMark(e: MarkEvent): AnimSound | null {
   if (m.type === 'swing') {
     if (e.phase !== 'begin') return null;                       // конец отрезка — это тишина, а не второй свист
     return { kind: 'whoosh', dur: clamp(m.dur ?? 0.18, 0.06, 0.8), gain: 0.85 };
+  }
+  if (m.type === 'footstep' && e.phase === 'point') {
+    // ⚠ Левая и правая — РАЗНОЙ высоты: одинаковые шаги подряд слышны как повтор сэмпла, а не как ходьба.
+    return { kind: 'step', dur: 0.16, gain: 0.7, tone: m.foot === 'R' ? 1.12 : 0.92 };
+  }
+  if (m.type === 'sfx' && e.phase === 'point') {
+    const id = m.sfx ?? '';
+    const tone = SFX_TONE.find(([re]) => re.test(id))?.[1] ?? 1;
+    return { kind: 'clank', dur: 0.22, gain: 0.7, tone };
   }
   if (m.type === 'windup' && e.phase === 'point') {
     // ⚠ Только когда взмаха нет: иначе на одном ударе свистело бы дважды (см. шапку).
@@ -134,11 +160,85 @@ function playWhoosh(dur: number, g: number): void {
   noiseSrc(ctx, dur).connect(bp).connect(gn).connect(master);
 }
 
+/** ШАГ: мягкий низкий толчок + короткий шорох подошвы. Высота — от стороны (см. `soundForMark`). */
+function playStep(dur: number, g: number, tone: number): void {
+  const a = audio(); if (!a || a.ctx.state === 'suspended') return;
+  const { ctx, master } = a; const t = ctx.currentTime;
+  const osc = ctx.createOscillator(); osc.type = 'sine';
+  osc.frequency.setValueAtTime(120 * tone, t);
+  osc.frequency.exponentialRampToValueAtTime(52 * tone, t + dur);
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0.0001, t);
+  og.gain.linearRampToValueAtTime(g, t + 0.006);
+  og.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(og).connect(master); osc.start(t); osc.stop(t + dur + 0.02);
+
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2200;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(g * 0.35, t);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.35);
+  noiseSrc(ctx, dur).connect(hp).connect(ng).connect(master);
+}
+
+/** ЛЯЗГ (и прочие «сторонние» звуки): узкая полоса шума + два призвука — металлический, короткий. */
+function playClank(dur: number, g: number, tone: number): void {
+  const a = audio(); if (!a || a.ctx.state === 'suspended') return;
+  const { ctx, master } = a; const t = ctx.currentTime;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400 * tone; bp.Q.value = 6;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t);
+  ng.gain.linearRampToValueAtTime(g * 0.8, t + 0.003);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  noiseSrc(ctx, dur).connect(bp).connect(ng).connect(master);
+  for (const [mul, lvl] of [[1, 0.5], [1.48, 0.3]] as const) {   // несоизмеримые призвуки = металл, а не бип
+    const osc = ctx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = 1700 * tone * mul;
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(g * lvl, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.8);
+    osc.connect(og).connect(master); osc.start(t); osc.stop(t + dur + 0.02);
+  }
+}
+
 /** Проиграть решение `soundForMark`. Громкость источника (свой игрок / пир) — множителем. */
 export function playAnimSound(s: AnimSound, gain = 1): void {
   const g = s.gain * clamp(gain, 0, 1);
   if (g <= 0.001) return;
-  if (s.kind === 'hit') playHit(s.dur, g); else playWhoosh(s.dur, g);
+  const tone = s.tone ?? 1;
+  if (s.kind === 'hit') playHit(s.dur, g);
+  else if (s.kind === 'whoosh') playWhoosh(s.dur, g);
+  else if (s.kind === 'step') playStep(s.dur, g, tone);
+  else playClank(s.dur, g, tone);
+}
+
+/**
+ * ⭐ СИЛА ТРЯСКИ по метке `camshake`. Живёт рядом со звуком по одной причине: это такое же чистое
+ * правило «метка → величина», и держать его в коде камеры значило бы прятать решение в отрисовке.
+ * Сила берётся из самой метки (`num`) — чтобы масштабировать её от тяжести удара.
+ */
+export function shakeForMark(e: MarkEvent): number {
+  if (e.mark.type !== 'camshake' || e.phase !== 'point') return 0;
+  const n = e.mark.num;
+  return n === undefined ? 1 : Math.max(0, n);
+}
+
+/**
+ * ⭐ ЭФФЕКТ по метке `vfx`.
+ *
+ * ⚠ ЗАГЛУШКА, КАК И У ЗВУКА: метка несёт ID эффекта из конфига, а библиотеки эффектов не существует.
+ * Поэтому знакомые слова дают узнаваемый цвет, всё прочее — нейтральную искру. Метка при этом
+ * ВИДНА в работе, а появление настоящей библиотеки сведётся к замене этой таблицы.
+ */
+const VFX_COLOR: ReadonlyArray<readonly [RegExp, number]> = [
+  [/(blood|кровь)/i, 0xc0402a],
+  [/(dust|пыль|земл)/i, 0x9c8b6a],
+  [/(smoke|дым)/i, 0x6b7280],
+  [/(spark|искр|огон|fire)/i, 0xffb04a],
+];
+export interface AnimBurst { color: number; n: number; speed: number; life: number }
+export function burstForMark(e: MarkEvent): AnimBurst | null {
+  if (e.mark.type !== 'vfx' || e.phase !== 'point') return null;
+  const id = e.mark.vfx ?? '';
+  return { color: VFX_COLOR.find(([re]) => re.test(id))?.[1] ?? 0xffe6a0, n: 12, speed: 70, life: 0.45 };
 }
 
 /** Подписчик для `doll.onMark`: метка → решение → звук. Ничего не решает сам — это делает `soundForMark`. */

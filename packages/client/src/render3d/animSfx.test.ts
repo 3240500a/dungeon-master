@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { soundForMark } from './animSfx.js';
+import { soundForMark, burstForMark } from './animSfx.js';
 import { marksInRange, type Clip, type MarkEvent } from './clipModel.js';
 
 /**
@@ -68,6 +68,47 @@ describe('метка → звук', () => {
 
   it('окно комбо само по себе молчит — это геймплей, а не звук', () => {
     expect(all(clip([{ t: 0.1, type: 'combo', dur: 0.5 }])).map(soundForMark).filter(Boolean).length).toBe(0);
+  });
+
+  it('⭐ ШАГ звучит, и левая с правой — РАЗНОЙ высоты', () => {
+    // ⚠ Мутация «одна высота на обе ноги» валит это: ходьба слышна как повтор одного сэмпла.
+    const L = soundForMark(all(clip([{ t: 0.2, type: 'footstep' }]))[0]!);
+    expect(L!.kind).toBe('step');
+    const mk = (foot: string): number => {
+      const c = { keys: [{ t: 0.2, pose: {}, marks: [{ type: 'footstep', foot }] }] } as unknown as Clip;
+      return soundForMark(marksInRange(c, -1e-9, 9)[0]!)!.tone!;
+    };
+    expect(mk('L')).not.toBe(mk('R'));
+  });
+
+  it('⭐ «прочий звук» (`sfx`) звучит, и разные id звучат ПО-РАЗНОМУ', () => {
+    const tone = (id: string): number => {
+      const c = { keys: [{ t: 0.2, pose: {}, marks: [{ type: 'sfx', sfx: id }] }] } as unknown as Clip;
+      const s = soundForMark(marksInRange(c, -1e-9, 9)[0]!)!;
+      expect(s.kind).toBe('clank');
+      return s.tone!;
+    };
+    expect(tone('лязг щита')).not.toBe(tone('выкрик'));
+    expect(tone('шорох брони')).not.toBe(tone('лязг щита'));
+    expect(tone('неизвестный id'), 'незнакомый id — нейтральный лязг, а не тишина').toBe(1);
+  });
+
+  it('⭐ ЭФФЕКТ (`vfx`) виден, и знакомые id дают СВОЙ цвет', () => {
+    // ⚠ Мутация «один цвет на всё» валит это: разные эффекты стали бы неразличимы.
+    const col = (id: string): number => {
+      const c = { keys: [{ t: 0.2, pose: {}, marks: [{ type: 'vfx', vfx: id }] }] } as unknown as Clip;
+      return burstForMark(marksInRange(c, -1e-9, 9)[0]!)!.color;
+    };
+    expect(col('кровь')).not.toBe(col('пыль'));
+    expect(col('искра')).not.toBe(col('дым'));
+    expect(col('что-то своё'), 'незнакомый id — нейтральная искра, а не пустота').toBe(0xffe6a0);
+  });
+
+  it('прочие метки эффекта не дают', () => {
+    for (const t of ['impact', 'swing', 'combo', 'footstep', 'sfx']) {
+      const c = { keys: [{ t: 0.2, pose: {}, marks: [{ type: t, dur: 0.2 }] }] } as unknown as Clip;
+      expect(burstForMark(marksInRange(c, -1e-9, 9)[0]!)).toBe(null);
+    }
   });
 
   it('⚠ вжух не бывает мгновенным и бесконечным — длительность зажата', () => {

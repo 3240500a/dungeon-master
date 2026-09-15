@@ -13,7 +13,8 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
-import { markSfx } from './animSfx.js';   // ⭐ метки клипа наконец звучат: удар и вжух (см. `animSfx`)
+import { markSfx, shakeForMark, burstForMark } from './animSfx.js';   // ⭐ метки клипа наконец звучат: удар и вжух (см. `animSfx`)
+import { makeCamShake } from './camShake.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { driveActor } from './driveActor.js';
 import { moveFromKeys, facingFrom, aimOnGround, aimTmp, CAM_AZ, camDirXZ } from './playerInput.js';
@@ -247,12 +248,14 @@ export async function startOnline3d(): Promise<void> {
   const aimT = aimTmp();   // рейкаст прицела — общий с вкладкой «Тест» (иначе прицел в тесте свой)
   const aimWorld = (): { x: number; y: number } | null =>
     (mouse.set ? aimOnGround(aimT, camera, canvas.getBoundingClientRect(), mouse.x, mouse.y) : null);
-  const applyCam = (): void => {
+  const camShake = makeCamShake();   // тряска по метке `camshake` — только от СВОЕГО удара (ввод пиров нам не виден)
+  const applyCam = (dt = 0): void => {
     const zt = Math.max(0, Math.min(1, (orbit.dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));   // 0 близко … 1 далеко
     const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;                                           // близко — ниже угол, далеко — топ-даун
     const hor = orbit.dist * Math.cos(el);   // горизонтальный вынос камеры; направление — общий `TO_CAM`
     camera.position.set(orbit.target.x + TO_CAM.x * hor, orbit.target.y + orbit.dist * Math.sin(el), orbit.target.z + TO_CAM.z * hor);
     camera.lookAt(orbit.target);
+    camShake.apply(camera, dt);   // ⚠ ПОСЛЕ lookAt и по КАМЕРЕ, а не по цели: иначе поедет прицел вместе с кадром
   };
 
   // Запечь ОСЕВШИЙ труп в ОДИН статический меш: ~22 меша куклы → 1 (цвет материалов → в вершины), в мир-координатах.
@@ -510,7 +513,14 @@ export async function startOnline3d(): Promise<void> {
     if (!self) {
       const d = makeGamePlayerDoll(pw, { classId, weapon: selfWeaponKey, weaponModels: weaponModelsFromSave(app.state!.save, app.config.get('items.base')), x: floor.spawn.x, z: floor.spawn.y, ...playerLook(classId) });
       actorsGroup.add(d.group);
-      d.onMark = markSfx(1);                 // ⭐ свой удар — в полную громкость
+      {   // ⭐ свой удар: звук в полную громкость + тряска камеры по метке
+        const sfx = markSfx(1);
+        d.onMark = (e) => {
+          sfx(e);
+          const p = shakeForMark(e); if (p > 0) camShake.hit(p);
+          const b = burstForMark(e); if (b) vfx.burst(smoothX, smoothZ, b.color, b.n, b.speed, b.life);
+        };
+      }
       self = { d, vx: 0, vz: 0, lx: floor.spawn.x, lz: floor.spawn.y };
       const sh = app.config.get('balance').lighting.shadow3d;
       playerLight = new THREE.PointLight(0xffd7a0, sh.playerLightIntensity, sh.playerLightDist, 2);
@@ -1127,7 +1137,7 @@ export async function startOnline3d(): Promise<void> {
     physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
     msPhys += (performance.now() - _tp - msPhys) * 0.1;   // «физ»: pw.step (Jolt) над активными телами
     wallFade.playerPos.set(smoothX, 20, smoothZ); wallFade.viewDir.set(smoothX - camera.position.x, smoothZ - camera.position.z).normalize();   // фейд стен: взгляд камеры → ближние стены по «лицу»
-    updateTorches(torches, torchPool, smoothX, smoothZ, tsec, app.config.get('balance').lighting.shadow3d.torchIntensity); vfx.update(dt); statusFx.update(dt); applyCam();
+    updateTorches(torches, torchPool, smoothX, smoothZ, tsec, app.config.get('balance').lighting.shadow3d.torchIntensity); vfx.update(dt); statusFx.update(dt); applyCam(dt);
     const _tr = performance.now();
     renderer.render(scene, camera);
     msRender += (performance.now() - _tr - msRender) * 0.1;   // «рендер»: submit дроуколов + куллинг (CPU-часть; GPU асинхронно)

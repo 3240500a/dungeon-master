@@ -18,7 +18,9 @@
  */
 import * as THREE from 'three';
 import { makeGamePlayerDoll } from './gamePlayerDoll.js';
-import { markSfx } from './animSfx.js';   // звук меток — тот же, что в игре (правило «редактор ≡ игра»)
+import { markSfx, shakeForMark, burstForMark } from './animSfx.js';   // звук меток — тот же, что в игре (правило «редактор ≡ игра»)
+import { Vfx } from './vfx.js';
+import { makeCamShake } from './camShake.js';
 import { loadAssetConfig, resolvePlayerLook, editorClasses } from './modelSkin.js';
 import type { RagdollHandle, PhysWorld } from './ragdoll.js';
 import { createTestScene, TEST_TICK_DT, type TestScene } from './testScene.js';
@@ -97,7 +99,9 @@ export function createTestTab(host: TestTabHost): TestTab {
     dist = Math.max(CAM.minDist, Math.min(CAM.maxDist, dist * (e.deltaY < 0 ? 0.9 : 1.1)));
   };
 
-  const applyCam = (x: number, z: number): void => {
+  const camShake = makeCamShake();
+  const vfx = new Vfx(host.scene);   // эффекты меток: во вкладке те же, что в игре
+  const applyCam = (x: number, z: number, dt = 0): void => {
     // Одна формула с игрой: близко — ниже угол, далеко — почти топ-даун.
     const zt = Math.max(0, Math.min(1, (dist - CAM.minDist) / (CAM.maxDist - CAM.minDist)));
     const el = CAM.elNear + (CAM.elFar - CAM.elNear) * zt;
@@ -105,6 +109,7 @@ export function createTestTab(host: TestTabHost): TestTab {
     const dir = camDirXZ(CAM.az), hor = dist * Math.cos(el);   // тот же шов, что в игре
     host.camera.position.set(target.x + dir.x * hor, target.y + dist * Math.sin(el), target.z + dir.z * hor);
     host.camera.lookAt(target);
+    camShake.apply(host.camera, dt);   // тот же шов, что в игре
   };
 
   /** Рамка комнаты: без неё непонятно, где кончается пол и почему персонаж встал. */
@@ -150,7 +155,14 @@ export function createTestTab(host: TestTabHost): TestTab {
       if (!alive()) return null;          // ушли с вкладки, пока грузился конфиг
       const sc = createTestScene(classId);
       const doll = makeGamePlayerDoll(pw, { x: sc.view.x, z: sc.view.z, weapon: host.weapon(), classId, ...look });
-      doll.onMark = markSfx(1);           // ⭐ разметку взмаха/удара СЛЫШНО прямо в редакторе
+      {   // ⭐ разметку взмаха/удара СЛЫШНО и ТРЯСКУ ВИДНО прямо в редакторе — как в игре
+        const sfx = markSfx(1);
+        doll.onMark = (e) => {
+          sfx(e);
+          const p = shakeForMark(e); if (p > 0) camShake.hit(p);
+          const b = burstForMark(e); if (b) vfx.burst(sc.view.x, sc.view.z, b.color, b.n, b.speed, b.life);
+        };
+      }
       host.scene.add(doll.group);
       const room = makeRoom(sc.bounds.w, sc.bounds.h);
       host.scene.add(room);
@@ -193,6 +205,7 @@ export function createTestTab(host: TestTabHost): TestTab {
       };
       prevSpace = space;
 
+      vfx.update(dt);
       c.doll.setAttackHold?.(lmb);        // зажатая ЛКМ держит цепочку внутри окна комбо — ровно как в игре
       for (const e of scene.step(dt, input)) {
         // Удар отыгрывает КУКЛА по серверному событию — с тем же окном и вайндапом, что в игре.
@@ -200,7 +213,7 @@ export function createTestTab(host: TestTabHost): TestTab {
       }
       driveActor(drive, scene.view.x, scene.view.z, scene.view.facing, scene.view.alive, dt,
         { combat: scene.view.inCombat, stun: scene.view.stun });
-      applyCam(scene.view.x, scene.view.z);
+      applyCam(scene.view.x, scene.view.z, dt);
     },
 
     status(): string {
