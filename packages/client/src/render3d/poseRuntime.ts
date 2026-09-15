@@ -1274,8 +1274,8 @@ export class PosePlayer {
    * ⚠ Пост-импактный отрезок обязан уметь РАСТЯГИВАТЬСЯ: контакт в мокапе обычно на ~60 % клипа, а вайндап
    * сервера — ~35 % окна, поэтому коридор скорости `[0.35, 8]`, а не `max(1, …)`.
    */
-  triggerAttack(clip: Clip | null, windowSec = 0, windupSec = 0, st?: { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' }): void {
-    if (!clip) return;
+  triggerAttack(clip: Clip | null, windowSec = 0, windupSec = 0, st?: { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' }): boolean {
+    if (!clip) return false;
     // ⚠ СВИНГ, ПРИШЕДШИЙ СРАЗУ ПОСЛЕ АВТОСЦЕПКИ, НЕ ПЕРЕЗАПУСКАЕТ КЛИП. Пока атака зажата, работают ДВА
     // источника: наша сцепка по концу окна комбо и настоящий свинг сервера. Разнести их по времени нельзя
     // (темп атаки — серверный), а перезапуск на 0.1 с позже собственной сцепки читается как лишний рывок.
@@ -1284,7 +1284,7 @@ export class PosePlayer {
     if (this.atkAuto >= 0 && this.atkAuto < COMBO_REGRAB && this.atk.clip) {
       this.atkWindow = windowSec; this.atkWindup = windupSec;
       this.retime(this.atk.clip, this.atk.t, windowSec, windupSec);
-      return;
+      return false;                                 // ⚠ клип НЕ запускался — значит и удар из очереди не израсходован
     }
     // ЦЕПОЧКА (атака зажата): новый свинг пришёл, пока предыдущий ещё играет. Уходящий клип кроссфейдим,
     // а входящий стартуем с ЗАМАХА, минуя idle-вход — это Montage Sections из Unreal, только разметкой внутри
@@ -1300,6 +1300,7 @@ export class PosePlayer {
     this.atk.legs = st?.legs; this.atk.prio = st?.priority ?? 0; this.atk.lock = st ? !st.interruptible : false;
     this.atkWindow = windowSec; this.atkWindup = windupSec; this.atkState = st; this.atkAuto = -1;
     this.retime(clip, start, windowSec, windupSec);
+    return true;
   }
   /**
    * Пересчитать темп клипа от точки `start`: с меткой `impact` — двумя отрезками, чтобы контакт пришёлся

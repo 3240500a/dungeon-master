@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
+import { pickAttack, ATTACK_VARY } from './attackPick.js';   // ⭐ очередь ударов: порядок + шанс разнообразия
 import { GAIT } from './pose.js';
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, renderMatchWeight, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons , hostWeaponOnHand, dropWeaponHost} from './weapon3d.js';
@@ -161,7 +162,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const risePos = new THREE.Vector3();
   // Членство тел в pw.step: активны только если кукла не усыплена окном И (мертва | нокдаун | физрежим | транзиентная физика удара).
   const syncRagdollSim = (): void => ragdoll.setSimEnabled(simEnabled && (dead || downT > 0 || !kinematic || physHold > 0));
-  let atkClipIdx = 0;   // индекс чередования poseClips скила (замах справа→слева→…)
+  let atkLast: string | null = null;   // ПОСЛЕДНИЙ СЫГРАННЫЙ удар — по нему считается следующий (см. `attackPick`)
   let wvx = 0, wvz = 0, hasWvel = false, vxS = 0, vzS = 0;
   let rx = opts.x, rz = opts.z;            // сглаженная мир-позиция (сим 30Гц телепортит tx/tz)
   const off = new THREE.Vector3(), pelWorld = new THREE.Vector3(), hipsQ = new THREE.Quaternion();
@@ -225,10 +226,21 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       const pool = (clips && clips.length)
         ? clips.map((n) => content.resolveAbilityClip(n, weapon)).filter((c): c is NonNullable<typeof c> => !!c)
         : content.attackClips(weapon);
-      // ⭐ ТОТ ЖЕ ПУЛ отдаём автосцепке по окну комбо: чередование ударов — дело куклы, а не проигрывателя.
-      player.comboNext = pool.length ? () => pool[atkClipIdx++ % pool.length] ?? null : null;
-      if (pool.length) { player.triggerAttack(pool[atkClipIdx % pool.length]!, windowSec, windupSec); atkClipIdx++; }
-      else player.triggerAttack(content.attackClip(weapon), windowSec, windupSec);   // ничего не авторено → прежний фолбэк
+      // ⭐ ОДНО ПРАВИЛО ОЧЕРЕДИ НА ОБА ИСТОЧНИКА (свинг сервера и автосцепка по окну комбо), и состояние
+      // у него — ПОСЛЕДНИЙ СЫГРАННЫЙ клип. Счётчик тут не годится: его крутили двое, на пуле из двух
+      // ударов «+2» за цикл — тождество, и потому зажатая мышь повторяла один и тот же удар.
+      const names = pool.map((c) => c.name);
+      const take = (): (typeof pool)[number] | null => {
+        const i = pickAttack(names, atkLast, ATTACK_VARY);
+        return i < 0 ? null : pool[i]!;
+      };
+      player.comboNext = pool.length ? () => { const c = take(); if (c) atkLast = c.name; return c; } : null;
+      if (pool.length) {
+        const c = take();
+        // ⚠ СЧИТАЕМ УДАР СЫГРАННЫМ ТОЛЬКО ЕСЛИ ОН ДЕЙСТВИТЕЛЬНО ЗАПУСТИЛСЯ: свинг, подавленный
+        // перехватом автосцепки, ничего не играет — и очередь двигать не должен.
+        if (c && player.triggerAttack(c, windowSec, windupSec)) atkLast = c.name;
+      } else player.triggerAttack(content.attackClip(weapon), windowSec, windupSec);   // ничего не авторено → прежний фолбэк
     },
     /** Атака зажата: пока true, удар на конце окна комбо переходит в следующий, а не в стойку. */
     setAttackHold(on) { player.attackHold = on; },
