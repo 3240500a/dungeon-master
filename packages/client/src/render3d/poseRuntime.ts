@@ -3,7 +3,7 @@
 // (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets } from './pose.js';
+import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipName, locoDir, locoPhaseU, stepLocoSection, sectionClipTime, type LocoSectionState } from './locoBlend.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
@@ -1017,9 +1017,19 @@ const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.V
  *  Планировщик (setStance) при повороте держит стопы В ЭТИХ точках и переступает ровно в них (idl-стойка в новом фейсинге).
  *  Нет клипа стойки → фолбэк ±полуширина таза РИГА (нога 0/левая на +X — под её кость LeftUpperLeg, см. [[humanoid-rig-mirror]]).
  *  Мутирует human (reset + поза ног) — зови вне кадра рендера (спавн/смена оружия); следующий полный step перепозирует. */
-export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number; standY: number } {
+/**
+ * Планты стоп из idle-стойки + высота таза + ⭐ ОРИЕНТАЦИЯ СТОПЫ (наклон X и рыск Y, как их поставил автор).
+ *
+ * ⚠ ЗАЧЕМ ОРИЕНТАЦИЯ. Планты планировщик уже брал отсюда, а стопу держал «прямо» (рыск 0) — и на
+ * передаче ног авторской позе стопы ДОВОРАЧИВАЛИСЬ. ЗАМЕР расхождения поза↔планировщик в покое:
+ * левая стопа по рыску **0.502 рад (28.8°)**, правая −0.296 (17°) и по наклону −0.314 (18°); у бедра
+ * и голени — сотые. То есть «доступил, а потом раздвигается и ступни скручиваются» — это почти
+ * целиком стопа, и расхождение СТАТИЧЕСКОЕ, не от поворота.
+ */
+export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number; standY: number; foot: StanceFoot } {
   const hw = human.legRest?.hipHalfW ?? HIP_DX;   // полутаз — из рига; HIP_DX остаётся только процедурному манекену
-  if (!idle) return { latL: hw, fwdL: 0, latR: -hw, fwdR: 0, standY: GAIT.standY };
+  const noFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0 };
+  if (!idle) return { latL: hw, fwdL: 0, latR: -hw, fwdR: 0, standY: GAIT.standY, foot: noFoot };
   human.reset();
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
@@ -1036,7 +1046,9 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL:
   // Фолбэк (позы вообще без офсета таза): расчёт из стоп — таз так, чтобы стопы idle стояли на полу (FOOT_Y + footLift).
   const authored = hipsOffset(idle, human.hipsRest.y);
   const standY = authored ? human.hipsRest.y + authored[1] : (human.ankleRest ?? (FOOT_Y + (human.footLift ?? 0))) + (h.y - (fl.y + fr.y) / 2);   // пол — из рига (`ankleRest`), см. poseRuntime.update
-  return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY };
+  const fL = idle['LeftFoot'], fR = idle['RightFoot'];
+  const foot: StanceFoot = { pitchL: fL?.[0] ?? 0, yawL: fL?.[1] ?? 0, pitchR: fR?.[0] ?? 0, yawR: fR?.[1] ?? 0 };
+  return { latL: fl.x - h.x, fwdL: fl.z - h.z, latR: fr.x - h.x, fwdR: fr.z - h.z, standY, foot };
 }
 
 // ── PosePlayer: драйвер гейта для ИГРЫ (владеет своим состоянием) — тредмил-ноги + idle-стойка + физ-удар ──
@@ -1141,7 +1153,7 @@ export class PosePlayer {
    */
   measureStance(): void {
     const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null);
-    this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY);
+    this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY, p.foot);
     this.stanceCombat = this.combat;
   }
   setWeapon(w: string): void { this.weapon = w; this.measureStance(); }

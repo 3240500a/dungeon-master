@@ -11,6 +11,13 @@
  *   к точке на полу, маховая переносится дугой), углы бедра/колена даёт 2-костная IK. Стопы не едут.
  */
 
+/**
+ * ОРИЕНТАЦИЯ СТОПЫ ИЗ АВТОРСКОЙ СТОЙКИ (рад): наклон X и рыск Y на каждую ногу. Замеряется
+ * `measureStancePlants` вместе с плантами — стойка должна приезжать в планировщик ЦЕЛИКОМ, а не
+ * одними точками (иначе стопы доворачиваются на передаче ног позе).
+ */
+export interface StanceFoot { pitchL: number; yawL: number; pitchR: number; yawR: number }
+
 export interface PoseTargets {
   hipL: number; hipR: number; knL: number; knR: number;
   /** Боковой вынос бедра (+ = наружу/вправо). Без него приставные шаги вырождаются в топтание. */
@@ -1268,6 +1275,17 @@ export class PoseDriver {
   private dead = false;
   private planner: StepPlanner | null = null;
   private stanceLatL: number | null = null; private stanceFwdL = 0; private stanceLatR = 0; private stanceFwdR = 0; private standY = GAIT.standY;
+  /**
+   * ⭐ ОРИЕНТАЦИЯ СТОПЫ ИЗ АВТОРСКОЙ СТОЙКИ. Планты планировщик брал оттуда давно, а стопу держал
+   * «прямо» — и на передаче ног позе стопы ДОВОРАЧИВАЛИСЬ. ЗАМЕР расхождения поза↔планировщик
+   * в покое: левая стопа по рыску 0.502 рад (28.8°), правая −0.296 (17°) и по наклону −0.314 (18°);
+   * у бедра и голени — сотые. То есть «ступни скручиваются» — это почти целиком стопа, и расхождение
+   * СТАТИЧЕСКОЕ, не от поворота.
+   *
+   * ⚠ Вес — `1 − moveAmt`: на ходу стопу ведёт походка (`footTurn`, голеностоп, заземление).
+   * Умолчание — нули: `PoseDriver` без `setStance` (golden-харнесс, тесты) бит в бит как раньше.
+   */
+  private stanceFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0 };
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   private combat = 0;     // мирно(0) ↔ бой(1): боевая колонка настроек (Ф6). Нет записей — ведёт себя как раньше.
@@ -1309,8 +1327,9 @@ export class PoseDriver {
   setPlantVia(lVia: [number, number][], rVia: [number, number][]): void { this.planner?.setPlantVia(lVia, rVia); }
   /** Планты стоп из idle-стойки: по каждой ноге body-local (lat, fwd) СО ЗНАКОМ + базовая высота таза standY (всё замер
    *  measureStancePlants). Стоя держит стопы в этих точках, при повороте переступает в них; таз не поднимается выше standY. */
-  setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number): void {
+  setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number, foot?: StanceFoot): void {
     this.stanceLatL = latL; this.stanceFwdL = fwdL; this.stanceLatR = latR; this.stanceFwdR = fwdR;
+    if (foot) this.stanceFoot = foot;
     if (standY !== undefined) this.standY = standY;
     this.planner?.setStance(latL, fwdL, latR, fwdR, standY);
   }
@@ -1423,7 +1442,14 @@ export class PoseDriver {
     // ⚠ ЗНАК ЗАМЕРЕН ПО ПАЛЬЦУ, А НЕ ПО УГЛУ. Угол кости читается неочевидно, поэтому мерили ВЫНОС
     // ПАЛЬЦА ОТ ЛОДЫЖКИ по X у ЛЕВОЙ стопы: база +2.06, при −кнопке +4.42 (наружу), при +кнопке −1.00 (внутрь).
     // Значит для «+ = наружу» (как у `kneeDir`) нужен ПРЯМОЙ знак слева и зеркало справа.
-    o.ankYawL = footTurn(0); o.ankYawR = -footTurn(1);
+    // ⭐ СТОПА: КРОССФЕЙД «АВТОРСКАЯ СТОЙКА ↔ ПОХОДКА» (см. `stanceFoot`).
+    // ⚠ Именно КРОССФЕЙД, а не прибавка: `footTurn` — ходовая ручка, и в покое она продолжала крутить
+    // стопу поверх авторской. ЗАМЕР (у воина `footTurn` = −0.36): авторский рыск слева +0.142, а на
+    // выходе стояло −0.218 — ровно на ползунок мимо. Теперь стоя выход = авторская стопа РОВНО.
+    const mv = clamp(this.planner ? this.planner.moveAmt : this.move, 0, 1);
+    o.ankYawL = footTurn(0) * mv + this.stanceFoot.yawL * (1 - mv);
+    o.ankYawR = -footTurn(1) * mv + this.stanceFoot.yawR * (1 - mv);
+    o.ankL += this.stanceFoot.pitchL * (1 - mv); o.ankR += this.stanceFoot.pitchR * (1 - mv);
     // Развод бёдер идёт ОТДЕЛЬНЫМ каналом, а не прибавкой к решению IK: прибавка уводила стопу
     // с планта на 19 ед (замер), то есть ломала походку вместо разведения колен.
     o.hipSplayL = hipSplay(0); o.hipSplayR = hipSplay(1);
