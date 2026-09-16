@@ -47,12 +47,16 @@ import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
  * ⚠ ЗАПЕКАЕТСЯ ВСЕГДА ПРОЦЕДУРКА. Если в редакторе включена локомоция клипами, плеер сам заиграл бы
  * уже запечённые клипы (а на месте — клипы поворота, которые ведут таз), и новый клип сняли бы с
  * самого себя. Поэтому на время съёма доля клипа принудительно 0, а после — как было.
+ *
+ * ⚠ И МЕТКИ НА ВРЕМЯ СЪЁМА МОЛЧАТ. Съём гоняет плеер сотнями кадров за один вызов, и каждый его шаг (`onMark`)
+ * прозвучал бы разом — пачкой в момент нажатия «запечь».
  */
 function procedural<T>(player: PosePlayer, fn: () => T): T {
-  const was = getLocoMixOverride();
+  const was = getLocoMixOverride(), mark = player.onMark;
   setLocoMixOverride(0);
+  player.onMark = null;
   player.cancelTurn();
-  try { return fn(); } finally { setLocoMixOverride(was); }
+  try { return fn(); } finally { setLocoMixOverride(was); player.onMark = mark; }
 }
 
 /** Максимальная скорость, к которой нормируются vx/vz спеки (как ползунок «Бег» в редакторе). */

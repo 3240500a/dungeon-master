@@ -23,7 +23,9 @@ import { solveBalance, type BalanceProbe } from './balanceSolve.js';   // Ф26.6
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
 import { solveTwoBone, elbowGoal, perpTo, LIMB_SOFT } from './limbIk.js';
 import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type TimelinePanel } from './timelinePanel.js';
-import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType , idleEndsSource } from './clipModel.js';
+import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType , idleEndsSource, carryMarks, marksInRange, loopMarksInRange, type MarkEvent } from './clipModel.js';
+import { markSfx } from './animSfx.js';   // звук меток — тот же, что в игре (шаги, взмах): слышно прямо при разметке
+import { bakedLocoSpeed } from './locoBlend.js';
 import { clampClip, clampSummary } from './clipClamp.js';   // ⭐ пределы суставов: та же функция, что на импорте
 import { MASK_PARTS, type MaskPart } from './boneMask.js';
 import { makeCurvePanel, CURVE_PRESETS, easeOfKey, matchPreset, type CurvePanel, type Ease } from './curveEditor.js';   // Ф10: безье-ручки
@@ -4421,7 +4423,9 @@ function bakeGaitSection(): void {
     ];
     const ms = performance.now() - t0;
     histLib('запечь походку', () => {
-      for (const r of out) putClip(r.clip, 'replace');   // перезапекание набора — это осознанная перезапись
+      // Перезапекание набора — осознанная перезапись ПОЗ, но не разметки: метки (шаги!) расставлены руками и
+      // переезжают на новый клип долей цикла (`carryMarks`), иначе жили бы до первой правки походки.
+      for (const r of out) { const i = clipIndexOf(r.clip); putClip(i >= 0 ? carryMarks(library[i]!, r.clip) : r.clip, 'replace'); }
       saveLib();
     });
     const keys = out.reduce((a, r) => a + r.keys, 0), frames = out.reduce((a, r) => a + r.frames, 0);
@@ -4979,6 +4983,23 @@ function renderTurn(): void {
 
 // ── Таймлайн ──
 let playing = false, playT = 0, playSpeed = 1;
+/**
+ * ЗВУК МЕТОК В РЕДАКТОРЕ — шаги, взмах, прочие звуки: при проигрывании клипа и в превью «Бег»/«Повороты».
+ * Тот же синтез и то же правило, что в игре (`markSfx`), поэтому ставишь метку шага — и сразу слышишь, попала ли
+ * она в касание. Выключатель — личная настройка редактора.
+ */
+let markSound = getPref('markSound', true);
+const editorMarkSfx = markSfx(1);
+/** Темп шага для превью клипа (в игре его ставит проигрыватель по скорости): ходьба/бег — по скорости запекания. */
+const previewPace = (c: Clip): number | undefined =>
+  /^(walk|run)_/.test(c.name) ? Math.min(1, bakedLocoSpeed(c.name) / Math.max(1, GAIT.speedRun)) : c.name.startsWith('turn_') ? 0 : undefined;
+/** Метки, пройденные проигрыванием клипа за кадр (с переходом через конец цикла). */
+function previewMarks(c: Clip, t0: number, t1: number, wrapped: boolean): void {
+  if (!markSound) return;
+  const evs: MarkEvent[] = wrapped ? loopMarksInRange(c, t0, t1, 0, clipDur(c)) : marksInRange(c, t0 > 0 ? t0 : -1e-9, t1);
+  const pace = previewPace(c);
+  for (const e of evs) editorMarkSfx(pace === undefined ? e : { ...e, pace });
+}
 const tlName = el('span', 'color:#9ae6a0;min-width:90px');
 const playBtn = mkBtn('▶', () => { const c = curClip(); if (!playing && c && playT >= clipDur(c)) playT = 0; playing = !playing; playBtn.textContent = playing ? '⏸' : '▶'; });
 const spd = el('input', 'width:80px') as HTMLInputElement; spd.type = 'range'; spd.min = '0.2'; spd.max = '3'; spd.step = '0.1'; spd.value = '1'; spd.oninput = () => { playSpeed = parseFloat(spd.value); };
@@ -4987,7 +5008,13 @@ timeline.style.flexDirection = 'column'; timeline.style.alignItems = 'stretch';
 const tlTop = el('div', 'display:flex;align-items:center;gap:5px;flex-wrap:wrap');
 const tlBody = el('div', 'flex:1;min-height:34px;position:relative');
 timeline.append(tlTop, tlBody);
-tlTop.append(playBtn, tlName, document.createTextNode('скор'), spd);
+const markSoundBtn = mkBtn(markSound ? '🔊 метки' : '🔇 метки', () => {
+  markSound = !markSound; setPref('markSound', markSound);
+  markSoundBtn.textContent = markSound ? '🔊 метки' : '🔇 метки'; markSoundBtn.classList.toggle('on', markSound);
+});
+markSoundBtn.title = 'Звук меток (шаги, взмах, прочие звуки) — при проигрывании клипа и в превью «Бег»/«Повороты», как в игре';
+markSoundBtn.classList.toggle('on', markSound);
+tlTop.append(playBtn, tlName, document.createTextNode('скор'), spd, markSoundBtn);
 
 /** Ключи, над которыми работают кнопки: выделение на тайм-лайне, иначе текущий кадр. */
 const tlSel = (): number[] => { const s2 = tl.selection(); return s2.length ? s2 : [frameIdx]; };
@@ -5127,6 +5154,8 @@ function lp(): PosePlayer {
   if (!locoPlayer || locoPlayerHuman !== human) {
     locoPlayer = new PosePlayer(human, () => weaponGroups, editorContent, weapon, GX, gaitPlant, editorTwistStates);
     locoPlayerHuman = human;
+    // Шаги и метки превью «Бег»/«Повороты» звучат ТАК ЖЕ, как в игре: тот же шов `onMark` и тот же синтез.
+    locoPlayer.onMark = (e) => { if (markSound) editorMarkSfx(e); };
   }
   return locoPlayer;
 }
@@ -6326,7 +6355,12 @@ function loop(): void {
   else if (playing && c) {
     const dur = clipDur(c);
     if (dur < 1e-3 || c.keys.length < 2) { playing = false; playBtn.textContent = '▶'; }
-    else { playT += dt * playSpeed; if (playT > dur) { if (c.loop) playT %= dur; else { playT = dur; playing = false; playBtn.textContent = '▶'; } } preview(playT); tl.draw(); }
+    else {
+      const t0 = playT; let wrapped = false;
+      playT += dt * playSpeed; if (playT > dur) { if (c.loop) { playT %= dur; wrapped = true; } else { playT = dur; playing = false; playBtn.textContent = '▶'; } }
+      previewMarks(c, t0, playT, wrapped);   // метки звучат при проигрывании — слышно, попал ли шаг в касание
+      preview(playT); tl.draw();
+    }
   }
   else {
     // Солвим IK ТОЛЬКО когда реально тянешь ручку. Иначе (вхолостую) солвер пересчитывал руки/ноги из

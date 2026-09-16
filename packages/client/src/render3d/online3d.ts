@@ -13,7 +13,7 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
-import { markSfx, shakeForMark, burstForMark, playHitSound } from './animSfx.js';
+import { markSfx, shakeForMark, burstForMark, playHitSound, earShot } from './animSfx.js';
 import { setLocoMixOverride } from './poseRuntime.js';   // галка «бег клипами» из настроек клиента   // ⭐ метки клипа звучат (вжух/шаг), а удар — от события (см. `animSfx`)
 import { makeCamShake } from './camShake.js';
 import { makeNetInterp } from './netInterp.js';
@@ -782,7 +782,10 @@ export async function startOnline3d(): Promise<void> {
       if (!a) {
         const d = makeGamePlayerDoll(pw, { classId: pv.classId, weapon: wk, x: pv.x, z: pv.y, ...playerLook(pv.classId) }); actorsGroup.add(d.group);
         d.setAppearance?.(appearanceFromModels(pv.armorModels));   // C7: скин-слой пира (базы слотов + надетая броня)
-        d.onMark = markSfx(0.55);                 // ⭐ чужой удар — тише своего, иначе в толпе каша
+        // ⭐ Чужие метки (взмах, шаги) — тише своих и гаснут с расстоянием: сервер шлёт всех игроков в окне, и шаги
+        // каждого в полную громкость сливались бы в сплошной топот. Громкость считается В МОМЕНТ звука.
+        const pid = pv.id;
+        d.onMark = markSfx(() => { const q = peers.get(pid); return q ? 0.55 * earShot(q.lx - smoothX, q.lz - smoothZ) : 0; });
         const hp = makeNameplate(pv.name || 'Игрок', false, true); actorsGroup.add(hp.spr);   // неймплейт пира: имя + полоска HP (синий = союзник)
         a = { d, vx: 0, vz: 0, lx: pv.x, lz: pv.y, wkey: wk, akey: ak, hp }; peers.set(pv.id, a);
       }

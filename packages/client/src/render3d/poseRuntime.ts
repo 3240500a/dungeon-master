@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, type LocoSectionState, type LocoDir } from './locoBlend.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, type LocoSectionState, type LocoSection, type LocoDir } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
@@ -16,7 +16,7 @@ import { readAnimCfg } from './animConfig.js';
 export type { Pose, Keyframe, Clip, Interp, Mark, MarkType, MarkTrack, MarkEvent } from './clipModel.js';
 export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, clipSections, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
 import { hipsOffset } from './clipModel.js';   // Ф12: офсет таза читаем только через него (дельта + терпимость к легаси-абсолюту)
-import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, comboWindow, type MarkEvent } from './clipModel.js';
+import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, loopMarksInRange, hasMark, comboWindow, type Mark, type MarkEvent } from './clipModel.js';
 // Коридор скорости тайм-варпа удара. Нижняя граница НИЖЕ единицы осознанно: контакт в мокапе
 // обычно на ~60 % клипа, а вайндап сервера — ~35 % окна, то есть хвост обязан уметь РАСТЯГИВАТЬСЯ.
 const WARP_MIN = 0.35, WARP_MAX = 8;
@@ -681,6 +681,26 @@ const _lockV = new THREE.Vector3();
  * а не держим оба источника). Иначе щелчок галки в настройках был бы рывком позы на 100°.
  */
 const MODE_FADE = 0.25;
+/**
+ * ⭐⭐ ШАГИ (звук): ОДИН ШОВ НА ВСЕ РЕЖИМЫ — `onMark` с меткой `footstep`, той же, что ставится в клипе руками.
+ *
+ *   кто ведёт ноги            откуда шаг
+ *   поворот клипом            метки шага клипа поворота; не размечены — касания его канала `__swing`
+ *   «только клипы», на ходу   метки шага ВЕДУЩЕГО клипа бега; не размечены — касания клипа (`clipContact`)
+ *   планировщик               его постановка стопы (перенос → опора)
+ *
+ * Касание берётся ровно из той опоры, что заземляет ноги (`groundSupport`), поэтому звук и стопа на полу —
+ * одно и то же событие, а не два похожих расчёта. ⚠ Размеченный клип касаний НЕ озвучивает: иначе на один шаг
+ * звучало бы два — метка автора и касание рядом с ней.
+ *
+ * Метки бега берутся с ВЕДУЩЕГО клипа (у кого колонка весит больше) — как Blend Space в Unreal с режимом
+ * «Highest Weighted Animation»: клипы синхронны по фазе, и шаги со всех колонок сразу звучали бы пачкой.
+ *
+ * `STEP_MIN_GAP` — не чаще раза на ногу: два источника на одном касании (смена ведущего клипа, смена режима)
+ * звучат одним шагом.
+ */
+const STEP_MIN_GAP = 0.12;
+const STEP_MARKS: readonly [Mark, Mark] = [{ type: 'footstep', foot: 'L' }, { type: 'footstep', foot: 'R' }];
 /** Кости, которыми владеет клип поворота: таз и ноги. Корпус — нет, его ведёт живая скрутка к прицелу. */
 const TURN_BONES = ['Hips', 'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes'] as const;
 const _qT1 = new THREE.Quaternion(), _qT2 = new THREE.Quaternion(), _eT = new THREE.Euler();
@@ -1324,6 +1344,12 @@ export class PosePlayer {
   private atkPrevT = 0;   // время клипа на прошлом кадре — по этому интервалу ищем метки
   /** Куда уходят метки кадров (звук/VFX/тряска/шаги). Клип говорит ЧТО и КОГДА, обработчик решает КАК. */
   onMark: ((e: MarkEvent) => void) | null = null;
+  /** Шаги (см. `STEP_MIN_GAP`): опора прошлого кадра (null — ещё не следили), время последнего шага на ногу, часы. */
+  private stepSup: [boolean, boolean] | null = null;
+  private stepAt: [number, number] = [-1e9, -1e9];
+  private stepClock = 0;
+  /** Ведущий клип бега на прошлом кадре: его время, фаза цикла и секция — отсюда пройденный отрезок меток. */
+  private locoMark: { clip: Clip; t: number; phaseU: number; section: LocoSection } | null = null;
   /**
    * ⭐⭐ АТАКА ЗАЖАТА. Пока true, конец окна комбо НЕ отпускает удар в стойку, а начинает следующий
    * (`comboNext`). Нет метки `combo` или не зажато — поведение прежнее бит в бит.
@@ -1677,6 +1703,7 @@ export class PosePlayer {
     // relaxTime: прицел стабилен долго и есть скрутка → таз доворачивается к нейтрали (не держим лид вечно).
     this.aimStableFor = Math.abs(wrapPi(this.aimYaw - this.prevAim)) < 0.01 ? this.aimStableFor + dt : 0;
     this.prevAim = this.aimYaw;
+    const turnWas = this.turn, turnT0 = this.turn?.t ?? 0;   // поворот ДО шага: по пройденному отрезку ищем его метки
     const tl = this.stepTurn(dt, twist) ?? stepTorsoLead(this.rootYaw, this.aimYaw, twist, dt, this.turning, this.aimStableFor > twist.relaxTime);
     // ⚠ КОПИМ БЕЗ ДОВОРОТА. `stepTorsoLead` получает свой прошлый результат как вход; запиши сюда
     // доворот — и он на следующем кадре станет базой для нового доворота, то есть закрутится сам.
@@ -1761,6 +1788,7 @@ export class PosePlayer {
     this.locoW += clamp(mixTarget - this.locoW, -dt / LOCO_FADE, dt / LOCO_FADE);
     const mix = this.locoW;
     let locoPose: Pose | null = null;
+    let leadNow: LeadMark | null = null;   // ведущий клип бега в «только клипы» — с него звучат метки (см. `emitSteps`)
     if (mix > 0.001 && this.content.locoClip) {
       // ⚠ НАПРАВЛЕНИЕ — ГЕОМЕТРИЯ, А НЕ СТИЛЬ (`locoDirWeights`): `st`/`bt` планировщика — пороги его
       // колонок настроек (0 до 45°), и клип под ними отыгрывал чистый бег вперёд, пока тело ехало вбок.
@@ -1795,8 +1823,10 @@ export class PosePlayer {
       if (lead && lead.keys.length) {
         const dur = clipDur(lead) || 1;
         const sc = clipSections(lead);
+        const phaseU = u;
         this.locoSec = stepLocoSection(this.locoSec, this.moveMag > 0.05, dt, { ...sc, dur });
         u = sectionClipTime(this.locoSec, u, sc, dur) / dur;
+        if (clipOnly) leadNow = { clip: lead, t: u * dur, phaseU, section: this.locoSec.section, loopStart: sc.loopStart, loopEnd: sc.loopEnd };
       }
       // ⚠ ОДНО НОРМАЛИЗОВАННОЕ ВРЕМЯ НА ВСЕ КЛИПЫ — это и есть синхронизация фаз: у клипов разная
       // длительность, и блендить их по СЕКУНДАМ значило бы смешивать «левая нога на земле» с «правая».
@@ -1886,5 +1916,46 @@ export class PosePlayer {
       this.modeBlend -= dt / MODE_FADE;
       if (this.modeBlend <= 0) this.modeSnap = null;
     }
+    this.stepClock += dt;
+    this.emitSteps(turnWas, turnT0, clipOnly && mix > 0.001 ? leadNow : null, spd);
+  }
+  /**
+   * Шаги и прочие метки того, кто ведёт ноги (см. `STEP_MIN_GAP`). Без подписчика — только забыть прошлое: иначе
+   * подписка посреди бега выстрелила бы разом всем «накопленным» касанием.
+   */
+  private emitSteps(turn: PosePlayer['turn'], turnT0: number, lead: LeadMark | null, spd: number): void {
+    const on = this.onMark;
+    if (!on) { this.stepSup = null; this.locoMark = null; return; }
+    const pace = clamp(spd / Math.max(1, GAIT.speedRun), 0, 1);
+    const step = (leg: 0 | 1, e: MarkEvent): void => {
+      if (this.stepClock - this.stepAt[leg] < STEP_MIN_GAP) return;
+      this.stepAt[leg] = this.stepClock;
+      on({ ...e, pace });
+    };
+    const pass = (evs: readonly MarkEvent[]): void => {
+      for (const e of evs) if (e.mark.type === 'footstep') { if (e.phase === 'point') step(e.mark.foot === 'R' ? 1 : 0, e); } else on(e);
+    };
+    let authored = false;
+    if (turn && !turn.out) {
+      // Поворот клипом ведёт ноги сам: его метки по пройденному отрезку. Кончился на этом кадре — хвост до конца клипа.
+      pass(marksInRange(turn.clip, turnT0 > 0 ? turnT0 : -1e-9, Math.min(turn.t, clipDur(turn.clip))));
+      authored = hasMark(turn.clip, 'footstep');
+    } else if (lead) {
+      const prev = this.locoMark;
+      // Тот же клип и секция — время прошлого кадра как есть. Сменился ведущий посреди цикла — клипы синхронны
+      // по фазе, и прошлое время переводится ЧЕРЕЗ ФАЗУ: иначе на смене ведущего шаг терялся бы или звучал дважды.
+      const tPrev = !prev ? null
+        : prev.clip === lead.clip && prev.section === lead.section ? prev.t
+          : prev.section === 'loop' && lead.section === 'loop' ? lead.loopStart + prev.phaseU * (lead.loopEnd - lead.loopStart)
+            : null;
+      if (tPrev !== null) pass(lead.section === 'loop' ? loopMarksInRange(lead.clip, tPrev, lead.t, lead.loopStart, lead.loopEnd) : marksInRange(lead.clip, tPrev, lead.t));
+      authored = hasMark(lead.clip, 'footstep');
+    }
+    this.locoMark = lead ? { clip: lead.clip, t: lead.t, phaseU: lead.phaseU, section: lead.section } : null;
+    const sup = this.groundSupport;
+    if (this.stepSup && !authored) for (const leg of [0, 1] as const) if (sup[leg] && !this.stepSup[leg]) step(leg, { mark: STEP_MARKS[leg], phase: 'point', t: 0 });
+    this.stepSup = [sup[0], sup[1]];
   }
 }
+/** Ведущий клип бега на кадре: время в клипе, фаза цикла до секций, секция и границы цикла. */
+interface LeadMark { clip: Clip; t: number; phaseU: number; section: LocoSection; loopStart: number; loopEnd: number }

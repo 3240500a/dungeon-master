@@ -320,8 +320,11 @@ export function comboWindow(c: Clip | null | undefined): { start: number; end: n
 export interface MarkEvent {
   mark: Mark; phase: 'point' | 'begin' | 'end'; t: number;
   /** Клип, из которого метка. Нужен подписчику, чтобы видеть СОСЕДНИЕ метки (звук замаха молчит,
-   *  если в клипе размечен взмах — иначе свистело бы дважды; см. `animSfx.soundForMark`). */
+   *  если в клипе размечен взмах — иначе свистело бы дважды; см. `animSfx.soundForMark`). Шаг, снятый
+   *  с опоры ног (планировщик, касания клипа), клипа не имеет. */
   clip?: Clip;
+  /** Темп хода в момент события: 0 — на месте … 1 — бег. Ставит проигрыватель; шаг по нему громче и суше. */
+  pace?: number;
 }
 /**
  * Метки, ПЕРЕСЕЧЁННЫЕ на интервале (tPrev, tNow] времени КЛИПА. Точечные дают `point`, отрезки — `begin`
@@ -344,6 +347,52 @@ export function marksInRange(c: Clip, tPrev: number, tNow: number): MarkEvent[] 
     }
   }
   return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Метки ЦИКЛА, пройденные за кадр. Время цикла могло перескочить через шов — тогда `tNow < tPrev`, и пройденный
+ * путь это (tPrev, конец цикла] ∪ [начало цикла, tNow].
+ * ⚠ Начало после шва берётся ВКЛЮЧИТЕЛЬНО: метка на первом кадре цикла иначе не звучала бы никогда — та же
+ * причина, по которой удар на первом кадре ищет от −ε.
+ */
+export function loopMarksInRange(c: Clip, tPrev: number, tNow: number, loopStart: number, loopEnd: number): MarkEvent[] {
+  if (tNow >= tPrev) return marksInRange(c, tPrev, tNow);
+  return [...marksInRange(c, tPrev, loopEnd), ...marksInRange(c, loopStart - 1e-9, tNow)];
+}
+
+/** Есть ли в клипе метка этого типа. */
+export const hasMark = (c: Clip | null | undefined, type: MarkType): boolean =>
+  !!c?.keys.some((k) => k.marks?.some((m) => m.type === type));
+
+const sameMark = (a: Mark, b: Mark): boolean =>
+  a.type === b.type && a.foot === b.foot && a.sfx === b.sfx && a.vfx === b.vfx && a.num === b.num && a.dur === b.dur;
+
+/**
+ * ⭐ ПЕРЕНЕСТИ МЕТКИ СО СТАРОЙ ВЕРСИИ КЛИПА НА ПЕРЕЗАПЕЧЁННУЮ. Запекание пишет клип заново — ключи другие,
+ * и расставленные руками метки (шаги!) пропадали бы при первой же правке походки и перезапекании.
+ *
+ * Время переносится ДОЛЕЙ длительности: цикл походки снят по фазе, поэтому «левая пятка на 12 % цикла»
+ * остаётся на 12 % и при другом темпе. Ключа в этой точке нет — он ВСТАВЛЯЕТСЯ позой самого клипа в ней:
+ * отрезок делится на два отрезка той же дуги, и движение не меняется ни на градус.
+ * Одинаковые метки на одном ключе не дублируются — повторный перенос ничего не добавит.
+ */
+export function carryMarks(from: Clip, to: Clip): Clip {
+  const src = from.keys.filter((k) => k.marks?.length);
+  const dFrom = clipDur(from), dTo = clipDur(to);
+  if (!src.length || !to.keys.length) return to;
+  const keys: Keyframe[] = to.keys.map((k) => (k.marks ? { ...k, marks: [...k.marks] } : { ...k }));
+  for (const k of src) {
+    const t = dFrom > 0 && dTo > 0 ? Math.min(dTo, (k.t / dFrom) * dTo) : 0;
+    let i = keys.findIndex((x) => Math.abs(x.t - t) < 1e-4);
+    if (i < 0) {
+      i = keys.findIndex((x) => x.t > t);
+      if (i < 0) i = keys.length;
+      keys.splice(i, 0, { t, pose: clipPoseAt(to, dTo > 0 ? t / dTo : 0) });
+    }
+    const dst = keys[i]!;
+    for (const m of k.marks!) if (!dst.marks?.some((x) => sameMark(x, m))) (dst.marks ??= []).push({ ...m });
+  }
+  return { ...to, keys };
 }
 
 // ── Зеркало / переворот ───────────────────────────────────────────────────────────────────────────

@@ -6,11 +6,12 @@
  * но подписчика не было НИ ОДНОГО (проверено поиском по всему клиенту). То есть разметка взмаха
  * в редакторе была работой в стол.
  *
- * Здесь два звука, оба генерируются WebAudio на лету:
+ * Все звуки генерируются WebAudio на лету:
  *  • **удар** — шумовой щелчок через полосовой фильтр + низкий «бум», быстрый спад. Это не «бип»:
  *    у настоящего удара есть и высокая атака (контакт), и низкое тело (масса);
  *  • **вжух** — шум с полосой, ЕДУЩЕЙ вверх и обратно, с нарастанием и спадом громкости. Классический
- *    swoosh: высота «проезжает» мимо слушателя.
+ *    swoosh: высота «проезжает» мимо слушателя;
+ *  • **шаг** — мягкая кожаная подошва по камню (см. `renderStep`).
  *
  * ⚠ РЕШЕНИЯ ПО ВСЕМ ДОРОЖКАМ ЖИВУТ ЗДЕСЬ — звук, тряска камеры, эффект. Синтезируется здесь только
  * звук, остальное отдаётся своим системам; но правило «что делает эта метка» должно читаться В ОДНОМ
@@ -23,12 +24,22 @@
  * ⚠ ОДИН ВЖУХ НА УДАР. У клипа могут стоять И «замах» (`windup`), И «взмах» (`swing`) — это разные
  * вещи (первая про цепочку ударов, вторая про свист), и озвучивать обе значило бы свистеть дважды.
  * Поэтому `windup` звучит ТОЛЬКО если взмаха в клипе нет.
+ *
+ * ⚠ СИНТЕЗ СОБИРАЕТСЯ В ЛЮБОЙ КОНТЕКСТ (`renderAnimSound`): живой — в игре, офлайн — для замера и записи
+ * в файл. Иначе проверить, КАК звучит шаг, было бы можно только ушами в игре.
  */
 import type { MarkEvent } from './clipModel.js';
 import type { HitMaterial } from '@dm/shared';
 
+/** Пол под ногами. Материал поверхности знает МИР, а не клип (см. метку `footstep`); пока пол один — камень. */
+export type StepSurface = 'stone';
+
 /** Что играть: вид, длительность (сек) и относительная громкость. */
-export interface AnimSound { kind: 'hit' | 'whoosh' | 'step' | 'clank'; dur: number; gain: number; tone?: number; mat?: HitMaterial }
+export interface AnimSound {
+  kind: 'hit' | 'whoosh' | 'step' | 'clank'; dur: number; gain: number; tone?: number; mat?: HitMaterial;
+  /** Шаг: темп хода 0 (на месте) … 1 (бег) и пол. */
+  pace?: number; surface?: StepSurface;
+}
 
 /**
  * ⚠ ЗАГЛУШКА, НО РАЗЛИЧИМАЯ. Метка `sfx` несёт ID звука из конфига — а конфига звуков не
@@ -46,6 +57,12 @@ const SFX_TONE: ReadonlyArray<readonly [RegExp, number]> = [
 const clamp = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);
 
 /**
+ * Темп шага, если его не сообщили (метка шага в клипе удара, превью в редакторе): обычный шаг.
+ * Проигрыватель походки ставит темп сам — по скорости (`PosePlayer`).
+ */
+export const STEP_PACE_DEFAULT = 0.45;
+
+/**
  * ⭐ ЧИСТОЕ ПРАВИЛО «метка → звук». Вся логика решения живёт здесь, чтобы её можно было проверить
  * тестом: сам синтез проверить нечем, а вот «что и когда звучит» ломается легко и молча.
  */
@@ -60,8 +77,12 @@ export function soundForMark(e: MarkEvent): AnimSound | null {
     return { kind: 'whoosh', dur: clamp(m.dur ?? 0.18, 0.06, 0.8), gain: 0.85 };
   }
   if (m.type === 'footstep' && e.phase === 'point') {
-    // ⚠ Левая и правая — РАЗНОЙ высоты: одинаковые шаги подряд слышны как повтор сэмпла, а не как ходьба.
-    return { kind: 'step', dur: 0.16, gain: 0.7, tone: m.foot === 'R' ? 1.12 : 0.92 };
+    // ⭐ ГРОМКОСТЬ — ОТ ТЕМПА: подшаг на месте едва слышен, бег топает. Один уровень на всё звучал бы либо
+    // слишком громко на повороте, либо беззвучно на бегу.
+    // ⚠ Левая и правая — ЧУТЬ РАЗНОЙ высоты: одинаковые шаги подряд слышны как повтор сэмпла. Именно чуть:
+    // разница в пятую часть тона превращала ходьбу в «тик-так».
+    const pace = clamp(e.pace ?? STEP_PACE_DEFAULT, 0, 1);
+    return { kind: 'step', dur: 0.26, gain: 0.3 + 0.55 * pace, tone: m.foot === 'R' ? 1.035 : 0.965, pace, surface: 'stone' };
   }
   if (m.type === 'sfx' && e.phase === 'point') {
     const id = m.sfx ?? '';
@@ -112,6 +133,20 @@ export function soundForHit(e: HitSoundInput): AnimSound | null {
   return { kind: 'hit', dur: t.dur * (e.crit ? 1.25 : 1), gain: e.crit ? 1 : 0.85, mat: e.mat };
 }
 
+/**
+ * СЛЫШНОСТЬ ПО РАССТОЯНИЮ (единицы мира): вплотную — полностью, дальше — плавно на нет. Без неё чужие шаги
+ * сливались бы в сплошной топот: сервер присылает всех игроков в окне, а не только соседей.
+ * Квадрат, а не прямая: на слух громкость падает быстрее расстояния.
+ */
+export const EAR_NEAR = 160, EAR_FAR = 640;
+export function earShot(dx: number, dz: number): number {
+  const d = Math.hypot(dx, dz);
+  if (d <= EAR_NEAR) return 1;
+  if (d >= EAR_FAR) return 0;
+  const k = 1 - (d - EAR_NEAR) / (EAR_FAR - EAR_NEAR);
+  return k * k;
+}
+
 // ── Синтез ───────────────────────────────────────────────────────────────────────────────────────
 let _ctx: AudioContext | null = null;
 let _master: GainNode | null = null;
@@ -141,8 +176,8 @@ export function setAnimSfxVolume(v: number): void {
   if (_master) _master.gain.value = _volume;
 }
 
-/** Секунда белого шума — основа обоих звуков; считается один раз. */
-function noiseBuf(ctx: AudioContext): AudioBuffer {
+/** Секунда белого шума — основа всех звуков; считается один раз на частоту дискретизации. */
+function noiseBuf(ctx: BaseAudioContext): AudioBuffer {
   if (_noise && _noise.sampleRate === ctx.sampleRate) return _noise;
   const n = Math.floor(ctx.sampleRate);
   const buf = ctx.createBuffer(1, n, ctx.sampleRate);
@@ -152,21 +187,27 @@ function noiseBuf(ctx: AudioContext): AudioBuffer {
   return buf;
 }
 
-/** Шумовой источник со случайным началом — два подряд удара не звучат копиями. */
-function noiseSrc(ctx: AudioContext, dur: number): AudioBufferSourceNode {
+/** Шумовой источник со случайным началом — два подряд звука не звучат копиями. */
+function noiseSrc(ctx: BaseAudioContext, t0: number, dur: number, rnd: () => number): AudioBufferSourceNode {
   const src = ctx.createBufferSource();
   src.buffer = noiseBuf(ctx);
   src.loop = true;
   src.loopStart = 0; src.loopEnd = 1;
-  const t = ctx.currentTime;
-  src.start(t, Math.random() * 0.9); src.stop(t + dur + 0.02);
+  src.start(t0, rnd() * 0.9); src.stop(t0 + dur + 0.02);
   return src;
 }
 
+/** Огибающая «щелчок и спад»: атака `att`, экспонента до тишины к `t0 + dec`. */
+function decayEnv(ctx: BaseAudioContext, t0: number, peak: number, att: number, dec: number): GainNode {
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.linearRampToValueAtTime(Math.max(0.0002, peak), t0 + att);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + Math.max(att + 0.005, dec));
+  return g;
+}
+
 /** УДАР: высокий контакт (шум через полосу) + низкое тело (синус вниз) + призвуки металла по материалу. */
-function playHit(dur: number, g: number, mat: HitMaterial): void {
-  const a = audio(); if (!a || a.ctx.state === 'suspended') return;
-  const { ctx, master } = a; const t = ctx.currentTime;
+function renderHit(ctx: BaseAudioContext, out: AudioNode, t: number, dur: number, g: number, mat: HitMaterial, rnd: () => number): void {
   const tb = MAT_TIMBRE[mat] ?? MAT_TIMBRE.flesh;
   const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
   bp.frequency.value = tb.band; bp.Q.value = 0.8 + tb.metal * 3;            // металл = уже полоса, то есть звонче
@@ -174,7 +215,7 @@ function playHit(dur: number, g: number, mat: HitMaterial): void {
   ng.gain.setValueAtTime(0.0001, t);
   ng.gain.linearRampToValueAtTime(g * 0.9, t + 0.004);                      // атака 4 мс: это и есть «щелчок контакта»
   ng.gain.exponentialRampToValueAtTime(0.0001, t + dur * (0.35 + tb.metal * 0.4));
-  noiseSrc(ctx, dur).connect(bp).connect(ng).connect(master);
+  noiseSrc(ctx, t, dur, rnd).connect(bp).connect(ng).connect(out);
 
   const osc = ctx.createOscillator(); osc.type = 'sine';
   osc.frequency.setValueAtTime(tb.body, t);
@@ -183,7 +224,7 @@ function playHit(dur: number, g: number, mat: HitMaterial): void {
   og.gain.setValueAtTime(0.0001, t);
   og.gain.linearRampToValueAtTime(g * 0.8, t + 0.008);
   og.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(og).connect(master);
+  osc.connect(og).connect(out);
   osc.start(t); osc.stop(t + dur + 0.02);
 
   // ⚠ ПРИЗВУКИ — ТОЛЬКО У МЕТАЛЛА и НЕСОИЗМЕРИМЫЕ по частоте: кратные дали бы музыкальный тон, то есть «бип».
@@ -192,14 +233,12 @@ function playHit(dur: number, g: number, mat: HitMaterial): void {
     const gg = ctx.createGain();
     gg.gain.setValueAtTime(g * lvl * tb.metal, t);
     gg.gain.exponentialRampToValueAtTime(0.0001, t + dur);                  // звон живёт весь хвост — он и есть «латы»
-    o.connect(gg).connect(master); o.start(t); o.stop(t + dur + 0.02);
+    o.connect(gg).connect(out); o.start(t); o.stop(t + dur + 0.02);
   }
 }
 
 /** ВЖУХ: полоса шума проезжает вверх и обратно, громкость нарастает к середине. */
-function playWhoosh(dur: number, g: number): void {
-  const a = audio(); if (!a || a.ctx.state === 'suspended') return;
-  const { ctx, master } = a; const t = ctx.currentTime;
+function renderWhoosh(ctx: BaseAudioContext, out: AudioNode, t: number, dur: number, g: number, rnd: () => number): void {
   const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.4;
   bp.frequency.setValueAtTime(320, t);
   bp.frequency.exponentialRampToValueAtTime(1700, t + dur * 0.55);          // проезд мимо слушателя
@@ -208,57 +247,113 @@ function playWhoosh(dur: number, g: number): void {
   gn.gain.setValueAtTime(0.0001, t);
   gn.gain.linearRampToValueAtTime(g * 0.55, t + dur * 0.45);
   gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  noiseSrc(ctx, dur).connect(bp).connect(gn).connect(master);
+  noiseSrc(ctx, t, dur, rnd).connect(bp).connect(gn).connect(out);
 }
 
-/** ШАГ: мягкий низкий толчок + короткий шорох подошвы. Высота — от стороны (см. `soundForMark`). */
-function playStep(dur: number, g: number, tone: number): void {
-  const a = audio(); if (!a || a.ctx.state === 'suspended') return;
-  const { ctx, master } = a; const t = ctx.currentTime;
-  const osc = ctx.createOscillator(); osc.type = 'sine';
-  osc.frequency.setValueAtTime(120 * tone, t);
-  osc.frequency.exponentialRampToValueAtTime(52 * tone, t + dur);
-  const og = ctx.createGain();
-  og.gain.setValueAtTime(0.0001, t);
-  og.gain.linearRampToValueAtTime(g, t + 0.006);
-  og.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(og).connect(master); osc.start(t); osc.stop(t + dur + 0.02);
+/**
+ * Подошва × пол. Пара пока одна — мягкая кожа по камню; появится материал пола от мира — добавится строка.
+ *  • `heel`/`toe` — середина полосы касания пятки и носка (Гц): кожа гасит верх, звук сидит низко;
+ *  • `crisp` — полоса короткого «тк» самого камня под подошвой (у дерева его нет, у камня он и есть камень);
+ *  • `body` — едва слышный вес (Гц): у кожи по камню низа мало, это не сапог по доскам;
+ *  • `grit` — зернистый шорох песка между подошвой и камнем (Гц);
+ *  • `dec` — спад касания (сек).
+ */
+/**
+ * ⚠ КАЛИБРОВКА ГРОМКОСТИ ШАГА — ПО A-ВЗВЕШЕННОМУ УРОВНЮ, А НЕ ПО RMS. У удара почти вся энергия — низкий «бум»
+ * (90 Гц), который уши и маленькие колонки почти не слышат, а шаг сидит в 0.2–4 кГц, где слух острее всего.
+ * По RMS шаг ходьбы был втрое тише удара — а на слух на 7 дБ ГРОМЧЕ. Замер офлайн-рендером (8 прогонов,
+ * громкость относительно удара по телу): подшаг на месте −12 дБ(A), шаг −8, бег −5.5; для масштаба взмах +4,
+ * удар по коже +5, по латам +17. Спектр шага ходьбы: центр 1.07 кГц, 50 % энергии в 0.2–1 кГц, выше 4 кГц — 1 %,
+ * спад на 20 дБ за 51 мс — глухо и без щелчка, то есть мягкая подошва, а не каблук.
+ */
+const STEP_LEVEL = 0.167;
+const STEP_TIMBRE: Record<StepSurface, { heel: number; toe: number; crisp: number; body: number; grit: number; dec: number }> = {
+  stone: { heel: 520, toe: 780, crisp: 2900, body: 92, grit: 3000, dec: 0.16 },
+};
 
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2200;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(g * 0.35, t);
-  ng.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.35);
-  noiseSrc(ctx, dur).connect(hp).connect(ng).connect(master);
+/**
+ * ⭐⭐ ШАГ: МЯГКАЯ КОЖАНАЯ ПОДОШВА ПО КАМЕННОМУ ПОЛУ.
+ *
+ * Что слышно у такого шага и чем это собрано:
+ *  • ПЯТКА — глухое «туп» без щелчка: мягкая кожа жёсткого контакта не даёт. Шум через полосу ~0.56 кГц
+ *    с подрезанным верхом, атака 3 мс (короче — уже щелчок каблука, другая обувь), спад ~85 мс;
+ *  • КАМЕНЬ — короткое тихое «тк» ~2.9 кГц поверх пятки: жёсткий пол под мягкой подошвой;
+ *  • ВЕС — едва слышный низ 92 → 58 Гц;
+ *  • НОСОК — второе, чуть более светлое касание через 55–80 мс: перекат с пятки. На бегу перекат
+ *    схлопывается (стопа ставится сразу на подушку), касание одно, но звонче и суше;
+ *  • ПЕСОК — зернистый шорох 1.5–7 кГц, тихий; на бегу громче (подошву протаскивает).
+ *
+ * ⚠ КАЖДЫЙ ШАГ ЧУТЬ ДРУГОЙ: полоса ±12 %, спад ±15 %, громкость ±12 %, задержка носка ±18 %, песок ±30 %.
+ * Одинаковые шаги подряд слышны как «пулемёт» одного сэмпла, а не как ходьба.
+ */
+function renderStep(ctx: BaseAudioContext, out: AudioNode, t: number, s: AnimSound, g: number, rnd: () => number): void {
+  const tb = STEP_TIMBRE[s.surface ?? 'stone'] ?? STEP_TIMBRE.stone;
+  const vary = (a: number): number => 1 + (rnd() * 2 - 1) * a;            // случайный множитель 1 ± a
+  const pace = clamp(s.pace ?? STEP_PACE_DEFAULT, 0, 1), tone = s.tone ?? 1;
+  const gg = g * STEP_LEVEL * vary(0.12);
+  const dec = tb.dec * vary(0.15) * (1 - 0.3 * pace);                        // бег — короче и суше
+  const bright = 1 + 0.22 * pace;                                            // бег — звонче: удар сильнее
+  /** Одно касание: шум через полосу, верх подрезан (кожа), плюс тихое «тк» камня. */
+  const touch = (at: number, band: number, lvl: number, d: number, crispLvl: number): void => {
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = band; bp.Q.value = 0.8;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = band * 3.2;
+    noiseSrc(ctx, at, d, rnd).connect(bp).connect(lp).connect(decayEnv(ctx, at, lvl, 0.003, d)).connect(out);
+    const cp = ctx.createBiquadFilter(); cp.type = 'bandpass'; cp.frequency.value = tb.crisp * tone * vary(0.1); cp.Q.value = 1.6;
+    noiseSrc(ctx, at, 0.05, rnd).connect(cp).connect(decayEnv(ctx, at, lvl * crispLvl, 0.0015, 0.028)).connect(out);
+  };
+  touch(t, tb.heel * tone * bright * vary(0.12), gg * 2.4, dec, 0.12 + 0.18 * pace);
+  // Вес: тихо — у кожи по камню низа почти нет.
+  const osc = ctx.createOscillator(); osc.type = 'sine';
+  osc.frequency.setValueAtTime(tb.body * tone, t);
+  osc.frequency.exponentialRampToValueAtTime(tb.body * tone * 0.63, t + 0.07);
+  osc.connect(decayEnv(ctx, t, gg * 0.12, 0.004, 0.075)).connect(out);
+  osc.start(t); osc.stop(t + 0.1);
+  // Носок: перекат с пятки. На бегу задержка уходит в ноль — касание одно.
+  const lag = 0.068 * vary(0.18) * (1 - pace);
+  if (lag > 0.014) touch(t + lag, tb.toe * tone * vary(0.12), gg * 2.4 * (0.5 + 0.2 * rnd()), dec * 0.7, 0.1);
+  // Песок: зернистый шорох подошвы по камню.
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = tb.grit * 0.5;
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = tb.grit * 1.6;
+  const gritAt = t + 0.006, gritDec = (0.1 + 0.07 * pace) * vary(0.2);
+  noiseSrc(ctx, gritAt, gritDec + 0.02, rnd).connect(hp).connect(lp)
+    .connect(decayEnv(ctx, gritAt, gg * (0.035 + 0.06 * pace) * vary(0.3), 0.006, gritDec)).connect(out);
 }
 
 /** ЛЯЗГ (и прочие «сторонние» звуки): узкая полоса шума + два призвука — металлический, короткий. */
-function playClank(dur: number, g: number, tone: number): void {
-  const a = audio(); if (!a || a.ctx.state === 'suspended') return;
-  const { ctx, master } = a; const t = ctx.currentTime;
+function renderClank(ctx: BaseAudioContext, out: AudioNode, t: number, dur: number, g: number, tone: number, rnd: () => number): void {
   const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400 * tone; bp.Q.value = 6;
   const ng = ctx.createGain();
   ng.gain.setValueAtTime(0.0001, t);
   ng.gain.linearRampToValueAtTime(g * 0.8, t + 0.003);
   ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  noiseSrc(ctx, dur).connect(bp).connect(ng).connect(master);
+  noiseSrc(ctx, t, dur, rnd).connect(bp).connect(ng).connect(out);
   for (const [mul, lvl] of [[1, 0.5], [1.48, 0.3]] as const) {   // несоизмеримые призвуки = металл, а не бип
     const osc = ctx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = 1700 * tone * mul;
     const og = ctx.createGain();
     og.gain.setValueAtTime(g * lvl, t);
     og.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.8);
-    osc.connect(og).connect(master); osc.start(t); osc.stop(t + dur + 0.02);
+    osc.connect(og).connect(out); osc.start(t); osc.stop(t + dur + 0.02);
   }
+}
+
+/**
+ * Собрать звук в ЛЮБОЙ контекст на момент `t0`: живой (игра) или офлайн (замер, запись в файл).
+ * `rnd` — источник разброса: офлайн его можно зафиксировать, чтобы замер повторялся.
+ */
+export function renderAnimSound(ctx: BaseAudioContext, out: AudioNode, t0: number, s: AnimSound, gain = 1, rnd: () => number = Math.random): void {
+  const g = s.gain * clamp(gain, 0, 1);
+  if (g <= 0.001) return;
+  const tone = s.tone ?? 1;
+  if (s.kind === 'hit') renderHit(ctx, out, t0, s.dur, g, s.mat ?? 'flesh', rnd);
+  else if (s.kind === 'whoosh') renderWhoosh(ctx, out, t0, s.dur, g, rnd);
+  else if (s.kind === 'step') renderStep(ctx, out, t0, s, g, rnd);
+  else renderClank(ctx, out, t0, s.dur, g, tone, rnd);
 }
 
 /** Проиграть решение `soundForMark`. Громкость источника (свой игрок / пир) — множителем. */
 export function playAnimSound(s: AnimSound, gain = 1): void {
-  const g = s.gain * clamp(gain, 0, 1);
-  if (g <= 0.001) return;
-  const tone = s.tone ?? 1;
-  if (s.kind === 'hit') playHit(s.dur, g, s.mat ?? 'flesh');
-  else if (s.kind === 'whoosh') playWhoosh(s.dur, g);
-  else if (s.kind === 'step') playStep(s.dur, g, tone);
-  else playClank(s.dur, g, tone);
+  const a = audio(); if (!a || a.ctx.state === 'suspended') return;
+  renderAnimSound(a.ctx, a.master, a.ctx.currentTime, s, gain);
 }
 
 /**
@@ -298,7 +393,13 @@ export function playHitSound(e: HitSoundInput, gain = 1): void {
   if (s) playAnimSound(s, gain);
 }
 
-/** Подписчик для `doll.onMark`: метка → решение → звук. Ничего не решает сам — это делает `soundForMark`. */
-export function markSfx(gain = 1): (e: MarkEvent) => void {
-  return (e: MarkEvent): void => { const s = soundForMark(e); if (s) playAnimSound(s, gain); };
+/**
+ * Подписчик для `doll.onMark`: метка → решение → звук. Ничего не решает сам — это делает `soundForMark`.
+ * Громкость — число или функция: чужому игроку её считают В МОМЕНТ звука, по расстоянию (`earShot`).
+ */
+export function markSfx(gain: number | (() => number) = 1): (e: MarkEvent) => void {
+  return (e: MarkEvent): void => {
+    const s = soundForMark(e);
+    if (s) playAnimSound(s, typeof gain === 'function' ? gain() : gain);
+  };
 }
