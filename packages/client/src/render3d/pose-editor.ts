@@ -3805,15 +3805,17 @@ function animExportSection(): void {
 }
 /** Вид клипа для групп/фильтра — теми же префиксами, что читает игра и экспорт (`clipToAnimation`), чтобы UI и данные не разъехались. */
 type ClipKind = 'stance' | 'hit' | 'gait' | 'other';
+// ⚠ Повороты на месте (`turn_*`) — тоже «ходьба»: их пишет тот же бейк с вкладки «Бег», и в общем
+// списке шесть клипов поворота заслоняли стойки и удары, которые правят руками.
 const clipKind = (n: string): ClipKind =>
   /^(combat_)?idle_/.test(n) ? 'stance'
   : /^(s_)?hit_/.test(n) ? 'hit'
-  : /^(idle|walk|run|strafe)(_|$)/.test(n) ? 'gait' : 'other';
+  : /^(idle|walk|run|strafe|turn)(_|$)/.test(n) ? 'gait' : 'other';
 const KIND_LABEL: Record<ClipKind, string> = { stance: 'стойки', hit: 'удары', gait: 'ходьба', other: 'прочее' };
 /**
  * СПИСОК КЛИПОВ (Ф26.4) — вертикальный, со СВОИМ скроллом, поиском, чипсами вида и сортировкой.
- * Запечённая ходьба (`walk_*`/`run_*`/`strafe_*`) — ОТДЕЛЬНОЙ группой, свёрнутой по умолчанию: её пишет
- * бейк с вкладки «Бег» десятками клипов, и вручную там делать обычно нечего.
+ * Запечённая ходьба (`walk_*`/`run_*`/`strafe_*`) и повороты на месте (`turn_*`) — ОТДЕЛЬНОЙ группой,
+ * свёрнутой по умолчанию: их пишет бейк с вкладки «Бег» десятками клипов, и вручную там делать обычно нечего.
  */
 function clipList(list: Clip[]): void {
   const f = el('div', 'display:flex;gap:3px;align-items:center;margin-top:4px'); body.append(f);
