@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { soundForMark, burstForMark } from './animSfx.js';
+import { soundForMark, burstForMark, soundForHit } from './animSfx.js';
+import { HIT_MATERIALS, hitMaterialOf, type HitMaterial } from '@dm/shared';
 import { marksInRange, type Clip, type MarkEvent } from './clipModel.js';
 
 /**
@@ -20,11 +21,13 @@ describe('метка → звук', () => {
   /** События, пройденные за весь клип. */
   const all = (c: Clip, to = 9): MarkEvent[] => marksInRange(c, -1e-9, to);
 
-  it('⭐ УДАР звучит один раз, в точке метки', () => {
+  it('⭐⭐ МЕТКА УДАРА МОЛЧИТ — звук удара знает только СОБЫТИЕ', () => {
+    // ⚠ ЗДЕСЬ БЫЛО ОБРАТНОЕ ТРЕБОВАНИЕ («удар звучит в точке метки»), и его отменила живая проверка
+    // автора: «звук удара играет всегда, даже если никого не бьёшь». Так и было — клип не знает ни
+    // попал ли ты, ни во что; момент урона он ставит верно, а решение «звучать ли» не его.
     const ev = all(clip([{ t: 0.45, type: 'impact' }]));
-    const snd = ev.map(soundForMark).filter(Boolean);
-    expect(snd.length, '⚠ удар прозвучал не один раз').toBe(1);
-    expect(snd[0]!.kind).toBe('hit');
+    expect(ev.length, 'сама метка на месте — она держит момент урона').toBe(1);
+    expect(ev.map(soundForMark).filter(Boolean), '⚠ удар снова звучит по метке — значит и по воздуху').toEqual([]);
   });
 
   it('⭐⭐ ВЖУХ ДЛИТСЯ РОВНО СТОЛЬКО, СКОЛЬКО РАЗМЕЧЕН ВЗМАХ', () => {
@@ -63,7 +66,8 @@ describe('метка → звук', () => {
     // Разметка снята с реального `hit_none_r_01` пользователя.
     const c = clip([{ t: 0.12, type: 'combo', dur: 0.8 }, { t: 0.32, type: 'swing', dur: 0.133 }, { t: 0.453, type: 'impact' }]);
     const snd = all(c).map(soundForMark).filter(Boolean);
-    expect(snd.map((s) => s!.kind), '⚠ порядок или состав звуков не тот').toEqual(['whoosh', 'hit']);
+    // ⚠ Удара в списке НЕТ намеренно: по клипу играет только свист взмаха, удар — по событию (см. выше).
+    expect(snd.map((s) => s!.kind), '⚠ порядок или состав звуков не тот').toEqual(['whoosh']);
   });
 
   it('окно комбо само по себе молчит — это геймплей, а не звук', () => {
@@ -114,5 +118,59 @@ describe('метка → звук', () => {
   it('⚠ вжух не бывает мгновенным и бесконечным — длительность зажата', () => {
     expect(soundForMark(all(clip([{ t: 0.1, type: 'swing', dur: 0.001 }]))[0]!)!.dur).toBeGreaterThanOrEqual(0.06);
     expect(soundForMark(all(clip([{ t: 0.1, type: 'swing', dur: 99 }]))[0]!)!.dur).toBeLessThanOrEqual(0.8);
+  });
+});
+
+/**
+ * ⭐⭐ ЗВУК УДАРА ЗВУЧИТ ТОЛЬКО ПО ФАКТУ: попал или отбили. Жалоба была дословной — «сейчас звук
+ * удара проигрывается всегда, даже если никого не бьёшь», плюс «привязать к типу брони: латы один
+ * звук, кожа другой».
+ */
+describe('событие удара → звук', () => {
+  const hit = (over: Partial<Parameters<typeof soundForHit>[0]> = {}): ReturnType<typeof soundForHit> =>
+    soundForHit({ hit: true, blocked: false, crit: false, mat: 'flesh', ...over });
+
+  it('⭐⭐ ПРОМАХ МОЛЧИТ', () => {
+    // ⚠ Мутация «звучать всегда» валит это — ровно с этого и начался разговор.
+    expect(hit({ hit: false })).toBe(null);
+  });
+
+  it('⭐ ПОПАЛ — звучит, ОТБИЛИ — звучит, но ПО-ДРУГОМУ', () => {
+    expect(hit()!.kind).toBe('hit');
+    const blocked = hit({ hit: false, blocked: true });
+    expect(blocked, '⚠ блок промолчал — игрок не отличит его от промаха').not.toBe(null);
+    expect(blocked!.kind, '⚠ блок звучит как обычное попадание').not.toBe('hit');
+  });
+
+  it('⭐⭐ КАЖДЫЙ КЛАСС БРОНИ ЗВУЧИТ СВОИМ ТЕМБРОМ — иначе привязка к броне ничего не значит', () => {
+    // ⚠ Мутация «одна таблица тембра на всё» валит это.
+    const sounds = HIT_MATERIALS.map((m) => hit({ mat: m })!);
+    expect(new Set(sounds.map((s) => s.mat)).size, 'материал доезжает до синтеза').toBe(HIT_MATERIALS.length);
+    // Латы обязаны звенеть дольше кожи: хвост — это и есть «металл» на слух.
+    const dur = (m: HitMaterial): number => hit({ mat: m })!.dur;
+    expect(dur('plate'), '⚠ латы звучат не дольше кожи').toBeGreaterThan(dur('leather'));
+    expect(dur('plate')).toBeGreaterThan(dur('flesh'));
+  });
+
+  it('⚠ КРИТ — тот же материал, но заметнее (а не второй звук поверх)', () => {
+    const a = hit({ crit: false })!, b = hit({ crit: true })!;
+    expect(b.kind).toBe(a.kind);
+    expect(b.mat).toBe(a.mat);
+    expect(b.dur).toBeGreaterThan(a.dur);
+  });
+
+  it('⚠ незнакомый материал не роняет звук — играет как тело', () => {
+    expect(hit({ mat: 'орихалк' as HitMaterial })!.kind).toBe('hit');
+  });
+});
+
+describe('материал цели', () => {
+  it('⭐ НАГРУДНИК ВАЖНЕЕ ШЛЕМА, а без брони — тело', () => {
+    // ⚠ Мутация «брать первый попавшийся слот» валит порядок: в латах со стёганым капюшоном
+    // удар обязан звенеть, а не шлёпать.
+    expect(hitMaterialOf('plate', 'quilted')).toBe('plate');
+    expect(hitMaterialOf(undefined, 'chain'), 'есть только шлем — звучит он').toBe('chain');
+    expect(hitMaterialOf(undefined, undefined), 'брони нет — тело').toBe('flesh');
+    expect(hitMaterialOf('мифрил'), 'незнакомый класс — тело, а не падение').toBe('flesh');
   });
 });

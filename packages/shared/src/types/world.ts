@@ -117,6 +117,9 @@ export interface ScaledMonster extends MonsterDef {
   atlasKey?: string;
   /** id 3D-моделей надетой брони по слоту атласа (chest/helm = имя submesh-варианта). */
   armorModels?: { chest?: string; helm?: string };
+  /** Класс надетой брони (`armor-classes`: нагрудник, иначе шлем) — ЗВУК попадания: латы звенят, кожа шлёпает.
+   *  Нет брони — поля нет, и это честное «тело» (`hitMaterialOf`). */
+  armorClass?: string;
   /** id 3D-модели оружия (kind:'weapon'). */
   weaponModelId?: string;
   /** 3D-ключ оружия монстра (форма процедурного меша: 'sword+shield'/'greataxe'/…), как PlayerView.weaponKey. */

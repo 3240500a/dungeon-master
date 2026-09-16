@@ -19,3 +19,4 @@ export * from './skills.js';
 export * from './playerCombat.js';
 export * from './resolveWeapon.js';
 export * from './resolveArmor.js';
+export * from './hitMaterial.js';

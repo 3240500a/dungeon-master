@@ -175,6 +175,9 @@ export function generateMonster(
   if (armor?.modelId) am.chest = armor.modelId;
   if (helm?.modelId) am.helm = helm.modelId;
   if (am.chest || am.helm) m.armorModels = am;
+  // ⚠ Класс брони — НЕ то же, что модель: модель рисуют, а класс слышно. Нагрудник важнее шлема.
+  const ac = armor?.armorClass ?? helm?.armorClass;
+  if (ac) m.armorClass = ac;
 
   if (opts.itemAffixes && opts.rarities) {
     // Редкость монстра = редкость его гира (4 редкости). По редкости+уровню N СЛОТОВ становятся magic/rare
