@@ -4,7 +4,7 @@ import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, getLocoMixOverride } from './poseRuntime.js';
 import { GAIT } from './pose.js';
 import { LOCO_NAMES, LOCO_DIRS, locoClipName, locoClipNames, findLocoClip } from './locoBlend.js';
-import { GAIT_PRESETS, defaultBakePick, bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
+import { GAIT_PRESETS, TURN_PRESETS, defaultBakePick, bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
 import type { Clip } from './clipModel.js';
 
 /**
@@ -34,7 +34,7 @@ describe('набор локомоции', () => {
     // ⚠ Мутация «вернуть диагонали в набор» валит это: запекалось бы то, чего никто не читает.
     expect(GAIT_PRESETS.map((s) => s.name).sort()).toEqual(['idle', ...LOCO_NAMES].sort());
     expect(GAIT_PRESETS.some((s) => /diag/i.test(s.name)), '⚠ диагональ вернулась в набор').toBe(false);
-    expect(defaultBakePick().length, 'по умолчанию запекается весь набор').toBe(GAIT_PRESETS.length);
+    expect(defaultBakePick().length, 'по умолчанию запекается весь набор — походка и повороты на месте').toBe(GAIT_PRESETS.length + TURN_PRESETS.length);
   });
 
   it('⚠ БЕГОВОЙ РЕЖИМ СНИМАЕТСЯ НА БЕГОВОЙ СКОРОСТИ — иначе каденция клипа разойдётся с фазой', () => {

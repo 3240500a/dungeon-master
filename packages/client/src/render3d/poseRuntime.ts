@@ -6,6 +6,7 @@ import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, type LocoSectionState, type LocoDir } from './locoBlend.js';
+import { pickTurn, turnYawAt, turnSupportAt, TURN_NAMES } from './turnInPlace.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
@@ -611,6 +612,36 @@ export const LOCO_BONES = [
  */
 /** Разгон доли клипа локомоции, сек: переключение «клипы ↔ планировщик» не должно быть рывком. */
 const LOCO_FADE = 0.25;
+/**
+ * ⚠⚠ ВОРОТА ПО ДВИЖЕНИЮ: слой клипов бега ведёт ноги ТОЛЬКО на ходу; полный вес — с этой доли скорости
+ * ходьбы (`moveMag`). Без них клип «вперёд» накрывал ноги и СТОЯ — застывшим кадром ходьбы на фазе, где
+ * планировщик остановился, — и съедал подшаги поворота на месте: ЗАМЕР — подъём стопы 0.00 против 6.5
+ * у планировщика, хотя шаги он делал те же (2 / 3 / 6 на 45° / 90° / 180°).
+ */
+const LOCO_MOVE_FULL = 0.25;
+/** Гашение клипа поворота, если на середине поворота пошли (сек). */
+const TURN_FADE = 0.15;
+/** Кости, которыми владеет клип поворота: таз и ноги. Корпус — нет, его ведёт живая скрутка к прицелу. */
+const TURN_BONES = ['Hips', 'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes'] as const;
+const _qT1 = new THREE.Quaternion(), _qT2 = new THREE.Quaternion(), _eT = new THREE.Euler();
+/** Подмешать кости клипа с весом `w` (slerp) + офсет таза. Общий шов для бега (`gaitToHumanoid`) и поворота. */
+function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly string[]): void {
+  if (w <= 0.001) return;
+  for (const nm of bones) {
+    const b = human.bones.get(nm); const want = pose[nm];
+    if (!b || !want) continue;
+    _eT.set(b.rotation.x, b.rotation.y, b.rotation.z); _qT1.setFromEuler(_eT);
+    _eT.set(want[0], want[1], want[2]); _qT2.setFromEuler(_eT);
+    b.quaternion.copy(_qT1).slerp(_qT2, w);
+  }
+  const hd = hipsOffset(pose, human.hipsRest.y);
+  if (hd) {
+    const hp = human.bones.get('Hips')!.position;
+    hp.set(hp.x + (human.hipsRest.x + hd[0] - hp.x) * w,
+      hp.y + (human.hipsRest.y + hd[1] - hp.y) * w,
+      hp.z + (human.hipsRest.z + hd[2] - hp.z) * w);
+  }
+}
 let locoMixOverride: number | null = null;
 export function setLocoMixOverride(v: number | null): void { locoMixOverride = v; }
 /** Текущий override (для UI и тестов). */
@@ -659,22 +690,7 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // Кладётся ЗДЕСЬ: ноги и торс уже процедурные, а верх (стойка, предметы, слот действия) идёт ниже
   // и ложится ПОВЕРХ — то есть ровно в том порядке, что и в стеке слоёв. Положи раньше — затрут ноги;
   // позже — клип съест стойку с оружием, и меч в руке начнёт жить чужой жизнью.
-  if (locoMix > 0.001 && locoPose) {
-    for (const nm of LOCO_BONES) {
-      const b = human.bones.get(nm); const want = locoPose[nm];
-      if (!b || !want) continue;
-      _euH.set(b.rotation.x, b.rotation.y, b.rotation.z); _qA.setFromEuler(_euH);
-      _euH.set(want[0], want[1], want[2]); _qB.setFromEuler(_euH);
-      b.quaternion.copy(_qA).slerp(_qB, locoMix);
-    }
-    const hd = hipsOffset(locoPose, human.hipsRest.y);
-    if (hd) {
-      const hp = human.bones.get('Hips')!.position;
-      hp.set(hp.x + (human.hipsRest.x + hd[0] - hp.x) * locoMix,
-        hp.y + (human.hipsRest.y + hd[1] - hp.y) * locoMix,
-        hp.z + (human.hipsRest.z + hd[2] - hp.z) * locoMix);
-    }
-  }
+  if (locoMix > 0.001 && locoPose) blendClipBones(human, locoPose, locoMix, LOCO_BONES);
   applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade, idleT, atkLegs);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
@@ -1306,6 +1322,22 @@ export class PosePlayer {
   private locoSec: LocoSectionState = { section: 'idle', t: 0 };
   /** Текущая доля клипа локомоции (едет к цели за `LOCO_FADE`) — см. комментарий на месте чтения. */
   private locoW = 0;
+  /** Идёт клип поворота на месте (`turnInPlace.ts`): время, курс таза на старте, вес, гасится ли. */
+  private turn: { clip: Clip; t: number; startYaw: number; w: number; out: boolean } | null = null;
+  /** Имя играющего поворота — окну слоёв и тестам. null = не поворачиваемся клипом. */
+  get turnClipName(): string | null { return this.turn && !this.turn.out ? this.turn.clip.name : null; }
+  /** Оборвать поворот сразу, без гашения (запекание, телепорт). */
+  cancelTurn(): void { if (this.turn) { this.turn = null; this.driver.replant(); } }
+  /**
+   * КАКИЕ СТОПЫ ЗАЗЕМЛЯТЬ. Обычно — опорные по планировщику; на время клипа поворота — по флагам
+   * переноса ИЗ КЛИПА: ноги у планировщика отобраны, он считает обе опорными и положил бы маховую
+   * ногу клипа плоско на пол (подъём стопы из клипа не был бы виден вовсе).
+   */
+  get groundSupport(): [boolean, boolean] {
+    if (this.turn && this.turn.w > 0.5) return turnSupportAt(this.turn.clip, this.turn.t);
+    const sw = this.driver.swingLegs;
+    return [!sw[0], !sw[1]];
+  }
   /** Доворот таза этого кадра — редактору для читаута. */
   get dirWarpDeg(): number { return this.dirWarp.warp * 180 / Math.PI; }
   /** Идём ли спиной вперёд (доворот меряется от хвоста) — редактору для читаута. */
@@ -1344,7 +1376,45 @@ export class PosePlayer {
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
   setYaw(yaw: number): void { this.aimYaw = yaw; if (!this.yawInit) { this.rootYaw = yaw; this.yawInit = true; } }
   /** Снять лаг таза (спавн/пробуждение/телепорт): таз мгновенно = прицел, без доворота-«юлы». */
-  snapYaw(): void { this.rootYaw = this.aimYaw; this.turning = false; }
+  snapYaw(): void { this.cancelTurn(); this.rootYaw = this.aimYaw; this.turning = false; }
+  /**
+   * ⭐⭐ ПОВОРОТ НА МЕСТЕ КЛИПАМИ (см. `turnInPlace.ts`). Возвращает доворот таза на этот кадр — или
+   * `null`, если поворот клипами сейчас неприменим и таз ведёт обычный `stepTorsoLead`.
+   *
+   * Режим включается, когда локомоция клипами (цель доли ≥ 0.5), персонаж СТОИТ и у него запечён хоть
+   * один поворот. Тогда таз НЕ догоняет прицел сам — копится остаток (его несёт скрутка корпуса), и по
+   * порогу играет клип нужной величины, ведущий таз по своей кривой. Клипов нет — ровно прежнее
+   * поведение: процедурный доворот и подшаги планировщика.
+   */
+  private stepTurn(dt: number, twist: TwistProfile): { rootYaw: number; residual: number; turning: boolean } | null {
+    const clampTw = (r: number): number => Math.abs(r) > twist.maxTwist ? Math.sign(r) * twist.maxTwist : r;
+    const t = this.turn;
+    if (t) {
+      const dur = clipDur(t.clip) || 1;
+      if (!t.out && this.moveMag >= STILL_OFF) t.out = true;          // пошли посреди поворота — гасим, ноги отдаём ходу
+      if (t.out) {
+        t.w -= dt / TURN_FADE;
+        if (t.w <= 0) { this.turn = null; this.driver.replant(); }
+        return null;                                                  // курс — снова у обычного доворота, от текущего
+      }
+      t.t += dt;
+      this.rootYaw = t.startYaw + turnYawAt(t.clip, t.t);
+      if (t.t >= dur) { this.turn = null; this.driver.replant(); }   // встал в стойку на новом курсе → стопы туда же
+      return { rootYaw: this.rootYaw, residual: clampTw(wrapPi(this.aimYaw - this.rootYaw)), turning: true };
+    }
+    const clipMode = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) >= 0.5;
+    if (!clipMode || !this.still || this.atk.clip || !this.content.locoClip) return null;
+    const has = (name: string): boolean => !!this.content.locoClip!([name], this.weapon);
+    if (!this.content.locoClip(TURN_NAMES, this.weapon)) return null;     // поворотов не запекали — процедурный доворот
+    const residual = wrapPi(this.aimYaw - this.rootYaw);
+    const pick = pickTurn(residual, has);
+    if (pick) {
+      this.turn = { clip: this.content.locoClip([pick.name], this.weapon)!, t: 0, startYaw: this.rootYaw, w: 1, out: false };
+      return { rootYaw: this.rootYaw, residual: clampTw(residual), turning: true };
+    }
+    // Стоим ниже порога: таз держит курс, верх докручивается к прицелу скруткой.
+    return { rootYaw: this.rootYaw, residual: clampTw(residual), turning: false };
+  }
   /**
    * Запустить удар. `windowSec` — окно атаки (attack-лок с сервера): клип ужимается, чтобы отыграть ЦЕЛИКОМ за
    * это окно (быстрее бьёшь — быстрее клип, но всегда до конечных кадров). Без метки медленнее авторского темпа
@@ -1488,7 +1558,7 @@ export class PosePlayer {
     // relaxTime: прицел стабилен долго и есть скрутка → таз доворачивается к нейтрали (не держим лид вечно).
     this.aimStableFor = Math.abs(wrapPi(this.aimYaw - this.prevAim)) < 0.01 ? this.aimStableFor + dt : 0;
     this.prevAim = this.aimYaw;
-    const tl = stepTorsoLead(this.rootYaw, this.aimYaw, twist, dt, this.turning, this.aimStableFor > twist.relaxTime);
+    const tl = this.stepTurn(dt, twist) ?? stepTorsoLead(this.rootYaw, this.aimYaw, twist, dt, this.turning, this.aimStableFor > twist.relaxTime);
     // ⚠ КОПИМ БЕЗ ДОВОРОТА. `stepTorsoLead` получает свой прошлый результат как вход; запиши сюда
     // доворот — и он на следующем кадре станет базой для нового доворота, то есть закрутится сам.
     this.rootYaw = tl.rootYaw; this.turning = tl.turning;
@@ -1549,8 +1619,9 @@ export class PosePlayer {
     // кадр, когда пошёл поворот (иначе подшаг опоздает), а вот поза ног обязана перетечь — иначе
     // на каждом входе-выходе был бы щелчок.
     this.atkLegsW += ((legsHeld ? 1 : 0) - this.atkLegsW) * Math.min(1, dt / LEGS_FADE);
-    this.driver.setLegsHeld(legsHeld);
-    if (this.legMag > 0.5 && !legsHeld) {                         // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
+    const turnLegs = !!this.turn && !this.turn.out;               // поворот клипом: планировщик шагов не начинает
+    this.driver.setLegsHeld(legsHeld || turnLegs);
+    if (this.legMag > 0.5 && !legsHeld && !turnLegs) {            // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
@@ -1563,7 +1634,7 @@ export class PosePlayer {
     //
     // ⚠ ДОЛЯ КЛИПА ЕДЕТ ПЛАВНО (`locoW`), а не скачком: галка в настройках и смена конфига куклы
     // меняют цель мгновенно, и без разгона переключение само было бы рывком.
-    const mixTarget = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1);
+    const mixTarget = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) * clamp(this.moveMag / LOCO_MOVE_FULL, 0, 1);   // ⚠ ворота по движению — см. LOCO_MOVE_FULL
     this.locoW += clamp(mixTarget - this.locoW, -dt / LOCO_FADE, dt / LOCO_FADE);
     const mix = this.locoW;
     let locoPose: Pose | null = null;
@@ -1604,6 +1675,9 @@ export class PosePlayer {
       layerTrace.moveMag = this.moveMag; layerTrace.legMag = this.legMag; layerTrace.combat = this.combat;
       layerTrace.twistGait = tg.twist; layerTrace.twistAim = tw;
     }
+    // ПОВОРОТ НА МЕСТЕ: таз и ноги из клипа. ДО `applyTorsoTwist` — тот ставит тазу курс абсолютно, а
+    // курс на время поворота уже идёт по кривой клипа (`stepTurn`), так что они не спорят.
+    if (this.turn) blendClipBones(this.human, clipPoseAt(this.turn.clip, Math.min(1, this.turn.t / (clipDur(this.turn.clip) || 1))), this.turn.w, TURN_BONES);
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
     // КАЧАНИЕ ТАЗА ВБОК — В КАДРЕ ТЕЛА, и именно ЗДЕСЬ, а не в `gaitToHumanoid`. `Hips.position` живёт в кадре
     // РОДИТЕЛЯ и рыском самой кости НЕ поворачивается — без доворота на `yaw` качание уехало бы в мировые оси

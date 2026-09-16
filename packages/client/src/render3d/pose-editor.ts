@@ -58,7 +58,8 @@ import { buildInventory, inventorySummary } from './animInventory.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
-import { bakeGaitSet, defaultReadPose, GAIT_PRESETS, defaultBakePick } from './clipBake.js';    // Ф2.1: процедурка → клипы
+import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick } from './clipBake.js';   // Ф2.1: процедурка → клипы
+import { TURN_NAMES } from './turnInPlace.js';
 import { findLocoClip, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
 import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
@@ -1879,8 +1880,7 @@ function groundManikinForView(): (() => void) | null {
   const y0 = human.root.position.y;
   // ⚠ `lp()` в конструкторе зовёт measureStance → human.reset() и сбил бы позу в Позы/Анимации,
   // поэтому спрашиваем опорность ТОЛЬКО в локо — тот же гейт, что у призрака.
-  const sw = locoOn ? lp().driver.swingLegs : null;
-  const un = groundManikin(sw ? [!sw[0], !sw[1]] : undefined); if (!un) return null;
+  const un = groundManikin(locoOn ? lp().groundSupport : undefined); if (!un) return null;   // опорность — тот же разбор, что в игре (на повороте клипом — из клипа)
   const dy = human.root.position.y - y0;
   // РУЧКИ ЦЕЛЕЙ ЕДУТ ВМЕСТЕ С КОСТЬЮ: они стоят на `e.target` в АВТОРСКОМ пространстве,
   // и без этого сдвига синяя ручка оторвалась бы от кисти на те же 1.4u. Полюсные и плечевые НЕ трогаем:
@@ -1891,8 +1891,7 @@ function groundManikinForView(): (() => void) | null {
 }
 
 function readPoseFull(): Pose {
-  const swR = locoOn ? lp().driver.swingLegs : null;   // запись кадра в локо — та же опорность, что на экране
-  const ungroundManikin = groundManikin(swR ? [!swR[0], !swR[1]] : undefined);   // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу, потом возвращаем манекен как был
+  const ungroundManikin = groundManikin(locoOn ? lp().groundSupport : undefined);   // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу (опорность — как на экране), потом возвращаем манекен как был
   const p = human.readPose();
   delete p['LeftBreast']; delete p['RightBreast'];           // jiggle груди — рантайм, не пишем в позу
 
@@ -4378,28 +4377,32 @@ function bakeGaitSection(): void {
   // это стойка и ЧЕТЫРЕ направления × ходьба/бег: диагональ закрывает доворот таза, восьми
   // направлений нам не нужно. Галки здесь — чтобы перезапечь ЧАСТЬ набора, не трогая остальное.
   const listBox = el('div', 'margin:4px 0;border:1px solid #39415a;border-radius:6px;padding:4px 6px');
-  for (const s of GAIT_PRESETS) {
+  const addRow = (nameStr: string, hint: string): void => {
     const row = el('label', 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0;font-size:11px');
-    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = picked.includes(s.name);
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = picked.includes(nameStr);
     cb.addEventListener('change', () => {
-      const next = cb.checked ? [...bakeList(), s.name] : bakeList().filter((n) => n !== s.name);
+      const next = cb.checked ? [...bakeList(), nameStr] : bakeList().filter((n) => n !== nameStr);
       setBakeList(next); refreshAll();   // список живёт на вкладке «Бег» — перерисовываем её, а не «Анимации»
     });
-    const have = findLocoClip(library, s.name, curCharId, weapon);
-    const name = el('span', 'flex:1'); name.textContent = s.name;
-    const speed = el('span', 'color:#6b7180');
-    speed.textContent = s.durationSec !== undefined ? 'стойка' : `${Math.round(Math.hypot(s.vx, s.vz) * 100)}%`;
+    const have = findLocoClip(library, nameStr, curCharId, weapon);
+    const name = el('span', 'flex:1'); name.textContent = nameStr;
+    const speed = el('span', 'color:#6b7180'); speed.textContent = hint;
     const mark = el('span', have ? 'color:#9ae6a0' : 'color:#6b7180');
     mark.textContent = have ? (have.weapon === weapon ? '✓ есть' : `✓ ${have.weapon}`) : '—';
     row.append(cb, name, speed, mark);
     listBox.append(row);
-  }
+  };
+  for (const s of GAIT_PRESETS) addRow(s.name, s.durationSec !== undefined ? 'стойка' : `${Math.round(Math.hypot(s.vx, s.vz) * 100)}%`);
+  // ⭐ ПОВОРОТЫ НА МЕСТЕ: играют, пока стоишь с локомоцией клипами, — по порогу скрутки корпуса, сами
+  // ведут таз (`turnInPlace.ts`). Не запечены — поворот на месте остаётся за планировщиком.
+  const th = el('div', 'color:#8fb7ff;font-size:10px;margin-top:4px'); th.textContent = 'повороты на месте'; listBox.append(th);
+  for (const s of TURN_PRESETS) addRow(s.name, `${s.deg > 0 ? '→' : '←'} ${Math.round(Math.abs(s.deg))}°`);
   body.append(listBox);
   // Сторож расхождения ГЛАЗАМИ: чего из нужного движку в выборке нет.
-  const miss = LOCO_NAMES.filter((n) => !picked.includes(n));
+  const miss = [...LOCO_NAMES, ...TURN_NAMES].filter((n) => !picked.includes(n));
   if (miss.length) {
     const w = el('div', 'color:#e0b050;font-size:10px;margin-bottom:2px');
-    w.textContent = `⚠ движок спрашивает, а в наборе нет: ${miss.join(', ')} — эти направления останутся на планировщике`;
+    w.textContent = `⚠ движок спрашивает, а в наборе нет: ${miss.join(', ')} — это останется на планировщике`;
     body.append(w);
   }
 
@@ -4409,8 +4412,11 @@ function bakeGaitSection(): void {
     if (player.weapon !== weapon) player.setWeapon(weapon);
     player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
     const t0 = performance.now();
-    const specs = GAIT_PRESETS.filter((s) => bakeList().includes(s.name));
-    const out = bakeGaitSet(player, human, { character: curCharId, weapon, readPose: defaultReadPose(human) }, specs);
+    const opts = { character: curCharId, weapon, readPose: defaultReadPose(human) };
+    const out = [
+      ...bakeGaitSet(player, human, opts, GAIT_PRESETS.filter((s) => bakeList().includes(s.name))),
+      ...bakeTurnSet(player, human, opts, TURN_PRESETS.filter((s) => bakeList().includes(s.name))),
+    ];
     const ms = performance.now() - t0;
     histLib('запечь походку', () => {
       for (const r of out) putClip(r.clip, 'replace');   // перезапекание набора — это осознанная перезапись
@@ -6242,13 +6248,13 @@ function stepPhysics(dt: number): void {
   // (per-кадр __match удара + ATK_MATCH-рамп поверх базы); в Позы/Анимации — PHYS.match (applyFramePhys). «Упал» → 0 (свободный коллапс).
   if (ghostHuman) {
     // lp() ТОЛЬКО в локо: его конструктор зовёт measureStance→human.reset() (мутирует манекен) — в Позы/Анимации это сбило бы позу.
-    const sw = locoOn ? lp().driver.swingLegs : ([false, false] as [boolean, boolean]);
+    const sup = locoOn ? lp().groundSupport : undefined;   // опорность — тот же разбор, что в игре
     const gOpts = { w: locoOn ? lp().driver.groundWeights : undefined, lag: GAIT.gndLag,
       flat: locoOn ? lp().driver.plantWeights : undefined,
       still: locoOn ? lp().moveMag < 0.02 : true };   // окно/плавность/укладка/«стоим» — те же, что в игре
     const rMatch = physDead ? 0 : (locoOn ? renderMatchWeight(physMatchBase, lp().attackWeight, lp().attackMatch) : PHYS.match);
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
-      rMatch > 0.001 ? human.readPose() : null, rMatch, undefined, locoOn ? [!sw[0], !sw[1]] : undefined, footGround, gOpts);
+      rMatch > 0.001 ? human.readPose() : null, rMatch, undefined, sup, footGround, gOpts);
     applyGripToGhost();   // призрак пересобирает позу каждый кадр — хват кладём после него, иначе фаланги уедут в бинд
   }
 }

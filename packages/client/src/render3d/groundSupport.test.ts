@@ -77,13 +77,19 @@ describe('сторож: редактор действительно переда
   it('вид манекена спрашивает опорность у планировщика', () => {
     // Мало, что `groundManikin` УМЕЕТ принимать support — его можно снова позвать пустым, и именно
     // так редактор и жил. Требуем, чтобы вызов в кадре реально передавал маховые ноги.
-    const call = src.match(/groundManikin\([^)]*\)/g) ?? [];
+    // Аргумент берём до конца строки: у `lp().groundSupport` свои скобки, и `[^)]*` обрывался бы на `lp(`.
+    const call = src.match(/groundManikin\([^;\n]*/g) ?? [];
     expect(call.length, 'вызовы должны находиться').toBeGreaterThan(0);
-    const withSup = call.filter((c) => c.includes('sw'));
+    const withSup = call.filter((c) => c.includes('groundSupport'));
     expect(withSup.length, `из ${call.length} вызовов с опорностью: ${withSup.length}`).toBeGreaterThanOrEqual(2);
   });
 
   it('опорность берётся у ТОГО ЖЕ плеера, что рисует позу', () => {
-    expect(src).toContain('lp().driver.swingLegs');
+    // ⚠ Было `lp().driver.swingLegs` — флаги планировщика. Стало `lp().groundSupport`: на повороте на
+    // месте клипом ноги у планировщика отобраны, он считает обе опорными, и маховую ногу клипа
+    // заземление положило бы на пол. Опорность теперь решает плеер: обычно — планировщик, на
+    // повороте — сам клип. Требование «тот же плеер, что рисует позу» при этом не изменилось.
+    expect(src).toContain('lp().groundSupport');
+    expect(src, '⚠ редактор снова читает флаги планировщика мимо плеера').not.toContain('lp().driver.swingLegs');
   });
 });

@@ -37,9 +37,22 @@
 import * as THREE from 'three';
 import { reduceKeyframes } from './clipBaker.js';
 import type { Clip, Keyframe, Pose } from './clipModel.js';
-import { setHipsOffset, blendTwo, isAngleKey } from './clipModel.js';
+import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW } from './clipModel.js';
 import type { Humanoid } from './humanoid.js';
-import type { PosePlayer } from './poseRuntime.js';
+import { setLocoMixOverride, getLocoMixOverride, type PosePlayer } from './poseRuntime.js';
+import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
+
+/**
+ * ⚠ ЗАПЕКАЕТСЯ ВСЕГДА ПРОЦЕДУРКА. Если в редакторе включена локомоция клипами, плеер сам заиграл бы
+ * уже запечённые клипы (а на месте — клипы поворота, которые ведут таз), и новый клип сняли бы с
+ * самого себя. Поэтому на время съёма доля клипа принудительно 0, а после — как было.
+ */
+function procedural<T>(player: PosePlayer, fn: () => T): T {
+  const was = getLocoMixOverride();
+  setLocoMixOverride(0);
+  player.cancelTurn();
+  try { return fn(); } finally { setLocoMixOverride(was); }
+}
 
 /** Максимальная скорость, к которой нормируются vx/vz спеки (как ползунок «Бег» в редакторе). */
 export const BAKE_MAXSPD = 120;
@@ -263,8 +276,8 @@ export const GAIT_PRESETS: readonly GaitSpec[] = [
   { name: 'run_strafe_R', vx: RUN, vz: 0, yaw: 0 },
 ] as const;
 
-/** Имена, включённые по умолчанию, — ВЕСЬ набор: лишнего в нём нет. */
-export const defaultBakePick = (specs: readonly GaitSpec[] = GAIT_PRESETS): string[] =>
+/** Имена, включённые по умолчанию, — ВЕСЬ набор (походка и повороты на месте): лишнего в нём нет. */
+export const defaultBakePick = (specs: readonly { name: string }[] = [...GAIT_PRESETS, ...TURN_PRESETS]): string[] =>
   specs.map((s) => s.name);
 
 /** Запечь весь набор. Плеер переиспользуется — между режимами он сам выходит на новый через разогрев. */
@@ -272,5 +285,93 @@ export function bakeGaitSet(
   player: PosePlayer, human: Humanoid, opts: BakeGaitOptions,
   specs: readonly GaitSpec[] = GAIT_PRESETS,
 ): BakeGaitResult[] {
-  return specs.map((s) => bakeGaitToClip(player, human, s, opts));
+  return procedural(player, () => specs.map((s) => bakeGaitToClip(player, human, s, opts)));
+}
+
+// ── ПОВОРОТЫ НА МЕСТЕ ─────────────────────────────────────────────────────────────────────────────
+
+/** Поворот на месте: имя клипа и угол СО ЗНАКОМ (+ = вправо, та же сторона, что у `strafe_R`). */
+export interface TurnSpec { name: string; deg: number }
+
+/**
+ * ⭐ НАБОР ПОВОРОТОВ = РОВНО ТО, ЧТО СПРАШИВАЕТ РАНТАЙМ (`TURN_NAMES`): 45° / 90° / 180° в обе стороны.
+ *
+ * ⚠ 180° СНИМАЕТСЯ КАК 179.5°. Ровно пол-оборота — вырожденный случай: сторону доворота решает то,
+ * как `wrapPi` сворачивает ±π. Нынешний (`atan2(sin, cos)`) знак сохраняет — мутацией проверено, сейчас
+ * без полградуса тоже работает. Но в этом же клиенте живут ДВА других `wrapPi` (`jointClamp.ts`,
+ * `jointLimitV2.ts`), которые +π сворачивают в −π, и стоит унифицировать — `turn_R_180` молча станет
+ * левым. Полградуса задают сторону явно; остаток уйдёт в скрутку корпуса.
+ */
+export const TURN_PRESETS: readonly TurnSpec[] = TURN_ANGLES_DEG.flatMap((d) => {
+  const a = d >= 180 ? d - 0.5 : d;
+  return [{ name: turnClipName(d, false), deg: -a }, { name: turnClipName(d, true), deg: a }];
+});
+
+/** Сколько стоять после поворота, прежде чем закончить съём: ноги дома, таз встал. */
+const TURN_TAIL_SEC = 0.25;
+
+/**
+ * Запечь ПОВОРОТ НА МЕСТЕ: стоим, прицел прыгает на угол, снимаем, как планировщик переступает, пока
+ * таз не встанет на новый курс и ноги не успокоятся.
+ *
+ * В клип кладутся ДВА канала сверх позы, и оба нужны проигрыванию:
+ *  • `__rootY` — накопленный курс таза от начала: по нему рантайм ведёт таз, чтобы стопы и корпус не
+ *    разошлись (связь «угол ↔ момент шага» есть только внутри клипа);
+ *  • `__swing` — какая нога в воздухе: заземление по нему решает, кого прижимать к полу.
+ *
+ * ⚠ ПРОРЕЖИВАНИЕ — ПО ОТРЕЗКАМ МЕЖДУ СМЕНАМИ ОПОРЫ. Прореживатель меряет ошибку только по костям и
+ * позициям, флаги переноса для него «не движение» — и он бы их размазал. Режем по кадрам, где
+ * меняется опора: концы отрезков он сохраняет всегда.
+ */
+export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSpec, opts: BakeGaitOptions): BakeGaitResult {
+  return procedural(player, () => {
+    const fps = Math.max(1, opts.fps ?? 60), dt = 1 / fps;
+    const read = opts.readPose ?? defaultReadPose(human);
+    const maxSec = opts.maxSec ?? 6;
+    player.setVel(0, 0); player.setYaw(0); player.snapYaw(); player.resetPos();
+    for (let t = 0; t < (opts.warmSec ?? 2); t += dt) player.step(dt);
+    const y0 = player.pelvisYaw, aim = y0 + spec.deg * Math.PI / 180;
+    player.setYaw(aim);
+    const dense: Keyframe[] = [];
+    const frame = (t: number): void => {
+      const p = neutralizeFacing(read(), player.pelvisYaw);
+      p[ROOT_YAW] = [+(player.pelvisYaw - y0).toFixed(5), 0, 0];
+      const sw = player.driver.swingLegs;
+      p[SWING_KEY] = [sw[0] ? 1 : 0, sw[1] ? 1 : 0, 0];
+      dense.push({ t: +t.toFixed(4), pose: p });
+    };
+    frame(0);
+    let t = 0, calm = 0, prevYaw = player.pelvisYaw;
+    while (t < maxSec) {
+      player.step(dt); t += dt; frame(t);
+      const sw = player.driver.swingLegs;
+      // КОНЕЦ ПОВОРОТА = ТАЗ ОСТАНОВИЛСЯ и ноги на полу. ⚠ Не «таз дошёл до прицела»: у доворота есть
+      // мёртвая зона (замер: на 90° таз встаёт на 88.8°), и такой съём шёл до `maxSec` — клип на 6 с, из них
+      // пять стояния. И не по `driver.stepping`: при выключенном «уходе в idle» он не гаснет вовсе.
+      const still = Math.abs(player.pelvisYaw - prevYaw) < 0.02 * Math.PI / 180;
+      prevYaw = player.pelvisYaw;
+      const settled = still && !sw[0] && !sw[1] && Math.abs(player.pelvisYaw - y0) > 1e-3;
+      calm = settled ? calm + dt : 0;
+      if (calm >= TURN_TAIL_SEC) break;
+    }
+    // Прореживание по отрезкам между сменами опоры (см. шапку функции).
+    const keys: Keyframe[] = [];
+    let from = 0;
+    const swingOf = (k: Keyframe): string => (k.pose[SWING_KEY] ?? [0, 0, 0]).join();
+    for (let i = 1; i <= dense.length; i++) {
+      if (i < dense.length && swingOf(dense[i]!) === swingOf(dense[i - 1]!)) continue;
+      const seg = reduceKeyframes(dense.slice(from, i), opts.epsDeg ?? 0.5);
+      for (const k of seg) if (!keys.length || k.t > keys[keys.length - 1]!.t) keys.push(k);
+      from = i;
+    }
+    return {
+      clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop: false, rootYaw: true, keys },
+      frames: dense.length, keys: keys.length, periodSec: t, cyclic: false,
+    };
+  });
+}
+
+/** Запечь набор поворотов (по умолчанию — все шесть). */
+export function bakeTurnSet(player: PosePlayer, human: Humanoid, opts: BakeGaitOptions, specs: readonly TurnSpec[] = TURN_PRESETS): BakeGaitResult[] {
+  return specs.map((s) => bakeTurnToClip(player, human, s, opts));
 }

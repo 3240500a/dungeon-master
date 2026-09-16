@@ -807,6 +807,14 @@ class StepPlanner {
    */
   private legsHeld = false;
   setLegsHeld(v: boolean): void { this.legsHeld = v; }
+  /**
+   * ПЕРЕСАДИТЬ СТОПЫ В СТОЙКУ на следующем кадре (на курсе, который придёт в `update`).
+   *
+   * Нужна, когда ногами владел КЛИП, который сам развернул тело (поворот на месте): клип кончается в
+   * idle-стойке уже на новом курсе, а планты планировщика остались на старом. Не пересадить — и он на
+   * первом же кадре увидит стопы «за пределом угла» и сделает лишние подшаги прямо после поворота.
+   */
+  replant(): void { this.placed = false; }
   /** Фаза приставного шага КАЖДОЙ ноги (0 = стоит, 0..1 = переносится к планту). */
   private sideT: [number, number] = [0, 0];
   /**
@@ -1419,6 +1427,8 @@ export class PoseDriver {
   setFeet(lx: number, lz: number, rx: number, rz: number): void { this.planner?.setFeet(lx, lz, rx, rz); }
   /** Ноги сейчас ведёт слот действия (подшаг из клипа) — планировщик не возвращает стопу домой. */
   setLegsHeld(v: boolean): void { this.planner?.setLegsHeld(v); }
+  /** См. `StepPlanner.replant`. */
+  replant(): void { this.planner?.replant(); }
   /** Авторский сдвиг плант-цели (body-local fwd/lat) на ногу — для редактора. Дефолт 0 → без эффекта. */
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void { this.planner?.setPlantOffset(lF, lL, rF, rL); }
   /** Точки обвода свинга на ногу (body-local fwd,lat). Пусто → прямой свинг. */

@@ -360,12 +360,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       player.setYaw(tyaw);
       if (yawSnap) player.snapYaw();                          // после setYaw: снять лаг таза на телепорте/пробуждении
       player.step(dt);                                       // позирует target (гейт+idle-стойка+удар) + грип оружия на solid — дёшево, в обоих режимах
-      const sw = player.driver.swingLegs;   // опора = !swing → заземляем только стоящую ногу (иначе «лыжник» на спуске)
+      const sup = player.groundSupport;   // опора → заземляем только стоящую ногу (иначе «лыжник» на спуске); на повороте клипом — из клипа
       if (kinematic && physHold <= 0) {                      // KINEMATIC: рисуем ПРЯМО из позы манекена, физику монстра не считаем
         target.root.updateMatrixWorld(true);
         const hips = target.bones.get('Hips')!;
         hips.getWorldPosition(pelWorld); pelWorld.x += rx; pelWorld.z += rz;   // мир-таз позы + оффсет сглаженной позиции
-        renderKinematicPose(solid, target.readPose(), pelWorld, ground, dt, GROUND0, [!sw[0], !sw[1]], !poseLod);
+        renderKinematicPose(solid, target.readPose(), pelWorld, ground, dt, GROUND0, sup, !poseLod);
         skin?.update(); syncWeaponHost();
         return;
       }
@@ -376,7 +376,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       // Во время удара вес совпадения = АВТОРСКИЙ per-кадр __match (задан в редакторе покадрово), иначе фолбэк — огибающая
       // ATK_MATCH·attackWeight (physics один не доводит замах до конца). В покое/беге — базовый matchWeight (физ-ведомая походка).
       const effMatch = renderMatchWeight(matchWeight, player.attackWeight, player.attackMatch);   // ЕДИНО с редактором-локо
-      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, [!sw[0], !sw[1]], !poseLod,
+      renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, sup, !poseLod,
         { w: player.driver.groundWeights, lag: GAIT.gndLag, flat: player.driver.plantWeights, still: player.moveMag < 0.02 });   // окно/плавность/укладка/«стоим» — те же, что в редакторе
       skin?.update(); syncWeaponHost();                                        // GLB-слои ведутся solid (после физрезультата + бленда к позе)
       if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику
