@@ -7,10 +7,24 @@
  *
  * ТРИ НЕОЧЕВИДНЫЕ ВЕЩИ:
  *
- * 1. ЦИКЛ ЗАМЫКАЕТСЯ ПО НОГЕ, А НЕ ПО ТАЙМЕРУ. Период походки зависит от скорости/каденции/шага, считать
- *    его формулой — значит продублировать половину pose.ts и разойтись с ней. Вместо этого ловим фронт
- *    «левая нога пошла в перенос» (`driver.swingLegs[0]` false→true): от одного фронта до следующего —
- *    ровно один цикл. Последний ключ = первый → шов не виден.
+ * 1. ⭐⭐ ЦИКЛ СНИМАЕТСЯ ПО ФАЗЕ ПЛАНИРОВЩИКА — ТЕМИ ЖЕ ЧАСАМИ, КОТОРЫМИ ЕГО ПОТОМ ИГРАЮТ.
+ *    Рантайм читает клип как «нормализованное время = фаза шага / 2π» (`locoPhaseU`). Значит и снимать
+ *    обязано в той же координате: начало клипа = фаза 0, конец = 2π, ключи — равномерно ПО ФАЗЕ.
+ *
+ *    ⚠ РАНЬШЕ цикл ловился фронтом «левая пошла в перенос», а это фаза u≈0.126, а не 0: клип играл
+ *    на 45° не в такт с ногами планировщика. ЗАМЕР (бег, та же фаза, что в рантайме): расхождение с
+ *    живым бегом до 63° и в среднем 5.7° — стоп-IK и подтяжка стопы тянули опорную ногу туда, где клип
+ *    её не ставил, отсюда «на вкладке Бег плавно, а запечённое дёргано». Со съёмом по фазе — ≈0.3°.
+ *    Старый паритет-тест этого не видел: он выравнивал живой бег по тому же фронту, то есть проверял
+ *    «клип совпадает сам с собой», а не контракт проигрывания.
+ *
+ * 1б. ШОВ ЦИКЛА — РАЗНЕСЕНИЕ ДРЕЙФА, А НЕ ПОДМЕНА ПОСЛЕДНЕГО КАДРА. Раньше последний ключ просто
+ *    заменялся первым. Со съёмом по фронту ноги это давало скачок скорости на шве 25.9°/кадр (замер) —
+ *    но почти весь он был от самого фронта: окно съёма не совпадало с циклом фазы. Со съёмом по фазе
+ *    остаётся настоящий дрейф планировщика — от цикла к циклу поза в фазе 0 гуляет на 0.2–3.4° (подгонка
+ *    шага, скрутка корпуса). Подмена сжала бы его в ОДИН кадр; вместо этого разница разносится линейно по
+ *    циклу (так делает «Loop Pose» в Unity и «cycle» в пакетах мокапа). Замер шва по костям на ходьбе:
+ *    1.0–1.1° → 0.16–0.35°. На беге дрейф и без того мал (0.3–0.7°), и разница там в пределах шума стоп.
  *
  * 2. КЛИП IN-PLACE И БЕЗ FACING. `applyTorsoTwist` пишет в `Hips.rotation.y` ФЕЙСИНГ персонажа (rootYaw).
  *    Если оставить его в клипе, анимация будет «поворачивать» персонажа в чужом движке поверх его же
@@ -20,9 +34,10 @@
  * 3. РАЗОГРЕВ ОБЯЗАТЕЛЕН. У планировщика есть инерция (планты, подшаг, torso-lead, сглаживание таза):
  *    первые ~1.5 с он выходит на режим из произвольной фазы. Снимать раньше — запечь переходный процесс.
  */
+import * as THREE from 'three';
 import { reduceKeyframes } from './clipBaker.js';
 import type { Clip, Keyframe, Pose } from './clipModel.js';
-import { setHipsOffset } from './clipModel.js';
+import { setHipsOffset, blendTwo, isAngleKey } from './clipModel.js';
 import type { Humanoid } from './humanoid.js';
 import type { PosePlayer } from './poseRuntime.js';
 
@@ -78,6 +93,45 @@ function neutralizeFacing(p: Pose, pelvisYaw: number): Pose {
   return p;
 }
 
+const TAU = Math.PI * 2;
+const _dq0 = new THREE.Quaternion(), _dq1 = new THREE.Quaternion(), _dqc = new THREE.Quaternion(), _dqu = new THREE.Quaternion();
+const _de = new THREE.Euler(), _dI = new THREE.Quaternion();
+
+/**
+ * ⭐ ЗАМЫКАНИЕ ЦИКЛА РАЗНЕСЕНИЕМ ДРЕЙФА: последний кадр сетки (фаза 2π) обязан совпасть с первым (фаза 0).
+ * Разница между ними распределяется ЛИНЕЙНО по фазе на все кадры — на кадр приходится её доля, а не вся.
+ *
+ * Повороты — поправкой слева `slerp(I, q0·q2π⁻¹, u)·q(u)`: на u=0 это ровно q0, на u=1 — тоже q0.
+ * Скаляры (офсет таза и прочие `__…`) — прибавкой `(v0 − v2π)·u`.
+ */
+export function removeLoopDrift(grid: Pose[]): void {
+  const n = grid.length - 1;
+  if (n < 1) return;
+  const first = grid[0]!, last = grid[n]!;
+  for (const key of Object.keys(first)) {
+    const v0 = first[key]!, v1 = last[key];
+    if (!v1) continue;
+    if (isAngleKey(key)) {
+      _dq0.setFromEuler(_de.set(v0[0], v0[1], v0[2], 'XYZ'));
+      _dq1.setFromEuler(_de.set(v1[0], v1[1], v1[2], 'XYZ'));
+      _dqc.copy(_dq0).multiply(_dq1.invert());               // поправка, которая переводит конец в начало
+      for (let k = 1; k <= n; k++) {
+        const v = grid[k]![key]; if (!v) continue;
+        _dqu.copy(_dI).slerp(_dqc, k / n).multiply(_dq1.setFromEuler(_de.set(v[0], v[1], v[2], 'XYZ')));
+        _de.setFromQuaternion(_dqu, 'XYZ');
+        grid[k]![key] = [_de.x, _de.y, _de.z];
+      }
+    } else {
+      const d = [v0[0] - v1[0], v0[1] - v1[1], v0[2] - v1[2]];
+      for (let k = 1; k <= n; k++) {
+        const v = grid[k]![key]; if (!v) continue;
+        const u = k / n;
+        grid[k]![key] = [v[0] + d[0]! * u, v[1] + d[1]! * u, v[2] + d[2]! * u];
+      }
+    }
+  }
+}
+
 /**
  * Запечь один режим походки в клип. `player` и `human` должны быть уже связаны
  * (плеер построен на этом же гуманоиде), иначе снимем чужую позу.
@@ -116,22 +170,39 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
       periodSec = dur;
     }
   } else {
-    // Ищем ФРОНТ «левая нога пошла в перенос», затем снимаем до следующего такого же фронта.
-    let prevSwing = player.driver.swingLegs[0];
-    let started = false, t = 0, elapsed = 0;
+    // ⭐⭐ СЪЁМ ПО ФАЗЕ (см. пункт 1 шапки): ждём перехода фазы через кратное 2π и пишем кадры вместе с
+    // их фазой, пока не пройдём полный оборот. Кадры приходятся на произвольные фазы, поэтому дальше
+    // они ПЕРЕСЭМПЛИРУЮТСЯ на равномерную сетку по фазе — ровно так, как клип будут читать.
+    const rec: { ph: number; t: number; pose: Pose }[] = [];
+    let prevPh = player.driver.gaitPhase, prevPose = neutralizeFacing(read(), player.pelvisYaw);
+    let base = NaN, elapsed = 0;
     while (elapsed < maxSec) {
       player.step(dt); elapsed += dt;
-      const sw = player.driver.swingLegs[0];
-      const rising = sw && !prevSwing;
-      prevSwing = sw;
-      if (rising) {
-        if (!started) { started = true; t = 0; }
-        else { periodSec = +t.toFixed(4); cyclic = true; break; }
+      const ph = player.driver.gaitPhase;
+      const pose = neutralizeFacing(read(), player.pelvisYaw);
+      if (Number.isNaN(base) && Math.floor(ph / TAU) > Math.floor(prevPh / TAU)) {
+        base = Math.floor(ph / TAU) * TAU;
+        rec.push({ ph: prevPh - base, t: elapsed - dt, pose: prevPose });   // кадр ДО перехода — чтобы поймать ровно фазу 0
       }
-      if (started) {
-        dense.push({ t: +t.toFixed(4), pose: neutralizeFacing(read(), player.pelvisYaw) });
-        t += dt;
+      if (!Number.isNaN(base)) {
+        rec.push({ ph: ph - base, t: elapsed, pose });
+        if (ph - base >= TAU) { cyclic = true; break; }
       }
+      prevPh = ph; prevPose = pose;
+    }
+    if (cyclic) {
+      const at = (phi: number): { pose: Pose; t: number } => {
+        let i = 0; while (i < rec.length - 2 && rec[i + 1]!.ph < phi) i++;
+        const a = rec[i]!, b = rec[i + 1]!, w = b.ph > a.ph ? Math.min(1, Math.max(0, (phi - a.ph) / (b.ph - a.ph))) : 0;
+        return { pose: blendTwo(a.pose, b.pose, w), t: a.t + (b.t - a.t) * w };
+      };
+      const start = at(0), end = at(TAU);
+      periodSec = +(end.t - start.t).toFixed(4);
+      const n = Math.max(8, Math.round(periodSec * fps));
+      const grid: Pose[] = [];
+      for (let k = 0; k <= n; k++) grid.push(at(TAU * k / n).pose);
+      removeLoopDrift(grid);
+      for (let k = 0; k < n; k++) dense.push({ t: +(periodSec * k / n).toFixed(4), pose: grid[k]! });
     }
     if (!cyclic) {   // фронт не пойман (очень медленная походка/патология) — падаем на окно 1 с
       dense.length = 0;

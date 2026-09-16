@@ -174,7 +174,7 @@ describe('смешивание в рантайме', () => {
     const hh = buildHumanoid({});
     const p = new PosePlayer(hh, () => [], withLoco(other), 'sword', GX, emptyGrid());
     GAIT.locoMix = 1;
-    const v = new THREE.Vector3();
+    const v = new THREE.Vector3(), hip = new THREE.Vector3(), knee = new THREE.Vector3(), tgt = new THREE.Vector3();
     let worst = 0, seen = 0;
     for (let i = 0; i < 260; i++) {
       const yaw = i * 0.02;                       // ~1.2 рад/с — обычный доворот на бегу
@@ -183,9 +183,18 @@ describe('смешивание в рантайме', () => {
       hh.root.updateMatrixWorld(true);
       for (let leg = 0; leg < 2; leg++) {
         if (p.driver.swingLegs[leg]) continue;
-        const f = hh.bones.get(leg === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(v);
+        const side = leg === 0 ? 'Left' : 'Right';
+        const f = hh.bones.get(side + 'Foot')!.getWorldPosition(v);
         const t = p.driver.plantTarget(leg);
-        if (i > 120) { seen++; worst = Math.max(worst, Math.hypot(f.x - (t[0] - p.posX), f.z - (t[1] - p.posZ))); }
+        // ⚠ КАДРЫ, ГДЕ ПЛАНТ ФИЗИЧЕСКИ ВНЕ ДОСЯГАЕМОСТИ НОГИ, ПОРЯДОК НЕ СУДЯТ: там IK упирается в длину
+        // ноги, и остаток есть при ЛЮБОМ порядке. Появились они, когда запекатель стал снимать по фазе:
+        // клип играет в такт, боб таза стоит там, где ему место, и на крайнем выносе поворотного шага
+        // плант оказывается на 0.3–0.7 % дальше вытянутой ноги (замер: 3 кадра из ~130, до 0.51).
+        hh.bones.get(side + 'UpperLeg')!.getWorldPosition(hip);
+        hh.bones.get(side + 'LowerLeg')!.getWorldPosition(knee);
+        tgt.set(t[0] - p.posX, f.y, t[1] - p.posZ);
+        if (hip.distanceTo(tgt) >= hip.distanceTo(knee) + knee.distanceTo(f)) continue;
+        if (i > 120) { seen++; worst = Math.max(worst, Math.hypot(f.x - tgt.x, f.z - tgt.z)); }
       }
     }
     expect(seen, 'опорные кадры на повороте были — иначе проверка пустая').toBeGreaterThan(20);
