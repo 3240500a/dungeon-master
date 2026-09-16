@@ -4374,9 +4374,9 @@ function bakeGaitSection(): void {
   body.append(info);
 
   // ── Список режимов: что запекаем ────────────────────────────────────────────────────────────
-  // Видно сразу три вещи: что включено, что уже запечено (и под каким оружием найдётся), и что
-  // движок вообще не спрашивает. Без последнего легко запечь набор, который никто не читает —
-  // ровно это и было с `strafe_L`/диагоналями.
+  // Видно сразу две вещи: что включено и что уже запечено (и под каким оружием найдётся). Набор —
+  // это стойка и ЧЕТЫРЕ направления × ходьба/бег: диагональ закрывает доворот таза, восьми
+  // направлений нам не нужно. Галки здесь — чтобы перезапечь ЧАСТЬ набора, не трогая остальное.
   const listBox = el('div', 'margin:4px 0;border:1px solid #39415a;border-radius:6px;padding:4px 6px');
   for (const s of GAIT_PRESETS) {
     const row = el('label', 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0;font-size:11px');
@@ -4392,7 +4392,6 @@ function bakeGaitSection(): void {
     const mark = el('span', have ? 'color:#9ae6a0' : 'color:#6b7180');
     mark.textContent = have ? (have.weapon === weapon ? '✓ есть' : `✓ ${have.weapon}`) : '—';
     row.append(cb, name, speed, mark);
-    if (s.extra) { row.style.opacity = '0.6'; row.title = 'движок это имя не спрашивает — только для экспорта в чужой движок'; }
     listBox.append(row);
   }
   body.append(listBox);

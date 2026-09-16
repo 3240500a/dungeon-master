@@ -30,7 +30,7 @@ import type { PosePlayer } from './poseRuntime.js';
 export const BAKE_MAXSPD = 120;
 
 export interface GaitSpec {
-  name: string;                 // имя будущего клипа (walk_fwd, run_diag_L, …)
+  name: string;                 // имя будущего клипа (walk_fwd, run_strafe_L, …)
   vx: number;                   // боковая скорость −1..1 (правая — плюс)
   vz: number;                   // продольная −1..1 (вперёд — плюс)
   /** Прицел (рад). Не задан → лицом по движению (обычная ходьба/бег). Задан → страйф. */
@@ -38,9 +38,6 @@ export interface GaitSpec {
   /** Не задана → длительность определяется циклом ноги. Задана → снимаем ровно столько секунд. */
   durationSec?: number;
   loop?: boolean;               // по умолчанию true для циклических
-  /** ⚠ Движок это имя НЕ спрашивает (`LOCO_NAMES`) — режим для экспорта в чужой движок, по умолчанию
-   *  в набор запекания не входит. Не «выключено», а «не нужно нашему рантайму». */
-  extra?: boolean;
 }
 
 export interface BakeGaitOptions {
@@ -172,9 +169,9 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
  * ходьба→бег), поэтому клип, который будет играть на беге, обязан быть снят НА БЕГОВОЙ скорости:
  * иначе каденция клипа и фаза планировщика разойдутся, и стопы поедут.
  *
- * ДИАГОНАЛИ ОСТАВЛЕНЫ, НО ВЫКЛЮЧЕНЫ ПО УМОЛЧАНИЮ (`extra`): решение Ф0 — четыре направления, а
- * диагональ закрывает доворот таза. Они не удалены, потому что чужому движку при экспорте могут
- * понадобиться, а в редакторе их видно галочкой и понятно, что движок их не читает.
+ * ДИАГОНАЛЕЙ ЗДЕСЬ НЕТ: решение Ф0 — ЧЕТЫРЕ направления, диагональ закрывает доворот таза (`stepDirWarp`,
+ * замерено: на 30–60° и 120–135° цифры совпадают с прямым бегом). Восемь клипов — это 4 направления ×
+ * ходьба/бег, а не 8 направлений; второй набор на восемь направлений не нужен и заводить его не надо.
  *
  * ПОВОРОТОВ ЗДЕСЬ НЕТ ОСОЗНАННО: разворот — это вращение КОРНЯ (мировой facing), а наши клипы in-place.
  * Пока Root не анимируется (Ф1.4 завёл узел, но треков корня ещё нет), запечённый «поворот» был бы
@@ -193,17 +190,11 @@ export const GAIT_PRESETS: readonly GaitSpec[] = [
   { name: 'run_back', vx: 0, vz: -RUN, yaw: 0 },
   { name: 'run_strafe_L', vx: -RUN, vz: 0, yaw: 0 },
   { name: 'run_strafe_R', vx: RUN, vz: 0, yaw: 0 },
-  { name: 'walk_diag_FL', vx: -0.3, vz: 0.3, yaw: 0, extra: true },
-  { name: 'walk_diag_FR', vx: 0.3, vz: 0.3, yaw: 0, extra: true },
-  { name: 'walk_diag_BL', vx: -0.3, vz: -0.3, yaw: 0, extra: true },
-  { name: 'walk_diag_BR', vx: 0.3, vz: -0.3, yaw: 0, extra: true },
-  { name: 'run_diag_FL', vx: -0.6, vz: 0.6, yaw: 0, extra: true },
-  { name: 'run_diag_FR', vx: 0.6, vz: 0.6, yaw: 0, extra: true },
 ] as const;
 
-/** Имена, включённые по умолчанию: всё, кроме помеченного `extra` (движок их не спрашивает). */
+/** Имена, включённые по умолчанию, — ВЕСЬ набор: лишнего в нём нет. */
 export const defaultBakePick = (specs: readonly GaitSpec[] = GAIT_PRESETS): string[] =>
-  specs.filter((s) => !s.extra).map((s) => s.name);
+  specs.map((s) => s.name);
 
 /** Запечь весь набор. Плеер переиспользуется — между режимами он сам выходит на новый через разогрев. */
 export function bakeGaitSet(
