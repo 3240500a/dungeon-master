@@ -21,7 +21,8 @@ import { PLAYER_RADIUS, MONSTER_RADIUS } from '@dm/shared';                // Ф
 import { extraLimitView, LIMIT_PRESETS, findPreset } from './jointLimits.js';
 import { solveBalance, type BalanceProbe } from './balanceSolve.js';   // Ф26.6в: перенос веса решается от АВТОРСКОЙ позы
 import { makeFullBodyIk, type FbikRig } from './fullBodyIk.js';
-import { solveTwoBone, elbowGoal, perpTo, planeSwivel, hingePoleLocal, hingeBendSign, LIMB_SOFT } from './limbIk.js';
+import { solveTwoBone, elbowGoal, perpTo, LIMB_SOFT, limbNaturalPole, armPoleLegacy, armPoleAnatomical, fadeSwivel, type ArmPoleFn } from './limbIk.js';
+import { solveLimbChain, setHingeBend as setHingeBendChain, swivelRootToPole, hingePlaneSwivel, type LimbChain, type LimbEnv } from './limbSolve.js';
 import { makeTimelinePanel, setKeyTimes, setInterp, scaleKeys, MARK_COLOR, type TimelinePanel } from './timelinePanel.js';
 import { MARK_TRACK, duplicateClipKeys, freeClipNameIn, type MarkType , idleEndsSource, carryMarks, marksInRange, loopMarksInRange, type MarkEvent } from './clipModel.js';
 import { markSfx } from './animSfx.js';   // звук меток — тот же, что в игре (шаги, взмах): слышно прямо при разметке
@@ -585,7 +586,7 @@ function syncEff(e: Eff): void {
   const dir = ep.clone().sub(rp);
   if (dir.lengthSq() > 1e-6) { const perp = mp.clone().sub(rp).sub(dir.clone().multiplyScalar(mp.clone().sub(rp).dot(dir) / dir.lengthSq())); if (perp.lengthSq() > 1) e.pole.copy(perp.normalize()); }   // прямая рука → полюс не трогаем
   e.footQuat.copy(end.getWorldQuaternion(Q()));   // ориентация КОНЦА (кисть/стопа) — восстановим после солва (иначе IK крутит скрутку)
-  if (e.isFoot) swivelFromHinge(e);               // плоскость колена = АВТОРСКИЙ твист бедра, а не «строго вперёд» (см. `swivelFromHinge`)
+  swivelFromHinge(e);                             // плоскость колена/локтя = АВТОРСКИЙ твист бедра/плеча, а не натураль (см. `swivelFromHinge`)
 }
 /**
  * РУЧКИ ГОНЯТСЯ ЗА КОСТЯМИ (каждый кадр вне драга). Позу НЕ трогает.
@@ -625,8 +626,11 @@ let fbikFor: Humanoid | null = null;
  * косинусов с полюсом и soft IK, как в Maya/Unity/UE. FABRIK оставлен за Про-кнопкой на один релиз
  * для сравнения: на шарнире локтя/колена он теряет непрерывность (замер: «кисть к бедру» —
  * сгиб 7° вместо 24°, недолёт 6u).
+ * ⚠ С 17.09.2026 КНОПКА УБРАНА, сохранённый выбор не читается: у FABRIK для рук нет ни полюса, ни защиты твиста плеча —
+ * кисть недолетала до 11u, локоть уходил в корпус (стенд разбора локтя), а передать ему полюс нельзя без той же
+ * защиты (Ф23.1: недолёт 0 → 10.5u). Код оставлен для сравнения через `__pe.setSolver('fabrik')`.
  */
-let solverMode: 'analytic' | 'fabrik' = getPref<'analytic' | 'fabrik'>('solver', 'analytic');
+let solverMode: 'analytic' | 'fabrik' = 'analytic';
 function getFbik(): FbikRig {
   if (!fbik || fbikFor !== human) { fbik = makeFullBodyIk(human, { limits: limitViewForBone }); fbikFor = human; }
   return fbik;
@@ -944,132 +948,23 @@ function applyBalance(): void {
   // «желание = кость − запись» недовычтет, и он въестся в авторскую позу — ровно та же утечка.
   balanceOff.x += human.hips.position.x - bx; balanceOff.z += human.hips.position.z - bz;
 }
-const LIMB_PREFER_ARM = new THREE.Vector3(0, -1, -0.4);   // локоть назад-вниз (UE PBIK «preferred angle»)
-const LIMB_PREFER_LEG = new THREE.Vector3(0, 0, 1);       // колено вперёд
 /**
- * ТВИСТ КОРНЯ ПОД ПЛОСКОСТЬ СГИБА (Ф25.2). `aimBoneAt` целит минимальной дугой — твист плеча/бедра
- * получается ПРОИЗВОЛЬНЫЙ. А ось шарнира локтя/колена задана в фрейме корня, то есть твист корня
- * решает, в КАКОЙ плоскости сможет согнуться шарнир. Не совместишь её с плоскостью (корень, локоть, цель) —
- * клэмп шарнира выбросит внеосевую часть и кисть промахнётся. Знак оси — в сторону, куда шарнир вообще гнётся.
+ * АНАЛИТИЧЕСКАЯ КОНЕЧНОСТЬ — в `limbSolve.ts` (вынесено 17.09.2026, чтобы солв гонялся node-тестами, а не пробой-копией).
+ * Здесь только привязка к манекену: кости эффектора, пределы редактора и отладочные выключатели.
  */
-/** Отладочные выключатели ступеней `solveLimb` (через `__pe.limbDbg`) — для замеров, в проде все false. */
 const limbDbg = { noSwivel: false, noRootClamp: false, noMidClamp: false };
-const LIMB_ITERS = 3;
-
-/** Направить КОРЕНЬ так, чтобы его КОНЕЦ цепи (кисть/стопа) смотрел в `target`. Сгиб шарнира уже выставлен, то есть
- *  длина |корень→конец| фиксирована — один поворот ставит конец НА ЦЕЛЬ (или на луч к ней, если длины не хватает). */
-function aimRootAtTarget(root: THREE.Object3D, end: THREE.Object3D, target: THREE.Vector3): void {
-  if (!root.parent) return;
-  root.updateMatrixWorld(true);
-  const S = root.getWorldPosition(V());
-  const cur = end.getWorldPosition(V()).sub(S), want = target.clone().sub(S);
-  if (cur.lengthSq() < 1e-8 || want.lengthSq() < 1e-8) return;
-  // ДЕЛЬТА-ПОВОРОТ, а НЕ `aimBoneAt`. `setFromUnitVectors` строит КВАТЕРНИОН ЦЕЛИКОМ минимальной дугой,
-  // то есть СТИРАЕТ твист кости — а именно твистом задана плоскость сгиба. Замер: свивель честно уводил
-  // колено на 13.1u при стоящей стопе (0.00u), а следующий аим возвращал колено РОВНО НА МЕСТО — оттого оранжевые
-  // ручки и «ни на что не влияли». Дельта же поворачивает КАДР ЦЕЛИКОМ и сохраняет и свивель, и позу прошлого кадра
-  // (как HumanIK/Unity, которые стартуют из текущей FK-позы).
-  const w = root.getWorldQuaternion(Q()).premultiply(Q().setFromUnitVectors(cur.normalize(), want.normalize()));
-  root.quaternion.copy(root.parent.getWorldQuaternion(Q()).invert().multiply(w));
-  root.updateMatrixWorld(true);
-}
-/** СВИВЕЛЬ: повернуть корень ВОКРУГ линии корень→цель, чтобы локоть лёг на сторону полюса. Конец цепи
- *  лежит на этой же линии, значит ПО ПОСТРОЕНИЮ НЕ ДВИГАЕТСЯ (Ф23.1: замер — уход конца 0.00u за 120 кадров).
- *  `rootPoleLocal` (ноги) — текущая плоскость берётся из ТВИСТА КОРНЯ, а не из положения колена: у почти прямой
- *  ноги колено в полуюните от линии, и после пересборки шарнира (`setHingeBend`, голень сдвигается на ~4°)
- *  направление этого выноса шумит. Замер в живом редакторе на модели (колено в 0.52u от линии, idle_none_relax):
- *  сдвиг цели стопы на 0.01u проворачивал правое бедро на 19.3° (без свивеля — 1.9°); по плоскости шарнира шаг
- *  свивеля 0.03°, бедро 1.9°. Тот же полюс, что снимает `swivelFromHinge`, — захват и солв меряют одно и то же. */
-function swivelRootToPole(root: THREE.Object3D, mid: THREE.Object3D, target: THREE.Vector3, pole: THREE.Vector3, rootPoleLocal: THREE.Vector3 | null = null): void {
-  if (!root.parent) return;
-  root.updateMatrixWorld(true);
-  const S = root.getWorldPosition(V());
-  const a = target.clone().sub(S); if (a.lengthSq() < 1e-8) return; a.normalize();
-  const cur = rootPoleLocal ? perpTo(rootPoleLocal.clone().applyQuaternion(root.getWorldQuaternion(Q())), a) : perpTo(mid.getWorldPosition(V()).sub(S), a);
-  const want = perpTo(pole, a);
-  if ((rootPoleLocal ? cur.lengthSq() < 1e-8 : cur.length() < 0.3) || want.lengthSq() < 1e-8) return;   // почти прямая цепь (без твиста корня) — плоскость не определена
-  cur.normalize(); want.normalize();
-  let ang = Math.acos(clamp(cur.dot(want), -1, 1));
-  if (V().crossVectors(cur, want).dot(a) < 0) ang = -ang;
-  if (Math.abs(ang) < 1e-5) return;
-  const w = root.getWorldQuaternion(Q()).premultiply(Q().setFromAxisAngle(a, ang));
-  root.quaternion.copy(root.parent.getWorldQuaternion(Q()).invert().multiply(w));
-  root.updateMatrixWorld(true);
-}
-/**
- * АНАЛИТИЧЕСКАЯ КОНЕЧНОСТЬ С ПРЕДЕЛАМИ (Ф25.2). Порядок — как в ozz-animation / Unity TwoBoneIK, и это
- * главное решение ФТ5:
- *   1) ШАРНИР СТАВИТСЯ УГЛОМ по закону косинусов ВОКРУГ СВОЕЙ ОСИ, а не «целься в точку и потом клэмп».
- *      Предыдущая версия целила предплечье минимальной дугой, а 1-DOF клэмп ВЫБРАСЫВАЕТ внеосевую часть —
- *      вместе с ней уходил СГИБ (замер «колено вверх»: 88° вместо 116°, недолёт 13.3u; без клэмпа — 116°/0.00u).
- *   2) КОРЕНЬ ЦЕЛИТ КОНЕЦ ЦЕПИ В ЦЕЛЬ (а не себя в локоть): длина |корень→конец| уже задана сгибом,
- *      поэтому один поворот ставит кисть РОВНО НА РУЧКУ. Именно это делает «рука улетела от хелпера» невозможным:
- *      предел плеча теперь забирает СТОРОНУ ЛОКТЯ, а не дотягивание.
- *   3) СВИВЕЛЬ к полюсу вокруг линии корень→цель — конец не двигается, меняется только плоскость сгиба.
- * Клэмп плеча/бедра после каждого шага может сбить конец — поэтому шаги 2–3 повторяются и хранится ЛУЧШИЙ
- * кадр (сходимость не гарантирована, когда полюс требует твиста за пределом).
- */
-function solveLimb(e: Eff, target: THREE.Vector3, pole: THREE.Vector3): number {
+const limbEnv: LimbEnv = { limits: limitViewForBone, clamp: (q, v) => clampLocalToLimit(q, v), dbg: limbDbg };
+function limbChainOf(e: Eff): LimbChain | null {
   const root = human.bones.get(e.root), mid = human.bones.get(e.mid), end = human.bones.get(e.end);
-  if (!root || !mid || !end || !root.parent) return Infinity;
-  human.root.updateMatrixWorld(true);
-  const L1 = mid.position.length(), L2 = end.position.length();
-  const S = root.getWorldPosition(V());
-  const r = solveTwoBone({ S, H: target, pole, L1, L2, soft: LIMB_SOFT, prefer: e.isFoot ? LIMB_PREFER_LEG : LIMB_PREFER_ARM });
-  const vr = limitViewForBone(e.root), vm = limitViewForBone(e.mid);
-  setHingeBend(mid, end, vm, r.bend);
-  const rootPole = legHingePoleLocal(e, vm);                                     // ноги: плоскость — из твиста бедра (см. `swivelRootToPole`)
-  const clampRoot = (): void => {
-    if (!vr || limbDbg.noRootClamp) return;
-    root.quaternion.copy(clampLocalToLimit(root.quaternion, vr)); root.updateMatrixWorld(true);
-  };
-  let best = Infinity, bq = root.quaternion.clone(), bm = mid.quaternion.clone();
-  // ЛУЧШИЙ КАДР СНИМАЕТСЯ ПОСЛЕ КАЖДОГО ШАГА, а не в конце итерации: полюс — ПОЖЕЛАНИЕ, цель — ТРЕБОВАНИЕ
-  // (та же иерархия, что у pole vector в Maya). Замер без этого: «кисть к бедру» — прицеливание давало 0.00u,
-  // но свивель требовал твист за пределом, клэмп уводил кисть — и записывался ИМЕННО испорченный кадр (9.3u).
-  // НЕ ХУЖЕ — ЗНАЧИТ БЕРЁМ ПОЗДНИЙ. Свивель НЕ двигает конец (вращение вокруг линии корень→цель), то есть даёт
-  // РОВНО ТОТ ЖЕ недолёт — и при строгом «лучше» его кадр отбрасывался всегда, когда цель достижима: оранжевая ручка
-  // колена не двигала колено ВООБЩЕ (замер: 0.00u на тяге 6u) — та же жалоба, что в Ф23.
-  const rec = (): number => {
-    const m = end.getWorldPosition(V()).distanceTo(target);
-    if (m < best + 1e-4) { best = Math.min(best, m); bq = root.quaternion.clone(); bm = mid.quaternion.clone(); }
-    return m;
-  };
-  for (let it = 0; it < LIMB_ITERS; it++) {
-    aimRootAtTarget(root, end, target); clampRoot(); rec();
-    if (!limbDbg.noSwivel) {
-      swivelRootToPole(root, mid, target, pole, rootPole); clampRoot(); rec();
-      aimRootAtTarget(root, end, target); clampRoot(); rec();
-    }
-    if (best < 1e-3) break;
-  }
-  root.quaternion.copy(bq); mid.quaternion.copy(bm); human.root.updateMatrixWorld(true);
-  return best;
+  return root && mid && end ? { root, mid, end, world: human.root } : null;
 }
-/**
- * СГИБ ШАРНИРА НА ЗАДАННЫЙ УГОЛ, вокруг собственной оси сустава и в пределах таблицы. Знак — туда, куда сустав
- * вообще гнётся (у правого локтя диапазон [−6°, +138°], у левого зеркальный). Авторская поза может быть не ровно
- * прямой (бинд чужого рига), поэтому после установки СМОТРИМ ФАКТИЧЕСКИЙ сгиб и добираем разницу одним шагом
- * (абсолютный угол брать нельзя — тот же урок, что с бинд-избытком фаланг в Ф15).
- */
-function setHingeBend(mid: THREE.Object3D, end: THREE.Object3D, vm: LimitView | null, bend: number): void {
-  const aimMid = end.position.clone().normalize();
-  if (!vm || vm.kind !== 'hinge' || !vm.axis || limbDbg.noMidClamp) {
-    if (mid.parent) { const d = aimMid.clone().applyQuaternion(Q().setFromAxisAngle(new THREE.Vector3(1, 0, 0), bend)); mid.quaternion.setFromUnitVectors(aimMid, d); mid.updateMatrixWorld(true); }
-    return;
-  }
-  const ax = new THREE.Vector3(vm.axis[0], vm.axis[1], vm.axis[2]).normalize();
-  const sign = hingeBendSign(vm);                                      // ⚠ это же правило читает `swivelFromHinge` — поодиночке не менять
-  const put = (ang: number): number => {
-    mid.quaternion.copy(clampLocalToLimit(Q().setFromAxisAngle(ax, clamp(ang, vm.min ?? 0, vm.max ?? 0)), vm));
-    mid.updateMatrixWorld(true);
-    const d = aimMid.clone().applyQuaternion(mid.quaternion);
-    return Math.acos(clamp(d.dot(aimMid), -1, 1));                     // фактический сгиб относительно авторской позы
-  };
-  const want = sign * bend;
-  const got = put(want);
-  if (Math.abs(got - bend) > 1e-3) put(want + sign * (bend - got));    // один шаг Ньютона под бинд-смещение
+function solveLimb(e: Eff, target: THREE.Vector3, pole: THREE.Vector3): number {
+  const c = limbChainOf(e); if (!c) return Infinity;
+  // Плоскость — из твиста корня (см. `swivelRootToPole`); рукам — свивель только в пределах плеча (`swivelFeasible`):
+  // иначе локоть «держал место» и рука выкручивалась, а потом перескакивала на 158–165° за кадр (стенд `armIkHarness`).
+  return solveLimbChain(c, target, pole, { isFoot: e.isFoot, planeFromTwist: true, twistGuard: !e.isFoot }, limbEnv);
 }
+const setHingeBend = (mid: THREE.Object3D, end: THREE.Object3D, vm: LimitView | null, bend: number): void => setHingeBendChain(mid, end, vm, bend, limbEnv);
 /**
  * ПЛЕЧЕВОЙ ПОЯС (Ф25.3): довернуть ключицу так, чтобы плечевой сустав подошёл к `wantS` — в пределах
  * ключицы (Ф21.4: ±20° выведение, ±15° подъём, ±10° твист). Зовётся ТОЛЬКО когда рука сама не достаёт
@@ -1158,7 +1053,7 @@ function solveElbowEffector(e: Eff): void {
     }
   }
   poleFromPose(e);
-  if (e.isFoot) swivelFromHinge(e); else swivelFromPose(e);    // человек выбрал плоскость руками — запоминаем ЕЁ УГЛОМ от натурали (колено — по твисту бедра, см. `swivelFromHinge`)
+  swivelFromHinge(e);                                          // человек выбрал плоскость руками — запоминаем ЕЁ УГЛОМ от натурали, по твисту корня (см. `swivelFromHinge`)
 }
 /**
  * АНАТОМИЧЕСКИЙ ПОЛЮС (Ф26.7) — куда САМ смотрит локоть/колено при данном направлении руки.
@@ -1177,53 +1072,27 @@ function solveElbowEffector(e: Eff): void {
 // вниз-наружу. Рука НАД плечом (замах, трофейная поза) — локоть ВПЕРЁД-наружу: за спину его не увести,
 // плечевой сустав так не работает. Без этого переключения любое «вниз»-предпочтение при поднятой руке даёт ровно
 // противоположную сторону круга свивеля — локоть за спиной (замер на замахе: 14.6u позади плеча).
-const POLE_PREF_LOW = new THREE.Vector3(0.6, -1, 0.35);      // рука ниже плеча: наружу (× side), вниз, чуть вперёд
-const POLE_PREF_HIGH = new THREE.Vector3(0.5, 0.15, 1);      // рука выше плеча: вперёд-наружу
-const POLE_PREF_LEG = new THREE.Vector3(0, 0, 1);            // колено строго вперёд
+// Предпочтения и сама формула — в `limbIk.limbNaturalPole` (общий код со стендом рук в тестах).
+// Локоть: анатомическая таблица (сгиб — назад-вниз, у лица — вперёд, над головой — наружу). Прежний `armPoleLegacy`
+// ставил локоть наружу-вперёд: у опущенной кисти он висел на 5.75u впереди плеча, а на сгибе плечо прокручивалось на ~100°.
+let ARM_POLE: ArmPoleFn = armPoleAnatomical;
 function naturalPole(e: Eff, target: THREE.Vector3): THREE.Vector3 {
-  const root = human.bones.get(e.root); if (!root) return e.pole.clone();
+  const root = human.bones.get(e.root), mid = human.bones.get(e.mid), end = human.bones.get(e.end); if (!root) return e.pole.clone();
   human.root.updateMatrixWorld(true);
-  const hq = human.hips.getWorldQuaternion(Q());
+  // Фрейм опоры: ноге — таз, руке — ГРУДЬ (UpperChest). Наклонился корпус — локоть едет с ним, как у FinalIK «Parent».
+  const hq = (e.isFoot ? human.hips : human.bones.get('UpperChest') ?? human.hips).getWorldQuaternion(Q());
   const S = root.getWorldPosition(V());
-  const u = target.clone().sub(S).applyQuaternion(hq.clone().invert());          // направление тяги во фрейме таза
+  const toT = target.clone().sub(S);
+  const u = toT.clone().applyQuaternion(hq.clone().invert());                   // направление тяги во фрейме опоры
   if (u.lengthSq() < 1e-8) return e.pole.clone();
   u.normalize();
   const side = e.root.startsWith('Left') ? 1 : -1;
-  let pref: THREE.Vector3;
-  if (e.isFoot) pref = POLE_PREF_LEG.clone();
-  else {
-    const t = clamp((u.y + 0.2) / 0.8, 0, 1);                                    // 0 = рука ниже плеча, 1 = высоко над ним
-    pref = new THREE.Vector3(
-      (POLE_PREF_LOW.x + (POLE_PREF_HIGH.x - POLE_PREF_LOW.x) * t) * side,
-      POLE_PREF_LOW.y + (POLE_PREF_HIGH.y - POLE_PREF_LOW.y) * t,
-      POLE_PREF_LOW.z + (POLE_PREF_HIGH.z - POLE_PREF_LOW.z) * t);
-  }
-  let p = perpTo(pref.normalize(), u);
-  if (p.lengthSq() < 1e-6) p = perpTo(new THREE.Vector3(side, 0, 0), u);         // тянем точно вдоль предпочтения
-  if (p.lengthSq() < 1e-6) return e.pole.clone();
-  p.normalize();
-  if (e.swivel) p.applyQuaternion(Q().setFromAxisAngle(u, e.swivel));            // ручная правка — УГЛОМ вокруг линии тяги
-  return p.applyQuaternion(hq);                                                  // обратно в мир
-}
-/** Запомнить СВИВЕЛЬ (угол от натурали), а не мировой вектор — тогда правка переживает перемещение руки. */
-function swivelFromPose(e: Eff): void {
-  const root = human.bones.get(e.root), mid = human.bones.get(e.mid), end = human.bones.get(e.end);
-  if (!root || !mid || !end) return;
-  human.root.updateMatrixWorld(true);
-  const S = root.getWorldPosition(V()), Ep = mid.getWorldPosition(V()), Hp = end.getWorldPosition(V());
-  const axis = Hp.clone().sub(S); if (axis.lengthSq() < 1e-6) return; axis.normalize();
-  const cur = perpTo(Ep.sub(S), axis); if (cur.length() < 0.5) return;            // почти прямая — плоскость ненадёжна
-  const sw0 = e.swivel; e.swivel = 0;
-  const nat = perpTo(naturalPole(e, Hp), axis);
-  e.swivel = sw0;
-  if (nat.lengthSq() < 1e-6) return;
-  cur.normalize(); nat.normalize();
-  let a = Math.acos(clamp(nat.dot(cur), -1, 1));
-  if (V().crossVectors(nat, cur).dot(axis) < 0) a = -a;
-  e.swivel = a;
+  const reach = mid && end ? toT.length() / (mid.position.length() + end.position.length()) : 1;
+  const p = limbNaturalPole(u, side, e.isFoot, e.swivel, reach, ARM_POLE);
+  return p ? p.applyQuaternion(hq) : e.pole.clone();                             // обратно в мир
 }
 /**
- * СВИВЕЛЬ КОЛЕНА ИЗ ТВИСТА БЕДРА (только стопы). Жалоба: «кручу ЛЮБУЮ кость — правая нога прыгает в непонятный угол».
+ * СВИВЕЛЬ ИЗ ТВИСТА КОРНЯ (колено — бедра, локоть — плеча). Жалоба: «кручу ЛЮБУЮ кость — правая нога прыгает в непонятный угол».
  * Запиненная нога дорешается при любом драге, а `naturalPole` без записанного свивеля (его пишет только оранжевая
  * ручка) ставит колено СТРОГО ВПЕРЁД по тазу — авторская ротация бедра наружу стиралась. Замер на клипах воина
  * (правое бедро развёрнуто, эйлер Y ≈ −0.28): правая нога прыгала на 16–20° (ключ удара — до 37°), левая на 1–8°.
@@ -1231,30 +1100,21 @@ function swivelFromPose(e: Eff): void {
  * воспроизводит ту же плоскость. Из положения колена (как `swivelFromPose`) брать НЕЛЬЗЯ: у почти прямой ноги вынос
  * колена — внеосевой шум, который `setHingeBend` срезает (замер: ошибка 47–60°).
  */
-/** Полюс шарнира ноги в ЛОКАЛЬНОМ фрейме бедра (куда выпирает колено при сгибе). Руки — `null`: локоть ждёт своего решения. */
-function legHingePoleLocal(e: Eff, vm: LimitView | null): THREE.Vector3 | null {
-  const end = human.bones.get(e.end);
-  if (!e.isFoot || !end || !vm || vm.kind !== 'hinge' || !vm.axis) return null;
-  return hingePoleLocal(new THREE.Vector3(vm.axis[0], vm.axis[1], vm.axis[2]).normalize(), hingeBendSign(vm), end.position.clone().normalize());
-}
 function swivelFromHinge(e: Eff): void {
-  if (!e.isFoot) return;                                                          // локоть — отдельное решение, не трогаем
-  const root = human.bones.get(e.root), end = human.bones.get(e.end);
-  const vm = limitViewForBone(e.mid);
-  if (!root || !end || !vm || vm.kind !== 'hinge' || !vm.axis) return;
+  // Руки — с 17.09.2026 так же (раньше свивель локтя писался по положению локтя и только оранжевой ручкой): захват
+  // авторской плоскости + затухание по ходу кисти (`ARM_SWIVEL_FADE`) дают «мелкий ход держит позу, большой — анатомию».
+  const c = limbChainOf(e); if (!c) return;
   human.root.updateMatrixWorld(true);
   // ОСЬ — НА ПИН, А НЕ НА ТЕКУЩУЮ СТОПУ: солв (`holdPins` → `naturalPole(e, e.target)`) кладёт плоскость вокруг «бедро → пин».
   // FK-твист бедра уносит стопу с пина вместе с коленом — жёстко, вокруг оси бедра, — и угол вокруг «бедро → стопа» почти не
   // менялся. Замер (506 ключей, твист −10°): по стопе плоскость удерживалась в среднем на 9.5° при запрошенных 10.7°, у 116 ключей < 9°
   // (run_fwd#5: 16.0° → 3.6°); по пину — 10.6°, < 9° только у 6 ключей, где твист бедра упёрся в предел ±40°. В `syncEff` пин = стопа, там без разницы.
-  const S = root.getWorldPosition(V()), H = e.ik && e.pin ? e.target.clone() : end.getWorldPosition(V());
-  const axis = H.clone().sub(S); if (axis.lengthSq() < 1e-8) return; axis.normalize();
-  // Знак сгиба — `hingeBendSign`, как гнёт `setHingeBend`, а не флаг `flex` каталога: у пресета «дигитигр» тот врёт на 180°.
-  const pole = legHingePoleLocal(e, vm)!.applyQuaternion(root.getWorldQuaternion(Q()));
+  const H = e.ik && e.pin ? e.target.clone() : c.end.getWorldPosition(V());
   const sw0 = e.swivel; e.swivel = 0;
   const nat = naturalPole(e, H);
   e.swivel = sw0;
-  const sw = planeSwivel(axis, pole, nat);
+  // Знак сгиба внутри — `hingeBendSign`, как гнёт `setHingeBend`, а не флаг `flex` каталога: у пресета «дигитигр» тот врёт на 180°.
+  const sw = hingePlaneSwivel(c, H, nat, limbEnv);
   if (sw !== null) e.swivel = sw;
 }
 /**
@@ -1783,7 +1643,7 @@ gizmo.addEventListener('objectChange', () => {
         // ТОЛЬКО БЕДРО, НЕ ГОЛЕНЬ: шарнир плоскость не меняет, а переснятие на голени мерит угол по оси «бедро → стопа,
         // уехавшая от пина», солв кладёт его на ось «бедро → пин» — и так на КАЖДОЕ движение мыши. Замер (сим, сгиб
         // голени +0.5 рад от решённого, бедро Y −0.28): плоскость колена ползла 12.7° → 30.3° за 200 событий; без переснятия — стоит.
-        if (lk && rig.eff[lk]!.isFoot && nm === rig.eff[lk]!.root) swivelFromHinge(rig.eff[lk]!);
+        if (lk && nm === rig.eff[lk]!.root) swivelFromHinge(rig.eff[lk]!);
         // Правишь корпус руками — этот поворот стал АВТОРСКИМ, Pull больше не вправе его откатывать (Ф22.3).
         if ((TWIST_BONES as readonly string[]).includes(nm)) pullForget();
         if (nm === 'Neck' || nm === 'Head') gazeForget();   // Ф24.2: твой угол головы — новая база взгляда
@@ -1805,6 +1665,11 @@ gizmo.addEventListener('objectChange', () => {
     // «раскорячивает». Теперь тело идёт за рукой СКРУТКОЙ КОРПУСА (см. PULL в `solveRig`), а таз
     // двигается только своей ручкой — как в Cascadeur, где таз отдельный контроллер.
     const e = rig.eff[activeKey!]!; const nt = e.handle.position.clone().sub(e.viewOff);   // ручка нарисована на ладони — цель на суставе
+    // ПРАВКА ПЛОСКОСТИ ЛОКТЯ ЗАТУХАЕТ ПО ХОДУ КИСТИ (вариант 4 из разбора, 17.09.2026). Свивель — это авторская плоскость
+    // (снята с позы) или правка оранжевой ручкой; раньше он жил вечно и уводил локоть в плохие области при любом
+    // следующем движении (стенд: одна правка 60° — перескок 164° над головой). Мелкий ход кисти держит позу,
+    // большой — возвращает анатомию. По пройденному пути, а не по кадрам: от частоты кадров не зависит.
+    if (!e.isFoot) e.swivel = fadeSwivel(e.swivel, nt.distanceTo(e.target));
     e.target.copy(nt); e.prev.copy(nt);
   }
 });
@@ -2062,15 +1927,17 @@ function makeRunCycle(): Keyframe[] {
   return [K(0, k0), K(0.2, k1), K(0.4, mir(k0)), K(0.6, mir(k1)), K(0.8, k0)];
 }
 
-interface State { pose: Pose; hips: { p: [number, number, number]; q: [number, number, number, number] }; eff: Record<string, { t: [number, number, number]; fq: [number, number, number, number]; pl: [number, number, number]; ik: boolean; pin: boolean; kr?: boolean }> }
+interface State { pose: Pose; hips: { p: [number, number, number]; q: [number, number, number, number] }; eff: Record<string, { t: [number, number, number]; fq: [number, number, number, number]; pl: [number, number, number]; ik: boolean; pin: boolean; kr?: boolean; sw?: number }> }
 function snapshot(): State {
   const eff: State['eff'] = {};
-  for (const k in rig.eff) { const e = rig.eff[k]!; eff[k] = { t: e.target.toArray() as [number, number, number], fq: e.footQuat.toArray() as [number, number, number, number], pl: e.pole.toArray() as [number, number, number], ik: e.ik, pin: e.pin, kr: e.keepRot }; }
+  // `sw` — СВИВЕЛЬ: запиненные конечности его не переснимают (`syncHandles`), а драг кисти его гасит (`ARM_SWIVEL_FADE`) —
+  // без него undo вернул бы позу и пин, но следующий `holdPins` повёл бы локоть/колено в плоскость ПОСЛЕ драга.
+  for (const k in rig.eff) { const e = rig.eff[k]!; eff[k] = { t: e.target.toArray() as [number, number, number], fq: e.footQuat.toArray() as [number, number, number, number], pl: e.pole.toArray() as [number, number, number], ik: e.ik, pin: e.pin, kr: e.keepRot, sw: e.swivel }; }
   return { pose: readPoseFull(), hips: { p: rig.hipsPos.toArray() as [number, number, number], q: rig.hipsQuat.toArray() as [number, number, number, number] }, eff };
 }
 function restore(s: State): void {
   applyPose(s.pose); rig.hipsPos.fromArray(s.hips.p); rig.hipsQuat.fromArray(s.hips.q);
-  for (const k in s.eff) { const e = rig.eff[k]; const d = s.eff[k]!; if (e) { e.target.fromArray(d.t); e.footQuat.fromArray(d.fq); if (d.pl) e.pole.fromArray(d.pl); e.ik = d.ik; e.pin = d.pin; if (d.kr !== undefined) e.keepRot = d.kr; } }
+  for (const k in s.eff) { const e = rig.eff[k]; const d = s.eff[k]!; if (e) { e.target.fromArray(d.t); e.footQuat.fromArray(d.fq); if (d.pl) e.pole.fromArray(d.pl); e.ik = d.ik; e.pin = d.pin; if (d.kr !== undefined) e.keepRot = d.kr; if (d.sw !== undefined) e.swivel = d.sw; } }
   refreshLimbs();
 }
 const history = makeHistory(100);
@@ -2854,7 +2721,6 @@ function poseTools(): void {
   { const hint = el('div', 'color:#6b7180;font-size:10px'); hint.textContent = 'выкл — кисть/стопа едет за цепью (естественно); вкл — держит мировой угол (оружие, подошва)'; body.append(hint); }
   const rr = el('div', 'display:flex;flex-wrap:wrap;gap:6px'); body.append(rr);
   for (const [k, lb] of [['LH', 'кисть Л'], ['RH', 'кисть П'], ['LF', 'стопа Л'], ['RF', 'стопа П']] as const) { const lab = el('label', 'font-size:11px'); const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox'; cb.checked = rig.eff[k]!.keepRot; cb.onchange = () => { const e = rig.eff[k]!; e.keepRot = cb.checked; if (e.keepRot) syncEff(e); }; lab.append(cb, document.createTextNode(lb)); rr.append(lab); }
-  if (uiPro) body.append(pbtn(solverMode === 'analytic' ? 'солвер: аналитика' : 'солвер: FABRIK (старый)', () => { solverMode = solverMode === 'analytic' ? 'fabrik' : 'analytic'; setPref('solver', solverMode); renderAnim(); }, solverMode === 'analytic'));
   const rh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); rh.textContent = 'ТЕЛО ЗА РУКОЙ (замах)'; body.append(rh);
   const bf = el('input', 'width:100%') as HTMLInputElement; bf.type = 'range'; bf.min = '0'; bf.max = '1'; bf.step = '0.05'; bf.value = String(bodyFollow); bf.oninput = () => { bodyFollow = parseFloat(bf.value); }; body.append(bf);
   {   // Ф26.6 — Про: раздельно скрутка / прогиб / наклон + доля таза; в простом режиме всё ведёт один ползунок выше
@@ -6540,7 +6406,7 @@ function loop(): void {
 }
 loop();
 
-(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, fitPhysToMesh, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, groundManikinForView, get manGroundView() { return manGroundView; }, set manGroundView(v: boolean) { manGroundView = v; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, applyPose, swivelFromHinge, get selected() { return selected; }, get gripMode() { return gripMode; }, pickSet: () => ({ onModelBones: onModelBones(), meshes: boneMeshes().length, fingers: boneMeshes().filter((m) => isHandBone(m.userData.bone as string)).length, visible: boneMeshes().filter((m) => m.visible).length }), pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
+(window as unknown as { __pe: unknown }).__pe = { scene, camera, renderer, gizmo, rig, setComposer: (on: boolean): void => { useComposer = on; }, get human() { return human; }, get library() { return library; }, get weapons() { return weaponGroups; }, render: () => renderer.render(scene, camera), setIk, solvePlan, syncHandles, applySwivel, setGaze, applyGaze, gazeRelax, get gazeTarget() { return gazeTarget; }, get solverMode() { return solverMode; }, physBodies, PHYS_SIZES, fitPhysToBones, fitPhysToMesh, bodyAxis, rebuildForMorph, massCenter, supportRect, applyBalance, get balanceOff() { return balanceOff; }, get balance() { return { on: balanceOn, shift: weightShift }; }, setBalance: (on: boolean, sh: number): void => { balanceOn = on; weightShift = sh; }, bakeBodyFollow, naturalPole, applyBodyFollow, holdPins, get pinPower() { return pinPower; }, set pinPower(v: number) { pinPower = v; }, bodyFollowAngles, get bodyFollow() { return bodyFollow; }, set bodyFollow(v: number) { bodyFollow = v; }, get gains() { return { gTwist, gPitch, gRoll, pelvisFollow }; }, setGains: (t: number, p: number, r: number, pv: number): void => { gTwist = t; gPitch = p; gRoll = r; pelvisFollow = pv; }, get flex() { return { tw: flexTw, bend: flexBend, pelvis: flexPelvis }; }, setFlex: (t: number, b: number, p: number): void => { flexTw = t; flexBend = b; flexPelvis = p; }, applyAlpha, get alpha() { return { skel: aSkel, handle: aHandle }; }, rigDelta, syncRigs, rigRecipe, recipeKey, get ghost() { return ghostHuman; }, groundManikinForView, get manGroundView() { return manGroundView; }, set manGroundView(v: boolean) { manGroundView = v; }, setAlpha: (sk: number, hd: number): void => { aSkel = sk; aHandle = hd; applyAlpha(); }, shoulderHandles, gazeHandle, get activeShoulder() { return activeShoulder; }, get ghostGround() { return ghostGround; }, get locoOn() { return locoOn; }, get physOn() { return physOn; }, get tab() { return tab; }, tabSwitch, setSolver: (m: 'analytic' | 'fabrik'): void => { solverMode = m; }, setArmPole: (m: 'anatomical' | 'legacy'): void => { ARM_POLE = m === 'legacy' ? armPoleLegacy : armPoleAnatomical; }, solveLimb, shoulderGirdle, limbDbg, limitViewForBone, setActive: (k: string | null, p: string | null): void => { activeKey = k; activePole = p; }, aimBoneAt, clampLocalToLimit, setHingeBend, swivelRootToPole, get activeKey() { return activeKey; }, get activePole() { return activePole; }, applyChar, setWeapon, solveRig, captureRig, syncEff, applyPose, swivelFromHinge, get selected() { return selected; }, get gripMode() { return gripMode; }, pickSet: () => ({ onModelBones: onModelBones(), meshes: boneMeshes().length, fingers: boneMeshes().filter((m) => isHandBone(m.userData.bone as string)).length, visible: boneMeshes().filter((m) => m.visible).length }), pose: () => readPoseFull(), wpos: (b: string) => human.bones.get(b)!.getWorldPosition(V()).toArray().map((v) => +v.toFixed(1)),
   ensurePhysics, bakeCurrentClip, PHYS, LIMITS, MOTOR, rebuildRagdoll, jiggle, get pw() { return pw; }, get ragdoll() { return ragdoll; },
   get player() { return lp(); }, locoSetVel: (x: number, z: number): void => { locoVx = x; locoVz = z; }, locoStep: (dt: number): void => stepLoco(dt), locoGaitStep: (dt: number): void => stepGait(dt), get locoNodes() { return locoNodes; }, locoAdd: (clip: string, vx: number, vz: number): void => { locoNodes.push({ character: curCharId, weapon, clip, vx, vz }); },
   setPlantCell: (dir: number, run: boolean, lF: number, lL: number, rF: number, rL: number): void => { const cell = (run ? gaitPlant.run : gaitPlant.walk)[((dir % 8) + 8) % 8]!; cell.l = [lF, lL]; cell.r = [rF, rL]; }, get plant() { return gaitPlant; }, get plantSel() { return { dir: plantDirSel, run: plantSpeedRun }; },
