@@ -32,6 +32,11 @@
         "editor"
       ],
       "port": 5174
+    },
+    {
+      "name": "editor-running",
+      "url": "http://localhost:5174",
+      "port": 5174
     }
   ]
 }
