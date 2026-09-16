@@ -29,7 +29,7 @@
  * опечатка в задаче проекта уронила бы игровой сервер. Здесь запись и так DEV-only, а связи с игрой нет.
  */
 import { devFetch } from '../devAuth.js';   // публикация — инструментальный роут: нужен токен админа
-export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield', 'pe_twist', 'pe_models', 'pe_grip', 'pe_ui', 'pe_gripposes', 'pe_morph', 'pe_morph_range', 'pe_poselib', 'pe_ai', 'pe_bonemaps', 'pe_roadmap', 'pe_anim'] as const;
+export const POSE_KEYS = ['pe_gait', 'pe_clips', 'pe_sway', 'pe_phys', 'pe_ragdoll', 'pe_chars', 'pe_attacks', 'pe_loco', 'pe_appearance', 'pe_shield', 'pe_twist', 'pe_models', 'pe_grip', 'pe_ui', 'pe_gripposes', 'pe_morph', 'pe_morph_range', 'pe_poselib', 'pe_ai', 'pe_bonemaps', 'pe_roadmap', 'pe_anim', 'pe_gaitbake'] as const;
 export type PoseKey = typeof POSE_KEYS[number];
 
 /** Состояние синка (ЛИЧНОЕ, на сервер не уходит): на какой ревизии основана рабочая копия и что в ней правлено. */

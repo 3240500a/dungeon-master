@@ -45,6 +45,52 @@ export function locoClipName(dir: LocoDir, fast: boolean): string {
   return `${fast ? 'run' : 'walk'}_${dir}`;
 }
 
+/**
+ * ⭐⭐ ВСЁ, ЧТО ДВИЖОК МОЖЕТ СПРОСИТЬ: четыре направления × ходьба/бег. Ровно эти имена и обязан
+ * покрывать набор запекания — иначе запечёшь клипы, которых никто не читает, и наоборот.
+ *
+ * ⚠ Этот список — ЕДИНСТВЕННАЯ правда о составе набора. Он же кормит сторожа расхождения
+ * (`locoSet.test.ts`) и список запекания в редакторе, поэтому «добавил направление» = одна правка.
+ */
+export const LOCO_DIRS: readonly LocoDir[] = ['fwd', 'back', 'strafe_L', 'strafe_R'];
+export const LOCO_NAMES: readonly string[] =
+  [false, true].flatMap((fast) => LOCO_DIRS.map((d) => locoClipName(d, fast)));
+
+/**
+ * Имена-кандидаты при ПОИСКЕ: нынешняя конвенция, затем историческая.
+ *
+ * ⚠ Историческое имя страйфа — без префикса скорости (`strafe_L`): запекатель делал ОДИН страйф на
+ * сторону, и он подходит обеим скоростям — другого у автора всё равно нет. Смена конвенции не должна
+ * обнулять уже запечённое (та же логика, что у имён стоек: `stanceNameCandidates`).
+ */
+export function locoClipNames(dir: LocoDir, fast: boolean): string[] {
+  const out = [locoClipName(dir, fast)];
+  if (dir === 'strafe_L' || dir === 'strafe_R') out.push(dir);
+  return out;
+}
+
+/**
+ * ⭐⭐ НАБОР ЛОКОМОЦИИ — ОДИН НА ВСЕ ОРУЖИЯ, С ВОЗМОЖНОСТЬЮ ПЕРЕКРЫТЬ ЕГО ПООРУЖНО.
+ *
+ * Порядок: точный набор ЭТОГО оружия → безоружный (`none`) → любой, что есть. Так «запёк без оружия»
+ * работает везде, а «запёк отдельно под двуручник» бьёт базу — ровно как у стоек предметов.
+ *
+ * ⚠ РАНЬШЕ ОРУЖИЕ НЕ УЧАСТВОВАЛО ВОВСЕ: поиск шёл по имени и персонажу, и `find` отдавал ПЕРВЫЙ
+ * подходящий клип — то есть набор был не «общий» и не «пооружный», а «какой раньше лёг в массив».
+ */
+export function findLocoClip<T extends { name: string; character?: string; weapon?: string }>(
+  clips: readonly T[], name: string, character: string, weapon: string,
+): T | null {
+  let exact: T | null = null, base: T | null = null, any: T | null = null;
+  for (const c of clips) {
+    if (c.name !== name || c.character !== character) continue;
+    if (c.weapon === weapon) { exact = c; break; }              // точнее уже не будет — выходим
+    if (c.weapon === 'none') base ??= c;
+    any ??= c;
+  }
+  return exact ?? base ?? any;
+}
+
 // ── СЕКЦИИ: старт → цикл → остановка (Ф5б) ───────────────────────────────────────────────────────
 
 /** Что именно играет слой локомоции прямо сейчас. */

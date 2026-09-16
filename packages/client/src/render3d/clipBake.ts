@@ -38,6 +38,9 @@ export interface GaitSpec {
   /** Не задана → длительность определяется циклом ноги. Задана → снимаем ровно столько секунд. */
   durationSec?: number;
   loop?: boolean;               // по умолчанию true для циклических
+  /** ⚠ Движок это имя НЕ спрашивает (`LOCO_NAMES`) — режим для экспорта в чужой движок, по умолчанию
+   *  в набор запекания не входит. Не «выключено», а «не нужно нашему рантайму». */
+  extra?: boolean;
 }
 
 export interface BakeGaitOptions {
@@ -158,29 +161,49 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
 }
 
 /**
- * Стандартный набор походки. Это те же режимы, что покрывает golden-харнесс `gaitGolden.ts`,
- * то есть ровно то, что клиенту нужно, чтобы полностью обойтись без StepPlanner.
+ * ⭐⭐ СТАНДАРТНЫЙ НАБОР ПОХОДКИ = РОВНО ТО, ЧТО ДВИЖОК СПРАШИВАЕТ (`LOCO_NAMES`), плюс стойка.
+ *
+ * ⚠ РАНЬШЕ ЭТИ ДВА СПИСКА РАСХОДИЛИСЬ, и половина работы уходила в никуда: запекались `strafe_L`,
+ * `strafe_R` и шесть диагоналей, а рантайм просил `walk_strafe_L`/`run_strafe_L`/`run_back`… — из
+ * восьми имён набор покрывал ТРИ. То есть «переключил бег на клипы» давало клипы только вперёд,
+ * назад и бег вперёд, а страйф и бег назад молча падали обратно на планировщик.
+ *
+ * ⚠ СКОРОСТЬ ЗАПЕКАНИЯ = СКОРОСТЬ ПРОИГРЫВАНИЯ. Ходьба/бег выбираются порогом по `sb` (ось
+ * ходьба→бег), поэтому клип, который будет играть на беге, обязан быть снят НА БЕГОВОЙ скорости:
+ * иначе каденция клипа и фаза планировщика разойдутся, и стопы поедут.
+ *
+ * ДИАГОНАЛИ ОСТАВЛЕНЫ, НО ВЫКЛЮЧЕНЫ ПО УМОЛЧАНИЮ (`extra`): решение Ф0 — четыре направления, а
+ * диагональ закрывает доворот таза. Они не удалены, потому что чужому движку при экспорте могут
+ * понадобиться, а в редакторе их видно галочкой и понятно, что движок их не читает.
  *
  * ПОВОРОТОВ ЗДЕСЬ НЕТ ОСОЗНАННО: разворот — это вращение КОРНЯ (мировой facing), а наши клипы in-place.
  * Пока Root не анимируется (Ф1.4 завёл узел, но треков корня ещё нет), запечённый «поворот» был бы
  * либо пустым, либо содержал бы facing, который в чужом движке подрался бы с его собственным поворотом.
  */
+const WALK = 0.42, RUN = 0.85;
 export const GAIT_PRESETS: readonly GaitSpec[] = [
   { name: 'idle', vx: 0, vz: 0, durationSec: 0.5, loop: true },
-  { name: 'walk_fwd', vx: 0, vz: 0.42 },
+  { name: 'walk_fwd', vx: 0, vz: WALK },
   // ХОД СПИНОЙ: обязателен yaw:0. Без него facing берётся ПО ДВИЖЕНИЮ (atan2 → пол-оборота), и получается
   // «развернулся и пошёл вперёд» — та же походка, а не ход назад. Ловится тем, что период совпадает с walk_fwd.
-  { name: 'walk_back', vx: 0, vz: -0.42, yaw: 0 },
-  { name: 'run_fwd', vx: 0, vz: 0.85 },
-  { name: 'strafe_L', vx: -0.5, vz: 0, yaw: 0 },
-  { name: 'strafe_R', vx: 0.5, vz: 0, yaw: 0 },
-  { name: 'walk_diag_FL', vx: -0.3, vz: 0.3, yaw: 0 },
-  { name: 'walk_diag_FR', vx: 0.3, vz: 0.3, yaw: 0 },
-  { name: 'walk_diag_BL', vx: -0.3, vz: -0.3, yaw: 0 },
-  { name: 'walk_diag_BR', vx: 0.3, vz: -0.3, yaw: 0 },
-  { name: 'run_diag_FL', vx: -0.6, vz: 0.6, yaw: 0 },
-  { name: 'run_diag_FR', vx: 0.6, vz: 0.6, yaw: 0 },
+  { name: 'walk_back', vx: 0, vz: -WALK, yaw: 0 },
+  { name: 'walk_strafe_L', vx: -WALK, vz: 0, yaw: 0 },
+  { name: 'walk_strafe_R', vx: WALK, vz: 0, yaw: 0 },
+  { name: 'run_fwd', vx: 0, vz: RUN },
+  { name: 'run_back', vx: 0, vz: -RUN, yaw: 0 },
+  { name: 'run_strafe_L', vx: -RUN, vz: 0, yaw: 0 },
+  { name: 'run_strafe_R', vx: RUN, vz: 0, yaw: 0 },
+  { name: 'walk_diag_FL', vx: -0.3, vz: 0.3, yaw: 0, extra: true },
+  { name: 'walk_diag_FR', vx: 0.3, vz: 0.3, yaw: 0, extra: true },
+  { name: 'walk_diag_BL', vx: -0.3, vz: -0.3, yaw: 0, extra: true },
+  { name: 'walk_diag_BR', vx: 0.3, vz: -0.3, yaw: 0, extra: true },
+  { name: 'run_diag_FL', vx: -0.6, vz: 0.6, yaw: 0, extra: true },
+  { name: 'run_diag_FR', vx: 0.6, vz: 0.6, yaw: 0, extra: true },
 ] as const;
+
+/** Имена, включённые по умолчанию: всё, кроме помеченного `extra` (движок их не спрашивает). */
+export const defaultBakePick = (specs: readonly GaitSpec[] = GAIT_PRESETS): string[] =>
+  specs.filter((s) => !s.extra).map((s) => s.name);
 
 /** Запечь весь набор. Плеер переиспользуется — между режимами он сам выходит на новый через разогрев. */
 export function bakeGaitSet(

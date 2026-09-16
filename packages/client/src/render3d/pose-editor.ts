@@ -58,7 +58,8 @@ import { buildInventory, inventorySummary } from './animInventory.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
-import { bakeGaitSet, defaultReadPose, GAIT_PRESETS } from './clipBake.js';                    // Ф2.1: процедурка → клипы
+import { bakeGaitSet, defaultReadPose, GAIT_PRESETS, defaultBakePick } from './clipBake.js';    // Ф2.1: процедурка → клипы
+import { findLocoClip, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
 import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
 import { hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';   // Ф12: офсет таза — ДЕЛЬТА от rest, а не абсолют
@@ -4349,16 +4350,68 @@ function renderLoco(): void {
 /** Панель настройки процедурного бега (GX/POSE/GAIT). Меняет живые объекты + пишет per-character в pe_gait. */
 // Ф2.1: запечь процедурную походку в обычные клипы (после этого клиенту StepPlanner не нужен)
 let bakeStatus = '';
+/**
+ * ⭐ ЧТО ИМЕННО ЗАПЕКАТЬ — НАСТРОЙКА, А НЕ КОНСТАНТА. Список режимов хранится per-персонаж
+ * (`pe_gaitbake`), потому что и сама походка настраивается per-персонаж.
+ *
+ * Пустая запись = умолчание (`defaultBakePick`): всё, что спрашивает движок, без диагоналей.
+ */
+type BakePick = Record<string, string[]>;
+let bakePick: BakePick = (() => { try { return JSON.parse(localStorage.getItem('pe_gaitbake') || '{}') as BakePick; } catch { return {}; } })();
+const bakeList = (): string[] => bakePick[curCharId] ?? defaultBakePick();
+const setBakeList = (names: string[]): void => {
+  bakePick = { ...bakePick, [curCharId]: names };
+  try { localStorage.setItem('pe_gaitbake', JSON.stringify(bakePick)); savePoseKey('pe_gaitbake'); } catch { /* приватный режим */ }
+};
+
 function bakeGaitSection(): void {
   const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); h.textContent = 'ЗАПЕЧЬ ПОХОДКУ В КЛИПЫ'; body.append(h);
-  const info = el('div', 'color:#6b7180;font-size:10px'); info.textContent = `${GAIT_PRESETS.length} режимов (стойка/шаг/бег/страйф/диагонали) → обычные клипы для текущего оружия`; body.append(info);
-  body.append(pbtn('⚙ запечь набор походки', () => {
+  const picked = bakeList();
+  const info = el('div', 'color:#6b7180;font-size:10px');
+  info.textContent = weapon === 'none'
+    ? 'БЕЗ ОРУЖИЯ = базовый набор: работает со всеми оружиями, пока им не запечён свой'
+    : `набор для «${weapon}» — перекроет безоружный только для этого оружия`;
+  body.append(info);
+
+  // ── Список режимов: что запекаем ────────────────────────────────────────────────────────────
+  // Видно сразу три вещи: что включено, что уже запечено (и под каким оружием найдётся), и что
+  // движок вообще не спрашивает. Без последнего легко запечь набор, который никто не читает —
+  // ровно это и было с `strafe_L`/диагоналями.
+  const listBox = el('div', 'margin:4px 0;border:1px solid #39415a;border-radius:6px;padding:4px 6px');
+  for (const s of GAIT_PRESETS) {
+    const row = el('label', 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0;font-size:11px');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = picked.includes(s.name);
+    cb.addEventListener('change', () => {
+      const next = cb.checked ? [...bakeList(), s.name] : bakeList().filter((n) => n !== s.name);
+      setBakeList(next); refreshAll();   // список живёт на вкладке «Бег» — перерисовываем её, а не «Анимации»
+    });
+    const have = findLocoClip(library, s.name, curCharId, weapon);
+    const name = el('span', 'flex:1'); name.textContent = s.name;
+    const speed = el('span', 'color:#6b7180');
+    speed.textContent = s.durationSec !== undefined ? 'стойка' : `${Math.round(Math.hypot(s.vx, s.vz) * 100)}%`;
+    const mark = el('span', have ? 'color:#9ae6a0' : 'color:#6b7180');
+    mark.textContent = have ? (have.weapon === weapon ? '✓ есть' : `✓ ${have.weapon}`) : '—';
+    row.append(cb, name, speed, mark);
+    if (s.extra) { row.style.opacity = '0.6'; row.title = 'движок это имя не спрашивает — только для экспорта в чужой движок'; }
+    listBox.append(row);
+  }
+  body.append(listBox);
+  // Сторож расхождения ГЛАЗАМИ: чего из нужного движку в выборке нет.
+  const miss = LOCO_NAMES.filter((n) => !picked.includes(n));
+  if (miss.length) {
+    const w = el('div', 'color:#e0b050;font-size:10px;margin-bottom:2px');
+    w.textContent = `⚠ движок спрашивает, а в наборе нет: ${miss.join(', ')} — эти направления останутся на планировщике`;
+    body.append(w);
+  }
+
+  body.append(pbtn(`⚙ запечь набор походки (${picked.length})`, () => {
     const wasLoco = locoOn; locoOn = false;                   // бейк сам гоняет плеера — цикл не должен мешать
     const player = lp();
     if (player.weapon !== weapon) player.setWeapon(weapon);
     player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
     const t0 = performance.now();
-    const out = bakeGaitSet(player, human, { character: curCharId, weapon, readPose: defaultReadPose(human) });
+    const specs = GAIT_PRESETS.filter((s) => bakeList().includes(s.name));
+    const out = bakeGaitSet(player, human, { character: curCharId, weapon, readPose: defaultReadPose(human) }, specs);
     const ms = performance.now() - t0;
     histLib('запечь походку', () => {
       for (const r of out) putClip(r.clip, 'replace');   // перезапекание набора — это осознанная перезапись
@@ -5180,6 +5233,18 @@ const GX = { armDown: 1.35, elbowBend: 0.25 };   // legWidth убран (дуб�
 const editorContent: PoseContent = {
   resolveUpper: (w, combat, t) => resolveUpper(w, combat, t),   // t — часы живой стойки (редактор ≡ игра)
   shieldOverlay: (wk) => { const c = stanceClip(wk) ?? stanceClip('shield'); return c && c.keys[0] ? { pose: c.keys[0].pose, mix: shieldMixFor(wk) } : null; },
+  /**
+   * ⚠⚠ ЭТОГО НЕ БЫЛО ВОВСЕ, и ползунок «доля клипа локомоции» в редакторе крутился ВХОЛОСТУЮ:
+   * контент редактора не умел отдавать клип локомоции, поэтому игра играла запечённое, а редактор —
+   * всегда процедурку. Проверять запечённый бег было негде — ровно то, что запрещает «редактор ≡ игра».
+   *
+   * Правило разбора ОБЩЕЕ с игрой (`findLocoClip`): точный набор оружия → безоружный → любой.
+   * Разными остаются только источники клипов: здесь живая библиотека, там localStorage.
+   */
+  locoClip: (names, w) => {
+    for (const n of names) { const c = findLocoClip(library, migratePoseName(n), curCharId, w); if (c) return c; }
+    return null;
+  },
 };
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
 interface UpperPose { pose: Pose; swing: number }

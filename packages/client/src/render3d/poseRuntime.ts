@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipName, locoDir, locoPhaseU, stepLocoSection, sectionClipTime, type LocoSectionState } from './locoBlend.js';
+import { locoClipNames, locoDir, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, type LocoSectionState } from './locoBlend.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
@@ -148,7 +148,8 @@ export interface PoseContent {
   /** Клип состояния (`stagger`, `knockdown_fall`, `getup`…) по привязке из `pe_anim`. Нет клипа → null. */
   stateClip?(state: string): Clip | null;
   /** Клип локомоции по имени конвенции (`run_fwd`, `walk_strafe_L`…). Нет — ползунок Ф4 просто молчит. */
-  locoClip?(name: string): Clip | null;
+  /** Клип локомоции: имена-кандидаты в порядке приоритета + оружие (набор `none` работает на всех). */
+  locoClip?(names: readonly string[], weapon: string): Clip | null;
   /** Настройка состояния: приоритет, прерываемость, кроссфейд, владение ногами. */
   stateCfg?(state: string): { priority: number; interruptible: boolean; blendSec: number; legs: 'auto' | 'never' | 'always' };
   /** ⭐ ЖИВОЙ ХВАТ из `pe_gripposes` (см. `liveGrip`). Нет метода — хват только запечённый, как раньше. */
@@ -600,6 +601,19 @@ export const LOCO_BONES = [
   'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes',
 ] as const;
 
+/**
+ * ⭐ ПЕРЕКЛЮЧАТЕЛЬ ЛОКОМОЦИИ ИЗ НАСТРОЕК КЛИЕНТА: клипы (1) ↔ планировщик (0), `null` — как настроено
+ * в редакторе (`pe_gait.locoMix`).
+ *
+ * ⚠ Отдельным полем, а НЕ записью в `GAIT.locoMix`: та — контент (правится в редакторе, приезжает с
+ * конфигом персонажа и перезаписывается при каждой смене куклы), а это — выбор игрока, который обязан
+ * пережить загрузку конфига. Иначе галка «работала до первого входа на этаж».
+ */
+let locoMixOverride: number | null = null;
+export function setLocoMixOverride(v: number | null): void { locoMixOverride = v; }
+/** Текущий override (для UI и тестов). */
+export function getLocoMixOverride(): number | null { return locoMixOverride; }
+
 export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
@@ -839,8 +853,21 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
     /** Клип состояния по привязке (`pe_anim.states`), иначе по имени состояния как есть. */
     stateClip(state: string): Clip | null { return byName(anim.stateName(state)); },
-    /** Клип локомоции (Ф4). Через ту же привязку `pe_anim`, что и состояния: имя — лишь умолчание. */
-    locoClip(name: string): Clip | null { return byName(anim.stateName(name)); },
+    /**
+     * Клип локомоции (Ф4). Привязка `pe_anim` главнее (имя — лишь умолчание), затем кандидаты имени,
+     * и на каждом — набор ПОД ОРУЖИЕ: точный → безоружный → любой (`findLocoClip`).
+     */
+    locoClip(names: readonly string[], weapon: string): Clip | null {
+      const bound = names[0] ? anim.stateName(names[0]) : '';
+      for (const n of [bound, ...names]) {
+        if (!n) continue;
+        const nm = migratePoseName(n);
+        const c = findLocoClip(clips, nm, charId, weapon)
+          ?? (fallbackId ? findLocoClip(clips, nm, fallbackId, weapon) : null);
+        if (c) return c;
+      }
+      return null;
+    },
     stateCfg(state: string) { const c = anim.stateCfg(state); return { priority: c.priority, interruptible: c.interruptible, blendSec: c.blendSec, legs: c.legs }; },
     /** Живой хват: цепочка клип → оружие → авто (`effectiveWeaponGrip`). Считается один раз на (оси, оружие, клип). */
     gripPose(weapon: string, axes: Record<string, FingerAxes> | null, clipName?: string): Pose | null {
@@ -1529,12 +1556,12 @@ export class PosePlayer {
     // Клип берём по направлению В КАДРЕ ТЕЛА и по режиму (ходьба/бег), а сэмплируем ФАЗОЙ
     // ПЛАНИРОВЩИКА: у клипа не должно быть своего таймера, иначе настройки персонажа перестанут на
     // него влиять и «из двух паков много вариантов» не получится.
-    const mix = clamp(GAIT.locoMix, 0, 1);
+    const mix = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1);
     let locoPose: Pose | null = null;
     if (mix > 0.001 && this.content.locoClip) {
       const fy = Math.sin(yaw), fz2 = Math.cos(yaw), rx2 = Math.cos(yaw), rz2 = -Math.sin(yaw);
       const fwd = this.vx * fy + this.vz * fz2, lat = this.vx * rx2 + this.vz * rz2;
-      const c = this.content.locoClip(locoClipName(locoDir(fwd, lat, GAIT.strafeFrom), (tg.sb ?? 0) > 0.5));
+      const c = this.content.locoClip(locoClipNames(locoDir(fwd, lat, GAIT.strafeFrom), (tg.sb ?? 0) > 0.5), this.weapon);
       if (c && c.keys.length) {
         // СЕКЦИИ (Ф5б): разгон → цикл → остановка одним клипом. Меток нет — весь клип цикл, то есть
         // ровно прежнее поведение; размечать обычный зацикленный `run_fwd` никто не обязан.

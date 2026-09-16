@@ -13,7 +13,8 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
-import { markSfx, shakeForMark, burstForMark, playHitSound } from './animSfx.js';   // ⭐ метки клипа звучат (вжух/шаг), а удар — от события (см. `animSfx`)
+import { markSfx, shakeForMark, burstForMark, playHitSound } from './animSfx.js';
+import { setLocoMixOverride } from './poseRuntime.js';   // галка «бег клипами» из настроек клиента   // ⭐ метки клипа звучат (вжух/шаг), а удар — от события (см. `animSfx`)
 import { makeCamShake } from './camShake.js';
 import { makeNetInterp } from './netInterp.js';
 import { cameraCfg, placeCamera, applyLens, camZoom, camDir } from './cameraRig.js';   // ⭐ камера из конфига, одна формула с вкладкой «Тест»   // ⭐ снапшот 30 Гц → гладкий кадр (экстраполяция + гашение ошибки)
@@ -190,6 +191,7 @@ export async function startOnline3d(): Promise<void> {
     if (playerLight) { playerLight.shadow.mapSize.set(shadowRes, shadowRes); playerLight.shadow.bias = sh.bias; playerLight.castShadow = playerShadows; }
     renderer.shadowMap.needsUpdate = true;
   };
+  // Галка «бег клипами» из настроек: перекрывает `pe_gait.locoMix` и переживает загрузку конфига куклы.
   const debug = mountDebug(scene, camera, canvas, root);   // DBG-панель: только debug-слои + инфо (перф-тумблеры → «Настройки»)
   const applySavedSettings = mountSettings(root, {
     onMonKinematic: (on) => { monKinematic = on; },   // применяет цикл монстров (форс кинематик всем поверх авто-физ-LOD)
@@ -208,6 +210,9 @@ export async function startOnline3d(): Promise<void> {
     },
     onAdaptiveRes: (on) => { adaptiveRes = on; if (on) prIdx = 0; else applyPR(manualPR); },   // авто (контроллер по FPS) ↔ ручной (значение ползунка)
     onResScale: (v) => { manualPR = Math.max(0.5, Math.min(2, v)); if (!adaptiveRes) applyPR(manualPR); },   // ползунок 0.5–2× (>native = суперсэмплинг); применяется в ручном режиме
+    // ⚠ Перекрывает `pe_gait.locoMix` НАСОВСЕМ (а не пишет в него): конфиг персонажа перезагружается
+    // при каждой смене куклы и затёр бы выбор игрока на первом же входе на этаж.
+    onLocoClips: (on) => setLocoMixOverride(on ? 1 : 0),
   });
 
   await initPhysics();
