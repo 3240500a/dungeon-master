@@ -3,7 +3,7 @@ import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, getLocoMixOverride } from './poseRuntime.js';
 import { GAIT } from './pose.js';
 import { LOCO_NAMES, LOCO_DIRS, locoClipName, locoClipNames, findLocoClip } from './locoBlend.js';
-import { GAIT_PRESETS, defaultBakePick } from './clipBake.js';
+import { GAIT_PRESETS, defaultBakePick, bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
 import type { Clip } from './clipModel.js';
 
 /**
@@ -80,6 +80,83 @@ describe('набор под оружие', () => {
   });
 });
 
+/**
+ * ⭐⭐ ДЁРГАНЬЕ НА СМЕНЕ РЕЖИМА. Жалоба была ровно такой: «как-то дёргано они играются».
+ *
+ * ЗАМЕР (максимальный скачок позы за кадр, воин, запечённый набор, 10 с прогона):
+ *
+ *            случай            было      стало     планировщик
+ *   у порога ходьба/бег        60.84°    28.46°      25.78°
+ *   у порога страйфа           51.73°    31.57°      25.78°
+ *   разгон шаг→бег             33.66°    30.24°      25.78°
+ *
+ * И главное: ВЕСЬ максимум приходился на кадр ПОДМЕНЫ клипа — то есть поза менялась целиком за один
+ * кадр. Так и работало: клип ВЫБИРАЛСЯ порогом (угол ≥ `strafeFrom` → страйф, `sb > 0.5` → бег), и
+ * на пороге происходила мгновенная подмена. Лечится не сглаживанием порога, а тем, что порога быть
+ * не должно: клипы БЛЕНДЯТСЯ по непрерывным осям (Blend Space / Blend Tree в индустрии), а фаза у
+ * них общая — планировщика (Sync Group).
+ *
+ * Сторож держит РАВНЕНИЕ НА ПЛАНИРОВЩИКА, а не магическое число: клип-слой не имеет права дёргаться
+ * заметно сильнее процедурного на тех же входах.
+ */
+describe('плавность на смене режима', () => {
+  const GAIT0 = { ...GAIT };
+  const GX2 = { armDown: 1.35, elbowBend: 0.25 };
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: () => null, setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
+    } as Storage;
+  });
+  afterEach(() => { setLocoMixOverride(null); delete (globalThis as unknown as { localStorage?: Storage }).localStorage; Object.assign(GAIT, GAIT0); });
+
+  /** Запечь набор так же, как это делает кнопка в редакторе. */
+  const bakeAll = (): Map<string, Clip> => {
+    const h = buildHumanoid({});
+    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX2, emptyGrid());
+    const out = new Map<string, Clip>();
+    for (const sp of GAIT_PRESETS) out.set(sp.name, bakeGaitToClip(p, h, sp, { character: 'warrior', weapon: 'none' }).clip);
+    return out;
+  };
+
+  /** Максимальный скачок позы за кадр (град) на заданном ходе. `lib === null` — чистый планировщик. */
+  const jerk = (lib: Map<string, Clip> | null, drive: (i: number) => { vx: number; vz: number }): number => {
+    const h = buildHumanoid({});
+    const base = localStorageContent('warrior');
+    const content = lib ? { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } } : base;
+    const p = new PosePlayer(h, () => [], content, 'none', GX2, emptyGrid());
+    setLocoMixOverride(lib ? 1 : 0);
+    const names = [...h.bones.keys()].sort();
+    let prev: number[] | null = null, max = 0;
+    for (let i = 0; i < 600; i++) {
+      const d = drive(i);
+      p.setVel(d.vx, d.vz); p.setYaw(0);
+      p.step(1 / 60);
+      h.root.updateMatrixWorld(true);
+      const cur: number[] = [];
+      for (const k of names) { const b = h.bones.get(k)!; cur.push(b.rotation.x, b.rotation.y, b.rotation.z); }
+      if (prev && i > 200) for (let j = 0; j < cur.length; j++) max = Math.max(max, Math.abs(cur[j]! - prev[j]!) * 180 / Math.PI);
+      prev = cur;
+    }
+    return max;
+  };
+
+  const W = 0.42 * BAKE_MAXSPD, R = 0.85 * BAKE_MAXSPD;
+  const CASES: [string, (i: number) => { vx: number; vz: number }][] = [
+    ['у порога ходьба/бег', (i) => ({ vx: 0, vz: (W + R) / 2 + Math.sin(i / 40) * 4 })],
+    ['у порога страйфа', (i) => { const a2 = (45 + Math.sin(i / 40) * 4) * Math.PI / 180; return { vx: Math.sin(a2) * R, vz: Math.cos(a2) * R }; }],
+    ['разгон шаг→бег', (i) => ({ vx: 0, vz: W + (R - W) * Math.min(1, Math.max(0, (i - 120) / 300)) })],
+  ];
+
+  it('⭐⭐ НА ПОРОГАХ КЛИПЫ НЕ ДЁРГАЮТСЯ СИЛЬНЕЕ ПЛАНИРОВЩИКА', () => {
+    // ⚠ Мутация «вернуть выбор клипа порогом вместо бленда» валит это: было 61° против 26° у планировщика.
+    const lib = bakeAll();
+    for (const [name, drive] of CASES) {
+      const proc = jerk(null, drive), clip = jerk(lib, drive);
+      expect(clip, `${name}: клипы ${clip.toFixed(1)}° против ${proc.toFixed(1)}° у планировщика`).toBeLessThan(proc * 1.5);
+    }
+  });
+});
+
 describe('галка «бег клипами» в настройках клиента', () => {
   const GAIT0 = { ...GAIT };
   const GX = { armDown: 1.35, elbowBend: 0.25 };   // минимальные ручки рук — как в соседних тестах походки
@@ -123,6 +200,25 @@ describe('галка «бег клипами» в настройках клие�
 
     GAIT.locoMix = 1;                                   // редактор: клипы…
     expect(frame(() => flat), '⚠ галка «StepPlanner» не перебила настройку редактора').toEqual(planner);
+  });
+
+  it('⭐⭐ ПЕРЕКЛЮЧЕНИЕ ГАЛКИ — НЕ РЫВОК: доля клипа разгоняется, а не прыгает', () => {
+    // ⚠ Мутация «mix = цель без разгона» валит это: галка в бою дёргала бы позу целиком за кадр.
+    GAIT.locoMix = 0;
+    const h = buildHumanoid({});
+    const base = localStorageContent('warrior');
+    const p = new PosePlayer(h, () => [], { ...base, locoClip: () => flat }, 'sword', GX, emptyGrid());
+    p.setVel(0, 115); p.setYaw(0);
+    setLocoMixOverride(0);
+    for (let i = 0; i < 120; i++) p.step(1 / 60);
+    const snap = (): number[] => { h.root.updateMatrixWorld(true); const o: number[] = []; for (const [, b] of [...h.bones].sort((a2, b2) => a2[0].localeCompare(b2[0]))) o.push(b.rotation.x, b.rotation.y, b.rotation.z); return o; };
+    const before = snap();
+    setLocoMixOverride(1);                                     // игрок щёлкнул галкой
+    p.step(1 / 60);
+    const after = snap();
+    let jump = 0;
+    for (let i = 0; i < after.length; i++) jump = Math.max(jump, Math.abs(after[i]! - before[i]!) * 180 / Math.PI);
+    expect(jump, `⚠ поза прыгнула на ${jump.toFixed(1)}° за один кадр`).toBeLessThan(12);
   });
 
   it('⚠ НЕ ТРОГАЛ ГАЛКУ — РАБОТАЕТ НАСТРОЙКА РЕДАКТОРА (null ≠ «выключено»)', () => {

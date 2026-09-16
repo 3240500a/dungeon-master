@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipNames, locoDir, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, type LocoSectionState } from './locoBlend.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, type LocoSectionState, type LocoDir } from './locoBlend.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
@@ -609,6 +609,8 @@ export const LOCO_BONES = [
  * конфигом персонажа и перезаписывается при каждой смене куклы), а это — выбор игрока, который обязан
  * пережить загрузку конфига. Иначе галка «работала до первого входа на этаж».
  */
+/** Разгон доли клипа локомоции, сек: переключение «клипы ↔ планировщик» не должно быть рывком. */
+const LOCO_FADE = 0.25;
 let locoMixOverride: number | null = null;
 export function setLocoMixOverride(v: number | null): void { locoMixOverride = v; }
 /** Текущий override (для UI и тестов). */
@@ -1302,6 +1304,8 @@ export class PosePlayer {
   private idleT = 0;
   /** Секция локомоции (Ф5б): разгон / цикл / остановка. Меток в клипе нет — всегда цикл. */
   private locoSec: LocoSectionState = { section: 'idle', t: 0 };
+  /** Текущая доля клипа локомоции (едет к цели за `LOCO_FADE`) — см. комментарий на месте чтения. */
+  private locoW = 0;
   /** Доворот таза этого кадра — редактору для читаута. */
   get dirWarpDeg(): number { return this.dirWarp.warp * 180 / Math.PI; }
   /** Идём ли спиной вперёд (доворот меряется от хвоста) — редактору для читаута. */
@@ -1553,23 +1557,42 @@ export class PosePlayer {
     this.idleT += dt;
     const tg = this.driver.update(dt);
     // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
-    // Клип берём по направлению В КАДРЕ ТЕЛА и по режиму (ходьба/бег), а сэмплируем ФАЗОЙ
-    // ПЛАНИРОВЩИКА: у клипа не должно быть своего таймера, иначе настройки персонажа перестанут на
-    // него влиять и «из двух паков много вариантов» не получится.
-    const mix = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1);
+    // Клипы БЛЕНДЯТСЯ по тем же осям, что и колонки настроек (`sb`/`st`/`bt`), и сэмплируются ОДНОЙ
+    // фазой планировщика: у клипа нет своего таймера, иначе настройки персонажа перестали бы на него
+    // влиять, а разные клипы разъехались бы ногами на бленде (это и есть Sync Group из индустрии).
+    //
+    // ⚠ ДОЛЯ КЛИПА ЕДЕТ ПЛАВНО (`locoW`), а не скачком: галка в настройках и смена конфига куклы
+    // меняют цель мгновенно, и без разгона переключение само было бы рывком.
+    const mixTarget = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1);
+    this.locoW += clamp(mixTarget - this.locoW, -dt / LOCO_FADE, dt / LOCO_FADE);
+    const mix = this.locoW;
     let locoPose: Pose | null = null;
     if (mix > 0.001 && this.content.locoClip) {
-      const fy = Math.sin(yaw), fz2 = Math.cos(yaw), rx2 = Math.cos(yaw), rz2 = -Math.sin(yaw);
-      const fwd = this.vx * fy + this.vz * fz2, lat = this.vx * rx2 + this.vz * rz2;
-      const c = this.content.locoClip(locoClipNames(locoDir(fwd, lat, GAIT.strafeFrom), (tg.sb ?? 0) > 0.5), this.weapon);
-      if (c && c.keys.length) {
-        // СЕКЦИИ (Ф5б): разгон → цикл → остановка одним клипом. Меток нет — весь клип цикл, то есть
-        // ровно прежнее поведение; размечать обычный зацикленный `run_fwd` никто не обязан.
-        const dur = clipDur(c) || 1;
-        const sc = clipSections(c);
+      const rx2 = Math.cos(yaw), rz2 = -Math.sin(yaw);
+      const lat = this.vx * rx2 + this.vz * rz2;
+      const axes = { sb: tg.sb ?? 0, st: tg.st ?? 0, bt: tg.bt ?? 0 };
+      const latRight = lat >= 0;
+      const clipOf = (dir: LocoDir, fast: boolean): Clip | null =>
+        this.content.locoClip!(locoClipNames(dir, fast), this.weapon);
+      // СЕКЦИИ (Ф5б) живут на ВЕДУЩЕМ клипе — том, чья колонка сейчас весит больше всех. Меток нет —
+      // весь клип цикл, то есть прежнее поведение; размечать обычный зацикленный `run_fwd` никто не обязан.
+      // ⚠ Порога это не вводит: ведущий выбирает лишь ЧЬИ МЕТКИ читать, а поза всё равно из бленда.
+      const domDir: LocoDir = axes.bt > axes.st ? 'back' : axes.st > 0.5 ? (latRight ? 'strafe_R' : 'strafe_L') : 'fwd';
+      const lead = clipOf(domDir, axes.sb > 0.5) ?? clipOf(domDir, axes.sb <= 0.5);
+      let u = locoPhaseU(this.driver.gaitPhase);
+      if (lead && lead.keys.length) {
+        const dur = clipDur(lead) || 1;
+        const sc = clipSections(lead);
         this.locoSec = stepLocoSection(this.locoSec, this.moveMag > 0.05, dt, { ...sc, dur });
-        locoPose = clipPoseAt(c, sectionClipTime(this.locoSec, locoPhaseU(this.driver.gaitPhase), sc, dur) / dur);
+        u = sectionClipTime(this.locoSec, u, sc, dur) / dur;
       }
+      // ⚠ ОДНО НОРМАЛИЗОВАННОЕ ВРЕМЯ НА ВСЕ КЛИПЫ — это и есть синхронизация фаз: у клипов разная
+      // длительность, и блендить их по СЕКУНДАМ значило бы смешивать «левая нога на земле» с «правая».
+      const pickPose = (dir: LocoDir, fast: boolean): Pose | null => {
+        const c = clipOf(dir, fast);
+        return c && c.keys.length ? clipPoseAt(c, u) : null;
+      };
+      locoPose = blendLocoPose(pickPose, axes, latRight, blendTwo);
     }
     gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix, this.atkLegsW);
     if (layerTrace.on) {

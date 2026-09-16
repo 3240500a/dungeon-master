@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, type PoseContent } from './poseRuntime.js';
 import { GAIT } from './pose.js';
-import { locoClipName, locoDir, locoPhaseU, stepLocoSection, sectionClipTime } from './locoBlend.js';
+import { locoClipName, blendLocoPose, locoPhaseU, stepLocoSection, sectionClipTime, type LocoDir } from './locoBlend.js';
 import { bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
 import { clipSections, type Clip } from './clipModel.js';
 import { stitchLocoClip } from './clipImport.js';
@@ -35,19 +35,37 @@ describe('фаза и выбор клипа', () => {
     expect(locoPhaseU(-Math.PI)).toBeCloseTo(0.5, 12);
   });
 
-  it('четыре направления, а не восемь: диагональ — это ВПЕРЁД (её закрывает доворот таза)', () => {
-    expect(locoDir(1, 0, 45)).toBe('fwd');
-    expect(locoDir(1, 0.9, 45), '42° — ещё вперёд').toBe('fwd');
-    expect(locoDir(-1, 0, 45), 'спиной — шаг назад, а не разворот').toBe('back');
-    expect(locoDir(0, 1, 45)).toBe('strafe_R');
-    expect(locoDir(0, -1, 45)).toBe('strafe_L');
+  /** Вместо позы — просто имя колонки: так видно, ЧТО и с каким весом легло в бленд. */
+  const mixNames = (axes: { sb: number; st: number; bt: number }, latRight = true, have: (d: LocoDir, f: boolean) => boolean = () => true): string =>
+    blendLocoPose<string>(
+      (d, f) => (have(d, f) ? `${f ? 'run' : 'walk'}_${d}` : null),
+      axes, latRight,
+      (a, b, t) => (t <= 0.001 ? a : t >= 0.999 ? b : `${a}+${b}@${t.toFixed(2)}`),
+    ) ?? '—';
+
+  it('⭐⭐ ПОРОГОВ НЕТ: направление и скорость — БЛЕНД по осям планировщика, а не выбор клипа', () => {
+    // ⚠ ЗДЕСЬ БЫЛ ПОРОГ («угол ≥ strafeFrom → страйф-клип») и второй по скорости, и его отменил
+    // ЗАМЕР дёрганья: у порога скачок позы за кадр 52–61°, и весь он приходился на кадр подмены.
+    // Ровно так это решают Blend Space / Blend Tree: несколько клипов с весами, а не один выбранный.
+    expect(mixNames({ sb: 0, st: 0, bt: 0 }), 'чистая ходьба вперёд').toBe('walk_fwd');
+    expect(mixNames({ sb: 1, st: 0, bt: 0 }), 'чистый бег вперёд').toBe('run_fwd');
+    expect(mixNames({ sb: 0.5, st: 0, bt: 0 }), 'середина ходьба/бег — ОБА клипа').toBe('walk_fwd+run_fwd@0.50');
+    expect(mixNames({ sb: 1, st: 0.5, bt: 0 }), 'полубок — бег вперёд и бег боком').toBe('run_fwd+run_strafe_R@0.50');
+    expect(mixNames({ sb: 1, st: 0, bt: 0.5 }), 'полуспиной').toBe('run_fwd+run_back@0.50');
+    expect(mixNames({ sb: 1, st: 1, bt: 0 }), 'чистый страйф — база не читается').toBe('run_strafe_R');
+    expect(mixNames({ sb: 1, st: 0.4, bt: 0 }, false), 'сторона — по знаку боковой скорости').toBe('run_fwd+run_strafe_L@0.40');
   });
 
-  it('граница страйфа — ОБЩАЯ с колонкой настроек, а не своя', () => {
-    // Передаём тот же порог, что и у страйф-колонки: две расходящиеся границы дали бы клип страйфа
-    // на одних числах и настройки бега на других — ровно на стыке, где и так тяжелее всего.
-    expect(locoDir(1, 1, 45), 'ровно 45° — уже вбок').toBe('strafe_R');
-    expect(locoDir(1, 1, 80), 'подняли порог — снова вперёд').toBe('fwd');
+  it('⚠ ПОРЯДОК НАЛОЖЕНИЯ — как у колонок настроек (`locoVal`): база → страйф → назад', () => {
+    // Иначе слой клипов и слой настроек спорили бы о том, что сейчас играет.
+    expect(mixNames({ sb: 0, st: 0.5, bt: 0.5 })).toBe('walk_fwd+walk_strafe_R@0.50+walk_back@0.50');
+  });
+
+  it('⚠ НЕТ КЛИПА — ВЕС ПЕРЕТЕКАЕТ, а не роняет кадр и не подменяет направление', () => {
+    // Нет бегового страйфа — колонка играет ходьбовым (у автора другого всё равно нет).
+    expect(mixNames({ sb: 1, st: 1, bt: 0 }, true, (d) => d !== 'strafe_R' ? true : false), 'нет страйфа вовсе — остаётся база').toBe('run_fwd');
+    expect(mixNames({ sb: 1, st: 1, bt: 0 }, true, (d, f) => !(d === 'strafe_R' && f)), 'есть только ходьбовый страйф').toBe('walk_strafe_R');
+    expect(mixNames({ sb: 0.5, st: 0, bt: 0 }, true, () => false), 'нет вообще ничего — null, а не падение').toBe('—');
   });
 
   it('имена по конвенции плана', () => {
