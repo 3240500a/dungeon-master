@@ -5,7 +5,7 @@ import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride } from '
 import { GAIT } from './pose.js';
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, TURN_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { clipDur, clipPoseAt, type Clip } from './clipModel.js';
-import { pickTurn, turnClipName, turnSupportAt, turnYawAt, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
+import { pickTurn, turnClipName, turnSupportAt, turnYawAt, shouldCommitTurn, TURN_NAMES, SWING_KEY, TURN_SETTLE_SEC, TURN_URGENT_SEC } from './turnInPlace.js';
 
 /**
  * ⭐⭐ ПОВОРОТ НА МЕСТЕ: «стоишь и поворачиваешься — подшагов нет».
@@ -22,12 +22,26 @@ const rad = (d: number): number => d * Math.PI / 180;
 describe('выбор поворота', () => {
   const all = (): boolean => true;
 
-  it('⭐ квантуется наибольшим, до которого дорос остаток, с запасом 10°', () => {
-    expect(pickTurn(rad(30), all), 'меньше порога — стоим, крутится верх').toBe(null);
+  it('⭐ величина — БЛИЖАЙШАЯ к остатку (а не наибольшая «до которой дорос»)', () => {
+    // ⚠ ЗДЕСЬ БЫЛО ДРУГОЕ ПРАВИЛО — «наибольший, до которого дорос, с запасом 10°». При нём 70° давали
+    // 45° и следом ещё один поворот. Мутация «вернуть правило наибольшего» валит случай 70°.
+    expect(pickTurn(rad(30), all), 'меньше наименьшего доворота — стоим, крутится верх').toBe(null);
     expect(pickTurn(rad(36), all)?.name).toBe('turn_R_45');
+    expect(pickTurn(rad(60), all)?.deg, '60° ближе к 45').toBe(45);
+    expect(pickTurn(rad(70), all)?.deg, '⚠ 70° ближе к 90 — одним поворотом, а не 45 и ещё раз').toBe(90);
     expect(pickTurn(rad(-85), all)?.name, 'знак — сторона').toBe('turn_L_90');
-    expect(pickTurn(rad(175), all)?.name).toBe('turn_R_180');
-    expect(pickTurn(rad(120), all)?.deg, '120° — это 90°, остаток уйдёт следующим поворотом').toBe(90);
+    expect(pickTurn(rad(140), all)?.deg, '140° ближе к 180').toBe(180);
+    expect(pickTurn(rad(135), all)?.deg, 'ровно посередине — больший: меньше повторных подходов').toBe(180);
+  });
+
+  it('⭐⭐ РЕШАЕМ ПО ИТОГУ ДВИЖЕНИЯ ПРИЦЕЛА, а не по первому кадру', () => {
+    // ⚠ Жалоба «сразу начинает на 45° и поворачивает за несколько подходов» — ровно отсутствие этих правил.
+    const tw = { threshold: rad(40), relaxTime: 1.2 };
+    expect(shouldCommitTurn(rad(60), 0, 0, tw), '⚠ мышь ещё едет — не решаем').toBe(false);
+    expect(shouldCommitTurn(rad(60), TURN_SETTLE_SEC, 0, tw), 'мышь доехала, остаток за порогом доворота').toBe(true);
+    expect(shouldCommitTurn(rad(30), TURN_SETTLE_SEC, 0, tw), 'остаток меньше порога — это скрутка корпуса').toBe(false);
+    expect(shouldCommitTurn(rad(80), 0, TURN_URGENT_SEC, tw), 'верх упёрся в предел скрутки — не ждём мышь').toBe(true);
+    expect(shouldCommitTurn(rad(36), tw.relaxTime, 0, tw), 'прицел давно стоит — доворачиваем и небольшой остаток').toBe(true);
   });
 
   it('⚠ нет клипа нужной величины — повернуться МЕНЬШИМ, а не стоять перекрученным', () => {
@@ -145,6 +159,35 @@ describe('поворот на месте в рантайме', () => {
       // Замер: 0.23–0.56 за опору; с тазом, ведомым своим доворотом, на 45° уже 1.41.
       expect(r.plantedSlide, `${deg}°: ⚠ опорная стопа уехала на ${r.plantedSlide.toFixed(2)} за опору`).toBeLessThan(1);
     }
+  });
+
+  it('⭐⭐ РЫВОК МЫШЬЮ — ОДИН ПОВОРОТ НУЖНОЙ ВЕЛИЧИНЫ, и не раньше, чем мышь доехала', () => {
+    // ЗАМЕР жалобы (было): рывок 180° за 0.2 с → 45° на 0.07 с → 90° → 45°; рывок 90° → 45° → 45°.
+    // ⚠ Мутация «решать в первый же кадр за порогом» валит это.
+    const lib = bake(true);
+    const flick = (deg: number, sec: number): { clips: string[]; firstAt: number } => {
+      const h = buildHumanoid({});
+      const base = localStorageContent('warrior');
+      const p = new PosePlayer(h, () => [], { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
+      setLocoMixOverride(1);
+      p.setVel(0, 0); p.setYaw(0); p.snapYaw();
+      for (let i = 0; i < 120; i++) p.step(1 / 60);
+      const clips: string[] = []; let last: string | null = null, firstAt = -1;
+      for (let i = 0; i < 60 * 4; i++) {
+        const k = Math.min(1, i / 60 / sec), e = k * k * (3 - 2 * k);    // мышь разгоняется и тормозит
+        p.setYaw(rad(deg) * e);
+        p.step(1 / 60);
+        const cn = p.turnClipName;
+        if (cn && cn !== last) { clips.push(cn); if (firstAt < 0) firstAt = i / 60; }
+        last = cn;
+      }
+      return { clips, firstAt };
+    };
+    const a = flick(179.5, 0.2);
+    expect(a.clips, 'рывок на 180°').toEqual(['turn_R_180']);
+    expect(a.firstAt, '⚠ поворот начался, пока мышь ещё ехала').toBeGreaterThanOrEqual(0.2 - 1e-6);
+    expect(flick(90, 0.15).clips, 'рывок на 90°').toEqual(['turn_R_90']);
+    expect(flick(90, 0.6).clips, 'плавно на 90°').toEqual(['turn_R_90']);
   });
 
   it('⚠ ПЛАНИРОВЩИК В РЕЖИМЕ НЕ-КЛИПОВ НЕ ТРОНУТ: повороты запечены, но галка на планировщике', () => {

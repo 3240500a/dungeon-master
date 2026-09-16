@@ -6,7 +6,7 @@ import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, type LocoSectionState, type LocoDir } from './locoBlend.js';
-import { pickTurn, turnYawAt, turnSupportAt, TURN_NAMES } from './turnInPlace.js';
+import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES } from './turnInPlace.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
@@ -1324,6 +1324,14 @@ export class PosePlayer {
   private locoW = 0;
   /** Идёт клип поворота на месте (`turnInPlace.ts`): время, курс таза на старте, вес, гасится ли. */
   private turn: { clip: Clip; t: number; startYaw: number; w: number; out: boolean } | null = null;
+  /** Сколько секунд верх упирается в предел скрутки, пока поворот не начат (правило 2 `shouldCommitTurn`). */
+  private turnPinnedFor = 0;
+  /**
+   * Поворотами на месте на этом кадре распоряжаются клипы — и когда клип играет, и когда ЖДЁМ решения.
+   * ⚠ Ноги планировщику не отдаём и в ожидании: он целит подшаг в стойку на ПРИЦЕЛЕ (`setGoalYaw`) и за
+   * 0.1 с ожидания успевал начать свой шаг — поймано тестом «планировщик шагал поверх клипа».
+   */
+  private turnMode = false;
   /** Имя играющего поворота — окну слоёв и тестам. null = не поворачиваемся клипом. */
   get turnClipName(): string | null { return this.turn && !this.turn.out ? this.turn.clip.name : null; }
   /** Оборвать поворот сразу, без гашения (запекание, телепорт). */
@@ -1387,6 +1395,7 @@ export class PosePlayer {
    * поведение: процедурный доворот и подшаги планировщика.
    */
   private stepTurn(dt: number, twist: TwistProfile): { rootYaw: number; residual: number; turning: boolean } | null {
+    this.turnMode = false;
     const clampTw = (r: number): number => Math.abs(r) > twist.maxTwist ? Math.sign(r) * twist.maxTwist : r;
     const t = this.turn;
     if (t) {
@@ -1397,6 +1406,7 @@ export class PosePlayer {
         if (t.w <= 0) { this.turn = null; this.driver.replant(); }
         return null;                                                  // курс — снова у обычного доворота, от текущего
       }
+      this.turnMode = true;
       t.t += dt;
       this.rootYaw = t.startYaw + turnYawAt(t.clip, t.t);
       if (t.t >= dur) { this.turn = null; this.driver.replant(); }   // встал в стойку на новом курсе → стопы туда же
@@ -1406,9 +1416,14 @@ export class PosePlayer {
     if (!clipMode || !this.still || this.atk.clip || !this.content.locoClip) return null;
     const has = (name: string): boolean => !!this.content.locoClip!([name], this.weapon);
     if (!this.content.locoClip(TURN_NAMES, this.weapon)) return null;     // поворотов не запекали — процедурный доворот
+    this.turnMode = true;
     const residual = wrapPi(this.aimYaw - this.rootYaw);
-    const pick = pickTurn(residual, has);
+    this.turnPinnedFor = Math.abs(residual) >= twist.maxTwist ? this.turnPinnedFor + dt : 0;
+    // ⚠ РЕШАЕМ ПО ИТОГУ ДВИЖЕНИЯ ПРИЦЕЛА, А НЕ ПО ПЕРВОМУ КАДРУ (см. шапку `turnInPlace.ts`): иначе рывок
+    // мышью на 180° запускал 45° на 0.07 с и доворачивал ещё двумя клипами.
+    const pick = shouldCommitTurn(residual, this.aimStableFor, this.turnPinnedFor, twist) ? pickTurn(residual, has) : null;
     if (pick) {
+      this.turnPinnedFor = 0;
       this.turn = { clip: this.content.locoClip([pick.name], this.weapon)!, t: 0, startYaw: this.rootYaw, w: 1, out: false };
       return { rootYaw: this.rootYaw, residual: clampTw(residual), turning: true };
     }
@@ -1619,7 +1634,7 @@ export class PosePlayer {
     // кадр, когда пошёл поворот (иначе подшаг опоздает), а вот поза ног обязана перетечь — иначе
     // на каждом входе-выходе был бы щелчок.
     this.atkLegsW += ((legsHeld ? 1 : 0) - this.atkLegsW) * Math.min(1, dt / LEGS_FADE);
-    const turnLegs = !!this.turn && !this.turn.out;               // поворот клипом: планировщик шагов не начинает
+    const turnLegs = this.turnMode;                               // поворот клипами (идёт или ждём решения): планировщик шагов не начинает
     this.driver.setLegsHeld(legsHeld || turnLegs);
     if (this.legMag > 0.5 && !legsHeld && !turnLegs) {            // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
