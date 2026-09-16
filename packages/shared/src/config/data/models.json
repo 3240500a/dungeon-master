@@ -389,5 +389,135 @@
       "RightLittleDistal": "CC_Base_R_Pinky3"
     },
     "submeshMaterials": {}
+  },
+  {
+    "id": "crypt_floor_base_01",
+    "name": "crypt_floor_base_01",
+    "url": "/assets/tiles/crypt/crypt_floor_base_01.glb",
+    "category": "tile",
+    "kind": "part",
+    "slot": "helm",
+    "weaponType": "sword",
+    "classId": "",
+    "slots": {},
+    "body": {
+      "height": 0,
+      "arm": 0,
+      "leg": 0,
+      "torso": 0,
+      "girth": 0
+    },
+    "boneScale": {},
+    "boneOffsets": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "grip": {
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    "submeshMaterials": {}
+  },
+  {
+    "id": "crypt_wall_base_01",
+    "name": "crypt_wall_base_01",
+    "url": "/assets/tiles/crypt/crypt_wall_base_01.glb",
+    "category": "tile",
+    "kind": "part",
+    "slot": "helm",
+    "weaponType": "sword",
+    "classId": "",
+    "slots": {},
+    "body": {
+      "height": 0,
+      "arm": 0,
+      "leg": 0,
+      "torso": 0,
+      "girth": 0
+    },
+    "boneScale": {},
+    "boneOffsets": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "grip": {
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    "submeshMaterials": {}
+  },
+  {
+    "id": "crypt_column_01",
+    "name": "Крипта — колонна (угол)",
+    "url": "/assets/tiles/crypt/crypt_column_01.glb",
+    "category": "decor",
+    "kind": "part",
+    "slots": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "submeshMaterials": {}
+  },
+  {
+    "id": "crypt_floor_grille_01",
+    "name": "crypt_floor_grille_01",
+    "url": "/assets/tiles/crypt/crypt_floor_grille_01.glb",
+    "category": "tile",
+    "kind": "part",
+    "slot": "helm",
+    "weaponType": "sword",
+    "classId": "",
+    "slots": {},
+    "body": {
+      "height": 0,
+      "arm": 0,
+      "leg": 0,
+      "torso": 0,
+      "girth": 0
+    },
+    "boneScale": {},
+    "boneOffsets": {},
+    "base": false,
+    "hideHair": false,
+    "scale": 1,
+    "boneMap": {},
+    "grip": {
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    "submeshMaterials": {},
+    "collider": {
+      "shape": "circle",
+      "r": 0,
+      "w": 0,
+      "h": 0
+    }
   }
 ]
