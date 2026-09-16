@@ -16,7 +16,7 @@ function fakeLS(): Storage {
 }
 
 /** Сервер в памяти: тела + ревизии, поведение роутов 1:1 с `server/src/index.ts`. */
-function fakeServer(init: Record<string, unknown> = {}) {
+function fakeServer(init: Record<string, unknown> = {}, models: unknown[] = []) {
   const data: Record<string, unknown> = { ...init };
   const rev: Record<string, number> = {};
   let clock = 1000;
@@ -31,6 +31,7 @@ function fakeServer(init: Record<string, unknown> = {}) {
     state.calls.push(url);
     if (url === '/api/pose') return { ok: true, status: 200, json: async () => ({ ...data }) } as Response;
     if (url === '/api/pose/rev') return { ok: true, status: 200, json: async () => ({ ...rev }) } as Response;
+    if (url === '/api/config') return { ok: true, status: 200, json: async () => ({ models }) } as Response;
     if (url === '/api/dev/pose') {
       const body = JSON.parse(String(opts?.body ?? '{}')) as Record<string, unknown>;
       const base = body.__baseRev as Record<string, number> | undefined;
@@ -290,15 +291,35 @@ describe('чистый лист', () => {
     expect(localStorage.getItem('dm:auth'), '⚠ вход не трогаем — иначе выкинет из редактора').toBe('token');
   });
 
-  it('⭐ моделям пишется ПУСТОЙ оверрайд, а не сброс к дефолту', async () => {
-    // Сброс к дефолту вернул бы `models.json`, который запущенный сервер держит в памяти.
-    const { fetchMock } = fakeServer({});
+  it('⭐ из моделей уходят ТОЛЬКО персонажи — окружение и оружие остаются', async () => {
+    // 14.09 секцию обнуляли целиком, и вместе с рыцарем ушли пол и стены крипты.
+    // Сброс к дефолту тоже не годится: вернул бы `models.json`, который сервер держит в памяти.
+    const models = [
+      { id: 'knight', kind: 'character' },                               // легаси без category
+      { id: 'zombie', kind: 'character', category: 'monster' },
+      { id: 'crypt_floor', kind: 'part', category: 'tile' },
+      { id: 'crypt_column', kind: 'part', category: 'decor' },
+      { id: 'axe', kind: 'weapon', category: 'weapon' },
+    ];
+    const { fetchMock } = fakeServer({}, models);
     G.fetch = fetchMock as unknown as typeof fetch;
-    await wipeAll();
+    const r = await wipeAll();
     const call = fetchMock.mock.calls.find((c) => String(c[0]).startsWith('/api/dev/config'));
     expect(call, 'конфиг моделей обязан быть тронут').toBeTruthy();
     expect(String(call![0]), 'именно POST на секцию, а не DELETE').toBe('/api/dev/config');
-    expect(JSON.parse(String((call![1] as RequestInit).body)), 'список моделей пуст').toEqual({ models: [] });
+    const sent = JSON.parse(String((call![1] as RequestInit).body)) as { models: { id: string }[] };
+    expect(sent.models.map((m) => m.id), 'остались окружение и оружие').toEqual(['crypt_floor', 'crypt_column', 'axe']);
+    expect(r.failed).toEqual([]);
+  });
+
+  it('⚠ список моделей не прочитан — секцию НЕ пишем (пустой список снёс бы окружение)', async () => {
+    const { fetchMock } = fakeServer({});
+    const noConfig = vi.fn(async (url: string, opts?: RequestInit) => (
+      url === '/api/config' ? { ok: false, status: 500, json: async () => ({}) } as Response : fetchMock(url, opts)));
+    G.fetch = noConfig as unknown as typeof fetch;
+    const r = await wipeAll();
+    expect(noConfig.mock.calls.some((c) => String(c[0]).startsWith('/api/dev/config')), 'записи не было').toBe(false);
+    expect(r.failed.join(' '), 'и об этом сказано').toMatch(/модели не тронуты/);
   });
 
   it('⚠ если на сервере что-то осталось — говорим об этом, а не молчим', async () => {

@@ -177,6 +177,16 @@ export interface PublishResult {
   error?: string;
 }
 
+/** Минимум записи `models`, нужный чистке: по нему решается, персонаж это или нет. */
+export interface WipeModel { id: string; kind?: string; category?: string }
+
+/**
+ * Персонаж = атлас с калибровкой из FBX (скелет, карта костей, офсеты). Только такие записи «чистый лист»
+ * имеет право снести. Легаси-записи без `category` узнаются по `kind`; тайл/декор/оружие — не персонаж.
+ */
+export const isCharacterModel = (m: WipeModel): boolean =>
+  m.kind === 'character' || m.category === 'character' || m.category === 'monster';
+
 /**
  * ЧИСТЫЙ ЛИСТ: снести ВЕСЬ авторский контент — и рабочую копию, и опубликованное.
  *
@@ -188,8 +198,13 @@ export interface PublishResult {
  * ⚠ Операция НЕОБРАТИМАЯ и спрашивается дважды в UI. Здесь только механика.
  *
  * Что сносится: все ключи `pe_*` в рабочей копии (кроме ЛИЧНЫХ `pe_prefs`/`pe_sync` — это настройки
- * инструмента, а не контент), все ключи на сервере и оверрайд секции `models` в конфиге (иначе
- * список моделей вернётся с сервера при первой же загрузке).
+ * инструмента, а не контент), все ключи на сервере и из секции `models` — ТОЛЬКО атласы персонажей
+ * и монстров (иначе они вернутся с сервера при первой же загрузке).
+ *
+ * ⚠ Секцию `models` НЕ обнуляем целиком. Так было, и 14.09 вместе с персонажами ушли пол, стены,
+ * колонна и решётка крипты: GLB и объекты остались, а ссылки повисли в пустоту — редактор перестал
+ * показывать окружение, игра рисовала боксы. Окружение и оружие не калибруются из FBX, «начать
+ * с нуля» к ним не относится.
  */
 export async function wipeAll(): Promise<{ local: string[]; server: string[]; failed: string[] }> {
   const server: string[] = [], failed: string[] = [];
@@ -201,13 +216,20 @@ export async function wipeAll(): Promise<{ local: string[]; server: string[]; fa
       if (r.ok) server.push(k); else failed.push(k + ' (' + r.status + ')');
     } catch { failed.push(k + ' (сеть)'); }
   }
-  // ⚠ МОДЕЛИ: пишем ПУСТОЙ оверрайд, а не удаляем его. Удаление возвращает секцию к ДЕФОЛТУ, а дефолт
-  // — это `models.json`, который запущенный сервер держит В ПАМЯТИ (файл перечитается только при
-  // рестарте процесса). То есть «сбросить к дефолту» возвращало ровно тот список, который сносим.
+  // ⚠ МОДЕЛИ: пишем оверрайд БЕЗ персонажей, а не удаляем его. Удаление возвращает секцию к ДЕФОЛТУ,
+  // а дефолт — это `models.json`, который запущенный сервер держит В ПАМЯТИ (файл перечитается только
+  // при рестарте процесса). То есть «сбросить к дефолту» возвращало ровно тот список, который сносим.
+  // Список берём с ЖИВОГО сервера: не прочитали — не пишем вовсе (пустой список снёс бы окружение).
   try {
-    const r = await devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models: [] }) });
-    if (!r.ok) failed.push('config:models (' + r.status + ')');
-  } catch { failed.push('config:models (сеть)'); }
+    const c = await fetch('/api/config', { cache: 'no-store' });
+    if (!c.ok) failed.push('config:models (не прочитан: ' + c.status + ' — модели не тронуты)');
+    else {
+      const models = ((await c.json()) as { models?: WipeModel[] }).models ?? [];
+      const kept = models.filter((m) => !isCharacterModel(m));
+      const r = await devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models: kept }) });
+      if (!r.ok) failed.push('config:models (' + r.status + ')');
+    }
+  } catch { failed.push('config:models (сеть — модели не тронуты)'); }
 
   const local: string[] = [];
   try {
