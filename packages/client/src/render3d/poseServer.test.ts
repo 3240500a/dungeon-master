@@ -312,6 +312,23 @@ describe('чистый лист', () => {
     expect(r.failed).toEqual([]);
   });
 
+  it('⭐ роадмап не трогается — ни на сервере, ни локально', async () => {
+    // Трекер работ живёт в том же `pose_store` ради синхронизации, но к анимациям отношения не имеет.
+    const { state, fetchMock } = fakeServer({ pe_clips: [{ name: 'старый' }], pe_roadmap: { milestones: [{ id: 'f1' }] } });
+    G.fetch = fetchMock as unknown as typeof fetch;
+    localStorage.setItem('pe_clips', '[]');
+    localStorage.setItem('pe_roadmap', '{"milestones":[{"id":"f1"}]}');
+    localStorage.setItem('pe_roadmap_seen', '1001');
+
+    const r = await wipeAll();
+
+    expect(r.server, 'удалён только контент').toEqual(['pe_clips']);
+    expect(Object.keys(state.data), 'роадмап на сервере цел').toEqual(['pe_roadmap']);
+    expect(localStorage.getItem('pe_roadmap'), 'и локально цел').toBe('{"milestones":[{"id":"f1"}]}');
+    expect(localStorage.getItem('pe_roadmap_seen')).toBe('1001');
+    expect(r.failed, 'оставшийся роадмап — не «осечка» чистки').toEqual([]);
+  });
+
   it('⚠ список моделей не прочитан — секцию НЕ пишем (пустой список снёс бы окружение)', async () => {
     const { fetchMock } = fakeServer({});
     const noConfig = vi.fn(async (url: string, opts?: RequestInit) => (

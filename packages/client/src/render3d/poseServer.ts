@@ -188,6 +188,13 @@ export const isCharacterModel = (m: WipeModel): boolean =>
   m.kind === 'character' || m.category === 'character' || m.category === 'monster';
 
 /**
+ * Ключи, которые лежат в том же хранилище (`pe_*` / `pose_store`), но контентом поз-редактора НЕ являются —
+ * «чистый лист» их не трогает ни локально, ни на сервере. Роадмап — трекер работ из редактора конфигов:
+ * он попал в `pose_store` только ради готовой синхронизации между машинами, к анимациям отношения не имеет.
+ */
+export const WIPE_SPARED: readonly string[] = ['pe_roadmap', 'pe_roadmap_seen'];
+
+/**
  * ЧИСТЫЙ ЛИСТ: снести ВЕСЬ авторский контент — и рабочую копию, и опубликованное.
  *
  * Зачем такая кнопка вообще. Настройки копятся в десятке ключей (`pe_gait`, `pe_grip`, `pe_phys`,
@@ -205,12 +212,16 @@ export const isCharacterModel = (m: WipeModel): boolean =>
  * колонна и решётка крипты: GLB и объекты остались, а ссылки повисли в пустоту — редактор перестал
  * показывать окружение, игра рисовала боксы. Окружение и оружие не калибруются из FBX, «начать
  * с нуля» к ним не относится.
+ *
+ * Не трогаются и ключи из `WIPE_SPARED` (роадмап).
  */
 export async function wipeAll(): Promise<{ local: string[]; server: string[]; failed: string[] }> {
   const server: string[] = [], failed: string[] = [];
   let revs: Record<string, number> = {};
   try { const r = await fetch('/api/pose/rev'); if (r.ok) revs = await r.json() as Record<string, number>; } catch { /* сервера нет — чистим локальное */ }
+  const spared = new Set(WIPE_SPARED);
   for (const k of Object.keys(revs)) {
+    if (spared.has(k)) continue;                            // не контент поз-редактора — не наше стирать
     try {
       const r = await devFetch('/api/dev/pose/' + encodeURIComponent(k), { method: 'DELETE' });
       if (r.ok) server.push(k); else failed.push(k + ' (' + r.status + ')');
@@ -233,7 +244,7 @@ export async function wipeAll(): Promise<{ local: string[]; server: string[]; fa
 
   const local: string[] = [];
   try {
-    const keep = new Set(['pe_prefs', SYNC_KEY]);            // личные настройки инструмента — не контент
+    const keep = new Set(['pe_prefs', SYNC_KEY, ...WIPE_SPARED]);   // личные настройки и не-контент (роадмап)
     const all: string[] = [];
     for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('pe_') && !keep.has(k)) all.push(k); }
     for (const k of all) { localStorage.removeItem(k); local.push(k); }
@@ -243,7 +254,7 @@ export async function wipeAll(): Promise<{ local: string[]; server: string[]; fa
   // притащит это обратно (`syncPoseFromServer` тянет всё, чего нет локально). Молчать про такое нельзя.
   try {
     const r = await fetch('/api/pose/rev');
-    if (r.ok) { const left = Object.keys(await r.json() as Record<string, number>); if (left.length) failed.push('на сервере осталось: ' + left.join(', ')); }
+    if (r.ok) { const left = Object.keys(await r.json() as Record<string, number>).filter((k) => !spared.has(k)); if (left.length) failed.push('на сервере осталось: ' + left.join(', ')); }
   } catch { /* сервера нет — проверять нечего */ }
   notify();
   return { local, server, failed };
