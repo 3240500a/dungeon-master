@@ -46,6 +46,7 @@ interface WeaponRestrict {
 /** Атака: удар/выстрел оружием (геометрия/состав от оружия) + моды/эффекты скилла. Мили ИЛИ снаряд(ы). */
 export interface AttackActive extends ActiveCommon, WeaponRestrict {
   category: 'attack';
+  /** Скорость ОДНОГО взмаха: длительность взмаха = 1 / (скорость атаки × speed). */
   speed: number;
   damageMult: number;
   arcMult: number;
@@ -60,7 +61,8 @@ export interface AttackActive extends ActiveCommon, WeaponRestrict {
   count: number;
   spread: number;
   pierce: boolean;
-  /** Мили: число последовательных ударов за скилл (каждый = damageMult). 1 = одиночный. */
+  /** Число последовательных срабатываний за применение (каждое = damageMult, своя анимация и свой
+   *  бросок). Применение длится `hits` × один взмах — см. схему `attackAbilitySchema.hits`. */
   hits: number;
 }
 /** Каст: особая механика (рывок/прыжок/нова/лужа/метеор/бумеранг). Тайминг — от скорости каста (INT). */

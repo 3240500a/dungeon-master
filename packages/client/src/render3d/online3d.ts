@@ -13,7 +13,7 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
-import { markSfx, shakeForMark, burstForMark } from './animSfx.js';   // ⭐ метки клипа наконец звучат: удар и вжух (см. `animSfx`)
+import { markSfx, shakeForMark, burstForMark, playHitSound } from './animSfx.js';   // ⭐ метки клипа звучат (вжух/шаг), а удар — от события (см. `animSfx`)
 import { makeCamShake } from './camShake.js';
 import { makeNetInterp } from './netInterp.js';
 import { cameraCfg, placeCamera, applyLens, camZoom, camDir } from './cameraRig.js';   // ⭐ камера из конфига, одна формула с вкладкой «Тест»   // ⭐ снапшот 30 Гц → гладкий кадр (экстраполяция + гашение ошибки)
@@ -907,6 +907,7 @@ export async function startOnline3d(): Promise<void> {
   // ── События сервера (VFX + лог + звук через шину) ────────────────────────────
   function onEvents(events: import('@dm/shared').SessionEvent[]): void {
     const bus = app.bus;
+    const sounded = new Set<string>();   // чьи удары уже озвучены в этой пачке (см. «один звук на взмах»)
     for (const e of events) {
       // Сундук открыт — убираем меш и подсказку: FloorInit шлётся один раз, и без этого
       // события пустой сундук висел бы до конца этажа и звал жать [E].
@@ -917,6 +918,14 @@ export async function startOnline3d(): Promise<void> {
       }
       if (e.type === 'hit') {
         const dom = (['physical', 'fire', 'cold', 'lightning', 'poison'] as const).reduce((b, t) => (e.byType[t] > e.byType[b] ? t : b), 'physical' as DamageType);
+        // ⭐⭐ ЗВУК УДАРА — ОТСЮДА, А НЕ ИЗ МЕТКИ КЛИПА. Метка играла всегда, даже когда бьёшь воздух;
+        // событие знает и попадание, и блок, и во что попали (`mat` = класс брони цели).
+        // ⚠ ОДИН ЗВУК НА ВЗМАХ: дуга задевает нескольких, и каждый бы щёлкнул отдельно — вышла бы каша.
+        if (!sounded.has(e.by ?? '')) {
+          const own = e.by === myId || e.id === myId;           // свой удар (или по себе) — в полную громкость
+          playHitSound(e, own ? 1 : 0.55);
+          if (e.hit || e.blocked) sounded.add(e.by ?? '');       // промах звука не даёт и взмах не «занимает»
+        }
         // Боевой фидбэк плавающим текстом (как 2D feedback): промах/блок/число. Видят все.
         if (!e.hit) vfx.floatText(e.x, e.y, 'промах', 0x9a9a9a);
         else if (e.blocked) vfx.floatText(e.x, e.y, 'блок', 0x8fd0ff);
@@ -957,8 +966,9 @@ export async function startOnline3d(): Promise<void> {
         if (pv) vfx.slash(pv.x, pv.y, pv.facing, 0xffe6a0, 48);
         if (e.playerId === myId) {   // свой удар — заливка-откат слота биндов
           const now = performance.now();
-          app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
-          app.attackLockUntil = now + e.lockMs;
+          // ⚠ Взмах СЕРИИ заливку не трогает: откат идёт с первого взмаха, и перезапуск дёргал бы её назад.
+          if (!e.chain) app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
+          app.attackLockUntil = now + e.lockMs;   // …а лок продлевает каждый: он держит ВСЮ серию
         }
       } else if (e.type === 'monster-swing') {
         // Телеграф монстра несёт только windupMs (окна атаки у него нет) — этого достаточно, чтобы кадр

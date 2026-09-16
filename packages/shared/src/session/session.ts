@@ -9,6 +9,7 @@ import { emptyPacket, packetTotal } from '../types/combat.js';
 import type { Difficulty } from '../formulas/power.js';
 import { createRng, type Rng } from '../formulas/rng.js';
 import { resolveAttack, abilityCooldown, abilityRankMult, swingHalfWidth } from '../formulas/combat.js';
+import { hitMaterialOf, type HitMaterial } from '../formulas/hitMaterial.js';
 import { buildAttackPacket, attackWeaponsOf } from '../formulas/playerCombat.js';
 import { buildMonsterPacket, monsterCombatStats, monsterDebuffs } from '../formulas/monstergen.js';
 import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/resolveWeapon.js';
@@ -41,6 +42,7 @@ import {
   type MonsterEntity,
   type ProjectileEntity,
   type Obstacle,
+  type AttackSeries,
 } from '../world/state.js';
 import { playerSnapshot, equippedItems, type PlayerSnapshot } from './derive.js';
 import { stepMonsterAi, ALERT_TIME } from './ai.js';
@@ -106,9 +108,17 @@ export interface FloorLayout {
   pvp?: boolean;
 }
 
+/** Материал цели для звука удара: монстр — по надетой броне (нагрудник, иначе шлем). */
+const monsterMat = (m: MonsterEntity): HitMaterial => hitMaterialOf(m.def.armorClass);
+/** …игрок — по своему нагруднику, иначе шлему. */
+const playerMat = (p: PlayerEntity): HitMaterial =>
+  hitMaterialOf(p.save.equipment.chest?.armorClass, p.save.equipment.helm?.armorClass);
+
 /** События тика — для вью (числа/эффекты) и статистики. */
 export type SessionEvent =
-  | { type: 'hit'; target: 'monster' | 'player'; id: string | number; by?: string; x: number; y: number; hit: boolean; blocked: boolean; crit: boolean; amount: number; byType: DamagePacket }
+  // `mat` — ВО ЧТО попали (класс брони цели, `flesh` = тела). Звук удара берётся отсюда, а не из метки
+  // клипа: метка не знает ни попал ли ты, ни во что. Промах приходит тем же событием с `hit: false`.
+  | { type: 'hit'; target: 'monster' | 'player'; id: string | number; by?: string; x: number; y: number; hit: boolean; blocked: boolean; crit: boolean; amount: number; byType: DamagePacket; mat: HitMaterial }
   | { type: 'monster-died'; id: number; def: ScaledMonster; x: number; y: number; by?: string }
   | { type: 'quest'; playerId: string; kind: 'accepted' | 'progress' | 'completed' | 'turned-in'; questId: string; name: string }
   /** `from` — с трупа или из сундука. Без него в отчёте не отличить два потока добычи. */
@@ -127,7 +137,10 @@ export type SessionEvent =
   // Реальный свинг игрока (принят: мана/КД/оружие прошли) — для клиентского VFX (форма удара) и
   // заливки-отката слота бинда. ability = nodeId скилла или 'attack'. windupMs — замах, cooldownMs — откат
   // использованного действия, lockMs — общий attack-таймер (блокирует ВСЕ удары/attack-cast-скиллы).
-  | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; lockMs: number; x: number; y: number; facing: number }
+  // `chain` — это НЕ новое применение, а очередной взмах уже идущей серии (`hits`>1): клиент играет
+  // ему свою анимацию и звук, но заливку-откат слота НЕ перезапускает (иначе она дёргалась бы назад
+  // на каждом взмахе, хотя откат идёт себе с первого).
+  | { type: 'swing'; playerId: string; ability: string; windupMs: number; cooldownMs: number; lockMs: number; x: number; y: number; facing: number; chain?: boolean }
   // Старт замаха монстра — клиент рисует телеграф-вспышку на время windupMs в сторону facing.
   | { type: 'monster-swing'; id: number; windupMs: number; x: number; y: number; facing: number }
   // Уклонение игрока (dodge-рывок) — клиент проигрывает VFX/SFX рывка в сторону dir.
@@ -511,8 +524,8 @@ export class GameSession {
   }
 
   /** Событие реального свинга (принят: мана/КД/оружие прошли) — клиент рисует форму + льёт откат слота. */
-  private emitSwing(p: PlayerEntity, ability: string, windupSec: number, cooldownSec: number, lockSec: number): void {
-    this.events.push({ type: 'swing', playerId: p.id, ability, windupMs: windupSec * 1000, cooldownMs: cooldownSec * 1000, lockMs: lockSec * 1000, x: p.pos.x, y: p.pos.y, facing: p.facing });
+  private emitSwing(p: PlayerEntity, ability: string, windupSec: number, cooldownSec: number, lockSec: number, chain = false): void {
+    this.events.push({ type: 'swing', playerId: p.id, ability, windupMs: windupSec * 1000, cooldownMs: cooldownSec * 1000, lockMs: lockSec * 1000, x: p.pos.x, y: p.pos.y, facing: p.facing, ...(chain ? { chain: true } : {}) });
   }
 
   /**
@@ -694,12 +707,21 @@ export class GameSession {
         if (!this.canSpend(p, active)) return;
         this.spend(p, active);
         const pm = this.dmods(p.debuffs);
-        p.attackCd = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
+        // ⭐⭐ `speed` — СКОРОСТЬ ОДНОГО ВЗМАХА, а `hits` — СКОЛЬКО ИХ. Раньше и то и другое мерилось
+        // целым скиллом: «3 удара, скорость ×2» ужимало ВСЮ способность в полцикла и выдавало три
+        // урона одним кадром под одну анимацию. Теперь один взмах = `stepSec`, а серия = `hits` × `stepSec`.
+        const stepSec = 1 / Math.max(0.2, snap.derived.attackSpeed * active.speed * pm.atkSpeedMult);
+        const hits = Math.max(1, active.hits);
+        p.attackCd = stepSec * hits;                 // общий attack-лок держит ВСЮ серию
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
-        const windup = this.windupSec(p.attackCd, active.windupSec);
-        this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0), p.attackCd);
-        if (windup > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: windup }; return; }
-        this.executeResolved(p, snap, res, rank);
+        // ⚠ Замах считается от ОДНОГО взмаха (`stepSec`), а не от всей серии: иначе у трёхударного
+        // скилла первый удар пришёлся бы на треть позже, чем у такого же одноударного.
+        const windup = this.windupSec(stepSec, active.windupSec);
+        // Окно свинга = ОДИН взмах: клиент ужимает клип под него, и каждый удар получает свою анимацию.
+        this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0), stepSec);
+        const series: AttackSeries = { hits, struck: 0, stepSec, windupSec: windup, recover: false };
+        p.windup = { kind: 'skill', nodeId, rank, remaining: windup, series };
+        if (windup <= 0) this.stepWindup(p, snap, 0);   // мгновенный замах: первый удар прямо сейчас, остаток серии — по таймеру
         return;
       }
       // Каст/проклятие: тайминг от скорости КАСТА (Интеллект), личный КД, НЕ делит attack-лок (lockMs=0).
@@ -735,12 +757,29 @@ export class GameSession {
       return;
     }
     wu.remaining -= dt;
-    if (wu.remaining <= 0) {
-      p.windup = null;
-      if (wu.kind === 'attack') { this.executeBasicAttack(p, snap); return; }
-      const r = resolveActive(this.cfg, p.save, wu.nodeId);
-      if (r) this.executeResolved(p, snap, r, wu.rank);
+    if (wu.remaining > 0) return;
+    if (wu.kind === 'attack') { p.windup = null; this.executeBasicAttack(p, snap); return; }
+    const s = wu.series;
+    // ДОБОЙ ЦИКЛА КОНЧИЛСЯ → НАЧИНАЕТСЯ СЛЕДУЮЩИЙ ВЗМАХ СЕРИИ: свой свинг (а значит своя анимация
+    // и свой звук) и свой замах. Именно этого не было: сколько ударов написано — столько и должно быть.
+    if (s?.recover) {
+      s.recover = false;
+      // ⚠ ПЕРЕНОС ОСТАТКА (`+=`, а не `=`): `remaining` здесь уже ушёл в минус на долю кадра, и если
+      // её выбрасывать, каждый взмах опаздывает на полкадра, а серия копит эту ошибку. С переносом
+      // темп серии точный: три взмаха ровно через `stepSec`, а не «через 0.517 вместо 0.5».
+      wu.remaining += s.windupSec;
+      this.emitSwing(p, wu.nodeId, s.windupSec, Math.max(p.attackCd, p.skillCd[wu.nodeId] ?? 0), s.stepSec, true);
+      return;
     }
+    const r = resolveActive(this.cfg, p.save, wu.nodeId);
+    // ⚠ ПРОКИ ВСТАВОК — РОВНО ОДИН РАЗ ЗА ПРИМЕНЕНИЕ (на первом взмахе): цена и откат тоже списываются
+    // один раз, и печать «при касте», сработавшая трижды за один каст, была бы скрытым ×3.
+    if (r) this.executeResolved(p, snap, r, wu.rank, !s || s.struck === 0);
+    if (!s) { p.windup = null; return; }
+    s.struck++;
+    if (s.struck >= s.hits) { p.windup = null; return; }
+    s.recover = true;
+    wu.remaining += Math.max(0, s.stepSec - s.windupSec);   // остаток цикла до следующего взмаха (с переносом кадровой доли)
   }
 
   /** Группа эксклюзива тогла (только у аур/стоек). */
@@ -799,9 +838,9 @@ export class GameSession {
    * Исполнить способность СО ВСТАВКАМИ: сперва сам скил, потом доп. эффекты вставок.
    * Порядок важен: волна холода должна добивать после удара, а не вместо него.
    */
-  private executeResolved(p: PlayerEntity, snap: PlayerSnapshot, res: ResolvedActive, rank: number): void {
+  private executeResolved(p: PlayerEntity, snap: PlayerSnapshot, res: ResolvedActive, rank: number, withProcs = true): void {
     this.executeAbility(p, snap, this.withConditional(p, res), rank);
-    if (res.procs.length) this.fireInsertProcs(p, snap, res.procs, rank);
+    if (withProcs && res.procs.length) this.fireInsertProcs(p, snap, res.procs, rank);
   }
 
   /**
@@ -911,12 +950,10 @@ export class GameSession {
     const attacker = pm.accuracyMult !== 1 ? { ...snap.combat, accuracy: snap.combat.accuracy * pm.accuracyMult } : snap.combat;
     const opts = this.skillOpts(active, element, weapon, packet);   // статусы по итоговому составу + скилл-эффекты
     const at: AttackType = weapon?.attackType ?? 'melee';
-    if (at === 'melee') {
-      // Мили-мультиудар: `hits` последовательных взмахов за скилл (каждый = damageMult), напр. «серия уколов».
-      const hits = Math.max(1, active.hits);
-      for (let h = 0; h < hits; h++) this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult);
-      return;
-    }
+    // ⚠ ОДИН ВЫЗОВ = ОДИН ВЗМАХ. `hits` здесь НЕ читается намеренно: серию ведёт таймер замаха
+    // (`AttackSeries`), который зовёт эту функцию заново на каждый удар. Цикл в кадре, который тут
+    // стоял раньше, давал три урона одной анимацией — и три КОПИИ одного броска урона: пакет-то один.
+    if (at === 'melee') { this.meleeSwing(p, packet, attacker, weapon, opts, active.rangeMult, active.arcMult); return; }
     // Дальнобой/маг: веер из `count` снарядов со `spread`; урон каждой = damageMult (для веера ставь ниже).
     const n = Math.max(1, active.count), spread = active.spread;
     const speed = weapon?.damageKind === 'magical' ? ABILITY_PROJ_SPEED : PLAYER_PROJ_SPEED;
@@ -1184,7 +1221,7 @@ export class GameSession {
     pk[element] = amount;
     m.hp = Math.max(0, m.hp - amount);
     m.alertTimer = ALERT_TIME;
-    this.events.push({ type: 'hit', target: 'monster', id: m.id, by: p.id, x: m.pos.x, y: m.pos.y, hit: true, blocked: false, crit: false, amount, byType: pk });
+    this.events.push({ type: 'hit', target: 'monster', id: m.id, by: p.id, x: m.pos.x, y: m.pos.y, hit: true, blocked: false, crit: false, amount, byType: pk, mat: monsterMat(m) });
     if (m.hp <= 0) this.killMonster(m, p);
   }
 
@@ -1198,7 +1235,7 @@ export class GameSession {
     const pk = mult !== 1 ? scalePacket(packet, mult) : packet;
     const res = resolvePlayerHit(target, attacker, pk, { ...opts, debuffTuning: this.cfg.get('debuffs') }, this.rng, this.world.timeMs);
 
-    this.events.push({ type: 'hit', target: 'monster', id: m.id, by: killer.id, x: m.pos.x, y: m.pos.y, hit: res.hit, blocked: res.blocked, crit: res.crit, amount: res.damage, byType: res.byType });
+    this.events.push({ type: 'hit', target: 'monster', id: m.id, by: killer.id, x: m.pos.x, y: m.pos.y, hit: res.hit, blocked: res.blocked, crit: res.crit, amount: res.damage, byType: res.byType, mat: monsterMat(m) });
     m.alertTimer = ALERT_TIME; // получил внимание/удар — в погоню
     if (!res.hit || res.blocked) return;
 
@@ -1254,13 +1291,13 @@ export class GameSession {
     const pm = this.dmods(p.debuffs);
     const res = resolveAttack(attacker, snap.combat, packet, this.rng);
     if (!res.hit || res.blocked) {
-      this.events.push({ type: 'hit', target: 'player', id: p.id, by, x: p.pos.x, y: p.pos.y, hit: res.hit, blocked: res.blocked, crit: false, amount: 0, byType: res.byType });
+      this.events.push({ type: 'hit', target: 'player', id: p.id, by, x: p.pos.x, y: p.pos.y, hit: res.hit, blocked: res.blocked, crit: false, amount: 0, byType: res.byType, mat: playerMat(p) });
       return;
     }
     // Реактивные мастерства «hit-taken»: снижение получаемого урона + отражение.
     const tk = this.hitTakenEffects(p, snap);
     const dmg = Math.round(res.total * pm.recvDamageMult * (1 - tk.reduction)); // увечье: +урон; мастерства: −урон
-    this.events.push({ type: 'hit', target: 'player', id: p.id, by, x: p.pos.x, y: p.pos.y, hit: true, blocked: false, crit: res.crit, amount: dmg, byType: res.byType });
+    this.events.push({ type: 'hit', target: 'player', id: p.id, by, x: p.pos.x, y: p.pos.y, hit: true, blocked: false, crit: res.crit, amount: dmg, byType: res.byType, mat: playerMat(p) });
     p.hp = Math.max(0, p.hp - dmg);
     if (source && tk.reflectPct > 0) this.reflectToMonster(p, source, Math.round(dmg * tk.reflectPct), tk.reflectElement);
     if (p.hp <= 0) { p.alive = false; this.events.push({ type: 'player-died', playerId: p.id }); return; }

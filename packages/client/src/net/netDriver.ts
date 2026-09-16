@@ -325,7 +325,8 @@ export class NetDriver {
         // Реальный удар своего игрока (мана/КД/оружие уже прошли): форма-телеграф + заливка-откат слота.
         if (e.playerId === this.myId) {
           const now = performance.now();
-          this.app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
+          // ⚠ Взмах СЕРИИ (`chain`) заливку не перезапускает — откат идёт с первого взмаха.
+          if (!e.chain) this.app.actionCooldowns[e.ability] = { start: now, until: now + e.cooldownMs };
           this.app.attackLockUntil = now + e.lockMs; // общий лок → остальные атак-слоты серые
           this.vfx.startSwing(this.vfx.currentAttack(this.app.state!, this.app.config, e.ability), e.windupMs);
         }
