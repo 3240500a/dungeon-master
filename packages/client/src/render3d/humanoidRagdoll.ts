@@ -22,9 +22,12 @@ const clamp = (x: number, a: number, b: number): number => Math.min(Math.max(x, 
 type Vec3 = [number, number, number];
 type Con =
   // swing: диапазоны АСИММЕТРИЧНЫ по осям (planeLim вокруг plane-оси, normalLim вокруг normal=twist×plane, twistLim вокруг twist).
-  // Заданы в конвенции КОНКРЕТНОЙ кости (B[] правая сторона зеркальна — см. jointLimitView flip-right).
+  // Числа в каталоге — КАНОН (конвенция ЛЕВОЙ кости). У правой кости ОСИ свои, и там, где ось не зеркальна левой,
+  // диапазон переворачивается при чтении (`mirrorSigns`) — сами числа правой стороны не читаются.
   | { kind: 'swing'; twist: Vec3; plane: Vec3; planeLim: [number, number]; normalLim: [number, number]; twistLim: [number, number] }
-  | { kind: 'hinge'; axis: Vec3; normal: Vec3; lim: [number, number] };
+  // `flex` — какая сторона диапазона СГИБ (+1 = max, −1 = min). Не задан — сгиб там, где угол больше по модулю.
+  // Явный нужен носку: у него разгиб (вверх) больше сгиба (вниз), а слайдер «сгиб» обязан остаться «вниз».
+  | { kind: 'hinge'; axis: Vec3; normal: Vec3; lim: [number, number]; flex?: 1 | -1 };
 type MGroup = 'leg' | 'arm' | 'core' | 'head';
 /**
  * ФОРМА ФИЗ-ТЕЛА (Ф26.5). Цилиндр и капсула в Jolt всегда по оси Y, а наши кости смотрят куда угодно
@@ -89,24 +92,29 @@ type ActiveBone = HBone & { parentIdx: number; chain: string[] };
 
 const swing = (planeLim: [number, number], normalLim: [number, number], twistLim: [number, number], twist: Vec3, plane: Vec3): Con =>
   ({ kind: 'swing', twist, plane, planeLim, normalLim, twistLim });
-const hinge = (lim: [number, number], axis: Vec3, normal: Vec3): Con => ({ kind: 'hinge', axis, normal, lim });
+const hinge = (lim: [number, number], axis: Vec3, normal: Vec3, flex?: 1 | -1): Con => ({ kind: 'hinge', axis, normal, lim, ...(flex ? { flex } : {}) });
 
 // ── АУДИТ DOF СУСТАВОВ (наши пределы vs анатомия человека; рад→°: ×57.3) ──────────────────────────────
 // Свинг = 3 оси: plane (сгиб/разгиб), normal (отвед/прив или бок), twist (осевая ротация). Hinge = 1 ось (сгиб).
-//   Бедро:  сгиб/разг ±52° | отвед/прив ±80° | твист ±40°(★расширен с ±23)   — реально сгиб120/разг20, тв внутр40/внеш45
+//   Бедро:  сгиб 130° / разг 52° | отвед/прив ±80° | твист ±40°            — реально сгиб120(+таз)/разг20, тв внутр40/внеш45
 //   Колено: сгиб −3..126° (hinge)                                            — реально 0..135 (+ротация в сгибе — не моделим)
-//   Голень-стоп: питч ±26° | крен ±11° | твист ±10° (swing)                  — реально подошв50/тыл20 (асимм. упрощена)
-//   Плечо:  сгиб/разг ±97° | отвед/прив ±69° | твист ±80°(★расширен с ±46)   — реально до 180 / твист ±90
+//   Голеностоп: вверх 40° / вниз 60° | крен ±30° | рыск ±45°                 — реально тыл20(40 под весом)/подошв50, инв35/эв15
+//   Носок: вверх 60° / вниз 40° (hinge)                                      — реально разгиб большого ~70, сгиб ~45
+//   Плечо:  сгиб/разг ±97° | подъём ±109° | твист ±97°                        — реально до 180 / твист ±90
 //   Локоть: сгиб −138..6° (hinge, пронации НЕТ — Jolt hinge = 1-DOF)         — реально сгиб145 + пронация ±85 (на запястье)
 //   Запястье: сгиб/девиация ±57° | ТВИСТ ±80°(★=ПРОНАЦИЯ, ось предплечья)    — пронация авторится ЗДЕСЬ (локоть-роллом отложено)
-//   Спина(3 слиты): сгиб/разг −34..40° | бок ±23° | твист ±29°              — грубо, но ок для игры
+//   Спина (3 сегмента, сумма): сгиб 90° / разг 50° | бок ±45° | твист ±60°    — AAOS грудопоясничный: 80 / 25 / 35 / 45
 //   Шея(2 слиты):   сгиб/разг ±29° | бок ±23° | твист ±40°                  — реально твист ±80, занижено намеренно
-// НАМЕРЕННО game-tuned (НЕ баг): бедро сгиб/разг СИММЕТРИЧНО ±0.9 (гейт машет ±0.7, pose.ts — анатом. асимм. разгиб~0.35
-//   клипал бы бег); бедро отвед/прив ШИРЕ анатомии (стойка опирается). Jolt-swing-конус СИММЕТРИЧЕН (max полу-угол)
-//   → для асимм. дефолтов физика чуть шире клэмпа манекена (<0.1рад, незаметно); полная асимметрия (bias-рамка) отложена —
-//   конфликтует с тюнингом бега + нужна верификация в игре. Пределы правятся живьём в редакторе (RB3, pe_ragdoll → jointOv).
+// Жалоба 16.09.2026: «колено к животу не поднять, поясница и грудь почти не гнутся, носок гнётся не в ту сторону,
+//   стопа влево-вправо еле ходит». Числа выше — редакторные (поза-инструмент берёт анатомию с запасом).
+// РАЗГИБ БЕДРА ОСТАЛСЯ 0.9 (а не анатомические 0.35): гейт машет бедром ±0.7 (pose.ts), меньше — клипал бы бег.
+// Отвед/прив бедра ШИРЕ анатомии (стойка опирается). В физике асимметричный сгиб держит СДВИНУТАЯ рамка сустава
+// (`joltSwing`), а не симметричный конус по максимуму — иначе кукла гнулась бы назад на те же 130°.
+// Пределы правятся живьём в редакторе (RB3, pe_ragdoll → jointOv).
 // Кости в порядке скелета (родитель раньше ребёнка — требование Jolt). Пропорции = гуманоид T-поза.
-/** Доля общего диапазона `spine` на ОДИН сегмент спины (три сегмента в сумме дают анатомию целиком). */
+/** Доля общего диапазона `spine` на ОДИН сегмент спины (три сегмента в сумме дают анатомию целиком).
+ *  Канон спины — сумма: сгиб 90° / разгиб 50° / бок ±45° / твист ±60°, то есть на сегмент 30 / 17 / 15 / 20°.
+ *  Было 13 / 11 / 8 / 10° на сегмент — поясница и грудь при FK почти не гнулись. */
 const SPINE_SEG = 1 / 3;
 const CATALOG: HBone[] = [
   { name: 'Hips', parent: null, tier: 'core', anchor: [0, 32, 0], off: [0, 0, 0], shape: { k: 'box', h: [5, 3, 3] }, con: null, group: 'core', damp: 1 },
@@ -114,9 +122,9 @@ const CATALOG: HBone[] = [
   // теле длиной 17u: форма брала поворот ПОСЛЕДНЕЙ кости цепи, поэтому на любом изгибе корпуса
   // коробка уезжала от меша, а ткань с таким коллайдером протыкала бы спину. Анкеры — ровно на суставах
   // дефолтного рига (`humanoid.ts`: Spine 37, Chest 43, UpperChest 48, Neck 53).
-  { name: 'Torso', parent: 'Hips', tier: 'core', anchor: [0, 37, 0], off: [0, 3, 0], shape: { k: 'box', h: [4.6, 3, 3.0] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
-  { name: 'Chest', parent: 'Torso', tier: 'core', anchor: [0, 43, 0], off: [0, 2.5, 0], shape: { k: 'box', h: [5.4, 2.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
-  { name: 'UpperChest', parent: 'Chest', tier: 'core', anchor: [0, 48, 0], off: [0, 2.5, 0], shape: { k: 'box', h: [5.2, 2.5, 3.2] }, con: swing([-0.6, 0.7], [-0.4, 0.4], [-0.5, 0.5], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
+  { name: 'Torso', parent: 'Hips', tier: 'core', anchor: [0, 37, 0], off: [0, 3, 0], shape: { k: 'box', h: [4.6, 3, 3.0] }, con: swing([-0.87, 1.57], [-0.79, 0.79], [-1.05, 1.05], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
+  { name: 'Chest', parent: 'Torso', tier: 'core', anchor: [0, 43, 0], off: [0, 2.5, 0], shape: { k: 'box', h: [5.4, 2.5, 3.2] }, con: swing([-0.87, 1.57], [-0.79, 0.79], [-1.05, 1.05], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
+  { name: 'UpperChest', parent: 'Chest', tier: 'core', anchor: [0, 48, 0], off: [0, 2.5, 0], shape: { k: 'box', h: [5.2, 2.5, 3.2] }, con: swing([-0.87, 1.57], [-0.79, 0.79], [-1.05, 1.05], [0, 1, 0], [1, 0, 0]), group: 'core', damp: 1, limScale: SPINE_SEG },
   { name: 'Head', parent: 'UpperChest', tier: 'core', anchor: [0, 53, 0], off: [0, 4, 0], shape: { k: 'sphere', r: 5 }, con: swing([-0.5, 0.5], [-0.4, 0.4], [-0.7, 0.7], [0, 1, 0], [1, 0, 0]), group: 'head', damp: 1 },
   // КЛЮЧИЦЫ ОТДЕЛЬНЫМИ ТЕЛАМИ (Ф28.1). Жалоба «руки съехали»: тело `ArmL` покрывало КЛЮЧИЦУ И ПЛЕЧО
   // разом (замер на атласе: анкер на ключице, длина 19.7u при плече→локоть 15.1u и ключице 4.6u), а поворот
@@ -149,21 +157,25 @@ const CATALOG: HBone[] = [
   { name: 'ForeR', parent: 'ArmR', tier: 'core', anchor: [-20, 51, 0], off: [-5.5, 0, 0], shape: { k: 'capsule', r: 2.2, half: 3.3 }, con: hinge([-0.1, 2.4], [0, 1, 0], [-1, 0, 0]), group: 'arm', damp: 0.9 },
   // Бедро: твист (внутр/внеш ротация) ±0.7≈±40° — анатомично (было ±0.4≈±23°, вдвое мало). Бокс НЕквадратный (X>Z, колено
   // «смотрит» вперёд) → осевой твист ВИДЕН на призраке (квадрат его прятал). ab/ad ±1.4 оставлено ШИРЕ анатомии — game-tuned
-  // (стойка опирается на него; сужать = клипать гейт). Сгиб/разгиб ±0.9 симметрично — асимметрию даёт Ф2 (bias-рамка).
-  { name: 'ThighL', parent: 'Hips', tier: 'core', anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', r: 3.4, half: 4.1 }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'ThighR', parent: 'Hips', tier: 'core', anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', r: 3.4, half: 4.1 }, con: swing([-0.9, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  // (стойка опирается на него; сужать = клипать гейт). СГИБ 2.27 (130°, колено к животу; было 0.9 — замер: запрос 60/100/125°
+  // упирался в 51.6°), РАЗГИБ 0.9 — гейт машет ±0.7. Сгиб = −X = planeMin (замер пробой: −X ведёт колено вперёд).
+  { name: 'ThighL', parent: 'Hips', tier: 'core', anchor: [4, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', r: 3.4, half: 4.1 }, con: swing([-2.27, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'ThighR', parent: 'Hips', tier: 'core', anchor: [-4, 30, 0], off: [0, -7.5, 0], shape: { k: 'capsule', r: 3.4, half: 4.1 }, con: swing([-2.27, 0.9], [-1.4, 1.4], [-0.7, 0.7], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
   { name: 'ShinL', parent: 'ThighL', tier: 'core', anchor: [4, 15, 0], off: [0, -7, 0], shape: { k: 'capsule', r: 2.9, half: 4.1 }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
   { name: 'ShinR', parent: 'ThighR', tier: 'core', anchor: [-4, 15, 0], off: [0, -7, 0], shape: { k: 'capsule', r: 2.9, half: 4.1 }, con: hinge([-0.05, 2.2], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  // Голеностоп — SWING (малый многоосевой ход): twist вдоль голени = лево-право (рыск), plane=питч (плантар/дорси), normal=крен.
-  { name: 'FootL', parent: 'ShinL', tier: 'core', anchor: [4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
-  { name: 'FootR', parent: 'ShinR', tier: 'core', anchor: [-4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.45, 0.45], [-0.2, 0.2], [-0.18, 0.18], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  // Голеностоп — SWING: twist вдоль голени = носок влево-вправо (рыск ±45°), plane = питч (−X носок вверх 40°, +X вниз 60°),
+  // normal = крен подошвы ±30°. Было ±10°/±26°/±11° — меньше, чем стоят авторские айдлы (стопа по крену −0.28 при пределе 0.2).
+  { name: 'FootL', parent: 'ShinL', tier: 'core', anchor: [4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.7, 1.05], [-0.52, 0.52], [-0.785, 0.785], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
+  { name: 'FootR', parent: 'ShinR', tier: 'core', anchor: [-4, 1, 0], off: [0, 0, 3], shape: { k: 'box', h: [3, 1.5, 5.5] }, con: swing([-0.7, 1.05], [-0.52, 0.52], [-0.785, 0.785], [0, -1, 0], [1, 0, 0]), group: 'leg', damp: 1 },
   // Запястье: twist-ось [±1,0,0] = ось предплечья → его твист = ПРОНАЦИЯ/СУПИНАЦИЯ (реально сустав предплечья, но локоть у нас
-  // чистый hinge, а асимм. L/R swing не калиброван — jointLimitView; отд. кость-ролл отложена). ±1.4≈±80° = полная пронация.
+  // чистый hinge; правая сторона читает канон через `mirrorSigns`; отд. кость-ролл отложена). ±1.4≈±80° = полная пронация.
   { name: 'HandL', parent: 'ForeL', tier: 'extra', anchor: [31, 51, 0], off: [2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.4, 1.4], [1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
   { name: 'HandR', parent: 'ForeR', tier: 'extra', anchor: [-31, 51, 0], off: [-2, 0, 0], shape: { k: 'sphere', r: 2.6 }, con: swing([-1.0, 1.0], [-1.0, 1.0], [-1.4, 1.4], [-1, 0, 0], [0, 1, 0]), group: 'arm', damp: 0.8 },
-  // Носок — HINGE (сгиб вверх на отталкивании), крошечное тело спереди стопы. Даёт носку физику + предел.
-  { name: 'ToeL', parent: 'FootL', tier: 'extra', anchor: [4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
-  { name: 'ToeR', parent: 'FootR', tier: 'extra', anchor: [-4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-0.15, 0.6], [1, 0, 0], [0, -1, 0]), group: 'leg', damp: 1 },
+  // Носок — HINGE, крошечное тело спереди стопы. +X = кончик ВНИЗ (сгиб, 40°), −X = ВВЕРХ (разгиб, 60° — отталкивание).
+  // ⚠ Было [−0.15, 0.6] = вверх 8.6°, вниз 34° — наоборот анатомии (жалоба «гнётся вниз больше, чем вверх»; походка сама
+  // поднимает носок на 13–17°). `flex: 1` держит слайдер «сгиб» внизу, хотя разгиб теперь больше.
+  { name: 'ToeL', parent: 'FootL', tier: 'extra', anchor: [4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-1.05, 0.7], [1, 0, 0], [0, -1, 0], 1), group: 'leg', damp: 1 },
+  { name: 'ToeR', parent: 'FootR', tier: 'extra', anchor: [-4, 0.5, 6], off: [0, 0, 1.5], shape: { k: 'box', h: [2.6, 1, 2] }, con: hinge([-1.05, 0.7], [1, 0, 0], [0, -1, 0], 1), group: 'leg', damp: 1 },
 ];
 
 /**
@@ -394,11 +406,15 @@ export interface JointLim {
 const _cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 // Пределы НЕ зависят от того, включено ли тело: это канал АВТОРИНГА (Ф3.3), а набор тел — выбор симуляции.
 const _bBone = _catBone;
-// hinge [min,max] в конвенции КОНКРЕТНОЙ кости из канон-формы {flex,hyperext} (знак = как в базе baseLim).
-function hingeLimits(baseLim: [number, number], e: JointLim | null): [number, number] {
-  if (!e || e.flex === undefined) return baseLim;
+/** Сторона сгиба шарнира: +1 = max, −1 = min. Явная (`flex` в каталоге) или там, где угол больше по модулю. */
+function hingeFlexSign(c: { lim: [number, number]; flex?: 1 | -1 }): 1 | -1 {
+  return c.flex ?? (Math.abs(c.lim[0]) >= Math.abs(c.lim[1]) ? -1 : 1);
+}
+// hinge [min,max] в конвенции КОНКРЕТНОЙ кости из канон-формы {flex,hyperext} (знак = как в базе).
+function hingeLimits(c: { lim: [number, number]; flex?: 1 | -1 }, e: JointLim | null): [number, number] {
+  if (!e || e.flex === undefined) return c.lim;
   const flex = e.flex, hyper = e.hyperext ?? 0;
-  return Math.abs(baseLim[0]) >= Math.abs(baseLim[1]) ? [-flex, hyper] : [-hyper, flex];   // сгиб в ту же сторону, что и база
+  return hingeFlexSign(c) < 0 ? [-flex, hyper] : [-hyper, flex];   // сгиб в ту же сторону, что и база
 }
 // Дефолты по канон-суставу (из B[], первое вхождение = ЛЕВАЯ кость → канон-конвенция).
 export const JOINT_DEF: Record<string, JointLim> = (() => {
@@ -407,10 +423,123 @@ export const JOINT_DEF: Record<string, JointLim> = (() => {
     const canon = CANON[b.name]; if (!canon || !b.con || out[canon]) continue;
     const c = b.con;
     if (c.kind === 'swing') out[canon] = { kind: 'swing', group: b.group, planeMin: c.planeLim[0], planeMax: c.planeLim[1], normalMin: c.normalLim[0], normalMax: c.normalLim[1], twistMin: c.twistLim[0], twistMax: c.twistLim[1] };
-    else out[canon] = { kind: 'hinge', group: b.group, flex: Math.max(Math.abs(c.lim[0]), Math.abs(c.lim[1])), hyperext: Math.min(Math.abs(c.lim[0]), Math.abs(c.lim[1])) };
+    else { const s = hingeFlexSign(c); out[canon] = { kind: 'hinge', group: b.group, flex: Math.abs(c.lim[s > 0 ? 1 : 0]), hyperext: Math.abs(c.lim[s > 0 ? 0 : 1]) }; }
   }
   return out;
 })();
+/**
+ * ЗЕРКАЛО ПРАВОЙ СТОРОНЫ. Канон сустава записан в конвенции ЛЕВОЙ кости, а оси у правой свои — и зеркальны
+ * НЕ ВЕЗДЕ: у ног правые оси совпадают с левыми (twist −Y, plane +X), у рук зеркален только twist. Поворот левой
+ * кости на θ вокруг оси a в зеркале X — это поворот на −θ вокруг M·a (M = diag(−1,1,1)). Значит, если ось правой
+ * кости равна M·a, её угол противоположен канону и диапазон читается как [−max, −min]; если −M·a — как есть.
+ *
+ * ЗАМЕР до правки (проба, оверрайд бедра normal [−0.2, 1.4]): левое бедро отводилось на 80°, правое — на 11°,
+ * а приводилось на 80°. Симметричные дефолты это прятали; асимметричный слайдер ломал правую ногу.
+ * Знаки по каналам [plane, normal, twist]; шарниры не трогаем — их знак уже записан в самой кости (ForeR).
+ */
+const _mirrorCache = new Map<string, [number, number, number]>();
+function mirrorSigns(ragName: string): [number, number, number] {
+  const hit = _mirrorCache.get(ragName); if (hit) return hit;
+  let out: [number, number, number] = [1, 1, 1];
+  const b = _bBone.get(ragName), l = /R$/.test(ragName) ? _bBone.get(ragName.replace(/R$/, 'L')) : undefined;
+  if (b?.con?.kind === 'swing' && l?.con?.kind === 'swing' && CANON[ragName] && CANON[ragName] === CANON[l.name]) {
+    const sg = (r: Vec3, a: Vec3): number => { const d = r[0] * -a[0] + r[1] * a[1] + r[2] * a[2]; return Math.abs(d) > 0.99 ? -Math.sign(d) : 1; };   // d = r · (M·a)
+    out = [sg(b.con.plane, l.con.plane), sg(_cross(b.con.twist, b.con.plane), _cross(l.con.twist, l.con.plane)), sg(b.con.twist, l.con.twist)];
+  }
+  _mirrorCache.set(ragName, out);
+  return out;
+}
+const _mir = (lo: number, hi: number, s: number): [number, number] => (s < 0 ? [-hi, -lo] : [lo, hi]);
+/** Эффективные диапазоны свинга КОНКРЕТНОЙ кости (канон × зеркало стороны × L). Один источник для клэмпа и физики. */
+function swingRanges(ragName: string, c: Extract<Con, { kind: 'swing' }>, e: JointLim | null, L: number): { plane: [number, number]; normal: [number, number]; twist: [number, number] } {
+  const [sp, sn, st] = mirrorSigns(ragName);
+  const sc = (r: [number, number]): [number, number] => [r[0] * L, r[1] * L];
+  return {
+    plane: sc(_mir(e?.planeMin ?? c.planeLim[0], e?.planeMax ?? c.planeLim[1], sp)),
+    normal: sc(_mir(e?.normalMin ?? c.normalLim[0], e?.normalMax ?? c.normalLim[1], sn)),
+    twist: sc(_mir(e?.twistMin ?? c.twistLim[0], e?.twistMax ?? c.twistLim[1], st)),
+  };
+}
+/**
+ * SWING → JOLT `SwingTwistConstraint`. Две вещи, обе замерены на живом Jolt (стенд jolt-test.html, 17.09.2026):
+ *
+ * 1) ИМЕНА КОНУСОВ У JOLT — НАОБОРОТ НАШИМ. Рамка Jolt: X = twist, Y = plane × twist, Z = plane, а
+ *    `mPlaneHalfConeAngle` уходит в предел поворота вокруг Y — то есть вокруг НАШЕЙ normal-оси. Замер: plane 0.2 /
+ *    normal 1.0 → поворот вокруг plane-оси встал на 57.3°, вокруг normal — на 11.5°. До правки кукла гнула бедро
+ *    вперёд по пределу отведения, а корпус — по пределу бокового наклона. Наш plane-диапазон = `mNormalHalfConeAngle`.
+ * 2) АСИММЕТРИЯ — СДВИГОМ РАМКИ, а не конусом по максимуму. Конус Jolt симметричен; ось twist со стороны РОДИТЕЛЯ
+ *    поворачиваем вокруг plane на середину диапазона, полу-угол = половина ширины. Замер: центр −0.3, полу 0.5 →
+ *    сгиб встал на −45.8°, разгиб на +11.5° (ровно [−0.8, 0.2]), в покое 0.0°, твист [−0.2, 0.6] не сбит.
+ *    Без сдвига спина (сгиб 90°, разгиб 50°) гнулась бы в физике назад тоже на 90°.
+ * Normal-диапазон остаётся симметричным конусом по максимуму (асимметрия там только из ручного тюна).
+ */
+/**
+ * ФИЗ-ПОТОЛОК (только Jolt, клэмп редактора его не видит). Поза-инструмент берёт анатомию с запасом, а кукла
+ * в смерти — это мешок без мышц: колено к животу на 130° там складывает тело ПОПОЛАМ, грудью на бёдра.
+ * ЗАМЕР (стенд, 25 падений из стойки с толчком по кругу, угол корпус–бедро): сгиб бедра 130° → 10 из 17 сложены
+ * (< 45°); 80° → 3/25; 60° → 1/25, медиана 74–75°; 52° → 0/25. Спина на это почти не влияет (старая спина при новом
+ * бедре — всё равно 8/17). Живой игре потолок не мешает: ноги видимого меша ведёт поза (`LEG_MESH`, match = 1).
+ * Задан в канон-конвенции (до зеркала и ×L), ужимает только сторону сгиба.
+ */
+const PHYS_CAP: Record<string, Partial<Pick<JointLim, 'planeMin'>>> = { hip: { planeMin: -1.05 } };
+function physCapped(canon: string | undefined, e: JointLim | null): JointLim | null {
+  const cap = canon ? PHYS_CAP[canon] : undefined; if (!cap || !e || e.kind !== 'swing') return e;
+  return { ...e, planeMin: Math.max(e.planeMin ?? -Infinity, cap.planeMin ?? -Infinity) };
+}
+/** Что реально получает Jolt для swing-сустава `ragName` (диапазоны редактора + физ-потолок, рамка Jolt). */
+export function physSwingOf(ragName: string): ReturnType<typeof joltSwing> | null {
+  const b = _bBone.get(ragName); if (!b?.con || b.con.kind !== 'swing') return null;
+  const canon = CANON[ragName], e = canon ? effJoint(canon) : null, L = LIMITS[b.group] * (b.limScale ?? 1);
+  return joltSwing(b.con.twist, b.con.plane, swingRanges(ragName, b.con, physCapped(canon, e), L));
+}
+/**
+ * НАСТРОЙКИ СУСТАВА ДЛЯ JOLT БЕЗ МОТОРОВ — точка, оси, пределы. Один код на куклу (`makeCon`) и на сторож с ЖИВЫМ Jolt
+ * (`humanoidJolt.test.ts`): ошибка «чей диапазон в какой конус» (17.09 — перепутаны местами) видна только на самом
+ * движке, а проверка чистой функции её не ловила (мутации в `makeCon` проходили тесты молча).
+ * Диапазоны — ТЕ ЖЕ, что у клэмпа манекена (`swingRanges`), кроме физ-потолка (`PHYS_CAP`); рамка и конусы — `joltSwing`.
+ */
+export function joltJointSettings(J: JoltNS, ragName: string, anchor: Vec3):
+  | { kind: 'hinge'; s: InstanceType<JoltNS['HingeConstraintSettings']> }
+  | { kind: 'swing'; s: InstanceType<JoltNS['SwingTwistConstraintSettings']> }
+  | null {
+  const b = _bBone.get(ragName); if (!b?.con) return null;
+  const [ax, ay, az] = anchor, c = b.con;
+  if (c.kind === 'hinge') {
+    const canon = CANON[ragName], e = canon ? effJoint(canon) : null, L = LIMITS[b.group] * (b.limScale ?? 1);
+    const s = new J.HingeConstraintSettings();
+    const p1 = new J.RVec3(ax, ay, az), p2 = new J.RVec3(ax, ay, az);
+    const h1 = new J.Vec3(...c.axis), h2 = new J.Vec3(...c.axis);
+    const n1 = new J.Vec3(...c.normal), n2 = new J.Vec3(...c.normal);
+    s.mPoint1 = p1; s.mPoint2 = p2; s.mHingeAxis1 = h1; s.mHingeAxis2 = h2; s.mNormalAxis1 = n1; s.mNormalAxis2 = n2;
+    const [lo, hi] = hingeLimits(c, e);
+    s.mLimitsMin = clamp(lo * L, -3.1, 3.1); s.mLimitsMax = clamp(hi * L, -3.1, 3.1);
+    J.destroy(p1); J.destroy(p2); J.destroy(h1); J.destroy(h2); J.destroy(n1); J.destroy(n2);
+    return { kind: 'hinge', s };
+  }
+  const js = physSwingOf(ragName)!;
+  const s = new J.SwingTwistConstraintSettings();
+  const p1 = new J.RVec3(ax, ay, az), p2 = new J.RVec3(ax, ay, az);
+  const t1 = new J.Vec3(...js.twist1), t2 = new J.Vec3(...js.twist2);
+  const pl1 = new J.Vec3(...js.plane), pl2 = new J.Vec3(...js.plane);
+  s.mPosition1 = p1; s.mPosition2 = p2; s.mTwistAxis1 = t1; s.mTwistAxis2 = t2; s.mPlaneAxis1 = pl1; s.mPlaneAxis2 = pl2;
+  s.mSwingType = J.ESwingType_Pyramid;
+  s.mNormalHalfConeAngle = js.normalHalfCone;
+  s.mPlaneHalfConeAngle = js.planeHalfCone;
+  s.mTwistMinAngle = js.twistMin; s.mTwistMaxAngle = js.twistMax;
+  J.destroy(p1); J.destroy(p2); J.destroy(t1); J.destroy(t2); J.destroy(pl1); J.destroy(pl2);
+  return { kind: 'swing', s };
+}
+export function joltSwing(twist: Vec3, plane: Vec3, r: { plane: [number, number]; normal: [number, number]; twist: [number, number] }): { twist1: Vec3; twist2: Vec3; plane: Vec3; normalHalfCone: number; planeHalfCone: number; twistMin: number; twistMax: number } {
+  const mid = (r.plane[0] + r.plane[1]) / 2, half = Math.max(0, (r.plane[1] - r.plane[0]) / 2);
+  const kx = _cross(plane, twist), c = Math.cos(mid), s = Math.sin(mid);   // Родриг для twist ⟂ plane: t·cos + (plane × t)·sin
+  const twist1: Vec3 = [twist[0] * c + kx[0] * s, twist[1] * c + kx[1] * s, twist[2] * c + kx[2] * s];
+  return {
+    twist1, twist2: twist, plane,
+    normalHalfCone: clamp(half, 0, 3.0),                                                         // вокруг НАШЕЙ plane-оси (Jolt Z)
+    planeHalfCone: clamp(Math.max(Math.abs(r.normal[0]), Math.abs(r.normal[1])), 0, 3.0),       // вокруг НАШЕЙ normal-оси (Jolt Y)
+    twistMin: clamp(r.twist[0], -3.1, 3.1), twistMax: clamp(r.twist[1], -3.1, 3.1),
+  };
+}
 export const jointOv: Record<string, Partial<JointLim>> = {};   // оверрайды сустава (pe_ragdoll.joints)
 export function effJoint(canon: string): JointLim { return { ...JOINT_DEF[canon]!, ...(jointOv[canon] || {}) }; }
 // humanoid-кость → rag-кость (инверсия RETARGET) → канон-сустав. Для гизмо/панели по выбранной кости манекена.
@@ -448,14 +577,14 @@ export function jointLimitView(ragName: string): LimitView | null {
   const canon = CANON[ragName]; if (!canon) return null;
   const e = effJoint(canon), c = b.con, L = LIMITS[b.group] * (b.limScale ?? 1);   // Ф28.1: доля сегмента — и в клэмпе манекена тоже
   if (c.kind === 'swing') {
-    // Оси — этой кости (правая уже зеркальна в B[]). Диапазоны — канон (левая конвенция) × L. Для СИММЕТРИЧНЫХ
-    // дефолтов зеркальные оси дают верное L/R автоматически; асимметрия (юзер-тюн) калибруется отдельно (Ф5).
+    // Оси — этой кости, диапазоны — канон × зеркало стороны × L (`swingRanges`; то же читает физика).
+    const r = swingRanges(ragName, c, e, L);
     return {
       kind: 'swing', group: b.group, canon, twist: c.twist, plane: c.plane, normal: _cross(c.twist, c.plane),
-      planeMin: e.planeMin! * L, planeMax: e.planeMax! * L, normalMin: e.normalMin! * L, normalMax: e.normalMax! * L, twistMin: e.twistMin! * L, twistMax: e.twistMax! * L,
+      planeMin: r.plane[0], planeMax: r.plane[1], normalMin: r.normal[0], normalMax: r.normal[1], twistMin: r.twist[0], twistMax: r.twist[1],
     };
   }
-  const [lo, hi] = hingeLimits(c.lim, e);
+  const [lo, hi] = hingeLimits(c, e);
   return { kind: 'hinge', group: b.group, canon, axis: c.axis, hingeNormal: c.normal, min: lo * L, max: hi * L };
 }
 /** Загрузить лимиты/моторы (localStorage `pe_ragdoll`, ГЛОБАЛЬНО на всех) в LIMITS/MOTOR — ЗВАТЬ ДО создания рэгдолла. */
@@ -584,44 +713,16 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
 
   // ── Суставы ──
   const makeCon = (b: ActiveBone): InstanceType<JoltNS['TwoBodyConstraintSettings']> => {
-    const [ax, ay, az] = b.anchor;
-    const [freq, torque] = MOTOR[b.group]; const L = LIMITS[b.group] * (b.limScale ?? 1);   // множитель группы (RB3) × доля сегмента (Ф28.1)
-    const c = b.con!;
-    const canon = CANON[b.name]; const e = canon ? effJoint(canon) : null;   // пер-сустав оверрайд (симметрия L/R) поверх базы
+    const [freq, torque] = MOTOR[b.group];
     const spring = (m: InstanceType<JoltNS['MotorSettings']>): void => {
       m.mSpringSettings.mMode = J.ESpringMode_FrequencyAndDamping;
       m.mSpringSettings.mFrequency = freq; m.mSpringSettings.mDamping = b.damp;
       m.mMinTorqueLimit = -torque; m.mMaxTorqueLimit = torque;
     };
-    if (c.kind === 'hinge') {
-      const s = new J.HingeConstraintSettings();
-      const p1 = new J.RVec3(ax, ay, az), p2 = new J.RVec3(ax, ay, az);
-      const h1 = new J.Vec3(...c.axis), h2 = new J.Vec3(...c.axis);
-      const n1 = new J.Vec3(...c.normal), n2 = new J.Vec3(...c.normal);
-      s.mPoint1 = p1; s.mPoint2 = p2; s.mHingeAxis1 = h1; s.mHingeAxis2 = h2; s.mNormalAxis1 = n1; s.mNormalAxis2 = n2;
-      const [lo, hi] = hingeLimits(c.lim, e);
-      s.mLimitsMin = clamp(lo * L, -3.1, 3.1); s.mLimitsMax = clamp(hi * L, -3.1, 3.1);
-      spring(s.mMotorSettings);
-      J.destroy(p1); J.destroy(p2); J.destroy(h1); J.destroy(h2); J.destroy(n1); J.destroy(n2);
-      return s;
-    }
-    const s = new J.SwingTwistConstraintSettings();
-    const p1 = new J.RVec3(ax, ay, az), p2 = new J.RVec3(ax, ay, az);
-    const t1 = new J.Vec3(...c.twist), t2 = new J.Vec3(...c.twist);
-    const pl1 = new J.Vec3(...c.plane), pl2 = new J.Vec3(...c.plane);
-    s.mPosition1 = p1; s.mPosition2 = p2; s.mTwistAxis1 = t1; s.mTwistAxis2 = t2; s.mPlaneAxis1 = pl1; s.mPlaneAxis2 = pl2;
-    s.mSwingType = J.ESwingType_Pyramid;
-    // Jolt-конус СИММЕТРИЧЕН по осям — берём макс. полу-угол из асимм. диапазона (физика приближённо; точный
-    // асимм. предел — на манекене через FK-клэмп/гизмо). Твист Jolt поддерживает асимметрию напрямую.
-    const pMin = e?.planeMin ?? c.planeLim[0], pMax = e?.planeMax ?? c.planeLim[1];
-    const nMin = e?.normalMin ?? c.normalLim[0], nMax = e?.normalMax ?? c.normalLim[1];
-    const tmin = e?.twistMin ?? c.twistLim[0], tmax = e?.twistMax ?? c.twistLim[1];
-    s.mPlaneHalfConeAngle = clamp(Math.max(Math.abs(pMin), Math.abs(pMax)) * L, 0, 3.0);
-    s.mNormalHalfConeAngle = clamp(Math.max(Math.abs(nMin), Math.abs(nMax)) * L, 0, 3.0);
-    s.mTwistMinAngle = clamp(tmin * L, -3.1, 3.1); s.mTwistMaxAngle = clamp(tmax * L, -3.1, 3.1);
-    spring(s.mSwingMotorSettings); spring(s.mTwistMotorSettings);
-    J.destroy(p1); J.destroy(p2); J.destroy(t1); J.destroy(t2); J.destroy(pl1); J.destroy(pl2);
-    return s;
+    const j = joltJointSettings(J, b.name, b.anchor)!;
+    if (j.kind === 'hinge') spring(j.s.mMotorSettings);
+    else { spring(j.s.mSwingMotorSettings); spring(j.s.mTwistMotorSettings); }
+    return j.s;
   };
 
   // ── Части ──

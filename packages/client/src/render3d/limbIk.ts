@@ -74,6 +74,41 @@ function anyPerp(dir: THREE.Vector3): THREE.Vector3 {
   return perpTo(t, dir).normalize();
 }
 
+/**
+ * УГОЛ СВИВЕЛЯ МЕЖДУ ДВУМЯ ПОЛЮСАМИ — на сколько (рад, со знаком) повернуть `nat` вокруг `axis`, чтобы он лёг на `cur`.
+ * Оба сперва проецируются ⊥ оси (длина роли не играет — входы нормируются). Знак — ТОТ ЖЕ, что у применения
+ * в `naturalPole`: `nat.applyQuaternion(Q().setFromAxisAngle(axis, угол))` ляжет на `cur`. `atan2`, а не `acos`:
+ * у ±π знак не прыгает. Проекция вырождена (вектор вдоль оси) — `null`: плоскость не задана, прежний угол не трогать.
+ */
+export function planeSwivel(axis: THREE.Vector3, cur: THREE.Vector3, nat: THREE.Vector3): number | null {
+  const a = axis.clone(); if (a.lengthSq() < 1e-12) return null; a.normalize();
+  const c = perpTo(cur.clone().normalize(), a), n = perpTo(nat.clone().normalize(), a);
+  if (c.lengthSq() < 1e-8 || n.lengthSq() < 1e-8) return null;
+  return Math.atan2(new THREE.Vector3().crossVectors(n, c).dot(a), n.dot(c));
+}
+
+/**
+ * КУДА ВЫПИРАЕТ СРЕДНИЙ СУСТАВ ПРИ СГИБЕ ШАРНИРА — в ЛОКАЛЬНОМ фрейме корня (бедра/плеча), из одной оси шарнира.
+ * Сгиб на +θ·flexSign уводит дочернее звено вдоль `ось × звено`, значит сустав торчит в обратную сторону:
+ * `−flexSign · (ось × звено)`. Колено: ось (1,0,0), +1, голень (0,−1,0) → (0,0,1). Зависит ТОЛЬКО от твиста корня,
+ * а не от положения колена: у почти прямой ноги вынос колена от линии «бедро → лодыжка» — это внеосевой шум
+ * ±0.043 рад, который `setHingeBend` всё равно срезает (замер: свивель по колену ошибался на 47–60°).
+ * Ось ∥ звену — вектор нулевой (плоскость не задана), `planeSwivel` вернёт на нём `null`.
+ */
+export function hingePoleLocal(hingeAxis: THREE.Vector3, flexSign: 1 | -1, childRestDir: THREE.Vector3): THREE.Vector3 {
+  return new THREE.Vector3().crossVectors(hingeAxis, childRestDir).multiplyScalar(-flexSign).normalize();
+}
+
+/**
+ * КУДА ШАРНИР ГНЁТСЯ В СОЛВЕ — по ЭФФЕКТИВНОМУ диапазону: сторона, где угол больше по модулю (+1 = max, −1 = min).
+ * ОДНО правило на `setHingeBend` (ставит сгиб) и `swivelFromHinge` (читает плоскость): разойдутся — свивель встанет
+ * на 180° мимо колена. Флаг `flex` каталога (какой слайдер зовётся «сгиб») сюда НЕ годится — пресета он не видит: у «дигитигра»
+ * (колено: сгиб 10°, переразгиб 130° → [−2.27, 0.17]) флаг = +1, а солв гнёт ногу в −1 (замер: плоскость 180° мимо).
+ */
+export function hingeBendSign(range: { min?: number; max?: number }): 1 | -1 {
+  return Math.abs(range.max ?? 0) >= Math.abs(range.min ?? 0) ? 1 : -1;
+}
+
 export function solveTwoBone(i: TwoBoneIn): TwoBoneOut {
   const L1 = i.L1, L2 = i.L2, L = L1 + L2;
   const soft = i.soft ?? LIMB_SOFT;

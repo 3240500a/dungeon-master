@@ -163,8 +163,10 @@ export const LIMIT_PRESETS: readonly LimitPreset[] = [
     hint: 'вдвое шире человеческих — для мультяшных/нечеловеческих поз',
     joints: {
       shoulder: { planeMin: -200 * D, planeMax: 200 * D, normalMin: -160 * D, normalMax: 160 * D, twistMin: -170 * D, twistMax: 170 * D },
-      hip: { planeMin: -120 * D, planeMax: 120 * D, normalMin: -170 * D, normalMax: 170 * D, twistMin: -90 * D, twistMax: 90 * D },
-      spine: { planeMin: -80 * D, planeMax: 90 * D, normalMin: -60 * D, normalMax: 60 * D, twistMin: -70 * D, twistMax: 70 * D },
+      // ⚠ Свободный обязан быть ШИРЕ человека по каждому каналу: после расширения человека (сгиб бедра 130°, спина 90°)
+      // старые −120° / 90° оказались бы УЖЕ дефолта, и кнопка «свободнее» сужала бы позу.
+      hip: { planeMin: -170 * D, planeMax: 120 * D, normalMin: -170 * D, normalMax: 170 * D, twistMin: -90 * D, twistMax: 90 * D },
+      spine: { planeMin: -100 * D, planeMax: 160 * D, normalMin: -90 * D, normalMax: 90 * D, twistMin: -110 * D, twistMax: 110 * D },
       elbow: { flex: 170 * D, hyperext: 25 * D },
       knee: { flex: 170 * D, hyperext: 25 * D },
     },
