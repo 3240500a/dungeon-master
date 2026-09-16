@@ -377,7 +377,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
       // ATK_MATCH·attackWeight (physics один не доводит замах до конца). В покое/беге — базовый matchWeight (физ-ведомая походка).
       const effMatch = renderMatchWeight(matchWeight, player.attackWeight, player.attackMatch);   // ЕДИНО с редактором-локо
       renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, effMatch > 0.001 ? target.readPose() : null, effMatch, undefined, sup, !poseLod,
-        { w: player.driver.groundWeights, lag: GAIT.gndLag, flat: player.driver.plantWeights, still: player.moveMag < 0.02 });   // окно/плавность/укладка/«стоим» — те же, что в редакторе
+        { w: player.groundWeights, lag: GAIT.gndLag, flat: player.plantWeights, still: player.moveMag < 0.02 });   // окно/плавность/укладка/«стоим» — те же, что в редакторе; веса через плеер (в «только клипы» планировщика нет)
       skin?.update(); syncWeaponHost();                                        // GLB-слои ведутся solid (после физрезультата + бленда к позе)
       if (physHold > 0) { physHold -= dt; if (physHold <= 0) { snapNext = true; syncRagdollSim(); } }   // транзиентная физика удара кончилась → назад в кинематику
     },

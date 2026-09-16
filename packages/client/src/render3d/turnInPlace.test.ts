@@ -85,7 +85,7 @@ describe('поворот на месте в рантайме', () => {
     return lib;
   };
 
-  interface Run { steps: number; stepsAfter: number; clips: string[]; lift: number; pelvis: number; swingFromClip: boolean; plantedSlide: number; clipEnd: number }
+  interface Run { steps: number; stepsAfter: number; clips: string[]; lift: number; pelvis: number; swingFromClip: boolean; plantedSlide: number; clipEnd: number; contactChanges: number }
   /** Стоим, прицел прыгает на `deg`, 5 секунд смотрим. */
   const turn = (lib: Map<string, Clip>, mix: number, deg: number, moveAt = -1): Run => {
     const h = buildHumanoid({});
@@ -98,8 +98,10 @@ describe('поворот на месте в рантайме', () => {
     h.root.updateMatrixWorld(true);
     const v = new THREE.Vector3();
     const y0 = [h.bones.get('LeftFoot')!.getWorldPosition(v).y, h.bones.get('RightFoot')!.getWorldPosition(v).y];
-    const out: Run = { steps: 0, stepsAfter: 0, clips: [], lift: 0, pelvis: 0, swingFromClip: false, plantedSlide: 0, clipEnd: -1 };
-    let prev = [...p.driver.swingLegs], last: string | null = null, ended = false;
+    const out: Run = { steps: 0, stepsAfter: 0, clips: [], lift: 0, pelvis: 0, swingFromClip: false, plantedSlide: 0, clipEnd: -1, contactChanges: 0 };
+    // В «только клипы» планировщик не читаем вовсе: его выходы там не имеют смысла (и сторож ниже это требует).
+    const legs = (): boolean[] => (p.clipOnly ? [false, false] : [...p.driver.swingLegs]);
+    let prev = legs(), prevSup = [...p.groundSupport], last: string | null = null, ended = false;
     const prevFoot: (THREE.Vector3 | null)[] = [null, null];
     p.setYaw(rad(deg));
     for (let i = 0; i < 300; i++) {
@@ -122,25 +124,37 @@ describe('поворот на месте в рантайме', () => {
           else prevFoot[leg] = null;
         }
       }
-      const sw = p.driver.swingLegs;
+      const sup = p.groundSupport;
+      if (sup[0] !== prevSup[0] || sup[1] !== prevSup[1]) out.contactChanges++;
+      prevSup = [...sup];
+      const sw = legs();
       for (let leg = 0; leg < 2; leg++) {
         if (sw[leg] && !prev[leg]) { out.steps++; if (ended) out.stepsAfter++; }
         out.lift = Math.max(out.lift, h.bones.get(leg === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(v).y - y0[leg]!);
       }
-      prev = [...sw];
+      prev = sw;
     }
     out.pelvis = p.pelvisYaw * 180 / Math.PI;
     return out;
   };
 
-  it('⭐⭐ БЕЗ ЗАПЕЧЁННЫХ ПОВОРОТОВ ПОДШАГИ ПЛАНИРОВЩИКА ВИДНЫ И ПРИ КЛИПАХ БЕГА', () => {
+  it('⭐⭐ БЕЗ ЗАПЕЧЁННЫХ ПОВОРОТОВ ПОДШАГИ ПЛАНИРОВЩИКА ВИДНЫ И ПРИ КЛИПАХ БЕГА (смешанный режим)', () => {
     // ⚠ Мутация «убрать ворота по движению у слоя бега» валит это: подъём стопы 0.00 — ровно жалоба.
+    // ⚠ Доля 0.99, а не 1: единица — режим «только клипы», в нём планировщика нет (см. тест ниже).
     const lib = bake(false);
     for (const deg of [45, 90, 180]) {
-      const r = turn(lib, 1, deg);
+      const r = turn(lib, 0.99, deg);
       expect(r.steps, `${deg}°: планировщик шагает`).toBeGreaterThan(0);
       expect(r.lift, `${deg}°: ⚠ стопа не отрывается — слой бега накрыл подшаги`).toBeGreaterThan(3);
     }
+  });
+
+  it('⚠ «ТОЛЬКО КЛИПЫ» БЕЗ ЗАПЕЧЁННЫХ ПОВОРОТОВ — ПОДШАГОВ НЕТ: планировщик выключен, а заменить нечем', () => {
+    // Это не баг, а ровно то, что должна показать репетиция без планировщика: повороты на месте надо запечь.
+    const r = turn(bake(false), 1, 90);
+    expect(r.clips, 'поворотов в библиотеке нет — играть нечего').toEqual([]);
+    expect(r.contactChanges, '⚠ ноги переступили — значит, их ещё кто-то ведёт').toBe(0);
+    expect(r.lift, '⚠ стопа оторвалась — значит, их ещё кто-то ведёт').toBeLessThan(0.5);
   });
 
   it('⭐⭐ С ЗАПЕЧЁННЫМИ ПОВОРОТАМИ — ОДИН КЛИП НУЖНОЙ ВЕЛИЧИНЫ, таз доходит, лишних шагов нет', () => {
@@ -148,7 +162,9 @@ describe('поворот на месте в рантайме', () => {
     // на прежнем курсе и сразу же делал подшаги поверх уже законченного поворота.
     const lib = bake(true);
     for (const [deg, name] of [[45, 'turn_R_45'], [90, 'turn_R_90'], [179.5, 'turn_R_180'], [-90, 'turn_L_90']] as const) {
-      const r = turn(lib, 1, deg);
+      // Доля 0.99 — смешанный режим: планировщик ЖИВ, и проверка «не шагал поверх клипа и после» не пустая.
+      // Что в «только клипы» его нет вовсе, стережёт отдельный тест с подменой его выходов.
+      const r = turn(lib, 0.99, deg);
       expect(r.clips, `${deg}°: сыграл один нужный поворот`).toEqual([name]);
       expect(r.steps, `${deg}°: ⚠ планировщик шагал поверх клипа`).toBe(0);
       expect(r.stepsAfter, `${deg}°: ⚠ лишние подшаги после поворота`).toBe(0);
@@ -201,8 +217,8 @@ describe('поворот на месте в рантайме', () => {
     expect(r.clips, 'поворот начался').toEqual(['turn_R_180']);
     // ⚠ Мутация «ход не обрывает поворот» валит это: поворот на 180° доиграл бы свои 1.3 с (≈79 кадров).
     expect(r.clipEnd, `⚠ поворот оборвался только на кадре ${r.clipEnd}`).toBeLessThan(20 + 12);
-    // На ходу ноги снова у планировщика: он шагает.
-    expect(r.steps, '⚠ ход не забрал ноги у недоигранного поворота').toBeGreaterThan(2);
+    // На ходу ноги у бега: в «только клипы» опора меняется по клипу бега (планировщика нет).
+    expect(r.contactChanges, '⚠ ход не забрал ноги у недоигранного поворота').toBeGreaterThan(2);
   });
 });
 

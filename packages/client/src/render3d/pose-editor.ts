@@ -1846,8 +1846,8 @@ function groundManikin(support?: [boolean, boolean]): (() => void) | null {
   _manGround.off = 0;                                   // одноразовый шаг: интегратор с нуля…
   // ⚠ ВЕС ОКНА — ТОТ ЖЕ, что у призрака и в игре: иначе манекен снова покажет НЕ ТО, ради чего редактор и живёт.
   groundFeet(human, human.hipsWorldY(), _manGround, 1e3, () => 0, support,
-    { w: locoOn ? lp().driver.groundWeights : undefined,
-      flat: locoOn ? lp().driver.plantWeights : undefined,
+    { w: locoOn ? lp().groundWeights : undefined,
+      flat: locoOn ? lp().plantWeights : undefined,
       still: locoOn ? lp().moveMag < 0.02 : true });   // …и большой dt → полное схождение за один вызов
   return () => {
     LEG_BONES.forEach((n, i) => { const b = human.bones.get(n), q = save[i]; if (b && q) b.quaternion.copy(q); });
@@ -4888,10 +4888,13 @@ function updateTurnPlants(): void {
   const show = tab === 'turn' && showTurnPlants && locoOn;
   for (let i = 0; i < 2; i++) {
     const cur = turnPlantMarks[i]!, goal = goalStanceMarks[i]!;
-    cur.visible = show; goal.visible = show;
+    // Кольцо цели — мысль ПЛАНИРОВЩИКА. В «только клипы» его нет, и кольцо стояло бы в нуле мира — прячем.
+    const planner = !lp().clipOnly;
+    cur.visible = show; goal.visible = show && planner;
     if (!show) continue;
     const fb = viewBone(i === 0 ? 'LeftFoot' : 'RightFoot');   // ТЕКУЩАЯ позиция стопы — сфера; Ф20.2: где СТОИТ видимая нога
     if (fb) { const fp = fb.getWorldPosition(V()); setXZ(cur, fp.x, fp.z); }
+    if (!planner) continue;
     const [gx, gz] = lp().driver.stanceAtGoal(i as 0 | 1);           // ЦЕЛЬ: идл-стойка на ПРИЦЕЛЕ (куда шагнёт после доворота) — кольцо
     setXZ(goal, gx - gaitPx, gz - gaitPz);
   }
@@ -5229,8 +5232,9 @@ function updatePlantMarks(): void {
       if (on) { authMarks.push({ mesh: vm, foot, kind: 'via', k });
         if (dragMark?.mesh !== vm) { const p = refPos(foot, via[k]![0], via[k]![1]); setXZ(vm, p[0], p[1]); } }
     }
-    const lm = liveMarks[i]!; lm.visible = show;                 // живой: реальная цель, тредмилл-ремап
-    if (show) { const [tx, tz] = lp().driver.plantTarget(foot); setXZ(lm, tx - gaitPx, tz - gaitPz); }
+    // Живой: реальная цель ПЛАНИРОВЩИКА, тредмилл-ремап. В «только клипы» его нет — метку не показываем (стояла бы в нуле).
+    const lm = liveMarks[i]!; lm.visible = show && !lp().clipOnly;
+    if (lm.visible) { const [tx, tz] = lp().driver.plantTarget(foot); setXZ(lm, tx - gaitPx, tz - gaitPz); }
   }
 }
 /** Ретаргет-крутилки редактора (сверх GAIT/POSE): ширина ног, база «рука вниз», база сгиба локтя, множитель боба. Передаются в общий poseRuntime. */
@@ -6251,8 +6255,8 @@ function stepPhysics(dt: number): void {
   if (ghostHuman) {
     // lp() ТОЛЬКО в локо: его конструктор зовёт measureStance→human.reset() (мутирует манекен) — в Позы/Анимации это сбило бы позу.
     const sup = locoOn ? lp().groundSupport : undefined;   // опорность — тот же разбор, что в игре
-    const gOpts = { w: locoOn ? lp().driver.groundWeights : undefined, lag: GAIT.gndLag,
-      flat: locoOn ? lp().driver.plantWeights : undefined,
+    const gOpts = { w: locoOn ? lp().groundWeights : undefined, lag: GAIT.gndLag,
+      flat: locoOn ? lp().plantWeights : undefined,
       still: locoOn ? lp().moveMag < 0.02 : true };   // окно/плавность/укладка/«стоим» — те же, что в игре
     const rMatch = physDead ? 0 : (locoOn ? renderMatchWeight(physMatchBase, lp().attackWeight, lp().attackMatch) : PHYS.match);
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,

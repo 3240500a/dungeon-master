@@ -5,8 +5,8 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, type LocoSectionState, type LocoDir } from './locoBlend.js';
-import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES } from './turnInPlace.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, type LocoSectionState, type LocoDir } from './locoBlend.js';
+import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
@@ -405,7 +405,9 @@ export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: nu
     hips.position.x += dz * s + dx * c; hips.position.y += dy; hips.position.z += dz * c - dx * s;
   }
 }
-function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0, atkLegs?: number): void {
+/** Кости рук, которые в «только клипы» без авторской стойки берутся из клипа (корпус уже положил слой бега). */
+const CLIP_ARM_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand'] as const;
+function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0, atkLegs?: number, armsFrom: Pose | null = null): void {
   const H = human.bones;
   const up = content.resolveUpper(weapon, combat, idleT);
   // Раздельные руки ходьба↔бег: armDown/elbowBend блендятся walk→run по t.sb (POSE armSh/armEl/armSwing уже слиты в pose.ts).
@@ -427,7 +429,30 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
     traceRow(it.hand === 'main' ? 'ГЛАВНАЯ РУКА' : 'ВТОРАЯ РУКА', it.item, it.weight,
       it.kind === 'override' ? 'замена верха целиком (двуручное)' : 'дельта к безоружной базе');
   }
-  if (!up) {   // нет idle-позы → полный мах гейта
+  // ⭐ РЕЖИМ «ТОЛЬКО КЛИПЫ»: «походная» сторона каждой кости руки — поворот ИЗ КЛИПА, а не процедурный мах.
+  // Смешивание со стойкой то же самое (`hw`), поэтому оружие, `pe_sway` и хват работают как раньше.
+  // Кости, которой в клипе нет, клип не трогает: её «походная» сторона — сама стойка (иначе клип без каналов
+  // рук ставил бы руки в ноль, то есть в Т-позу).
+  if (armsFrom && !up) {
+    // Стойки нет: покой — та же процедурная рука, что в ветке ниже (мах в «только клипы» нулевой), а к клипу — ПО МЕРЕ
+    // ХОДА. ⚠ Было «клип целиком»: стоя фаза клипа замирает, и рука висела на махе, пока доля клипа не угаснет, а
+    // потом щёлкала в покой — 41° за кадр (замер остановки с бега).
+    gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, eDownL);
+    gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, eDownR);
+    H.get('LeftLowerArm')!.rotation.set(0, -(Math.abs(t.elL) + eBendL), 0);
+    H.get('RightLowerArm')!.rotation.set(0, Math.abs(t.elR) + eBendR, 0);
+    const w = clamp(moveMag, 0, 1);
+    for (const nm of CLIP_ARM_BONES) {
+      const b = H.get(nm), e = armsFrom[nm];
+      if (b && e) { qEuler(e, _qB); b.quaternion.slerp(_qB, w); }
+    }
+  } else if (armsFrom && up) {
+    const hw = clamp(1 - up.swing * moveMag, 0, 1);
+    for (const nm of ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm']) blendEuler(H.get(nm), armsFrom[nm] ?? up.pose[nm] ?? ZERO3, up.pose[nm], hw);
+    for (const nm of UPPER_BONES) blendEuler(H.get(nm), armsFrom[nm] ?? up.pose[nm] ?? ZERO3, up.pose[nm], hw);
+    applyGripChannels(human, up.pose);
+    applyWeaponUpper(weaponGroups, up.pose, hw);
+  } else if (!up) {   // нет idle-позы → полный мах гейта
     gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, eDownL);
     gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, eDownR);
     // Локоть гнётся вокруг ЛОКАЛЬНОЙ Y (лево −Y / право +Y): кисть форерукава лежит на локальной +X, поэтому X =
@@ -621,6 +646,41 @@ const LOCO_FADE = 0.25;
 const LOCO_MOVE_FULL = 0.25;
 /** Гашение клипа поворота, если на середине поворота пошли (сек). */
 const TURN_FADE = 0.15;
+/**
+ * ⭐⭐ РЕЖИМ «ТОЛЬКО КЛИПЫ» — репетиция клиента без StepPlanner.
+ *
+ * Включается, когда доля клипа локомоции равна единице (галка «Бег/ходьба клипами» в настройках клиента,
+ * ползунок на 1 в редакторе). Тогда планировщик НЕ ОБНОВЛЯЕТСЯ и НИ ОДИН его выход не читается — это
+ * стережётся тестом, который подменяет выходы планировщика на исключения. Всё, что он давал, берётся так:
+ *
+ *   что давал планировщик                  чем заменено
+ *   часы клипов (фаза шага)                фаза ПО ПРОЙДЕННОМУ ПУТИ: длина цикла = скорость запекания × период
+ *   ходьба ↔ бег (`sb`)                    та же формула по скорости и тем же ручкам `speedWalk/speedRun`
+ *   опорная нога (флаги переноса)          канал `__swing` клипа; нет его — окна опоры по фазе и доле опоры
+ *   подтяжка стопы к его плантам           ФИКСАЦИЯ СТОПЫ: где коснулась пола — там и держим, пока опора
+ *   мах рук, плечевой пояс                 руки и пояс ИЗ КЛИПА, смешанные со стойкой по `pe_sway` как раньше
+ *   веса заземления                        единицы (опору решает контакт)
+ *   подшаги стоя                           только клипы поворота (нет их — ноги стоят, таз крутится: видно)
+ *
+ * Всё, чего здесь нет, — это и есть список того, что предстоит закрыть до вырезания планировщика.
+ */
+const CLIP_ONLY_TG = (): PoseTargets => ({
+  hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, ankL: 0, ankR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
+  lean: 0, twist: 0, bobY: 0, splay: 0, twChest: 0, twUpper: 0,
+  shTwL: 0, shTwR: 0, shSpL: 0, shSpR: 0, hipTwL: 0, hipTwR: 0, leanSide: 0, headNod: 0, headTurn: 0, headTilt: 0,
+  ankYawL: 0, ankYawR: 0, hipSplayL: 0, hipSplayR: 0, bobX: 0, hipsRoll: 0, hipsPitch: 0,
+  toeCurlL: 0, toeCurlR: 0,
+  shoLX: 0, shoLY: 0, shoLZ: 0, shoRX: 0, shoRY: 0, shoRZ: 0,
+  wLX: 0, wLY: 0, wLZ: 0, wRX: 0, wRY: 0, wRZ: 0, sb: 0, st: 0, bt: 0,
+});
+const _lockV = new THREE.Vector3();
+/**
+ * Переход между режимами (планировщик ↔ «только клипы»), сек. Смешивать ДВА ИСТОЧНИКА здесь нечем —
+ * в «только клипы» планировщик не считается вовсе, — поэтому поза в момент переключения ЗАПОМИНАЕТСЯ и
+ * новая перетекает из неё (инерциализация «на бедность», как узел `Inertialization` в UE: гасим разницу,
+ * а не держим оба источника). Иначе щелчок галки в настройках был бы рывком позы на 100°.
+ */
+const MODE_FADE = 0.25;
 /** Кости, которыми владеет клип поворота: таз и ноги. Корпус — нет, его ведёт живая скрутка к прицелу. */
 const TURN_BONES = ['Hips', 'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes'] as const;
 const _qT1 = new THREE.Quaternion(), _qT2 = new THREE.Quaternion(), _eT = new THREE.Euler();
@@ -647,7 +707,7 @@ export function setLocoMixOverride(v: number | null): void { locoMixOverride = v
 /** Текущий override (для UI и тестов). */
 export function getLocoMixOverride(): number | null { return locoMixOverride; }
 
-export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number): void {
+export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number, clipOnly = false): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
   const m = legMag;
@@ -679,19 +739,25 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // ТОРС/ШЕЯ держат idle-стойку при ПОВОРОТЕ НА МЕСТЕ: блендим к гейту по МГНОВЕННОЙ скорости (armMag=0 стоя/крутясь), а не по
   // legMag (=1 на подшаге) — иначе спина разгибалась/клонило назад при развороте. При движении (armMag→1) — гейт-наклон. Скрутка
   // к прицелу (applyTorsoTwist) и head-look-at идут ОТДЕЛЬНО поверх этого.
-  blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, armMag);
+  // В режиме «только клипы» корпус и шея — из стойки (вес 0), поверх ляжет клип: процедурного наклона нет.
+  const torsoMag = clipOnly ? 0 : armMag;
+  blendBone(human, 'Spine', [t.lean, t.twist, t.leanSide], idle, torsoMag);
   // ⚠ ДЕРЖИМ КОРПУС И НОГИ ПРИ КРЕНЕ/НАКЛОНЕ ТАЗА — и именно ЗДЕСЬ, ПОСЛЕ бленда, а не внутри его
   // тройки. `blendBone` подмешивает авторскую стойку весом `armMag`, а таз повёрнут ЖЁСТКО: вычитание
   // внутри тройки разбавилось бы вместе со стойкой, и стоя корпус всё равно кренился бы.
   applyHipsTiltHold(human, t.hipsRoll, t.hipsPitch);
-  blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, armMag);
-  blendBone(human, 'Head', [0, 0, 0], idle, armMag);
+  blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, torsoMag);
+  blendBone(human, 'Head', [0, 0, 0], idle, torsoMag);
   // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
   // Кладётся ЗДЕСЬ: ноги и торс уже процедурные, а верх (стойка, предметы, слот действия) идёт ниже
   // и ложится ПОВЕРХ — то есть ровно в том порядке, что и в стеке слоёв. Положи раньше — затрут ноги;
   // позже — клип съест стойку с оружием, и меч в руке начнёт жить чужой жизнью.
   if (locoMix > 0.001 && locoPose) blendClipBones(human, locoPose, locoMix, LOCO_BONES);
-  applyUpper(human, weaponGroups, gx, armMag, t, content, weapon, atk, combat, fade, idleT, atkLegs);   // руки — по МГНОВЕННОЙ скорости (в покое точная idle)
+  // Руки — по МГНОВЕННОЙ скорости (в покое точная idle). В «только клипы» — мах ИЗ КЛИПА и вес — ДОЛЯ КЛИПА: она
+  // сглажена (`LOCO_FADE`) и та же, что у ног. ⚠ Мгновенная скорость там не годится: на остановке она падает в ноль
+  // за кадр, а фаза клипа замирает — рука щёлкала бы со взмаха в стойку.
+  applyUpper(human, weaponGroups, gx, clipOnly ? locoMix : armMag, t, content, weapon, atk, combat, fade, idleT, atkLegs,
+    clipOnly && locoMix > 0.001 ? locoPose : null);
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
   if (weapon.endsWith('+shield')) {
@@ -1335,7 +1401,25 @@ export class PosePlayer {
   /** Имя играющего поворота — окну слоёв и тестам. null = не поворачиваемся клипом. */
   get turnClipName(): string | null { return this.turn && !this.turn.out ? this.turn.clip.name : null; }
   /** Оборвать поворот сразу, без гашения (запекание, телепорт). */
-  cancelTurn(): void { if (this.turn) { this.turn = null; this.driver.replant(); } }
+  cancelTurn(): void { if (this.turn) { this.turn = null; this.replantPlanner(); } }
+  /** Режим «только клипы» на этом кадре (см. `CLIP_ONLY_TG`): планировщик не обновлялся и не читался. */
+  private clipOnlyNow = false;
+  get clipOnly(): boolean { return this.clipOnlyNow; }
+  /** Пересадить стопы планировщика после поворота — только если он в деле: в «только клипы» его не трогаем вовсе. */
+  private replantPlanner(): void { if (!this.clipOnlyNow) this.driver.replant(); }
+  /** Часы клипов в режиме «только клипы»: фаза по пройденному пути (рад, π на шаг — как у планировщика). */
+  private clipPhase = 0;
+  /** Поза в момент смены режима и доля, с которой она ещё держится (см. `MODE_FADE`). */
+  private modeSnap: { rot: Map<string, THREE.Quaternion>; hips: THREE.Vector3 } | null = null;
+  private modeBlend = 0;
+  /** Опорные стопы клипа (true = на полу) и точки, где они коснулись пола (мир), — фиксация стопы. */
+  private clipContact: [boolean, boolean] = [true, true];
+  private footLock: [{ x: number; z: number } | null, { x: number; z: number } | null] = [null, null];
+  /** Вес фиксации стоп (см. место чтения): на ходу 1, встали — гаснет за `LOCO_FADE`. */
+  private lockW = 0;
+  /** Веса заземления: в «только клипы» опору решает контакт, окон планировщика нет. */
+  get groundWeights(): [number, number] { return this.clipOnlyNow ? [1, 1] : this.driver.groundWeights; }
+  get plantWeights(): [number, number] { return this.clipOnlyNow ? [1, 1] : this.driver.plantWeights; }
   /**
    * КАКИЕ СТОПЫ ЗАЗЕМЛЯТЬ. Обычно — опорные по планировщику; на время клипа поворота — по флагам
    * переноса ИЗ КЛИПА: ноги у планировщика отобраны, он считает обе опорными и положил бы маховую
@@ -1343,6 +1427,7 @@ export class PosePlayer {
    */
   get groundSupport(): [boolean, boolean] {
     if (this.turn && this.turn.w > 0.5) return turnSupportAt(this.turn.clip, this.turn.t);
+    if (this.clipOnlyNow) return [this.clipContact[0], this.clipContact[1]];
     const sw = this.driver.swingLegs;
     return [!sw[0], !sw[1]];
   }
@@ -1376,6 +1461,8 @@ export class PosePlayer {
    * многокадровый idle не должен перенастраивать её каждый кадр.
    */
   measureStance(): void {
+    // «Только клипы»: стойка нужна одному планировщику — не мерим и не отдаём. −1 = при возврате замерить заново.
+    if (this.clipOnlyNow) { this.stanceCombat = -1; return; }
     const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null);
     this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY, p.foot);
     this.stanceCombat = this.combat;
@@ -1403,13 +1490,13 @@ export class PosePlayer {
       if (!t.out && this.moveMag >= STILL_OFF) t.out = true;          // пошли посреди поворота — гасим, ноги отдаём ходу
       if (t.out) {
         t.w -= dt / TURN_FADE;
-        if (t.w <= 0) { this.turn = null; this.driver.replant(); }
+        if (t.w <= 0) { this.turn = null; this.replantPlanner(); }
         return null;                                                  // курс — снова у обычного доворота, от текущего
       }
       this.turnMode = true;
       t.t += dt;
       this.rootYaw = t.startYaw + turnYawAt(t.clip, t.t);
-      if (t.t >= dur) { this.turn = null; this.driver.replant(); }   // встал в стойку на новом курсе → стопы туда же
+      if (t.t >= dur) { this.turn = null; this.replantPlanner(); }   // встал в стойку на новом курсе → стопы туда же
       return { rootYaw: this.rootYaw, residual: clampTw(wrapPi(this.aimYaw - this.rootYaw)), turning: true };
     }
     const clipMode = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) >= 0.5;
@@ -1559,11 +1646,28 @@ export class PosePlayer {
     }
     const cstep = dt / Math.max(0.01, GAIT.combatBlend);   // кроссфейд боевой стойки (линейно за combatBlend сек)
     this.combat += clamp(this.combatTarget - this.combat, -cstep, cstep);
-    this.driver.setCombat(this.combat);   // боевая колонка настроек (Ф6) — тот же плавный combat, что блендит стойку
-    // ⭐ …и СТОЙКА ПЛАНИРОВЩИКА следует за той же осью: иначе поворот на месте в бою поднимал бы таз
-    // на релакс-высоту (см. `measureStance`). Порог 0.02 — чтобы не мерить каждый кадр кроссфейда:
-    // замер зовёт `human.reset()`, а поза всё равно собирается заново в `gaitToHumanoid`.
-    if (Math.abs(this.combat - this.stanceCombat) > 0.02) this.measureStance();
+    // ⭐⭐ «ТОЛЬКО КЛИПЫ»: доля клипа ровно 1 и контенту есть откуда брать клипы. Решается ПЕРВЫМ — от него зависит,
+    // трогаем ли планировщик на этом кадре вообще: в этом режиме ему не уходит НИ ОДИН вызов, даже сеттер
+    // (и если режим включён с первого кадра, планировщик так и не создаётся — `PoseDriver.setWorld` его не позовёт).
+    const clipOnly = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) >= 0.999 && !!this.content.locoClip;
+    if (clipOnly !== this.clipOnlyNow) {
+      this.footLock = [null, null]; this.clipContact = [true, true];
+      // Поза прошлого кадра ещё на гуманоиде — её и запоминаем, из неё новый режим и перетечёт.
+      const rot = new Map<string, THREE.Quaternion>();
+      for (const [nm, b] of this.human.bones) rot.set(nm, b.quaternion.clone());
+      this.modeSnap = { rot, hips: this.human.bones.get('Hips')!.position.clone() };
+      this.modeBlend = 1;
+      // Назад к планировщику: его планты остались там, где он их бросил (за метры отсюда), — ставим стопы заново.
+      if (!clipOnly) this.driver.replant();
+    }
+    this.clipOnlyNow = clipOnly;
+    if (!clipOnly) {
+      this.driver.setCombat(this.combat);   // боевая колонка настроек (Ф6) — тот же плавный combat, что блендит стойку
+      // ⭐ …и СТОЙКА ПЛАНИРОВЩИКА следует за той же осью: иначе поворот на месте в бою поднимал бы таз
+      // на релакс-высоту (см. `measureStance`). Порог 0.02 — чтобы не мерить каждый кадр кроссфейда:
+      // замер зовёт `human.reset()`, а поза всё равно собирается заново в `gaitToHumanoid`.
+      if (Math.abs(this.combat - this.stanceCombat) > 0.02) this.measureStance();
+    }
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
     const twist = blendTwist(this.twistStates, spd);   // скрутка корпуса по состоянию (стой/ходьба/бег), плавно по скорости
@@ -1592,27 +1696,29 @@ export class PosePlayer {
     // за морфом. ЗАМЕР в живом редакторе: рост 1.16 поднял таз 35.05 → 40.66 и всю цепь ноги, лодыжка
     // рига встала на 3.355, а `FOOT_Y + footLift` остался 2.900 — персонаж уезжал в пол на 0.455.
     // `ankleRest` считается по САМОМУ ригу, поэтому следует и за моделью, и за телосложением.
-    this.driver.footFloor = this.human.ankleRest ?? (FOOT_Y + (this.human.footLift ?? 0));
-    this.driver.legRest = this.human.legRest;   // длины бедра/голени и полутаз — из рига, не из констант
-    this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
-    this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
     const fwdC = vx * Math.sin(yaw) + vz * Math.cos(yaw), latC = vx * Math.cos(yaw) - vz * Math.sin(yaw);
-    let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
-    const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
-    const spB = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
-    const bl = (leg: 'l' | 'r', k: 0 | 1): number => {
-      const w = this.plant.walk[i0]![leg][k] + (this.plant.walk[i1]![leg][k] - this.plant.walk[i0]![leg][k]) * ft;
-      const r = this.plant.run[i0]![leg][k] + (this.plant.run[i1]![leg][k] - this.plant.run[i0]![leg][k]) * ft;
-      return w + (r - w) * spB;
-    };
-    this.driver.setPlantOffset(bl('l', 0), bl('l', 1), bl('r', 0), bl('r', 1));
-    this.driver.setPlantVia(blendVia(this.plant, 'lVia', i0, i1, ft, spB), blendVia(this.plant, 'rVia', i0, i1, ft, spB));
+    if (!clipOnly) {
+      this.driver.footFloor = this.human.ankleRest ?? (FOOT_Y + (this.human.footLift ?? 0));
+      this.driver.legRest = this.human.legRest;   // длины бедра/голени и полутаз — из рига, не из констант
+      this.driver.setWorld(this.px, this.pz, yaw, vx, vz);        // yaw таза → стопы в верном body-кадре + подшаг при повороте
+      this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
+      let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
+      const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
+      const spB = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
+      const bl = (leg: 'l' | 'r', k: 0 | 1): number => {
+        const w = this.plant.walk[i0]![leg][k] + (this.plant.walk[i1]![leg][k] - this.plant.walk[i0]![leg][k]) * ft;
+        const r = this.plant.run[i0]![leg][k] + (this.plant.run[i1]![leg][k] - this.plant.run[i0]![leg][k]) * ft;
+        return w + (r - w) * spB;
+      };
+      this.driver.setPlantOffset(bl('l', 0), bl('l', 1), bl('r', 0), bl('r', 1));
+      this.driver.setPlantVia(blendVia(this.plant, 'lVia', i0, i1, ft, spB), blendVia(this.plant, 'rVia', i0, i1, ft, spB));
+    }
     // Вес гейта в ногах: идём/подшагиваем (разворот на месте) → ноги ведёт планировщик, иначе — поза idle-стойки.
     // Без этого при стоянии ноги целиком из idle: подшаг НЕ виден, а фидбэк setFeet отдаёт планировщику чужие стопы.
     // ⚠ `stepping` МЕРЦАЕТ (settled щёлкает по гистерезису) → держим ещё STEP_HOLD после конца подшага, иначе ноги
     // мигают idle↔гейт = тик при развороте на месте.
-    if (this.driver.stepping) this.stepHold = STEP_HOLD; else this.stepHold = Math.max(0, this.stepHold - dt);
-    const want = this.stepHold > 0 ? 1 : this.moveMag;
+    if (!clipOnly && this.driver.stepping) this.stepHold = STEP_HOLD; else this.stepHold = Math.max(0, this.stepHold - dt);
+    const want = clipOnly ? 0 : this.stepHold > 0 ? 1 : this.moveMag;   // «только клипы»: процедурных ног нет вовсе
     // Асимметрия скорости: ВХОД в гейт (шаг) — резво (отзывчивый подшаг); ВЫХОД в idle (конец поворота) — мягче, иначе поза
     // «оседает» рывком при остановке (ноги морфятся гейт→idle-стойка плавно). Резкое переключение idle↔гейт дребезжит.
     this.legMag += (want - this.legMag) * Math.min(1, dt * (want >= this.legMag ? 6 : 3.5));
@@ -1625,7 +1731,7 @@ export class PosePlayer {
     // ⚠ Гистерезис на «стоим» обязателен: скорость шумит (снапшоты реже кадров), и один порог
     // дребезжал — ЗАМЕР давал 107–119 переключений за пару секунд.
     this.still = this.still ? this.moveMag < STILL_OFF : this.moveMag < STILL_ON;
-    const sw = this.driver.swingLegs;
+    const sw = clipOnly ? [!this.clipContact[0], !this.clipContact[1]] : this.driver.swingLegs;
     const busy = !this.still || this.turning || sw[0] || sw[1];
     const legsHeld = !!this.atk.clip && this.atk.t >= 0
       && (this.atk.legs === 'always' || (this.atk.legs !== 'never' && !busy));
@@ -1635,13 +1741,15 @@ export class PosePlayer {
     // на каждом входе-выходе был бы щелчок.
     this.atkLegsW += ((legsHeld ? 1 : 0) - this.atkLegsW) * Math.min(1, dt / LEGS_FADE);
     const turnLegs = this.turnMode;                               // поворот клипами (идёт или ждём решения): планировщик шагов не начинает
-    this.driver.setLegsHeld(legsHeld || turnLegs);
-    if (this.legMag > 0.5 && !legsHeld && !turnLegs) {            // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
+    if (!clipOnly) this.driver.setLegsHeld(legsHeld || turnLegs);
+    if (!clipOnly && this.legMag > 0.5 && !legsHeld && !turnLegs) {   // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
     this.idleT += dt;
-    const tg = this.driver.update(dt);
+    // ⚠ В «только клипы» планировщик НЕ ОБНОВЛЯЕТСЯ: цели нейтральные, ось ходьба↔бег — по скорости теми же ручками.
+    const tg = clipOnly ? CLIP_ONLY_TG() : this.driver.update(dt);
+    if (clipOnly) tg.sb = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
     // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
     // Клипы БЛЕНДЯТСЯ по тем же осям, что и колонки настроек (`sb`/`st`/`bt`), и сэмплируются ОДНОЙ
     // фазой планировщика: у клипа нет своего таймера, иначе настройки персонажа перестали бы на него
@@ -1668,7 +1776,22 @@ export class PosePlayer {
       // ⚠ Порога это не вводит: ведущий выбирает лишь ЧЬИ МЕТКИ читать, а поза всё равно из бленда.
       const domDir: LocoDir = axes.bt > axes.st ? 'back' : axes.st > 0.5 ? (latRight ? 'strafe_R' : 'strafe_L') : 'fwd';
       const lead = clipOf(domDir, axes.sb > 0.5) ?? clipOf(domDir, axes.sb <= 0.5);
-      let u = locoPhaseU(this.driver.gaitPhase);
+      // ЧАСЫ: у планировщика — его фаза; в «только клипы» — фаза по ПРОЙДЕННОМУ ПУТИ. Длина цикла = скорость, на
+      // которой клип снят, × его период: столько пути проходит тело за один цикл клипа. Смесь колонок — весами бленда.
+      if (clipOnly) {
+        const cyc = (d: LocoDir): number => {
+          const w = clipOf(d, false), r = clipOf(d, true);
+          const lw = w ? bakedLocoSpeed(w.name) * (clipDur(w) || 1) : 0, lr = r ? bakedLocoSpeed(r.name) * (clipDur(r) || 1) : 0;
+          return lw && lr ? lw + (lr - lw) * axes.sb : lw || lr;
+        };
+        const side: LocoDir = latRight ? 'strafe_R' : 'strafe_L';
+        const cF = cyc('fwd'), cS = cyc(side), cB = cyc('back');
+        const wF = (1 - axes.st) * (1 - axes.bt), wS = axes.st * (1 - axes.bt), wB = axes.bt;
+        const sumW = (cF ? wF : 0) + (cS ? wS : 0) + (cB ? wB : 0);
+        const cycle = sumW > 1e-6 ? ((cF ? cF * wF : 0) + (cS ? cS * wS : 0) + (cB ? cB * wB : 0)) / sumW : 0;
+        if (cycle > 1e-3) this.clipPhase += (2 * Math.PI) * spd * dt / cycle;
+      }
+      let u = locoPhaseU(clipOnly ? this.clipPhase : this.driver.gaitPhase);
       if (lead && lead.keys.length) {
         const dur = clipDur(lead) || 1;
         const sc = clipSections(lead);
@@ -1683,7 +1806,21 @@ export class PosePlayer {
       };
       locoPose = blendLocoPose(pickPose, axes, latRight, blendTwo);
     }
-    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix, this.atkLegsW);
+    // ОПОРНЫЕ СТОПЫ В «ТОЛЬКО КЛИПЫ»: из канала `__swing` клипа, а если его нет (клип запечён до канала) — окна
+    // опоры по фазе с той же долей опоры, что у планировщика (`dutyWalk/dutyRun`): клипы сняты по его фазе, так что
+    // для запечённых это та же разметка. Стоим — обе на полу.
+    if (clipOnly) {
+      if (mix > 0.001 && locoPose) {
+        const s = locoPose[SWING_KEY];
+        if (s) this.clipContact = [s[0] < 0.5, s[1] < 0.5];
+        else {
+          const duty = GAIT.dutyWalk + (GAIT.dutyRun - GAIT.dutyWalk) * (tg.sb ?? 0);
+          const inStance = (i: number): boolean => Math.abs(wrapPi(this.clipPhase - i * Math.PI)) <= Math.PI * duty;
+          this.clipContact = [inStance(0), inStance(1)];
+        }
+      } else this.clipContact = [true, true];
+    }
+    gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix, this.atkLegsW, clipOnly);
     if (layerTrace.on) {
       layerTrace.speed = Math.hypot(this.vx, this.vz);
       layerTrace.sb = tg.sb ?? 0; layerTrace.st = tg.st ?? 0;
@@ -1701,7 +1838,27 @@ export class PosePlayer {
       const hb = this.human.bones.get('Hips')!;
       hb.position.x += tg.bobX * Math.cos(yaw); hb.position.z += -tg.bobX * Math.sin(yaw);
     }
-    if (locoPose) {
+    if (clipOnly) {
+      // ⭐ ФИКСАЦИЯ СТОПЫ вместо подтяжки к плантам планировщика: где стопа коснулась пола — там и держим, пока
+      // клип говорит «опора». Точка берётся в момент касания из самой позы, поэтому на касании рывка нет.
+      // Тоже ПОСЛЕ `applyTorsoTwist` (он крутит весь риг). Мир ↔ риг — через позицию персонажа, как у плантов.
+      // ⚠ ВЕС ФИКСАЦИИ СВОЙ, А НЕ ДОЛЯ КЛИПА. Доля на старте растёт четверть секунды, и опорная стопа, державшаяся
+      // её долей, ехала за позой — замер старта с места в бег: 2.62 ед. Идём — держим целиком (точка берётся в
+      // кадр, когда вес поднялся, поэтому рывка нет); встали — отпускаем за то же время, что гаснет клип.
+      // На ОСТАНОВКЕ это всё равно скольжение: шагнуть в стойку нечем — нужен клип остановки, его пока нет.
+      this.lockW = this.still ? Math.max(0, this.lockW - dt / LOCO_FADE) : 1;
+      this.human.root.updateMatrixWorld(true);
+      const tgt: [[number, number], [number, number]] = [[0, 0], [0, 0]];
+      for (let i = 0; i < 2; i++) {
+        if (!this.clipContact[i] || this.lockW <= 0.001) { this.footLock[i] = null; continue; }
+        if (!this.footLock[i]) {
+          const f = this.human.bones.get(i === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(_lockV);
+          this.footLock[i] = { x: f.x + this.px, z: f.z + this.pz };
+        }
+        tgt[i] = [this.footLock[i]!.x - this.px, this.footLock[i]!.z - this.pz];
+      }
+      warpStanceFeet(this.human, tgt, [!this.footLock[0], !this.footLock[1]], this.lockW);
+    } else if (locoPose) {
       // ⚠ ПОСЛЕ `applyTorsoTwist`, А НЕ ДО. Он ставит тазу фейсинг, то есть ПОВОРАЧИВАЕТ ВЕСЬ РИГ, и
       // подтяжка, сделанная раньше, была бы посчитана в другом кадре и уехала бы вместе с поворотом.
       // Планты у планировщика в МИРЕ, риг локальный → вычитаем позицию персонажа.
@@ -1723,5 +1880,11 @@ export class PosePlayer {
     if (this.fade) applyAttackPelvis(this.human, this.fade.atk, yaw, this.fade.w * pelvisW);   // таз уходящего удара — тоже с кроссфейдом
     applyAttackPelvis(this.human, this.atk, yaw, pelvisW);   // мах/скрутка таза удара in-place (поверх facing; Root≠Pelvis) — аддитивно
     applyHeadLookAt(this.human, this.aimYaw, twist.headLook, twist.headPitch);   // голова на ПРИЦЕЛ + ЗАДАННЫЙ кивок (убирает свинг-нырок от удара)
+    if (this.modeSnap) {                                             // смена режима: новая поза перетекает из запомненной
+      for (const [nm, b] of this.human.bones) { const q = this.modeSnap.rot.get(nm); if (q) b.quaternion.slerp(q, this.modeBlend); }
+      this.human.bones.get('Hips')!.position.lerp(this.modeSnap.hips, this.modeBlend);
+      this.modeBlend -= dt / MODE_FADE;
+      if (this.modeBlend <= 0) this.modeSnap = null;
+    }
   }
 }

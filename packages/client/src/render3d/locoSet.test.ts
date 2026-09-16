@@ -181,8 +181,12 @@ describe('наискосок: стопы не скользят на остатк
   });
   afterEach(() => { setLocoMixOverride(null); delete (globalThis as unknown as { localStorage?: Storage }).localStorage; Object.assign(GAIT, GAIT0); });
 
-  /** Средний боковой снос маховой стопы с линии хода, ед/кадр. `lib === null` — чистый планировщик. */
-  const drift = (lib: Map<string, Clip> | null, deg: number): number => {
+  /**
+   * Средний боковой снос маховой стопы с линии хода, ед/кадр. `lib === null` — чистый планировщик.
+   * ⚠ Маховую ногу берём у ПЛЕЕРА (`groundSupport`), а не у планировщика: на галке «клипами» его нет вовсе, и
+   * `driver.swingLegs` там всегда «обе стоят» — выборка была бы пустой, а сторож проходил бы вхолостую нулём.
+   */
+  const drift = (lib: Map<string, Clip> | null, deg: number): { v: number; n: number } => {
     const h = buildHumanoid({});
     const base = localStorageContent('warrior');
     const content = lib ? { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } } : base;
@@ -199,11 +203,11 @@ describe('наискосок: стопы не скользят на остатк
         const f = h.bones.get(leg === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(new THREE.Vector3());
         const wx = f.x + p.posX, wz = f.z + p.posZ;
         const q = prev[leg];
-        if (i > 240 && q && p.driver.swingLegs[leg]) { sum += Math.abs(-(wx - q.x) * Math.cos(a) + (wz - q.z) * Math.sin(a)); n++; }
+        if (i > 240 && q && !p.groundSupport[leg]) { sum += Math.abs(-(wx - q.x) * Math.cos(a) + (wz - q.z) * Math.sin(a)); n++; }
         prev[leg] = { x: wx, z: wz };
       }
     }
-    return sum / Math.max(1, n);
+    return { v: sum / Math.max(1, n), n };
   };
 
   it('⭐⭐ НА ХОДУ ПОД 65–90° (остаток 15–40°) КЛИПЫ СНОСЯТ СТОПУ НЕ СИЛЬНЕЕ ПЛАНИРОВЩИКА', () => {
@@ -215,7 +219,8 @@ describe('наискосок: стопы не скользят на остатк
     for (const sp of GAIT_PRESETS) lib.set(sp.name, bakeGaitToClip(p0, h0, sp, { character: 'warrior', weapon: 'none' }).clip);
     for (const deg of [65, 80, 90]) {
       const proc = drift(null, deg), clip = drift(lib, deg);
-      expect(clip, `ход ${deg}°: клипы ${clip.toFixed(3)} против ${proc.toFixed(3)} у планировщика`).toBeLessThanOrEqual(proc);
+      expect(clip.n, `ход ${deg}°: ⚠ маховых кадров нет — сторож мерил бы пустоту`).toBeGreaterThan(300);
+      expect(clip.v, `ход ${deg}°: клипы ${clip.v.toFixed(3)} против ${proc.v.toFixed(3)} у планировщика`).toBeLessThanOrEqual(proc.v);
     }
   });
 });

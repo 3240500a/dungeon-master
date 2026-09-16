@@ -41,6 +41,7 @@ import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW } from './clipModel.js';
 import type { Humanoid } from './humanoid.js';
 import { setLocoMixOverride, getLocoMixOverride, type PosePlayer } from './poseRuntime.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
+import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
 
 /**
  * ⚠ ЗАПЕКАЕТСЯ ВСЕГДА ПРОЦЕДУРКА. Если в редакторе включена локомоция клипами, плеер сам заиграл бы
@@ -55,7 +56,7 @@ function procedural<T>(player: PosePlayer, fn: () => T): T {
 }
 
 /** Максимальная скорость, к которой нормируются vx/vz спеки (как ползунок «Бег» в редакторе). */
-export const BAKE_MAXSPD = 120;
+export const BAKE_MAXSPD = LOCO_BAKE_MAXSPD;
 
 export interface GaitSpec {
   name: string;                 // имя будущего клипа (walk_fwd, run_strafe_L, …)
@@ -261,7 +262,7 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
  * Пока Root не анимируется (Ф1.4 завёл узел, но треков корня ещё нет), запечённый «поворот» был бы
  * либо пустым, либо содержал бы facing, который в чужом движке подрался бы с его собственным поворотом.
  */
-const WALK = 0.42, RUN = 0.85;
+const WALK = LOCO_WALK, RUN = LOCO_RUN;   // те же числа читают часы «только клипы» (`bakedLocoSpeed`)
 export const GAIT_PRESETS: readonly GaitSpec[] = [
   { name: 'idle', vx: 0, vz: 0, durationSec: 0.5, loop: true },
   { name: 'walk_fwd', vx: 0, vz: WALK },

@@ -16,6 +16,16 @@
 /** Четыре направления вместо восьми — решение Ф0: диагонали закрывает доворот таза. */
 export type LocoDir = 'fwd' | 'back' | 'strafe_L' | 'strafe_R';
 
+/**
+ * ⭐ СКОРОСТИ ЗАПЕКАНИЯ НАБОРА — одна правда для запекателя (`GAIT_PRESETS`) и для часов режима «только клипы».
+ * Там клип идёт по ПРОЙДЕННОМУ ПУТИ: его цикл = скорость, на которой он снят, × его период. Разойдись эти
+ * числа у запекателя и рантайма — стопы поехали бы по полу ровно на разницу (сторож в `clipOnly.test.ts`).
+ */
+export const LOCO_BAKE_MAXSPD = 120;
+export const LOCO_WALK = 0.42, LOCO_RUN = 0.85;
+/** Скорость (u/с), на которой снят клип набора, — по имени: `run_*` бегом, остальное шагом. */
+export const bakedLocoSpeed = (name: string): number => (/^run_/.test(name) ? LOCO_RUN : LOCO_WALK) * LOCO_BAKE_MAXSPD;
+
 /** Фаза планировщика (рад, π на шаг) → нормализованное время клипа 0..1. */
 export function locoPhaseU(phase: number): number {
   const TAU = Math.PI * 2;

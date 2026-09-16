@@ -168,7 +168,9 @@ describe('смешивание в рантайме', () => {
     const content = withLoco(other);
     const hh = buildHumanoid({});
     const p = new PosePlayer(hh, () => [], content, 'sword', GX, emptyGrid());
-    GAIT.locoMix = 1;
+    // ⚠ 0.99, А НЕ 1: единица — режим «только клипы», где планировщика нет вовсе и подтягивать стопу
+    // не к чему (её держит фиксация). Подтяжка к плантам живёт в СМЕШАННОМ режиме — его и стережём.
+    GAIT.locoMix = 0.99;
     let worst = 0, seen = 0;
     const v = new THREE.Vector3();
     p.setVel(0, 115); p.setYaw(0);
@@ -199,7 +201,7 @@ describe('смешивание в рантайме', () => {
       { name: 'walk_fwd', vx: 0, vz: 0.3 }, { character: 'warrior', weapon: 'sword' }).clip;
     const hh = buildHumanoid({});
     const p = new PosePlayer(hh, () => [], withLoco(other), 'sword', GX, emptyGrid());
-    GAIT.locoMix = 1;
+    GAIT.locoMix = 0.99;   // смешанный режим — см. выше: на единице планировщика нет
     const v = new THREE.Vector3(), hip = new THREE.Vector3(), knee = new THREE.Vector3(), tgt = new THREE.Vector3();
     let worst = 0, seen = 0;
     for (let i = 0; i < 260; i++) {
@@ -236,7 +238,7 @@ describe('смешивание в рантайме', () => {
       { name: 'walk_fwd', vx: 0, vz: 0.3 }, { character: 'warrior', weapon: 'sword' }).clip;
     const hh = buildHumanoid({});
     const p = new PosePlayer(hh, () => [], withLoco(other), 'sword', GX, emptyGrid());
-    GAIT.locoMix = 1;
+    GAIT.locoMix = 0.99;   // смешанный режим — см. выше: на единице планировщика нет
     const yaw = Math.PI / 3;
     p.setVel(115 * Math.sin(yaw), 115 * Math.cos(yaw)); p.setYaw(yaw);
     const v = new THREE.Vector3();
