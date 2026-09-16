@@ -32,7 +32,7 @@ export const MARK_COLOR: Record<MarkTrack, string> = { gameplay: '#ffcf66', audi
 
 /** Цвет ромба по форме перехода — форма читается с одного взгляда. */
 export const INTERP_COLOR: Record<Interp | 'none', string> = {
-  none: '#8fb7ff', linear: '#8fb7ff', ease: '#9ae6a0', step: '#ffcf66', fixed: '#b088ff',
+  none: '#8fb7ff', linear: '#8fb7ff', ease: '#9ae6a0', step: '#ffcf66', fixed: '#b088ff', smooth: '#6fd6d0',
 };
 
 export interface TimelineCallbacks {

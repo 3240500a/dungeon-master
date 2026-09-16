@@ -66,7 +66,7 @@ import { findLocoClip, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
 import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
 import { hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';   // Ф12: офсет таза — ДЕЛЬТА от rest, а не абсолют
-import { blendTwo, clipPoseAt, clipSegmentAt, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
+import { blendTwo, clipPoseAt, clipSegmentAt, segmentPose, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
   type Pose, type Keyframe, type Clip } from './clipModel.js';   // Ф1.1: одна модель клипа на редактор и игру
 import { createModelsTab } from './poseModelsTab.js';
 
@@ -5027,6 +5027,9 @@ tlTop.append(
   tlAct('↗ плавно', 'кривая: плавно (ease)', (c, sl) => setInterp(c.keys, sl, 'ease', [0.42, 0, 0.58, 1])),
   tlAct('╱ резко', 'кривая: линейно', (c, sl) => setInterp(c.keys, sl, 'linear')),
   tlAct('■ держать', 'кривая: ступенька (stepped-блокинг)', (c, sl) => setInterp(c.keys, sl, 'step')),
+  // Сплайн — не ремап фазы одного интервала, а кривая ЧЕРЕЗ ключи: скорость на ключе непрерывна, форму дают соседи.
+  // Так запекается походка (11–13 ключей на цикл); руками — чтобы разгладить движение, не добавляя ключей.
+  tlAct('〰 сплайн', 'кривая: сплайн через ключи (скорость на ключе без излома)', (c, sl) => setInterp(c.keys, sl, 'smooth')),
   sep(),
   tlAct('⧉ дубль', 'дублировать кадры', (c, sl) => {
     const add = sl.map((i) => c.keys[i]).filter((k): k is Keyframe => !!k)
@@ -5127,6 +5130,8 @@ function preview(time: number): void {   // time в секундах
   const c = curClip(); if (!c) return;
   const seg = clipSegmentAt(c, time); if (!seg) return;
   if (seg.a === seg.b) { applyPose(seg.a.pose); return; }
+  // Сплайн считает поза целиком из соседних ключей — тем же `segmentPose`, что игра; ломаная — прежним лерпом.
+  if (seg.a.interp === 'smooth') { applyPose(segmentPose(c, seg)); return; }
   lerpPose(seg.a.pose, seg.b.pose, seg.u);
 }
 
@@ -6193,7 +6198,7 @@ function updateTrajectory(): void {
   const v = new THREE.Vector3();
   for (const smp of trajectorySamples(c, 5)) {
     const seg = clipSegmentAt(c, smp.t); if (!seg) continue;
-    const pose = seg.a === seg.b ? seg.a.pose : blendTwo(seg.a.pose, seg.b.pose, seg.u);
+    const pose = segmentPose(c, seg);   // траектория — тем же проигрывателем, что игра (и сплайн, и ломаная)
     human.reset();
     for (const nm in pose) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(pose[nm]![0], pose[nm]![1], pose[nm]![2]); }
     { const hd = hipsOffset(pose, human.hipsRest.y); if (hd) human.hips.position.set(human.hipsRest.x + hd[0], human.hipsRest.y + hd[1], human.hipsRest.z + hd[2]); }

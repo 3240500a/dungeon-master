@@ -133,7 +133,8 @@ export function makeCurvePanel(host: HTMLElement, cb: CurveCallbacks): CurvePane
 
     const e = easeOfKey(k);
     const stepped = k.interp === 'step';
-    const flat = !k.interp || k.interp === 'linear' || k.interp === 'fixed';
+    const spline = k.interp === 'smooth';                    // фаза у сплайна линейна: форму дают соседние ключи
+    const flat = !k.interp || k.interp === 'linear' || k.interp === 'fixed' || spline;
 
     // сама кривая
     ctx.strokeStyle = stepped ? '#ffcf66' : flat ? '#8fb7ff' : '#9ae6a0';
@@ -156,7 +157,7 @@ export function makeCurvePanel(host: HTMLElement, cb: CurveCallbacks): CurvePane
     }
     ctx.restore();
     ctx.fillStyle = '#6b7180'; ctx.font = '9px monospace';
-    ctx.fillText(stepped ? 'держать' : flat ? 'линейно' : describeEase(e), PAD + 2, 10);
+    ctx.fillText(stepped ? 'держать' : spline ? 'сплайн — форма из соседних ключей' : flat ? 'линейно' : describeEase(e), PAD + 2, 10);
   }
 
   const local = (ev: PointerEvent): [number, number] => {

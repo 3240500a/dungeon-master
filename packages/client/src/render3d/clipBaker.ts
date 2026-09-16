@@ -14,7 +14,7 @@ import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { makeBakeRig, autoBoneMap, enforceTPose, FULL_AIM_CHILD, OUR_BONES, OUR_FINGERS, type BakeRig } from './retarget3d.js';
 import { boneWeight, partWeight, setPartWeight, maskFromBody, hasPart, type BoneMask } from './boneMask.js';
 import { rigSignature, isStaticBake, type ImportReport, type BakeStats } from './clipImport.js';
-import { slerpEuler, setHipsOffset, setRootMotion } from './clipModel.js';
+import { slerpEuler, setHipsOffset, setRootMotion, ERROR_POS_KEYS, POS_DEG_PER_UNIT } from './clipModel.js';
 import { groundBakeOffset , FOOT_SOLE} from './footIk.js';
 import { detrendTravel, rootTravel, refPose, readLimbTarget, groundTargets, clampHipsToFeet, lockLimb, limbBones, LIMBS, type Vec3, type FootTarget, type LimbId } from './footLock.js';
 import { applyHeadLookAt } from './poseRuntime.js';
@@ -67,16 +67,13 @@ function applyPoseTo(H: Humanoid, p: Pose, hipsD: readonly [number, number, numb
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _qc = new THREE.Quaternion();
 const _ea = new THREE.Euler(), _eb = new THREE.Euler(), _ec = new THREE.Euler();
 /**
- * Какие позиционные каналы участвуют в прореживании и почём юнит смещения в «градусах».
- * ⚙ ГРАБЛЯ: раньше функция гнала ЛЮБУЮ тройку через `setFromEuler().angleTo()`. Пока в клип писались только
- * кости, это спало; с появлением офсета таза (`__hipsD`) смещение [0,−1.5,0] читалось бы как ~86° ошибки НА КАЖДОМ
- * кадре — и прореживание перестало бы прореживать. Скаляры (`__match`, `__pinKp` до 12000) в меру НЕ входят вообще:
- * плотность ключей задаёт движение, а не настройки физики.
+ * Какие позиционные каналы участвуют в прореживании и почём юнит смещения в «градусах» — ОДНА мера на
+ * прореживание ломаной и подгонку сплайна (`clipModel.ERROR_POS_KEYS` / `POS_DEG_PER_UNIT`, там же грабля).
+ * Скаляры (`__match`, `__pinKp` до 12000) в меру НЕ входят вообще: плотность ключей задаёт движение, а не
+ * настройки физики.
  */
-const POS_KEYS = new Set(['__hipsD', '__hipsP', '__wpnMainP', '__wpnOffP', '__lgripP']);
-/** 1 юнит смещения ≈ 5° поворота. При дефолтном пороге 3° это значит «боб таза от 0.6 юнита сохраняется»
- *  (рост таза у нас 32 юнита, то есть чувствительность ≈ 2 % высоты таза). */
-export const POS_DEG_PER_UNIT = 5;
+const POS_KEYS = ERROR_POS_KEYS;
+export { POS_DEG_PER_UNIT };
 
 /** Макс. (по костям) угловая ошибка (°) slerp-реконструкции кадра `c` из соседних ключей `a`,`b`.
  *  Мера в углах КВАТЕРНИОНОВ (не эйлер-дельте) — так же, как интерполирует наш плеер (blendTwo slerp'ом);

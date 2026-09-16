@@ -17,8 +17,9 @@ export type Pose = Record<string, [number, number, number]>;
  *  `linear` — как было всегда (дефолт, старые клипы без поля читаются именно так);
  *  `ease` — безье-ремап фазы ручками `ease` (дефолт EASE_INOUT);
  *  `step` — держать позу ключа до следующего (stepped-блокинг);
- *  `fixed` — интервал считается уже записанным покадрово, доп. сглаживания нет (== linear). */
-export type Interp = 'linear' | 'ease' | 'step' | 'fixed';
+ *  `fixed` — интервал считается уже записанным покадрово, доп. сглаживания нет (== linear);
+ *  `smooth` — СПЛАЙН через ключи: скорость на ключе непрерывна, форму задают соседи (`splinePose`). */
+export type Interp = 'linear' | 'ease' | 'step' | 'fixed' | 'smooth';
 
 // ── Метки на кадрах (модель Unreal Notify / Notify State) ────────────────────────────────────────
 /**
@@ -220,7 +221,7 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number, u: n
  *  Ключ без `interp` == 'linear' → `u` возвращается как есть, поэтому старые клипы ведут себя ровно как раньше. */
 export function easeU(k: Keyframe | undefined, u: number): number {
   const m = k?.interp;
-  if (!m || m === 'linear' || m === 'fixed') return u;
+  if (!m || m === 'linear' || m === 'fixed' || m === 'smooth') return u;   // у сплайна фаза своя, ремапа нет
   if (m === 'step') return u >= 1 ? 1 : 0;                      // держим позу ключа ДО следующего; ровно на нём — переключаемся
   const e = k?.ease ?? EASE_INOUT;
   return cubicBezier(e[0], e[1], e[2], e[3], u);
@@ -254,8 +255,108 @@ export function clipSegmentAt(c: Clip, time: number): ClipSegment | null {
 /** Поза клипа на НОРМАЛИЗОВАННОЙ фазе 0..1. */
 export function clipPoseAt(c: Clip, t01: number): Pose {
   const seg = clipSegmentAt(c, clamp01(t01) * (clipDur(c) || 1));
-  if (!seg) return {};
-  return seg.a === seg.b ? seg.a.pose : blendTwo(seg.a.pose, seg.b.pose, seg.u);
+  return seg ? segmentPose(c, seg) : {};
+}
+
+/** Поза интервала: линейно (с ремапом кривой ключа) или сплайном. ОДНА точка для игры, редактора и экспорта. */
+export function segmentPose(c: Clip, seg: ClipSegment): Pose {
+  if (seg.a === seg.b) return seg.a.pose;
+  return seg.a.interp === 'smooth' ? splinePose(c, seg.i, seg.u) : blendTwo(seg.a.pose, seg.b.pose, seg.u);
+}
+
+// ── Сплайн между ключами ──────────────────────────────────────────────────────────────────────────
+/**
+ * Позиционные каналы движения: у сплайна они гладкие, у меры ошибки идут через `POS_DEG_PER_UNIT`.
+ * Прочие скаляры (`__match`, `__pinKp` до 12000, флаги опоры `__swing`) — линейно: сглаживать веса и флаги
+ * нельзя, кубика перелетает за 0 и 1.
+ */
+export const MOTION_POS_KEYS: ReadonlySet<string> = new Set([HIPS_DEL, HIPS_ABS, ...WPN_POS, '__lgripP', ROOT_POS, ROOT_YAW]);
+/**
+ * Позиционные каналы в МЕРЕ ОШИБКИ прореживания и подгонки. Корня здесь нет: `__rootY` — радианы, и мерить его
+ * «юнитами смещения» было бы бессмыслицей.
+ * ⚙ ГРАБЛЯ (из `clipBaker`): раньше мера гнала ЛЮБУЮ тройку через `setFromEuler().angleTo()`, и офсет таза
+ * [0,−1.5,0] читался бы как ~86° ошибки на каждом кадре — прореживание перестало бы прореживать.
+ */
+export const ERROR_POS_KEYS: ReadonlySet<string> = new Set([HIPS_DEL, HIPS_ABS, ...WPN_POS, '__lgripP']);
+/** 1 юнит смещения ≈ 5° поворота. При пороге 3° это «боб таза от 0.6 юнита сохраняется» (рост таза 32 юнита). */
+export const POS_DEG_PER_UNIT = 5;
+
+/** Соседний ключ для касательной. В цикле — через шов (последний ключ цикла повторяет первый), иначе край клипа. */
+function splineIndex(c: Clip, j: number): number {
+  const n = c.keys.length;
+  if (j >= 0 && j < n) return j;
+  if (c.loop && n > 2) return j < 0 ? n - 1 + j : j - (n - 1);
+  return j < 0 ? 0 : n - 1;
+}
+function splineTime(c: Clip, j: number): number {
+  const n = c.keys.length;
+  if (j >= 0 && j < n) return c.keys[j]!.t;
+  if (c.loop && n > 2) return j < 0 ? c.keys[n - 1 + j]!.t - clipDur(c) : c.keys[j - (n - 1)]!.t + clipDur(c);
+  return c.keys[j < 0 ? 0 : n - 1]!.t;
+}
+/** Касательная на ключе по трём точкам с НЕРАВНЫМ шагом (взвешенное среднее наклонов); на краю — односторонняя. */
+const tangent = (a: number, b: number, c: number, d1: number, d2: number): number =>
+  d1 <= 1e-9 ? (d2 <= 1e-9 ? 0 : (c - b) / d2) : d2 <= 1e-9 ? (b - a) / d1 : (((b - a) / d1) * d2 + ((c - b) / d2) * d1) / (d1 + d2);
+const _sp0 = new THREE.Quaternion(), _sp1 = new THREE.Quaternion(), _sp2 = new THREE.Quaternion(), _sp3 = new THREE.Quaternion();
+const _spE = new THREE.Euler();
+const ZERO3: readonly [number, number, number] = [0, 0, 0];
+
+/**
+ * ⭐ СПЛАЙН НА ИНТЕРВАЛЕ `i` (ключ `i` → `i+1`) при фазе `u`: кубический Эрмит, касательные из соседних ключей
+ * (Катмулл–Ром с неравным шагом). Кривая проходит ЧЕРЕЗ ключи, и скорость на ключе непрерывна — поэтому на
+ * тех же ключах движение плавное, а ключей нужно в разы меньше, чем для ломаной.
+ *
+ * Повороты — ПО КОМПОНЕНТАМ КВАТЕРНИОНА в одном полушарии и с нормировкой. Так считает Unity в режиме
+ * «Quaternion» и glTF `CUBICSPLINE`; кратчайшая дуга сохраняется, пока соседние ключи ближе 180°.
+ * Позиции (`MOTION_POS_KEYS`) — по компонентам, прочие скаляры — линейно. Цикл: соседи — через шов.
+ */
+export function splinePose(c: Clip, i: number, u: number): Pose {
+  const ks = c.keys;
+  const k0 = ks[splineIndex(c, i - 1)]!, k1 = ks[i]!, k2 = ks[i + 1]!, k3 = ks[splineIndex(c, i + 2)]!;
+  const d0 = k1.t - splineTime(c, i - 1), h = k2.t - k1.t, d2 = splineTime(c, i + 2) - k2.t;
+  const s2 = u * u, s3 = s2 * u;
+  const h00 = 2 * s3 - 3 * s2 + 1, h10 = (s3 - 2 * s2 + u) * h, h01 = -2 * s3 + 3 * s2, h11 = (s3 - s2) * h;
+  const out: Pose = {};
+  for (const key of new Set([...Object.keys(k1.pose), ...Object.keys(k2.pose)])) {
+    const p1 = k1.pose[key] ?? ZERO3, p2 = k2.pose[key] ?? ZERO3;          // union — как у `blendTwo`
+    const p0 = k0.pose[key] ?? p1, p3 = k3.pose[key] ?? p2;
+    if (isAngleKey(key)) {
+      _sp1.setFromEuler(_spE.set(p1[0], p1[1], p1[2]));
+      _sp2.setFromEuler(_spE.set(p2[0], p2[1], p2[2])); if (_sp2.dot(_sp1) < 0) _sp2.set(-_sp2.x, -_sp2.y, -_sp2.z, -_sp2.w);
+      _sp0.setFromEuler(_spE.set(p0[0], p0[1], p0[2])); if (_sp0.dot(_sp1) < 0) _sp0.set(-_sp0.x, -_sp0.y, -_sp0.z, -_sp0.w);
+      _sp3.setFromEuler(_spE.set(p3[0], p3[1], p3[2])); if (_sp3.dot(_sp2) < 0) _sp3.set(-_sp3.x, -_sp3.y, -_sp3.z, -_sp3.w);
+      const cmp = (a: number, b: number, cc: number, d: number): number =>
+        h00 * b + h10 * tangent(a, b, cc, d0, h) + h01 * cc + h11 * tangent(b, cc, d, h, d2);
+      _sp0.set(cmp(_sp0.x, _sp1.x, _sp2.x, _sp3.x), cmp(_sp0.y, _sp1.y, _sp2.y, _sp3.y), cmp(_sp0.z, _sp1.z, _sp2.z, _sp3.z), cmp(_sp0.w, _sp1.w, _sp2.w, _sp3.w)).normalize();
+      _spE.setFromQuaternion(_sp0);
+      out[key] = [_spE.x, _spE.y, _spE.z];
+    } else if (MOTION_POS_KEYS.has(key)) {
+      const v = (j: number): number => h00 * p1[j]! + h10 * tangent(p0[j]!, p1[j]!, p2[j]!, d0, h) + h01 * p2[j]! + h11 * tangent(p1[j]!, p2[j]!, p3[j]!, h, d2);
+      out[key] = [v(0), v(1), v(2)];
+    } else out[key] = [p1[0] + (p2[0] - p1[0]) * u, p1[1] + (p2[1] - p1[1]) * u, p1[2] + (p2[2] - p1[2]) * u];
+  }
+  return out;
+}
+
+/**
+ * Ошибка позы `got` против эталона `ref`, в градусах: повороты — угол между кватернионами, позиции движения —
+ * через `POS_DEG_PER_UNIT`; прочие скаляры в меру не входят (плотность ключей задаёт движение, а не настройки).
+ * `bones` — фильтр каналов.
+ */
+export function poseErrorDeg(ref: Pose, got: Pose, bones?: (key: string) => boolean): number {
+  let worst = 0;
+  for (const key in ref) {
+    if (bones && !bones(key)) continue;
+    const a = ref[key]!, b = got[key]; if (!b) continue;
+    let e: number;
+    if (isAngleKey(key)) {
+      _sp1.setFromEuler(_spE.set(a[0], a[1], a[2])); _sp2.setFromEuler(_spE.set(b[0], b[1], b[2]));
+      e = _sp1.angleTo(_sp2) * 180 / Math.PI;
+    } else if (ERROR_POS_KEYS.has(key)) e = Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2])) * POS_DEG_PER_UNIT;
+    else continue;
+    if (e > worst) worst = e;
+  }
+  return worst;
 }
 
 /**

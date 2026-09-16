@@ -42,6 +42,7 @@ import type { Humanoid } from './humanoid.js';
 import { setLocoMixOverride, getLocoMixOverride, type PosePlayer } from './poseRuntime.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
+import { fitSmoothLoop } from './clipFit.js';
 
 /**
  * ⚠ ЗАПЕКАЕТСЯ ВСЕГДА ПРОЦЕДУРКА. Если в редакторе включена локомоция клипами, плеер сам заиграл бы
@@ -82,7 +83,23 @@ export interface BakeGaitOptions {
   weapon: string;
   /** Чем читать позу. По умолчанию — повороты костей + офсет таза. Редактор может подсунуть свой readPoseFull. */
   readPose?: () => Pose;
+  /**
+   * ГЛАДКИЕ КЛЮЧИ ДЛЯ ЦИКЛА (сплайн, `interp: 'smooth'`, `clipFit.fitSmoothLoop`) — по умолчанию ВКЛ. Выкл —
+   * ломаная через `reduceKeyframes`, как было. `epsDeg: 0` — без прореживания вовсе (все кадры, для сверок).
+   */
+  smooth?: boolean;
+  /** Допуск подгонки сплайна к слегка сглаженному проходу, ° (по умолч. `SMOOTH_EPS_DEG`). */
+  smoothEpsDeg?: number;
+  /** Сглаживание прохода перед подгонкой, ДОЛЯ ПЕРИОДА цикла (по умолч. `SMOOTH_SIGMA_CYCLE`). */
+  smoothSigmaCycle?: number;
 }
+/** Допуск подгонки сплайна, °: 11–13 ключей на цикл против 27–35 у ломаной, средняя ошибка 0.2° (замер в README). */
+export const SMOOTH_EPS_DEG = 2;
+/**
+ * Сглаживание прохода — 2.4 % периода: ~20 мс на беге, ~35 мс на ходьбе. Снимает однокадровые изломы планировщика.
+ * ⚠ ДОЛЯ ЦИКЛА, А НЕ СЕКУНДЫ: бег вдвое короче ходьбы, и одно и то же время скругляло бы его мах колена вдвое сильнее.
+ */
+export const SMOOTH_SIGMA_CYCLE = 0.024;
 
 export interface BakeGaitResult {
   clip: Clip;
@@ -90,6 +107,9 @@ export interface BakeGaitResult {
   keys: number;                 // сколько осталось после прореживания
   periodSec: number;            // найденный период цикла
   cyclic: boolean;              // цикл найден по ноге (false — снимали по таймеру)
+  /** Гладкие ключи: ошибка к сглаженному проходу и отклонение от исходного, ° (нет — ломаная). */
+  fitErrDeg?: number;
+  rawErrDeg?: number;
 }
 
 /** Съём позы по умолчанию: повороты всех костей + авторский офсет таза (`__hipsP`). */
@@ -229,8 +249,17 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
     }
   }
 
-  const reduced = reduceKeyframes(dense, opts.epsDeg ?? 1.5);
+  const eps = opts.epsDeg ?? 1.5;
+  // ⭐ ЦИКЛ — ГЛАДКИМИ КЛЮЧАМИ (см. `clipFit.ts`): ломаная держала 28–35 ключей не из-за допуска, а из-за
+  // однокадровых изломов планировщика; сплайн, подогнанный к слегка сглаженному проходу, обходится 11–13.
+  let fit: { errDeg: number; rawErrDeg: number } | null = null;
+  let reduced: Keyframe[];
   const loop = spec.loop ?? cyclic;
+  if (cyclic && loop && (opts.smooth ?? true) && eps > 0 && dense.length >= 5) {
+    const r = fitSmoothLoop([...dense, { t: periodSec, pose: dense[0]!.pose }],
+      { epsDeg: opts.smoothEpsDeg ?? SMOOTH_EPS_DEG, sigmaFrames: (opts.smoothSigmaCycle ?? SMOOTH_SIGMA_CYCLE) * periodSec * fps });
+    reduced = r.keys; fit = r;
+  } else reduced = reduceKeyframes(dense, eps);
   // Замкнуть цикл: последний ключ = первый, ровно в момент периода. Иначе на стыке будет рывок.
   if (loop && reduced.length > 1 && periodSec > 0) {
     const first = reduced[0]!;
@@ -243,6 +272,7 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
   return {
     clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced },
     frames: dense.length, keys: reduced.length, periodSec, cyclic,
+    ...(fit ? { fitErrDeg: +fit.errDeg.toFixed(2), rawErrDeg: +fit.rawErrDeg.toFixed(2) } : {}),
   };
 }
 

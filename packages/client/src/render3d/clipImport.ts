@@ -9,7 +9,7 @@
  * Ни загрузчиков, ни DOM → тестируется в node.
  */
 import * as THREE from 'three';
-import { clipDur, clipSegmentAt, blendTwo, type Clip, type Keyframe, type MarkType, type Pose } from './clipModel.js';
+import { clipDur, clipSegmentAt, segmentPose, blendTwo, type Clip, type Keyframe, type MarkType, type Pose } from './clipModel.js';
 import { pasteIntoInterval } from './poseLibrary.js';
 
 const RAD2DEG = 180 / Math.PI;
@@ -69,7 +69,7 @@ export function rigSignature(boneNames: readonly string[]): string {
 export function poseAtSec(c: Clip, sec: number): Pose {
   const seg = clipSegmentAt(c, sec);
   if (!seg) return {};
-  return seg.a === seg.b ? clonePose(seg.a.pose) : blendTwo(seg.a.pose, seg.b.pose, seg.u);
+  return seg.a === seg.b ? clonePose(seg.a.pose) : segmentPose(c, seg);   // сплайн — тем же проигрывателем, что игра
 }
 
 /**

@@ -138,11 +138,12 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
 
   /** Стопа и носок: ими владеет заземление рантайма, а не клип (см. комментарий к порогам ниже). */
   const FOOT = (b: string): boolean => /Foot|Toe/.test(b);
-  const parity = (spec: GaitSpec, tolDeg: number): { worst: number; bone: string; period: number; feet: number } => {
+  interface Parity { worst: number; bone: string; period: number; feet: number; mean: number; p95: number; keys: number }
+  const parity = (spec: GaitSpec, smooth = true): Parity => {
     const fps = 60, dt = 1 / fps, warm = 2;
     // 1) запечь
     const hb = buildHumanoid({});
-    const r = bakeGaitToClip(mkPlayer(hb), hb, spec, { character: 'warrior', weapon: 'sword', fps, epsDeg: 0.5, warmSec: warm });
+    const r = bakeGaitToClip(mkPlayer(hb), hb, spec, { character: 'warrior', weapon: 'sword', fps, epsDeg: 0.5, warmSec: warm, smooth });
     expect(r.cyclic).toBe(true);
 
     // 2) прогнать ЖИВОЙ гейт и на каждом кадре взять клип ТОЙ ЖЕ ФАЗОЙ, что и рантайм
@@ -156,6 +157,7 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
 
     const read = defaultReadPose(hl);
     let worst = 0, bone = '—', feet = 0;
+    const all: number[] = [];
     for (let t = 0; t < r.periodSec * 2; t += dt) {            // два цикла — чтобы шов тоже попал в сверку
       pl.step(dt);
       const live = read();
@@ -163,36 +165,53 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
       const baked = clipPoseAt(r.clip, locoPhaseU(pl.driver.gaitPhase));
       const d = maxAngleDeg(live, baked, (b) => !FOOT(b));
       if (d.deg > worst) { worst = d.deg; bone = d.bone; }
+      for (const b of Object.keys(live)) if (b[0] !== '_' && !FOOT(b)) all.push(maxAngleDeg({ [b]: live[b]! }, { [b]: baked[b] ?? [0, 0, 0] }).deg);
       feet = Math.max(feet, maxAngleDeg(live, baked, FOOT).deg);
     }
-    return { worst, bone, period: r.periodSec, feet };
+    all.sort((a, b) => a - b);
+    const mean = all.reduce((s, v) => s + v, 0) / Math.max(1, all.length);
+    return { worst, bone, period: r.periodSec, feet, mean, p95: all[Math.floor(all.length * 0.95)] ?? 0, keys: r.keys };
   };
 
-  // ⚠ ПОРОГИ — 4° (раньше 3° ходьба / 4° бег), но теперь на ЧЕСТНОМ контракте, и ПО КОСТЯМ, КОТОРЫМИ
-  // ВЛАДЕЕТ КЛИП. Замер по группам (бег): таз 0.00°, корпус 0.07°, руки ≤0.2°, ноги ≤2.4° — а стопы
-  // до 5.8° (ходьба до 10.4°). Стопа — единственное исключение, и не случайное: её угол у планировщика
-  // зависит не только от фазы (передача шага, цель лодыжки), у живого гейта на смене опоры есть свой
-  // скачок стопы ~25.8° за кадр, а в игре опорную стопу всё равно кладёт на пол заземление. Поэтому
-  // стопам — свой, мягкий порог. Прореживание ключей на это не влияет вовсе (eps 0.5 и 0 — одно и то же).
-  // Мутация «снимать по фронту ноги» даёт по ногам 60–64° и проваливает оба порога.
+  // ⚠ ПОРОГИ ЛОМАНОЙ — 4° на ЧЕСТНОМ контракте и ПО КОСТЯМ, КОТОРЫМИ ВЛАДЕЕТ КЛИП. Замер по группам (бег): таз 0.00°,
+  // корпус 0.07°, руки ≤0.2°, ноги ≤2.4° — а стопы до 5.8° (ходьба до 10.4°). Стопа — исключение не случайное: её
+  // угол у планировщика зависит не только от фазы, у живого гейта на смене опоры свой скачок стопы ~25.8° за кадр,
+  // а в игре опорную стопу всё равно кладёт на пол заземление. Мутация «снимать по фронту ноги» даёт 60–64°.
+  //
+  // ⭐ СПЛАЙН (по умолчанию) — другой контракт, и пороги у него свои: подгонка СОЗНАТЕЛЬНО скругляет однокадровые
+  // изломы планировщика (колено дёргается на 11–16° за кадр при касании другой ноги), поэтому максимум вырос —
+  // ЗАМЕР худшей голени: ходьба 8.4°, бег 6.5°, боком 5.8°. Сверять только максимум значило бы сверять изломы, а
+  // не контракт проигрывания, поэтому у сплайна главные — СРЕДНЕЕ и 95-й ПЕРЦЕНТИЛЬ по всем костям и кадрам: сдвиг
+  // фазы (та мутация) поднимает среднее до ~6°, а скругление изломов — нет.
+  const SMOOTH_LIMITS = { mean: 0.6, p95: 2.5, worst: 11, feet: 18 };
+  const smoothParity = (name: string, spec: GaitSpec): void => {
+    const r = parity(spec);
+    const msg = `${name}: ключей ${r.keys}, среднее ${r.mean.toFixed(2)}°, 95 % ${r.p95.toFixed(2)}°, худшая ${r.bone} ${r.worst.toFixed(1)}°, стопы ${r.feet.toFixed(1)}°`;
+    expect(r.mean, msg).toBeLessThan(SMOOTH_LIMITS.mean);
+    expect(r.p95, msg).toBeLessThan(SMOOTH_LIMITS.p95);
+    expect(r.worst, msg).toBeLessThan(SMOOTH_LIMITS.worst);
+    expect(r.feet, msg).toBeLessThan(SMOOTH_LIMITS.feet);
+  };
   it('⭐⭐ walk_fwd: клип, сыгранный фазой планировщика, совпадает с живой ходьбой', () => {
-    // Было 3°, стало 4°: на ДВУХ циклах против живого гейта голень ходьбы даёт 3.68° (замер) — это
-    // неполная периодичность планировщика, а не запекание (при eps 0 и 0.5 число то же).
-    const { worst, bone, feet } = parity({ name: 'walk_fwd', vx: 0, vz: 0.42 }, 4);
-    expect(worst, `худшая кость: ${bone}`).toBeLessThan(4);
-    expect(feet, 'стопы').toBeLessThan(12);
+    smoothParity('walk_fwd', { name: 'walk_fwd', vx: 0, vz: 0.42 });
   });
 
   it('⭐⭐ run_fwd: то же на беге (шире шаг, быстрее фаза)', () => {
-    const { worst, bone, feet } = parity({ name: 'run_fwd', vx: 0, vz: 0.85 }, 4);
-    expect(worst, `худшая кость: ${bone}`).toBeLessThan(4);
-    expect(feet, 'стопы').toBeLessThan(12);
+    smoothParity('run_fwd', { name: 'run_fwd', vx: 0, vz: 0.85 });
   });
 
   it('⭐⭐ run_strafe_R: боковой ход (прицел вперёд) тоже совпадает', () => {
-    const { worst, bone, feet } = parity({ name: 'run_strafe_R', vx: 0.85, vz: 0, yaw: 0 }, 4);
-    expect(worst, `худшая кость: ${bone}`).toBeLessThan(4);
-    expect(feet, 'стопы').toBeLessThan(12);
+    smoothParity('run_strafe_R', { name: 'run_strafe_R', vx: 0.85, vz: 0, yaw: 0 });
+  });
+
+  it('⭐ ЛОМАНАЯ (сплайн выключен) держит прежний строгий контракт: худшая кость < 4°, стопы < 12°', () => {
+    // Было 3°, стало 4°: на ДВУХ циклах против живого гейта голень ходьбы даёт 3.68° (замер) — это неполная
+    // периодичность планировщика, а не запекание (при eps 0 и 0.5 число то же).
+    for (const spec of [{ name: 'walk_fwd', vx: 0, vz: 0.42 }, { name: 'run_fwd', vx: 0, vz: 0.85 }] as GaitSpec[]) {
+      const r = parity(spec, false);
+      expect(r.worst, `${spec.name}: худшая кость ${r.bone}`).toBeLessThan(4);
+      expect(r.feet, `${spec.name}: стопы`).toBeLessThan(12);
+    }
   });
 
   it('⭐ ШОВ ЦИКЛА БЕЗ РЫВКА: шаг позы через шов такой же, как сразу после начала', () => {
