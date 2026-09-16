@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, type LocoSectionState, type LocoDir } from './locoBlend.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, type LocoSectionState, type LocoDir } from './locoBlend.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
@@ -1568,10 +1568,13 @@ export class PosePlayer {
     const mix = this.locoW;
     let locoPose: Pose | null = null;
     if (mix > 0.001 && this.content.locoClip) {
-      const rx2 = Math.cos(yaw), rz2 = -Math.sin(yaw);
-      const lat = this.vx * rx2 + this.vz * rz2;
-      const axes = { sb: tg.sb ?? 0, st: tg.st ?? 0, bt: tg.bt ?? 0 };
-      const latRight = lat >= 0;
+      // ⚠ НАПРАВЛЕНИЕ — ГЕОМЕТРИЯ, А НЕ СТИЛЬ (`locoDirWeights`): `st`/`bt` планировщика — пороги его
+      // колонок настроек (0 до 45°), и клип под ними отыгрывал чистый бег вперёд, пока тело ехало вбок.
+      // `fwdC`/`latC` уже в осях ДОВЁРНУТОГО таза — доворот снимает сколько может, бленд досыпает остаток.
+      // Ось ходьба↔бег остаётся общей с планировщиком: это скорость, у неё мёртвой зоны нет.
+      const dir = locoDirWeights(fwdC, latC);
+      const axes = { sb: tg.sb ?? 0, st: dir.st, bt: dir.bt };
+      const latRight = latC >= 0;
       const clipOf = (dir: LocoDir, fast: boolean): Clip | null =>
         this.content.locoClip!(locoClipNames(dir, fast), this.weapon);
       // СЕКЦИИ (Ф5б) живут на ВЕДУЩЕМ клипе — том, чья колонка сейчас весит больше всех. Меток нет —

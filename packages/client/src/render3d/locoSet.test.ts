@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, getLocoMixOverride } from './poseRuntime.js';
 import { GAIT } from './pose.js';
@@ -153,6 +154,68 @@ describe('плавность на смене режима', () => {
     for (const [name, drive] of CASES) {
       const proc = jerk(null, drive), clip = jerk(lib, drive);
       expect(clip, `${name}: клипы ${clip.toFixed(1)}° против ${proc.toFixed(1)}° у планировщика`).toBeLessThan(proc * 1.5);
+    }
+  });
+});
+
+/**
+ * ⭐⭐ НАИСКОСОК: ОСТАТОК, КОТОРЫЙ НЕ СНЯЛ ДОВОРОТ ТАЗА, ДОСЫПАЕТ БЛЕНД — И СТОПЫ НЕ СКОЛЬЗЯТ.
+ *
+ * Жалоба: «бежишь наискосок — таз доворачивает не до конца, и ноги скользят». ЗАМЕР (бег, доворот
+ * включён, `warpMax` 50°, боковой снос маховой стопы с линии хода, ед/кадр):
+ *
+ *      ход   остаток   планировщик   клипы было   клипы стало
+ *      65°     15°        0.157         0.399        0.082
+ *      80°     30°        0.222         0.770        0.115
+ *      90°     40°        0.219         0.991        0.131
+ *
+ * Причина была в весе страйфа: он брался из стилевого порога колонок планировщика (0 до 45°).
+ */
+describe('наискосок: стопы не скользят на остатке доворота', () => {
+  const GAIT0 = { ...GAIT };
+  const GX3 = { armDown: 1.35, elbowBend: 0.25 };
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: () => null, setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
+    } as Storage;
+  });
+  afterEach(() => { setLocoMixOverride(null); delete (globalThis as unknown as { localStorage?: Storage }).localStorage; Object.assign(GAIT, GAIT0); });
+
+  /** Средний боковой снос маховой стопы с линии хода, ед/кадр. `lib === null` — чистый планировщик. */
+  const drift = (lib: Map<string, Clip> | null, deg: number): number => {
+    const h = buildHumanoid({});
+    const base = localStorageContent('warrior');
+    const content = lib ? { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } } : base;
+    const p = new PosePlayer(h, () => [], content, 'none', GX3, emptyGrid());
+    setLocoMixOverride(lib ? 1 : 0);
+    const a = deg * Math.PI / 180, R = 0.85 * BAKE_MAXSPD;
+    const prev: ({ x: number; z: number } | null)[] = [null, null];
+    let sum = 0, n = 0;
+    for (let i = 0; i < 900; i++) {
+      p.setVel(Math.sin(a) * R, Math.cos(a) * R); p.setYaw(0);
+      p.step(1 / 60);
+      h.root.updateMatrixWorld(true);
+      for (let leg = 0; leg < 2; leg++) {
+        const f = h.bones.get(leg === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(new THREE.Vector3());
+        const wx = f.x + p.posX, wz = f.z + p.posZ;
+        const q = prev[leg];
+        if (i > 240 && q && p.driver.swingLegs[leg]) { sum += Math.abs(-(wx - q.x) * Math.cos(a) + (wz - q.z) * Math.sin(a)); n++; }
+        prev[leg] = { x: wx, z: wz };
+      }
+    }
+    return sum / Math.max(1, n);
+  };
+
+  it('⭐⭐ НА ХОДУ ПОД 65–90° (остаток 15–40°) КЛИПЫ СНОСЯТ СТОПУ НЕ СИЛЬНЕЕ ПЛАНИРОВЩИКА', () => {
+    // ⚠ Мутация «вес страйфа из `st` планировщика» валит это: было в 2.5–4.5 раза хуже.
+    GAIT.warpOn = 1; GAIT.warpMax = 50;
+    const h0 = buildHumanoid({});
+    const p0 = new PosePlayer(h0, () => [], localStorageContent('warrior'), 'none', GX3, emptyGrid());
+    const lib = new Map<string, Clip>();
+    for (const sp of GAIT_PRESETS) lib.set(sp.name, bakeGaitToClip(p0, h0, sp, { character: 'warrior', weapon: 'none' }).clip);
+    for (const deg of [65, 80, 90]) {
+      const proc = drift(null, deg), clip = drift(lib, deg);
+      expect(clip, `ход ${deg}°: клипы ${clip.toFixed(3)} против ${proc.toFixed(3)} у планировщика`).toBeLessThanOrEqual(proc);
     }
   });
 });

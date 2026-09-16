@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, type PoseContent } from './poseRuntime.js';
 import { GAIT } from './pose.js';
-import { locoClipName, blendLocoPose, locoPhaseU, stepLocoSection, sectionClipTime, type LocoDir } from './locoBlend.js';
+import { locoClipName, blendLocoPose, locoDirWeights, locoPhaseU, stepLocoSection, sectionClipTime, type LocoDir } from './locoBlend.js';
 import { bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
 import { clipSections, type Clip } from './clipModel.js';
 import { stitchLocoClip } from './clipImport.js';
@@ -54,6 +54,32 @@ describe('фаза и выбор клипа', () => {
     expect(mixNames({ sb: 1, st: 0, bt: 0.5 }), 'полуспиной').toBe('run_fwd+run_back@0.50');
     expect(mixNames({ sb: 1, st: 1, bt: 0 }), 'чистый страйф — база не читается').toBe('run_strafe_R');
     expect(mixNames({ sb: 1, st: 0.4, bt: 0 }, false), 'сторона — по знаку боковой скорости').toBe('run_fwd+run_strafe_L@0.40');
+  });
+
+  it('⭐⭐ ВЕСА НАПРАВЛЕНИЯ — ГЕОМЕТРИЯ ХОДА, БЕЗ МЁРТВОЙ ЗОНЫ (`strafeFrom` клипов не касается)', () => {
+    // ⚠ Мутация «брать `st` планировщика» валит это: у него ноль до 45°, и на 20° клип играл чистый бег
+    // вперёд, пока тело ехало вбок.
+    const deg = (d: number): { st: number; bt: number } => locoDirWeights(Math.cos(d * Math.PI / 180), Math.sin(d * Math.PI / 180));
+    expect(deg(0)).toEqual({ st: 0, bt: 0 });
+    expect(deg(20).st, 'уже на 20° страйф подмешан').toBeGreaterThan(0.2);
+    expect(deg(45).st, 'ровно между — поровну').toBeCloseTo(0.5, 9);
+    expect(deg(90).st, 'чистый бок').toBeCloseTo(1, 9);
+    // Доля смеси повторяет угол хода: atan(w / (1 − w)) = θ — стопа уходит ровно туда, куда едет тело.
+    for (const d of [10, 30, 60, 80]) {
+      const w = deg(d).st;
+      expect(Math.atan2(w, 1 - w) * 180 / Math.PI, `на ${d}° смесь ведёт стопу не туда`).toBeCloseTo(d, 6);
+    }
+  });
+
+  it('⚠ ЗАДНЯЯ ПОЛУПЛОСКОСТЬ — через страйф-колонку, и на боку НЕТ ступеньки', () => {
+    // Порядок наложения база → страйф → назад: чтобы «вперёд» не просочилось в ход спиной, страйф там = 1,
+    // а «назад» берёт долю продольной составляющей. На чистом боку обе стороны дают одно и то же.
+    expect(locoDirWeights(-1, 0), 'чистый ход спиной').toEqual({ st: 1, bt: 1 });
+    expect(locoDirWeights(-1, 1).bt, 'спиной наискосок — поровну').toBeCloseTo(0.5, 9);
+    const front = locoDirWeights(1e-9, 1), back = locoDirWeights(-1e-9, 1);
+    expect(front.st).toBeCloseTo(back.st, 6);
+    expect(back.bt, 'на боку «назад» уже погас').toBeCloseTo(0, 6);
+    expect(locoDirWeights(0, 0), 'стоим — направления нет').toEqual({ st: 0, bt: 0 });
   });
 
   it('⚠ ПОРЯДОК НАЛОЖЕНИЯ — как у колонок настроек (`locoVal`): база → страйф → назад', () => {
