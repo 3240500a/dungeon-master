@@ -269,8 +269,12 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
     else reduced.push({ t: periodSec, pose: closing });
   }
 
+  // ⭐ СКОРОСТЬ ЗАПЕКАНИЯ ЕДЕТ В КЛИП (u/с): часы «только клипы» меряют цикл ею × период (`bakedLocoSpeed`). Раньше
+  // её угадывали по имени (`run_*` 102, прочее 50.4), и смена скоростей набора молча расходилась бы с уже запечённым.
+  // Стоя (стойка, повороты) скорости нет — и поля нет: у них часы не путевые.
+  const bakeSpeed = moving ? +Math.hypot(vx, vz).toFixed(4) : 0;
   return {
-    clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced },
+    clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced, ...(bakeSpeed > 0 ? { bakeSpeed } : {}) },
     frames: dense.length, keys: reduced.length, periodSec, cyclic,
     ...(fit ? { fitErrDeg: +fit.errDeg.toFixed(2), rawErrDeg: +fit.rawErrDeg.toFixed(2) } : {}),
   };
@@ -284,9 +288,9 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
  * восьми имён набор покрывал ТРИ. То есть «переключил бег на клипы» давало клипы только вперёд,
  * назад и бег вперёд, а страйф и бег назад молча падали обратно на планировщик.
  *
- * ⚠ СКОРОСТЬ ЗАПЕКАНИЯ = СКОРОСТЬ ПРОИГРЫВАНИЯ. Ходьба/бег выбираются порогом по `sb` (ось
- * ходьба→бег), поэтому клип, который будет играть на беге, обязан быть снят НА БЕГОВОЙ скорости:
- * иначе каденция клипа и фаза планировщика разойдутся, и стопы поедут.
+ * ⚠ СКОРОСТЬ ЗАПЕКАНИЯ ПОМНИТ САМ КЛИП (`bakeSpeed`). Играть его можно и на другой скорости: в «только клипы»
+ * часы идут по пройденному пути с циклом «скорость запекания × период», поэтому бег, снятый на 120, на 80 u/с
+ * играет медленнее (темп 80/120), а стопы стоят.
  *
  * ДИАГОНАЛЕЙ ЗДЕСЬ НЕТ: решение Ф0 — ЧЕТЫРЕ направления, диагональ закрывает доворот таза (`stepDirWarp`,
  * замерено: на 30–60° и 120–135° цифры совпадают с прямым бегом). Восемь клипов — это 4 направления ×
@@ -296,7 +300,17 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
  * Пока Root не анимируется (Ф1.4 завёл узел, но треков корня ещё нет), запечённый «поворот» был бы
  * либо пустым, либо содержал бы facing, который в чужом движке подрался бы с его собственным поворотом.
  */
-const WALK = LOCO_WALK, RUN = LOCO_RUN;   // те же числа читают часы «только клипы» (`bakedLocoSpeed`)
+/**
+ * ⭐⭐ СКОРОСТИ НАБОРА — 40 и 120 u/с (`LOCO_BAKE_WALK_SPD` / `LOCO_BAKE_RUN_SPD`, решение автора, см. `locoBlend.ts`).
+ * Доли максимума: 1/3 и 1. Каждый клип хода запоминает свою скорость (`Clip.bakeSpeed`) — её и читают часы.
+ *
+ * ⚠ «ЧИСТО» — ПРИ УСЛОВИИ: ось планировщика `sb = (v − speedWalk) / (speedRun − speedWalk)` даёт ровно 0 на 40 u/с,
+ * только если `speedWalk ≥ 40`, и ровно 1 на 120 u/с, только если `speedRun ≤ 120`. Умолчания (40 / 115) и настройки
+ * воина (40 / 115) условие держат: ходьба снимается с 0 % беговых настроек, бег — со 100 %. Было 50.4 / 102 →
+ * sb 0.139 / 0.827: ходьба несла 14 % бега, бег 17 % ходьбы. Сдвинул `speedWalk` ниже 40 или `speedRun` выше 120 —
+ * клип снова станет смесью (сторож в `clipBake.test.ts` проверяет условие на умолчаниях).
+ */
+const WALK = LOCO_WALK, RUN = LOCO_RUN;
 export const GAIT_PRESETS: readonly GaitSpec[] = [
   { name: 'idle', vx: 0, vz: 0, durationSec: 0.5, loop: true },
   { name: 'walk_fwd', vx: 0, vz: WALK },

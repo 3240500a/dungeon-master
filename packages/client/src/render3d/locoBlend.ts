@@ -22,9 +22,46 @@ export type LocoDir = 'fwd' | 'back' | 'strafe_L' | 'strafe_R';
  * числа у запекателя и рантайма — стопы поехали бы по полу ровно на разницу (сторож в `clipOnly.test.ts`).
  */
 export const LOCO_BAKE_MAXSPD = 120;
-export const LOCO_WALK = 0.42, LOCO_RUN = 0.85;
-/** Скорость (u/с), на которой снят клип набора, — по имени: `run_*` бегом, остальное шагом. */
-export const bakedLocoSpeed = (name: string): number => (/^run_/.test(name) ? LOCO_RUN : LOCO_WALK) * LOCO_BAKE_MAXSPD;
+/**
+ * ⭐⭐ РЕШЕНИЕ АВТОРА (17.09): ходьба запекается на 40 u/с, бег — на 120 u/с, и оба — ЧИСТЫМИ.
+ *
+ * Было 0.42 / 0.85 от максимума = 50.4 / 102 u/с. ЗАМЕР (планировщик воина, speedWalk 40 / speedRun 115): на 50.4
+ * ось ходьба↔бег стоит на sb 0.139, на 102 — на 0.827. То есть «ходьба» несла 14 % беговых настроек, а «бег» —
+ * 17 % шаговых, и ни один клип не был тем видом, который автор настраивал на вкладке «Бег» (превью там — 40.8 и
+ * 114 u/с, sb 0.011 / 0.987). На 40 и 120 при умолчаниях sb ровно 0 и 1 — условие см. `GAIT_PRESETS` в `clipBake.ts`.
+ *
+ * ИГРА: базовая скорость воина 80 u/с (`balance.json` moveSpeedBase), в атаке ×0.4 = 32, штраф брони до 44, с
+ * бонусами скорости до ~130–140, рывок 200. Поэтому бег играет на 100 % веса уже с 80 u/с (`LOCO_RUN_FULL_SPD`),
+ * только медленнее (темп 80/120), а между 40 и 80 ходьба перетекает в бег (`locoRunWeight`). Позже возможен
+ * промежуточный набор, снятый на 80.
+ */
+export const LOCO_BAKE_WALK_SPD = 40;
+export const LOCO_BAKE_RUN_SPD = 120;
+export const LOCO_RUN_FULL_SPD = 80;
+/** Те же скорости ДОЛЯМИ максимума — в них пишет пресеты запекатель и показывает редактор: 1/3 и 1. */
+export const LOCO_WALK = LOCO_BAKE_WALK_SPD / LOCO_BAKE_MAXSPD, LOCO_RUN = LOCO_BAKE_RUN_SPD / LOCO_BAKE_MAXSPD;
+/**
+ * ⚠ ЛЕГАСИ: доли, на которых снят ВЕСЬ набор до 17.09 (коммиты b11b042 … ea59571 — 0.42 и 0.85 не менялись ни разу).
+ * У тех клипов поля `bakeSpeed` нет, и темп им нужен тот, на котором их сняли, — иначе до перезапекания стопы
+ * поехали бы на разницу: 50.4 → 40 это −21 % длины цикла, 102 → 120 это +18 %.
+ */
+const LEGACY_WALK = 0.42, LEGACY_RUN = 0.85;
+/**
+ * Скорость (u/с), на которой снят клип набора. Клип её ПОМНИТ (`Clip.bakeSpeed`, пишет запекатель); старый клип без
+ * поля — по имени, легаси-долями: `run_*` 102, остальное 50.4. Непозитивное/битое число считается отсутствующим:
+ * длина цикла 0 остановила бы часы, и стопы стояли бы на месте, пока тело едет.
+ */
+export const bakedLocoSpeed = (c: { name: string; bakeSpeed?: number }): number =>
+  typeof c.bakeSpeed === 'number' && Number.isFinite(c.bakeSpeed) && c.bakeSpeed > 0
+    ? c.bakeSpeed
+    : (/^run_/.test(c.name) ? LEGACY_RUN : LEGACY_WALK) * LOCO_BAKE_MAXSPD;
+/**
+ * ⭐ ВЕС БЕГА КЛИПОВ ПО СКОРОСТИ (u/с): 0 до 40, линейно, 1 с 80 и выше — по решению автора (см. выше).
+ * Это ось `sb` бленда клипов в режиме «только клипы»; к оси планировщика (`speedWalk/speedRun` = 40/115) она
+ * отношения не имеет: у планировщика на 80 было бы sb 0.533, и игра никогда не видела бы бег целиком.
+ */
+export const locoRunWeight = (spd: number): number =>
+  clamp01((spd - LOCO_BAKE_WALK_SPD) / (LOCO_RUN_FULL_SPD - LOCO_BAKE_WALK_SPD));
 
 /** Фаза планировщика (рад, π на шаг) → нормализованное время клипа 0..1. */
 export function locoPhaseU(phase: number): number {
@@ -74,7 +111,7 @@ export interface LocoAxes {
   bt: number;
 }
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+function clamp01(v: number): number { return v < 0 ? 0 : v > 1 ? 1 : v; }   // function — её зовёт `locoRunWeight` выше по файлу
 
 /**
  * ⭐⭐ ВЕСА НАПРАВЛЕНИЯ ДЛЯ КЛИПОВ — ГЕОМЕТРИЧЕСКИЕ, БЕЗ МЁРТВОЙ ЗОНЫ.

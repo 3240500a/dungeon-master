@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, type PoseContent } from './poseRuntime.js';
 import { GAIT } from './pose.js';
-import { locoClipName, blendLocoPose, locoDirWeights, locoPhaseU, stepLocoSection, sectionClipTime, type LocoDir } from './locoBlend.js';
+import { locoClipName, blendLocoPose, locoDirWeights, locoPhaseU, stepLocoSection, sectionClipTime, type LocoDir,
+  bakedLocoSpeed, locoRunWeight, LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
 import { bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
 import { clipSections, type Clip } from './clipModel.js';
 import { stitchLocoClip } from './clipImport.js';
@@ -335,5 +336,34 @@ describe('секции: старт → цикл → остановка одни�
     expect(s.loopStart, 'цикл начинается там, где кончился разгон').toBeCloseTo(0.4, 4);
     expect(s.loopEnd, 'и кончается там, где началась остановка').toBeCloseTo(1.4, 4);
     expect(s.hasStart && s.hasStop).toBe(true);
+  });
+});
+
+describe('скорости набора и вес бега (решение 17.09: запекание 40 / 120, бег целиком с 80)', () => {
+  it('⭐ скорости запекания — 40 и 120 u/с, доли для пресетов — 1/3 и 1', () => {
+    expect([LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD]).toEqual([40, 120, 80]);
+    expect(LOCO_WALK * LOCO_BAKE_MAXSPD).toBeCloseTo(40, 12);
+    expect(LOCO_RUN * LOCO_BAKE_MAXSPD).toBeCloseTo(120, 12);
+  });
+
+  it('⭐⭐ вес бега: 0 до 40, линейно, 1 с 80 — и дальше не растёт (с бонусами скорости до 140, рывок 200)', () => {
+    for (const v of [0, 32, 39.9, 40]) expect(locoRunWeight(v), `${v} u/с`).toBe(0);
+    expect(locoRunWeight(50)).toBeCloseTo(0.25, 12);
+    expect(locoRunWeight(60)).toBeCloseTo(0.5, 12);
+    expect(locoRunWeight(70)).toBeCloseTo(0.75, 12);
+    for (const v of [80, 102, 120, 140, 200]) expect(locoRunWeight(v), `${v} u/с`).toBe(1);
+    // ⚠ Не ось планировщика: у него на 80 было бы (80 − 40) / (115 − 40) = 0.533.
+    expect(locoRunWeight(80)).not.toBeCloseTo(40 / 75, 2);
+  });
+
+  it('⭐⭐ скорость запекания — из клипа; нет поля — легаси по имени (50.4 / 102), битое число не принимается', () => {
+    expect(bakedLocoSpeed({ name: 'run_fwd', bakeSpeed: 120 })).toBe(120);
+    expect(bakedLocoSpeed({ name: 'walk_back', bakeSpeed: 40 })).toBe(40);
+    expect(bakedLocoSpeed({ name: 'run_strafe_R', bakeSpeed: 80 }), 'будущий промежуточный набор на 80').toBe(80);
+    expect(bakedLocoSpeed({ name: 'run_back' }), 'старый бег').toBeCloseTo(102, 9);
+    expect(bakedLocoSpeed({ name: 'walk_fwd' }), 'старая ходьба').toBeCloseTo(50.4, 9);
+    expect(bakedLocoSpeed({ name: 'strafe_L' }), 'историческое имя страйфа — снимался шагом').toBeCloseTo(50.4, 9);
+    // Цикл 0 остановил бы часы — стопы стояли бы, пока тело едет. Такое поле считается отсутствующим.
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) expect(bakedLocoSpeed({ name: 'run_fwd', bakeSpeed: bad }), String(bad)).toBeCloseTo(102, 9);
   });
 });

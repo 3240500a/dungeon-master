@@ -7,6 +7,7 @@ import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, GAIT_PRESETS, TURN_PRESETS, B
 import { clipDur, clipPoseAt, carryMarks, loopMarksInRange, marksInRange, type Clip, type Mark, type MarkEvent } from './clipModel.js';
 import { soundForMark, earShot, EAR_NEAR, EAR_FAR, STEP_PACE_DEFAULT } from './animSfx.js';
 import { GAIT } from './pose.js';
+import { bakedLocoSpeed } from './locoBlend.js';
 
 /**
  * ⭐⭐ ЗВУК ШАГОВ: «кожаная подошва мягко по каменному полу; метки я расставлю в клипах, а в планировщике
@@ -194,14 +195,15 @@ describe('шаги в рантайме', () => {
     const dur = clipDur(lib.get('run_fwd')!);
     for (const e of s) expect(Math.abs(e.t - (e.foot === 'L' ? 0.3 : 0.8) * dur), '⚠ шаг не в точке метки').toBeLessThan(1e-3);
     expect(alternates(r.ev)).toBe(true);
-    // Сколько циклов прошло, столько и пар шагов: клип идёт по пройденному пути.
-    const cycles = (R * (480 - 61) / 60) / (R * dur);
+    // Сколько циклов прошло, столько и пар шагов: клип идёт по пройденному пути. Цикл — СКОРОСТЬ ЗАПЕКАНИЯ × период, а не
+    // текущая скорость × период: бег снят на 120, а здесь играет на 102 (вес бега 1 уже с 80 u/с) — медленнее.
+    const cycles = (R * (480 - 61) / 60) / (bakedLocoSpeed(lib.get('run_fwd')!) * dur);
     expect(Math.abs(s.length - 2 * cycles), `шагов ${s.length} за ${cycles.toFixed(1)} циклов`).toBeLessThanOrEqual(2);
   });
 
   it('⚠ МЕТКА НА САМОМ НАЧАЛЕ ЦИКЛА звучит раз в цикл — не теряется на шве и не двоится', () => {
     const r = run(marked([{ u: 0, mark: L }]), 1, 480, (p) => p.setVel(0, R), 60);
-    const dur = clipDur(lib.get('run_fwd')!), cycles = (R * (480 - 61) / 60) / (R * dur);
+    const dur = clipDur(lib.get('run_fwd')!), cycles = (R * (480 - 61) / 60) / (bakedLocoSpeed(lib.get('run_fwd')!) * dur);   // цикл — см. тест выше
     expect(Math.abs(steps(r.ev).length - cycles), `левых ${steps(r.ev).length} за ${cycles.toFixed(1)} циклов`).toBeLessThanOrEqual(1);
   });
 

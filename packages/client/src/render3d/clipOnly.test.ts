@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, BAKE_MAXSPD } from './clipBake.js';
-import { bakedLocoSpeed } from './locoBlend.js';
-import type { Clip } from './clipModel.js';
+import { bakedLocoSpeed, locoRunWeight, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
+import { clipDur, type Clip } from './clipModel.js';
+import { GAIT } from './pose.js';
 
 /**
  * ⭐⭐ РЕЖИМ «ТОЛЬКО КЛИПЫ» — репетиция клиента без StepPlanner.
@@ -19,7 +20,8 @@ import type { Clip } from './clipModel.js';
  * спиной, наискосок, встаёт, поворачивается на месте, бьёт стоя и на бегу, меняет оружие, входит в бой.
  */
 const GX = { armDown: 1.35, elbowBend: 0.25 };
-const R = 0.85 * BAKE_MAXSPD, W = 0.42 * BAKE_MAXSPD;
+/** Скорости запекания набора (40 / 120 u/с) и игровая скорость воина, с которой бег весит 100 % (80 u/с). */
+const R = LOCO_BAKE_RUN_SPD, W = LOCO_BAKE_WALK_SPD, GAME = LOCO_RUN_FULL_SPD;
 const ARMS = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm'] as const;
 const HIT = { name: 'hit_test', character: 'warrior', weapon: 'none', loop: false, keys: [
   { t: 0, pose: { RightUpperArm: [0, 0, 1.2] } }, { t: 0.25, pose: { RightUpperArm: [-1.2, 0, 1.2] } }, { t: 0.5, pose: { RightUpperArm: [0, 0, 1.2] } },
@@ -134,7 +136,15 @@ describe('«только клипы»: планировщика нет', () => {
   it('⭐⭐ БЕЗ НЕГО ВСЁ ЖИВОЕ: ноги переступают, опорная стопа стоит, стопа отрывается, руки машут', () => {
     // ЗАМЕР (воин, запечённый набор; планировщик — для сравнения): смена опоры в секунду 4.9 (4.8), максимальный
     // уход опорной стопы 0 (0.66), подъём стопы 12.7 (10.8), размах плеча 63° (64°); боком: уход 0.46 (0.76).
-    for (const [name, vx, vz, slideMax] of [['бег вперёд', 0, R, 0.3], ['бег спиной', 0, -R, 0.3], ['бег боком', R, 0, 1]] as const) {
+    // ⭐ ИГРОВЫЕ 80 u/с: бег, снятый на 120, играет на 100 % веса в темпе 80/120 (смен опоры за эти 2 с — 9 против 12 на
+    // 120, поэтому порог ниже). ЗАМЕР ухода опорной стопы с фиксацией на 80: вперёд / спиной / боком 0 / 0 / 0; без
+    // фиксации (сама поза клипа за окно опоры, отдельный зонд) 1.22 / 1.17 / 1.50 — как на своей скорости 120.
+    // ⚠ Темп эта мерка НЕ ловит: фиксация прижимает стопу при любом темпе (мутация «цикл = текущая скорость × период» —
+    // здесь 0). Темп стережёт сверка цикла ниже, долю опоры — тест доли опоры.
+    for (const [name, vx, vz, slideMax, minChanges] of [
+      ['бег вперёд', 0, R, 0.3, 7], ['бег спиной', 0, -R, 0.3, 7], ['бег боком', R, 0, 1, 7],
+      ['бег вперёд на 80', 0, GAME, 0.3, 6], ['бег спиной на 80', 0, -GAME, 0.3, 6], ['бег боком на 80', GAME, 0, 1, 6],
+    ] as const) {
       for (const content of [withLib(localStorageContent('warrior')), withStance(withLib(localStorageContent('warrior')))]) {
         const { h, p } = make(content);
         setLocoMixOverride(1);
@@ -162,7 +172,7 @@ describe('«только клипы»: планировщика нет', () => {
         }
         restore();
         expect(touched, `${name}: ⚠ планировщик тронут`).toEqual([]);
-        expect(changes, `${name}: опора меняется (ноги переступают)`).toBeGreaterThanOrEqual(7);
+        expect(changes, `${name}: опора меняется (ноги переступают)`).toBeGreaterThanOrEqual(minChanges);
         expect(slide, `${name}: ⚠ опорная стопа уехала на ${slide.toFixed(2)}`).toBeLessThan(slideMax);
         expect(Math.max(yMax[0]! - yMin[0]!, yMax[1]! - yMin[1]!), `${name}: стопа отрывается`).toBeGreaterThan(5);
         const armDeg = (armMax - armMin) * 180 / Math.PI;
@@ -172,14 +182,17 @@ describe('«только клипы»: планировщика нет', () => {
   });
 
   it('⚠ ЧАСЫ КЛИПА ИДУТ В ТАКТ ЗАПЕКАНИЮ: темп шагов — как у планировщика, с которого клип снят', () => {
-    // Часы «только клипы» — пройденный путь, делённый на длину цикла (скорость запекания × период). Скорости
-    // запекания — одна правда (`bakedLocoSpeed`), и её сверяем с пресетами запекателя…
+    // Часы «только клипы» — пройденный путь, делённый на длину цикла (скорость запекания × период). Скорость
+    // запекания клип ПОМНИТ сам (`bakeSpeed`, пишет запекатель), и часы читают именно её (`bakedLocoSpeed`)…
     for (const s of GAIT_PRESETS) {
-      if (s.name === 'idle') continue;
-      expect(bakedLocoSpeed(s.name), `${s.name}: ⚠ запекатель и часы разошлись в скорости`).toBeCloseTo(Math.hypot(s.vx, s.vz) * BAKE_MAXSPD, 6);
+      const c = lib.get(s.name)!;
+      if (s.name === 'idle') { expect(c.bakeSpeed, 'стойка скорости не несёт').toBeUndefined(); continue; }
+      expect(c.bakeSpeed, `${s.name}: ⚠ клип не запомнил скорость запекания`).toBeCloseTo(Math.hypot(s.vx, s.vz) * BAKE_MAXSPD, 6);
+      expect(bakedLocoSpeed(c), `${s.name}: ⚠ запекатель и часы разошлись в скорости`).toBe(c.bakeSpeed);
     }
-    // …а сами часы — по темпу смены опоры против живого планировщика на том же ходу.
-    // ЗАМЕР: бег 4.91 против 4.82 раз/с. ⚠ Мутация «длина цикла ×1.3» даёт 3.8 и валит это.
+    // …а сами часы — по темпу смены опоры против живого планировщика на том же ходу. Сверка — на СКОРОСТЯХ ЗАПЕКАНИЯ
+    // (40 / 120): только там клип обязан идти в темпе планировщика; на 80 бег нарочно медленнее (см. тест ниже).
+    // ЗАМЕР (набор 40 / 120): шаг 2.33 против 2.33, бег 5.50 против 5.50 раза/с. ⚠ Мутация «длина цикла ×1.3» валит это.
     const rate = (mix: number, spd: number): number => {
       const { p } = make();
       setLocoMixOverride(mix);
@@ -195,6 +208,161 @@ describe('«только клипы»: планировщика нет', () => {
     for (const spd of [W, R]) {
       const clip = rate(1, spd), planner = rate(0, spd);
       expect(Math.abs(clip - planner) / planner, `${spd === R ? 'бег' : 'шаг'}: смена опоры ${clip.toFixed(2)} против ${planner.toFixed(2)} раз/с у планировщика`).toBeLessThan(0.1);
+    }
+  });
+
+  const libContent = (l: Map<string, Clip>): PoseContent =>
+    ({ ...localStorageContent('warrior'), locoClip: (names: readonly string[]) => { for (const n of names) { const c = l.get(n); if (c) return c; } return null; } });
+  /**
+   * СТАРЫЙ НАБОР — как снимали до 17.09: 0.42 / 0.85 от 120 (50.4 / 102 u/с) и БЕЗ поля `bakeSpeed`. Строится лениво:
+   * нужен двум тестам, а съём восьми клипов — треть секунды.
+   */
+  let oldSet: Map<string, Clip> | null = null;
+  const oldLib = (): Map<string, Clip> => {
+    if (oldSet) return oldSet;
+    const h = buildHumanoid({});
+    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    oldSet = new Map();
+    for (const s of GAIT_PRESETS) {
+      if (s.name === 'idle') continue;
+      const k = (/^run_/.test(s.name) ? 0.85 : 0.42) / Math.hypot(s.vx, s.vz);
+      const c = bakeGaitToClip(p, h, { ...s, vx: s.vx * k, vz: s.vz * k }, { character: 'warrior', weapon: 'none' }).clip;
+      delete c.bakeSpeed;
+      oldSet.set(s.name, c);
+    }
+    return oldSet;
+  };
+
+  /** Длина цикла клипа на ходу, u: пройденный путь на один оборот фазы часов «только клипы». */
+  const cycleAt = (l: Map<string, Clip>, vx: number, vz: number): number => {
+    const { p } = make(libContent(l));
+    setLocoMixOverride(1);
+    const phase = (): number => (p as unknown as { clipPhase: number }).clipPhase;
+    for (let i = 0; i < 120; i++) { p.setVel(vx, vz); p.step(1 / 60); }   // доля клипа и ворота по движению — на единице
+    const ph0 = phase();
+    let path = 0;
+    for (let i = 0; i < 240; i++) { p.setVel(vx, vz); p.step(1 / 60); path += Math.hypot(vx, vz) / 60; }
+    return path * 2 * Math.PI / (phase() - ph0);
+  };
+
+  it('⭐⭐ ВЕС БЕГА ПО СКОРОСТИ: 0 до 40, половина на 60, целиком с 80 u/с — и цикл клипа смешан тем же весом', () => {
+    // Решение автора: набор снят на 40 / 120, а в игре бег играет на 100 % уже с 80. Цикл — смесь «скорость запекания ×
+    // период» теми же весами, что поза. ЗАМЕР (набор умолчаний): 70.00 u шагом (40 × 1.75 с), 88.00 u бегом (120 × 0.733 с),
+    // на 60 — 79.00. ⚠ Мутация «ось планировщика 40…115» (было до 17.09) даёт на 80 цикл 79.6 вместо 88 и валит это.
+    expect(locoRunWeight(W)).toBe(0);
+    expect(locoRunWeight(60)).toBeCloseTo(0.5, 12);
+    expect(locoRunWeight(GAME)).toBe(1);
+    const walk = lib.get('walk_fwd')!, run = lib.get('run_fwd')!;
+    const cw = bakedLocoSpeed(walk) * clipDur(walk), cr = bakedLocoSpeed(run) * clipDur(run);
+    for (const spd of [32, W, 60, GAME, 100, R, 130]) {
+      const want = cw + (cr - cw) * locoRunWeight(spd), got = cycleAt(lib, 0, spd);
+      expect(Math.abs(got - want) / want, `${spd} u/с: цикл ${got.toFixed(2)} u, ждали ${want.toFixed(2)} (вес бега ${locoRunWeight(spd).toFixed(2)})`).toBeLessThan(1e-3);
+    }
+  });
+
+  it('⭐⭐ НА 80 u/с БЕГ, СНЯТЫЙ НА 120, ИГРАЕТ МЕДЛЕННЕЕ: цикл = 120 × период, темп 80/120', () => {
+    const run = lib.get('run_fwd')!;
+    expect(run.bakeSpeed).toBe(R);
+    const got = cycleAt(lib, 0, GAME);
+    expect(Math.abs(got - R * clipDur(run)), `цикл ${got.toFixed(3)} u против ${(R * clipDur(run)).toFixed(3)}`).toBeLessThan(1e-3 * got);
+    // Тот же вывод снаружи — по темпу смены опоры: на 80 ровно 2/3 темпа на 120, клип тот же.
+    const rate = (spd: number): number => {
+      const { p } = make();
+      setLocoMixOverride(1);
+      let n = 0, prev = [true, true];
+      for (let i = 0; i < 1320; i++) {
+        p.setVel(0, spd); p.step(1 / 60);
+        const s = p.groundSupport;
+        if (i >= 120 && (s[0] !== prev[0] || s[1] !== prev[1])) n++;
+        prev = [...s];
+      }
+      return n / 20;
+    };
+    const slow = rate(GAME), fast = rate(R);
+    expect(Math.abs(slow / fast - GAME / R), `смена опоры ${slow.toFixed(2)} на 80 против ${fast.toFixed(2)} на 120`).toBeLessThan(0.04);
+  });
+
+  it('⚠ ЦИКЛ СМЕШАН ВЕСАМИ КОЛОНОК: боком — цикл страйфа, спиной — цикл хода спиной, наискосок — их доли', () => {
+    // Сверки выше — только ВПЕРЁД, а на умолчаниях у всех колонок один период (88 u бегом, 70 u шагом), и перепутанные веса
+    // колонок в часах не видны вовсе. У автора колонки разные (`pe_gait` 17.09: спиной stepWalk 18.5 против 25; опубл.
+    // walk_back 1.082 с, walk_strafe_L 0.966 с, walk_fwd 1.119 с). Поэтому периоды разводим: спиной ×1.3, вправо ×0.8,
+    // влево ×0.9 (стороны разные — чтобы ловилась и путаница Л/П). ЗАМЕР (вправо = +x): вперёд 88.00, вправо 70.40, влево 79.20, спиной
+    // 114.39, на 80 те же; шагом вправо 56.00, спиной 91.00; наискосок 45° — 79.20 (пополам с «вперёд»), 135° — 92.40
+    // (пополам страйф и спиной). ⚠ Мутация «веса страйфа и спины в часах перепутаны» проходила ВСЕ прежние тесты; здесь
+    // боком даёт 114.39, спиной 70.40.
+    const scale = (c: Clip, k: number): Clip => ({ ...c, keys: c.keys.map((key) => ({ ...key, t: key.t * k })) });
+    const dl = new Map<string, Clip>();
+    for (const [n, c] of lib) dl.set(n, scale(c, /_back$/.test(n) ? 1.3 : /_strafe_R$/.test(n) ? 0.8 : /_strafe_L$/.test(n) ? 0.9 : 1));
+    const cyc = (n: string): number => bakedLocoSpeed(dl.get(n)!) * clipDur(dl.get(n)!);
+    for (const [name, vx, vz, want] of [
+      ['бег боком вправо', R, 0, cyc('run_strafe_R')], ['бег боком влево', -R, 0, cyc('run_strafe_L')], ['бег спиной', 0, -R, cyc('run_back')],
+      ['боком на 80', GAME, 0, cyc('run_strafe_R')], ['спиной на 80', 0, -GAME, cyc('run_back')],
+      ['шаг боком', W, 0, cyc('walk_strafe_R')], ['шаг спиной', 0, -W, cyc('walk_back')],
+      ['наискосок 45°', 85, 85, (cyc('run_fwd') + cyc('run_strafe_R')) / 2], ['наискосок 135°', 85, -85, (cyc('run_strafe_R') + cyc('run_back')) / 2],
+    ] as const) {
+      const got = cycleAt(dl, vx, vz);
+      expect(Math.abs(got - want) / want, `${name}: цикл ${got.toFixed(2)} u, ждали ${want.toFixed(2)}`).toBeLessThan(2e-3);
+    }
+  });
+
+  it('⚠ СТАРЫЙ КЛИП БЕЗ `bakeSpeed` ИДЁТ СВОИМ ТЕМПОМ: 50.4 / 102 по имени, стопа не едет', () => {
+    // Клипы, снятые до 17.09, поля не несут, а сняты на 0.42 / 0.85 от 120. До перезапекания они обязаны играть в
+    // своём темпе: читай их новыми 40 / 120 — длина цикла ходьбы −21 %, бега +18 %, и стопы поехали бы.
+    const old = oldLib();
+    expect(bakedLocoSpeed(old.get('walk_fwd')!)).toBeCloseTo(50.4, 9);
+    expect(bakedLocoSpeed(old.get('run_strafe_L')!)).toBeCloseTo(102, 9);
+    // 102 ≥ 80 — играет чистый старый бег, и цикл обязан быть 102 × его период (а не 120 ×).
+    const run = old.get('run_fwd')!, got = cycleAt(old, 0, 102);
+    expect(Math.abs(got - 102 * clipDur(run)), `цикл ${got.toFixed(2)} u против ${(102 * clipDur(run)).toFixed(2)}`).toBeLessThan(1e-3 * got);
+    // И опорная стопа старого набора на игровых 80 (та же мерка, что выше: уход за время опоры, с фиксацией).
+    for (const [vx, vz, max] of [[0, GAME, 0.3], [GAME, 0, 1]] as const) {
+      const { h: hh, p: pp } = make(libContent(old));
+      setLocoMixOverride(1);
+      const lock: ({ x: number; z: number } | null)[] = [null, null];
+      let slide = 0;
+      for (let i = 0; i < 360; i++) {
+        pp.setVel(vx, vz); pp.step(1 / 60);
+        hh.root.updateMatrixWorld(true);
+        if (i < 120) continue;
+        const sup = pp.groundSupport;
+        for (let leg = 0; leg < 2; leg++) {
+          const f = footW(hh, pp, leg);
+          if (!sup[leg]) { lock[leg] = null; continue; }
+          lock[leg] ??= { x: f.x, z: f.z };
+          slide = Math.max(slide, Math.hypot(f.x - lock[leg]!.x, f.z - lock[leg]!.z));
+        }
+      }
+      expect(slide, `старый набор (${vx}, ${vz}): ⚠ опорная стопа уехала на ${slide.toFixed(2)}`).toBeLessThan(max);
+    }
+  });
+
+  it('⚠ ДОЛЯ ОПОРЫ — ТА, С КОТОРОЙ КЛИП СНЯТ, а не та, что у планировщика на текущей скорости', () => {
+    // Клипы хода без канала `__swing`: опору дают окна по фазе шириной в долю опоры. Доля — смесь долей, с которыми сняты
+    // клипы (ось планировщика на СКОРОСТИ ЗАПЕКАНИЯ), теми же весами, что поза. Чистый набор на 80 — ровно dutyRun, на 60 —
+    // середина; старый бег (102, sb 0.827) на 80 — свою 0.224. ⚠ Мутация «доля по текущей скорости» (как было) даёт на 80
+    // 0.259 и валит это; «голый lerp по весу бега» на старом наборе даёт 0.202 и валит последнюю строку. ЗАМЕР: 0.198 / 0.273 / 0.226.
+    const G = GAIT;
+    const plSb = (v: number): number => Math.min(1, Math.max(0, (v - G.speedWalk) / (G.speedRun - G.speedWalk)));
+    const lerpD = (sb: number): number => G.dutyWalk + (G.dutyRun - G.dutyWalk) * sb;
+    const share = (l: Map<string, Clip>, spd: number): number => {
+      const { p } = make(libContent(l));
+      setLocoMixOverride(1);
+      let on = 0, n = 0;
+      for (let i = 0; i < 1320; i++) {
+        p.setVel(0, spd); p.step(1 / 60);
+        if (i < 120) continue;
+        const s = p.groundSupport;
+        on += (s[0] ? 1 : 0) + (s[1] ? 1 : 0); n += 2;
+      }
+      return on / n;
+    };
+    for (const [name, l, spd, want] of [
+      ['чистый набор, 80', lib, GAME, lerpD(1)],
+      ['чистый набор, 60', lib, 60, lerpD(0.5)],
+      ['старый набор, 80', oldLib(), GAME, lerpD(plSb(102))],
+    ] as const) {
+      const got = share(l, spd);
+      expect(Math.abs(got - want), `${name}: доля опоры ${got.toFixed(3)}, клипы сняты с ${want.toFixed(3)}`).toBeLessThan(0.012);
     }
   });
 

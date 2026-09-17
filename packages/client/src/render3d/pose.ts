@@ -249,6 +249,21 @@ export const GAIT = {
   // стоп — то есть это был не боб, а артефакт полёта.
   // 1 = прежнее поведение (тянуть к стойке), 0 = держать высоту, с которой оторвались.
   bobFlight: 1,
+  /**
+   * ⭐ ПРЕДЕЛ СКОРОСТИ ЦЕЛИ ВЫСОТЫ ТАЗА, ед/с (ходьба / бег, интерп как у `bobWalk/bobRun`). 0 = выкл = прежнее
+   * поведение бит в бит (golden-вектор не двигается).
+   *
+   * ⚠ ЗАЧЕМ. Цель `wantY` СТУПЕНЬКОЙ: в полёте — рост стоя, в кадр касания — упор в `pelvisMin`
+   * (замер на беге: 32.08 → 26.57 ЗА ОДИН КАДР, и обратно на отрыве). Лаг первого порядка превращает
+   * ступеньку в МГНОВЕННУЮ смену скорости (rate × 5.5 ед/с) — это и есть «рывок головы» в запечённых
+   * `run_fwd`/`run_back`/`walk_back`: max |a| таза 1112–1596 ед/с² против ~120 у гладкого боба того же размаха.
+   * Предел скорости делает из ступеньки рампу, а лаг скругляет её углы.
+   * Замер (реплей цели, лаги 3/2.5): лаг как был 1113 ед/с² при размахе 0.79; предел 30 + лаг — 122 и 0.50;
+   * предел 60 — 234 и 0.84. Пружина ω=6 давала 182, но РАЗМАХ 0.25 — съедала настроенный боб, поэтому не она.
+   * ⚠ Остаток ≈ `bobLag × смена наклона рампы`, то есть растёт с лагом. Живой тюн warrior (лаги бега 8.5/15,
+   * PosePlayer, бег 120): 1436 → 469 при 20, 660 при 30; ход назад 40: 3246 → 793 / 1126. Таблица — в README.
+   */
+  bobSlew: 0, bobSlewRun: 0,
   // ── ЗАЗЕМЛЕНИЕ (footIk.groundFeet) ────────────────────────────────────────────────────────────
   // `gndLag` — скорость схождения сдвига таза к полу (было зашито `GROUND_LAG = 8`). Это ВТОРОЙ,
   // невидимый в редакторе боб: ЗАМЕР на бегу — таз призрака гуляет 1.282, из них 0.793 даёт именно
@@ -716,6 +731,8 @@ class StepPlanner {
   combat = 0;                // мирно(0) ↔ бой(1) — ЧЕТВЁРТАЯ колонка: шире стойка, короче шаг (Ф6)
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
   private hipY = STAND_Y;
+  /** Цель высоты таза ПОСЛЕ предела скорости (`GAIT.bobSlew`). При пределе 0 всегда = сырой цели. */
+  private hipWant = STAND_Y;
   private mAvgX = 0; private mAvgZ = 0; private mAvgOn = false;   // сглаженный вектор хода (направление планта)
   /**
    * РАЗМЕРЫ НОГИ РИГА — бедро, голень, полуширина таза. Ставит рантайм из `Humanoid.legRest`
@@ -797,7 +814,7 @@ class StepPlanner {
   setStance(latL: number, fwdL: number, latR: number, fwdR: number, standY?: number, foot?: StanceFoot): void {
     if (foot) this.stanceFoot = foot;
     this.latL = latL; this.stanceFwdL = fwdL; this.latR = latR; this.stanceFwdR = fwdR;
-    if (standY !== undefined) { this.standY = standY; this.hipY = standY; }
+    if (standY !== undefined) { this.standY = standY; this.hipY = standY; this.hipWant = standY; }
   }
   /**
    * НОГИ ЗАНЯТЫ СЛОТОМ ДЕЙСТВИЯ (удар с места делает подшаг из клипа).
@@ -1275,14 +1292,24 @@ class StepPlanner {
     const grab = locoVal('pelvisReach', 'pelvisReachRun', GAIT.pelvisReach, GAIT.pelvisReachRun, stanceLeg, m);
     const stanceY = want0 > maxHipY ? want0 - (want0 - maxHipY) * clamp(grab, 0, 1) : want0;
     const wantY = anyStance ? stanceY : this.hipY + (baseY - this.hipY) * clamp(GAIT.bobFlight, 0, 1);
+    // ⭐ ПРЕДЕЛ СКОРОСТИ ЦЕЛИ (`GAIT.bobSlew`): ступенька `wantY` на касании/отрыве (замер 32.08 → 26.57 за
+    // кадр) превращается в рампу не круче `slew` ед/с — и только ПОТОМ идёт в лаг. Лаг по ступеньке давал
+    // мгновенную смену скорости таза (max |a| 1112 ед/с²), по рампе — только излом скорости, который он же
+    // скругляет (лаги 3/2.5, предел 30: 122 ед/с², размах 0.79 → 0.50; тюн warrior, бег 120, предел 20: 1436 → 469).
+    // 0 = без предела: цель как была, бит в бит.
+    // ⚠ Предел — на ЦЕЛИ, а не на самом тазе: ограничь скорость таза — и лаг снова упрётся в тот же угол.
+    const slew = locoVal('bobSlew', 'bobSlewRun', GAIT.bobSlew, GAIT.bobSlewRun, stanceLeg, m);
+    if (slew > 0) { const s = slew * dt; this.hipWant += clamp(wantY - this.hipWant, -s, s); }
+    else this.hipWant = wantY;
+    const tgtY = this.hipWant;
     // Сглаживание: вверх и вниз своими скоростями, и у каждой — своя пара ходьба/бег.
     // ⚠ Раньше здесь стоял ПОРОГ `speed > GAIT.speedWalk`: 39.9 → 40.1 переключало скорость скачком.
     // `locoVal` блендит по `sb` (та же ось, что у длины шага и подъёма стопы) — разрыва нет.
-    const rising = wantY > this.hipY;
+    const rising = tgtY > this.hipY;
     const rate = rising
       ? locoVal('bobLagUp', 'bobLagUpRun', GAIT.bobLagUp, GAIT.bobLagUpRun, stanceLeg, m)
       : locoVal('bobLagDown', 'bobLagDownRun', GAIT.bobLagDown, GAIT.bobLagDownRun, stanceLeg, m);
-    this.hipY += (wantY - this.hipY) * Math.min(1, dt * Math.max(0, rate));
+    this.hipY += (tgtY - this.hipY) * Math.min(1, dt * Math.max(0, rate));
     const hipY = this.hipY;
     const out: LegAngles[] = [];
     const toeCurl: [number, number] = [0, 0];

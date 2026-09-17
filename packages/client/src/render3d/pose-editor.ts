@@ -45,6 +45,8 @@ import { parentOfOur } from './retarget3d.js';   // НАШа канон-топо
 import { makeBoneView, type BoneSource } from './boneView.js';   // Ф20.3: скелет по НАСТОЯЩИМ костям модели   // Ф14.4: оси сгиба пальцев из геометрии рига; Ф16 — отчёт о поджатости бинда
 import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
+import { forgetDrag } from './jointLimitV2.js';   // накопитель протяжки кости: забывать на новом драге и при смене позы
+import { poseRig, settleLikePhysGhost, writeKeyPose, keyAtTime, previewOffKey, faceTarget, captureAimOffsets, aimBoneToPoint as aimChainBone } from './frameEdit.js';   // правка кадра: чистая часть под node-тесты
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
@@ -61,7 +63,7 @@ import { buildInventory, inventorySummary } from './animInventory.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
-import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick } from './clipBake.js';   // Ф2.1: процедурка → клипы
+import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick, BAKE_MAXSPD } from './clipBake.js';   // Ф2.1: процедурка → клипы
 import { TURN_NAMES } from './turnInPlace.js';
 import { findLocoClip, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
@@ -249,6 +251,13 @@ function parkProxy(): void {
 function beginProxyDrag(): void {
   if (!fkProxyBone) return;
   const b = human.bones.get(fkProxyBone); if (!b) return;
+  // ⭐ НОВЫЙ ДРАГ — С ЧИСТЫМ НАКОПИТЕЛЕМ. `jointLimitV2` держит по кости `lastAngle`/`lastRaw` (твист и шарнир),
+  // и ключ — сама кость, которая живёт между кадрами и клипами. Прошлый драг, упёршийся в предел, оставлял там
+  // разрыв «куда ушло кольцо − где встала кость», и ПЕРВОЕ же касание этой кости на ЛЮБОМ другом кадре
+  // поворачивало её ровно на этот разрыв. ЗАМЕР (LeftFoot, твист ±45°): кольцо протянули на 25° за упор, на другом
+  // кадре касание 0.2° поворачивает стопу на 24.8° в обратную сторону; с `forgetDrag` — на 0.2°. Жалоба: «правка
+  // стопы на одном кадре появилась на других кадрах, повёрнутая на тот же угол». Сторож — `limitDragMemory.test.ts`.
+  forgetDrag(b);
   human.root.updateMatrixWorld(true);
   b.getWorldQuaternion(_bBase);
   b.parent!.getWorldQuaternion(_parW); _parInv.copy(_parW).invert();
@@ -459,21 +468,14 @@ function gazeRelax(): void {
 }
 /** Забыть опору: текущий поворот шеи/головы стал АВТОРСКИМ. */
 function gazeForget(): void { gazeBase = null; }
-/** Довернуть кость своей осью «вперёд» на точку с весом и клэмпом по пределу сустава. */
+/**
+ * СДВИГИ ПРИЦЕЛА шеи/головы (`frameEdit.captureAimOffsets`). null — целим осью ровно в точку (как при включении).
+ * Снимаются, когда поза ЗАМЕНЕНА (`gazeRecapture`), и сбрасываются явным включением взгляда (`setGaze`).
+ */
+let gazeOffset: Map<string, THREE.Vector3> | null = null;
+/** Довернуть кость своей осью «вперёд» на точку с весом и клэмпом по пределу сустава (математика — `frameEdit.ts`). */
 function aimBoneToPoint(nm: string, target: THREE.Vector3, weight: number): void {
-  const b = human.bones.get(nm); if (!b || !b.parent || weight <= 0) return;
-  b.updateWorldMatrix(true, false);
-  const wq = b.getWorldQuaternion(Q());
-  const cur = GAZE_FWD.clone().applyQuaternion(wq);
-  const want = target.clone().sub(b.getWorldPosition(V()));
-  if (want.lengthSq() < 1e-6) return;
-  want.normalize();
-  const full = Q().setFromUnitVectors(cur, want);
-  const nw = Q().slerp(full, weight).multiply(wq);          // часть дуги, а не вся — отсюда распределение по цепи
-  b.quaternion.copy(b.parent.getWorldQuaternion(Q()).invert().multiply(nw));
-  const view = limitViewForBone(nm);
-  if (view) b.quaternion.copy(clampLocalToLimit(b.quaternion, view));
-  b.updateMatrixWorld(true);
+  aimChainBone(human, nm, target, weight, GAZE_FWD, limitViewForBone, gazeOffset?.get(nm));
 }
 /** Навести взгляд на `gazeTarget`. Звать ПОСЛЕ солва и ПОСЛЕ `gazeRelax`. */
 function applyGaze(): void {
@@ -482,9 +484,29 @@ function applyGaze(): void {
   // Два прохода: после клэмпа шеи голове остаётся добрать остаток.
   for (let it = 0; it < 2; it++) for (const [n, w] of GAZE_BONES) aimBoneToPoint(n, gazeTarget, w);
 }
+/**
+ * ПОЗА ЗАМЕНЕНА (кадр, скраб, undo, пересборка) — взгляд ПЕРЕСНИМАЕТСЯ С НЕЁ, а не тянет её к старой точке.
+ *
+ * Было: `gazeTarget` — мировая точка, поставленная на каком-то кадре, — переживал смену кадра, и каждый следующий
+ * кадр при включённом взгляде доворачивал шею/голову к ней; при выключенном IK ещё и `gazeBase` оставался от
+ * ПРОШЛОГО кадра, и `gazeRelax` возвращал голове его углы. Всё это попадало в запись кадра (`readPoseFull`
+ * читает довёрнутую позу). ЗАМЕР на 24 опубликованных клипах, смена на соседний ключ, knight_06:
+ *   старая точка — шея/голова до 106.8° (`turn_L_180`, взгляд уводило на 164°), `run_fwd` 21.7°;
+ *   цель перед лицом нового кадра — направление держится (≤13.2°), но шея/голова всё равно до 48.9°;
+ *   цель перед лицом + сдвиги прицела (`frameEdit.captureAimOffsets`) — 0.00° на всех 24.
+ * Скрутка корпуса на 30° после этого — голова держит направление в пределах 3.7° (кроме ключей у предела шеи).
+ */
+function gazeRecapture(): void {
+  gazeForget();
+  if (!gazeOn) return;
+  if (!faceTarget(human, 'Head', GAZE_FWD, GAZE_DIST, gazeTarget)) return;
+  gazeOffset = captureAimOffsets(human, GAZE_BONES, gazeTarget, GAZE_FWD);
+  gazeHandle.position.copy(gazeTarget);
+}
 /** Вкл/выкл хелпера. При включении цель встаёт ПЕРЕД ЛИЦОМ по МИРОВОМУ вперёд. */
 function setGaze(on: boolean): void {
   gazeOn = on; gazeHandle.visible = on || ikOn; gazeLine.visible = gazeHandle.visible; gazeForget();
+  gazeOffset = null;   // явное включение — голова целит ровно в ручку, как было
   gazeB?.classList.toggle('on', on);   // Ф26.3: взгляд включается и КЛИКОМ ПО РУЧКЕ ГОЛОВЫ — кнопка должна это показывать
   if (on) {
     const hd = human.bones.get('Head');
@@ -606,9 +628,18 @@ function syncHandles(): void {
   // до следующего клика (замер: расхождение 1.8u держалось после отпускания).
   for (const e of effList()) if (!(e.ik && e.pin)) syncEff(e);
 }
+/** Забыть накопители протяжки (`jointLimitV2`) у ВСЕХ костей манекена — «очистить всё» у памяти нет, она по кости. */
+function forgetDragAll(): void { for (const nm of human.boneNames) { const b = human.bones.get(nm); if (b) forgetDrag(b); } }
+/**
+ * ПОЗА ЗАМЕНЕНА ЦЕЛИКОМ (`applyPose`/`lerpPose` — через них идут кадр, скраб, проигрывание, undo, пересборка):
+ * накопители драга и взгляд, снятые с ПРОШЛОЙ позы, к новой не относятся. Без IK `captureRig` не зовётся вовсе,
+ * поэтому это отдельный шов, а не часть `captureRig`.
+ */
+function onPoseReplaced(): void { forgetDragAll(); gazeRecapture(); }
 /** Поза ЗАМЕНЕНА (клип/кадр/T-поза/undo): всё перечитываем заново, включая пины и опору корпуса. */
 function captureRig(): void {
   pullForget(); gazeForget(); girdleForget(); hipsGood = null; pinBase = 0; goodPose.clear();
+  forgetDragAll();   // накопители драга прошлой позы (см. `beginProxyDrag`)
   for (const e of effList()) { e.bodyApplied[0] = 0; e.bodyApplied[1] = 0; e.bodyApplied[2] = 0; }   // поза заменена — она авторская целиком
   // ⚠ ВЫЧИТАЕМ СДВИГ БАЛАНСА, КАК `syncHandles`. Раньше здесь его не было, и `rig.hipsPos` (ЖЕЛАНИЕ)
   // расходился с ним же на следующем кадре: ЗАМЕР — кость (0, 32, 0), а желание уезжало в (−3, 32, −2)
@@ -1720,6 +1751,11 @@ let library: Clip[] = loadLib();
 let clipBuf: Clip | null = null;      // буфер «копировать позу» — переживает переключение оружия/персонажа (вставка в другое оружие)
 let clipBufWasAtk = false;            // был ли исходник в буфере помечен ударом (перенести метку при вставке)
 let clipIdx = 0, frameIdx = 0;
+/**
+ * ВРЕМЯ ПРЕВЬЮ, если поза манекена выставлена ПРЕВЬЮ (скраб, проигрывание, превью кривой), а не выбором кадра;
+ * null — на манекене поза ключа `frameIdx` (плюс правки поверх). Читает `offKeyTime` — гейт записи кадра.
+ */
+let previewT: number | null = null;
 const clipsHere = (): Clip[] => library.filter((c) => c.character === curCharId && c.weapon === weapon);
 const curClip = (): Clip | null => clipsHere()[clipIdx] ?? null;
 function sortKeys(c: Clip): void { const cur = c.keys[frameIdx]; c.keys.sort((a, b) => a.t - b.t); if (cur) frameIdx = c.keys.indexOf(cur); }
@@ -1819,8 +1855,22 @@ function groundManikinForView(): (() => void) | null {
   return () => { for (const o of moved) o.position.y -= dy; un(); };
 }
 
+/**
+ * ВИДНО ЛИ СЕЙЧАС ЗАЗЕМЛЁННОЕ ТЕЛО — ровно то условие, при котором его рисует цикл кадра.
+ *
+ * Меш и серое тело ведёт `modelsTab.drive(physOn && ghostHuman ? ghostHuman : human)`, а заземляет их
+ * `renderRagdollGhost(…, footGround, …)` в `stepPhysics`. То есть: физика вкл И призрак есть И «заземл. стоп» вкл —
+ * видна заземлённая фигура; физика выкл — меш ведёт НЕзаземлённый манекен (`groundManikinForView` тоже молчит).
+ * «Манекен на полу» (`manGroundView`) сюда НЕ входит: он двигает только оверлей скелета поверх уже заземлённого тела.
+ */
+const groundedView = (): boolean => physOn && !!ghostHuman && footGround;
 function readPoseFull(): Pose {
-  const ungroundManikin = groundManikin(locoOn ? lp().groundSupport : undefined);   // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу (опорность — как на экране), потом возвращаем манекен как был
+  // Ф20.5: читаем ЗАЗЕМЛЁННУЮ позу (опорность — как на экране), потом возвращаем манекен как был — но ТОЛЬКО когда
+  // заземлённое тело и есть то, что на экране (`groundedView`). Раньше заземлялось при любом `footGround`, и с
+  // выключенной физикой в ключ уходила плоская стопа, которой никто не видел. ЗАМЕР разбора (опубликованные клипы,
+  // опора угадывается по высоте, стопа кладётся плоско): наклон стопы меняется больше чем на 5° у 3 из 12 ключей
+  // `run_fwd` и 6 из 13 `walk_fwd`; ключи 0–1 `run_fwd` уже записаны с 0.0° при авторских 19.5°. В ключ идёт то, что видно.
+  const ungroundManikin = groundedView() ? groundManikin(locoOn ? lp().groundSupport : undefined) : null;
   const p = human.readPose();
   delete p['LeftBreast']; delete p['RightBreast'];           // jiggle груди — рантайм, не пишем в позу
 
@@ -1841,7 +1891,7 @@ function readPoseFull(): Pose {
   // хвата — и любая правка формулы хвата превращала старые совпадения в расхождения, то есть в мёртвые
   // ключи, которые глушат хват навсегда. Канал хвата теперь единственный источник позы пальцев;
   // в клип они попадают только НА ЭКСПОРТЕ (`bakeGripIntoClip`), где это осознанный выбор пользователя.
-  for (const nm in p) if (isHandBone(nm)) delete p[nm];
+  dropFingers(p);
   // Офсет таза — ДЕЛЬТА от rest тела (Ф12): абсолют зависел от телосложения — «присед» среднего был бы «цыпочками» высокого.
   { const hp = human.hips.position, hr = human.hipsRest; setHipsOffset(p, [+(hp.x - hr.x).toFixed(2), +(hp.y - hr.y).toFixed(2), +(hp.z - hr.z).toFixed(2)]); }
   ungroundManikin?.();   // заземление двигает КОРЕНЬ, а не `hips.position`, так что в `__hipsD` выше оно не течёт
@@ -1859,8 +1909,12 @@ function applyWeaponPose(p: Pose): void {
   if (p['__lgripP']) { const m = ensureLgripMark(); if (m) { const lp = p['__lgripP']!, lr = p['__lgripR'] ?? [0, 0, 0]; m.position.set(lp[0], lp[1], lp[2]); m.rotation.set(lr[0], lr[1], lr[2]); m.visible = true; } }
   else if (lgripMark) lgripMark.visible = false;             // нет хвата в кадре → маркер скрыт (обычная FK-левая рука)
 }
-function applyPose(p: Pose): void { human.reset(); balanceOff.set(0, 0, 0);   // ⚠ reset убрал сдвиг баланса ИЗ КОСТИ — значит и запись о нём недействительна (см. `captureRig`)
-   for (const nm in p) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); } { const hd = hipsOffset(p, human.hipsRest.y); if (hd) human.hips.position.set(human.hipsRest.x + hd[0], human.hipsRest.y + hd[1], human.hipsRest.z + hd[2]); } applyGripOver(p); applyWeaponPose(p); applyFramePhys(p); }   // восстановить авторский офсет таза (иначе после бега остаётся gait-standY → провал скелета)
+// Поза ключа на манекен — ТОТ ЖЕ `poseRig`, что у призраков соседних кадров: повороты + авторский офсет таза
+// (иначе после бега остаётся gait-standY → провал скелета).
+function applyPose(p: Pose): void {
+  poseRig(human, p); balanceOff.set(0, 0, 0);   // ⚠ reset убрал сдвиг баланса ИЗ КОСТИ — значит и запись о нём недействительна (см. `captureRig`)
+  applyGripOver(p); applyWeaponPose(p); applyFramePhys(p); onPoseReplaced();
+}
 // Интерп ПОВОРОТОВ кадров — КВАТЕРНИОННЫЙ SLERP (истинная кратчайшая дуга, без gimbal). Покомпонентный лерп эйлеров
 // (даже с обёрткой углов в [-π,π]) на многоосевых кадрах даёт «прокрутку» руки (эйлеры далеки, хотя поворот близок).
 // slerp учитывает двойное покрытие (q и −q = один поворот) → всегда короткий путь. lerpAng оставлен для скаляров/маркера.
@@ -1888,6 +1942,11 @@ function lerpPose(a: Pose, b: Pose, t: number): void {
     m.position.set(pa[0] + (pb[0] - pa[0]) * t, pa[1] + (pb[1] - pa[1]) * t, pa[2] + (pb[2] - pa[2]) * t);
     m.rotation.set(lerpAng(ra[0], rb[0], t), lerpAng(ra[1], rb[1], t), lerpAng(ra[2], rb[2], t)); m.visible = true;
   } } else if (lgripMark) lgripMark.visible = false;
+  // ⚠ ХВАТ — КАК В `applyPose`. `human.reset()` выше вернул фаланги в бинд, а у рыцаря бинд-кисть плоская
+  // (средний сгиб 0.2°/−0.5°): ломаные клипы (все локальные ходьба/бег/повороты) при проигрывании, скрабе и
+  // превью кривой показывали на манекене выпрямленную ладонь вместо хвата 63–90°.
+  applyGripOver();
+  onPoseReplaced();
 }
 function mirrorLR(): void {   // «подтянуть правую сторону под левую» (общая чистая mirrorSide из clipModel)
   const m = mirrorSide(human.readPose(), 'Left');
@@ -1951,7 +2010,7 @@ function libRestore(s: LibState): void {
   library = (JSON.parse(s.lib) as unknown[]).map(migrateClip);
   clipIdx = s.clipIdx; frameIdx = s.frameIdx;
   saveLib();
-  const c = curClip(); const k = c?.keys[frameIdx]; if (k) applyPose(k.pose);
+  const c = curClip(); const k = c?.keys[frameIdx]; if (k) { applyPose(k.pose); previewT = null; }
   if (ikOn) captureRig();
   refreshAll();
 }
@@ -2023,10 +2082,31 @@ addEventListener('keydown', (e) => {
 /** Клавиши правки клипа активны только там, где они имеют смысл. */
 const animKeys = (): boolean => tab === 'anim' && !!curClip()?.keys.length;
 function togglePlay(): void { playBtn.click(); }
-/** `i` — записать текущую позу в кадр (концы-стойка неприкосновенны, как и у кнопки). */
+/** Время, на котором стоит поза манекена, если она показана превью и это НЕ время ключа `frameIdx`; иначе null. */
+function offKeyTime(c: Clip): number | null { return previewOffKey(c, frameIdx, previewT); }   // чистая часть и её тест — `frameEdit.ts`
+/** Подсказка, почему запись отказала, и что сделать. */
+function offKeyHint(c: Clip, t: number): string {
+  const on = keyAtTime(c, t), cur = c.keys[frameIdx];
+  return on >= 0
+    ? `Поза стоит на ключе ${on + 1} (t=${c.keys[on]!.t.toFixed(2)} с), а выбран кадр ${frameIdx + 1} — запись ушла бы не в тот ключ. Встань на кадр ${on + 1} (клик по ключу или ◀ ▶).`
+    : `Поза показана МЕЖДУ ключами (t=${t.toFixed(2)} с), а выбран кадр ${frameIdx + 1}${cur ? ` (t=${cur.t.toFixed(2)} с)` : ''} — запись ушла бы в него. Встань на кадр (клик по ключу, ◀ ▶) или нажми «+ кадр»: ключ встанет ровно на t=${t.toFixed(2)}.`;
+}
+/**
+ * ЗАПИСАТЬ КАДР — ОДИН шов на кнопку «◉ записать кадр» и клавишу `i` (были две копии одной строки).
+ *
+ * `writeKeyPose` (`frameEdit.ts`) переносит служебные каналы ключа и держит шов цикла; здесь — два гейта:
+ *  • концы-стойка удара/импорта неприкосновенны (`isEndFrame`);
+ *  • ⭐ ПОЗА ПОКАЗАНА ПРЕВЬЮ, А НЕ С КЛЮЧА. Скраб, проигрывание и превью кривой меняют позу, но не `frameIdx` —
+ *    запись молча уходила в ранее выбранный ключ (поза с t=0.45 в кадр на t=0.30). Выбран ОТКАЗ С ПОДСКАЗКОЙ,
+ *    а не «записать в ближайший ключ»: тот тихо переносил бы позу по времени. Клик по линейке ровно на ключ
+ *    и остановка проигрывания на ключе и так выбирают этот кадр (`onScrub`, `settlePlayStop`), а между
+ *    ключами «+ кадр» ставит новый ключ ровно на показанное время.
+ */
 function recordFrame(): void {
-  const c = curClip(); if (!c || isEndFrame(c, frameIdx)) return;
-  histLib('записать кадр', () => { if (c.keys[frameIdx]) c.keys[frameIdx]!.pose = readPoseFull(); saveLib(); });
+  const c = curClip(); if (!c || isEndFrame(c, frameIdx) || !c.keys[frameIdx]) return;
+  const off = offKeyTime(c);
+  if (off !== null) { alert(offKeyHint(c, off)); return; }
+  histLib('записать кадр', () => { writeKeyPose(c, frameIdx, readPoseFull()); saveLib(); refreshAll(); });
 }
 /** Del — удалить кадр (те же ограничения, что у кнопки «− кадр»). */
 function deleteFrame(): void {
@@ -2406,10 +2486,22 @@ function applyGripOver(_p?: Pose): void {
 setPublishPrepare((key, value) => {
   if (key !== 'pe_clips' || !Array.isArray(value)) return value;
   const axes = fingerAxes();
+  // ⚠ ФАЛАНГИ СНАЧАЛА ВЫРЕЗАЕМ, ПОТОМ ВПЕКАЕМ. `bakeGripIntoClip` заполняет только ПУСТЫЕ каналы, а запекатель
+  // походки до 17.09 писал все 30 фаланг нулями (`defaultReadPose`). ЗАМЕР опубликованного: все ключи 8 клипов
+  // ходьбы/бега, 6 `turn_*` и `idle` несут 30 нулевых фаланг, у `run_fwd` ключи 2+ — тоже; Unity и экспорт
+  // показывают там плоскую ладонь. По Ф17 фаланги в клипе не живут (канал хвата — единственный источник),
+  // так что вырезать можно всегда — и следующая публикация заменит нули на сервере без перезапекания.
   return (value as Clip[]).map((c) => bakeGripIntoClip(
-    { ...c, keys: (c.keys ?? []).map((k) => ({ ...k, pose: clonePose(k.pose) })) },
+    { ...c, keys: (c.keys ?? []).map((k) => ({ ...k, pose: dropFingers(clonePose(k.pose)) })) },
     resolveGripPose(gripCfg, c.character, c.weapon, axes, c.name)));   // ⭐ хват КЛИПА (см. `GripConfig.byClip`)
 });
+/** Вырезать фаланги из позы (на месте). Ф17: в кадр они не попадают — хват живёт отдельным каналом. */
+function dropFingers(p: Pose): Pose { for (const nm in p) if (isHandBone(nm)) delete p[nm]; return p; }
+/**
+ * Съём позы для запекателя походки: `defaultReadPose` БЕЗ ФАЛАНГ. Тот писал все кости рига, то есть 30 фаланг
+ * нулями (у рыцаря — плоская ладонь в Unity/экспорте), а с живым хватом в `editorContent` вписал бы хват.
+ */
+function bakeReadPose(h: Humanoid): () => Pose { const read = defaultReadPose(h); return () => dropFingers(read()); }
 
 function applyGripToGhost(): void {
   if (ghostHuman && wantFingers()) applyGripPose(ghostHuman.bones, curGripPose());
@@ -2451,11 +2543,11 @@ function applyChar(id: string): void {
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
   disposeOnion();                                             // онион-призраки пересоберутся под новые пропорции
-  clipIdx = 0; frameIdx = 0; history.clear();
+  clipIdx = 0; frameIdx = 0; previewT = null; history.clear();
   syncAllAttackEnds();                                        // концы ударов этого персонажа = его стойки
   refreshAll();
 }
-function setWeapon(w: string): void { weapon = w; updateWeapon(); clipIdx = 0; frameIdx = 0; refreshAll(); }
+function setWeapon(w: string): void { weapon = w; updateWeapon(); clipIdx = 0; frameIdx = 0; previewT = null; refreshAll(); }
 function manStyle(): 'solid' | 'skeleton' { return manView === 'skel' ? 'skeleton' : 'solid'; }
 // Лёгкая пересборка манекена под новый стиль (скелет↔тело) С СОХРАНЕНИЕМ позы/оружия (в отличие от applyChar — без сброса клипа/undo).
 function rebuildManikin(): void {
@@ -2553,7 +2645,7 @@ personaB = mkBtn('◧ персонажи', () => {
 const pubBtn = createPublishButton({ extraDirty: () => configDirtyKeys(), publishExtra: () => publishConfigEdits() });
 
 bar.append(personaB, document.createTextNode('Персонаж'), charSel, document.createTextNode('Оружие'), wpnSel, document.createTextNode('офф'), offSel, sep(), ikB, gazeB, hipsB, sep(),
-  mkBtn('зеркало L→R', () => histPose('зеркало L→R', mirrorLR)), mkBtn('T-поза', () => histPose('T-поза', () => { human.reset(); if (ikOn) captureRig(); })), sep(),
+  mkBtn('зеркало L→R', () => histPose('зеркало L→R', mirrorLR)), mkBtn('T-поза', () => histPose('T-поза', () => { human.reset(); onPoseReplaced(); if (ikOn) captureRig(); })), sep(),
   mkBtn('↶ undo', () => { history.undo(); }), mkBtn('↷ redo', () => { history.redo(); }), sep(), physB, manB, gripB, posB, traceB, sep(), pubBtn.el, modeB);
 
 // ── Панель-вкладки (Анимация = клипы+кадры+поза; Бег = 2D бленд локомоции; Персонаж = setup) ──
@@ -2761,7 +2853,9 @@ function poseTools(): void {
     ovrCb.onchange = () => {
       wpnOverride = ovrCb.checked; const c = curClip(); const kk = c?.keys[frameIdx];
       if (kk) {
-        if (wpnOverride) kk.pose = readPoseFull();   // захватить текущий хват как override ЭТОГО кадра
+        // Захватить текущий хват как override ЭТОГО кадра — ТОЛЬКО каналы оружия. Было: ключ целиком заменялся свежим `readPoseFull`, и галка
+        // молча перезаписывала весь ключ (кости, `__swing`, шов цикла), а после скраба — позой с другого времени.
+        if (wpnOverride) { const fresh = readPoseFull(); for (const k of ['__wpnOverride', ...WPN_KEYS, ...WPN_POS]) if (fresh[k]) kk.pose[k] = fresh[k]!; }
         else { delete kk.pose['__wpnOverride']; for (const k of [...WPN_KEYS, ...WPN_POS]) delete kk.pose[k]; applyWeaponPose(kk.pose); }   // убрать → база
         saveLib();
       }
@@ -2847,7 +2941,7 @@ function poseTools(): void {
       if (fkProxyBone) attachBoneGizmo(fkProxyBone);   // кольца живут в разных фреймах → пере-прицепить
       renderAnim();
     }, limitVersion() === 2),
-    pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; setPref('groundFeet', footGround); renderAnim(); }, footGround),
+    pbtn(footGround ? 'заземл. стоп: вкл' : 'заземл. стоп: выкл', () => { footGround = !footGround; setPref('groundFeet', footGround); renderAnim(); updateOnion(); }, footGround),   // призраки соседних кадров садятся на пол вместе с видимым телом
     pbtn(manGroundView ? 'манекен на полу: вкл' : 'манекен на полу: выкл', () => { manGroundView = !manGroundView; setPref('floorMannequin', manGroundView); renderAnim(); }, manGroundView),
     pbtn(snapOn ? 'шаг (S): вкл' : 'шаг (S): выкл', () => { snapOn = !snapOn; setPref('snap', snapOn); applySnap(); renderAnim(); }, snapOn),
   );
@@ -3844,20 +3938,21 @@ function clipSection(): void {
     const taken = (nm: string): boolean => library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon);
     if (clipBuf.weapon === weapon) name = nameFree(name);                                   // то же оружие = дубликат → не затирать
     else if (taken(name) && !confirm('Клип «' + name + '» на «' + weapon + '» уже есть — перезаписать?')) return;
-    const nc: Clip = { name, character: curCharId, weapon, loop: clipBuf.loop, keys: clipBuf.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) };
+    // `bakeSpeed` — скорость, на которой снят клип набора: без неё копия шла бы по часам старых 50.4/102 (`bakedLocoSpeed`).
+    const nc: Clip = { name, character: curCharId, weapon, loop: clipBuf.loop, ...(clipBuf.bakeSpeed ? { bakeSpeed: clipBuf.bakeSpeed } : {}), keys: clipBuf.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) };
     histLib('вставить клип', () => {
       putClip(nc, 'replace');   // столкновение уже разрулено выше (nameFree / отдельный confirm)
       if (clipBufWasAtk) { const arr = ((atkCfgs[curCharId] ??= {})[weapon] ??= []); if (!arr.includes(name)) { arr.push(name); saveAtk(); } }
       saveLib(); clipIdx = Math.max(0, clipsHere().findIndex((x) => x.name === name)); frameIdx = 0; refreshAll();
     });
   };
-  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; histLib('новый клип', () => { putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }, 'rename'); clipIdx = list.length; frameIdx = 0; saveLib(); refreshAll(); }); }));
+  row1.append(pbtn('+ новый', () => { const nm = prompt('имя клипа (действие)', 'clip' + (list.length + 1)); if (!nm) return; histLib('новый клип', () => { putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: readPoseFull(), t: 0 }] }, 'rename'); clipIdx = list.length; frameIdx = 0; previewT = null; saveLib(); refreshAll(); }); }));   // единственный ключ нового клипа — ЭТО показанная поза: `previewT` прошлого клипа (скраб на t=0.45) иначе отказывал бы в записи с подсказкой «между ключами»
   row1.append(pbtn('📥 из FBX/BVH', () => openImportAnimModal()));   // импорт мокап/AI-анимации → наш клип (запекатель)
   if (clipBuf) row1.append(pbtn('⎘ вставить: ' + retargetClipName(clipBuf.name, clipBuf.weapon, weapon), pasteHere));   // буфер переживает смену оружия/персонажа
   const c = curClip();
   if (c) {
     row1.append(
-      pbtn('⎘ копир', () => { clipBuf = { name: c.name, character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }; clipBufWasAtk = atkList().includes(c.name); refreshAll(); }),
+      pbtn('⎘ копир', () => { clipBuf = { name: c.name, character: curCharId, weapon, loop: c.loop, ...(c.bakeSpeed ? { bakeSpeed: c.bakeSpeed } : {}), keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }; clipBufWasAtk = atkList().includes(c.name); refreshAll(); }),
       pbtn('дубл', () => histLib('дублировать клип', () => { putClip({ name: c.name + '_copy', character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }, 'rename'); saveLib(); refreshAll(); })),
       pbtn('переим', () => {
         const nm = prompt('имя клипа', c.name); if (!nm || nm === c.name) return;
@@ -3899,10 +3994,20 @@ function clipSection(): void {
     act.append(
       atEnd
         ? pbtn('🔒 кадр из стойки', () => { alert('Крайние кадры — это idle-стойка, тут не редактируются. Правь стойку: таб «Бег» → «захватить стойку», концы всех клипов (удары + импорт) подхватят.'); })
-        : pbtn('◉ записать кадр', () => histLib('записать кадр', () => { if (c.keys[frameIdx]) c.keys[frameIdx]!.pose = readPoseFull(); saveLib(); })),
-      pbtn('+ кадр', () => histLib('добавить кадр', () => { const insAt = lockEnds ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; const nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); c.keys.splice(insAt, 0, { pose: readPoseFull(), t: nt }); frameIdx = insAt; saveLib(); refreshAll(); })),   // концы-стойка неприкосновенны → вставка в середину
+        : pbtn(offKeyTime(c) !== null ? '◌ записать кадр: поза между ключами' : '◉ записать кадр', () => recordFrame()),
+      pbtn('+ кадр', () => histLib('добавить кадр', () => {
+        // Поза показана превью МЕЖДУ ключами (скраб/пауза) — новый ключ встаёт РОВНО на это время: что видно, там и окажется.
+        // Иначе (и если время вне концов-стойки) — как было: после текущего кадра, посередине интервала.
+        const off = offKeyTime(c);
+        const atT = off !== null && keyAtTime(c, off) < 0 && (!lockEnds || (off > c.keys[0]!.t && off < c.keys[lastI]!.t)) ? off : null;
+        let insAt: number, nt: number;
+        if (atT !== null) { insAt = c.keys.findIndex((k) => k.t > atT); if (insAt < 0) insAt = c.keys.length; nt = +atT.toFixed(4); }
+        else { insAt = lockEnds ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); }   // концы-стойка неприкосновенны → вставка в середину
+        c.keys.splice(insAt, 0, { pose: readPoseFull(), t: nt }); frameIdx = insAt; previewT = null; saveLib(); refreshAll();
+      })),
       pbtn('− кадр', () => histLib('удалить кадр', () => { if (!atEnd && c.keys.length > (lockEnds ? 3 : 1)) { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } })),   // концы не удалить
     );
+    { const off = offKeyTime(c); if (off !== null && !atEnd) { const hn = el('div', 'color:#e0b050;font-size:10px;margin-top:2px'); hn.textContent = '⚠ ' + offKeyHint(c, off); act.append(hn); } }
     // подтянуть позу в текущий кадр из соседнего (строить замах/удар от концов-idle, потом править)
     if (!atEnd) {
       const pr2 = el('div', 'margin-top:3px'); body.append(pr2);
@@ -4309,7 +4414,7 @@ function bakeGaitSection(): void {
   // это стойка и ЧЕТЫРЕ направления × ходьба/бег: диагональ закрывает доворот таза, восьми
   // направлений нам не нужно. Галки здесь — чтобы перезапечь ЧАСТЬ набора, не трогая остальное.
   const listBox = el('div', 'margin:4px 0;border:1px solid #39415a;border-radius:6px;padding:4px 6px');
-  const addRow = (nameStr: string, hint: string): void => {
+  const addRow = (nameStr: string, hint: string, presetSpd?: number): void => {
     const row = el('label', 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0;font-size:11px');
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = picked.includes(nameStr);
     cb.addEventListener('change', () => {
@@ -4321,10 +4426,20 @@ function bakeGaitSection(): void {
     const speed = el('span', 'color:#6b7180'); speed.textContent = hint;
     const mark = el('span', have ? 'color:#9ae6a0' : 'color:#6b7180');
     mark.textContent = have ? (have.weapon === weapon ? '✓ есть' : `✓ ${have.weapon}`) : '—';
+    // Запечённый клип снят НА ДРУГОЙ скорости, чем пресет сейчас (легаси 50/102 u/с против 40/120) — видно, что пора перезапечь.
+    if (have && presetSpd !== undefined) {
+      const was = bakedLocoSpeed(have);
+      if (Math.abs(was - presetSpd) > 0.5) { mark.textContent += ` (снят на ${Math.round(was)})`; mark.style.color = '#e0b050'; }
+    }
     row.append(cb, name, speed, mark);
     listBox.append(row);
   };
-  for (const s of GAIT_PRESETS) addRow(s.name, s.durationSec !== undefined ? 'стойка' : `${Math.round(Math.hypot(s.vx, s.vz) * 100)}%`);
+  // Скорость пресета — в u/с, ровно та, что запекатель впишет в клип (`bakeSpeed` = |v| × `BAKE_MAXSPD`) и по которой
+  // часы «только клипы» мерят цикл. Доля «42%/85%» не говорила, на какой скорости игры клип снят.
+  for (const s of GAIT_PRESETS) {
+    const spd = Math.hypot(s.vx, s.vz) * BAKE_MAXSPD;
+    addRow(s.name, s.durationSec !== undefined ? 'стойка' : `${Math.round(spd)} u/с`, s.durationSec !== undefined ? undefined : spd);
+  }
   // ⭐ ПОВОРОТЫ НА МЕСТЕ: играют, пока стоишь с локомоцией клипами, — по порогу скрутки корпуса, сами
   // ведут таз (`turnInPlace.ts`). Не запечены — поворот на месте остаётся за планировщиком.
   const th = el('div', 'color:#8fb7ff;font-size:10px;margin-top:4px'); th.textContent = 'повороты на месте'; listBox.append(th);
@@ -4344,7 +4459,7 @@ function bakeGaitSection(): void {
     if (player.weapon !== weapon) player.setWeapon(weapon);
     player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
     const t0 = performance.now();
-    const opts = { character: curCharId, weapon, readPose: defaultReadPose(human) };
+    const opts = { character: curCharId, weapon, readPose: bakeReadPose(human) };
     const out = [
       ...bakeGaitSet(player, human, opts, GAIT_PRESETS.filter((s) => bakeList().includes(s.name))),
       ...bakeTurnSet(player, human, opts, TURN_PRESETS.filter((s) => bakeList().includes(s.name))),
@@ -4633,6 +4748,9 @@ function renderGaitTune(): void {
   row2('таз по досягаемости ног (0 = как было)', GAITo, 'pelvisReach', 'pelvisReachRun', 0, 1, 0.05);
   row2('длина шага', GAITo, 'stepWalk', 'stepRun', 2, 140, 0.5);
   row2('боб таза ×', GAITo, 'bobWalk', 'bobRun', 0, 5, 0.02);
+  // ⭐ ПРЕДЕЛ СКОРОСТИ ЦЕЛИ ВЫСОТЫ ТАЗА (`GAIT.bobSlew`, планировщик): цель прыгала 32.08 → 26.57 за кадр касания,
+  // и запечённый бег «дёргал головой». 0 = выкл, как было. Замеры и рекомендация — README, «ПРЕДЕЛ СКОРОСТИ ЦЕЛИ ТАЗА».
+  row2('сглаж. высоты таза, u/с', GAITo, 'bobSlew', 'bobSlewRun', 0, 120, 1);
   // ПРОСАДКА. Высота таза на ходу отсчитывается от АВТОРСКОЙ СТОЙКИ, а её авторят почти на
   // прямых ногах — бег выходил «на ходулях». `присед` ниже — только ПРЕДЕЛ, он не опускает.
   row2('просадка таза от стойки (на ходу)', GAITo, 'crouchWalk', 'crouchRun', 0, 8, 0.05, { body: true });
@@ -4920,7 +5038,7 @@ let markSound = getPref('markSound', true);
 const editorMarkSfx = markSfx(1);
 /** Темп шага для превью клипа (в игре его ставит проигрыватель по скорости): ходьба/бег — по скорости запекания. */
 const previewPace = (c: Clip): number | undefined =>
-  /^(walk|run)_/.test(c.name) ? Math.min(1, bakedLocoSpeed(c.name) / Math.max(1, GAIT.speedRun)) : c.name.startsWith('turn_') ? 0 : undefined;
+  /^(walk|run)_/.test(c.name) ? Math.min(1, bakedLocoSpeed(c) / Math.max(1, GAIT.speedRun)) : c.name.startsWith('turn_') ? 0 : undefined;   // скорость — СВОЯ у клипа (`bakeSpeed`), иначе по имени
 /** Метки, пройденные проигрыванием клипа за кадр (с переходом через конец цикла). */
 function previewMarks(c: Clip, t0: number, t1: number, wrapped: boolean): void {
   if (!markSound) return;
@@ -4931,7 +5049,7 @@ function previewMarks(c: Clip, t0: number, t1: number, wrapped: boolean): void {
 const tlName = el('span', 'color:#9ae6a0;min-width:90px');
 // ⚠ ПАУЗА = ПОЗА ЗАМЕНЕНА. Проигрывание двигает кости мимо `captureRig`, и пины стоп оставались там, где стояли ДО
 // запуска — первый же FK-драг после паузы тащил обе стопы на старые места.
-const playBtn = mkBtn('▶', () => { const c = curClip(); if (!playing && c && playT >= clipDur(c)) playT = 0; playing = !playing; playBtn.textContent = playing ? '⏸' : '▶'; if (!playing && ikOn) captureRig(); });
+const playBtn = mkBtn('▶', () => { const c = curClip(); if (!playing && c && playT >= clipDur(c)) playT = 0; playing = !playing; playBtn.textContent = playing ? '⏸' : '▶'; if (!playing) { if (ikOn) captureRig(); settlePlayStop(); } });
 const spd = el('input', 'width:80px') as HTMLInputElement; spd.type = 'range'; spd.min = '0.2'; spd.max = '3'; spd.step = '0.1'; spd.value = '1'; spd.oninput = () => { playSpeed = parseFloat(spd.value); };
 // Ф6: верхняя строка — транспорт и действия над ключами, нижняя — сам тайм-лайн (канвас)
 timeline.style.flexDirection = 'column'; timeline.style.alignItems = 'stretch';
@@ -5013,7 +5131,13 @@ const tl: TimelinePanel = makeTimelinePanel(tlBody, {
   playT: () => playT,
   pro: () => uiPro,
   onSelectFrame: (i) => goFrame(i),
-  onScrub: (t) => { playT = t; preview(t); if (ikOn) captureRig(); },
+  // ⭐ Клик по линейке ровно на ключ (в полкадра при 60 к/с, `KEY_SNAP_SEC`) — это ВЫБОР кадра: раньше `frameIdx`
+  // оставался прежним, и «записать кадр» уходила в него. Между ключами поза — превью, запись откажет с подсказкой.
+  onScrub: (t) => {
+    const c = curClip(), k = c ? keyAtTime(c, t) : -1;
+    if (c && k >= 0) { playT = c.keys[k]!.t; goFrame(k); return; }
+    playT = t; preview(t); if (ikOn) captureRig(); refreshPose();
+  },
   // Драг ключей: тот же паттерн, что у ручек кривой — снимок ДО первой правки, одна запись в историю на отпускании.
   // Пока тащим — только время и перерисовка: ни сортировки (перетасует массив под драгом), ни `saveLib`
   // (это POST всей библиотеки на каждое движение мыши, и он fire-and-forget → порядок прихода не гарантирован).
@@ -5050,15 +5174,25 @@ function roleBtn(c: Clip, kind: 'idle' | 'combat_idle', label: string): HTMLElem
 function goFrame(i: number): void {
   ghostGround.off = 0; human.root.position.y = 0;
   const c = curClip(); if (!c) return;
-  frameIdx = i; if (c.keys[i]) applyPose(c.keys[i]!.pose);
+  frameIdx = i; if (c.keys[i]) { applyPose(c.keys[i]!.pose); previewT = null; }   // applyPose → onPoseReplaced: драг-память и взгляд пересняты
   if (ikOn) captureRig();
   refreshAll();
+}
+/**
+ * Проигрывание встало. На ключе — это ВЫБОР кадра (как клик по линейке ровно на ключ); между ключами поза остаётся
+ * превью, и панель показывает, почему «записать кадр» откажет. Без превью (пауза до первого кадра) — ничего.
+ */
+function settlePlayStop(): void {
+  const c = curClip(); if (!c || previewT === null) return;
+  const k = keyAtTime(c, playT);
+  if (k >= 0) goFrame(k); else refreshPose();
 }
 function preview(time: number): void {   // time в секундах
   // Интервал и фазу (уже отремапленную кривой кадра — linear/ease/step) считает ОБЩИЙ clipSegmentAt,
   // тот же, что у игрового clipPoseAt → редактор и игра гнут кривые одинаково.
   const c = curClip(); if (!c) return;
   const seg = clipSegmentAt(c, time); if (!seg) return;
+  previewT = time;   // поза с таймлайна, а не выбором кадра — гейт записи (`offKeyTime`)
   if (seg.a === seg.b) { applyPose(seg.a.pose); return; }
   // Сплайн считает поза целиком из соседних ключей — тем же `segmentPose`, что игра; ломаная — прежним лерпом.
   if (seg.a.interp === 'smooth') { applyPose(segmentPose(c, seg)); return; }
@@ -5220,6 +5354,14 @@ const editorContent: PoseContent = {
     for (const n of names) { const c = findLocoClip(library, migratePoseName(n), curCharId, w); if (c) return c; }
     return null;
   },
+  /**
+   * ⭐ ЖИВОЙ ХВАТ — ТОТ ЖЕ резолвер, что у игры (`localStorageContent.gripPose`) и у манекена (`curGripPose`).
+   * Без него превью «Бег»/«Повороты» и запекатель держали фаланги в бинде — у рыцаря это плоская ладонь.
+   * БЕЗ КЭША, в отличие от игры: конфиг хвата правится здесь же живьём (слайдер «ладонь ↔ хват», снятые концы).
+   * ⚠ Раз плеер теперь кладёт хват, запекатель обязан вырезать фаланги сам (см. `bakeReadPose`), иначе хват
+   * запёкся бы в клипы и перебил бы живой канал.
+   */
+  gripPose: (w, axes, clipName) => resolveGripPose(gripCfg, curCharId, w, axes, clipName),
 };
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
 interface UpperPose { pose: Pose; swing: number }
@@ -5730,7 +5872,7 @@ const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'lif
   'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax',
   'kneeDir', 'kneeDirRun', 'kneeDirMax', 'crouchWalk', 'crouchRun',
   // Плавность боба таза и окно заземления (см. «БОБ ТАЗА И ЗАЗЕМЛЕНИЕ» в render3d/README.md).
-  'bobLagUp', 'bobLagUpRun', 'bobLagDown', 'bobLagDownRun', 'bobFlight',
+  'bobLagUp', 'bobLagUpRun', 'bobLagDown', 'bobLagDownRun', 'bobFlight', 'bobSlew', 'bobSlewRun',
   'gndLag', 'gndIn', 'gndInRun', 'gndOut', 'gndOutRun', 'footPlant', 'footPlantRun',
   'toeOff', 'toeOffRun', 'toeOffFrom', 'toeOffFromRun', 'toeOffTo', 'toeOffToRun'] as const;   // длина шага/боб/подъём — раздельно ходьба/бег; standY убран (база из стойки)
 // ⚠ Run-твины рук РАНЬШЕ НЕ СОХРАНЯЛИСЬ: ползунки их правили, а в `pe_gait` они не попадали и молча
@@ -5957,6 +6099,7 @@ function setPhys(on: boolean, byUser = true): void {
   if (ghostHuman) ghostHuman.root.visible = on;
   physB.textContent = 'физ: ' + (on ? 'вкл' : 'выкл');
   physB.classList.toggle('on', on);
+  updateOnion();   // призраки соседних кадров заземляются только при видимом заземлённом теле (`groundedView`), а физика грузится асинхронно
 }
 // ── Онион-скин: полупрозрачные призраки соседних кадров (пред=синий, след=оранжевый) при позинге в «Анимации» ──
 let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
@@ -5991,10 +6134,29 @@ function disposeOnion(): void {
   for (const h of [onionPrev, onionNext]) if (h) { scene.remove(h.root); h.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   onionPrev = onionNext = null;
 }
-function applyPoseTo(h: Humanoid, p: Pose): void {   // применить позу (без оружия) к произвольному гуманоиду, выровняв таз к манекену
-  h.reset();
-  for (const nm in p) { if (nm[0] === '_') continue; const b = h.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); }
-  h.bones.get('Hips')!.position.copy(human.bones.get('Hips')!.position);
+/**
+ * ПОЗА СОСЕДНЕГО КЛЮЧА НА ПРИЗРАК — там же, где её покажет видимая фигура, если перейти на этот кадр.
+ *
+ * ⚠ Было: повороты ключа + таз, СКОПИРОВАННЫЙ С МАНЕКЕНА текущего кадра. Ноги соседа висели на чужом тазе, и стопы
+ * уезжали на разницу `__hipsD`. ЗАМЕР на опубликованных клипах (knight_06, соседи на ±1…3 ключа), расхождение
+ * с позой того кадра: `run_fwd` 0.76u, `walk_back` 3.67u, `hit_sword_r_01` 5.08u; стопа/носок призрака под полом
+ * до −3.63 (`walk_back`) и −2.22 (`hit_none_r_01`).
+ *
+ * Стало, в два шага:
+ *  1. `poseRig` — тот же, что у манекена: таз = rest + СОБСТВЕННЫЙ `__hipsD` ключа, корень в нуле (как `goFrame`).
+ *     Расхождение с позой кадра — 0.000000.
+ *  2. Когда видно заземлённое тело (`groundedView`: физика + призрак + «заземл. стоп»), призрак оседает ТАК ЖЕ,
+ *     как физ-призрак на паузе (`settleLikePhysGhost`, `GAIT.gndLag`). Без этого носок авторской позы уходит
+ *     под пол (`walk_back` −1.50, `run_back` −0.63, `run_fwd` −0.53), а видимая фигура стоит на 1.10. С ним
+ *     расхождение с моделью видимой фигуры ≤0.0001u при `gndLag` 15 (≤0.4 мс на призрак) и ≤0.004u при `gndLag` 1
+ *     (1.3–4.8 мс), нижняя точка стоп 1.10 — как у видимой.
+ */
+function applyPoseTo(h: Humanoid, p: Pose): void {   // применить позу (без оружия) к произвольному гуманоиду
+  poseRig(h, p);
+  h.root.position.set(0, 0, 0); h.root.updateMatrixWorld(true);   // корень как после `goFrame`
+  if (!groundedView()) return;                                     // физика выкл — меш ведёт НЕзаземлённый манекен
+  h.footLift = physFootLift;                                       // фолбэк пола без модели (`ankleRest` нет) — как у физ-призрака
+  settleLikePhysGhost(h, GAIT.gndLag);
 }
 
 // Ф10: ГРАФ КРИВОЙ — ручки безье вместо трёх кнопок-пресетов. Редактируется РЕМАП ФАЗЫ интервала
@@ -6129,9 +6291,7 @@ function updateTrajectory(): void {
   for (const smp of trajectorySamples(c, 5)) {
     const seg = clipSegmentAt(c, smp.t); if (!seg) continue;
     const pose = segmentPose(c, seg);   // траектория — тем же проигрывателем, что игра (и сплайн, и ломаная)
-    human.reset();
-    for (const nm in pose) { if (nm[0] === '_') continue; const b = human.bones.get(nm); if (b) b.rotation.set(pose[nm]![0], pose[nm]![1], pose[nm]![2]); }
-    { const hd = hipsOffset(pose, human.hipsRest.y); if (hd) human.hips.position.set(human.hipsRest.x + hd[0], human.hipsRest.y + hd[1], human.hipsRest.z + hd[2]); }
+    poseRig(human, pose);               // тот же шов «поза ключа на риг», что у `applyPose` и призраков
     human.root.updateMatrixWorld(true);
     bone.getWorldPosition(v);
     pts.push(v.clone()); if (smp.key >= 0) kpts.push(v.clone());
@@ -6295,7 +6455,7 @@ function loop(): void {
       playT += dt * playSpeed; if (playT > dur) { if (c.loop) { playT %= dur; wrapped = true; } else { playT = dur; playing = false; playBtn.textContent = '▶'; } }
       previewMarks(c, t0, playT, wrapped);   // метки звучат при проигрывании — слышно, попал ли шаг в касание
       preview(playT); tl.draw();
-      if (!playing && ikOn) captureRig();    // автостоп в конце клипа — пины на ПОСЛЕДНИЙ кадр, а не на позу до запуска
+      if (!playing) { if (ikOn) captureRig(); settlePlayStop(); }    // автостоп в конце клипа — пины на ПОСЛЕДНИЙ кадр, а не на позу до запуска; конец = последний ключ → он и выбран
     }
   }
   else {

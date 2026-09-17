@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import {
   blendTwo, clipPoseAt, clipSegmentAt, clipDur, isAngleKey, easeU, cubicBezier,
   slerpEuler, shortDelta, mirrorSide, flipPose, migrateClip, migratePose,
-  EASE_INOUT, hipsOffset, setHipsOffset, normalizeClipHips, type Clip, type Pose, type Keyframe,
+  EASE_INOUT, hipsOffset, setHipsOffset, normalizeClipHips, carryMarks, type Clip, type Pose, type Keyframe,
 } from './clipModel.js';
+import { flipClip, mirrorClip } from './poseLibrary.js';
 
 const P = (o: Record<string, [number, number, number]>): Pose => o;
 const clip = (keys: Keyframe[]): Clip => ({ name: 'c', character: 'x', weapon: 'sword', loop: false, keys });
@@ -235,5 +236,33 @@ describe('clipModel — офсет таза как ДЕЛЬТА (Ф12)', () => {
   it('переворот отражает X у обеих форм ключа', () => {
     expect(flipPose({ __hipsD: [2, 1, 3] })['__hipsD']).toEqual([-2, 1, 3]);
     expect(flipPose({ __hipsP: [2, 32, 3] })['__hipsP']).toEqual([-2, 32, 3]);
+  });
+});
+
+describe('clipModel — скорость запекания (`bakeSpeed`) переживает всё, что пересобирает клип', () => {
+  // ⚠ Потеря поля молчаливая и дорогая: перезапечённый на 120 бег прочитался бы легаси-скоростью 102 — длина цикла −15 %,
+  // и в «только клипы» стопы поехали бы. `migrateClip` собирает клип по ЯВНОМУ списку полей — ровно та грабля.
+  const run: Clip = { name: 'run_fwd', character: 'warrior', weapon: 'none', loop: true, bakeSpeed: 120,
+    keys: [{ t: 0, pose: { LeftUpperLeg: [0.3, 0, 0] } }, { t: 0.4, pose: { LeftUpperLeg: [-0.3, 0, 0] }, marks: [{ type: 'footstep', foot: 'L' }] }, { t: 0.8, pose: { LeftUpperLeg: [0.3, 0, 0] } }] };
+
+  it('⭐ чтение с сервера (JSON → migrateClip) и обратно', () => {
+    const back = migrateClip(JSON.parse(JSON.stringify(run)));
+    expect(back.bakeSpeed, '⚠ новое поле не дописано в migrateClip').toBe(120);
+    expect(JSON.parse(JSON.stringify(back)).bakeSpeed).toBe(120);
+  });
+
+  it('старый клип без поля остаётся без поля; битое число не тащится', () => {
+    const { bakeSpeed: _drop, ...old } = run; void _drop;
+    expect(migrateClip(JSON.parse(JSON.stringify(old))).bakeSpeed).toBeUndefined();
+    expect('bakeSpeed' in JSON.parse(JSON.stringify(migrateClip(old))), 'в JSON поле не появляется').toBe(false);
+    for (const bad of [0, -1, 'fast', null]) expect(migrateClip({ ...old, bakeSpeed: bad }).bakeSpeed, String(bad)).toBeUndefined();
+  });
+
+  it('переворот, зеркало и перенос меток на перезапечённый клип поле не теряют', () => {
+    expect(flipClip(run).bakeSpeed).toBe(120);
+    expect(mirrorClip(run, 'Left').bakeSpeed).toBe(120);
+    // Перенос меток: скорость берётся у НОВОГО клипа (он и есть результат запекания), а не у старой версии.
+    const rebaked: Clip = { ...run, bakeSpeed: 40, keys: run.keys.map((k) => ({ t: k.t, pose: k.pose })) };
+    expect(carryMarks({ ...run, bakeSpeed: 102 }, rebaked).bakeSpeed).toBe(40);
   });
 });

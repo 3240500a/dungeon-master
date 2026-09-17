@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, type LocoSectionState, type LocoSection, type LocoDir } from './locoBlend.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
@@ -655,7 +655,7 @@ const TURN_FADE = 0.15;
  *
  *   что давал планировщик                  чем заменено
  *   часы клипов (фаза шага)                фаза ПО ПРОЙДЕННОМУ ПУТИ: длина цикла = скорость запекания × период
- *   ходьба ↔ бег (`sb`)                    та же формула по скорости и тем же ручкам `speedWalk/speedRun`
+ *   ходьба ↔ бег (`sb`)                    вес бега клипов по скорости (`locoRunWeight`: 0 до 40, 1 с 80 u/с)
  *   опорная нога (флаги переноса)          канал `__swing` клипа; нет его — окна опоры по фазе и доле опоры
  *   подтяжка стопы к его плантам           ФИКСАЦИЯ СТОПЫ: где коснулась пола — там и держим, пока опора
  *   мах рук, плечевой пояс                 руки и пояс ИЗ КЛИПА, смешанные со стойкой по `pe_sway` как раньше
@@ -1774,9 +1774,13 @@ export class PosePlayer {
       this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
     }
     this.idleT += dt;
-    // ⚠ В «только клипы» планировщик НЕ ОБНОВЛЯЕТСЯ: цели нейтральные, ось ходьба↔бег — по скорости теми же ручками.
+    // ⚠ В «только клипы» планировщик НЕ ОБНОВЛЯЕТСЯ: цели нейтральные, а ось ходьба↔бег — ВЕС БЕГА КЛИПОВ по скорости.
+    // ⭐ Было `(v − speedWalk) / (speedRun − speedWalk)` — ось планировщика 40…115, а клипы сняты на 50.4 / 102: свой
+    // темп клип получал только ВНЕ своей скорости (замер: цикл на 50.4 длиннее планировщика на 6.2 %, на 102 короче
+    // на 5.9 %), а на игровых 80 u/с бег весил 53 % и целиком не был виден никогда. Решение автора: набор 40 / 120,
+    // бег на 100 % с 80 (`locoRunWeight`). Планировщиковую ось не трогаем — вне «только клипы» всё как было.
     const tg = clipOnly ? CLIP_ONLY_TG() : this.driver.update(dt);
-    if (clipOnly) tg.sb = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
+    if (clipOnly) tg.sb = locoRunWeight(spd);
     // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
     // Клипы БЛЕНДЯТСЯ по тем же осям, что и колонки настроек (`sb`/`st`/`bt`), и сэмплируются ОДНОЙ
     // фазой планировщика: у клипа нет своего таймера, иначе настройки персонажа перестали бы на него
@@ -1789,6 +1793,7 @@ export class PosePlayer {
     const mix = this.locoW;
     let locoPose: Pose | null = null;
     let leadNow: LeadMark | null = null;   // ведущий клип бега в «только клипы» — с него звучат метки (см. `emitSteps`)
+    let clipDuty = -1;                     // доля опоры смеси клипов (см. окна опоры ниже); −1 — не считалась
     if (mix > 0.001 && this.content.locoClip) {
       // ⚠ НАПРАВЛЕНИЕ — ГЕОМЕТРИЯ, А НЕ СТИЛЬ (`locoDirWeights`): `st`/`bt` планировщика — пороги его
       // колонок настроек (0 до 45°), и клип под ними отыгрывал чистый бег вперёд, пока тело ехало вбок.
@@ -1805,19 +1810,39 @@ export class PosePlayer {
       const domDir: LocoDir = axes.bt > axes.st ? 'back' : axes.st > 0.5 ? (latRight ? 'strafe_R' : 'strafe_L') : 'fwd';
       const lead = clipOf(domDir, axes.sb > 0.5) ?? clipOf(domDir, axes.sb <= 0.5);
       // ЧАСЫ: у планировщика — его фаза; в «только клипы» — фаза по ПРОЙДЕННОМУ ПУТИ. Длина цикла = скорость, на
-      // которой клип снят, × его период: столько пути проходит тело за один цикл клипа. Смесь колонок — весами бленда.
+      // которой клип снят (`bakedLocoSpeed`: из клипа, у старых — по имени), × его период: столько пути проходит тело за
+      // один цикл клипа. Смесь колонок — весами бленда. ⭐ Поэтому на 80 u/с бег, снятый на 120, играет с циклом
+      // 120 × период, то есть в темпе 80/120 — медленнее, но стопа стоит: путь за цикл совпадает с шагом клипа.
       if (clipOnly) {
-        const cyc = (d: LocoDir): number => {
-          const w = clipOf(d, false), r = clipOf(d, true);
-          const lw = w ? bakedLocoSpeed(w.name) * (clipDur(w) || 1) : 0, lr = r ? bakedLocoSpeed(r.name) * (clipDur(r) || 1) : 0;
-          return lw && lr ? lw + (lr - lw) * axes.sb : lw || lr;
+        // Величина клипа, смешанная ТЕМИ ЖЕ весами, что и поза: ходьба↔бег по `sb`, колонки по `st`/`bt`. Колонки без
+        // клипов в смесь не входят (их вес не должен тянуть число к нулю); не нашлось ни одной — `null`.
+        // Клипы колонок ищутся ОДИН раз на кадр: поиск идёт по библиотеке, а смесей две (цикл и доля опоры).
+        const cols: readonly (readonly [Clip | null, Clip | null, number])[] = [
+          [clipOf('fwd', false), clipOf('fwd', true), (1 - axes.st) * (1 - axes.bt)],
+          [clipOf(latRight ? 'strafe_R' : 'strafe_L', false), clipOf(latRight ? 'strafe_R' : 'strafe_L', true), axes.st * (1 - axes.bt)],
+          [clipOf('back', false), clipOf('back', true), axes.bt],
+        ];
+        const mixed = (of: (c: Clip) => number): number | null => {
+          let sum = 0, sumW = 0;
+          for (const [w, r, k] of cols) {
+            if (!w && !r) continue;
+            sum += (w && r ? of(w) + (of(r) - of(w)) * axes.sb : of((w ?? r)!)) * k; sumW += k;
+          }
+          return sumW > 1e-6 ? sum / sumW : null;
         };
-        const side: LocoDir = latRight ? 'strafe_R' : 'strafe_L';
-        const cF = cyc('fwd'), cS = cyc(side), cB = cyc('back');
-        const wF = (1 - axes.st) * (1 - axes.bt), wS = axes.st * (1 - axes.bt), wB = axes.bt;
-        const sumW = (cF ? wF : 0) + (cS ? wS : 0) + (cB ? wB : 0);
-        const cycle = sumW > 1e-6 ? ((cF ? cF * wF : 0) + (cS ? cS * wS : 0) + (cB ? cB * wB : 0)) / sumW : 0;
+        const cycle = mixed((c) => bakedLocoSpeed(c) * (clipDur(c) || 1)) ?? 0;
         if (cycle > 1e-3) this.clipPhase += (2 * Math.PI) * spd * dt / cycle;
+        // ⭐ ДОЛЯ ОПОРЫ — ТА, С КОТОРОЙ КЛИП СНЯТ: ось планировщика на СКОРОСТИ ЗАПЕКАНИЯ клипа, а не на текущей скорости.
+        // Чистый набор (40 / 120 при speedWalk ≥ 40, speedRun ≤ 120) даёт ровно dutyWalk / dutyRun, и смесь равна
+        // `lerp(dutyWalk, dutyRun, вес бега)`. Старый клип (50.4 / 102) — свою смесь 0.139 / 0.827.
+        // ⚠ Было `lerp(dutyWalk, dutyRun, sb планировщика на ТЕКУЩЕЙ скорости)` — верно, пока вес клипов был той же осью.
+        // С весом 40…80 это окно уже не про позу на экране. ЗАМЕР (манекен, вперёд, 80 u/с; «по текущей скорости» против
+        // этой формулы; уход стопы за окно опоры БЕЗ фиксации, u / скольжение прижатой стопы С фиксацией, u/с):
+        // чистый набор 2.94 / 0.10 → 1.22 / 0; старый набор 3.36 / 0.06 → 2.13 / 0 (боком 4.02 / 0.12 → 2.53 / 0.01).
+        // Голый `lerp(dutyWalk, dutyRun, вес бега)` на СТАРОМ наборе боком на 80–102 недодаёт опоры (0.2 против 0.224
+        // снятой), и стопа едет у пола вне окна 0.14–0.19 u/с; эта формула — 0. На чистом наборе они совпадают бит в бит.
+        const plannerSb = (v: number): number => clamp((v - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
+        clipDuty = mixed((c) => lerpN(GAIT.dutyWalk, GAIT.dutyRun, plannerSb(bakedLocoSpeed(c)))) ?? lerpN(GAIT.dutyWalk, GAIT.dutyRun, axes.sb);
       }
       let u = locoPhaseU(clipOnly ? this.clipPhase : this.driver.gaitPhase);
       if (lead && lead.keys.length) {
@@ -1837,14 +1862,14 @@ export class PosePlayer {
       locoPose = blendLocoPose(pickPose, axes, latRight, blendTwo);
     }
     // ОПОРНЫЕ СТОПЫ В «ТОЛЬКО КЛИПЫ»: из канала `__swing` клипа, а если его нет (клип запечён до канала) — окна
-    // опоры по фазе с той же долей опоры, что у планировщика (`dutyWalk/dutyRun`): клипы сняты по его фазе, так что
+    // опоры по фазе с долей опоры, с которой клипы сняты (`clipDuty` выше): клипы сняты по фазе планировщика, так что
     // для запечённых это та же разметка. Стоим — обе на полу.
     if (clipOnly) {
       if (mix > 0.001 && locoPose) {
         const s = locoPose[SWING_KEY];
         if (s) this.clipContact = [s[0] < 0.5, s[1] < 0.5];
         else {
-          const duty = GAIT.dutyWalk + (GAIT.dutyRun - GAIT.dutyWalk) * (tg.sb ?? 0);
+          const duty = clipDuty >= 0 ? clipDuty : lerpN(GAIT.dutyWalk, GAIT.dutyRun, tg.sb ?? 0);
           const inStance = (i: number): boolean => Math.abs(wrapPi(this.clipPhase - i * Math.PI)) <= Math.PI * duty;
           this.clipContact = [inStance(0), inStance(1)];
         }

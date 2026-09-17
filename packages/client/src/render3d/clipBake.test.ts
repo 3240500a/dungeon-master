@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
 import { clipPoseAt, clipDur, type Pose } from './clipModel.js';
-import { bakeGaitToClip, bakeGaitSet, defaultReadPose, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
-import { locoPhaseU } from './locoBlend.js';
+import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
+import { locoPhaseU, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD } from './locoBlend.js';
+import { GAIT } from './pose.js';
 
 /**
  * ГЛАВНАЯ ПРОВЕРКА Ф2: запечённый клип воспроизводит ЖИВУЮ походку.
@@ -192,22 +193,29 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
     expect(r.worst, msg).toBeLessThan(SMOOTH_LIMITS.worst);
     expect(r.feet, msg).toBeLessThan(SMOOTH_LIMITS.feet);
   };
+  // ⭐ СВЕРКА — НА СКОРОСТЯХ НАБОРА (`GAIT_PRESETS`, 40 / 120 u/с с 17.09), а не на прежних литералах 0.42 / 0.85: сторож
+  // обязан стеречь то, что реально запекается. Контракт тот же (клип фазой планировщика = живой ход на той же скорости),
+  // и на чистых скоростях он выполняется ЛУЧШЕ — у планировщика нет полусмеси ходьбы и бега. ЗАМЕР (среднее / 95 % /
+  // худшая / стопы, °): walk_fwd 0.21 / 1.10 / 8.4 / 13.2 → 0.17 / 0.69 / 6.4 / 11.5; run_fwd 0.21 / 1.17 / 6.5 / 11.0 →
+  // 0.19 / 1.02 / 5.9 / 9.3; run_strafe_R 0.19 / 0.97 / 5.8 / 6.4 → 0.19 / 0.91 / 6.7 / 5.2. Ломаная: худшая 3.68 / 2.42 →
+  // 0.45 / 0.41, стопы 10.4 / 5.8 → 0.17 / 0.03.
+  const preset = (name: string): GaitSpec => GAIT_PRESETS.find((s) => s.name === name)!;
   it('⭐⭐ walk_fwd: клип, сыгранный фазой планировщика, совпадает с живой ходьбой', () => {
-    smoothParity('walk_fwd', { name: 'walk_fwd', vx: 0, vz: 0.42 });
+    smoothParity('walk_fwd', preset('walk_fwd'));
   });
 
   it('⭐⭐ run_fwd: то же на беге (шире шаг, быстрее фаза)', () => {
-    smoothParity('run_fwd', { name: 'run_fwd', vx: 0, vz: 0.85 });
+    smoothParity('run_fwd', preset('run_fwd'));
   });
 
   it('⭐⭐ run_strafe_R: боковой ход (прицел вперёд) тоже совпадает', () => {
-    smoothParity('run_strafe_R', { name: 'run_strafe_R', vx: 0.85, vz: 0, yaw: 0 });
+    smoothParity('run_strafe_R', preset('run_strafe_R'));
   });
 
   it('⭐ ЛОМАНАЯ (сплайн выключен) держит прежний строгий контракт: худшая кость < 4°, стопы < 12°', () => {
     // Было 3°, стало 4°: на ДВУХ циклах против живого гейта голень ходьбы даёт 3.68° (замер) — это неполная
     // периодичность планировщика, а не запекание (при eps 0 и 0.5 число то же).
-    for (const spec of [{ name: 'walk_fwd', vx: 0, vz: 0.42 }, { name: 'run_fwd', vx: 0, vz: 0.85 }] as GaitSpec[]) {
+    for (const spec of [preset('walk_fwd'), preset('run_fwd')]) {
       const r = parity(spec, false);
       expect(r.worst, `${spec.name}: худшая кость ${r.bone}`).toBeLessThan(4);
       expect(r.feet, `${spec.name}: стопы`).toBeLessThan(12);
@@ -257,6 +265,36 @@ describe('clipBake — набор пресетов', () => {
         const f = r.clip.keys[0]!.pose, l = r.clip.keys[r.clip.keys.length - 1]!.pose;
         expect(maxAngleDeg(f, l).deg, `цикл не замкнут: ${r.clip.name}`).toBeLessThan(1e-3);
       }
+    }
+  });
+
+  it('⭐⭐ КАЖДЫЙ КЛИП ХОДА ПОМНИТ СКОРОСТЬ ЗАПЕКАНИЯ: ходьба 40, бег 120 u/с; стойка и повороты — без поля', () => {
+    // Часы «только клипы» меряют цикл этой скоростью × период. Раньше её угадывали по имени (0.42 / 0.85 от 120), и
+    // смена скоростей набора разошлась бы с уже запечённым молча.
+    const h = buildHumanoid({});
+    const p = mkPlayer(h);
+    const out = bakeGaitSet(p, h, { character: 'warrior', weapon: 'sword', fps: 60, warmSec: 1.2 });
+    for (const r of out) {
+      if (r.clip.name === 'idle') { expect(r.clip.bakeSpeed, 'стойка').toBeUndefined(); continue; }
+      const want = /^run_/.test(r.clip.name) ? LOCO_BAKE_RUN_SPD : LOCO_BAKE_WALK_SPD;
+      expect(r.clip.bakeSpeed, r.clip.name).toBe(want);
+    }
+    for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'sword' })) expect(r.clip.bakeSpeed, r.clip.name).toBeUndefined();
+  });
+
+  it('⭐⭐ НАБОР ЧИСТЫЙ: на 40 u/с планировщик снимает ходьбу на sb 0, на 120 — бег на sb 1 (условие на ручки)', () => {
+    // Было 50.4 / 102 → sb 0.139 / 0.827: «ходьба» несла 14 % беговых настроек, «бег» — 17 % шаговых. Чисто только пока
+    // speedWalk ≥ 40 и speedRun ≤ 120 — умолчания (40 / 115) это держат; сдвинешь ручку за край — клип снова смесь.
+    expect(GAIT.speedWalk, 'speedWalk ниже 40 — ходьба на 40 уже не чистая').toBeGreaterThanOrEqual(LOCO_BAKE_WALK_SPD);
+    expect(GAIT.speedRun, 'speedRun выше 120 — бег на 120 уже не чистый').toBeLessThanOrEqual(LOCO_BAKE_RUN_SPD);
+    for (const s of GAIT_PRESETS) {
+      if (s.name === 'idle') continue;
+      const h = buildHumanoid({});
+      const p = mkPlayer(h);
+      p.setVel(s.vx * BAKE_MAXSPD, s.vz * BAKE_MAXSPD); p.setYaw(s.yaw ?? Math.atan2(s.vx, s.vz)); p.snapYaw();
+      for (let i = 0; i < 30; i++) p.step(1 / 60);
+      const sb = (p.driver as unknown as { planner: { sb: number } }).planner.sb;
+      expect(sb, `${s.name}: ось ходьба↔бег планировщика при съёме`).toBe(/^run_/.test(s.name) ? 1 : 0);
     }
   });
 

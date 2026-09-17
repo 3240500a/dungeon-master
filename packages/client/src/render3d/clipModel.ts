@@ -101,6 +101,12 @@ export interface Clip {
    */
   rootYaw?: boolean;
   rootPos?: boolean;
+  /**
+   * ⭐ СКОРОСТЬ ЗАПЕКАНИЯ (u/с) — на какой скорости снят клип локомоции. Пишет запекатель (`clipBake.ts`), читает часы
+   * режима «только клипы» (`bakedLocoSpeed`): длина цикла = эта скорость × период, иначе стопы едут на разницу.
+   * Нет поля — клип снят до 17.09, скорость берётся по имени легаси-долями (50.4 / 102). Повороты и стойки — без поля.
+   */
+  bakeSpeed?: number;
 }
 
 export const DEF_GAP = 0.3;     // дефолт-шаг между кадрами (сек) при миграции старого формата
@@ -569,7 +575,10 @@ export function migrateClip(c0: unknown): Clip {
   // ⚠ Список полей ЯВНЫЙ, поэтому новое поле клипа надо дописывать И СЮДА — иначе оно молча
   // теряется на первом же чтении (ровно эта грабля описана у `marks`).
   return { name: c.name, character: c.character, weapon: c.weapon, loop: c.loop ?? false, keys,
-    idleEnds: c.idleEnds, idleEndsFrom: c.idleEndsFrom, rootYaw: c.rootYaw, rootPos: c.rootPos };
+    idleEnds: c.idleEnds, idleEndsFrom: c.idleEndsFrom, rootYaw: c.rootYaw, rootPos: c.rootPos,
+    // Скорость запекания: без неё перезапечённый на 40/120 клип прочитался бы легаси-скоростью (50.4/102) — длина
+    // цикла ходьбы +26 %, бега −15 %, и стопы поехали бы. Битое число не тащим: `bakedLocoSpeed` его всё равно отбросит.
+    bakeSpeed: typeof c.bakeSpeed === 'number' && Number.isFinite(c.bakeSpeed) && c.bakeSpeed > 0 ? c.bakeSpeed : undefined };
 }
 
 /**

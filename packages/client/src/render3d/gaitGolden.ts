@@ -15,7 +15,8 @@ import { PoseDriver, GAIT } from './pose.js';
 export interface GoldenFrame { dt: number; x: number; z: number; yaw: number; vx: number; vz: number; goalYaw: number | null }
 export interface GoldenOut { hipL: number; hipR: number; knL: number; knR: number; hipLatL: number; hipLatR: number; bobY: number }
 export interface GoldenStance { latL: number; fwdL: number; latR: number; fwdR: number; standY: number }
-export interface GoldenCase { name: string; stance: GoldenStance; frames: GoldenFrame[]; out: GoldenOut[] }
+/** `gait` — ПЕРЕКРЫТИЯ GAIT на время кейса (нет поля = умолчания кода). Unity-гейт накатывает их на свой GaitParams. */
+export interface GoldenCase { name: string; stance: GoldenStance; gait?: Record<string, number>; frames: GoldenFrame[]; out: GoldenOut[] }
 export interface GoldenFile { version: number; params: Record<string, number>; cases: GoldenCase[] }
 
 interface CaseSpec {
@@ -27,6 +28,13 @@ interface CaseSpec {
   settle?: number;                      // префикс: N кадров стоя (v=0) для устаканивания стойки
   flipEvery?: number;                   // перекладка: каждые N кадров скорость меняет знак (резкая смена направления)
   stance?: Partial<GoldenStance>;
+  /**
+   * Перекрытия GAIT на время кейса (восстанавливаются после). Нужны ручкам, у которых умолчание = «выкл»:
+   * иначе эталон их не видит вовсе и C#-порт мог бы разъехаться молча. Пишутся в JSON кейса (`gait`).
+   */
+  gait?: Record<string, number>;
+  /** Частота кадров кейса (умолч. 60). `dt` пишется в каждый кадр JSON, C#-гейт берёт его оттуда — порт не трогается. */
+  fps?: number;
 }
 
 const DEF_STANCE: GoldenStance = { latL: 3.6, fwdL: 0, latR: -3.6, fwdR: 0, standY: 30 };
@@ -34,10 +42,17 @@ const DEF_STANCE: GoldenStance = { latL: 3.6, fwdL: 0, latR: -3.6, fwdR: 0, stan
 function round(n: number): number { return Math.round(n * 1e6) / 1e6; }
 
 function runCase(spec: CaseSpec): GoldenCase {
+  const g = GAIT as unknown as Record<string, number>;
+  const saved: Record<string, number> = {};
+  for (const [k, v] of Object.entries(spec.gait ?? {})) { saved[k] = g[k]!; g[k] = v; }
+  try { return runCaseWith(spec); } finally { Object.assign(g, saved); }
+}
+
+function runCaseWith(spec: CaseSpec): GoldenCase {
   const stance: GoldenStance = { ...DEF_STANCE, ...spec.stance };
   const d = new PoseDriver();
   d.setStance(stance.latL, stance.fwdL, stance.latR, stance.fwdR, stance.standY);
-  const dt = 1 / 60;
+  const dt = 1 / (spec.fps ?? 60);   // ⚠ при 60 — то же число, что было: прежние кейсы байт в байт
   const frames: GoldenFrame[] = [];
   const out: GoldenOut[] = [];
   let x = 0, z = 0, yaw = spec.yaw0 ?? 0;
@@ -68,7 +83,8 @@ function runCase(spec: CaseSpec): GoldenCase {
       hipLatL: round(t.hipLatL), hipLatR: round(t.hipLatR), bobY: round(t.bobY),
     });
   }
-  return { name: spec.name, stance, frames, out };
+  // ⚠ `gait` только у кейсов с перекрытиями — прежние кейсы в JSON остаются байт в байт.
+  return { name: spec.name, stance, ...(spec.gait ? { gait: { ...spec.gait } } : {}), frames, out };
 }
 
 // Батарея. Непрерывные регимы (чистый пер-кадровый паритет). Скорости: 60 = ходьба (sb≈0.27), 110 = почти бег (sb≈0.93).
@@ -96,6 +112,14 @@ const SPECS: CaseSpec[] = [
   { name: 'flip_strafe_beat', n: 240, vx: 110, flipEvery: 20 },
   { name: 'flip_fwdback', n: 240, vz: 110, flipEvery: 20 },
   { name: 'flip_walk', n: 240, vx: 60, flipEvery: 30 },
+  // ПРЕДЕЛ СКОРОСТИ ЦЕЛИ ВЫСОТЫ ТАЗА (`GAIT.bobSlew*`, умолчание 0 = выкл). Бег на скорости запекания 120 (sb = 1 →
+  // берётся ровно `bobSlewRun`): цель таза прыгает на касании/отрыве, и именно здесь предел её режет.
+  { name: 'run_fwd_slew', n: 120, vz: 120, gait: { bobSlewRun: 30 } },
+  // ⚠ `run_fwd_slew` один ловит мало: sb = 1 (лерп ходьба/бег не виден), лаги бега вверх = вниз = 14 (направление
+  // лага не видно), 60 fps (ед/с против «на кадр» не видно). Замер мутациями C#-порта против него: «порог вместо
+  // лерпа», «вверх/вниз по сырой цели», «предел на кадр» — все ЗЕЛЁНЫЕ. Этот кейс: 80 u/с (sb ≈ 0.53), пары
+  // предела и лагов разведены, 144 fps, боб ×2 — те же мутации красные (0.157 / 0.059 / 0.252 рад при eps 0.02).
+  { name: 'mix_slew_144', n: 288, vz: 80, fps: 144, gait: { bobWalk: 2, bobRun: 2, bobSlew: 6, bobSlewRun: 30, bobLagUp: 3, bobLagUpRun: 4, bobLagDown: 40, bobLagDownRun: 60 } },
 ];
 
 /** Снимок актуальных GAIT-параметров (для сверки, что Unity гоняет теми же). */
@@ -104,7 +128,7 @@ function paramSnapshot(): Record<string, number> {
   const keys = ['standY', 'pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence',
     'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget',
     'footClear', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime',
-    'stanceWidth', 'strafeReach', 'crossClamp', 'planSmooth', 'stepSlack', 'stepUrge'];
+    'stanceWidth', 'strafeReach', 'crossClamp', 'planSmooth', 'stepSlack', 'stepUrge', 'bobSlew', 'bobSlewRun'];
   const out: Record<string, number> = {};
   for (const k of keys) out[k] = g[k]!;
   return out;
