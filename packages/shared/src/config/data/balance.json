@@ -98,9 +98,9 @@
   "moveSpeedBase": 80,
   "moveInertia": { "enabled": false, "accel": 900, "decel": 300 },
   "camera": {
-    "minDist": 160,
-    "maxDist": 480,
-    "startDist": 460,
+    "minDist": 120,
+    "maxDist": 360,
+    "startDist": 360,
     "elNearDeg": 31.5,
     "elFarDeg": 54.4,
     "azimuthDeg": -45,
@@ -225,7 +225,7 @@
     "baseWindupFrac": 0.35,
     "basicManaCost": 0,
     "attackMoveMult": 0.2,
-    "combatLingerSec": 3
+    "combatLingerSec": 15
   },
   "dodge": {
     "distance": 70,
