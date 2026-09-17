@@ -15,6 +15,7 @@ import { makeBakeRig, autoBoneMap, enforceTPose, FULL_AIM_CHILD, OUR_BONES, OUR_
 import { boneWeight, partWeight, setPartWeight, maskFromBody, hasPart, type BoneMask } from './boneMask.js';
 import { rigSignature, isStaticBake, type ImportReport, type BakeStats } from './clipImport.js';
 import { slerpEuler, setHipsOffset, setRootMotion, ERROR_POS_KEYS, POS_DEG_PER_UNIT } from './clipModel.js';
+import { pelvisHeading, pelvisPoseToChar } from './pelvisFrame.js';   // ⭐ корень: курс таза и его вычет — обратной композицией игры
 import { groundBakeOffset , FOOT_SOLE} from './footIk.js';
 import { detrendTravel, rootTravel, refPose, readLimbTarget, groundTargets, clampHipsToFeet, lockLimb, limbBones, LIMBS, type Vec3, type FootTarget, type LimbId } from './footLock.js';
 import { applyHeadLookAt } from './poseRuntime.js';
@@ -356,12 +357,19 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
   const wantRoot = !!(opts.rootPos || opts.rootYaw);
   const travel = opts.rootPos && takeHips ? rootTravel(rawHips, hipsMode) : null;
   // Рыск НАКАПЛИВАЕМ: развернуться можно и на 180°+, а свёрнутый в ±π угол дал бы на этом месте скачок.
+  // ⚠ КУРС — ПО ВЕКТОРУ «ВПЕРЁД» ТАЗА (`pelvisHeading`), а не по слоту Y эйлера: разбор XYZ держит Y в [−90°, 90°] (поворот
+  // ставит кватернион, `retarget3d.sampleInto`), и разворот за 90° отражался — корень терял поворот. ЗАМЕР (синтетический
+  // источник, таз 0 → 170°, `clipBakeSource.test.ts`): `__rootY` в конце 10.0° → 170.0° (с наклоном таза 15°: 9.7° → 170.0°),
+  // `Ry(__rootY)·таз клипа` против таза мокапа — до 144° → 0.05° (с наклоном 124° → 0.04°).
+  // ⚠ Таз, ПРОХОДЯЩИЙ ВЕРТИКАЛЬ (нокдаун, подъём: мокап сюда приходит любой), курс не рвёт — `pelvisHeading` страхует
+  // «вперёд» рыск-твистом; было отражение на 180° навсегда (падение ничком при постоянном курсе: `__rootY` 179.9° за
+  // кадр), и мировая поза это НЕ показывала — 180° уходили в кость таза. Сторож — `clipBakeSource.test.ts`, на сам `__rootY`.
   const rootYaws: number[] = [];
   if (opts.rootYaw) {
     let acc = 0, prev = 0;
     for (let i = 0; i < poses.length; i++) {
       const h = poses[i]!['Hips'];
-      const y = h ? h[1] : 0;
+      const y = h ? pelvisHeading(_qa.setFromEuler(_ea.set(h[0], h[1], h[2]))) : 0;
       if (i === 0) { prev = y; rootYaws.push(0); continue; }
       let d = y - prev; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
       acc += d; prev = y; rootYaws.push(acc);
@@ -419,10 +427,13 @@ export function bakeFromSource(src: BakeSource, opts: BakeOptions): BakeResult {
     }
     if (takeHips || ground) setHipsOffset(pose, hipsD);
     // Канал корня пишем ПОСЛЕ позы: сама поза остаётся in-place, корень лежит рядом отдельными числами.
-    // Рыск при этом ВЫЧИТАЕТСЯ из кости таза — иначе клип и поехал бы, и понёс бы тот же поворот дважды.
+    // Рыск при этом ВЫЧИТАЕТСЯ из таза — иначе клип и поехал бы, и понёс бы тот же поворот дважды. Вычет — ОБРАТНАЯ
+    // композиция игры (`pelvisPoseToChar`): таз `Ry(−рыск)·Q`, перенос веса `__hipsD` X/Z тоже в кадр персонажа — игра
+    // и шарнир редактора крутят их на курс `старт + __rootY` вместе с телом. ⚠ Было `Hips.y − рыск` в слоте эйлера: с
+    // наклоном таза поворот ложился не туда, а перенос веса оставался в мировых осях мокапа.
     if (wantRoot) {
       const ry = rootYaws[i] ?? 0, tr = travel?.[i];
-      if (opts.rootYaw) { const h = pose['Hips']; if (h) pose['Hips'] = [h[0], h[1] - ry, h[2]]; }
+      if (opts.rootYaw) pelvisPoseToChar(pose, ry, H.hipsRest);
       setRootMotion(pose, ry, tr ? tr[0] : 0, tr ? tr[2] : 0);
     }
     dense.push({ t: times[i]!, pose });

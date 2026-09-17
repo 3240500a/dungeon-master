@@ -16,7 +16,8 @@ import type { Humanoid } from './humanoid.js';
 import type { LimitView } from './humanoidRagdoll.js';
 import { groundFeet } from './footIk.js';
 import { clampLocalToLimit } from './jointClamp.js';
-import { hipsOffset, clipPoseAt, clipChannelAt, clipDur, clamp01, WPN_KEYS, WPN_POS, ROOT_YAW, ROOT_POS, type Clip, type Pose } from './clipModel.js';
+import { hipsOffset, clipPoseAt, clipChannelAt, clipDur, clamp01, WPN_KEYS, WPN_POS, ROOT_YAW, ROOT_POS, HIPS_DEL, type Clip, type Pose } from './clipModel.js';
+import { pelvisEulerToWorld, pelvisPoseToWorld } from './pelvisFrame.js';   // ⭐ таз на курсе — одна композиция с игрой
 import { SWING_KEY } from './turnInPlace.js';
 
 // ── Поза ключа на риг ─────────────────────────────────────────────────────────────────────────────
@@ -365,9 +366,9 @@ export const ROOT_SNAP_POS = 4;
 export const rootViewJump = (a: RootView, b: RootView): boolean =>
   Math.abs(a.yaw - b.yaw) > ROOT_SNAP_YAW || Math.hypot(a.x - b.x, a.z - b.z) > ROOT_SNAP_POS;
 
-const _thE = new THREE.Euler(), _thQ = new THREE.Quaternion(), _thR = new THREE.Quaternion();
 /**
- * ЦЕЛЬ ФИЗ-ПРИЗРАКА С РЫСКОМ КОРНЯ: `Hips := Ry(yaw)·Hips` (позу мутирует и возвращает её же).
+ * ЦЕЛЬ ФИЗ-ПРИЗРАКА С РЫСКОМ КОРНЯ: `Hips := Ry(yaw)·Hips` (позу мутирует и возвращает её же) — та же композиция, что у игры
+ * (`pelvisFrame.pelvisEulerToWorld`).
  *
  * Призрак стоит в сцене сам по себе, а не под шарниром: его таз берётся из физики В МИРЕ (кинематический таз = мировой
  * таз манекена, рыск уже в нём), а цель бленда (`renderRagdollGhost`, match ≈ 0.85) — ЛОКАЛЬНАЯ поза манекена без
@@ -375,74 +376,31 @@ const _thE = new THREE.Euler(), _thQ = new THREE.Quaternion(), _thR = new THREE.
  */
 export function turnHipsTarget(p: Pose, yaw: number): Pose {
   if (Math.abs(yaw) < 1e-12) return p;
-  const h = p['Hips'] ?? [0, 0, 0];
-  _thR.setFromAxisAngle(_rvY, yaw).multiply(_thQ.setFromEuler(_thE.set(h[0], h[1], h[2])));
-  _thE.setFromQuaternion(_thR);
-  p['Hips'] = [_thE.x, _thE.y, _thE.z];
+  p['Hips'] = pelvisEulerToWorld(p['Hips'] ?? [0, 0, 0], yaw);
   return p;
 }
 
+const _gE = new THREE.Euler();
 /**
- * ⚠⚠ ГДЕ ПОКАЗ НЕ РАВЕН ИГРЕ — ТАЗ КЛИПА ПОВОРОТА (ревью 17.09, замер на настоящем `PosePlayer`).
+ * ТАЗ КЛИПА ПОВОРОТА В ИГРЕ на курсе `course` — модель ветки поворота `PosePlayer` (вес клипа 1, шов погашен): поворот
+ * `Ry(курс)·таз клипа`, X/Z — `Ry(курс)·(rest + __hipsD)` (`blendClipBones` кладёт таз в кадре персонажа, `applyTorsoTwist`
+ * докладывает курс через `pelvisFrame.pelvisToWorld`; здесь — та же композиция позой, `pelvisPoseToWorld`). Без `__hipsD`
+ * X/Z — база `gaitToHumanoid`, 0. Y не считаем.
  *
- * Шарнир крутит персонажа ЦЕЛИКОМ: таз ложится `Ry(курс)·таз клипа`, а сдвиг `__hipsD` поворачивается вместе с телом —
- * кадр персонажа, в котором автор таз и правит (так же кладёт таз удара `applyAttackPelvis`). Ветка поворота игры
- * (`PosePlayer.step` → `applyTorsoTwist`) пишет курс В СЛОТ Y ЭЙЛЕРА: таз = `Rx(наклон)·Ry(курс)·Rz(крен)` — наклон
- * вперёд-назад оказывается в МИРОВОЙ оси X, авторский рыск таза выпадает, а X/Z `__hipsD` `blendClipBones` кладёт в мировых
- * осях. Совпадает, пока у таза клипа нет наклона вперёд-назад, своего рыска и сдвига по полу — у процедурных запеканий так
- * и есть (0.00° / 0.00u). ЗАМЕР: turn_R_180 с наклоном таза +15° на всех ключах — в игре к концу наклон НАЗАД, 30.0°;
- * `__hipsD.x` +3 — таз на другой стороне, 6u. И это не только редактор: курс на старте поворота в игре любой, так что
- * тот же наклон на 90° выходит креном вбок уже с первого кадра.
- *
- * Показ переделывать под игру НЕ стали: шарнир один на все чтения мира, а расхождение зависит от позы таза — каждый драг и
- * каждая итерация IK двигали бы шарнир (и правили бы в «неправильном» кадре, закрепив ошибку игры в данных). Правка — в
- * игре (кадр персонажа для таза клипа поворота, как у удара); пока её нет, редактор ПРЕДУПРЕЖДАЕТ цифрой отсюда.
- * Сторож — `rootPreview.test.ts`: он же упадёт, когда игру поправят, и напомнит убрать предупреждение.
- *
- * Возвращает НАИБОЛЬШЕЕ расхождение по курсам (курс в игре = курс на старте + `__rootY`, старт любой): угол таза (°) и
- * сдвиг таза по полу (u). `rest` — `hipsRest` рига (у игры без `__hipsD` таз стоит в X/Z = 0, с ним — `rest + __hipsD`).
- */
-export interface PelvisGap { deg: number; u: number }
-/** Порог предупреждения: меньше — шум чтения позы (1e-3 рад) и округления запекателя. */
-export const TURN_GAP_DEG = 1;
-export const TURN_GAP_U = 0.3;
-const GAP_COURSES = 24;   // шаг 15°: максимум по наклону — на 180°, он в сетке
-const _gE = new THREE.Euler(), _gH = new THREE.Quaternion(), _gGame = new THREE.Quaternion(), _gView = new THREE.Quaternion();
-const _gPg = new THREE.Vector3(), _gPv = new THREE.Vector3();
-/**
- * Таз ключа `p` В ИГРЕ на курсе `course` — модель ветки поворота `PosePlayer` (вес клипа 1, шов погашен): поворот кости
- * `Rx·Ry(курс)·Rz` из канонического разбора эйлера таза клипа (так `rotation.y = курс` в `applyTorsoTwist` видит кость) и X/Z
- * относительно персонажа (`blendClipBones`: `rest + __hipsD` без поворота; без `__hipsD` — база `gaitToHumanoid`, 0). Y не считаем.
+ * ⭐ ПОКАЗ = ИГРА ПО ПОСТРОЕНИЮ (ревью 17.09). Шарнир корня крутит персонажа целиком — `Ry(курс)` слева на таз и на его
+ * X/Z, и игра теперь кладёт курс ТАК ЖЕ. Было — курс в слот Y эйлера: наклон таза вперёд-назад в мировой оси X, свой
+ * рыск таза клипа выпадал, `__hipsD` X/Z в мировых осях. ЗАМЕР на настоящем `PosePlayer` (turn_R_180, наклон таза +15° на
+ * всех ключах): игра против показа 30.0° → 0.00°; `__hipsD.x` +3 — 6u → 0.00u; на старте курсом 0 / 90 / 180 / −90 так же.
+ * Предупреждение «в игре таз ляжет иначе» в свитке клипа и функции расхождения убраны: расхождение — ноль по построению.
+ * Единственная разница моделей — клип БЕЗ `__hipsD` на риге с ненулевым X/Z реста (у всех нынешних ригов рест X/Z = 0):
+ * игра держит таз в 0, шарнир — в ресте. Сторож — `rootPreview.test.ts` (настоящий `PosePlayer` против шарнира).
  */
 export function turnHipsInGame(p: Pose, course: number, rest: THREE.Vector3, q: THREE.Quaternion, pos: THREE.Vector3): void {
-  const h = p['Hips'] ?? [0, 0, 0];
-  _gE.setFromQuaternion(_gH.setFromEuler(_gE.set(h[0], h[1], h[2])));
-  q.setFromEuler(_gE.set(_gE.x, course, _gE.z));
   const hd = hipsOffset(p, rest.y);
-  pos.set(hd ? rest.x + hd[0] : 0, 0, hd ? rest.z + hd[2] : 0);
-}
-/** Тот же таз НА ПОКАЗЕ под шарниром корня с курсом `course`: `Ry(курс)·таз клипа`, X/Z — `Ry(курс)·hips.position` (`poseRig`). */
-export function turnHipsInView(p: Pose, course: number, rest: THREE.Vector3, q: THREE.Quaternion, pos: THREE.Vector3): void {
-  const h = p['Hips'] ?? [0, 0, 0];
-  q.setFromAxisAngle(_rvY, course).multiply(_gH.setFromEuler(_gE.set(h[0], h[1], h[2])));
-  const hd = hipsOffset(p, rest.y);
-  pos.set(rest.x + (hd ? hd[0] : 0), 0, rest.z + (hd ? hd[2] : 0)).applyAxisAngle(_rvY, course);
-}
-export function turnPelvisGameGap(p: Pose, rest: THREE.Vector3, out: PelvisGap = { deg: 0, u: 0 }): PelvisGap {
-  out.deg = 0; out.u = 0;
-  for (let k = 0; k < GAP_COURSES; k++) {
-    const th = (k * 2 * Math.PI) / GAP_COURSES;
-    turnHipsInGame(p, th, rest, _gGame, _gPg); turnHipsInView(p, th, rest, _gView, _gPv);
-    out.deg = Math.max(out.deg, (_gGame.angleTo(_gView) * 180) / Math.PI);
-    out.u = Math.max(out.u, _gPg.distanceTo(_gPv));
-  }
-  return out;
-}
-/** Наибольшее расхождение по всем ключам клипа (предупреждение в свитке клипа). */
-export function clipTurnPelvisGap(c: Clip, rest: THREE.Vector3): PelvisGap {
-  const out: PelvisGap = { deg: 0, u: 0 }, g: PelvisGap = { deg: 0, u: 0 };
-  for (const k of c.keys) { turnPelvisGameGap(k.pose, rest, g); out.deg = Math.max(out.deg, g.deg); out.u = Math.max(out.u, g.u); }
-  return out;
+  const w = pelvisPoseToWorld({ Hips: p['Hips'] ?? [0, 0, 0], ...(hd ? { [HIPS_DEL]: hd } : {}) }, course, rest);
+  const h = w['Hips']!, d = w[HIPS_DEL];
+  q.setFromEuler(_gE.set(h[0], h[1], h[2]));
+  pos.set(d ? rest.x + d[0] : 0, 0, d ? rest.z + d[2] : 0);
 }
 
 /** Каналы ДВИЖЕНИЯ клипа во времени — корень и опорность стоп. Их задаёт таймлайн клипа, а не поза на манекене. */

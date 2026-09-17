@@ -234,12 +234,13 @@ describe('⭐ предпросмотр корня (галки «корень: п
     expect(SRC).toMatch(/if \(ch\.pos\) rr\.append\(chk\('корень: смещение', rootPosOn, \(v\) => \{ rootPosOn = v; setPref\('rootPosView', v\); \}/);
     expect(SRC).toMatch(/cb\.onchange = \(\) => \{ set\(cb\.checked\); syncRootView\(\); refreshAll\(\); \}/);
   });
-  it('⚠ таз клипа поворота: где показ ≠ игра, свиток клипа предупреждает цифрой, и подсказка «как в игре» не обещает', () => {
-    expect(SRC).toMatch(/if \(ch\.yaw && TURN_NAMES\.includes\(c\.name\)\) \{\s*const g = clipTurnPelvisGap\(c, human\.hipsRest\);\s*if \(g\.deg > TURN_GAP_DEG \|\| g\.u > TURN_GAP_U\) \{/);
-    expect(SRC).toMatch(/hn\.textContent = `⚠ в игре таз этого поворота ляжет иначе: до \$\{g\.deg\.toFixed\(0\)\}° \/ \$\{g\.u\.toFixed\(1\)\}u`;\s*hn\.title = [\s\S]*?;\s*rr\.append\(hn\);/);
+  it('таз клипа поворота: игра кладёт его в кадре персонажа, как шарнир — предупреждения «ляжет иначе» в свитке нет', () => {
+    // Было предупреждение цифрой (`clipTurnPelvisGap`), пока игра писала курс в слот Y эйлера. Игру поправили
+    // (`pelvisFrame.pelvisToWorld`), расхождение — ноль по построению; сторож равенства — `rootPreview.test.ts`.
+    expect(SRC).not.toMatch(/clipTurnPelvisGap|TURN_GAP_DEG|TURN_GAP_U|в игре таз этого поворота ляжет иначе/);
     const hint = /chk\('корень: поворот'[\s\S]*?\)\);/.exec(SRC)?.[0] ?? '';
     expect(hint).toContain('turnYawAt');
-    expect(hint, 'обещание «как в игре» без оговорки — ровно то, что ревью поймало на тазе').not.toMatch(/как в игре/);
+    expect(hint, 'таз — в кадре персонажа').toContain('в кадре персонажа');
   });
   it('новый ключ и «из пред./след./середина» — корень и опора с таймлайна клипа, а не пусто и не от соседа', () => {
     expect(SRC).toMatch(/const pose = seedMotionChannels\(readPoseFull\(\), c, nt\);\s*c\.keys\.splice\(insAt, 0, \{ pose, t: nt \}\)/);

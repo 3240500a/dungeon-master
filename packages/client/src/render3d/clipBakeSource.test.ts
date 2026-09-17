@@ -345,3 +345,68 @@ describe('clipBaker — опора держит конечность в МИРЕ
     expect(at(0.5)).toBeLessThan(at(1));
   });
 });
+
+/**
+ * ⭐ КОРЕНЬ: ПОВОРОТ МОКАПА (`rootYaw`) — ОБРАТНАЯ КОМПОЗИЦИЯ ИГРЫ (ревью 17.09, `pelvisFrame.ts`).
+ *
+ * Игра и шарнир редактора кладут таз клипа на курс `старт + __rootY` жёстким поворотом: `Ry(курс)·таз`, X/Z `__hipsD` тоже.
+ * Импорт снимает курс ровно обратным ходом. ⚠ Было: курс — слот Y эйлера (разбор XYZ держит его в [−90°, 90°], разворот за
+ * 90° отражался и копился не туда) и вычет в том же слоте (с наклоном таза поворот ложился мимо), а перенос веса оставался в
+ * мировых осях мокапа.
+ */
+describe('clipBaker — корень: поворот мокапа снимается обратной композицией игры', () => {
+  const hipsRest = buildHumanoid().hipsRest.clone();
+  const D = Math.PI / 180, UP = new THREE.Vector3(0, 1, 0);
+  const TILT = new THREE.Quaternion().setFromEuler(new THREE.Euler(15 * D, 0, 0));
+  const at = (yawDeg: number): THREE.Quaternion => new THREE.Quaternion().setFromAxisAngle(UP, yawDeg * D).multiply(TILT);
+  /** Таз мокапа: разворот 0 → 170° с постоянным наклоном вперёд 15°, и перенос веса по МИРОВОЙ X туда-обратно (пик на 90°). */
+  const turning = (): BakeSource => {
+    const qs = [0, 60, 120, 170].map(at);
+    const rot = new THREE.QuaternionKeyframeTrack('s_Hips.quaternion', [0, 1 / 3, 2 / 3, 1], qs.flatMap((q) => [q.x, q.y, q.z, q.w]));
+    const pos = posTrackMid('Hips', [hipsRest.x, hipsRest.y, hipsRest.z], [hipsRest.x + 3, hipsRest.y, hipsRest.z], [hipsRest.x, hipsRest.y, hipsRest.z]);
+    return source([clipOf([rot, pos])]);
+  };
+  const yawAtT = (t: number): number => (t <= 2 / 3 ? t * 180 : 120 + (t - 2 / 3) * 150);
+
+  it('⭐ разворот 170° с наклоном таза: `__rootY` накоплен целиком, `Ry(__rootY)·таз клипа` = таз мокапа, в клипе — только наклон', () => {
+    const keys = bakeFromSource(turning(), { ...OPTS, ground: false, hips: 'full', rootYaw: true }).clip.keys;
+    let worst = 0;
+    for (const k of keys) {
+      const ry = k.pose['__rootY']![0], h = k.pose['Hips']!;
+      expect(ry / D, `t ${k.t}`).toBeCloseTo(yawAtT(k.t), 1);
+      const world = new THREE.Quaternion().setFromAxisAngle(UP, ry).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(h[0], h[1], h[2])));
+      worst = Math.max(worst, world.angleTo(at(yawAtT(k.t))) / D, new THREE.Quaternion().setFromEuler(new THREE.Euler(h[0], h[1], h[2])).angleTo(TILT) / D);
+    }
+    expect(keys.at(-1)!.pose['__rootY']![0] / D, 'поворот за 90° не отражён').toBeCloseTo(170, 1);
+    expect(worst, 'чтение позы округлено до 1e-3 рад').toBeLessThan(0.2);
+  });
+
+  it('перенос веса по мировой X на курсе 90° ложится в клип ВПЕРЁД персонажа (кадр персонажа), а не вбок', () => {
+    const keys = bakeFromSource(turning(), { ...OPTS, ground: false, hips: 'full', rootYaw: true }).clip.keys;
+    const mid = keys.find((k) => Math.abs(k.t - 0.5) < 1e-6)!;
+    const d = hipsOffset(mid.pose, hipsRest.y)!;
+    expect(mid.pose['__rootY']![0] / D).toBeCloseTo(90, 1);
+    expect(d[2], 'вперёд').toBeCloseTo(3, 2);
+    expect(d[0], 'не вбок').toBeCloseTo(0, 2);
+    // без корня клип остаётся в осях мокапа, как был: курс в тазу, перенос по X
+    const plain = bakeFromSource(turning(), { ...OPTS, ground: false, hips: 'full' }).clip.keys.find((k) => Math.abs(k.t - 0.5) < 1e-6)!;
+    expect(hipsOffset(plain.pose, hipsRest.y)![0]).toBeCloseTo(3, 2);
+  });
+
+  /**
+   * ⚠ НОКДАУН И ПОДЪЁМ: таз ПРОХОДИТ ВЕРТИКАЛЬ при постоянном курсе. Голый `atan2` вектора «вперёд» отражал курс на
+   * 180° (см. `pelvisFrame.pelvisHeading`) — и накопитель писал разворот из ниоткуда. Сторож на САМ `__rootY`:
+   * `Ry(__rootY)·таз клипа` = таз мокапа держится и с отражением (180° уходят в кость таза), эту беду он не видит.
+   */
+  it('⭐ падение ничком 0 → 120° при постоянном курсе: `__rootY` остаётся нулём (отражения на 180° нет)', () => {
+    const fall = (from: number, to: number): BakeSource => {
+      const qs = [from, (from + to) / 2, to].map((pitch) => new THREE.Quaternion().setFromAxisAngle(UP, 20 * D)
+        .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * D, 0, 0))));
+      return source([clipOf([new THREE.QuaternionKeyframeTrack('s_Hips.quaternion', [0, 0.5, 1], qs.flatMap((q) => [q.x, q.y, q.z, q.w]))])]);
+    };
+    for (const [from, to] of [[0, 120], [120, 0], [0, 95], [0, -120]] as const) {
+      const keys = bakeFromSource(fall(from, to), { ...OPTS, ground: false, hips: 'full', rootYaw: true }).clip.keys;
+      for (const k of keys) expect(Math.abs(k.pose['__rootY']![0] / D), `наклон ${from} → ${to}°, t ${k.t}`).toBeLessThan(0.5);
+    }
+  });
+});

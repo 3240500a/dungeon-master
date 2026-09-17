@@ -621,8 +621,22 @@ describe('twistTorso — скрутка без таза (Ф21.4)', () => {
     h.bones.get('Hips')!.rotation.y = 0.37;                   // авторский рыск таза
     twistTorso(h, 0.4, W);
     expect(h.bones.get('Hips')!.rotation.y).toBeCloseTo(0.37, 9);
-    applyTorsoTwist(h, 0, 0.4, W);                            // а вот она — перезаписывает
-    expect(h.bones.get('Hips')!.rotation.y).toBeCloseTo(0, 9);
+    applyTorsoTwist(h, 0.5, 0.4, W);                          // а вот она — кладёт курс на таз (слева, в кадре персонажа)
+    expect(h.bones.get('Hips')!.rotation.y).toBeCloseTo(0.87, 9);
+  });
+
+  it('applyTorsoTwist кладёт курс СЛЕВА: наклон таза остаётся наклоном вперёд, X/Z таза поворачиваются с телом', () => {
+    // ⚠ Было `Hips.rotation.y = курс` — слот Y эйлера: наклон уходил в мировую ось X, рыск таза перезаписывался,
+    // X/Z не поворачивались. Сторож на настоящем `PosePlayer` — `rootPreview.test.ts` и `pelvisFrame.test.ts`.
+    const UP = new THREE.Vector3(0, 1, 0);
+    for (const yaw of [Math.PI / 2, Math.PI, -2.3]) {
+      const h = buildHumanoid({}), hb = h.bones.get('Hips')!;
+      hb.rotation.set(0.26, 0.1, -0.05); hb.position.set(3, 33, 2);
+      const q0 = hb.quaternion.clone(), p0 = hb.position.clone();
+      applyTorsoTwist(h, yaw, 0, W);
+      expect(hb.quaternion.angleTo(q0.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw)))).toBeLessThan(1e-9);
+      expect(hb.position.distanceTo(p0.applyAxisAngle(UP, yaw))).toBeLessThan(1e-9);
+    }
   });
 
   it('остаток размазан по весам, а не всажен в одну кость', () => {

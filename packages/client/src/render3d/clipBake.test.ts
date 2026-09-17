@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
-import { clipPoseAt, clipDur, type Pose } from './clipModel.js';
-import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
+import { clipPoseAt, clipDur, hipsOffset, type Pose } from './clipModel.js';
+import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
 import { locoPhaseU, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD } from './locoBlend.js';
-import { GAIT } from './pose.js';
+import { GAIT, GAIT_BASE, POSE, POSE_BASE } from './pose.js';
 
 /**
  * ГЛАВНАЯ ПРОВЕРКА Ф2: запечённый клип воспроизводит ЖИВУЮ походку.
@@ -162,7 +162,7 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
     for (let t = 0; t < r.periodSec * 2; t += dt) {            // два цикла — чтобы шов тоже попал в сверку
       pl.step(dt);
       const live = read();
-      const h = live['Hips']; if (h) live['Hips'] = [h[0], h[1] - pl.pelvisYaw, h[2]];   // тот же вычет фейсинга
+      neutralizeFacing(live, pl.pelvisYaw, hl.hipsRest);         // тот же вычет фейсинга, что у запекателя
       const baked = clipPoseAt(r.clip, locoPhaseU(pl.driver.gaitPhase));
       const d = maxAngleDeg(live, baked, (b) => !FOOT(b));
       if (d.deg > worst) { worst = d.deg; bone = d.bone; }
@@ -297,6 +297,38 @@ describe('clipBake — набор пресетов', () => {
       expect(sb, `${s.name}: ось ходьба↔бег планировщика при съёме`).toBe(/^run_/.test(s.name) ? 1 : 0);
     }
   });
+
+  /**
+   * ⭐ КАЧАНИЕ ТАЗА ЛОЖИТСЯ В КАДР ПЕРСОНАЖА — ВБОК (X), А НЕ ПОД ДОВОРОТ (ревью 17.09, `pelvisFrame.ts`).
+   *
+   * Страйф игра ведёт с доворотом таза под движение (`warpMax` до 50°). Старый вычет фейсинга снимал курс только из
+   * ПОВОРОТА таза, а X/Z `__hipsD` оставлял в осях мира — качание уезжало в клип уже повёрнутым, и игра, которая
+   * теперь крутит `__hipsD` на `pelvisYaw`, положила бы доворот ВТОРОЙ раз. ЗАМЕР (рыцарь, доворот+качание включены):
+   * старый вычет — `|__hipsD.z|` до 0.97u (ходьба) и 1.15u (бег) при `|x|` 0.81 / 0.97; новый — ≤ 0.0003u при `|x|` 1.26 / 1.50.
+   */
+  it('⭐ качание таза запекается ВБОК персонажа: у всей походки `__hipsD.z` ≈ 0 (доворот страйфа вычтен)', () => {
+    Object.assign(GAIT, GAIT_BASE, { warpOn: 1, warpMax: 50 });          // без доворота и качания сторожить нечего
+    Object.assign(POSE, POSE_BASE, { hipSway: 1.5, hipSwayRun: 1.5 });
+    try {
+      const h = buildHumanoid({});
+      const out = bakeGaitSet(mkPlayer(h), h, { character: 'warrior', weapon: 'sword', fps: 60, warmSec: 1.2 }, GAIT_PRESETS.filter((sp) => sp.name !== 'idle'));
+      for (const r of out) {
+        let mx = 0, mz = 0;
+        for (const k of r.clip.keys) { const d = hipsOffset(k.pose, h.hipsRest.y); if (!d) continue; mx = Math.max(mx, Math.abs(d[0])); mz = Math.max(mz, Math.abs(d[2])); }
+        expect(mx, `${r.clip.name}: качание таза вбок`).toBeGreaterThan(0.5);
+        expect(mz, `${r.clip.name}: качание таза ВПЕРЁД (доворот остался в клипе)`).toBeLessThan(0.02);
+      }
+    } finally { Object.assign(GAIT, GAIT_BASE); Object.assign(POSE, POSE_BASE); }
+  });
+
+  /**
+   * ⚠ НЕ ЗАКРЫТО, ДЕЙСТВИЕ ЗА ПОЛЬЗОВАТЕЛЕМ: четыре ОПУБЛИКОВАННЫХ страйфа запечены СТАРЫМ вычетом — их качание таза
+   * лежит уже повёрнутым на доворот, и игра поворачивает его второй раз (замер ревью: таз и голова уезжают на 0.26u
+   * на курсе 0). Сторож выше держит ЗАПЕКАТЕЛЬ, но опубликованные данные лежат на сервере, и лечатся они только
+   * перезапеканием этих клипов в редакторе и публикацией. Этот `todo` — напоминание в отчёте прогона: снять, когда
+   * страйфы перепечены и опубликованы.
+   */
+  it.todo('перезапечь и опубликовать: walk_strafe_L, walk_strafe_R, run_strafe_L, run_strafe_R (качание таза старого вычета)');
 
   it('в наборе НЕТ поворотов (они требуют вращения корня, а клипы in-place)', () => {
     expect(GAIT_PRESETS.some((s) => /turn/i.test(s.name))).toBe(false);

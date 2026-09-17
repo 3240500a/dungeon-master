@@ -49,7 +49,7 @@ import { forgetDrag } from './jointLimitV2.js';   // накопитель про
 import { poseRig, settleLikePhysGhost, writeKeyPose, keyAtTime, previewOffKey, faceTarget, captureAimOffsets, aimBoneToPoint as aimChainBone } from './frameEdit.js';   // правка кадра: чистая часть под node-тесты
 import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRootView, placeRootView, composeRootView, rootViewDelta,
   rootViewJump, turnHipsTarget, seedMotionChannels, copyRootView, rootPointToLocal, rootPointToWorld, rootDirToLocal, rootDirToWorld,
-  rootQuatToLocal, rootQuatToWorld, clipTurnPelvisGap, TURN_GAP_DEG, TURN_GAP_U, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
+  rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
@@ -4083,19 +4083,7 @@ function clipSection(): void {
           + 'персонаж крутится целиком, с тазом (наклон и сдвиг таза — в кадре персонажа). Только вид: в кадр, буфер и публикацию не пишется.'));
         if (ch.pos) rr.append(chk('корень: смещение', rootPosOn, (v) => { rootPosOn = v; setPref('rootPosView', v); },
           'Показать смещение персонажа по полу из канала клипа (__rootP). Только вид: в кадр, буфер и публикацию не пишется.'));
-        // ⚠ ГДЕ ПОКАЗ ≠ ИГРА (`frameEdit.turnPelvisGameGap`): таз клипа поворота игра кладёт в мировых осях. Не молчим — цифрой.
-        if (ch.yaw && TURN_NAMES.includes(c.name)) {
-          const g = clipTurnPelvisGap(c, human.hipsRest);
-          if (g.deg > TURN_GAP_DEG || g.u > TURN_GAP_U) {
-            const hn = el('div', 'color:#e0b050;font-size:10px;margin-top:2px;flex-basis:100%');
-            hn.textContent = `⚠ в игре таз этого поворота ляжет иначе: до ${g.deg.toFixed(0)}° / ${g.u.toFixed(1)}u`;
-            hn.title = 'Игра пишет курс поворота в слот Y эйлера таза: наклон таза вперёд-назад остаётся в МИРОВОЙ оси (к концу разворота '
-              + 'на 180° — наклон назад), собственный рыск таза клипа выпадает, а сдвиг таза (__hipsD X/Z) не поворачивается с телом. '
-              + 'Зависит от того, куда персонаж смотрел на старте. Здесь показан кадр персонажа. Пока игру не поправили — держи таз '
-              + 'поворота без наклона вперёд-назад и без сдвига по полу (крен таза совпадает).';
-            rr.append(hn);
-          }
-        }
+        // Таз клипа поворота игра кладёт в кадре персонажа, как шарнир (`pelvisFrame.pelvisToWorld`) — показ = игра, предупреждать не о чем.
       } }
   rollout('curve', 'КРИВАЯ ПЕРЕХОДА', () => curveSection(c));
   rollout('marks', 'МЕТКИ КАДРА', () => marksSection(c));

@@ -26,10 +26,11 @@
  *    циклу (так делает «Loop Pose» в Unity и «cycle» в пакетах мокапа). Замер шва по костям на ходьбе:
  *    1.0–1.1° → 0.16–0.35°. На беге дрейф и без того мал (0.3–0.7°), и разница там в пределах шума стоп.
  *
- * 2. КЛИП IN-PLACE И БЕЗ FACING. `applyTorsoTwist` пишет в `Hips.rotation.y` ФЕЙСИНГ персонажа (rootYaw).
- *    Если оставить его в клипе, анимация будет «поворачивать» персонажа в чужом движке поверх его же
- *    поворота. Вычитаем `player.pelvisYaw` — остаётся только скрутка корпуса относительно таза (то, что
- *    и есть анимация), а направление держит игра. Для прямолинейных походок вычитание — no-op.
+ * 2. КЛИП IN-PLACE И БЕЗ FACING. `applyTorsoTwist` кладёт на таз ФЕЙСИНГ персонажа (`pelvisFrame.pelvisToWorld`:
+ *    `Ry(курс)` слева на поворот и на X/Z таза). Если оставить его в клипе, анимация будет «поворачивать» персонажа
+ *    в чужом движке поверх его же поворота. Снимаем `player.pelvisYaw` обратной композицией (`neutralizeFacing`) —
+ *    остаётся таз в кадре персонажа (то, что и есть анимация), а направление держит игра. Для прямолинейных
+ *    походок без доворота вычет — no-op.
  *
  * 3. РАЗОГРЕВ ОБЯЗАТЕЛЕН. У планировщика есть инерция (планты, подшаг, torso-lead, сглаживание таза):
  *    первые ~1.5 с он выходит на режим из произвольной фазы. Снимать раньше — запечь переходный процесс.
@@ -37,7 +38,8 @@
 import * as THREE from 'three';
 import { reduceKeyframes } from './clipBaker.js';
 import type { Clip, Keyframe, Pose } from './clipModel.js';
-import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW } from './clipModel.js';
+import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL } from './clipModel.js';
+import { pelvisEulerToWorld, pelvisOffsetToWorld } from './pelvisFrame.js';   // ⭐ вычет фейсинга — обратная композиция игры
 import type { Humanoid } from './humanoid.js';
 import { setLocoMixOverride, getLocoMixOverride, type PosePlayer } from './poseRuntime.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
@@ -124,10 +126,22 @@ export function defaultReadPose(h: Humanoid): () => Pose {
   };
 }
 
-/** Убрать фейсинг из позы: `Hips.y` содержит rootYaw (см. пункт 2 в шапке файла). */
-function neutralizeFacing(p: Pose, pelvisYaw: number): Pose {
+/**
+ * Убрать фейсинг из позы (см. пункт 2 в шапке файла) — ТОЧНОЕ обратное композиции игры (`pelvisFrame.pelvisToWorld`):
+ * таз `Ry(−pelvisYaw)·Q`, X/Z `__hipsD` — `Ry(−pelvisYaw)·(rest + d) − rest`. `rest` — `hipsRest` рига.
+ *
+ * ⚠ БЫЛО `Hips.y − pelvisYaw` в слоте эйлера и `__hipsD` как есть. Верно, пока у таза нет наклона и сдвига по полу:
+ * при наклоне игра раскрывает эйлер (Y в [−90°, 90°]), и вычет в слоте ломается — ЗАМЕР (игра с новой композицией играет
+ * старое запекание с `hipsPitchSwing` 0.15): 7.6° на курсе 40°, 120° на 90°, 17° на 180° (сторож `pelvisFrame.test.ts` на
+ * живом плеере: 7.27° / 0.97u уже на 40°). А качание таза страйфа (доворот 40°) ложилось в клип повёрнутым на доворот —
+ * `__hipsD.z` до 0.27 при `z/x = tan 40°`.
+ * Нулевой наклон — прежний путь бит в бит (вычет в слоте Y, округление 1e-4); наклон — канонический разбор, округлён так же.
+ */
+export function neutralizeFacing(p: Pose, pelvisYaw: number, rest: THREE.Vector3): Pose {
+  const r4 = (v: number): number => +v.toFixed(4);
   const h = p['Hips'];
-  if (h) p['Hips'] = [h[0], +(h[1] - pelvisYaw).toFixed(4), h[2]];
+  if (h) { const n = pelvisEulerToWorld(h, -pelvisYaw); p['Hips'] = h[0] === 0 ? [n[0], r4(n[1]), n[2]] : [r4(n[0]), r4(n[1]), r4(n[2])]; }
+  if (pelvisOffsetToWorld(p, -pelvisYaw, rest)) { const d = p[HIPS_DEL]!; p[HIPS_DEL] = [r4(d[0]), d[1], r4(d[2])]; }
   return p;
 }
 
@@ -199,10 +213,10 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
   if (spec.durationSec !== undefined || !moving) {
     // Нецикличный (или стойка): снимаем фиксированное окно. Для стойки хватает пары кадров.
     const dur = spec.durationSec ?? 0;
-    if (dur <= 0) { dense.push({ t: 0, pose: neutralizeFacing(read(), player.pelvisYaw) }); periodSec = 0; }
+    if (dur <= 0) { dense.push({ t: 0, pose: neutralizeFacing(read(), player.pelvisYaw, human.hipsRest) }); periodSec = 0; }
     else {
       for (let t = 0; t <= dur + 1e-9; t += dt) {
-        dense.push({ t: +t.toFixed(4), pose: neutralizeFacing(read(), player.pelvisYaw) });
+        dense.push({ t: +t.toFixed(4), pose: neutralizeFacing(read(), player.pelvisYaw, human.hipsRest) });
         player.step(dt);
       }
       periodSec = dur;
@@ -212,12 +226,12 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
     // их фазой, пока не пройдём полный оборот. Кадры приходятся на произвольные фазы, поэтому дальше
     // они ПЕРЕСЭМПЛИРУЮТСЯ на равномерную сетку по фазе — ровно так, как клип будут читать.
     const rec: { ph: number; t: number; pose: Pose }[] = [];
-    let prevPh = player.driver.gaitPhase, prevPose = neutralizeFacing(read(), player.pelvisYaw);
+    let prevPh = player.driver.gaitPhase, prevPose = neutralizeFacing(read(), player.pelvisYaw, human.hipsRest);
     let base = NaN, elapsed = 0;
     while (elapsed < maxSec) {
       player.step(dt); elapsed += dt;
       const ph = player.driver.gaitPhase;
-      const pose = neutralizeFacing(read(), player.pelvisYaw);
+      const pose = neutralizeFacing(read(), player.pelvisYaw, human.hipsRest);
       if (Number.isNaN(base) && Math.floor(ph / TAU) > Math.floor(prevPh / TAU)) {
         base = Math.floor(ph / TAU) * TAU;
         rec.push({ ph: prevPh - base, t: elapsed - dt, pose: prevPose });   // кадр ДО перехода — чтобы поймать ровно фазу 0
@@ -244,7 +258,7 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
     }
     if (!cyclic) {   // фронт не пойман (очень медленная походка/патология) — падаем на окно 1 с
       dense.length = 0;
-      for (let k = 0; k <= fps; k++) { dense.push({ t: +(k * dt).toFixed(4), pose: neutralizeFacing(read(), player.pelvisYaw) }); player.step(dt); }
+      for (let k = 0; k <= fps; k++) { dense.push({ t: +(k * dt).toFixed(4), pose: neutralizeFacing(read(), player.pelvisYaw, human.hipsRest) }); player.step(dt); }
       periodSec = 1;
     }
   }
@@ -383,7 +397,7 @@ export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSp
     player.setYaw(aim);
     const dense: Keyframe[] = [];
     const frame = (t: number): void => {
-      const p = neutralizeFacing(read(), player.pelvisYaw);
+      const p = neutralizeFacing(read(), player.pelvisYaw, human.hipsRest);
       p[ROOT_YAW] = [+(player.pelvisYaw - y0).toFixed(5), 0, 0];
       const sw = player.driver.swingLegs;
       p[SWING_KEY] = [sw[0] ? 1 : 0, sw[1] ? 1 : 0, 0];

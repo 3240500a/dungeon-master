@@ -10,7 +10,7 @@ import {
   poseRig, clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, rootViewMatrix, placeRootView, composeRootView,
   rootViewDelta, rootViewJump, turnHipsTarget, seedMotionChannels, sameRootView, copyRootView, ROOT_VIEW_ZERO, ROOT_SNAP_YAW, ROOT_SNAP_POS,
   rootPointToLocal, rootPointToWorld, rootDirToLocal, rootDirToWorld, rootQuatToLocal, rootQuatToWorld,
-  turnHipsInGame, turnHipsInView, turnPelvisGameGap, clipTurnPelvisGap, TURN_GAP_DEG, TURN_GAP_U,
+  turnHipsInGame,
   type RootView,
 } from './frameEdit.js';
 
@@ -387,87 +387,121 @@ describe('каналы корня без сборки позы (ревью 17.09
 });
 
 /**
- * ⚠⚠ ТАЗ КЛИПА ПОВОРОТА: ПОКАЗ ≠ ИГРА (ревью 17.09). Шарнир крутит таз в кадре персонажа, ветка поворота `PosePlayer` —
- * курсом в слот Y эйлера и `__hipsD` в мировых осях (разбор — `frameEdit.turnPelvisGameGap`). Игру в этом заходе не правили
- * (`poseRuntime.ts` правит параллельная работа), редактор предупреждает цифрой. Здесь обе модели привязаны к настоящим
- * `PosePlayer` и шарниру: когда игру поправят, тест упадёт и напомнит убрать предупреждение.
+ * ⭐⭐ ТАЗ КЛИПА ПОВОРОТА: ПОКАЗ = ИГРА (ревью 17.09). Шарнир крутит таз в кадре персонажа (`Ry(курс)` слева на поворот и на
+ * X/Z), и ветка поворота `PosePlayer` теперь кладёт курс ТОЙ ЖЕ композицией (`pelvisFrame.pelvisToWorld` в `applyTorsoTwist`).
+ * Было — курс в слот Y эйлера и `__hipsD` в мировых осях: turn_R_180 с наклоном таза +15° — 30.0° между игрой и показом,
+ * сдвиг +3 — 6u, и зависело от курса на старте. Редактор тогда предупреждал цифрой; предупреждение снято вместе с расхождением.
+ *
+ * Сторож — НАСТОЯЩИЙ `PosePlayer` против НАСТОЯЩЕГО шарнира на КАЖДОМ кадре клипа (после шва старта), со старта курсом
+ * 0 / 90 / 180 / −90, на запечённых поворотах и на правках таза автора: наклон, свой рыск + крен, сдвиг по полу и всё вместе.
+ * Мутации (замер): курс в слот Y эйлера — 30.0°; X/Z без поворота — 7.2u; «сложение в слот Y» без проверки наклона — 30.0°.
  */
-describe('⚠ таз клипа поворота: показ ≠ игра — модели обеих сторон против настоящих `PosePlayer` и шарнира', () => {
+describe('⭐ таз клипа поворота: игра (настоящий `PosePlayer`) = показ (манекен под шарниром) на любом курсе', () => {
   const GX = { armDown: 1.35, elbowBend: 0.25 };
+  let lib0: Map<string, Clip> | null = null;
   const bakedTurns = (): Map<string, Clip> => {
-    const h = buildHumanoid({}), p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
-    const lib = new Map<string, Clip>();
-    for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib.set(r.clip.name, r.clip);
-    return lib;
+    if (!lib0) {
+      const h = buildHumanoid({}), p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      lib0 = new Map<string, Clip>();
+      for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib0.set(r.clip.name, r.clip);
+    }
+    return new Map(lib0);
   };
-  /** Правка автора на ВСЕХ ключах: наклон таза вперёд +15° и сдвиг таза на +3 по X персонажа. */
-  const edited = (c: Clip): Clip => ({ ...c, keys: c.keys.map((k) => {
-    const pose = { ...k.pose }, hh = pose['Hips'] ?? [0, 0, 0], hd = hipsOffset(pose) ?? [0, 0, 0];
-    pose['Hips'] = [hh[0] + 15 * D, hh[1], hh[2]]; setHipsOffset(pose, [hd[0] + 3, hd[1], hd[2]]);
+  /** Правка автора на ВСЕХ ключах, в кадре персонажа: прибавка к эйлеру таза и сдвиг таза по X/Z. */
+  const edited = (c: Clip, dh: readonly [number, number, number], dx: number, dz: number): Clip => ({ ...c, keys: c.keys.map((k) => {
+    const pose = { ...k.pose }, hh = pose['Hips'] ?? [0, 0, 0];
+    pose['Hips'] = [hh[0] + dh[0], hh[1] + dh[1], hh[2] + dh[2]];
+    if (dx || dz) { const hd = hipsOffset(pose) ?? [0, 0, 0]; setHipsOffset(pose, [hd[0] + dx, hd[1], hd[2] + dz]); }
     return { ...k, pose };
   }) });
-  interface Shot { name: string; course: number; q: THREE.Quaternion; pos: THREE.Vector3 }
-  /** Стоим, прицел прыгает на `deg`; таз снимаем на ПОСЛЕДНЕМ кадре клипа поворота (вес 1, шов старта погашен). */
-  const playTurn = (lib: Map<string, Clip>, deg: number): Shot | null => {
-    const h = buildHumanoid({});
+  interface Gap { deg: number; u: number; model: number; frames: number; course: number; played: string | null }
+  /**
+   * Стоим курсом `h0`, прицел прыгает на `deg`. На каждом кадре клипа (после шва старта, `TURN_FADE` 0.15 с) — таз игры
+   * против манекена под шарниром на курсе `pelvisYaw` с позой клипа на том же времени, и против модели `turnHipsInGame`.
+   */
+  const playTurn = (lib: Map<string, Clip>, name: string, h0: number, deg: number, mix: number): Gap => {
+    const h = buildHumanoid({}), rest = h.hipsRest;
     const content = { ...localStorageContent('warrior'), locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } };
     const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
-    setLocoMixOverride(1);
+    const { h: man, pivot } = underPivot();
+    const gq = new THREE.Quaternion(), gp = new THREE.Vector3();
+    const out: Gap = { deg: 0, u: 0, model: 0, frames: 0, course: 0, played: null };
+    setLocoMixOverride(mix);
     try {
-      p.setVel(0, 0); p.setYaw(0); p.snapYaw();
+      p.setVel(0, 0); p.setYaw(h0 * D); p.snapYaw();
       for (let i = 0; i < 120; i++) p.step(1 / 60);
-      p.setYaw(deg * D);
-      let last: Shot | null = null;
-      for (let i = 0; i < 400; i++) {
+      p.setYaw((h0 + deg) * D);
+      let j = -1, startYaw = 0;
+      for (let i = 0; i < 480; i++) {
         p.step(1 / 60);
         const cn = p.turnClipName;
-        if (cn) last = { name: cn, course: p.pelvisYaw, q: h.hips.quaternion.clone(), pos: h.hips.position.clone() };
-        else if (last) break;
+        if (!cn) { if (j >= 0) break; continue; }
+        if (j < 0) { startYaw = p.pelvisYaw; out.played = cn; }
+        j++;
+        const c = lib.get(cn)!, t = j / 60;
+        expect(Math.abs(p.pelvisYaw - (startYaw + turnYawAt(c, t))), 'время клипа сошлось с курсом игры').toBeLessThan(1e-9);
+        if (j < 10) continue;                                            // шов старта (0.15 с) ещё идёт
+        const pose = clipPoseAt(c, Math.min(1, t / (clipDur(c) || 1)));
+        poseRig(man, pose); placeRootView(pivot, { yaw: p.pelvisYaw, x: 0, z: 0 });
+        const mq = worldQuat(man, 'Hips'), mp = worldPos(man, 'Hips');
+        out.deg = Math.max(out.deg, h.hips.quaternion.angleTo(mq) / D);
+        out.u = Math.max(out.u, Math.hypot(h.hips.position.x - mp.x, h.hips.position.z - mp.z));
+        turnHipsInGame(pose, p.pelvisYaw, rest, gq, gp);
+        out.model = Math.max(out.model, gq.angleTo(mq) / D, Math.hypot(gp.x - mp.x, gp.z - mp.z));
+        out.frames++; out.course = p.pelvisYaw - startYaw;
       }
-      return last;
+      return out;
     } finally { setLocoMixOverride(null); }
   };
+  const EDITS: readonly [string, readonly [number, number, number], number, number][] = [
+    ['как запечено', [0, 0, 0], 0, 0],
+    ['наклон таза +15°', [15 * D, 0, 0], 0, 0],
+    ['свой рыск +10° и крен +10°', [0, 10 * D, 10 * D], 0, 0],
+    ['сдвиг таза (+3, +2)', [0, 0, 0], 3, 2],
+    ['всё вместе', [15 * D, 10 * D, 10 * D], 3, 2],
+  ];
+  for (const [name, deg] of [['turn_R_180', 180], ['turn_L_90', -90]] as const) {
+    it(`⭐ ${name}: старт курсом 0 / 90 / 180 / −90, «только клипы» — таз игры = манекен под шарниром на каждом кадре`, () => {
+      const lib = bakedTurns(), base = lib.get(name)!;
+      for (const [en, dh, dx, dz] of EDITS) {
+        lib.set(name, edited(base, dh, dx, dz));
+        for (const h0 of [0, 90, 180, -90]) {
+          const g = playTurn(lib, name, h0, deg, 1);
+          const msg = `${en}, старт ${h0}°: ${g.deg.toFixed(3)}° / ${g.u.toFixed(3)}u за ${g.frames} кадров`;
+          expect(g.played, msg).toBe(name);
+          expect(g.frames, msg).toBeGreaterThan(15);
+          expect(Math.abs(g.course) / D, `${msg}: поворот сыграл целиком`).toBeGreaterThan(Math.abs(deg) * 0.7);
+          expect(g.deg, msg).toBeLessThan(0.2);
+          expect(g.u, msg).toBeLessThan(0.05);
+          expect(g.model, `${msg}: модель \`turnHipsInGame\``).toBeLessThan(1e-3);
+        }
+      }
+    }, 120_000);
+  }
 
-  it('процедурное запекание — без наклона, рыска и сдвига таза: показ = игра, предупреждения нет', () => {
-    const rest = buildHumanoid({}).hipsRest;
-    for (const [name, c] of bakedTurns()) {
-      const g = clipTurnPelvisGap(c, rest);
-      expect(g.deg, `${name}: ${g.deg.toFixed(2)}°`).toBeLessThan(TURN_GAP_DEG);
-      expect(g.u, `${name}: ${g.u.toFixed(2)}u`).toBeLessThan(TURN_GAP_U);
+  it('смешанный режим (доля 0.99) — та же ветка поворота, то же равенство', () => {
+    const lib = bakedTurns(), name = 'turn_R_180';
+    lib.set(name, edited(lib.get(name)!, [15 * D, 10 * D, 10 * D], 3, 2));
+    for (const h0 of [0, 90, 180, -90]) {
+      const g = playTurn(lib, name, h0, 180, 0.99);
+      const msg = `старт ${h0}°: ${g.deg.toFixed(3)}° / ${g.u.toFixed(3)}u за ${g.frames} кадров`;
+      expect(g.played, msg).toBe(name);
+      expect(g.frames, msg).toBeGreaterThan(15);
+      expect(g.deg, msg).toBeLessThan(0.2);
+      expect(g.u, msg).toBeLessThan(0.05);
     }
-  }, 60_000);
+  }, 120_000);
 
-  it('⭐ наклон +15° и сдвиг +3 на turn_R_180: игра = `turnHipsInGame`, показ = `turnHipsInView`, разница = предупреждение', () => {
-    const lib = bakedTurns(), rest = buildHumanoid({}).hipsRest, ed = edited(lib.get('turn_R_180')!);
-    lib.set('turn_R_180', ed);
-    const r = playTurn(lib, 180);
-    expect(r?.name, 'поворот сыграл клипом').toBe('turn_R_180');
-    expect(Math.abs(r!.course) / D, 'снимаем на развороте').toBeGreaterThan(150);
-    const pose = clipPoseAt(ed, 1);   // правка постоянна по ключам, а таз запекания нулевой (тест выше) — таз клипа на любом времени тот же
-    const gq = new THREE.Quaternion(), gp = new THREE.Vector3(), vq = new THREE.Quaternion(), vp = new THREE.Vector3();
-    turnHipsInGame(pose, r!.course, rest, gq, gp);
-    turnHipsInView(pose, r!.course, rest, vq, vp);
-    const STALE = '⚠ игра кладёт таз клипа поворота уже не так, как `frameEdit.turnHipsInGame`: поправь модель; если игра теперь '
-      + 'кладёт его в кадре персонажа (как показ) — убери предупреждение в свитке клипа (`clipTurnPelvisGap`) и этот тест';
-    expect(r!.q.angleTo(gq) / D, STALE).toBeLessThan(1);
-    expect(Math.hypot(r!.pos.x - gp.x, r!.pos.z - gp.z), STALE).toBeLessThan(0.3);
-    // показ: манекен под шарниром на том же курсе — ровно `turnHipsInView`
-    const { h: man, pivot } = underPivot(); poseRig(man, pose); placeRootView(pivot, { yaw: r!.course, x: 0, z: 0 });
-    expect(worldQuat(man, 'Hips').angleTo(vq) / D).toBeLessThan(0.01);
-    const mw = worldPos(man, 'Hips');
-    expect(Math.hypot(mw.x - vp.x, mw.z - vp.z)).toBeLessThan(1e-6);
-    // разные — на столько, сколько обещает предупреждение (замер ревью: 30.0° и 6u)
-    expect(gq.angleTo(vq) / D).toBeGreaterThan(25);
-    expect(Math.hypot(gp.x - vp.x, gp.z - vp.z)).toBeGreaterThan(5);
-    const g = turnPelvisGameGap(pose, rest);
-    expect(g.deg).toBeCloseTo(30, 0);
-    expect(g.u).toBeCloseTo(6, 0);
-    expect(clipTurnPelvisGap(ed, rest).deg).toBeGreaterThan(TURN_GAP_DEG);
-  }, 60_000);
-
-  it('крен таза без наклона вперёд-назад — совпадает (в подсказке это обещано)', () => {
-    const rest = buildHumanoid({}).hipsRest, g = turnPelvisGameGap(P({ Hips: [0, 0, 12 * D], __hipsD: [0, -1.5, 0] }), rest);
-    expect(g.deg).toBeLessThan(1e-4);
-    expect(g.u).toBeLessThan(1e-6);
+  it('контроль мутации: курс в слот Y эйлера (как было) на этом же кадре расходится с шарниром на десятки градусов', () => {
+    const pose = P({ Hips: [15 * D, 0, 0], __hipsD: [3, 0, 2] }), rest = buildHumanoid({}).hipsRest;
+    const { h: man, pivot } = underPivot(); poseRig(man, pose); placeRootView(pivot, { yaw: Math.PI, x: 0, z: 0 });
+    const old = new THREE.Quaternion().setFromEuler(new THREE.Euler(15 * D, Math.PI, 0));
+    expect(old.angleTo(worldQuat(man, 'Hips')) / D).toBeCloseTo(30, 3);
+    const gq = new THREE.Quaternion(), gp = new THREE.Vector3();
+    turnHipsInGame(pose, Math.PI, rest, gq, gp);
+    expect(gq.angleTo(worldQuat(man, 'Hips'))).toBeLessThan(1e-6);
+    const mp = worldPos(man, 'Hips');
+    expect(Math.hypot(rest.x + 3 - mp.x, rest.z + 2 - mp.z), 'X/Z без поворота — на другой стороне').toBeGreaterThan(7);
+    expect(Math.hypot(gp.x - mp.x, gp.z - mp.z)).toBeLessThan(1e-9);
   });
 });

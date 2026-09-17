@@ -16,6 +16,7 @@ import { readAnimCfg } from './animConfig.js';
 export type { Pose, Keyframe, Clip, Interp, Mark, MarkType, MarkTrack, MarkEvent } from './clipModel.js';
 export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, clipSections, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
 import { hipsOffset } from './clipModel.js';   // Ф12: офсет таза читаем только через него (дельта + терпимость к легаси-абсолюту)
+import { pelvisToWorld } from './pelvisFrame.js';   // ⭐ таз кадра персонажа → мир: одна композиция с запекателем, импортом и шарниром редактора
 import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, loopMarksInRange, hasMark, comboWindow, type Mark, type MarkEvent } from './clipModel.js';
 // Коридор скорости тайм-варпа удара. Нижняя граница НИЖЕ единицы осознанно: контакт в мокапе
 // обычно на ~60 % клипа, а вайндап сервера — ~35 % окна, то есть хвост обязан уметь РАСТЯГИВАТЬСЯ.
@@ -715,6 +716,9 @@ const _qT1 = new THREE.Quaternion(), _qT2 = new THREE.Quaternion(), _eT = new TH
  * шесть поворотов): таз стоя 33.83, клип держал его на релакс-высоте 34.97 — в смешанном режиме скачок 1.14–1.46 за кадр
  * туда и назад (размах 1.14–1.82), в «только клипы» подъём ~0.9 на весь поворот. Стало: разрыва на старте нет ни в какой
  * стойке, режиме и риге; размах за поворот 0.14–0.54 — собственное движение таза клипа, как в релаксе.
+ *
+ * ⚠ Таз (кость и X/Z `rest + __hipsD`) кладётся В КАДРЕ ПЕРСОНАЖА, без курса: курс позже докладывает `applyTorsoTwist`
+ * одним поворотом (`pelvisToWorld`). Повернуть здесь — и курс ляжет дважды.
  */
 function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly string[], yBase: number | null = null, yFrom = 0): void {
   if (w <= 0.001) return;
@@ -747,8 +751,8 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   if (layerTrace.on) { layerTrace.rows.length = 0; layerTrace.t = Date.now(); }
   traceRow('НОГИ / ТАЗ', 'планировщик шагов', m, m < 0.99 ? 'остальное — ноги из стойки' : undefined);
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
-  // КРЕН И НАКЛОН ТАЗА (две плоскости). Ставим ДО `applyTorsoTwist` — он трогает только `.y` (рыск),
-  // поэтому X и Z переживают его нетронутыми. Боковое смещение `bobX` кладётся отдельно, в кадре ТЕЛА.
+  // КРЕН И НАКЛОН ТАЗА (две плоскости) — в кадре персонажа. Ставим ДО `applyTorsoTwist`: курс он кладёт СЛЕВА
+  // (`pelvisFrame.pelvisToWorld`), и наклон остаётся наклоном вперёд на любом курсе. Боковое смещение `bobX` — отдельно, в кадре ТЕЛА.
   { const hb = human.bones.get('Hips')!; hb.rotation.x = t.hipsPitch; hb.rotation.z = t.hipsRoll; }
   blendBone(human, 'LeftUpperLeg', [t.hipL, t.hipTwL, t.hipLatL], idle, m);
   blendBone(human, 'RightUpperLeg', [t.hipR, t.hipTwR, t.hipLatR], idle, m);
@@ -1240,9 +1244,19 @@ function addEuler(bone: THREE.Object3D | undefined, e: [number, number, number],
   bone.quaternion.multiply(_addQ);
 }
 const PULL_W_DEF: [number, number, number, number, number] = [0.2, 0.4, 0.4, 0, 0];
-/** Навесить скрутку на риг: таз на rootYaw + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ gaitToHumanoid. */
+/**
+ * Навесить скрутку на риг: таз на курс `rootYaw` + остаток размазан по цепочке [Spine..Head] (веса сумм.=1). Звать ПОСЛЕ
+ * gaitToHumanoid и клипа поворота — таз к этому моменту собран В КАДРЕ ПЕРСОНАЖА (процедурный наклон/крен, кости и
+ * `__hipsD` клипов бега и поворота, шов поворота), и курс кладётся на него ОДНИМ жёстким поворотом (`pelvisToWorld`).
+ *
+ * ⚠ БЫЛО `Hips.rotation.y = rootYaw` — курс в слот Y эйлера: наклон таза вперёд-назад оставался в мировой оси X, свой рыск
+ * таза клипа выпадал, X/Z таза не поворачивались с телом (замеры — в шапке `pelvisFrame.ts`). Поверх `human.reset()` каждого
+ * кадра это по-прежнему «курс абсолютно»: база таза свежая, дважды курс не накапливается.
+ * ⚠ СТРАЙФ С ОТКРЫТЫМ ТАЗОМ В КЛИПЕ: рыск таза клипа теперь СОХРАНЯЕТСЯ — прибавлять его к курсу ещё раз нельзя (посчитается
+ * дважды); запекатель вычитает ровно `pelvisYaw` (курс + доворот), открытие, запечённое в таз, переживает это один раз.
+ */
 export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number]): void {
-  human.bones.get('Hips')!.rotation.y = rootYaw;              // facing таза (углы ног body-local → корень на rootYaw)
+  pelvisToWorld(human.bones.get('Hips')!, rootYaw);           // facing таза (углы ног body-local → корень на rootYaw)
   twistTorso(human, residual, weights);
 }
 const _UP_Y = new THREE.Vector3(0, 1, 0);
@@ -1768,8 +1782,8 @@ export class PosePlayer {
   get facing(): number { return this.aimYaw; }
   /**
    * Текущий yaw таза (лаг) — для отладки/редактора И ДЛЯ ЗАПЕКАНИЯ.
-   * Отдаём РЕАЛЬНО ПРИМЕНЁННЫЙ угол, вместе с доворотом: ровно он уходит в `Hips.rotation.y`, и ровно
-   * его вычитает `neutralizeFacing` при запекании клипа. Поле `rootYaw` живёт без доворота по другой
+   * Отдаём РЕАЛЬНО ПРИМЕНЁННЫЙ угол, вместе с доворотом: ровно на него `pelvisToWorld` поворачивает таз, и ровно
+   * его снимает `neutralizeFacing` при запекании клипа (обратной композицией, `pelvisPoseToChar`). Поле `rootYaw` живёт без доворота по другой
    * причине (обратная связь `stepTorsoLead`), и отдавать наружу его было бы ложью.
    */
   get pelvisYaw(): number { return this.rootYaw + this.dirWarp.warp; }
@@ -2023,8 +2037,9 @@ export class PosePlayer {
       layerTrace.moveMag = this.moveMag; layerTrace.legMag = this.legMag; layerTrace.combat = this.combat;
       layerTrace.twistGait = tg.twist; layerTrace.twistAim = tw;
     }
-    // ПОВОРОТ НА МЕСТЕ: таз и ноги из клипа. ДО `applyTorsoTwist` — тот ставит тазу курс абсолютно, а
-    // курс на время поворота уже идёт по кривой клипа (`stepTurn`), так что они не спорят.
+    // ПОВОРОТ НА МЕСТЕ: таз и ноги из клипа. ДО `applyTorsoTwist` — тот кладёт курс на таз клипа слева, а
+    // курс на время поворота уже идёт по кривой клипа (`stepTurn`), так что они не спорят. Таз клипа (наклон, свой
+    // рыск, `__hipsD`) остаётся в кадре персонажа — ровно так его показывает шарнир корня в редакторе.
     // Таз клипа — ПРИРАЩЕНИЕМ от его первого ключа (`hy0`) поверх высоты стоя `clipStandY + lift`, едущей за стойкой
     // (`clipStandY`: вход в бой посреди поворота).
     // ⭐ В «ТОЛЬКО КЛИПЫ» `lift` ЖИВОЙ: таз до клипа здесь — это стойка плюс ДОГАСАЮЩИЙ клип хода (`locoW` гаснет за
@@ -2048,10 +2063,11 @@ export class PosePlayer {
         t.hy0 === null ? null : this.clipStandY + t.lift, t.hy0 ?? 0);
     }
     this.easeSeamHips(this.turn !== turnWas);   // клип сменился — таз продолжает с показанной позы (см. `seamW`); ноги — ниже
-    applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
+    applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на курс (кадр персонажа → мир) + скрутка позвоночника к прицелу
     // КАЧАНИЕ ТАЗА ВБОК — В КАДРЕ ТЕЛА, и именно ЗДЕСЬ, а не в `gaitToHumanoid`. `Hips.position` живёт в кадре
     // РОДИТЕЛЯ и рыском самой кости НЕ поворачивается — без доворота на `yaw` качание уехало бы в мировые оси
-    // (та же грабля, что у переноса веса в `applyAttackPelvis`). Правая ось тела = (cos yaw, −sin yaw).
+    // (та же грабля, что у переноса веса в `applyAttackPelvis`). Правая ось тела = (cos yaw, −sin yaw) — тот же
+    // `Ry(yaw)`, которым `pelvisToWorld` крутит X/Z таза клипа выше: кадр у качания, клипа и удара один.
     if (tg.bobX !== 0) {
       const hb = this.human.bones.get('Hips')!;
       hb.position.x += tg.bobX * Math.cos(yaw); hb.position.z += -tg.bobX * Math.sin(yaw);
