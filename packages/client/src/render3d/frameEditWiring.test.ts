@@ -120,3 +120,138 @@ describe('скорости и сглаживание таза (общий кон
     expect(keys).toContain("'bobSlewRun'");
   });
 });
+
+/**
+ * ⭐ ПРЕДПРОСМОТР КОРНЯ — галки «корень: поворот / смещение» (17.09.2026). Поведение чистых частей (сэмплер = игра, вид
+ * не течёт в запись, призраки и физ-призрак на месте, перенос правки) — `rootPreview.test.ts`. Здесь — что редактор держит
+ * корень ВНЕ позы и везде, где пишутся мировые данные, ставит его в ноль.
+ */
+describe('⭐ предпросмотр корня (галки «корень: поворот / смещение»)', () => {
+  it('манекен висит под шарниром корня, а не в сцене', () => {
+    expect(SRC, 'манекен прямо в сцене — шарнир его не повернёт').not.toMatch(/scene\.(add|remove)\(human\.root\)/);
+    expect(SRC.match(/rootTurn\.add\(human\.root\)/g)?.length, 'applyChar + rebuildManikin').toBe(2);
+    expect(SRC.match(/rootTurn\.remove\(human\.root\)/g)?.length).toBe(2);
+  });
+  it('⭐ запись кадра и чтение/постановка позы о показе корня не знают', () => {
+    for (const f of ['readPoseFull', 'recordFrame', 'applyPose', 'lerpPose']) expect(fn(f), f).not.toMatch(/rootTurn|rootShown|rootView|RootView/);
+    expect(fn('snapshot')).toMatch(/pose: readPoseFull\(\)/);
+    // шарнир ставят ровно два места: `putRootTurn` (через него `syncRootView` и сэмплинг траектории)
+    expect(SRC.match(/placeRootView\(rootTurn/g)?.length).toBe(1);
+    expect(SRC).not.toMatch(/rootTurn\.(rotation|position|quaternion)\.(set|copy)/);
+    expect(fn('putRootTurn')).toMatch(/placeRootView\(rootTurn, v\)/);
+  });
+  it('корень — на том же времени, что поза: превью, переход на кадр, перерисовка, цикл кадра', () => {
+    expect(fn('preview'), 'из цикла кадра корень отставал бы от проигрывания').toMatch(/else lerpPose\(seg\.a\.pose, seg\.b\.pose, seg\.u\);\s*syncRootView\(c\);[^\n]*\s*\}$/);
+    expect(fn('preview'), 'ранний return обошёл бы корень').not.toMatch(/applyPose\([^)]*\)\); return;|\); return; \}/);
+    expect(fn('goFrame')).toMatch(/previewT = null; \}[^\n]*\n\s*syncRootView\(\);/);
+    expect(fn('refreshAll')).toMatch(/^function refreshAll\(\): void \{ syncRootView\(\);/);
+    expect(fn('loop'), 'клип цикла — тот же, что увидит корень: `curClip` второй раз не фильтрует библиотеку').toMatch(/last = now;\s*const c = curClip\(\);\s*syncRootView\(c\);/);
+  });
+  it('гейт: только «Анимация», не в превью бега/поворотов, не в тесте, не под удержанием; время — превью или ключ', () => {
+    const g = fn('rootViewGate');
+    for (const part of ['rootViewHold === 0', "tab === 'anim'", '!locoOn', '!testTab.active']) expect(g).toContain(part);
+    const n = fn('rootViewNow');
+    expect(n).toMatch(/const t = clip \? rootViewTime\(clip, frameIdx, previewT\) : null;/);
+    expect(n).toMatch(/rootPreviewAt\(clip, t, rootViewWant\(\), _rootNext\)/);
+  });
+  it('⭐ кадр цикла без аллокаций (ревью 17.09): без галок — ни клипа, ни сэмпла; с галкой — только каналы корня в общий объект', () => {
+    const n = fn('rootViewNow');
+    // выход ДО `curClip` и сэмпла — `syncRootView` зовётся на каждом кадре цикла и ещё раз из `preview`
+    expect(n).toMatch(/\{\s*if \(\(!rootYawOn && !rootPosOn\) \|\| !rootViewGate\(\)\) return ROOT_VIEW_ZERO;\s*const clip = c === undefined \? curClip\(\) : c;/);
+    expect(n, 'объект на кадр').not.toMatch(/\{ \.\.\.ROOT_VIEW_ZERO \}|\{ yaw:/);
+    for (const f of ['rootViewNow', 'rootViewWant', 'syncRootView']) expect(fn(f), `${f}: скан всех ключей клипа на кадр`).not.toMatch(/clipRootChannels|clipPoseAt/);
+    expect(fn('rootViewWant')).toMatch(/_rootWant\.yaw = rootYawOn; _rootWant\.pos = rootPosOn; return _rootWant;/);
+    const s = fn('syncRootView');
+    expect(s).toMatch(/rootViewDelta\(rootShown, next, _rootDelta\)/);
+    expect(s).toMatch(/copyRootView\(rootShown, next\); putRootTurn\(rootShown\);/);
+    expect(SRC, 'показанный корень — один объект, переписывается на месте').toMatch(/const rootShown: RootView = \{ \.\.\.ROOT_VIEW_ZERO \};/);
+  });
+  it('⭐ мировые данные пишутся с корнем в нуле: запекание физики, подгонка физ-тел, набор походки, экспорт GLB', () => {
+    expect(fn('bakeCurrentClip'), 'снятие запечённой позы — под удержанием').toMatch(/withRootViewOff\([\s\S]*rag\.readBakedPose\(\)[\s\S]*return out;\s*\}\);\s*histLib/);
+    expect(fn('fitPhysToBones')).toMatch(/\{ withRootViewOff\(fitPhysToBonesAt0\); \}/);
+    expect(SRC).toMatch(/function fitPhysToMesh\([^\n]*\{ return withRootViewOff\(\(\) => fitPhysToMeshAt0\(inflate, pct\)\); \}/);
+    expect(SRC.match(/fitPhysToBonesAt0/g)?.length, 'голой подгонки мимо обёртки нет').toBe(2);
+    expect(SRC.match(/fitPhysToMeshAt0/g)?.length).toBe(2);
+    expect(SRC).toMatch(/const out = withRootViewOff\(\(\) => \[\s*\.\.\.bakeGaitSet\(/);
+    expect(SRC).toMatch(/rootViewHold\+\+; syncRootView\(\); if \(tgt\) modelsTab\.drive\(human\);\s*const target = tgt/);
+    expect(SRC).toMatch(/\.finally\(\(\) => \{ rootViewHold--;/);
+    expect(SRC.match(/rootViewHold--/g)?.length, 'удержание снимают только `withRootViewOff` и `finally` экспорта').toBe(2);
+    expect(SRC, 'удержание снимается и при исключении').toMatch(/function withRootViewOff<T>\(fn: \(\) => T\): T \{\s*rootViewHold\+\+; syncRootView\(\);\s*try \{ return fn\(\); \} finally \{ rootViewHold--; syncRootView\(\); \}/);
+  });
+  it('физ-призрак: цель с рыском корня — и моторам, и бленду призрака; на скачке — на позу', () => {
+    const b = fn('stepPhysics');
+    expect(b).toMatch(/const target = turnHipsTarget\(human\.readPose\(\), rootShown\.yaw\);\s*ragdoll\.setPoseTarget\(target\);/);
+    expect(b).toMatch(/rMatch > 0\.001 \? target : null/);
+    expect(b.match(/human\.readPose\(\)/g)?.length, 'голая поза манекена в бленд — призрак довернулся бы на ~15%').toBe(1);
+    expect(b).toMatch(/if \(rootViewJump\(physRootAt, rootShown\) && !physDead\) ragdoll\.snapToPose\(\);\s*copyRootView\(physRootAt, rootShown\);/);
+    expect(SRC, '⚠ ссылка на `rootShown` (он переписывается на месте) — скачок сравнивал бы корень с самим собой, и кукла не вставала бы на позу').not.toMatch(/physRootAt = rootShown/);
+    expect(SRC, 'память физ-призрака — свой объект, не ссылка').toMatch(/const physRootAt: RootView = \{ \.\.\.ROOT_VIEW_ZERO \};/);
+  });
+  it('призрак соседнего кадра — на СВОЁМ корне, до раннего выхода без заземления', () => {
+    expect(fn('applyPoseTo')).toMatch(/h\.root\.position\.set\(0, 0, 0\);[\s\S]*composeRootView\(h\.root, rootViewGate\(\) \? rootViewOfPose\(p, rootViewWant\(\)\) : ROOT_VIEW_ZERO\);\s*h\.root\.updateMatrixWorld\(true\);\s*if \(!groundedView\(\)\) return/);
+  });
+  it('траектория — с корнем каждого сэмпла, шарнир возвращается на показанный корень', () => {
+    const b = fn('updateTrajectory');
+    expect(b).toMatch(/const want = rootViewGate\(\) \? rootViewWant\(\) : null;/);
+    expect(b).toMatch(/poseRig\(human, pose\);[^\n]*\n\s*if \(want\) putRootTurn\(rootPreviewAt\(c, smp\.t, want\)\);/);
+    expect(b).toMatch(/human\.hips\.position\.copy\(snapHip\); putRootTurn\(rootShown\);/);
+  });
+  it('мир → локальный таз: драг таза, ручка вращения, кламп по пинам, баланс', () => {
+    expect(fn('moveHips')).toMatch(/rig\.hipsPos\.add\(rootLocalDir\(delta\.clone\(\)\)\);[^\n]*e\.target\.add\(delta\)/);
+    expect(fn('clampHipsToPins')).toMatch(/human\.hips\.position\.addScaledVector\(rootLocalDir\(r\.sub\(L\.goal\)/);
+    expect(SRC).toMatch(/com: \(\) => \{ const \{ p \} = massCenter\(\); rootLocal\(p\); return/);
+    expect(SRC, 'опора — в кадре персонажа (у `supportRect` в типе возврата скобки — `fn` его не режет)').toMatch(/function supportRect\(\)[\s\S]{0,400}const p = rootLocal\(f\.getWorldPosition\(V\(\)\)\);/);
+    expect(SRC.match(/rootQuatToWorld\(rig\.hipsHandle\.quaternion\.copy\(rig\.hipsQuat\), rootShown\)/g)?.length, 'клик по ручке, отпускание Shift, кнопка «таз: вращать»').toBe(3);
+    expect(SRC).toMatch(/else rootQuatToLocal\(rig\.hipsQuat\.copy\(rig\.hipsHandle\.quaternion\), rootShown\);/);
+    expect(SRC.match(/rig\.hipsHandle\.quaternion\.copy\(rig\.hipsQuat\)/g)?.length, 'мировой поворот ручки мимо перевода').toBe(3);
+    expect(SRC.match(/rig\.hipsQuat\.copy\(rig\.hipsHandle\.quaternion\)/g)?.length).toBe(1);
+    // ⚠ баланс: центр масс и опора уже в кадре персонажа — сдвиг таза пишется в `hips.position` КАК ЕСТЬ, второй перевод увёл бы его
+    expect(SRC).toMatch(/move: \(dx, dz\) => \{ human\.hips\.position\.x \+= dx; human\.hips\.position\.z \+= dz; human\.root\.updateMatrixWorld\(true\); \},/);
+  });
+  it('⭐ мир ↔ кадр персонажа — ТОЛЬКО через чистые функции `frameEdit` (их математику меряет `rootPreview.test.ts` против three)', () => {
+    expect(fn('rootLocal')).toMatch(/\{ return rootPointToLocal\(v, rootShown\); \}/);
+    expect(fn('rootWorld')).toMatch(/\{ return rootPointToWorld\(v, rootShown\); \}/);
+    expect(fn('rootLocalDir')).toMatch(/\{ return rootDirToLocal\(v, rootShown\); \}/);
+    expect(SRC, 'своя формула рядом (матрица/кватернион шарнира)').not.toMatch(/rootTurn\.(quaternion|matrixWorld|matrix)\b/);
+    expect(fn('setGaze'), 'точка взгляда — «вперёд» персонажа').toMatch(/gazeTarget\.copy\(hd\.getWorldPosition\(V\(\)\)\)\.add\(rootDirToWorld\(new THREE\.Vector3\(0, 0, GAZE_DIST\), rootShown\)\);/);
+  });
+  it('⭐ мировое состояние правки едет за корнем; undo хранит его в кадре персонажа', () => {
+    const s = fn('syncRootView');
+    expect(s).toMatch(/if \(sameRootView\(next, rootShown\)\) return;\s*const d = rootViewDelta\(rootShown, next, _rootDelta\);/);
+    for (const part of ['e.target.applyMatrix4(d.m)', 'e.prev.applyMatrix4(d.m)', 'e.pole.applyQuaternion(d.q)', 'e.footQuat.premultiply(d.q)', 'gazeTarget.applyMatrix4(d.m)', 'rig.hipsHandle.quaternion.premultiply(d.q)']) expect(s).toContain(part);
+    const sn = fn('snapshot'), rs = fn('restore');
+    expect(sn).toMatch(/t: rootLocal\(e\.target\.clone\(\)\)/);
+    expect(sn).toMatch(/fq: rootQuatToLocal\(e\.footQuat\.clone\(\), rootShown\)/);
+    expect(sn).toMatch(/pl: rootDirToLocal\(e\.pole\.clone\(\), rootShown\)/);
+    expect(rs).toMatch(/rootWorld\(e\.target\.fromArray\(d\.t\)\)/);
+    expect(rs).toMatch(/rootQuatToWorld\(e\.footQuat\.fromArray\(d\.fq\), rootShown\)/);
+    expect(rs).toMatch(/rootDirToWorld\(e\.pole\.fromArray\(d\.pl\), rootShown\)/);
+  });
+  it('галки — личные настройки pe_prefs (дефолт выкл), только у клипов с каналами корня', () => {
+    expect(SRC).toMatch(/let rootYawOn = getPref\('rootYawView', false\), rootPosOn = getPref\('rootPosView', false\);/);
+    expect(SRC).toMatch(/const ch = clipRootChannels\(c\);\s*if \(ch\.yaw \|\| ch\.pos\) \{/);
+    expect(SRC).toMatch(/if \(ch\.yaw\) rr\.append\(chk\('корень: поворот', rootYawOn, \(v\) => \{ rootYawOn = v; setPref\('rootYawView', v\); \}/);
+    expect(SRC).toMatch(/if \(ch\.pos\) rr\.append\(chk\('корень: смещение', rootPosOn, \(v\) => \{ rootPosOn = v; setPref\('rootPosView', v\); \}/);
+    expect(SRC).toMatch(/cb\.onchange = \(\) => \{ set\(cb\.checked\); syncRootView\(\); refreshAll\(\); \}/);
+  });
+  it('⚠ таз клипа поворота: где показ ≠ игра, свиток клипа предупреждает цифрой, и подсказка «как в игре» не обещает', () => {
+    expect(SRC).toMatch(/if \(ch\.yaw && TURN_NAMES\.includes\(c\.name\)\) \{\s*const g = clipTurnPelvisGap\(c, human\.hipsRest\);\s*if \(g\.deg > TURN_GAP_DEG \|\| g\.u > TURN_GAP_U\) \{/);
+    expect(SRC).toMatch(/hn\.textContent = `⚠ в игре таз этого поворота ляжет иначе: до \$\{g\.deg\.toFixed\(0\)\}° \/ \$\{g\.u\.toFixed\(1\)\}u`;\s*hn\.title = [\s\S]*?;\s*rr\.append\(hn\);/);
+    const hint = /chk\('корень: поворот'[\s\S]*?\)\);/.exec(SRC)?.[0] ?? '';
+    expect(hint).toContain('turnYawAt');
+    expect(hint, 'обещание «как в игре» без оговорки — ровно то, что ревью поймало на тазе').not.toMatch(/как в игре/);
+  });
+  it('новый ключ и «из пред./след./середина» — корень и опора с таймлайна клипа, а не пусто и не от соседа', () => {
+    expect(SRC).toMatch(/const pose = seedMotionChannels\(readPoseFull\(\), c, nt\);\s*c\.keys\.splice\(insAt, 0, \{ pose, t: nt \}\)/);
+    expect(SRC).toMatch(/kk\.pose = seedMotionChannels\(get\(\), c, kk\.t\)/);
+  });
+  it('меш модели ведётся МИРОВЫМ корнем манекена (`poseModelsTab.driveAsm`)', () => {
+    const M = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'poseModelsTab.ts'), 'utf8');
+    const m = /function driveAsm\([^)]*\): void \{[\s\S]*?\n {2}\}/.exec(M);
+    expect(m).toBeTruthy();
+    const b = m![0];
+    expect(b).toMatch(/source\.root\.updateWorldMatrix\(true, false\);\s*source\.root\.matrixWorld\.decompose\(_wp, asmSrc\.root\.quaternion, _ws\);\s*asmSrc\.root\.position\.copy\(_wp\);/);
+    expect(b, 'локальная копия корня оставляла меш на месте').not.toMatch(/asmSrc\.root\.position\.copy\(source\.root\.position\)/);
+    expect(b.indexOf('matrixWorld.decompose'), 'после копии поворотов: кость Root перетёрла бы мировой корень локальным').toBeGreaterThan(b.indexOf('tb.rotation.copy(sb.rotation)'));
+  });
+});

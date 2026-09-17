@@ -30,6 +30,8 @@ export interface EditorPrefs {
   snapMove?: number;         // шаг перемещения, ед. мира
   snapRot?: number;          // шаг поворота, градусы
   floorMannequin?: boolean;  // манекен на полу
+  rootYawView?: boolean;     // галка «корень: поворот» — показывать рыск корня клипа (`__rootY`); только вид
+  rootPosView?: boolean;     // галка «корень: смещение» — показывать смещение корня клипа (`__rootP`); только вид
   // рабочее место
   tab?: string;              // выбранная вкладка панели
   charId?: string; weapon?: string; clip?: string;   // на чём остановился

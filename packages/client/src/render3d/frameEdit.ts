@@ -5,16 +5,19 @@
  *  • `poseRig`             — поставить позу КЛЮЧА на любой риг (манекен, призрак соседнего кадра);
  *  • `settleLikePhysGhost` — заземлить риг ТАК ЖЕ, как на паузе оседает физ-призрак, который ведёт меш;
  *  • `writeKeyPose`        — записать позу в ключ, не потеряв служебные каналы и не порвав шов цикла;
- *  • `aimBoneToPoint`      — хелпер взгляда, который на смене кадра НЕ переписывает шею и голову.
+ *  • `aimBoneToPoint`      — хелпер взгляда, который на смене кадра НЕ переписывает шею и голову;
+ *  • `rootPreviewAt` и Ко  — ПРЕДПРОСМОТР КОРНЯ клипа (галки «корень: поворот / смещение») — внизу файла.
  *
- * Разбор и замеры — `render3d/README.md`, раздел «Запись кадра, призраки соседних кадров, хват (17.09.2026)».
+ * Разбор и замеры — `render3d/README.md`, раздел «Запись кадра, призраки соседних кадров, хват (17.09.2026)»
+ * и «Предпросмотр корня: галки «корень: поворот / смещение» (17.09.2026)».
  */
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import type { LimitView } from './humanoidRagdoll.js';
 import { groundFeet } from './footIk.js';
 import { clampLocalToLimit } from './jointClamp.js';
-import { hipsOffset, WPN_KEYS, WPN_POS, type Clip, type Pose } from './clipModel.js';
+import { hipsOffset, clipPoseAt, clipChannelAt, clipDur, clamp01, WPN_KEYS, WPN_POS, ROOT_YAW, ROOT_POS, type Clip, type Pose } from './clipModel.js';
+import { SWING_KEY } from './turnInPlace.js';
 
 // ── Поза ключа на риг ─────────────────────────────────────────────────────────────────────────────
 
@@ -237,4 +240,224 @@ export function aimBoneToPoint(h: Humanoid, nm: string, target: THREE.Vector3, w
   const view = limit(nm);
   if (view) b.quaternion.copy(clampLocalToLimit(b.quaternion, view));
   b.updateMatrixWorld(true);
+}
+
+// ── ⭐ Предпросмотр корня: галки «корень: поворот / смещение» ─────────────────────────────────────
+
+/**
+ * КОРЕНЬ, ПОКАЗАННЫЙ В РЕДАКТОРЕ: рыск (рад, накопленный) и смещение по полу (u).
+ *
+ * Жалоба: «в анимациях поворота непонятно, как это будет выглядеть — он просто топчется на месте». Клип поворота
+ * in-place: запекатель ВЫЧИТАЕТ рыск из таза и кладёт его рядом каналом `__rootY` (`clipBake.neutralizeFacing`,
+ * `clipBaker`), а игра возвращает его через `turnYawAt`. Редактор каналы корня не читал вовсе — отсюда «топчется».
+ * ЗАМЕР (все 6 `TURN_PRESETS`, процедурное запекание, кости против мировых позиций на запекании): показ на месте
+ * расходится на 12.86u (45°) / 23.52u (90°) / 33.60u (180°), с поворотом корня — 0.021u, как у формулы игры.
+ *
+ * ⚠ Это ВИД, а не поза: в ключ, буфер, публикацию и запекание он не попадает — его держит отдельный шарнир-родитель
+ * рига в сцене (`pose-editor.ts`, `rootTurn`), а все чтения позы локальные.
+ */
+export interface RootView { yaw: number; x: number; z: number }
+export const ROOT_VIEW_ZERO: Readonly<RootView> = Object.freeze({ yaw: 0, x: 0, z: 0 });
+/** Какие части корня показывать: галки `pe_prefs` ∩ каналы, которые клип вообще несёт. */
+export interface RootWant { yaw: boolean; pos: boolean }
+
+/** Несёт ли клип каналы корня. Флаг клипа (`rootYaw`/`rootPos`) ИЛИ канал хоть в одном ключе: флаги пишут не все пути. */
+export function clipRootChannels(c: Clip | null | undefined): RootWant {
+  const out = { yaw: !!c?.rootYaw, pos: !!c?.rootPos };
+  for (const k of c?.keys ?? []) {
+    if (out.yaw && out.pos) break;
+    if (k.pose[ROOT_YAW]) out.yaw = true;
+    if (k.pose[ROOT_POS]) out.pos = true;
+  }
+  return out;
+}
+
+/** Корень кадра по его СОБСТВЕННЫМ каналам (призраки соседних кадров). Нет канала — ноль этой части. */
+export function rootViewOfPose(p: Pose, want: RootWant): RootView {
+  const y = p[ROOT_YAW], q = p[ROOT_POS];
+  return { yaw: want.yaw && y ? y[0] : 0, x: want.pos && q ? q[0] : 0, z: want.pos && q ? q[2] : 0 };
+}
+
+/**
+ * Корень клипа на времени `t` (сек) — ТЕМ ЖЕ сэмплером, что игра (`turnInPlace.turnYawAt`: `clipPoseAt` по t / длит.).
+ * `__rootY` накопленный и лерпится линейно (сплайн — по компонентам), поэтому разворот на 180°+ не сворачивается в ±π.
+ * Зеркало клипа (`flipPose`) меняет знак `__rootY` и X у `__rootP` — здесь ничего особого не нужно.
+ */
+export function rootPreviewAt(c: Clip, t: number, want: RootWant, out: RootView = { yaw: 0, x: 0, z: 0 }): RootView {
+  out.yaw = 0; out.x = 0; out.z = 0;
+  if (!want.yaw && !want.pos) return out;
+  // ⚠ Только каналы корня (`clipChannelAt`), а не `clipPoseAt` целиком: редактор зовёт это каждый кадр проигрывания, и
+  // бленд всех костей ради одного числа был лишней позой на кадр (ревью 17.09). Значение то же — сторожит тест.
+  const u = clamp01(t / (clipDur(c) || 1));
+  if (want.yaw) { const y = clipChannelAt(c, u, ROOT_YAW, _rvCh); if (y) out.yaw = y[0]; }
+  if (want.pos) { const q = clipChannelAt(c, u, ROOT_POS, _rvCh); if (q) { out.x = q[0]; out.z = q[2]; } }
+  return out;
+}
+const _rvCh: [number, number, number] = [0, 0, 0];
+/** Скопировать корень в `out` (у редактора `rootShown` — свой объект: на него не ссылаются, его переписывают). */
+export function copyRootView(out: RootView, v: Readonly<RootView>): RootView { out.yaw = v.yaw; out.x = v.x; out.z = v.z; return out; }
+
+/** На каком времени стоит показанная поза: время превью (скраб, проигрывание, кривая) или время выбранного ключа. */
+export function rootViewTime(c: Clip, frameIdx: number, previewT: number | null): number | null {
+  return previewT ?? c.keys[frameIdx]?.t ?? null;
+}
+
+export const sameRootView = (a: RootView, b: RootView, eps = 1e-9): boolean =>
+  Math.abs(a.yaw - b.yaw) <= eps && Math.abs(a.x - b.x) <= eps && Math.abs(a.z - b.z) <= eps;
+
+const _rvY = new THREE.Vector3(0, 1, 0), _rvQ = new THREE.Quaternion(), _rvM = new THREE.Matrix4();
+/**
+ * Матрица корня `T(x,0,z)·Ry(yaw)`: поворот вокруг ВЕРТИКАЛИ В ЛОГИЧЕСКОМ НАЧАЛЕ персонажа, а не вокруг таза. Таз
+ * уходит с этой оси авторским `__hipsD` (выпад, перенос веса) — крутить вокруг него значило бы водить ось по кругу.
+ */
+export function rootViewMatrix(v: RootView, out = new THREE.Matrix4()): THREE.Matrix4 {
+  return out.makeRotationY(v.yaw).setPosition(v.x, 0, v.z);
+}
+/** Поставить корень на ШАРНИР (объект, у которого своего трансформа нет): позиция и рыск целиком. */
+export function placeRootView(o: THREE.Object3D, v: RootView): void {
+  o.position.set(v.x, 0, v.z); o.quaternion.setFromAxisAngle(_rvY, v.yaw);
+  o.updateMatrixWorld(true);   // ⚠ дети (`human.root.updateMatrixWorld`) берут матрицу родителя как есть — устаревшая отстала бы на кадр
+}
+/**
+ * Надеть корень ПОВЕРХ корня рига (призрак соседнего кадра стоит в сцене сам по себе): `Ry·Root`, смещение по полу.
+ * Равно шарниру-родителю, пока у `Root` нет своего X/Z (его ставит только `goFrame`/`applyPoseTo` — в ноль).
+ */
+export function composeRootView(o: THREE.Object3D, v: RootView): void {
+  o.position.x += v.x; o.position.z += v.z;
+  o.quaternion.premultiply(_rvQ.setFromAxisAngle(_rvY, v.yaw));
+}
+/**
+ * ПЕРЕНОС МИРОВОГО СОСТОЯНИЯ ПРАВКИ при смене показанного корня: `m` для точек (цели эффекторов, точка взгляда),
+ * `q` для направлений и поворотов (полюса, ориентация стоп, ручка таза). Как если бы они были привязаны к персонажу —
+ * тогда в кадре персонажа (под шарниром) они не меняются, и правка с галкой идёт ровно так же, как без неё.
+ */
+export function rootViewDelta(from: RootView, to: RootView, out = { m: new THREE.Matrix4(), q: new THREE.Quaternion() }): { m: THREE.Matrix4; q: THREE.Quaternion } {
+  rootViewMatrix(to, out.m).multiply(rootViewMatrix(from, _rvM).invert());
+  out.q.setFromAxisAngle(_rvY, to.yaw - from.yaw);
+  return out;
+}
+
+/**
+ * ⭐ МИР ↔ КАДР ПЕРСОНАЖА под корнем `v` (шарнир `T(x,0,z)·Ry(yaw)`, `rootViewMatrix`): точка, направление, поворот.
+ * Все места редактора, где мировое встречается с локальным, зовут ЭТИ функции — драг и кламп таза, ручка вращения таза,
+ * центр масс и опора баланса, снимок undo, точка взгляда. ⚠ Раньше это были обёртки прямо в `pose-editor.ts`, и семь
+ * мутаций (забытый `invert`, обратная матрица вместо прямой, смещение мимо, «вперёд» мира вместо персонажа) проходили все
+ * тесты: проверялось, ЧТО зовётся, а не что считается. Теперь математику сторожит `rootPreview.test.ts` против матриц
+ * самого three (`Object3D.worldToLocal`/`localToWorld`/`getWorldQuaternion`). Все мутируют аргумент и возвращают его.
+ */
+export function rootPointToLocal(p: THREE.Vector3, v: Readonly<RootView>): THREE.Vector3 { p.x -= v.x; p.z -= v.z; return p.applyQuaternion(_rvYaw(-v.yaw)); }
+export function rootPointToWorld(p: THREE.Vector3, v: Readonly<RootView>): THREE.Vector3 { p.applyQuaternion(_rvYaw(v.yaw)); p.x += v.x; p.z += v.z; return p; }
+/** Направление (дельта драга, вектор кламп-сдвига, полюс) — только рыск, без смещения. */
+export function rootDirToLocal(d: THREE.Vector3, v: Readonly<RootView>): THREE.Vector3 { return d.applyQuaternion(_rvYaw(-v.yaw)); }
+export function rootDirToWorld(d: THREE.Vector3, v: Readonly<RootView>): THREE.Vector3 { return d.applyQuaternion(_rvYaw(v.yaw)); }
+/** Поворот (ориентация стопы, ручка таза): рыск корня СЛЕВА — `Ry(∓yaw)·q`. */
+export function rootQuatToLocal(q: THREE.Quaternion, v: Readonly<RootView>): THREE.Quaternion { return q.premultiply(_rvYaw(-v.yaw)); }
+export function rootQuatToWorld(q: THREE.Quaternion, v: Readonly<RootView>): THREE.Quaternion { return q.premultiply(_rvYaw(v.yaw)); }
+const _rvYaw = (yaw: number): THREE.Quaternion => _rvQ.setFromAxisAngle(_rvY, yaw);
+
+/** Скачок корня, после которого физ-призрак ставится на позу, а не догоняет её (скраб, переход на кадр, галка). */
+export const ROOT_SNAP_YAW = (15 * Math.PI) / 180;
+export const ROOT_SNAP_POS = 4;
+/**
+ * Скачок ли. Кинематический таз куклы (`MoveKinematic`) за ОДИН шаг довернуть на 90–180° — это сотни рад/с: верх тела
+ * хлещет, пока пины не соберут. Проигрывание поворота даёт единицы градусов на кадр и сюда не попадает.
+ */
+export const rootViewJump = (a: RootView, b: RootView): boolean =>
+  Math.abs(a.yaw - b.yaw) > ROOT_SNAP_YAW || Math.hypot(a.x - b.x, a.z - b.z) > ROOT_SNAP_POS;
+
+const _thE = new THREE.Euler(), _thQ = new THREE.Quaternion(), _thR = new THREE.Quaternion();
+/**
+ * ЦЕЛЬ ФИЗ-ПРИЗРАКА С РЫСКОМ КОРНЯ: `Hips := Ry(yaw)·Hips` (позу мутирует и возвращает её же).
+ *
+ * Призрак стоит в сцене сам по себе, а не под шарниром: его таз берётся из физики В МИРЕ (кинематический таз = мировой
+ * таз манекена, рыск уже в нём), а цель бленда (`renderRagdollGhost`, match ≈ 0.85) — ЛОКАЛЬНАЯ поза манекена без
+ * рыска. Не повернуть цель — призрак (а с ним меш и оружие) довернулся бы только на ~15%. Нулевой рыск — поза как есть.
+ */
+export function turnHipsTarget(p: Pose, yaw: number): Pose {
+  if (Math.abs(yaw) < 1e-12) return p;
+  const h = p['Hips'] ?? [0, 0, 0];
+  _thR.setFromAxisAngle(_rvY, yaw).multiply(_thQ.setFromEuler(_thE.set(h[0], h[1], h[2])));
+  _thE.setFromQuaternion(_thR);
+  p['Hips'] = [_thE.x, _thE.y, _thE.z];
+  return p;
+}
+
+/**
+ * ⚠⚠ ГДЕ ПОКАЗ НЕ РАВЕН ИГРЕ — ТАЗ КЛИПА ПОВОРОТА (ревью 17.09, замер на настоящем `PosePlayer`).
+ *
+ * Шарнир крутит персонажа ЦЕЛИКОМ: таз ложится `Ry(курс)·таз клипа`, а сдвиг `__hipsD` поворачивается вместе с телом —
+ * кадр персонажа, в котором автор таз и правит (так же кладёт таз удара `applyAttackPelvis`). Ветка поворота игры
+ * (`PosePlayer.step` → `applyTorsoTwist`) пишет курс В СЛОТ Y ЭЙЛЕРА: таз = `Rx(наклон)·Ry(курс)·Rz(крен)` — наклон
+ * вперёд-назад оказывается в МИРОВОЙ оси X, авторский рыск таза выпадает, а X/Z `__hipsD` `blendClipBones` кладёт в мировых
+ * осях. Совпадает, пока у таза клипа нет наклона вперёд-назад, своего рыска и сдвига по полу — у процедурных запеканий так
+ * и есть (0.00° / 0.00u). ЗАМЕР: turn_R_180 с наклоном таза +15° на всех ключах — в игре к концу наклон НАЗАД, 30.0°;
+ * `__hipsD.x` +3 — таз на другой стороне, 6u. И это не только редактор: курс на старте поворота в игре любой, так что
+ * тот же наклон на 90° выходит креном вбок уже с первого кадра.
+ *
+ * Показ переделывать под игру НЕ стали: шарнир один на все чтения мира, а расхождение зависит от позы таза — каждый драг и
+ * каждая итерация IK двигали бы шарнир (и правили бы в «неправильном» кадре, закрепив ошибку игры в данных). Правка — в
+ * игре (кадр персонажа для таза клипа поворота, как у удара); пока её нет, редактор ПРЕДУПРЕЖДАЕТ цифрой отсюда.
+ * Сторож — `rootPreview.test.ts`: он же упадёт, когда игру поправят, и напомнит убрать предупреждение.
+ *
+ * Возвращает НАИБОЛЬШЕЕ расхождение по курсам (курс в игре = курс на старте + `__rootY`, старт любой): угол таза (°) и
+ * сдвиг таза по полу (u). `rest` — `hipsRest` рига (у игры без `__hipsD` таз стоит в X/Z = 0, с ним — `rest + __hipsD`).
+ */
+export interface PelvisGap { deg: number; u: number }
+/** Порог предупреждения: меньше — шум чтения позы (1e-3 рад) и округления запекателя. */
+export const TURN_GAP_DEG = 1;
+export const TURN_GAP_U = 0.3;
+const GAP_COURSES = 24;   // шаг 15°: максимум по наклону — на 180°, он в сетке
+const _gE = new THREE.Euler(), _gH = new THREE.Quaternion(), _gGame = new THREE.Quaternion(), _gView = new THREE.Quaternion();
+const _gPg = new THREE.Vector3(), _gPv = new THREE.Vector3();
+/**
+ * Таз ключа `p` В ИГРЕ на курсе `course` — модель ветки поворота `PosePlayer` (вес клипа 1, шов погашен): поворот кости
+ * `Rx·Ry(курс)·Rz` из канонического разбора эйлера таза клипа (так `rotation.y = курс` в `applyTorsoTwist` видит кость) и X/Z
+ * относительно персонажа (`blendClipBones`: `rest + __hipsD` без поворота; без `__hipsD` — база `gaitToHumanoid`, 0). Y не считаем.
+ */
+export function turnHipsInGame(p: Pose, course: number, rest: THREE.Vector3, q: THREE.Quaternion, pos: THREE.Vector3): void {
+  const h = p['Hips'] ?? [0, 0, 0];
+  _gE.setFromQuaternion(_gH.setFromEuler(_gE.set(h[0], h[1], h[2])));
+  q.setFromEuler(_gE.set(_gE.x, course, _gE.z));
+  const hd = hipsOffset(p, rest.y);
+  pos.set(hd ? rest.x + hd[0] : 0, 0, hd ? rest.z + hd[2] : 0);
+}
+/** Тот же таз НА ПОКАЗЕ под шарниром корня с курсом `course`: `Ry(курс)·таз клипа`, X/Z — `Ry(курс)·hips.position` (`poseRig`). */
+export function turnHipsInView(p: Pose, course: number, rest: THREE.Vector3, q: THREE.Quaternion, pos: THREE.Vector3): void {
+  const h = p['Hips'] ?? [0, 0, 0];
+  q.setFromAxisAngle(_rvY, course).multiply(_gH.setFromEuler(_gE.set(h[0], h[1], h[2])));
+  const hd = hipsOffset(p, rest.y);
+  pos.set(rest.x + (hd ? hd[0] : 0), 0, rest.z + (hd ? hd[2] : 0)).applyAxisAngle(_rvY, course);
+}
+export function turnPelvisGameGap(p: Pose, rest: THREE.Vector3, out: PelvisGap = { deg: 0, u: 0 }): PelvisGap {
+  out.deg = 0; out.u = 0;
+  for (let k = 0; k < GAP_COURSES; k++) {
+    const th = (k * 2 * Math.PI) / GAP_COURSES;
+    turnHipsInGame(p, th, rest, _gGame, _gPg); turnHipsInView(p, th, rest, _gView, _gPv);
+    out.deg = Math.max(out.deg, (_gGame.angleTo(_gView) * 180) / Math.PI);
+    out.u = Math.max(out.u, _gPg.distanceTo(_gPv));
+  }
+  return out;
+}
+/** Наибольшее расхождение по всем ключам клипа (предупреждение в свитке клипа). */
+export function clipTurnPelvisGap(c: Clip, rest: THREE.Vector3): PelvisGap {
+  const out: PelvisGap = { deg: 0, u: 0 }, g: PelvisGap = { deg: 0, u: 0 };
+  for (const k of c.keys) { turnPelvisGameGap(k.pose, rest, g); out.deg = Math.max(out.deg, g.deg); out.u = Math.max(out.u, g.u); }
+  return out;
+}
+
+/** Каналы ДВИЖЕНИЯ клипа во времени — корень и опорность стоп. Их задаёт таймлайн клипа, а не поза на манекене. */
+export const MOTION_CHANNELS: readonly string[] = [ROOT_YAW, ROOT_POS, SWING_KEY];
+/**
+ * ЗАСЕЯТЬ КАНАЛЫ ДВИЖЕНИЯ в позу нового/заменённого ключа — значением клипа на времени `t` (зовётся ДО вставки/замены).
+ *
+ * ⚠ «+ кадр» вставлял `readPoseFull()` без `__rootY`/`__swing`, а бленд считает отсутствующий канал нулём
+ * (`blendTwo`): на вставленном ключе поворот клипа проваливался в 0 — и в игре (`turnYawAt`), и теперь на виду
+ * в редакторе. «◀ из пред.» / «из след. ▶» / «середина» копировали корень СОСЕДА. Каналы, которых клип не несёт, не добавляем.
+ */
+export function seedMotionChannels(fresh: Pose, c: Clip, t: number): Pose {
+  const has = MOTION_CHANNELS.filter((k) => c.keys.some((kf) => kf.pose[k]));
+  if (!has.length) return fresh;
+  const at = clipPoseAt(c, clamp01(t / (clipDur(c) || 1)));
+  for (const k of has) { const v = at[k]; if (v) fresh[k] = [v[0], v[1], v[2]]; }
+  return fresh;
 }

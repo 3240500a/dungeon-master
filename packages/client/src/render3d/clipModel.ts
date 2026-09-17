@@ -94,10 +94,11 @@ export interface Clip {
   /**
    * КОРЕНЬ (Ф2): клип НЕСЁТ поворот / смещение персонажа в каналах `__rootY` / `__rootP`.
    *
-   * ⚠ Это ДАННЫЕ, а не привод. Позицию и фейсинг задаёт сервер, и в игре каналы корня не читает
-   * никто — сторож проверяет это проигрыванием. Нужны они трём потребителям: анализатору походки
-   * (длина шага и угол поворота берутся отсюда), экспорту в чужой движок (там это root motion) и
-   * предпросмотру в редакторе, где персонажа можно катить по полу.
+   * ⚠ Это ДАННЫЕ, а не привод. Позицию и фейсинг задаёт сервер: смещение корня игра не читает вовсе, а рыск
+   * читают только повороты на месте — `turnInPlace.turnYawAt` ведёт им таз, пока играет `turn_*` (фейсинг
+   * на сервере от этого не меняется). Прочие потребители: анализатор походки (длина шага и угол поворота),
+   * экспорт в чужой движок (там это root motion) и предпросмотр в редакторе — галки «корень: поворот /
+   * смещение» (`frameEdit.rootPreviewAt`), где персонаж поворачивается и катится по полу, как в игре.
    */
   rootYaw?: boolean;
   rootPos?: boolean;
@@ -341,6 +342,34 @@ export function splinePose(c: Clip, i: number, u: number): Pose {
       out[key] = [v(0), v(1), v(2)];
     } else out[key] = [p1[0] + (p2[0] - p1[0]) * u, p1[1] + (p2[1] - p1[1]) * u, p1[2] + (p2[2] - p1[2]) * u];
   }
+  return out;
+}
+
+/**
+ * ОДИН НЕ-УГЛОВОЙ КАНАЛ клипа на нормализованной фазе — ровно `clipPoseAt(c, t01)[key]`, но без сборки позы целиком
+ * (все кости + slerp) и без аллокаций: пишет в `out`. Нет канала ни в одном ключе интервала — `null`, как отсутствие ключа
+ * в позе. Зовёт предпросмотр корня редактора (`frameEdit.rootPreviewAt`) каждый кадр. ⚠ Формулы — копия веток
+ * `blendTwo`/`splinePose` для скаляров: их равенство `clipPoseAt` на линейных, сплайновых, ease-, step- и цикловых клипах
+ * сторожит `rootPreview.test.ts`. Угловой ключ — через `segmentPose` (сюда не для них).
+ */
+export function clipChannelAt(c: Clip, t01: number, key: string, out: [number, number, number] = [0, 0, 0]): [number, number, number] | null {
+  const seg = clipSegmentAt(c, clamp01(t01) * (clipDur(c) || 1)); if (!seg) return null;
+  const set = (v: readonly number[] | undefined): [number, number, number] | null => { if (!v) return null; out[0] = v[0]!; out[1] = v[1]!; out[2] = v[2]!; return out; };
+  if (seg.a === seg.b) return set(seg.a.pose[key]);
+  const a = seg.a.pose[key], b = seg.b.pose[key];
+  if (!a && !b) return null;
+  if (isAngleKey(key)) return set(segmentPose(c, seg)[key]);
+  const p1 = a ?? ZERO3, p2 = b ?? ZERO3, u = seg.u;
+  if (seg.a.interp === 'smooth' && MOTION_POS_KEYS.has(key)) {
+    const i = seg.i, ks = c.keys;
+    const p0 = ks[splineIndex(c, i - 1)]!.pose[key] ?? p1, p3 = ks[splineIndex(c, i + 2)]!.pose[key] ?? p2;
+    const d0 = ks[i]!.t - splineTime(c, i - 1), h = ks[i + 1]!.t - ks[i]!.t, d2 = splineTime(c, i + 2) - ks[i + 1]!.t;
+    const s2 = u * u, s3 = s2 * u;
+    const h00 = 2 * s3 - 3 * s2 + 1, h10 = (s3 - 2 * s2 + u) * h, h01 = -2 * s3 + 3 * s2, h11 = (s3 - s2) * h;
+    for (let j = 0; j < 3; j++) out[j] = h00 * p1[j]! + h10 * tangent(p0[j]!, p1[j]!, p2[j]!, d0, h) + h01 * p2[j]! + h11 * tangent(p1[j]!, p2[j]!, p3[j]!, h, d2);
+    return out;
+  }
+  for (let j = 0; j < 3; j++) out[j] = p1[j]! + (p2[j]! - p1[j]!) * u;
   return out;
 }
 

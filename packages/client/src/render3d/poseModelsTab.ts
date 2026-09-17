@@ -761,11 +761,17 @@ export function createModelsTab(scene: THREE.Scene, charProfile?: () => BodyProf
   // Сборка: копируем ПОЗУ манекена editor'а в источник-риг сборки → меш СОВПАДАЕТ с манекеном. Корень (таз) ведём за
   // манекеном (position тоже, не только rotation) — иначе меш стоит в origin, а манекен уезжает при IK-перетаскивании
   // таза → тело «не движется за тазом» + оружие (на кисти манекена) висит мимо меша. Совпадение = обе проблемы решены.
+  const _wp = new THREE.Vector3(), _ws = new THREE.Vector3();
   function driveAsm(source: Humanoid): void {
     if (!asmOn || !asmSrc || !asmSkin) return;
-    asmSrc.root.position.copy(source.root.position);       // корень: позиция персонажа
     asmSrc.hips.position.copy(source.hips.position);       // таз ОТДЕЛЬНО (Root ≠ таз): боб/присед/авторский мах таза
     for (const nm of asmSrc.boneNames) { const sb = source.bones.get(nm); const tb = asmSrc.bones.get(nm); if (sb && tb) tb.rotation.copy(sb.rotation); }
+    // ⭐ КОРЕНЬ — МИРОВОЙ, а не локальный: манекен редактора висит под шарниром корня (галка «корень: поворот / смещение»,
+    // `pose-editor.ts` `rootTurn`), а источник модели стоит в сцене. Локальная копия оставляла меш (и оружие на его кисти)
+    // на месте, пока манекен поворачивался. Без шарнира (и у физ-призрака, он в сцене) мировой корень = локальный — как было.
+    source.root.updateWorldMatrix(true, false);
+    source.root.matrixWorld.decompose(_wp, asmSrc.root.quaternion, _ws);
+    asmSrc.root.position.copy(_wp);                        // корень: позиция персонажа (масштаб источника свой — не копируем)
     asmSrc.root.updateMatrixWorld(true);
     asmSkin.update();
   }

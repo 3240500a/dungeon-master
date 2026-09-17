@@ -47,6 +47,9 @@ import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
 import { forgetDrag } from './jointLimitV2.js';   // накопитель протяжки кости: забывать на новом драге и при смене позы
 import { poseRig, settleLikePhysGhost, writeKeyPose, keyAtTime, previewOffKey, faceTarget, captureAimOffsets, aimBoneToPoint as aimChainBone } from './frameEdit.js';   // правка кадра: чистая часть под node-тесты
+import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRootView, placeRootView, composeRootView, rootViewDelta,
+  rootViewJump, turnHipsTarget, seedMotionChannels, copyRootView, rootPointToLocal, rootPointToWorld, rootDirToLocal, rootDirToWorld,
+  rootQuatToLocal, rootQuatToWorld, clipTurnPelvisGap, TURN_GAP_DEG, TURN_GAP_U, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
@@ -136,6 +139,30 @@ const grid = new THREE.GridHelper(320, 10, 0x4a5680, 0x2a3040);
 grid.position.y = 0.02; (grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = 0.35;
 scene.add(grid);
 const axes = new THREE.AxesHelper(20); axes.position.y = 0.03; scene.add(axes);
+/**
+ * ⭐ ШАРНИР КОРНЯ — родитель `human.root` для галок «корень: поворот / смещение» (разбор — у `syncRootView`).
+ * Не кость `Root` (её пишет `readPose` в ключ и сбрасывает `reset()`) и не таз (утёк бы в запись, undo и цели физики):
+ * под шарниром все чтения позы остаются локальными, а всё, что берёт мировые координаты, видит персонажа повёрнутым.
+ */
+const rootTurn = new THREE.Group(); rootTurn.name = '__rootTurn'; scene.add(rootTurn);
+/**
+ * Показанный сейчас корень (то, что стоит на шарнире). Меняется ТОЛЬКО в `syncRootView` — копией полей (`copyRootView`):
+ * объект свой и один, на него не ссылаются (физ-призрак помнит корень КОПИЕЙ, `physRootAt`), кадр цикла его не аллоцирует.
+ */
+const rootShown: RootView = { ...ROOT_VIEW_ZERO };
+/** Общие объекты кадра цикла (`rootViewWant`/`rootViewNow`/`syncRootView`) — здесь, наверху: вызов раньше объявления упал бы в TDZ. */
+const _rootWant: RootWant = { yaw: false, pos: false }, _rootNext: RootView = { ...ROOT_VIEW_ZERO };
+const _rootDelta = { m: new THREE.Matrix4(), q: new THREE.Quaternion() };
+/** Галки — ЛИЧНАЯ настройка (`pe_prefs`): в клип и на сервер не едут. Дефолт — выкл, как было. */
+let rootYawOn = getPref('rootYawView', false), rootPosOn = getPref('rootPosView', false);
+/** >0 — корень насильно в нуле: запекание, подгонка физ-тел, экспорт (они пишут МИРОВЫЕ данные). */
+let rootViewHold = 0;
+/** Мировая точка → кадр персонажа (под шарниром). Без показа корня — тождество. Математика — `frameEdit.rootPointToLocal` (тест). */
+function rootLocal(v: THREE.Vector3): THREE.Vector3 { return rootPointToLocal(v, rootShown); }
+/** Кадр персонажа → мир. */
+function rootWorld(v: THREE.Vector3): THREE.Vector3 { return rootPointToWorld(v, rootShown); }
+/** Мировое НАПРАВЛЕНИЕ (дельта драга, вектор кламп-сдвига) → кадр персонажа: только рыск, без смещения. */
+function rootLocalDir(v: THREE.Vector3): THREE.Vector3 { return rootDirToLocal(v, rootShown); }
 
 const gizmo = new TransformControls(camera, canvas); gizmo.setSpace('world'); scene.add(gizmo.getHelper());
 /**
@@ -513,7 +540,7 @@ function setGaze(on: boolean): void {
   gazeB?.classList.toggle('on', on);   // Ф26.3: взгляд включается и КЛИКОМ ПО РУЧКЕ ГОЛОВЫ — кнопка должна это показывать
   if (on) {
     const hd = human.bones.get('Head');
-    if (hd) { human.root.updateMatrixWorld(true); gazeTarget.copy(hd.getWorldPosition(V())).add(new THREE.Vector3(0, 0, GAZE_DIST)); }
+    if (hd) { human.root.updateMatrixWorld(true); gazeTarget.copy(hd.getWorldPosition(V())).add(rootDirToWorld(new THREE.Vector3(0, 0, GAZE_DIST), rootShown)); }   // «вперёд» персонажа, а не мира (галка «корень»)
     gazeHandle.position.copy(gazeTarget);
   }
   refreshPose();
@@ -943,8 +970,8 @@ function supportRect(): { x0: number; x1: number; z0: number; z1: number } | nul
   for (const k of ['LF', 'RF'] as const) {
     const e = rig.eff[k]; if (!e) continue;
     const f = human.bones.get(e.end); if (!f) continue;
-    const p = f.getWorldPosition(V());
-    if (p.y > SOLE_STAND) continue;                                             // ОПОРА — ЭТО ВЫСОТА, А НЕ ПИН: заколотая в воздухе стопа ничего не держит
+    const p = rootLocal(f.getWorldPosition(V()));                              // ⭐ в кадре персонажа: носок — по его «вперёд», а не по мировому +Z (галка «корень»)
+    if (p.y > SOLE_STAND) continue;                                            // ОПОРА — ЭТО ВЫСОТА, А НЕ ПИН: заколотая в воздухе стопа ничего не держит
     x0 = Math.min(x0, p.x - FOOT_HALF); x1 = Math.max(x1, p.x + FOOT_HALF);
     z0 = Math.min(z0, p.z - FOOT_HALF); z1 = Math.max(z1, p.z + FOOT_HALF * 1.6);   // носок длиннее пятки
     n++;
@@ -955,8 +982,10 @@ const SOLE_STAND = 4;      // выше этого над полом стопа �
 const FOOT_HALF = 3;       // полуширина стопы в плане
 const balanceOff = V();    // ВЕСЬ сдвиг таза, сделанный помощью (НЕ авторский! см. `syncHandles`)
 /** Как решатель переноса веса видит сцену (`balanceSolve.ts` — там же замеры и обе причины «улетает в бок»). */
+// ⭐ ВСЁ В КАДРЕ ПЕРСОНАЖА (под шарниром корня): `move` пишет в ЛОКАЛЬНЫЙ `hips.position`, значит и центр масс с опорой
+// меряем там же. В мире с показанным поворотом корня баланс толкал бы таз не туда, а на 180° — прочь от опоры.
 const BAL_PROBE: BalanceProbe = {
-  com: () => { const { p } = massCenter(); return { x: p.x, z: p.z }; },
+  com: () => { const { p } = massCenter(); rootLocal(p); return { x: p.x, z: p.z }; },
   sup: () => supportRect(),
   move: (dx, dz) => { human.hips.position.x += dx; human.hips.position.z += dz; human.root.updateMatrixWorld(true); },
 };
@@ -1336,7 +1365,7 @@ function clampHipsToPins(): void {
       const r = human.bones.get(L.root)?.getWorldPosition(V()); if (!r) continue;
       const d = r.distanceTo(L.goal);
       if (d <= L.reach) continue;
-      human.hips.position.addScaledVector(r.sub(L.goal).multiplyScalar(1 / d), L.reach - d);
+      human.hips.position.addScaledVector(rootLocalDir(r.sub(L.goal).multiplyScalar(1 / d)), L.reach - d);   // мир → кадр персонажа (галка «корень»)
       moved = Math.max(moved, d - L.reach);
     }
     if (moved < 1e-3) break;
@@ -1533,7 +1562,8 @@ function solvePlan(): SolvePlan {
   for (const k in rig.eff) { const e = rig.eff[k]!; if (e.ik && e.isFoot && mask.has(e.mid)) poles.set(e.mid, e.pole.clone()); }
   return { mask, targets, rigid, anchorBone, anchorPos, pull, poles };
 }
-function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.add(delta); for (const e of effList()) if (!e.isFoot && !e.pin && e !== except) e.target.add(delta); }
+// `rig.hipsPos` — ЛОКАЛЬНЫЙ таз, цели эффекторов — МИРОВЫЕ: дельта ручки (мир) идёт в таз через кадр персонажа (галка «корень»).
+function moveHips(delta: THREE.Vector3, except: Eff | null): void { rig.hipsPos.add(rootLocalDir(delta.clone())); for (const e of effList()) if (!e.isFoot && !e.pin && e !== except) e.target.add(delta); }
 
 // ── Пикинг ──
 const ray = new THREE.Raycaster(); let activeKey: string | null = null; let activePole: string | null = null; let activeGaze = false;
@@ -1580,7 +1610,7 @@ canvas.addEventListener('pointerdown', (ev) => {
       activeGaze = false; activeShoulder = null;
       if (shK) { activeShoulder = shK; if (!gazeOn) girdleForget(); gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(shoulderHandles[shK]!); }
       else if (hit.object === gazeHandle) { activeGaze = true; if (!gazeOn) setGaze(true); gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(gazeHandle); }
-      else if (hit.object === rig.hipsHandle) { activeKey = 'hips'; pinBase = pinMiss(); markHipsGood(); gizmo.setSpace('world'); gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); gizmo.attach(rig.hipsHandle); }
+      else if (hit.object === rig.hipsHandle) { activeKey = 'hips'; pinBase = pinMiss(); markHipsGood(); gizmo.setSpace('world'); gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rootQuatToWorld(rig.hipsHandle.quaternion.copy(rig.hipsQuat), rootShown); gizmo.attach(rig.hipsHandle); }   // ручка — в мире, таз — локальный
       else {
         const endK = Object.keys(rig.eff).find((k) => rig.eff[k]!.handle === hit.object);
         const polK = Object.keys(rig.eff).find((k) => rig.eff[k]!.poleHandle === hit.object);
@@ -1691,7 +1721,7 @@ gizmo.addEventListener('objectChange', () => {
   if (activePole) { const e = rig.eff[activePole]!; const rp = human.bones.get(e.root)!.getWorldPosition(V()); const pv = e.poleHandle.position.clone().sub(rp); if (pv.lengthSq() > 1e-6) e.pole.copy(pv.normalize()); return; }   // угол свивеля снимется в solveElbowEffector по ФАКТУ
   if (activeKey === 'hips') {
     if (hipsMode === 'translate') { moveHips(rig.hipsHandle.position.clone().sub(rig.hipsHandleAt), null); rig.hipsHandleAt.copy(rig.hipsHandle.position); }
-    else rig.hipsQuat.copy(rig.hipsHandle.quaternion);
+    else rootQuatToLocal(rig.hipsQuat.copy(rig.hipsHandle.quaternion), rootShown);   // мир ручки → локальный таз (галка «корень»)
   }
   else {
     // Ф21.4: ТЯГА КИСТИ БОЛЬШЕ НЕ ДВИГАЕТ ТАЗ. Здесь стояло `moveHips(дельта × bodyFollow)` — КАЖДЫЙ
@@ -1994,12 +2024,14 @@ function snapshot(): State {
   const eff: State['eff'] = {};
   // `sw` — СВИВЕЛЬ: запиненные конечности его не переснимают (`syncHandles`), а драг кисти его гасит (`ARM_SWIVEL_FADE`) —
   // без него undo вернул бы позу и пин, но следующий `holdPins` повёл бы локоть/колено в плоскость ПОСЛЕ драга.
-  for (const k in rig.eff) { const e = rig.eff[k]!; eff[k] = { t: e.target.toArray() as [number, number, number], fq: e.footQuat.toArray() as [number, number, number, number], pl: e.pole.toArray() as [number, number, number], ik: e.ik, pin: e.pin, kr: e.keepRot, sw: e.swivel }; }
+  // ⭐ ЦЕЛИ/ПОЛЮСА/СТОПЫ — В КАДРЕ ПЕРСОНАЖА, а не в мире: между снимком и откатом показанный корень мог смениться (галка
+  // «корень», переход на другой кадр поворота), и мировая цель запиненной стопы потянула бы ногу на старое место.
+  for (const k in rig.eff) { const e = rig.eff[k]!; eff[k] = { t: rootLocal(e.target.clone()).toArray() as [number, number, number], fq: rootQuatToLocal(e.footQuat.clone(), rootShown).toArray() as [number, number, number, number], pl: rootDirToLocal(e.pole.clone(), rootShown).toArray() as [number, number, number], ik: e.ik, pin: e.pin, kr: e.keepRot, sw: e.swivel }; }
   return { pose: readPoseFull(), hips: { p: rig.hipsPos.toArray() as [number, number, number], q: rig.hipsQuat.toArray() as [number, number, number, number] }, eff };
 }
 function restore(s: State): void {
   applyPose(s.pose); rig.hipsPos.fromArray(s.hips.p); rig.hipsQuat.fromArray(s.hips.q);
-  for (const k in s.eff) { const e = rig.eff[k]; const d = s.eff[k]!; if (e) { e.target.fromArray(d.t); e.footQuat.fromArray(d.fq); if (d.pl) e.pole.fromArray(d.pl); e.ik = d.ik; e.pin = d.pin; if (d.kr !== undefined) e.keepRot = d.kr; if (d.sw !== undefined) e.swivel = d.sw; } }
+  for (const k in s.eff) { const e = rig.eff[k]; const d = s.eff[k]!; if (e) { rootWorld(e.target.fromArray(d.t)); rootQuatToWorld(e.footQuat.fromArray(d.fq), rootShown); if (d.pl) rootDirToWorld(e.pole.fromArray(d.pl), rootShown); e.ik = d.ik; e.pin = d.pin; if (d.kr !== undefined) e.keepRot = d.kr; if (d.sw !== undefined) e.swivel = d.sw; } }
   refreshLimbs();
 }
 const history = makeHistory(100);
@@ -2150,7 +2182,7 @@ function ringsOff(): void {
   shiftRings = null;
   if (gizmo.dragging) return;   // крутит кольца прямо сейчас — не выдёргиваем гизмо из-под руки
   fkProxyBone = null; selected = r.sel; activeKey = r.key; activePole = r.pole; hiMesh(r.sel);
-  if (r.key === 'hips') { gizmo.setSpace('world'); gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); gizmo.attach(rig.hipsHandle); }
+  if (r.key === 'hips') { gizmo.setSpace('world'); gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rootQuatToWorld(rig.hipsHandle.quaternion.copy(rig.hipsQuat), rootShown); gizmo.attach(rig.hipsHandle); }
   else if (r.key) { gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(rig.eff[r.key]!.handle); }
   else if (r.pole) { gizmo.setSpace('world'); gizmo.setMode('translate'); gizmo.attach(rig.eff[r.pole]!.poleHandle); }
   else if (r.sel) attachBoneGizmo(r.sel);
@@ -2536,13 +2568,13 @@ function applyChar(id: string): void {
   loadShieldMix(id);                                          // вес подмешивания щита этого персонажа
   loadTwistCfg(id);                                           // профиль скрутки корпуса (torso-lead) этого персонажа
   applyGaitCfg(id);                                            // свой настроенный бег у каждого персонажа
-  if (human) { scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
+  if (human) { rootTurn.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   gizmo.detach(); selMesh = null; selected = null; activeKey = null; weaponGroups = [];
   human = stampRig(buildHumanoid({ ...rigRecipe(), style: manStyle() })); curHumanStyle = manStyle();   // Ф27: геометрия — только из рецепта
   normalizeHipsOfChar(id);   // Ф12: rest-высота ЭТОГО тела только что стала известна — переводим его клипы в дельту
   modelsTab.refreshProfile();   // Ф15.1: морф этого персонажа обязан уехать И в риг-источник, иначе меш не поедет за скелетом
   human.footLift = physFootLift;                              // подъём стопы персонажа (standY через measureStancePlants)
-  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();
+  rootTurn.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();   // под шарниром корня (`rootTurn`), не в сцене
   if (pw) buildGhost();                                       // призрак под новые пропорции (оружие крепится К НЕМУ)
   updateWeapon(); captureRig();                               // оружие — на свежий физ-призрак
   disposeOnion();                                             // онион-призраки пересоберутся под новые пропорции
@@ -2556,11 +2588,11 @@ function manStyle(): 'solid' | 'skeleton' { return manView === 'skel' ? 'skeleto
 function rebuildManikin(): void {
   fbik = null;   // солвер связан с КОНКРЕТНЫМ скелетом (топология/длины) — пересобрать
   const pose = readPoseFull();
-  scene.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
+  rootTurn.remove(human.root); human.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); });
   gizmo.detach(); selMesh = null; selected = null;
   human = stampRig(buildHumanoid({ ...rigRecipe(), style: manStyle() })); curHumanStyle = manStyle();   // Ф27: геометрия — только из рецепта
   human.footLift = physFootLift;                              // подъём стопы сохраняется при пересборке стиля манекена
-  scene.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();
+  rootTurn.add(human.root); human.root.visible = manView !== 'hidden'; manikinOnTop(); applyAlpha();   // под шарниром корня (`rootTurn`), не в сцене
   applyPose(pose); if (ikOn) captureRig();   // оружие на физ-призраке — манекен-стиль его не трогает
 }
 function setManView(): void {
@@ -2603,7 +2635,7 @@ function setIk(on: boolean): void {
 ikB = mkBtn('IK ●', () => setIk(!ikOn));
 gazeB = mkBtn('👁 взгляд', () => setGaze(!gazeOn));
 gazeB.title = 'Голова смотрит в точку-хелпер (белый шар перед лицом): взгляд держится вперёд, как бы ни скручивался корпус';
-hipsB = mkBtn('таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'), () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; setPref('hipsMode', hipsMode); hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rig.hipsHandle.quaternion.copy(rig.hipsQuat); } });
+hipsB = mkBtn('таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'), () => { hipsMode = hipsMode === 'translate' ? 'rotate' : 'translate'; setPref('hipsMode', hipsMode); hipsB.textContent = 'таз: ' + (hipsMode === 'translate' ? 'двигать' : 'вращать'); if (activeKey === 'hips') { gizmo.setMode(hipsMode); if (hipsMode === 'rotate') rootQuatToWorld(rig.hipsHandle.quaternion.copy(rig.hipsQuat), rootShown); } });   // ручка — в мире, таз — локальный (галка «корень»)
 const physB = mkBtn('физ: выкл', () => { void ensurePhysics().then(() => setPhys(!physOn)); });
 const modeB = mkBtn('', () => { uiPro = !uiPro; ui.pro = uiPro; saveUi(); syncModeB(); refreshAll(); });
 function syncModeB(): void { modeB.textContent = uiPro ? '⚙ Про' : '○ Простой'; modeB.title = uiPro ? 'Про: все настройки (лимиты, моторы, физика, тюнинг походки)' : 'Простой: только позинг и клипы — инженерные панели скрыты (их значения действуют)'; modeB.classList.toggle('on', uiPro); }
@@ -2669,7 +2701,7 @@ const posMat = (): THREE.LineBasicMaterial => new THREE.LineBasicMaterial({ colo
 const posRing = new THREE.LineLoop(new THREE.BufferGeometry(), posMat());
 const posCross = new THREE.LineSegments(new THREE.BufferGeometry(), posMat());
 const posMark = new THREE.Group();
-posMark.add(posRing, posCross); posMark.position.y = 2; posMark.visible = false; scene.add(posMark);
+posMark.add(posRing, posCross); posMark.position.y = 2; posMark.visible = false; rootTurn.add(posMark);   // серверная позиция = корень: с галкой «корень: смещение» едет за ним
 for (const o of [posRing, posCross]) { o.renderOrder = 999; o.frustumCulled = false; }
 let posMarkR = -1;
 /** Радиус берём ИЗ SHARED, а не переписываем число — иначе кольцо разъедется с сервером на первом же тюне. */
@@ -2786,7 +2818,7 @@ for (const [k, lbl] of [['anim', 'Анимация'], ['loco', 'Бег'], ['turn
 // иначе кости модели стоят не там, где нарисованы кости редактора (колено расходилось на 2.37u).
 const modelsTab = createModelsTab(scene, () => atlasProfile(), () => morphBoneScale());
 
-function refreshAll(): void { for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else if (tab === 'graph') renderGraph(); else if (tab === 'test') renderTest(); else modelsTab.render(body); if (tab !== 'graph' && graphField) graphField.style.display = 'none'; syncTestTab(); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
+function refreshAll(): void { syncRootView(); for (const b of Array.from(tabBar.children) as HTMLButtonElement[]) b.style.background = b.dataset.tab === tab ? '#3a5030' : '#20242f'; charSel.innerHTML = ''; for (const c of rosterChars()) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; o.selected = c.id === curCharId; charSel.append(o); } { const [wm, wo] = splitWeapon(weapon); wpnSel.value = wm; offSel.value = wo; } if (tab === 'anim') renderAnim(); else if (tab === 'loco') renderLoco(); else if (tab === 'turn') renderTurn(); else if (tab === 'char') renderChar(); else if (tab === 'ai') renderAi(); else if (tab === 'graph') renderGraph(); else if (tab === 'test') renderTest(); else modelsTab.render(body); if (tab !== 'graph' && graphField) graphField.style.display = 'none'; syncTestTab(); refreshTimeline(); updateOnion(); updateTrajectory(); updateLimitGizmo(); syncPosMark(); }
 function refreshPose(): void { if (tab === 'anim') renderAnim(); }
 /** Пересчитать позу без перерисовки панели — для `oninput` ползунков (перерисовка отобрала бы у мыши захваченный бегунок). */
 function refreshLive(): void { if (ikOn) solveRig(); }
@@ -3164,7 +3196,8 @@ function poseLibSection(): void {
     // «А в игре так же?» — требование «редактор ≡ игра» становится ИЗМЕРИМЫМ, а не на глаз.
     body.append(pbtn('⚖ сверить с физ-призраком', () => {
       if (!ghostHuman) { alert('Включи физику — без призрака сверять не с чем.'); return; }
-      const d = comparePoses(human.readPose() as Pose, ghostHuman.readPose() as Pose, (x, y) => {
+      // Авторская поза — ТОЙ ЖЕ цели, что получает призрак (`stepPhysics`): с галкой «корень» таз призрака несёт рыск корня.
+      const d = comparePoses(turnHipsTarget(human.readPose() as Pose, rootShown.yaw), ghostHuman.readPose() as Pose, (x, y) => {
         const qa = new THREE.Quaternion().setFromEuler(new THREE.Euler(x[0] ?? 0, x[1] ?? 0, x[2] ?? 0, 'XYZ'));
         const qb = new THREE.Quaternion().setFromEuler(new THREE.Euler(y[0] ?? 0, y[1] ?? 0, y[2] ?? 0, 'XYZ'));
         return qa.angleTo(qb) * 180 / Math.PI;
@@ -3439,7 +3472,9 @@ async function showImportPanel(file: File): Promise<void> {
  * оси суставов и рест-трансляции констрейнтов). А вот ДЛИНЫ в Т-позе уже с морфом и профилем атласа —
  * именно поэтому после авто-подгонки тела едут за телосложением.
  */
-function fitPhysToBones(): void {
+/** ⚠ Анкеры — МИРОВЫЕ позиции и уезжают в `pe_ragdoll` (контент): показанный корень (галка «корень») туда не пишем. */
+function fitPhysToBones(): void { withRootViewOff(fitPhysToBonesAt0); }
+function fitPhysToBonesAt0(): void {
   const snap = new Map<string, THREE.Quaternion>();
   for (const [n, b] of human.bones) snap.set(n, b.quaternion.clone());
   const hp = human.hips.position.clone();
@@ -3520,7 +3555,9 @@ function fitPhysToBones(): void {
  * Сначала всегда идёт подгонка ПО КОСТЯМ: она даёт анкер и ось, а вершины уточняют толщину,
  * длину и центр. Без загруженной модели возвращает null и оставляет подгонку по костям.
  */
-function fitPhysToMesh(inflate = 0.95, pct = 0.95): { bodies: number; verts: number } | null {
+/** ⚠ Облако вершин — В МИРЕ, как и анкеры: корень в нуле на всё время замера (галка «корень»). */
+function fitPhysToMesh(inflate = 0.95, pct = 0.95): { bodies: number; verts: number } | null { return withRootViewOff(() => fitPhysToMeshAt0(inflate, pct)); }
+function fitPhysToMeshAt0(inflate: number, pct: number): { bodies: number; verts: number } | null {
   const ex = modelsTab.exportTarget(); if (!ex) return null;
   const meshes: THREE.SkinnedMesh[] = [];
   ex.root.traverse((o) => { const m = o as THREE.SkinnedMesh; if (m.isSkinnedMesh && m.geometry.getAttribute('skinWeight')) meshes.push(m); });
@@ -3807,6 +3844,9 @@ function animExportSection(): void {
     // Манекен отдаём В T-ПОЗЕ: бинд-поза в GLB должна быть канонической, иначе в чужом движке
     // все клипы приедут со смещением от той случайной позы, в которой был манекен в момент клика.
     const saved = readPoseFull();
+    // ⚠ Экспорт снимает узлы модели КАК ОНИ СТОЯТ — показанный корень (галка «корень») туда не должен попасть. Держим его
+    // в нуле до конца (экспорт асинхронный) и перегоняем меш с манекена сразу: цикл кадра до разбора сцены не успеет.
+    rootViewHold++; syncRootView(); if (tgt) modelsTab.drive(human);
     const target = tgt ? tgt.root : (human.reset(), human.root);
     void exportClipsToGLB(target, clips, {
       profile: tgt ? expProfile : (expProfile === 'model' ? 'canon' : expProfile),
@@ -3820,7 +3860,7 @@ function animExportSection(): void {
           + (res.lostTracks.length ? ` ⚠ потеряно дорожек: ${res.lostTracks.length} (имена костей не совпали)` : '');
       })
       .catch((e: unknown) => { expStatus = '✗ ' + String(e); })
-      .finally(() => { applyPose(saved); if (ikOn) captureRig(); renderAnim(); });
+      .finally(() => { rootViewHold--; applyPose(saved); if (ikOn) captureRig(); syncRootView(); renderAnim(); });
   };
 
   const cur = curClip();
@@ -4006,7 +4046,9 @@ function clipSection(): void {
         let insAt: number, nt: number;
         if (atT !== null) { insAt = c.keys.findIndex((k) => k.t > atT); if (insAt < 0) insAt = c.keys.length; nt = +atT.toFixed(4); }
         else { insAt = lockEnds ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); }   // концы-стойка неприкосновенны → вставка в середину
-        c.keys.splice(insAt, 0, { pose: readPoseFull(), t: nt }); frameIdx = insAt; previewT = null; saveLib(); refreshAll();
+        // Корень и опорность стоп — С ТАЙМЛАЙНА на время нового ключа (`seedMotionChannels`): без них поворот клипа проваливался в 0 на вставке.
+        const pose = seedMotionChannels(readPoseFull(), c, nt);
+        c.keys.splice(insAt, 0, { pose, t: nt }); frameIdx = insAt; previewT = null; saveLib(); refreshAll();
       })),
       pbtn('− кадр', () => histLib('удалить кадр', () => { if (!atEnd && c.keys.length > (lockEnds ? 3 : 1)) { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } })),   // концы не удалить
     );
@@ -4014,7 +4056,8 @@ function clipSection(): void {
     // подтянуть позу в текущий кадр из соседнего (строить замах/удар от концов-idle, потом править)
     if (!atEnd) {
       const pr2 = el('div', 'margin-top:3px'); body.append(pr2);
-      const pull = (get: () => Pose): void => histLib('поза из соседнего кадра', () => { const kk = c.keys[frameIdx]; if (kk) { kk.pose = get(); saveLib(); goFrame(frameIdx); } });
+      // Корень и опорность стоп — СВОИ у ключа (`seedMotionChannels`, сэмпл до замены): у соседа они другие, копировались его.
+      const pull = (get: () => Pose): void => histLib('поза из соседнего кадра', () => { const kk = c.keys[frameIdx]; if (kk) { kk.pose = seedMotionChannels(get(), c, kk.t); saveLib(); goFrame(frameIdx); } });
       if (frameIdx > 0) pr2.append(pbtn('◀ из пред.', () => pull(() => clonePose(c.keys[frameIdx - 1]!.pose))));
       if (frameIdx < lastI) pr2.append(pbtn('из след. ▶', () => pull(() => clonePose(c.keys[frameIdx + 1]!.pose))));
       if (frameIdx > 0 && frameIdx < lastI) pr2.append(pbtn('⇄ середина (пред+след)', () => pull(() => blendTwo(c.keys[frameIdx - 1]!.pose, c.keys[frameIdx + 1]!.pose, 0.5))));
@@ -4025,6 +4068,35 @@ function clipSection(): void {
     trajBtn = pbtn(trajLabel(), () => { trajOn = !trajOn; refreshAll(); }, trajOn);
     trajBtn.title = 'Путь выбранной кости за весь клип. Расстояние между точками = скорость (сетка времени равномерная).';
     vr.append(trajBtn); }
+    // ⭐ КОРЕНЬ КЛИПА НА ВИДУ (`syncRootView`). Галки есть только у клипов, которые корень несут (повороты, импорт с корнем).
+    { const ch = clipRootChannels(c);
+      if (ch.yaw || ch.pos) {
+        const rr = el('div', 'display:flex;flex-wrap:wrap;gap:2px 12px;margin-top:3px'); body.append(rr);
+        const chk = (label: string, on: boolean, set: (v: boolean) => void, hint: string): HTMLElement => {
+          const l = el('label', 'font-size:11px;display:flex;align-items:center;gap:4px'); l.title = hint;
+          const cb = el('input', '') as HTMLInputElement; cb.type = 'checkbox'; cb.checked = on;
+          cb.onchange = () => { set(cb.checked); syncRootView(); refreshAll(); };   // refreshAll — призраки соседних кадров и траектория
+          l.append(cb, document.createTextNode(label)); return l;
+        };
+        if (ch.yaw) rr.append(chk('корень: поворот', rootYawOn, (v) => { rootYawOn = v; setPref('rootYawView', v); },
+          'Показать поворот персонажа из канала клипа (__rootY). Курс — тем же сэмплером, что у поворотов на месте в игре (turnYawAt); '
+          + 'персонаж крутится целиком, с тазом (наклон и сдвиг таза — в кадре персонажа). Только вид: в кадр, буфер и публикацию не пишется.'));
+        if (ch.pos) rr.append(chk('корень: смещение', rootPosOn, (v) => { rootPosOn = v; setPref('rootPosView', v); },
+          'Показать смещение персонажа по полу из канала клипа (__rootP). Только вид: в кадр, буфер и публикацию не пишется.'));
+        // ⚠ ГДЕ ПОКАЗ ≠ ИГРА (`frameEdit.turnPelvisGameGap`): таз клипа поворота игра кладёт в мировых осях. Не молчим — цифрой.
+        if (ch.yaw && TURN_NAMES.includes(c.name)) {
+          const g = clipTurnPelvisGap(c, human.hipsRest);
+          if (g.deg > TURN_GAP_DEG || g.u > TURN_GAP_U) {
+            const hn = el('div', 'color:#e0b050;font-size:10px;margin-top:2px;flex-basis:100%');
+            hn.textContent = `⚠ в игре таз этого поворота ляжет иначе: до ${g.deg.toFixed(0)}° / ${g.u.toFixed(1)}u`;
+            hn.title = 'Игра пишет курс поворота в слот Y эйлера таза: наклон таза вперёд-назад остаётся в МИРОВОЙ оси (к концу разворота '
+              + 'на 180° — наклон назад), собственный рыск таза клипа выпадает, а сдвиг таза (__hipsD X/Z) не поворачивается с телом. '
+              + 'Зависит от того, куда персонаж смотрел на старте. Здесь показан кадр персонажа. Пока игру не поправили — держи таз '
+              + 'поворота без наклона вперёд-назад и без сдвига по полу (крен таза совпадает).';
+            rr.append(hn);
+          }
+        }
+      } }
   rollout('curve', 'КРИВАЯ ПЕРЕХОДА', () => curveSection(c));
   rollout('marks', 'МЕТКИ КАДРА', () => marksSection(c));
   }
@@ -4463,10 +4535,11 @@ function bakeGaitSection(): void {
     player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
     const t0 = performance.now();
     const opts = { character: curCharId, weapon, readPose: bakeReadPose(human) };
-    const out = [
+    // Планировщик ставит стопы в МИРОВЫХ X/Z — корень обязан быть в нуле (вне «Анимации» он и так ноль; держим явно).
+    const out = withRootViewOff(() => [
       ...bakeGaitSet(player, human, opts, GAIT_PRESETS.filter((s) => bakeList().includes(s.name))),
       ...bakeTurnSet(player, human, opts, TURN_PRESETS.filter((s) => bakeList().includes(s.name))),
-    ];
+    ]);
     const ms = performance.now() - t0;
     histLib('запечь походку', () => {
       // Перезапекание набора — осознанная перезапись ПОЗ, но не разметки: метки (шаги!) расставлены руками и
@@ -5178,6 +5251,7 @@ function goFrame(i: number): void {
   ghostGround.off = 0; human.root.position.y = 0;
   const c = curClip(); if (!c) return;
   frameIdx = i; if (c.keys[i]) { applyPose(c.keys[i]!.pose); previewT = null; }   // applyPose → onPoseReplaced: драг-память и взгляд пересняты
+  syncRootView();   // корень ЭТОГО кадра (галка «корень»); ручки ниже снимаются уже на нём — хотя `syncRootView` перенёс бы их и сам
   if (ikOn) captureRig();
   refreshAll();
 }
@@ -5196,10 +5270,69 @@ function preview(time: number): void {   // time в секундах
   const c = curClip(); if (!c) return;
   const seg = clipSegmentAt(c, time); if (!seg) return;
   previewT = time;   // поза с таймлайна, а не выбором кадра — гейт записи (`offKeyTime`)
-  if (seg.a === seg.b) { applyPose(seg.a.pose); return; }
+  if (seg.a === seg.b) applyPose(seg.a.pose);
   // Сплайн считает поза целиком из соседних ключей — тем же `segmentPose`, что игра; ломаная — прежним лерпом.
-  if (seg.a.interp === 'smooth') { applyPose(segmentPose(c, seg)); return; }
-  lerpPose(seg.a.pose, seg.b.pose, seg.u);
+  else if (seg.a.interp === 'smooth') applyPose(segmentPose(c, seg));
+  else lerpPose(seg.a.pose, seg.b.pose, seg.u);
+  syncRootView(c);   // корень — на ТОМ ЖЕ времени, что поза: из цикла кадра он отставал бы от проигрывания на кадр
+}
+
+/**
+ * ⭐ ПРЕДПРОСМОТР КОРНЯ — галки «корень: поворот / смещение» (17.09.2026).
+ *
+ * Жалоба: «в анимациях поворота нужна галка для корня, чтобы он поворачивался — видеть, как это будет в реальности, и
+ * править; сейчас непонятно, потому что он просто топчется на месте». Клип поворота in-place: рыск вычтен из таза и лежит
+ * рядом каналом `__rootY`, игра возвращает его через `turnYawAt`. Замеры — в шапке `frameEdit.RootView`.
+ *
+ * КАК. Шарнир `rootTurn` — родитель `human.root` (и маркера серверной позиции) — стоит на корне клипа в показанный момент:
+ * `rootPreviewAt(клип, previewT ?? время ключа)`, тот же сэмплер, что у игры. Под ним ВСЁ, что читает мир, видит персонажа
+ * повёрнутым — ручки, гизмо, кольца FK, вид костей модели, взгляд, пины. Остальное доводится явно, и каждое место помечено:
+ *  • физ-призрак стоит в сцене сам: его цель таза поворачивается (`turnHipsTarget`), на скачке — ставится на позу;
+ *  • меш модели: `driveAsm` копирует МИРОВОЙ корень источника (`poseModelsTab.ts`), оружие висит на кисти меша;
+ *  • призраки соседних кадров — каждый на СВОЁМ корне (`applyPoseTo`), траектория — на корне каждого сэмпла;
+ *  • мир → локальный таз: `moveHips`, ручка таза в режиме вращения, `clampHipsToPins`, `BAL_PROBE`/`supportRect`;
+ *  • мировое состояние правки (цели, полюса, стопы, точка взгляда) ЕДЕТ за корнем при его смене — в кадре персонажа оно
+ *    не меняется, и правка с галкой идёт так же, как без неё; снимок undo хранит его в кадре персонажа.
+ *
+ * ⚠ ДАННЫЕ ВНЕ ЭТОГО. Чтение позы (`readPoseFull` → запись кадра, копия, зеркало, библиотека поз, undo) — локальные
+ * повороты и `hips.position`, шарнир в них не входит по построению. Там, где пишутся МИРОВЫЕ данные — запекание физики,
+ * подгонка физ-тел (`pe_ragdoll`), запекание набора походки, экспорт GLB, — корень держится в нуле (`withRootViewOff`).
+ * Вне «Анимации», в превью бега/поворотов и в «▶ Тест» корень — ноль (планировщик ставит стопы в мировых X/Z).
+ */
+function rootViewGate(): boolean { return rootViewHold === 0 && tab === 'anim' && !locoOn && !testTab.active; }
+/**
+ * Что показывать — ГАЛКИ. Пересекать с каналами клипа не нужно: канала нет — сэмплер читает ноль (`clipChannelAt` → null,
+ * как `blendTwo`), а скан всех ключей на каждом кадре цикла был лишним (ревью 17.09). ⚠ Объект общий — не храни его.
+ */
+function rootViewWant(): RootWant { _rootWant.yaw = rootYawOn; _rootWant.pos = rootPosOn; return _rootWant; }
+/**
+ * Корень, который ДОЛЖЕН стоять сейчас; `c` — текущий клип, если вызывающий его уже взял (`curClip` фильтрует библиотеку).
+ * ⚠ Зовётся из цикла кадра и из `preview` — дважды за кадр проигрывания. Без галок — ни клипа, ни сэмпла, ни аллокаций;
+ * с галкой — только каналы корня двух ключей в общий `_rootNext` (не храни его).
+ */
+function rootViewNow(c?: Clip | null): Readonly<RootView> {
+  if ((!rootYawOn && !rootPosOn) || !rootViewGate()) return ROOT_VIEW_ZERO;
+  const clip = c === undefined ? curClip() : c;
+  const t = clip ? rootViewTime(clip, frameIdx, previewT) : null;
+  return clip && t !== null ? rootPreviewAt(clip, t, rootViewWant(), _rootNext) : ROOT_VIEW_ZERO;
+}
+/** Поставить шарнир БЕЗ переноса состояния правки — только для сэмплинга (траектория), с возвратом на `rootShown`. */
+function putRootTurn(v: Readonly<RootView>): void { placeRootView(rootTurn, v); }
+const physRootAt: RootView = { ...ROOT_VIEW_ZERO };   // корень, под который физ-призрак ставился прошлым шагом (`stepPhysics`) — КОПИЯ
+/** Привести шарнир к `rootViewNow()`. Идемпотентна: зови где угодно после смены клипа/кадра/времени/вкладки/галки. */
+function syncRootView(c?: Clip | null): void {
+  const next = rootViewNow(c);
+  if (sameRootView(next, rootShown)) return;
+  const d = rootViewDelta(rootShown, next, _rootDelta);
+  for (const e of effList()) { e.target.applyMatrix4(d.m); e.prev.applyMatrix4(d.m); e.pole.applyQuaternion(d.q); e.footQuat.premultiply(d.q); }
+  gazeTarget.applyMatrix4(d.m); gazeHandle.position.copy(gazeTarget);
+  rig.hipsHandle.quaternion.premultiply(d.q);   // режим «вращать»: ручка несёт мировой поворот таза
+  copyRootView(rootShown, next); putRootTurn(rootShown);
+}
+/** Выполнить с корнем в нуле (вложенно — счётчиком) и вернуть показ после. */
+function withRootViewOff<T>(fn: () => T): T {
+  rootViewHold++; syncRootView();
+  try { return fn(); } finally { rootViewHold--; syncRootView(); }
 }
 
 // ── Физика (Ф2b: рэгдолл на гуманоид-скелете — призрак, ведомый моторами к позе) ──
@@ -6156,7 +6289,11 @@ function disposeOnion(): void {
  */
 function applyPoseTo(h: Humanoid, p: Pose): void {   // применить позу (без оружия) к произвольному гуманоиду
   poseRig(h, p);
-  h.root.position.set(0, 0, 0); h.root.updateMatrixWorld(true);   // корень как после `goFrame`
+  h.root.position.set(0, 0, 0);                                    // корень как после `goFrame`
+  // ⭐ …и на СВОЁМ корне этого ключа (галка «корень»): призрак стоит в сцене, не под шарниром манекена — общий поворот дал бы
+  // соседу чужой рыск. Оседание ниже трогает только высоту, рыск ему не мешает.
+  composeRootView(h.root, rootViewGate() ? rootViewOfPose(p, rootViewWant()) : ROOT_VIEW_ZERO);
+  h.root.updateMatrixWorld(true);
   if (!groundedView()) return;                                     // физика выкл — меш ведёт НЕзаземлённый манекен
   h.footLift = physFootLift;                                       // фолбэк пола без модели (`ankleRest` нет) — как у физ-призрака
   settleLikePhysGhost(h, GAIT.gndLag);
@@ -6291,16 +6428,18 @@ function updateTrajectory(): void {
   const snapHip = human.hips.position.clone();
   const pts: THREE.Vector3[] = [], kpts: THREE.Vector3[] = [];
   const v = new THREE.Vector3();
+  const want = rootViewGate() ? rootViewWant() : null;   // ⭐ галка «корень»: путь кости — вместе с поворотом/смещением корня на КАЖДОМ сэмпле
   for (const smp of trajectorySamples(c, 5)) {
     const seg = clipSegmentAt(c, smp.t); if (!seg) continue;
     const pose = segmentPose(c, seg);   // траектория — тем же проигрывателем, что игра (и сплайн, и ломаная)
     poseRig(human, pose);               // тот же шов «поза ключа на риг», что у `applyPose` и призраков
+    if (want) putRootTurn(rootPreviewAt(c, smp.t, want));
     human.root.updateMatrixWorld(true);
     bone.getWorldPosition(v);
     pts.push(v.clone()); if (smp.key >= 0) kpts.push(v.clone());
   }
   human.boneNames.forEach((n, i) => human.bones.get(n)!.quaternion.copy(snapQ[i]!));
-  human.hips.position.copy(snapHip); human.root.updateMatrixWorld(true);
+  human.hips.position.copy(snapHip); putRootTurn(rootShown); human.root.updateMatrixWorld(true);   // шарнир — обратно на показанный корень
 
   const arr = pts.map((q) => [q.x, q.y, q.z] as [number, number, number]);
   trajLen = polylineLength(arr); trajArc = arcRatio(arr); trajSpan = excursion(arr);
@@ -6364,7 +6503,12 @@ function stepPhysics(dt: number): void {
     ragdoll.setPelvis(reviveFrom.clone().lerp(stand, e), standQ);
     if (t >= 1) reviveT = -1;
   } else ragdoll.setPelvis(stand, standQ);
-  ragdoll.setPoseTarget(human.readPose());
+  // ⭐ ЦЕЛЬ — С ПОКАЗАННЫМ РЫСКОМ КОРНЯ (`turnHipsTarget`): таз куклы мировой (рыск в нём), а поза манекена локальная.
+  const target = turnHipsTarget(human.readPose(), rootShown.yaw);
+  ragdoll.setPoseTarget(target);
+  // Скачок корня (скраб, переход на кадр, галка) — ставим куклу на позу, а не крутим кинематический таз за шаг.
+  if (rootViewJump(physRootAt, rootShown) && !physDead) ragdoll.snapToPose();
+  copyRootView(physRootAt, rootShown);   // КОПИЯ: `rootShown` переписывается на месте — ссылка сравнивала бы его с самим собой
   for (let i = 0; i < RAG_NAMES.length; i++) {               // цели пинов = мир-позиции суставов манекена
     const src = PIN_SRC[RAG_NAMES[i]!]; const b = src ? human.bones.get(src) : undefined;
     if (b) { b.getWorldPosition(pinVecs[i]!); pinArr[i] = pinVecs[i]!; } else pinArr[i] = null;
@@ -6387,7 +6531,7 @@ function stepPhysics(dt: number): void {
       still: locoOn ? lp().moveMag < 0.02 : true };   // окно/плавность/укладка/«стоим» — те же, что в игре
     const rMatch = physDead ? 0 : (locoOn ? renderMatchWeight(physMatchBase, lp().attackWeight, lp().attackMatch) : PHYS.match);
     renderRagdollGhost(ghostHuman, ragdoll, ghostGround, Math.min(dt, 1 / 60), 0, !physDead,
-      rMatch > 0.001 ? human.readPose() : null, rMatch, undefined, sup, footGround, gOpts);
+      rMatch > 0.001 ? target : null, rMatch, undefined, sup, footGround, gOpts);
     applyGripToGhost();   // призрак пересобирает позу каждый кадр — хват кладём после него, иначе фаланги уедут в бинд
   }
 }
@@ -6395,18 +6539,22 @@ const ghostGround = newGhostGround();
 /** Ф4 — ЗАПЕКАНИЕ: прогнать клип через физику, покадрово снять физ-результат → обычная покадровая анимация. */
 async function bakeCurrentClip(): Promise<void> {
   await ensurePhysics();
-  const c = curClip(); if (!c || !ragdoll) return;
-  setPhys(true);
-  const dur = clipDur(c) || 0.5, dt = 1 / 60, sampleEvery = 2;   // сэмпл 30 к/с
-  const baked: Keyframe[] = [];
-  preview(0); for (let i = 0; i < 40; i++) stepPhysics(dt);       // устаканиться на стартовой позе
-  let simT = 0, step = 0;
-  while (simT <= dur + 1e-6) {
-    preview(Math.min(simT, dur));                                // манекен = интерполированная авторская поза
-    stepPhysics(dt);
-    if (step % sampleEvery === 0) baked.push({ pose: ragdoll.readBakedPose(), t: +simT.toFixed(3) });
-    simT += dt; step++;
-  }
+  const c = curClip(), rag = ragdoll; if (!c || !rag) return;
+  // ⚠ Таз запечённой позы — МИРОВОЙ (`readBakedPose`): показанный корень (галка «корень») в клип не пишем — держим ноль.
+  const baked = withRootViewOff((): Keyframe[] => {
+    setPhys(true);
+    const dur = clipDur(c) || 0.5, dt = 1 / 60, sampleEvery = 2;   // сэмпл 30 к/с
+    const out: Keyframe[] = [];
+    preview(0); for (let i = 0; i < 40; i++) stepPhysics(dt);       // устаканиться на стартовой позе
+    let simT = 0, step = 0;
+    while (simT <= dur + 1e-6) {
+      preview(Math.min(simT, dur));                                // манекен = интерполированная авторская поза
+      stepPhysics(dt);
+      if (step % sampleEvery === 0) out.push({ pose: rag.readBakedPose(), t: +simT.toFixed(3) });
+      simT += dt; step++;
+    }
+    return out;
+  });
   histLib('запечь физику', () => {
     putClip({ name: c.name + '_baked', character: curCharId, weapon, loop: c.loop, keys: baked }, 'replace');   // перезапёк ту же физику — заменяем, а не плодим
     clipIdx = clipsHere().length - 1; frameIdx = 0; saveLib(); refreshAll();
@@ -6448,6 +6596,7 @@ let last = performance.now();
 function loop(): void {
   const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
   const c = curClip();
+  syncRootView(c);   // ⭐ корень клипа: смена вкладки/клипа/галки без `goFrame` (проигрывание зовёт его из `preview`)
   if (tab === 'turn' && locoOn) updateTurnTest(dt);   // вкладка «Повороты»: прицел=курсор, движение=стой/ходьба/бег
   if (locoOn) stepGait(dt * locoTempo);   // бег = процедурный гейт (ноги) + idle-стойка + физ; locoTempo = скорость ПРОСМОТРА (slow-mo/×)
   else if (playing && c) {
