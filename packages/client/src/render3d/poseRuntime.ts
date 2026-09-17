@@ -703,9 +703,20 @@ const STEP_MIN_GAP = 0.12;
 const STEP_MARKS: readonly [Mark, Mark] = [{ type: 'footstep', foot: 'L' }, { type: 'footstep', foot: 'R' }];
 /** Кости, которыми владеет клип поворота: таз и ноги. Корпус — нет, его ведёт живая скрутка к прицелу. */
 const TURN_BONES = ['Hips', 'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes'] as const;
-const _qT1 = new THREE.Quaternion(), _qT2 = new THREE.Quaternion(), _eT = new THREE.Euler();
-/** Подмешать кости клипа с весом `w` (slerp) + офсет таза. Общий шов для бега (`gaitToHumanoid`) и поворота. */
-function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly string[]): void {
+const _qT1 = new THREE.Quaternion(), _qT2 = new THREE.Quaternion(), _eT = new THREE.Euler(), _qSeam = new THREE.Quaternion();
+/**
+ * Подмешать кости клипа с весом `w` (slerp) + офсет таза. Общий шов для бега (`gaitToHumanoid`) и поворота.
+ *
+ * `yBase` / `yFrom`: высота таза клипа ложится ПРИРАЩЕНИЕМ — `y = yBase + hd.y − yFrom` (у поворота `yFrom` — таз его
+ * первого ключа, `yBase` — высота стоя), а не абсолютом `hipsRest.y + hd.y`. `yBase` null — абсолют, как у бега.
+ *
+ * ⭐ ЗАЧЕМ ПОВОРОТУ ПРИРАЩЕНИЕ. Повороты запекаются ОДНИ на все стойки — в релакс-стойке (у набора нет боевой оси), и
+ * абсолютная высота клипа поднимала боевого персонажа на весь поворот. ЗАМЕР (опубликованный warrior, рыцарь, бой, все
+ * шесть поворотов): таз стоя 33.83, клип держал его на релакс-высоте 34.97 — в смешанном режиме скачок 1.14–1.46 за кадр
+ * туда и назад (размах 1.14–1.82), в «только клипы» подъём ~0.9 на весь поворот. Стало: разрыва на старте нет ни в какой
+ * стойке, режиме и риге; размах за поворот 0.14–0.54 — собственное движение таза клипа, как в релаксе.
+ */
+function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly string[], yBase: number | null = null, yFrom = 0): void {
   if (w <= 0.001) return;
   for (const nm of bones) {
     const b = human.bones.get(nm); const want = pose[nm];
@@ -717,8 +728,9 @@ function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly 
   const hd = hipsOffset(pose, human.hipsRest.y);
   if (hd) {
     const hp = human.bones.get('Hips')!.position;
+    const ty = yBase === null ? human.hipsRest.y + hd[1] : yBase + hd[1] - yFrom;
     hp.set(hp.x + (human.hipsRest.x + hd[0] - hp.x) * w,
-      hp.y + (human.hipsRest.y + hd[1] - hp.y) * w,
+      hp.y + (ty - hp.y) * w,
       hp.z + (human.hipsRest.z + hd[2] - hp.z) * w);
   }
 }
@@ -1414,8 +1426,13 @@ export class PosePlayer {
   private locoSec: LocoSectionState = { section: 'idle', t: 0 };
   /** Текущая доля клипа локомоции (едет к цели за `LOCO_FADE`) — см. комментарий на месте чтения. */
   private locoW = 0;
-  /** Идёт клип поворота на месте (`turnInPlace.ts`): время, курс таза на старте, вес, гасится ли. */
-  private turn: { clip: Clip; t: number; startYaw: number; w: number; out: boolean } | null = null;
+  /**
+   * Идёт клип поворота на месте (`turnInPlace.ts`): время, курс таза на старте, вес, гасится ли. Для высоты таза
+   * (приращение, см. `blendClipBones`): `hy0` — таз ПЕРВОГО КЛЮЧА клипа (дельта от rest; null — клип таз не трогает),
+   * `lift` — таз до клипа поворота минус высота стойки `clipStandY`: в «только клипы» — ЖИВОЙ, каждый кадр; в смешанном —
+   * запомненный на первом кадре поворота (null — ещё не играл ни кадра). Почему по-разному — на месте чтения.
+   */
+  private turn: { clip: Clip; t: number; startYaw: number; w: number; out: boolean; hy0: number | null; lift: number | null } | null = null;
   /** Сколько секунд верх упирается в предел скрутки, пока поворот не начат (правило 2 `shouldCommitTurn`). */
   private turnPinnedFor = 0;
   /**
@@ -1426,8 +1443,12 @@ export class PosePlayer {
   private turnMode = false;
   /** Имя играющего поворота — окну слоёв и тестам. null = не поворачиваемся клипом. */
   get turnClipName(): string | null { return this.turn && !this.turn.out ? this.turn.clip.name : null; }
-  /** Оборвать поворот сразу, без гашения (запекание, телепорт). */
-  cancelTurn(): void { if (this.turn) { this.turn = null; this.replantPlanner(); } }
+  /**
+   * Оборвать поворот сразу, без гашения (запекание, телепорт). ⚠ Шов поворота (`seamW`) тоже сбрасываем: обрыв снаружи
+   * `step` — это снап по смыслу, и недогашенная разница (или «показанная поза» до телепорта) не должна доехать до
+   * следующего кадра. Зовётся и из `snapYaw`.
+   */
+  cancelTurn(): void { if (this.turn) { this.turn = null; this.replantPlanner(); } this.seamW = 0; this.shownOk = false; }
   /** Режим «только клипы» на этом кадре (см. `CLIP_ONLY_TG`): планировщик не обновлялся и не читался. */
   private clipOnlyNow = false;
   get clipOnly(): boolean { return this.clipOnlyNow; }
@@ -1485,15 +1506,132 @@ export class PosePlayer {
    *
    * ⚠ Время живой стойки берём 0, а не `idleT`: `standY` — БАЗА для планировщика, и дышащий
    * многокадровый idle не должен перенастраивать её каждый кадр.
+   *
+   * ⚠ Замер мутирует риг (`human.reset()` + ноги стойки), и с 17.09 — в ОБОИХ режимах: в «только клипы» он нужен ради
+   * `clipStandY`. Вызов снаружи `step` (`setWeapon`) оставляет риг сброшенным до следующего шага (таз рыцаря 35.13 → 30.00);
+   * у планировщика так было всегда, а оба живых вызывающих (`gamePlayerDoll.setWeapon`, превью редактора) шагают до
+   * рендера — на экран это не попадает.
    */
   measureStance(): void {
-    // «Только клипы»: стойка нужна одному планировщику — не мерим и не отдаём. −1 = при возврате замерить заново.
-    if (this.clipOnlyNow) { this.stanceCombat = -1; return; }
     const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null);
+    this.clipStandY = p.standY;
+    // «Только клипы»: планировщику стойку НЕ отдаём (в этом режиме к нему ни одного обращения), но высоту таза
+    // держим сами — см. `clipStandY`. −1 = при возврате в планировщик замерить заново.
+    if (this.clipOnlyNow) { this.stanceCombat = -1; this.clipStanceCombat = this.combat; return; }
     this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY, p.foot);
-    this.stanceCombat = this.combat;
+    this.stanceCombat = this.combat; this.clipStanceCombat = -1;
   }
-  setWeapon(w: string): void { this.weapon = w; this.measureStance(); }
+  /**
+   * ⭐⭐ ВЫСОТА ТАЗА СТОЯ В «ТОЛЬКО КЛИПЫ» — та же `standY`, что планировщик получает из стойки.
+   *
+   * ⚠ Без неё таз стоя стоял на голой базе `gaitToHumanoid` (30 + bobY, bobY = 0 у `CLIP_ONLY_TG`), а клип
+   * поворота кладёт таз на `hipsRest.y + __hipsD` (рыцарь: 35.049 − 0.081 = 34.968). ЗАМЕР, опубликованный
+   * warrior, turn_R_90: таз 30.000 → 34.968 за кадр на старте клипа и 34.809 → 30.000 на конце (заземлённый
+   * +3.74 / −3.57, размах 6.1) — «при повороте дёргается вверх-вниз». До ea59571 locoMix = 1 шёл через
+   * планировщик, и его bobY = standY − 30 — отсюда и прежняя гладкость (≤ 0.18 за кадр).
+   */
+  private clipStandY = GAIT.standY;
+  /** Combat, при котором мерили `clipStandY` в «только клипы»: −1 = замерить на ближайшем кадре. */
+  private clipStanceCombat = -1;
+  /**
+   * ⭐⭐ ШОВ КЛИПА ПОВОРОТА — ИНЕРЦИАЛИЗАЦИЯ ТАЗА И НОГ (`TURN_BONES` + позиция таза).
+   *
+   * Клип забирает таз и ноги весом 1 в кадр решения и отдаёт в кадр конца, а его крайние кадры стоят не ровно в стойке:
+   *  • таз — конец клипа не на высоте начала (запечённый рыцарь: старт −0.081, конец turn_R_90 −0.247);
+   *  • ноги — первый ключ держит ноги ПЛАНИРОВЩИКА стоя (при опубликованном `idleSettle` 0 он в idle-позу не уходит:
+   *    колено 0.411 рад), а «только клипы» стоит в АВТОРСКОЙ idle-позе (колено 0.023). В смешанном режиме стойка —
+   *    та же реконструкция планировщика, отсюда там 0.03°, а в «только клипы» 23.4° за кадр и стопа на 1.25 вбок.
+   *    Конец клипа против планировщика, забирающего ноги после `replant`, — 4.7–9.8° и стопа до 4.6 даже в смешанном.
+   * Разницу, скакнувшую в кадр смены, гасим за `TURN_FADE` (smoothstep): в кадр смены запоминаем СМЕЩЕНИЕ «показанное
+   * минус новое» и затухаем его ПОВЕРХ живого источника — как узел `Inertialization` в UE (у `modeSnap` — замершая
+   * поза; здесь клип с первого же кадра ведёт маховую ногу, и замершая поза её бы держала).
+   * ⚠ Весь клип целиком НЕ гасим (так пробовали): вес клипа < 1 на опоре уводил стопу — смешанный 45° уезжал на 2.44.
+   * `shown*` — показанная поза прошлого кадра; `seam*` — смещение и доля.
+   *
+   * ⭐ ДВЕ СТУПЕНИ. Таз (`easeSeamHips`) — сразу после клипа поворота, ДО скрутки корпуса: та ставит тазу курс
+   * абсолютно, и шов не должен с ней спорить. Ноги (`easeSeamLegs`) — В КОНЦЕ НОЖНОГО КОНВЕЙЕРА, после подтяжек стоп
+   * (`warpStanceFeet`). ⚠ Иначе шов не видел подтяжку: она перерешает ногу IK ЦЕЛИКОМ при любом весе > 0.001 (вес
+   * двигает только цель; бедро/голень ставятся заново, стопа кладётся плашмя), а при весе 0 не трогает вовсе — выключение
+   * подтяжки само щёлкает. Поэтому ещё и: ПОКА ИДЁТ КЛИП ПОВОРОТА (включая гашение), ПОДТЯЖЕК НЕТ — ногами владеет клип,
+   * а включение/выключение подтяжки приходится ровно на кадр смены, который шов и покрывает. Точку фиксации стопы
+   * («только клипы») на это время тоже бросаем: её снимут заново с позы того кадра, когда подтяжка вернётся.
+   * ЗАМЕР (рыцарь, опубликованный warrior; шли 40, встали и прицел +90 в тот же кадр: клип стартует на f7, `lockW` / `locoW`
+   * гаснет на f14): ноги в кадр гашения 28.6° → 3.4° («только клипы»), 29.5° → 4.1° (смешанный), дальше — свой ход клипа
+   * (≤ 21.6°); на 120 u/с смешанный 41.1° → 27.7° (это уже кадр остановки). Пошли посреди поворота — подтяжка включалась
+   * посреди гашения: 28.6° → 7.9°, конец гашения 0°. Стоячие повороты, ход без поворота и процедурка — бит в бит.
+   * ⚠ НЕ ЗАКРЫТО (и не про поворот): подтяжка так же щёлкает при остановке без поворота (смешанный, гаснет `locoW`), при
+   * смене опорной ноги на ходу и на первом отрыве стопы после старта в «только клипы» (фиксация отпускает ногу) — 20–37°
+   * и в ходьбе без всякого поворота. Шов покрывает только кадры смены клипа поворота; корень — вес подтяжки не
+   * непрерывен по повороту костей.
+   *
+   * ЗАМЕР (рыцарь, опубликованный warrior, шесть поворотов, мгновенный и плавный прицел):
+   *  • таз за кадр в «только клипы» (со стойкой `clipStandY`): 0.16–0.34 → ≤ 0.063; смешанный 0.05–0.30 → ≤ 0.063;
+   *  • ноги: кадр смены 23.4° / 22.9–24.8° → 0°, хвост конца ≤ 4.1° за кадр; смешанный конец 4.7–9.8° → ≤ 1.6° (в бою
+   *    10.3–14.5° → ≤ 2.4°);
+   *  • опорная стопа за кадр: «только клипы» старт 1.25 → ≤ 0.24, конец до 4.66 → ≤ 0.81; в бою 3.69 → ≤ 0.62 и до 7.31 →
+   *    ≤ 1.22. ⚠ ПУТЬ стопы прежний (это разница стоек, её шов не убирает) — он проходится за 0.15 с, а не за кадр.
+   * Процедурка (доля 0) — бит в бит: поворот клипом там не играет, шов только запоминает позу.
+   */
+  private seamRot = TURN_BONES.map(() => new THREE.Quaternion());
+  private seamPos = new THREE.Vector3();
+  private seamW = 0;
+  private shownRot = TURN_BONES.map(() => new THREE.Quaternion());
+  private shownPos = new THREE.Vector3();
+  private shownOk = false;
+  /** Кадр смены: ступень ног снимет своё смещение в этом же кадре (решает ступень таза). */
+  private seamFresh = false;
+  /** Доля шва этого кадра после smoothstep — одна на обе ступени. */
+  private seamS = 0;
+  /** Сменили оружие, пока шов идёт: на ближайшем кадре шов снимается заново (см. `setWeapon`). */
+  private seamRestart = false;
+  /**
+   * Шов поворота, ступень ТАЗА (см. `seamW`): `changed` — клип поворота сменился на этом кадре (начался / кончился /
+   * погас). ⚠ `TURN_BONES[0]` — `Hips`, остальные — ноги (их ведёт `easeSeamLegs`).
+   */
+  private easeSeamHips(changed: boolean): void {
+    const hb = this.human.bones.get('Hips')!, hp = hb.position;
+    this.seamFresh = (changed || this.seamRestart) && this.shownOk;
+    this.seamRestart = false;
+    if (this.seamFresh) {
+      this.seamRot[0]!.copy(hb.quaternion).invert().premultiply(this.shownRot[0]!);   // показанная · новая⁻¹
+      this.seamPos.copy(this.shownPos).sub(hp);
+      this.seamW = 1;
+    }
+    const w = this.seamW;
+    this.seamS = w * w * (3 - 2 * w);
+    if (w > 0) {
+      hb.quaternion.premultiply(_qSeam.identity().slerp(this.seamRot[0]!, this.seamS));
+      hp.addScaledVector(this.seamPos, this.seamS);
+    }
+    this.shownRot[0]!.copy(hb.quaternion); this.shownPos.copy(hp);
+  }
+  /** Шов поворота, ступень НОГ: после подтяжек стоп — показанная поза ног и есть итог конвейера. Здесь же доля убывает. */
+  private easeSeamLegs(dt: number): void {
+    for (let i = 1; i < TURN_BONES.length; i++) {
+      const b = this.human.bones.get(TURN_BONES[i]!);
+      if (!b) continue;
+      if (this.seamFresh) this.seamRot[i]!.copy(b.quaternion).invert().premultiply(this.shownRot[i]!);
+      if (this.seamW > 0) b.quaternion.premultiply(_qSeam.identity().slerp(this.seamRot[i]!, this.seamS));
+      this.shownRot[i]!.copy(b.quaternion);
+    }
+    this.seamFresh = false;
+    if (this.seamW > 0) this.seamW = Math.max(0, this.seamW - dt / TURN_FADE);
+    this.shownOk = true;
+  }
+  /**
+   * Сменить оружие: стойка — его (`measureStance`).
+   * ⚠ ПОСРЕДИ ШВА ПОВОРОТА (`seamW` > 0) ШОВ НАЧИНАЕТСЯ ЗАНОВО — с показанной позы на новую стойку, как новый переход
+   * у `Inertialization` в UE. Иначе смещение, снятое против ног СТАРОЙ стойки, ложилось на ноги новой (idle-ноги меча
+   * другие — 39.7° за кадр в «только клипы») и уводило опорную стопу дальше, чем сама смена. ЗАМЕР (рыцарь, опубликованный
+   * warrior, «только клипы», поворот +90, меч через 1 / 2 / 4 кадра после конца клипа): опорная стопа за кадр 3.53 / 3.26 /
+   * 2.35 → 0 в кадр смены и ≤ 0.1 дальше; в бою, где ноги у меча те же, 0.18 / 0.50 / 0.86 → 0 и ≤ 0.2 дальше; смешанный —
+   * таз 0.38 / 0.34 / 0.29 за кадр → 0. ⚠ «Просто погасить шов» (`seamW` = 0) пробовали: остаток шва щёлкал вместе со сменой —
+   * 2.09 / 2.03 / 1.60, а в бою при тех же ногах 5.41 (весь щелчок конца клипа). Вне шва смена — снап, как и была.
+   */
+  setWeapon(w: string): void {
+    if (w !== this.weapon && this.seamW > 0) this.seamRestart = true;
+    this.weapon = w; this.measureStance();
+  }
   setVel(vx: number, vz: number): void { this.vx = vx; this.vz = vz; }
   setYaw(yaw: number): void { this.aimYaw = yaw; if (!this.yawInit) { this.rootYaw = yaw; this.yawInit = true; } }
   /** Снять лаг таза (спавн/пробуждение/телепорт): таз мгновенно = прицел, без доворота-«юлы». */
@@ -1537,7 +1675,8 @@ export class PosePlayer {
     const pick = shouldCommitTurn(residual, this.aimStableFor, this.turnPinnedFor, twist) ? pickTurn(residual, has) : null;
     if (pick) {
       this.turnPinnedFor = 0;
-      this.turn = { clip: this.content.locoClip([pick.name], this.weapon)!, t: 0, startYaw: this.rootYaw, w: 1, out: false };
+      const clip = this.content.locoClip([pick.name], this.weapon)!;
+      this.turn = { clip, t: 0, startYaw: this.rootYaw, w: 1, out: false, hy0: hipsOffset(clipPoseAt(clip, 0), this.human.hipsRest.y)?.[1] ?? null, lift: null };
       return { rootYaw: this.rootYaw, residual: clampTw(residual), turning: true };
     }
     // Стоим ниже порога: таз держит курс, верх докручивается к прицелу скруткой.
@@ -1693,7 +1832,7 @@ export class PosePlayer {
       // на релакс-высоту (см. `measureStance`). Порог 0.02 — чтобы не мерить каждый кадр кроссфейда:
       // замер зовёт `human.reset()`, а поза всё равно собирается заново в `gaitToHumanoid`.
       if (Math.abs(this.combat - this.stanceCombat) > 0.02) this.measureStance();
-    }
+    } else if (Math.abs(this.combat - this.clipStanceCombat) > 0.02) this.measureStance();   // высота таза стоя — та же ось (см. `clipStandY`)
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
     const twist = blendTwist(this.twistStates, spd);   // скрутка корпуса по состоянию (стой/ходьба/бег), плавно по скорости
@@ -1780,7 +1919,9 @@ export class PosePlayer {
     // на 5.9 %), а на игровых 80 u/с бег весил 53 % и целиком не был виден никогда. Решение автора: набор 40 / 120,
     // бег на 100 % с 80 (`locoRunWeight`). Планировщиковую ось не трогаем — вне «только клипы» всё как было.
     const tg = clipOnly ? CLIP_ONLY_TG() : this.driver.update(dt);
-    if (clipOnly) tg.sb = locoRunWeight(spd);
+    // ⚠ ТАЗ СТОЯ — НА ВЫСОТЕ СТОЙКИ, а не на базе 30 из `gaitToHumanoid` (см. `clipStandY`): иначе клип поворота и клип
+    // хода, кладущие таз на `hipsRest.y + __hipsD`, дёргали его вверх на входе и вниз на выходе.
+    if (clipOnly) { tg.sb = locoRunWeight(spd); tg.bobY = this.clipStandY - 30; }
     // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
     // Клипы БЛЕНДЯТСЯ по тем же осям, что и колонки настроек (`sb`/`st`/`bt`), и сэмплируются ОДНОЙ
     // фазой планировщика: у клипа нет своего таймера, иначе настройки персонажа перестали бы на него
@@ -1884,7 +2025,29 @@ export class PosePlayer {
     }
     // ПОВОРОТ НА МЕСТЕ: таз и ноги из клипа. ДО `applyTorsoTwist` — тот ставит тазу курс абсолютно, а
     // курс на время поворота уже идёт по кривой клипа (`stepTurn`), так что они не спорят.
-    if (this.turn) blendClipBones(this.human, clipPoseAt(this.turn.clip, Math.min(1, this.turn.t / (clipDur(this.turn.clip) || 1))), this.turn.w, TURN_BONES);
+    // Таз клипа — ПРИРАЩЕНИЕМ от его первого ключа (`hy0`) поверх высоты стоя `clipStandY + lift`, едущей за стойкой
+    // (`clipStandY`: вход в бой посреди поворота).
+    // ⭐ В «ТОЛЬКО КЛИПЫ» `lift` ЖИВОЙ: таз до клипа здесь — это стойка плюс ДОГАСАЮЩИЙ клип хода (`locoW` гаснет за
+    // `LOCO_FADE`), и больше ничего, двойной просадки неоткуда взяться. ⚠ Запомненный на первом кадре, он замораживал
+    // догасание на весь поворот: встал и сразу повернулся — клип стартует на f7 при `locoW` 0.53, и поворот шёл в
+    // полуприседе, а в конце таз вставал. ЗАМЕР (рыцарь, опубликованный warrior, шли 40, встали и прицел в тот же кадр):
+    // таз посреди поворота ниже стойки на 0.63 (+90) / 0.62 (180) → 0.07 / 0.06 — ровно как у поворота с места; подъём
+    // после клипа 0.72 → 0.16 (свой конец клипа); наибольший шаг таза за кадр после клипа 0.120 → 0.026 (заземлённый
+    // 0.143 → 0.094); прицел через 3 кадра — 0.080 → 0.026; с 80 u/с — 0.113 → 0.026. Повороты с места — бит в бит.
+    // ⚠ В СМЕШАННОМ — запомненный на первом кадре, НЕ живой: планировщик с отобранными ногами сам проседает, пока таз
+    // крутится (ЗАМЕР, рыцарь, −180°: 34.97 → 34.57), и клип ложился бы на эту просадку второй раз — размах таза 0.14 →
+    // 0.59. ⚠ Гасить его к 0 за `LOCO_FADE` (так пробовали) — размен, а не выигрыш: встал и повернулся — подъём после
+    // клипа 0.15–0.31 → 0.01–0.12 за кадр, зато цепочка поворотов в бою 0.063 → 0.094, телепорт после поворота 0.065 →
+    // 0.218, размах поворота с места 0.21 → 0.29. Просадка там — самого планировщика после хода (встал с 80 без всякого
+    // поворота — таз и через 3 с на 1.54 ниже стойки), и лечится она в планировщике, не здесь.
+    if (this.turn) {
+      const t = this.turn;
+      const live = this.human.bones.get('Hips')!.position.y - this.clipStandY;
+      if (clipOnly || t.lift === null) t.lift = live;
+      blendClipBones(this.human, clipPoseAt(t.clip, Math.min(1, t.t / (clipDur(t.clip) || 1))), t.w, TURN_BONES,
+        t.hy0 === null ? null : this.clipStandY + t.lift, t.hy0 ?? 0);
+    }
+    this.easeSeamHips(this.turn !== turnWas);   // клип сменился — таз продолжает с показанной позы (см. `seamW`); ноги — ниже
     applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на rootYaw + скрутка позвоночника к прицелу
     // КАЧАНИЕ ТАЗА ВБОК — В КАДРЕ ТЕЛА, и именно ЗДЕСЬ, а не в `gaitToHumanoid`. `Hips.position` живёт в кадре
     // РОДИТЕЛЯ и рыском самой кости НЕ поворачивается — без доворота на `yaw` качание уехало бы в мировые оси
@@ -1905,7 +2068,9 @@ export class PosePlayer {
       this.human.root.updateMatrixWorld(true);
       const tgt: [[number, number], [number, number]] = [[0, 0], [0, 0]];
       for (let i = 0; i < 2; i++) {
-        if (!this.clipContact[i] || this.lockW <= 0.001) { this.footLock[i] = null; continue; }
+        // ⚠ Клип поворота (и его гашение) — ноги его: фиксации нет, и точку не держим — после поворота её снимут заново
+        // с той позы, что будет тогда, а не со стоп-кадра до поворота (см. `seamW`, ступень ног).
+        if (!this.clipContact[i] || this.lockW <= 0.001 || this.turn) { this.footLock[i] = null; continue; }
         if (!this.footLock[i]) {
           const f = this.human.bones.get(i === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(_lockV);
           this.footLock[i] = { x: f.x + this.px, z: f.z + this.pz };
@@ -1913,7 +2078,7 @@ export class PosePlayer {
         tgt[i] = [this.footLock[i]!.x - this.px, this.footLock[i]!.z - this.pz];
       }
       warpStanceFeet(this.human, tgt, [!this.footLock[0], !this.footLock[1]], this.lockW);
-    } else if (locoPose) {
+    } else if (locoPose && !this.turn) {   // ⚠ клип поворота владеет ногами — подтяжки нет (см. `seamW`)
       // ⚠ ПОСЛЕ `applyTorsoTwist`, А НЕ ДО. Он ставит тазу фейсинг, то есть ПОВОРАЧИВАЕТ ВЕСЬ РИГ, и
       // подтяжка, сделанная раньше, была бы посчитана в другом кадре и уехала бы вместе с поворотом.
       // Планты у планировщика в МИРЕ, риг локальный → вычитаем позицию персонажа.
@@ -1922,6 +2087,7 @@ export class PosePlayer {
         [[p0[0] - this.px, p0[1] - this.pz], [p1[0] - this.px, p1[1] - this.pz]],
         this.driver.swingLegs, mix);
     }
+    this.easeSeamLegs(dt);   // шов поворота, ноги — ПОСЛЕ подтяжек: смещение снимается с того, что реально показано
     // ТАЗ УДАРА ГАСНЕТ ЛОКОМОЦИЕЙ. Удар — слой ВЕРХА, низом владеет походка (в Unreal такой слой кладут
     // `Layered blend per bone` с исключённым тазом, в Unity — маской слоя). Наша маска удара таз и так не
     // содержит (`Hips` нет в `ATK_BONES`), но `applyAttackPelvis` добавляет его ОТДЕЛЬНО — ради маха таза
