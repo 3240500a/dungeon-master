@@ -45,7 +45,7 @@ export function poseRig(h: Humanoid, p: Pose): void {
 
 const LEG_BONES = ['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot'] as const;
 const FLAT_FLOOR = (): number => 0;
-/** Шаг физики редактора (`stepPhysics`: `min(dt, 1/60)`). */
+/** Шаг призрака редактора (`renderRagdollGhost` в `stepPhysics`: `min(dt, 1/60)`; физика там шагает кадр целиком). */
 export const GHOST_DT = 1 / 60;
 /**
  * Предохранитель от зацикливания (опорность стопы может мигать на пороге высоты). Шагов столько, сколько нужно

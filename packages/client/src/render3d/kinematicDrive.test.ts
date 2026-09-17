@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import * as THREE from 'three';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 // env3d тянет DOM/GLTFLoader — физмиру от него нужна только высота стены. С этим моком НАСТОЯЩИЕ `ragdoll.ts`
-// (initPhysics + PhysWorld) и `makeHumanoidRagdoll` грузятся в node-vitest (риг — процедурный пресет, 17 тел).
+// (initPhysics + PhysWorld), `makeHumanoidRagdoll` и кукла `makeHumanoidDoll` грузятся в node-vitest (риг — процедурный пресет, 17 тел).
 vi.mock('./env3d.js', () => ({ WALL_H: 96 }));
 
-import { initPhysics, PhysWorld, jolt, PHYS_H } from './ragdoll.js';
-import { makeHumanoidRagdoll, RAG_NAMES, renderRagdollGhost, newGhostGround, type HumanoidRagdoll } from './humanoidRagdoll.js';
-import { buildHumanoid } from './humanoid.js';
+import { initPhysics, PhysWorld, jolt, PHYS_H, type RagdollHandle } from './ragdoll.js';
+import { makeHumanoidRagdoll, RAG_NAMES, PIN_SRC, renderRagdollGhost, newGhostGround, type HumanoidRagdoll } from './humanoidRagdoll.js';
+import { buildHumanoid, type Humanoid } from './humanoid.js';
+import { makeHumanoidDoll } from './gamePlayerDoll.js';
 
 /**
  * СТОРОЖ KINEMATIC-ТАЗА НА ЖИВОМ JOLT. Ошибка жила с da5f331 по 17.09.2026: кукла звала `MoveKinematic(цель, dt КАДРА)`,
@@ -18,6 +22,10 @@ import { buildHumanoid } from './humanoid.js';
  * Сейчас (цели по времени, `PhysWorld.advance`): 225–524 на всех частотах.
  * И то, что ВИДНО: игра рисует куклу до шага физики, поэтому корень призрака берётся из цели таза (`pelvisTarget`), а не
  * из тела — иначе на 120/144 Гц и рваных 60 Гц корень прыгал на шаг движения (бег 300 u/с: 2.5–3.9u за кадр).
+ * Ещё (17.09, ревью): `advance` — ≤4 шагов за кадр и хвост сверх них выброшен; привод держит доехавший таз без `update`;
+ * редактор поз шагает `stepFrame(dt)` (ниже 60 fps не в замедлении, запекание — шаг-в-шаг). Кукла целиком: тела,
+ * вернувшиеся в мир после сна окна / kinematic-режима, ставятся на позу (пробуждение, смерть, нокдаун); подъём из
+ * нокдауна начинается с тел, сдвинутых под нарисованный корень. Каждый сторож проверен своей мутацией (README).
  */
 const Y0 = 32, RUN_V = 300;
 const V = (x = 0, y = 0, z = 0): THREE.Vector3 => new THREE.Vector3(x, y, z);
@@ -65,8 +73,8 @@ function feed(w: World, tg: Tgt, dt: number): void {
 }
 function stepWorld(w: World, mode: Mode, dt: number): void {
   if (mode === 'advance') w.pw.advance(dt);                 // игра (online3d)
-  else if (mode === 'step') w.pw.step(Math.min(dt, PHYS_H)); // редактор поз сейчас
-  else w.pw.stepFrame(dt);                                  // редактор поз — кадр целиком
+  else if (mode === 'step') w.pw.step(Math.min(dt, PHYS_H)); // редактор поз до 17.09 (шаг без часов)
+  else w.pw.stepFrame(dt);                                  // редактор поз — кадр целиком (`stepPhysics`)
 }
 const hips = (w: World): number[] => w.rag.bodyPos('Hips');
 /** RMS второй разности позиции по шагам (u/с²) после `from` с. */
@@ -191,7 +199,7 @@ describe('PhysWorld: kinematic-таз куклы ведётся длиной Ш�
   it('редактор: таз на цели ПОСЛЕ шага и ниже 60 fps; кадр подшагами — ещё и без рывков', () => {
     for (const hz of [30, 45, 144]) {
       const a = world(run(0));
-      const errStep = drive(a, run, frames(hz, 2), 'step', 0.3);   // step(min(dt, 1/60)) — как сейчас в pose-editor
+      const errStep = drive(a, run, frames(hz, 2), 'step', 0.3);   // step(min(dt, 1/60)) — шаг без часов (редактор до 17.09)
       close(a);
       expect(errStep, `step, ${hz} fps`).toBeLessThan(0.01);      // было 10.03u на 30 fps, 2.23u на 45
       const b = world(run(0));
@@ -201,6 +209,14 @@ describe('PhysWorld: kinematic-таз куклы ведётся длиной Ш�
       expect(errFrame, `stepFrame, ${hz} fps`).toBeLessThan(0.01);
       expect(acc, `stepFrame, ${hz} fps: дрожь торса`).toBeLessThan(1000);   // 30 fps: 522 (подшаги «держать» дали бы ~31 000)
     }
+    // длины шагов Jolt: запекание `stepPhysics(1/60)` — ровно ОДИН шаг 1/60 (и с fp-шумом); кадр 20 fps — три по 1/60, не один в 0.05
+    const w = world({ x: 0, y: Y0, yaw: 0 });
+    const lens = (dt: number): number[] => { const n0 = w.torso.length, t0 = n0 ? w.torso[n0 - 1]!.t : 0; w.pw.stepFrame(dt); return w.torso.slice(n0).map((s, i, a) => s.t - (i ? a[i - 1]!.t : t0)); };
+    for (const dt of [1 / 60, 1 / 60 + 1e-12, 1 / 60 - 1e-12]) { const l = lens(dt); expect(l.length, `stepFrame(${dt})`).toBe(1); expect(l[0]!).toBeCloseTo(dt, 12); }
+    const l20 = lens(0.05);
+    close(w);
+    expect(l20.length, 'stepFrame(0.05): шагов').toBe(3);
+    for (const h of l20) expect(h).toBeLessThanOrEqual(1.1 * PHYS_H);
   });
 
   it('смерть: привод отпущен — труп не тянет к последней цели таза', () => {
@@ -262,5 +278,190 @@ describe('PhysWorld: kinematic-таз куклы ведётся длиной Ш�
     const err = drive(w, run, frames(60, 0.5), 'advance', 0.3);
     close(w);
     expect(err).toBeLessThan(0.1);
+  });
+
+  it('привод держит доехавший таз: апдейты куклы встали, физика шагает — таз стоит на последней цели', () => {
+    // buildArea (`latest = undefined`), разрыв связи, kinematic-режим после нокдауна: `update` не зовётся, `advance` идёт.
+    // Скорость kinematic-тела в Jolt живёт между шагами — без MoveKinematic на КАЖДОМ шаге таз уезжает (мутация
+    // «доехал → не вести»: 150.5u за 30 кадров).
+    const w = world(run(0));
+    const dts = frames(60, 1);
+    drive(w, run, dts, 'advance', 1e9);
+    const last = run(dts.reduce((a, b) => a + b, 0));
+    for (let i = 0; i < 30; i++) w.pw.advance(1 / 60);
+    const p = hips(w);
+    close(w);
+    expect(Math.hypot(p[0]! - last.x, p[1]! - last.y, p[2]!)).toBeLessThan(0.01);
+  });
+
+  it('advance: не больше 4 шагов за кадр, хвост сверх них выброшен — отставание таза не копится', () => {
+    const w = world(run(0));
+    drive(w, run, frames(60, 0.5), 'advance', 1e9);
+    const n0 = w.torso.length;
+    expect(w.pw.advance(0.25), 'рывок 250 мс: шагов').toBe(4);   // без предела — 15 шагов Jolt подряд (спираль долгих кадров)
+    expect(w.torso.length - n0).toBe(4);
+    close(w);
+    // кадры длиннее 4 шагов подряд. ЗАМЕР без обрезки хвоста: 100 / 200 / 300u на 1 / 2 / 3 с, остаток растёт; с ней — 22.5u
+    const v = world(run(0));
+    let T = 0, err = 0;
+    while (T < 3) { T += 0.1; const tg = run(T); feed(v, tg, 0.1); v.pw.advance(0.1); const p = hips(v); err = Math.hypot(p[0]! - tg.x, p[1]! - tg.y, p[2]!); }
+    const acc = (v.pw as unknown as { acc: number }).acc;
+    close(v);
+    expect(err, '|таз − цель| через 3 с при advance(0.1)').toBeLessThan(30);
+    expect(acc).toBeLessThanOrEqual(PHYS_H + 1e-9);
+  });
+
+  it('⭐ редактор поз шагает кадр ЦЕЛИКОМ (`stepFrame`): ниже 60 fps физика не в замедлении', () => {
+    const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'pose-editor.ts'), 'utf8');
+    const at = SRC.indexOf('function stepPhysics(');
+    expect(at, 'stepPhysics').toBeGreaterThanOrEqual(0);
+    let i = SRC.indexOf('{', at), depth = 0;
+    for (; i < SRC.length; i++) { if (SRC[i] === '{') depth++; else if (SRC[i] === '}' && --depth === 0) break; }
+    const body = SRC.slice(at, i + 1);
+    expect(body).toMatch(/ragdoll\.update\(dt\);[^\n]*\n(\s*\/\/[^\n]*\n)*\s*pw\.stepFrame\(dt\);/);
+    expect(SRC, 'шаг без часов в редакторе: ниже 60 fps пины/вес оружия в dt·60 раз сильнее').not.toMatch(/\bpw\.step\(/);
+    // что это даёт: голова куклы от своего места у таза, бег 300 u/с. `step(min(dt, 1/60))`: 20 / 30 fps — 253.8 / 93.0u
+    for (const hz of [20, 30]) {
+      const w = world(run(0));
+      const hi = RAG_NAMES.indexOf('Head');
+      let T = 0, worst = 0;
+      for (const dt of frames(hz, 2)) {
+        T += dt; const tg = run(T); feed(w, tg, dt); w.pw.stepFrame(dt);
+        if (T < 0.5) continue;
+        const h = hips(w), hd = w.rag.bodyPos('Head'), want = w.rel[hi]!.clone().applyQuaternion(qYaw(tg.yaw));
+        worst = Math.max(worst, Math.hypot(hd[0]! - h[0]! - want.x, hd[1]! - h[1]! - want.y, hd[2]! - h[2]! - want.z));
+      }
+      close(w);
+      expect(worst, `${hz} fps: голова от места у таза`).toBeLessThan(20);   // 10.3 / 8.9u (на 60 fps — 11.2u)
+    }
+  });
+});
+
+// ── КУКЛА ЦЕЛИКОМ (`makeHumanoidDoll`, монстр): тела, вернувшиеся в мир стухшими ──────────────────────────────────────
+interface Doll { pw: PhysWorld; d: RagdollHandle; solid: Humanoid; target: Humanoid; rag: HumanoidRagdoll; x: number }
+function doll(): Doll {
+  const pw = new PhysWorld(); pw.addGround(3000);
+  const d = makeHumanoidDoll(pw, { x: 0, z: 0, weapon: 'none', gaitId: 'monster', gaitFallback: 'warrior' });
+  const g = d._dbg as { solid: Humanoid; target: Humanoid; ragdoll: HumanoidRagdoll };
+  return { pw, d, solid: g.solid, target: g.target, rag: g.ragdoll, x: 0 };
+}
+function closeDoll(o: Doll): void { o.d.dispose(); jolt().destroy(o.pw.jolt); }
+const boneAt = (h: Humanoid, b: string): THREE.Vector3 => { h.root.updateMatrixWorld(true); return h.bones.get(b)!.getWorldPosition(V()); };
+/** Кадр игры (driveActor → online3d): цель сервера → `update` → `advance`. `alive = false` — коллапс-луп мёртвых (только `update`). */
+function dollTick(o: Doll, dt: number, vx: number, alive = true): void {
+  o.x += vx * dt;
+  if (alive) { o.d.setPose(o.x, 0, 0); o.d.setWorldVel?.(vx, 0); o.d.setDead(false); }
+  o.d.update(dt);
+  o.pw.advance(dt);
+}
+/** Тело головы от места, куда его ставит поза (пин), относительно тела таза. На бегу 300 u/с — ~10u. */
+function headOff(o: Doll): number {
+  const h = o.rag.bodyPos('Hips'), hd = o.rag.bodyPos('Head');
+  const th = boneAt(o.target, 'Hips'), td = boneAt(o.target, PIN_SRC['Head']!);
+  return Math.hypot(hd[0] - h[0] - (td.x - th.x), hd[1] - h[1] - (td.y - th.y), hd[2] - h[2] - (td.z - th.z));
+}
+/**
+ * Нокдаун (1, 0) на 1.1 + 0.8 с, сервер держит на месте → худший `headOff` за подъём (с кадра, где таз снова ведёт мир).
+ * `wake` — кукла СПАЛА в момент удара: её тогда не будят (`fallPending`, см. `windowCull`), падение отыгрывается на
+ * пробуждении — окно догнало монстра.
+ */
+function knockRise(o: Doll, dts: number[], wake = false): { worst: number; lying: number } {
+  o.d.knockdown!(1, 0, 1.1, 0.8);
+  if (wake) o.d.setSimEnabled!(true);
+  let k = -1, worst = 0, lying = 0;
+  for (const dt of dts) {
+    dollTick(o, dt, 0);
+    if (k < 0 && o.rag.pelvisTarget()) k = 0; else if (k >= 0) k++;
+    if (k < 0) { const b = o.rag.bodyPos('Hips'); lying = Math.hypot(b[0] - o.x, b[2]); }   // тело таза лёжа — от сервера
+    if (k >= 0 && k < 48) worst = Math.max(worst, headOff(o));
+  }
+  return { worst, lying };
+}
+
+describe('кукла: тела после сна окна / kinematic-режима / нокдауна — на текущей позе (живой Jolt)', () => {
+  it('проснулась после окна-culling — тела ставятся на позу в новой точке, а не тянутся со старой', () => {
+    for (const hz of [60, 144]) {
+      const o = doll();
+      let T = 0, worst = 0;
+      for (const dt of frames(hz, 2.5)) {
+        T += dt;
+        if (T >= 1 && T - dt < 1) o.d.setSimEnabled!(false);
+        if (T >= 2 && T - dt < 2) o.d.setSimEnabled!(true);   // во сне монстр прошёл 300u
+        dollTick(o, dt, 300);
+        if (T >= 2) worst = Math.max(worst, headOff(o));
+      }
+      closeDoll(o);
+      expect(worst, `${hz} Гц: голова тела от позы после пробуждения`).toBeLessThan(25);   // 9.9u; без снапа на пробуждении — 298–316u
+    }
+  });
+
+  it('смерть спящего и kinematic-монстра: труп падает там, где монстр, а не где тела вынули', () => {
+    for (const mode of ['culled', 'kinematic'] as const) {
+      const o = doll();
+      if (mode === 'kinematic') o.d.setPhysicsMode!('kinematic');
+      let T = 0;
+      for (const dt of frames(60, 2.5)) { T += dt; if (mode === 'culled' && T >= 0.5 && T - dt < 0.5) o.d.setSimEnabled!(false); dollTick(o, dt, 100); }
+      o.d.setDead(true);
+      let first = -1;
+      for (const dt of frames(60, 1)) {
+        dollTick(o, dt, 0, false);
+        if (first < 0) { const p = boneAt(o.solid, 'Hips'); first = Math.hypot(p.x - o.x, p.z); }
+      }
+      const b = o.rag.bodyPos('Hips');
+      closeDoll(o);
+      expect(first, `${mode}: нарисованный труп от сервера, 1-й кадр`).toBeLessThan(10);    // было 200u (сон) / 250u (kinematic)
+      expect(Math.hypot(b[0] - o.x, b[2]), `${mode}: тело таза через 1 с`).toBeLessThan(20);   // было 197 / 257u
+    }
+  });
+
+  it('нокдаун спящего и kinematic-монстра: подъём без рывка тел со старого места', () => {
+    // Спящего (`culled`) нокдаун не будит — часы идут во сне, падение ждёт пробуждения (`fallPending`, см. `windowCull`):
+    // будит его окно, и тела при этом ОБЯЗАНЫ встать на текущую позу (за 2 с сна монстр ушёл на 200u).
+    for (const mode of ['culled', 'kinematic'] as const) for (const hz of [60, 144]) {
+      const o = doll();
+      if (mode === 'kinematic') o.d.setPhysicsMode!('kinematic');
+      let T = 0;
+      for (const dt of frames(hz, 2.5)) { T += dt; if (mode === 'culled' && T >= 0.5 && T - dt < 0.5) o.d.setSimEnabled!(false); dollTick(o, dt, 100); }
+      const { worst, lying } = knockRise(o, frames(hz, 2.5), mode === 'culled');
+      closeDoll(o);
+      // лежит там, где сбили (отлёт падения 19–23u), а не где тела вынули (без снапа — 177–221u); подъёмный сдвиг тел это бы скрыл
+      expect(lying, `${mode}, ${hz} Гц: тело таза лёжа от сервера`).toBeLessThan(60);
+      expect(worst, `${mode}, ${hz} Гц: голова тела от позы на подъёме`).toBeLessThan(60);   // было 163–223u; эталон без стухших тел 14–20u
+    }
+  });
+
+  it('нокдаун на бегу: труп проскользил — подъём начинается под нарисованным корнем, таз не рвёт тела', () => {
+    for (const hz of [60, 144]) {
+      const o = doll();
+      for (const dt of frames(hz, 1)) dollTick(o, dt, 300);
+      const { worst } = knockRise(o, frames(hz, 2.5));
+      closeDoll(o);
+      expect(worst, `${hz} Гц: голова тела от позы на подъёме`).toBeLessThan(60);   // без сдвига тел 245–290u
+    }
+  });
+
+  it('kinematic-режим: встал из нокдауна — тела вон из мира, смерть без удара (DoT) падает у монстра', () => {
+    // Два входа: физ-LOD перевёл ЛЕЖАЩЕГО в kinematic (игрок отошёл > 560u) / нокдаун уже в kinematic без удара перед ним.
+    // Встал → ушёл на 300u → смерть без события `hit` (DoT: `killMonster` его не шлёт) → снап смерти держится на том,
+    // что `syncRagdollSim` скажет «тела вернулись». Без вызова в конце нокдауна тела стояли в мире на месте подъёма.
+    for (const path of ['LOD лёжа', 'kinematic без удара'] as const) for (const hz of [60, 144]) {
+      const o = doll();
+      if (path === 'kinematic без удара') o.d.setPhysicsMode!('kinematic');
+      for (const dt of frames(hz, 1)) dollTick(o, dt, 100);
+      o.d.knockdown!(1, 0, 1.1, 0.8);
+      let T = 0;
+      for (const dt of frames(hz, 2.6)) { T += dt; if (path === 'LOD лёжа' && T >= 1 && T - dt < 1) o.d.setPhysicsMode!('kinematic'); dollTick(o, dt, 0); }
+      for (const dt of frames(hz, 3)) dollTick(o, dt, 100);
+      o.d.setDead(true);
+      let first = -1;
+      for (const dt of frames(hz, 1)) {
+        dollTick(o, dt, 0, false);
+        if (first < 0) { const p = boneAt(o.solid, 'Hips'); first = Math.hypot(p.x - o.x, p.z); }
+      }
+      const b = o.rag.bodyPos('Hips');
+      closeDoll(o);
+      expect(first, `${path}, ${hz} Гц: нарисованный труп от сервера, 1-й кадр`).toBeLessThan(10);    // было 300u
+      expect(Math.hypot(b[0] - o.x, b[2]), `${path}, ${hz} Гц: тело таза через 1 с`).toBeLessThan(30);   // было 290–297u
+    }
   });
 });

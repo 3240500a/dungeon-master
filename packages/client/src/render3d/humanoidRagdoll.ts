@@ -638,6 +638,8 @@ export interface HumanoidRagdoll {
   setDead(d: boolean): void;
   /** Жёстко поставить тела на текущую позу-цель + обнулить скорости (спавн без перехлёста T-поза→стойка). */
   snapToPose(): void;
+  /** Сдвинуть ВСЕ тела на (dx, dy, dz) как есть — поза, скорости и цель привода таза не меняются (подъём из нокдауна). */
+  shiftBodies(dx: number, dy: number, dz: number): void;
   /**
    * Ф27.6 — ПОКАЗАТЬ ФОРМЫ НА ЗАДАННОМ СКЕЛЕТЕ (отладочный оверлей редактора), а не в СЫРОМ
    * физ-пространстве. Сырые тела НЕ заземлены и не блендятся к позе по `match`, поэтому оверлей
@@ -872,6 +874,16 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       for (let i = 0; i < B.length; i++) { pw.bi.SetLinearVelocity(ids[i]!, force); pw.bi.SetAngularVelocity(ids[i]!, force); }
       // Таз уже на месте — и цель туда же, span 0: иначе мир дотянет его к цели ПРОШЛОГО `update` (скачок корня насмарку).
       if (!dead && simOn) pw.setKinematic(kin, pelvisPos, pelvisQuat, 0);
+    },
+    shiftBodies(dx, dy, dz) {
+      if (!(Number.isFinite(dx) && Number.isFinite(dy) && Number.isFinite(dz))) return;
+      for (let i = 0; i < B.length; i++) {
+        const p = pw.bi.GetPosition(ids[i]!);   // временная обёртка — копируем сразу
+        kPos.Set(p.GetX() + dx, p.GetY() + dy, p.GetZ() + dz);
+        pw.bi.SetPosition(ids[i]!, kPos, J.EActivation_Activate);
+      }
+      kPos.Set(0, 0, 0);
+      sync();
     },
     setSimEnabled(on) {   // окно-culling: вон из/в физ-мир (pw.step). Пробуждённого тут же активируем — снап к позе делает вызывающий (snapNext).
       if (on === simOn) return; simOn = on;

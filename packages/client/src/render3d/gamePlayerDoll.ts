@@ -166,8 +166,39 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // однократный переход коллапс→подъём (записываем упавшую позицию таза + возвращаем моторы). risePos — таз на полу.
   let downT = 0, downRise = 0.8, riseInit = false;
   const risePos = new THREE.Vector3();
+  // ⭐ Нокдаун СПЯЩЕЙ куклы (вне окна): её не будим, часы нокдауна идут в `update` и во сне, а падение отложено до
+  // пробуждения — `fallPending` + направление толчка. Было: `knockdown` будил куклу, а `a.dormant` у клиента оставался
+  // true → луп монстров её больше не вёл: часы нокдауна стояли, тела лежали в `pw.step` на месте нокдауна, и смерть за
+  // окном без удара (DoT) падала оттуда. ЗАМЕР (копия кадра online3d, живой Jolt, кукла монстра; сбит спящим → встал →
+  // ушёл на 300u → DoT за окном; 60 / 144 Гц, физ / kinematic): труп запечён в 316 / 314u от монстра, тела в физике за
+  // окном 325 / 777 кадров. И часы: кукла, уснувшая лёжа (или сбитая во сне), просыпалась в окне уже после подъёма
+  // сервера и доигрывала нокдаун у игрока на глазах — лёжа 47–171 кадр, пока монстр шёл.
+  let fallPending = false, fallDx = 0, fallDz = 0;
   // Членство тел в pw.step: активны только если кукла не усыплена окном И (мертва | нокдаун | физрежим | транзиентная физика удара).
-  const syncRagdollSim = (): void => ragdoll.setSimEnabled(simEnabled && (dead || downT > 0 || !kinematic || physHold > 0));
+  // → true, если тела ТОЛЬКО ЧТО вернулись в мир: они там, где их вынули (сон окна / kinematic-режим), а не где кукла сейчас.
+  let simIn = true;
+  const syncRagdollSim = (): boolean => {
+    const was = simIn;
+    simIn = simEnabled && (dead || downT > 0 || !kinematic || physHold > 0);
+    ragdoll.setSimEnabled(simIn);
+    return simIn && !was;
+  };
+  // ⚠ Тела вернулись на СМЕРТЬ/НОКДАУН — сначала на текущую позу, потом коллапс: иначе труп падает с места, где тела
+  // вынули, и рисуется оттуда (из тела, `pelvisTarget` = null). ЗАМЕР (живой Jolt, кукла монстра, 100 u/с 2–2.5 с до
+  // события): смерть спящего — труп в 200u от сервера, kinematic-режима — 250u (стало 0); нокдаун — тело таза лёжа в
+  // 177–221u от сервера (стало 19–23u, отлёт падения), голова тела на подъёме от позы 163–223u (стало 17–23u). Спящему (`culled`)
+  // ещё и мир-позицию на сервер: во сне `update` не шёл, rx/rz стухли вместе с телами.
+  const snapStaleBodies = (culled: boolean): void => {
+    if (culled) { rx = tx; rz = tz; }
+    driveRagdollToPose(); ragdoll.snapToPose();
+  };
+  // Нокдаун кончился (встал) → обычный режим. Зовётся и во сне (часы идут и там): тела тогда вне мира — `setDead(false)`
+  // меняет только тип тела таза, Jolt не активирует тело вне broadphase (замер), тела в мир вернёт пробуждение.
+  const endKnockdown = (): void => {
+    downT = 0; fallPending = false;
+    if (!riseInit) ragdoll.setDead(false);
+    riseInit = false; snapNext = true; syncRagdollSim();
+  };
   let atkLast: string | null = null;   // ПОСЛЕДНИЙ СЫГРАННЫЙ удар — по нему считается следующий (см. `attackPick`)
   let wvx = 0, wvz = 0, hasWvel = false, vxS = 0, vzS = 0;
   let rx = opts.x, rz = opts.z;            // сглаженная мир-позиция (сим 30Гц телепортит tx/tz)
@@ -254,15 +285,23 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     get onMark() { return player.onMark; },
     set onMark(fn) { player.onMark = fn ?? null; },
     setDead(d) {
-      if (d && !simEnabled) { simEnabled = true; snapNext = true; }   // умер спящим (вне окна) → будим, чтоб коллапс отыгрался
-      if (d) { downT = 0; riseInit = false; }   // смерть главнее нокдауна: обрываем подъём, дальше свободный коллапс
+      const culled = d && !simEnabled;
+      if (culled) { simEnabled = true; snapNext = true; }   // умер спящим (вне окна) → будим, чтоб коллапс отыгрался
+      if (d) { downT = 0; riseInit = false; fallPending = false; }   // смерть главнее нокдауна: обрываем подъём, дальше свободный коллапс
       if (d === dead) return; dead = d;
-      syncRagdollSim();          // dead → тела в pw.step (коллапс) в ЛЮБОМ режиме (в т.ч. kinematic)
+      const back = syncRagdollSim();   // dead → тела в pw.step (коллапс) в ЛЮБОМ режиме (в т.ч. kinematic)
+      if (d && back) snapStaleBodies(culled);   // ДО `setDead(true)`: снап ставит цель таза, смерть её отпускает
       ragdoll.setDead(d);
     },
     setSimEnabled(on) {   // окно-culling: on=false → тела вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап к цели
       if (on === simEnabled) return; simEnabled = on;
       if (on) { snapNext = true; wakeSnap = true; }
+      if (on && fallPending) {   // сбит во сне: тела на позу в НОВОЙ точке; лежать ещё есть когда → падение отсюда, иначе сразу подъём из стойки
+        fallPending = false;
+        if (syncRagdollSim()) snapStaleBodies(true);
+        if (downT > downRise) { ragdoll.setDead(true); ragdoll.hit('Torso', fallDx, 0.12, fallDz, 0.5); }
+        return;
+      }
       syncRagdollSim();
     },
     setPhysicsMode(mode) {   // debug: 'kinematic' = рисуем из позы (тела вон из pw.step), физика лишь транзиентно на удар/смерть; 'physics' = обычно
@@ -284,11 +323,13 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     },
     knockdown(dx, dz, downSec, riseSec) {   // сбит с ног: коллапс рагдоллом в (dx,dz), лежит, потом ВСТАЁТ (см. ветку downT в update)
       if (dead) return;
-      if (!simEnabled) { simEnabled = true; snapNext = true; }   // сбит спящим (вне окна) → будим
       downRise = Math.max(0.05, riseSec);
       downT = Math.max(0.1, downSec) + downRise;
       riseInit = false;
-      syncRagdollSim();          // тела в pw.step на весь нокдаун
+      // Сбит спящим (вне окна) → НЕ будим: часы пошли, падение — при пробуждении (`setSimEnabled`), если ещё лежать.
+      if (!simEnabled) { fallPending = true; fallDx = dx; fallDz = dz; return; }
+      fallPending = false;
+      if (syncRagdollSim()) snapStaleBodies(false);   // тела в pw.step на весь нокдаун; вернулись стухшими (kinematic-режим) → на позу
       ragdoll.setDead(true);     // моторы off + таз dynamic → падение. Горизонт. отлёт даёт СЕРВЕР (глайд позиции); тут только опрокидывание.
       ragdoll.hit('Torso', dx, 0.12, dz, 0.5);   // мягкий толчок верха назад → валится ОТ атакующего (не «взрыв»)
     },
@@ -312,7 +353,9 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     setCombat(on) { player.setCombat(on); },   // боевой айдл (сервер-авторитетный флаг → боевая стойка)
     setState(stunned, downed) { player.setState(stunned, downed); },   // стан/нокдаун → клип реакции (Ф1.5)
     update(dt) {
-      if (!simEnabled) return;                               // спит (вне окна): физика вынута, меш заморожен в позе — не считаем
+      // Спит (вне окна): физика вынута, меш заморожен в позе — не считаем. Но часы нокдауна идут (клиент зовёт `update`
+      // и спящему — см. `windowCull`): проснётся в той же фазе, что сервер, а не доигрывать встающего на глазах.
+      if (!simEnabled) { if (downT > 0 && (downT -= dt) <= 0) endKnockdown(); return; }
       const woke = wakeSnap; wakeSnap = false;               // гасим в ЛЮБОЙ ветке: запоздалый снап съел бы импульс удара позже
       if (dead) {                                            // мёртв — свободный коллапс, рендерим без прижима
         ragdoll.update(dt);
@@ -330,7 +373,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
           renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
           solid.root.position.x = rx; solid.root.position.z = rz; solid.root.updateMatrixWorld(true);   // XZ = серверная позиция (авторитетный отлёт), Y от физики (падение) → без рассинхрона
         } else {                                             // ВСТАЁТ: таз обратно kinematic и лерпит с пола к стойке, верх блендит физику→позу
-          if (!riseInit) { const hp = ragdoll.bodyPos('Hips'); risePos.set(rx, hp[1], rz); ragdoll.setDead(false); riseInit = true; }   // подъём из СЕРВЕРНОЙ позиции (XZ=rx/rz), Y с пола → без «прыжка»
+          // Подъём из СЕРВЕРНОЙ позиции (XZ = rx/rz), Y с пола. ⚠ Лёжа корень рисовался по rx/rz, а труп скользил дальше
+          // (скорость бега, отлёт падения) — kinematic-таз рвал его к rx/rz за кадр. Сначала сдвигаем ВСЕ тела под
+          // нарисованный корень (поза та же — на экране ничего не прыгает), потом оживляем. ЗАМЕР (живой Jolt, кукла
+          // монстра, нокдаун на бегу 300 / 80 / 0 u/с, 60–144 Гц): рывок тела таза в первый кадр подъёма 196–299 / 51–69 /
+          // 23–29u; голова тела от позы на подъёме 245–290 / 66–84 / 13–17u → со сдвигом 27–30 / 26–31 / 13–16u.
+          if (!riseInit) { const hp = ragdoll.bodyPos('Hips'); ragdoll.shiftBodies(rx - hp[0], 0, rz - hp[2]); risePos.set(rx, hp[1], rz); ragdoll.setDead(false); riseInit = true; }
           const t = 1 - Math.max(0, downT) / downRise;       // прогресс подъёма 0→1
           const e = t * t * (3 - 2 * t);                     // smoothstep — мягкий старт/финиш
           // Кормим рагдолл ТОЛЬКО углами позы (моторы распрямляют тело) + kinematic-таз, БЕЗ мир-пинов (пины на стоячих
@@ -347,7 +395,13 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
           renderRagdollGhost(solid, ragdoll, ground, dt, 0, true, target.readPose(), e * matchWeight, undefined, undefined, !poseLod);
         }
         skin?.update(); syncWeaponHost();
-        if (downT <= 0) { downT = 0; if (!riseInit) ragdoll.setDead(false); riseInit = false; snapNext = true; }   // встал → обычный режим (гарантируем оживление физики)
+        // Встал → обычный режим (гарантируем оживление физики). ⚠ И членство тел — заново: в kinematic-режиме нокдаун был
+        // единственной причиной держать их в мире. Без `syncRagdollSim` тела так и стояли в мире там, где кончился подъём
+        // (kinematic-ветка их не ведёт), и смерть без удара (DoT: `killMonster` не шлёт `hit`) не получала «тела вернулись»
+        // → без снапа → труп падал со старого места. ЗАМЕР (живой Jolt, кукла монстра, встал → ушёл на 300u → DoT; физ-LOD перевёл в kinematic лёжа /
+        // нокдаун в kinematic без удара; 60 / 144 Гц): нарисованный труп от сервера в 1-й кадр 300u, тело таза через 1 с
+        // 290–297u → 0 и 9–14u.
+        if (downT <= 0) endKnockdown();
         return;
       }
       const yawSnap = snapNext || first;                     // телепорт/спавн/пробуждение → таз мгновенно к прицелу (без «юлы»)
