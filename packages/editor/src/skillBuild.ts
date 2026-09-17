@@ -290,6 +290,12 @@ export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unk
 
   // Итог «до → после».
   const rows = diffRows(pv.base, pv.resolved.active);
+  // Вторая цена живёт не в способности, а рядом с ней (`extraCost`), поэтому в таблицу различий
+  // сама не попадёт — а без неё «цена не изменилась» выглядит как «вставка ничего не стоит».
+  const extraLine = pv.resolved.extraCost
+    ? `Вторая цена: ${pv.resolved.extraCost.amount} ${pv.resolved.extraCost.pool === 'mana' ? 'маны' : 'выносливости'}`
+      + ' — надбавка вставок, которые платят своим ресурсом'
+    : '';
   const table = document.createElement('table');
   table.style.cssText = 'border-collapse:collapse;font-size:13px;min-width:520px';
   const head = table.insertRow();
@@ -308,6 +314,7 @@ export function renderSkillBuildPage(page: HTMLElement, data: Record<string, unk
     });
   }
   wrap.appendChild(table);
+  if (extraLine) wrap.appendChild(h('div', 'font-size:12px;color:#d0a86a', extraLine));
 
   // ── УРОН: то, ради чего вставку и ставят ──────────────────────────────────
   // Таблица полей выше показывает `damageMult` и `addElementPct` — это ВХОДЫ. Дизайнеру нужен

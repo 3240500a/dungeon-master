@@ -15,7 +15,8 @@
     "tune": {
       "element": "fire",
       "addElementPct": 0.35
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-frost-edge",
@@ -33,7 +34,8 @@
     "tune": {
       "element": "cold",
       "addElementPct": 0.35
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-heavy-blow",
@@ -73,7 +75,8 @@
         "maxStacks": 3,
         "durationMs": 4000
       }
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-hoarfrost",
@@ -96,7 +99,8 @@
         "maxStacks": 2,
         "durationMs": 3000
       }
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-serrated",
@@ -231,7 +235,7 @@
         "category": "cast",
         "abilityId": "insert-cold-wave",
         "shape": "nova",
-        "manaCost": 0,
+        "manaCost": 5,
         "resource": "mana",
         "cooldown": 0,
         "castTimeSec": 0,
@@ -247,7 +251,8 @@
           "durationMs": 2500
         }
       }
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-arc-burst",
@@ -269,7 +274,7 @@
         "category": "cast",
         "abilityId": "insert-arc-burst",
         "shape": "nova",
-        "manaCost": 0,
+        "manaCost": 4,
         "resource": "mana",
         "cooldown": 0,
         "castTimeSec": 0,
@@ -278,7 +283,8 @@
         "damageMult": 0.6,
         "radius": 110
       }
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-quickening",
@@ -333,7 +339,7 @@
       "ability": {
         "category": "buff",
         "abilityId": "insert-ward",
-        "manaCost": 0,
+        "manaCost": 4,
         "resource": "mana",
         "cooldown": 0,
         "durationSec": 4,
@@ -345,7 +351,8 @@
           }
         ]
       }
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-swiftness",
@@ -366,7 +373,7 @@
       "ability": {
         "category": "buff",
         "abilityId": "insert-swiftness",
-        "manaCost": 0,
+        "manaCost": 3,
         "resource": "mana",
         "cooldown": 0,
         "durationSec": 3,
@@ -378,7 +385,8 @@
           }
         ]
       }
-    }
+    },
+    "costPool": "mana"
   },
   {
     "id": "ins-blood-rhythm",

@@ -28,7 +28,10 @@ import { moveWithCollision, type Vec2 } from '../world/movement.js';
 import { resolveEntityCollisions, type CollisionBody } from '../world/separation.js';
 import { playerWeight, type WeightTables } from '../formulas/stats.js';
 import { activeAbilityOf, reservedFrac, effectivePool, toggleBuffMods } from './toggles.js';
-import { resolveActive, type InsertProc, type ResolvedActive } from './inserts.js';
+import { resolveActive, type InsertProc, type ResolvedActive, type ResourcePool } from './inserts.js';
+/** Цена способности и вторая цена (надбавка вставок в чужой пул) — короткие имена для платежа. */
+type Cost = { manaCost: number; resource: ResourcePool };
+type Extra = { pool: ResourcePool; amount: number };
 import { isBlockedCell, worldToCell, Cell } from '../world/grid.js';
 import type { Grid } from '../world/grid.js';
 import { hasLineOfSight } from '../world/lineOfSight.js';
@@ -663,20 +666,46 @@ export class GameSession {
     return !br?.classId || br.classId === save.classId;
   }
 
-  /** Хватает ли ресурса под способность (мана/выносливость по active.resource). */
-  private canSpend(p: PlayerEntity, active: { manaCost: number; resource: 'mana' | 'stamina' }): boolean {
-    return (active.resource === 'stamina' ? p.stamina : p.mana) >= active.manaCost;
+  private pool(p: PlayerEntity, pool: ResourcePool): number {
+    return pool === 'stamina' ? p.stamina : p.mana;
   }
-  private spend(p: PlayerEntity, active: { manaCost: number; resource: 'mana' | 'stamina' }): void {
-    if (active.resource === 'stamina') p.stamina -= active.manaCost;
-    else p.mana -= active.manaCost;
+  private take(p: PlayerEntity, pool: ResourcePool, amount: number): void {
+    if (pool === 'stamina') p.stamina -= amount; else p.mana -= amount;
+  }
+
+  /**
+   * Хватает ли ресурса под способность. Пулов ДВА: свой у носителя (`active.resource`) и чужой —
+   * надбавка магических вставок (`extraCost`). Пулы по построению разные, поэтому проверяются
+   * независимо: сложить их было бы неверно.
+   */
+  private canSpend(p: PlayerEntity, active: Cost, extra?: Extra): boolean {
+    if (this.pool(p, active.resource) < active.manaCost) return false;
+    return !extra || this.pool(p, extra.pool) >= extra.amount;
+  }
+  private spend(p: PlayerEntity, active: Cost, extra?: Extra): void {
+    this.take(p, active.resource, active.manaCost);
+    if (extra) this.take(p, extra.pool, extra.amount);
+  }
+
+  /**
+   * ПОГАСШАЯ ВСТАВКА: маны не хватило на магическую часть — собираем ту же способность без неё.
+   * Удар проходит физическим, вставка не применяется и не оплачивается. Решение юзера: билд не
+   * должен вставать колом из-за пустого второго пула, а нехватка обязана читаться по урону сразу.
+   */
+  private affordableRes(p: PlayerEntity, nodeId: string, res: ResolvedActive): ResolvedActive {
+    const ex = res.extraCost;
+    if (!ex || this.pool(p, ex.pool) >= ex.amount) return res;
+    return resolveActive(this.cfg, p.save, nodeId, { omitPools: [ex.pool] }) ?? res;
   }
 
   private castSkill(p: PlayerEntity, snap: PlayerSnapshot, nodeId: string): void {
     // СО ВСТАВКАМИ: дальше всё (ресурс, КД, оружие, замах, исполнение) работает на ЭФФЕКТИВНОЙ
     // способности — именно поэтому вся система стоит на одном шве, а не на десятке правок.
-    const res = resolveActive(this.cfg, p.save, nodeId);
-    if (!res) return;
+    const full = resolveActive(this.cfg, p.save, nodeId);
+    if (!full) return;
+    const res = this.affordableRes(p, nodeId, full);
+    // Что не оплачено — помнит замах: способность пересобирается в момент удара (`stepWindup`).
+    const omit = res === full ? undefined : [full.extraCost!.pool];
     // Условная часть нужна УЖЕ ЗДЕСЬ: `active.speed` у атаки потребляется прямо в этом кадре —
     // из него считается `attackCd` (ниже). Надбавка к скорости, применённая только на ударе,
     // не доехала бы никуда. Поэтому правило такое: СКОРОСТЬ решается в начале замаха, а УРОН —
@@ -694,8 +723,8 @@ export class GameSession {
       // Временный бафф: стат-моды за ресурс на durationSec; не рефрешим, пока активен.
       case 'buff': {
         if ((p.skillBuffs[nodeId] ?? 0) > 0) return;
-        if (!this.canSpend(p, active)) return;
-        this.spend(p, active);
+        if (!this.canSpend(p, active, res.extraCost)) return;
+        this.spend(p, active, res.extraCost);
         p.skillBuffs[nodeId] = active.durationSec;
         return;
       }
@@ -704,8 +733,8 @@ export class GameSession {
         if (p.attackCd > 0 || p.windup) return;    // делит тайминг с базовой атакой; занят замахом
         if ((p.skillCd[nodeId] ?? 0) > 0) return;   // опц. персональный КД
         if (!this.weaponAllowed(p, active)) return; // не то оружие → скилл не срабатывает
-        if (!this.canSpend(p, active)) return;
-        this.spend(p, active);
+        if (!this.canSpend(p, active, res.extraCost)) return;
+        this.spend(p, active, res.extraCost);
         const pm = this.dmods(p.debuffs);
         // ⭐⭐ `speed` — СКОРОСТЬ ОДНОГО ВЗМАХА, а `hits` — СКОЛЬКО ИХ. Раньше и то и другое мерилось
         // целым скиллом: «3 удара, скорость ×2» ужимало ВСЮ способность в полцикла и выдавало три
@@ -720,7 +749,7 @@ export class GameSession {
         // Окно свинга = ОДИН взмах: клиент ужимает клип под него, и каждый удар получает свою анимацию.
         this.emitSwing(p, nodeId, windup, Math.max(p.attackCd, p.skillCd[nodeId] ?? 0), stepSec);
         const series: AttackSeries = { hits, struck: 0, stepSec, windupSec: windup, recover: false };
-        p.windup = { kind: 'skill', nodeId, rank, remaining: windup, series };
+        p.windup = { kind: 'skill', nodeId, rank, remaining: windup, series, ...(omit ? { omit } : {}) };
         if (windup <= 0) this.stepWindup(p, snap, 0);   // мгновенный замах: первый удар прямо сейчас, остаток серии — по таймеру
         return;
       }
@@ -730,12 +759,12 @@ export class GameSession {
         if (p.windup) return;                       // занят замахом/каст-таймом
         if ((p.skillCd[nodeId] ?? 0) > 0) return;   // личный КД
         if (!this.weaponAllowed(p, active)) return;
-        if (!this.canSpend(p, active)) return;
-        this.spend(p, active);
+        if (!this.canSpend(p, active, res.extraCost)) return;
+        this.spend(p, active, res.extraCost);
         if (active.cooldown > 0) p.skillCd[nodeId] = abilityCooldown(active.cooldown, rank);
         const castTime = active.castTimeSec / Math.max(0.2, snap.derived.castSpeed);
         this.emitSwing(p, nodeId, castTime, Math.max(castTime, p.skillCd[nodeId] ?? 0), 0);
-        if (castTime > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: castTime }; return; }
+        if (castTime > 0) { p.windup = { kind: 'skill', nodeId, rank, remaining: castTime, ...(omit ? { omit } : {}) }; return; }
         this.executeResolved(p, snap, res, rank);
         return;
       }
@@ -771,7 +800,7 @@ export class GameSession {
       this.emitSwing(p, wu.nodeId, s.windupSec, Math.max(p.attackCd, p.skillCd[wu.nodeId] ?? 0), s.stepSec, true);
       return;
     }
-    const r = resolveActive(this.cfg, p.save, wu.nodeId);
+    const r = resolveActive(this.cfg, p.save, wu.nodeId, wu.omit ? { omitPools: wu.omit } : {});
     // ⚠ ПРОКИ ВСТАВОК — РОВНО ОДИН РАЗ ЗА ПРИМЕНЕНИЕ (на первом взмахе): цена и откат тоже списываются
     // один раз, и печать «при касте», сработавшая трижды за один каст, была бы скрытым ×3.
     if (r) this.executeResolved(p, snap, r, wu.rank, !s || s.struck === 0);
@@ -898,6 +927,15 @@ export class GameSession {
       for (const pr of procs) {
         if (pr.on !== 'cast') continue;
         if (pr.chance < 1 && !this.rng.chance(pr.chance)) continue;
+        // ⭐ ПРОК ПЛАТИТ САМ. «Волна холода» и «Дуговой разряд» — настоящие новы со своей стихией:
+        // бесплатное заклинание на каждом взмахе носителя было дырой. Не хватило маны — прок молчит,
+        // носитель бьёт как обычно (тот же принцип, что у погасшей вставки).
+        const cost = pr.ability.manaCost;
+        if (cost > 0) {
+          const pool = pr.ability.resource;
+          if (this.pool(p, pool) < cost) continue;
+          this.take(p, pool, cost);
+        }
         // Печать (бафф на себя) не проходит через `executeAbility`: тот бьёт по миру, а бафф —
         // состояние игрока. Ключ с префиксом `ins:` — чтобы не столкнуться с id узлов дерева.
         if (pr.ability.category === 'buff') { p.skillBuffs['ins:' + pr.insertId] = pr.ability.durationSec; continue; }

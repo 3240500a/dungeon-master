@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
 import { newCharacterSave } from '../economy/newCharacter.js';
 import type { SaveState } from '../types/save.js';
-import { resolveActive, socketsOpen, insertFits, insertById, insertUnlocked } from './inserts.js';
+import { resolveActive, socketsOpen, insertFits, insertById, insertUnlocked, insertPool } from './inserts.js';
 
 /**
  * Модульные скилы: гнёзда и вставки. Проверяется РЕЗОЛВ — чистая функция, через которую проходит
@@ -16,6 +16,19 @@ const off = (a: unknown): Off => a as Off;
 /** Узел дерева, у которого есть активка нужной категории. */
 const nodeWithActive = (category: string): string =>
   cfg.get('skill-tree').nodes.find((n) => n.effect.active?.category === category)!.id;
+
+/**
+ * Атака, которая платит ВЫНОСЛИВОСТЬЮ и стоит дороже нуля. Нужна везде, где проверяется перенос:
+ * на скиле, который и так платит маной, магической вставке переносить некуда — она просто дорожает.
+ */
+const staminaAttack = (): string => cfg.get('skill-tree').nodes.find((n) => {
+  const a = n.effect.active;
+  return a?.category === 'attack' && a.resource === 'stamina' && a.manaCost > 0;
+})!.id;
+const activeOf = (nid: string): { manaCost: number; cooldown: number; resource: string } =>
+  cfg.get('skill-tree').nodes.find((n) => n.id === nid)!.effect.active! as never;
+/** Курс переноса надбавки в чужой пул — из баланса, а не из головы. */
+const rates = (): { manaPerStamina: number; staminaPerMana: number } => cfg.get('balance').inserts;
 
 /** Сейв с выученным узлом заданного ранга и открытыми вставками (через узлы-доноры). */
 function saveWith(nodeId: string, rank: number, sockets: (string | null)[] = [], unlock: string[] = []): SaveState {
@@ -77,25 +90,74 @@ describe('ИНВАРИАНТ НЕТРОНУТОСТИ', () => {
 });
 
 describe('вставки меняют носителя', () => {
-  it('стихия и статус приходят из вставки, стоимость и КД растут', () => {
-    const id = nodeWithActive('attack');
-    const base = cfg.get('skill-tree').nodes.find((n) => n.id === id)!.effect.active!;
+  it('⭐ МАГИЧЕСКАЯ вставка берёт МАНУ, а выносливость носителя не растёт', () => {
+    // Жалоба, с которой всё началось: огонь в мече дорожал выносливостью, а мана не тратилась.
+    const id = staminaAttack(), base = activeOf(id);
     const save = saveWith(id, 20, ['ins-flame-edge'], ['ins-flame-edge']);
     const r = resolveActive(cfg, save, id)!;
     expect(off(r.active).element).toBe('fire');
     expect(off(r.active).addElementPct).toBeGreaterThan(0);
-    expect(r.active.manaCost).toBeCloseTo(off(base).manaCost * 1.25, 2);
-    expect(r.active.cooldown).toBeCloseTo(off(base).cooldown * 1.1, 2);
-    expect(off(base).element, 'исходный конфиг НЕ мутирован').not.toBe('fire');
+    expect(r.active.manaCost, 'цена носителя НЕ тронута').toBeCloseTo(base.manaCost, 6);
+    expect(r.extraCost?.pool).toBe('mana');
+    expect(r.extraCost!.amount).toBeCloseTo(base.manaCost * 0.25 * rates().manaPerStamina, 2);
+    expect(r.active.cooldown, 'откат по-прежнему растёт').toBeCloseTo(base.cooldown * 1.1, 2);
+    expect(off(base as never).element, 'исходный конфиг НЕ мутирован').not.toBe('fire');
   });
 
-  it('множители ПЕРЕМНОЖАЮТСЯ — три вставки дороже, а не «плюс немного»', () => {
-    const id = nodeWithActive('attack');
-    const base = cfg.get('skill-tree').nodes.find((n) => n.id === id)!.effect.active!;
-    const ids = ['ins-flame-edge', 'ins-kindling', 'ins-wide-arc'];
+  it('ФИЗИЧЕСКАЯ вставка работает как раньше: дорожает пул носителя, второй цены нет', () => {
+    const id = staminaAttack(), base = activeOf(id);
+    const r = resolveActive(cfg, saveWith(id, 20, ['ins-wide-arc'], ['ins-wide-arc']), id)!;
+    expect(r.active.manaCost).toBeCloseTo(base.manaCost * 1.25, 2);
+    expect(r.extraCost).toBeUndefined();
+  });
+
+  it('множители ПЕРЕМНОЖАЮТСЯ в своём пуле, магические надбавки СКЛАДЫВАЮТСЯ во втором', () => {
+    const id = staminaAttack(), base = activeOf(id);
+    const ids = ['ins-flame-edge', 'ins-kindling', 'ins-wide-arc'];   // мана, мана, выносливость
     const r = resolveActive(cfg, saveWith(id, 20, ids, ids), id)!;
     expect(r.applied.length, 'все три разного типа — влезли').toBe(3);
-    expect(r.active.manaCost).toBeCloseTo(off(base).manaCost * 1.25 * 1.2 * 1.25, 1);
+    expect(r.active.manaCost, 'в выносливости осталась только физическая').toBeCloseTo(base.manaCost * 1.25, 2);
+    expect(r.extraCost!.amount).toBeCloseTo(base.manaCost * (0.25 + 0.2) * rates().manaPerStamina, 2);
+  });
+
+  it('⚠ У ЗАКЛИНАНИЯ второй цены нет: магическая вставка и носитель платят из ОДНОГО пула', () => {
+    // Перенос — не «всегда два пула», а «вставка платит своим ресурсом». У мага ресурс уже тот же,
+    // поэтому стихийная вставка просто дорожает по мане, как было всегда.
+    const id = cfg.get('skill-tree').nodes.find((n) => {
+      const a = n.effect.active;
+      return a?.category === 'attack' && a.resource === 'mana' && a.manaCost > 0;
+    })!.id;
+    const base = activeOf(id);
+    const r = resolveActive(cfg, saveWith(id, 20, ['ins-flame-edge'], ['ins-flame-edge']), id)!;
+    expect(r.active.manaCost).toBeCloseTo(base.manaCost * 1.25, 2);
+    expect(r.extraCost).toBeUndefined();
+  });
+
+  it('КУРС ИЗ БАЛАНСА, а не из кода: удвоил курс — удвоилась вторая цена', () => {
+    const id = staminaAttack();
+    const save = saveWith(id, 20, ['ins-flame-edge'], ['ins-flame-edge']);
+    const one = resolveActive(cfg, save, id)!.extraCost!.amount;
+    const alt = new ConfigRegistry();
+    alt.loadAll();
+    const bal = alt.get('balance');
+    alt.reload({ balance: { ...bal, inserts: { ...bal.inserts, manaPerStamina: bal.inserts.manaPerStamina * 2 } } });
+    expect(resolveActive(alt, save, id)!.extraCost!.amount).toBeCloseTo(one * 2, 2);
+  });
+
+  it('⭐ ПОГАСШАЯ ВСТАВКА: omitPools убирает магические — ни стихии, ни второй цены', () => {
+    const id = staminaAttack(), base = activeOf(id);
+    const ids = ['ins-flame-edge', 'ins-wide-arc'];
+    const dim = resolveActive(cfg, saveWith(id, 20, ids, ids), id, { omitPools: ['mana'] })!;
+    expect(dim.applied.map((a) => a.insert.id), 'физическая осталась').toEqual(['ins-wide-arc']);
+    expect(off(dim.active).element).not.toBe('fire');
+    expect(dim.extraCost).toBeUndefined();
+    expect(dim.active.manaCost, 'физическая по-прежнему дорожает').toBeCloseTo(base.manaCost * 1.25, 2);
+  });
+
+  it('пул вставки: `carrier` идёт в пул носителя, свой — в свой', () => {
+    expect(insertPool(insertById(cfg, 'ins-flame-edge')!, 'stamina')).toBe('mana');
+    expect(insertPool(insertById(cfg, 'ins-wide-arc')!, 'stamina')).toBe('stamina');
+    expect(insertPool(insertById(cfg, 'ins-wide-arc')!, 'mana')).toBe('mana');
   });
 
   it('ОДНА ВСТАВКА КАЖДОГО ТИПА: вторая того же типа отбрасывается, другого — принимается', () => {
@@ -130,7 +192,8 @@ describe('proc-вставки', () => {
     expect(r.procs[0]!.on).toBe('cast');
     expect(r.procs[0]!.ability.category).toBe('cast');
     expect(off(r.active).damageMult, 'урон носителя не тронут').toBe(off(base).damageMult);
-    expect(r.active.manaCost, 'а цена — да').toBeGreaterThan(off(base).manaCost);
+    expect(r.extraCost!.amount, 'а цена — да, и она в мане: волна холода это заклинание').toBeGreaterThan(0);
+    expect(r.procs[0]!.ability.manaCost, 'у самого прока теперь есть цена').toBeGreaterThan(0);
   });
 });
 
@@ -247,7 +310,7 @@ describe('ранг узла-донора усиливает вставку', () 
    */
   const id = (): string => cfg.get('skill-tree').nodes.find((n) => {
     const a = n.effect.active;
-    return a?.category === 'attack' && a.cooldown > 0 && a.manaCost > 0;
+    return a?.category === 'attack' && a.cooldown > 0 && a.manaCost > 0 && a.resource === 'stamina';
   })!.id;
   const baseOf = (nid: string) => cfg.get('skill-tree').nodes.find((n) => n.id === nid)!.effect.active!;
 
@@ -256,7 +319,8 @@ describe('ранг узла-донора усиливает вставку', () 
     const r = resolveActive(cfg, saveAtRank(nid, ['ins-flame-edge'], 1), nid)!;
     const ins = insertById(cfg, 'ins-flame-edge')!;
     expect(off(r.active).addElementPct).toBeCloseTo(ins.tune!.addElementPct!, 6);
-    expect(r.active.manaCost).toBeCloseTo(off(base).manaCost * ins.costMult, 2);
+    expect(r.active.manaCost, 'выносливость носителя не трогается магией').toBeCloseTo(off(base).manaCost, 6);
+    expect(r.extraCost!.amount).toBeCloseTo(off(base).manaCost * (ins.costMult - 1) * rates().manaPerStamina, 2);
     expect(r.active.cooldown).toBeCloseTo(off(base).cooldown * ins.cooldownMult, 2);
   });
 
@@ -266,7 +330,7 @@ describe('ранг узла-донора усиливает вставку', () 
     const hi = resolveActive(cfg, saveAtRank(nid, ['ins-flame-edge'], 10), nid)!;
 
     expect(off(hi.active).addElementPct).toBeGreaterThan(off(lo.active).addElementPct);
-    expect(hi.active.manaCost).toBeGreaterThan(lo.active.manaCost);
+    expect(hi.extraCost!.amount, 'вторая цена растёт с рангом донора').toBeGreaterThan(lo.extraCost!.amount);
     // Надбавка к откату — это то, что СВЕРХ базового отката носителя. Она обязана убывать.
     const surchargeLo = lo.active.cooldown - off(base).cooldown;
     const surchargeHi = hi.active.cooldown - off(base).cooldown;

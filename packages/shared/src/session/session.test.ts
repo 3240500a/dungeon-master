@@ -4,6 +4,7 @@ import { createRng } from '../formulas/rng.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { Cell, TILE, makeGrid, cellToWorld, type Grid } from '../world/grid.js';
 import { newBotSave } from '../sim/playerBot.js';
+import { insertById } from './inserts.js';
 import { carriedMaterials } from '../economy/materials.js';
 import type { Item } from '../types/items.js';
 import type { MonsterFaction } from '../types/world.js';
@@ -963,5 +964,90 @@ describe('GameSession — нокдаун (сбить с ног)', () => {
     const avg = (a: number[]): number => a.reduce((s, x) => s + x, 0) / a.length;
     expect(up.length).toBeGreaterThan(5); expect(down.length).toBeGreaterThan(5);   // атака редкая: ~10 ударов за 400 тиков
     expect(avg(down)).toBeGreaterThan(avg(up) * 1.1);   // средний урон по лежачему выше (~×(1+vuln)=1.25), запас против крит-шума
+  });
+});
+
+// ── Ресурсы вставок: магия берёт ману ───────────────────────────────────────────
+describe(`GameSession — ${'⭐ ВСТАВКА ПЛАТИТ СВОИМ РЕСУРСОМ'}`, () => {
+  /** Вставить вставку в гнездо узла: гнездо открывается рангом узла, сама вставка — рангом донора. */
+  function socket(r: ConfigRegistry, save: ReturnType<typeof newBotSave>, nodeId: string, insertId: string): void {
+    save.skills[nodeId] = 1;
+    save.sockets = { ...(save.sockets ?? {}), [nodeId]: [insertId] };
+    const donor = r.get('skill-tree').nodes.find((n) => n.effect.grantsInsert === insertId)!;
+    save.skills[donor.id] = 1;
+  }
+  /** Поле с игроком и одним впрыснутым скилом наготове. */
+  function arena(r: ConfigRegistry, nodeId: string, insertId: string) {
+    const s = new GameSession(r, 21, 'normal');
+    const save = newBotSave(r, 'warrior');
+    socket(r, save, nodeId, insertId);
+    const p = s.addPlayer('p1', save);
+    s.enterFloor(1, { grid: openField(12, 12), spawn: cellToWorld(5, 5), monsters: [] });
+    return { s, p };
+  }
+
+  it('огонь в мече: выносливость как у голого скила, мана убывает', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_fire', activeFx({ category: 'attack', resource: 'stamina', manaCost: 6 }));
+    const { s, p } = arena(r, 't_fire', 'ins-flame-edge');
+    p.stamina = 30; p.mana = 25;   // ⚠ в пределах пулов воина (30/35) — иначе тик подрежет их к максимуму
+
+    s.tick(1 / 30, { p1: { ...idle, cast: 't_fire' } });
+
+    const extra = 6 * 0.25 * r.get('balance').inserts.manaPerStamina;   // надбавка вставки по курсу
+    expect(p.stamina, 'выносливость — только цена носителя').toBeCloseTo(30 - 6, 0);
+    expect(p.mana, 'а надбавка ушла в ману').toBeCloseTo(25 - extra, 0);
+  });
+
+  it('⭐ ПОГАСШАЯ ВСТАВКА: маны нет — удар всё равно проходит и мана не уходит в минус', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_fire', activeFx({ category: 'attack', resource: 'stamina', manaCost: 6 }));
+    const { s, p } = arena(r, 't_fire', 'ins-flame-edge');
+    p.stamina = 30; p.mana = 0;
+
+    const evs = s.tick(1 / 30, { p1: { ...idle, cast: 't_fire' } });
+
+    expect(evs.some((e) => e.type === 'swing' && e.ability === 't_fire'), 'скил сработал').toBe(true);
+    expect(p.stamina, 'списана только выносливость носителя').toBeCloseTo(30 - 6, 0);
+    expect(p.mana, 'мана не уходит в минус').toBeLessThan(0.5);
+    expect(p.mana).toBeGreaterThanOrEqual(0);
+  });
+
+  it('не хватает СВОЕГО пула — скил не срабатывает вовсе (такого теста не было)', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_fire', activeFx({ category: 'attack', resource: 'stamina', manaCost: 6 }));
+    const { s, p } = arena(r, 't_fire', 'ins-flame-edge');
+    p.stamina = 1; p.mana = 25;
+
+    const evs = s.tick(1 / 30, { p1: { ...idle, cast: 't_fire' } });
+
+    expect(evs.some((e) => e.type === 'swing' && e.ability === 't_fire')).toBe(false);
+    expect(p.mana, 'и вторая цена не списана').toBeGreaterThan(24.5);
+  });
+
+  it('прок-вставка платит маной САМА: хватило — печать легла', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_ward', activeFx({ category: 'attack', resource: 'mana', manaCost: 1 }));
+    const { s, p } = arena(r, 't_ward', 'ins-ward');
+    p.mana = 12;
+
+    // ⚠ Прок срабатывает не на нажатии, а по завершении ЗАМАХА (0.35 шага) — одного тика мало.
+    for (let i = 0; i < 20; i++) s.tick(1 / 30, { p1: { ...idle, cast: 't_ward' } });
+
+    const proc = insertById(r, 'ins-ward')!.proc!.ability.manaCost;
+    expect(p.skillBuffs['ins:ins-ward'], 'печать сработала').toBeGreaterThan(0);
+    expect(p.mana, 'списаны и носитель со вставкой, и сам прок').toBeCloseTo(12 - 1 * 1.3 - proc, 0);
+  });
+
+  it('прок-вставка молчит, когда маны хватает только на носителя', () => {
+    const r = reg();
+    injectSkill(r, 'warrior', 't_ward', activeFx({ category: 'attack', resource: 'mana', manaCost: 1 }));
+    const { s, p } = arena(r, 't_ward', 'ins-ward');
+    p.mana = 2;
+
+    for (let i = 0; i < 20; i++) s.tick(1 / 30, { p1: { ...idle, cast: 't_ward' } });
+
+    expect(p.skillBuffs['ins:ins-ward'], 'печати нет — заклинание не оплачено').toBeUndefined();
+    expect(p.mana, 'а носитель отработал и оплачен').toBeCloseTo(2 - 1.3, 0);
   });
 });

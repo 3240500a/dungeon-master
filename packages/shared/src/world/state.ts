@@ -61,7 +61,11 @@ export interface PlayerEntity {
   /** Временные баффы: id узла → остаток длительности, сек. */
   skillBuffs: Record<string, number>;
   /** Идёт замах удара (базовой атаки ИЛИ скилла): сработает по завершении, прерывается станом. */
-  windup: ({ kind: 'attack' } | { kind: 'skill'; nodeId: string; rank: number; series?: AttackSeries }) & { remaining: number } | null;
+  windup: ({ kind: 'attack' }
+    // `omit` — пулы, вставки которых НЕ оплачены (не хватило маны). Замах пересобирает способность
+    // по завершении, и без этой памяти удар прилетел бы со стихией, за которую не заплатили.
+    | { kind: 'skill'; nodeId: string; rank: number; series?: AttackSeries; omit?: ('mana' | 'stamina')[] })
+    & { remaining: number } | null;
   /** Активный рывок (движение) — пока не null, ввод игнорируется, масса ×weightMult. */
   dash: DashState | null;
   /** Кулдаун уклонения (dodge-рывок на пробел), сек; >0 — рывок недоступен. */

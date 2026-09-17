@@ -470,8 +470,13 @@ export const characterPanel: PanelFactory = (app, ui) => {
               ? (() => { const r = Math.max(0.2, state.derived().attackSpeed * active.speed); return [Math.round(sdmg * r), `темп ${(1 / r).toFixed(2)} с/удар`] as const; })()
               : (() => { const ct = active.castTimeSec / Math.max(0.2, state.derived().castSpeed); return [ct > 0 ? Math.round(sdmg / ct) : sdmg, `каст ${ct.toFixed(2)} с`] as const; })();
             right.append(mk('span', `font-weight:600;color:${dmgColor(el)}`, `${sdmg} (ДПС ~${sdps})`));
+            // ⚠ Здесь стояло «Мана N» независимо от пула: у боевых скилов это враньё — они платят
+            // выносливостью. Плюс вторая цена (надбавка магических вставок) не показывалась вовсе.
+            const resd = resolvedOf(binding);
+            const costTip = `${active.manaCost} ${active.resource === 'stamina' ? 'выносл.' : 'маны'}`
+              + (resd?.extraCost ? ` + ${resd.extraCost.amount} ${resd.extraCost.pool === 'mana' ? 'маны' : 'выносл.'}` : '');
             attachTooltip(row, () =>
-              `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Мана ${active.manaCost}.<br><br>` +
+              `${node.name}: урон <b>${sdmg}</b>, ${rateTip}, ДПС ~${sdps}. Цена ${costTip}.<br><br>` +
               `Урон по типам:<br>${typeLines(sbt)}` +
               ailmentTip(binding));
           } else if (node && active) {

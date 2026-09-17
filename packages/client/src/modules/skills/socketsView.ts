@@ -3,6 +3,9 @@ import { socketsOpen, insertById, insertRank, insertUnlocked, insertFits, resolv
 import { COLORS, mk, attachTooltip } from '../../ui/kit.js';
 import { elementColor, elementOf } from './skillIcon.js';
 
+/** Пул ресурса словом. Короткое: строка итога и так длинная, а «выносливости» в неё не влезает. */
+const POOL_SHORT: Record<'mana' | 'stamina', string> = { mana: 'маны', stamina: 'выносл.' };
+
 /**
  * СБОРКА СКИЛА: гнёзда выученных активок и вставки в них.
  *
@@ -72,7 +75,8 @@ export function renderSockets(app: App, body: HTMLElement): void {
       attachTooltip(cell, () => `<div style="color:${COLORS.text};font-weight:bold">${ins.name}</div>` +
         `<div style="color:#9aa">${typeName(ins.type)} · ранг ${rk}</div>` +
         `<div style="color:#c4bca8">${ins.description}</div>` +
-        `<div style="color:#9aa;margin-top:3px">стоимость ×${ins.costMult} · откат ×${ins.cooldownMult}</div>` +
+        `<div style="color:#9aa;margin-top:3px">стоимость ×${ins.costMult} · откат ×${ins.cooldownMult}` +
+        (ins.costPool === 'carrier' ? '' : ` · платит ${POOL_SHORT[ins.costPool]}`) + '</div>' +
         `<div style="color:${COLORS.dim};margin-top:3px">ранг растёт от очков в узле-доноре · клик — заменить или вынуть</div>`);
     }
     cell.addEventListener('click', () => openPicker(app, cell, node, i, cur));
@@ -84,13 +88,17 @@ export function renderSockets(app: App, body: HTMLElement): void {
   const r = resolveActive(cfg, save, node.id);
   if (r) {
     const b = base as { manaCost: number; cooldown: number };
-    const a = r.active as { manaCost: number; cooldown: number };
+    const a = r.active as { manaCost: number; cooldown: number; resource: 'mana' | 'stamina' };
     const d = (was: number, now: number): string => was === now
       ? String(now)
       : `<span style="color:${now > was ? COLORS.bad : COLORS.good}">${was} → ${now}</span>`;
     const line = mk('div', `font-size:11px;color:${COLORS.dim}`);
-    line.innerHTML = `Стоимость: ${d(b.manaCost, a.manaCost)} · откат: ${d(b.cooldown, a.cooldown)} с` +
-      (r.procs.length ? ` · доп. эффектов: ${r.procs.length}` : '');
+    // ⭐ ЦЕНЫ ДВЕ. Магическая вставка не удорожает пул носителя, а берёт свой — и если её не показать,
+    // игрок увидит «цена не изменилась» и решит, что вставка бесплатна.
+    line.innerHTML = `Стоимость: ${d(b.manaCost, a.manaCost)} ${POOL_SHORT[a.resource]}`
+      + (r.extraCost ? ` <span style="color:${COLORS.bad}">+ ${r.extraCost.amount} ${POOL_SHORT[r.extraCost.pool]}</span>` : '')
+      + ` · откат: ${d(b.cooldown, a.cooldown)} с`
+      + (r.procs.length ? ` · доп. эффектов: ${r.procs.length}` : '');
     body.append(line);
   }
   body.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-top:4px`,

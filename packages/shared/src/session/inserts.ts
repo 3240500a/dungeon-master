@@ -36,9 +36,30 @@ export interface InsertProc {
 /** Вставка вместе с рангом её узла-донора — ранг определяет силу, а не только доступ. */
 export interface AppliedInsert { insert: SkillInsert; rank: number }
 
+/** Пул ресурса. Тот же союз, что у `active.resource`, — имя нужно, чтобы не писать его пять раз. */
+export type ResourcePool = 'mana' | 'stamina';
+
+/**
+ * ЧЕЙ РЕСУРС ПЛАТИТ ЗА ЭТУ ВСТАВКУ. `carrier` — пул носителя (как было всегда), иначе — свой.
+ * Правило: вставка платит своим ресурсом. Огонь в мече берёт ману, даже когда меч бьёт на
+ * выносливости. Обратной симметрии нет: физические вставки остаются `carrier`, иначе у мага
+ * они стали бы почти бесплатными — выносливость он всё равно не тратит.
+ */
+export const insertPool = (ins: SkillInsert, carrier: ResourcePool): ResourcePool =>
+  (ins.costPool === 'carrier' ? carrier : ins.costPool);
+
+/** Курс переноса надбавки в чужой пул (`balance.inserts`). */
+export interface InsertRates { manaPerStamina: number; staminaPerMana: number }
+
 export interface ResolvedActive {
   /** Способность носителя с наложенными вставками. При пустых гнёздах — ИСХОДНЫЙ объект. */
   active: ActiveAbility;
+  /**
+   * ВТОРАЯ ЦЕНА: надбавка вставок, ушедшая в ЧУЖОЙ пул. Её платят вместе с `active.manaCost`,
+   * и именно она делает стихию в мече магией: выносливость не растёт, а мана убывает.
+   * Нет магических вставок (или они в пуле носителя) — поля нет вовсе.
+   */
+  extraCost?: { pool: ResourcePool; amount: number };
   /** Отдельные эффекты вставок (волна, разряд, печать). */
   procs: InsertProc[];
   /** Что реально применилось и с каким рангом — для подсказок и предпросмотра в редакторе. */
@@ -184,14 +205,25 @@ const addAt = (v: number, k: number): number => v * k;
  *
  * РАНГ узла-донора усиливает прибавку и надбавку к цене, но СНИЖАЕТ надбавку к откату: на высоком
  * ранге вставка почти не удлиняет носителя — иначе качать её было бы наказанием, а не наградой.
+ *
+ * ⭐ ДВА НАКОПИТЕЛЯ ВМЕСТО ОДНОГО. Надбавка вставки со своим пулом уходит НЕ в цену носителя,
+ * а во вторую цену (`extraCost`) — по курсу из баланса. Считается она от ИСХОДНОЙ цены носителя,
+ * а не от накопленной: иначе результат зависел бы от порядка вставок в гнёздах.
  */
-function applyInserts(active: ActiveAbility, list: readonly AppliedInsert[]): ActiveAbility {
+function applyInserts(
+  active: ActiveAbility, list: readonly AppliedInsert[], rates: InsertRates,
+): { active: ActiveAbility; extraCost?: { pool: ResourcePool; amount: number } } {
   const a = structuredClone(active) as ActiveAbility;
-  let cost = 1, cd = 1;
+  const carrier: ResourcePool = active.resource;
+  const other: ResourcePool = carrier === 'stamina' ? 'mana' : 'stamina';
+  const rate = carrier === 'stamina' ? rates.manaPerStamina : rates.staminaPerMana;
+  let cost = 1, cd = 1, extra = 0;
   for (const { insert: ins, rank } of list) {
     const k = gainAt(ins, rank);
     const r = Math.max(1, rank) - 1;
-    cost *= 1 + (ins.costMult - 1) * (1 + ins.perRank.cost * r);
+    const surplus = (ins.costMult - 1) * (1 + ins.perRank.cost * r);
+    if (insertPool(ins, carrier) === carrier) cost *= 1 + surplus;
+    else extra += active.manaCost * surplus * rate;
     cd *= 1 + (ins.cooldownMult - 1) * Math.max(0, 1 - ins.perRank.cooldownDecay * r);
     const t = ins.tune;
     if (!t) continue;
@@ -224,7 +256,10 @@ function applyInserts(active: ActiveAbility, list: readonly AppliedInsert[]): Ac
   }
   a.manaCost = r2(a.manaCost * cost);
   a.cooldown = r2(a.cooldown * cd);
-  return a;
+  // Скидочная вставка в чужом пуле не должна ВОЗВРАЩАТЬ ресурс из ниоткуда — вторая цена не бывает
+  // отрицательной. Скидку имеет смысл давать в своём пуле, там она честно уменьшает цену носителя.
+  const amount = r2(Math.max(0, extra));
+  return amount > 0 ? { active: a, extraCost: { pool: other, amount } } : { active: a };
 }
 
 /** Способность-прок на ранге: урон и радиус — множителями, длительность баффа — тоже. */
@@ -240,16 +275,29 @@ function scaleProc(ab: ActiveAbility, k: number): ActiveAbility {
   return out;
 }
 
+/** Что исключить из сборки. Сегодня нужен один случай: не хватило маны — магические вставки гаснут. */
+export interface ResolveOpts { omitPools?: readonly ResourcePool[] }
+
 /**
  * ГЛАВНАЯ ТОЧКА: способность узла с учётом вставок. `undefined` — у узла нет активки.
  *
  * Пустые гнёзда возвращают ИСХОДНЫЙ объект без клонирования — и дёшево, и служит доказательством
  * инварианта нетронутости (сравнение по ссылке в тесте).
+ *
+ * `omitPools` собирает ту же способность БЕЗ вставок, которые платят из названного пула. Так сделан
+ * откат «нет маны — удар проходит без стихии»: вставка не применяется и не оплачивается, а скил
+ * продолжает работать. Иначе мили-персонаж на сухой мане терял бы основную атаку целиком.
  */
-export function resolveActive(reg: ConfigRegistry, save: SaveState, nodeId: string): ResolvedActive | undefined {
+export function resolveActive(
+  reg: ConfigRegistry, save: SaveState, nodeId: string, opts: ResolveOpts = {},
+): ResolvedActive | undefined {
   const base = activeAbilityOf(reg, nodeId);
   if (!base) return undefined;
-  const list = socketed(reg, save, nodeId, base);
+  let list = socketed(reg, save, nodeId, base);
+  if (opts.omitPools?.length) {
+    const omit = new Set(opts.omitPools);
+    list = list.filter(({ insert }) => !omit.has(insertPool(insert, base.resource)));
+  }
   if (!list.length) return { active: base, procs: [], applied: [] };
   const procs: InsertProc[] = [];
   for (const { insert: ins, rank } of list) {
@@ -258,5 +306,6 @@ export function resolveActive(reg: ConfigRegistry, save: SaveState, nodeId: stri
     // ранге била бы ровно как на первом, и качать её было бы незачем.
     procs.push({ insertId: ins.id, on: ins.proc.on, chance: ins.proc.chance, ability: scaleProc(ins.proc.ability, gainAt(ins, rank)) });
   }
-  return { active: applyInserts(base, list), procs, applied: [...list] };
+  const { active, extraCost } = applyInserts(base, list, reg.get('balance').inserts);
+  return { active, procs, applied: [...list], ...(extraCost ? { extraCost } : {}) };
 }

@@ -280,7 +280,7 @@ function monsterTtk(page: HTMLElement, data: Record<string, unknown>, reg: Confi
     ['Игрок → монстр', `~${ttkKill.toFixed(1)}с · ${Math.ceil(mon.hp / Math.max(0.01, pExp))} уд · поп. ${pctS(pHitCh)}`],
     ['Монстр → игрок', `~${ttkDeath.toFixed(1)}с · ${Math.ceil(d.maxHp / Math.max(0.01, mExp))} уд · поп. ${pctS(mHitCh)}`],
   ]);
-  if (selSkill) ttk.appendChild(h('div', 'margin-top:6px;font-size:11px;color:#9aa', `Скилл «${selSkill.name}»: ${dmgShort(reg, selSkill.sim.element)} · ~${Math.round(hit)}/удар · КД ${selSkill.sim.cooldown.toFixed(1)}с · мана ${selSkill.sim.manaCost}${selSkill.sim.aoe ? ' · AoE' : ''}`));
+  if (selSkill) ttk.appendChild(h('div', 'margin-top:6px;font-size:11px;color:#9aa', `Скилл «${selSkill.name}»: ${dmgShort(reg, selSkill.sim.element)} · ~${Math.round(hit)}/удар · КД ${selSkill.sim.cooldown.toFixed(1)}с · цена ${selSkill.sim.manaCost}${selSkill.sim.aoe ? ' · AoE' : ''}`));
   ttk.appendChild(h('div', `margin-top:8px;font-size:13px;font-weight:600;color:${win ? '#5dcaa5' : '#e0708a'}`, `${win ? '▲ Игрок побеждает' : '▼ Монстр побеждает'} · запас ×${(Math.max(ttkKill, ttkDeath) / Math.max(0.01, Math.min(ttkKill, ttkDeath))).toFixed(1)}`));
   box.appendChild(ttk);
 

@@ -196,6 +196,10 @@
   "passiveRespecCostPct": 0.5,
   "skillRespecCostPerPoint": 100,
   "skillSocketRanks": [1, 6, 12],
+  "inserts": {
+    "manaPerStamina": 2,
+    "staminaPerMana": 2
+  },
   "inventory": {
     "cols": 10,
     "rows": 6,
