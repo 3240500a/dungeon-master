@@ -25,6 +25,11 @@
       "port": 3001
     },
     {
+      "name": "server-running",
+      "url": "http://localhost:3001",
+      "port": 3001
+    },
+    {
       "name": "editor",
       "runtimeExecutable": "npm",
       "runtimeArgs": [
