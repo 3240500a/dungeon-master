@@ -4,9 +4,9 @@
  * Математика живёт в `roadmapModel.ts` (чистая, под тестами) — здесь только DOM и хранение.
  *
  * ХРАНЕНИЕ. Ключ `pe_roadmap` в `pose_store` (не в игровом конфиге — почему, см. `roadmapModel.ts`).
- * Пишем в localStorage СРАЗУ, на сервер шлём с задержкой. Отличие от Ф12 намеренное: у роадмапа нет
- * «публикации для игроков», поэтому кнопки «Опубликовать» тут быть не должно — сервер здесь просто
- * синхронизация между двумя машинами. Правило Ф12 при этом соблюдается: сервер не затирает локальное
+ * Пишем в localStorage СРАЗУ, на сервер шлём с задержкой. Отличие от Ф12 намеренное: сервер здесь просто
+ * синхронизация между двумя машинами, кнопки «Опубликовать» нет. Роадмап ДЛЯ ИГРОКОВ сервером тоже не
+ * публикуется — он выгружается файлом или текстом (HTML / Steam / Discord), см. `roadmapPublic.ts`. Правило Ф12 при этом соблюдается: сервер не затирает локальное
  * молча — при расхождении показываем, что серверная копия свежее, и забрать её можно кнопкой.
  */
 import { devFetch } from '@dm/client/devAuth.js';
@@ -16,12 +16,17 @@ import {
   driftDays, autoClose, shiftTail, roadmapStats, shortDate as fmtDate,
   type RoadmapDoc, type Milestone, type Item, type Ctx, type AssetStats, type Who, type Source, type Status, type Snapshot,
 } from './roadmapModel.js';
-import { SEED } from './roadmapSeed.js';
+import { SEED, migrateRoadmap } from './roadmapSeed.js';
+import { renderPublicView } from './roadmapPublicView.js';
 import { replan, applyProposals } from './roadmapReplan.js';
 import { byId } from './roadmapCalendar.js';
 
 const LS_KEY = 'pe_roadmap';
 const LS_SEEN = 'pe_roadmap_seen';   // ревизия сервера, на которой основана локальная копия
+/** Какой роадмап открыт — личная настройка вкладки. Без префикса `pe_`: это не контент, его не синхронизируем. */
+const LS_VIEW = 'roadmap_view';
+type View = 'work' | 'public';
+let view: View = (() => { try { return localStorage.getItem(LS_VIEW) === 'public' ? 'public' : 'work'; } catch { return 'work'; } })();
 
 const C = {
   bg: '#1c1c26', edge: '#2c2c3a', text: '#e8e8f0', dim: '#9a9ab0', faint: '#6f6f88',
@@ -99,7 +104,13 @@ async function load(): Promise<void> {
       serverAhead = !!rev && rev > seen && (remote.updatedAt ?? 0) > (local.updatedAt ?? 0);
     }
     if (rev && !local) { try { localStorage.setItem(LS_SEEN, String(rev)); } catch { /* */ } }
+    // Серверной копии нет, а локальная есть — вернуть её на сервер. Так было после «чистого листа» 14.09:
+    // он стёр `pe_roadmap` на сервере, и вторая машина открыла бы пустой сид вместо живого плана.
+    if (!remote && local && bodies) scheduleSave();
   } catch { /* сервера нет — работаем на локальной копии */ }
+  // Обновления наполнения из репозитория (отмеченное сделанным, роадмап для игроков) доезжают и до
+  // уже правленой копии — точечными правками по id, не затирая остального.
+  if (migrateRoadmap(doc)) { writeLocal(doc); scheduleSave(); }
   try { assets = await fetch('/api/assets/stats').then((r) => (r.ok ? r.json() : undefined)); } catch { /* */ }
   loaded = true;
   selected = activeIndex(doc, ctxOf(undefined));
@@ -152,6 +163,16 @@ export function renderRoadmapPage(host: HTMLElement, config: Snapshot): void {
   const hrow = el('div', 'display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px');
   hrow.appendChild(el('div', 'font-size:15px;font-weight:700', '📍 Дорожная карта'));
   hrow.appendChild(el('div', `color:${C.faint};font-size:12px`, 'The Fourth Bequest'));
+  // Два роадмапа на одних данных: рабочий (для команды) и для игроков (свои тексты, статусы — отсюда же).
+  const seg = el('div', `display:flex;border:1px solid ${C.edge};border-radius:7px;overflow:hidden;margin-left:8px`);
+  for (const [v, label] of [['work', '🔧 Рабочий'], ['public', '👁 Для игроков']] as [View, string][]) {
+    const b = btn(label, () => {
+      view = v; try { localStorage.setItem(LS_VIEW, v); } catch { /* приватный режим */ }
+      redraw();
+    }, `border:0;border-radius:0;${view === v ? `background:#2a2a38;color:${C.text};font-weight:600` : `color:${C.dim}`}`);
+    seg.appendChild(b);
+  }
+  hrow.appendChild(seg);
   const spacer = el('div', 'flex:1'); hrow.appendChild(spacer);
   const replanBtn = btn('\u27f3 Пересчитать план', () => showReplan(ctx), `border-color:${C.active};color:${C.active}`);
   replanBtn.title = 'Подогнать даты под реальный календарь Steam: работа сдвигается на отставание, '
@@ -200,6 +221,7 @@ export function renderRoadmapPage(host: HTMLElement, config: Snapshot): void {
   }
   root.appendChild(head);
 
+  if (view === 'public') { root.appendChild(renderPublicView(doc, ctx, touch)); return; }
   root.appendChild(renderTrack(ctx));
   if (doc.milestones[selected]) root.appendChild(renderMilestone(doc.milestones[selected]!, ctx, config));
   else root.appendChild(emptyState());
