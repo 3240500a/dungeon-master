@@ -47,6 +47,7 @@ import { makeLimitGizmo } from './poseLimitGizmo.js';
 import { clampLocalToLimit, decomposeToLimit, setLimitVersion, limitVersion } from './jointClamp.js';
 import { forgetDrag } from './jointLimitV2.js';   // накопитель протяжки кости: забывать на новом драге и при смене позы
 import { poseRig, settleLikePhysGhost, writeKeyPose, keyAtTime, previewOffKey, faceTarget, captureAimOffsets, aimBoneToPoint as aimChainBone } from './frameEdit.js';   // правка кадра: чистая часть под node-тесты
+import { onionClipKey, clampPicks, shiftPicks, onionFrames, ghostShade, settleCacheKey } from './frameEdit.js';   // ⭐ призраки произвольных кадров: выбор, оттенок, кэш оседания
 import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRootView, placeRootView, composeRootView, rootViewDelta,
   rootViewJump, turnHipsTarget, seedMotionChannels, copyRootView, rootPointToLocal, rootPointToWorld, rootDirToLocal, rootDirToWorld,
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
@@ -2148,7 +2149,7 @@ function deleteFrame(): void {
   const c = curClip(); if (!c || isEndFrame(c, frameIdx)) return;
   const lock = !!c.idleEnds || isAttackClip(c);
   if (c.keys.length <= (lock ? 3 : 1)) return;
-  histLib('удалить кадр', () => { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); });
+  histLib('удалить кадр', () => { const at = frameIdx; c.keys.splice(at, 1); shiftOnionPicks(c, at, -1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); });
 }
 /** Крайний кадр клипа-удара/импорта = idle-стойка: правится в стойке, а не тут. */
 const isEndFrame = (c: Clip, i: number): boolean =>
@@ -2311,7 +2312,7 @@ function syncRigs(): void {
   let touched = false;
   if (human && rigKeyOf(human) !== key) { rebuildManikin(); touched = true; }
   if (pw && (!ghostHuman || rigKeyOf(ghostHuman) !== key)) { buildGhost(); touched = true; }
-  if ((onionPrev && rigKeyOf(onionPrev) !== key) || (onionNext && rigKeyOf(onionNext) !== key)) { disposeOnion(); touched = true; }
+  if (onionGhosts.some((g) => rigKeyOf(g) !== key)) { disposeOnion(); touched = true; }   // ВЕСЬ пул: устаревший призрак остался бы на старом скелете (грабля Ф27)
   // РИГ-ИСТОЧНИК МОДЕЛИ СЮДА НЕ ВХОДИТ ОСОЗНАННО: он строится ПРЯМО из атласа (`curAtlas()`),
   // то есть всегда актуален, а морф ему довозит `refreshProfile()`. Замер (Ф27): до починки манекена
   // расхождение с костями модели было 5.07u ИМЕННО из-за манекена. Пересобирать его по ключу ВРЕДНО:
@@ -4037,7 +4038,37 @@ function clipSection(): void {
     const isEnd = (i: number): boolean => lockEnds && (i === 0 || i === lastI);
     const fh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); fh.textContent = `КАДРЫ (${c.keys.length}) · длит. ${clipDur(c).toFixed(2)}с` + (lockEnds ? ' · 🔒кадры 1/' + (lastI + 1) + ' из стойки' : ''); body.append(fh);
     const fr = el('div', 'display:flex;flex-wrap:wrap;gap:2px'); body.append(fr);
-    c.keys.forEach((kf, i) => fr.append(pbtn(`${isEnd(i) ? '🔒' : ''}${i + 1}·${kf.t.toFixed(2)}`, () => goFrame(i), i === frameIdx)));
+    // ⭐ ГАЛКА «ПРИЗРАК» У КАЖДОГО КАДРА (18.09.2026). Показываем её только при включённом тумблере: список кадров
+    // и так wrap-flex во всю панель, и у выключённого инструмента лишняя колонка галок его только разряжает.
+    const picks = new Set(onionPicks(c));
+    c.keys.forEach((kf, i) => {
+      const b = pbtn(`${isEnd(i) ? '🔒' : ''}${i + 1}·${kf.t.toFixed(2)}`, () => goFrame(i), i === frameIdx);
+      if (!onionOn) { fr.append(b); return; }
+      const box = el('span', 'display:inline-flex;align-items:center;gap:1px');
+      const cb = el('input', 'width:11px;height:11px;margin:0;accent-color:#8fb7ff;cursor:pointer') as HTMLInputElement;
+      cb.type = 'checkbox'; cb.checked = picks.has(i); cb.title = `призрак кадра ${i + 1}`;
+      cb.onchange = () => { if (cb.checked) picks.add(i); else picks.delete(i); setOnionPicks(c, picks); refreshAll(); };
+      box.append(cb, b); fr.append(box);
+    });
+    if (onionOn) {
+      const orow = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:2px'); body.append(orow);
+      orow.append(
+        pbtn(`все (${c.keys.length - 1})`, () => {
+          // Мягкий тормоз вместо потолка: числом призраков не ограничиваем (решение автора), но на длинном клипе
+          // десятки кукол строятся заметно — спрашиваем. ЗАМЕР сборки — в README.
+          if (c.keys.length - 1 > ONION_MANY && !confirm(`Кадров ${c.keys.length}. Столько призраков строятся разом (≈${((c.keys.length - 1) * 2.2).toFixed(0)} мс) и с ними тяжелее крутить сцену. Отметить все?`)) return;
+          setOnionPicks(c, c.keys.map((_, i) => i)); refreshAll();
+        }),
+        pbtn('снять все', () => { setOnionPicks(c, []); refreshAll(); }, picks.size === 0),
+        pbtn('соседние ±' + onionSpan, () => { onionNear = !onionNear; setPref('onionNear', onionNear); refreshAll(); }, onionNear),
+      );
+      if (onionNear) orow.append(pbtn('±' + onionSpan, () => { onionSpan = onionSpan >= 3 ? 1 : onionSpan + 1; setPref('onionSpan', onionSpan); refreshAll(); }));
+      const hint = el('span', 'color:#6d7590;font-size:10px;align-self:center');
+      hint.textContent = `призраков: ${onionFrames(picks, frameIdx, c.keys.length, onionNear, onionSpan).length}`;
+      hint.title = 'Показываются ОТМЕЧЕННЫЕ кадры плюс соседи ±N, если режим «соседние» включён. Текущий кадр призраком не дублируется. '
+        + 'Ближние ярче, дальние бледнее; назад — синий, вперёд — оранжевый. Выбор помнится по клипу (личная настройка, на сервер не уходит).';
+      orow.append(hint);
+    }
     const kf = c.keys[frameIdx];
     if (kf) {
       const tr = el('label', 'display:flex;align-items:center;gap:6px;margin-top:4px'); tr.innerHTML = '<span style="flex:1">время кадра (с)</span>';
@@ -4061,9 +4092,9 @@ function clipSection(): void {
         else { insAt = lockEnds ? Math.max(1, Math.min(frameIdx + 1, lastI)) : frameIdx + 1; const a = c.keys[insAt - 1], b = c.keys[insAt]; nt = (a && b) ? (a.t + b.t) / 2 : (a ? a.t + DEF_GAP : 0); }   // концы-стойка неприкосновенны → вставка в середину
         // Корень и опорность стоп — С ТАЙМЛАЙНА на время нового ключа (`seedMotionChannels`): без них поворот клипа проваливался в 0 на вставке.
         const pose = seedMotionChannels(readPoseFull(), c, nt);
-        c.keys.splice(insAt, 0, { pose, t: nt }); frameIdx = insAt; previewT = null; saveLib(); refreshAll();
+        c.keys.splice(insAt, 0, { pose, t: nt }); shiftOnionPicks(c, insAt, 1); frameIdx = insAt; previewT = null; saveLib(); refreshAll();
       })),
-      pbtn('− кадр', () => histLib('удалить кадр', () => { if (!atEnd && c.keys.length > (lockEnds ? 3 : 1)) { c.keys.splice(frameIdx, 1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } })),   // концы не удалить
+      pbtn('− кадр', () => histLib('удалить кадр', () => { if (!atEnd && c.keys.length > (lockEnds ? 3 : 1)) { const at = frameIdx; c.keys.splice(at, 1); shiftOnionPicks(c, at, -1); frameIdx = Math.min(frameIdx, c.keys.length - 1); saveLib(); refreshAll(); } })),   // концы не удалить
     );
     { const off = offKeyTime(c); if (off !== null && !atEnd) { const hn = el('div', 'color:#e0b050;font-size:10px;margin-top:2px'); hn.textContent = '⚠ ' + offKeyHint(c, off); act.append(hn); } }
     // подтянуть позу в текущий кадр из соседнего (строить замах/удар от концов-idle, потом править)
@@ -4076,8 +4107,7 @@ function clipSection(): void {
       if (frameIdx > 0 && frameIdx < lastI) pr2.append(pbtn('⇄ середина (пред+след)', () => pull(() => blendTwo(c.keys[frameIdx - 1]!.pose, c.keys[frameIdx + 1]!.pose, 0.5))));
     }
     { const vr = el('div', 'display:flex;flex-wrap:wrap;gap:3px'); body.append(vr);
-    vr.append(pbtn('🧅 призраки соседних кадров', () => { onionOn = !onionOn; refreshAll(); }, onionOn));
-    if (onionOn) vr.append(pbtn('±' + onionSpan, () => { onionSpan = onionSpan >= 3 ? 1 : onionSpan + 1; refreshAll(); }));
+    vr.append(pbtn('🧅 призраки кадров', () => { onionOn = !onionOn; setPref('onion', onionOn); refreshAll(); }, onionOn));   // тумблер помнится (`pe_prefs.onion`); ВЫБОР кадров — галками в списке КАДРЫ выше, там же «все / снять все / соседние ±N»
     trajBtn = pbtn(trajLabel(), () => { trajOn = !trajOn; refreshAll(); }, trajOn);
     trajBtn.title = 'Путь выбранной кости за весь клип. Расстояние между точками = скорость (сетка времени равномерная).';
     vr.append(trajBtn); }
@@ -6496,38 +6526,100 @@ function setPhys(on: boolean, byUser = true): void {
   physB.classList.toggle('on', on);
   updateOnion();   // призраки соседних кадров заземляются только при видимом заземлённом теле (`groundedView`), а физика грузится асинхронно
 }
-// ── Онион-скин: полупрозрачные призраки соседних кадров (пред=синий, след=оранжевый) при позинге в «Анимации» ──
-let onionOn = false; let onionPrev: Humanoid | null = null; let onionNext: Humanoid | null = null;
-/** Сколько кадров назад/вперёд показывать призраками. Больше 1 нужно на быстрых замахах: соседний кадр там
+// ── Онион-скин: полупрозрачные призраки ВЫБРАННЫХ кадров (прошлое=синий, будущее=оранжевый) при позинге в «Анимации» ──
+let onionOn = getPref('onion', false);         // ⚠ до 18.09 тумблер не помнился вовсе — включать заново каждый F5
+/** Сколько кадров назад/вперёд показывать в режиме «соседние». Больше 1 нужно на быстрых замахах: соседний кадр там
  *  почти совпадает с текущим, и «след» движения виден только через 2-3 ключа. */
-let onionSpan = 1;
+let onionSpan = getPref('onionSpan', 1);
+let onionNear = getPref('onionNear', true);    // режим «соседние ±N» — прежнее поведение, оно же по умолчанию
+/** ПУЛ призраков: растёт лениво под число показанных кадров, лишние прячутся (не разбираются — их снова покажут). */
+const onionGhosts: Humanoid[] = [];
+let onionSkel = false;                          // чем построен ПУЛ (скелет / тело) — стиль общий, иначе призраки разнородны
 /**
- * ПРИЗРАК СОСЕДНЕГО КАДРА.
+ * СКЕЛЕТ-СТИЛЬ ОТ ЭТОГО ЧИСЛА ПРИЗРАКОВ — даже без атласа. Полупрозрачные ТЕЛА складываются в кашу уже на
+ * пятом-шестом: каждое — это полный силуэт в half-alpha поверх предыдущего, и позу за ними не видно.
+ * ⚠ ЧЕСТНО: СБОРКА скелета не дешевле (ЗАМЕР, node: тело 1.3 мс, скелет 1.8 мс на куклу — у скелета свой материал
+ * на каждую кость и сустав). Выигрыш — в ЧИТАЕМОСТИ и в заливке: тонкие октаэдры не закрывают ни меш, ни друг друга.
+ */
+const ONION_SKEL_AT = 6;
+/** С этого числа кадров «все» переспрашивает: потолка на число призраков нет (решение автора), но десятки строятся заметно. */
+const ONION_MANY = 24;
+/** ⭐ КЭШ ОСЕДАНИЯ, адресуемый содержимым (`settleCacheKey`): ключ → сдвиг таза. Стухнуть не может. */
+const onionSettle = new Map<string, number>();
+const SETTLE_CACHE_MAX = 512;   // ключей; переполнился — чистим целиком (это кэш, а не хранилище)
+/**
+ * ПРИЗРАК КАДРА.
  *
- * ⚠ С ЗАГРУЖЕННЫМ АТЛАСОМ РИСУЕМ СКЕЛЕТОМ, а не телом. Раньше онионы при атласе просто ГАСИЛИСЬ
- * (`aad37c2`, по жалобе «куча ненужных скелетов, оставить только скелет и модель»): два
+ * ⚠ С ЗАГРУЖЕННЫМ АТЛАСОМ (и от `ONION_SKEL_AT` штук) РИСУЕМ СКЕЛЕТОМ, а не телом. Раньше онионы при атласе
+ * просто ГАСИЛИСЬ (`aad37c2`, по жалобе «куча ненужных скелетов, оставить только скелет и модель»): два
  * полупрозрачных процедурных ТЕЛА поверх меша действительно мешали. Но с тех пор манекен и сам стал
  * скелетом, и тонкие октаэдры соседних кадров меш уже не загораживают — гасить нечего, а инструмент
  * возвращается. Тумблер включён, а призраков нет — это читается как поломка, и читалось.
  *
  * Сквозь меш рисуем намеренно (`depthTest = false`): призрак внутри модели не виден, то есть
  * бесполезен. `renderOrder` ниже манекена (998) — текущая поза обязана оставаться поверх соседних.
+ *
+ * ⚠ ЦВЕТ ЗДЕСЬ НЕ ВЫБИРАЕТСЯ: кукла из пула сегодня показывает кадр −1, завтра +4 — оттенок кладёт
+ * `tintOnion` на каждом обновлении. И ВИДИМОСТЬ тут не трогаем: у неё ровно один хозяин — `updateOnion`.
  */
-function mkOnion(tint: number): Humanoid {
-  const skel = !!atlasBS();
-  const h = stampRig(buildHumanoid({ ...rigRecipe(), style: skel ? 'skeleton' : undefined, limb: tint, body: tint, head: tint }));
+function mkOnion(): Humanoid {
+  const skel = onionSkel;
+  const h = stampRig(buildHumanoid({ ...rigRecipe(), style: skel ? 'skeleton' : undefined }));
   for (const m of h.meshes) {
     const mat = m.material as THREE.MeshStandardMaterial;
-    mat.transparent = true; mat.depthWrite = false; mat.emissive.setHex(tint); mat.emissiveIntensity = 0.25;
-    // Скелет тоньше тела: на 0.32 октаэдры почти не читались, поэтому ему своя прозрачность.
-    mat.opacity = skel ? 0.45 : 0.32;
+    mat.transparent = true; mat.depthWrite = false; mat.emissiveIntensity = 0.25;
     if (skel) { mat.depthTest = false; m.renderOrder = 996; }
   }
-  scene.add(h.root); h.root.visible = false; return h;
+  h.root.userData.onionSkel = skel;
+  scene.add(h.root); return h;
 }
+/** Базовая прозрачность стиля: скелет тоньше тела — на 0.32 октаэдры почти не читались. */
+const ONION_ALPHA = (skel: boolean): number => (skel ? 0.45 : 0.32);
+/** ⭐ Оттенок и прозрачность по ЗНАКОВОМУ расстоянию до текущего кадра (`ghostShade`) — иначе десяток призраков нечитаем. */
+function tintOnion(h: Humanoid, d: number): void {
+  const { tint, alpha } = ghostShade(d), a = ONION_ALPHA(!!h.root.userData.onionSkel) * alpha;
+  for (const m of h.meshes) {
+    const mat = m.material as THREE.MeshStandardMaterial;
+    mat.color.setHex(tint); mat.emissive.setHex(tint); mat.opacity = a;
+  }
+}
+/**
+ * ⚠ МАТЕРИАЛЫ ТОЖЕ ОСВОБОЖДАЕМ. Скелет-стиль выделяет материал НА МЕШ (`humanoid.ts`: `boneMat()`/`jointMat()`
+ * на каждую кость и сустав) — это 40-60 материалов на призрака, а разбирали только геометрию. С двумя
+ * призраками утечка была незаметна, с пулом на десятки — уже нет. Материалы `buildHumanoid` ничьи больше:
+ * они создаются ВНУТРИ вызова, общего с манекеном нет.
+ */
 function disposeOnion(): void {
-  for (const h of [onionPrev, onionNext]) if (h) { scene.remove(h.root); h.root.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
-  onionPrev = onionNext = null;
+  for (const h of onionGhosts) {
+    scene.remove(h.root);
+    h.root.traverse((o) => {
+      const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose();
+      const mt = m.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mt)) mt.forEach((x) => x.dispose()); else mt?.dispose();
+    });
+  }
+  onionGhosts.length = 0; onionSettle.clear();
+}
+/**
+ * ОТМЕЧЕННЫЕ КАДРЫ — личная настройка (`pe_prefs.onionPick`), по клипу. На сервер не уходит: это рабочее место,
+ * а не контент. ⚠ При чтении индексы ЗАЖИМАЮТСЯ по длине клипа и устаревшие выбрасываются — клип мог укоротиться
+ * в другой сессии (или в чужой рабочей копии), и призрак несуществующего кадра упал бы на `keys[i]!`.
+ */
+/** ⚠ Всё из `localStorage` считаем чужим: там могло оказаться что угодно (ручная правка, старый формат). */
+const onionPickRaw = (c: Clip): number[] => {
+  const v = (getPref<Record<string, number[]>>('onionPick', {}) ?? {})[onionClipKey(c)];
+  return Array.isArray(v) ? v : [];
+};
+function onionPicks(c: Clip): number[] { return clampPicks(onionPickRaw(c), c.keys.length); }
+function setOnionPicks(c: Clip, idx: Iterable<number>): void {
+  const all = { ...(getPref<Record<string, number[]>>('onionPick', {}) ?? {}) }, clean = clampPicks(idx, c.keys.length);
+  if (clean.length) all[onionClipKey(c)] = clean; else delete all[onionClipKey(c)];
+  setPref('onionPick', all);
+}
+/** Вставили/удалили ключ — отметки едут вместе с ним (иначе призраки молча разъезжаются по чужим кадрам). Зовётся ПОСЛЕ правки. */
+function shiftOnionPicks(c: Clip, at: number, delta: 1 | -1): void {
+  const p = onionPickRaw(c);
+  if (p.length) setOnionPicks(c, shiftPicks(p, at, delta));
 }
 /**
  * ПОЗА СОСЕДНЕГО КЛЮЧА НА ПРИЗРАК — там же, где её покажет видимая фигура, если перейти на этот кадр.
@@ -6551,11 +6643,17 @@ function applyPoseTo(h: Humanoid, p: Pose): void {   // применить по�
   h.root.position.set(0, 0, 0);                                    // корень как после `goFrame`
   // ⭐ …и на СВОЁМ корне этого ключа (галка «корень»): призрак стоит в сцене, не под шарниром манекена — общий поворот дал бы
   // соседу чужой рыск. Оседание ниже трогает только высоту, рыск ему не мешает.
-  composeRootView(h.root, rootViewGate() ? rootViewOfPose(p, rootViewWant()) : ROOT_VIEW_ZERO);
+  const view = rootViewGate() ? rootViewOfPose(p, rootViewWant()) : ROOT_VIEW_ZERO;
+  composeRootView(h.root, view);
   h.root.updateMatrixWorld(true);
   if (!groundedView()) return;                                     // физика выкл — меш ведёт НЕзаземлённый манекен
   h.footLift = physFootLift;                                       // фолбэк пола без модели (`ankleRest` нет) — как у физ-призрака
-  settleLikePhysGhost(h, GAIT.gndLag);
+  // ⭐ КЭШ ОСЕДАНИЯ: сдвиг таза этого ключа уже считали — стартуем с него, и сходится за ОДИН шаг вместо 26-29 / 305-355
+  // (`settleLikePhysGhost(seed)`; поза — в пределах того же допуска, 4.9e-6 по тазу). Ключ содержательный — стухнуть не может.
+  const ck = settleCacheKey(p, rigKeyOf(h), GAIT.gndLag, physFootLift, view);
+  const seed = onionSettle.get(ck);
+  const r = settleLikePhysGhost(h, GAIT.gndLag, undefined, seed ?? 0);
+  if (seed === undefined) { if (onionSettle.size >= SETTLE_CACHE_MAX) onionSettle.clear(); onionSettle.set(ck, r.off); }
 }
 
 // Ф10: ГРАФ КРИВОЙ — ручки безье вместо трёх кнопок-пресетов. Редактируется РЕМАП ФАЗЫ интервала
@@ -6714,14 +6812,29 @@ function updateTrajectory(): void {
   trajVisible(true);
   if (trajBtn) trajBtn.textContent = trajLabel();
 }
+/** ⭐ ЕДИНСТВЕННЫЙ писатель видимости призраков — зовётся ТОЛЬКО из `updateOnion` (сторож `onionOwner.test.ts`). */
+function onionVisible(h: Humanoid, on: boolean): void { h.root.visible = on; }
+/**
+ * ПРИЗРАКИ ПОКАЗАННЫХ КАДРОВ — пул вместо двух кукол (18.09.2026).
+ *
+ * Зовётся ПО СОБЫТИЯМ (`refreshAll`, смена кадра, тумблеры физики и заземления), НЕ из кадрового цикла:
+ * каждый призрак стоит позы, оседания и заливки. Кадровому циклу трогать их видимость нельзя — на этом
+ * призраки уже ломались дважды (сторож `onionOwner.test.ts`).
+ */
 function updateOnion(): void {
   const c = onionOn && tab === 'anim' ? curClip() : null;
-  if (!c || c.keys.length < 2) { if (onionPrev) onionPrev.root.visible = false; if (onionNext) onionNext.root.visible = false; return; }
-  if (!onionPrev) { onionPrev = mkOnion(0x4a8cff); onionNext = mkOnion(0xff8c3a); }
-  const pv = c.keys[Math.max(0, frameIdx - onionSpan)], nx = c.keys[Math.min(c.keys.length - 1, frameIdx + onionSpan)];
-  const havePv = frameIdx > 0, haveNx = frameIdx < c.keys.length - 1;
-  if (pv && havePv) { applyPoseTo(onionPrev!, pv.pose); onionPrev!.root.visible = true; } else onionPrev!.root.visible = false;
-  if (nx && haveNx) { applyPoseTo(onionNext!, nx.pose); onionNext!.root.visible = true; } else onionNext!.root.visible = false;
+  const want = c && c.keys.length >= 2 ? onionFrames(onionPicks(c), frameIdx, c.keys.length, onionNear, onionSpan) : [];
+  // Стиль пула: скелет при атласе ИЛИ когда призраков много. Смена стиля — пересборка пула (событие редкое).
+  const skel = !!atlasBS() || want.length >= ONION_SKEL_AT;
+  if (skel !== onionSkel) { if (onionGhosts.length) disposeOnion(); onionSkel = skel; }   // пустой пул разбирать нечего — и кэш оседания тогда зря не чистим
+  for (let i = 0; i < want.length; i++) {
+    const g = onionGhosts[i] ?? (onionGhosts[i] = mkOnion());
+    const idx = want[i]!;
+    tintOnion(g, idx - frameIdx);                 // оттенок — по ЗНАКОВОМУ расстоянию: прошлое синее, будущее оранжевое
+    applyPoseTo(g, c!.keys[idx]!.pose);
+    onionVisible(g, true);
+  }
+  for (let i = want.length; i < onionGhosts.length; i++) onionVisible(onionGhosts[i]!, false);
 }
 async function ensurePhysics(): Promise<void> {
   if (pw) return;

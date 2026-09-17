@@ -32,6 +32,11 @@ export interface EditorPrefs {
   floorMannequin?: boolean;  // манекен на полу
   rootYawView?: boolean;     // галка «корень: поворот» — показывать рыск корня клипа (`__rootY`); только вид
   rootPosView?: boolean;     // галка «корень: смещение» — показывать смещение корня клипа (`__rootP`); только вид
+  // 🧅 призраки кадров (до 18.09 не помнилось НИЧЕГО — тумблер слетал на каждый F5)
+  onion?: boolean;           // сам тумблер призраков
+  onionNear?: boolean;       // режим «соседние ±N» (по умолчанию вкл — прежнее поведение)
+  onionSpan?: number;        // N для «соседних»
+  onionPick?: Record<string, number[]>;   // отмеченные кадры ПО КЛИПУ (`onionClipKey`: персонаж|оружие|имя)
   // рабочее место
   tab?: string;              // выбранная вкладка панели
   charId?: string; weapon?: string; clip?: string;   // на чём остановился

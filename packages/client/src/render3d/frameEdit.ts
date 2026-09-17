@@ -16,7 +16,7 @@ import type { Humanoid } from './humanoid.js';
 import type { LimitView } from './humanoidRagdoll.js';
 import { groundFeet } from './footIk.js';
 import { clampLocalToLimit } from './jointClamp.js';
-import { hipsOffset, clipPoseAt, clipChannelAt, clipDur, clamp01, WPN_KEYS, WPN_POS, ROOT_YAW, ROOT_POS, HIPS_DEL, type Clip, type Pose } from './clipModel.js';
+import { hipsOffset, clipPoseAt, clipChannelAt, clipDur, clamp01, WPN_KEYS, WPN_POS, ROOT_YAW, ROOT_POS, HIPS_DEL, HIPS_ABS, type Clip, type Pose } from './clipModel.js';
 import { pelvisEulerToWorld, pelvisPoseToWorld } from './pelvisFrame.js';   // ⭐ таз на курсе — одна композиция с игрой
 import { SWING_KEY } from './turnInPlace.js';
 
@@ -70,9 +70,19 @@ const SETTLE_EPS = 1e-5;
  * 10-секундной модели призрака. Одна опорная стопа (`holdIdle`) держит сдвиг как есть — у призрака после `goFrame` это 0.
  *
  * `lag` — `GAIT.gndLag`. Возвращает итоговый сдвиг таза и число шагов (для замеров).
+ *
+ * ⭐ `seed` — УЖЕ ИЗВЕСТНЫЙ СДВИГ (кэш призраков, `settleCacheKey`). Неподвижная точка у итерации одна, поэтому
+ * старт с неё — это ровно ПОСЛЕДНИЙ шаг холодного прогона: тот же `groundFeet` на той же высоте таза, те же углы
+ * голеностопа, выход по тому же порогу. ЗАМЕР: холодный прогон 26-29 шагов (`gndLag` 15) / 305-355 (`gndLag` 1) → 1 шаг,
+ * сдвиг таза в пределах того же `SETTLE_EPS` (4.9e-6), кости ≤1e-4u (сторож `onionPick.test.ts`). Кэш хранит ЧИСЛО,
+ * а не позу, поэтому и стухнуть ему нечем.
+ *
+ * ⚠ ЧУЖОЙ `seed` НЕ ВСЕГДА ЛЕЧИТСЯ ИТЕРАЦИЕЙ. На двух опорных стопах неподвижная точка одна — сходится откуда
+ * угодно. Но на ОДНОЙ опоре (маховая нога — половина кадров бега) `groundFeet` держит сдвиг КАК ЕСТЬ (`holdIdle`),
+ * и неверный старт остаётся навсегда. Отсюда требование к ключу кэша: он обязан быть содержательным.
  */
-export function settleLikePhysGhost(h: Humanoid, lag: number, dt = GHOST_DT): { off: number; steps: number } {
-  const gs = { off: 0 };
+export function settleLikePhysGhost(h: Humanoid, lag: number, dt = GHOST_DT, seed = 0): { off: number; steps: number } {
+  const gs = { off: seed };
   h.root.updateMatrixWorld(true);
   const hy = h.hipsWorldY();
   const save = LEG_BONES.map((n) => h.bones.get(n)?.quaternion.clone() ?? null);
@@ -86,6 +96,101 @@ export function settleLikePhysGhost(h: Humanoid, lag: number, dt = GHOST_DT): { 
     if (Math.abs(gs.off - was) < SETTLE_EPS) break;
   }
   return { off: gs.off, steps: n };
+}
+
+// ── Призраки ПРОИЗВОЛЬНЫХ кадров: выбор, оттенок, кэш оседания ────────────────────────────────────
+
+/**
+ * ⭐ ПРИЗРАКИ ВЫБРАННЫХ КАДРОВ (18.09.2026). Было ровно два призрака — соседи ±N. Автор: «хочу отмечать
+ * галочкой произвольные кадры в правом меню и держать их призраки на виду, числом не ограничиваясь».
+ *
+ * Чистая часть здесь (node-тесты `onionPick.test.ts`), пул кукол и рисование — в `pose-editor.ts`.
+ * Разбор и замеры — `render3d/README.md`, «⭐ Призраки произвольных кадров».
+ */
+
+/** Ключ набора отмеченных кадров: выбор живёт У КЛИПА (у `hit_sword_r_01` воина он свой). */
+export const onionClipKey = (c: Pick<Clip, 'name' | 'character' | 'weapon'>): string => `${c.character}|${c.weapon}|${c.name}`;
+
+/** Отмеченные кадры → допустимые для клипа длины `len`: целые, в диапазоне, без повторов, по возрастанию. */
+export function clampPicks(picks: Iterable<number>, len: number): number[] {
+  const out = new Set<number>();
+  for (const i of picks) if (Number.isInteger(i) && i >= 0 && i < len) out.add(i);
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * Сдвиг отметок при вставке/удалении ключа. Иначе «+ кадр» в середине переводил бы все отметки правее
+ * на чужие кадры — со стороны это «призраки разъехались сами».
+ * `delta` = +1 (вставили ключ на место `at`) или −1 (удалили ключ `at`; его отметка уходит).
+ */
+export function shiftPicks(picks: Iterable<number>, at: number, delta: 1 | -1): number[] {
+  const out = new Set<number>();
+  for (const i of picks) {
+    if (delta === 1) out.add(i >= at ? i + 1 : i);
+    else if (i !== at) out.add(i > at ? i - 1 : i);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * КАКИЕ КАДРЫ ПОКАЗЫВАТЬ ПРИЗРАКАМИ: отмеченные ∪ соседи ±`span` (если режим «соседние» включён).
+ *
+ * ⚠ Текущий кадр не показываем НИКОГДА: его призрак лёг бы ровно на манекен — только каша и лишняя кукла.
+ * Соседи зажимаются по концам клипа и НЕ показываются, когда стоим на самом краю — ровно как было до пула.
+ */
+export function onionFrames(picks: Iterable<number>, frameIdx: number, len: number, near: boolean, span: number): number[] {
+  const out = new Set<number>(clampPicks(picks, len));
+  if (near && len >= 2) {
+    if (frameIdx > 0) out.add(Math.max(0, frameIdx - span));
+    if (frameIdx < len - 1) out.add(Math.min(len - 1, frameIdx + span));
+  }
+  out.delete(frameIdx);
+  return [...out].sort((a, b) => a - b);
+}
+
+/** Прошлое — синий, будущее — оранжевое (как было у двух соседей). */
+export const ONION_PAST = 0x4a8cff, ONION_FUTURE = 0xff8c3a;
+/** Дальше этого расстояния (кадров) оттенок и прозрачность уже не меняются — иначе дальние пропадут вовсе. */
+export const ONION_FADE_SPAN = 6;
+/** Во сколько раз бледнее самый дальний призрак. */
+export const ONION_FADE_MIN = 0.34;
+const DIM = 0x6a7080;   // к чему выцветает дальний призрак: холодный серый панели
+/** ⚠ Не ДО серого: на полном выцветании синий и оранжевый сходятся в один цвет, и сторона (назад/вперёд) пропадает. */
+const DIM_MAX = 0.6;
+const lerpByte = (a: number, b: number, k: number): number => Math.round(a + (b - a) * k);
+/**
+ * ОТТЕНОК И ПРОЗРАЧНОСТЬ ПО ЗНАКОВОМУ РАССТОЯНИЮ от текущего кадра (`d = кадр − frameIdx`).
+ * При десятке призраков одного цвета и одной прозрачности читается каша: ближние обязаны быть
+ * ярче и насыщеннее дальних. `alpha` — МНОЖИТЕЛЬ к базовой прозрачности стиля (скелет 0.45 / тело 0.32).
+ */
+export function ghostShade(d: number): { tint: number; alpha: number } {
+  const base = d < 0 ? ONION_PAST : ONION_FUTURE;
+  const k = Math.min(1, Math.max(0, (Math.abs(d) - 1) / ONION_FADE_SPAN));   // d = ±1 → 0 (ярче некуда)
+  const kc = k * DIM_MAX;
+  const tint = (lerpByte((base >> 16) & 255, (DIM >> 16) & 255, kc) << 16)
+    | (lerpByte((base >> 8) & 255, (DIM >> 8) & 255, kc) << 8)
+    | lerpByte(base & 255, DIM & 255, kc);
+  return { tint, alpha: 1 - (1 - ONION_FADE_MIN) * k };
+}
+
+/**
+ * ⭐ КЛЮЧ КЭША ОСЕДАНИЯ. Оседание стоит 0.4 мс (`gndLag` 15) и до 4.8 мс (`gndLag` 1) НА ПРИЗРАКА, а
+ * `updateOnion` зовётся из каждого `refreshAll` (перерисовка панели, тумблер, смена кадра). При десятке
+ * призраков это заметно руками, хотя менялся ОДИН кадр.
+ *
+ * Кэш содержательный: ключ — ровно то, от чего зависит результат, и ничего сверх.
+ *  • поза ключа — ТАЗ и НОГИ (`groundFeet` двигает только их; руки/голова стопу не двигают);
+ *  • риг (`recipeKey`: пропорции, длины, `ankleRest`), подъём стопы (`footLift`), `lag` заземления;
+ *  • корень вида (галки «корень: поворот / смещение»). На ПЛОСКОМ полу он высоту не меняет (поворот вокруг
+ *    вертикали и сдвиг по X/Z), но это свойство плоского пола, а не инвариант — держим в ключе.
+ * Меняется что угодно из этого — ключа нет, оседание считается заново. Стухнуть кэш не может: он
+ * адресуется содержимым, а не «инвалидируется» руками.
+ */
+export function settleCacheKey(p: Pose, rigKey: string, lag: number, lift: number, view: Readonly<RootView>): string {
+  const ch = (nm: string): string => { const v = p[nm]; return v ? `${v[0]},${v[1]},${v[2]}` : '-'; };
+  let s = `${rigKey}|${lag}|${lift}|${view.yaw},${view.x},${view.z}|${ch(HIPS_DEL)}|${ch(HIPS_ABS)}`;
+  for (const nm of LEG_BONES) s += '|' + ch(nm);
+  return s;
 }
 
 // ── Запись позы в ключ ────────────────────────────────────────────────────────────────────────────

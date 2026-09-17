@@ -141,6 +141,32 @@ describe('всё видимое стоит там же, где манекен п
     for (const nm of man.boneNames) expect(worldPos(ghost, nm).distanceTo(worldPos(man, nm)), nm).toBeLessThan(1e-6);
   });
 
+  /**
+   * ⭐ ПРИЗРАК ЛЮБОГО ОТМЕЧЕННОГО КАДРА (18.09.2026) — не только соседа. Призраков теперь пул, и кадры в нём
+   * произвольные: каждый обязан стоять РОВНО там, где встанет манекен, если на этот кадр перейти. Свой корень
+   * у каждого — не общий: иначе все призраки получат курс текущего кадра (мутация внизу).
+   */
+  it('⭐ призрак ЛЮБОГО кадра клипа стоит там же, где манекен на нём (пул отмеченных кадров)', () => {
+    const c = turnClip();
+    for (let i = 0; i < c.keys.length; i++) {
+      const p = c.keys[i]!.pose, v = rootViewOfPose(p, WANT);
+      const { h: man, pivot } = underPivot(); poseRig(man, p); man.root.position.set(0, 0, 0); placeRootView(pivot, v);
+      const ghost = buildHumanoid(); new THREE.Scene().add(ghost.root);
+      poseRig(ghost, p); ghost.root.position.set(0, 0, 0); composeRootView(ghost.root, v); ghost.root.updateMatrixWorld(true);
+      let worst = 0;
+      for (const nm of man.boneNames) worst = Math.max(worst, worldPos(ghost, nm).distanceTo(worldPos(man, nm)));
+      expect(worst, `кадр ${i}`).toBeLessThan(1e-6);
+      // Контроль-мутация «все призраки на корне ТЕКУЩЕГО кадра»: чужой корень видно сразу (кроме самого кадра 3).
+      if (i !== 3) {
+        const wrong = buildHumanoid(); new THREE.Scene().add(wrong.root);
+        poseRig(wrong, p); wrong.root.position.set(0, 0, 0); composeRootView(wrong.root, view); wrong.root.updateMatrixWorld(true);
+        let off = 0;
+        for (const nm of man.boneNames) off = Math.max(off, worldPos(wrong, nm).distanceTo(worldPos(man, nm)));
+        expect(off, `кадр ${i} на чужом корне`).toBeGreaterThan(0.5);   // против допуска 1e-6 — мутация ловится с запасом
+      }
+    }
+  });
+
   it('⭐ физ-призрак: цель таза с рыском даёт те же мировые повороты костей, что у манекена; без неё — мимо на рыск', () => {
     for (const yaw of [30 * D, 100 * D, 170 * D, -135 * D, 200 * D]) {
       const { h: man, pivot } = underPivot(); poseRig(man, keyPose); placeRootView(pivot, { yaw, x: 0, z: 0 });

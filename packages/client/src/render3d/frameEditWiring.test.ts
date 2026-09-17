@@ -21,7 +21,7 @@ function bodyAt(from: number, what: string): string {
 }
 const fn = (name: string): string => { const m = new RegExp(`function ${name}\\([^)]*\\)[^{]*\\{`).exec(SRC); return bodyAt(m ? m.index : -1, `функция ${name}`); };
 
-describe('призраки соседних кадров', () => {
+describe('призраки кадров', () => {
   it('⭐ applyPoseTo НЕ берёт таз с манекена — поза ключа ставится общим poseRig', () => {
     const b = fn('applyPoseTo');
     expect(b, 'таз призрака копировался с манекена текущего кадра — стопы соседа уезжали на разницу __hipsD')
@@ -33,7 +33,16 @@ describe('призраки соседних кадров', () => {
     const b = fn('applyPoseTo');
     expect(b).toMatch(/if \(!groundedView\(\)\) return/);
     expect(b).toMatch(/h\.footLift = physFootLift/);
-    expect(b).toMatch(/settleLikePhysGhost\(h, GAIT\.gndLag\)/);
+    expect(b).toMatch(/settleLikePhysGhost\(h, GAIT\.gndLag/);
+  });
+  it('⭐ оседание кэшируется ПО СОДЕРЖИМОМУ: ключ считает settleCacheKey, промах — пишет результат', () => {
+    const b = fn('applyPoseTo');
+    // Мутация «ключ по номеру кадра» или «кэш без корня вида» — не пройдёт: ключ строит общая чистая функция
+    // (её сторожит `onionPick.test.ts`), а сюда обязаны приехать ВСЕ её входы.
+    expect(b).toMatch(/settleCacheKey\(p, rigKeyOf\(h\), GAIT\.gndLag, physFootLift, view\)/);
+    expect(b, 'найденный сдвиг — СТАРТ оседания, а не подмена позы').toMatch(/settleLikePhysGhost\(h, GAIT\.gndLag, undefined, seed \?\? 0\)/);
+    expect(b, 'промах кладётся в кэш').toMatch(/onionSettle\.set\(ck, r\.off\)/);
+    expect(b, 'корень вида берётся ОДИН раз и идёт и в позу, и в ключ').toMatch(/const view = rootViewGate\(\)/);
   });
   it('манекен ставит позу ключа тем же poseRig', () => {
     expect(fn('applyPose')).toMatch(/poseRig\(human, p\)/);
@@ -202,7 +211,7 @@ describe('⭐ предпросмотр корня (галки «корень: п
     expect(SRC, 'память физ-призрака — свой объект, не ссылка').toMatch(/const physRootAt: RootView = \{ \.\.\.ROOT_VIEW_ZERO \};/);
   });
   it('призрак соседнего кадра — на СВОЁМ корне, до раннего выхода без заземления', () => {
-    expect(fn('applyPoseTo')).toMatch(/h\.root\.position\.set\(0, 0, 0\);[\s\S]*composeRootView\(h\.root, rootViewGate\(\) \? rootViewOfPose\(p, rootViewWant\(\)\) : ROOT_VIEW_ZERO\);\s*h\.root\.updateMatrixWorld\(true\);\s*if \(!groundedView\(\)\) return/);
+    expect(fn('applyPoseTo')).toMatch(/h\.root\.position\.set\(0, 0, 0\);[\s\S]*const view = rootViewGate\(\) \? rootViewOfPose\(p, rootViewWant\(\)\) : ROOT_VIEW_ZERO;\s*composeRootView\(h\.root, view\);\s*h\.root\.updateMatrixWorld\(true\);\s*if \(!groundedView\(\)\) return/);
   });
   it('траектория — с корнем каждого сэмпла, шарнир возвращается на показанный корень', () => {
     const b = fn('updateTrajectory');
