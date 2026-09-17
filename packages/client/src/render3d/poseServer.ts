@@ -90,22 +90,43 @@ export const notifySyncChange = notify;
  * Boot: узнать ревизии сервера и ДОЗАПОЛНИТЬ то, чего локально нет. Существующую рабочую копию не трогаем
  * НИКОГДА — в этом вся правка. Офлайн переживаем тихо (работаем на рабочей копии).
  */
-export async function syncPoseFromServer(): Promise<void> {
+export async function syncPoseFromServer(opts: SyncOptions = {}): Promise<void> {
+  const cmp = opts.compareBodies === true;
   const revs = await fetchRevs();
   const missing = POSE_KEYS.filter((k) => !hasLocal(k));
   const s = readSync();
   if (revs) { s.seen = { ...s.seen, ...revs }; }
+  /**
+   * ⭐⭐ БАЗУ ДВИГАЕТ ТЕЛО, А НЕ ОТСУТСТВИЕ СВОИХ ПРАВОК — НО ТОЛЬКО В РЕДАКТОРЕ (`compareBodies`).
+   *
+   * ⚠ БЫЛО «нет своих правок → база = ревизия сервера»: база уезжала вперёд, а ТЕЛО рабочей копии оставалось старым.
+   * Машина со старым `pe_clips` не видела бейджа «на сервере новее», первая же правка любого клипа проходила замок
+   * 409 и молча возвращала на сервер страйфы ДО перезапекания.
+   * ⚠ И НЕЛЬЗЯ ПРОСТО ЗАМОРОЗИТЬ БАЗУ: ключи пишутся и мимо этой вкладки. `pe_roadmap` шлёт конфиг-редактор
+   * (`editor/src/roadmap.ts`, свой POST через 900 мс после каждой правки, наш `pe_sync` он не трогает) — с голой
+   * заморозкой поз-редактор загорался бы «на сервере новее» после КАЖДОЙ правки роадмапа, ничего не правя.
+   * Поэтому: сервер ушёл вперёд по ЧИСТОМУ ключу → тянем тела и двигаем базу, ТОЛЬКО если тело совпадает с нашим.
+   * Не совпало — база стоит, бейдж горит, публикация поверх получает 409.
+   *
+   * ⚠⚠ И ТОЛЬКО ТАМ, ГДЕ ЕСТЬ КОМУ СПОРИТЬ. `syncPoseFromServer` зовёт и ИГРА (`game3d-boot.ts`, до старта клиента), а
+   * она серверное тело в рабочую копию не пишет (`missing` заполняется лишь при ОТСУТСТВИИ ключа) и бейджа «взять
+   * серверное» не показывает: спор там не разрешается никогда. ЗАМЕР: `pe_clips` 831 КБ из 0.82 МБ ответа
+   * `/api/pose` — после каждой публикации автора КАЖДЫЙ вернувшийся игрок тянул бы эти 0.82 МБ и парсил их на главном
+   * потоке ДО старта игры, БЕСКОНЕЧНО (база не двигается, тело не обновляется). В игре база едет как раньше.
+   */
+  const behind = cmp ? POSE_KEYS.filter((k) => revs && k in revs && s.base[k] !== undefined && !s.dirty[k]
+    && revs[k]! > s.base[k]! && !WIPE_SPARED.includes(k)) : [];
+  // ⚠ ОДИН `fetchAll()` НА ЗАГРУЗКУ, А НЕ ДВА. Новая машина, где части ключей нет, а `pe_clips` есть и отстал, даёт
+  // ОБА условия сразу — и `/api/pose` (0.82 МБ замером) качался дважды подряд.
+  const all = (missing.length || behind.length) ? await fetchAll() : null;
 
-  if (missing.length) {
+  if (missing.length && all) {
     // Первый запуск / новая машина: тел у нас нет, значит взять серверные — не затирание, а заполнение.
-    const data = await fetchAll();
-    if (data) {
-      for (const k of missing) {
-        if (k in data && data[k] !== undefined) {
-          writeLS(k, JSON.stringify(data[k]));
-          s.base[k] = revs?.[k] ?? 0;
-          delete s.dirty[k];
-        }
+    for (const k of missing) {
+      if (k in all && all[k] !== undefined) {
+        writeLS(k, JSON.stringify(all[k]));
+        s.base[k] = revs?.[k] ?? 0;
+        delete s.dirty[k];
       }
     }
   }
@@ -116,11 +137,33 @@ export async function syncPoseFromServer(): Promise<void> {
     // ПЕРВАЯ ВСТРЕЧА ключа: наша рабочая копия основана ровно на том, что сейчас на сервере, — фиксируем базу
     // даже для правленого. Иначе база оставалась 0 и бейдж «на сервере новее» горел бы ВСЕГДА (поймано живьём).
     if (s.base[k] === undefined) { s.base[k] = revs[k]!; continue; }
-    // Дальше базу двигает только отсутствие своих правок: если мы ничего не меняли, спорить не о чем.
-    if (!s.dirty[k]) s.base[k] = revs[k]!;
+    // Игра (и любой, кто не сверяет тела): прежнее поведение — база едет, пока своих правок нет.
+    if (!cmp) { if (!s.dirty[k]) s.base[k] = revs[k]!; continue; }
+    // Не контент поз-редактора (роадмап): его пишет другая вкладка, спорить тут не о чем — база едет как раньше.
+    if (WIPE_SPARED.includes(k) && !s.dirty[k]) { s.base[k] = revs[k]!; continue; }
+    if (all && behind.includes(k) && k in all && sameBody(readLS(k), all[k])) s.base[k] = revs[k]!;
   }
   writeSync(s);
   notify();
+}
+/**
+ * `compareBodies` — сверять ли ТЕЛА отставших чистых ключей (см. `syncPoseFromServer`). Просит его только редактор:
+ * он один умеет показать бейдж «на сервере новее» и кнопку «взять серверное».
+ */
+export interface SyncOptions { compareBodies?: boolean }
+/**
+ * Тело рабочей копии (сырой JSON из localStorage) и серверное — одно и то же? Сравнение КАНОНИЧЕСКОЕ: порядок ключей
+ * объекта у `JSON.stringify` зависит от того, кто и в каком порядке их клал, и побайтовое сравнение врало бы «разные».
+ */
+function sameBody(localRaw: string | null, server: unknown): boolean {
+  if (localRaw === null) return false;
+  try { return canon(JSON.parse(localRaw)) === canon(server); } catch { return false; }
+}
+function canon(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
+  if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+  const o = v as Record<string, unknown>;
+  return '{' + Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => JSON.stringify(k) + ':' + canon(o[k])).join(',') + '}';
 }
 
 /** Ревизии сервера: `{ключ: updatedAt}`. null — сервера нет. */

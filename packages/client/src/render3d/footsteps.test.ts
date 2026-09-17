@@ -74,9 +74,19 @@ describe('шаги: модель меток', () => {
   });
 
   it('редактор переносит метки при перезапекании набора (иначе ручная разметка живёт до первой правки походки)', () => {
+    // ⚠ Запись в библиотеку у ОБОИХ съёмов (основной набор и «таз открыт») идёт через `putBaked` — проверяем шов, а не
+    // текст на месте: раньше сканировалось 600 символов после `histLib`, и вынос записи в функцию тихо снял бы сторожа.
     const src = fs.readFileSync(path.join(__dirname, 'pose-editor.ts'), 'utf8');
-    const bake = src.slice(src.indexOf("histLib('запечь походку'"), src.indexOf("histLib('запечь походку'") + 600);
-    expect(bake, '⚠ перезапекание пишет клип без переноса меток').toMatch(/carryMarks\(/);
+    for (const h of ["histLib('запечь походку'", "histLib('запечь «таз открыт»'"]) {
+      const i = src.indexOf(h);
+      expect(i, `в редакторе нет ${h}`).toBeGreaterThan(0);
+      expect(src.slice(i, i + 400), `⚠ ${h}: запись клипов мимо putBaked`).toMatch(/putBaked\(/);
+    }
+    const j = src.indexOf('function putBaked(');
+    expect(j, 'нет функции putBaked').toBeGreaterThan(0);
+    expect(src.slice(j, j + 900), '⚠ перезапекание пишет клип без переноса меток').toMatch(/carryMarks\(/);
+    // Первый съём `_open` берёт метки у КАРДИНАЛЬНОГО клипа того же имени, иначе «открыт» терял бы авторские шаги.
+    expect(src.slice(j, j + 900), '⚠ у `_open` нет источника меток').toMatch(/_open/);
   });
 });
 
@@ -210,6 +220,9 @@ describe('шаги в рантайме', () => {
   it('⭐ СМЕНА ВЕДУЩЕГО КЛИПА ПОСРЕДИ ЦИКЛА — без пропусков и без пачек', () => {
     // Ход под 45° к тазу с дрожью направления: ведущий клип скачет между «вперёд» и «вбок» почти каждый кадр.
     // ⚠ Мутация «на смене ведущего не переводить время через фазу» даёт пропуски — и счёт уходит.
+    // ⚠ Тумблер доворота глобальный: возвращаем ТО, ЧТО БЫЛО (было `finally { warpOn = 1 }` — и все тесты ниже в
+    // файле шли с доворотом, хотя умолчание 0).
+    const was = GAIT.warpOn;
     GAIT.warpOn = 0;
     try {
       const l = marked([{ u: 0.3, mark: L }, { u: 0.8, mark: Rf }]);
@@ -220,7 +233,53 @@ describe('шаги в рантайме', () => {
       expect(alternates(r.ev), '⚠ одна нога дважды подряд — пачка на смене ведущего').toBe(true);
       const gaps = s.slice(1).map((e, k) => e.i - s[k]!.i);
       expect(Math.max(...gaps) / Math.min(...gaps), `⚠ разрыв между шагами ${Math.min(...gaps)}…${Math.max(...gaps)} кадров — шаг потерялся`).toBeLessThan(2.2);
-    } finally { GAIT.warpOn = 1; }
+    } finally { GAIT.warpOn = was; }
+  });
+
+  it('⭐ ДОВОРОТ ВКЛ: ПЕРЕБРОС СЕКТОРА НА 45° (таз «вперёд» ↔ «вбок») — шаги без пропусков и без пачек', () => {
+    // С доворотом дрожь 45 ± 6° сектор НЕ перебрасывает (гистерезис), ведущий не меняется — поэтому гоняем ход
+    // медленно через границу: 45 ± 20° с периодом 3 с. На каждом перебросе таз едет на ~70°, веса колонок — за ним.
+    const was = { on: GAIT.warpOn, max: GAIT.warpMax };
+    GAIT.warpOn = 1; GAIT.warpMax = 45;
+    try {
+      const l = marked([{ u: 0.3, mark: L }, { u: 0.8, mark: Rf }]);
+      let flips = 0, sec = -1;
+      const r = run(l, 1, 600, (p, i) => {
+        const a = (45 + 20 * Math.sin(2 * Math.PI * i / 180)) * Math.PI / 180;
+        p.setVel(Math.sin(a) * R, Math.cos(a) * R); p.setYaw(0);
+        if (i > 60 && p.dirWarpSector !== sec) { if (sec >= 0) flips++; sec = p.dirWarpSector; }
+      }, 60);
+      expect(flips, 'сектор действительно перебрасывался').toBeGreaterThanOrEqual(4);
+      const s = steps(r.ev);
+      expect(new Set(s.map((e) => e.clip)).size, 'ведущий клип менялся').toBeGreaterThan(1);
+      expect(alternates(r.ev), '⚠ одна нога дважды подряд — пачка на перебросе сектора').toBe(true);
+      const gaps = s.slice(1).map((e, k) => e.i - s[k]!.i);
+      expect(Math.max(...gaps) / Math.min(...gaps), `⚠ разрыв между шагами ${Math.min(...gaps)}…${Math.max(...gaps)} кадров`).toBeLessThan(2.2);
+    } finally { GAIT.warpOn = was.on; GAIT.warpMax = was.max; }
+  });
+
+  it('⭐ «ТАЗ ОТКРЫТ»: метки страйфа звучат ТЕ ЖЕ И ТОГДА ЖЕ, что в «ровно» — раскрытие не трогает тайминг шага', () => {
+    // ⚠ Мутация «ведущим на раскрытии становится клип `_open`» валит это: у свежезапечённого `_open` меток нет,
+    // `emitSteps` падает на касания пола — шаги съезжают и перестают быть авторскими (другой клип в событии).
+    const was = { on: GAIT.warpOn, max: GAIT.warpMax, hm: GAIT.hipsMode, op: GAIT.hipsOpen };
+    GAIT.warpOn = 1; GAIT.warpMax = 45; GAIT.hipsOpen = 35;
+    try {
+      const l = marked([{ u: 0.3, mark: L }, { u: 0.8, mark: Rf }]);
+      // Набор «таз открыт» БЕЗ меток — ровно как сразу после съёма.
+      const open = new Map(l);
+      for (const sp of ['walk', 'run']) for (const sd of ['L', 'R']) {
+        const base = lib.get(`${sp}_strafe_${sd}`)!;
+        open.set(`${sp}_strafe_${sd}_open`, { ...base, name: `${sp}_strafe_${sd}_open`, hipsOpenDeg: 35, hipsOpenW: [0.25, 0.35, 0.4], keys: base.keys.map((k) => ({ t: k.t, pose: k.pose })) });
+      }
+      const go = (hm: number): Ev[] => { GAIT.hipsMode = hm; return steps(run(open, 1, 480, (p) => { p.setVel(R, 0); p.setYaw(0); }, 60).ev); };
+      const flat = go(0), opened = go(1);
+      expect(flat.length, 'шаги в «ровно» есть').toBeGreaterThan(4);
+      expect(opened.every((e) => e.clip === 'run_strafe_R'), `⚠ метки не с кардинального клипа: ${JSON.stringify(opened.find((e) => e.clip !== 'run_strafe_R'))}`).toBe(true);
+      const dur = clipDur(lib.get('run_strafe_R')!);
+      for (const e of opened) expect(Math.abs(e.t - (e.foot === 'L' ? 0.3 : 0.8) * dur), '⚠ шаг не в точке метки автора').toBeLessThan(1e-3);
+      expect(Math.abs(opened.length - flat.length), `⚠ «открыт» ${opened.length} шагов против ${flat.length} в «ровно»`).toBeLessThanOrEqual(1);
+      expect(alternates(opened)).toBe(true);
+    } finally { GAIT.warpOn = was.on; GAIT.warpMax = was.max; GAIT.hipsMode = was.hm; GAIT.hipsOpen = was.op; }
   });
 
   it('⭐ ПОВОРОТ КЛИПОМ: без меток — касания его канала, с метками — метки', () => {

@@ -56,6 +56,14 @@ export interface GaitMeasure {
   /** Сколько ШАГОВ в клипе: переходов «стопа оторвалась». Для поворотных — во сколько приёмов разворот. */
   steps: number;
   frames: number;
+  /**
+   * ⭐ НАПРАВЛЕНИЕ ХОДА клипа от корня, ° (atan2(x, z): 0 — вперёд, +90 — к +X, то есть `strafe_R`). Куда уезжает
+   * ОПОРНАЯ стопа — с минусом. Контакт здесь без направления (см. `contactSpeedTol`): старый признак мерит скорость
+   * только вдоль Z и на страйфе отбрасывает ВСЕ кадры опоры. `null` — опоры не нашлось.
+   */
+  travelDeg: number | null;
+  /** Средняя впечённая скрутка корпуса ΣY(Spine..Head), °. У кардинального клипа хода ≈ 0 (доворот — дело рантайма). */
+  torsoTwistDeg: number;
 }
 
 export interface AnalyzeOptions {
@@ -115,6 +123,7 @@ export function analyzeGait(clip: Clip, opts: AnalyzeOptions = {}): GaitMeasure 
   const footZ: [number[], number[]] = [[], []];
   const footX: [number[], number[]] = [[], []];
   const hipsY: number[] = [];
+  let twistSum = 0;
   const shX: number[] = [], elY: number[] = [];
 
   for (let i = 0; i < n; i++) {
@@ -127,6 +136,7 @@ export function analyzeGait(clip: Clip, opts: AnalyzeOptions = {}): GaitMeasure 
       const f = world(h, leg === 0 ? 'LeftFoot' : 'RightFoot');
       footY[leg].push(f.y); footZ[leg].push(f.z - hip.z); footX[leg].push(f.x - hip.x);
     }
+    for (const b of TWIST_CHAIN) twistSum += pose[b]?.[1] ?? 0;
     const sh = pose['LeftUpperArm'], el = pose['LeftLowerArm'];
     shX.push(sh ? sh[0] : 0); elY.push(el ? Math.abs(el[1]) : 0);
   }
@@ -154,6 +164,20 @@ export function analyzeGait(clip: Clip, opts: AnalyzeOptions = {}): GaitMeasure 
       contact++; latSum += Math.abs(footX[leg][i]!); latN++;
     }
   }
+
+  // ── НАПРАВЛЕНИЕ ХОДА: опорная стопа — низко И едет относительно таза со скоростью тела (модуль, без направления);
+  // скорости нет — опорной считаем нижнюю из двух. Ход = минус её смещение.
+  let tx = 0, tz = 0, tn = 0;
+  for (let i = 1; i < n; i++) {
+    for (let leg = 0 as 0 | 1; leg < 2; leg = (leg + 1) as 0 | 1) {
+      const dx = footX[leg][i]! - footX[leg][i - 1]!, dz = footZ[leg][i]! - footZ[leg][i - 1]!;
+      let stance: boolean;
+      if (speed0 !== null && dtF > 1e-9) stance = footY[leg][i]! <= thr && Math.abs(Math.hypot(dx, dz) / dtF - speed0) <= speed0 * tol;
+      else stance = footY[leg][i]! <= footY[leg === 0 ? 1 : 0][i]!;
+      if (stance) { tx -= dx; tz -= dz; tn++; }
+    }
+  }
+  const travelDeg = tn && Math.hypot(tx, tz) > 1e-6 ? Math.atan2(tx, tz) * 180 / Math.PI : null;
 
   // ── ШАГИ: считаем отрывы опорной стопы. Для поворотного клипа это «во сколько приёмов развернулись»,
   // и без этого числа угол на шаг из клипа не достать — а именно он и настраивает поворот на месте.
@@ -190,7 +214,28 @@ export function analyzeGait(clip: Clip, opts: AnalyzeOptions = {}): GaitMeasure 
     turnRad,
     steps,
     frames: n,
+    travelDeg,
+    torsoTwistDeg: twistSum / n * 180 / Math.PI,
   };
+}
+const TWIST_CHAIN = ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head'];
+
+/**
+ * ⭐ ПРЕДУПРЕЖДЕНИЕ ПО КЛИПУ ХОДА: направление и впечённая скрутка против оси из имени. Кардинальный клип (`bakeRev` 2)
+ * идёт ровно по своей оси и без скрутки; снятый с доворотом таза — нет (страйфы воина до перезапекания: ход ±126°,
+ * скрутка ±40°). `null` — клип не из набора хода или всё в допуске (10° по ходу, 5° по скрутке).
+ */
+export function locoClipWarning(name: string, m: Pick<GaitMeasure, 'travelDeg' | 'torsoTwistDeg'>): string | null {
+  const mm = /^(walk|run)_(fwd|back|strafe_L|strafe_R)$/.exec(name);
+  if (!mm) return null;
+  const want = { fwd: 0, back: 180, strafe_R: 90, strafe_L: -90 }[mm[2] as 'fwd' | 'back' | 'strafe_R' | 'strafe_L'];
+  const out: string[] = [];
+  if (m.travelDeg !== null) {
+    const err = ((m.travelDeg - want + 540) % 360) - 180;
+    if (Math.abs(err) > 10) out.push(`ход ${m.travelDeg.toFixed(0)}° вместо ${want}°`);
+  }
+  if (Math.abs(m.torsoTwistDeg) > 5) out.push(`в корпус впечена скрутка ${m.torsoTwistDeg.toFixed(0)}°`);
+  return out.length ? `⚠ ${out.join(', ')} — клип снят с доворотом таза, перезапеки набор` : null;
 }
 
 /** Одна настройка: что меняем, как было, как станет. Применение — отдельным шагом и по кнопке. */
@@ -203,8 +248,11 @@ export interface GaitSuggestion { key: string; label: string; was: number; now: 
  * `fast` выбирает колонку (бег или ходьба): у каждого параметра формы есть run-двойник, и анализ
  * бегового клипа обязан ложиться в беговую колонку, иначе он затрёт настроенную ходьбу.
  */
-export function gaitSuggestions(m: GaitMeasure, cur: Record<string, number>, fast: boolean): GaitSuggestion[] {
+export function gaitSuggestions(m: GaitMeasure, cur: Record<string, number>, fast: boolean, clipName = ''): GaitSuggestion[] {
   const out: GaitSuggestion[] = [];
+  // ⚠ СТРАЙФ И ХОД СПИНОЙ В ОСНОВНЫЕ КОЛОНКИ НЕ ИДУТ: шаг и размах меряются вдоль Z (у страйфа их нет), а доля опоры
+  // и подъём у них — колонки «страйф» / «назад». Предложить их как основные значило бы затереть настроенный ход вперёд.
+  if (/_(strafe_[LR]|back)(_open)?$|^strafe_[LR]$/.test(clipName)) return out;   // `_open` — набор «таз открыт», тоже страйф
   const put = (key: string, label: string, now: number | null): void => {
     if (now === null || !Number.isFinite(now)) return;
     const was = cur[key] ?? 0;

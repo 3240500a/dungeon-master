@@ -32,18 +32,27 @@
  *    остаётся таз в кадре персонажа (то, что и есть анимация), а направление держит игра. Для прямолинейных
  *    походок без доворота вычет — no-op.
  *
+ * 2б. ⭐⭐ КЛИП ХОДА — КАРДИНАЛЬНЫЙ: СНИМАЕТСЯ БЕЗ ДОВОРОТА ТАЗА И СО СВЕЖИМ ЕГО СОСТОЯНИЕМ (`bakeRev` 2).
+ *    ⚠ Было: съём шёл с включённым доворотом (у воина `warpOn` 1, `warpMax` 40), вычитался `pelvisYaw` = курс +
+ *    доворот, и в клип впекалась скрутка корпуса 40°, а ноги шагали под 90° ∓ 40° к корню. Хуже того, доворот
+ *    жил в ОДНОМ плеере на весь набор, и флаг «назад» от `walk_back`/`run_back` доезжал до страйфов (гистерезис
+ *    78°–102° держит его на 90°): страйфы вышли под ±125–128° — диагональ назад. Теперь на каждый пресет доворот
+ *    сброшен (`resetDirWarp`) и выключен (`setDirWarpOverride(0)`), а на каждом кадре съёма проверяется, что он 0.
+ *    Доворот — дело рантайма (`stepDirWarp`), в клипе его быть не должно: чужой движок доворачивает сам.
+ *
  * 3. РАЗОГРЕВ ОБЯЗАТЕЛЕН. У планировщика есть инерция (планты, подшаг, torso-lead, сглаживание таза):
  *    первые ~1.5 с он выходит на режим из произвольной фазы. Снимать раньше — запечь переходный процесс.
  */
 import * as THREE from 'three';
 import { reduceKeyframes } from './clipBaker.js';
 import type { Clip, Keyframe, Pose } from './clipModel.js';
-import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL } from './clipModel.js';
+import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL, clipDur, clipPoseAt, flipPose } from './clipModel.js';
 import { pelvisEulerToWorld, pelvisOffsetToWorld } from './pelvisFrame.js';   // ⭐ вычет фейсинга — обратная композиция игры
 import type { Humanoid } from './humanoid.js';
-import { setLocoMixOverride, getLocoMixOverride, type PosePlayer } from './poseRuntime.js';
+import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, LOCO_BAKE_REV, OPEN_SUFFIX, openCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
+import { ASYM } from './pose.js';   // ⚠ зеркало страйфа несовместимо с асимметрией сторон — см. `gaitIsAsymmetric`
 import { fitSmoothLoop } from './clipFit.js';
 
 /**
@@ -59,7 +68,30 @@ function procedural<T>(player: PosePlayer, fn: () => T): T {
   setLocoMixOverride(0);
   player.onMark = null;
   player.cancelTurn();
-  try { return fn(); } finally { setLocoMixOverride(was); player.onMark = mark; }
+  try { return warpFree(player, 0, fn); } finally { setLocoMixOverride(was); player.onMark = mark; }
+}
+/**
+ * ⭐⭐ СЪЁМ БЕЗ ДОВОРОТА ТАЗА (см. пункт 2б шапки): доворот выключен перекрытием (тумблер редактора не трогаем) и
+ * сброшен — флаг сектора от прошлого пресета не доезжает до следующего. Вложенный вызов безопасен: восстанавливаем
+ * то, что было на входе.
+ */
+function warpFree<T>(player: PosePlayer, warpRad: number, fn: () => T): T {
+  const was = getDirWarpOverride();
+  setDirWarpOverride(warpRad);
+  player.resetDirWarp();
+  // После съёма — тоже сброс: иначе живое превью стартовало бы с доворота последнего пресета (±раскрытие «таз открыт»).
+  try { return fn(); } finally { setDirWarpOverride(was); player.resetDirWarp(); }
+}
+/**
+ * Кадр съёма с чужим тазом — ошибка запекания, а не «чуть кривой клип»: пусть редактор не запишет его вовсе.
+ * `wantDeg` — 0 у кардинального клипа, ±раскрытие у набора «таз открыт». Живого раскрытия (`hipsMode`) на съёме быть не
+ * должно: перекрытие доворота его гасит.
+ */
+function assertWarp(player: PosePlayer, wantDeg: number, name: string): void {
+  const got = (player.pelvisYaw - player.aimRootYaw) * 180 / Math.PI;
+  if (Math.abs(player.dirWarpDeg - wantDeg) > 1e-6 || Math.abs(got - wantDeg) > 1e-6) {
+    throw new Error(`запекание «${name}»: таз от прицела ${got.toFixed(3)}° вместо ${wantDeg}° на кадре съёма — клип вышел бы не кардинальным`);
+  }
 }
 
 /** Максимальная скорость, к которой нормируются vx/vz спеки (как ползунок «Бег» в редакторе). */
@@ -74,6 +106,12 @@ export interface GaitSpec {
   /** Не задана → длительность определяется циклом ноги. Задана → снимаем ровно столько секунд. */
   durationSec?: number;
   loop?: boolean;               // по умолчанию true для циклических
+  /**
+   * ⭐ «ТАЗ ОТКРЫТ» (набор `*_strafe_*_open`), °: на съёме таз повёрнут К ХОДУ ровно на столько (знак — по `vx`), и
+   * вычитается ТОЛЬКО прицельный корень — раскрытие (Hips.y) и отворот Spine..UpperChest остаются В КЛИПЕ. Клип
+   * канонический: сыгранный как есть, держит грудь на прицеле. Нет/0 — кардинальный клип (доворот на съёме 0).
+   */
+  hipsOpenDeg?: number;
 }
 
 export interface BakeGaitOptions {
@@ -94,6 +132,13 @@ export interface BakeGaitOptions {
   smoothEpsDeg?: number;
   /** Сглаживание прохода перед подгонкой, ДОЛЯ ПЕРИОДА цикла (по умолч. `SMOOTH_SIGMA_CYCLE`). */
   smoothSigmaCycle?: number;
+  /**
+   * ⭐ НОМЕР СЪЁМА (обычно `Date.now()`), общий на весь прогон кнопки. Пишется в клипы ХОДА (`Clip.bakeId`) и отвечает
+   * на один вопрос: набор «таз открыт» снят ТОЙ ЖЕ походкой, что кардинальный, или остался от старой?
+   * ⚠ Без него редактор сравнивал только УГОЛ раскрытия: правишь плант-сетку или ползунки бега в режиме «ровно»,
+   * перезапекаешь — `_open` остаётся со старой походкой, и «ровно» ↔ «открыт» сравнивают две РАЗНЫЕ настройки молча.
+   */
+  bakeId?: number;
 }
 /** Допуск подгонки сплайна, °: 11–13 ключей на цикл против 27–35 у ломаной, средняя ошибка 0.2° (замер в README). */
 export const SMOOTH_EPS_DEG = 2;
@@ -184,11 +229,69 @@ export function removeLoopDrift(grid: Pose[]): void {
   }
 }
 
+export type LoopKeyOpts = Pick<BakeGaitOptions, 'fps' | 'epsDeg' | 'smooth' | 'smoothEpsDeg' | 'smoothSigmaCycle'>;
+/**
+ * Плотные кадры цикла → ключи клипа: гладкие (сплайн, `fitSmoothLoop`) или ломаная, и замыкание цикла ключом на периоде.
+ * Общий хвост съёма и зеркала страйфа (`mirrorStrafeL`): зеркало не должно давать другие ключи, чем съём.
+ */
+function loopKeys(dense: Keyframe[], periodSec: number, cyclic: boolean, loop: boolean, fps: number, opts: LoopKeyOpts): { reduced: Keyframe[]; fit: { errDeg: number; rawErrDeg: number } | null } {
+  const eps = opts.epsDeg ?? 1.5;
+  // ⭐ ЦИКЛ — ГЛАДКИМИ КЛЮЧАМИ (см. `clipFit.ts`): ломаная держала 28–35 ключей не из-за допуска, а из-за
+  // однокадровых изломов планировщика; сплайн, подогнанный к слегка сглаженному проходу, обходится 11–13.
+  let fit: { errDeg: number; rawErrDeg: number } | null = null;
+  let reduced: Keyframe[];
+  if (cyclic && loop && (opts.smooth ?? true) && eps > 0 && dense.length >= 5) {
+    const r = fitSmoothLoop([...dense, { t: periodSec, pose: dense[0]!.pose }],
+      { epsDeg: opts.smoothEpsDeg ?? SMOOTH_EPS_DEG, sigmaFrames: (opts.smoothSigmaCycle ?? SMOOTH_SIGMA_CYCLE) * periodSec * fps });
+    reduced = r.keys; fit = r;
+  } else reduced = reduceKeyframes(dense, eps);
+  // Замкнуть цикл: последний ключ = первый, ровно в момент периода. Иначе на стыке будет рывок.
+  if (loop && reduced.length > 1 && periodSec > 0) {
+    const first = reduced[0]!;
+    const closing: Pose = {}; for (const k in first.pose) { const v = first.pose[k]!; closing[k] = [v[0], v[1], v[2]]; }
+    const last = reduced[reduced.length - 1]!;
+    if (Math.abs(last.t - periodSec) < 1e-4) reduced[reduced.length - 1] = { t: periodSec, pose: closing };
+    else reduced.push({ t: periodSec, pose: closing });
+  }
+  return { reduced, fit };
+}
+
 /**
  * Запечь один режим походки в клип. `player` и `human` должны быть уже связаны
  * (плеер построен на этом же гуманоиде), иначе снимем чужую позу.
  */
 export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions): BakeGaitResult {
+  // ⚠ ПРОЦЕДУРКА И БЕЗ ДОВОРОТА — И У ОДИНОЧНОГО СЪЁМА, а не только у набора (`bakeGaitSet`). Было: одиночный вызов
+  // при опубликованном `locoMix` 1 шёл в «только клипы», фаза планировщика стояла, фронт не ловился — и клип молча
+  // снимался окном 1 с С САМИХ ЗАПЕЧЁННЫХ клипов (поймано зондом: период ровно 1.000 у всех страйфов).
+  const openDeg = (spec.hipsOpenDeg ?? 0) * Math.sign(spec.vx || 0);
+  assertOpenBudget(player, spec, openDeg);
+  return procedural(player, () => warpFree(player, openDeg * Math.PI / 180, () => bakeGaitWarpFree(player, human, spec, opts, openDeg)));
+}
+/**
+ * ⭐ РАСКРЫТИЕ БОЛЬШЕ БЮДЖЕТА СКРУТКИ — ОТКАЗ В СЪЁМЕ, А НЕ ТИХО КРИВОЙ КЛИП.
+ *
+ * Контракт `_open`: клип КАНОНИЧЕСКИЙ — таз раскрыт на `a`, отворот `−a` запечён в Spine..UpperChest, и любой движок,
+ * сыгравший его как есть, держит грудь на прицеле. Отворот кладёт `step` числом `clamp(residual − раскрытие, ±maxTwist)`:
+ * при `maxTwist` меньше раскрытия он УПИРАЕТСЯ в предел, и в клип уходит отворота меньше, чем просили, — на
+ * `(раскрытие − maxTwist) × c3`, где `c3` — сумма весов Spine/Chest/UpperChest. ЗАМЕР (манекен, веса 0.15/0.25/0.3,
+ * c3 = 0.7, раскрытие 35°, бег 120 u/с вбок): при `maxTwist` 80° клип, сыгранный КАК ЕСТЬ, держит грудь на 0.0° от
+ * прицела и наш рантайм на 0.2°; при `maxTwist` 20° — 10.5° и 5.1° соответственно, ровно `(35 − 20) × 0.7`.
+ * ⚠ Записать «сколько получилось» вместо «сколько просили» мало: клип станет самосогласованным, но грудь всё равно
+ * будет мимо прицела. Единственный честный выход — сказать это автору: подними предел или опусти раскрытие.
+ */
+function assertOpenBudget(player: PosePlayer, spec: GaitSpec, openDeg: number): void {
+  if (!openDeg) return;
+  const tw = blendTwist(player.twistStates, Math.hypot(spec.vx, spec.vz) * BAKE_MAXSPD);
+  const maxDeg = tw.maxTwist * 180 / Math.PI;
+  if (Math.abs(openDeg) <= maxDeg + 1e-6) return;
+  const c3 = (tw.weights[0] ?? 0) + (tw.weights[1] ?? 0) + (tw.weights[2] ?? 0);
+  const offDeg = (Math.abs(openDeg) - maxDeg) * c3;   // столько отворота не влезло — ровно на столько уедет грудь
+  throw new Error(`запекание «${spec.name}»: раскрытие ${Math.abs(openDeg).toFixed(0)}° больше «макс. скрутка верха» `
+    + `${maxDeg.toFixed(0)}° — верх не отвернётся обратно, и клип вышел бы НЕ каноническим: грудь мимо прицела `
+    + `на ${offDeg.toFixed(1)}°. Подними «макс. скрутка верха» или опусти раскрытие.`);
+}
+function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions, openDeg: number): BakeGaitResult {
   const fps = Math.max(1, opts.fps ?? 60);
   const dt = 1 / fps;
   const warm = opts.warmSec ?? 2;
@@ -209,14 +312,16 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
   const dense: Keyframe[] = [];
   let periodSec = spec.durationSec ?? 0;
   let cyclic = false;
+  // Вычитаем ПРИЦЕЛЬНЫЙ корень: у кардинального клипа таз с ним совпадает (доворот 0), у «таз открыт» раскрытие остаётся в клипе.
+  const take = (): Pose => { assertWarp(player, openDeg, spec.name); return neutralizeFacing(read(), player.aimRootYaw, human.hipsRest); };
 
   if (spec.durationSec !== undefined || !moving) {
     // Нецикличный (или стойка): снимаем фиксированное окно. Для стойки хватает пары кадров.
     const dur = spec.durationSec ?? 0;
-    if (dur <= 0) { dense.push({ t: 0, pose: neutralizeFacing(read(), player.pelvisYaw, human.hipsRest) }); periodSec = 0; }
+    if (dur <= 0) { dense.push({ t: 0, pose: take() }); periodSec = 0; }
     else {
       for (let t = 0; t <= dur + 1e-9; t += dt) {
-        dense.push({ t: +t.toFixed(4), pose: neutralizeFacing(read(), player.pelvisYaw, human.hipsRest) });
+        dense.push({ t: +t.toFixed(4), pose: take() });
         player.step(dt);
       }
       periodSec = dur;
@@ -226,12 +331,12 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
     // их фазой, пока не пройдём полный оборот. Кадры приходятся на произвольные фазы, поэтому дальше
     // они ПЕРЕСЭМПЛИРУЮТСЯ на равномерную сетку по фазе — ровно так, как клип будут читать.
     const rec: { ph: number; t: number; pose: Pose }[] = [];
-    let prevPh = player.driver.gaitPhase, prevPose = neutralizeFacing(read(), player.pelvisYaw, human.hipsRest);
+    let prevPh = player.driver.gaitPhase, prevPose = take();
     let base = NaN, elapsed = 0;
     while (elapsed < maxSec) {
       player.step(dt); elapsed += dt;
       const ph = player.driver.gaitPhase;
-      const pose = neutralizeFacing(read(), player.pelvisYaw, human.hipsRest);
+      const pose = take();
       if (Number.isNaN(base) && Math.floor(ph / TAU) > Math.floor(prevPh / TAU)) {
         base = Math.floor(ph / TAU) * TAU;
         rec.push({ ph: prevPh - base, t: elapsed - dt, pose: prevPose });   // кадр ДО перехода — чтобы поймать ровно фазу 0
@@ -258,37 +363,25 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
     }
     if (!cyclic) {   // фронт не пойман (очень медленная походка/патология) — падаем на окно 1 с
       dense.length = 0;
-      for (let k = 0; k <= fps; k++) { dense.push({ t: +(k * dt).toFixed(4), pose: neutralizeFacing(read(), player.pelvisYaw, human.hipsRest) }); player.step(dt); }
+      for (let k = 0; k <= fps; k++) { dense.push({ t: +(k * dt).toFixed(4), pose: take() }); player.step(dt); }
       periodSec = 1;
     }
   }
 
-  const eps = opts.epsDeg ?? 1.5;
-  // ⭐ ЦИКЛ — ГЛАДКИМИ КЛЮЧАМИ (см. `clipFit.ts`): ломаная держала 28–35 ключей не из-за допуска, а из-за
-  // однокадровых изломов планировщика; сплайн, подогнанный к слегка сглаженному проходу, обходится 11–13.
-  let fit: { errDeg: number; rawErrDeg: number } | null = null;
-  let reduced: Keyframe[];
   const loop = spec.loop ?? cyclic;
-  if (cyclic && loop && (opts.smooth ?? true) && eps > 0 && dense.length >= 5) {
-    const r = fitSmoothLoop([...dense, { t: periodSec, pose: dense[0]!.pose }],
-      { epsDeg: opts.smoothEpsDeg ?? SMOOTH_EPS_DEG, sigmaFrames: (opts.smoothSigmaCycle ?? SMOOTH_SIGMA_CYCLE) * periodSec * fps });
-    reduced = r.keys; fit = r;
-  } else reduced = reduceKeyframes(dense, eps);
-  // Замкнуть цикл: последний ключ = первый, ровно в момент периода. Иначе на стыке будет рывок.
-  if (loop && reduced.length > 1 && periodSec > 0) {
-    const first = reduced[0]!;
-    const closing: Pose = {}; for (const k in first.pose) { const v = first.pose[k]!; closing[k] = [v[0], v[1], v[2]]; }
-    const last = reduced[reduced.length - 1]!;
-    if (Math.abs(last.t - periodSec) < 1e-4) reduced[reduced.length - 1] = { t: periodSec, pose: closing };
-    else reduced.push({ t: periodSec, pose: closing });
-  }
+  const { reduced, fit } = loopKeys(dense, periodSec, cyclic, loop, fps, opts);
 
   // ⭐ СКОРОСТЬ ЗАПЕКАНИЯ ЕДЕТ В КЛИП (u/с): часы «только клипы» меряют цикл ею × период (`bakedLocoSpeed`). Раньше
   // её угадывали по имени (`run_*` 102, прочее 50.4), и смена скоростей набора молча расходилась бы с уже запечённым.
   // Стоя (стойка, повороты) скорости нет — и поля нет: у них часы не путевые.
   const bakeSpeed = moving ? +Math.hypot(vx, vz).toFixed(4) : 0;
+  // Ревизия — тоже только у клипов хода: у стойки нет доворота, её и перезапекать незачем.
+  // «Таз открыт»: угол и доли отворота, с которыми он запечён, — рантайм снимает отворот ровно ими, даже если `pe_twist` поменяют.
+  const counterW = openDeg ? openCounterWeights(blendTwist(player.twistStates, Math.hypot(vx, vz)).weights) : null;
   return {
-    clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced, ...(bakeSpeed > 0 ? { bakeSpeed } : {}) },
+    clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced,
+      ...(bakeSpeed > 0 ? { bakeSpeed, bakeRev: LOCO_BAKE_REV, ...(opts.bakeId ? { bakeId: opts.bakeId } : {}) } : {}),
+      ...(openDeg && counterW ? { hipsOpenDeg: Math.abs(openDeg), hipsOpenW: counterW.map((v) => +v.toFixed(4)) } : {}) },
     frames: dense.length, keys: reduced.length, periodSec, cyclic,
     ...(fit ? { fitErrDeg: +fit.errDeg.toFixed(2), rawErrDeg: +fit.rawErrDeg.toFixed(2) } : {}),
   };
@@ -306,9 +399,10 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
  * часы идут по пройденному пути с циклом «скорость запекания × период», поэтому бег, снятый на 120, на 80 u/с
  * играет медленнее (темп 80/120), а стопы стоят.
  *
- * ДИАГОНАЛЕЙ ЗДЕСЬ НЕТ: решение Ф0 — ЧЕТЫРЕ направления, диагональ закрывает доворот таза (`stepDirWarp`,
- * замерено: на 30–60° и 120–135° цифры совпадают с прямым бегом). Восемь клипов — это 4 направления ×
+ * ДИАГОНАЛЕЙ ЗДЕСЬ НЕТ: решение Ф0 — ЧЕТЫРЕ направления, диагональ закрывает доворот таза (`stepDirWarp`: ход
+ * складывается к ближайшей из четырёх осей, доворачивается только остаток ≤ 45°). Восемь клипов — это 4 направления ×
  * ходьба/бег, а не 8 направлений; второй набор на восемь направлений не нужен и заводить его не надо.
+ * ⚠ Поэтому каждый клип обязан идти РОВНО по своей оси (страйф ±90°, таз 0, скрутки нет) — см. пункт 2б шапки.
  *
  * ПОВОРОТОВ ЗДЕСЬ НЕТ ОСОЗНАННО: разворот — это вращение КОРНЯ (мировой facing), а наши клипы in-place.
  * Пока Root не анимируется (Ф1.4 завёл узел, но треков корня ещё нет), запечённый «поворот» был бы
@@ -338,6 +432,74 @@ export const GAIT_PRESETS: readonly GaitSpec[] = [
   { name: 'run_strafe_L', vx: -RUN, vz: 0, yaw: 0 },
   { name: 'run_strafe_R', vx: RUN, vz: 0, yaw: 0 },
 ] as const;
+
+/**
+ * ⭐ НАБОР «ТАЗ ОТКРЫТ»: четыре страйфа с раскрытием таза к ходу, имена `<страйф>_open`. Снимается тем же планировщиком,
+ * что и кардинальный, только таз на съёме повёрнут к ходу: ноги шагают диагональю ОТНОСИТЕЛЬНО ТАЗА (колени за тазом), в
+ * мире — ровно вбок. Угол 0 — клип не нужен: колонка этой скорости играет кардинальный. Живой вид того же набора —
+ * «Бег» без «только клипы» в режиме «таз открыт».
+ */
+export const openStrafePresets = (runDeg: number, walkDeg: number): GaitSpec[] =>
+  GAIT_PRESETS.filter((s) => /_strafe_/.test(s.name))
+    .map((s) => ({ ...s, name: s.name + OPEN_SUFFIX, hipsOpenDeg: /^run_/.test(s.name) ? runDeg : walkDeg }))
+    .filter((s) => s.hipsOpenDeg > 0.5);
+
+/**
+ * ⭐ СТРАЙФ ВЛЕВО = ЗЕРКАЛО СТРАЙФА ВПРАВО СО СДВИГОМ НА ПОЛЦИКЛА (роли ног: опора левой на фазе 0 остаётся левой).
+ *
+ * Зачем: плант-сетка — данные автора, и настроенная с одной стороны даёт разные страйфы. ЗАМЕР (рыцарь, опубликованный
+ * воин): ходьба «вправо» разнесена, «влево» пустая — `walk_strafe_L` голени ближе 5.8 ед. в 35 % кадров (мин. 0.1 —
+ * насквозь) против 5.8 % у правого; зеркалом — 4.2 %. Клип пересэмплируется на `fps` и идёт через тот же хвост съёма
+ * (`loopKeys`). Метки не копируются (ноги поменялись) — их переносит `carryMarks` со старого левого.
+ */
+export function mirrorStrafeL(clipR: Clip, opts: LoopKeyOpts = {}): Clip {
+  const fps = Math.max(1, opts.fps ?? 60);
+  const dur = clipDur(clipR) || 1, n = Math.max(8, Math.round(dur * fps));
+  const dense: Keyframe[] = [];
+  for (let k = 0; k < n; k++) {
+    const p = flipPose(clipPoseAt(clipR, ((k / n) + 0.5) % 1));
+    // ⚠ ФЛАГИ ПЕРЕНОСА МЕНЯЮТСЯ МЕСТАМИ. `flipPose` тащит скалярные каналы как есть (`__match`, `__pinKp`), и `__swing`
+    // попал бы в ту же корзину: заземление держало бы к полу НЕ ТУ ногу. Клипы хода его пока не несут (его пишет только
+    // съём поворота), но импорт мокапа и будущий съём могут — чиним здесь, а не в `flipPose`: тот общий на все зеркала.
+    const sw = p[SWING_KEY];
+    if (sw) p[SWING_KEY] = [sw[1], sw[0], sw[2]];
+    dense.push({ t: +(dur * k / n).toFixed(4), pose: p });
+  }
+  const { reduced } = loopKeys(dense, dur, true, clipR.loop !== false, fps, opts);
+  // ⚠ МЕТКИ ЯВНО СБРАСЫВАЮТСЯ: ключи новые и СДВИНУТЫ НА ПОЛЦИКЛА, а `marks` живут на ключах правого клипа — оставь их
+  // в спреде, и шаг «левой» прозвучал бы на полшага мимо. Переносит их `carryMarks` со СТАРОГО левого клипа (редактор).
+  const out: Clip = { ...clipR, name: clipR.name.replace('_strafe_R', '_strafe_L'), keys: reduced };
+  return out;
+}
+/**
+ * Набор: каждый снятый `*_strafe_L*`, у которого в наборе есть `*_strafe_R*` той же скорости, заменяется его зеркалом.
+ * ⭐ А ЕСЛИ ЛЕВОГО В НАБОРЕ НЕТ — ДОБАВЛЯЕТСЯ. Съём левого при включённом зеркале пропускается целиком (`specsForBake`
+ * в редакторе): раньше он честно снимался — 2 с разогрева + до 6 с цикла — и тут же выбрасывался.
+ */
+export function withMirroredStrafeL(out: readonly BakeGaitResult[], opts: LoopKeyOpts = {}): BakeGaitResult[] {
+  const byName = new Map(out.map((r) => [r.clip.name, r]));
+  const mirrored = (right: BakeGaitResult): BakeGaitResult => {
+    const clip = mirrorStrafeL(right.clip, opts);
+    return { ...right, clip, keys: clip.keys.length };
+  };
+  const res = out.map((r) => {
+    if (!/_strafe_L/.test(r.clip.name)) return r;
+    const right = byName.get(r.clip.name.replace('_strafe_L', '_strafe_R'));
+    return right ? mirrored(right) : r;
+  });
+  for (const r of out) {
+    const l = r.clip.name.replace('_strafe_R', '_strafe_L');
+    if (l !== r.clip.name && !byName.has(l)) res.push(mirrored(r));
+  }
+  return res;
+}
+/**
+ * ⚠ ЗЕРКАЛО НЕЛЬЗЯ ПРИМЕНЯТЬ К АСИММЕТРИЧНОЙ ПОХОДКЕ. `ASYM` (ползунки «на сторону»: `stepRun`, `dutyS(i)`, разведение
+ * бёдер…) остаётся НА СВОЕЙ НОГЕ и при `flipPose` переезжает на противоположную: левый страйф понесёт хромоту не той
+ * ноги, чем `*_fwd` и `*_back`, и это полезет на кроссфейдах и перебросах сектора. Тот же счёт у наборов вроде
+ * `none+shield`, где разница сторон НАРОЧНАЯ. Редактор зовёт зеркало только когда здесь пусто (см. `bakeGaitSection`).
+ */
+export const gaitIsAsymmetric = (): boolean => Object.keys(ASYM).length > 0;
 
 /** Имена, включённые по умолчанию, — ВЕСЬ набор (походка и повороты на месте): лишнего в нём нет. */
 export const defaultBakePick = (specs: readonly { name: string }[] = [...GAIT_PRESETS, ...TURN_PRESETS]): string[] =>
@@ -397,6 +559,7 @@ export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSp
     player.setYaw(aim);
     const dense: Keyframe[] = [];
     const frame = (t: number): void => {
+      assertWarp(player, 0, spec.name);
       const p = neutralizeFacing(read(), player.pelvisYaw, human.hipsRest);
       p[ROOT_YAW] = [+(player.pelvisYaw - y0).toFixed(5), 0, 0];
       const sw = player.driver.swingLegs;

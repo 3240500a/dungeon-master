@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { savePoseKey, dirtyKeys, serverAheadKeys, publish, pullFromServer, syncPoseFromServer, refreshServerRevs, setPublishPrepare, wipeAll } from './poseServer.js';
+import { savePoseKey, dirtyKeys, serverAheadKeys, publish, pullFromServer, syncPoseFromServer, refreshServerRevs, setPublishPrepare, wipeAll, POSE_KEYS } from './poseServer.js';
 import { saveConfigSection, configEdits, configDirtyKeys, mergedConfig, publishConfigEdits } from './configEdits.js';
 
 /** Мини-localStorage: тесты гоняют РЕАЛЬНУЮ логику хранения, поэтому подделка должна вести себя как настоящий. */
@@ -56,6 +56,10 @@ function fakeServer(init: Record<string, unknown> = {}, models: unknown[] = []) 
 }
 
 const G = globalThis as unknown as { localStorage: Storage; fetch: typeof fetch };
+/** Синк РЕДАКТОРА: только он сверяет тела отставших ключей (игра — без этого, см. `syncPoseFromServer`). */
+const ED = { compareBodies: true } as const;
+/** Сколько раз за прогон качали ВСЁ тело `/api/pose` (0.82 МБ на опубликованном снимке). */
+const bodyCalls = (calls: readonly string[]): number => calls.filter((u) => u === '/api/pose').length;
 
 describe('рабочая копия: сервер не затирает локальное', () => {
   beforeEach(() => { G.localStorage = fakeLS(); });
@@ -175,6 +179,93 @@ describe('публикация и замок от затирания', () => {
     await refreshServerRevs();
 
     expect(serverAheadKeys()).toEqual(['pe_gait']);
+  });
+
+  it('⭐ ЧИСТЫЙ КЛЮЧ, СЕРВЕР УШЁЛ ВПЕРЁД: загрузка НЕ сдвигает базу без тела — бейдж виден, правка поверх получает 409', async () => {
+    // Сценарий перезапекания страйфов: машина A опубликовала новый `pe_clips`, машина B ничего не правила и
+    // перезагрузилась. ⚠ Мутация «нет своих правок → база = сервер» валит это: бейджа нет, публикация B проходит
+    // замок и молча возвращает на сервер старые клипы.
+    const { state, fetchMock } = fakeServer({ pe_clips: [{ name: 'walk_strafe_R', bakeRev: 0 }] });
+    G.fetch = fetchMock as unknown as typeof fetch;
+    await syncPoseFromServer(ED);                                   // B: первая встреча, тело = серверное
+    state.poke('pe_clips', [{ name: 'walk_strafe_R', bakeRev: 2 }]);  // A перезапёк и опубликовал
+    await syncPoseFromServer(ED);                                   // B перезагрузился, своих правок нет
+
+    expect(JSON.parse(localStorage.getItem('pe_clips')!), 'рабочую копию сервер по-прежнему не трогает').toEqual([{ name: 'walk_strafe_R', bakeRev: 0 }]);
+    expect(serverAheadKeys(), 'старое тело при новой ревизии — это ВИДНО').toEqual(['pe_clips']);
+
+    localStorage.setItem('pe_clips', JSON.stringify([{ name: 'walk_strafe_R', bakeRev: 0 }, { name: 'hit_axe' }]));
+    savePoseKey('pe_clips');
+    const r = await publish();
+    expect(r.ok).toBe(false);
+    expect(r.conflicts).toEqual(['pe_clips']);
+    expect(state.data.pe_clips, 'перезапечённое на сервере цело').toEqual([{ name: 'walk_strafe_R', bakeRev: 2 }]);
+  });
+
+  it('⚠ ЧИСТЫЙ КЛЮЧ, ТЕЛО ТО ЖЕ: ревизия уехала, а содержимое совпадает — бейджа НЕТ и публикация проходит', async () => {
+    // Оборотная сторона теста выше. Ключи пишет не только эта вкладка: `pe_roadmap` шлёт конфиг-редактор своим POST-ом
+    // (ревизия растёт после каждой правки), да и «опубликовал ту же правку с другой машины» — обычное дело.
+    // ⚠ Мутация «чистый ключ + сервер новее → всегда замораживать базу» валит это: бейдж «на сервере новее» горит,
+    // ничего не правя, и первая же публикация упирается в 409.
+    const { state, fetchMock } = fakeServer({ pe_gait: { warpOn: 1, hipsMode: 0 }, pe_roadmap: { v: 1 } });
+    G.fetch = fetchMock as unknown as typeof fetch;
+    await syncPoseFromServer(ED);
+    state.poke('pe_gait', { hipsMode: 0, warpOn: 1 });   // то же тело, ДРУГОЙ порядок ключей и новая ревизия
+    state.poke('pe_roadmap', { v: 2 });                  // чужая вкладка (WIPE_SPARED) — спорить не о чем
+    await syncPoseFromServer(ED);
+
+    expect(serverAheadKeys(), 'совпало по телу — бейджа нет').toEqual([]);
+    localStorage.setItem('pe_gait', JSON.stringify({ warpOn: 1, hipsMode: 1 }));
+    savePoseKey('pe_gait');
+    const r = await publish();
+    expect(r.ok, 'публикация поверх своей же ревизии проходит').toBe(true);
+    expect(state.data.pe_gait).toEqual({ warpOn: 1, hipsMode: 1 });
+  });
+
+  it('⭐ ИГРОВОЙ BOOT НЕ СВЕРЯЕТ ТЕЛА: 0 загрузок и прежняя база, а в редакторе — 1 загрузка и бейдж', async () => {
+    // ⚠ Сверка «база едет только при совпадении тела» имеет смысл там, где есть бейдж «на сервере новее» и кнопка
+    // «взять серверное», то есть в редакторе. Игра (`game3d-boot.ts`) серверное тело в рабочую копию не пишет и
+    // спорить не умеет: для неё это чистая загрузка 0.82 МБ (831 КБ `pe_clips`) плюс две канонические
+    // сериализации на главном потоке ДО старта игры — и так на КАЖДОМ входе после каждой публикации автора.
+    // ⚠ Мутация «сверять тела всегда» (убрать параметр) валит это.
+    // Все ключи заранее лежат локально — `missing` пуст, и видна РОВНО цена сверки.
+    const seedAll = (state: { data: Record<string, unknown> }): void => {
+      for (const k of POSE_KEYS) localStorage.setItem(k, JSON.stringify(state.data[k] ?? {}));
+    };
+    const scenario = async (opts?: { compareBodies: boolean }): Promise<{ calls: number; ahead: string[] }> => {
+      G.localStorage = fakeLS();
+      const { state, fetchMock } = fakeServer(Object.fromEntries(POSE_KEYS.map((k) => [k, { v: 1 }])));
+      G.fetch = fetchMock as unknown as typeof fetch;
+      seedAll(state);
+      await syncPoseFromServer(opts);                 // первый вход: тела уже лежат, качать нечего
+      state.poke('pe_clips', { v: 2 });               // автор перезапёк и опубликовал
+      state.calls.length = 0;
+      await syncPoseFromServer(opts);                 // следующий вход
+      return { calls: bodyCalls(state.calls), ahead: serverAheadKeys() };
+    };
+
+    const game = await scenario();
+    expect(game.calls, 'игра тела не качает вовсе').toBe(0);
+    expect(game.ahead, 'и спорить ей не о чем — база едет, как было').toEqual([]);
+
+    const editor = await scenario({ compareBodies: true });
+    expect(editor.calls, 'редактор качает тела РОВНО один раз').toBe(1);
+    expect(editor.ahead, 'и показывает бейдж').toEqual(['pe_clips']);
+  });
+
+  it('⚠ ОДИН `/api/pose` НА ЗАГРУЗКУ: части ключей нет, а `pe_clips` отстал — оба условия сразу', async () => {
+    // ⚠ Мутация «свой `fetchAll()` под `missing` и свой под `behind`» валит это: ≈ 1.8 МБ за один boot.
+    const { state, fetchMock } = fakeServer({ pe_clips: [{ name: 'walk_strafe_R', bakeRev: 0 }], pe_gait: { v: 1 } });
+    G.fetch = fetchMock as unknown as typeof fetch;
+    await syncPoseFromServer(ED);                     // новая машина: тела приехали, база встала
+    state.poke('pe_clips', [{ name: 'walk_strafe_R', bakeRev: 2 }]);
+    localStorage.removeItem('pe_gait');               // ← ключ снова «отсутствует»: `missing` И `behind` в одном вызове
+    state.calls.length = 0;
+    await syncPoseFromServer(ED);
+
+    expect(bodyCalls(state.calls), 'тела качаются РОВНО один раз').toBe(1);
+    expect(JSON.parse(localStorage.getItem('pe_gait')!), 'отсутствующее дозаполнено').toEqual({ v: 1 });
+    expect(serverAheadKeys(), 'отставшее с ДРУГИМ телом — видно').toEqual(['pe_clips']);
   });
 
   it('«забрать серверное» — единственное место, где серверное перезаписывает локальное', async () => {

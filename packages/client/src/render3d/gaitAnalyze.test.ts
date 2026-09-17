@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
 import { GAIT, POSE } from './pose.js';
-import { bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
-import { analyzeGait, gaitSuggestions } from './gaitAnalyze.js';
+import { bakeGaitToClip, BAKE_MAXSPD, GAIT_PRESETS } from './clipBake.js';
+import { analyzeGait, gaitSuggestions, locoClipWarning } from './gaitAnalyze.js';
 
 /**
  * КРУГОВОЙ ТЕСТ: `анализ(запекание(параметры)) ≈ параметры`.
@@ -48,6 +48,38 @@ describe('анализ запечённой походки', () => {
     // И это же число обязано совпасть с настройкой, из которой клип и запечён (± прореживание кадров).
     const want = GAIT.stepWalk + (GAIT.stepRun - GAIT.stepWalk) * Math.max(0, Math.min(1, (speed - GAIT.speedWalk) / (GAIT.speedRun - GAIT.speedWalk)));
     expect(Math.abs(m.stepLen! - want) / want, `шаг ${m.stepLen!.toFixed(1)} против ${want.toFixed(1)}`).toBeLessThan(0.12);
+  });
+
+  it('⭐⭐ НАПРАВЛЕНИЕ ХОДА: вперёд ≈ 0°, назад ≈ 180°, страйфы ≈ ±90° — контакт без направления, скрутки нет', () => {
+    // ⚠ Мутация «контакт по скорости вдоль Z» (как у доли опоры) валит это: на страйфе опорных кадров нет вовсе → null.
+    GAIT.warpOn = 1; GAIT.warpMax = 40;   // как у воина: запекатель обязан снять кардинальный клип и так
+    const want: Record<string, number> = { walk_fwd: 0, walk_back: 180, walk_strafe_L: -90, walk_strafe_R: 90, run_strafe_R: 90 };
+    for (const [name, deg] of Object.entries(want)) {
+      const spec = GAIT_PRESETS.find((x) => x.name === name)!;
+      const h = buildHumanoid({});
+      const r = bakeGaitToClip(mk(h), h, spec, { character: 'warrior', weapon: 'none' });
+      const m = analyzeGait(r.clip, { speed: Math.hypot(spec.vx, spec.vz) * BAKE_MAXSPD, human: buildHumanoid({}) });
+      expect(m.travelDeg, `${name}: опорных кадров не нашлось`).not.toBeNull();
+      const err = ((m.travelDeg! - deg + 540) % 360) - 180;
+      expect(Math.abs(err), `${name}: ход ${m.travelDeg!.toFixed(1)}°`).toBeLessThan(10);
+      expect(Math.abs(m.torsoTwistDeg), `${name}: скрутка`).toBeLessThan(2);
+      expect(locoClipWarning(name, m), `${name}: ложная тревога`).toBeNull();
+    }
+  });
+
+  it('⭐ ПРЕДУПРЕЖДЕНИЕ «перезапеки»: страйф под 126° со скруткой 40° (опубликованный до 17.09) — ловится', () => {
+    expect(locoClipWarning('walk_strafe_R', { travelDeg: 126, torsoTwistDeg: 40 })).toMatch(/перезапеки/);
+    expect(locoClipWarning('run_strafe_L', { travelDeg: -90, torsoTwistDeg: -40 })).toMatch(/скрутка/);
+    expect(locoClipWarning('walk_back', { travelDeg: -178, torsoTwistDeg: 0 })).toBeNull();   // −178 ≡ 182: в допуске
+    expect(locoClipWarning('hit_sword', { travelDeg: 50, torsoTwistDeg: 40 }), 'не клип хода — молчим').toBeNull();
+  });
+
+  it('страйф и ход спиной НЕ предлагают основных настроек (их колонки — страйф / назад)', () => {
+    const m = roundTrip(0.42);
+    expect(gaitSuggestions(m, {}, false, 'walk_fwd').length).toBeGreaterThan(0);
+    expect(gaitSuggestions(m, {}, false, 'walk_strafe_L')).toEqual([]);
+    expect(gaitSuggestions(m, {}, true, 'run_strafe_R_open'), 'набор «таз открыт» — тоже страйф').toEqual([]);
+    expect(gaitSuggestions(m, {}, true, 'run_back')).toEqual([]);
   });
 
   it('ДОЛЯ ОПОРЫ восстанавливается ПОЧТИ ТОЧНО — по высоте И скорости стопы', () => {
@@ -100,7 +132,7 @@ describe('без скорости честного ответа нет', () => {
 
 describe('предложения настроек', () => {
   const m = { periodSec: 1, speed: 50, stepLen: 25, footRange: 24, slide: 0.04, duty: 0.3, lift: 9, bob: 2,
-    stanceWidth: 7, armSwing: 0.6, armSh: -0.2, armEl: 0.5, turnRad: null, steps: 2, frames: 60 };
+    stanceWidth: 7, armSwing: 0.6, armSh: -0.2, armEl: 0.5, turnRad: null, steps: 2, frames: 60, travelDeg: 0, torsoTwistDeg: 0 };
 
   it('ничего не применяют сами — только «было → стало»', () => {
     const s = gaitSuggestions(m, { stepWalk: 35 }, false);

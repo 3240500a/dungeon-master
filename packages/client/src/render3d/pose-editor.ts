@@ -52,21 +52,21 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, plantMirrorGaps as rtPlantMirrorGaps } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
-import { savePoseKey, setPublishPrepare } from './poseServer.js';
+import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
 import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { createTestTab } from './testTab.js';
-import { analyzeGait, gaitSuggestions, type GaitSuggestion } from './gaitAnalyze.js';
+import { analyzeGait, gaitSuggestions, locoClipWarning, type GaitSuggestion } from './gaitAnalyze.js';
 import { buildInventory, inventorySummary } from './animInventory.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
-import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick, BAKE_MAXSPD } from './clipBake.js';   // Ф2.1: процедурка → клипы
+import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick, BAKE_MAXSPD, openStrafePresets, withMirroredStrafeL, gaitIsAsymmetric, type BakeGaitOptions } from './clipBake.js';   // Ф2.1: процедурка → клипы
 import { TURN_NAMES } from './turnInPlace.js';
 import { findLocoClip, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
@@ -2563,6 +2563,7 @@ function normalizeHipsOfChar(charId: string): void {
   if (changed) saveLib();
 }
 function applyChar(id: string): void {
+  cancelOpenBake();                                           // отложенный пересъём «таз открыт» — не новому персонажу
   curCharId = id; const c = curChar(); weapon = c.weapon;
   loadPhys(id);                                               // физ-настройки (match) этого персонажа
   loadShieldMix(id);                                          // вес подмешивания щита этого персонажа
@@ -2582,7 +2583,7 @@ function applyChar(id: string): void {
   syncAllAttackEnds();                                        // концы ударов этого персонажа = его стойки
   refreshAll();
 }
-function setWeapon(w: string): void { weapon = w; updateWeapon(); clipIdx = 0; frameIdx = 0; previewT = null; refreshAll(); }
+function setWeapon(w: string): void { cancelOpenBake(); weapon = w; updateWeapon(); clipIdx = 0; frameIdx = 0; previewT = null; refreshAll(); }
 function manStyle(): 'solid' | 'skeleton' { return manView === 'skel' ? 'skeleton' : 'solid'; }
 // Лёгкая пересборка манекена под новый стиль (скелет↔тело) С СОХРАНЕНИЕМ позы/оружия (в отличие от applyChar — без сброса клипа/undo).
 function rebuildManikin(): void {
@@ -3975,14 +3976,26 @@ function clipSection(): void {
   const row1 = el('div', ''); body.append(row1);
   const nameFree = (nm: string): string => { let n = nm, i = 2; while (library.some((x) => x.name === n && x.character === curCharId && x.weapon === weapon)) n = nm + '_' + i++; return n; };
   // Вставить позу из буфера в ТЕКУЩЕЕ оружие: глубокий клон кадров + ретаргет имени (idle_меч→idle_топор). Игра подхватит.
+  /**
+   * ⭐ ПОЛЯ СЪЁМА, КОТОРЫЕ ОБЯЗАНЫ ЕХАТЬ С КОПИЕЙ КЛИПА (копир / вставить / дубл — ОДИН шов).
+   * `bakeSpeed` — скорость съёма: без неё копия шла бы по часам старых 50.4/102 (`bakedLocoSpeed`). `bakeRev` — иначе
+   * копия «старая», и сектора доворота на ней не включатся. `bakeId` — номер съёма (расхождение наборов).
+   * `hipsOpenDeg`/`hipsOpenW` — раскрытие: без них рантайм не снимет запечённый отворот, и грудь уедет от прицела.
+   * ⚠ «Дубл» терял всё это с самого начала (там не было даже `bakeSpeed`) — дубликат страйфа молча становился «чужим».
+   */
+  const bakeFieldsOf = (c: Clip): Partial<Clip> => ({
+    ...(c.bakeSpeed ? { bakeSpeed: c.bakeSpeed } : {}),
+    ...(c.bakeRev ? { bakeRev: c.bakeRev } : {}),
+    ...(c.bakeId ? { bakeId: c.bakeId } : {}),
+    ...(c.hipsOpenDeg ? { hipsOpenDeg: c.hipsOpenDeg, ...(c.hipsOpenW ? { hipsOpenW: [...c.hipsOpenW] } : {}) } : {}),
+  });
   const pasteHere = (): void => {
     if (!clipBuf) return;
     let name = retargetClipName(clipBuf.name, clipBuf.weapon, weapon);
     const taken = (nm: string): boolean => library.some((x) => x.name === nm && x.character === curCharId && x.weapon === weapon);
     if (clipBuf.weapon === weapon) name = nameFree(name);                                   // то же оружие = дубликат → не затирать
     else if (taken(name) && !confirm('Клип «' + name + '» на «' + weapon + '» уже есть — перезаписать?')) return;
-    // `bakeSpeed` — скорость, на которой снят клип набора: без неё копия шла бы по часам старых 50.4/102 (`bakedLocoSpeed`).
-    const nc: Clip = { name, character: curCharId, weapon, loop: clipBuf.loop, ...(clipBuf.bakeSpeed ? { bakeSpeed: clipBuf.bakeSpeed } : {}), keys: clipBuf.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) };
+    const nc: Clip = { name, character: curCharId, weapon, loop: clipBuf.loop, ...bakeFieldsOf(clipBuf), keys: clipBuf.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) };
     histLib('вставить клип', () => {
       putClip(nc, 'replace');   // столкновение уже разрулено выше (nameFree / отдельный confirm)
       if (clipBufWasAtk) { const arr = ((atkCfgs[curCharId] ??= {})[weapon] ??= []); if (!arr.includes(name)) { arr.push(name); saveAtk(); } }
@@ -3995,8 +4008,8 @@ function clipSection(): void {
   const c = curClip();
   if (c) {
     row1.append(
-      pbtn('⎘ копир', () => { clipBuf = { name: c.name, character: curCharId, weapon, loop: c.loop, ...(c.bakeSpeed ? { bakeSpeed: c.bakeSpeed } : {}), keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }; clipBufWasAtk = atkList().includes(c.name); refreshAll(); }),
-      pbtn('дубл', () => histLib('дублировать клип', () => { putClip({ name: c.name + '_copy', character: curCharId, weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }, 'rename'); saveLib(); refreshAll(); })),
+      pbtn('⎘ копир', () => { clipBuf = { name: c.name, character: curCharId, weapon, loop: c.loop, ...bakeFieldsOf(c), keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }; clipBufWasAtk = atkList().includes(c.name); refreshAll(); }),
+      pbtn('дубл', () => histLib('дублировать клип', () => { putClip({ name: c.name + '_copy', character: curCharId, weapon, loop: c.loop, ...bakeFieldsOf(c), keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) }, 'rename'); saveLib(); refreshAll(); })),
       pbtn('переим', () => {
         const nm = prompt('имя клипа', c.name); if (!nm || nm === c.name) return;
         if (library.some((x) => x !== c && x.name === nm && x.character === curCharId && x.weapon === weapon)) { alert('Клип «' + nm + '» на этом оружии уже есть — выберите другое имя.'); return; }
@@ -4409,6 +4422,24 @@ function renderLoco(): void {
       pbtn('сброс ячейки', () => { (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel] = zeroLeg(); saveGaitCfg(); }),
       pbtn('сброс всех', () => { Object.assign(gaitPlant, emptyGrid()); saveGaitCfg(); renderLoco(); }),
     );
+    // ⭐ ЗЕРКАЛО ЯЧЕЙКИ: страйф L и R снимаются по ячейкам «влево» / «вправо», и настроенная только с одной стороны
+    // сетка даёт разные страйфы (у воина ходьба «вправо» разнесена, «влево» пустая — голени касаются). Данные автора:
+    // кнопка ничего не делает сама, только по нажатию и только в зеркальную ячейку той же скорости.
+    const mj = rtMirrorPlantDir(plantDirSel);
+    if (mj !== plantDirSel) {
+      rr.append(pbtn(`⇆ в «${DIR8[mj]}»`, () => {
+        const grid = plantSpeedRun ? gaitPlant.run : gaitPlant.walk;
+        grid[mj] = rtMirrorPlantCell(selCell());
+        saveGaitCfg(); renderLoco();
+      }));
+    }
+    const gaps = rtPlantMirrorGaps(gaitPlant);
+    if (gaps.length) {
+      const warn = el('div', 'font-size:10px;color:#e0b050;margin-top:3px');
+      warn.textContent = '⚠ не зеркально: ' + gaps.map((g) => `${g.speed === 'run' ? 'бег' : 'шаг'} ${g.i === g.j ? DIR8[g.i] : `${DIR8[g.i]}↔${DIR8[g.j]}`} (Δ${Number.isFinite(g.diff) ? g.diff.toFixed(1) : ' обвод'})`).join(', ')
+        + ' — страйфы/диагонали в разные стороны снимутся разными';
+      cb.append(warn);
+    }
   }
   if (!gaitFaceMove) {
     const yr = el('label', 'display:flex;align-items:center;gap:6px;flex:1 1 100%'); yr.innerHTML = '<span style="flex:1">угол (°)</span>';
@@ -4438,14 +4469,224 @@ function renderLoco(): void {
     wsl('потолок доворота', 'warpMax', 80, 5, '°');
     wsl('сглаживание', 'warpSmooth', 0.4, 0.01, ' с');
     const wn = el('div', 'color:#7a869e;font-size:10px;margin-top:3px');
-    wn.textContent = 'Остаток сверх потолка остаётся боковым выносом — это и есть переход на страйф.';
+    wn.textContent = 'Ход складывается к ближайшей из четырёх осей (вперёд / вбок / назад), доворачивается только остаток — потолок 45° его покрывает целиком.';
     wb.append(wn);
+    hipsOpenBox(wb);
   }
   bakeGaitSection();
   if (uiPro) renderGaitTune();   // тюнинг походки (24 ползунка GAIT/POSE/GX) — только Про
   renderUpperPanel();
   renderAttackPanel();
 }
+/**
+ * ⭐⭐ ТАЗ НА ХОДЕ БОКОМ — «РОВНО» / «ОТКРЫТ», ПЕРЕКЛЮЧЕНИЕ МГНОВЕННОЕ. Режим — `GAIT.hipsMode` в `pe_gait`: та же запись
+ * едет в игру по «Опубликовать» (редактор ≡ игра). В «только клипы» «открыт» играет набор `*_strafe_*_open`; его нет или
+ * угол набора не совпал с ползунками — набор снимается сам (переключение, отпускание ползунка), ~0.5–2 с. Без «только
+ * клипы» раскрытие живое — ровно то, что снимет набор.
+ */
+/** Пауза после последнего движения ползунка раскрытия, после которой снимается набор (см. `inp.onchange`), мс. */
+const OPEN_BAKE_DEBOUNCE = 400;
+let openBakeTimer = 0;
+/**
+ * ⚠ ОТЛОЖЕННЫЙ ПЕРЕСЪЁМ ОТМЕНЯЕТСЯ НА СМЕНЕ ПЕРСОНАЖА/ОРУЖИЯ. Колбэк читает ЖИВЫЕ `curCharId`/`weapon`/`GAIT`
+ * в момент СРАБАТЫВАНИЯ: подвинул ползунок раскрытия и за 400 мс переключился — и молчаливый съём 0.5–2 с
+ * уходил НОВОМУ персонажу, у которого режим «ровно» и никто ничего не просил (плюс запись в историю и `pe_clips`).
+ */
+function cancelOpenBake(): void { if (openBakeTimer !== 0) { clearTimeout(openBakeTimer); openBakeTimer = 0; } }
+function hipsOpenBox(wb: HTMLElement): void {
+  const hr = el('div', 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px'); wb.append(hr);
+  const lab = el('span', 'font-size:11px;color:#8fb7ff'); lab.textContent = 'таз на ходе боком:'; hr.append(lab);
+  const setMode = (m: number): void => {
+    GAIT.hipsMode = m; saveGaitCfg();
+    if (m === 1 && openSetStale()) bakeOpenSet(); else renderLoco();
+  };
+  hr.append(pbtn('ровно', () => setMode(0), (GAIT.hipsMode | 0) === 0), pbtn('открыт', () => setMode(1), (GAIT.hipsMode | 0) === 1));
+  if ((GAIT.hipsMode | 0) !== 1) return;
+  const sl = (label: string, key: 'hipsOpen' | 'hipsOpenWalk'): void => {
+    const r = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
+    const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = label; r.append(nm);
+    const inp = el('input', 'flex:2') as HTMLInputElement;
+    inp.type = 'range'; inp.min = '0'; inp.max = '45'; inp.step = '5'; inp.value = String(GAIT[key]);
+    const v = el('span', 'width:46px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = GAIT[key] + '°';
+    inp.oninput = () => { GAIT[key] = parseFloat(inp.value); v.textContent = GAIT[key] + '°'; saveGaitCfg(); };   // планировщик — сразу
+    // ⚠ ПЕРЕСЪЁМ ОТЛОЖЕН НА `OPEN_BAKE_DEBOUNCE`. `change` у ползунка стреляет на КАЖДОМ шаге стрелками с клавиатуры, а
+    // каждый съём — синхронные 0.5–2 с: зажатая стрелка вешала бы вкладку на десятки секунд. Мышью (отпустил — одно
+    // событие) задержка не заметна.
+    inp.onchange = () => {
+      cancelOpenBake();
+      const forChar = curCharId, forW = weapon;   // ⚠ цель — та, что была ВЫБРАНА при постановке таймера (см. `cancelOpenBake`)
+      openBakeTimer = setTimeout(() => {
+        openBakeTimer = 0;
+        if (curCharId !== forChar || weapon !== forW) return;
+        if (openSetStale()) bakeOpenSet();
+      }, OPEN_BAKE_DEBOUNCE) as unknown as number;
+    };
+    r.append(inp, v); wb.append(r);
+  };
+  sl('раскрытие на беге', 'hipsOpen');
+  sl('раскрытие на ходьбе', 'hipsOpenWalk');
+  const note = el('div', 'color:#7a869e;font-size:10px;margin-top:2px'); wb.append(note);
+  const got = openSetAngles();
+  const txt = `набор «таз открыт»: ходьба ${got.walk === null ? '—' : got.walk + '°'}, бег ${got.run === null ? '—' : got.run + '°'}`;
+  const stale = openSetStale();
+  note.textContent = stale ? `${txt} — ⚠ ${stale}, перезапеки` : `${txt} · без «только клипы» — живьём`;
+  if (stale) note.style.color = '#e0b050';
+  wb.append(pbtn(`⚙ запечь «таз открыт» (бег ${GAIT.hipsOpen}°, ходьба ${GAIT.hipsOpenWalk}°)`, () => bakeOpenSet()));
+  // ⚠ В ИГРУ «ОТКРЫТ» ЕДЕТ ТОЛЬКО С КЛИПАМИ. `pe_gait` несёт РЕЖИМ, а раскрытие в «только клипы» живёт в наборе
+  // `*_open` (`pe_clips`): опубликуешь один `pe_gait` — игра молча сыграет «ровно».
+  const pending = dirtyKeys().includes('pe_clips');
+  if (!cardinalSetExists()) {
+    const w = el('div', 'color:#e0b050;font-size:10px;margin-top:2px');
+    w.textContent = '⚠ кардинального набора страйфов нет — сначала «⚙ запечь набор походки» ниже, иначе сравнивать «открыт» не с чем.';
+    wb.append(w);
+  }
+  if (got.run === null && got.walk === null) {
+    const w = el('div', 'color:#e0b050;font-size:10px;margin-top:2px');
+    w.textContent = '⚠ набора «таз открыт» нет — в «только клипы» (и в игре) это «ровно». Запеки его кнопкой выше.';
+    wb.append(w);
+  } else if (pending) {
+    const w = el('div', 'color:#e0b050;font-size:10px;margin-top:2px');
+    w.textContent = '⚠ клипы не опубликованы: без «Опубликовать» (pe_clips) игра сыграет «ровно», даже если режим уедет с pe_gait.';
+    wb.append(w);
+  }
+}
+/**
+ * Клип набора «таз открыт» ТОГО ЖЕ оружия, что разрешённый кардинальный страйф (правый — по нему и живёт набор).
+ * ⚠ Проверять «просто есть клип с таким именем» нельзя: `findLocoClip` падает «точное оружие → `none` → любое`
+ * НЕЗАВИСИМО для каждого поиска, и у оружия со своим набором страйфов, но без своего `_open`, редактор показал бы
+ * углы БЕЗОРУЖНОГО набора и никогда не предложил бы снять свой (рантайм — см. `findOpen` в `poseRuntime`).
+ * ⚠ НО ОТСУТСТВИЕ КАРДИНАЛЬНОГО НЕ ПРЯЧЕТ САМ `_open`. Было «нет кардинального → нет ничего»: у персонажа без
+ * запечённого набора хода кнопка «открыт» снимала четыре клипа, а подпись продолжала писать «набора нет» и жалась
+ * по кругу — каждый раз новый съём 1–2 с. Нет кардинального — это ОТДЕЛЬНАЯ жалоба («сначала запеки набор походки»),
+ * и её показывает `hipsOpenBox`.
+ */
+function openSetPair(speed: 'walk' | 'run'): { sq: Clip | null; open: Clip | null } {
+  const sq = findLocoClip(library, `${speed}_strafe_R`, curCharId, weapon);
+  const open = findLocoClip(library, `${speed}_strafe_R_open`, curCharId, weapon);
+  const own = !!open && (!sq || (open.weapon === sq.weapon && open.character === sq.character));
+  return { sq, open: own ? open : null };
+}
+/** Есть ли у персонажа/оружия кардинальный набор страйфов вообще (без него сравнивать «ровно» ↔ «открыт» не с чем). */
+const cardinalSetExists = (): boolean => !!openSetPair('walk').sq || !!openSetPair('run').sq;
+/** Угол, с которым снят набор «таз открыт» текущего персонажа/оружия (правый страйф; нет клипа — null). */
+function openSetAngles(): { walk: number | null; run: number | null } {
+  return { walk: openSetPair('walk').open?.hipsOpenDeg ?? null, run: openSetPair('run').open?.hipsOpenDeg ?? null };
+}
+/** Есть ли набор «таз открыт» этого оружия вообще (его положено перезапекать вместе с основным). */
+const openSetExists = (): boolean => !!openSetPair('walk').open || !!openSetPair('run').open;
+/**
+ * Чем набор «таз открыт» разошёлся с настройками — текст для подписи, `''` = всё сходится.
+ * ⚠ ДВЕ ПРИЧИНЫ, А НЕ ОДНА. Угол — очевидная. Вторая: номера съёма (`bakeId`) кардинального и `_open` РАЗОШЛИСЬ —
+ * так бывает, когда плант-сетку или ползунки бега правили в режиме «ровно» и перезапекли только основной набор.
+ * Тогда «ровно» ↔ «открыт» сравнивали бы две РАЗНЫЕ настройки, и молча.
+ * ⚠ СРАВНЕНИЕ НА НЕРАВЕНСТВО, А НЕ «кардинальный новее». Расходится и в обратную сторону: снял галки с
+ * `walk_strafe_*`/`run_strafe_*` (правил только повороты) и нажал «запечь набор» — кардинальные остались старыми,
+ * а `_open` перезапеклись со свежим номером. Это ровно тот класс расхождения, ради которого номер и заведён.
+ */
+function openSetStale(): string {
+  for (const sp of ['walk', 'run'] as const) {
+    const want = sp === 'run' ? GAIT.hipsOpen : GAIT.hipsOpenWalk;
+    const { sq, open } = openSetPair(sp);
+    if (want > 0.5 ? !open : !!open) return 'не совпадает с ползунками';
+    if (open && Math.abs((open.hipsOpenDeg ?? 0) - want) > 0.5) return 'не совпадает с ползунками';
+    if (open && sq && (sq.bakeId ?? 0) !== (open.bakeId ?? 0)) return 'снят ДРУГИМ прогоном съёма, чем кардинальный';
+  }
+  return '';
+}
+/**
+ * Снять набор «таз открыт» тем же плеером, что крутит «Бег»; угол 0 — клип этой скорости удаляется (играет кардинальный).
+ * ⚠ Номер съёма берётся у КАРДИНАЛЬНОГО набора (`bakeId` правого страйфа той же скорости), а не `Date.now()`: набор только
+ * что снят под ту же походку, и ставить ему более новый номер значило бы навсегда прятать расхождение от `openSetStale`.
+ *
+ * ⭐⭐ ОРУЖИЕ КЛИПА — ХОЗЯИНА КАРДИНАЛЬНОГО СТРАЙФА, А НЕ ВЫБРАННОЕ В ПАНЕЛИ.
+ * ⚠ Было `weapon:` выбранным всегда, а признают `_open` только рядом со своим кардинальным (`openSetPair`, рантаймовый
+ * `findOpen`: `oc.weapon === sq.weapon`). `findLocoClip` падает «точное оружие → `none` → любое» НЕЗАВИСИМО для каждого
+ * поиска, поэтому у оружия, живущего на БЕЗОРУЖНОМ наборе хода (а это большинство), съём делал сироту: подпись вечно
+ * «набора нет», кнопка ничего не меняет, а игра молча играет «ровно» и тащит мёртвые клипы в `pe_clips`.
+ * Скорости группируются отдельно: ходьба и бег могут жить на разных оружиях, и зеркало работает внутри своей группы.
+ */
+function bakeOpenSet(): void {
+  const wasLoco = locoOn; locoOn = false;                   // бейк сам гоняет плеера — цикл не должен мешать
+  try {
+    const player = lp();
+    if (player.weapon !== weapon) player.setWeapon(weapon);
+    player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
+    const t0 = performance.now();
+    const groups = new Map<string, { specs: ReturnType<typeof openStrafePresets>; bakeId: number }>();
+    for (const sp of openStrafePresets(GAIT.hipsOpen, GAIT.hipsOpenWalk)) {
+      const sq = openSetPair(/^run_/.test(sp.name) ? 'run' : 'walk').sq;
+      const owner = sq?.weapon ?? weapon;
+      const g = groups.get(owner) ?? { specs: [], bakeId: sq?.bakeId ?? Date.now() };
+      g.specs.push(sp); groups.set(owner, g);
+    }
+    // Планировщик ставит стопы в МИРОВЫХ X/Z — корень обязан быть в нуле (та же обёртка, что у основного съёма).
+    const out = withRootViewOff(() => [...groups].flatMap(([owner, g]) => {
+      const opts = { character: curCharId, weapon: owner, readPose: bakeReadPose(human), bakeId: g.bakeId };
+      return mirrorIfAsked(bakeGaitSet(player, human, opts, specsForBake(g.specs)), opts);
+    }));
+    const ms = performance.now() - t0;
+    const drop = openDropList();
+    histLib('запечь «таз открыт»', () => { putBaked(out); dropClips(drop); saveLib(); });
+    bakeStatus = `✓ «таз открыт»: ${out.length} клипов, ${ms.toFixed(0)} мс${mirrorNote()}`;
+  } catch (e) { bakeStatus = '⚠ съём не удался: ' + String(e instanceof Error ? e.message : e); }
+  // ⚠ ИМЕННО `finally`. Съём УМЕЕТ отказать (`assertWarp` — чужой таз на кадре, `assertOpenBudget` — раскрытие больше
+  // бюджета скрутки): без этого `locoOn` оставался false, превью «Бега» вставало намертво, статус показывал прежнее
+  // «✓ …», и причина была видна только в консоли.
+  finally { locoOn = wasLoco; refreshAll(); }
+}
+/** Клипы `_open`, у которых угол упал в 0: эта скорость играет кардинальный. Оружие — хозяина кардинального (см. `bakeOpenSet`). */
+function openDropList(): { name: string; weapon: string }[] {
+  const out: { name: string; weapon: string }[] = [];
+  for (const sp of ['walk', 'run'] as const) {
+    if ((sp === 'run' ? GAIT.hipsOpen : GAIT.hipsOpenWalk) > 0.5) continue;
+    const w = openSetPair(sp).sq?.weapon ?? weapon;
+    out.push({ name: `${sp}_strafe_L_open`, weapon: w }, { name: `${sp}_strafe_R_open`, weapon: w });
+  }
+  return out;
+}
+/**
+ * Записать снятое в библиотеку с переносом меток. Метки (шаги!) расставлены руками и переезжают долей цикла
+ * (`carryMarks`), иначе жили бы до первой правки походки.
+ * ⭐ У ПЕРВОГО СЪЁМА `_open` МЕТОК ВЗЯТЬ НЕОТКУДА — берём их у КАРДИНАЛЬНОГО клипа того же имени: раскладка фазы у них
+ * одна (оба сняты по фазе планировщика), а без этого «открыт» терял бы авторские шаги и падал на касание пола, то есть
+ * переключение режима меняло бы ещё и ТАЙМИНГ звука шага.
+ */
+function putBaked(out: readonly { clip: Clip }[]): void {
+  for (const r of out) {
+    const i = clipIndexOf(r.clip);
+    // ⚠ Метки первому `_open` ищем по ПАРЕ САМОГО КЛИПА, а не по выбранному в панели: набор пишется под оружием
+    // хозяина кардинального страйфа (см. `bakeOpenSet`), и по `weapon` панели мы искали бы в чужом наборе.
+    const src = i >= 0 ? library[i]!
+      : r.clip.name.endsWith('_open') ? (findLocoClip(library, r.clip.name.slice(0, -'_open'.length), r.clip.character, r.clip.weapon) ?? null) : null;
+    putClip(src ? carryMarks(src, r.clip) : r.clip, 'replace');
+  }
+}
+function dropClips(names: readonly { name: string; weapon: string }[]): void {
+  for (const n of names) { const i = clipIndexOf({ name: n.name, character: curCharId, weapon: n.weapon }); if (i >= 0) library.splice(i, 1); }
+}
+/**
+ * Зеркало левого страйфа — если попрошено И походка симметрична. ⚠ `ASYM` (ползунки «на сторону») остаётся на СВОЕЙ
+ * ноге: зеркало перенесло бы хромоту на другую ногу, и левый страйф разошёлся бы с `*_fwd`/`*_back`. Тогда молча
+ * пропускаем зеркало и пишем это в статус — чтобы автор не гадал, почему левый страйф другой.
+ */
+let mirrorSkipped = false;
+/** Зеркало действительно применится: попрошено И походка симметрична. */
+const mirrorOn = (): boolean => !!GAIT.strafeMirror && !gaitIsAsymmetric();
+function mirrorIfAsked<T extends { clip: Clip }>(baked: T[], opts?: BakeGaitOptions): T[] {
+  mirrorSkipped = !!GAIT.strafeMirror && gaitIsAsymmetric();
+  return mirrorOn() ? withMirroredStrafeL(baked as never, opts) as unknown as T[] : baked;
+}
+/**
+ * ⭐ ЛЕВЫЙ СТРАЙФ ПРИ ВКЛЮЧЁННОМ ЗЕРКАЛЕ НЕ СНИМАЕТСЯ ВОВСЕ. Раньше он снимался полным процедурным съёмом
+ * (разогрев 2 с + до 6 с цикла на каждый) и тут же ЦЕЛИКОМ выбрасывался — `withMirroredStrafeL` подменял результат
+ * зеркалом правого. На наборе с «таз открыт» это четыре лишних съёма, то есть примерно вдвое дольше на страйфах.
+ * ⚠ Правый той же скорости обязан быть в ТОМ ЖЕ съёме — иначе зеркалить нечем, и левый снимаем как раньше.
+ */
+function specsForBake<T extends { name: string }>(specs: readonly T[]): T[] {
+  if (!mirrorOn()) return [...specs];
+  return specs.filter((s) => !/_strafe_L/.test(s.name) || !specs.some((r) => r.name === s.name.replace('_strafe_L', '_strafe_R')));
+}
+const mirrorNote = (): string => (mirrorSkipped ? ' · ⚠ зеркало пропущено: походка асимметрична (ASYM)' : '');
 /** Панель настройки процедурного бега (GX/POSE/GAIT). Меняет живые объекты + пишет per-character в pe_gait. */
 // Ф2.1: запечь процедурную походку в обычные клипы (после этого клиенту StepPlanner не нужен)
 let bakeStatus = '';
@@ -4493,6 +4734,8 @@ function bakeGaitSection(): void {
     if (have && presetSpd !== undefined) {
       const was = bakedLocoSpeed(have);
       if (Math.abs(was - presetSpd) > 0.5) { mark.textContent += ` (снят на ${Math.round(was)})`; mark.style.color = '#e0b050'; }
+      // Снят с доворотом таза (до ревизии 2): страйф шёл диагональю, сектора доворота на нём не включатся — перезапечь.
+      else if (!isLocoClipFresh(have)) { mark.textContent += ' ⚠ с доворотом — перезапеки'; mark.style.color = '#e0b050'; }
     }
     row.append(cb, name, speed, mark);
     listBox.append(row);
@@ -4516,29 +4759,48 @@ function bakeGaitSection(): void {
     body.append(w);
   }
 
-  body.append(pbtn(`⚙ запечь набор походки (${picked.length})`, () => {
+  // ⭐ СТРАЙФ ВЛЕВО = ЗЕРКАЛО ВПРАВО (`GAIT.strafeMirror`, в `pe_gait` — одинаково на всех машинах): плант-сетка несимметрична
+  // — левый страйф снимется не таким, как правый. Выкл — каждый своим съёмом (если сетку настраивали с обеих сторон).
+  body.append(pbtn(GAIT.strafeMirror ? 'страйф влево = зеркало вправо' : 'страйф влево — свой съём',
+    () => { GAIT.strafeMirror = GAIT.strafeMirror ? 0 : 1; saveGaitCfg(); refreshAll(); }, !!GAIT.strafeMirror));
+  // ⭐ «ТАЗ ОТКРЫТ» СНИМАЕТСЯ ВМЕСТЕ С ОСНОВНЫМ НАБОРОМ — И КОГДА РЕЖИМ ВЫКЛЮЧЕН ТОЖЕ, лишь бы набор существовал.
+  // ⚠ Иначе: покрутил плант-сетку/ползунки в «ровно», перезапёк основной — а `_open` остался со СТАРОЙ походкой, и
+  // сравнение «ровно» ↔ «открыт» сравнивало бы две разные настройки. Второй сторож этого же — `openSetStale` по `bakeId`.
+  const withOpen = !!(GAIT.warpOn && (GAIT.hipsMode | 0) === 1) || openSetExists();
+  body.append(pbtn(`⚙ запечь набор походки (${picked.length}${withOpen ? ' + «таз открыт»' : ''})`, () => {
     const wasLoco = locoOn; locoOn = false;                   // бейк сам гоняет плеера — цикл не должен мешать
-    const player = lp();
-    if (player.weapon !== weapon) player.setWeapon(weapon);
-    player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
-    const t0 = performance.now();
-    const opts = { character: curCharId, weapon, readPose: bakeReadPose(human) };
-    // Планировщик ставит стопы в МИРОВЫХ X/Z — корень обязан быть в нуле (вне «Анимации» он и так ноль; держим явно).
-    const out = withRootViewOff(() => [
-      ...bakeGaitSet(player, human, opts, GAIT_PRESETS.filter((s) => bakeList().includes(s.name))),
-      ...bakeTurnSet(player, human, opts, TURN_PRESETS.filter((s) => bakeList().includes(s.name))),
-    ]);
-    const ms = performance.now() - t0;
-    histLib('запечь походку', () => {
-      // Перезапекание набора — осознанная перезапись ПОЗ, но не разметки: метки (шаги!) расставлены руками и
-      // переезжают на новый клип долей цикла (`carryMarks`), иначе жили бы до первой правки походки.
-      for (const r of out) { const i = clipIndexOf(r.clip); putClip(i >= 0 ? carryMarks(library[i]!, r.clip) : r.clip, 'replace'); }
-      saveLib();
-    });
-    const keys = out.reduce((a, r) => a + r.keys, 0), frames = out.reduce((a, r) => a + r.frames, 0);
-    bakeStatus = `✓ ${out.length} клипов, ${frames} кадров → ${keys} ключей, ${ms.toFixed(0)} мс`;
-    locoOn = wasLoco;
-    refreshAll();
+    try {
+      const player = lp();
+      if (player.weapon !== weapon) player.setWeapon(weapon);
+      player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
+      const t0 = performance.now();
+      const opts = { character: curCharId, weapon, readPose: bakeReadPose(human), bakeId: Date.now() };
+      // ⚠ `_open` ФИЛЬТРУЕТСЯ ТЕМИ ЖЕ ГАЛКАМИ, что и кардинальный, — по имени кардинального. Иначе: снял галки со
+      // страйфов (правил только повороты) и нажал съём — кардинальные остались старыми, а `_open` перезапеклись со
+      // свежим номером съёма, то есть разошлись ровно так, как `bakeId` и должен ловить.
+      const openSpecs = withOpen ? openStrafePresets(GAIT.hipsOpen, GAIT.hipsOpenWalk)
+        .filter((s) => bakeList().includes(s.name.replace(/_open$/, ''))) : [];
+      // Планировщик ставит стопы в МИРОВЫХ X/Z — корень обязан быть в нуле (вне «Анимации» он и так ноль; держим явно).
+      // ⚠ ВЕСЬ съём внутри обёртки — и набор хода, и «таз открыт», и зеркало, и повороты.
+      const out = withRootViewOff(() => {
+        const specs = specsForBake([...GAIT_PRESETS.filter((s) => bakeList().includes(s.name)), ...openSpecs]);
+        const gait = bakeGaitSet(player, human, opts, specs);
+        return [...mirrorIfAsked(gait, opts),
+          ...bakeTurnSet(player, human, opts, TURN_PRESETS.filter((s) => bakeList().includes(s.name)))];
+      });
+      const ms = performance.now() - t0;
+      // Клипы «таз открыт», у которых угол упал в 0, из библиотеки убираем: эта скорость играет кардинальный.
+      const drop = withOpen ? openDropList() : [];
+      histLib('запечь походку', () => {
+        // Перезапекание набора — осознанная перезапись ПОЗ, но не разметки: метки (шаги!) расставлены руками и
+        // переезжают на новый клип долей цикла (`carryMarks`), иначе жили бы до первой правки походки.
+        putBaked(out); dropClips(drop);
+        saveLib();
+      });
+      const keys = out.reduce((a, r) => a + r.keys, 0), frames = out.reduce((a, r) => a + r.frames, 0);
+      bakeStatus = `✓ ${out.length} клипов, ${frames} кадров → ${keys} ключей, ${ms.toFixed(0)} мс${mirrorNote()}`;
+    } catch (e) { bakeStatus = '⚠ съём не удался: ' + String(e instanceof Error ? e.message : e); }
+    finally { locoOn = wasLoco; refreshAll(); }   // ⚠ см. `bakeOpenSet`: съём умеет отказать, превью не должно вставать
   }));
   if (bakeStatus) { const st = el('div', 'font-size:10px;margin-top:2px;color:#9ae6a0'); st.textContent = bakeStatus; body.append(st); }
 }
@@ -4942,11 +5204,13 @@ function renderGaitTune(): void {
       if (!c) { learnInfo = 'клип не найден'; learnList = null; renderLoco(); return; }
       const m = analyzeGait(c, { human, speed: learnSpeed > 0 ? learnSpeed : undefined });
       const cur: NumRec = { ...(GAIT as unknown as NumRec), ...(POSE as unknown as NumRec) };
-      learnList = gaitSuggestions(m, cur, gaitSpeed === 'run');
+      learnList = gaitSuggestions(m, cur, gaitSpeed === 'run', c.name);
       learnInfo = `период ${m.periodSec.toFixed(2)} с · шаг ${m.stepLen === null ? '—' : m.stepLen.toFixed(1)}`
         + ` · опора ${(m.duty * 100) | 0}% · подъём ${m.lift.toFixed(1)}`
         + (m.slide === null ? '' : ` · скольжение ${(m.slide * 100) | 0}%`)
-        + (m.turnRad ? ` · поворот ${(m.turnRad * 180 / Math.PI).toFixed(0)}°` : '');
+        + (m.turnRad ? ` · поворот ${(m.turnRad * 180 / Math.PI).toFixed(0)}°` : '')
+        + (m.travelDeg !== null ? ` · ход ${m.travelDeg.toFixed(0)}°` : '')
+        + ((w) => (w ? ` · ${w}` : ''))(locoClipWarning(c.name, m));
       renderLoco();
     }));
     if (learnInfo) { const i2 = el('div', 'color:#9ae6a0;font-size:10px;margin-top:3px;font-family:monospace'); i2.textContent = learnInfo; box.append(i2); }
@@ -5386,7 +5650,7 @@ const COL_SFX = ['@s', '@b', '@c'] as const;
 const colMapOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): NumRec => (d === 'cbt' ? gaitCombat : d === 'back' ? gaitBack : gaitStrafe);
 const colSfxOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): string => (d === 'cbt' ? '@c' : d === 'back' ? '@b' : '@s');
 let warpReadout: HTMLElement | null = null;                // живой угол доворота таза (Ф0) — глазами его на диагонали не отличить
-let editorRootYaw = 0;                                      // зеркало pelvisYaw плеера (updateTurnTest идёт по тазу)
+let editorRootYaw = 0;                                      // зеркало pelvisYawWorld плеера (updateTurnTest идёт по тазу)
 let editorTwistStates: TwistStates = TWIST_STATES_DEFAULT();   // 3 профиля скрутки (стой/ходьба/бег) текущего персонажа
 const editTwist = (): TwistProfile => editorTwistStates[turnTestMove];   // редактируемый профиль = ВЫБРАННОЕ состояние (кнопка стой/ходьба/бег)
 let twistCfgs: Record<string, TwistCfgStored> = (() => { try { return JSON.parse(localStorage.getItem('pe_twist') || '{}') as Record<string, TwistCfgStored>; } catch { return {}; } })();
@@ -5987,7 +6251,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'planSmooth', 'stepSlack', 'stepUrge',
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'hipsMode', 'hipsOpen', 'hipsOpenWalk', 'strafeMirror', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
@@ -6174,8 +6438,15 @@ function stepGait(dt: number): void {
   player.setVel(vx, vz); player.setYaw(gaitYaw); player.step(dt);   // ЕДИНЫЙ пайплайн (Ф2): гейт+idle+удар+torso-lead+голова — как в игре
   // Зеркалим состояние плеера для маркеров/скролла пола/ридаута.
   gaitMoveMag = player.moveMag; gaitLegMag = player.legMag;
-  gaitPx = player.posX; gaitPz = player.posZ; editorRootYaw = player.pelvisYaw;
-  if (warpReadout && warpReadout.isConnected) warpReadout.textContent = `таз ${player.dirWarpDeg.toFixed(0)}°`;
+  // ⚠ МИРОВОЙ рыск таза, а не приложенный курс: в «только клипы» + «открыт» раскрытие живёт в рыске самого клипа
+  // (`clipHipsOpen`), и по `pelvisYaw` активная ячейка плант-сетки уезжала на целое раскрытие (35°).
+  gaitPx = player.posX; gaitPz = player.posZ; editorRootYaw = player.pelvisYawWorld;
+  if (warpReadout && warpReadout.isConnected) {
+    // Сектор доворота: к какому клипу складывается ход. Старая складка — пока страйфы не перезапечены (см. `isLocoClipFresh`).
+    const SEC = ['вперёд', 'бок +X', 'назад', 'бок −X'];
+    const open = player.hipsOpenDeg;
+    warpReadout.textContent = `таз ${player.dirWarpDeg.toFixed(0)}°${Math.abs(open) > 0.5 ? ` + раскрытие ${open.toFixed(0)}°` : ''} · ${SEC[player.dirWarpSector]}${player.dirWarpSectors ? '' : ' · старая складка: перезапеки страйфы'}`;
+  }
   if (plantDrag < 0 && spd > 1) {   // активная ячейка плант-сетки следит за падом (body-локальное направление движения)
     const fwdC = vx * Math.sin(editorRootYaw) + vz * Math.cos(editorRootYaw), latC = vx * Math.cos(editorRootYaw) - vz * Math.sin(editorRootYaw);
     let a = Math.atan2(latC, fwdC) / DIR_STEP; a = ((a % 8) + 8) % 8;

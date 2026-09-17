@@ -265,4 +265,39 @@ describe('clipModel — скорость запекания (`bakeSpeed`) пер
     const rebaked: Clip = { ...run, bakeSpeed: 40, keys: run.keys.map((k) => ({ t: k.t, pose: k.pose })) };
     expect(carryMarks({ ...run, bakeSpeed: 102 }, rebaked).bakeSpeed).toBe(40);
   });
+
+  it('⭐ РЕВИЗИЯ ЗАПЕКАНИЯ (`bakeRev`) — тот же путь: потеряй её на чтении, и перезапечённый страйф снова «старый»', () => {
+    // Рантайм включает сектора доворота только на страйфах с `bakeRev` ≥ 2 (`isLocoClipFresh`), редактор без неё
+    // просит «перезапеки». Молчаливая потеря поля в `migrateClip` откатила бы игру на старую складку доворота.
+    const fresh: Clip = { ...run, bakeRev: 2 };
+    expect(migrateClip(JSON.parse(JSON.stringify(fresh))).bakeRev, '⚠ поле не дописано в migrateClip').toBe(2);
+    expect('bakeRev' in JSON.parse(JSON.stringify(migrateClip(run))), 'у старого клипа поле не появляется').toBe(false);
+    expect(migrateClip({ ...run, bakeRev: 'x' }).bakeRev).toBeUndefined();
+    expect(flipClip(fresh).bakeRev).toBe(2);
+    expect(mirrorClip(fresh, 'Left').bakeRev, 'зеркало чистого страйфа — тоже чистый страйф').toBe(2);
+    expect(carryMarks(run, { ...fresh, keys: run.keys.map((k) => ({ t: k.t, pose: k.pose })) }).bakeRev, 'метки со старого клипа ревизию не сбивают').toBe(2);
+  });
+
+  it('⭐ «ТАЗ ОТКРЫТ» (`hipsOpenDeg` / `hipsOpenW`) переживает чтение, зеркало и перенос меток; битые доли не тащим', () => {
+    // Потеряй угол или доли на чтении — рантайм не снимет запечённый отворот, и грудь уедет от прицела на 41 % угла.
+    const open: Clip = { ...run, name: 'run_strafe_R_open', bakeRev: 2, hipsOpenDeg: 35, hipsOpenW: [0.2143, 0.3571, 0.4286] };
+    const back = migrateClip(JSON.parse(JSON.stringify(open)));
+    expect(back.hipsOpenDeg).toBe(35);
+    expect(back.hipsOpenW).toEqual([0.2143, 0.3571, 0.4286]);
+    expect('hipsOpenDeg' in JSON.parse(JSON.stringify(migrateClip(run))), 'у обычного клипа полей нет').toBe(false);
+    expect(migrateClip({ ...open, hipsOpenW: [1, 'x', 0] }).hipsOpenW).toBeUndefined();
+    expect(migrateClip({ ...open, hipsOpenW: [1, 0] }).hipsOpenW).toBeUndefined();
+    expect(flipClip(open).hipsOpenDeg).toBe(35);
+    expect(carryMarks(run, { ...open, keys: run.keys.map((k) => ({ t: k.t, pose: k.pose })) }).hipsOpenW).toEqual(open.hipsOpenW);
+  });
+
+  it('⭐ НОМЕР СЪЁМА (`bakeId`) переживает чтение: по нему редактор видит, что набор «таз открыт» снят СТАРОЙ походкой', () => {
+    // ⚠ Мутация «не копировать bakeId в migrateClip» снимает единственный признак расхождения наборов, у которых
+    // совпал УГОЛ раскрытия: правишь плант-сетку в «ровно», перезапекаешь основной набор — `_open` тихо остаётся старым.
+    const stamped: Clip = { ...run, bakeRev: 2, bakeId: 1758000000000 };
+    expect(migrateClip(JSON.parse(JSON.stringify(stamped))).bakeId).toBe(1758000000000);
+    expect('bakeId' in JSON.parse(JSON.stringify(migrateClip(run))), 'у старого клипа поля нет').toBe(false);
+    expect(migrateClip({ ...run, bakeId: 'x' }).bakeId).toBeUndefined();
+    expect(flipClip(stamped).bakeId).toBe(1758000000000);
+  });
 });

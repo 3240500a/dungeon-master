@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
-import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir } from './locoBlend.js';
+import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
 import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
@@ -881,6 +881,42 @@ export function blendVia(grid: PlantGrid, key: 'lVia' | 'rVia', i0: number, i1: 
   }
   return out;
 }
+/**
+ * ⭐ ЗЕРКАЛО ПЛАНТ-СЕТКИ (сагиттальная плоскость тела): направление `i` ↔ `(8 − i) % 8`, левая нога ↔ правая, боковой
+ * сдвиг (и у точек обвода) — с минусом. Сдвиги в осях тела АБСОЛЮТНЫЕ (`lat` к +X, где левая нога), см. `plant` в `pose.ts`.
+ *
+ * ЗАЧЕМ. Сетка — данные автора, а страйф-клипы снимаются ровно по ячейкам 2 (+X, `strafe_R`) и 6 (−X, `strafe_L`).
+ * ЗАМЕР опубликованного воина: ходьба, ячейка 2 = Л [−9, 1.86] / П [5, 1.10], ячейка 6 — пустая. Разнос стоп вдоль
+ * хода есть только у правого страйфа: манекен, доворот выкл — `walk_strafe_R` ширина 12.5 без касания голеней,
+ * `walk_strafe_L` ширина 1.1 и голени касаются в 48 % кадров. Пока клипы шли диагональю, это было не видно.
+ */
+export const mirrorPlantDir = (i: number): number => (8 - (((i % 8) + 8) % 8)) % 8;
+export function mirrorPlantCell(c: Leg2): Leg2 {
+  const m = (v: XY[] | undefined): XY[] => (v ?? []).map((p) => [p[0], -p[1]] as XY);
+  return { l: [c.r[0], -c.r[1]], r: [c.l[0], -c.l[1]], lVia: m(c.rVia), rVia: m(c.lVia) };
+}
+/** Где сетка НЕ зеркальна: пары (i, зеркало i) с расхождением больше `eps` ед. Ячейки 0 и 4 сверяются сами с собой. */
+export function plantMirrorGaps(g: PlantGrid, eps = 0.5): { speed: 'walk' | 'run'; i: number; j: number; diff: number }[] {
+  const out: { speed: 'walk' | 'run'; i: number; j: number; diff: number }[] = [];
+  const cellDiff = (a: Leg2, b: Leg2): number => {
+    let d = Math.max(Math.abs(a.l[0] - b.l[0]), Math.abs(a.l[1] - b.l[1]), Math.abs(a.r[0] - b.r[0]), Math.abs(a.r[1] - b.r[1]));
+    for (const k of ['lVia', 'rVia'] as const) {
+      const va = a[k] ?? [], vb = b[k] ?? [];
+      if (va.length !== vb.length) return Infinity;
+      for (let n = 0; n < va.length; n++) d = Math.max(d, Math.abs(va[n]![0] - vb[n]![0]), Math.abs(va[n]![1] - vb[n]![1]));
+    }
+    return d;
+  };
+  for (const speed of ['walk', 'run'] as const) {
+    for (let i = 0; i <= 4; i++) {
+      const j = mirrorPlantDir(i), a = g[speed][i], b = g[speed][j];
+      if (!a || !b) continue;
+      const diff = cellDiff(b, mirrorPlantCell(a));
+      if (diff > eps) out.push({ speed, i, j, diff });
+    }
+  }
+  return out;
+}
 
 // ── Провайдер контента из localStorage (same-origin с редактором): idle-стойки + удары + sway по классу ──
 export interface GamePoseContent extends PoseContent {
@@ -1144,40 +1180,93 @@ export function stepTorsoLead(prevRoot: number, aimYaw: number, twist: TwistProf
   return { rootYaw: root, residual, turning };
 }
 /**
- * ДОВОРОТ ТАЗА ПОД НАПРАВЛЕНИЕ ДВИЖЕНИЯ (orientation warping).
+ * ДОВОРОТ ТАЗА ПОД НАПРАВЛЕНИЕ ДВИЖЕНИЯ (orientation warping) — ЧЕТЫРЕ СЕКТОРА, доворачивается только ОСТАТОК.
  *
  * ЗАЧЕМ. Без него диагональ — это отдельная анимация, и библиотека растёт вдвое: восемь направлений
- * на каждую скорость. С ним низ доворачивается к ходу и играет «вперёд», верх отворачивается обратно
- * к прицелу — диагоналей как клипов не нужно вовсе.
+ * на каждую скорость. С ним низ доворачивается к ближайшему кардинальному клипу, верх отворачивается
+ * обратно к прицелу — диагоналей как клипов не нужно вовсе.
  *
- * ТРИ ОГРАНИЧИТЕЛЯ, и все три обязательны:
- *  1. БЛИЖАЙШАЯ ОСЬ. Ход спиной — это не «доворот на 180», а обычный шаг назад: угол складывается
- *     к ближайшей оси (вперёд/назад), доворачивается только остаток. Без этого на беге спиной таз
- *     уезжал в произвольную сторону и ноги скрещивались — замер на 180°: 0 % перекрёста → 28 %.
- *  2. ПОТОЛОК `warpMax` — дальше низ читается вывернутым. Остаток сверх потолка никуда не девается:
- *     он остаётся боковой компонентой выноса, то есть страйфом. Отдельный «порог страйфа» не нужен.
- *  3. БЮДЖЕТ СКРУТКИ. Верх обязан отвернуться ровно на угол доворота, иначе персонаж перестанет
- *     целиться туда, куда целится на самом деле, — а прицел в этой игре видимая вещь. Поэтому доворот
- *     урезается так, чтобы остаточная скрутка влезла в `maxTwist` профиля.
+ * ⭐⭐ КАНОН (Lyra / UE Orientation Warping): ход складывается к БЛИЖАЙШЕЙ ИЗ ЧЕТЫРЁХ ОСЕЙ — вперёд, +X
+ * (`strafe_R`), назад, −X (`strafe_L`) — и доворачивается ТОЛЬКО ОСТАТОК до неё. Чистый бок = доворот 0 и
+ * страйф-клип целиком. ⚠ Было две оси (вперёд/назад): на чистых 90° таз всегда уезжал на потолок (40°), ноги
+ * шли под 50° к тазу, а бленд давал 0.54 страйфа + 0.46 вперёд. ЗАМЕР (рыцарь, клипы, 90° @80): скольжение
+ * опорной стопы 65 % скорости, ошибка направления +20°, верх груди 19° от прицела. Сектора — см. README.
  *
- * Чистая функция (только числа) — проверяется в node без сцены. Выбор «вперёд/назад» возвращается
- * наружу, потому что он с ГИСТЕРЕЗИСОМ: ровно на 90° иначе щёлкает туда-сюда каждый кадр.
+ * ОГРАНИЧИТЕЛИ, и все обязательны:
+ *  1. СЕКТОР С ГИСТЕРЕЗИСОМ `SECTOR_HYST` на границах ±45°/±135°, но ТОЛЬКО ПОКА ИДЁМ (`moving` прошлого кадра,
+ *     как `bWasMovingLastUpdate` у Lyra): встали — сектор забыт, следующий старт берёт ближайший. Иначе он
+ *     залипал через остановку — тот же класс утечки, что флаг «назад» между запеканиями (замер: 60° → стоп →
+ *     35° шёл сектором R с доворотом −45 на весь забег).
+ *  2. НИЧЬЯ РОВНО НА ±45°/±135° — ЯВНОЕ ПРАВИЛО, зеркальное по знаку и одинаковое в JS и C#: `|d|` сравнивается
+ *     с 45°/135° с допуском, ничья отдаётся оси вперёд/назад (`nearestWarpSector`). Не `Math.round` — он
+ *     ломал зеркальность (+135 → назад, −135 → L) и в C# округляет половину к чётному.
+ *  3. ПОТОЛОК `warpMax` — дальше низ читается вывернутым; остаток сверх потолка доедает бленд клипов.
+ *  4. БЮДЖЕТ СКРУТКИ. Верх обязан отвернуться ровно на угол доворота, иначе персонаж перестанет
+ *     целиться туда, куда целится на самом деле. Поэтому доворот урезается так, чтобы остаточная скрутка
+ *     влезла в `maxTwist` профиля.
+ *
+ * `cfg.sectors === false` — СТАРАЯ складка вперёд/назад (гистерезис 90° ± `BACK_HYST`). Рантайм берёт её, только
+ * пока клипы страйфа не перезапечены (`isLocoClipFresh`): со старыми клипами (ноги под 126°) сектора хуже, чем было.
+ *
+ * Чистая функция (только числа) — проверяется в node без сцены.
  */
-export type DirWarp = { warp: number; back: boolean };
-export const DIR_WARP0: DirWarp = { warp: 0, back: false };
-/** Полуширина зоны нерешительности вокруг 90°: вошли в «назад» на 102°, вышли на 78°. */
+/** Сектор хода: 0 вперёд, 1 +X (`strafe_R`), 2 назад, 3 −X (`strafe_L`). */
+export type WarpSector = 0 | 1 | 2 | 3;
+/**
+ * `open` — сглаженная ДОЛЯ раскрытия таза «таз открыт» (−1..1, знак — сторона хода, `openFrac`); угол раскрытия
+ * (°) живёт снаружи (`GAIT.hipsOpen*` или угол, с которым снят набор `_open`). При `hipsMode` 0 — всегда 0.
+ */
+export type DirWarp = { warp: number; sector: WarpSector; moving: boolean; open: number };
+export const DIR_WARP0: DirWarp = { warp: 0, sector: 0, moving: false, open: 0 };
+/**
+ * ⭐ ДОЛЯ РАСКРЫТИЯ ТАЗА «ТАЗ ОТКРЫТ» по ходу `d` (рад, от таза) и сектору: только в секторах страйфа — 1 от 45° до 90°,
+ * к 135° гаснет в 0 (знак — сторона). Без гашения ход назад-вбок держал бы таз на 45° + раскрытие, и переброс в сектор
+ * «назад» (таз −45°) был бы качком на 90° + раскрытие. Секторы «вперёд»/«назад» — 0.
+ */
+export function openFrac(d: number, sector: WarpSector): number {
+  if (sector !== 1 && sector !== 3) return 0;
+  const a = Math.abs(d);
+  const k = a <= Math.PI / 2 ? 1 : clamp((3 * Math.PI / 4 - a) / (Math.PI / 4), 0, 1);
+  return (sector === 1 ? 1 : -1) * k;
+}
+/** Полуширина зоны нерешительности вокруг 90° у СТАРОЙ складки: вошли в «назад» на 102°, вышли на 78°. */
 const BACK_HYST = 12 * Math.PI / 180;
+/** Гистерезис сектора: держим сектор, пока ход в пределах 45° + этого от его оси (Lyra CardinalDirectionDeadZone 10). */
+export const SECTOR_HYST = 10 * Math.PI / 180;
+/** Ось сектора (рад, от таза): вперёд, +X, назад, −X. */
+export const SECTOR_AXIS: readonly number[] = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+/** Допуск ничьей на границе сектора (рад). Отдаёт ничью оси вперёд/назад — зеркально по знаку. */
+const SECTOR_TIE = 1e-6;
+/** Ближайший сектор без памяти. `d` — угол хода от таза в (−π, π]. */
+export function nearestWarpSector(d: number): WarpSector {
+  const a = Math.abs(d);
+  if (a <= Math.PI / 4 + SECTOR_TIE) return 0;
+  if (a >= 3 * Math.PI / 4 - SECTOR_TIE) return 2;
+  return d > 0 ? 1 : 3;
+}
 
 export function stepDirWarp(
   prev: DirWarp, rootYaw: number, aimYaw: number, vx: number, vz: number,
   maxTwist: number, dt: number,
-  cfg: { on: number; maxDeg: number; smooth: number },
+  cfg: { on: number; maxDeg: number; smooth: number; sectors?: boolean; openDeg?: number },
 ): DirWarp {
-  let want = 0, back = prev.back;
-  if (cfg.on > 0.5 && Math.hypot(vx, vz) > MOVE_EPS_WARP) {
+  let want = 0, sector = prev.sector, wantOpen = 0;
+  const moving = Math.hypot(vx, vz) > MOVE_EPS_WARP;
+  if (cfg.on > 0.5 && moving) {
     const d = wrapPi(Math.atan2(vx, vz) - rootYaw);
-    back = Math.abs(d) > Math.PI / 2 + (back ? -BACK_HYST : BACK_HYST);
-    const rel = back ? wrapPi(d - Math.PI) : d;      // «назад» меряем от хвоста, а не от носа
+    if (cfg.sectors ?? true) {
+      // Гистерезис — только на ходу: после остановки сектор выбирается заново, без памяти.
+      if (!prev.moving || Math.abs(wrapPi(d - SECTOR_AXIS[sector]!)) > Math.PI / 4 + SECTOR_HYST) sector = nearestWarpSector(d);
+    } else {
+      // ⚠ ФЛАГ «НАЗАД» ПОМНИТСЯ ЧЕРЕЗ ОСТАНОВКУ — это ПРЕЖНЕЕ поведение, и трогать его тут нельзя: ветка живёт
+      // ровно для неперезапечённых наборов, которым обещано «как было». Забывание флага на старте (как у секторов)
+      // на 78–102° даёт ДРУГОЙ знак доворота, и не на кадр: гистерезис тут же залипает на новом выборе и держит его
+      // весь забег. ЗАМЕР (потолок 50°): шёл спиной → стоп → пошёл под 85° — доворот −50° (помним) против +50°
+      // (забыли). Забывание — свойство СЕКТОРОВ (`prev.moving` выше), у них своя причина (см. ограничитель 1).
+      const wasBack = prev.sector === 2;
+      sector = Math.abs(d) > Math.PI / 2 + (wasBack ? -BACK_HYST : BACK_HYST) ? 2 : 0;
+    }
+    const rel = wrapPi(d - SECTOR_AXIS[sector]!);   // доворачиваем только остаток до оси сектора
     const cap = Math.abs(cfg.maxDeg) * Math.PI / 180;
     want = clamp(rel, -cap, cap);
     // Бюджет: после доворота верх крутится на (residual − want) и обязан влезть в maxTwist.
@@ -1185,13 +1274,80 @@ export function stepDirWarp(
     // ляжет на позвоночник. Считать от сырого значит разрешить доворот, который при отставшем
     // тазе (прицел дальше предела скрутки) утащит верх за предел.
     const residual = clamp(wrapPi(aimYaw - rootYaw), -maxTwist, maxTwist);
-    want = clamp(want, residual - maxTwist, residual + maxTwist);
+    // «Таз открыт» (только в секторах): раскрытие тоже уходит из скрутки верха — в бюджет его вместе с доворотом.
+    if ((cfg.sectors ?? true) && cfg.openDeg) wantOpen = openFrac(d, sector);
+    const openRad = wantOpen * (cfg.openDeg ?? 0) * Math.PI / 180;
+    want = clamp(want + openRad, residual - maxTwist, residual + maxTwist) - openRad;
   }
   const k = cfg.smooth > 1e-4 ? Math.min(1, dt / cfg.smooth) : 1;
-  return { warp: prev.warp + (want - prev.warp) * k, back };
+  return { warp: prev.warp + (want - prev.warp) * k, sector, moving, open: prev.open + (wantOpen - prev.open) * k };
 }
 /** Ниже этой скорости (u/с) направление хода — шум, доворачивать не по чему. */
 const MOVE_EPS_WARP = 4;
+/**
+ * ⭐ ПЕРЕКРЫТИЕ ДОВОРОТА ТАЗА, рад (`null` — как настроено в `GAIT`). Число — доворот РОВНО такой, без секторов,
+ * сглаживания и раскрытия. Нужно ЗАПЕКАТЕЛЮ: кардинальный клип снимается с 0 (иначе в клип впекается скрутка
+ * корпуса, а ноги идут под 90° ± доворот), набор «таз открыт» — с ±раскрытием.
+ * ⚠ Отдельным полем, а не записью в `GAIT.warpOn`: тумблер — контент редактора, запекание не должно его портить.
+ * ⚠ Имя не `setWarpOverride`: `PosePlayer.warp` — это ВРЕМЕННОЙ варп удара, путать нельзя.
+ */
+let dirWarpOverride: number | null = null;
+export function setDirWarpOverride(v: number | null): void { dirWarpOverride = v; }
+export function getDirWarpOverride(): number | null { return dirWarpOverride; }
+/**
+ * ⭐⭐ РЕВИЗИЯ ЗАПЕКАНИЯ КЛИПОВ ХОДА. 2 = кардинальный клип: снят без доворота таза и со свежим состоянием
+ * доворота на каждый пресет (до неё страйфы шли под ±126° к тазу со впечённой скруткой ±40°). Пишет
+ * запекатель (`Clip.bakeRev`), читают рантайм (сектора доворота включаются только на свежих страйфах) и
+ * редактор (предупреждение «перезапеки»).
+ */
+export const LOCO_BAKE_REV = 2;
+/**
+ * Клип хода годится секторам: снят нашим запекателем на ревизии ≥ `LOCO_BAKE_REV` — или снят НЕ им (импорт мокапа:
+ * `bakeSpeed` пишет только запекатель, а чужой кардинальный клип доворота в себе не несёт).
+ * ⚠ Запечённое до 17.09 (без `bakeSpeed`) отсюда не отличить от импорта; его и так выдаёт метка «снят на 50».
+ */
+export const isLocoClipFresh = (c: { bakeRev?: number; bakeSpeed?: number } | null | undefined): boolean =>
+  !!c && (c.bakeSpeed === undefined || (c.bakeRev ?? 0) >= LOCO_BAKE_REV);
+/**
+ * Доли отворота доворота/раскрытия по Spine / Chest / UpperChest — веса скрутки, перенормированные на их сумму
+ * (та же раскладка, что в `twistTorso(…, warp)`). `null` — у профиля нет веса на спине, раскладывать нечем.
+ */
+export function openCounterWeights(w: readonly number[]): [number, number, number] | null {
+  const c3 = (w[0] ?? 0) + (w[1] ?? 0) + (w[2] ?? 0);
+  return c3 > 1e-3 ? [(w[0] ?? 0) / c3, (w[1] ?? 0) / c3, (w[2] ?? 0) / c3] : null;
+}
+/** Клип набора «таз открыт» по имени (`walk_strafe_R_open` …). */
+export const OPEN_SUFFIX = '_open';
+/**
+ * ⭐ «ТАЗ ОТКРЫТ»: СНЯТЬ ЗАПЕЧЁННЫЙ ОТВОРОТ С КЛИПА ПЕРЕД СМЕШИВАНИЕМ СО СТОЙКОЙ.
+ *
+ * Клип `*_strafe_*_open` КАНОНИЧЕСКИЙ: таз раскрыт на `a` к ходу, отворот `−a × w` запечён в Spine..UpperChest — такой клип
+ * любой движок сыграет как есть, и грудь останется на прицеле. У НАС Chest/UpperChest дальше смешиваются со стойкой по
+ * `pe_sway` (`UPPER_BONES`, в «только клипы» от клипа остаётся доля `swing`), и отворот разбавился бы вместе с ними —
+ * ЗАМЕР прототипа B: грудь мимо прицела на 41 % раскрытия (12.3° при 30°). Поэтому здесь отворот снимаем, а после всех
+ * слоёв его кладёт `applyTorsoTwist` рантаймовыми весами. Поза — копия: ключ клипа может прийти по ссылке.
+ */
+const OPEN_SPINE = ['Spine', 'Chest', 'UpperChest'] as const;
+const _obE = new THREE.Euler(), _obQ = new THREE.Quaternion(), _obR = new THREE.Quaternion(), _obY = new THREE.Vector3(0, 1, 0);
+export function unbakeOpenCounter(p: Pose, a: number, w: readonly number[]): Pose {
+  if (!a || w.length < 3) return p;
+  const out: Pose = { ...p };
+  for (let i = 0; i < 3; i++) {
+    const nm = OPEN_SPINE[i]!, v = p[nm];
+    if (!v || !w[i]) continue;
+    _obQ.setFromEuler(_obE.set(v[0], v[1], v[2], 'XYZ')).multiply(_obR.setFromAxisAngle(_obY, a * w[i]!));
+    _obE.setFromQuaternion(_obQ, 'XYZ');
+    out[nm] = [_obE.x, _obE.y, _obE.z];
+  }
+  return out;
+}
+/** Как часто перепроверяется ревизия запечённых страйфов (сек) — см. `strafeClipsFresh`. */
+const FRESH_TTL = 0.25;
+/** Кроссфейд при ДИСКРЕТНОЙ смене колонки клипов (сторона страйфа, вперёд↔назад, мгновенный разворот), сек. */
+const COL_FADE = 0.1;
+/** Скачок весов колонок за кадр, который считается подменой (мгновенный разворот). Перебросу сектора он не грозит:
+ *  доворот едет за `warpSmooth`, и `st` меняется не больше ~0.2 за кадр даже на 90° переброса. */
+const COL_JUMP = 0.3;
 
 /**
  * ТОЛЬКО АДДИТИВНАЯ скрутка цепочки [Spine..Head] (веса сумм.=1), БЕЗ таза.
@@ -1200,10 +1356,22 @@ const MOVE_EPS_WARP = 4;
  * его `rotation.y` перезаписывать нельзя — а сама развёртка остатка по спине нужна та же самая,
  * что и в походке. Один шов — одинаковый вид скрутки в анимации и в ручной позе.
  */
-export function twistTorso(human: Humanoid, residual: number, weights: [number, number, number, number, number]): void {
+export function twistTorso(human: Humanoid, residual: number, weights: [number, number, number, number, number], warp = 0): void {
   const H = human.bones;
+  // ⭐ ОТВОРОТ ОТ ДОВОРОТА ТАЗА (`warp`, уже ВЫЧТЕН из `residual`) ПЕРЕРАСПРЕДЕЛЯЕТСЯ на Spine..UpperChest (веса
+  // перенормированы на их сумму `c3`). Иначе грудь — и оружие на ней — отставала бы от прицела на долю шеи и головы:
+  // при весах 0.15/0.25/0.3 это (1 − c3) × доворот = 0.3 × 45° = 13.5° на потолке. Голову всё равно ставит look-at.
+  // Добавка `warp·(w − ww)` в сумме по цепочке НОЛЬ (Σw = Σww = 1): итог скрутки прежний, меняется только раскладка.
+  // ⚠ При `warp === 0` — ровно прежняя формула бит в бит (ручной позинг, доворот выкл, стойка).
+  const c3 = (weights[0] ?? 0) + (weights[1] ?? 0) + (weights[2] ?? 0);
   // rotateY аддитивен поверх авторской позы; цепочка Spine→…→Head накапливает → плечи/голова ведут, оружие (на UpperChest) следом.
-  for (let i = 0; i < TWIST_BONES.length; i++) { const b = H.get(TWIST_BONES[i]!); if (b && weights[i]) b.rotateY(residual * weights[i]!); }
+  for (let i = 0; i < TWIST_BONES.length; i++) {
+    const b = H.get(TWIST_BONES[i]!); if (!b) continue;
+    const w = weights[i] ?? 0;
+    let a = residual * w;
+    if (warp !== 0 && c3 > 1e-3) a += warp * (w - (i < 3 ? w / c3 : 0));
+    if (a) b.rotateY(a);
+  }
 }
 /**
  * КОРПУС В ТРЁХ СТЕПЕНЯХ СВОБОДЫ (Ф26.6) — расширение `twistTorso` на наклоны. Аддитивно поверх
@@ -1253,11 +1421,16 @@ const PULL_W_DEF: [number, number, number, number, number] = [0.2, 0.4, 0.4, 0, 
  * таза клипа выпадал, X/Z таза не поворачивались с телом (замеры — в шапке `pelvisFrame.ts`). Поверх `human.reset()` каждого
  * кадра это по-прежнему «курс абсолютно»: база таза свежая, дважды курс не накапливается.
  * ⚠ СТРАЙФ С ОТКРЫТЫМ ТАЗОМ В КЛИПЕ: рыск таза клипа теперь СОХРАНЯЕТСЯ — прибавлять его к курсу ещё раз нельзя (посчитается
- * дважды); запекатель вычитает ровно `pelvisYaw` (курс + доворот), открытие, запечённое в таз, переживает это один раз.
+ * дважды). Запекатель кардинального клипа вычитает `pelvisYaw` (там он равен прицельному корню — доворот на съёме 0), а
+ * набора `*_strafe_*_open` — ТОЛЬКО прицельный корень (`aimRootYaw`), так что раскрытие остаётся в клипе ровно один раз:
+ * сюда оно приходит слагаемым `clipHipsOpen` в `rootYaw` и `warp` (см. `step`), а не вторым поворотом таза.
+ * ⚠ И ОБРАТНО: если когда-нибудь таз станет собираться из клипа хода С ЕГО РЫСКОМ АВТОМАТИЧЕСКИ (как `frameEdit.turnPelvisGameGap`
+ *   просит для клипов поворота), раскрытие набора `_open` посчитается ДВАЖДЫ (35° → 70°): здесь рыск таза клипа уже входит
+ *   в `rootYaw` (`clipHipsOpen` в `step`). Сторож — `hipsOpen.test.ts` (прицел 137°/−100° и наклон таза в клипе).
  */
-export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number]): void {
+export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number], warp = 0): void {
   pelvisToWorld(human.bones.get('Hips')!, rootYaw);           // facing таза (углы ног body-local → корень на rootYaw)
-  twistTorso(human, residual, weights);
+  twistTorso(human, residual, weights, warp);
 }
 const _UP_Y = new THREE.Vector3(0, 1, 0);
 const _hlCur = new THREE.Quaternion(), _hlDes = new THREE.Quaternion(), _hlP = new THREE.Quaternion();
@@ -1495,7 +1668,56 @@ export class PosePlayer {
   /** Доворот таза этого кадра — редактору для читаута. */
   get dirWarpDeg(): number { return this.dirWarp.warp * 180 / Math.PI; }
   /** Идём ли спиной вперёд (доворот меряется от хвоста) — редактору для читаута. */
-  get dirWarpBack(): boolean { return this.dirWarp.back; }
+  get dirWarpBack(): boolean { return this.dirWarp.sector === 2; }
+  /** Сектор доворота: 0 вперёд, 1 +X (strafe_R), 2 назад, 3 −X (strafe_L). */
+  get dirWarpSector(): WarpSector { return this.dirWarp.sector; }
+  /** Сектора (true) или старая складка вперёд/назад (false, пока страйфы не перезапечены) на этом кадре. */
+  get dirWarpSectors(): boolean { return this.warpSectorsNow; }
+  private warpSectorsNow = true;
+  /**
+   * Все запечённые страйфы (ходьба/бег, обе стороны) текущего оружия — кардинальные, ревизии `LOCO_BAKE_REV`.
+   *
+   * ⚠ РЕЗУЛЬТАТ КЭШИРУЕТСЯ: это ЧЕТЫРЕ поиска по библиотеке (привязка `pe_anim` → `migratePoseName` → скан
+   * `findLocoClip` дважды), а шагает этим кодом КАЖДАЯ кукла на сцене — монстры и чужие игроки тоже. Пересчёт: смена
+   * оружия (сразу) и не чаще `FRESH_TTL`. Задержка видна только в редакторе сразу после перезапекания набора — четверть
+   * секунды, дальше сектора включаются сами.
+   */
+  private freshCache = { weapon: '', at: -1e9, val: true, has: false };
+  private strafeClipsFresh(): boolean {
+    const lc = this.content.locoClip; if (!lc) return true;
+    const c = this.freshCache;
+    if (c.has && c.weapon === this.weapon && this.stepClock - c.at < FRESH_TTL) return c.val;
+    let val = true;
+    for (const d of ['strafe_L', 'strafe_R'] as const) for (const fast of [false, true]) {
+      const cl = lc(locoClipNames(d, fast), this.weapon);
+      if (cl && !isLocoClipFresh(cl)) { val = false; break; }
+    }
+    c.weapon = this.weapon; c.at = this.stepClock; c.val = val; c.has = true;
+    return val;
+  }
+  /** Забыть доворот (запекание, телепорт): таз ровно, сектор «вперёд». */
+  resetDirWarp(): void { this.dirWarp = { ...DIR_WARP0 }; }
+  /** Доля раскрытия «таз открыт» этого кадра (−1..1) — читаут редактора и пробы. */
+  get dirWarpOpen(): number { return this.dirWarp.open; }
+  /** Раскрытие таза этого кадра, ° (со знаком стороны): в планировщике — живой угол, в «только клипы» — из клипа `_open`. */
+  get hipsOpenDeg(): number { return (this.legsOpen + this.clipHipsOpen) * 180 / Math.PI; }
+  /** Курс таза БЕЗ доворота и раскрытия (прицельный корень) — запекателю набора «таз открыт»: вычитается только он. */
+  get aimRootYaw(): number { return this.rootYaw; }
+  /** «Таз открыт» вне «только клипы»: раскрытие ведёт планировщик (ноги за тазом), рад. В «только клипы» — 0. */
+  private legsOpen = 0;
+  /** «Таз открыт» в «только клипы»: рыск таза, взятый из клипа `_open` этого кадра, рад. */
+  private clipHipsOpen = 0;
+  /** Угол (°), с которым СНЯТ найденный набор `_open` текущей стороны (смесь ходьба/бег); null — набора нет. */
+  private openClipDeg: number | null = null;
+  /**
+   * Колонка клипов прошлого кадра и уходящая колонка (кроссфейд `COL_FADE`). Поля ПЕРЕИСПОЛЬЗУЮТСЯ (`has`/`w` вместо
+   * null): кадр куклы не должен аллоцировать — этим кодом шагают и монстры, и чужие игроки.
+   */
+  private colPrev = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latRight: false, has: false };
+  private colFade = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latRight: false, w: 0 };
+  /** Мемо разбора клипов `_open` НА ОДИН КАДР: слот = сторона (+X / −X) | бег·2, маска — что уже посчитано (см. `findOpen`). */
+  private openMemo: (Clip | null)[] = [null, null, null, null];
+  private openMemoHas = 0;
   readonly atk: AttackState = { clip: null, t: -1 };
   constructor(
     private human: Humanoid,
@@ -1781,12 +2003,23 @@ export class PosePlayer {
   /** Видимый facing (радианы) = ПРИЦЕЛ (куда целится корпус/голова), не таз. */
   get facing(): number { return this.aimYaw; }
   /**
-   * Текущий yaw таза (лаг) — для отладки/редактора И ДЛЯ ЗАПЕКАНИЯ.
-   * Отдаём РЕАЛЬНО ПРИМЕНЁННЫЙ угол, вместе с доворотом: ровно на него `pelvisToWorld` поворачивает таз, и ровно
-   * его снимает `neutralizeFacing` при запекании клипа (обратной композицией, `pelvisPoseToChar`). Поле `rootYaw` живёт без доворота по другой
-   * причине (обратная связь `stepTorsoLead`), и отдавать наружу его было бы ложью.
+   * ⭐ КУРС, ПРИЛОЖЕННЫЙ К ТАЗУ, — для отладки/редактора И ДЛЯ ЗАПЕКАНИЯ.
+   * Отдаём РЕАЛЬНО ПРИМЕНЁННЫЙ угол, вместе с доворотом: ровно его `pelvisToWorld` кладёт слева (`Ry(yaw)`), и ровно
+   * его снимает `neutralizeFacing` при запекании клипа (обратной композицией, `pelvisPoseToChar`). Поле `rootYaw` живёт
+   * без доворота по другой причине (обратная связь `stepTorsoLead`), и отдавать наружу его было бы ложью.
+   *
+   * ⚠ ЭТО НЕ МИРОВОЙ РЫСК ТАЗА В «ТОЛЬКО КЛИПЫ» + «ОТКРЫТ». Там раскрытие сидит в СОБСТВЕННОМ рыске клипа
+   * (`clipHipsOpen`), который `pelvisToWorld` сохраняет, а не в курсе, — и прибавлять его сюда нельзя: запекателю
+   * (`neutralizeFacing`, `assertWarp`) нужен именно приложенный курс, иначе раскрытие вычтется из клипа, в котором
+   * оно и должно остаться. Мировой угол — `pelvisYawWorld`.
    */
-  get pelvisYaw(): number { return this.rootYaw + this.dirWarp.warp; }
+  get pelvisYaw(): number { return this.rootYaw + this.dirWarp.warp + this.legsOpen; }
+  /**
+   * ⭐ МИРОВОЙ РЫСК ТАЗА этого кадра = курс + рыск таза из клипа. Читают те, кому нужен НАСТОЯЩИЙ разворот таза:
+   * плант-сетка редактора (какая ячейка активна), читауты, пробы. ЗАМЕР: «только клипы» + «открыт», страйф вправо
+   * 35° — `pelvisYaw` 0°, мир 35°, и ячейка сетки подсвечивалась на целое раскрытие мимо.
+   */
+  get pelvisYawWorld(): number { return this.pelvisYaw + this.clipHipsOpen; }
   /** Пройденный путь тредмила (интеграл скорости) — редактору для скролла пола/оффсета маркеров. */
   get posX(): number { return this.px; }
   get posZ(): number { return this.pz; }
@@ -1861,14 +2094,30 @@ export class PosePlayer {
     // ⚠ КОПИМ БЕЗ ДОВОРОТА. `stepTorsoLead` получает свой прошлый результат как вход; запиши сюда
     // доворот — и он на следующем кадре станет базой для нового доворота, то есть закрутится сам.
     this.rootYaw = tl.rootYaw; this.turning = tl.turning;
-    this.dirWarp = stepDirWarp(this.dirWarp, tl.rootYaw, this.aimYaw, vx, vz, twist.maxTwist, dt,
-      { on: GAIT.warpOn, maxDeg: GAIT.warpMax, smooth: GAIT.warpSmooth });
+    // ⭐ СЕКТОРА ДОВОРОТА — только на СВЕЖИХ страйфах, если клипы хода в деле. Старый страйф (ноги под ±126° к
+    // тазу, скрутка ±40° впечена) на секторах играет хуже, чем со старой складкой: там его целиком ставит чистый
+    // бок. Пока набор не перезапечён — прежнее поведение, редактор при этом просит «перезапеки».
+    const clipsInUse = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) > 0.001 && !!this.content.locoClip;
+    this.warpSectorsNow = !clipsInUse || this.strafeClipsFresh();
+    // ⭐ ТАЗ НА ХОДЕ БОКОМ (`GAIT.hipsMode`): 0 «ровно», 1 «открыт». Только с доворотом и секторами. Угол: в «только клипы» —
+    // тот, с которым СНЯТ набор `_open` (нет набора — 0, играет «ровно»); иначе — живой, ходьба↔бег по весу бега клипов.
+    const hm = GAIT.warpOn > 0.5 && this.warpSectorsNow ? (GAIT.hipsMode | 0) : 0;
+    // ⚠ Угол — НЕ от режима: выключили «открыт» на ходу — доля раскрытия гаснет сглаживанием (`warpSmooth`), и всё это
+    // время ей нужен угол. Иначе таз щёлкал в «ровно» за кадр (замер: 35° за кадр, скачок ноги 47°).
+    const openAngle = clipOnly ? (this.openClipDeg ?? 0) : lerpN(GAIT.hipsOpenWalk, GAIT.hipsOpen, locoRunWeight(spd));
+    const openDeg = hm === 1 ? openAngle : 0;   // цель раскрытия: «ровно» — 0
+    if (dirWarpOverride !== null) this.dirWarp = { ...DIR_WARP0, warp: dirWarpOverride };   // съём: доворот ровно заданный
+    else this.dirWarp = stepDirWarp(this.dirWarp, tl.rootYaw, this.aimYaw, vx, vz, twist.maxTwist, dt,
+      { on: GAIT.warpOn, maxDeg: GAIT.warpMax, smooth: GAIT.warpSmooth, sectors: this.warpSectorsNow, openDeg });
     const warp = this.dirWarp.warp;
+    // «Таз открыт» вне «только клипы» — ноги за тазом: раскрытие уходит в курс планировщика (живой вид того, что снимет
+    // набор `_open`). В «только клипы» раскрытие приносит клип (`clipHipsOpen` ниже).
+    this.legsOpen = !clipOnly ? openAngle * Math.PI / 180 * this.dirWarp.open : 0;
     // Таз уезжает к ходу, верх на столько же отворачивается обратно — прицел остаётся на месте.
     // Подрезка — страховка на ПЕРЕХОДЕ: доворот сглаживается за `warpSmooth`, и если прицел за это
     // время улетел, сумма успевает вылезти за предел. Шею не выворачиваем ни на кадр.
-    const yaw = tl.rootYaw + warp;
-    const tw = clamp(tl.residual - warp, -twist.maxTwist, twist.maxTwist);
+    const yaw = tl.rootYaw + warp + this.legsOpen;
+    let tw = clamp(tl.residual - warp - this.legsOpen, -twist.maxTwist, twist.maxTwist);
     this.px += vx * dt; this.pz += vz * dt;
     // ⚠ ОДИН ПОЛ НА ПЛАНИРОВЩИК, ЗАЗЕМЛЕНИЕ И СТОЙКУ — И БЕРЁТСЯ ОН ИЗ РИГА (`ankleRest`).
     //
@@ -1884,6 +2133,12 @@ export class PosePlayer {
       this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
       let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
       const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
+      // ⚠ ПОД СЕКТОРАМИ ЯЧЕЙКУ НЕ «ПРИЩЁЛКИВАЕМ» К ОСИ СЕКТОРА, хотя диагональные ячейки задеваются только на перебросе.
+      // Пробовал: переброс меняет ячейку скачком (ходьба «вправо» [−9, 1.86] → «назад» [−5, 0]), и планировщик ловит
+      // рывок. ЗАМЕР (рыцарь, опубликованный воин, доворот 45°, планировщик): поворот прицела 90°/с — скачок голени
+      // 41.2° (p99 29.4) с прищёлкиванием против 32.2° (p99 22.2) без; ход 120°→150° — 33.4° против 20.7°. Угол в
+      // осях довёрнутого таза едет НЕПРЕРЫВНО (доворот сглажен), и сетка вслед за ним — тоже. Косые ячейки — данные
+      // автора: редактор показывает «не зеркально» и зеркалит по кнопке.
       const spB = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
       const bl = (leg: 'l' | 'r', k: 0 | 1): number => {
         const w = this.plant.walk[i0]![leg][k] + (this.plant.walk[i1]![leg][k] - this.plant.walk[i0]![leg][k]) * ft;
@@ -1957,12 +2212,65 @@ export class PosePlayer {
       const dir = locoDirWeights(fwdC, latC);
       const axes = { sb: tg.sb ?? 0, st: dir.st, bt: dir.bt };
       const latRight = latC >= 0;
+      // ⭐ КРОССФЕЙД ПРИ ДИСКРЕТНОЙ СМЕНЕ КОЛОНКИ. Сторона страйфа и вперёд↔назад выбираются дискретно; на
+      // непрерывном повороте хода вес колонки в точке смены нулевой, и подмены не видно. Но инерции хода нет
+      // (`moveInertia` выключена), и мгновенный разворот (R90→L90, 0→180) менял клип за кадр: ЗАМЕР (критика O2)
+      // скачок ноги 90° за кадр. Поэтому уходящая колонка доигрывает `COL_FADE` той же фазой (Sync Group) и гаснет.
+      {
+        const pc = this.colPrev;
+        const sideFlip = pc.has && pc.latRight !== latRight && pc.axes.st * (1 - pc.axes.bt) > 0.05;
+        const jump = pc.has && Math.abs(axes.st - pc.axes.st) + Math.abs(axes.bt - pc.axes.bt) > COL_JUMP;
+        if (sideFlip || jump) {
+          const f = this.colFade;
+          f.axes.sb = pc.axes.sb; f.axes.st = pc.axes.st; f.axes.bt = pc.axes.bt; f.latRight = pc.latRight; f.w = 1;
+        }
+        pc.axes.sb = axes.sb; pc.axes.st = axes.st; pc.axes.bt = axes.bt; pc.latRight = latRight; pc.has = true;
+      }
       const clipOf = (dir: LocoDir, fast: boolean): Clip | null =>
         this.content.locoClip!(locoClipNames(dir, fast), this.weapon);
+      // ⭐ «ТАЗ ОТКРЫТ» В «ТОЛЬКО КЛИПЫ» (`hipsMode` 1): страйф-колонка смешивает кардинальный клип с клипом `_open` ТОЙ ЖЕ
+      // скорости долей `openK` (доля раскрытия, гаснет к 135°). Нет клипа этой скорости — играет кардинальный (набор ходьбы
+      // может не сниматься вовсе: угол ходьбы 0). Угол набора ищется НЕЗАВИСИМО от доли: доля растёт, только когда угол
+      // известен (`openDeg` → `stepDirWarp`), и поиск «по доле» запер бы раскрытие в нуле навсегда.
+      //
+      // ⚠ ИМЯ `_open` — ОТ РАЗРЕШЁННОГО КАРДИНАЛЬНОГО КЛИПА, И ТОЛЬКО ТОГО ЖЕ ОРУЖИЯ/ПЕРСОНАЖА. `findLocoClip` падает
+      // «точное оружие → `none` → любое» НЕЗАВИСИМО для каждого поиска: у оружия со своим набором страйфов, но без
+      // своего `_open`, рантайм смешал бы его страйф с БЕЗОРУЖНЫМ раскрытием долей 1 — «открыт» показывал бы чужой
+      // стиль. Имя от разрешённого клипа заодно уважает привязки `pe_anim` (`stateName`).
+      const sd: LocoDir = latRight ? 'strafe_R' : 'strafe_L';
+      const openWanted = (hm === 1 || Math.abs(this.dirWarp.open) > 1e-3) && clipOnly;
+      /**
+       * ⚠ РАЗБОР `_open` МЕМОИЗИРУЕТСЯ НА КАДР (4 слота: сторона × ходьба/бег). Каждый разбор — ДВА `locoClip`, а тот
+       * — `stateName` + `migratePoseName` + ЛИНЕЙНЫЙ скан всей библиотеки в `findLocoClip`; зовут его `openW`/`openR`,
+       * колонки `cols`, `pickPose` обеих колонок и ещё раз весь проход кроссфейда — без мемо «открыт» удваивал число
+       * сканов библиотеки на кадр, и платит их КАЖДАЯ кукла на сцене (`GAIT.hipsMode` глобальный: монстры и чужие
+       * игроки делят тюн игрока, см. `applyGaitConfig`). Тот же счёт, что у `strafeClipsFresh`.
+       * ⚠ Мемо именно НА КАДР, а не кэш с TTL, как у `strafeClipsFresh`: там сравнивается РЕВИЗИЯ (четверть секунды
+       * задержки не видно), а здесь — сам клип, и в редакторе он меняется съёмом прямо между кадрами.
+       */
+      this.openMemoHas = 0;
+      const findOpen = (d: LocoDir, fast: boolean): Clip | null => {
+        if (!openWanted || (d !== 'strafe_L' && d !== 'strafe_R')) return null;
+        const i = (d === 'strafe_R' ? 0 : 1) | (fast ? 2 : 0);
+        if (this.openMemoHas & (1 << i)) return this.openMemo[i]!;
+        const sq = clipOf(d, fast);
+        const oc = sq ? this.content.locoClip!([sq.name + OPEN_SUFFIX], this.weapon) : null;
+        const res = sq && oc && oc.weapon === sq.weapon && oc.character === sq.character ? oc : null;
+        this.openMemo[i] = res; this.openMemoHas |= 1 << i;
+        return res;
+      };
+      const openW = findOpen(sd, false), openR = findOpen(sd, true);
+      this.openClipDeg = openW || openR ? lerpN(openW?.hipsOpenDeg ?? 0, openR?.hipsOpenDeg ?? 0, axes.sb) : null;
+      const openK = openW || openR ? Math.abs(this.dirWarp.open) : 0;
+      const openOf = (d: LocoDir, fast: boolean): Clip | null => (openK > 0.001 ? findOpen(d, fast) : null);
       // СЕКЦИИ (Ф5б) живут на ВЕДУЩЕМ клипе — том, чья колонка сейчас весит больше всех. Меток нет —
       // весь клип цикл, то есть прежнее поведение; размечать обычный зацикленный `run_fwd` никто не обязан.
       // ⚠ Порога это не вводит: ведущий выбирает лишь ЧЬИ МЕТКИ читать, а поза всё равно из бленда.
-      const domDir: LocoDir = axes.bt > axes.st ? 'back' : axes.st > 0.5 ? (latRight ? 'strafe_R' : 'strafe_L') : 'fwd';
+      // ⚠ ВЕДУЩИЙ — ВСЕГДА КАРДИНАЛЬНЫЙ КЛИП, ДАЖЕ В «ОТКРЫТ». Метки (шаги, звук, VFX) живут на нём: `emitSteps` берёт
+      // `hasMark(lead.clip, 'footstep')`, а у свежезапечённого `_open` меток нет, и переключение «ровно ↔ открыт»
+      // меняло бы ещё и ТАЙМИНГ шагов (авторские метки → падение на касание пола). Раскрытие несут поза (`pickPose`)
+      // и часы (колонка `_open` в `cols`), а секции и метки — кардинальный, как было.
+      const domDir: LocoDir = axes.bt > axes.st ? 'back' : axes.st > 0.5 ? sd : 'fwd';
       const lead = clipOf(domDir, axes.sb > 0.5) ?? clipOf(domDir, axes.sb <= 0.5);
       // ЧАСЫ: у планировщика — его фаза; в «только клипы» — фаза по ПРОЙДЕННОМУ ПУТИ. Длина цикла = скорость, на
       // которой клип снят (`bakedLocoSpeed`: из клипа, у старых — по имени), × его период: столько пути проходит тело за
@@ -1972,9 +2280,12 @@ export class PosePlayer {
         // Величина клипа, смешанная ТЕМИ ЖЕ весами, что и поза: ходьба↔бег по `sb`, колонки по `st`/`bt`. Колонки без
         // клипов в смесь не входят (их вес не должен тянуть число к нулю); не нашлось ни одной — `null`.
         // Клипы колонок ищутся ОДИН раз на кадр: поиск идёт по библиотеке, а смесей две (цикл и доля опоры).
+        // «Таз открыт»: своя колонка с долей `openK`; нет клипа `_open` этой скорости — часы берут кардинальный ТОЙ ЖЕ
+        // скорости (было в прототипе: ходьба без `walk_*_open` шла циклом бега — скольжение 49 %).
         const cols: readonly (readonly [Clip | null, Clip | null, number])[] = [
           [clipOf('fwd', false), clipOf('fwd', true), (1 - axes.st) * (1 - axes.bt)],
-          [clipOf(latRight ? 'strafe_R' : 'strafe_L', false), clipOf(latRight ? 'strafe_R' : 'strafe_L', true), axes.st * (1 - axes.bt)],
+          [clipOf(sd, false), clipOf(sd, true), axes.st * (1 - axes.bt) * (1 - openK)],
+          [openOf(sd, false) ?? clipOf(sd, false), openOf(sd, true) ?? clipOf(sd, true), axes.st * (1 - axes.bt) * openK],
           [clipOf('back', false), clipOf('back', true), axes.bt],
         ];
         const mixed = (of: (c: Clip) => number): number | null => {
@@ -1997,6 +2308,11 @@ export class PosePlayer {
         // Голый `lerp(dutyWalk, dutyRun, вес бега)` на СТАРОМ наборе боком на 80–102 недодаёт опоры (0.2 против 0.224
         // снятой), и стопа едет у пола вне окна 0.14–0.19 u/с; эта формула — 0. На чистом наборе они совпадают бит в бит.
         const plannerSb = (v: number): number => clamp((v - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
+        // ⚠ ДОЛЯ ОПОРЫ КОЛОНКИ «НАЗАД» СЮДА НЕ БЕРЁТСЯ, хотя планировщик снимал клип «назад» с ней (у воина 0.64 / 0.34
+        // против основных 0.52 / 0.29). ЗАМЕР (рыцарь, чистый набор, 135–180° @40/80/120): окна по доле колонки дают
+        // скольжение опорной стопы 10.4–13.7 % против 6.3–10.1 %, пик фиксации 7–23 u/с против 0–13 и скачок ноги
+        // 34–41° против 24–30°. Флаг опоры планировщика — не «стопа стоит»: при крошечном подъёме назад он держит ногу
+        // «опорной», когда клип уже несёт её, и фиксация тянет стопу, а на отпускании бьёт.
         clipDuty = mixed((c) => lerpN(GAIT.dutyWalk, GAIT.dutyRun, plannerSb(bakedLocoSpeed(c)))) ?? lerpN(GAIT.dutyWalk, GAIT.dutyRun, axes.sb);
       }
       let u = locoPhaseU(clipOnly ? this.clipPhase : this.driver.gaitPhase);
@@ -2011,11 +2327,34 @@ export class PosePlayer {
       // ⚠ ОДНО НОРМАЛИЗОВАННОЕ ВРЕМЯ НА ВСЕ КЛИПЫ — это и есть синхронизация фаз: у клипов разная
       // длительность, и блендить их по СЕКУНДАМ значило бы смешивать «левая нога на земле» с «правая».
       const pickPose = (dir: LocoDir, fast: boolean): Pose | null => {
-        const c = clipOf(dir, fast);
-        return c && c.keys.length ? clipPoseAt(c, u) : null;
+        const oc = openOf(dir, fast);
+        // ⚠ Кардинальный клип не сэмплируем вовсе, когда раскрытие целиком (`openK` ≈ 1): его вес 0, а поза стоит
+        // в 54 канала — на каждой кукле (монстры, чужие игроки) это лишняя работа каждый кадр.
+        const c = oc && openK >= 0.999 ? null : clipOf(dir, fast);
+        const sq = c && c.keys.length ? clipPoseAt(c, u) : null;
+        if (!oc || !oc.keys.length) return sq;
+        let op = clipPoseAt(oc, u);
+        // Запечённый отворот снимаем ДО смешивания со стойкой — его кладёт `applyTorsoTwist` (см. `unbakeOpenCounter`).
+        if (oc.hipsOpenDeg && oc.hipsOpenW) op = unbakeOpenCounter(op, (dir === 'strafe_R' ? 1 : -1) * oc.hipsOpenDeg * Math.PI / 180, oc.hipsOpenW);
+        return sq ? blendTwo(sq, op, openK) : op;
       };
       locoPose = blendLocoPose(pickPose, axes, latRight, blendTwo);
-    }
+      if (this.colFade.w > 0 && locoPose) {
+        const f = this.colFade;
+        // ⚠ УХОДЯЩАЯ КОЛОНКА ДОИГРЫВАЕТ СО СВОИМ ВЕСОМ БЕГА, а не с нынешним `axes.sb`. Инерции хода нет: остановка
+        // роняет скорость в ноль за кадр, вес бега — тоже, и страйф/назад догорал бы как ХОДЬБА. ЗАМЕР (манекен,
+        // «только клипы», 120 u/с вбок → стоп): с `sb` нынешним таз 35.0 → 8.1 → 6.0° (26.9°/кадр) и скачок ноги
+        // 32.2° (на ходу 13.8°); со своим — 28.1 → 20.8 → 13.2° (7.6°/кадр) и 11.6°. В «ровно» скачок ноги 27.1 → 15.2°.
+        const old = blendLocoPose(pickPose, f.axes, f.latRight, blendTwo);
+        if (old) locoPose = blendTwo(locoPose, old, f.w * f.w * (3 - 2 * f.w));   // smoothstep: без излома на входе и выходе
+        f.w = Math.max(0, f.w - dt / COL_FADE);
+      }
+      // Рыск таза из клипа `_open` (запечён от прицельного корня) — СКЛАДЫВАЕТСЯ с курсом в `applyTorsoTwist`, а не
+      // затирается им. Только когда «открытый» клип в позе: рыск таза кардинального/импортного клипа затирается, как было.
+      this.clipHipsOpen = openK > 0.001 && locoPose ? (locoPose['Hips']?.[1] ?? 0) * mix : 0;
+      // ⚠ Ветка «клипов в позе нет» (доля ≤ 0.001 — стоим или процедурка): колонки нет, старт в любую сторону
+      // вырастает из стойки, и раскрытие клипа с прошлого кадра тащить некуда.
+    } else { this.colPrev.has = false; this.colFade.w = 0; this.clipHipsOpen = 0; this.openClipDeg = null; }
     // ОПОРНЫЕ СТОПЫ В «ТОЛЬКО КЛИПЫ»: из канала `__swing` клипа, а если его нет (клип запечён до канала) — окна
     // опоры по фазе с долей опоры, с которой клипы сняты (`clipDuty` выше): клипы сняты по фазе планировщика, так что
     // для запечённых это та же разметка. Стоим — обе на полу.
@@ -2063,7 +2402,17 @@ export class PosePlayer {
         t.hy0 === null ? null : this.clipStandY + t.lift, t.hy0 ?? 0);
     }
     this.easeSeamHips(this.turn !== turnWas);   // клип сменился — таз продолжает с показанной позы (см. `seamW`); ноги — ниже
-    applyTorsoTwist(this.human, yaw, tw, twist.weights);   // таз на курс (кадр персонажа → мир) + скрутка позвоночника к прицелу
+    // ⭐⭐ «ТАЗ ОТКРЫТ» КЛИПОМ: РАСКРЫТИЕ В КУРС НЕ ПРИБАВЛЯЕТСЯ — ОНО УЖЕ В ТАЗЕ.
+    // `pelvisToWorld` кладёт курс `Ry(yaw)` СЛЕВА и СОХРАНЯЕТ собственный рыск таза клипа (см. `pelvisFrame.ts`), а
+    // клип `_open` снят с вычетом только прицельного корня — раскрытие сидит прямо в его `Hips.y`. Прибавь его к курсу
+    // ещё раз — посчитается ДВАЖДЫ: ЗАМЕР (рыцарь, клипы, 120 u/с вбок, набор 35°) — таз 70.0° вместо 35.0°, сторож
+    // `hipsOpen.test.ts`. ⚠ До 17.09 (`Hips.rotation.y = rootYaw` затирал рыск клипа) складывать было ОБЯЗАТЕЛЬНО —
+    // при возврате к той композиции эту строку надо менять вместе с ней.
+    // В БЮДЖЕТ И В ОТВОРОТ раскрытие входит как обычно: верх обязан отвернуться и на него тоже, иначе грудь и оружие
+    // уедут от прицела на весь угол.
+    const openClip = clipOnly ? this.clipHipsOpen : 0;
+    if (openClip) tw = clamp(tl.residual - warp - openClip, -twist.maxTwist, twist.maxTwist);
+    applyTorsoTwist(this.human, yaw, tw, twist.weights, warp + this.legsOpen + openClip);   // таз на курс + доворот; скрутка к прицелу, отворот — по Spine..UpperChest
     // КАЧАНИЕ ТАЗА ВБОК — В КАДРЕ ТЕЛА, и именно ЗДЕСЬ, а не в `gaitToHumanoid`. `Hips.position` живёт в кадре
     // РОДИТЕЛЯ и рыском самой кости НЕ поворачивается — без доворота на `yaw` качание уехало бы в мировые оси
     // (та же грабля, что у переноса веса в `applyAttackPelvis`). Правая ось тела = (cos yaw, −sin yaw) — тот же

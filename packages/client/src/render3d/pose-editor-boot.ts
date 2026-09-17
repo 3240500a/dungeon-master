@@ -15,6 +15,9 @@ void (async (): Promise<void> => {
   const me = await ensureAdmin();
   if (!me) console.warn('[pose-editor] сервер недоступен — работаем на локальной рабочей копии, публикация не пройдёт');
 
-  await Promise.all([syncConfigFromServer(), syncPoseFromServer()]);
+  // ⚠ `compareBodies` — ТОЛЬКО здесь: сверка тел отставших ключей тянет всё тело `/api/pose` (≈ 0.9 МБ), и смысл
+  // она имеет там, где есть бейдж «на сервере новее» и кнопка «взять серверное», то есть в редакторе. Игра
+  // (`game3d-boot.ts`) зовёт синк без него — см. шапку `syncPoseFromServer`.
+  await Promise.all([syncConfigFromServer(), syncPoseFromServer({ compareBodies: true })]);
   await import('./pose-editor.js');
 })();

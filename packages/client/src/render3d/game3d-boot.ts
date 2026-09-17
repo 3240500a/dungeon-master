@@ -5,6 +5,8 @@
 import { syncPoseFromServer, syncConfigFromServer } from './poseServer.js';
 
 void (async (): Promise<void> => {
+  // ⚠ БЕЗ `compareBodies`: игра серверное тело в рабочую копию не пишет и спорить о нём не умеет, а сверка тянула бы
+  // весь `/api/pose` (0.82 МБ, из них 831 КБ `pe_clips`) на КАЖДОМ входе после каждой публикации автора.
   await Promise.all([syncConfigFromServer(), syncPoseFromServer()]);
   const { startOnline3d } = await import('./online3d.js');
   await startOnline3d();

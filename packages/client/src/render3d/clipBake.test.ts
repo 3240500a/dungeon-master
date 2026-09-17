@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
-import { clipPoseAt, clipDur, hipsOffset, type Pose } from './clipModel.js';
-import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
+import { PosePlayer, localStorageContent, emptyGrid, getDirWarpOverride, isLocoClipFresh, LOCO_BAKE_REV, mirrorPlantCell, mirrorPlantDir, plantMirrorGaps } from './poseRuntime.js';
+import { clipPoseAt, clipDur, hipsOffset, type Clip, type Pose } from './clipModel.js';
+import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS, openStrafePresets, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
 import { locoPhaseU, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD } from './locoBlend.js';
 import { GAIT, GAIT_BASE, POSE, POSE_BASE } from './pose.js';
 
@@ -79,10 +79,11 @@ describe('clipBake — запекание походки', () => {
     for (const k of r.clip.keys) expect(Math.abs(k.pose['Hips']?.[1] ?? 0)).toBeLessThan(0.02);
   });
 
-  it('страйф с прицелом вперёд тоже не тащит фейсинг в клип', () => {
+  it('страйф с прицелом вперёд тоже не тащит фейсинг в клип — и доворота таза в нём нет (кардинальный)', () => {
+    // Было < 0.35 рад («остаётся скрутка таза»): порог пропускал впечённый доворот 20°. Клип хода — кардинальный.
     const h = buildHumanoid({});
     const r = bakeGaitToClip(mkPlayer(h), h, { name: 'strafe_R', vx: 0.5, vz: 0, yaw: 0 }, { character: 'warrior', weapon: 'sword' });
-    for (const k of r.clip.keys) expect(Math.abs(k.pose['Hips']?.[1] ?? 0)).toBeLessThan(0.35);   // остаётся только скрутка таза
+    for (const k of r.clip.keys) expect(Math.abs(k.pose['Hips']?.[1] ?? 0)).toBeLessThan(0.02);
   });
 
   it('стойка (v=0) — один ключ, не цикл', () => {
@@ -156,13 +157,16 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
     pl.snapYaw(); pl.resetPos();
     for (let t = 0; t < warm; t += dt) pl.step(dt);
 
+    // ⚠ ВЫЧИТАЕМ ТО ЖЕ, ЧТО ЗАПЕКАТЕЛЬ: у кардинального клипа это `pelvisYaw` (доворот на съёме 0, поэтому он же —
+    // прицельный корень), у набора «таз открыт» — ТОЛЬКО прицельный корень: раскрытие обязано остаться в позе.
+    const sub = (): number => (spec.hipsOpenDeg ? pl.aimRootYaw : pl.pelvisYaw);
     const read = defaultReadPose(hl);
     let worst = 0, bone = '—', feet = 0;
     const all: number[] = [];
     for (let t = 0; t < r.periodSec * 2; t += dt) {            // два цикла — чтобы шов тоже попал в сверку
       pl.step(dt);
       const live = read();
-      neutralizeFacing(live, pl.pelvisYaw, hl.hipsRest);         // тот же вычет фейсинга, что у запекателя
+      neutralizeFacing(live, sub(), hl.hipsRest);                // тот же вычет фейсинга, что у запекателя
       const baked = clipPoseAt(r.clip, locoPhaseU(pl.driver.gaitPhase));
       const d = maxAngleDeg(live, baked, (b) => !FOOT(b));
       if (d.deg > worst) { worst = d.deg; bone = d.bone; }
@@ -210,6 +214,25 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
 
   it('⭐⭐ run_strafe_R: боковой ход (прицел вперёд) тоже совпадает', () => {
     smoothParity('run_strafe_R', preset('run_strafe_R'));
+  });
+
+  /**
+   * ⭐ ПАРИТЕТ НОВЫХ РЕЖИМОВ. Прежние сверки шли с `warpOn` 0: тумблер доворота и «таз открыт» в них не участвовали
+   * вовсе, а редактор обещает «без «только клипы» планировщик показывает то, что снимет кнопка».
+   *  • доворот ВКЛ, сектора: на чистом боку доворот 0, но путь `stepDirWarp` работает и обязан не портить съём;
+   *  • набор «таз открыт»: живой планировщик раскрывает таз на `hipsOpen`, и запечённый клип обязан совпасть с ним
+   *    при вычете ПРИЦЕЛЬНОГО КОРНЯ (мутация «вычитать pelvisYaw» даёт клип с Hips 0, то есть «ровно»).
+   */
+  it('⭐ ПАРИТЕТ С ДОВОРОТОМ ВКЛ и с «таз открыт»: живой планировщик = запечённый клип', () => {
+    // ⚠ Режим у живого прогона и у съёма ОДИН: «ровно» сверяем с кардинальным клипом, «открыт» — с клипом набора
+    // `_open`. Смешать нельзя: при `hipsMode` 1 планировщик сам раскрывает таз на 35° (`legsOpen`), и кардинальный
+    // клип против него честно разойдётся (замер: среднее 4.24°, бедро 44.8°) — это не дефект, а разные режимы.
+    Object.assign(GAIT, GAIT_BASE, { warpOn: 1, warpMax: 45, hipsMode: 0, hipsOpen: 35, hipsOpenWalk: 10 });
+    try {
+      smoothParity('run_strafe_R (доворот ВКЛ)', preset('run_strafe_R'));
+      GAIT.hipsMode = 1;
+      smoothParity('run_strafe_R_open', { ...preset('run_strafe_R'), name: 'run_strafe_R_open', hipsOpenDeg: 35 });
+    } finally { Object.assign(GAIT, GAIT_BASE); }
   });
 
   it('⭐ ЛОМАНАЯ (сплайн выключен) держит прежний строгий контракт: худшая кость < 4°, стопы < 12°', () => {
@@ -322,16 +345,224 @@ describe('clipBake — набор пресетов', () => {
   });
 
   /**
-   * ⚠ НЕ ЗАКРЫТО, ДЕЙСТВИЕ ЗА ПОЛЬЗОВАТЕЛЕМ: четыре ОПУБЛИКОВАННЫХ страйфа запечены СТАРЫМ вычетом — их качание таза
-   * лежит уже повёрнутым на доворот, и игра поворачивает его второй раз (замер ревью: таз и голова уезжают на 0.26u
-   * на курсе 0). Сторож выше держит ЗАПЕКАТЕЛЬ, но опубликованные данные лежат на сервере, и лечатся они только
-   * перезапеканием этих клипов в редакторе и публикацией. Этот `todo` — напоминание в отчёте прогона: снять, когда
-   * страйфы перепечены и опубликованы.
+   * ⭐ ЗАКРЫТО (было `it.todo` «перезапечь четыре страйфа»). Старый вычет клал качание таза уже повёрнутым на доворот,
+   * и игра с композицией `pelvisFrame` крутила его второй раз — таз и голова уезжали на 0.26u на курсе 0. Теперь съём
+   * идёт БЕЗ доворота (`warpFree` + `assertWarp`), круг «снял → сыграл» сходится (сторож выше и `pelvisFrame.test.ts`),
+   * а СТАРЫЕ опубликованные клипы видны и коду, и автору: `isLocoClipFresh` = false → рантайм держит старую складку
+   * доворота, редактор в списке съёма пишет «⚠ с доворотом — перезапеки» (user step 4).
    */
-  it.todo('перезапечь и опубликовать: walk_strafe_L, walk_strafe_R, run_strafe_L, run_strafe_R (качание таза старого вычета)');
+  it('⭐ перезапечённый набор лечит старый вычет: ревизия 2 и свежесть; клип БЕЗ ревизии рантайм и редактор считают старым', () => {
+    Object.assign(GAIT, GAIT_BASE, { warpOn: 1, warpMax: 50 });
+    Object.assign(POSE, POSE_BASE, { hipSway: 1.5, hipSwayRun: 1.5 });
+    try {
+      const h = buildHumanoid({});
+      const out = bakeGaitSet(mkPlayer(h), h, { character: 'warrior', weapon: 'none', fps: 60, warmSec: 1.2 },
+        GAIT_PRESETS.filter((sp) => /_strafe_/.test(sp.name)));
+      for (const r of out) {
+        expect(r.clip.bakeRev, `${r.clip.name}: ревизия`).toBe(LOCO_BAKE_REV);
+        expect(isLocoClipFresh(r.clip), `${r.clip.name}: рантайм считает свежим`).toBe(true);
+        // Опубликованный до 17.09 клип: `bakeSpeed` есть (наш съём), ревизии нет — это и есть «старый вычет».
+        expect(isLocoClipFresh({ ...r.clip, bakeRev: undefined }), `${r.clip.name}: старый — не свежий`).toBe(false);
+      }
+      // Импорт мокапа (`bakeSpeed` пишет только наш запекатель) доворота в себе не несёт — он свежий по определению.
+      expect(isLocoClipFresh({ name: 'walk_strafe_R', keys: [] } as unknown as Clip), 'импорт — свежий').toBe(true);
+    } finally { Object.assign(GAIT, GAIT_BASE); Object.assign(POSE, POSE_BASE); }
+  });
 
   it('в наборе НЕТ поворотов (они требуют вращения корня, а клипы in-place)', () => {
     expect(GAIT_PRESETS.some((s) => /turn/i.test(s.name))).toBe(false);
+  });
+});
+
+/**
+ * ⭐⭐ СТРАЙФЫ КАРДИНАЛЬНЫЕ, КАК БЫ И В КАКОМ ПОРЯДКЕ НИ ЗАПЕКАЛИ.
+ *
+ * Жалоба: «страйф выглядит как ход под 45°». ЗАМЕР опубликованного набора (рыцарь): ноги strafe_L / strafe_R шли
+ * под −125° / +126° (бег −126 / +126) к корню клипа, в корпус впечена скрутка ±40°. Две причины сразу: съём шёл с
+ * включённым доворотом таза (`warpOn` 1 у воина) и вычитал довёрнутый таз; а состояние доворота жило в ОДНОМ плеере
+ * на весь набор, и флаг «назад» от `walk_back`/`run_back` доезжал до страйфов (гистерезис 78–102° держит его на 90°).
+ * Сторож гоняет ровно тот случай, что у автора: доворот ВКЛ, один плеер на весь набор в порядке редактора.
+ */
+describe('clipBake — страйфы кардинальные при любом довороте и порядке', () => {
+  const GAIT0 = { ...GAIT };
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: () => null, setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
+    } as Storage;
+    GAIT.warpOn = 1; GAIT.warpMax = 40;
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; Object.assign(GAIT, GAIT0); });
+
+  /** Направление хода клипа от корня (°, atan2(x, z)): куда уезжает опорная (нижняя) стопа — с минусом. */
+  const travelDeg = (c: Clip, h: Humanoid): number => {
+    let sx = 0, sz = 0, prev: [THREE.Vector3, THREE.Vector3] | null = null, prevLow = -1;
+    for (let k = 0; k <= 240; k++) {
+      const p = clipPoseAt(c, k / 240);
+      h.reset();
+      for (const nm in p) { if (nm[0] === '_') continue; const b = h.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); }
+      const d = hipsOffset(p, h.hipsRest.y); if (d) h.hips.position.set(h.hipsRest.x + d[0], h.hipsRest.y + d[1], h.hipsRest.z + d[2]);
+      h.root.updateMatrixWorld(true);
+      const fl = h.bones.get('LeftFoot')!.getWorldPosition(new THREE.Vector3()), fr = h.bones.get('RightFoot')!.getWorldPosition(new THREE.Vector3());
+      const low = fl.y <= fr.y ? 0 : 1;
+      if (prev && low === prevLow) { const cur = low === 0 ? fl : fr; sx -= cur.x - prev[low]!.x; sz -= cur.z - prev[low]!.z; }
+      prev = [fl, fr]; prevLow = low;
+    }
+    return Math.atan2(sx, sz) * 180 / Math.PI;
+  };
+  const twistSumDeg = (c: Clip): number => {
+    let s = 0;
+    for (const k of c.keys) for (const b of ['Spine', 'Chest', 'UpperChest', 'Neck', 'Head']) s += k.pose[b]?.[1] ?? 0;
+    return s / Math.max(1, c.keys.length) * 180 / Math.PI;
+  };
+
+  it('⭐⭐ один плеер на весь набор (как кнопка редактора), доворот ВКЛ: страйфы ±90° ± 8°, таз 0, скрутки нет', () => {
+    // ⚠ Мутации: убрать `resetDirWarp` — ±125° (флаг «назад» доезжает от *_back); убрать перекрытие доворота — ±49°.
+    const h = buildHumanoid({});
+    const out = bakeGaitSet(mkPlayer(h), h, { character: 'warrior', weapon: 'none' });
+    const rig = buildHumanoid({});
+    for (const r of out.filter((x) => /_strafe_/.test(x.clip.name))) {
+      const want = r.clip.name.endsWith('_R') ? 90 : -90;
+      const got = travelDeg(r.clip, rig);
+      // 8°: на манекене нижняя стопа даёт ходьбу ±87.9°, бег −85.0° / +85.2° (разброс метода, у рыцаря 88.8–90.5).
+      expect(Math.abs(got - want), `${r.clip.name}: ход ${got.toFixed(1)}° вместо ${want}°`).toBeLessThan(8);
+      for (const k of r.clip.keys) expect(Math.abs(k.pose['Hips']?.[1] ?? 0), `${r.clip.name}: Hips.y`).toBeLessThan(0.02);
+      expect(Math.abs(twistSumDeg(r.clip)), `${r.clip.name}: скрутка Spine..Head`).toBeLessThan(2);
+      expect(r.clip.bakeRev, `${r.clip.name}: ревизия запекания`).toBe(LOCO_BAKE_REV);
+    }
+    expect(getDirWarpOverride(), 'перекрытие доворота снято после съёма').toBe(null);
+  });
+
+  it('⭐ порядок запекания не влияет: набор одним плеером ≈ каждый клип свежим плеером (< 3° по костям)', () => {
+    // ЗАМЕР (манекен): walk_back / walk_strafe_L/R / run_back / run_strafe_L — 0.000–0.012°, run_strafe_R — 1.88° (ход
+    // 85.21° против 84.97°): планировщик за 2 с разогрева не до конца забывает шаг в обратную сторону. С утечкой
+    // доворота расхождение — десятки градусов (ход ±126° против ±49°), поэтому порог 3° ловит именно её.
+    const h = buildHumanoid({});
+    const one = bakeGaitSet(mkPlayer(h), h, { character: 'warrior', weapon: 'none' });
+    for (const r of one.filter((x) => /_strafe_|_back/.test(x.clip.name))) {
+      const hf = buildHumanoid({});
+      const fresh = bakeGaitToClip(mkPlayer(hf), hf, GAIT_PRESETS.find((s) => s.name === r.clip.name)!, { character: 'warrior', weapon: 'none' });
+      let worst = 0;
+      for (let k = 0; k <= 40; k++) worst = Math.max(worst, maxAngleDeg(clipPoseAt(r.clip, k / 40), clipPoseAt(fresh.clip, k / 40)).deg);
+      expect(worst, `${r.clip.name}: набор одним плеером против свежего`).toBeLessThan(3);
+    }
+  });
+
+  it('⭐ доворот выключен ПЕРЕКРЫТИЕМ: диагональ (вне набора) снимается без скрутки корпуса, ход 45°', () => {
+    // На кардинальных пресетах секторный доворот и так 0 — сторож на них мутацию «не перекрывать доворот» не видит.
+    // Диагональ видит: без перекрытия таз уходит на 40°, скрутка −40° впекается в корпус, ноги идут под 5° к корню.
+    const h = buildHumanoid({});
+    const r = bakeGaitToClip(mkPlayer(h), h, { name: 'walk_diag', vx: 0.3, vz: 0.3, yaw: 0 }, { character: 'warrior', weapon: 'none' });
+    expect(Math.abs(twistSumDeg(r.clip)), 'скрутка Spine..Head').toBeLessThan(2);
+    expect(Math.abs(travelDeg(r.clip, buildHumanoid({})) - 45), 'ход от корня').toBeLessThan(8);
+  });
+
+  it('⭐ доворот СБРОШЕН перед съёмом: плеер из живого превью (доворот 40°, медленное сглаживание) снимает чистый клип', () => {
+    // ⚠ Мутация «не звать resetDirWarp» валит это: с `warpSmooth` 0.4 за 2 с разогрева остаётся 0.24° — съём падает.
+    GAIT.warpSmooth = 0.4;
+    const h = buildHumanoid({});
+    const p = mkPlayer(h);
+    p.setYaw(0); p.setVel(90, 90);
+    for (let i = 0; i < 90; i++) p.step(1 / 60);
+    expect(Math.abs(p.dirWarpDeg), 'превью действительно довернуло таз').toBeGreaterThan(20);
+    const r = bakeGaitToClip(p, h, GAIT_PRESETS.find((s) => s.name === 'walk_strafe_R')!, { character: 'warrior', weapon: 'none' });
+    for (const k of r.clip.keys) expect(Math.abs(k.pose['Hips']?.[1] ?? 0)).toBeLessThan(0.02);
+  });
+
+  it('⭐ ОДИНОЧНЫЙ СЪЁМ — ТОЖЕ ПРОЦЕДУРКА: при опубликованном `locoMix` 1 клип снимается с ПЛАНИРОВЩИКА, а не с себя', () => {
+    // ⚠ Мутация «`bakeGaitToClip` без `procedural`»: у автора `locoMix` 1, плеер уходит в «только клипы», фаза
+    // планировщика стоит, фронт цикла не ловится — и съём молча падает на окно 1 с, снятое С САМИХ КЛИПОВ.
+    // Признак ровно такой: `cyclic` false и период РОВНО 1.000 у всех режимов.
+    const h = buildHumanoid({});
+    const p = mkPlayer(h);
+    const lib = new Map<string, Clip>();
+    for (const r of bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, GAIT_PRESETS.filter((s) => /_strafe_R|_fwd/.test(s.name)))) lib.set(r.clip.name, r.clip);
+    // Плеер с библиотекой клипов и долей 1 — то, что стоит у автора.
+    const h2 = buildHumanoid({});
+    const content = { ...localStorageContent('warrior'), locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } };
+    const p2 = new PosePlayer(h2, () => [], content, 'sword', GX, emptyGrid());
+    GAIT.locoMix = 1;
+    try {
+      const r = bakeGaitToClip(p2, h2, GAIT_PRESETS.find((s) => s.name === 'run_strafe_R')!, { character: 'warrior', weapon: 'none' });
+      expect(r.cyclic, 'цикл найден по фазе планировщика, а не окном 1 с').toBe(true);
+      expect(Math.abs(r.periodSec - 1), `период ${r.periodSec} — ровно 1.000 значит «сняли окно с самих клипов»`).toBeGreaterThan(0.05);
+    } finally { GAIT.locoMix = GAIT_BASE.locoMix!; }
+  });
+
+  it('⭐ ПОСЛЕ СЪЁМА НАБОРА (вместе с «таз открыт») ПЛЕЕР ЧИСТ: доворот 0, раскрытие 0, перекрытие снято', () => {
+    // ⚠ `resetDirWarp` — не гигиена. Мутация «сделать его пустым» оставляет плеер с доворотом ±35° ПОСЛЕ съёма набора
+    // «таз открыт», и живое превью «Бега» едет с него: таз 30.1 → 26.0 → 22.3° на первых кадрах после кнопки.
+    const h = buildHumanoid({});
+    const p = mkPlayer(h);
+    bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, [...GAIT_PRESETS, ...openStrafePresets(35, 10)]);
+    expect(p.dirWarpDeg, 'доворот плеера после съёма').toBe(0);
+    expect(p.dirWarpOpen, 'доля раскрытия после съёма').toBe(0);
+    expect(getDirWarpOverride(), 'перекрытие снято').toBe(null);
+  });
+
+  it('на кадрах съёма доворот ровно 0 даже с тумблером редактора ВКЛ, а тумблер после съёма не тронут', () => {
+    const h = buildHumanoid({});
+    const p = mkPlayer(h);
+    const seen: number[] = [];
+    const step = p.step.bind(p);
+    p.step = (dt: number): void => { step(dt); seen.push(Math.abs(p.dirWarpDeg)); };
+    bakeGaitToClip(p, h, GAIT_PRESETS.find((s) => s.name === 'run_strafe_R')!, { character: 'warrior', weapon: 'none' });
+    expect(seen.length).toBeGreaterThan(60);
+    expect(Math.max(...seen)).toBe(0);
+    expect(GAIT.warpOn, 'тумблер редактора').toBe(1);
+  });
+});
+
+/**
+ * ⭐ ПЛАНТ-СЕТКА И СИММЕТРИЯ СТРАЙФОВ. Страйфы L / R снимаются по ячейкам 6 / 2, а сетка — данные автора. У воина
+ * настроена только ячейка 2 (ходьба: Л [−9, 1.86] / П [5, 1.10]), ячейка 6 пустая. ЗАМЕР (рыцарь, опубликованный
+ * конфиг, чистый съём): `walk_strafe_R` — разнос стоп вдоль тела 12.7, мин. зазор голеней 4.9; `walk_strafe_L` —
+ * 1.5 и 0.30, голени ближе 3 ед. в 31 % кадров. Правка данных — кнопкой редактора «⇆ в зеркальную», не кодом.
+ */
+describe('плант-сетка: зеркало ячейки', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: () => null, setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
+    } as Storage;
+  });
+  afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
+
+  it('зеркало: вправо ↔ влево, вп-вправо ↔ вп-влево, вперёд/назад сами в себя; дважды — исходная ячейка', () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 7].map(mirrorPlantDir)).toEqual([0, 7, 6, 5, 4, 3, 2, 1]);
+    const c = { l: [-9, 1.86] as [number, number], r: [5, 1.1] as [number, number], lVia: [[2, 12]] as [number, number][], rVia: [] };
+    expect(mirrorPlantCell(c)).toEqual({ l: [5, -1.1], r: [-9, -1.86], lVia: [], rVia: [[2, -12]] });
+    expect(mirrorPlantCell(mirrorPlantCell(c))).toEqual({ ...c, rVia: [] });
+    const g = emptyGrid(); g.walk[2] = c;
+    expect(plantMirrorGaps(g).map((x) => `${x.speed}:${x.i}-${x.j}`)).toEqual(['walk:2-6']);
+    g.walk[6] = mirrorPlantCell(c);
+    expect(plantMirrorGaps(g)).toEqual([]);
+  });
+
+  it('⭐ настроена одна сторона — страйфы разные; зеркальная ячейка — страйфы зеркальны (разнос стоп вдоль тела)', () => {
+    // Меряем средний |z_Л − z_П| (разнос стоп вперёд-назад) на клипе: у зеркальных страйфов он совпадает.
+    const sep = (c: Clip, h: Humanoid): number => {
+      let s = 0;
+      for (let k = 0; k < 120; k++) {
+        const p = clipPoseAt(c, k / 120);
+        h.reset();
+        for (const nm in p) { if (nm[0] === '_') continue; const b = h.bones.get(nm); if (b) b.rotation.set(p[nm]![0], p[nm]![1], p[nm]![2]); }
+        const d = hipsOffset(p, h.hipsRest.y); if (d) h.hips.position.set(h.hipsRest.x + d[0], h.hipsRest.y + d[1], h.hipsRest.z + d[2]);
+        h.root.updateMatrixWorld(true);
+        s += Math.abs(h.bones.get('LeftFoot')!.getWorldPosition(new THREE.Vector3()).z - h.bones.get('RightFoot')!.getWorldPosition(new THREE.Vector3()).z);
+      }
+      return s / 120;
+    };
+    const bake = (name: string, g: ReturnType<typeof emptyGrid>): number => {
+      const h = buildHumanoid({});
+      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, g);
+      return sep(bakeGaitToClip(p, h, GAIT_PRESETS.find((s) => s.name === name)!, { character: 'warrior', weapon: 'none' }).clip, buildHumanoid({}));
+    };
+    const g = emptyGrid();
+    g.walk[2] = { l: [-9, 1.86], r: [5, 1.1], lVia: [], rVia: [] };
+    const oneR = bake('walk_strafe_R', g), oneL = bake('walk_strafe_L', g);
+    expect(oneR - oneL, `одна сторона: R ${oneR.toFixed(1)} против L ${oneL.toFixed(1)}`).toBeGreaterThan(5);
+    g.walk[6] = mirrorPlantCell(g.walk[2]!);
+    const R = bake('walk_strafe_R', g), L = bake('walk_strafe_L', g);
+    expect(Math.abs(R - L), `зеркально: R ${R.toFixed(2)} против L ${L.toFixed(2)}`).toBeLessThan(1);
   });
 });
 

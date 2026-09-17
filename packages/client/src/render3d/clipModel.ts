@@ -108,6 +108,25 @@ export interface Clip {
    * Нет поля — клип снят до 17.09, скорость берётся по имени легаси-долями (50.4 / 102). Повороты и стойки — без поля.
    */
   bakeSpeed?: number;
+  /**
+   * ⭐ РЕВИЗИЯ ЗАПЕКАНИЯ клипа хода (`LOCO_BAKE_REV` в `poseRuntime.ts`). 2 — кардинальный клип: снят без доворота таза
+   * и со свежим состоянием доворота. Нет поля при `bakeSpeed` — клип снят с доворотом (страйфы шли под ±126° к тазу).
+   */
+  bakeRev?: number;
+  /**
+   * ⭐ НОМЕР СЪЁМА: один на весь прогон кнопки «запечь» (`Date.now()`). Отвечает на вопрос «набор `*_open` снят ТОЙ ЖЕ
+   * походкой, что кардинальный?» — редактор сравнивает его у пары клипов и просит перезапечь, если `_open` старше.
+   * ⚠ Без него расхождение было тихим: угол раскрытия совпадает, а плант-сетка и ползунки бега — уже другие.
+   */
+  bakeId?: number;
+  /**
+   * ⭐ НАБОР «ТАЗ ОТКРЫТ» (`*_strafe_*_open`): раскрытие таза к ходу, запечённое в клипе, ° (Hips.y = ±угол от прицельного
+   * корня; отворот Spine..UpperChest = ∓угол × `hipsOpenW`). Рантайм берёт угол ОТСЮДА, а не с ползунка: ползунок меняют —
+   * клип остаётся снятым со своим углом, пока его не перезапекут (редактор показывает расхождение).
+   */
+  hipsOpenDeg?: number;
+  /** Доли отворота Spine / Chest / UpperChest, с которыми он запечён (в сумме 1): рантайм снимает ровно их (`unbakeOpenCounter`). */
+  hipsOpenW?: number[];
 }
 
 export const DEF_GAP = 0.3;     // дефолт-шаг между кадрами (сек) при миграции старого формата
@@ -607,7 +626,14 @@ export function migrateClip(c0: unknown): Clip {
     idleEnds: c.idleEnds, idleEndsFrom: c.idleEndsFrom, rootYaw: c.rootYaw, rootPos: c.rootPos,
     // Скорость запекания: без неё перезапечённый на 40/120 клип прочитался бы легаси-скоростью (50.4/102) — длина
     // цикла ходьбы +26 %, бега −15 %, и стопы поехали бы. Битое число не тащим: `bakedLocoSpeed` его всё равно отбросит.
-    bakeSpeed: typeof c.bakeSpeed === 'number' && Number.isFinite(c.bakeSpeed) && c.bakeSpeed > 0 ? c.bakeSpeed : undefined };
+    bakeSpeed: typeof c.bakeSpeed === 'number' && Number.isFinite(c.bakeSpeed) && c.bakeSpeed > 0 ? c.bakeSpeed : undefined,
+    // Ревизия запекания: потеряй её на чтении — перезапечённый страйф снова считался бы старым (сектора доворота не включатся).
+    bakeRev: typeof c.bakeRev === 'number' && Number.isFinite(c.bakeRev) ? c.bakeRev : undefined,
+    // Номер съёма: потеряй его — и редактор перестанет видеть, что набор «таз открыт» снят СТАРОЙ походкой.
+    bakeId: typeof c.bakeId === 'number' && Number.isFinite(c.bakeId) ? c.bakeId : undefined,
+    // «Таз открыт»: потеряй угол или доли на чтении — рантайм не снимет отворот, и грудь уедет от прицела на 41 % угла.
+    hipsOpenDeg: typeof c.hipsOpenDeg === 'number' && Number.isFinite(c.hipsOpenDeg) ? c.hipsOpenDeg : undefined,
+    hipsOpenW: Array.isArray(c.hipsOpenW) && c.hipsOpenW.length === 3 && c.hipsOpenW.every((v: unknown) => typeof v === 'number' && Number.isFinite(v)) ? [...c.hipsOpenW] as number[] : undefined };
 }
 
 /**
