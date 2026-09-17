@@ -154,6 +154,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   // ── состояние синхронизации ──
   let tx = opts.x, tz = opts.z, tyaw = 0, lastX = opts.x, lastZ = opts.z, first = true, dead = false;
   let simEnabled = true, snapNext = false;   // окно-culling: вне экрана усыпляем физику (тела вон из pw.step), меш замерзает
+  // Пробуждение из окна-culling: поставить ТЕЛА на позу (не только rx/rz). Без снапа kinematic-таз за один шаг летел
+  // через весь путь, пройденный во сне, и тащил верх. ЗАМЕР (живой Jolt, скачок 200u, 30/60/144 Гц): голова
+  // 176–193u от своего места у таза, к <10u — через 0.95–1.3 с; со снапом — 0.0u, 0 кадров. Отдельный флаг:
+  // snapNext ставят ещё конец нокдауна и конец транзиентной физики удара — там тела уже на месте, лишний SetPose
+  // съел бы импульс.
+  let wakeSnap = false;
   let kinematic = false, physHold = 0;       // debug-режим «кинематика»: рисуем из позы, физика лишь транзиентно (physHold сек) на удар/смерть
   let poseLod = false;                        // поза-LOD дальних монстров: пропуск FOOT-IK (заземления стоп) — дёшево, детали стоп вдали не видно
   // Нокдаун (сбить с ног): downT>0 — идёт коллапс+подъём (не смерть). downRise — длительность фазы подъёма; riseInit —
@@ -256,7 +262,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     },
     setSimEnabled(on) {   // окно-culling: on=false → тела вон из физ-мира (pw.step их не считает), меш замерзает; on=true → вернуть + снап к цели
       if (on === simEnabled) return; simEnabled = on;
-      if (on) snapNext = true;
+      if (on) { snapNext = true; wakeSnap = true; }
       syncRagdollSim();
     },
     setPhysicsMode(mode) {   // debug: 'kinematic' = рисуем из позы (тела вон из pw.step), физика лишь транзиентно на удар/смерть; 'physics' = обычно
@@ -307,6 +313,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
     setState(stunned, downed) { player.setState(stunned, downed); },   // стан/нокдаун → клип реакции (Ф1.5)
     update(dt) {
       if (!simEnabled) return;                               // спит (вне окна): физика вынута, меш заморожен в позе — не считаем
+      const woke = wakeSnap; wakeSnap = false;               // гасим в ЛЮБОЙ ветке: запоздалый снап съел бы импульс удара позже
       if (dead) {                                            // мёртв — свободный коллапс, рендерим без прижима
         ragdoll.update(dt);
         renderRagdollGhost(solid, ragdoll, ground, dt, 0, false);
@@ -370,6 +377,7 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
         return;
       }
       driveRagdollToPose();                                  // кормим физику позой-целью + пины на мир-позиции
+      if (woke) ragdoll.snapToPose();                        // проснулся (окно-culling) → тела сразу на позу в НОВОЙ точке
       PHYS.pinKp = player.attackPinKp ?? DEF_PINKP;          // per-кадр жёсткость пинов удара (авторская) / дефолт. PHYS глобальна — ставим перед СВОИМ update
       ragdoll.update(dt);                                    // шаг физики (моторы к позе + пины + вес оружия + kinematic-таз)
       // солид = физрезультат + заземление ОПОРНЫХ стоп (маховую ведёт поза) + БЛЕНД к позе-цели по matchWeight.

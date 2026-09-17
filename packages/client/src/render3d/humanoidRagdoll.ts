@@ -648,6 +648,12 @@ export interface HumanoidRagdoll {
   /** Окно-culling: on=false → RemoveFromPhysicsSystem (тела вон из pw.step); on=true → AddToPhysicsSystem+Activate. */
   setSimEnabled(on: boolean): void;
   update(dt: number): void;                               // ведём к цели + двигаем kinematic-таз + синк мешей
+  /**
+   * Цель kinematic-таза (последний `setKinematic`), пока таз ведёт мир: жив, в мире, цель выдана. Иначе `null` —
+   * смерть, нокдаун лёжа, окно-culling: там таз dynamic/вынут и его место — только тело. Для РЕНДЕРА корня
+   * (`renderRagdollGhost`): тело таза — это цель, сэмплированная на шагах физики, а рисуется кадр.
+   */
+  pelvisTarget(): { readonly p: THREE.Vector3; readonly q: THREE.Quaternion } | null;
   bodyPos(name: string): [number, number, number];        // мировая позиция тела (дебаг/тест)
   /** Снять ФИЗ-результат как humanoid-позу (локальные эйлеры костей) — для запекания. */
   readBakedPose(): Record<string, [number, number, number]>;
@@ -749,6 +755,9 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
   ragdoll.AddToPhysicsSystem(J.EActivation_Activate);
 
   const ids = B.map((_, i) => new J.BodyID(ragdoll.GetBodyID(i).GetIndexAndSequenceNumber()));   // копируем BodyID
+  // ⭐ Kinematic-таз ведёт МИР перед каждым шагом (`PhysWorld.driveKinematic`), кукла только сдаёт цель и свой dt.
+  // Свой `MoveKinematic(dt кадра)` тут был и раскачивал таз при кадре ≠ шагу (≥144 Гц — в бесконечность): см. ragdoll.ts.
+  const kin = pw.kinematic(ids[0]!);
 
   // ── Поза покоя (локальные смещения костей) ──
   const pose = new J.SkeletonPose();
@@ -775,7 +784,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
   });
   const offs = B.map((b) => new THREE.Vector3(...shapeOff(b)));   // Ф28.2: то же смещение, что у физ-формы
 
-  const kPos = new J.RVec3(0, 0, 0), kRot = new J.Quat(0, 0, 0, 1), force = new J.Vec3(0, 0, 0);
+  const kPos = new J.RVec3(0, 0, 0), force = new J.Vec3(0, 0, 0);   // kPos — только нулевой SetRootOffset (цель таза — в `kin`)
   const q = new THREE.Quaternion(), qi = new THREE.Quaternion(), e = new THREE.Euler(), tmp = new THREE.Vector3();
   const _psP = new THREE.Vector3();   // Ф27.6: мир-позиция кости-анкера для `poseShapes`
   const wq = B.map(() => new THREE.Quaternion()), invQ = new THREE.Quaternion(), locQ = new THREE.Quaternion(), eb = new THREE.Euler();
@@ -842,7 +851,12 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
     setDead(d) {
       if (d === dead) return; dead = d;
       setMotors(d ? J.EMotorState_Off : J.EMotorState_Position);
+      // ⚠ Отпустить привод ДО Dynamic: MoveKinematic двигает и dynamic-тело (замер: труп тянуло к старой цели).
+      if (d) pw.releaseKinematic(kin);
       pw.bi.SetMotionType(ids[0]!, d ? J.EMotionType_Dynamic : J.EMotionType_Kinematic, J.EActivation_Activate);
+      // Dynamic → Kinematic сохраняет скорость падения — держим таз на месте, пока `update` не даст цель
+      // (конец нокдауна в gamePlayerDoll оживляет без `update` в этом кадре).
+      if (!d && simOn) pw.holdKinematic(kin);
     },
     snapToPose() {   // жёстко на позу-цель (SetPose) + скорости в ноль — старт сразу в стойке, без флейла
       const root = pose.GetJoint(0);
@@ -856,11 +870,13 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       ragdoll.SetPose(pose, true);
       force.Set(0, 0, 0);
       for (let i = 0; i < B.length; i++) { pw.bi.SetLinearVelocity(ids[i]!, force); pw.bi.SetAngularVelocity(ids[i]!, force); }
+      // Таз уже на месте — и цель туда же, span 0: иначе мир дотянет его к цели ПРОШЛОГО `update` (скачок корня насмарку).
+      if (!dead && simOn) pw.setKinematic(kin, pelvisPos, pelvisQuat, 0);
     },
     setSimEnabled(on) {   // окно-culling: вон из/в физ-мир (pw.step). Пробуждённого тут же активируем — снап к позе делает вызывающий (snapNext).
       if (on === simOn) return; simOn = on;
       if (on) ragdoll.AddToPhysicsSystem(J.EActivation_Activate);
-      else ragdoll.RemoveFromPhysicsSystem();
+      else { pw.releaseKinematic(kin); ragdoll.RemoveFromPhysicsSystem(); }   // вынутое тело не вести: MoveKinematic активирует его ВНЕ broadphase
     },
     update(dt) {
       for (let i = 0; i < B.length; i++) if (limp[i]! > 0) limp[i] = Math.max(0, limp[i]! - dt / 0.4);   // дёрг затухает ~0.4с
@@ -895,10 +911,11 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       if (!dead && PHYS.load > 0) {   // вес оружия: доп. гравитация на нагруженную кисть → руку оттягивает
         for (let i = 1; i < B.length; i++) { const ld = load[i]!; if (ld > 0) { force.Set(0, -ld * GRAV * PHYS.load * dt, 0); pw.bi.AddImpulse(ids[i]!, force); } }
       }
-      kPos.Set(pelvisPos.x, pelvisPos.y, pelvisPos.z); kRot.Set(pelvisQuat.x, pelvisQuat.y, pelvisQuat.z, pelvisQuat.w);
-      if (!dead) pw.bi.MoveKinematic(ids[0]!, kPos, kRot, dt);
+      // Таз: только цель + интервал. MoveKinematic с длиной ШАГА зовёт мир (`pw.advance`/`step`/`stepFrame`).
+      if (!dead && simOn) pw.setKinematic(kin, pelvisPos, pelvisQuat, dt);
       sync();
     },
+    pelvisTarget() { return !dead && simOn && kin.on ? kin : null; },
     // ⚠ БЕЗ ОКРУГЛЕНИЯ. Было `toFixed(1)` — и это ловушка: функция задумывалась «дебаг/тест», но
     // `renderRagdollGhost` строит на ней МИРОВУЮ ВЫСОТУ ТАЗА призрака, то есть того, что видит игрок.
     // ЗАМЕР на бегу: таз призрака принимал 6 РАЗНЫХ значений на 181 кадр (манекен — 176), то есть боб
@@ -916,6 +933,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
       return out;
     },
     dispose() {
+      pw.dropKinematic(kin);                          // иначе мир вёл бы таз уничтоженной куклы (пересборка в редакторе, смерть монстра)
       if (simOn) ragdoll.RemoveFromPhysicsSystem();   // спящий (окно-culling) уже вынут — второй Remove крашит wasm
       // формы/settings/ragdoll не destroy'им (кэш/крэш wasm) — утечка копеечная
       J.destroy(pose);
@@ -927,6 +945,7 @@ export function makeHumanoidRagdoll(pw: PhysWorld): HumanoidRagdoll {
 
 // ── ЕДИНЫЙ РЕНДЕР ФИЗ-ПРИЗРАКА (редактор + игра) ─────────────────────────────────────
 const _gq = new THREE.Quaternion(), _gqT = new THREE.Quaternion(), _geu = new THREE.Euler();
+const _ghp: [number, number, number] = [0, 0, 0];   // мир-позиция корня призрака (цель таза) — без аллокации на кадр
 // Кости ног МЕША — их ведём ровно позой (match=1), а не физ-блендом: рагдолл фикс-геометрии искажает ноги splay-меша (P4).
 const LEG_MESH = new Set(['LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot', 'LeftToes', 'RightUpperLeg', 'RightLowerLeg', 'RightFoot', 'RightToes']);
 
@@ -937,7 +956,7 @@ export const newGhostGround = (): GhostGround => ({ off: 0 });
 
 /**
  * Ведём humanoid-МЕШ результатом рэгдолла: `readBakedPose()` → локальные повороты костей,
- * `bodyPos('Hips')` → мир-позиция корня, + ЗАЗЕМЛЕНИЕ низшей стопы к полу. Реконструкция 21-костного
+ * мир-позиция корня — цель kinematic-таза (`pelvisTarget`; мёртв/лежит → `bodyPos('Hips')`), + ЗАЗЕМЛЕНИЕ низшей стопы к полу. Реконструкция 21-костного
  * меша из 15-костной физики чуть промахивается по длине ног (стопа уходит вниз) — прижим корня по
  * низшей стопе это чинит (сглажено, чтобы не дёргалось). ОДИН код для редакторного призрака и игровой куклы.
  * @param floorY уровень пола (0 в редакторе и в игре — верх статики на y=0).
@@ -955,6 +974,17 @@ export function renderRagdollGhost(
 ): void {
   const gnd = groundAt ?? ((): number => floorY);
   const bp = rag.readBakedPose(); mesh.reset();
+  // ⭐ КОРЕНЬ (позиция И поворот таза) — ИЗ ЦЕЛИ, пока таз kinematic; позы костей — физика, как была.
+  // ⚠ Тело таза — это цель, сэмплированная на ШАГАХ физики, а игра рисует куклу ДО `pw.advance` и без интерполяции:
+  // на 120/144 Гц шаг есть не в каждом кадре, на рваных 60 Гц — 0 или 2 шага, и корень прыгал на целый шаг движения.
+  // ЗАМЕР (живой Jolt, призрак на процедурном меше, смена смещения корня от цели за кадр, RMS / макс.):
+  // шаг 80 u/с — 144 Гц 0.66 / 0.78u, 120 Гц 0.67u, 60 Гц с fp-шумом меток 1.09 / 1.34u, ±2 мс 0.99 / 1.61u;
+  // рывок 200 u/с — 1.64 / 1.94u, 1.67u, 2.72 / 3.35u, 2.47 / 4.04u. Из цели — 0 на всех. Поворот таза тоже из цели:
+  // рывок кисти (разность скорости за кадр, RMS) на развороте 4 рад/с — 144 Гц 0.68 → 0.06u, ±2 мс 0.44 → 0.14u.
+  // Редактор шагает ДО рендера — у него тело и так на цели (разницы нет). Смерть/нокдаун лёжа/culling: `pelvisTarget`
+  // = null → корень из тела (там таз dynamic, цели нет).
+  const pt = rag.pelvisTarget();
+  if (pt) { const h = bp['Hips']; if (h) { _geu.setFromQuaternion(pt.q); h[0] = _geu.x; h[1] = _geu.y; h[2] = _geu.z; } }
   if (match > 0.001 && targetPose) {   // БЛЕНД физрезультат → цель по match: точное совпадение с манекеном
     for (const nm in targetPose) {
       const b = mesh.bones.get(nm); if (!b) continue;
@@ -971,7 +1001,7 @@ export function renderRagdollGhost(
   } else {
     for (const nm in bp) { const b = mesh.bones.get(nm); if (b) b.rotation.set(bp[nm]![0], bp[nm]![1], bp[nm]![2]); }
   }
-  const hp = rag.bodyPos('Hips');
+  const hp = pt ? (_ghp[0] = pt.p.x, _ghp[1] = pt.p.y, _ghp[2] = pt.p.z, _ghp) : rag.bodyPos('Hips');
   if (!ground) gs.off += (0 - gs.off) * Math.min(1, dt * 8);         // смерть/полёт: прижим затухает
   mesh.setHipsWorld(hp[0], hp[1] + gs.off, hp[2]);   // Root ≠ таз: физика задаёт положение ТАЗА, корень вычисляется из него
   mesh.root.updateMatrixWorld(true);

@@ -34,6 +34,28 @@ export async function initPhysics(): Promise<void> {
 
 const LAYER_STATIC = 0, LAYER_DOLL = 1, NUM_LAYERS = 2;
 const BP_STATIC = 0, BP_MOVING = 1, NUM_BP = 2;
+/** Фикс-шаг игровой физики (с). */
+export const PHYS_H = 1 / 60;
+
+/**
+ * КИНЕМАТИЧЕСКИЙ ПРИВОД ТЕЛА (таз куклы): цель + КОГДА её достичь. Живёт в `PhysWorld`, ставит его кукла
+ * (`setKinematic` в `update`, `holdKinematic`/`releaseKinematic` на смерти/подъёме/culling). Сам `MoveKinematic`
+ * зовёт ТОЛЬКО мир — перед КАЖДЫМ шагом, с длиной ИМЕННО ЭТОГО шага. Поля — внутренние, снаружи не трогать.
+ */
+export interface KinDrive {
+  readonly id: InstanceType<JoltNS['BodyID']>;
+  readonly p: THREE.Vector3;
+  readonly q: THREE.Quaternion;
+  /** Интервал, за который кукла выдала цель (dt её `update`; при temporal-LOD — накопленный). 0 — «держать». */
+  span: number;
+  /** Мир-время (`PhysWorld.now`), к которому таз должен быть на цели. Считается в `advance`/`stepFrame`. */
+  t: number;
+  /** Цель свежая — `t` ещё не посчитан. */
+  fresh: boolean;
+  /** false — мир тело НЕ ведёт (мёртв/нокдаун — таз dynamic; вынут из мира — MoveKinematic активирует тело вне broadphase). */
+  on: boolean;
+}
+const _kq = new THREE.Quaternion();
 
 /** Физмир + статика этажа. */
 export class PhysWorld {
@@ -41,6 +63,12 @@ export class PhysWorld {
   readonly system: ReturnType<InstanceType<JoltNS['JoltInterface']>['GetPhysicsSystem']>;
   readonly bi: ReturnType<ReturnType<InstanceType<JoltNS['JoltInterface']>['GetPhysicsSystem']>['GetBodyInterface']>;
   private statics: InstanceType<JoltNS['BodyID']>[] = [];
+  // ── кинематические приводы (см. `advance`) ──
+  private kin: KinDrive[] = [];   // массив, не Set: обход без итератора — без аллокаций на каждом шаге
+  private now = 0;                // мир-время: сумма dt кадров (`advance`/`stepFrame`)
+  private acc = 0;                // остаток аккумулятора фикс-шага: физика отстаёт от `now` на него
+  private readonly kP: InstanceType<JoltNS['RVec3']>;
+  private readonly kQ: InstanceType<JoltNS['Quat']>;
 
   constructor() {
     const s = new J.JoltSettings();
@@ -73,6 +101,8 @@ export class PhysWorld {
     ps.mSpeculativeContactDistance *= TILE;
     ps.mPenetrationSlop *= TILE;
     this.system.SetPhysicsSettings(ps);
+    this.kP = new J.RVec3(0, 0, 0);
+    this.kQ = new J.Quat(0, 0, 0, 1);
   }
 
   private addBox(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number): void {
@@ -112,7 +142,131 @@ export class PhysWorld {
   /** Плоский пол-плита в произвольной точке XZ (верх на y=0) — для тредмил-физики игрока ВНЕ подземелья. */
   addGroundAt(cx: number, cz: number, half = 300): void { this.addBox(cx, -2, cz, half, 2, half); }
 
-  step(dt: number): void { this.jolt.Step(dt, 1); }
+  // ── КИНЕМАТИЧЕСКИЙ ТАЗ: MoveKinematic с длиной ШАГА, а не кадра ────────────────────────────────────────────
+  //
+  // ⚠ БЫЛО (с da5f331 по 17.09.2026): кукла в `update(dt)` сама звала `MoveKinematic(цель, dt КАДРА)`, а игра
+  // шагала фикс-шагом 1/60 из аккумулятора. MoveKinematic ставит скорость (цель − тело)/dt, шаг интегрирует её
+  // за 1/60 → за шаг таз проходит (1/60)/dt разрыва, и ошибка умножается на (1 − частота/60) на КАЖДОМ шаге.
+  // ЗАМЕР (живой Jolt, риг 'base', скачок цели +5u): 120 Гц — раскачка ±5.00u навсегда; 144 Гц — ×−1.40 за шаг,
+  // 8e26 u за 3 с бега; 165/240 Гц — Infinity/NaN. «60 Гц» с fp-шумом меток rAF: 22–23 % кадров без шага и
+  // столько же с двумя → перелёт 5u, дрожь торса (RMS 2-й разности тела Torso по шагам) 20 076 u/с² при 225 на чистых 60.
+  //
+  // ⚠ «ПРОСТО ДЕРЖАТЬ» (MoveKinematic(цель, h) перед каждым шагом) расхождение снимает, но весь путь кадра уходит
+  // в ОДИН шаг, а следующие стоят. ЗАМЕР дрожи торса, бег 300 u/с: 30 Гц — 31 150 (было 522); 60 Гц ±2 мс —
+  // 18 174; 90 Гц — 10 675; 144 Гц — 5 997. Бюджет (max(h, остаток dt)) чинит 30 Гц и LOD через кадр, но не
+  // 45 Гц (8 761), рваные 60 (15 487), 90 (10 675), 144 (5 997).
+  //
+  // ⭐ СТАЛО — цель с ВРЕМЕНЕМ: кукла сдаёт цель и свой dt (`setKinematic`), мир знает, к какому мир-времени таз
+  // должен на ней быть (`t = now + max(0, span − dt)`; при temporal-LOD — к следующему апдейту куклы, как было), и
+  // КАЖДЫЙ шаг двигает тело на долю h/(t − время физики) от текущей позы к цели → таз идёт по цели, сэмплированной
+  // в моменты шагов, с ровной скоростью. ЗАМЕР дрожи торса: 30 Гц 522 (= было), 45 — 477 (было 10 047),
+  // 60 ±2 мс — 398 (было 13 601), 90 — 282 (было 30 082), 120 — 226 (было 30 370), 144 — 246, 165 — 244,
+  // 240 — 225 (было ∞), temporal-LOD через 2/3 кадра — 524/1046 (= было). Цена: таз физики отстаёт от
+  // последней цели не больше чем на шаг движения (5u при 300 u/с) — там, где частота не кратна 60.
+
+  /** Зарегистрировать кинематическое тело (выключено до первого `setKinematic`). Снять — `dropKinematic`. */
+  kinematic(id: InstanceType<JoltNS['BodyID']>): KinDrive {
+    const k: KinDrive = { id, p: new THREE.Vector3(), q: new THREE.Quaternion(), span: 0, t: 0, fresh: false, on: false };
+    this.kin.push(k);
+    return k;
+  }
+  dropKinematic(k: KinDrive): void {
+    k.on = false;
+    const i = this.kin.indexOf(k); if (i < 0) return;
+    this.kin[i] = this.kin[this.kin.length - 1]!; this.kin.pop();
+  }
+  /** Цель тела. `span` — за какой интервал она выдана (dt апдейта куклы); 0 — прибыть сразу и держать. */
+  setKinematic(k: KinDrive, pos: THREE.Vector3, quat: THREE.Quaternion, span: number): void {
+    k.p.copy(pos); k.q.copy(quat);
+    k.span = Number.isFinite(span) && span > 0 ? span : 0;
+    k.fresh = true; k.on = true;
+  }
+  /** Держать тело там, где оно СЕЙЧАС (dynamic → kinematic наследует скорость падения — её надо погасить). */
+  holdKinematic(k: KinDrive): void {
+    const p = this.bi.GetPosition(k.id); const x = p.GetX(), y = p.GetY(), z = p.GetZ();
+    const r = this.bi.GetRotation(k.id); _kq.set(r.GetX(), r.GetY(), r.GetZ(), r.GetW());
+    k.p.set(x, y, z); k.q.copy(_kq);
+    k.span = 0; k.fresh = true; k.on = true;
+  }
+  /** Мир тело больше не ведёт (смерть/нокдаун — таз dynamic; вынос из мира). До следующего `setKinematic`/`holdKinematic`. */
+  releaseKinematic(k: KinDrive): void { k.on = false; }
+
+  /** Посчитать `t` свежим целям: кадр длиной `dt` уже прибавлен к `now`. */
+  private stampKinematic(dt: number): void {
+    for (let i = 0; i < this.kin.length; i++) {
+      const k = this.kin[i]!;
+      if (k.fresh) { k.t = this.now + Math.max(0, k.span - dt); k.fresh = false; }
+    }
+  }
+  /**
+   * MoveKinematic ВСЕМ включённым телам перед шагом длины `h`. `simT` — мир-время состояния физики ДО шага;
+   * NaN — «держать»: доехать за этот шаг (шаг без часов — `step`). Зовётся на КАЖДОМ шаге: скорость kinematic-тела
+   * в Jolt живёт между шагами (замер: 10 → 20 → 30 без новых MoveKinematic), доехавшее тело надо останавливать.
+   */
+  private driveKinematic(h: number, simT: number): void {
+    const bi = this.bi, kP = this.kP, kQ = this.kQ;
+    for (let i = 0; i < this.kin.length; i++) {
+      const k = this.kin[i]!;
+      if (!k.on) continue;
+      const rem = k.t - simT;                          // NaN при «держать» → сравнение ложно → f = 1
+      const f = rem > h + 1e-9 ? h / rem : 1;
+      if (f < 1) {
+        const p = bi.GetPosition(k.id); const x = p.GetX(), y = p.GetY(), z = p.GetZ();   // временные обёртки — копируем сразу
+        const r = bi.GetRotation(k.id); _kq.set(r.GetX(), r.GetY(), r.GetZ(), r.GetW()).slerp(k.q, f);
+        kP.Set(x + (k.p.x - x) * f, y + (k.p.y - y) * f, z + (k.p.z - z) * f);
+        kQ.Set(_kq.x, _kq.y, _kq.z, _kq.w);
+      } else {
+        kP.Set(k.p.x, k.p.y, k.p.z); kQ.Set(k.q.x, k.q.y, k.q.z, k.q.w);
+      }
+      bi.MoveKinematic(k.id, kP, kQ, h);
+    }
+  }
+
+  /**
+   * ОДИН шаг длины `h`, цели «держать»: kinematic-тела доезжают до своей цели за этот шаг. Для вызывающих без
+   * часов кадра — редактор поз (`step(min(dt, 1/60))`, рендер после шага → таз на цели, без недоезда ниже 60 fps),
+   * запекание, тесты. Игра шагает `advance`.
+   */
+  step(h: number): void {
+    for (let i = 0; i < this.kin.length; i++) this.kin[i]!.fresh = false;
+    this.driveKinematic(h, NaN);
+    this.jolt.Step(h, 1);
+  }
+
+  /**
+   * ИГРА: кадр длиной `dt` фикс-шагами `h` (аккумулятор, не больше `maxSteps` за кадр — как было в online3d).
+   * Кинематические цели ведутся по времени (см. блок выше). Возвращает число шагов.
+   */
+  advance(dt: number, h = PHYS_H, maxSteps = 4): number {
+    if (!(dt > 0)) return 0;
+    this.now += dt;
+    this.stampKinematic(dt);
+    this.acc += dt;
+    let n = 0;
+    while (this.acc >= h && n < maxSteps) {
+      this.driveKinematic(h, this.now - this.acc);
+      this.jolt.Step(h, 1);
+      this.acc -= h; n++;
+    }
+    return n;
+  }
+
+  /**
+   * Кадр `dt` целиком, подшагами не длиннее `maxH` (dt ≤ 1/60 → один шаг длины dt, как `step`): время физики =
+   * время кадра, цели ведутся по времени, после вызова таз НА цели. Для редактора — вместо `step(min(dt, 1/60))`,
+   * который ниже 60 fps считает физику в замедлении (пины/вес оружия — импульсы ·dt — там ×dt·60 сильнее).
+   */
+  stepFrame(dt: number, maxH = PHYS_H): number {
+    if (!(dt > 0)) return 0;
+    const n = Math.max(1, Math.ceil(dt / maxH - 0.1)), h = dt / n;   // −0.1: dt = 1/60 с fp-шумом → 1 шаг
+    this.now += dt;
+    this.stampKinematic(dt);
+    for (let i = 0; i < n; i++) {
+      this.driveKinematic(h, this.now - dt + i * h);
+      this.jolt.Step(h, 1);
+    }
+    return n;
+  }
 }
 
 

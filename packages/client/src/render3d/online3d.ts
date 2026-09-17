@@ -1151,7 +1151,7 @@ export async function startOnline3d(): Promise<void> {
   app.net.connect();
 
   // ── Кадр (вынесен, чтобы гнать вручную в фоновой вкладке — rAF там заморожен) ──
-  let physAcc = 0, tsec = 0, fps = 60, miniAcc = 0;
+  let tsec = 0, fps = 60, miniAcc = 0;
   let msWorld = 0, msPhys = 0, msRender = 0;   // профайлер фаз кадра (мс, сглажено) — в DBG-инфо: во что упираемся
   /** Один раз на снапшот: раздать позиции актёров интерполятору и забыть ушедших. */
   function feedInterp(): void {
@@ -1215,7 +1215,9 @@ export async function startOnline3d(): Promise<void> {
       }
     }
     const _tp = performance.now();
-    physAcc += dt; let guard = 0; while (physAcc >= 1 / 60 && guard++ < 4) { pw.step(1 / 60); physAcc -= 1 / 60; }
+    // ⭐ Фикс-шаг 1/60 (не больше 4 за кадр) — ВНУТРИ `pw.advance`: мир знает время кадра и ведёт kinematic-тазы кукол
+    // по нему. Был свой аккумулятор с `pw.step(1/60)` — таз раскачивался/расходился при кадре ≠ шагу (см. ragdoll.ts).
+    pw.advance(dt);
     msPhys += (performance.now() - _tp - msPhys) * 0.1;   // «физ»: pw.step (Jolt) над активными телами
     wallFade.playerPos.set(smoothX, 20, smoothZ); wallFade.viewDir.set(smoothX - camera.position.x, smoothZ - camera.position.z).normalize();   // фейд стен: взгляд камеры → ближние стены по «лицу»
     updateTorches(torches, torchPool, smoothX, smoothZ, tsec, app.config.get('balance').lighting.shadow3d.torchIntensity); vfx.update(dt); statusFx.update(dt); applyCam(dt);
