@@ -346,7 +346,7 @@ function updateWeapon(): void {
   for (const g of weaponGroups) { g.parent?.remove(g); g.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); }); }
   // Атлас-режим: физ-призрак СКРЫТ (виден меш), поэтому оружие на нём было бы невидимо → крепим к манекену (меш с ним
   // совпадает, driveAsm ведёт корень) → оружие ложится на кисть меша. Иначе (без атласа) — на физ-призрак, как в игре.
-  const wpnHost = atlasBS() ? human : (ghostHuman ?? human);
+  const wpnHost = atlasBS() ? human : viewRig();   // тот же источник, что у меша (`viewRig`): без физики призрак стоит на месте
   weaponGroups = attachWeapons(wpnHost, weapon);                       // старт: на манекен/призрак (fallback); syncWeaponHost переносит на кисть атласа
   applyBaseGrip(weaponGroups, curCharId, weapon);                     // ЕДИНЫЙ базовый хват pe_grip → g.userData.baseRot/basePos (поверх weapon-type дефолта)
   seedGripBaseFromIdle();                                             // миграция: pe_grip пуст → сид из idle-хвата (не терять уже настроенное)
@@ -379,7 +379,10 @@ function saveGripBase(): void {
 function syncWeaponHost(): void {
   for (const g of weaponGroups) {
     const hn = g.userData.handBone as string | undefined; if (!hn) continue;
-    hostWeaponOnHand(g, modelsTab.handBone(hn), (ghostHuman ?? human).bones.get(hn) ?? human.bones.get(hn) ?? null);
+    // ⚠ ПОВОРОТ ОРУЖИЯ — ОТ ТОЙ ЖЕ КИСТИ, ЧТО ВЕДЁТ МЕШ (`viewRig`), а не «от призрака, если он есть». Выключенная физика
+    // призрака не удаляет, а ЗАМОРАЖИВАЕТ: меш (и позиция оружия на кисти атласа) шёл за манекеном, а поворот брался с
+    // застывшей кисти призрака — оружие держало мировой угол, и кисть его только двигала (жалоба 17.09.2026).
+    hostWeaponOnHand(g, modelsTab.handBone(hn), viewRig().bones.get(hn) ?? human.bones.get(hn) ?? null);
   }
 }
 
@@ -6503,7 +6506,7 @@ function loop(): void {
   syncRigs();   // Ф27: все риги с ОДНИМ рецептом; панель перерисуется там же
   // Атлас-скин ведём ФИЗ-телом (ghostHuman) — как игра (скин на solid) → превью атласа = игра. Физ off → манекеном.
   // ghostHuman позирован stepPhysics выше (физ-бленд по PHYS.match), у него та же геометрия атласа (buildGhost).
-  modelsTab.drive(physOn && ghostHuman ? ghostHuman : human);   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена
+  modelsTab.drive(viewRig());   // «Модели»: импортный скелет ведётся позой физ-тела (== игра) / манекена
   // Ф20.2: гизмо предела ставится ПОСЛЕ `drive` — до него локальные трансформы костей модели
   // держат вывод ПРОШЛОГО кадра, и гизмо отставало на кадр при перетаскивании.
   placeLimitGizmo(); parkProxy();   // кольца FK стоят в том же фрейме, что и зона предела
@@ -6554,7 +6557,7 @@ function loop(): void {
   // Ф27.6: боксы физ-тел — НА ТОМ ЖЕ СКЕЛЕТЕ, что виден. Сырое физ-состояние не заземлено и
   // не сбленжено к позе по `match`, поэтому оверлей висел ниже призрака на 1.15u и стоял
   // под своим углом (1.2–14.8°) — жалоба «бокс вертикальный, а кость под углом».
-  if (showBoxes && ragdoll) ragdoll.poseShapes(physOn && ghostHuman ? ghostHuman : human);
+  if (showBoxes && ragdoll) ragdoll.poseShapes(viewRig());
   if (testTab.active) {
     testTab.frame(Math.min(dt, 0.1));
     if (testStatus && testStatus.isConnected) testStatus.textContent = testTab.status();
