@@ -66,6 +66,20 @@ export interface PoseTargets {
   /** ТАЗ: боковое смещение (в кадре ТЕЛА, не мира), крен вбок и наклон вперёд/назад. Всё — колебание
    *  в такт шагу; раньше таз умел только подниматься/опускаться (`bobY`). */
   bobX: number; hipsRoll: number; hipsPitch: number;
+  /**
+   * ⭐⭐ РЫСК ТАЗА — КАЧАНИЕ за шаг (рад, + = таз разворачивается вправо), ТРЕТЬЯ плоскость к крену и наклону.
+   *
+   * ⚠ ЭТО ТОЛЬКО КАЧАНИЕ. Статический ПОВОРОТ таза (`POSE.hipsTurn`) сюда НЕ кладётся: он уходит в КУРС
+   * планировщика (`PoseDriver.hipsTurn` → `PosePlayer.legsTurn`), чтобы низ тела повернулся целиком — стопы
+   * плантуются в повёрнутом кадре, колени и носки идут за тазом. Качание в курс подавать НЕЛЬЗЯ: цели плантов
+   * задрожали бы в такт шагу, и опорная стопа поехала бы (ЗАМЕР — в README, «РЫСК ТАЗА»).
+   *
+   * ⚠ ПРОТОКОЛ РЫСКА В КОСТИ: угол, который сидит В КОСТИ, к курсу `applyTorsoTwist` НЕ прибавляется (иначе
+   * посчитается дважды — грабля 35° → 70°), а ВЫЧИТАЕТСЯ из бюджета скрутки и идёт во встречный отворот по
+   * Spine..UpperChest; приложенный угол ИЗМЕРЯЕТСЯ (`pelvisFrame.pelvisHeading` до/после), а не читается из
+   * слота Y эйлера — при ненулевом наклоне это разные числа.
+   */
+  hipsYaw: number;
   headNod: number; headTurn: number; headTilt: number;
   // Запястья (кисти-кости): X сгиб, Y скрутка (крутит меч вокруг оси руки), Z вбок. Нужны вооружённому/редактору.
   wLX: number; wLY: number; wLZ: number; wRX: number; wRY: number; wRZ: number;
@@ -460,15 +474,14 @@ export const GAIT = {
   //   ЗАМЕР (стенд torsoJitter, прямой бег 80 ед/с): канал доворота p99 400–435 °/с, пик 795 → с пределом 300
   //   p99 и пик ≤ 300. Обычное ведение медленнее предела (30° за 0.12 с = 250 °/с) и им не задето.
   warpOn: 0, warpMax: 50, warpSmooth: 0.12, warpRate: 300,
-  // ТАЗ НА ХОДЕ БОКОМ (работает только с `warpOn` и секторами): hipsMode 0 — «таз ровно» (кардинальный страйф, таз на
-  //   прицеле); 1 — «таз открыт»: таз раскрыт К ХОДУ на угол, колени и носки за тазом, грудь и оружие на прицеле.
-  //   В «только клипы» раскрытие несёт второй набор `*_strafe_*_open` (снимается кнопкой «Бега»), в планировщике — живое.
-  // hipsOpen — угол на БЕГУ (вес бега клипов 1, с 80 u/с), hipsOpenWalk — на ходьбе (40 u/с), между — по весу бега.
-  //   Ходьба маленьким углом: на 20–40° голени ходьбы сходятся (замер прототипа: 14–22 % кадров против 5.8 %).
+  // ⚠ РЕЖИМ «ТАЗ РОВНО / ОТКРЫТ» (`hipsMode`, `hipsOpen`, `hipsOpenWalk`) УБРАН 19.09 ЦЕЛИКОМ — решение автора.
+  //   Поворот таза стал ОБЫЧНОЙ ручкой походки (`POSE.hipsTurn` + `hipsYawSwing`), которая печётся прямо в обычные
+  //   клипы страйфа; «ровно» — это просто «поворот 0». Вместе с режимом ушли набор `*_strafe_*_open`, его отдельный
+  //   съём и протухание, доля `openK`, секторное гашение `openFrac` и поиск `_open` по оружию. Миграция старых
+  //   `pe_gait` — в редакторе (`migrateHipsOpen`): угол переезжает в колонку страйфа на ОБЕ стороны.
   // ⚠ ЗЕРКАЛА ЛЕВОГО СТРАЙФА БОЛЬШЕ НЕТ (было `strafeMirror`, убрано 19.09). Оно и делало левую сторону
   //   ненастраиваемой: что ни крути в колонке «СТРАЙФ», левый клип всё равно снимался как отражение правого.
   //   Теперь каждый страйф снимается СВОИМ проходом, а стороны настраиваются колонками `STRAFE_L`/`STRAFE_R`.
-  hipsMode: 0, hipsOpen: 35, hipsOpenWalk: 10,
   /**
    * ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ В ИГРЕ: 0 = выкл (бит в бит как было), 1 = таз стойки играет целиком.
    *
@@ -562,6 +575,25 @@ export const POSE = {
   hipSway: 0, hipSwayRun: 0,                 // вбок, юниты
   hipsRollSwing: 0, hipsRollSwingRun: 0,     // крен вбок, рад
   hipsPitchSwing: 0, hipsPitchSwingRun: 0,   // наклон вперёд/назад, рад
+  /**
+   * ⭐⭐ РЫСК ТАЗА: ПОВОРОТ (статика) + КАЧАНИЕ (амплитуда за шаг). Рад, + = таз вправо. Обе — обычные ручки
+   * походки: пара ходьба/бег и все колонки (страйф, его СТОРОНЫ `@sr`/`@sl`, «назад», бой). Умолчание 0 —
+   * поведение бит в бит прежнее (тот же прецедент, что у `hipsRollSwing` и `hipSwing`).
+   *
+   * Просьба автора (19.09): настраивать страйф с чуть повёрнутым тазом — «так будет более естественно».
+   * До этого рыска у таза не было ВОВСЕ: в целях позы стояли только `bobY`, `bobX`, крен и наклон, а
+   * единственный поворот таза на страйфе приносила отдельная фича «таз открыт» (снята 19.09, см. README).
+   *
+   * ⚠ РАЗНЫЕ ПУТИ У ДВУХ РУЧЕК, И ЭТО НЕ НЕПОСЛЕДОВАТЕЛЬНОСТЬ:
+   *  • `hipsTurn` (СТАТИКА) → в КУРС планировщика (`PoseDriver.hipsTurn`): низ тела поворачивается целиком,
+   *    стопы плантуются в повёрнутом кадре, колени и носки идут за тазом — ровно то, что раньше делало
+   *    раскрытие (`legsOpen`). Стоя ручка НЕ работает (гейт `gaitStepD`, как у `kneeDir`/`hipSplay`):
+   *    иначе она разворачивала бы авторскую стойку.
+   *  • `hipsYawSwing` (КАЧАНИЕ) → ТОЛЬКО на кость (`PoseTargets.hipsYaw`): колебание в курсе качало бы цели
+   *    плантов и возило опорную стопу.
+   */
+  hipsTurn: 0, hipsTurnRun: 0,               // СТАТИЧЕСКИЙ поворот таза (в курс планировщика), рад
+  hipsYawSwing: 0, hipsYawSwingRun: 0,       // КАЧАНИЕ рыска за шаг (только кость), рад
   /**
    * ⭐ КОГО КРЕН И НАКЛОН ТАЗА НЕ ДОЛЖНЫ ТАЩИТЬ ЗА СОБОЙ. 0 = наследует целиком (сырая иерархия),
    * 1 = держим на месте. Умолчание 1 — но оно НЕЙТРАЛЬНО: сам крен по умолчанию 0.
@@ -1026,7 +1058,20 @@ class StepPlanner {
    */
   footFloor = FOOT_Y;
 
-  update(dt: number, px: number, pz: number, yaw: number, vx: number, vz: number): { l: LegAngles; r: LegAngles; bobY: number; toeCurl: [number, number] } {
+  /**
+   * ⭐⭐ `mixYaw` — КУРС, ОТ КОТОРОГО СЧИТАЕТСЯ БОКОВИТОСТЬ (и назадность, и стороны страйфа). Обычно он равен
+   * `yaw`; отличается ровно на АВТОРСКИЙ ПОВОРОТ ТАЗА (`POSE.hipsTurn`), который в `yaw` уже входит.
+   *
+   * ⚠⚠ ЗАЧЕМ РАЗВОДИТЬ (ЗАМЕР 19.09, найдено на живом прогоне): поворот таза — это ручка, умноженная на
+   * боковитость `st`, а боковитость считается ОТ ОСЕЙ ТАЗА. Развернул таз к ходу — ход стал «менее боковым»,
+   * `st` упал, ручка отдала меньше, таз вернулся, `st` вырос… ЗАМЕР: ручка 20° садилась на 17.59° (`st` 0.879)
+   * — это ещё терпимо, а ручка 35° уходила в ЦИКЛ ПЕРИОДА 2 между 6.9° и 35° (`st` 0.198 ↔ 1.0), то есть таз
+   * мигал каждый кадр. Считая боковитость от НЕПОВЁРНУТОГО курса (корень + доворот), петлю разрываем: `st`
+   * больше не зависит от собственного выхода, ручка отдаёт ровно то, что на ней написано.
+   * ⚠ Плантуется нога всё равно в ПОВЁРНУТОМ кадре (`fx/fz/rx/rz` от `yaw`) — в этом и смысл поворота.
+   * `mixYaw` не задан → он равен `yaw`, то есть поведение прежнее бит в бит.
+   */
+  update(dt: number, px: number, pz: number, yaw: number, vx: number, vz: number, mixYaw = yaw): { l: LegAngles; r: LegAngles; bobY: number; toeCurl: [number, number] } {
     // Оси тела в мире: вперёд = локальный +Z, вправо = локальный +X.
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
     const rx = Math.cos(yaw), rz = -Math.sin(yaw);
@@ -1062,7 +1107,10 @@ class StepPlanner {
     // БОКОВИТОСТЬ. Считается от СГЛАЖЕННОГО направления и от осей ТАЗА (а не прицела): при включённом
     // довороте (Ф0) таз уже развёрнут под движение, поэтому диагональ здесь честно читается как ход
     // вперёд и страйф-колонку не поднимает — ровно так, как показал замер 4-против-8 направлений.
-    const mFwd = pmx * fx + pmz * fz, mLat = pmx * rx + pmz * rz;
+    // ⚠ ОСИ БОКОВИТОСТИ — ОТ `mixYaw`, А НЕ ОТ `yaw` (см. шапку `update`): иначе поворот таза мерит сам себя.
+    const gfx = mixYaw === yaw ? fx : Math.sin(mixYaw), gfz = mixYaw === yaw ? fz : Math.cos(mixYaw);
+    const grx = mixYaw === yaw ? rx : Math.cos(mixYaw), grz = mixYaw === yaw ? rz : -Math.sin(mixYaw);
+    const mFwd = pmx * gfx + pmz * gfz, mLat = pmx * grx + pmz * grz;
     this.st = moving ? strafeMix(mFwd, mLat) : 0;
     // СТОРОНА СТРАЙФА. Доли делят ровно `st` (сумма = `st`), поэтому включение сторон ничего не
     // прибавляет само по себе: пока карты сторон пусты, `locoVal` даёт прежнее число бит в бит.
@@ -1514,7 +1562,7 @@ export class PoseDriver {
    * Умолчание — нули: `PoseDriver` без `setStance` (golden-харнесс, тесты) бит в бит как раньше.
    */
   private stanceFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0, liftL: 0, liftR: 0 };
-  private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
+  private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0, mixYaw: 0 };
   private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   private combat = 0;     // мирно(0) ↔ бой(1): боевая колонка настроек (Ф6). Нет записей — ведёт себя как раньше.
   /** Боевое состояние 0..1 — ИЗ ИГРЫ (серверный `inCombat`), тот же, что блендит стойку. */
@@ -1527,7 +1575,7 @@ export class PoseDriver {
     hipL: 0, hipR: 0, knL: 0, knR: 0, hipLatL: 0, hipLatR: 0, ankL: 0, ankR: 0, shL: 0, shR: 0, elL: 0, elR: 0,
     lean: 0, twist: 0, bobY: 0, splay: 0, twChest: 0, twUpper: 0,
     shTwL: 0, shTwR: 0, shSpL: 0, shSpR: 0, hipTwL: 0, hipTwR: 0, leanSide: 0, headNod: 0, headTurn: 0, headTilt: 0,
-    ankYawL: 0, ankYawR: 0, hipSplayL: 0, hipSplayR: 0, bobX: 0, hipsRoll: 0, hipsPitch: 0,
+    ankYawL: 0, ankYawR: 0, hipSplayL: 0, hipSplayR: 0, bobX: 0, hipsRoll: 0, hipsPitch: 0, hipsYaw: 0,
     toeCurlL: 0, toeCurlR: 0,
     shoLX: 0, shoLY: 0, shoLZ: 0, shoRX: 0, shoRY: 0, shoRZ: 0,
     wLX: 0, wLY: 0, wLZ: 0, wRX: 0, wRY: 0, wRZ: 0,
@@ -1535,7 +1583,7 @@ export class PoseDriver {
 
   setMove(s: number): void { this.move = Math.max(0, Math.min(1.4, s)); }
   /** Включает походку с опорой: позиция/рыск/скорость тела в мире (юниты, u/с). */
-  setWorld(x: number, z: number, yaw: number, vx: number, vz: number): void {
+  setWorld(x: number, z: number, yaw: number, vx: number, vz: number, mixYaw = yaw): void {
     if (!this.planner) {
       this.planner = new StepPlanner();
       // Стойку передаём ТОЛЬКО замеренную: иначе планировщик возьмёт полутаз рига, а не нашу константу.
@@ -1543,7 +1591,7 @@ export class PoseDriver {
     }
     this.planner.footFloor = this.footFloor;   // пол для лодыжки — из рига, см. `StepPlanner.footFloor`
     this.planner.legRest = this.legRest;       // длины бедра/голени и полутаз — из рига, не из констант
-    this.w.x = x; this.w.z = z; this.w.yaw = yaw; this.w.vx = vx; this.w.vz = vz;
+    this.w.x = x; this.w.z = z; this.w.yaw = yaw; this.w.vx = vx; this.w.vz = vz; this.w.mixYaw = mixYaw;
   }
   /** Обратная связь от физики: где НА САМОМ ДЕЛЕ стоят щиколотки (мир). Плантуем по факту, а не по расчёту. */
   setFeet(lx: number, lz: number, rx: number, rz: number): void { this.planner?.setFeet(lx, lz, rx, rz); }
@@ -1551,6 +1599,17 @@ export class PoseDriver {
   setLegsHeld(v: boolean): void { this.planner?.setLegsHeld(v); }
   /** См. `StepPlanner.replant`. */
   replant(): void { this.planner?.replant(); }
+  /**
+   * ⭐⭐ ВЫБРОСИТЬ ПЛАНИРОВЩИК ЦЕЛИКОМ — состояние походки с нуля (ЗАПЕКАНИЕ). `setWorld` соберёт новый и вернёт
+   * ему замеренную стойку, пол и длины рига; фаза стартует с 0, а не с `Math.random()`.
+   *
+   * ⚠ ЗАЧЕМ ЭТО НУЖНО СЪЁМУ (ЗАМЕР 19.09): `bakeGaitSet` гоняет ВСЕ пресеты через ОДИН `PosePlayer`, а разогрев
+   * 2 с фазу и планты НЕ обнуляет — и правка одной ручки сдвигала КАЖДЫЙ клип, снятый ПОСЛЕ неё. Замер: ручка
+   * колонки `STRAFE_L` двигала `run_back` на 22.48°, а `walk_strafe_R` на 2.22°, при том что всё, снятое ДО неё,
+   * оставалось 0.00° — то есть порядок кнопок в списке влиял на содержимое чужих клипов. Контрольный опыт с
+   * ручкой колонки `BACK` дал ту же картину, значит беда не в сторонах страйфа, а в общем состоянии плеера.
+   */
+  resetPlanner(): void { this.planner = null; this.phase = 0; }
   /** Авторский сдвиг плант-цели (body-local fwd/lat) на ногу — для редактора. Дефолт 0 → без эффекта. */
   setPlantOffset(lF: number, lL: number, rF: number, rL: number): void { this.planner?.setPlantOffset(lF, lL, rF, rL); }
   /** Точки обвода свинга на ногу (body-local fwd,lat). Пусто → прямой свинг. */
@@ -1567,6 +1626,27 @@ export class PoseDriver {
   plantTarget(i: number): [number, number] { return this.planner ? this.planner.getTarget(i) : [0, 0]; }
   /** Фаза походки (рад, π на шаг) — ею Ф4 сэмплирует клип локомоции, а не своим таймером. */
   get gaitPhase(): number { return this.phase; }
+  /**
+   * ⭐⭐ СТАТИЧЕСКИЙ ПОВОРОТ ТАЗА этого кадра (рад, + = вправо) — ЭТО КУРС, А НЕ ПОЗА.
+   *
+   * Читает его `PosePlayer.step` ДО `setWorld`, и кладёт в тот же угол, что доворот (`legsTurn`): низ тела
+   * поворачивается целиком, стопы плантуются в повёрнутом кадре, колени и носки идут за тазом. Ровно так
+   * раньше работало раскрытие «таз открыт» (`legsOpen`), только угол теперь — обычная ручка с колонками, а
+   * значит и со сторонами страйфа.
+   *
+   * ⚠ СМЕСЬ — ПРОШЛОГО КАДРА. `st`/`stR`/`stL`/`sb` планировщик пересчитывает ВНУТРИ `update`, а курс нужен
+   * ДО него (`setWorld` кормит планировщик уже повёрнутым кадром). Отставание на кадр незаметно: все четыре
+   * доли сглажены по времени (`planSmooth`, `moveAmt`), а сам угол дальше едет тем же путём, что доворот.
+   * ⚠ СТОЯ — НОЛЬ (гейт `gaitStepD`, как у `kneeDir`/`hipSplay`/носка): это ручка ПОХОДКИ, и разворачивать
+   * ею авторскую стойку нельзя — «эталонная стойка при прокрутке на месте должна быть idle 1:1».
+   */
+  get hipsTurn(): number {
+    const p = this.planner;
+    if (!p) return 0;
+    const m: LocoMix = { sb: p.sb, st: p.st, stR: p.stR, stL: p.stL, bt: p.bt, ct: this.combat };
+    const gate = clamp(p.moveAmt / 0.2, 0, 1);
+    return gate > 0 ? locoVal('hipsTurn', 'hipsTurnRun', POSE.hipsTurn, POSE.hipsTurnRun, 0, m) * gate : 0;
+  }
   /** Фейсинг ПРИЦЕЛА (куда доворачивает таз) — подшаг целит стопу в идл-стойку НА НЁМ. null → текущий yaw (как было). */
   setGoalYaw(y: number | null): void { this.planner?.setGoalYaw(y); }
   /** Идл-стойка ноги i на гол-фейсинге (прицел) — куда приземлится подшаг. Целевые маркеры редактора «Повороты». */
@@ -1595,7 +1675,7 @@ export class PoseDriver {
     const o = this.out;
     // Доп. оси нужны только вооружённому (ГАРД меч+щит) — в процедурке всегда 0 (иначе стухшие значения «прилипнут»).
     o.shTwL = o.shTwR = o.shSpL = o.shSpR = 0; o.hipTwL = o.hipTwR = 0; o.leanSide = 0;
-    o.ankYawL = o.ankYawR = 0; o.hipSplayL = o.hipSplayR = 0; o.bobX = 0; o.hipsRoll = 0; o.hipsPitch = 0;
+    o.ankYawL = o.ankYawR = 0; o.hipSplayL = o.hipSplayR = 0; o.bobX = 0; o.hipsRoll = 0; o.hipsPitch = 0; o.hipsYaw = 0;
     o.toeCurlL = o.toeCurlR = 0;
     o.twChest = o.twUpper = 0;
     o.headNod = o.headTurn = o.headTilt = 0;
@@ -1611,7 +1691,7 @@ export class PoseDriver {
 
     if (this.planner) {
       const w = this.w;
-      const g = this.planner.update(dt, w.x, w.z, w.yaw, w.vx, w.vz);
+      const g = this.planner.update(dt, w.x, w.z, w.yaw, w.vx, w.vz, w.mixYaw);
       o.hipL = g.l.hip; o.knL = g.l.knee; o.hipLatL = g.l.lat; o.ankL = g.l.ank;
       o.hipR = g.r.hip; o.knR = g.r.knee; o.hipLatR = g.r.lat; o.ankR = g.r.ank;
       o.bobY = g.bobY;
@@ -1705,6 +1785,9 @@ export class PoseDriver {
     o.bobX = s * amp * body('hipSway', 'hipSwayRun', POSE.hipSway, POSE.hipSwayRun);
     o.hipsRoll = s * amp * body('hipsRollSwing', 'hipsRollSwingRun', POSE.hipsRollSwing, POSE.hipsRollSwingRun);
     o.hipsPitch = s * amp * body('hipsPitchSwing', 'hipsPitchSwingRun', POSE.hipsPitchSwing, POSE.hipsPitchSwingRun);
+    // РЫСК — та же фаза и та же амплитуда, что у крена и наклона. ⚠ ТОЛЬКО КАЧАНИЕ: статический поворот
+    // (`hipsTurn`) идёт в КУРС планировщика отдельным путём (`PoseDriver.hipsTurn`), см. `PoseTargets.hipsYaw`.
+    o.hipsYaw = s * amp * body('hipsYawSwing', 'hipsYawSwingRun', POSE.hipsYawSwing, POSE.hipsYawSwingRun);
     const eArmSh = armSh(0), eArmEl = armEl(0);   // для веток, где стороны не разводятся (удар/гард)
     // ── КЛЮЧИЦЫ. Плечевой пояс больше не «сводится в ноль» на ходу: у него своя поза и своё качание.
     // dev — отклонение плеча своей руки от базы (<0 = рука ушла вперёд). Пояс идёт за рукой вперёд

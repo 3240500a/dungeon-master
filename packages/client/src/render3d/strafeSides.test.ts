@@ -347,10 +347,10 @@ describe('⭐⭐ ЗЕРКАЛА ЛЕВОГО СТРАЙФА БОЛЬШЕ НЕТ'
     const i = SRC_ED.indexOf('const out = withRootViewOff(() => {');
     expect(i).toBeGreaterThan(0);
     const body = SRC_ED.slice(i, SRC_ED.indexOf('});', i) + 3);
-    expect(body, 'весь набор идёт в съём как есть').toMatch(/const specs = \[\.\.\.GAIT_PRESETS\.filter/);
+    expect(body, 'весь набор идёт в съём как есть').toMatch(/bakeGaitSet\(player, human, opts, GAIT_PRESETS\.filter/);
     expect(body).not.toMatch(/specsForBake/);
-    // И набор «таз открыт» — тоже своим проходом, без подмены.
-    expect(SRC_ED).toMatch(/return bakeGaitSet\(player, human, opts, g\.specs\);/);
+    // ⚠ И отдельного набора «таз открыт» больше нет вовсе (снят 19.09) — поворот таза печётся в эти же клипы.
+    expect(SRC_ED, 'второго съёма нет').not.toMatch(/openStrafePresets/);
   });
 
   it('⚠ КНОПКА «⇆ В ЗЕРКАЛЬНУЮ» ЯЧЕЙКУ ОСТАЛАСЬ (удобная авторская операция), а предупреждение — нет', () => {

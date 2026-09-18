@@ -278,20 +278,22 @@ describe('clipModel — скорость запекания (`bakeSpeed`) пер
     expect(carryMarks(run, { ...fresh, keys: run.keys.map((k) => ({ t: k.t, pose: k.pose })) }).bakeRev, 'метки со старого клипа ревизию не сбивают').toBe(2);
   });
 
-  it('⭐ «ТАЗ ОТКРЫТ» (`hipsOpenDeg` / `hipsOpenW`) переживает чтение, зеркало и перенос меток; битые доли не тащим', () => {
-    // Потеряй угол или доли на чтении — рантайм не снимет запечённый отворот, и грудь уедет от прицела на 41 % угла.
-    const open: Clip = { ...run, name: 'run_strafe_R_open', bakeRev: 2, hipsOpenDeg: 35, hipsOpenW: [0.2143, 0.3571, 0.4286] };
-    const back = migrateClip(JSON.parse(JSON.stringify(open)));
-    expect(back.hipsOpenDeg).toBe(35);
-    expect(back.hipsOpenW).toEqual([0.2143, 0.3571, 0.4286]);
-    expect('hipsOpenDeg' in JSON.parse(JSON.stringify(migrateClip(run))), 'у обычного клипа полей нет').toBe(false);
-    expect(migrateClip({ ...open, hipsOpenW: [1, 'x', 0] }).hipsOpenW).toBeUndefined();
-    expect(migrateClip({ ...open, hipsOpenW: [1, 0] }).hipsOpenW).toBeUndefined();
-    expect(flipClip(open).hipsOpenDeg).toBe(35);
-    expect(carryMarks(run, { ...open, keys: run.keys.map((k) => ({ t: k.t, pose: k.pose })) }).hipsOpenW).toEqual(open.hipsOpenW);
+  it('⭐ ПОВОРОТ ТАЗА (`hipsYawDeg` / `hipsYawW`) переживает чтение, зеркало и перенос меток; битые доли не тащим', () => {
+    // Потеряй доли на чтении — рантайм не снимет запечённый отворот, и грудь уедет от прицела на 41 % угла.
+    // ⚠ Мутация «не копировать `hipsYawW` в `migrateClip`» = клип молча теряет метку «в нём есть авторский рыск таза».
+    const yaw: Clip = { ...run, name: 'run_strafe_R', bakeRev: 2, hipsYawDeg: 10, hipsYawW: [0.2143, 0.3571, 0.4286] };
+    const back = migrateClip(JSON.parse(JSON.stringify(yaw)));
+    expect(back.hipsYawDeg).toBe(10);
+    expect(back.hipsYawW).toEqual([0.2143, 0.3571, 0.4286]);
+    expect('hipsYawW' in JSON.parse(JSON.stringify(migrateClip(run))), 'у клипа без поворота полей нет').toBe(false);
+    expect(migrateClip({ ...yaw, hipsYawW: [1, 'x', 0] }).hipsYawW).toBeUndefined();
+    expect(migrateClip({ ...yaw, hipsYawW: [1, 0] }).hipsYawW).toBeUndefined();
+    // ⭐ ЗЕРКАЛО МЕНЯЕТ ЗНАК УГЛА: `flipPose` зеркалит и сам рыск таза, а число — подпись к нему.
+    expect(flipClip(yaw).hipsYawDeg).toBe(-10);
+    expect(carryMarks(run, { ...yaw, keys: run.keys.map((k) => ({ t: k.t, pose: k.pose })) }).hipsYawW).toEqual(yaw.hipsYawW);
   });
 
-  it('⭐ НОМЕР СЪЁМА (`bakeId`) переживает чтение: по нему редактор видит, что набор «таз открыт» снят СТАРОЙ походкой', () => {
+  it('⭐ НОМЕР СЪЁМА (`bakeId`) переживает чтение: по нему редактор видит, что клипы набора сняты РАЗНЫМИ прогонами', () => {
     // ⚠ Мутация «не копировать bakeId в migrateClip» снимает единственный признак расхождения наборов, у которых
     // совпал УГОЛ раскрытия: правишь плант-сетку в «ровно», перезапекаешь основной набор — `_open` тихо остаётся старым.
     const stamped: Clip = { ...run, bakeRev: 2, bakeId: 1758000000000 };

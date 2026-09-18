@@ -7,7 +7,7 @@ import {
   TURN_ACCEL_SEC, WARP_ACCEL_SEC,
   type PoseContent, type GXKnobs, type TwistStates,
 } from './poseRuntime.js';
-import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, openStrafePresets } from './clipBake.js';
+import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS } from './clipBake.js';
 import { type Clip } from './clipModel.js';
 import { makeNetInterp } from './netInterp.js';
 import { driveActor, facingToYaw, type DriveState, type DrivenDoll } from './driveActor.js';
@@ -117,8 +117,10 @@ const CHAR = 'warrior';
 const TORSO = ['Hips', 'Spine', 'Chest', 'UpperChest'] as const;
 type TorsoBone = typeof TORSO[number];
 /**
- * Разбор канала таза: `rootYaw` (torso-lead, рейт-лимит `turnRate`) и `warp` (доворот под ход + раскрытие,
- * `pelvisYaw − rootYaw`). Оба — публичные геттеры `PosePlayer`, так что разбор не лезет во внутренности.
+ * Разбор канала таза: `rootYaw` (torso-lead, рейт-лимит `turnRate`) и `warp` — ВЕСЬ остальной рыск таза
+ * (`pelvisYawWorld − aimRootYaw`): доворот под ход, ПОВОРОТ ТАЗА ручкой, качание рыска и рыск из клипа.
+ * ⚠ Было `pelvisYaw − aimRootYaw`, то есть только курс: рыск, сидящий В КОСТИ, мимо этой меры проходил молча.
+ * Оба — публичные геттеры `PosePlayer`, так что разбор не лезет во внутренности.
  * Без него «таз дёрнулся» не отличить: рейт-лимит физически не может дать больше 172 °/с, а замер даёт 700+.
  */
 const CHAN = [...TORSO, 'rootYaw', 'warp'] as const;
@@ -146,9 +148,6 @@ beforeAll(() => {
   const p = new PosePlayer(h, () => [], localStorageContent(CHAR), 'none', GX, plant, loadTwistStates(CHAR));
   lib = new Map();
   for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: CHAR, weapon: 'none' }).clip);
-  // ⭐ Набор «таз открыт» (`*_strafe_*_open`) — без него `hipsMode` 1 в «только клипы» не делает НИЧЕГО
-  // (`openClipDeg` остаётся null), и сцены с раскрытием молча мерили бы «ровно».
-  for (const s of openStrafePresets(GAIT_BASE.hipsOpen ?? 35, GAIT_BASE.hipsOpenWalk ?? 10)) lib.set(s.name, bakeGaitToClip(p, h, s, { character: CHAR, weapon: 'none' }).clip);
   for (const r of bakeTurnSet(p, h, { character: CHAR, weapon: 'none' })) lib.set(r.clip.name, r.clip);
 });
 afterAll(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
@@ -238,8 +237,8 @@ interface Scene {
   stopAt?: number;
   /** Через сколько после начала доворота игрок отпускает кнопку (сек). Ноль — встал ровно в тот же кадр. */
   stopLag?: number;
-  /** `GAIT.hipsMode` на прогон: 1 — «таз открыт» (раскрытие тоже едет в рыск таза). */
-  hipsMode?: 0 | 1;
+  /** Поворот таза (`POSE.hipsTurn`) на прогон, °: он тоже едет в рыск таза и тоже обязан влезать в предел скорости. */
+  hipsTurnDeg?: number;
 }
 type Abl = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J';
 
@@ -265,7 +264,7 @@ function run(o: RunOpts): Row[] {
   const twist = loadTwistStates(CHAR);
   if (o.abl === 'E') for (const k of ['stand', 'walk', 'run'] as const) twist[k].relaxTime = Infinity;
   const doll = makeDoll(twist, withLib(localStorageContent(CHAR)));
-  GAIT.hipsMode = sc.hipsMode ?? 0;
+  POSE.hipsTurn = POSE.hipsTurnRun = (sc.hipsTurnDeg ?? 0) * Math.PI / 180;
   setLocoMixOverride(o.abl === 'G' ? 0 : 1);
 
   // Курсор стоит на месте ВПЕРЕДИ (+X). Ход: вперёд +X (сближаемся) или назад −X (удаляемся, лицом к курсору).
@@ -351,7 +350,7 @@ function run(o: RunOpts): Row[] {
       ch.push(pelvisHeading(qtmp[i]!));
       q.push(qtmp[i]!.clone());
     });
-    ch.push(doll.p.aimRootYaw, doll.p.pelvisYaw - doll.p.aimRootYaw);   // разбор таза: torso-lead и доворот
+    ch.push(doll.p.aimRootYaw, doll.p.pelvisYawWorld - doll.p.aimRootYaw);   // разбор таза: torso-lead и ВЕСЬ прочий рыск
     rows.push({
       t, ch, q, aim: facing, turning: priv.turning, stable: priv.aimStableFor,
       lat: priv.colPrev.latRight, fade: priv.colFade.w, phase: priv.clipPhase, turnClip: doll.p.turnClipName,
@@ -359,7 +358,7 @@ function run(o: RunOpts): Row[] {
       rate: priv.leadRate, hold: priv.turnAccelHold,
     });
   }
-  setLocoMixOverride(null); GAIT.hipsMode = 0;
+  setLocoMixOverride(null); POSE.hipsTurn = POSE.hipsTurnRun = 0;
   return rows;
 }
 
@@ -486,9 +485,9 @@ const SCENES: readonly Scene[] = [
    */
   { name: 'stop_mid', spd: 80, r0: 300, bearingDeg: 0, missU: 25, stopAt: 3.78, aimW: 0, stopLag: 0 },
   { name: 'stop_mid2', spd: 80, r0: 300, bearingDeg: 0, missU: 25, stopAt: 3.9, aimW: 0, stopLag: 0 },
-  /** «Таз открыт» (`hipsMode` 1): раскрытие ±35° едет в рыск таза наравне с доворотом. */
-  { name: 'fwd20_open', spd: 80, r0: 300, bearingDeg: 20, hipsMode: 1 },
-  { name: 'cross_miss25_open', spd: 80, r0: 300, bearingDeg: 0, missU: 25, hipsMode: 1 },
+  /** ПОВОРОТ ТАЗА ручкой (35°): он едет в рыск таза наравне с доворотом и тоже обязан влезать в предел. */
+  { name: 'fwd20_turn', spd: 80, r0: 300, bearingDeg: 20, hipsTurnDeg: 35 },
+  { name: 'cross_miss25_turn', spd: 80, r0: 300, bearingDeg: 0, missU: 25, hipsTurnDeg: 35 },
 ];
 /**
  * ⭐ ПОЛОСА ПОРОГА «ПРИЦЕЛ СТОИТ». Сближение на `dMin` при 80 ед/с даёт скорость прицела `80 / dMin` рад/с;
@@ -669,12 +668,13 @@ describe('подёргивание корпуса на бегу: сторожа'
     }
   }, 180_000);
 
-  it('⭐ ХЛЫСТ ДОВОРОТА НА ПЕРЕБРОСЕ СЕКТОРА ОГРАНИЧЕН (`GAIT.warpRate`) — И С «ТАЗ ОТКРЫТ» ТОЖЕ', () => {
+  it('⭐ ХЛЫСТ ДОВОРОТА НА ПЕРЕБРОСЕ СЕКТОРА ОГРАНИЧЕН (`GAIT.warpRate`) — И С ПОВЁРНУТЫМ ТАЗОМ ТОЖЕ', () => {
     // ⚠ Мутация «предела скорости доворота нет» (`rateDeg` 0) валит это: ЗАМЕР — канал доворота p99
     // 400–435 °/с при пике 610–795, то есть вчетверо выше физического потолка torso-lead (172 °/с).
-    // ⚠ Мутация «предел только на довороте, раскрытие мимо» (как было до 19.09) валит строки `_open`:
-    // 35° раскрытия переезжали за `warpSmooth` свободно, и ЗАМЕР давал 350 / 356 / 353 и 359 / 366 / 369 °/с
-    // против потолка 300. Сцены выбраны так, чтобы переброс сектора в окне ЗАМЕРА точно был.
+    // ⚠ СТРОКИ `_turn` — ПРО НОВУЮ РУЧКУ. Раньше здесь мерили раскрытие «таз открыт», которое цеплялось за СЕКТОР и
+    // на его перебросе прыгало на весь угол (ЗАМЕР до 19.09: 350–369 °/с при потолке 300). Поворот таза за сектор
+    // не цепляется вовсе — он едет непрерывной долей страйфа, — и проверяется ровно это: добавь ему сектор, и
+    // прыжок вернётся. Сцены выбраны так, чтобы переброс сектора в окне ЗАМЕРА точно был.
     const cap = GAIT.warpRate * 1.02;
     for (const nm of ['fwd20_r300', 'cross_miss25', 'band_d133']) {
       const sc = SC(nm);
@@ -684,13 +684,14 @@ describe('подёргивание корпуса на бегу: сторожа'
         expect(s.ch.warp.d1max, `${nm} @${hz}: доворот ${s.ch.warp.d1max.toFixed(0)} °/с`).toBeLessThan(cap);
       }
     }
-    // «Таз открыт»: и в «только клипы» (A), и на процедурке (G) — там раскрытие едет в `legsOpen`.
-    for (const nm of ['fwd20_open', 'cross_miss25_open']) {
+    // ⚠ ПОВОРОТ ТАЗА МЕРЯЕМ НА ПРОЦЕДУРКЕ (G): в «только клипы» (A) ручка инертна по построению — угол там несёт
+    // САМ КЛИП, а клипы этого стенда сняты с нулевой ручкой. Клиповый путь стережёт `hipsYaw.test.ts`.
+    for (const nm of ['fwd20_turn', 'cross_miss25_turn']) {
       const sc = SC(nm);
-      for (const abl of ['A', 'G'] as const) for (const hz of RATES) {
-        const s = st(sc, hz, abl);
-        expect(s.sectFlip, `${nm}|${abl} @${hz}: сторож пустой`).toBeGreaterThan(0);
-        expect(s.ch.warp.d1max, `${nm}|${abl} @${hz}: рыск таза ${s.ch.warp.d1max.toFixed(0)} °/с`).toBeLessThan(cap * 1.03);
+      for (const hz of RATES) {
+        const s = st(sc, hz, 'G');
+        expect(s.sectFlip, `${nm} @${hz}: сторож пустой`).toBeGreaterThan(0);
+        expect(s.ch.warp.d1max, `${nm} @${hz}: рыск таза ${s.ch.warp.d1max.toFixed(0)} °/с`).toBeLessThan(cap * 1.03);
       }
     }
   }, 300_000);
@@ -781,7 +782,7 @@ describe('подёргивание корпуса на бегу: стенд ди
     const lines: string[] = [], json: Record<string, unknown> = {};
     lines.push(`# СЦЕНАРИИ (абляция A = база, сим ${SIM_HZ} Гц, рассылка ${SNAP_HZ} Гц — боевая, дрожание прихода ±5 мс)`);
     lines.push('# d1 — первая разность мирового курса, °/с; d2 — вторая, °/с²; rev/s — смен знака d1 в секунду');
-    lines.push('# root = torso-lead (рейт-лимит turnRate 172 °/с), warp = доворот таза под ход (pelvisYaw − rootYaw)');
+    lines.push('# root = torso-lead (рейт-лимит turnRate 172 °/с), warp = ВЕСЬ прочий рыск таза (pelvisYawWorld − aimRootYaw)');
     lines.push(HEAD);
     for (const sc of SCENES) for (const spd of SPEEDS) for (const hz of (sc.mouseHz ? MRATES : RATES)) {
       if (sc.mouseHz && spd !== SPEEDS[0]) continue;   // мышь стоя: скорость не при чём, одна строка
@@ -790,9 +791,9 @@ describe('подёргивание корпуса на бегу: стенд ди
       lines.push(line(key, s)); json[key] = s;
     }
     lines.push('');
-    lines.push('# «ТАЗ ОТКРЫТ» (hipsMode 1) — в «только клипы» (A) и на процедурке (G, раскрытие едет в `legsOpen`)');
+    lines.push('# ПОВОРОТ ТАЗА РУЧКОЙ (POSE.hipsTurn 35°) — на процедурке (G; в «только клипы» его несёт сам клип)');
     lines.push(HEAD);
-    for (const nm of ['fwd20_open', 'cross_miss25_open']) for (const abl of ['A', 'G'] as const) for (const hz of RATES) {
+    for (const nm of ['fwd20_turn', 'cross_miss25_turn']) for (const abl of ['G'] as const) for (const hz of RATES) {
       const sc = [...SCENES].find((x) => x.name === nm)!;
       const s = stats(run({ sc, hz, abl, jitter: true }), hz, 2, sc.stopAt);
       const key = `${abl}|${nm}|${hz}`;

@@ -81,7 +81,9 @@ export const flipPoseSides = (p: Pose): Pose => flipPose(p);
 /** Перевернуть ВЕСЬ клип (частая операция: сделал удар справа — получил слева).
  *  Метки едут с ключами, но `footstep` меняет ногу: перевёрнутый шаг делает ДРУГАЯ нога. */
 export function flipClip(c: Clip): Clip {
-  return { ...c, keys: c.keys.map((k) => ({
+  // ⚠ ЗАПЕЧЁННЫЙ ПОВОРОТ ТАЗА МЕНЯЕТ ЗНАК ВМЕСТЕ С ПОЗОЙ: `flipPose` зеркалит и рыск таза, а число в клипе —
+  // подпись к нему; оставь как было — и редактор написал бы «+10°» под клипом, где таз повёрнут на −10°.
+  return { ...c, ...(c.hipsYawDeg ? { hipsYawDeg: -c.hipsYawDeg } : {}), keys: c.keys.map((k) => ({
     ...k, pose: flipPose(k.pose),
     marks: k.marks?.map((m) => (m.foot ? { ...m, foot: m.foot === 'L' ? 'R' as const : 'L' as const } : { ...m })),
   })) };

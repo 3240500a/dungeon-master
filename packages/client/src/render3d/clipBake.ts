@@ -49,7 +49,8 @@ import type { Clip, Keyframe, Pose } from './clipModel.js';
 import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL } from './clipModel.js';
 import { pelvisEulerToWorld, pelvisOffsetToWorld } from './pelvisFrame.js';   // ⭐ вычет фейсинга — обратная композиция игры
 import type { Humanoid } from './humanoid.js';
-import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, LOCO_BAKE_REV, OPEN_SUFFIX, openCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
+import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, LOCO_BAKE_REV, yawCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
+import { pelvisHeading } from './pelvisFrame.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
 import { fitSmoothLoop } from './clipFit.js';
@@ -91,16 +92,31 @@ function warpFree<T>(player: PosePlayer, warpRad: number, fn: () => T): T {
   try { return fn(); } finally { setDirWarpOverride(was); player.resetDirWarp(); }
 }
 /**
- * Кадр съёма с чужим тазом — ошибка запекания, а не «чуть кривой клип»: пусть редактор не запишет его вовсе.
- * `wantDeg` — 0 у кардинального клипа, ±раскрытие у набора «таз открыт». Живого раскрытия (`hipsMode`) на съёме быть не
- * должно: перекрытие доворота его гасит.
+ * ⭐⭐ КАДР СЪЁМА С ЧУЖИМ ТАЗОМ — ОШИБКА ЗАПЕКАНИЯ, а не «чуть кривой клип»: пусть редактор не запишет его вовсе.
+ *
+ * ⚠⚠ СТОРОЖ МЕРЯЕТ ТАЗ ПО РИГУ, А НЕ СКЛАДЫВАЕТ ИЗВЕСТНЫЕ СЛАГАЕМЫЕ. Раньше он сверял `pelvisYaw − aimRootYaw`
+ * с ожиданием, то есть сумму «курс + доворот + раскрытие» саму с собой: НОВЫЙ источник рыска таза (а качание
+ * `hipsYawSwing` сидит в КОСТИ и в `pelvisYaw` не входит вовсе) проскочил бы молча и уехал в клип незамеченным.
+ * Теперь левая часть — ЗАМЕР `pelvisHeading` по кости таза (после `pelvisToWorld`, то есть уже в мире), а правая —
+ * перечисление ВСЕГО, что мы намерены туда положить: доворот + статический поворот + замеренное качание + таз стойки.
+ * Любой пятый источник ломает равенство и останавливает съём.
+ *
+ * `warpDeg` — доворот, который на этом съёме разрешён (всегда 0: клип хода кардинальный, доворачивает рантайм).
  */
-function assertWarp(player: PosePlayer, wantDeg: number, name: string): void {
-  const got = (player.pelvisYaw - player.aimRootYaw) * 180 / Math.PI;
-  if (Math.abs(player.dirWarpDeg - wantDeg) > 1e-6 || Math.abs(got - wantDeg) > 1e-6) {
-    throw new Error(`запекание «${name}»: таз от прицела ${got.toFixed(3)}° вместо ${wantDeg}° на кадре съёма — клип вышел бы не кардинальным`);
+function assertPelvis(player: PosePlayer, human: Humanoid, warpDeg: number, name: string): void {
+  const D = 180 / Math.PI;
+  const got = wrapPiLocal(pelvisHeading(human.bones.get('Hips')!.quaternion) - player.aimRootYaw) * D;
+  const want = (player.dirWarpDeg / D + player.hipsTurnRad + player.hipsYawSwingRad + player.clipHipsYawRad + player.stancePelvisYaw) * D;
+  if (Math.abs(player.dirWarpDeg - warpDeg) > 1e-6) {
+    throw new Error(`запекание «${name}»: доворот таза ${player.dirWarpDeg.toFixed(3)}° вместо ${warpDeg}° на кадре съёма — клип вышел бы не кардинальным`);
+  }
+  if (Math.abs(wrapPiLocal((got - want) / D)) * D > 1e-4) {
+    throw new Error(`запекание «${name}»: рыск таза ${got.toFixed(3)}° на кадре съёма, а известные источники дают ${want.toFixed(3)}° `
+      + `— у таза появился ещё один источник поворота, и он ушёл бы в клип молча`);
   }
 }
+/** Угол в (−π, π] — своя копия (файл не тянет рантайм ради одной строки). */
+const wrapPiLocal = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** Максимальная скорость, к которой нормируются vx/vz спеки (как ползунок «Бег» в редакторе). */
 export const BAKE_MAXSPD = LOCO_BAKE_MAXSPD;
@@ -114,12 +130,6 @@ export interface GaitSpec {
   /** Не задана → длительность определяется циклом ноги. Задана → снимаем ровно столько секунд. */
   durationSec?: number;
   loop?: boolean;               // по умолчанию true для циклических
-  /**
-   * ⭐ «ТАЗ ОТКРЫТ» (набор `*_strafe_*_open`), °: на съёме таз повёрнут К ХОДУ ровно на столько (знак — по `vx`), и
-   * вычитается ТОЛЬКО прицельный корень — раскрытие (Hips.y) и отворот Spine..UpperChest остаются В КЛИПЕ. Клип
-   * канонический: сыгранный как есть, держит грудь на прицеле. Нет/0 — кардинальный клип (доворот на съёме 0).
-   */
-  hipsOpenDeg?: number;
 }
 
 export interface BakeGaitOptions {
@@ -237,6 +247,14 @@ export function removeLoopDrift(grid: Pose[]): void {
   }
 }
 
+/** Наибольший |рыск таза| по ключам клипа (рад): по нему решается, есть ли в клипе авторский поворот таза вообще. */
+function maxHipsYaw(keys: readonly Keyframe[]): number {
+  let m = 0;
+  for (const k of keys) { const h = k.pose['Hips']; if (h) m = Math.max(m, Math.abs(h[0] === 0 && h[2] === 0 ? h[1] : pelvisHeading(_myQ.setFromEuler(_myE.set(h[0], h[1], h[2], 'XYZ'))))); }
+  return m;
+}
+const _myE = new THREE.Euler(), _myQ = new THREE.Quaternion();
+
 export type LoopKeyOpts = Pick<BakeGaitOptions, 'fps' | 'epsDeg' | 'smooth' | 'smoothEpsDeg' | 'smoothSigmaCycle'>;
 /**
  * Плотные кадры цикла → ключи клипа: гладкие (сплайн, `fitSmoothLoop`) или ломаная, и замыкание цикла ключом на периоде.
@@ -271,34 +289,33 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
   // ⚠ ПРОЦЕДУРКА И БЕЗ ДОВОРОТА — И У ОДИНОЧНОГО СЪЁМА, а не только у набора (`bakeGaitSet`). Было: одиночный вызов
   // при опубликованном `locoMix` 1 шёл в «только клипы», фаза планировщика стояла, фронт не ловился — и клип молча
   // снимался окном 1 с С САМИХ ЗАПЕЧЁННЫХ клипов (поймано зондом: период ровно 1.000 у всех страйфов).
-  const openDeg = (spec.hipsOpenDeg ?? 0) * Math.sign(spec.vx || 0);
-  assertOpenBudget(player, spec, openDeg);
-  return procedural(player, () => warpFree(player, openDeg * Math.PI / 180, () => bakeGaitWarpFree(player, human, spec, opts, openDeg)));
+  return procedural(player, () => warpFree(player, 0, () => bakeGaitWarpFree(player, human, spec, opts)));
 }
 /**
- * ⭐ РАСКРЫТИЕ БОЛЬШЕ БЮДЖЕТА СКРУТКИ — ОТКАЗ В СЪЁМЕ, А НЕ ТИХО КРИВОЙ КЛИП.
+ * ⭐⭐ ПОВОРОТ ТАЗА БОЛЬШЕ БЮДЖЕТА СКРУТКИ — ОТКАЗ В СЪЁМЕ, А НЕ ТИХО КРИВОЙ КЛИП.
  *
- * Контракт `_open`: клип КАНОНИЧЕСКИЙ — таз раскрыт на `a`, отворот `−a` запечён в Spine..UpperChest, и любой движок,
- * сыгравший его как есть, держит грудь на прицеле. Отворот кладёт `step` числом `clamp(residual − раскрытие, ±maxTwist)`:
- * при `maxTwist` меньше раскрытия он УПИРАЕТСЯ в предел, и в клип уходит отворота меньше, чем просили, — на
- * `(раскрытие − maxTwist) × c3`, где `c3` — сумма весов Spine/Chest/UpperChest. ЗАМЕР (манекен, веса 0.15/0.25/0.3,
- * c3 = 0.7, раскрытие 35°, бег 120 u/с вбок): при `maxTwist` 80° клип, сыгранный КАК ЕСТЬ, держит грудь на 0.0° от
- * прицела и наш рантайм на 0.2°; при `maxTwist` 20° — 10.5° и 5.1° соответственно, ровно `(35 − 20) × 0.7`.
+ * Контракт клипа страйфа с повёрнутым тазом: он КАНОНИЧЕСКИЙ — таз повёрнут на `a`, отворот `−a` запечён в
+ * Spine..UpperChest, и любой движок, сыгравший его как есть, держит грудь на прицеле. Отворот кладёт `step` числом
+ * `clamp(residual − a, ±maxTwist)`: при `maxTwist` меньше `a` он УПИРАЕТСЯ в предел, и в клип уходит отворота
+ * меньше, чем просили, — на `(a − maxTwist) × c3`, где `c3` — сумма весов Spine/Chest/UpperChest. ЗАМЕР (манекен,
+ * веса 0.15/0.25/0.3, c3 = 0.7, угол 35°, бег 120 u/с вбок): при `maxTwist` 80° клип, сыгранный КАК ЕСТЬ, держит
+ * грудь на 0.0° от прицела и наш рантайм на 0.2°; при `maxTwist` 20° — 10.5° и 5.1°, ровно `(35 − 20) × 0.7`.
  * ⚠ Записать «сколько получилось» вместо «сколько просили» мало: клип станет самосогласованным, но грудь всё равно
- * будет мимо прицела. Единственный честный выход — сказать это автору: подними предел или опусти раскрытие.
+ * будет мимо прицела. Единственный честный выход — сказать это автору: подними предел или опусти поворот.
+ *
+ * ⚠⚠ ПРОВЕРЯЕТСЯ КАЖДЫЙ КАДР СЪЁМА, А НЕ ОДНО ЧИСЛО ЗАРАНЕЕ, — потому что теперь у рыска есть КАЧАНИЕ: в бюджет
+ * упирается ПИК `|поворот| + |качание|`, а не его среднее, и посчитать пик «на бумаге» нельзя (амплитуда качания
+ * зависит от `walkingAmp(drive)`, то есть от вышедшей на режим скорости планировщика).
  */
-function assertOpenBudget(player: PosePlayer, spec: GaitSpec, openDeg: number): void {
-  if (!openDeg) return;
-  const tw = blendTwist(player.twistStates, Math.hypot(spec.vx, spec.vz) * BAKE_MAXSPD);
-  const maxDeg = tw.maxTwist * 180 / Math.PI;
-  if (Math.abs(openDeg) <= maxDeg + 1e-6) return;
-  const c3 = (tw.weights[0] ?? 0) + (tw.weights[1] ?? 0) + (tw.weights[2] ?? 0);
-  const offDeg = (Math.abs(openDeg) - maxDeg) * c3;   // столько отворота не влезло — ровно на столько уедет грудь
-  throw new Error(`запекание «${spec.name}»: раскрытие ${Math.abs(openDeg).toFixed(0)}° больше «макс. скрутка верха» `
-    + `${maxDeg.toFixed(0)}° — верх не отвернётся обратно, и клип вышел бы НЕ каноническим: грудь мимо прицела `
-    + `на ${offDeg.toFixed(1)}°. Подними «макс. скрутка верха» или опусти раскрытие.`);
+function assertYawBudget(player: PosePlayer, name: string, maxTwist: number): void {
+  const a = player.hipsTurnRad + player.hipsYawSwingRad;
+  if (Math.abs(a) <= maxTwist + 1e-9) return;
+  const D = 180 / Math.PI;
+  throw new Error(`запекание «${name}»: поворот таза ${Math.abs(a * D).toFixed(1)}° (с качанием, на пике) больше `
+    + `«макс. скрутка верха» ${(maxTwist * D).toFixed(0)}° — верх не отвернётся обратно, и клип вышел бы НЕ каноническим: `
+    + `грудь уедет с прицела. Подними «макс. скрутка верха» или опусти поворот/качание таза.`);
 }
-function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions, openDeg: number): BakeGaitResult {
+function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions): BakeGaitResult {
   const fps = Math.max(1, opts.fps ?? 60);
   const dt = 1 / fps;
   const warm = opts.warmSec ?? 2;
@@ -309,6 +326,10 @@ function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, o
   const moving = Math.hypot(vx, vz) > 1;
   const yaw = spec.yaw ?? (moving ? Math.atan2(vx, vz) : 0);
 
+  // ⭐⭐ КАЖДЫЙ ПРЕСЕТ — С ЧИСТОГО ЛИСТА (см. `PosePlayer.resetGaitState`). Разогрев 2 с выводит на режим сглаженные
+  // величины, но НЕ обнуляет фазу планировщика и его планты: без сброса содержимое клипа зависело от того, что
+  // снималось ПЕРЕД ним, и правка одной ручки двигала чужие клипы (ЗАМЕР — 22.48° на `run_back`).
+  player.resetGaitState();
   player.setVel(vx, vz);
   player.setYaw(yaw);
   player.snapYaw();
@@ -316,11 +337,22 @@ function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, o
 
   for (let t = 0; t < warm; t += dt) player.step(dt);         // выход на режим (планты/подшаг/torso-lead устаканиваются)
 
+  // ⭐ БЮДЖЕТ СКРУТКИ — ПО ЭТОЙ СКОРОСТИ (профиль скрутки зависит от неё), а сам предел проверяется НА КАЖДОМ кадре.
+  const maxTwist = blendTwist(player.twistStates, Math.hypot(vx, vz)).maxTwist;
+  let yawSum = 0, yawN = 0;                                  // средний статический поворот таза за съём (подпись клипа)
+
   const dense: Keyframe[] = [];
   let periodSec = spec.durationSec ?? 0;
   let cyclic = false;
-  // Вычитаем ПРИЦЕЛЬНЫЙ корень: у кардинального клипа таз с ним совпадает (доворот 0), у «таз открыт» раскрытие остаётся в клипе.
-  const take = (): Pose => { assertWarp(player, openDeg, spec.name); return neutralizeFacing(read(), player.aimRootYaw, human.hipsRest); };
+  // ⭐ ВЫЧИТАЕМ ПРИЦЕЛЬНЫЙ КОРЕНЬ, А НЕ ВЕСЬ ПРИЛОЖЕННЫЙ КУРС: доворот на съёме 0, а ПОВОРОТ ТАЗА (`POSE.hipsTurn`)
+  // обязан ОСТАТЬСЯ в клипе — он авторские данные, как крен и наклон. Вместе с ним в клипе остаётся и качание рыска
+  // (оно и так в кости), и встречный отворот Spine..UpperChest: клип выходит каноническим.
+  const take = (): Pose => {
+    assertPelvis(player, human, 0, spec.name);
+    assertYawBudget(player, spec.name, maxTwist);
+    yawSum += player.hipsTurnRad; yawN++;
+    return neutralizeFacing(read(), player.aimRootYaw, human.hipsRest);
+  };
 
   if (spec.durationSec !== undefined || !moving) {
     // Нецикличный (или стойка): снимаем фиксированное окно. Для стойки хватает пары кадров.
@@ -383,12 +415,17 @@ function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, o
   // Стоя (стойка, повороты) скорости нет — и поля нет: у них часы не путевые.
   const bakeSpeed = moving ? +Math.hypot(vx, vz).toFixed(4) : 0;
   // Ревизия — тоже только у клипов хода: у стойки нет доворота, её и перезапекать незачем.
-  // «Таз открыт»: угол и доли отворота, с которыми он запечён, — рантайм снимает отворот ровно ими, даже если `pe_twist` поменяют.
-  const counterW = openDeg ? openCounterWeights(blendTwist(player.twistStates, Math.hypot(vx, vz)).weights) : null;
+  // ⭐ ПОВОРОТ ТАЗА: угол (подпись) и доли отворота, с которыми клип запечён, — рантайм снимает отворот ровно ими,
+  // даже если `pe_twist` потом поменяют, иначе бленд стойки разбавил бы встречную скрутку (см. `unbakeYawCounter`).
+  // ⚠ Метка ставится по ПОЛНОМУ рыску (поворот ИЛИ качание): без неё рантайм не узнает, что в клипе есть авторский
+  // рыск таза, и не вычтет его из бюджета скрутки — грудь уедет с прицела на весь угол.
+  const yawDeg = yawN ? +(yawSum / yawN * 180 / Math.PI).toFixed(3) : 0;
+  const hasYaw = maxHipsYaw(reduced) > 5e-4;                 // ≈0.03°: ниже этого рыска в клипе нет (округление ключей)
+  const counterW = hasYaw ? yawCounterWeights(blendTwist(player.twistStates, Math.hypot(vx, vz)).weights) : null;
   return {
     clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced,
       ...(bakeSpeed > 0 ? { bakeSpeed, bakeRev: LOCO_BAKE_REV, ...(opts.bakeId ? { bakeId: opts.bakeId } : {}) } : {}),
-      ...(openDeg && counterW ? { hipsOpenDeg: Math.abs(openDeg), hipsOpenW: counterW.map((v) => +v.toFixed(4)) } : {}) },
+      ...(counterW ? { hipsYawDeg: yawDeg, hipsYawW: counterW.map((v: number) => +v.toFixed(4)) } : {}) },
     frames: dense.length, keys: reduced.length, periodSec, cyclic,
     ...(fit ? { fitErrDeg: +fit.errDeg.toFixed(2), rawErrDeg: +fit.rawErrDeg.toFixed(2) } : {}),
   };
@@ -439,18 +476,6 @@ export const GAIT_PRESETS: readonly GaitSpec[] = [
   { name: 'run_strafe_L', vx: -RUN, vz: 0, yaw: 0 },
   { name: 'run_strafe_R', vx: RUN, vz: 0, yaw: 0 },
 ] as const;
-
-/**
- * ⭐ НАБОР «ТАЗ ОТКРЫТ»: четыре страйфа с раскрытием таза к ходу, имена `<страйф>_open`. Снимается тем же планировщиком,
- * что и кардинальный, только таз на съёме повёрнут к ходу: ноги шагают диагональю ОТНОСИТЕЛЬНО ТАЗА (колени за тазом), в
- * мире — ровно вбок. Угол 0 — клип не нужен: колонка этой скорости играет кардинальный. Живой вид того же набора —
- * «Бег» без «только клипы» в режиме «таз открыт».
- */
-export const openStrafePresets = (runDeg: number, walkDeg: number): GaitSpec[] =>
-  GAIT_PRESETS.filter((s) => /_strafe_/.test(s.name))
-    .map((s) => ({ ...s, name: s.name + OPEN_SUFFIX, hipsOpenDeg: /^run_/.test(s.name) ? runDeg : walkDeg }))
-    .filter((s) => s.hipsOpenDeg > 0.5);
-
 
 /** Имена, включённые по умолчанию, — ВЕСЬ набор (походка и повороты на месте): лишнего в нём нет. */
 export const defaultBakePick = (specs: readonly { name: string }[] = [...GAIT_PRESETS, ...TURN_PRESETS]): string[] =>
@@ -510,13 +535,14 @@ export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSp
     const fps = Math.max(1, opts.fps ?? 60), dt = 1 / fps;
     const read = opts.readPose ?? defaultReadPose(human);
     const maxSec = opts.maxSec ?? 6;
+    player.resetGaitState();   // как и у походки: поворот не должен зависеть от того, что снимали до него
     player.setVel(0, 0); player.setYaw(0); player.snapYaw(); player.resetPos();
     for (let t = 0; t < (opts.warmSec ?? 2); t += dt) player.step(dt);
     const y0 = player.pelvisYaw, aim = y0 + spec.deg * Math.PI / 180;
     player.setYaw(aim);
     const dense: Keyframe[] = [];
     const frame = (t: number): void => {
-      assertWarp(player, 0, spec.name);
+      assertPelvis(player, human, 0, spec.name);
       const p = neutralizeFacing(read(), player.pelvisYaw, human.hipsRest);
       p[ROOT_YAW] = [+(player.pelvisYaw - y0).toFixed(5), 0, 0];
       const sw = player.driver.swingLegs;

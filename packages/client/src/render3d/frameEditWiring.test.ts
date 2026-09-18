@@ -188,12 +188,9 @@ describe('⭐ предпросмотр корня (галки «корень: п
     const setBake = SRC.slice(at, SRC.indexOf('});', at) + 3);
     expect(setBake, 'набор походки — под удержанием корня').toMatch(/bakeGaitSet\(/);
     expect(setBake, 'повороты — тоже').toMatch(/bakeTurnSet\(/);
-    // И отдельный съём «таз открыт» — своя обёртка (кнопка в «Беге» и авто-пересъём по ползунку). Сканируем ТЕЛО
-    // обёртки: с 17.09 внутри неё группировка по оружию-хозяину кардинального страйфа (см. `bakeOpenSet`).
-    const ot = SRC.indexOf('const out = withRootViewOff(() => [...groups]');
-    expect(ot, 'съём «таз открыт» обёрнут `withRootViewOff`').toBeGreaterThan(0);
-    const openBake = SRC.slice(ot, SRC.indexOf('}));', ot) + 4);
-    expect(openBake, 'набор «таз открыт» — под удержанием корня').toMatch(/bakeGaitSet\(/);
+    // ⚠ ВТОРОЙ ОБЁРТКИ БОЛЬШЕ НЕТ: отдельный съём «таз открыт» снят 19.09 (поворот таза печётся в обычные клипы
+    // страйфа), и обёртка съёма в редакторе теперь РОВНО ОДНА — иначе где-то снова снимают клипы мимо удержания корня.
+    expect(SRC.match(/const out = withRootViewOff\(/g)?.length, 'обёртка съёма клипов ровно одна').toBe(1);
     expect(SRC).toMatch(/rootViewHold\+\+; syncRootView\(\); if \(tgt\) modelsTab\.drive\(human\);\s*const target = tgt/);
     expect(SRC).toMatch(/\.finally\(\(\) => \{ rootViewHold--;/);
     expect(SRC.match(/rootViewHold--/g)?.length, 'удержание снимают только `withRootViewOff` и `finally` экспорта').toBe(2);

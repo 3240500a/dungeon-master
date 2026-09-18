@@ -74,19 +74,18 @@ describe('шаги: модель меток', () => {
   });
 
   it('редактор переносит метки при перезапекании набора (иначе ручная разметка живёт до первой правки походки)', () => {
-    // ⚠ Запись в библиотеку у ОБОИХ съёмов (основной набор и «таз открыт») идёт через `putBaked` — проверяем шов, а не
-    // текст на месте: раньше сканировалось 600 символов после `histLib`, и вынос записи в функцию тихо снял бы сторожа.
+    // ⚠ Запись в библиотеку идёт через `putBaked` — проверяем шов, а не текст на месте: раньше сканировалось
+    // 600 символов после `histLib`, и вынос записи в функцию тихо снял бы сторожа.
+    // ⚠ ВТОРОГО СЪЁМА БОЛЬШЕ НЕТ: набор «таз открыт» снят 19.09, поворот таза печётся в обычные клипы страйфа.
     const src = fs.readFileSync(path.join(__dirname, 'pose-editor.ts'), 'utf8');
-    for (const h of ["histLib('запечь походку'", "histLib('запечь «таз открыт»'"]) {
-      const i = src.indexOf(h);
-      expect(i, `в редакторе нет ${h}`).toBeGreaterThan(0);
-      expect(src.slice(i, i + 400), `⚠ ${h}: запись клипов мимо putBaked`).toMatch(/putBaked\(/);
-    }
+    const h = "histLib('запечь походку'";
+    const i = src.indexOf(h);
+    expect(i, `в редакторе нет ${h}`).toBeGreaterThan(0);
+    expect(src.slice(i, i + 400), `⚠ ${h}: запись клипов мимо putBaked`).toMatch(/putBaked\(/);
+    expect(src, '⚠ отдельный съём «таз открыт» обязан быть убран целиком').not.toMatch(/histLib\('запечь «таз открыт»'/);
     const j = src.indexOf('function putBaked(');
     expect(j, 'нет функции putBaked').toBeGreaterThan(0);
     expect(src.slice(j, j + 900), '⚠ перезапекание пишет клип без переноса меток').toMatch(/carryMarks\(/);
-    // Первый съём `_open` берёт метки у КАРДИНАЛЬНОГО клипа того же имени, иначе «открыт» терял бы авторские шаги.
-    expect(src.slice(j, j + 900), '⚠ у `_open` нет источника меток').toMatch(/_open/);
   });
 });
 
@@ -258,28 +257,29 @@ describe('шаги в рантайме', () => {
     } finally { GAIT.warpOn = was.on; GAIT.warpMax = was.max; }
   });
 
-  it('⭐ «ТАЗ ОТКРЫТ»: метки страйфа звучат ТЕ ЖЕ И ТОГДА ЖЕ, что в «ровно» — раскрытие не трогает тайминг шага', () => {
-    // ⚠ Мутация «ведущим на раскрытии становится клип `_open`» валит это: у свежезапечённого `_open` меток нет,
-    // `emitSteps` падает на касания пола — шаги съезжают и перестают быть авторскими (другой клип в событии).
-    const was = { on: GAIT.warpOn, max: GAIT.warpMax, hm: GAIT.hipsMode, op: GAIT.hipsOpen };
-    GAIT.warpOn = 1; GAIT.warpMax = 45; GAIT.hipsOpen = 35;
+  it('⚠ МЁРТВЫЙ НАБОР «ТАЗ ОТКРЫТ» (`*_strafe_*_open`) НЕ ЧИТАЕТСЯ ВОВСЕ — ни позой, ни метками', () => {
+    // Режим «таз открыт» снят 19.09, но уже запечённые клипы у автора в библиотеке лежат. Рантайм обязан их
+    // ПРОСТО НЕ ВИДЕТЬ: имена он берёт из `locoClipNames`, а `findLocoClip` ищет точное совпадение.
+    // ⚠ МУТАЦИЯ, которую это ловит: вернуть поиск `имя + '_open'` (или fuzzy-совпадение по префиксу) — и шаги
+    // зазвучат с чужого клипа в чужие моменты, а поза уедет на его рыск таза.
+    const was = { on: GAIT.warpOn, max: GAIT.warpMax };
+    GAIT.warpOn = 1; GAIT.warpMax = 45;
     try {
       const l = marked([{ u: 0.3, mark: L }, { u: 0.8, mark: Rf }]);
-      // Набор «таз открыт» БЕЗ меток — ровно как сразу после съёма.
-      const open = new Map(l);
+      const withDead = new Map(l);
       for (const sp of ['walk', 'run']) for (const sd of ['L', 'R']) {
-        const base = lib.get(`${sp}_strafe_${sd}`)!;
-        open.set(`${sp}_strafe_${sd}_open`, { ...base, name: `${sp}_strafe_${sd}_open`, hipsOpenDeg: 35, hipsOpenW: [0.25, 0.35, 0.4], keys: base.keys.map((k) => ({ t: k.t, pose: k.pose })) });
+        const base = l.get(`${sp}_strafe_${sd}`)!;
+        // У мёртвого клипа СВОИ метки в ДРУГИХ точках цикла и метка поворота таза — если его прочтут, это будет видно.
+        withDead.set(`${sp}_strafe_${sd}_open`, { ...base, name: `${sp}_strafe_${sd}_open`, hipsYawDeg: 35, hipsYawW: [0.25, 0.35, 0.4],
+          keys: base.keys.map((k, i) => ({ t: k.t, pose: k.pose, ...(i === 0 ? { marks: [L, Rf] } : {}) })) });
       }
-      const go = (hm: number): Ev[] => { GAIT.hipsMode = hm; return steps(run(open, 1, 480, (p) => { p.setVel(R, 0); p.setYaw(0); }, 60).ev); };
-      const flat = go(0), opened = go(1);
-      expect(flat.length, 'шаги в «ровно» есть').toBeGreaterThan(4);
-      expect(opened.every((e) => e.clip === 'run_strafe_R'), `⚠ метки не с кардинального клипа: ${JSON.stringify(opened.find((e) => e.clip !== 'run_strafe_R'))}`).toBe(true);
-      const dur = clipDur(lib.get('run_strafe_R')!);
-      for (const e of opened) expect(Math.abs(e.t - (e.foot === 'L' ? 0.3 : 0.8) * dur), '⚠ шаг не в точке метки автора').toBeLessThan(1e-3);
-      expect(Math.abs(opened.length - flat.length), `⚠ «открыт» ${opened.length} шагов против ${flat.length} в «ровно»`).toBeLessThanOrEqual(1);
-      expect(alternates(opened)).toBe(true);
-    } finally { GAIT.warpOn = was.on; GAIT.warpMax = was.max; GAIT.hipsMode = was.hm; GAIT.hipsOpen = was.op; }
+      const ev = steps(run(withDead, 1, 480, (p) => { p.setVel(R, 0); p.setYaw(0); }, 60).ev);
+      expect(ev.length, 'шаги вообще есть').toBeGreaterThan(4);
+      expect(ev.every((e) => e.clip === 'run_strafe_R'), `⚠ прочитан мёртвый клип: ${JSON.stringify(ev.find((e) => e.clip !== 'run_strafe_R'))}`).toBe(true);
+      const dur = clipDur(l.get('run_strafe_R')!);
+      for (const e of ev) expect(Math.abs(e.t - (e.foot === 'L' ? 0.3 : 0.8) * dur), '⚠ шаг не в точке метки автора').toBeLessThan(1e-3);
+      expect(alternates(ev)).toBe(true);
+    } finally { GAIT.warpOn = was.on; GAIT.warpMax = was.max; }
   });
 
   it('⭐ ПОВОРОТ КЛИПОМ: без меток — касания его канала, с метками — метки', () => {

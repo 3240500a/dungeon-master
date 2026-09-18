@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, getDirWarpOverride, isLocoClipFresh, LOCO_BAKE_REV, mirrorPlantCell, mirrorPlantDir, plantMirrorGaps } from './poseRuntime.js';
 import { clipPoseAt, clipDur, hipsOffset, type Clip, type Pose } from './clipModel.js';
-import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS, openStrafePresets, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
+import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
 import { locoPhaseU, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD } from './locoBlend.js';
-import { GAIT, GAIT_BASE, POSE, POSE_BASE } from './pose.js';
+import { GAIT, GAIT_BASE, POSE, POSE_BASE, STRAFE_R } from './pose.js';
 
 /**
  * ГЛАВНАЯ ПРОВЕРКА Ф2: запечённый клип воспроизводит ЖИВУЮ походку.
@@ -152,14 +152,15 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
     const hl = buildHumanoid({});
     const pl = mkPlayer(hl);
     const vx = spec.vx * BAKE_MAXSPD, vz = spec.vz * BAKE_MAXSPD;
+    pl.resetGaitState();                                       // ⭐ как и съём: пресет не зависит от того, что гоняли до него
     pl.setVel(vx, vz);
     pl.setYaw(spec.yaw ?? Math.atan2(vx, vz));
     pl.snapYaw(); pl.resetPos();
     for (let t = 0; t < warm; t += dt) pl.step(dt);
 
-    // ⚠ ВЫЧИТАЕМ ТО ЖЕ, ЧТО ЗАПЕКАТЕЛЬ: у кардинального клипа это `pelvisYaw` (доворот на съёме 0, поэтому он же —
-    // прицельный корень), у набора «таз открыт» — ТОЛЬКО прицельный корень: раскрытие обязано остаться в позе.
-    const sub = (): number => (spec.hipsOpenDeg ? pl.aimRootYaw : pl.pelvisYaw);
+    // ⚠ ВЫЧИТАЕМ ТО ЖЕ, ЧТО ЗАПЕКАТЕЛЬ: ТОЛЬКО прицельный корень. Доворот на съёме 0, а ПОВОРОТ ТАЗА обязан
+    // остаться в позе (мутация «вычитать pelvisYaw» даёт клип с ровным тазом, то есть без авторского поворота).
+    const sub = (): number => pl.aimRootYaw;
     const read = defaultReadPose(hl);
     let worst = 0, bone = '—', feet = 0;
     const all: number[] = [];
@@ -220,19 +221,22 @@ describe('clipBake — ПАРИТЕТ: запечённый клип ≈ жив�
    * ⭐ ПАРИТЕТ НОВЫХ РЕЖИМОВ. Прежние сверки шли с `warpOn` 0: тумблер доворота и «таз открыт» в них не участвовали
    * вовсе, а редактор обещает «без «только клипы» планировщик показывает то, что снимет кнопка».
    *  • доворот ВКЛ, сектора: на чистом боку доворот 0, но путь `stepDirWarp` работает и обязан не портить съём;
-   *  • набор «таз открыт»: живой планировщик раскрывает таз на `hipsOpen`, и запечённый клип обязан совпасть с ним
-   *    при вычете ПРИЦЕЛЬНОГО КОРНЯ (мутация «вычитать pelvisYaw» даёт клип с Hips 0, то есть «ровно»).
+   *  • ПОВЁРНУТЫЙ ТАЗ (`POSE.hipsTurn` + качание): живой планировщик поворачивает таз ручкой, и запечённый клип обязан
+   *    совпасть с ним при вычете ПРИЦЕЛЬНОГО КОРНЯ (мутация «вычитать pelvisYaw» даёт клип с ровным тазом).
    */
-  it('⭐ ПАРИТЕТ С ДОВОРОТОМ ВКЛ и с «таз открыт»: живой планировщик = запечённый клип', () => {
-    // ⚠ Режим у живого прогона и у съёма ОДИН: «ровно» сверяем с кардинальным клипом, «открыт» — с клипом набора
-    // `_open`. Смешать нельзя: при `hipsMode` 1 планировщик сам раскрывает таз на 35° (`legsOpen`), и кардинальный
-    // клип против него честно разойдётся (замер: среднее 4.24°, бедро 44.8°) — это не дефект, а разные режимы.
-    Object.assign(GAIT, GAIT_BASE, { warpOn: 1, warpMax: 45, hipsMode: 0, hipsOpen: 35, hipsOpenWalk: 10 });
+  it('⭐ ПАРИТЕТ С ДОВОРОТОМ ВКЛ и с ПОВЁРНУТЫМ ТАЗОМ: живой планировщик = запечённый клип', () => {
+    // ⚠ Поворот таза теперь — обычная ручка, и живой прогон с ней обязан совпасть с клипом, снятым С НЕЙ ЖЕ:
+    // угол остаётся В КЛИПЕ (вычитается только прицельный корень), а ноги плантуются в повёрнутом кадре.
+    Object.assign(GAIT, GAIT_BASE, { warpOn: 1, warpMax: 45 });
     try {
       smoothParity('run_strafe_R (доворот ВКЛ)', preset('run_strafe_R'));
-      GAIT.hipsMode = 1;
-      smoothParity('run_strafe_R_open', { ...preset('run_strafe_R'), name: 'run_strafe_R_open', hipsOpenDeg: 35 });
-    } finally { Object.assign(GAIT, GAIT_BASE); }
+      STRAFE_R['hipsTurn'] = 20 * Math.PI / 180; STRAFE_R['hipsTurnRun'] = 20 * Math.PI / 180;
+      STRAFE_R['hipsYawSwing'] = 0.08; STRAFE_R['hipsYawSwingRun'] = 0.08;
+      smoothParity('run_strafe_R (таз повёрнут 20° + качание)', preset('run_strafe_R'));
+    } finally {
+      Object.assign(GAIT, GAIT_BASE);
+      for (const k of Object.keys(STRAFE_R)) delete STRAFE_R[k];
+    }
   });
 
   it('⭐ ЛОМАНАЯ (сплайн выключен) держит прежний строгий контракт: худшая кость < 4°, стопы < 12°', () => {
@@ -347,7 +351,7 @@ describe('clipBake — набор пресетов', () => {
   /**
    * ⭐ ЗАКРЫТО (было `it.todo` «перезапечь четыре страйфа»). Старый вычет клал качание таза уже повёрнутым на доворот,
    * и игра с композицией `pelvisFrame` крутила его второй раз — таз и голова уезжали на 0.26u на курсе 0. Теперь съём
-   * идёт БЕЗ доворота (`warpFree` + `assertWarp`), круг «снял → сыграл» сходится (сторож выше и `pelvisFrame.test.ts`),
+   * идёт БЕЗ доворота (`warpFree` + `assertPelvis`), круг «снял → сыграл» сходится (сторож выше и `pelvisFrame.test.ts`),
    * а СТАРЫЕ опубликованные клипы видны и коду, и автору: `isLocoClipFresh` = false → рантайм держит старую складку
    * доворота, редактор в списке съёма пишет «⚠ с доворотом — перезапеки» (user step 4).
    */
@@ -488,14 +492,13 @@ describe('clipBake — страйфы кардинальные при любом
     } finally { GAIT.locoMix = GAIT_BASE.locoMix!; }
   });
 
-  it('⭐ ПОСЛЕ СЪЁМА НАБОРА (вместе с «таз открыт») ПЛЕЕР ЧИСТ: доворот 0, раскрытие 0, перекрытие снято', () => {
-    // ⚠ `resetDirWarp` — не гигиена. Мутация «сделать его пустым» оставляет плеер с доворотом ±35° ПОСЛЕ съёма набора
-    // «таз открыт», и живое превью «Бега» едет с него: таз 30.1 → 26.0 → 22.3° на первых кадрах после кнопки.
+  it('⭐ ПОСЛЕ СЪЁМА НАБОРА ПЛЕЕР ЧИСТ: доворот 0, перекрытие снято', () => {
+    // ⚠ `resetDirWarp` — не гигиена. Мутация «сделать его пустым» оставляет плеер с доворотом последнего пресета,
+    // и живое превью «Бега» едет с него: таз 30.1 → 26.0 → 22.3° на первых кадрах после кнопки.
     const h = buildHumanoid({});
     const p = mkPlayer(h);
-    bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, [...GAIT_PRESETS, ...openStrafePresets(35, 10)]);
+    bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, GAIT_PRESETS);
     expect(p.dirWarpDeg, 'доворот плеера после съёма').toBe(0);
-    expect(p.dirWarpOpen, 'доля раскрытия после съёма').toBe(0);
     expect(getDirWarpOverride(), 'перекрытие снято').toBe(null);
   });
 
