@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, BAKE_MAXSPD } from './clipBake.js';
@@ -115,6 +117,67 @@ describe('«только клипы»: планировщика нет', () => {
     expect(contactChanges, 'ноги переступали по клипу').toBeGreaterThan(20);
     expect([...turns], 'поворот на месте сыграл клипом').toContain('turn_R_90');
     expect([...attacks]).toContain('hit_test');
+  });
+
+  it('⭐⭐ ИГРА ХОДИТ ТОЛЬКО КЛИПАМИ: перекрытие ставится безусловно, галки «бег клипами» в настройках клиента нет', () => {
+    // Решение автора (19.09): «степ-планер из игры убираем полностью… остаётся только в поз-редакторе». `online3d` не
+    // собирается в node (рендерер, DOM), поэтому проводка стережётся по исходнику — как у остальных швов редактора.
+    const src = (f: string): string => readFileSync(path.join(__dirname, f), 'utf8');
+    const game = src('online3d.ts');
+    expect(game, '⚠ игра обязана включать «только клипы» сама, а не по галке').toMatch(/^\s*setLocoMixOverride\(1\);/m);
+    expect(game, '⚠ перекрытие снова зависит от настройки игрока').not.toMatch(/setLocoMixOverride\((?!1\))/);
+    expect(game).not.toContain('onLocoClips');
+    const settings = src('settings3d.ts');
+    expect(settings, '⚠ галка «бег клипами (иначе StepPlanner)» вернулась в настройки клиента').not.toContain('onLocoClips');
+    expect(settings).not.toMatch(/type = 'checkbox'[^\n]*loco/i);
+  });
+
+  it('⭐⭐ КУКЛА БЕЗ ЗАПЕЧЁННОГО НАБОРА НЕ ЕДЕТ СТОЛБОМ: «только клипы» требует набор, иначе ноги ведёт планировщик', () => {
+    // Игра просит «только клипы» у ВСЕХ кукол разом. Раньше режим включался по одному лишь перекрытию: планировщик
+    // выключен, клипа нет — персонаж скользил по полу в позе стоя (ЗАМЕР ниже: подъём стопы 0).
+    const lift = (content: PoseContent): number => {
+      const h = buildHumanoid({});
+      const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+      p.setVel(0, R); p.setYaw(0); p.snapYaw();
+      setLocoMixOverride(1);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < 240; i++) { p.step(1 / 60); if (i >= 120) { const y = footW(h, p, 0).y; lo = Math.min(lo, y); hi = Math.max(hi, y); } }
+      return hi - lo;
+    };
+    const none = localStorageContent('warrior');   // localStorage пуст — клипов нет вовсе
+    expect(none.locoClip!(['run_fwd'], 'none')).toBe(null);
+    expect(lift(none), '⚠ СТОЛБ: набора нет, а планировщик выключен — ноги не идут').toBeGreaterThan(3);
+    expect(lift(withLib(none)), 'с набором ноги ведёт клип').toBeGreaterThan(3);
+    // …и с набором планировщик по-прежнему не создаётся вовсе (первый сторож файла), а без него — работает он.
+    const h = buildHumanoid({}); const p = new PosePlayer(h, () => [], none, 'none', GX, emptyGrid());
+    setLocoMixOverride(1); p.setVel(0, R); p.step(1 / 60);
+    expect((p.driver as unknown as { planner: unknown }).planner, 'без набора ноги обязан вести планировщик').not.toBe(null);
+  });
+
+  it('⭐ МОНСТР БЕЗ СВОИХ КЛИПОВ ХОДИТ НАБОРОМ ПЕРСОНАЖА-ФОЛБЭКА — и тоже без планировщика', () => {
+    // Игра собирает монстров как `localStorageContent(<фракция>, 'warrior')`: своих клипов у фракций нет.
+    const was = globalThis.localStorage;
+    const clips = [...lib.values()];
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => (k === 'pe_clips' ? JSON.stringify(clips) : null), setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
+    } as unknown as Storage;
+    try {
+      const content = localStorageContent('mon_undead', 'warrior');
+      expect(content.locoClip!(['run_fwd'], 'axe')?.character, 'набор воина найден через фолбэк — под любым оружием').toBe('warrior');
+      const h = buildHumanoid({});
+      const p = new PosePlayer(h, () => [], content, 'axe', GX, emptyGrid());
+      p.setVel(0, 0); p.setYaw(0); p.snapYaw();
+      setLocoMixOverride(1);
+      const { touched, restore } = trap(p);
+      let lo = Infinity, hi = -Infinity;
+      for (const [vx, vz] of [[0, 0], [0, W], [0, R], [R, 0], [0, 0]] as const) {
+        p.setVel(vx, vz);
+        for (let i = 0; i < 60; i++) { p.step(1 / 60); if (vz === R) { const y = footW(h, p, 0).y; lo = Math.min(lo, y); hi = Math.max(hi, y); } }
+      }
+      restore();
+      expect(touched, '⚠ планировщик тронут у монстра').toEqual([]);
+      expect(hi - lo, 'ноги монстра идут по клипу').toBeGreaterThan(3);
+    } finally { (globalThis as unknown as { localStorage: Storage }).localStorage = was; }
   });
 
   it('⚠ ГАЛКУ ВКЛЮЧИЛИ НА БЕГУ — С ТОГО ЖЕ КАДРА К ПЛАНИРОВЩИКУ НИ ОДНОГО ОБРАЩЕНИЯ', () => {

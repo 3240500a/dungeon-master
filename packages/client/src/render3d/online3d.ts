@@ -193,7 +193,6 @@ export async function startOnline3d(): Promise<void> {
     if (playerLight) { playerLight.shadow.mapSize.set(shadowRes, shadowRes); playerLight.shadow.bias = sh.bias; playerLight.castShadow = playerShadows; }
     renderer.shadowMap.needsUpdate = true;
   };
-  // Галка «бег клипами» из настроек: перекрывает `pe_gait.locoMix` и переживает загрузку конфига куклы.
   const debug = mountDebug(scene, camera, canvas, root);   // DBG-панель: только debug-слои + инфо (перф-тумблеры → «Настройки»)
   const applySavedSettings = mountSettings(root, {
     onMonKinematic: (on) => { monKinematic = on; },   // применяет цикл монстров (форс кинематик всем поверх авто-физ-LOD)
@@ -212,10 +211,13 @@ export async function startOnline3d(): Promise<void> {
     },
     onAdaptiveRes: (on) => { adaptiveRes = on; if (on) prIdx = 0; else applyPR(manualPR); },   // авто (контроллер по FPS) ↔ ручной (значение ползунка)
     onResScale: (v) => { manualPR = Math.max(0.5, Math.min(2, v)); if (!adaptiveRes) applyPR(manualPR); },   // ползунок 0.5–2× (>native = суперсэмплинг); применяется в ручном режиме
-    // ⚠ Перекрывает `pe_gait.locoMix` НАСОВСЕМ (а не пишет в него): конфиг персонажа перезагружается
-    // при каждой смене куклы и затёр бы выбор игрока на первом же входе на этаж.
-    onLocoClips: (on) => setLocoMixOverride(on ? 1 : 0),
   });
+  // ⭐⭐ ИГРА ХОДИТ ТОЛЬКО КЛИПАМИ (решение автора 19.09: «степ-планер из игры убираем полностью, анимации дают лучше
+  // результат; планировщик остаётся только в поз-редакторе» — им запекается набор). Галки «бег клипами» в настройках
+  // больше нет. ⚠ Перекрытием, а НЕ записью в `GAIT.locoMix`: тот — контент редактора (ползунок превью и запекания),
+  // приезжает с конфигом персонажа и перезаписывается при каждой смене куклы. Кукла без запечённого набора остаётся на
+  // планировщике сама (`PosePlayer.hasLocoSet`) — иначе ехала бы столбом.
+  setLocoMixOverride(1);
 
   await initPhysics();
   const pw = new PhysWorld();

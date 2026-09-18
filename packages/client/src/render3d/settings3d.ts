@@ -16,9 +16,6 @@ export interface SettingsOpts {
   onAdaptiveRes?: (on: boolean) => void;   // авто-разрешение по FPS вкл/выкл
   onResScale?: (v: number) => void;        // ручное разрешение (pixelRatio) 0.5–2×
   onShadowRes?: (px: number) => void;      // разрешение теневой карты (px) — клиентская настройка качества/перфа
-  /** Локомоция: true — запечённые КЛИПЫ, false — процедурный StepPlanner. Не вызывается вовсе, пока
-   *  игрок не трогал галку: тогда работает то, что настроено в редакторе (`pe_gait.locoMix`). */
-  onLocoClips?: (on: boolean) => void;
 }
 
 const LS_KEY = 'dm3d_settings';   // сохранённые галки настроек 3D
@@ -82,25 +79,8 @@ export function mountSettings(root: HTMLElement, opts: SettingsOpts): () => void
     state['resScale'] = v; save(); opts.onResScale?.(v);
   });
 
-  // ── ЛОКОМОЦИЯ: запечённые клипы ↔ процедурный StepPlanner ────────────────────────────────────
-  //
-  // ⚠ ТРИ СОСТОЯНИЯ, А НЕ ДВА, и это осознанно. Пока галку не трогали — работает то, что настроено
-  // в редакторе (`pe_gait.locoMix`, там это ПОЛЗУНОК, а не тумблер: можно смешать). Тронул — твой
-  // выбор перекрывает настройку и переживает загрузку конфига персонажа. Поэтому колбэк не зовётся
-  // на монтировании, если в сохранённом нет ключа: «не трогал» ≠ «выключил».
-  const hasLoco = 'locoClips' in saved;
-  const loco0 = hasLoco && !!saved['locoClips'];
-  state['locoClips'] = loco0;
-  const locoBlock = document.createElement('div');
-  locoBlock.style.cssText = 'margin-top:8px;padding-top:8px;border-top:1px solid #2a3340';
-  const locoRow = document.createElement('label'); locoRow.style.cssText = 'display:block;cursor:pointer;padding:2px 0';
-  locoRow.title = 'Не трогал — как настроено в редакторе поз (доля клипа локомоции). Тронул — решает галка.';
-  const locoCb = document.createElement('input'); locoCb.type = 'checkbox'; locoCb.checked = loco0;
-  locoCb.style.cssText = 'margin-right:8px;vertical-align:middle';
-  locoCb.addEventListener('change', () => { state['locoClips'] = locoCb.checked; save(); opts.onLocoClips?.(locoCb.checked); });
-  locoRow.append(locoCb, document.createTextNode('Бег/ходьба клипами (иначе StepPlanner)'));
-  locoBlock.appendChild(locoRow);
-  panel.appendChild(locoBlock);
+  // ⭐ Галки «Бег/ходьба клипами (иначе StepPlanner)» больше нет (19.09): игра ходит ТОЛЬКО клипами, планировщик остался
+  // поз-редактору (им запекается набор). Сохранённый ключ `locoClips` у старых игроков просто не читается.
 
   // ── Разрешение теней (теневая карта, px) — клиентская настройка качества/перфа (НЕ в редакторе) ──
   const SHADOW_RES = [256, 512, 1024, 2048];
@@ -128,7 +108,6 @@ export function mountSettings(root: HTMLElement, opts: SettingsOpts): () => void
   return () => {
     opts.onShadowRes?.(shRes0);          // разрешение теней ДО applyShadows (его дёрнут колбэки теней ниже)
     for (const r of ROWS) if (state[r.key]) r.cb?.(true);
-    if (hasLoco) opts.onLocoClips?.(loco0);   // «не трогал» — молчим, работает настройка редактора
     opts.onResScale?.(resScale0);        // сначала ручное значение (manualPR)
     opts.onAdaptiveRes?.(resAuto0);      // затем режим: авто (контроллер) или ручной (применит manualPR)
   };

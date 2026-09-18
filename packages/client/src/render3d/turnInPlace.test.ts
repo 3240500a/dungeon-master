@@ -251,6 +251,9 @@ describe('шов клипа поворота: таз и ноги не прыга
     const h = buildHumanoid({}); const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
     const lib = new Map<string, Clip>();
     for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib.set(r.clip.name, r.clip);
+    // ⚠ И КЛИП ХОДА: с 19.09 режим «только клипы» требует у куклы запечённый НАБОР (`PosePlayer.hasLocoSet`) — без него
+    // кукла остаётся на планировщике, чтобы не ехать столбом. Здесь персонаж стоит, и сам клип хода не играет ни кадра.
+    lib.set('walk_fwd', bakeGaitToClip(p, h, GAIT_PRESETS.find((s) => s.name === 'walk_fwd')!, { character: 'warrior', weapon: 'none' }).clip);
     return lib;
   };
   interface Play { ys: number[]; leg: number[]; clips: string[]; start: number; end: number; standLegs: THREE.Quaternion[]; legs: THREE.Quaternion[] }

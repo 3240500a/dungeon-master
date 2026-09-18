@@ -5113,6 +5113,15 @@ function renderGaitTune(): void {
   grp('процедурно ↔ клип');
   one1('доля клипа локомоции', GAITo, 'locoMix', 0, 1, 0.01);
   {
+    // ⭐ С 19.09 ИГРА ЭТОТ ПОЛЗУНОК НЕ ЧИТАЕТ: она всегда ходит клипами (`online3d`: `setLocoMixOverride(1)`), планировщик
+    // остался здесь — им настраивается походка и запекается набор. Сказать это надо прямо у ручки, иначе «поставил 0.5 —
+    // а в игре по-другому» выглядит поломкой.
+    const n0 = el('div', 'color:#e0b050;font-size:10px;margin-top:2px');
+    n0.textContent = '⚠ Только превью редактора. Игра всегда ходит клипами (планировщик из неё убран), а клипы снимаются '
+      + 'с планировщика кнопкой «запечь набор» — поэтому правка ручек походки доезжает до игры ТОЛЬКО через перезапекание.';
+    box.append(n0);
+  }
+  {
     const n2 = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
     n2.textContent = '0 — только процедурная походка (ровно как было, бит в бит). К 1 подмешивается клип '
       + '`walk_fwd` / `run_strafe_L` и т.п. по направлению и режиму. ⚠ Планировщик остаётся ЧАСАМИ: клип '
@@ -6034,7 +6043,7 @@ const testTab = createTestTab({
  * в начале координат. Жалоба «после того как нажал тест, появился ещё один меш» — это она.
  */
 function syncTestTab(): void {
-  if (tab === 'test') { if (!testTab.wanted) void testTab.start(); rtSetLocoMixOverride(testLoco); }
+  if (tab === 'test') { if (!testTab.wanted) void testTab.start(); rtSetLocoMixOverride(testLocoMix()); }
   // ⚠ Перекрытие хода — ТОЛЬКО на вкладке «Тест»: на остальных манекен обязан слушаться ползунка «процедурно ↔ клип».
   else { if (testTab.wanted) testTab.stop(); rtSetLocoMixOverride(null); }
 }
@@ -6061,11 +6070,11 @@ function renderTest(): void {
   const abL = el('span', 'color:#9aa3b8;font-size:10px;margin-right:4px'); abL.textContent = 'ход куклы:';
   ab.append(abL);
   for (const [v, label, tip] of [
-    [null, `как настроено (${GAIT.locoMix >= 0.999 ? 'клипы' : GAIT.locoMix <= 0.001 ? 'планировщик' : 'смесь ' + GAIT.locoMix.toFixed(2)})`, 'Доля клипа с вкладки «Бег» (pe_gait.locoMix).'],
-    [1, 'только клипы', 'Как в игре с галкой «бег клипами»: планировщик шагов не участвует вовсе.'],
-    [0, 'планировщик', 'Процедурная походка — для сравнения.'],
+    ['clips', 'как в игре: клипы', 'Игра всегда ходит клипами — планировщик шагов не участвует вовсе.'],
+    ['planner', 'планировщик', 'Процедурная походка — для сравнения: с неё снимаются клипы.'],
+    ['gait', `доля с «Бега» (${GAIT.locoMix.toFixed(2)})`, 'Ползунок «доля клипа локомоции» вкладки «Бег» — смешанный режим, только превью.'],
   ] as const) {
-    const b = pbtn(label, () => { testLoco = v; setPref('testLoco', v); rtSetLocoMixOverride(v); renderTest(); }, testLoco === v);
+    const b = pbtn(label, () => { testLoco = v; setPref('testLoco', v); rtSetLocoMixOverride(testLocoMix()); renderTest(); }, testLoco === v);
     b.title = tip; ab.append(b);
   }
   body.append(ab);
@@ -6081,8 +6090,14 @@ function renderTest(): void {
   hint.textContent = 'Полная картина слоёв (ноги, стойка, предметы, удар) — тумблер «◫ слои» в тулбаре: он работает и здесь, и в игре.';
   body.append(hint);
 }
-/** Выбор хода куклы вкладки «Тест»: `null` — как настроено, 1 — только клипы, 0 — планировщик. Личная настройка. */
-let testLoco: number | null = getPref<number | null>('testLoco', null);
+/**
+ * Выбор хода куклы вкладки «Тест». По умолчанию — КАК В ИГРЕ (только клипы): вкладка обещает «увиденное здесь и есть то,
+ * что будет в клиенте», а клиент с 19.09 планировщиком не ходит. Личная настройка (`pe_prefs`), на сервер не уходит.
+ */
+type TestLoco = 'clips' | 'planner' | 'gait';
+let testLoco: TestLoco = ((v: unknown): TestLoco => (v === 'planner' || v === 'gait' ? v : 'clips'))(getPref<unknown>('testLoco', 'clips'));
+/** Перекрытие доли клипа под выбор: клипы 1, планировщик 0, «доля с „Бега“» — без перекрытия (`null`). */
+const testLocoMix = (): number | null => (testLoco === 'clips' ? 1 : testLoco === 'planner' ? 0 : null);
 /**
  * Панель весов слоёв — ОДНА на редактор (вкладки «Тест» и «Бег» показывают её по очереди). Прежнюю снимаем явно: она
  * держит подписку на трассу слоёв, а `body.innerHTML = ''` про подписки не знает.
