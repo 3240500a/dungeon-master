@@ -81,7 +81,7 @@ const same = (a: Snap, b: Snap): boolean => SNAP_KEYS.every((n) => sameBone(a, b
 describe('pe_layers: разбор данных', () => {
   it('⭐ ПОИСК: свой точный → своё базовое → фолбэк точный → фолбэк базовое → умолчание; запись бьёт легаси на том же ключе', () => {
     const sway = { warrior: { none: 0.5, sword: 0.3 }, wolf: { 'sword+shield': 0.9 } };
-    const e: LayerEntry = { run: { armR: 0.8 } };
+    const e: LayerEntry = { run: { chest: 0.8 } };
     expect(lookupLayers({}, sway, 'warrior', 'sword+shield')).toMatchObject({ source: 'sway', swing: 0.3, weapon: 'sword', entry: null });
     expect(lookupLayers({}, sway, 'wolf', 'sword+shield', 'warrior'), 'свой точный раньше фолбэка').toMatchObject({ swing: 0.9, charId: 'wolf', weapon: 'sword+shield' });
     expect(lookupLayers({}, sway, 'rat', 'sword+shield', 'warrior'), 'монстр без своих — базовое оружие фолбэка').toMatchObject({ swing: 0.3, charId: 'warrior', weapon: 'sword' });
@@ -102,29 +102,30 @@ describe('pe_layers: разбор данных', () => {
 
   it('веса кадра: без записи — пять частей = легаси, голова = умолчание режима; ходьба↔бег по sb', () => {
     const out = newResolvedLayers();
-    expect(resolveLayers(null, 0.37, 0.6, 0.45, 1, out)).toEqual({ armL: 0.45, armR: 0.45, wristL: 0.45, wristR: 0.45, chest: 0.45, head: 1 });
+    expect(resolveLayers(null, 0.37, 0.6, 0.45, 1, out)).toEqual({ chest: 0.45, head: 1 });
     expect(resolveLayers(null, 0.37, 0, 0.45, 0, out).head, 'в «только клипы» головой владеет стойка').toBe(0);
-    const e: LayerEntry = { walk: { armR: 0.2 }, run: { armR: 0.8 } };
-    expect(resolveLayers(e, 0, 0, 0.5, 0, out).armR).toBeCloseTo(0.2, 12);
-    expect(resolveLayers(e, 1, 0, 0.5, 0, out).armR).toBeCloseTo(0.8, 12);
-    expect(resolveLayers(e, 0.5, 0, 0.5, 0, out).armR).toBeCloseTo(0.5, 12);
-    expect(resolveLayers(e, 0.5, 0, 0.5, 0, out).armL, 'часть без записи — умолчание').toBe(0.5);
+    const e: LayerEntry = { walk: { chest: 0.2 }, run: { chest: 0.8 } };
+    expect(resolveLayers(e, 0, 0, 0.5, 0, out).chest).toBeCloseTo(0.2, 12);
+    expect(resolveLayers(e, 1, 0, 0.5, 0, out).chest).toBeCloseTo(0.8, 12);
+    expect(resolveLayers(e, 0.5, 0, 0.5, 0, out).chest).toBeCloseTo(0.5, 12);
+    expect(resolveLayers({}, 0.5, 0, 0.5, 0, out).chest, 'часть без записи — умолчание').toBe(0.5);
+    expect(resolveLayers(e, 0.5, 0, 0.5, 0, out).head, '…а у головы умолчание СВОЁ, по режиму').toBe(0);
   });
 
   it('⭐ КОЛОНКА БОЯ РАЗРЕЖЕНА ПО КЛЮЧУ: пропуск наследует релакс ТОЙ ЖЕ скорости, а не ноль', () => {
     const out = newResolvedLayers();
-    const e: LayerEntry = { walk: { armR: 0.2 }, run: { armR: 0.8 }, combat: { run: { armR: 0.1 } } };
-    expect(resolveLayers(e, 1, 1, 0.5, 0, out).armR, 'бег в бою — своя запись').toBeCloseTo(0.1, 12);
-    expect(resolveLayers(e, 0, 1, 0.5, 0, out).armR, 'ходьба в бою — записи нет → релакс ходьбы').toBeCloseTo(0.2, 12);
-    expect(resolveLayers(e, 1, 0.5, 0.5, 0, out).armR, 'на полпути кроссфейда боя').toBeCloseTo(0.45, 12);
-    expect(resolveLayers(e, 1, 1, 0.5, 0, out).armL, 'чужая часть боем не тронута').toBe(0.5);
+    const e: LayerEntry = { walk: { chest: 0.2 }, run: { chest: 0.8 }, combat: { run: { chest: 0.1 } } };
+    expect(resolveLayers(e, 1, 1, 0.5, 0, out).chest, 'бег в бою — своя запись').toBeCloseTo(0.1, 12);
+    expect(resolveLayers(e, 0, 1, 0.5, 0, out).chest, 'ходьба в бою — записи нет → релакс ходьбы').toBeCloseTo(0.2, 12);
+    expect(resolveLayers(e, 1, 0.5, 0.5, 0, out).chest, 'на полпути кроссфейда боя').toBeCloseTo(0.45, 12);
+    expect(resolveLayers(e, 1, 1, 0.5, 1, out).head, 'чужая часть боем не тронута').toBe(1);
   });
 
   it('легаси-число → запись: пять частей на обеих скоростях, ГОЛОВЫ НЕТ (sway ею не управлял)', () => {
     const e = entryFromSway(0.45);
-    expect(e.walk).toEqual({ armL: 0.45, armR: 0.45, wristL: 0.45, wristR: 0.45, chest: 0.45 });
+    expect(e.walk).toEqual({ chest: 0.45 });
     expect(e.run).toEqual(e.walk);
-    expect(e.walk!.head).toBeUndefined();
+    expect(e.walk!.head, '`sway` головой никогда не управлял').toBeUndefined();
   });
 
   it('⭐ ПЕРВОЕ КАСАНИЕ НЕ СБРАСЫВАЕТ ОСТАЛЬНОЕ: запись под точным ключом заводится КОПИЕЙ действующей', () => {
@@ -133,56 +134,62 @@ describe('pe_layers: разбор данных', () => {
     const e = ensureLayerEntry(layers, sway, 'warrior', 'sword+shield');
     expect(layers.warrior!['sword+shield'], 'заведена под ТОЧНЫМ ключом').toBe(e);
     expect(e.run!.chest, 'действовало 0.3 базового меча — оно и скопировано').toBe(0.3);
-    setLayerCell(e, 'armR', 'run', false, 0.8);
+    setLayerCell(e, 'chest', 'run', false, 0.8);
     const out = newResolvedLayers();
     const lk = lookupLayers(layers, sway, 'warrior', 'sword+shield');
-    expect(resolveLayers(lk.entry, 1, 0, lk.swing, 0, out)).toMatchObject({ armR: 0.8, armL: 0.3, chest: 0.3 });
+    expect(resolveLayers(lk.entry, 1, 0, lk.swing, 0, out)).toMatchObject({ chest: 0.8 });
     expect(ensureLayerEntry(layers, sway, 'warrior', 'sword+shield'), 'повторный вызов отдаёт ту же запись').toBe(e);
     // Копия чужой ЗАПИСИ — глубокая: правка меча+щита не портит меч.
-    const base: LayerEntry = { run: { armR: 0.6 } };
+    const base: LayerEntry = { run: { chest: 0.6 } };
     const l2: LayerStore = { warrior: { sword: base } };
-    setLayerCell(ensureLayerEntry(l2, null, 'warrior', 'sword+shield'), 'armR', 'run', false, 0.1);
-    expect(base.run!.armR).toBe(0.6);
+    setLayerCell(ensureLayerEntry(l2, null, 'warrior', 'sword+shield'), 'chest', 'run', false, 0.1);
+    expect(base.run!.chest).toBe(0.6);
   });
 
   it('⭐ КЛЮЧ ПРАВКИ ПАНЕЛИ: под щитом правится ОБЩАЯ запись меча, пока свою не отделили явно', () => {
     const layers: LayerStore = {};
     expect(layerEditKey(layers, 'warrior', 'sword+shield')).toEqual({ key: 'sword', own: false, base: 'sword' });
     // Правка общей записи доезжает и до меча, и до меча со щитом.
-    setLayerCell(ensureLayerEntry(layers, null, 'warrior', 'sword'), 'armR', 'run', false, 0.8);
-    expect(lookupLayers(layers, null, 'warrior', 'sword+shield').entry!.run!.armR).toBe(0.8);
+    setLayerCell(ensureLayerEntry(layers, null, 'warrior', 'sword'), 'chest', 'run', false, 0.8);
+    expect(lookupLayers(layers, null, 'warrior', 'sword+shield').entry!.run!.chest).toBe(0.8);
     expect(layerEditKey(layers, 'warrior', 'sword+shield').key, 'общая запись ключ правки не меняет').toBe('sword');
     // Отделили свою — дальше правится она, и меч от неё не зависит.
     ensureLayerEntry(layers, null, 'warrior', 'sword+shield');
     expect(layerEditKey(layers, 'warrior', 'sword+shield')).toEqual({ key: 'sword+shield', own: true, base: 'sword' });
-    expect(layers.warrior!['sword+shield']!.run!.armR, 'своя заведена копией действовавшей').toBe(0.8);
+    expect(layers.warrior!['sword+shield']!.run!.chest, 'своя заведена копией действовавшей').toBe(0.8);
     expect(layerEditKey(layers, 'warrior', 'sword'), 'у оружия без щита «своя» и «общая» — одно и то же').toEqual({ key: 'sword', own: false, base: 'sword' });
   });
 
   it('ячейка панели показывает то, что РЕАЛЬНО сработает; снятие записи возвращает уровень ниже и не оставляет мусора', () => {
     const e: LayerEntry = {};
-    expect(layerCell(e, 'armR', 'run', false, 0.2, 0)).toEqual({ value: 0.2, own: false });
+    expect(layerCell(e, 'chest', 'run', false, 0.2, 0)).toEqual({ value: 0.2, own: false });
     expect(layerCell(e, 'head', 'run', false, 0.2, 0), 'у головы своё умолчание').toEqual({ value: 0, own: false });
-    setLayerCell(e, 'armR', 'run', false, 0.7);
-    expect(layerCell(e, 'armR', 'run', true, 0.2, 0), 'бой без записи показывает релакс').toEqual({ value: 0.7, own: false });
-    setLayerCell(e, 'armR', 'run', true, 1.7);
-    expect(layerCell(e, 'armR', 'run', true, 0.2, 0), 'значение зажато').toEqual({ value: 1, own: true });
-    clearLayerCell(e, 'armR', 'run', true);
+    setLayerCell(e, 'chest', 'run', false, 0.7);
+    expect(layerCell(e, 'chest', 'run', true, 0.2, 0), 'бой без записи показывает релакс').toEqual({ value: 0.7, own: false });
+    setLayerCell(e, 'chest', 'run', true, 1.7);
+    expect(layerCell(e, 'chest', 'run', true, 0.2, 0), 'значение зажато').toEqual({ value: 1, own: true });
+    clearLayerCell(e, 'chest', 'run', true);
     expect(e.combat, 'пустая колонка боя убрана').toBeUndefined();
-    clearLayerCell(e, 'armR', 'run', false);
+    clearLayerCell(e, 'chest', 'run', false);
     expect(e).toEqual({});
   });
 
   it('чужой JSON: мусор отброшен, числа зажаты, неизвестные части не едут', () => {
-    const s = readLayerStore({ warrior: { sword: { run: { armR: 3, tail: 1, armL: 'x' }, walk: 7, combat: { walk: { chest: -1 } } }, junk: 5 }, bad: null });
-    expect(s).toEqual({ warrior: { sword: { run: { armR: 1 }, combat: { walk: { chest: 0 } } } } });
+    const s = readLayerStore({ warrior: { sword: { run: { chest: 3, tail: 1, head: 'x' }, walk: 7, combat: { walk: { chest: -1 } } }, junk: 5 }, bad: null });
+    expect(s).toEqual({ warrior: { sword: { run: { chest: 1 }, combat: { walk: { chest: 0 } } } } });
     expect(readLayerStore(null)).toEqual({});
   });
 
   it('каждая кость части известна таблице «кость → часть», и части не пересекаются', () => {
     const seen = new Set<string>();
     for (const p of LAYER_PARTS) for (const b of p.bones) { expect(seen.has(b), b).toBe(false); seen.add(b); expect(LAYER_PART_OF[b]).toBe(p.id); }
-    expect([...seen].sort(), 'ровно кости верха, за которые спорят стойка и локомоция').toEqual([...ALL_BONES].sort());
+    // ⚠ РУК ЗДЕСЬ БОЛЬШЕ НЕТ: ключом им служил ЦЕЛЫЙ КЛЮЧ ОРУЖИЯ, и обе руки получали одно число (замер: под мечом
+    // пустая левая душилась наравне с занятой правой). Они переехали в `pe_swing` — ключ ПРЕДМЕТ И РУКА,
+    // сторожа в `armSwing.test.ts`. Здесь остались части, которые предмету не принадлежат.
+    expect([...seen].sort()).toEqual(['Chest', 'Head', 'Neck', 'UpperChest']);
+    for (const arm of ['LeftUpperArm', 'RightUpperArm', 'LeftHand', 'RightHand']) {
+      expect(LAYER_PART_OF[arm], `⚠ ${arm} снова в pe_layers — ось настройки рук уехала бы обратно на ключ оружия`).toBeUndefined();
+    }
   });
 });
 
@@ -206,7 +213,7 @@ describe('pe_layers: рантайм', () => {
         const got = run({ swing: 0.2, layers: { walk: { [p.id]: v }, run: { [p.id]: v } } }, { mix, spd: 120 }).snap;
         // ⚠ ГРУДЬ ТЯНЕТ ЗА СОБОЙ ЛОКАЛЬНЫЙ ПОВОРОТ `Head` — и это не протечка веса: взгляд на прицел (`applyHeadLookAt`)
         // держит голову в МИРОВОМ курсе, то есть доворачивает её ровно на столько, на сколько ушла грудь под ней.
-        const want = p.id === 'chest' ? [...p.bones, 'Head'] : [...p.bones];
+        const want = p.id === 'chest' ? [...p.bones, 'Head'] : [...p.bones];   // голову за грудью тянет look-at
         expect(moved(base, got), `часть «${p.label}»`).toEqual(want.sort());
       }
     });
@@ -233,59 +240,39 @@ describe('pe_layers: рантайм', () => {
 
   it('⭐ ХОДЬБА И БЕГ — РАЗНЫЕ ВЕСА: вес бега не трогает ходьбу на 40 u/с, вес ходьбы не трогает бег на 120', () => {
     const w0 = run({ swing: 0.2 }, { mix: 1, spd: 40 }).snap, r0 = run({ swing: 0.2 }, { mix: 1, spd: 120 }).snap;
-    const onlyRun: LayerEntry = { run: { armR: 0.9 } }, onlyWalk: LayerEntry = { walk: { armR: 0.9 } };
+    const onlyRun: LayerEntry = { run: { chest: 0.9 } }, onlyWalk: LayerEntry = { walk: { chest: 0.9 } };
     expect(same(w0, run({ swing: 0.2, layers: onlyRun }, { mix: 1, spd: 40 }).snap), 'ходьба 40: вес бега молчит').toBe(true);
-    expect(diff(r0, run({ swing: 0.2, layers: onlyRun }, { mix: 1, spd: 120 }).snap, 'RightUpperArm'), 'бег 120: вес бега работает').toBeGreaterThan(1);
+    expect(diff(r0, run({ swing: 0.2, layers: onlyRun }, { mix: 1, spd: 120 }).snap, 'Chest'), 'бег 120: вес бега работает').toBeGreaterThan(1);
     expect(same(r0, run({ swing: 0.2, layers: onlyWalk }, { mix: 1, spd: 120 }).snap), 'бег 120: вес ходьбы молчит').toBe(true);
-    expect(diff(w0, run({ swing: 0.2, layers: onlyWalk }, { mix: 1, spd: 40 }).snap, 'RightUpperArm'), 'ходьба 40: вес ходьбы работает').toBeGreaterThan(1);
+    expect(diff(w0, run({ swing: 0.2, layers: onlyWalk }, { mix: 1, spd: 40 }).snap, 'Chest'), 'ходьба 40: вес ходьбы работает').toBeGreaterThan(1);
   });
 
   it('⭐ КОЛОНКА БОЯ: в бою — свой вес, в релаксе она молчит', () => {
-    const e: LayerEntry = { combat: { run: { armR: 0.95 } } };
+    const e: LayerEntry = { combat: { run: { chest: 0.95 } } };
     const relax0 = run({ swing: 0.2 }, { mix: 1, spd: 120 }).snap;
     expect(same(relax0, run({ swing: 0.2, layers: e }, { mix: 1, spd: 120 }).snap), 'релакс: колонка боя не читается').toBe(true);
     const c0 = run({ swing: 0.2 }, { mix: 1, spd: 120, combat: true }).snap, c1 = run({ swing: 0.2, layers: e }, { mix: 1, spd: 120, combat: true }).snap;
-    expect(moved(c0, c1), 'бой: сдвинулась только правая рука').toEqual(['RightLowerArm', 'RightShoulder', 'RightUpperArm']);
+    expect(moved(c0, c1), 'бой: сдвинулась грудь (и голова за ней — её держит look-at)').toEqual(['Chest', 'Head', 'UpperChest']);
   });
 
   it('⭐ СТОЯ СТОЙКА ВЛАДЕЕТ ВСЕМ при любых весах: вес — доля ЛОКОМОЦИИ, а локомоции стоя нет', () => {
-    const one: LayerEntry = { walk: { armL: 1, armR: 1, wristL: 1, wristR: 1, chest: 1, head: 1 }, run: { armL: 1, armR: 1, wristL: 1, wristR: 1, chest: 1, head: 1 } };
+    const one: LayerEntry = { walk: { chest: 1, head: 1 }, run: { chest: 1, head: 1 } };
     for (const mix of [0, 1]) {
       const a = run({ swing: 0.2 }, { mix, spd: 0 }).snap, b = run({ swing: 0.2, layers: one }, { mix, spd: 0 }).snap;
       expect(same(a, b), `стоя, доля клипа ${mix}`).toBe(true);
     }
   });
 
-  it('⭐ ПОВОРОТ ПРЕДМЕТА В КУЛАКЕ ИДЁТ ВЕСОМ КИСТИ СВОЕЙ РУКИ: главная — правая кисть, офф-рука — левая', () => {
-    const mk = (): THREE.Group => { const g = new THREE.Group(); g.userData.baseRot = new THREE.Euler(0, 0, 0); g.userData.basePos = new THREE.Vector3(); return g; };
-    const pose: Pose = { ...STANCE, __wpnOverride: [1, 0, 0], __wpnMain: [1, 0, 0], __wpnOff: [0, 1, 0] };
-    const go = (layers: LayerEntry): [number, number] => {
-      const groups = [mk(), mk()];
-      const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => groups, { ...content({}), resolveUpper: () => ({ swing: 0.2, pose, layers }) }, 'none', GX, emptyGrid());
-      setLocoMixOverride(1); p.setYaw(0); p.snapYaw(); p.setVel(0, 120);
-      for (let i = 0; i < 120; i++) p.step(1 / 60);
-      return [groups[0]!.rotation.x, groups[1]!.rotation.y];
-    };
-    const [m0, o0] = go({});
-    const [m1, o1] = go({ run: { wristR: 0.9 } });
-    expect(m1, 'главный предмет ушёл за правой кистью').toBeLessThan(m0 - 0.3);
-    expect(o1, 'офф-рука не тронута').toBe(o0);
-    const [m2, o2] = go({ run: { wristL: 0.9 } });
-    expect(m2).toBe(m0);
-    expect(o2, 'офф-предмет ушёл за левой кистью').toBeLessThan(o0 - 0.3);
-  });
-
   it('трасса слоёв: строка «ПОЗА ВЕРХА» как была + строка на каждую часть, числа — доля локомоции этого кадра', () => {
     layerTrace.on = true;
-    run({ swing: 0.2, layers: { run: { armR: 0.8 } } }, { mix: 1, spd: 120 });
+    run({ swing: 0.2, layers: { run: { chest: 0.8 }, walk: { chest: 0.8 } } }, { mix: 1, spd: 120 });
     const row = (n: string): number => layerTrace.rows.find((r) => r.layer === n)!.w;
-    expect(row('↳ рука П')).toBeCloseTo(0.8, 6);
-    expect(row('↳ рука Л')).toBeCloseTo(0.2, 6);
+    // Руки в трассе — по ПРЕДМЕТУ в них (контент стенда рук не занимает → обе пусты → мах клипа целиком).
+    expect(row('↳ рука П'), 'пустая рука машет клипом').toBeCloseTo(1, 6);
+    expect(row('↳ рука Л')).toBeCloseTo(1, 6);
+    expect(row('↳ грудь')).toBeCloseTo(0.8, 6);
     expect(row('↳ голова'), 'в «только клипы» головой владеет стойка').toBe(0);
-    expect(row('ПОЗА ВЕРХА'), 'средний вес стойки по пяти частям').toBeCloseTo(1 - (0.8 + 0.2 * 4) / 5, 6);
-    run({ swing: 0.45 }, { mix: 1, spd: 120 });
-    expect(row('ПОЗА ВЕРХА'), 'одно число на весь верх — ровно прежнее `1 − sway`').toBeCloseTo(0.55, 12);
+    expect(layerTrace.rows.find((r) => r.layer === '↳ рука П')!.src, 'в подписи видно, что рука пуста').toContain('пуста');
   });
 });
 
@@ -317,7 +304,7 @@ describe('pe_layers: запекание снимает верх ЧИСТЫМ', (
     // ⚠ БЫЛО: размах плеча клипа 0.0° / 24.1° / 119.1° при sway 0 / 0.2 / 1 — стойка запекалась в руки долей `1 − sway`,
     // а при проигрывании клип смешивался со стойкой ВТОРОЙ раз (под мечом от маха оставалось 10 %).
     const a = bake({ swing: 0 }), b = bake({ swing: 0.2 }), c = bake({ swing: 1 });
-    const d = bake({ swing: 0.2, layers: { run: { armR: 0.05, chest: 0.9 }, walk: { armL: 0 } } });
+    const d = bake({ swing: 0.2, layers: { run: { chest: 0.9 }, walk: { head: 0 } } });
     expect(JSON.stringify(b.keys)).toBe(JSON.stringify(a.keys));
     expect(JSON.stringify(c.keys)).toBe(JSON.stringify(a.keys));
     expect(JSON.stringify(d.keys)).toBe(JSON.stringify(a.keys));
@@ -369,7 +356,7 @@ describe('pe_layers: контент игры', () => {
   const idle = (w: string): Clip => ({ name: 'idle_' + w + '_relax', character: 'warrior', weapon: w, loop: false, keys: [{ t: 0, pose: STANCE }] });
 
   it('⭐ ИГРА ЧИТАЕТ `pe_layers` ТЕМ ЖЕ ПОИСКОМ: меч+щит без своей записи берёт запись меча, легаси — умолчанием частей', () => {
-    const entry: LayerEntry = { run: { armR: 0.8 } };
+    const entry: LayerEntry = { run: { chest: 0.8 } };
     withStore({ pe_clips: [idle('none'), idle('sword')], pe_sway: { warrior: { none: 0.5, sword: 0.3 } }, pe_layers: { warrior: { sword: entry } } }, () => {
       const c = localStorageContent('warrior');
       expect(c.resolveUpper('sword+shield')).toMatchObject({ swing: 0.3, layers: entry });
@@ -389,7 +376,7 @@ describe('pe_layers: контент игры', () => {
       const live: LayerStore = {};
       let sway = { warrior: { sword: 0.3 } };
       setLayerSource(() => ({ layers: live, sway }));
-      const e: LayerEntry = { run: { armR: 0.9 } };
+      const e: LayerEntry = { run: { chest: 0.9 } };
       (live.warrior ??= {}).sword = e;                                     // «потянули ползунок»
       expect(c.resolveUpper('sword')!.layers, 'тот же контент, та же кукла — запись уже видна').toBe(e);
       sway = { warrior: { sword: 0.7 } };                                  // редактор ПЕРЕПРИСВОИЛ стор (подтянул с сервера)

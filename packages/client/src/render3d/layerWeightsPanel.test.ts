@@ -29,8 +29,8 @@ let layers: LayerStore, sway: SwayStore, saves: number, weapon: string, panel: L
 const root = (): El => panel.el as unknown as El;
 const sliders = (): El[] => root().all().filter((e) => e.tag === 'input');
 const button = (part: string): El => root().all().find((e) => e.tag === 'button' && e.textContent.includes(part))!;
-/** Двенадцать ползунков: шесть частей × ходьба/бег, в порядке `LAYER_PARTS`. Индекс «рука П · бег» = 1·2 + 1. */
-const ARM_R_RUN = 3, ARM_R_WALK = 2;
+/** Четыре ползунка: две части (грудь, голова) × ходьба/бег, в порядке `LAYER_PARTS`. «грудь · бег» = 0·2 + 1. */
+const ARM_R_RUN = 1, ARM_R_WALK = 0;
 const drag = (i: number, v: number): void => { const s = sliders()[i]!; s.value = String(v); s.oninput!(); s.onchange!(); };
 const eff = (w: string, sb: number, combat = 0): ReturnType<typeof newResolvedLayers> => {
   const lk = lookupLayers(layers, sway, 'warrior', w);
@@ -51,35 +51,36 @@ afterEach(() => { for (const p of made.splice(0)) p.dispose(); });
 describe('панель весов слоёв', () => {
   it('⭐ ПОД МЕЧОМ СО ЩИТОМ ПОЛЗУНКИ ЕСТЬ — и говорят, что действует умолчание 0.2', () => {
     // Прежний одиночный ползунок рисовался только у точного ключа с клипом стойки: у `sword+shield` его не было вовсе.
-    expect(sliders()).toHaveLength(12);
-    expect(sliders().map((s) => s.value), 'пять частей верха — 0.2, голова — 0 (в игре ею владеет стойка)')
-      .toEqual(['0.2', '0.2', '0.2', '0.2', '0.2', '0.2', '0.2', '0.2', '0.2', '0.2', '0', '0']);
+    // ⚠ Рук здесь больше нет: они резолвятся по ПРЕДМЕТУ в руке (`pe_swing`, своя панель). Осталась грудь и голова,
+    // у которой своё умолчание — в игре ею владеет стойка.
+    expect(sliders()).toHaveLength(4);
+    expect(sliders().map((s) => s.value)).toEqual(['0.2', '0.2', '0', '0']);
     expect(root().text()).toContain('действует умолчание 0.2');
     expect(root().text()).toContain('правится ОБЩАЯ запись «sword»');
   });
 
   it('⭐ ПОЛЗУНОК ПИШЕТ В ОБЩУЮ ЗАПИСЬ МЕЧА — она действует и без щита; остальные части не сброшены', () => {
     drag(ARM_R_RUN, 0.8);
-    expect(layers.warrior!.sword!.run!.armR).toBe(0.8);
+    expect(layers.warrior!.sword!.run!.chest).toBe(0.8);
     expect(layers.warrior!['sword+shield'], 'своя запись под щит сама не заводится').toBeUndefined();
     expect(saves).toBeGreaterThan(0);
-    expect(eff('sword+shield', 1)).toMatchObject({ armR: 0.8, armL: 0.2, chest: 0.2 });
-    expect(eff('sword', 1).armR, 'и голый меч получил тот же вес').toBe(0.8);
-    expect(eff('sword+shield', 0).armR, 'ходьба не тронута').toBe(0.2);
+    expect(eff('sword+shield', 1)).toMatchObject({ chest: 0.8 });
+    expect(eff('sword', 1).chest, 'и голый меч получил тот же вес').toBe(0.8);
+    expect(eff('sword+shield', 0).chest, 'ходьба не тронута').toBe(0.2);
     expect(sliders()[ARM_R_RUN]!.value, 'после перерисовки ползунок показывает записанное').toBe('0.8');
   });
 
   it('⭐ «ОТДЕЛИТЬ СВОЮ» заводит запись под точным ключом КОПИЕЙ действующей; дальше правится она, меч не трогается', () => {
     drag(ARM_R_RUN, 0.8);
     button('отделить свою').onclick!();
-    expect(layers.warrior!['sword+shield']!.run!.armR).toBe(0.8);
+    expect(layers.warrior!['sword+shield']!.run!.chest).toBe(0.8);
     expect(root().text()).toContain('правится СВОЯ запись «sword+shield»');
     drag(ARM_R_RUN, 0.3);
-    expect(eff('sword+shield', 1).armR).toBe(0.3);
-    expect(eff('sword', 1).armR, 'меч без щита остался при своих 0.8').toBe(0.8);
+    expect(eff('sword+shield', 1).chest).toBe(0.3);
+    expect(eff('sword', 1).chest, 'меч без щита остался при своих 0.8').toBe(0.8);
     button('снять свою').onclick!();
     expect(layers.warrior!['sword+shield']).toBeUndefined();
-    expect(eff('sword+shield', 1).armR, 'вернулась общая запись меча').toBe(0.8);
+    expect(eff('sword+shield', 1).chest, 'вернулась общая запись меча').toBe(0.8);
   });
 
   it('⭐ ПЕРВОЕ КАСАНИЕ НЕ СБРАСЫВАЕТ ОСТАЛЬНОЕ И НЕ ПЛОДИТ ЗАПИСЕЙ: у `none` действовало 0.5 — прочие части его наследуют', () => {
@@ -87,8 +88,8 @@ describe('панель весов слоёв', () => {
     panel = open(false);
     expect(root().text()).toContain('одно число на весь верх — 0.50');
     drag(ARM_R_WALK, 0.9);
-    expect(eff('none', 0)).toMatchObject({ armR: 0.9, armL: 0.5, wristR: 0.5, chest: 0.5, head: 0 });
-    expect(layers.warrior!.none, 'запись разрежённая: в ней только тронутая ячейка').toEqual({ walk: { armR: 0.9 } });
+    expect(eff('none', 0)).toMatchObject({ chest: 0.9, head: 0 });
+    expect(layers.warrior!.none, 'запись разрежённая: в ней только тронутая ячейка').toEqual({ walk: { chest: 0.9 } });
     expect(root().all().filter((e) => e.textContent === '↺'), 'и «своей» помечена она одна').toHaveLength(1);
   });
 
@@ -97,20 +98,20 @@ describe('панель весов слоёв', () => {
     button('бой').onclick!();
     expect(sliders()[ARM_R_RUN]!.value, 'бой наследует релакс').toBe('0.8');
     drag(ARM_R_RUN, 0.1);
-    expect(eff('sword', 1, 1).armR).toBe(0.1);
-    expect(eff('sword', 1, 0).armR, 'релакс остался').toBe(0.8);
+    expect(eff('sword', 1, 1).chest).toBe(0.1);
+    expect(eff('sword', 1, 0).chest, 'релакс остался').toBe(0.8);
     // ↺ — третий ребёнок строки ползунка (ползунок, значение, сброс).
     const rst = root().all().filter((e) => e.textContent === '↺');
     expect(rst.length, 'своя запись в бою одна').toBe(1);
     rst[0]!.onclick!();
     expect(layers.warrior!.sword!.combat, 'пустая колонка боя убрана').toBeUndefined();
-    expect(eff('sword', 1, 1).armR).toBe(0.8);
+    expect(eff('sword', 1, 1).chest).toBe(0.8);
   });
 
   it('живые доли берутся ИЗ ТРАССЫ рантайма (панель сама ничего не считает); уход со вкладки снимает подписку', () => {
     expect(layerTrace.on, 'панель с живыми долями подписана на трассу').toBe(true);
     layerTrace.t = Date.now(); layerTrace.speed = 118; layerTrace.sb = 1; layerTrace.combat = 0;
-    layerTrace.rows = [{ layer: '↳ рука П', src: 'клип хода', w: 0.62, note: 'вес 0.80 × ход 0.78' }];
+    layerTrace.rows = [{ layer: '↳ грудь', src: 'клип хода', w: 0.62, note: 'вес 0.80 × ход 0.78' }];
     panel.update();
     expect(root().text()).toContain('ход 62 %');
     expect(root().text()).toContain('118 ед/с · бег 100 %');
@@ -126,6 +127,6 @@ describe('панель весов слоёв', () => {
     drag(ARM_R_RUN, 0.8);
     button('снести веса').onclick!();
     expect(layers.warrior!.sword).toBeUndefined();
-    expect(eff('sword+shield', 1).armR).toBe(0.2);
+    expect(eff('sword+shield', 1).chest).toBe(0.2);
   });
 });

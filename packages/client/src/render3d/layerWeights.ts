@@ -27,14 +27,17 @@
  * редактор показывал 0.2, пока игра играла 0.5.
  */
 
-export type LayerPart = 'armL' | 'armR' | 'wristL' | 'wristR' | 'chest' | 'head';
+/**
+ * ⚠⚠ РУК ЗДЕСЬ БОЛЬШЕ НЕТ. До 19.09 частями были и `armL/armR/wristL/wristR`, и ключом им служил ЦЕЛЫЙ КЛЮЧ ОРУЖИЯ —
+ * то есть обе руки получали одно число. ЗАМЕР показал, что ось выбрана неверно: под мечом пустая ЛЕВАЯ душилась
+ * наравне с занятой правой (13.8° против 13.5°), а `none+shield` не приглушался вовсе (30.0°).
+ * Руки переехали в `pe_swing` — ключ ПРЕДМЕТ И РУКА (см. ниже, `lookupItemSwing`). Здесь остались части, которые
+ * предмету не принадлежат и потому одним ключом описываются честно.
+ */
+export type LayerPart = 'chest' | 'head';
 
 /** Части в порядке показа. Кости части — ровно те, что смешиваются этим весом в `poseRuntime.applyUpper`. */
 export const LAYER_PARTS: readonly { id: LayerPart; label: string; bones: readonly string[] }[] = [
-  { id: 'armL', label: 'рука Л', bones: ['LeftShoulder', 'LeftUpperArm', 'LeftLowerArm'] },
-  { id: 'armR', label: 'рука П', bones: ['RightShoulder', 'RightUpperArm', 'RightLowerArm'] },
-  { id: 'wristL', label: 'кисть Л', bones: ['LeftHand'] },
-  { id: 'wristR', label: 'кисть П', bones: ['RightHand'] },
   { id: 'chest', label: 'грудь', bones: ['Chest', 'UpperChest'] },
   { id: 'head', label: 'голова', bones: ['Neck', 'Head'] },
 ];
@@ -78,7 +81,7 @@ export const layerBaseWeapon = (w: string): string => (w.endsWith('+shield') ? w
  */
 export function entryFromSway(s: number): LayerEntry {
   const v = clamp01(s);
-  const one = (): PartWeights => ({ armL: v, armR: v, wristL: v, wristR: v, chest: v });
+  const one = (): PartWeights => ({ chest: v });
   return { walk: one(), run: one() };
 }
 
@@ -123,7 +126,7 @@ export function lookupLayers(layers: LayerStore | null | undefined, sway: SwaySt
 
 /** Веса этого кадра: доля ЛОКОМОЦИИ 0..1 на часть (до ворот по ходу — их кладёт рантайм). */
 export type ResolvedLayers = Record<LayerPart, number>;
-export const newResolvedLayers = (): ResolvedLayers => ({ armL: 0, armR: 0, wristL: 0, wristR: 0, chest: 0, head: 0 });
+export const newResolvedLayers = (): ResolvedLayers => ({ chest: 0, head: 0 });
 
 /**
  * ⚠ ТОЧНЫЙ НА КОНЦАХ: `a + (b − a)·1` в плавающей точке НЕ равно `b` (0.9 + (0.2 − 0.9) = 0.20000000000000007), и на
@@ -259,6 +262,131 @@ export function readLayerStore(raw: unknown): LayerStore {
         if (cw || cr) entry.combat = { ...(cw ? { walk: cw } : {}), ...(cr ? { run: cr } : {}) };
       }
       (out[id] ??= {})[w] = entry;
+    }
+  }
+  return out;
+}
+
+// ── ⭐⭐ МАХ РУКИ ПО ПРЕДМЕТУ В НЕЙ (`pe_swing`) ──────────────────────────────────────────────────
+
+/**
+ * Жалоба автора (19.09): «должна браться анимация бега и подмешиваться каждая рука в зависимости от того, что в ней;
+ * если в левой руке нет ничего — чтобы она махала нормально».
+ *
+ * ⚠⚠ ПОЧЕМУ ЭТО ОТДЕЛЬНЫЙ КЛЮЧ, А НЕ ПОЛЕ В `pe_layers`. У `pe_layers` ключ — ЦЕЛЫЙ КЛЮЧ ОРУЖИЯ (`sword+shield`), и
+ * обе руки получают одно число. ЗАМЕР это и показал: под мечом пустая ЛЕВАЯ рука душилась наравне с занятой правой
+ * (13.8° против 13.5°), а `none+shield` не приглушался ВООБЩЕ (30.0°), потому что `layerBaseWeapon('none+shield')`
+ * даёт `none`. Ось настройки была выбрана неверно — чинится она сменой ОСИ, а не значений.
+ *
+ * Здесь ключ — ПРЕДМЕТ, а рука выбирается тем, в какой он руке. Пустая рука (`none`) не имеет записи вовсе и
+ * получает `a=0, k=1` — то есть машет ровно как в клипе.
+ */
+export type ArmPart = 'arm' | 'elbow' | 'wrist';
+export const ARM_PARTS: readonly { id: ArmPart; label: string }[] = [
+  { id: 'arm', label: 'плечо' }, { id: 'elbow', label: 'локоть' }, { id: 'wrist', label: 'кисть' },
+];
+/** Пара весов шва (`armBlend.ts`): `a` — где покой (0 нейтраль клипа ↔ 1 авторская стойка), `k` — сколько маха. */
+export interface SwingPair { a: number; k: number }
+export type SwingSet = Record<ArmPart, SwingPair>;
+export type ItemSwing = Partial<Record<ArmPart, Partial<SwingPair>>>;
+export interface SwingEntry { walk?: ItemSwing; run?: ItemSwing; combat?: { walk?: ItemSwing; run?: ItemSwing } }
+/** Содержимое ключа `pe_swing`: персонаж → ПРЕДМЕТ (не ключ оружия!) → настройка. */
+export type SwingStore = Record<string, Record<string, SwingEntry>>;
+
+/** Кость → (рука, часть). Кости вне таблицы швом рук не управляются (грудь, шея, голова — у них свой вес). */
+export const ARM_BONE_OF: Readonly<Record<string, { hand: 'main' | 'off'; part: ArmPart }>> = {
+  RightShoulder: { hand: 'main', part: 'arm' }, RightUpperArm: { hand: 'main', part: 'arm' },
+  RightLowerArm: { hand: 'main', part: 'elbow' }, RightHand: { hand: 'main', part: 'wrist' },
+  LeftShoulder: { hand: 'off', part: 'arm' }, LeftUpperArm: { hand: 'off', part: 'arm' },
+  LeftLowerArm: { hand: 'off', part: 'elbow' }, LeftHand: { hand: 'off', part: 'wrist' },
+};
+
+/**
+ * ⭐ УМОЛЧАНИЯ ПО КЛАССУ ПРЕДМЕТА — В ДАННЫХ, А НЕ В ГОЛОВЕ АВТОРА. Без записи в конфиге персонаж уже выглядит
+ * разумно, и «лес ползунков» не нужен: крутить надо только то, что не устраивает.
+ *
+ * ПУСТАЯ РУКА — `a=0, k=1`: нейтраль клипа и полная дуга, то есть РОВНО клип. Это прямая просьба автора.
+ * ПРЕДМЕТ — `a=1`: покой руки в авторской стойке (оружие держится как настроено), а мах ужимается `k`.
+ * ЛОКОТЬ ужимается сильнее плеча: ЗАМЕР — из мирового размаха кисти (98.6°) локоть даёт 43°, то есть меч метёт дугу
+ * в основном предплечьем. Гасить его отдельно точнее, чем гасить всю руку.
+ * КИСТЬ — `k=0`: хват обязан стоять там, где его поставил автор. В запечённых клипах её канал и так ноль
+ * (планировщик кисть не пишет), но у импортного мокапа он будет ненулевым — и тогда меч бы закрутило.
+ */
+export const swingDefault = (item: string): SwingSet => {
+  if (item === 'none' || !item) return { arm: { a: 0, k: 1 }, elbow: { a: 0, k: 1 }, wrist: { a: 0, k: 1 } };
+  const two = TWO_HANDED_ITEMS.has(item);
+  return two
+    ? { arm: { a: 1, k: 0.35 }, elbow: { a: 1, k: 0.3 }, wrist: { a: 1, k: 0 } }
+    : { arm: { a: 1, k: 0.6 }, elbow: { a: 1, k: 0.4 }, wrist: { a: 1, k: 0 } };
+};
+/** Двуручные предметы — ДУБЛЬ списка из `poseLayers.TWO_HANDED` (модуль чистый, без импорта сцены). Сторож сверяет. */
+export const TWO_HANDED_ITEMS = new Set(['greatsword', 'greataxe', 'greatmaul', 'halberd', 'spear', 'staff', 'bow', 'crossbow']);
+
+const pair = (v: unknown, d: SwingPair): SwingPair => {
+  const o = (v ?? {}) as Partial<SwingPair>;
+  return { a: num(o.a) ?? d.a, k: num(o.k) ?? d.k };
+};
+
+/**
+ * Веса кадра для ОДНОГО предмета: умолчание класса → своя запись (релакс) → колонка боя; ходьба↔бег по `sb`.
+ * Локоть без своей записи наследует ПЛЕЧО той же скорости — иначе «покрутил плечо, а локоть остался» читается поломкой.
+ */
+export function lookupItemSwing(store: SwingStore | null | undefined, charId: string, item: string,
+  sb: number, combat: number, fallbackId?: string): SwingSet {
+  const d = swingDefault(item);
+  const e = store?.[charId]?.[item] ?? (fallbackId ? store?.[fallbackId]?.[item] : undefined);
+  const s = clamp01(sb), c = clamp01(combat);
+  const at = (col: ItemSwing | undefined, p: ArmPart, base: SwingPair): SwingPair => pair(col?.[p], base);
+  const out = {} as SwingSet;
+  for (const p of ['arm', 'elbow', 'wrist'] as const) {
+    // ⭐ ЛОКОТЬ БЕЗ СВОЕЙ ЗАПИСИ ИДЁТ ЗА ПЛЕЧОМ, НО В ПРОПОРЦИИ КЛАССА. Слепое наследование убило бы умолчание
+    // класса («локоть тише плеча»), а полная независимость читалась бы поломкой: покрутил плечо — локоть не
+    // шелохнулся. Поэтому база локтя = разрешённое плечо × (умолчание локтя / умолчание плеча): не трогали ничего —
+    // ровно умолчание класса; подняли плечо — локоть идёт следом, оставаясь тише.
+    const base = p === 'elbow'
+      ? { a: out.arm.a, k: d.arm.k > 1e-6 ? clamp01(out.arm.k * (d.elbow.k / d.arm.k)) : d.elbow.k }
+      : d[p];
+    const w = at(e?.walk, p, base), r = at(e?.run, p, base);
+    let a = lerp(w.a, r.a, s), k = lerp(w.k, r.k, s);
+    if (c > 0 && e?.combat) {
+      const cw = at(e.combat.walk, p, w), cr = at(e.combat.run, p, r);
+      a = lerp(a, lerp(cw.a, cr.a, s), c); k = lerp(k, lerp(cw.k, cr.k, s), c);
+    }
+    out[p] = { a: clamp01(a), k: clamp01(k) };
+  }
+  return out;
+}
+
+/** Разобрать сырой `pe_swing` (чужой JSON): мусор отброшен, числа зажаты. */
+export function readSwingStore(raw: unknown): SwingStore {
+  const out: SwingStore = {};
+  if (!raw || typeof raw !== 'object') return out;
+  const col = (v: unknown): ItemSwing | undefined => {
+    if (!v || typeof v !== 'object') return undefined;
+    const o: ItemSwing = {};
+    for (const p of ['arm', 'elbow', 'wrist'] as const) {
+      const src = (v as Record<string, unknown>)[p];
+      if (!src || typeof src !== 'object') continue;
+      const a = num((src as Record<string, unknown>).a), k = num((src as Record<string, unknown>).k);
+      if (a !== undefined || k !== undefined) o[p] = { ...(a !== undefined ? { a } : {}), ...(k !== undefined ? { k } : {}) };
+    }
+    return Object.keys(o).length ? o : undefined;
+  };
+  for (const [id, byItem] of Object.entries(raw as Record<string, unknown>)) {
+    if (!byItem || typeof byItem !== 'object') continue;
+    for (const [item, e] of Object.entries(byItem as Record<string, unknown>)) {
+      if (!e || typeof e !== 'object') continue;
+      const src = e as Record<string, unknown>;
+      const entry: SwingEntry = {};
+      const w = col(src.walk), r = col(src.run);
+      if (w) entry.walk = w;
+      if (r) entry.run = r;
+      if (src.combat && typeof src.combat === 'object') {
+        const cc = src.combat as Record<string, unknown>;
+        const cw = col(cc.walk), cr = col(cc.run);
+        if (cw || cr) entry.combat = { ...(cw ? { walk: cw } : {}), ...(cr ? { run: cr } : {}) };
+      }
+      (out[id] ??= {})[item] = entry;
     }
   }
   return out;
