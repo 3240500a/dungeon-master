@@ -18,7 +18,8 @@
 import { layerTrace } from './poseRuntime.js';
 import { watchLayerTrace } from './layerTraceView.js';
 import { LAYER_PARTS, LAYER_FIXED, LAYER_LEGACY_DEFAULT, lookupLayers, layerEditKey, layerCell, setLayerCell, clearLayerCell, ensureLayerEntry, ownLayerEntry,
-  type LayerPart, type LayerSpeed, type LayerStore, type SwayStore } from './layerWeights.js';
+  ARM_PARTS, lookupItemSwing, swingDefault, TWO_HANDED_ITEMS,
+  type ArmPart, type LayerPart, type LayerSpeed, type LayerStore, type SwayStore, type SwingEntry, type SwingStore } from './layerWeights.js';
 
 export interface LayerPanelHost {
   charId(): string;
@@ -27,6 +28,10 @@ export interface LayerPanelHost {
   layers(): LayerStore;
   /** Легаси `pe_sway` (только чтение): умолчание частей без своей записи. */
   sway(): SwayStore;
+  /** ЖИВОЙ стор `pe_swing` — мах рук по ПРЕДМЕТУ (ключ не оружия, а предмета в руке). */
+  swing(): SwingStore;
+  /** Что сейчас в какой руке — по тому же разбору сборки стойки, что у рантайма. */
+  hands(): { main: string; off: string };
   save(): void;
   /** Показывать ли живые «сейчас NN %» (нужна шагающая кукла — вкладки «Тест» и «Бег» с превью). */
   live?: boolean;
@@ -72,7 +77,95 @@ export function createLayerWeightsPanel(host: LayerPanelHost): LayerPanel {
   /** Под каким ключом правим: своя запись точного ключа, если она есть, иначе ОБЩАЯ базового оружия (`layerEditKey`). */
   const editKey = (): { key: string; own: boolean; base: string } => layerEditKey(host.layers(), host.charId(), host.weapon());
 
+  /**
+   * ⭐⭐ МАХ РУК — ПО ПРЕДМЕТУ В РУКЕ, А НЕ ПО КЛЮЧУ ОРУЖИЯ. Две ручки на руку, потому что автор просит две РАЗНЫЕ
+   * вещи: «оружие держится как я настроил» (покой, `a`) и «мах остаётся, но не такой сильный» (`k`). Одной ручкой
+   * они отбирают друг у друга — на этом и стояла жалоба.
+   *
+   * ⚠ ПРОТИВ ЛЕСА ПОЛЗУНКОВ: по умолчанию на руку видно ОДНО число — мах. Покой почти двоичен (пусто 0, предмет 1)
+   * и живёт под «подробно», как и локоть с кистью. Ячейка без своей записи подписана умолчанием КЛАССА предмета,
+   * а не молчит.
+   */
+  let detail = false;
+  const drawArms = (): void => {
+    const charId = host.charId(), hands = host.hands();
+    const box = mk('div', 'margin-top:8px;padding-top:6px;border-top:1px solid #2a3340');
+    const head = mk('div', 'display:flex;align-items:center;gap:6px');
+    head.append(mk('div', css.head + ';flex:1;margin:0', 'МАХ РУК — по предмету в руке'));
+    const det = mk('button', detail ? css.btnOn : css.btn, 'подробно');
+    det.onclick = () => { detail = !detail; render(); };
+    head.append(det);
+    box.append(head);
+    box.append(mk('div', css.note, 'Мах: 1 — рука машет ровно как в клипе бега, 0 — стоит в авторской стойке. '
+      + 'Покой: где рука живёт между взмахами (0 — середина клипа, 1 — авторская стойка с хватом). Пустая рука машет как в клипе.'));
+    for (const [hand, label] of [['main', 'правая (главная)'], ['off', 'левая (вторая)']] as const) {
+      const item = hand === 'off' && TWO_HANDED_ITEMS.has(hands.main) ? hands.main : hands[hand];
+      const own = swingEntryOf(charId, item);
+      const eff = lookupItemSwing(host.swing(), charId, item, sbNow(), combat ? 1 : 0);
+      const def = swingDefault(item);
+      const row = mk('div', css.part);
+      row.append(mk('span', css.partName, label));
+      row.append(mk('span', 'flex:1;font-size:10px;color:' + (item === 'none' ? '#6b7180' : '#9ae6a0'),
+        item === 'none' ? 'пусто — машет как в клипе' : '«' + item + '»' + (TWO_HANDED_ITEMS.has(item) ? ' (двуручное: занимает обе)' : '')));
+      if (host.live) { const n = mk('span', css.now, '—'); row.append(n); nowArm.set(hand, n); }
+      box.append(row);
+      if (item === 'none') continue;   // у пустой руки ручек нет и быть не должно: её ведёт клип целиком
+      const parts: readonly ArmPart[] = detail ? ARM_PARTS.map((p) => p.id) : ['arm'];
+      for (const part of parts) {
+        for (const sp of SPEEDS) {
+          if (!detail && sp.id === 'walk') continue;   // кратко — одна строка «бег»: ходьбу почти всегда крутят следом
+          const lbl = ARM_PARTS.find((p) => p.id === part)!.label + (detail ? ' · ' + sp.label : '');
+          box.append(swingRow(charId, item, own, def, part, sp.id, lbl, 'k'));
+          if (detail) box.append(swingRow(charId, item, own, def, part, sp.id, 'покой', 'a'));
+        }
+      }
+      const rst = mk('button', css.btn, 'вернуть умолчания «' + item + '»');
+      rst.onclick = () => { delete host.swing()[charId]?.[item]; host.save(); render(); };
+      box.append(rst);
+    }
+    root.append(box);
+  };
+  /** Своя запись предмета (создаётся по первому касанию ползунка — разрежённой, только тронутая ячейка). */
+  const swingEntryOf = (charId: string, item: string): SwingEntry | undefined => host.swing()[charId]?.[item];
+  /** Ось «ходьба↔бег» этого кадра — из трассы рантайма; кукла не шагает → показываем бег (его и крутят). */
+  const sbNow = (): number => (Date.now() - layerTrace.t > 500 ? 1 : layerTrace.sb);
+  const swingRow = (charId: string, item: string, own: SwingEntry | undefined, def: ReturnType<typeof swingDefault>,
+    part: ArmPart, speed: LayerSpeed, label: string, key: 'a' | 'k'): HTMLElement => {
+    const col = combat ? own?.combat?.[speed] : own?.[speed];
+    const mine = col?.[part]?.[key];
+    const eff = lookupItemSwing(host.swing(), charId, item, speed === 'run' ? 1 : 0, combat ? 1 : 0);
+    const row = mk('div', css.cell);
+    row.append(mk('span', css.cellName, label));
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = '0'; sl.max = '1'; sl.step = '0.05'; sl.value = String(eff[part][key]); sl.style.flex = '1';
+    const val = mk('span', css.val, eff[part][key].toFixed(2));
+    val.style.color = mine !== undefined ? '#9ae6a0' : '#6b7180';
+    val.title = mine !== undefined ? 'своя запись' : 'умолчание класса «' + (TWO_HANDED_ITEMS.has(item) ? 'двуручное' : 'одноручное') + '» = ' + def[part][key].toFixed(2);
+    const rst = mk('span', css.rst, mine !== undefined ? '↺' : '');
+    rst.title = 'снять запись ячейки — вернётся умолчание класса предмета';
+    sl.oninput = () => {
+      const v = parseFloat(sl.value);
+      const e = ((host.swing()[charId] ??= {})[item] ??= {});
+      const c = combat ? ((e.combat ??= {})[speed] ??= {}) : (e[speed] ??= {});
+      (c[part] ??= {})[key] = v;
+      val.textContent = v.toFixed(2); val.style.color = '#9ae6a0'; rst.textContent = '↺';
+      host.save();
+    };
+    sl.onchange = () => render();
+    rst.onclick = () => {
+      const e = host.swing()[charId]?.[item]; if (!e) return;
+      const c = combat ? e.combat?.[speed] : e[speed];
+      if (c?.[part]) { delete c[part]![key]; if (!Object.keys(c[part]!).length) delete c[part]; }
+      host.save(); render();
+    };
+    row.append(sl, val, rst);
+    return row;
+  };
+  /** Живые «сейчас NN %» по рукам — из строк трассы, которые пишет сам рантайм. */
+  const nowArm = new Map<'main' | 'off', HTMLElement>();
+
   const render = (): void => {
+    nowArm.clear();
     root.replaceChildren(); nowOf.clear();
     const charId = host.charId(), weapon = host.weapon();
     const lk = lookupLayers(host.layers(), host.sway(), charId, weapon);
@@ -160,6 +253,7 @@ export function createLayerWeightsPanel(host: LayerPanelHost): LayerPanel {
         root.append(row);
       }
     }
+    drawArms();
     for (const f of LAYER_FIXED) {
       const r = mk('div', css.fixed);
       r.append(mk('span', 'flex:1', f.label), mk('span', '', f.owner));
@@ -182,6 +276,12 @@ export function createLayerWeightsPanel(host: LayerPanelHost): LayerPanel {
       if (axes) {
         axes.textContent = stale ? 'кукла не шагает — живых долей нет'
           : `сейчас: ${layerTrace.speed.toFixed(0)} ед/с · бег ${Math.round(layerTrace.sb * 100)} %` + (layerTrace.combat > 0.005 ? ` · бой ${Math.round(layerTrace.combat * 100)} %` : '');
+      }
+      for (const [hand, el] of nowArm) {
+        const r = stale ? undefined : layerTrace.rows.find((x) => x.layer === (hand === 'main' ? '↳ рука П' : '↳ рука Л'));
+        el.textContent = r ? `мах ${Math.round(r.w * 100)} %` : '—';
+        el.style.color = r ? tint(r.w) : '#9aa3b8';
+        el.title = r?.note ?? '';
       }
       for (const p of LAYER_PARTS) {
         const n = nowOf.get(p.id); if (!n) continue;

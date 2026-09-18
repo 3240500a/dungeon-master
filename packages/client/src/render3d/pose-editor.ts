@@ -57,9 +57,9 @@ import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWea
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
-import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
+import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
-import { lookupLayers, readLayerStore, type LayerEntry, type LayerLookup, type LayerStore } from './layerWeights.js';
+import { lookupLayers, readLayerStore, readSwingStore, type LayerEntry, type LayerLookup, type LayerStore, type SwingStore } from './layerWeights.js';
 import { createLayerWeightsPanel, type LayerPanel } from './layerWeightsPanel.js';   // ⭐ веса «локомоция ↔ стойка» по частям — один поиск с игрой
 import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
@@ -5732,7 +5732,7 @@ const editorContent: PoseContent = {
   gripPose: (w, axes, clipName) => resolveGripPose(gripCfg, curCharId, w, axes, clipName),
 };
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
-interface UpperPose { pose: Pose; swing: number; layers?: LayerEntry | null }
+interface UpperPose { pose: Pose; swing: number; layers?: LayerEntry | null; hands?: { main: string; off: string } }
 /** Конфиг контроллера (`pe_anim`): настройка предметов (чем подмешивается, в какой руке, с какой силой)
  *  и привязка клипов ПО ССЫЛКЕ — поэтому переименовывать существующие клипы не нужно. */
 let animStore: AnimStore = (() => { try { return JSON.parse(localStorage.getItem('pe_anim') || '{}') as AnimStore; } catch { return {}; } })();
@@ -5774,11 +5774,14 @@ function saveSway(): void { try { localStorage.setItem('pe_sway', JSON.stringify
  */
 let layerStore: LayerStore = (() => { try { return readLayerStore(JSON.parse(localStorage.getItem('pe_layers') || '{}')); } catch { return {}; } })();
 function saveLayers(): void { try { localStorage.setItem('pe_layers', JSON.stringify(layerStore)); savePoseKey('pe_layers'); } catch { /* */ } }
+/** ⭐ МАХ РУК ПО ПРЕДМЕТУ (`pe_swing`) — тоже ЖИВОЙ объект: панель правит его на месте, кукла читает на след. кадре. */
+let swingStore: SwingStore = (() => { try { return readSwingStore(JSON.parse(localStorage.getItem('pe_swing') || '{}')); } catch { return {}; } })();
+function saveSwing(): void { try { localStorage.setItem('pe_swing', JSON.stringify(swingStore)); savePoseKey('pe_swing'); } catch { /* */ } }
 /** Что действует для оружия — ТОТ ЖЕ поиск, что в игре (`lookupLayers`): точный ключ → базовое оружие → умолчание. */
 const layersFor = (w: string): LayerLookup => lookupLayers(layerStore, swayCfg, curCharId, w);
 // ⭐ Игровая кукла вкладки «Тест» читает веса ИЗ ЭТИХ ЖЕ живых сторов, а не из снимка localStorage: ползунок панели
 // действует на бегу, без пересборки куклы (см. `setLayerSource`).
-rtSetLayerSource(() => ({ layers: layerStore, sway: swayCfg }));
+rtSetLayerSource(() => ({ layers: layerStore, sway: swayCfg, swing: swingStore }));
 // ⚠ Прямого чтения `swayCfg[…][w] ?? 0.2` больше нет нигде: оно расходилось с игрой (у `none+shield` редактор показывал
 // 0.2, пока игра играла 0.5 базового `none`). Легаси-число берётся только через `layersFor(w).swing`.
 const combatStanceName = (w: string): string => animCfg().clipName('combat_idle', w);
@@ -5797,10 +5800,17 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
       ?? (kind === 'idle' ? stanceClip(item) : combatStanceClip(item));   // нет привязки — конвенция
     return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом — как в игре
   };
+  // ⚠ СОСТАВ РУК ОТДАЁТСЯ ВСЕГДА — по нему резолвится мах руки (`pe_swing`). Без него манекен редактора считал бы
+  // обе руки пустыми и махал бы полным клипом, пока игра приглушает занятую: «редактор ≡ игра» держится тем, что
+  // РАЗБОР ВХОДОВ у них один, а не тем, что числа похожи.
+  const layersOut: StanceLayerInfo[] = [];
   const pose = resolveStancePose(look, wpn, combat,
-    { weight: (it) => cfg.weightOf(it), kind: (it) => cfg.kindOf(it), hand: (it) => cfg.handOf(it) }, t);
+    { weight: (it) => cfg.weightOf(it), kind: (it) => cfg.kindOf(it), hand: (it) => cfg.handOf(it), trace: layersOut }, t);
   const lk = layersFor(wpn);
-  if (pose) return { pose, swing: lk.swing, layers: lk.entry };
+  let main = 'none', off = 'none';
+  for (const l of layersOut) { if (l.hand === 'main') main = l.item; else off = l.item; }
+  const hands = { main, off };
+  if (pose) return { pose, swing: lk.swing, layers: lk.entry, hands };
   // Сборка не сложилась (нет ни точной позы, ни безоружной базы) — прежний фолбэк по базовому оружию класса.
   let c = stanceClip(wpn); let wk = wpn;
   if (!c) { wk = rtBaseWeapon(wpn); c = stanceClip(wk); }
@@ -5808,7 +5818,7 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   if (!c || !c.keys[0]) return null;
   let p2 = c.keys[0]!.pose;
   if (combat > 0.001) { const cc = combatStanceClip(wpn) ?? combatStanceClip(rtBaseWeapon(wpn)); if (cc && cc.keys[0]) p2 = blendTwo(p2, cc.keys[0]!.pose, combat); }
-  return { pose: p2, swing: lk.swing, layers: lk.entry };
+  return { pose: p2, swing: lk.swing, layers: lk.entry, hands };
 }
 // Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');
@@ -6107,8 +6117,11 @@ function mountLayerPanel(): HTMLElement {
   layerPanel?.dispose();
   layerPanel = createLayerWeightsPanel({
     charId: () => curCharId, weapon: () => weapon,
-    layers: () => layerStore, sway: () => swayCfg,
-    save: saveLayers, live: true,
+    layers: () => layerStore, sway: () => swayCfg, swing: () => swingStore,
+    // ⚠ Состав рук берём у ТОГО ЖЕ резолвера, что кормит куклу: второй разбор ключа оружия разошёлся бы с первым
+    // ровно там, где предмет назначен в руку явно (`pe_anim.items[*].hand` — «факел в левой при пустой правой»).
+    hands: () => resolveUpper(weapon, editorCombat, 0)?.hands ?? { main: 'none', off: 'none' },
+    save: () => { saveLayers(); saveSwing(); }, live: true,
   });
   return layerPanel.el;
 }

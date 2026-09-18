@@ -15,7 +15,7 @@ import { dirtyKeys, serverAheadKeys, publish, pullFromServer, refreshServerRevs,
 
 /** Человеческие имена ключей: «pe_clips» ничего не говорит, «клипы и кадры» — говорит. */
 const LABEL: Record<string, string> = {
-  pe_clips: 'клипы и кадры', pe_gait: 'походка', pe_sway: 'покачивание (легаси)', pe_layers: 'веса слоёв по частям тела', pe_phys: 'физика (мышцы/пины)',
+  pe_clips: 'клипы и кадры', pe_gait: 'походка', pe_sway: 'покачивание (легаси)', pe_layers: 'веса слоёв по частям тела', pe_swing: 'мах рук по предмету', pe_phys: 'физика (мышцы/пины)',
   pe_ragdoll: 'суставы и физ-тела', pe_chars: 'свои персонажи', pe_attacks: 'удары', pe_loco: 'локомоция',
   pe_appearance: 'внешний вид', pe_shield: 'щит', pe_twist: 'скрутка корпуса', pe_models: '3D-модели',
   pe_grip: 'хват оружия', pe_gripposes: 'позы хвата', pe_morph: 'телосложение', pe_morph_range: 'разброс тел',

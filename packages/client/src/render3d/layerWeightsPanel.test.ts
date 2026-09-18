@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { layerTrace } from './poseRuntime.js';
 import { createLayerWeightsPanel, type LayerPanel } from './layerWeightsPanel.js';
-import { lookupLayers, resolveLayers, newResolvedLayers, type LayerStore, type SwayStore } from './layerWeights.js';
+import { lookupLayers, resolveLayers, newResolvedLayers, lookupItemSwing, swingDefault, type LayerStore, type SwayStore, type SwingStore } from './layerWeights.js';
 
 /**
  * ПАНЕЛЬ ВЕСОВ СЛОЁВ (вкладки «Тест» и «Бег») — сторож поведения.
@@ -25,7 +25,7 @@ const G = globalThis as unknown as { document?: unknown; confirm?: unknown };
 beforeAll(() => { G.document = { createElement: (t: string) => new El(t) }; G.confirm = () => true; });
 afterAll(() => { delete G.document; delete G.confirm; layerTrace.on = false; });
 
-let layers: LayerStore, sway: SwayStore, saves: number, weapon: string, panel: LayerPanel;
+let layers: LayerStore, sway: SwayStore, swing: SwingStore, hands: { main: string; off: string }, saves: number, weapon: string, panel: LayerPanel;
 const root = (): El => panel.el as unknown as El;
 const sliders = (): El[] => root().all().filter((e) => e.tag === 'input');
 const button = (part: string): El => root().all().find((e) => e.tag === 'button' && e.textContent.includes(part))!;
@@ -39,11 +39,12 @@ const eff = (w: string, sb: number, combat = 0): ReturnType<typeof newResolvedLa
 /** Все панели теста снимаются: подписка на трассу — счётчик, и забытая панель держала бы трассу включённой. */
 const made: LayerPanel[] = [];
 const open = (live: boolean): LayerPanel => {
-  const p = createLayerWeightsPanel({ charId: () => 'warrior', weapon: () => weapon, layers: () => layers, sway: () => sway, save: () => { saves++; }, live });
+  const p = createLayerWeightsPanel({ charId: () => 'warrior', weapon: () => weapon, layers: () => layers, sway: () => sway,
+    swing: () => swing, hands: () => hands, save: () => { saves++; }, live });
   made.push(p); return p;
 };
 beforeEach(() => {
-  layers = {}; sway = { warrior: { none: 0.5 } }; saves = 0; weapon = 'sword+shield';
+  layers = {}; sway = { warrior: { none: 0.5 } }; swing = {}; hands = { main: 'sword', off: 'shield' }; saves = 0; weapon = 'sword+shield';
   panel = open(true);
 });
 afterEach(() => { for (const p of made.splice(0)) p.dispose(); });
@@ -53,8 +54,9 @@ describe('панель весов слоёв', () => {
     // Прежний одиночный ползунок рисовался только у точного ключа с клипом стойки: у `sword+shield` его не было вовсе.
     // ⚠ Рук здесь больше нет: они резолвятся по ПРЕДМЕТУ в руке (`pe_swing`, своя панель). Осталась грудь и голова,
     // у которой своё умолчание — в игре ею владеет стойка.
-    expect(sliders()).toHaveLength(4);
-    expect(sliders().map((s) => s.value)).toEqual(['0.2', '0.2', '0', '0']);
+    // 4 у частей (грудь, голова × ходьба/бег) + по одной строке «мах» на каждую ЗАНЯТУЮ руку (кратко, без «подробно»).
+    expect(sliders()).toHaveLength(6);
+    expect(sliders().slice(0, 4).map((s) => s.value)).toEqual(['0.2', '0.2', '0', '0']);
     expect(root().text()).toContain('действует умолчание 0.2');
     expect(root().text()).toContain('правится ОБЩАЯ запись «sword»');
   });
@@ -120,6 +122,39 @@ describe('панель весов слоёв', () => {
     expect(root().text(), 'застывшую трассу панель за живую не выдаёт').toContain('кукла не шагает');
     panel.dispose();
     expect(layerTrace.on).toBe(false);
+    layerTrace.rows = [];
+  });
+
+  it('⭐⭐ МАХ РУК: ползунок пишет по ПРЕДМЕТУ, а не по ключу оружия; пустая рука ручек не имеет вовсе', () => {
+    // «Мах · бег» правой (меч) — пятый ползунок: 4 у частей, потом по одному на занятую руку.
+    const armSliders = sliders().slice(4);
+    expect(armSliders).toHaveLength(2);           // меч в правой + щит в левой
+    armSliders[0]!.value = '0.9'; armSliders[0]!.oninput!(); armSliders[0]!.onchange!();
+    expect(swing.warrior!.sword!.run!.arm!.k, 'запись легла под ПРЕДМЕТ «sword»').toBe(0.9);
+    expect(swing.warrior!.shield, 'щит не тронут — у него свой ключ').toBeUndefined();
+    expect(lookupItemSwing(swing, 'warrior', 'sword', 1, 0).arm.k).toBe(0.9);
+
+    hands = { main: 'sword', off: 'none' };       // щит сняли — левая рука пуста
+    panel.dispose(); panel = open(true);
+    expect(sliders().slice(4), 'у пустой руки ручек нет: её ведёт клип целиком').toHaveLength(1);
+    expect(root().text()).toContain('пусто — машет как в клипе');
+  });
+
+  it('значение без своей записи подписано УМОЛЧАНИЕМ КЛАССА, а не молчит; ↺ его возвращает', () => {
+    const arm = sliders()[4]!;
+    expect(arm.value).toBe(String(swingDefault('sword').arm.k));
+    arm.value = '0.15'; arm.oninput!(); arm.onchange!();
+    expect(root().all().filter((e) => e.textContent === '↺').length, 'своя запись помечена').toBeGreaterThan(0);
+    button('вернуть умолчания').onclick!();
+    expect(swing.warrior!.sword).toBeUndefined();
+    expect(sliders()[4]!.value).toBe(String(swingDefault('sword').arm.k));
+  });
+
+  it('живой «мах NN %» у руки берётся из строки трассы этой руки', () => {
+    layerTrace.t = Date.now(); layerTrace.sb = 1;
+    layerTrace.rows = [{ layer: '↳ рука П', src: 'клип хода + «sword»', w: 0.42, note: 'мах 0.42' }];
+    panel.update();
+    expect(root().text()).toContain('мах 42 %');
     layerTrace.rows = [];
   });
 
