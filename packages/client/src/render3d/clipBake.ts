@@ -54,6 +54,7 @@ import { pelvisHeading } from './pelvisFrame.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
 import { fitSmoothLoop } from './clipFit.js';
+import { meanPose, SWING_BONES } from './armBlend.js';   // ⭐ нейтраль маха: относительно неё рантайм берёт дельту
 
 /**
  * ⚠ ЗАПЕКАЕТСЯ ВСЕГДА ПРОЦЕДУРКА. Если в редакторе включена локомоция клипами, плеер сам заиграл бы
@@ -366,7 +367,13 @@ function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, o
     assertPelvis(player, human, 0, spec.name);
     assertYawBudget(player, spec.name, maxTwist);
     yawSum += player.hipsTurnRad; yawN++;
-    return neutralizeFacing(read(), player.aimRootYaw, human.hipsRest);
+    const p = neutralizeFacing(read(), player.aimRootYaw, human.hipsRest);
+    // ⭐⭐ КАНАЛ ОПОРЫ И У КЛИПОВ ХОДА. До 19.09 `__swing` писал ТОЛЬКО запекатель поворотов, а рантайм на ходу
+    // УГАДЫВАЛ окно опоры по доле `dutyWalk/dutyRun` — то есть по настройке, которую автор с тех пор мог сдвинуть.
+    // ЗАМЕР: щелчок голеностопа боком и спиной 43.6° / 42.9° ЗА КАДР, ровно на кадре подъёма флага, когда стопа
+    // висит в 4.8–5.0 ед над полом. В индустрии это Sync Markers: разметка едет В КЛИПЕ, а не выводится из настроек.
+    if (moving) { const sw = player.driver.swingLegs; p[SWING_KEY] = [sw[0] ? 1 : 0, sw[1] ? 1 : 0, 0]; }
+    return p;
   };
 
   if (spec.durationSec !== undefined || !moving) {
@@ -428,6 +435,10 @@ function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, o
   // ⭐ СКОРОСТЬ ЗАПЕКАНИЯ ЕДЕТ В КЛИП (u/с): часы «только клипы» меряют цикл ею × период (`bakedLocoSpeed`). Раньше
   // её угадывали по имени (`run_*` 102, прочее 50.4), и смена скоростей набора молча расходилась бы с уже запечённым.
   // Стоя (стойка, повороты) скорости нет — и поля нет: у них часы не путевые.
+  // ⭐⭐ НЕЙТРАЛЬ МАХА — ПО ПЛОТНОМУ ПОТОКУ, а не по прореженным ключам: относительно неё рантайм берёт аддитивную
+  // дельту маха (`armBlend`), и ошибка опоры уехала бы во ВСЮ дугу. Только у клипов хода: у стойки и поворотов
+  // цикла нет, среднее по ним было бы средним по случайному окну.
+  const swingRef = moving && cyclic ? meanPose(dense.map((k) => k.pose), SWING_BONES) : undefined;
   const bakeSpeed = moving ? +Math.hypot(vx, vz).toFixed(4) : 0;
   // Ревизия — тоже только у клипов хода: у стойки нет доворота, её и перезапекать незачем.
   // ⭐ ПОВОРОТ ТАЗА: угол (подпись) и доли отворота, с которыми клип запечён, — рантайм снимает отворот ровно ими,
@@ -439,7 +450,7 @@ function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, o
   const counterW = hasYaw ? yawCounterWeights(blendTwist(player.twistStates, Math.hypot(vx, vz)).weights) : null;
   return {
     clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced,
-      ...(bakeSpeed > 0 ? { bakeSpeed, bakeRev: LOCO_BAKE_REV, upperPure: true as const, ...(opts.bakeId ? { bakeId: opts.bakeId } : {}) } : {}),
+      ...(bakeSpeed > 0 ? { bakeSpeed, bakeRev: LOCO_BAKE_REV, upperPure: true as const, ...(swingRef ? { swingRef } : {}), ...(opts.bakeId ? { bakeId: opts.bakeId } : {}) } : {}),
       ...(counterW ? { hipsYawDeg: yawDeg, hipsYawW: counterW.map((v: number) => +v.toFixed(4)) } : {}) },
     frames: dense.length, keys: reduced.length, periodSec, cyclic,
     ...(fit ? { fitErrDeg: +fit.errDeg.toFixed(2), rawErrDeg: +fit.rawErrDeg.toFixed(2) } : {}),

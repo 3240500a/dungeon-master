@@ -1884,12 +1884,14 @@ let dirWarpOverride: number | null = null;
 export function setDirWarpOverride(v: number | null): void { dirWarpOverride = v; }
 export function getDirWarpOverride(): number | null { return dirWarpOverride; }
 /**
- * ⭐⭐ РЕВИЗИЯ ЗАПЕКАНИЯ КЛИПОВ ХОДА. 2 = кардинальный клип: снят без доворота таза и со свежим состоянием
- * доворота на каждый пресет (до неё страйфы шли под ±126° к тазу со впечённой скруткой ±40°). Пишет
- * запекатель (`Clip.bakeRev`), читают рантайм (сектора доворота включаются только на свежих страйфах) и
- * редактор (предупреждение «перезапеки»).
+ * ⭐⭐ РЕВИЗИЯ ЗАПЕКАНИЯ КЛИПОВ ХОДА. Пишет запекатель (`Clip.bakeRev`), читают рантайм (сектора доворота включаются
+ * только на свежих страйфах) и редактор (предупреждение «перезапеки»).
+ *   2 — кардинальный клип: снят без доворота таза и со свежим состоянием доворота на каждый пресет (до неё страйфы
+ *       шли под ±126° к тазу со впечённой скруткой ±40°);
+ *   3 — плюс КАНАЛ ОПОРЫ `__swing` (окно опоры больше не угадывается по доле `dutyWalk/dutyRun`: щелчок голеностопа
+ *       боком и спиной был 43.6° / 42.9° за кадр) и НЕЙТРАЛЬ МАХА `swingRef`, снятая по плотному потоку.
  */
-export const LOCO_BAKE_REV = 2;
+export const LOCO_BAKE_REV = 3;
 /**
  * Клип хода годится секторам: снят нашим запекателем на ревизии ≥ `LOCO_BAKE_REV` — или снят НЕ им (импорт мокапа:
  * `bakeSpeed` пишет только запекатель, а чужой кардинальный клип доворота в себе не несёт).
@@ -2965,6 +2967,7 @@ export class PosePlayer {
     const mix = this.locoW;
     let locoPose: Pose | null = null;
     let locoRef: Pose | null = null;   // нейтраль маха смеси (см. `armBlend.swingRefOf`)
+    let leadSwing: [number, number, number] | undefined;   // опора ВЕДУЩЕГО клипа (бинарный канал смешивать нельзя)
     let leadNow: LeadMark | null = null;   // ведущий клип бега в «только клипы» — с него звучат метки (см. `emitSteps`)
     let clipDuty = -1;                     // доля опоры смеси клипов (см. окна опоры ниже); −1 — не считалась
     if (mix > 0.001 && this.content.locoClip) {
@@ -3067,6 +3070,11 @@ export class PosePlayer {
       // перестанет быть дельтой К СВОЕЙ опоре, то есть на бленде колонок рука поедет. Один вызов на кадр.
       locoRef = blendLocoPose((dir, fast) => { const c = clipOf(dir, fast); return c && c.keys.length ? swingRefOf(c) : null; },
         axes, latPlusX, blendTwo);
+      // ⭐⭐ КАНАЛ ОПОРЫ БЕРЁТСЯ С ВЕДУЩЕГО КЛИПА, А НЕ ИЗ СМЕСИ. `__swing` — БИНАРНЫЙ флаг («нога в воздухе»), и
+      // бленд колонок размазывает его в дробь: порог 0.5 тогда срабатывает не там, где у самих клипов. ЗАМЕР на
+      // диагонали 60°: скольжение опорной стопы 10.4 % из смеси против 4.8 % у прямого хода. Ровно так же решает
+      // Blend Space в Unreal (режим «Highest Weighted Animation»), и ровно так же у нас уже берутся МЕТКИ ШАГОВ.
+      if (lead) { const lp = clipPoseAt(lead, u)[SWING_KEY]; if (lp) leadSwing = [lp[0], lp[1], lp[2]]; }
       if (this.colFade.w > 0 && locoPose) {
         const f = this.colFade;
         // ⚠ УХОДЯЩАЯ КОЛОНКА ДОИГРЫВАЕТ СО СВОИМ ВЕСОМ БЕГА, а не с нынешним `axes.sb`. Инерции хода нет: остановка
@@ -3089,7 +3097,7 @@ export class PosePlayer {
     // для запечённых это та же разметка. Стоим — обе на полу.
     if (clipOnly) {
       if (mix > 0.001 && locoPose) {
-        const s = locoPose[SWING_KEY];
+        const s = leadSwing ?? locoPose[SWING_KEY];
         if (s) this.clipContact = [s[0] < 0.5, s[1] < 0.5];
         else {
           const duty = clipDuty >= 0 ? clipDuty : lerpN(GAIT.dutyWalk, GAIT.dutyRun, tg.sb ?? 0);

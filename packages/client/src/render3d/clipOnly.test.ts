@@ -8,6 +8,8 @@ import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, BAKE_MAXSPD } from './clipBa
 import { bakedLocoSpeed, locoRunWeight, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
 import { clipDur, type Clip } from './clipModel.js';
 import { GAIT } from './pose.js';
+import { SWING_KEY } from './turnInPlace.js';
+import { LOCO_BAKE_REV } from './poseRuntime.js';
 
 /**
  * ⭐⭐ РЕЖИМ «ТОЛЬКО КЛИПЫ» — репетиция клиента без StepPlanner.
@@ -44,6 +46,27 @@ beforeAll(() => {
 afterAll(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
 afterEach(() => { setLocoMixOverride(null); });
 
+const libContent = (l: Map<string, Clip>): PoseContent =>
+  ({ ...localStorageContent('warrior'), locoClip: (names: readonly string[]) => { for (const n of names) { const c = l.get(n); if (c) return c; } return null; } });
+
+/** Доля кадров, в которых нога считается опорной (обе ноги, после разогрева). */
+const share = (l: Map<string, Clip>, spd: number): number => {
+  const h = buildHumanoid({});
+  const p = new PosePlayer(h, () => [], libContent(l), 'none', GX, emptyGrid());
+  p.setVel(0, 0); p.setYaw(0); p.snapYaw();
+  setLocoMixOverride(1);
+  let on = 0, n = 0;
+  for (let i = 0; i < 1320; i++) {
+    p.setVel(0, spd); p.step(1 / 60);
+    if (i < 120) continue;
+    const s = p.groundSupport;
+    on += (s[0] ? 1 : 0) + (s[1] ? 1 : 0); n += 2;
+  }
+  return on / n;
+};
+/** Библиотека БЕЗ канала опоры — ветка фолбэка (импортные клипы и снятые до ревизии 3). */
+const noSwing = (l: Map<string, Clip>): Map<string, Clip> => new Map([...l].map(([k, c]) => [k, { ...c,
+  keys: c.keys.map((f) => { const pose = { ...f.pose }; delete pose[SWING_KEY]; return { ...f, pose }; }) }]));
 const withLib = (base: PoseContent): PoseContent => ({ ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } });
 /** Стойка с руками, заведомо НЕ совпадающими с клипом: без неё ветка «рук со стойкой» не проверялась бы вовсе. */
 const withStance = (base: PoseContent): PoseContent => ({ ...base, resolveUpper: () => ({ swing: 1, pose: {
@@ -274,8 +297,6 @@ describe('«только клипы»: планировщика нет', () => {
     }
   });
 
-  const libContent = (l: Map<string, Clip>): PoseContent =>
-    ({ ...localStorageContent('warrior'), locoClip: (names: readonly string[]) => { for (const n of names) { const c = l.get(n); if (c) return c; } return null; } });
   /**
    * СТАРЫЙ НАБОР — как снимали до 17.09: 0.42 / 0.85 от 120 (50.4 / 102 u/с) и БЕЗ поля `bakeSpeed`. Строится лениво:
    * нужен двум тестам, а съём восьми клипов — треть секунды.
@@ -407,26 +428,34 @@ describe('«только клипы»: планировщика нет', () => {
     const G = GAIT;
     const plSb = (v: number): number => Math.min(1, Math.max(0, (v - G.speedWalk) / (G.speedRun - G.speedWalk)));
     const lerpD = (sb: number): number => G.dutyWalk + (G.dutyRun - G.dutyWalk) * sb;
-    const share = (l: Map<string, Clip>, spd: number): number => {
-      const { p } = make(libContent(l));
-      setLocoMixOverride(1);
-      let on = 0, n = 0;
-      for (let i = 0; i < 1320; i++) {
-        p.setVel(0, spd); p.step(1 / 60);
-        if (i < 120) continue;
-        const s = p.groundSupport;
-        on += (s[0] ? 1 : 0) + (s[1] ? 1 : 0); n += 2;
-      }
-      return on / n;
-    };
+    // ⚠ ЭТО ВЕТКА ФОЛБЭКА. С 19.09 запекатель пишет в клипы хода КАНАЛ ОПОРЫ `__swing` (ревизия 3), и окна по доле
+    // больше не угадываются — они остались только для клипов БЕЗ канала: импортных и снятых раньше. Поэтому здесь
+    // канал снимается явно, а то, что канал ГЛАВНЕЕ доли, проверяет случай ниже.
     for (const [name, l, spd, want] of [
-      ['чистый набор, 80', lib, GAME, lerpD(1)],
-      ['чистый набор, 60', lib, 60, lerpD(0.5)],
-      ['старый набор, 80', oldLib(), GAME, lerpD(plSb(102))],
+      ['чистый набор, 80', noSwing(lib), GAME, lerpD(1)],
+      ['чистый набор, 60', noSwing(lib), 60, lerpD(0.5)],
+      ['старый набор, 80', noSwing(oldLib()), GAME, lerpD(plSb(102))],
     ] as const) {
       const got = share(l, spd);
       expect(Math.abs(got - want), `${name}: доля опоры ${got.toFixed(3)}, клипы сняты с ${want.toFixed(3)}`).toBeLessThan(0.012);
     }
+  });
+
+  it('⭐⭐ КАНАЛ ОПОРЫ В КЛИПЕ ГЛАВНЕЕ ДОЛИ: опора идёт из `__swing`, а не из настройки `dutyRun`', () => {
+    // До 19.09 окно опоры на ходу ВЫВОДИЛОСЬ из `dutyWalk/dutyRun` — то есть из настройки, которую автор с тех пор
+    // мог сдвинуть, а клип остался прежним. ЗАМЕР беды: щелчок голеностопа боком и спиной 43.6° / 42.9° ЗА КАДР,
+    // ровно на кадре подъёма флага, когда стопа висит в 4.8–5.0 ед над полом. В индустрии это Sync Markers:
+    // разметка едет В КЛИПЕ. Проверяем ровно это: сдвинутая настройка доли опору БОЛЬШЕ НЕ ДВИГАЕТ.
+    const c = lib.get('run_fwd')!;
+    expect(c.keys.some((k) => k.pose[SWING_KEY]), 'запекатель обязан писать канал опоры в клипы хода').toBe(true);
+    expect(c.bakeRev, 'и помечать этим ревизию').toBe(LOCO_BAKE_REV);
+    const was = GAIT.dutyRun;
+    try {
+      const a = share(lib, GAME);
+      GAIT.dutyRun = Math.min(0.45, was + 0.2);            // грубо сдвигаем настройку
+      const b = share(lib, GAME);
+      expect(Math.abs(b - a), '⚠ доля опоры поехала за настройкой — значит канал не читается').toBeLessThan(0.005);
+    } finally { GAIT.dutyRun = was; }
   });
 
   it('⚠ СТАРТ С МЕСТА: опорная стопа не едет за разгоном клипа', () => {

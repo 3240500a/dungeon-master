@@ -125,7 +125,11 @@ export function blendArmKey(key: string, ref: readonly [number, number, number] 
   w: ArmWeights): [number, number, number] | undefined {
   const a = clamp01(w.a), k = clamp01(w.k);
   if (!loco && !stance) return undefined;              // клип кость не ведёт и стойка её не знает — не трогаем
-  const R = ref ?? loco ?? stance!;
+  // ⚠⚠ НЕТ ПОЗЫ КЛИПА — НЕТ И НЕЙТРАЛИ. Она снята с ЦЕЛОГО набора и несёт руки даже тогда, когда конкретный клип их
+  // не ведёт (импортный пак часто несёт только ноги; запечённый набор несёт `swingRef` полем, а каналы рук у него
+  // могли быть сняты). Прочитай её здесь — и рука уехала бы в беговую несущую позу вместо авторской стойки
+  // (ЗАМЕР до правки: 51.9° от позы стоя). Нейтраль имеет смысл ТОЛЬКО как опора для дельты этого же клипа.
+  const R = (loco ? ref : undefined) ?? loco ?? stance!;
   const L = loco ?? R;
   const S = stance ?? R;
   if (!isAngleKey(key)) {
