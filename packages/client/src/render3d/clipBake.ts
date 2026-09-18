@@ -49,7 +49,7 @@ import type { Clip, Keyframe, Pose } from './clipModel.js';
 import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL } from './clipModel.js';
 import { pelvisEulerToWorld, pelvisOffsetToWorld } from './pelvisFrame.js';   // ⭐ вычет фейсинга — обратная композиция игры
 import type { Humanoid } from './humanoid.js';
-import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, LOCO_BAKE_REV, yawCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
+import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, setLayerBakeOverride, getLayerBakeOverride, LOCO_BAKE_REV, yawCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
 import { pelvisHeading } from './pelvisFrame.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
@@ -70,14 +70,23 @@ import { fitSmoothLoop } from './clipFit.js';
  * перекрытием их надо снять заново — но ЯВНЫЙ вызов `measureStance()` отсюда менял бы сами клипы, потому что
  * `StepPlanner.setStance` снапает `hipY`/`hipWant` (ЗАМЕР: до 3.46° на колене `run_fwd` между клипами набора).
  * Поэтому `PosePlayer.step` ловит смену доли сам (`stanceKnob`) — ровно на первом кадре разогрева.
+ *
+ * ⚠⚠ И СТОЙКА В РУКАХ, КИСТЯХ И ГРУДИ ПОДАВЛЕНА (`setLayerBakeOverride`) — ТА ЖЕ ГРАБЛЯ, ЧТО У ТАЗА. Верх на ходу
+ * блендится к стойке (`pe_layers` / легаси `pe_sway`), и это тоже дело РАНТАЙМА. ЗАМЕР (опубликованный воин, `run_fwd`,
+ * размах плеча по клипу): съём при `sway(none)` 1.0 / 0.5 / 0.2 / 0 — 119.1° / 60.0° / 24.1° / 0.0°, а опубликованный
+ * клип — 60.1°: в него ушла стойка того оружия, что стояло в редакторе, долей `1 − sway`. При проигрывании клип
+ * смешивался со стойкой второй раз — под мечом (0.2) от маха оставалось 10 %, и в позу меча подмешивалась безоружная.
+ * Теперь клип хода несёт ЧИСТУЮ локомоцию верха и помечен `upperPure`; вес кладёт рантайм — один раз.
  */
 function procedural<T>(player: PosePlayer, fn: () => T): T {
-  const was = getLocoMixOverride(), mark = player.onMark, stance = getStancePelvisOverride();
+  const was = getLocoMixOverride(), mark = player.onMark, stance = getStancePelvisOverride(), layers = getLayerBakeOverride();
   setLocoMixOverride(0);
   setStancePelvisOverride(0);
+  setLayerBakeOverride(true);
   player.onMark = null;
   player.cancelTurn();
-  try { return warpFree(player, 0, fn); } finally { setLocoMixOverride(was); setStancePelvisOverride(stance); player.onMark = mark; }
+  try { return warpFree(player, 0, fn); }
+  finally { setLocoMixOverride(was); setStancePelvisOverride(stance); setLayerBakeOverride(layers); player.onMark = mark; }
 }
 /**
  * ⭐⭐ СЪЁМ БЕЗ ДОВОРОТА ТАЗА (см. пункт 2б шапки): доворот выключен перекрытием (тумблер редактора не трогаем) и
@@ -430,7 +439,7 @@ function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, o
   const counterW = hasYaw ? yawCounterWeights(blendTwist(player.twistStates, Math.hypot(vx, vz)).weights) : null;
   return {
     clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop, keys: reduced,
-      ...(bakeSpeed > 0 ? { bakeSpeed, bakeRev: LOCO_BAKE_REV, ...(opts.bakeId ? { bakeId: opts.bakeId } : {}) } : {}),
+      ...(bakeSpeed > 0 ? { bakeSpeed, bakeRev: LOCO_BAKE_REV, upperPure: true as const, ...(opts.bakeId ? { bakeId: opts.bakeId } : {}) } : {}),
       ...(counterW ? { hipsYawDeg: yawDeg, hipsYawW: counterW.map((v: number) => +v.toFixed(4)) } : {}) },
     frames: dense.length, keys: reduced.length, periodSec, cyclic,
     ...(fit ? { fitErrDeg: +fit.errDeg.toFixed(2), rawErrDeg: +fit.rawErrDeg.toFixed(2) } : {}),

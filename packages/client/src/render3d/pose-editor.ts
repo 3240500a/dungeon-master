@@ -59,6 +59,7 @@ import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
+import { lookupLayers, readLayerStore, type LayerEntry, type LayerLookup, type LayerStore } from './layerWeights.js';   // ⭐ веса «локомоция ↔ стойка» по частям — один поиск с игрой
 import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { createTestTab } from './testTab.js';
@@ -4630,6 +4631,9 @@ function bakeGaitSection(): void {
       if (Math.abs(was - presetSpd) > 0.5) { mark.textContent += ` (снят на ${Math.round(was)})`; mark.style.color = '#e0b050'; }
       // Снят с доворотом таза (до ревизии 2): страйф шёл диагональю, сектора доворота на нём не включатся — перезапечь.
       else if (!isLocoClipFresh(have)) { mark.textContent += ' ⚠ с доворотом — перезапеки'; mark.style.color = '#e0b050'; }
+      // ⭐ Снят ДО 19.09: в руки, кисти и грудь клипа впечена стойка того оружия, что стояло в редакторе (долей `1 − sway`),
+      // и при проигрывании вес стойки ложится ВТОРОЙ раз — мах под мечом был 10 % вместо 20 (см. `Clip.upperPure`).
+      else if (have.bakeSpeed !== undefined && !have.upperPure) { mark.textContent += ' ⚠ со стойкой в руках — перезапеки'; mark.style.color = '#e0b050'; mark.title = 'Клип снят до 19.09: стойка впечена в руки клипа и при проигрывании применяется дважды. После перезапекания мах вырастет (вес кладётся один раз) — поправь веса слоёв на вкладке «Тест».'; }
     }
     row.append(cb, name, speed, mark);
     listBox.append(row);
@@ -5745,7 +5749,7 @@ const editorContent: PoseContent = {
   gripPose: (w, axes, clipName) => resolveGripPose(gripCfg, curCharId, w, axes, clipName),
 };
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
-interface UpperPose { pose: Pose; swing: number }
+interface UpperPose { pose: Pose; swing: number; layers?: LayerEntry | null }
 /** Конфиг контроллера (`pe_anim`): настройка предметов (чем подмешивается, в какой руке, с какой силой)
  *  и привязка клипов ПО ССЫЛКЕ — поэтому переименовывать существующие клипы не нужно. */
 let animStore: AnimStore = (() => { try { return JSON.parse(localStorage.getItem('pe_anim') || '{}') as AnimStore; } catch { return {}; } })();
@@ -5781,7 +5785,17 @@ function stanceClip(w: string): Clip | null {
 function loadSway(): Record<string, Record<string, number>> { try { return JSON.parse(localStorage.getItem('pe_sway') || '{}') as Record<string, Record<string, number>>; } catch { return {}; } }
 let swayCfg: Record<string, Record<string, number>> = loadSway();
 function saveSway(): void { try { localStorage.setItem('pe_sway', JSON.stringify(swayCfg)); savePoseKey('pe_sway'); } catch { /* */ } }
-const swayOf = (w: string): number => swayCfg[curCharId]?.[w] ?? 0.2;   // остаточный мах поверх idle (физпокачивание)
+/**
+ * ⭐ ВЕСА СЛОЁВ ПО ЧАСТЯМ ТЕЛА (`pe_layers`, см. `layerWeights.ts`) — ЖИВОЙ объект: панель правит его на месте, а
+ * манекен и кукла вкладки «Тест» читают на следующем кадре. Легаси `pe_sway` остаётся входом (части без своей записи).
+ */
+let layerStore: LayerStore = (() => { try { return readLayerStore(JSON.parse(localStorage.getItem('pe_layers') || '{}')); } catch { return {}; } })();
+function saveLayers(): void { try { localStorage.setItem('pe_layers', JSON.stringify(layerStore)); savePoseKey('pe_layers'); } catch { /* */ } }
+/** Что действует для оружия — ТОТ ЖЕ поиск, что в игре (`lookupLayers`): точный ключ → базовое оружие → умолчание. */
+const layersFor = (w: string): LayerLookup => lookupLayers(layerStore, swayCfg, curCharId, w);
+// ⚠ ЧЕРЕЗ ОБЩИЙ ПОИСК, а не `swayCfg[…][w] ?? 0.2`: прямое чтение ключа расходилось с игрой (у `none+shield` редактор
+// показывал 0.2, пока игра играла 0.5 базового `none`).
+const swayOf = (w: string): number => layersFor(w).swing;   // остаточный мах поверх idle (легаси-число на весь верх)
 const combatStanceName = (w: string): string => animCfg().clipName('combat_idle', w);
 function combatStanceClip(w: string): Clip | null {
   for (const nm of animCfg().clipNames('combat_idle', w)) { const c = library.find((x) => x.name === nm && x.character === curCharId && x.weapon === w); if (c) return c; }
@@ -5800,7 +5814,8 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   };
   const pose = resolveStancePose(look, wpn, combat,
     { weight: (it) => cfg.weightOf(it), kind: (it) => cfg.kindOf(it), hand: (it) => cfg.handOf(it) }, t);
-  if (pose) { const wk = stanceClip(wpn) ? wpn : rtBaseWeapon(wpn); return { pose, swing: swayOf(wk) }; }
+  const lk = layersFor(wpn);
+  if (pose) return { pose, swing: lk.swing, layers: lk.entry };
   // Сборка не сложилась (нет ни точной позы, ни безоружной базы) — прежний фолбэк по базовому оружию класса.
   let c = stanceClip(wpn); let wk = wpn;
   if (!c) { wk = rtBaseWeapon(wpn); c = stanceClip(wk); }
@@ -5808,7 +5823,7 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   if (!c || !c.keys[0]) return null;
   let p2 = c.keys[0]!.pose;
   if (combat > 0.001) { const cc = combatStanceClip(wpn) ?? combatStanceClip(rtBaseWeapon(wpn)); if (cc && cc.keys[0]) p2 = blendTwo(p2, cc.keys[0]!.pose, combat); }
-  return { pose: p2, swing: swayOf(wk) };
+  return { pose: p2, swing: lk.swing, layers: lk.entry };
 }
 // Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');

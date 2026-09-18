@@ -29,8 +29,15 @@ import { resolveGripPose, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses
 import { deriveFingerAxes, type FingerAxes } from './fingerAxes.js';                    // оси сгиба выводятся из геометрии ЭТОГО рига
 import { fingersAnimated } from './clipModel.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
+import { lookupLayers, resolveLayers, fillLayers, newResolvedLayers, readLayerStore, LAYER_LEGACY_DEFAULT, LAYER_PARTS, type LayerEntry, type ResolvedLayers, type SwayStore } from './layerWeights.js';   // ⭐ веса «локомоция ↔ стойка» по частям тела
 export interface UpperPose {
-  pose: Pose; swing: number;                 // idle-поза верха + остаточный мах (0..1)
+  pose: Pose; swing: number;                 // idle-поза верха + остаточный мах (0..1) — ЛЕГАСИ: одно число на весь верх
+  /**
+   * ⭐ ВЕСА ПО ЧАСТЯМ ТЕЛА (`pe_layers`, см. `layerWeights.ts`): доля ЛОКОМОЦИИ на руку / кисть / грудь / голову, парой
+   * ходьба/бег и с колонкой боя. Есть — решает она, `swing` остаётся умолчанием для частей без записи. Нет поля
+   * (тесты, чужой контент) — все части верха = `swing`, голова — как была: поведение прежнее бит в бит.
+   */
+  layers?: LayerEntry | null;
   /** Имя клипа-стойки: по нему берётся хват КЛИПА (`GripConfig.byClip`), если он задан. */
   clipName?: string;
   /** У стойки анимированы сами пальцы — тогда живой хват её не перебивает (см. `fingersAnimated`). */
@@ -324,9 +331,15 @@ function blendEuler(bone: THREE.Object3D | undefined, gaitE: [number, number, nu
   if (!bone) return;
   qEuler(gaitE, _qA); qEuler(held, _qB); bone.quaternion.copy(_qA).slerp(_qB, hw);
 }
-function applyWeaponUpper(weaponGroups: THREE.Group[], pose: Pose, hw: number): void {   // оружие: БАЗА хвата; поза с __wpnOverride доредактирует её по hw
+/**
+ * Оружие: БАЗА хвата; поза с `__wpnOverride` доредактирует её весом стойки НА КИСТИ ЭТОЙ РУКИ — группа 0 висит на
+ * главной (правой) кисти, группа 1 — на офф-руке (левой). Поворот предмета в кулаке обязан идти тем же весом, что и
+ * сама кисть: разойдись они — меч довернётся под стойку, а запястье останется в позе клипа.
+ */
+function applyWeaponUpper(weaponGroups: THREE.Group[], pose: Pose, hwMain: number, hwOff: number = hwMain): void {
   const ovr = !!pose['__wpnOverride'];   // нет флага → жёстко база (единый хват во всех анимациях)
   weaponGroups.forEach((g, i) => {
+    const hw = i === 0 ? hwMain : hwOff;
     const rk = WPN_KEYS[i], pk = WPN_POS[i];
     const br = g.userData.baseRot as THREE.Euler | undefined, bp = g.userData.basePos as THREE.Vector3 | undefined;
     if (ovr && rk && pose[rk] && br) { const h = pose[rk]!; g.rotation.set(br.x + (h[0] - br.x) * hw, br.y + (h[1] - br.y) * hw, br.z + (h[2] - br.z) * hw); }
@@ -406,6 +419,36 @@ export function applyAttackPelvis(human: Humanoid, atk: AttackState, rootYaw: nu
     hips.position.x += dz * s + dx * c; hips.position.y += dy; hips.position.z += dz * c - dx * s;
   }
 }
+/**
+ * ⭐⭐ ВЕСА СЛОЁВ ЭТОГО КАДРА (доля ЛОКОМОЦИИ на часть тела, см. `layerWeights.ts`) — scratch с тем же контрактом, что
+ * `_stancePelvis`: пишет `gaitToHumanoid` из уже разобранной стойки, читает СИНХРОННО `applyUpper` того же вызова.
+ * Голова нужна раньше рук (её кладёт сам `gaitToHumanoid`), поэтому разбор один и стоит в начале кадра.
+ */
+const _lw: ResolvedLayers = newResolvedLayers();
+/**
+ * ⭐⭐ ЗАПЕКАНИЕ СНИМАЕТ ЛОКОМОЦИЮ ЧИСТОЙ — БЕЗ СТОЙКИ В РУКАХ (перекрытие, тем же приёмом, что `setStancePelvisOverride`).
+ *
+ * ЗАМЕР (опубликованный воин, `run_fwd`, размах плеча по клипу): опубликованный клип 60.1°; свежий съём при
+ * `pe_sway.none` 1.0 / 0.5 / 0.2 / 0 — 119.1° / 60.0° / 24.1° / 0.0°. То есть стойка ЗАПЕКАЛАСЬ в руки клипа долей
+ * `1 − sway` того оружия, что было выбрано в редакторе на момент съёма, а при проигрывании клип смешивался со
+ * стойкой ЕЩЁ РАЗ: под мечом (0.2) от маха оставалось 0.2 × 0.5 = 10 %, и вдобавок в позу меча подмешивалось
+ * 10 % БЕЗОРУЖНОЙ стойки. Ровно та же грабля, что у таза стойки: дело рантайма, попав в клип, применяется дважды.
+ *
+ * Под перекрытием на ходу стойка частями верха не владеет вовсе (вес локомоции 1 и ворота 1: скорость съёма ходьбы
+ * даёт `moveMag` 1 только при `speedWalk ≤ 40`, а зависеть от этого клипу незачем); стоя (клип `idle`, повороты) —
+ * владеет целиком, как и было. Голова — как в смешанном режиме по умолчанию (вес 1), то есть каналы головы в клипах
+ * не меняются. Клип помечается `Clip.upperPure` — редактор по метке предлагает перезапечь старые.
+ */
+let layerBakeOverride = false;
+export function setLayerBakeOverride(on: boolean): void { layerBakeOverride = on; }
+export function getLayerBakeOverride(): boolean { return layerBakeOverride; }
+/** Разобрать веса кадра в `_lw`. `clipHead` — режим «только клипы» (умолчание головы 0), иначе смешанный (1). */
+function frameLayers(up: UpperPose | null, sb: number, combat: number, clipHead: boolean): void {
+  if (layerBakeOverride) { fillLayers(_lw, 1); return; }
+  resolveLayers(up?.layers ?? null, sb, combat, up ? up.swing : LAYER_LEGACY_DEFAULT, clipHead ? 0 : 1, _lw);
+}
+/** Кости головы: в «только клипы» берутся из клипа долей `_lw.head` (в `LOCO_BONES` их нет — головой владеет стойка). */
+const HEAD_BONES = ['Neck', 'Head'] as const;
 /** Кости рук, которые в «только клипы» без авторской стойки берутся из клипа (корпус уже положил слой бега). */
 const CLIP_ARM_BONES = ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm', 'LeftShoulder', 'RightShoulder', 'LeftHand', 'RightHand'] as const;
 function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, moveMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, combat = 0, fade?: AttackFade | null, idleT = 0, atkLegs?: number, armsFrom: Pose | null = null): void {
@@ -424,8 +467,29 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   // Ключицы: своя поза из гейта вместо прежнего «сводим в ноль».
   const shoL: [number, number, number] = [t.shoLX, t.shoLY, t.shoLZ];
   const shoR: [number, number, number] = [t.shoRX, t.shoRY, t.shoRZ];
-  traceRow('ПОЗА ВЕРХА', up ? (combat > 0.001 ? `стойка (бой ${(combat * 100) | 0}%)` : 'стойка') : 'нет — чистый мах',
-    up ? clamp(1 - up.swing * moveMag, 0, 1) : 0, up ? undefined : 'авторской стойки для этого оружия нет');
+  // ⭐ ВЕС СТОЙКИ НА ЧАСТЬ ТЕЛА: `1 − доля локомоции × ворота`. Ворота — ход (`moveMag`; в «только клипы» сюда приходит
+  // сглаженная доля клипа). Под перекрытием запекания на ходу ворота = 1 (см. `setLayerBakeOverride`).
+  const gate = layerBakeOverride ? (moveMag > 1e-3 ? 1 : 0) : moveMag;
+  const hwArmL = clamp(1 - _lw.armL * gate, 0, 1), hwArmR = clamp(1 - _lw.armR * gate, 0, 1);
+  const hwWrL = clamp(1 - _lw.wristL * gate, 0, 1), hwWrR = clamp(1 - _lw.wristR * gate, 0, 1);
+  const hwChest = clamp(1 - _lw.chest * gate, 0, 1);
+  const hwOf = (nm: string): number =>
+    nm === 'LeftHand' ? hwWrL : nm === 'RightHand' ? hwWrR : nm === 'Chest' || nm === 'UpperChest' ? hwChest
+      : nm.charCodeAt(0) === 76 /* «L»eft */ ? hwArmL : hwArmR;
+  if (layerTrace.on) {
+    // Строка слоя — как была (средний вес стойки; при одном числе на весь верх — ровно оно), под ней — части.
+    const lo = Math.min(hwArmL, hwArmR, hwWrL, hwWrR, hwChest), hi = Math.max(hwArmL, hwArmR, hwWrL, hwWrR, hwChest);
+    const mean = hi - lo < 1e-12 ? hwArmL : (hwArmL + hwArmR + hwWrL + hwWrR + hwChest) / 5;
+    traceRow('ПОЗА ВЕРХА', up ? (combat > 0.001 ? `стойка (бой ${(combat * 100) | 0}%)` : 'стойка') : 'нет — чистый мах',
+      up ? mean : 0, up ? undefined : 'авторской стойки для этого оружия нет');
+    if (up) {
+      const src = armsFrom ? 'клип хода' : 'мах походки';
+      for (const p of LAYER_PARTS) {
+        if (p.id === 'head') continue;   // голову кладёт `gaitToHumanoid` — её строка там же
+        traceRow('↳ ' + p.label, src, clamp(_lw[p.id] * gate, 0, 1), `вес ${_lw[p.id].toFixed(2)} × ход ${gate.toFixed(2)}`);
+      }
+    }
+  }
   for (const it of layerTrace.items) {
     traceRow(it.hand === 'main' ? 'ГЛАВНАЯ РУКА' : 'ВТОРАЯ РУКА', it.item, it.weight,
       it.kind === 'override' ? 'замена верха целиком (двуручное)' : 'дельта к безоружной базе');
@@ -448,11 +512,10 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
       if (b && e) { qEuler(e, _qB); b.quaternion.slerp(_qB, w); }
     }
   } else if (armsFrom && up) {
-    const hw = clamp(1 - up.swing * moveMag, 0, 1);
-    for (const nm of ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm']) blendEuler(H.get(nm), armsFrom[nm] ?? up.pose[nm] ?? ZERO3, up.pose[nm], hw);
-    for (const nm of UPPER_BONES) blendEuler(H.get(nm), armsFrom[nm] ?? up.pose[nm] ?? ZERO3, up.pose[nm], hw);
+    for (const nm of ['LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm']) blendEuler(H.get(nm), armsFrom[nm] ?? up.pose[nm] ?? ZERO3, up.pose[nm], hwOf(nm));
+    for (const nm of UPPER_BONES) blendEuler(H.get(nm), armsFrom[nm] ?? up.pose[nm] ?? ZERO3, up.pose[nm], hwOf(nm));
     applyGripChannels(human, up.pose);
-    applyWeaponUpper(weaponGroups, up.pose, hw);
+    applyWeaponUpper(weaponGroups, up.pose, hwWrR, hwWrL);
   } else if (!up) {   // нет idle-позы → полный мах гейта
     gaitArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, eDownL);
     gaitArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, eDownR);
@@ -463,14 +526,13 @@ function applyUpper(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, m
   } else {
     // sway (остаточный мах) влияет ПО МЕРЕ ДВИЖЕНИЯ: в покое hw=1 → руки ТОЧНО как в авторской idle (стойка = как в редакторе),
     // на бегу hw=1-sway → мах гейта подмешивается. Раньше hw был константой → idle искажался даже стоя.
-    const hw = clamp(1 - up.swing * moveMag, 0, 1);
-    blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hw, eDownL);
-    blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hw, eDownR);
-    blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + eBendL), 0], up.pose['LeftLowerArm'], hw);   // локоть = Y (см. выше), не X
-    blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + eBendR, 0], up.pose['RightLowerArm'], hw);
-    for (const nm of UPPER_BONES) blendEuler(H.get(nm), ZERO3, up.pose[nm], hw);
+    blendArm(H.get('LeftUpperArm'), -1, t.shL, t.shSpL, t.shTwL, up.pose['LeftUpperArm'], hwArmL, eDownL);
+    blendArm(H.get('RightUpperArm'), 1, t.shR, t.shSpR, t.shTwR, up.pose['RightUpperArm'], hwArmR, eDownR);
+    blendEuler(H.get('LeftLowerArm'), [0, -(Math.abs(t.elL) + eBendL), 0], up.pose['LeftLowerArm'], hwArmL);   // локоть = Y (см. выше), не X
+    blendEuler(H.get('RightLowerArm'), [0, Math.abs(t.elR) + eBendR, 0], up.pose['RightLowerArm'], hwArmR);
+    for (const nm of UPPER_BONES) blendEuler(H.get(nm), ZERO3, up.pose[nm], hwOf(nm));
     applyGripChannels(human, up.pose);   // ⭐ ХВАТ СТОЙКИ: фаланг нет ни в одном слое-списке (см. `applyGripChannels`)
-    applyWeaponUpper(weaponGroups, up.pose, hw);
+    applyWeaponUpper(weaponGroups, up.pose, hwWrR, hwWrL);
   }
   // ⭐⭐ ЖИВОЙ ХВАТ ПОВЕРХ ЗАПЕЧЁННОГО — и в ветке «стойки нет» тоже: кисть держит оружие всегда.
   if (!up?.fingersAnimated) applyGripChannels(human, liveGrip(human, content, weapon, up?.clipName));
@@ -809,7 +871,7 @@ const _qT1 = new THREE.Quaternion(), _qT2 = new THREE.Quaternion(), _eT = new TH
  * ⚠ Таз (кость и X/Z `rest + __hipsD`) кладётся В КАДРЕ ПЕРСОНАЖА, без курса: курс позже докладывает `applyTorsoTwist`
  * одним поворотом (`pelvisToWorld`). Повернуть здесь — и курс ляжет дважды.
  */
-function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly string[], yBase: number | null = null, yFrom = 0): void {
+function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly string[], yBase: number | null = null, yFrom = 0, withHips = true): void {
   if (w <= 0.001) return;
   for (const nm of bones) {
     const b = human.bones.get(nm); const want = pose[nm];
@@ -818,7 +880,7 @@ function blendClipBones(human: Humanoid, pose: Pose, w: number, bones: readonly 
     _eT.set(want[0], want[1], want[2]); _qT2.setFromEuler(_eT);
     b.quaternion.copy(_qT1).slerp(_qT2, w);
   }
-  const hd = hipsOffset(pose, human.hipsRest.y);
+  const hd = withHips ? hipsOffset(pose, human.hipsRest.y) : null;
   if (hd) {
     const hp = human.bones.get('Hips')!.position;
     const ty = yBase === null ? human.hipsRest.y + hd[1] : yBase + hd[1] - yFrom;
@@ -873,7 +935,9 @@ const stancePelvisQuat = (rx: number, ry: number, rz: number, w: number, wYaw: n
 
 export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number, clipOnly = false): void {
   human.reset();
-  const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
+  const up0 = content.resolveUpper(weapon, combat, idleT);
+  const idle = up0?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
+  frameLayers(up0, t.sb ?? 0, combat, clipOnly);   // ⭐ веса «локомоция ↔ стойка» по частям → `_lw` (читает и `applyUpper` ниже)
   readStancePelvis(idle, human.hipsRest.y);   // ⭐ таз стойки → scratch; кладёт его `PosePlayer.step` ПОСЛЕ клипов и шва (см. `_stancePelvis`)
   const m = legMag;
   // Трасса собирается СНИЗУ ВВЕРХ, в порядке наложения слоёв — так же, как её показывает корень графа.
@@ -926,13 +990,23 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // ⚠ ПОСЛЕ `applyHipsTiltHold`, а не до: тот правит эйлер бедра покомпонентно (`rotation.x -=`), и сопряжение,
   // положенное раньше, он бы разобрал и собрал заново — то есть уничтожил. Порядок здесь несущий.
   applyHipsYawHold(human, t.hipsPitch, t.hipsYaw, t.hipsRoll);
-  blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, torsoMag);
-  blendBone(human, 'Head', [0, 0, 0], idle, torsoMag);
+  // ⭐ ГОЛОВА — ЧАСТЬ С ВЕСОМ (`_lw.head`). Смешанный режим: доля ручек походки по ходу, умолчание 1 — как было бит в
+  // бит. «Только клипы»: здесь стойка (`torsoMag` 0), а клип головы ложится ниже, сразу за слоем бега.
+  blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, torsoMag * _lw.head);
+  blendBone(human, 'Head', [0, 0, 0], idle, torsoMag * _lw.head);
   // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──
   // Кладётся ЗДЕСЬ: ноги и торс уже процедурные, а верх (стойка, предметы, слот действия) идёт ниже
   // и ложится ПОВЕРХ — то есть ровно в том порядке, что и в стеке слоёв. Положи раньше — затрут ноги;
   // позже — клип съест стойку с оружием, и меч в руке начнёт жить чужой жизнью.
   if (locoMix > 0.001 && locoPose) blendClipBones(human, locoPose, locoMix, LOCO_BONES);
+  // ⭐ ГОЛОВА ИЗ КЛИПА — только в «только клипы» и только долей `_lw.head` (умолчание 0 — головой владеет стойка, как
+  // было). В смешанном режиме головой клипа никто не владел и не владеет: там её ведут ручки походки (выше).
+  // ⚠ БЕЗ ТАЗА: офсет таза клипа уже положен строкой выше, второй вызов довёл бы его к цели ещё раз.
+  if (clipOnly && locoMix > 0.001 && locoPose && _lw.head > 0.001) blendClipBones(human, locoPose, locoMix * _lw.head, HEAD_BONES, null, 0, false);
+  if (layerTrace.on && idle) {
+    const hg = clipOnly ? locoMix : torsoMag;
+    traceRow('↳ голова', clipOnly ? 'клип хода' : 'ручки походки', clamp(_lw.head * hg, 0, 1), `вес ${_lw.head.toFixed(2)} × ход ${hg.toFixed(2)} · поверх — взгляд на прицел`);
+  }
   // Руки — по МГНОВЕННОЙ скорости (в покое точная idle). В «только клипы» — мах ИЗ КЛИПА и вес — ДОЛЯ КЛИПА: она
   // сглажена (`LOCO_FADE`) и та же, что у ног. ⚠ Мгновенная скорость там не годится: на остановке она падает в ноль
   // за кадр, а фаза клипа замирает — рука щёлкала бы со взмаха в стойку.
@@ -1094,13 +1168,21 @@ const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.g
 export function localStorageContent(charId: string, fallbackId?: string): GamePoseContent {
   // Имена клипов нормализуем на чтении (старая конвенция стойка_/удар_ → idle_/hit_), чтобы старые данные работали сразу.
   const clips = readJSON<Clip[]>('pe_clips', []).map((c) => (c && typeof c.name === 'string' ? { ...c, name: migratePoseName(c.name) } : c));
-  const sway = readJSON<Record<string, Record<string, number>>>('pe_sway', {});
+  const sway = readJSON<SwayStore>('pe_sway', {});
+  // ⭐ ВЕСА СЛОЁВ ПО ЧАСТЯМ (`pe_layers`) + легаси `pe_sway` — поиск ОДНИМ швом с редактором (`lookupLayers`).
+  // Контент — снимок localStorage на момент сборки куклы, поэтому ответ на ключ оружия считается один раз.
+  const layerStore = readLayerStore(readJSON<unknown>('pe_layers', {}));
+  const layerMemo = new Map<string, ReturnType<typeof lookupLayers>>();
+  const layersOf = (w: string): ReturnType<typeof lookupLayers> => {
+    let r = layerMemo.get(w);
+    if (!r) { r = lookupLayers(layerStore, sway, charId, w, fallbackId); layerMemo.set(w, r); }
+    return r;
+  };
   const shieldCfg = readJSON<Record<string, { mix?: number; perWeapon?: Record<string, number> }>>('pe_shield', {});   // щит: базовый mix + per-оружие
   const find = (kind: string, id: string, w: string): Clip | null => clips.find((c) => c.name === kind + '_' + w && c.character === id && c.weapon === w) ?? null;
   const stance = (w: string): Clip | null => find('idle', charId, w) ?? (fallbackId ? find('idle', fallbackId, w) : null);
   const combatStance = (w: string): Clip | null => find('combat_idle', charId, w) ?? (fallbackId ? find('combat_idle', fallbackId, w) : null);   // боевая стойка (нет → null → фолбэк на relaxed idle)
   const atk = (w: string): Clip | null => find('hit', charId, w) ?? (fallbackId ? find('hit', fallbackId, w) : null);
-  const swayOf = (w: string): number => sway[charId]?.[w] ?? (fallbackId ? sway[fallbackId]?.[w] : undefined) ?? 0.2;
   const anim = readAnimCfg(readJSON<unknown>('pe_anim', {}), charId, fallbackId);   // контроллер: предметы + привязки клипов
   // ⭐ ХВАТ ЖИВЁТ ЗДЕСЬ, А НЕ В КЛИПЕ (см. `liveGrip`). Ключ `pe_gripposes` — тот же, что у редактора.
   const gripCfg = readJSON<GripConfig>('pe_gripposes', EMPTY_GRIP_CONFIG());
@@ -1147,7 +1229,10 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
       const full = stance(weapon);
       // Ведущий клип стойки — по нему берётся хват КЛИПА и решается, анимированы ли пальцы.
       const lead = (combat > 0.5 ? bound('combat_idle', weapon) : bound('idle', weapon)) ?? full;
-      return { pose, swing: swayOf((full && full.keys.length) ? weapon : baseWeapon(weapon)),
+      // ⚠ Ключ весов больше НЕ зависит от того, есть ли полная стойка на точный ключ: это условие проверялось здесь по
+      // историческому имени `idle_<w>`, а в редакторе — по привязке, и для `none+shield` они расходились (0.5 против 0.2).
+      const lk = layersOf(weapon);
+      return { pose, swing: lk.swing, layers: lk.entry,
                clipName: lead?.name, fingersAnimated: fingersAnimated(lead) };
     },
     attackClip(weapon: string): Clip | null { return atk(baseWeapon(weapon)); },
