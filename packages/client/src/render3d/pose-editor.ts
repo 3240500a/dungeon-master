@@ -52,8 +52,8 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
   rootViewJump, turnHipsTarget, seedMotionChannels, copyRootView, rootPointToLocal, rootPointToWorld, rootDirToLocal, rootDirToWorld,
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
-import { ASYM, STRAFE, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, plantMirrorGaps as rtPlantMirrorGaps } from './poseRuntime.js';
+import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
@@ -67,7 +67,7 @@ import { buildInventory, inventorySummary } from './animInventory.js';
 import { createPublishButton } from './publishPanel.js';
 import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
-import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick, BAKE_MAXSPD, openStrafePresets, withMirroredStrafeL, gaitIsAsymmetric, type BakeGaitOptions } from './clipBake.js';   // Ф2.1: процедурка → клипы
+import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick, BAKE_MAXSPD, openStrafePresets } from './clipBake.js';   // Ф2.1: процедурка → клипы
 import { TURN_NAMES } from './turnInPlace.js';
 import { findLocoClip, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
@@ -4452,9 +4452,12 @@ function renderLoco(): void {
       pbtn('сброс ячейки', () => { (plantSpeedRun ? gaitPlant.run : gaitPlant.walk)[plantDirSel] = zeroLeg(); saveGaitCfg(); }),
       pbtn('сброс всех', () => { Object.assign(gaitPlant, emptyGrid()); saveGaitCfg(); renderLoco(); }),
     );
-    // ⭐ ЗЕРКАЛО ЯЧЕЙКИ: страйф L и R снимаются по ячейкам «влево» / «вправо», и настроенная только с одной стороны
-    // сетка даёт разные страйфы (у воина ходьба «вправо» разнесена, «влево» пустая — голени касаются). Данные автора:
-    // кнопка ничего не делает сама, только по нажатию и только в зеркальную ячейку той же скорости.
+    // ⭐ ЗЕРКАЛО ЯЧЕЙКИ — УДОБНАЯ АВТОРСКАЯ ОПЕРАЦИЯ, А НЕ ТРЕБОВАНИЕ. Настроил «вправо» — одной кнопкой скопировал
+    // в «влево» и дальше правь как хочешь. Данные автора: кнопка ничего не делает сама, только по нажатию и только
+    // в зеркальную ячейку той же скорости.
+    // ⚠ ПРЕДУПРЕЖДЕНИЯ «не зеркально» БОЛЬШЕ НЕТ (19.09): раньше несимметричная сетка означала, что левый страйф
+    // снимется не таким, как правый, — а он и должен сниматься СВОИМ. Зеркала съёма нет, стороны настраиваются
+    // раздельно (колонки `@sl`/`@sr`), и несимметрия теперь законна, а не подозрительна.
     const mj = rtMirrorPlantDir(plantDirSel);
     if (mj !== plantDirSel) {
       rr.append(pbtn(`⇆ в «${DIR8[mj]}»`, () => {
@@ -4462,13 +4465,6 @@ function renderLoco(): void {
         grid[mj] = rtMirrorPlantCell(selCell());
         saveGaitCfg(); renderLoco();
       }));
-    }
-    const gaps = rtPlantMirrorGaps(gaitPlant);
-    if (gaps.length) {
-      const warn = el('div', 'font-size:10px;color:#e0b050;margin-top:3px');
-      warn.textContent = '⚠ не зеркально: ' + gaps.map((g) => `${g.speed === 'run' ? 'бег' : 'шаг'} ${g.i === g.j ? DIR8[g.i] : `${DIR8[g.i]}↔${DIR8[g.j]}`} (Δ${Number.isFinite(g.diff) ? g.diff.toFixed(1) : ' обвод'})`).join(', ')
-        + ' — страйфы/диагонали в разные стороны снимутся разными';
-      cb.append(warn);
     }
   }
   if (!gaitFaceMove) {
@@ -4684,12 +4680,12 @@ function bakeOpenSet(): void {
     // Планировщик ставит стопы в МИРОВЫХ X/Z — корень обязан быть в нуле (та же обёртка, что у основного съёма).
     const out = withRootViewOff(() => [...groups].flatMap(([owner, g]) => {
       const opts = { character: curCharId, weapon: owner, readPose: bakeReadPose(human), bakeId: g.bakeId };
-      return mirrorIfAsked(bakeGaitSet(player, human, opts, specsForBake(g.specs)), opts);
+      return bakeGaitSet(player, human, opts, g.specs);
     }));
     const ms = performance.now() - t0;
     const drop = openDropList();
     histLib('запечь «таз открыт»', () => { putBaked(out); dropClips(drop); saveLib(); });
-    bakeStatus = `✓ «таз открыт»: ${out.length} клипов, ${ms.toFixed(0)} мс${mirrorNote()}`;
+    bakeStatus = `✓ «таз открыт»: ${out.length} клипов, ${ms.toFixed(0)} мс`;
   } catch (e) { bakeStatus = '⚠ съём не удался: ' + String(e instanceof Error ? e.message : e); }
   // ⚠ ИМЕННО `finally`. Съём УМЕЕТ отказать (`assertWarp` — чужой таз на кадре, `assertOpenBudget` — раскрытие больше
   // бюджета скрутки): без этого `locoOn` оставался false, превью «Бега» вставало намертво, статус показывал прежнее
@@ -4727,28 +4723,18 @@ function dropClips(names: readonly { name: string; weapon: string }[]): void {
   for (const n of names) { const i = clipIndexOf({ name: n.name, character: curCharId, weapon: n.weapon }); if (i >= 0) library.splice(i, 1); }
 }
 /**
- * Зеркало левого страйфа — если попрошено И походка симметрична. ⚠ `ASYM` (ползунки «на сторону») остаётся на СВОЕЙ
- * ноге: зеркало перенесло бы хромоту на другую ногу, и левый страйф разошёлся бы с `*_fwd`/`*_back`. Тогда молча
- * пропускаем зеркало и пишем это в статус — чтобы автор не гадал, почему левый страйф другой.
+ * ⭐⭐ ЗЕРКАЛА ЛЕВОГО СТРАЙФА БОЛЬШЕ НЕТ (19.09). Было: ручка `strafeMirror` в GAIT + пара функций зеркала в
+ * `clipBake` — левый страйф не снимался вовсе, а подменялся отражением правого со сдвигом на полцикла.
+ *
+ * ⚠ ПОЧЕМУ УБРАНО. Именно зеркало делало левую сторону НЕНАСТРАИВАЕМОЙ: сколько ни крути «СТРАЙФ» (а колонка и так
+ * была одна на обе стороны), левый клип всё равно снимался как отражение правого, и правка левого физически не могла
+ * никуда попасть. Теперь у страйфа есть свои колонки сторон (`STRAFE_L`/`STRAFE_R`, суффиксы `@sl`/`@sr`), а каждый
+ * левый страйф снимается СВОИМ проходом. Несимметрия сторон отныне законна, и оговорка «зеркало пропущено:
+ * походка асимметрична» (`gaitIsAsymmetric`) вместе с ней не нужна.
+ *
+ * ЗАМЕР цены: набор походки без зеркала снимает на 2 левых страйфа больше (+2 с разогрева и до 6 с цикла на каждый).
+ * Это и есть цена настройки по сторонам — числа в README, раздел «СТОРОНА СТРАЙФА».
  */
-let mirrorSkipped = false;
-/** Зеркало действительно применится: попрошено И походка симметрична. */
-const mirrorOn = (): boolean => !!GAIT.strafeMirror && !gaitIsAsymmetric();
-function mirrorIfAsked<T extends { clip: Clip }>(baked: T[], opts?: BakeGaitOptions): T[] {
-  mirrorSkipped = !!GAIT.strafeMirror && gaitIsAsymmetric();
-  return mirrorOn() ? withMirroredStrafeL(baked as never, opts) as unknown as T[] : baked;
-}
-/**
- * ⭐ ЛЕВЫЙ СТРАЙФ ПРИ ВКЛЮЧЁННОМ ЗЕРКАЛЕ НЕ СНИМАЕТСЯ ВОВСЕ. Раньше он снимался полным процедурным съёмом
- * (разогрев 2 с + до 6 с цикла на каждый) и тут же ЦЕЛИКОМ выбрасывался — `withMirroredStrafeL` подменял результат
- * зеркалом правого. На наборе с «таз открыт» это четыре лишних съёма, то есть примерно вдвое дольше на страйфах.
- * ⚠ Правый той же скорости обязан быть в ТОМ ЖЕ съёме — иначе зеркалить нечем, и левый снимаем как раньше.
- */
-function specsForBake<T extends { name: string }>(specs: readonly T[]): T[] {
-  if (!mirrorOn()) return [...specs];
-  return specs.filter((s) => !/_strafe_L/.test(s.name) || !specs.some((r) => r.name === s.name.replace('_strafe_L', '_strafe_R')));
-}
-const mirrorNote = (): string => (mirrorSkipped ? ' · ⚠ зеркало пропущено: походка асимметрична (ASYM)' : '');
 /** Панель настройки процедурного бега (GX/POSE/GAIT). Меняет живые объекты + пишет per-character в pe_gait. */
 // Ф2.1: запечь процедурную походку в обычные клипы (после этого клиенту StepPlanner не нужен)
 let bakeStatus = '';
@@ -4821,10 +4807,6 @@ function bakeGaitSection(): void {
     body.append(w);
   }
 
-  // ⭐ СТРАЙФ ВЛЕВО = ЗЕРКАЛО ВПРАВО (`GAIT.strafeMirror`, в `pe_gait` — одинаково на всех машинах): плант-сетка несимметрична
-  // — левый страйф снимется не таким, как правый. Выкл — каждый своим съёмом (если сетку настраивали с обеих сторон).
-  body.append(pbtn(GAIT.strafeMirror ? 'страйф влево = зеркало вправо' : 'страйф влево — свой съём',
-    () => { GAIT.strafeMirror = GAIT.strafeMirror ? 0 : 1; saveGaitCfg(); refreshAll(); }, !!GAIT.strafeMirror));
   // ⭐ «ТАЗ ОТКРЫТ» СНИМАЕТСЯ ВМЕСТЕ С ОСНОВНЫМ НАБОРОМ — И КОГДА РЕЖИМ ВЫКЛЮЧЕН ТОЖЕ, лишь бы набор существовал.
   // ⚠ Иначе: покрутил плант-сетку/ползунки в «ровно», перезапёк основной — а `_open` остался со СТАРОЙ походкой, и
   // сравнение «ровно» ↔ «открыт» сравнивало бы две разные настройки. Второй сторож этого же — `openSetStale` по `bakeId`.
@@ -4843,11 +4825,12 @@ function bakeGaitSection(): void {
       const openSpecs = withOpen ? openStrafePresets(GAIT.hipsOpen, GAIT.hipsOpenWalk)
         .filter((s) => bakeList().includes(s.name.replace(/_open$/, ''))) : [];
       // Планировщик ставит стопы в МИРОВЫХ X/Z — корень обязан быть в нуле (вне «Анимации» он и так ноль; держим явно).
-      // ⚠ ВЕСЬ съём внутри обёртки — и набор хода, и «таз открыт», и зеркало, и повороты.
+      // ⚠ ВЕСЬ съём внутри обёртки — и набор хода, и «таз открыт», и повороты.
+      // ⭐ ЛЕВЫЙ СТРАЙФ ИДЁТ СВОИМ ПРОХОДОМ, как и любой другой режим: фильтра спеков под зеркало больше нет.
       const out = withRootViewOff(() => {
-        const specs = specsForBake([...GAIT_PRESETS.filter((s) => bakeList().includes(s.name)), ...openSpecs]);
+        const specs = [...GAIT_PRESETS.filter((s) => bakeList().includes(s.name)), ...openSpecs];
         const gait = bakeGaitSet(player, human, opts, specs);
-        return [...mirrorIfAsked(gait, opts),
+        return [...gait,
           ...bakeTurnSet(player, human, opts, TURN_PRESETS.filter((s) => bakeList().includes(s.name)))];
       });
       const ms = performance.now() - t0;
@@ -4860,7 +4843,7 @@ function bakeGaitSection(): void {
         saveLib();
       });
       const keys = out.reduce((a, r) => a + r.keys, 0), frames = out.reduce((a, r) => a + r.frames, 0);
-      bakeStatus = `✓ ${out.length} клипов, ${frames} кадров → ${keys} ключей, ${ms.toFixed(0)} мс${mirrorNote()}`;
+      bakeStatus = `✓ ${out.length} клипов, ${frames} кадров → ${keys} ключей, ${ms.toFixed(0)} мс`;
     } catch (e) { bakeStatus = '⚠ съём не удался: ' + String(e instanceof Error ? e.message : e); }
     finally { locoOn = wasLoco; refreshAll(); }   // ⚠ см. `bakeOpenSet`: съём умеет отказать, превью не должно вставать
   }));
@@ -4894,7 +4877,14 @@ function renderGaitTune(): void {
     const v = gaitSpeed === 'walk' ? PAD_WALK : PAD_RUN;
     // СТРАЙФ и НАЗАД показываем честно: тело смотрит ВПЕРЁД, а едет вбок или спиной. Иначе «лицом по
     // движению» разворачивает персонажа, и оба режима превращаются в обычный бег вперёд.
-    if (gaitDir === 'str') { gaitFaceMove = false; gaitYawManual = 0; locoVx = v; locoVz = 0; plantDirSel = 2; }
+    // ⭐⭐ СТОРОНА СТРАЙФА ВЕДЁТ И ПРЕВЬЮ. Было жёстко забито на правую (`locoVx = v`, ячейка 2), поэтому
+    // левый страйф автор в глаза не видел: правишь «СТРАЙФ» — перед тобой едет вправо. Теперь «Л» ставит и
+    // ЗНАК боковой скорости, и ячейку плант-сетки «влево» (6) — иначе маркеры планта показывали бы чужую ячейку.
+    if (gaitDir === 'str') {
+      gaitFaceMove = false; gaitYawManual = 0;
+      const left = gaitStrSide === 'L';
+      locoVx = left ? -v : v; locoVz = 0; plantDirSel = left ? 6 : 2;
+    }
     else if (gaitDir === 'back') { gaitFaceMove = false; gaitYawManual = 0; locoVx = 0; locoVz = -v; plantDirSel = 4; }
     else { locoVx = 0; locoVz = v; plantDirSel = 0; }
     plantSpeedRun = gaitSpeed === 'run';
@@ -4906,6 +4896,7 @@ function renderGaitTune(): void {
   };
   const setSpeed = (v: 'walk' | 'run'): void => { gaitSpeed = v; applyView(); };
   const setDir = (d: 'fwd' | 'back' | 'str' | 'cbt'): void => { gaitDir = d; applyView(); };
+  const setStrSide = (s: 'both' | 'L' | 'R'): void => { gaitStrSide = s; applyView(); };
   const sp = el('span', 'color:#7a869e;font-size:10px'); sp.textContent = 'скорость';
   modeRow.append(sp,
     pbtn('ХОДЬБА', () => setSpeed('walk'), gaitSpeed === 'walk'),
@@ -4916,34 +4907,42 @@ function renderGaitTune(): void {
     pbtn('НАЗАД', () => setDir('back'), gaitDir === 'back'),
     pbtn('СТРАЙФ', () => setDir('str'), gaitDir === 'str'),
     pbtn('БОЙ', () => setDir('cbt'), gaitDir === 'cbt'));
+  // ⭐ СТОРОНА СТРАЙФА. «обе» — общая колонка (как было), «Л»/«П» — добавка ПОВЕРХ неё на свою сторону.
+  if (gaitDir === 'str') {
+    const ss = el('span', 'color:#7a869e;font-size:10px;margin-left:8px'); ss.textContent = 'сторона';
+    modeRow.append(ss,
+      pbtn('обе', () => setStrSide('both'), gaitStrSide === 'both'),
+      pbtn('Л', () => setStrSide('L'), gaitStrSide === 'L'),
+      pbtn('П', () => setStrSide('R'), gaitStrSide === 'R'));
+  }
   const linkBtn = pbtn(gaitLinkLR ? 'Л/П: связаны' : 'Л/П: раздельно', () => { gaitLinkLR = !gaitLinkLR; renderLoco(); }, gaitLinkLR);
   modeRow.append(linkBtn);
   const asymN = Object.keys(gaitAsym).filter((k) => !COL_SFX.some((x) => k.endsWith(x))).length;
   if (asymN) modeRow.append(pbtn(`сброс асимметрии (${asymN})`, () => { for (const k of Object.keys(gaitAsym)) if (!COL_SFX.some((x) => k.endsWith(x))) delete gaitAsym[k]; saveGaitCfg(); renderLoco(); }));
-  const strN = Object.keys(gaitStrafe).length + Object.keys(gaitAsym).filter((k) => k.endsWith('@s')).length;
-  if (strN) modeRow.append(pbtn(`сброс страйфа (${strN})`, () => {
-    for (const k of Object.keys(gaitStrafe)) delete gaitStrafe[k];
-    for (const k of Object.keys(gaitAsym)) if (k.endsWith('@s')) delete gaitAsym[k];
-    saveGaitCfg(); renderLoco();
-  }));
-  const bckN = Object.keys(gaitBack).length + Object.keys(gaitAsym).filter((k) => k.endsWith('@b')).length;
-  if (bckN) modeRow.append(pbtn(`сброс «назад» (${bckN})`, () => {
-    for (const k of Object.keys(gaitBack)) delete gaitBack[k];
-    for (const k of Object.keys(gaitAsym)) if (k.endsWith('@b')) delete gaitAsym[k];
-    saveGaitCfg(); renderLoco();
-  }));
-  const cbtN = Object.keys(gaitCombat).length + Object.keys(gaitAsym).filter((k) => k.endsWith('@c')).length;
-  if (cbtN) modeRow.append(pbtn(`сброс боя (${cbtN})`, () => {
-    for (const k of Object.keys(gaitCombat)) delete gaitCombat[k];
-    for (const k of Object.keys(gaitAsym)) if (k.endsWith('@c')) delete gaitAsym[k];
-    saveGaitCfg(); renderLoco();
-  }));
+  // Сброс колонки — ПОКЛЮЧЕВОЙ по своему суффиксу. ⚠ Сторон это касается ОТДЕЛЬНО: «сброс страйфа» чистит только
+  // общую колонку (`@s`), а «сброс страйфа Л/П» — свою добавку. Иначе одна кнопка молча уносила бы три настройки.
+  const colReset = (label: string, map: NumRec, sfx: string): void => {
+    const n = Object.keys(map).length + Object.keys(gaitAsym).filter((k) => k.endsWith(sfx)).length;
+    if (!n) return;
+    modeRow.append(pbtn(`${label} (${n})`, () => {
+      for (const k of Object.keys(map)) delete map[k];
+      for (const k of Object.keys(gaitAsym)) if (k.endsWith(sfx)) delete gaitAsym[k];
+      saveGaitCfg(); renderLoco();
+    }));
+  };
+  colReset('сброс страйфа', gaitStrafe, '@s');
+  colReset('сброс страйфа П', gaitStrafeR, '@sr');
+  colReset('сброс страйфа Л', gaitStrafeL, '@sl');
+  colReset('сброс «назад»', gaitBack, '@b');
+  colReset('сброс боя', gaitCombat, '@c');
   const mh = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
   const spName = gaitSpeed === 'run' ? 'БЕГ' : 'ХОДЬБУ';
   mh.textContent = gaitDir === 'fwd'
     ? `Правишь ${spName} ВПЕРЁД — это база. Между ходьбой и бегом всё интерполируется по скорости.`
     : gaitDir === 'str'
-      ? `Правишь ${spName} ВБОК. Отдельная колонка: подмешивается по боковитости хода и ход вперёд не трогает. Ползунок, который ты не тронул, здесь не задан — работает значение «вперёд».`
+      ? gaitStrSide === 'both'
+        ? `Правишь ${spName} ВБОК, ОБЕ СТОРОНЫ. Отдельная колонка: подмешивается по боковитости хода и ход вперёд не трогает. Ползунок, который ты не тронул, здесь не задан — работает значение «вперёд».`
+        : `Правишь ${spName} ВБОК, ТОЛЬКО ${gaitStrSide === 'L' ? 'ВЛЕВО' : 'ВПРАВО'}. Это ДОБАВКА поверх колонки «обе»: не тронул ползунок — работает то, что задано на обе стороны. Доли сторон делят ту же боковитость (сумма = «обе»), поэтому на переходе через прямой ход настройки непрерывны.`
       : gaitDir === 'back'
         ? `Правишь ${spName} НАЗАД. Отдельная колонка — затем и заведена, что наклон корпуса вперёд при ходе спиной складывается с посадкой тела и персонаж горбится. Не тронул ползунок — работает значение «вперёд».`
         : `Правишь БОЙ (${gaitSpeed === 'run' ? 'бег' : 'ходьба'}). Набор ног ОДИН — бой не второй набор, а те же ноги с другими числами: шире стойка, короче шаг. Подмешивается по боевому состоянию поверх направления; не тронул ползунок — в бою он как вне боя.`;
@@ -4963,7 +4962,9 @@ function renderGaitTune(): void {
     const p = gaitAsym[key];
     const v = p ? Math.max(Math.abs(p[0]), Math.abs(p[1])) : Math.abs(+obj[key]! || 0);
     if (gaitDir === 'fwd') return v;
-    const sv = colMapOf(gaitDir)[key];
+    // ⚠ У СТОРОНЫ страйфа откат — на ОБЩУЮ колонку, а не сразу на «вперёд»: амплитуду мог задать общий страйф,
+    // и без этого ручка-множитель на стороне ложно помечалась бы «нечего вращать».
+    const sv = colMapOf(gaitDir)[key] ?? (gaitDir === 'str' && gaitStrSide !== 'both' ? gaitStrafe[key] : undefined);
     return sv !== undefined ? Math.abs(sv) : v;
   };
   /**
@@ -4990,7 +4991,9 @@ function renderGaitTune(): void {
     const key = gaitSpeed === 'run' && kr ? kr : kw;
     // Затравка = то, что РЕАЛЬНО играет сейчас: колонка не задана → значение «вперёд» на той же
     // скорости. Первое касание ползунка тогда ничего не дёргает — оно лишь создаёт оверрайд тем же числом.
-    const seed = +obj[key]!;
+    // ⭐ У СТОРОНЫ страйфа затравка — ОБЩАЯ КОЛОНКА (если она задана), а не «вперёд»: сторона ложится ПОВЕРХ
+    // общей, и без этого первое касание ползунка «Л» сбрасывало бы настроенный общий страйф к значению хода вперёд.
+    const seed = gaitDir === 'str' && gaitStrSide !== 'both' ? gaitStrafe[key] ?? +obj[key]! : +obj[key]!;
     const setOn = onCol && (sparse[key] !== undefined || gaitAsym[key + sfx] !== undefined);
     const base = onCol ? sparse[key] ?? seed : seed;
     const pair = gaitAsym[onCol ? key + sfx : key];
@@ -4999,9 +5002,12 @@ function renderGaitTune(): void {
     if (pair) { const mk = el('span', 'color:#ffd24a;font-size:10px'); mk.textContent = 'Л≠П'; head.append(mk); }
     if (dead) { const mk = el('span', 'color:#c08a50;font-size:10px'); mk.textContent = `нечего вращать: ${opts!.depLabel} = 0`; head.append(mk); }
     if (onCol) {
-      const what = gaitDir === 'cbt' ? 'бой' : gaitDir === 'back' ? 'назад' : 'страйф';
+      const what = gaitDir === 'cbt' ? 'бой' : gaitDir === 'back' ? 'назад'
+        : gaitStrSide === 'L' ? 'страйф Л' : gaitStrSide === 'R' ? 'страйф П' : 'страйф';
       const mk = el('span', `color:${setOn ? '#9ae6a0' : '#6b7180'};font-size:10px`);
-      mk.textContent = setOn ? `${what} задан` : 'не задан (= как вперёд)';
+      // У стороны «не задан» значит «как в общей колонке», а не «как вперёд»: она ложится ПОВЕРХ общей.
+      const off = gaitDir === 'str' && gaitStrSide !== 'both' ? 'не задан (= как «обе»)' : 'не задан (= как вперёд)';
+      mk.textContent = setOn ? `${what} задан` : off;
       head.append(mk);
     }
     box.append(head);
@@ -5704,13 +5710,27 @@ let learnInfo = '';
 let gaitLinkLR = true;       // связаны ли стороны: связаны → одно число на обе, иначе пара в ASYM
 const gaitAsym = ASYM;       // ссылка на карту асимметрии рантайма (правим её же, что читает игра)
 const gaitStrafe = STRAFE;   // ссылка на страйф-колонку рантайма (та же, что читает игра)
+const gaitStrafeR = STRAFE_R;   // страйф ВПРАВО — добавка поверх общей колонки (суффикс `@sr`)
+const gaitStrafeL = STRAFE_L;   // страйф ВЛЕВО  — добавка поверх общей колонки (суффикс `@sl`)
 const gaitBack = BACK;       // колонка хода спиной — устроена так же и живёт там же
 const gaitCombat = COMBAT;   // боевая колонка (Ф6) — устроена так же и живёт там же
-/** Суффиксы сторон у КОЛОНОК: всё остальное в `ASYM` — асимметрия базы (хода вперёд). */
-const COL_SFX = ['@s', '@b', '@c'] as const;
-/** Карта и суффикс колонки по направлению. «Вперёд» колонки не имеет — это и есть база. */
-const colMapOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): NumRec => (d === 'cbt' ? gaitCombat : d === 'back' ? gaitBack : gaitStrafe);
-const colSfxOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): string => (d === 'cbt' ? '@c' : d === 'back' ? '@b' : '@s');
+/**
+ * ⭐ СТОРОНА СТРАЙФА В ПАНЕЛИ: «обе» правит общую колонку, «Л»/«П» — свою добавку поверх неё.
+ * Жалоба автора (19.09): «настройка только в одну сторону происходит» — колонка была одна на обе стороны,
+ * а превью жёстко показывало правый страйф. Выбор живёт рядом с `gaitDir`, потому что это его уточнение.
+ */
+let gaitStrSide: 'both' | 'L' | 'R' = 'both';
+/**
+ * Суффиксы сторон у КОЛОНОК: всё остальное в `ASYM` — асимметрия базы (хода вперёд).
+ * ⚠ `'@sr'`/`'@sl'` НЕ оканчиваются на `'@s'` — фильтры общей страйф-колонки их не захватывают, и это нарочно:
+ * «сброс страйфа» не должен молча сносить настройки сторон (у них свои кнопки).
+ */
+const COL_SFX = ['@s', '@sr', '@sl', '@b', '@c'] as const;
+/** Карта и суффикс колонки по направлению (у страйфа — с учётом выбранной стороны). «Вперёд» колонки не имеет — это база. */
+const colMapOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): NumRec => (d === 'cbt' ? gaitCombat : d === 'back' ? gaitBack
+  : gaitStrSide === 'R' ? gaitStrafeR : gaitStrSide === 'L' ? gaitStrafeL : gaitStrafe);
+const colSfxOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): string => (d === 'cbt' ? '@c' : d === 'back' ? '@b'
+  : gaitStrSide === 'R' ? '@sr' : gaitStrSide === 'L' ? '@sl' : '@s');
 let warpReadout: HTMLElement | null = null;                // живой угол доворота таза (Ф0) — глазами его на диагонали не отличить
 let stanceReadout: HTMLElement | null = null;              // живой вес и рыск таза авторской стойки — видно, как он гаснет на бегу и возвращается стоя
 let editorRootYaw = 0;                                      // зеркало pelvisYawWorld плеера (updateTurnTest идёт по тазу)
@@ -6314,7 +6334,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'warpRate', 'hipsMode', 'hipsOpen', 'hipsOpenWalk', 'stancePelvis', 'stancePelvisYaw', 'strafeMirror', 'planSmooth', 'stepSlack', 'stepUrge',
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'warpRate', 'hipsMode', 'hipsOpen', 'hipsOpenWalk', 'stancePelvis', 'stancePelvisYaw', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
@@ -6358,7 +6378,7 @@ const gaitPlant: PlantGrid = emptyGrid();                       // живая с
 let plantDirSel = 0, plantSpeedRun = true;                     // активная ячейка для правки (направление 0-7, бег/шаг)
 let plantEditDir = 0, plantEditRun = true;                     // замороженная ячейка на время драга маркера
 const activeCell = (): Leg2 => (plantEditRun ? gaitPlant.run : gaitPlant.walk)[plantEditDir]!;
-let gaitCfgs: Record<string, { gait: NumRec; pose: NumRec; gx: NumRec; plant?: PlantStored; asym?: Record<string, [number, number]>; strafe?: NumRec; back?: NumRec; combat?: NumRec }> = (() => { try { return JSON.parse(localStorage.getItem('pe_gait') || '{}'); } catch { return {}; } })();
+let gaitCfgs: Record<string, { gait: NumRec; pose: NumRec; gx: NumRec; plant?: PlantStored; asym?: Record<string, [number, number]>; strafe?: NumRec; strafeR?: NumRec; strafeL?: NumRec; back?: NumRec; combat?: NumRec }> = (() => { try { return JSON.parse(localStorage.getItem('pe_gait') || '{}'); } catch { return {}; } })();
 function loadPlant(p: PlantStored | undefined): void {          // читаем новый {walk,run} ИЛИ старый {l,r} (→ размазать во все ячейки)
   const g = emptyGrid();
   if (p?.walk && p?.run) { for (const sp of ['walk', 'run'] as const) for (let i = 0; i < 8; i++) { const e = p[sp]![i]; if (e) g[sp][i] = { l: [...(e.l ?? [0, 0])] as XY, r: [...(e.r ?? [0, 0])] as XY, lVia: cloneVia(e.lVia), rVia: cloneVia(e.rVia) }; } }
@@ -6376,6 +6396,12 @@ function applyGaitCfg(id: string): void {   // выставить GAIT/POSE/GX/p
   // Страйф-колонка — тоже пер-персонаж и тоже разреженная (пусто → страйф ведёт себя как бег).
   for (const k of Object.keys(STRAFE)) delete STRAFE[k];
   for (const [k, v] of Object.entries(c?.strafe ?? {})) if (typeof v === 'number') STRAFE[k] = v;
+  // Стороны страйфа — две отдельные добавки ПОВЕРХ общей. Конфига без них (всё, что сохранено до 19.09)
+  // это не касается: пустые карты = ровно прежнее поведение, бит в бит.
+  for (const k of Object.keys(STRAFE_R)) delete STRAFE_R[k];
+  for (const [k, v] of Object.entries(c?.strafeR ?? {})) if (typeof v === 'number') STRAFE_R[k] = v;
+  for (const k of Object.keys(STRAFE_L)) delete STRAFE_L[k];
+  for (const [k, v] of Object.entries(c?.strafeL ?? {})) if (typeof v === 'number') STRAFE_L[k] = v;
   for (const k of Object.keys(BACK)) delete BACK[k];
   for (const [k, v] of Object.entries(c?.back ?? {})) if (typeof v === 'number') BACK[k] = v;
   for (const k of Object.keys(COMBAT)) delete COMBAT[k];
@@ -6393,9 +6419,11 @@ function saveGaitCfg(): void {
   const asym: Record<string, [number, number]> = {};
   for (const [k, v] of Object.entries(ASYM)) asym[k] = [v[0], v[1]];   // пусто = стороны одинаковы
   const strafe: NumRec = { ...STRAFE };                                // пусто = страйф не настраивали
+  const strafeR: NumRec = { ...STRAFE_R };                             // пусто = страйф вправо = общая колонка
+  const strafeL: NumRec = { ...STRAFE_L };                             // пусто = страйф влево  = общая колонка
   const back: NumRec = { ...BACK };                                    // пусто = ход спиной как ход вперёд
   const combat: NumRec = { ...COMBAT };                                // пусто = бой ничего не меняет
-  gaitCfgs[curCharId] = { gait, pose, gx, plant: { walk: cp(gaitPlant.walk), run: cp(gaitPlant.run) }, asym, strafe, back, combat };
+  gaitCfgs[curCharId] = { gait, pose, gx, plant: { walk: cp(gaitPlant.walk), run: cp(gaitPlant.run) }, asym, strafe, strafeR, strafeL, back, combat };
   try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ }
 }
 let stanceMeasuredFor = '';   // замеряем ширину стойки один раз на текущее оружие (мутирует human → только на смене)

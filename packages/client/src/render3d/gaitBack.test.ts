@@ -14,7 +14,7 @@ import { applyGaitConfig } from './poseRuntime.js';
  * было негде.
  */
 const DT = 1 / 60;
-const mix = (sb: number, st = 0, bt = 0, ct = 0): LocoMix => ({ sb, st, bt, ct });
+const mix = (sb: number, st = 0, bt = 0, ct = 0, stR = 0, stL = 0): LocoMix => ({ sb, st, stR, stL, bt, ct });
 const clearAll = (): void => {
   for (const m of [ASYM as unknown as Record<string, unknown>, STRAFE, BACK, COMBAT]) for (const k of Object.keys(m)) delete m[k];
 };

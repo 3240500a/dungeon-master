@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
-import { bakeGaitSet, GAIT_PRESETS, openStrafePresets, mirrorStrafeL, withMirroredStrafeL } from './clipBake.js';
+import { bakeGaitSet, GAIT_PRESETS, openStrafePresets } from './clipBake.js';
 import { clipPoseAt, type Clip } from './clipModel.js';
 import { findLocoClip } from './locoBlend.js';
 import { readFileSync } from 'node:fs';
@@ -124,42 +124,6 @@ describe('таз на ходе боком: съём', () => {
     expect(libs.runOnly.has('walk_strafe_R_open'), 'угол ходьбы 0 — клипа ходьбы нет').toBe(false);
   });
 
-  it('ЛЕВЫЙ = ЗЕРКАЛО ПРАВОГО: имя, знак раскрытия и отворота, поля набора, замкнутый цикл, ключей как у съёма', () => {
-    const r = libs.open.get('run_strafe_R_open')!, l = mirrorStrafeL(r);
-    expect(l.name).toBe('run_strafe_L_open');
-    expect(l.hipsOpenDeg).toBe(35);
-    expect(l.hipsOpenW).toEqual(r.hipsOpenW);
-    expect(l.bakeSpeed).toBe(r.bakeSpeed);
-    expect(l.bakeRev).toBe(2);
-    expect(meanY(l, ['Hips'])).toBeCloseTo(-35, 0);
-    expect(Math.abs(meanY(l, ['Spine', 'Chest', 'UpperChest']) - 35)).toBeLessThan(2);
-    const a = l.keys[0]!.pose, b = l.keys[l.keys.length - 1]!.pose;
-    for (const k of ['LeftUpperLeg', 'RightLowerLeg', 'Hips']) expect(Math.hypot(a[k]![0] - b[k]![0], a[k]![1] - b[k]![1], a[k]![2] - b[k]![2]), k).toBeLessThan(1e-3);
-    expect(l.keys.length, 'зеркало идёт через тот же хвост съёма (гладкие ключи), а не 60 кадров/с').toBeLessThanOrEqual(r.keys.length * 2);
-    // Набор: левый заменяется, только если правый той же скорости снят в этом же наборе.
-    const out = withMirroredStrafeL([{ clip: libs.sq.get('walk_strafe_L')!, frames: 0, keys: 0, periodSec: 1, cyclic: true }]);
-    expect(out[0]!.clip, 'правого нет — левый свой').toBe(libs.sq.get('walk_strafe_L'));
-  });
-
-  it('⚠ ЗЕРКАЛО МЕНЯЕТ МЕСТАМИ ФЛАГИ ПЕРЕНОСА (`__swing`) и НЕ ТАЩИТ МЕТКИ правого клипа', () => {
-    // `flipPose` считает `__swing` обычным скаляром и оставляет как есть — заземление держало бы к полу НЕ ТУ ногу.
-    // Метки правого клипа в зеркале тоже недопустимы: ключи сдвинуты на ПОЛЦИКЛА, шаг звучал бы мимо.
-    const r0 = libs.sq.get('run_strafe_R')!;
-    // Перенос ЛЕВОЙ в первой половине цикла, ПРАВОЙ во второй — как у настоящего клипа (а не через ключ: соседние
-    // ключи с разными флагами интерполируются, и проба попадала бы в середину).
-    const half = r0.keys.length / 2;
-    const src: Clip = { ...r0, keys: r0.keys.map((k, i) => ({ ...k, pose: { ...k.pose, __swing: (i < half ? [1, 0, 0] : [0, 1, 0]) as [number, number, number] }, ...(i === 1 ? { marks: [{ type: 'footstep' as const, foot: 'L' as const }] } : {}) })) };
-    const l = mirrorStrafeL(src);
-    expect(l.keys.some((k) => k.marks?.length), 'метки правого в зеркало не едут').toBe(false);
-    const sw = (c: Clip, u: number): [number, number] => { const p = clipPoseAt(c, u); const s = p['__swing'] ?? [0, 0, 0]; return [s[0], s[1]]; };
-    // Зеркало сдвинуто на полцикла: перенос правой на фазе u у источника = перенос ЛЕВОЙ на (u + 0.5) у зеркала.
-    let seen = 0;
-    for (const u of [0.15, 0.35, 0.65, 0.85]) {
-      const a = sw(src, (u + 0.5) % 1), b = sw(l, u);
-      if (Math.abs(a[0] - a[1]) > 0.5) { seen++; expect(Math.sign(b[0] - b[1]), `u=${u}: флаги переноса поменялись местами`).toBe(-Math.sign(a[0] - a[1])); }
-    }
-    expect(seen, 'флаги в источнике действительно различались').toBeGreaterThan(1);
-  });
 });
 
 describe('таз на ходе боком: редактор', () => {
@@ -385,24 +349,6 @@ describe('таз на ходе боком: разбор ревью', () => {
     // перезапеклись со свежим номером — расхождение ровно того класса, ради которого номер и заведён.
     // ⚠ Мутация «openSpecs без фильтра» валит это.
     expect(btn()).toMatch(/\.filter\(\(s\) => bakeList\(\)\.includes\(s\.name\.replace\(\/_open\$\/, ''\)\)\)/);
-  });
-
-  it('⚠ ЛЕВЫЙ СТРАЙФ ПРИ ВКЛЮЧЁННОМ ЗЕРКАЛЕ НЕ СНИМАЕТСЯ ВОВСЕ (его всё равно выбрасывали)', () => {
-    // ⚠ Мутация «снимать и выбрасывать» стоит 2 с разогрева + до 6 с цикла на каждый левый страйф — на наборе с
-    // «таз открыт» это четыре лишних съёма.
-    const f = fn('specsForBake');
-    expect(f, 'фильтр включается только когда зеркало реально применится').toMatch(/if \(!mirrorOn\(\)\) return \[\.\.\.specs\];/);
-    expect(f, 'и только если правый той же скорости в ТОМ ЖЕ съёме').toMatch(/specs\.some\(\(r\) => r\.name === s\.name\.replace\('_strafe_L', '_strafe_R'\)\)/);
-    expect(btn(), 'кнопка набора снимает отфильтрованное').toMatch(/specsForBake\(\[\.\.\.GAIT_PRESETS/);
-    expect(fn('bakeOpenSet'), 'и набор «таз открыт» — тоже').toMatch(/specsForBake\(g\.specs\)/);
-  });
-
-  it('⚠ ЗЕРКАЛО ДОБАВЛЯЕТ ЛЕВЫЙ, КОГДА ЕГО В НАБОРЕ НЕТ (иначе пропуск съёма терял бы клип)', () => {
-    const r: Parameters<typeof withMirroredStrafeL>[0][number] = { clip: libs.sq.get('run_strafe_R')!, frames: 0, keys: 0, periodSec: 1, cyclic: true };
-    const out = withMirroredStrafeL([r]);
-    expect(out.length, 'правый + добавленное зеркало').toBe(2);
-    expect(out.map((x) => x.clip.name).sort()).toEqual(['run_strafe_L', 'run_strafe_R']);
-    expect(out.find((x) => x.clip.name === 'run_strafe_L')!.keys, 'ключи посчитаны').toBeGreaterThan(0);
   });
 
   it('⚠ АКТИВНАЯ ЯЧЕЙКА ПЛАНТ-СЕТКИ ИДЁТ ПО МИРОВОМУ РЫСКУ ТАЗА, а не по приложенному курсу', () => {

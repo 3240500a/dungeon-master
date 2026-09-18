@@ -153,6 +153,24 @@ export const sideLerp = (kw: string, kr: string, bw: number, br: number, i: 0 | 
 export const STRAFE: Record<string, number> = {};
 export const BACK: Record<string, number> = {};
 export const COMBAT: Record<string, number> = {};
+/**
+ * ⭐⭐ СТОРОНА СТРАЙФА — ЕЩЁ ДВЕ КАРТЫ ПОВЕРХ ОБЩЕЙ (`@sr` — вправо, `@sl` — влево).
+ *
+ * Жалоба автора (19.09): «по страйфу настройка только в одну сторону происходит… есть кнопка страйф
+ * влево, свой съём, а настроить его нечем». ЗАМЕР причины: `strafeMix` считает боковитость по МОДУЛЮ
+ * боковой скорости, а сторона (`latRight`) в планировщик не приходила вовсе — одна колонка «СТРАЙФ»
+ * обслуживала обе стороны, и превью редактора было жёстко забито на правую (`plantDirSel = 2`).
+ *
+ * ⚠ ПОЧЕМУ НЕ `ASYM`. Тот про ЛЕВУЮ/ПРАВУЮ НОГУ, а не про сторону ДВИЖЕНИЯ: ход влево и ход вправо —
+ * это одни и те же две ноги, просто в другом порядке. Выразить «влево шире шаг» через ногу нельзя.
+ *
+ * Порядок наложения: база (ходьба↔бег) → `STRAFE` ×`st` → сторона ×`stR`/`stL` → `BACK` ×`bt` →
+ * `COMBAT` ×`ct`. Общая колонка продолжает работать на обе стороны, поэтому МИГРАЦИИ НЕТ: уже
+ * настроенный страйф не сдвинулся ни на знак, а сторона — это ДОБАВКА поверх него.
+ * Пустая карта стороны = ровно прежнее поведение, бит в бит (`colLerp` возвращает `undefined`).
+ */
+export const STRAFE_R: Record<string, number> = {};
+export const STRAFE_L: Record<string, number> = {};
 
 /** Значение ключа в колонке на сторону: пара в `ASYM[key+sfx]`, иначе общее из карты, иначе нет. */
 const colOf = (map: Record<string, number>, sfx: string, key: string, i: 0 | 1): number | undefined =>
@@ -174,11 +192,17 @@ export const strafeOf = (key: string, i: 0 | 1): number | undefined => colOf(STR
 export const backOf = (key: string, i: 0 | 1): number | undefined => colOf(BACK, '@b', key, i);
 /** Боевое значение ключа. */
 export const combatOf = (key: string, i: 0 | 1): number | undefined => colOf(COMBAT, '@c', key, i);
+/** Значение ключа в колонке СТОРОНЫ страйфа (`right` — вправо). Для панели и тестов. */
+export const strafeSideOf = (key: string, right: boolean, i: 0 | 1): number | undefined =>
+  colOf(right ? STRAFE_R : STRAFE_L, right ? '@sr' : '@sl', key, i);
 
-/** Сколько чего подмешано в этом кадре: скорость, боковитость, назадность, бой. */
-export interface LocoMix { sb: number; st: number; bt: number; ct: number }
+/**
+ * Сколько чего подмешано в этом кадре: скорость, боковитость (и её доли по сторонам), назадность, бой.
+ * ⚠ `stR + stL === st` ПО ПОСТРОЕНИЮ — иначе сторона могла бы подмешать больше, чем сам страйф.
+ */
+export interface LocoMix { sb: number; st: number; stR: number; stL: number; bt: number; ct: number }
 /** Смесь «стоим вперёд мирно» — ею считается всё, у чего нет планировщика (монстры, превью). */
-export const MIX0: LocoMix = { sb: 0, st: 0, bt: 0, ct: 0 };
+export const MIX0: LocoMix = { sb: 0, st: 0, stR: 0, stL: 0, bt: 0, ct: 0 };
 /** Сглаженная ступенька 0..1 (smoothstep): нулевая производная на обоих концах — вход в опору без рывка. */
 const smooth01 = (t: number): number => t * t * (3 - 2 * t);
 
@@ -192,6 +216,9 @@ const smooth01 = (t: number): number => t * t * (3 - 2 * t);
 export const locoVal = (kw: string, kr: string, bw: number, br: number, i: 0 | 1, m: LocoMix): number => {
   let v = sideLerp(kw, kr, bw, br, i, m.sb);
   if (m.st > 0) { const c = colLerp(STRAFE, '@s', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.st; }
+  // Сторона — ПОВЕРХ общей колонки и тем же механизмом: пустая карта ничего не делает, бит в бит.
+  if (m.stR > 0) { const c = colLerp(STRAFE_R, '@sr', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.stR; }
+  if (m.stL > 0) { const c = colLerp(STRAFE_L, '@sl', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.stL; }
   if (m.bt > 0) { const c = colLerp(BACK, '@b', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.bt; }
   if (m.ct > 0) { const c = colLerp(COMBAT, '@c', kw, kr, i, m.sb); if (c !== undefined) v += (c - v) * m.ct; }
   return v;
@@ -438,9 +465,10 @@ export const GAIT = {
   //   В «только клипы» раскрытие несёт второй набор `*_strafe_*_open` (снимается кнопкой «Бега»), в планировщике — живое.
   // hipsOpen — угол на БЕГУ (вес бега клипов 1, с 80 u/с), hipsOpenWalk — на ходьбе (40 u/с), между — по весу бега.
   //   Ходьба маленьким углом: на 20–40° голени ходьбы сходятся (замер прототипа: 14–22 % кадров против 5.8 %).
-  // strafeMirror — СЪЁМ: страйф влево = зеркало страйфа вправо (половина цикла сдвигом). Плант-сетка — данные автора, и
-  //   настроенная с одной стороны давала разные страйфы (у воина `walk_strafe_L` голени насквозь в 31–35 % кадров).
-  hipsMode: 0, hipsOpen: 35, hipsOpenWalk: 10, strafeMirror: 1,
+  // ⚠ ЗЕРКАЛА ЛЕВОГО СТРАЙФА БОЛЬШЕ НЕТ (было `strafeMirror`, убрано 19.09). Оно и делало левую сторону
+  //   ненастраиваемой: что ни крути в колонке «СТРАЙФ», левый клип всё равно снимался как отражение правого.
+  //   Теперь каждый страйф снимается СВОИМ проходом, а стороны настраиваются колонками `STRAFE_L`/`STRAFE_R`.
+  hipsMode: 0, hipsOpen: 35, hipsOpenWalk: 10,
   /**
    * ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ В ИГРЕ: 0 = выкл (бит в бит как было), 1 = таз стойки играет целиком.
    *
@@ -639,6 +667,27 @@ export function foldElbow(gx: { elbowBend: number; elbowBendRun?: number }): voi
   POSE.armElWalk = 0;
 }
 
+/**
+ * ⭐ ДОЛЯ ПРАВОЙ СТОРОНЫ СТРАЙФА, 0..1: `smoothstep` по УЗКОЙ ПОЛОСЕ вокруг нулевой боковой скорости.
+ *
+ * ⚠ ПОЧЕМУ НЕ ПРОСТО ЗНАК (`latRight`). У процедурного пути НЕТ кроссфейда (в отличие от клипового,
+ * где смену стороны страйфа гасит `colFade`), поэтому жёсткий знак дал бы СТУПЕНЬКУ настроек ровно на
+ * переходе: за один кадр ручка прыгнула бы с левого числа на правое. Ступенька в настройках позы
+ * читается как рывок корпуса — та же грабля, из-за которой `backMix` считается через боковитость.
+ *
+ * Ровно в нуле обе доли равны 0.5, то есть сумма всегда `st` и на самом переходе сторона ничего не
+ * решает. Практически там и `strafeMix` = 0 (ход строго вперёд/спиной боковитость не поднимает), но
+ * полагаться на это нельзя: при вырожденных порогах (`strafeTo` = 0) `strafeMix` возвращает 1 сразу.
+ *
+ * Полоса — в ЕДИНИЦАХ НАПРАВЛЕНИЯ (вход `mLat` — компонента единичного вектора хода), не в u/с:
+ * иначе ширина перехода зависела бы от скорости, и на ходьбе он был бы вчетверо резче, чем на бегу.
+ */
+export const STRAFE_SIDE_BAND = 0.06;
+export const strafeSide = (mLat: number): number => {
+  const u = clamp(mLat / (2 * STRAFE_SIDE_BAND) + 0.5, 0, 1);
+  return u * u * (3 - 2 * u);
+};
+
 /** Боковитость хода 0..1 по углу между направлением движения и продольной осью тела (`strafeFrom`..`strafeTo`). */
 export const strafeMix = (mFwd: number, mLat: number): number => {
   const ang = Math.atan2(Math.abs(mLat), Math.abs(mFwd)) * 180 / Math.PI;
@@ -765,6 +814,7 @@ class StepPlanner {
   private prevYaw = 0;       // рыск прошлого кадра
   sb = 0;                    // блен ходьба(0)↔бег(1) — читает PoseDriver для раздельных рук walk/run
   st = 0;                    // боковитость 0 (вперёд/назад) … 1 (чистый страйф) — колонка страйфа
+  stR = 0; stL = 0;          // ДОЛИ боковитости по сторонам хода (сумма = st) — колонки `STRAFE_R`/`STRAFE_L`
   bt = 0;                    // назадность 0 (вперёд/вбок) … 1 (чистый ход спиной) — колонка «назад»
   combat = 0;                // мирно(0) ↔ бой(1) — ЧЕТВЁРТАЯ колонка: шире стойка, короче шаг (Ф6)
   private yawRate = 0;       // СГЛАЖЕННАЯ скорость поворота (рад/с) — сим 30Гц/физика 60Гц иначе мигает
@@ -1014,10 +1064,16 @@ class StepPlanner {
     // вперёд и страйф-колонку не поднимает — ровно так, как показал замер 4-против-8 направлений.
     const mFwd = pmx * fx + pmz * fz, mLat = pmx * rx + pmz * rz;
     this.st = moving ? strafeMix(mFwd, mLat) : 0;
+    // СТОРОНА СТРАЙФА. Доли делят ровно `st` (сумма = `st`), поэтому включение сторон ничего не
+    // прибавляет само по себе: пока карты сторон пусты, `locoVal` даёт прежнее число бит в бит.
+    // `mLat` берётся от СГЛАЖЕННОГО направления (тот же `pmx/pmz`, что у боковитости) — мгновенный
+    // вектор на диагонали мигает знаком, и сторона щёлкала бы вместе с ним.
+    const sr = moving ? strafeSide(mLat) : 0;
+    this.stR = this.st * sr; this.stL = this.st * (1 - sr);
     // НАЗАДНОСТЬ — по тем же осям таза и через ту же боковитость, поэтому колонки не спорят.
     // Стоим — обе нули: у стояния направления нет, и подмешивать ему «назад» не за что.
     this.bt = moving ? backMix(mFwd, mLat) : 0;
-    const m: LocoMix = { sb, st: this.st, bt: this.bt, ct: this.combat };
+    const m: LocoMix = { sb, st: this.st, stR: this.stR, stL: this.stL, bt: this.bt, ct: this.combat };
     const stepLen = lerp(GAIT.stepWalk, GAIT.stepRun, sb) / Math.max(0.1, GAIT.cadence);   // длина шага ходьба↔бег; cadence>1 → короче/чаще (путь px не трогаем)
     const duty = lerp(GAIT.dutyWalk, GAIT.dutyRun, sb);   // доля опоры ходьба↔бег (sb уже в [0,1])
     // Вынос стопы вперёд (относительно бедра): база шаг·доля + ручки панели.
@@ -1584,8 +1640,10 @@ export class PoseDriver {
     // Направление хода: у монстров планировщика нет — им колонки направления не положены
     // (st = bt = 0, то есть ровно прежнее поведение).
     const st = this.planner?.st ?? 0, bt = this.planner?.bt ?? 0;
+    // Стороны страйфа — оттуда же. Нет планировщика → обе нули (карты сторон и не спросят).
+    const stR = this.planner?.stR ?? 0, stL = this.planner?.stL ?? 0;
     o.st = st; o.bt = bt;
-    const m: LocoMix = { sb, st, bt, ct: this.combat };
+    const m: LocoMix = { sb, st, stR, stL, bt, ct: this.combat };
     // Руки — на сторону (ASYM/STRAFE пусты → оба значения одинаковы и это ровно прежние числа).
     const armSh = (i: 0 | 1): number => locoVal('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, m);
     const armEl = (i: 0 | 1): number => locoVal('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, m);

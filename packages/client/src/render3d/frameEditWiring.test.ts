@@ -181,21 +181,19 @@ describe('⭐ предпросмотр корня (галки «корень: п
     expect(SRC).toMatch(/function fitPhysToMesh\([^\n]*\{ return withRootViewOff\(\(\) => fitPhysToMeshAt0\(inflate, pct\)\); \}/);
     expect(SRC.match(/fitPhysToBonesAt0/g)?.length, 'голой подгонки мимо обёртки нет').toBe(2);
     expect(SRC.match(/fitPhysToMeshAt0/g)?.length).toBe(2);
-    // ⚠ ВЕСЬ съём набора — внутри обёртки: ход, «таз открыт», зеркало страйфа и повороты. Сканируем ТЕЛО обёртки, а не
-    // одну строку с `[ ...bakeGaitSet(`: с 17.09 внутри неё стоит блок (сначала набор, потом зеркало и повороты).
+    // ⚠ ВЕСЬ съём набора — внутри обёртки: ход, «таз открыт» и повороты. Сканируем ТЕЛО обёртки, а не
+    // одну строку с `[ ...bakeGaitSet(`: с 17.09 внутри неё стоит блок (сначала набор, потом повороты).
     const at = SRC.indexOf('const out = withRootViewOff(() => {');
     expect(at, 'съём набора походки обёрнут блоком `withRootViewOff`').toBeGreaterThan(0);
     const setBake = SRC.slice(at, SRC.indexOf('});', at) + 3);
     expect(setBake, 'набор походки — под удержанием корня').toMatch(/bakeGaitSet\(/);
     expect(setBake, 'повороты — тоже').toMatch(/bakeTurnSet\(/);
-    expect(setBake, 'зеркало страйфа — тоже').toMatch(/mirrorIfAsked\(/);
     // И отдельный съём «таз открыт» — своя обёртка (кнопка в «Беге» и авто-пересъём по ползунку). Сканируем ТЕЛО
     // обёртки: с 17.09 внутри неё группировка по оружию-хозяину кардинального страйфа (см. `bakeOpenSet`).
     const ot = SRC.indexOf('const out = withRootViewOff(() => [...groups]');
     expect(ot, 'съём «таз открыт» обёрнут `withRootViewOff`').toBeGreaterThan(0);
     const openBake = SRC.slice(ot, SRC.indexOf('}));', ot) + 4);
     expect(openBake, 'набор «таз открыт» — под удержанием корня').toMatch(/bakeGaitSet\(/);
-    expect(openBake, 'и его зеркало — тоже').toMatch(/mirrorIfAsked\(/);
     expect(SRC).toMatch(/rootViewHold\+\+; syncRootView\(\); if \(tgt\) modelsTab\.drive\(human\);\s*const target = tgt/);
     expect(SRC).toMatch(/\.finally\(\(\) => \{ rootViewHold--;/);
     expect(SRC.match(/rootViewHold--/g)?.length, 'удержание снимают только `withRootViewOff` и `finally` экспорта').toBe(2);

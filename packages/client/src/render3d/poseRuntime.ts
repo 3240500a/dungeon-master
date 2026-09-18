@@ -3,7 +3,7 @@
 // (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
+import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot } from './pose.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
@@ -1084,7 +1084,7 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
     shieldOverlay(weaponKey: string): { pose: Pose; mix: number } | null { const c = stance(weaponKey) ?? stance('shield'); if (!c || !c.keys.length) return null; const cfg = shieldCfg[charId] ?? (fallbackId ? shieldCfg[fallbackId] : undefined); const mix = cfg?.perWeapon?.[weaponKey] ?? cfg?.mix ?? 0.85; return { pose: c.keys[0]!.pose, mix }; },
   };
 }
-type GaitCfg = { gait?: Record<string, number>; pose?: Record<string, number>; gx?: Record<string, number>; plant?: Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] }; asym?: Record<string, [number, number]>; strafe?: Record<string, number>; back?: Record<string, number>; combat?: Record<string, number> };
+type GaitCfg = { gait?: Record<string, number>; pose?: Record<string, number>; gx?: Record<string, number>; plant?: Partial<PlantGrid> & { l?: [number, number]; r?: [number, number] }; asym?: Record<string, [number, number]>; strafe?: Record<string, number>; strafeR?: Record<string, number>; strafeL?: Record<string, number>; back?: Record<string, number>; combat?: Record<string, number> };
 /** Загрузить тюн бега класса (pe_gait[charId]) в ГЛОБАЛЬНЫЕ GAIT/POSE и переданный gx; вернуть плант-сетку. Для ИГРОКА. */
 export function applyGaitConfig(charId: string, gx: GXKnobs): PlantGrid {
   const cfgs = readJSON<Record<string, GaitCfg>>('pe_gait', {});
@@ -1107,7 +1107,7 @@ export function applyGaitConfig(charId: string, gx: GXKnobs): PlantGrid {
   // грузится здесь, иначе редактор показывает одно, а игрок видит другое.
   for (const k of Object.keys(ASYM)) delete ASYM[k];
   for (const [k, v] of Object.entries(c?.asym ?? {})) if (Array.isArray(v) && v.length === 2) ASYM[k] = [v[0]!, v[1]!];
-  for (const [map, src] of [[STRAFE, c?.strafe], [BACK, c?.back], [COMBAT, c?.combat]] as const) {
+  for (const [map, src] of [[STRAFE, c?.strafe], [STRAFE_R, c?.strafeR], [STRAFE_L, c?.strafeL], [BACK, c?.back], [COMBAT, c?.combat]] as const) {
     for (const k of Object.keys(map)) delete map[k];
     for (const [k, v] of Object.entries(src ?? {})) if (typeof v === 'number') map[k] = v;
   }

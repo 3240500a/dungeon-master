@@ -21,7 +21,7 @@ import { gaitToHumanoid, localStorageContent, type AttackState } from './poseRun
  * плоско, а маховую сознательно оставляет позе. Ручка «носок в опоре» была бы мёртвой.
  */
 const DT = 1 / 60;
-const mix = (sb: number, st = 0, bt = 0, ct = 0): LocoMix => ({ sb, st, bt, ct });
+const mix = (sb: number, st = 0, bt = 0, ct = 0, stR = 0, stL = 0): LocoMix => ({ sb, st, stR, stL, bt, ct });
 const KNOBS = ['ankLevel', 'ankLevelRun', 'toeLift', 'toeLiftRun', 'toeLiftPhase', 'toeLiftPhaseRun', 'ankMax'] as const;
 
 const clearCols = (): void => {

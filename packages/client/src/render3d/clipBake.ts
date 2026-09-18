@@ -46,13 +46,12 @@
 import * as THREE from 'three';
 import { reduceKeyframes } from './clipBaker.js';
 import type { Clip, Keyframe, Pose } from './clipModel.js';
-import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL, clipDur, clipPoseAt, flipPose } from './clipModel.js';
+import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL } from './clipModel.js';
 import { pelvisEulerToWorld, pelvisOffsetToWorld } from './pelvisFrame.js';   // ⭐ вычет фейсинга — обратная композиция игры
 import type { Humanoid } from './humanoid.js';
 import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, LOCO_BAKE_REV, OPEN_SUFFIX, openCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
-import { ASYM } from './pose.js';   // ⚠ зеркало страйфа несовместимо с асимметрией сторон — см. `gaitIsAsymmetric`
 import { fitSmoothLoop } from './clipFit.js';
 
 /**
@@ -241,7 +240,6 @@ export function removeLoopDrift(grid: Pose[]): void {
 export type LoopKeyOpts = Pick<BakeGaitOptions, 'fps' | 'epsDeg' | 'smooth' | 'smoothEpsDeg' | 'smoothSigmaCycle'>;
 /**
  * Плотные кадры цикла → ключи клипа: гладкие (сплайн, `fitSmoothLoop`) или ломаная, и замыкание цикла ключом на периоде.
- * Общий хвост съёма и зеркала страйфа (`mirrorStrafeL`): зеркало не должно давать другие ключи, чем съём.
  */
 function loopKeys(dense: Keyframe[], periodSec: number, cyclic: boolean, loop: boolean, fps: number, opts: LoopKeyOpts): { reduced: Keyframe[]; fit: { errDeg: number; rawErrDeg: number } | null } {
   const eps = opts.epsDeg ?? 1.5;
@@ -453,62 +451,6 @@ export const openStrafePresets = (runDeg: number, walkDeg: number): GaitSpec[] =
     .map((s) => ({ ...s, name: s.name + OPEN_SUFFIX, hipsOpenDeg: /^run_/.test(s.name) ? runDeg : walkDeg }))
     .filter((s) => s.hipsOpenDeg > 0.5);
 
-/**
- * ⭐ СТРАЙФ ВЛЕВО = ЗЕРКАЛО СТРАЙФА ВПРАВО СО СДВИГОМ НА ПОЛЦИКЛА (роли ног: опора левой на фазе 0 остаётся левой).
- *
- * Зачем: плант-сетка — данные автора, и настроенная с одной стороны даёт разные страйфы. ЗАМЕР (рыцарь, опубликованный
- * воин): ходьба «вправо» разнесена, «влево» пустая — `walk_strafe_L` голени ближе 5.8 ед. в 35 % кадров (мин. 0.1 —
- * насквозь) против 5.8 % у правого; зеркалом — 4.2 %. Клип пересэмплируется на `fps` и идёт через тот же хвост съёма
- * (`loopKeys`). Метки не копируются (ноги поменялись) — их переносит `carryMarks` со старого левого.
- */
-export function mirrorStrafeL(clipR: Clip, opts: LoopKeyOpts = {}): Clip {
-  const fps = Math.max(1, opts.fps ?? 60);
-  const dur = clipDur(clipR) || 1, n = Math.max(8, Math.round(dur * fps));
-  const dense: Keyframe[] = [];
-  for (let k = 0; k < n; k++) {
-    const p = flipPose(clipPoseAt(clipR, ((k / n) + 0.5) % 1));
-    // ⚠ ФЛАГИ ПЕРЕНОСА МЕНЯЮТСЯ МЕСТАМИ. `flipPose` тащит скалярные каналы как есть (`__match`, `__pinKp`), и `__swing`
-    // попал бы в ту же корзину: заземление держало бы к полу НЕ ТУ ногу. Клипы хода его пока не несут (его пишет только
-    // съём поворота), но импорт мокапа и будущий съём могут — чиним здесь, а не в `flipPose`: тот общий на все зеркала.
-    const sw = p[SWING_KEY];
-    if (sw) p[SWING_KEY] = [sw[1], sw[0], sw[2]];
-    dense.push({ t: +(dur * k / n).toFixed(4), pose: p });
-  }
-  const { reduced } = loopKeys(dense, dur, true, clipR.loop !== false, fps, opts);
-  // ⚠ МЕТКИ ЯВНО СБРАСЫВАЮТСЯ: ключи новые и СДВИНУТЫ НА ПОЛЦИКЛА, а `marks` живут на ключах правого клипа — оставь их
-  // в спреде, и шаг «левой» прозвучал бы на полшага мимо. Переносит их `carryMarks` со СТАРОГО левого клипа (редактор).
-  const out: Clip = { ...clipR, name: clipR.name.replace('_strafe_R', '_strafe_L'), keys: reduced };
-  return out;
-}
-/**
- * Набор: каждый снятый `*_strafe_L*`, у которого в наборе есть `*_strafe_R*` той же скорости, заменяется его зеркалом.
- * ⭐ А ЕСЛИ ЛЕВОГО В НАБОРЕ НЕТ — ДОБАВЛЯЕТСЯ. Съём левого при включённом зеркале пропускается целиком (`specsForBake`
- * в редакторе): раньше он честно снимался — 2 с разогрева + до 6 с цикла — и тут же выбрасывался.
- */
-export function withMirroredStrafeL(out: readonly BakeGaitResult[], opts: LoopKeyOpts = {}): BakeGaitResult[] {
-  const byName = new Map(out.map((r) => [r.clip.name, r]));
-  const mirrored = (right: BakeGaitResult): BakeGaitResult => {
-    const clip = mirrorStrafeL(right.clip, opts);
-    return { ...right, clip, keys: clip.keys.length };
-  };
-  const res = out.map((r) => {
-    if (!/_strafe_L/.test(r.clip.name)) return r;
-    const right = byName.get(r.clip.name.replace('_strafe_L', '_strafe_R'));
-    return right ? mirrored(right) : r;
-  });
-  for (const r of out) {
-    const l = r.clip.name.replace('_strafe_R', '_strafe_L');
-    if (l !== r.clip.name && !byName.has(l)) res.push(mirrored(r));
-  }
-  return res;
-}
-/**
- * ⚠ ЗЕРКАЛО НЕЛЬЗЯ ПРИМЕНЯТЬ К АСИММЕТРИЧНОЙ ПОХОДКЕ. `ASYM` (ползунки «на сторону»: `stepRun`, `dutyS(i)`, разведение
- * бёдер…) остаётся НА СВОЕЙ НОГЕ и при `flipPose` переезжает на противоположную: левый страйф понесёт хромоту не той
- * ноги, чем `*_fwd` и `*_back`, и это полезет на кроссфейдах и перебросах сектора. Тот же счёт у наборов вроде
- * `none+shield`, где разница сторон НАРОЧНАЯ. Редактор зовёт зеркало только когда здесь пусто (см. `bakeGaitSection`).
- */
-export const gaitIsAsymmetric = (): boolean => Object.keys(ASYM).length > 0;
 
 /** Имена, включённые по умолчанию, — ВЕСЬ набор (походка и повороты на месте): лишнего в нём нет. */
 export const defaultBakePick = (specs: readonly { name: string }[] = [...GAIT_PRESETS, ...TURN_PRESETS]): string[] =>
