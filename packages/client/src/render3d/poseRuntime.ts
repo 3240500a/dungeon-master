@@ -639,18 +639,59 @@ export function applyHipsTurn(human: Humanoid, turn: number): readonly [number, 
   }
   return _turnShift;
 }
-export function applyHipsTiltHold(human: Humanoid, roll: number, pitch: number, yaw = 0): void {
+export function applyHipsTiltHold(human: Humanoid, roll: number, pitch: number): void {
   const hb = clamp(POSE.hipsTiltHoldBody, 0, 1), hl = clamp(POSE.hipsTiltHoldLegs, 0, 1);
-  const bz = roll * hb, bx = pitch * hb, lz = roll * hl, lx = pitch * hl, ly = yaw * hl;
+  const bz = roll * hb, bx = pitch * hb, lz = roll * hl, lx = pitch * hl;
   if (Math.abs(bz) > 1e-6 || Math.abs(bx) > 1e-6) {
     const sp = human.bones.get('Spine');
     if (sp) { sp.rotation.z -= bz; sp.rotation.x -= bx; }
   }
-  if (Math.abs(lz) > 1e-6 || Math.abs(lx) > 1e-6 || Math.abs(ly) > 1e-6) {
+  if (Math.abs(lz) > 1e-6 || Math.abs(lx) > 1e-6) {
     for (const n of ['LeftUpperLeg', 'RightUpperLeg']) {
       const b = human.bones.get(n);
-      if (b) { b.rotation.z -= lz; b.rotation.x -= lx; b.rotation.y -= ly; }
+      if (b) { b.rotation.z -= lz; b.rotation.x -= lx; }
     }
+  }
+}
+/**
+ * ⭐⭐ КАЧАНИЕ РЫСКА ТАЗА (`POSE.hipsYawSwing`) — ТОЖЕ ЧИСТО ВИДИМОЕ: таз и корпус качаются, НОГИ НЕТ.
+ *
+ * Жалоба автора (19.09, тюн новых ручек таза): «если я делаю, чтобы таз доворачивался, когда передняя нога идёт
+ * вперёд, нога начинает ходить по дуге — надо, чтобы колено и ступня держались так, как настроено». То же
+ * требование, что у СТАТИЧЕСКОГО поворота (`applyHipsTurn`), и держание здесь ТО ЖЕ САМОЕ — сопряжение
+ * `L' = H1⁻¹·H0·L`. Разница ровно одна: угол МЕНЯЕТСЯ КАЖДЫЙ КАДР, поэтому неизменного смещения, которое глаз
+ * не видит, здесь не бывает — оно и читается как «дуга».
+ *
+ * ⚠⚠ ПОЭТОМУ СУСТАВ ПРИБИВАЕТСЯ, А НЕ ВЫЧИТАЕТСЯ ИЗ ФИДБЭКА, КАК У ПОВОРОТА. Тем же сопряжением, но к ПОЗИЦИИ
+ * кости бедра: `p' = H1⁻¹·H0·s` даёт `H1·p' = H0·s`, то есть сустав стоит РОВНО там, где стоял бы при качании 0.
+ * У статического поворота смещение сустава ПОСТОЯННО (таз развёрнут и не крутится) — там его честно отрабатывают
+ * ноги, а из фидбэка планировщика оно вычитается. У качания оно ОСЦИЛЛИРУЕТ в такт шагу, и это ровно вторая часть
+ * дуги. ЗАМЕР (рыцарь `knight_06` + опубликованный воин, бег 120, качание 0.1 рад, разомкнутая геометрия):
+ * дуга стопы 1.902 ед, из них поворот самой ноги 1.856 и снос сустава 0.389 — то есть сустав даёт пятую часть,
+ * и держать надо ОБА слагаемых. Прибитый сустав уезжает от таза не больше чем на этот же снос (0.39 ед при 0.1,
+ * 0.78 при 0.2 на полутазе 4.15) — на бедре шириной ~7 ед это доли процента скина.
+ *
+ * ⚠ ЧТО ЭТО ЗАМЕНИЛО: вычитание `yaw` из слота Y эйлера бедра (было внутри `applyHipsTiltHold`, ручкой
+ * `hipsTiltHoldLegs`). Вычитание из эйлера обратным поворотом НЕ является — та же грабля, что расписана у
+ * `applyHipsTurn`, — и сустав не трогало вовсе. ЗАМЕР (бег 120, качание 0.1): с ним стопа уезжала от траектории
+ * качания 0 на 3.185 ед (RMS 2.014), курс стопы на 11.18°, полюс колена на 11.92°, а сами цели плантов — на 3.53 ед.
+ * Больше геометрии (1.902) это потому, что повёрнутые стопы уходили в `setFeet` и планировщик гнался за ними.
+ *
+ * ⚠ РУЧКОЙ НЕ МАСШТАБИРУЕТСЯ И ГЕЙТОМ НЕ РАЗБАВЛЯЕТСЯ: это не стилевая ручка, а требование «качание не влияет на
+ * ноги». `hipsTiltHoldLegs` осталась ровно тем, чем была названа, — держанием от КРЕНА и НАКЛОНА.
+ * ⚠ КОРПУС сюда НЕ добавляется: его отворачивает `applyTorsoTwist` (рыск вычтен из бюджета скрутки), иначе дважды.
+ */
+const _hyhQ = new THREE.Quaternion(), _hyhH0 = new THREE.Quaternion(), _hyhE = new THREE.Euler();
+export function applyHipsYawHold(human: Humanoid, pitch: number, yaw: number, roll: number): void {
+  if (!yaw) return;
+  const hb = human.bones.get('Hips'); if (!hb) return;
+  // H0 — таз этого кадра БЕЗ рыска: ТА ЖЕ композиция `Rx·Ry·Rz`, что кладёт `gaitToHumanoid`, со снятым Y.
+  _hyhH0.setFromEuler(_hyhE.set(pitch, 0, roll, 'XYZ'));
+  const conj = _hyhQ.copy(hb.quaternion).invert().multiply(_hyhH0);   // `H1⁻¹·H0` — одно на обе ноги
+  for (const n of ['LeftUpperLeg', 'RightUpperLeg']) {
+    const b = human.bones.get(n); if (!b) continue;
+    b.quaternion.premultiply(conj);     // ориентация ноги в мире — бит в бит как при качании 0
+    b.position.applyQuaternion(conj);   // и сам сустав: `H1·(H1⁻¹·H0·s) = H0·s`
   }
 }
 // Приведение РУК в рантайме НЕ делаем: модели биндятся в T-позе (руки горизонт = поза покоя клипов). A-позный бинд корёжит
@@ -880,7 +921,11 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   // ⚠ ДЕРЖИМ КОРПУС И НОГИ ПРИ КРЕНЕ/НАКЛОНЕ ТАЗА — и именно ЗДЕСЬ, ПОСЛЕ бленда, а не внутри его
   // тройки. `blendBone` подмешивает авторскую стойку весом `armMag`, а таз повёрнут ЖЁСТКО: вычитание
   // внутри тройки разбавилось бы вместе со стойкой, и стоя корпус всё равно кренился бы.
-  applyHipsTiltHold(human, t.hipsRoll, t.hipsPitch, t.hipsYaw);
+  applyHipsTiltHold(human, t.hipsRoll, t.hipsPitch);
+  // ⭐⭐ А ОТ КАЧАНИЯ РЫСКА НОГИ ДЕРЖАТСЯ ТОЧНО — сопряжением и с прибитым суставом (см. `applyHipsYawHold`).
+  // ⚠ ПОСЛЕ `applyHipsTiltHold`, а не до: тот правит эйлер бедра покомпонентно (`rotation.x -=`), и сопряжение,
+  // положенное раньше, он бы разобрал и собрал заново — то есть уничтожил. Порядок здесь несущий.
+  applyHipsYawHold(human, t.hipsPitch, t.hipsYaw, t.hipsRoll);
   blendBone(human, 'Neck', [t.headNod, t.headTurn, t.headTilt], idle, torsoMag);
   blendBone(human, 'Head', [0, 0, 0], idle, torsoMag);
   // ── ПОЛЗУНОК «ПРОЦЕДУРНО ↔ КЛИП» (Ф4) ──

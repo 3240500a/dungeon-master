@@ -33,7 +33,8 @@ import { GAIT, POSE, STRAFE_R, STRAFE_L, PoseDriver } from './pose.js';
 const GX = { armDown: 1.35, elbowBend: 0.25 };
 const D = Math.PI / 180;
 const TURN_RUN = 20 * D, TURN_WALK = 8 * D;
-const libs: Record<'plain' | 'yaw', Map<string, Clip>> = { plain: new Map(), yaw: new Map() };
+const libs: Record<'plain' | 'yaw' | 'swing', Map<string, Clip>> = { plain: new Map(), yaw: new Map(), swing: new Map() };
+const SWING_BAKE = 0.1;   // качание, с которым снят `libs.swing` (круг клипа)
 
 const clearCols = (): void => {
   for (const k of Object.keys(STRAFE_R)) delete STRAFE_R[k];
@@ -60,10 +61,14 @@ beforeAll(() => {
   setTurn();
   libs.yaw = bake();
   clearCols();
+  // ⭐ КРУГ КЛИПА: тот же набор, снятый ТОЛЬКО с качанием — по нему сверяется, что в клип уехали ДЕРЖАННЫЕ ноги.
+  POSE.hipsYawSwing = POSE.hipsYawSwingRun = SWING_BAKE;
+  libs.swing = bake();
+  POSE.hipsYawSwing = POSE.hipsYawSwingRun = 0;
   GAIT.warpOn = 0;
 });
 afterAll(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
-afterEach(() => { setLocoMixOverride(null); clearCols(); POSE.hipsTurn = POSE.hipsTurnRun = POSE.hipsYawSwing = POSE.hipsYawSwingRun = 0; POSE.hipsPitchSwing = POSE.hipsPitchSwingRun = 0; });
+afterEach(() => { setLocoMixOverride(null); clearCols(); POSE.hipsTurn = POSE.hipsTurnRun = POSE.hipsYawSwing = POSE.hipsYawSwingRun = 0; POSE.hipsPitchSwing = POSE.hipsPitchSwingRun = 0; POSE.hipsRollSwing = POSE.hipsRollSwingRun = 0; });
 
 /** Средний рыск (°) кости по клипу — ЗАМЕРЕННЫЙ курс композиции, а не слот Y. */
 const meanYaw = (c: Clip, bones: readonly string[]): number => {
@@ -126,6 +131,50 @@ describe('рыск таза: съём', () => {
     }
     // Ход вперёд/назад колонкой страйфа не задет — поворот туда не просачивается.
     for (const n of ['run_fwd', 'walk_back']) expect(Math.abs(meanYaw(libs.yaw.get(n)!, ['Hips'])), n).toBeLessThan(0.5);
+  });
+
+  it('⭐⭐ КРУГ КЛИПА: качание уехало в ТАЗ, а ноги в клипе — ДЕРЖАННЫЕ', () => {
+    /**
+     * Держание живёт в рантайме (`applyHipsYawHold`), а съём читает РИГ — значит в клип обязаны попасть уже
+     * держанные ноги: их ЛОКАЛЬНЫЙ поворот в клипе с качанием другой (на сопряжение), а МИРОВАЯ ориентация
+     * цепочки таз→бедро→голень→стопа — та же, что в клипе без качания.
+     * ⚠ Мутация «снять держание» валит первую строку: мировая нога уедет на весь угол качания.
+     * ⚠ Мутация «не писать качание в таз» валит третью: клип перестанет нести авторские данные.
+     * ⚠ ЧЕГО ЭТОТ КРУГ НЕ ЗАКРЫВАЕТ И НЕ МОЖЕТ: прибитый СУСТАВ — это позиция кости, а клип хранит одни повороты
+     * (`Pose`), поэтому в «только клипы» снос сустава возвращается. ЗАМЕР (рыцарь, опубликованный воин, бег 120,
+     * качание 0.1): путь стопы против набора без качания 0.414 ед, курс стопы 0.197° — против 3.185 ед и 11.18°
+     * в процедурке ДО правки. Опорную там и так прибивает фиксация стопы, остаток виден на маховой.
+     */
+    const D3 = 180 / Math.PI;
+    const qOf = (v: [number, number, number] | undefined): THREE.Quaternion =>
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(v?.[0] ?? 0, v?.[1] ?? 0, v?.[2] ?? 0, 'XYZ'));
+    const chain = (p: Record<string, [number, number, number]>, s: 'Left' | 'Right'): THREE.Quaternion[] => {
+      const h = qOf(p['Hips']);
+      const u = h.clone().multiply(qOf(p[`${s}UpperLeg`]));
+      const l = u.clone().multiply(qOf(p[`${s}LowerLeg`]));
+      return [u, l, l.clone().multiply(qOf(p[`${s}Foot`]))];
+    };
+    const ang = (a: THREE.Quaternion, b: THREE.Quaternion): number => 2 * Math.acos(Math.min(1, Math.abs(a.dot(b)))) * D3;
+    for (const name of ['run_fwd', 'walk_fwd', 'run_strafe_R', 'walk_strafe_L', 'run_back']) {
+      const a = libs.plain.get(name)!, b = libs.swing.get(name)!;
+      let world = 0, local = 0, hips = 0, hips0 = 0;
+      const N = 60;
+      for (let i = 0; i < N; i++) {
+        const pa = clipPoseAt(a, i / N), pb = clipPoseAt(b, i / N);
+        for (const s of ['Left', 'Right'] as const) {
+          const ca = chain(pa, s), cb = chain(pb, s);
+          for (let k = 0; k < 3; k++) world = Math.max(world, ang(ca[k]!, cb[k]!));
+          local = Math.max(local, ang(qOf(pa[`${s}UpperLeg`]), qOf(pb[`${s}UpperLeg`])));
+        }
+        hips = Math.max(hips, Math.abs(pelvisHeading(qOf(pb['Hips'])) / D));
+        hips0 = Math.max(hips0, Math.abs(pelvisHeading(qOf(pa['Hips'])) / D));
+      }
+      // ЗАМЕР (рыцарь, опубликованный воин): мировая нога 0.08–0.15° — это прорежение ключей клипа, не держание.
+      expect(world, `${name}: нога в МИРЕ уехала на ${world.toFixed(2)}° — в клип попали НЕдержанные ноги`).toBeLessThan(0.6);
+      expect(local, `${name}: локальный поворот бедра обязан отличаться — это и есть сопряжение`).toBeGreaterThan(1);
+      expect(hips, `${name}: качание таза обязано остаться в клипе (авторские данные)`).toBeGreaterThan(1);
+      expect(hips0, `${name}: контроль — без ручки таз в клипе ровный`).toBeLessThan(0.5);
+    }
   });
 
   it('⭐ ОТКАЗ СЪЁМА ПО БЮДЖЕТУ СКРУТКИ — ПО ПИКУ (поворот + качание), А НЕ ПО СРЕДНЕМУ', () => {
@@ -255,6 +304,82 @@ describe('рыск таза: рантайм', () => {
       expect(diff(t.rows, base.rows), `⚠ поворот ${deg}° сдвинул планты/ноги — он обязан быть ЧИСТО ВИДИМЫМ`).toBeLessThan(1e-9);
       expect(t.yaw / D, 'ручка отдаёт РОВНО свой угол').toBeCloseTo(deg, 6);
       expect(t.drift, 'и цель под опорной стопой всё равно стоит').toBeLessThan(1e-9);
+    }
+    // ⭐⭐ И КАЧАНИЕ ТОЖЕ БИТ В БИТ — планты и углы ног у него ТЕ ЖЕ, что у ровного таза. До 19.09 этой строки здесь
+    // не было, и качание тихо гуляло планировщиком через фидбэк стоп (ЗАМЕР на рыцаре: цели плантов уезжали на 3.53 ед
+    // при качании 0.1 рад). Держит её `applyHipsYawHold`; мутация «вернуть вычитание из слота Y» валит её.
+    expect(diff(swung.rows, base.rows), '⚠ качание сдвинуло планты/ноги — оно обязано быть ЧИСТО ВИДИМЫМ').toBeLessThan(1e-9);
+  });
+
+  it('⭐⭐ КАЧАНИЕ РЫСКА — ЧИСТО ВИДИМОЕ НА САМОМ РИГЕ: стопа, её курс, полюс колена и ТАЗОБЕДРЕННЫЙ СУСТАВ бит в бит', () => {
+    /**
+     * ЖАЛОБА АВТОРА (19.09): «если я делаю, чтобы таз доворачивался, когда передняя нога идёт вперёд, нога начинает
+     * ходить по дуге — надо, чтобы колено и ступня держались так, как настроено».
+     *
+     * Предыдущий сторож смотрит на ПЛАНИРОВЩИК, а этот — на РИГ: дугу автор видит глазами, а не в числах планировщика,
+     * и два слагаемых у неё разные (ЗАМЕР, рыцарь + опубликованный воин, бег 120, качание 0.1, разомкнутая геометрия:
+     * дуга 1.902 ед = поворот самой ноги 1.856 + снос сустава 0.389).
+     *
+     * ⚠ КРЕН И НАКЛОН ТАЗА ЗДЕСЬ НЕНУЛЕВЫЕ НАРОЧНО: при ровном тазе вычитание рыска из слота Y эйлера случайно
+     * СОВПАДАЕТ с обратным поворотом, и мутация «вернуть вычитание» прошла бы. С наклоном `Rx(a)·Ry(b−t)·Rz(c)`
+     * обратным поворотом не является (см. `applyHipsTurn`), и сторож её ловит.
+     * ⚠ СУСТАВ — ОТДЕЛЬНАЯ СТРОКА: сопряжение на одной ориентации кости его НЕ держит (таз твёрдый), а у качания
+     * снос сустава ОСЦИЛЛИРУЕТ и читается как та же дуга. Мутация «убрать `b.position.applyQuaternion(conj)`»
+     * валит ровно её.
+     */
+    const V = new THREE.Vector3(), Q = new THREE.Quaternion();
+    const trace = (swing: number, vx: number, vz: number): { rows: number[]; yaw: number } => {
+      POSE.hipsYawSwing = POSE.hipsYawSwingRun = swing;
+      POSE.hipsRollSwing = POSE.hipsRollSwingRun = 0.08;
+      POSE.hipsPitchSwing = POSE.hipsPitchSwingRun = 0.12;
+      const h = buildHumanoid({});
+      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      setLocoMixOverride(0);                       // ЧИСТАЯ процедурка: держание живёт в ней, клип несёт своё запечённое
+      p.setVel(vx, vz); p.setYaw(0); p.snapYaw();
+      const rows: number[] = []; let yaw = 0;
+      for (let i = 0; i < 300; i++) {
+        p.step(1 / 60); h.root.updateMatrixWorld(true);
+        for (const s of ['Left', 'Right'] as const) {
+          const fb = h.bones.get(`${s}Foot`)!, ub = h.bones.get(`${s}UpperLeg`)!, lb = h.bones.get(`${s}LowerLeg`)!;
+          const fw = fb.getWorldPosition(new THREE.Vector3()), hp = ub.getWorldPosition(new THREE.Vector3()), kp = lb.getWorldPosition(new THREE.Vector3());
+          rows.push(fw.x + p.posX, fw.z + p.posZ, fw.y, hp.x + p.posX, hp.z + p.posZ, hp.y);   // стопа и САМ СУСТАВ в мире
+          fb.getWorldQuaternion(Q); V.set(0, 0, 1).applyQuaternion(Q);
+          rows.push(Math.atan2(V.x, V.z));                                                     // курс стопы
+          const u = new THREE.Vector3().subVectors(fw, hp), pole = new THREE.Vector3().subVectors(kp, hp);
+          pole.addScaledVector(u, -(pole.dot(u) / Math.max(1e-6, u.lengthSq())));
+          rows.push(Math.atan2(pole.x, pole.z));                                               // полюс колена
+        }
+        const a = p.driver.plantTarget(0), b = p.driver.plantTarget(1);
+        rows.push(a[0] - p.posX, a[1] - p.posZ, b[0] - p.posX, b[1] - p.posZ);
+        if (i >= 150) yaw = Math.max(yaw, Math.abs(p.hipsYawSwingRad));
+      }
+      return { rows, yaw };
+    };
+    const diff = (a: number[], b: number[]): number => a.reduce((m, v, i) => Math.max(m, Math.abs(v - (b[i] ?? 0))), 0);
+    for (const [nm, vx, vz] of [['вперёд 120', 0, 120], ['вбок +X 120', 120, 0], ['вбок −X 120', -120, 0], ['вперёд 40', 0, 40]] as [string, number, number][]) {
+      const base = trace(0, vx, vz);
+      for (const sw of [0.05, 0.1, 0.2, -0.1, -0.2]) {
+        const t = trace(sw, vx, vz);
+        // ЗАМЕР ПОСЛЕ правки (рыцарь, опубликованный воин): остаток 1e−15…1e−12 на мировых координатах порядка 10³.
+        // ДО правки (та же проба): стопа уезжала на 3.185 ед, курс стопы на 11.18°, полюс колена на 11.92°.
+        expect(diff(t.rows, base.rows), `⚠ ${nm}, качание ${sw}: ноги поехали за тазом`).toBeLessThan(1e-9);
+        // ...а таз при этом ДЕЙСТВИТЕЛЬНО качается — иначе «держание» можно было бы сделать, обнулив ручку.
+        expect(t.yaw, `${nm}, качание ${sw}: таз обязан качаться`).toBeGreaterThan(Math.abs(sw) * 0.2);
+      }
+      expect(base.yaw, 'контроль: без ручки таз не качается').toBe(0);
+    }
+    // ⭐ КОЛОНКИ СТОРОН — ТАК ЖЕ: ручка живёт в картах `STRAFE_R`/`STRAFE_L` (стороны страйфа), и держание обязано
+    // работать на обеих одинаково. Мутация «держать только одну сторону» валит эту пару.
+    for (const [nm, vx, sign] of [['вбок +X', 120, 1], ['вбок −X', -120, -1]] as [string, number, number][]) {
+      clearCols();
+      const b = trace(0, vx, 0);
+      clearCols();
+      STRAFE_R['hipsYawSwing'] = STRAFE_R['hipsYawSwingRun'] = 0.15 * sign;
+      STRAFE_L['hipsYawSwing'] = STRAFE_L['hipsYawSwingRun'] = 0.15 * sign;
+      const t = trace(0, vx, 0);   // сама ручка `POSE` в нуле: угол приходит КОЛОНКОЙ
+      expect(diff(t.rows, b.rows), `⚠ ${nm}: колонка стороны сдвинула ноги`).toBeLessThan(1e-9);
+      expect(t.yaw, `${nm}: колонка стороны обязана качать таз`).toBeGreaterThan(0.01);
+      clearCols();
     }
   });
 
