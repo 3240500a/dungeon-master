@@ -53,7 +53,7 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LOCO_BAKE_REV, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
@@ -4632,6 +4632,11 @@ function bakeGaitSection(): void {
       if (Math.abs(was - presetSpd) > 0.5) { mark.textContent += ` (снят на ${Math.round(was)})`; mark.style.color = '#e0b050'; }
       // Снят с доворотом таза (до ревизии 2): страйф шёл диагональю, сектора доворота на нём не включатся — перезапечь.
       else if (!isLocoClipFresh(have)) { mark.textContent += ' ⚠ с доворотом — перезапеки'; mark.style.color = '#e0b050'; }
+      // ⚠ Отдельная, МЯГКАЯ подсказка: клип рабочий, просто снят до канала опоры и нейтрали маха. Смешивать её с
+      // «с доворотом» нельзя — та про сломанный клип, а эта про «станет лучше».
+      else if (have.bakeSpeed !== undefined && (have.bakeRev ?? 0) < LOCO_BAKE_REV) {
+        mark.textContent += ' · без канала опоры'; mark.title = 'Клип снят до ревизии 3: нет канала опоры `__swing` (окно опоры угадывается по доле `dutyRun`) и нейтрали маха `swingRef` (считается на лету). Работает как есть; перезапекание уберёт щелчок голеностопа на боковом ходе.';
+      }
       // ⭐ Снят ДО 19.09: в руки, кисти и грудь клипа впечена стойка того оружия, что стояло в редакторе (долей `1 − sway`),
       // и при проигрывании вес стойки ложится ВТОРОЙ раз — мах под мечом был 10 % вместо 20 (см. `Clip.upperPure`).
       else if (have.bakeSpeed !== undefined && !have.upperPure) { mark.textContent += ' ⚠ со стойкой в руках — перезапеки'; mark.style.color = '#e0b050'; mark.title = 'Клип снят до 19.09: стойка впечена в руки клипа и при проигрывании применяется дважды. После перезапекания мах вырастет (вес кладётся один раз) — поправь веса слоёв на вкладке «Тест».'; }

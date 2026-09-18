@@ -20,7 +20,7 @@ vi.mock('./footIk.js', async (importOriginal) => {
 
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
-import { LOCO_BAKE_REV } from './poseRuntime.js';
+import { LOCO_BAKE_REV, LOCO_CARDINAL_REV, isLocoClipFresh } from './poseRuntime.js';
 import { GAIT } from './pose.js';
 import { bakeGaitSet } from './clipBake.js';
 import type { Clip } from './clipModel.js';
@@ -111,8 +111,24 @@ describe('страйф в «только клипах»: кардинальны�
     for (const nm of ['walk_strafe_L', 'walk_strafe_R', 'run_strafe_L', 'run_strafe_R']) {
       const c = lib.get(nm)!;
       expect(c.bakeRev, nm).toBe(LOCO_BAKE_REV);   // ⚠ из константы, а не числом: подъём ревизии не должен валить сторож не по делу
+      expect(isLocoClipFresh(c), `${nm}: кардинальный`).toBe(true);
       for (const k of c.keys) expect(Math.abs(k.pose['Hips']?.[1] ?? 0), `${nm}: Hips.y`).toBeLessThan(0.02);
     }
+  });
+
+
+  it('⭐⭐ ПОДЪЁМ РЕВИЗИИ ЗАПЕКАТЕЛЯ НЕ ВЫКЛЮЧАЕТ СЕКТОРА НА УЖЕ ЗАПЕЧЁННОМ НАБОРЕ', () => {
+    // ⚠ ЭТО УЖЕ СЛУЧАЛОСЬ. `LOCO_BAKE_REV` подняли 2 → 3 (добавились канал опоры и нейтраль маха), и весь
+    // ОПУБЛИКОВАННЫЙ набор разом стал «несвежим» — сектора доворота молча выключились, хотя с клипами ничего не
+    // произошло и автор ничего не перезапекал. Две разные вещи нельзя мерить одним числом:
+    //   `LOCO_CARDINAL_REV` — клип снят БЕЗ впечённого доворота (настоящий гейт: на старых страйфах сектора хуже);
+    //   `LOCO_BAKE_REV`     — текущая ревизия запекателя (у её новшеств есть мягкий фолбэк, гейтить нечего).
+    const old2 = { name: 'run_strafe_R', character: 'warrior', weapon: 'none', loop: true, keys: [{ t: 0, pose: {} }],
+      bakeSpeed: 120, bakeRev: LOCO_CARDINAL_REV } as unknown as Clip;
+    expect(isLocoClipFresh(old2), 'кардинальный клип ревизии 2 обязан оставаться свежим для секторов').toBe(true);
+    const old1 = { ...old2, bakeRev: 1 } as Clip;
+    expect(isLocoClipFresh(old1), 'а вот снятый С ДОВОРОТОМ — нет, и это настоящий гейт').toBe(false);
+    expect(LOCO_BAKE_REV, 'ревизия запекателя ушла вперёд кардинальной — иначе разделение бессмысленно').toBeGreaterThanOrEqual(LOCO_CARDINAL_REV);
   });
 
   it('⭐⭐ ЧИСТЫЙ БОК ±90°: стопа не едет, ноги по ходу, таз и грудь на прицеле', () => {
