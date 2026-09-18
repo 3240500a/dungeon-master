@@ -49,7 +49,7 @@ import type { Clip, Keyframe, Pose } from './clipModel.js';
 import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL, clipDur, clipPoseAt, flipPose } from './clipModel.js';
 import { pelvisEulerToWorld, pelvisOffsetToWorld } from './pelvisFrame.js';   // ⭐ вычет фейсинга — обратная композиция игры
 import type { Humanoid } from './humanoid.js';
-import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, LOCO_BAKE_REV, OPEN_SUFFIX, openCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
+import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, LOCO_BAKE_REV, OPEN_SUFFIX, openCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
 import { ASYM } from './pose.js';   // ⚠ зеркало страйфа несовместимо с асимметрией сторон — см. `gaitIsAsymmetric`
@@ -62,13 +62,22 @@ import { fitSmoothLoop } from './clipFit.js';
  *
  * ⚠ И МЕТКИ НА ВРЕМЯ СЪЁМА МОЛЧАТ. Съём гоняет плеер сотнями кадров за один вызов, и каждый его шаг (`onMark`)
  * прозвучал бы разом — пачкой в момент нажатия «запечь».
+ *
+ * ⚠⚠ И ТАЗ АВТОРСКОЙ СТОЙКИ ПОДАВЛЕН (`setStancePelvisOverride(0)`, тем же приёмом, что доворот). Он — дело
+ * РАНТАЙМА: попав в клип, он применился бы ВТОРОЙ РАЗ при проигрывании (клип кладёт таз, а поверх ложится
+ * стойка). Сторож — `stancePelvis.test.ts`: запекание при ручке 1 обязано быть бит в бит с запеканием при 0.
+ * ⚠ ПЛАНТЫ ПЕРЕ-МЕРЯЕТ САМ ПЛЕЕР, А НЕ МЫ: они снимаются С поворотом авторского таза (`measureStancePlants`), и под
+ * перекрытием их надо снять заново — но ЯВНЫЙ вызов `measureStance()` отсюда менял бы сами клипы, потому что
+ * `StepPlanner.setStance` снапает `hipY`/`hipWant` (ЗАМЕР: до 3.46° на колене `run_fwd` между клипами набора).
+ * Поэтому `PosePlayer.step` ловит смену доли сам (`stanceKnob`) — ровно на первом кадре разогрева.
  */
 function procedural<T>(player: PosePlayer, fn: () => T): T {
-  const was = getLocoMixOverride(), mark = player.onMark;
+  const was = getLocoMixOverride(), mark = player.onMark, stance = getStancePelvisOverride();
   setLocoMixOverride(0);
+  setStancePelvisOverride(0);
   player.onMark = null;
   player.cancelTurn();
-  try { return warpFree(player, 0, fn); } finally { setLocoMixOverride(was); player.onMark = mark; }
+  try { return warpFree(player, 0, fn); } finally { setLocoMixOverride(was); setStancePelvisOverride(stance); player.onMark = mark; }
 }
 /**
  * ⭐⭐ СЪЁМ БЕЗ ДОВОРОТА ТАЗА (см. пункт 2б шапки): доворот выключен перекрытием (тумблер редактора не трогаем) и

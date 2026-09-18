@@ -16,7 +16,7 @@ import { readAnimCfg } from './animConfig.js';
 export type { Pose, Keyframe, Clip, Interp, Mark, MarkType, MarkTrack, MarkEvent } from './clipModel.js';
 export { blendTwo, clipPoseAt, clipSegmentAt, clipDur, clipSections, isAngleKey, easeU, migrateClip, migratePose, mirrorSide, flipPose, hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';
 import { hipsOffset } from './clipModel.js';   // Ф12: офсет таза читаем только через него (дельта + терпимость к легаси-абсолюту)
-import { pelvisToWorld } from './pelvisFrame.js';   // ⭐ таз кадра персонажа → мир: одна композиция с запекателем, импортом и шарниром редактора
+import { pelvisToWorld, pelvisHeading } from './pelvisFrame.js';   // ⭐ таз кадра персонажа → мир: одна композиция с запекателем, импортом и шарниром редактора
 import { blendTwo, clipPoseAt, clipDur, impactSec, markSec, marksInRange, loopMarksInRange, hasMark, comboWindow, type Mark, type MarkEvent } from './clipModel.js';
 // Коридор скорости тайм-варпа удара. Нижняя граница НИЖЕ единицы осознанно: контакт в мокапе
 // обычно на ~60 % клипа, а вайндап сервера — ~35 % окна, то есть хвост обязан уметь РАСТЯГИВАТЬСЯ.
@@ -742,10 +742,43 @@ let locoMixOverride: number | null = null;
 export function setLocoMixOverride(v: number | null): void { locoMixOverride = v; }
 /** Текущий override (для UI и тестов). */
 export function getLocoMixOverride(): number | null { return locoMixOverride; }
+/**
+ * ⭐⭐ ПЕРЕКРЫТИЕ ТАЗА АВТОРСКОЙ СТОЙКИ (`null` — как настроено в `GAIT.stancePelvis`). Нужно ЗАПЕКАТЕЛЮ: таз стойки —
+ * дело РАНТАЙМА, и попав внутрь клипа он применился бы ВТОРОЙ РАЗ при проигрывании (см. `clipBake.procedural`).
+ * ⚠ Отдельным полем, а не записью в `GAIT`: ручка — контент редактора, запекание не должно её портить (как `setDirWarpOverride`).
+ */
+let stancePelvisOverride: number | null = null;
+export function setStancePelvisOverride(v: number | null): void { stancePelvisOverride = v; }
+export function getStancePelvisOverride(): number | null { return stancePelvisOverride; }
+/** Доля таза стойки этого кадра до гейтов (ручка либо перекрытие запекания). */
+const stancePelvisKnob = (): number => clamp(stancePelvisOverride ?? GAIT.stancePelvis, 0, 1);
+/**
+ * ⭐ ТАЗ АВТОРСКОЙ СТОЙКИ ЭТОГО КАДРА — scratch, ровно тот же контракт, что у `_twBlend`: пишет `gaitToHumanoid` из уже
+ * разобранной стойки (третьего `resolveUpper` заводить не надо — он не бесплатный), читает СИНХРОННО `PosePlayer.step`
+ * в том же кадре. Числа КОПИРУЮТСЯ: ссылку на позу держать нельзя, её следующий кадр перезапишет.
+ * Всё — В КАДРЕ ПЕРСОНАЖА (курс докладывает `applyTorsoTwist`). Высота (`__hipsD.y`) сюда НЕ кладётся: она уже
+ * приезжает путём `standY` → `bobY` (см. `GAIT.stancePelvis`).
+ */
+const _stancePelvis = { has: false, rx: 0, ry: 0, rz: 0, dx: 0, dz: 0 };
+function readStancePelvis(idle: Pose | null, restY: number): void {
+  const e = idle ? idle['Hips'] : null;
+  const d = idle ? hipsOffset(idle, restY) : null;
+  _stancePelvis.has = !!(e || d);
+  _stancePelvis.rx = e?.[0] ?? 0; _stancePelvis.ry = e?.[1] ?? 0; _stancePelvis.rz = e?.[2] ?? 0;
+  _stancePelvis.dx = d?.[0] ?? 0; _stancePelvis.dz = d?.[2] ?? 0;
+}
+const _spE = new THREE.Euler(), _spQ = new THREE.Quaternion();
+/**
+ * Поворот таза стойки с весом: `Rx(x·w)·Ry(y·wYaw)·Rz(z·w)` — покомпонентное масштабирование эйлера, как у `addEuler`
+ * (у обоих весах 1 это РОВНО авторский поворот, а это и есть контракт «включил ручку — вижу свою стойку»).
+ */
+const stancePelvisQuat = (rx: number, ry: number, rz: number, w: number, wYaw: number): THREE.Quaternion =>
+  _spQ.setFromEuler(_spE.set(rx * w, ry * wYaw, rz * w, 'XYZ'));
 
 export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx: GXKnobs, legMag: number, t: PoseTargets, content: PoseContent, weapon: string, atk: AttackState, armMag: number = legMag, noIk = false, combat = 0, fade?: AttackFade | null, idleT = 0, locoPose: Pose | null = null, locoMix = 0, atkLegs?: number, clipOnly = false): void {
   human.reset();
   const idle = content.resolveUpper(weapon, combat, idleT)?.pose ?? null;   // ПОЛНАЯ idle-стойка (ноги+торс+верх), боевая при combat>0
+  readStancePelvis(idle, human.hipsRest.y);   // ⭐ таз стойки → scratch; кладёт его `PosePlayer.step` ПОСЛЕ клипов и шва (см. `_stancePelvis`)
   const m = legMag;
   // Трасса собирается СНИЗУ ВВЕРХ, в порядке наложения слоёв — так же, как её показывает корень графа.
   if (layerTrace.on) { layerTrace.rows.length = 0; layerTrace.t = Date.now(); }
@@ -1574,13 +1607,24 @@ const _ms0 = new THREE.Vector3(), _ms1 = new THREE.Vector3(), _ms2 = new THREE.V
  * и голени — сотые. То есть «доступил, а потом раздвигается и ступни скручиваются» — это почти
  * целиком стопа, и расхождение СТАТИЧЕСКОЕ, не от поворота.
  */
-export function measureStancePlants(human: Humanoid, idle: Pose | null): { latL: number; fwdL: number; latR: number; fwdR: number; standY: number; foot: StanceFoot } {
+/**
+ * `pelvisW` — ДОЛЯ ТАЗА АВТОРСКОЙ СТОЙКИ, с которой мерить (0 = как было, бит в бит: таз занулён).
+ *
+ * ⭐ МЕРИМ С ПОВОРОТОМ ТАЗА, НО БЕЗ СДВИГА. Планты — это цели ПЛАНИРОВЩИКА, и если игра рисует стопы под повёрнутым
+ * авторским тазом, а планты сняты под ровным, цели и нарисованные стопы расходятся ровно на авторский поворот. Сдвиг
+ * (`__hipsD` X/Z) сюда, наоборот, НЕ идёт: стопы — дети таза, и в разности `стопа − таз` он сокращается по построению
+ * (сторож — `stancePelvis.test.ts`). Вес — тот же, что ляжет в кадре стоя (там `legMag` = 0 и клипа хода нет, то есть
+ * ровно ручка `GAIT.stancePelvis`).
+ */
+export function measureStancePlants(human: Humanoid, idle: Pose | null, pelvisW = 0): { latL: number; fwdL: number; latR: number; fwdR: number; standY: number; foot: StanceFoot } {
   const hw = human.legRest?.hipHalfW ?? HIP_DX;   // полутаз — из рига; HIP_DX остаётся только процедурному манекену
   const noFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0, liftL: 0, liftR: 0 };
   if (!idle) return { latL: hw, fwdL: 0, latR: -hw, fwdR: 0, standY: GAIT.standY, foot: noFoot };
   human.reset();
   const hips = human.bones.get('Hips')!;
   hips.position.set(0, 30, 0); hips.rotation.set(0, 0, 0);
+  const sp = idle['Hips'];
+  if (sp && pelvisW > 1e-4) hips.quaternion.copy(stancePelvisQuat(sp[0], sp[1], sp[2], pelvisW, pelvisW * clamp(GAIT.stancePelvisYaw, 0, 1)));
   for (const nm of STANCE_LEG_BONES) { const e = idle[nm]; if (e) { const b = human.bones.get(nm); if (b) b.rotation.set(e[0], e[1], e[2]); } }
   // Аддукт НЕ применяем: планты = АВТОРСКАЯ ширина стойки (как Позы-таб рисует idle, БЕЗ аддукта). idle в gaitToHumanoid тоже без
   // аддукта (legMag=0), так что стойка ≡ планты. Реконструкция при подшаге (legMag→1) добирает аддукт и всё равно попадает в план.
@@ -1816,6 +1860,15 @@ export class PosePlayer {
   /** Combat, при котором мерили стойку: −1 = ещё не мерили (первый замер в конструкторе). */
   private stanceCombat = -1;
   /**
+   * Доля таза стойки, С КОТОРОЙ мерены нынешние планты (−1 = ещё не мерили). Ею `step` ловит и ползунок редактора,
+   * и перекрытие запекания: `combat` внутри съёма ПОСТОЯНЕН, и автоматический пере-замер по нему не сработал бы
+   * никогда — планировщик весь съём целился бы в планты, снятые под ДРУГИМ тазом.
+   * ⚠ Почему не явный вызов из `clipBake`: `setStance` снапает `hipY`/`hipWant` планировщика, и лишний вызов между
+   * клипами набора менял бы сами клипы (ЗАМЕР: до 3.46° на колене `run_fwd`). Здесь он случается ровно один раз —
+   * на первом кадре разогрева, до которого планировщик ещё ничего не решил.
+   */
+  private stanceKnob = -1;
+  /**
    * Замерить планты стоп и высоту таза из idle-стойки текущего оружия и отдать планировщику
    * (подшаг при повороте идёт в эти точки).
    *
@@ -1834,7 +1887,10 @@ export class PosePlayer {
    * рендера — на экран это не попадает.
    */
   measureStance(): void {
-    const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null);
+    // ⚠ Планты — С ТАЗОМ СТОЙКИ (его поворотом), тем же весом, что ляжет в кадре стоя: иначе цели планировщика и
+    // нарисованные стопы разойдутся ровно на авторский поворот таза (см. `measureStancePlants`).
+    this.stanceKnob = stancePelvisKnob();
+    const p = measureStancePlants(this.human, this.content.resolveUpper(this.weapon, this.combat, 0)?.pose ?? null, this.stanceKnob);
     this.clipStandY = p.standY;
     // «Только клипы»: планировщику стойку НЕ отдаём (в этом режиме к нему ни одного обращения), но высоту таза
     // держим сами — см. `clipStandY`. −1 = при возврате в планировщик замерить заново.
@@ -1938,6 +1994,41 @@ export class PosePlayer {
     this.seamFresh = false;
     if (this.seamW > 0) this.seamW = Math.max(0, this.seamW - dt / TURN_FADE);
     this.shownOk = true;
+  }
+  private stanceYawNow = 0; private stanceWNow = 0;
+  /**
+   * ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ В ИГРЕ (`GAIT.stancePelvis`). Возвращает РЫСК, который реально лёг (рад) — его вызывающий
+   * вычитает из бюджета скрутки и отдаёт в отворот, как раскрытие `_open`.
+   *
+   * ГДЕ ЗОВЁТСЯ: в `step` ПОСЛЕ шва поворота (`easeSeamHips`) и ДО `applyTorsoTwist`. Позже — курс уже на тазе, и
+   * авторский наклон лёг бы в мировых осях; раньше (внутри `gaitToHumanoid`) — таз следом перезапишут клипы
+   * (`Hips` входит и в `LOCO_BONES`, и в `TURN_BONES`). Шов от вставки не страдает: он снимает смещение ДО нас, и
+   * наша дельта есть в обеих его половинах — сокращается.
+   *
+   * ВЕС — ТОТ ЖЕ, ЧТО У НОГ СТОЙКИ: `ручка × (1 − legMag) × (1 − доля клипа хода)`. Ноги идут `blendBone(…, idle, legMag)`,
+   * поверх ложится клип (`blendClipBones`) — значит авторская доля равна ровно этому произведению, и таз берёт её же.
+   * Новых ворот не заводим НАРОЧНО: оба множителя уже сглажены по времени (`legMag` — свой лаг, `locoW` — `LOCO_FADE`),
+   * поэтому кинематический таз физ-куклы не получает ступенек (ради этого был `9c1bb6b`).
+   *
+   * ⚠ РЫСК МЕРИМ, А НЕ СЧИТАЕМ. `wS·Hips[1]` — не тот угол, который лёг: авторский эйлер с наклоном и креном
+   * композицией даёт свой курс (`pelvisFrame.pelvisHeading` не равен слоту Y эйлера). Берём разность курса таза
+   * ДО и ПОСЛЕ умножения — тогда отворот груди точен на любой стойке.
+   *
+   * ⚠ ВЫСОТУ НА КОСТЬ НЕ КЛАДЁМ (`__hipsD.y`): она уже приезжает `standY` → `bobY` (и `clipStandY` в «только клипы»).
+   * ⚠ X/Z — ДЕЛЬТОЙ поверх того, что положил конвейер (0 стоя, `hipsRest + __hipsD` клипа под клипом), а не
+   * присвоением: клип поворота снят БЕЗ таза стойки (см. `clipBake.procedural`), его сдвиг — собственное движение.
+   */
+  private applyStancePelvis(legFree: number, clipFree: number): number {
+    const st = _stancePelvis;
+    const w = stancePelvisKnob() * clamp(legFree, 0, 1) * clamp(clipFree, 0, 1);
+    this.stanceWNow = w; this.stanceYawNow = 0;
+    if (!st.has || w <= 1e-4) return 0;
+    const hb = this.human.bones.get('Hips')!;
+    const before = pelvisHeading(hb.quaternion);
+    hb.quaternion.premultiply(stancePelvisQuat(st.rx, st.ry, st.rz, w, w * clamp(GAIT.stancePelvisYaw, 0, 1)));
+    this.stanceYawNow = wrapPi(pelvisHeading(hb.quaternion) - before);
+    hb.position.x += st.dx * w; hb.position.z += st.dz * w;
+    return this.stanceYawNow;
   }
   /**
    * Сменить оружие: стойка — его (`measureStance`).
@@ -2104,7 +2195,11 @@ export class PosePlayer {
    * плант-сетка редактора (какая ячейка активна), читауты, пробы. ЗАМЕР: «только клипы» + «открыт», страйф вправо
    * 35° — `pelvisYaw` 0°, мир 35°, и ячейка сетки подсвечивалась на целое раскрытие мимо.
    */
-  get pelvisYawWorld(): number { return this.pelvisYaw + this.clipHipsOpen; }
+  get pelvisYawWorld(): number { return this.pelvisYaw + this.clipHipsOpen + this.stanceYawNow; }
+  /** Рыск, который таз авторской стойки РЕАЛЬНО добавил в этом кадре (рад) — читаут редактора и замеров. */
+  get stancePelvisYaw(): number { return this.stanceYawNow; }
+  /** Вес таза авторской стойки в этом кадре (0..1) — та же величина, что стоит в `wS`. */
+  get stancePelvisW(): number { return this.stanceWNow; }
   /** Пройденный путь тредмила (интеграл скорости) — редактору для скролла пола/оффсета маркеров. */
   get posX(): number { return this.px; }
   get posZ(): number { return this.pz; }
@@ -2158,13 +2253,15 @@ export class PosePlayer {
       if (!clipOnly) this.driver.replant();
     }
     this.clipOnlyNow = clipOnly;
+    // Доля таза стойки поменялась (ползунок редактора / перекрытие запекания) → планты сняты под другим тазом (см. `stanceKnob`).
+    const knobStale = this.stanceKnob !== stancePelvisKnob();
     if (!clipOnly) {
       this.driver.setCombat(this.combat);   // боевая колонка настроек (Ф6) — тот же плавный combat, что блендит стойку
       // ⭐ …и СТОЙКА ПЛАНИРОВЩИКА следует за той же осью: иначе поворот на месте в бою поднимал бы таз
       // на релакс-высоту (см. `measureStance`). Порог 0.02 — чтобы не мерить каждый кадр кроссфейда:
       // замер зовёт `human.reset()`, а поза всё равно собирается заново в `gaitToHumanoid`.
-      if (Math.abs(this.combat - this.stanceCombat) > 0.02) this.measureStance();
-    } else if (Math.abs(this.combat - this.clipStanceCombat) > 0.02) this.measureStance();   // высота таза стоя — та же ось (см. `clipStandY`)
+      if (knobStale || Math.abs(this.combat - this.stanceCombat) > 0.02) this.measureStance();
+    } else if (knobStale || Math.abs(this.combat - this.clipStanceCombat) > 0.02) this.measureStance();   // высота таза стоя — та же ось (см. `clipStandY`)
     const vx = this.vx, vz = this.vz, spd = Math.hypot(vx, vz);
     this.moveMag = clamp(spd / GAIT.speedWalk, 0, 1);
     const twist = blendTwist(this.twistStates, spd);   // скрутка корпуса по состоянию (стой/ходьба/бег), плавно по скорости
@@ -2500,8 +2597,12 @@ export class PosePlayer {
     // В БЮДЖЕТ И В ОТВОРОТ раскрытие входит как обычно: верх обязан отвернуться и на него тоже, иначе грудь и оружие
     // уедут от прицела на весь угол.
     const openClip = clipOnly ? this.clipHipsOpen : 0;
-    if (openClip) tw = clamp(tl.residual - warp - openClip, -twist.maxTwist, twist.maxTwist);
-    applyTorsoTwist(this.human, yaw, tw, twist.weights, warp + this.legsOpen + openClip);   // таз на курс + доворот; скрутка к прицелу, отворот — по Spine..UpperChest
+    // ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ — ЗДЕСЬ (после шва, до курса), см. `applyStancePelvis`. Его рыск идёт ТЕМ ЖЕ каналом,
+    // что раскрытие `_open`: к курсу НЕ прибавляется (он уже в тазе, `pelvisToWorld` его сохраняет), но вычитается из
+    // бюджета скрутки и уходит в отворот — грудь и оружие остаются на прицеле.
+    const stanceYaw = this.applyStancePelvis(1 - this.legMag, 1 - mix);
+    if (openClip || stanceYaw) tw = clamp(tl.residual - warp - this.legsOpen - openClip - stanceYaw, -twist.maxTwist, twist.maxTwist);
+    applyTorsoTwist(this.human, yaw, tw, twist.weights, warp + this.legsOpen + openClip + stanceYaw);   // таз на курс + доворот; скрутка к прицелу, отворот — по Spine..UpperChest
     // КАЧАНИЕ ТАЗА ВБОК — В КАДРЕ ТЕЛА, и именно ЗДЕСЬ, а не в `gaitToHumanoid`. `Hips.position` живёт в кадре
     // РОДИТЕЛЯ и рыском самой кости НЕ поворачивается — без доворота на `yaw` качание уехало бы в мировые оси
     // (та же грабля, что у переноса веса в `applyAttackPelvis`). Правая ось тела = (cos yaw, −sin yaw) — тот же

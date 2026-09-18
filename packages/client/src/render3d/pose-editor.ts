@@ -4504,6 +4504,7 @@ function renderLoco(): void {
     wb.append(wn);
     hipsOpenBox(wb);
   }
+  stancePelvisBox(body);
   bakeGaitSection();
   if (uiPro) renderGaitTune();   // тюнинг походки (24 ползунка GAIT/POSE/GX) — только Про
   renderUpperPanel();
@@ -4580,6 +4581,36 @@ function hipsOpenBox(wb: HTMLElement): void {
     w.textContent = '⚠ клипы не опубликованы: без «Опубликовать» (pe_clips) игра сыграет «ровно», даже если режим уедет с pe_gait.';
     wb.append(w);
   }
+}
+/**
+ * ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ В ИГРЕ — две ручки рядом с «тазом на ходе боком» (`GAIT.stancePelvis` / `stancePelvisYaw`,
+ * per-персонаж, едут в игру по «Опубликовать»).
+ *
+ * До них игра брала из авторской стойки ТОЛЬКО ВЫСОТУ таза, а наклон, крен, рыск и сдвиг по полу выбрасывала. Ручка
+ * стоит ЗДЕСЬ, а не в «Про»-тюнинге, ровно по той же причине, что и тумблер доворота: она заводится ради сравнения
+ * «было / стало» одним движением — превью «Бега» гоняет тот же `PosePlayer`, что и игра.
+ * По умолчанию 0: правка меняет ВИД уже опубликованных стоек, и решение за автором (ЗАМЕР воина — в README).
+ */
+function stancePelvisBox(body: HTMLElement): void {
+  const sb = el('div', 'margin-top:6px;border:1px solid #39415a;border-radius:6px;padding:5px'); body.append(sb);
+  const hr = el('div', 'display:flex;gap:6px;align-items:center'); sb.append(hr);
+  const lab = el('span', 'flex:1;font-size:11px;color:#8fb7ff'); lab.textContent = 'таз авторской стойки в игре:'; hr.append(lab);
+  stanceReadout = el('span', 'color:#9ae6a0;font-size:11px'); stanceReadout.textContent = 'вес 0 · рыск 0°'; hr.append(stanceReadout);
+  const sl = (label: string, key: 'stancePelvis' | 'stancePelvisYaw', hint: string): void => {
+    const r = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px'); r.title = hint;
+    const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = label; r.append(nm);
+    const inp = el('input', 'flex:2') as HTMLInputElement;
+    inp.type = 'range'; inp.min = '0'; inp.max = '1'; inp.step = '0.05'; inp.value = String(GAIT[key]);
+    const v = el('span', 'width:46px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = GAIT[key].toFixed(2);
+    // Планты снимаются С поворотом авторского таза тем же весом; смену доли плеер ловит сам (`stanceKnob`),
+    // и пере-замер случается на ближайшем шаге превью — звать `measureStance()` отсюда не надо (он мутирует риг).
+    inp.oninput = () => { GAIT[key] = parseFloat(inp.value); v.textContent = GAIT[key].toFixed(2); saveGaitCfg(); };
+    r.append(inp, v); sb.append(r);
+  };
+  sl('доля таза стойки', 'stancePelvis', 'Наклон, крен, рыск и сдвиг таза из авторской стойки. Вес в кадре = эта доля × авторитет НОГ стойки: стоя 1, на бегу 0.');
+  sl('из неё — доля рыска', 'stancePelvisYaw', 'Отдельно доля РЫСКА таза. Он уходит в отворот Spine..UpperChest, поэтому грудь и оружие остаются на прицеле.');
+  const note = el('div', 'color:#7a869e;font-size:10px;margin-top:2px'); sb.append(note);
+  note.textContent = 'Высота таза стойки играет ВСЕГДА (через standY) — эти ручки её не трогают. При запекании клипов таз стойки подавляется: иначе он попал бы внутрь клипа и применился дважды.';
 }
 /**
  * Клип набора «таз открыт» ТОГО ЖЕ оружия, что разрешённый кардинальный страйф (правый — по нему и живёт набор).
@@ -5681,6 +5712,7 @@ const COL_SFX = ['@s', '@b', '@c'] as const;
 const colMapOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): NumRec => (d === 'cbt' ? gaitCombat : d === 'back' ? gaitBack : gaitStrafe);
 const colSfxOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): string => (d === 'cbt' ? '@c' : d === 'back' ? '@b' : '@s');
 let warpReadout: HTMLElement | null = null;                // живой угол доворота таза (Ф0) — глазами его на диагонали не отличить
+let stanceReadout: HTMLElement | null = null;              // живой вес и рыск таза авторской стойки — видно, как он гаснет на бегу и возвращается стоя
 let editorRootYaw = 0;                                      // зеркало pelvisYawWorld плеера (updateTurnTest идёт по тазу)
 let editorTwistStates: TwistStates = TWIST_STATES_DEFAULT();   // 3 профиля скрутки (стой/ходьба/бег) текущего персонажа
 const editTwist = (): TwistProfile => editorTwistStates[turnTestMove];   // редактируемый профиль = ВЫБРАННОЕ состояние (кнопка стой/ходьба/бег)
@@ -6282,7 +6314,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'warpRate', 'hipsMode', 'hipsOpen', 'hipsOpenWalk', 'strafeMirror', 'planSmooth', 'stepSlack', 'stepUrge',
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'warpRate', 'hipsMode', 'hipsOpen', 'hipsOpenWalk', 'stancePelvis', 'stancePelvisYaw', 'strafeMirror', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',
@@ -6472,6 +6504,9 @@ function stepGait(dt: number): void {
   // ⚠ МИРОВОЙ рыск таза, а не приложенный курс: в «только клипы» + «открыт» раскрытие живёт в рыске самого клипа
   // (`clipHipsOpen`), и по `pelvisYaw` активная ячейка плант-сетки уезжала на целое раскрытие (35°).
   gaitPx = player.posX; gaitPz = player.posZ; editorRootYaw = player.pelvisYawWorld;
+  if (stanceReadout && stanceReadout.isConnected) {
+    stanceReadout.textContent = `вес ${player.stancePelvisW.toFixed(2)} · рыск ${(player.stancePelvisYaw * 180 / Math.PI).toFixed(1)}°`;
+  }
   if (warpReadout && warpReadout.isConnected) {
     // Сектор доворота: к какому клипу складывается ход. Старая складка — пока страйфы не перезапечены (см. `isLocoClipFresh`).
     const SEC = ['вперёд', 'бок +X', 'назад', 'бок −X'];
