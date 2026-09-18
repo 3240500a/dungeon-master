@@ -7,6 +7,16 @@ import { elementColor, elementOf } from './skillIcon.js';
 const POOL_SHORT: Record<'mana' | 'stamina', string> = { mana: 'маны', stamina: 'выносл.' };
 
 /**
+ * Ценник вставки словом. Он ПЛОСКИЙ и одинаковый в любом скиле — ради этого и заведён: доля от
+ * цены носителя означала «3 маны тут и 10 там», и сравнить сборки было нечем.
+ */
+const priceText = (ins: { cost: number; costPool: 'carrier' | 'mana' | 'stamina' }, carrier?: 'mana' | 'stamina'): string => {
+  if (!ins.cost) return 'бесплатно';
+  const pool = ins.costPool === 'carrier' ? carrier : ins.costPool;
+  return `${ins.cost > 0 ? '+' : ''}${ins.cost} ${pool ? POOL_SHORT[pool] : 'ресурса скила'}`;
+};
+
+/**
  * СБОРКА СКИЛА: гнёзда выученных активок и вставки в них.
  *
  * Панель НИЧЕГО НЕ РЕШАЕТ САМА — клик шлёт `socketInsert`/`socketClear`, а сервер отвечает
@@ -75,8 +85,7 @@ export function renderSockets(app: App, body: HTMLElement): void {
       attachTooltip(cell, () => `<div style="color:${COLORS.text};font-weight:bold">${ins.name}</div>` +
         `<div style="color:#9aa">${typeName(ins.type)} · ранг ${rk}</div>` +
         `<div style="color:#c4bca8">${ins.description}</div>` +
-        `<div style="color:#9aa;margin-top:3px">стоимость ×${ins.costMult} · откат ×${ins.cooldownMult}` +
-        (ins.costPool === 'carrier' ? '' : ` · платит ${POOL_SHORT[ins.costPool]}`) + '</div>' +
+        `<div style="color:#9aa;margin-top:3px">цена ${priceText(ins, base.resource)} · откат ×${ins.cooldownMult}</div>` +
         `<div style="color:${COLORS.dim};margin-top:3px">ранг растёт от очков в узле-доноре · клик — заменить или вынуть</div>`);
     }
     cell.addEventListener('click', () => openPicker(app, cell, node, i, cur));
@@ -148,7 +157,7 @@ function openPicker(app: App, anchor: HTMLElement, node: SkillTreeNode, slot: nu
       () => app.sendCmd({ cmd: 'socketInsert', nodeId: node.id, slot, insertId: ins.id }),
       () => `<div style="color:${COLORS.text};font-weight:bold">${ins.name}</div>` +
         `<div style="color:#c4bca8">${ins.description}</div>` +
-        `<div style="color:#9aa;margin-top:3px">стоимость ×${ins.costMult} · откат ×${ins.cooldownMult}</div>`);
+        `<div style="color:#9aa;margin-top:3px">цена ${priceText(ins, base.resource)} · откат ×${ins.cooldownMult}</div>`);
   }
   if (!any && !cur) {
     menu.append(mk('div', `padding:6px 8px;font-size:11px;color:${COLORS.dim}`,

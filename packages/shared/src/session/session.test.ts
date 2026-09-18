@@ -994,7 +994,7 @@ describe(`GameSession — ${'⭐ ВСТАВКА ПЛАТИТ СВОИМ РЕСУ
 
     s.tick(1 / 30, { p1: { ...idle, cast: 't_fire' } });
 
-    const extra = 6 * 0.25 * r.get('balance').inserts.manaPerStamina;   // надбавка вставки по курсу
+    const extra = insertById(r, 'ins-flame-edge')!.cost;   // плоский ценник вставки, один на все скилы
     expect(p.stamina, 'выносливость — только цена носителя').toBeCloseTo(30 - 6, 0);
     expect(p.mana, 'а надбавка ушла в ману').toBeCloseTo(25 - extra, 0);
   });
@@ -1025,29 +1025,30 @@ describe(`GameSession — ${'⭐ ВСТАВКА ПЛАТИТ СВОИМ РЕСУ
     expect(p.mana, 'и вторая цена не списана').toBeGreaterThan(24.5);
   });
 
-  it('прок-вставка платит маной САМА: хватило — печать легла', () => {
+  it('на мана-скиле ценник вставки просто прибавляется к цене носителя', () => {
     const r = reg();
     injectSkill(r, 'warrior', 't_ward', activeFx({ category: 'attack', resource: 'mana', manaCost: 1 }));
     const { s, p } = arena(r, 't_ward', 'ins-ward');
     p.mana = 12;
 
-    // ⚠ Прок срабатывает не на нажатии, а по завершении ЗАМАХА (0.35 шага) — одного тика мало.
+    // ⚠ Печать кладётся не на нажатии, а по завершении ЗАМАХА (0.35 шага) — одного тика мало.
     for (let i = 0; i < 20; i++) s.tick(1 / 30, { p1: { ...idle, cast: 't_ward' } });
 
-    const proc = insertById(r, 'ins-ward')!.proc!.ability.manaCost;
     expect(p.skillBuffs['ins:ins-ward'], 'печать сработала').toBeGreaterThan(0);
-    expect(p.mana, 'списаны и носитель со вставкой, и сам прок').toBeCloseTo(12 - 1 * 1.3 - proc, 0);
+    expect(p.mana, 'один платёж: носитель плюс ценник вставки').toBeCloseTo(12 - 1 - insertById(r, 'ins-ward')!.cost, 0);
   });
 
-  it('прок-вставка молчит, когда маны хватает только на носителя', () => {
+  it('⭐ печать гаснет вместе со вставкой: на боевом скиле без маны прока нет, а удар есть', () => {
     const r = reg();
-    injectSkill(r, 'warrior', 't_ward', activeFx({ category: 'attack', resource: 'mana', manaCost: 1 }));
-    const { s, p } = arena(r, 't_ward', 'ins-ward');
-    p.mana = 2;
+    injectSkill(r, 'warrior', 't_ward_s', activeFx({ category: 'attack', resource: 'stamina', manaCost: 4 }));
+    const { s, p } = arena(r, 't_ward_s', 'ins-ward');
+    p.stamina = 30; p.mana = 0;
 
-    for (let i = 0; i < 20; i++) s.tick(1 / 30, { p1: { ...idle, cast: 't_ward' } });
+    const evs: SessionEvent[] = [];
+    for (let i = 0; i < 20; i++) evs.push(...s.tick(1 / 30, { p1: { ...idle, cast: 't_ward_s' } }));
 
-    expect(p.skillBuffs['ins:ins-ward'], 'печати нет — заклинание не оплачено').toBeUndefined();
-    expect(p.mana, 'а носитель отработал и оплачен').toBeCloseTo(2 - 1.3, 0);
+    expect(evs.some((e) => e.type === 'swing' && e.ability === 't_ward_s'), 'удар прошёл').toBe(true);
+    expect(p.skillBuffs['ins:ins-ward'], 'а печати нет — вставка не оплачена').toBeUndefined();
+    expect(p.stamina, 'списана только цена носителя').toBeCloseTo(30 - 4, 0);
   });
 });

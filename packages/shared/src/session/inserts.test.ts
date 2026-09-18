@@ -27,8 +27,8 @@ const staminaAttack = (): string => cfg.get('skill-tree').nodes.find((n) => {
 })!.id;
 const activeOf = (nid: string): { manaCost: number; cooldown: number; resource: string } =>
   cfg.get('skill-tree').nodes.find((n) => n.id === nid)!.effect.active! as never;
-/** Курс переноса надбавки в чужой пул — из баланса, а не из головы. */
-const rates = (): { manaPerStamina: number; staminaPerMana: number } => cfg.get('balance').inserts;
+/** Ценник вставки — плоский и свой; читаем из конфига, а не из головы. */
+const priceOf = (id: string): number => insertById(cfg, id)!.cost;
 
 /** Сейв с выученным узлом заданного ранга и открытыми вставками (через узлы-доноры). */
 function saveWith(nodeId: string, rank: number, sockets: (string | null)[] = [], unlock: string[] = []): SaveState {
@@ -99,7 +99,7 @@ describe('вставки меняют носителя', () => {
     expect(off(r.active).addElementPct).toBeGreaterThan(0);
     expect(r.active.manaCost, 'цена носителя НЕ тронута').toBeCloseTo(base.manaCost, 6);
     expect(r.extraCost?.pool).toBe('mana');
-    expect(r.extraCost!.amount).toBeCloseTo(base.manaCost * 0.25 * rates().manaPerStamina, 2);
+    expect(r.extraCost!.amount, 'ровно ценник вставки, а не доля от скила').toBeCloseTo(priceOf('ins-flame-edge'), 6);
     expect(r.active.cooldown, 'откат по-прежнему растёт').toBeCloseTo(base.cooldown * 1.1, 2);
     expect(off(base as never).element, 'исходный конфиг НЕ мутирован').not.toBe('fire');
   });
@@ -107,17 +107,18 @@ describe('вставки меняют носителя', () => {
   it('ФИЗИЧЕСКАЯ вставка работает как раньше: дорожает пул носителя, второй цены нет', () => {
     const id = staminaAttack(), base = activeOf(id);
     const r = resolveActive(cfg, saveWith(id, 20, ['ins-wide-arc'], ['ins-wide-arc']), id)!;
-    expect(r.active.manaCost).toBeCloseTo(base.manaCost * 1.25, 2);
+    expect(r.active.manaCost).toBeCloseTo(base.manaCost + priceOf('ins-wide-arc'), 6);
     expect(r.extraCost).toBeUndefined();
   });
 
-  it('множители ПЕРЕМНОЖАЮТСЯ в своём пуле, магические надбавки СКЛАДЫВАЮТСЯ во втором', () => {
+  it('⭐ ЦЕНЫ СКЛАДЫВАЮТСЯ и не зависят от скила: своя — в свой пул', () => {
     const id = staminaAttack(), base = activeOf(id);
     const ids = ['ins-flame-edge', 'ins-kindling', 'ins-wide-arc'];   // мана, мана, выносливость
     const r = resolveActive(cfg, saveWith(id, 20, ids, ids), id)!;
     expect(r.applied.length, 'все три разного типа — влезли').toBe(3);
-    expect(r.active.manaCost, 'в выносливости осталась только физическая').toBeCloseTo(base.manaCost * 1.25, 2);
-    expect(r.extraCost!.amount).toBeCloseTo(base.manaCost * (0.25 + 0.2) * rates().manaPerStamina, 2);
+    expect(r.active.manaCost, 'в выносливости — только физическая').toBeCloseTo(base.manaCost + priceOf('ins-wide-arc'), 6);
+    expect(r.extraCost!.amount, 'в мане — сумма двух магических')
+      .toBeCloseTo(priceOf('ins-flame-edge') + priceOf('ins-kindling'), 6);
   });
 
   it('⚠ У ЗАКЛИНАНИЯ второй цены нет: магическая вставка и носитель платят из ОДНОГО пула', () => {
@@ -129,19 +130,38 @@ describe('вставки меняют носителя', () => {
     })!.id;
     const base = activeOf(id);
     const r = resolveActive(cfg, saveWith(id, 20, ['ins-flame-edge'], ['ins-flame-edge']), id)!;
-    expect(r.active.manaCost).toBeCloseTo(base.manaCost * 1.25, 2);
+    expect(r.active.manaCost).toBeCloseTo(base.manaCost + priceOf('ins-flame-edge'), 6);
     expect(r.extraCost).toBeUndefined();
   });
 
-  it('КУРС ИЗ БАЛАНСА, а не из кода: удвоил курс — удвоилась вторая цена', () => {
+  it('⭐ ЦЕНА ОДНА И ТА ЖЕ В ЛЮБОМ СКИЛЕ — ради этого ценник и сделан плоским', () => {
+    // Раньше цена была долей от носителя: одна и та же вставка стоила 3 маны в дешёвом скиле
+    // и 10 в дорогом, и сравнить сборки было нечем.
+    const cheap = staminaAttack();
+    const rich = cfg.get('skill-tree').nodes.find((n) => {
+      const a = n.effect.active;
+      return a?.category === 'attack' && a.resource === 'stamina' && a.manaCost >= activeOf(cheap).manaCost * 2;
+    })!.id;
+    const ex = (nid: string): number => resolveActive(cfg, saveWith(nid, 20, ['ins-flame-edge'], ['ins-flame-edge']), nid)!.extraCost!.amount;
+    expect(activeOf(rich).manaCost, 'скилы действительно разной цены').toBeGreaterThan(activeOf(cheap).manaCost);
+    expect(ex(rich)).toBeCloseTo(ex(cheap), 6);
+  });
+
+  it('ценник берётся из конфига вставки, а не из кода', () => {
     const id = staminaAttack();
     const save = saveWith(id, 20, ['ins-flame-edge'], ['ins-flame-edge']);
-    const one = resolveActive(cfg, save, id)!.extraCost!.amount;
     const alt = new ConfigRegistry();
     alt.loadAll();
-    const bal = alt.get('balance');
-    alt.reload({ balance: { ...bal, inserts: { ...bal.inserts, manaPerStamina: bal.inserts.manaPerStamina * 2 } } });
-    expect(resolveActive(alt, save, id)!.extraCost!.amount).toBeCloseTo(one * 2, 2);
+    alt.reload({ 'skill-inserts': alt.get('skill-inserts').map((i) => (i.id === 'ins-flame-edge' ? { ...i, cost: i.cost * 2 } : i)) });
+    expect(resolveActive(alt, save, id)!.extraCost!.amount).toBeCloseTo(priceOf('ins-flame-edge') * 2, 6);
+  });
+
+  it('СКИДКА уменьшает цену носителя и не уводит её ниже нуля', () => {
+    const id = staminaAttack(), base = activeOf(id);
+    const r = resolveActive(cfg, saveWith(id, 20, ['ins-thrift'], ['ins-thrift']), id)!;
+    expect(priceOf('ins-thrift')).toBeLessThan(0);
+    expect(r.active.manaCost).toBeCloseTo(Math.max(0, base.manaCost + priceOf('ins-thrift')), 2);
+    expect(r.active.manaCost).toBeGreaterThanOrEqual(0);
   });
 
   it('⭐ ПОГАСШАЯ ВСТАВКА: omitPools убирает магические — ни стихии, ни второй цены', () => {
@@ -151,7 +171,7 @@ describe('вставки меняют носителя', () => {
     expect(dim.applied.map((a) => a.insert.id), 'физическая осталась').toEqual(['ins-wide-arc']);
     expect(off(dim.active).element).not.toBe('fire');
     expect(dim.extraCost).toBeUndefined();
-    expect(dim.active.manaCost, 'физическая по-прежнему дорожает').toBeCloseTo(base.manaCost * 1.25, 2);
+    expect(dim.active.manaCost, 'физическая по-прежнему дорожает').toBeCloseTo(base.manaCost + priceOf('ins-wide-arc'), 6);
   });
 
   it('пул вставки: `carrier` идёт в пул носителя, свой — в свой', () => {
@@ -192,8 +212,9 @@ describe('proc-вставки', () => {
     expect(r.procs[0]!.on).toBe('cast');
     expect(r.procs[0]!.ability.category).toBe('cast');
     expect(off(r.active).damageMult, 'урон носителя не тронут').toBe(off(base).damageMult);
-    expect(r.extraCost!.amount, 'а цена — да, и она в мане: волна холода это заклинание').toBeGreaterThan(0);
-    expect(r.procs[0]!.ability.manaCost, 'у самого прока теперь есть цена').toBeGreaterThan(0);
+    expect(r.extraCost!.amount, 'а цена — да, и она в мане: волна холода это заклинание')
+      .toBeCloseTo(insertById(cfg, 'ins-cold-wave')!.cost, 6);
+    expect(r.procs[0]!.ability.manaCost, '⚠ прок отдельно НЕ платит: у вставки один ценник на всё').toBe(0);
   });
 });
 
@@ -320,7 +341,7 @@ describe('ранг узла-донора усиливает вставку', () 
     const ins = insertById(cfg, 'ins-flame-edge')!;
     expect(off(r.active).addElementPct).toBeCloseTo(ins.tune!.addElementPct!, 6);
     expect(r.active.manaCost, 'выносливость носителя не трогается магией').toBeCloseTo(off(base).manaCost, 6);
-    expect(r.extraCost!.amount).toBeCloseTo(off(base).manaCost * (ins.costMult - 1) * rates().manaPerStamina, 2);
+    expect(r.extraCost!.amount).toBeCloseTo(ins.cost, 6);
     expect(r.active.cooldown).toBeCloseTo(off(base).cooldown * ins.cooldownMult, 2);
   });
 

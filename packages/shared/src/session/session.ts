@@ -927,15 +927,9 @@ export class GameSession {
       for (const pr of procs) {
         if (pr.on !== 'cast') continue;
         if (pr.chance < 1 && !this.rng.chance(pr.chance)) continue;
-        // ⭐ ПРОК ПЛАТИТ САМ. «Волна холода» и «Дуговой разряд» — настоящие новы со своей стихией:
-        // бесплатное заклинание на каждом взмахе носителя было дырой. Не хватило маны — прок молчит,
-        // носитель бьёт как обычно (тот же принцип, что у погасшей вставки).
-        const cost = pr.ability.manaCost;
-        if (cost > 0) {
-          const pool = pr.ability.resource;
-          if (this.pool(p, pool) < cost) continue;
-          this.take(p, pool, cost);
-        }
+        // ⚠ Прок отдельно НЕ оплачивается: у вставки один ценник на всё, что она делает, и он
+        // списан на применении носителя. Не хватило — вставка вообще не применилась (погасла),
+        // и прока в списке уже нет.
         // Печать (бафф на себя) не проходит через `executeAbility`: тот бьёт по миру, а бафф —
         // состояние игрока. Ключ с префиксом `ins:` — чтобы не столкнуться с id узлов дерева.
         if (pr.ability.category === 'buff') { p.skillBuffs['ins:' + pr.insertId] = pr.ability.durationSec; continue; }

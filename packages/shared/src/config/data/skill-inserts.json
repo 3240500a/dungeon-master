@@ -10,13 +10,13 @@
         "cast"
       ]
     },
-    "costMult": 1.25,
     "cooldownMult": 1.1,
     "tune": {
       "element": "fire",
       "addElementPct": 0.35
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 5
   },
   {
     "id": "ins-frost-edge",
@@ -29,13 +29,13 @@
         "cast"
       ]
     },
-    "costMult": 1.25,
     "cooldownMult": 1.1,
     "tune": {
       "element": "cold",
       "addElementPct": 0.35
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 5
   },
   {
     "id": "ins-heavy-blow",
@@ -48,11 +48,11 @@
         "cast"
       ]
     },
-    "costMult": 1.5,
     "cooldownMult": 1.35,
     "tune": {
       "damageMultMul": 1.4
-    }
+    },
+    "cost": 4
   },
   {
     "id": "ins-kindling",
@@ -65,7 +65,6 @@
         "cast"
       ]
     },
-    "costMult": 1.2,
     "cooldownMult": 1.1,
     "tune": {
       "ailment": {
@@ -76,7 +75,8 @@
         "durationMs": 4000
       }
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 4
   },
   {
     "id": "ins-hoarfrost",
@@ -89,7 +89,6 @@
         "cast"
       ]
     },
-    "costMult": 1.2,
     "cooldownMult": 1.1,
     "tune": {
       "ailment": {
@@ -100,7 +99,8 @@
         "durationMs": 3000
       }
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 4
   },
   {
     "id": "ins-serrated",
@@ -112,7 +112,6 @@
         "attack"
       ]
     },
-    "costMult": 1.2,
     "cooldownMult": 1.1,
     "tune": {
       "ailment": {
@@ -122,7 +121,8 @@
         "maxStacks": 3,
         "durationMs": 5000
       }
-    }
+    },
+    "cost": 2
   },
   {
     "id": "ins-wide-arc",
@@ -134,13 +134,13 @@
         "attack"
       ]
     },
-    "costMult": 1.25,
     "cooldownMult": 1.15,
     "tune": {
       "arcMultMul": 1.6,
       "rangeMultMul": 1.15,
       "damageMultMul": 0.85
-    }
+    },
+    "cost": 3
   },
   {
     "id": "ins-flurry",
@@ -152,12 +152,12 @@
         "attack"
       ]
     },
-    "costMult": 1.35,
     "cooldownMult": 1.2,
     "tune": {
       "hitsAdd": 1,
       "damageMultMul": 0.6
-    }
+    },
+    "cost": 4
   },
   {
     "id": "ins-piercing",
@@ -175,12 +175,12 @@
         "staff"
       ]
     },
-    "costMult": 1.3,
     "cooldownMult": 1.15,
     "tune": {
       "pierce": true,
       "damageMultMul": 0.9
-    }
+    },
+    "cost": 3
   },
   {
     "id": "ins-shove",
@@ -193,11 +193,11 @@
         "cast"
       ]
     },
-    "costMult": 1.2,
     "cooldownMult": 1.1,
     "tune": {
       "knockbackAdd": 90
-    }
+    },
+    "cost": 2
   },
   {
     "id": "ins-sweep",
@@ -209,11 +209,11 @@
         "attack"
       ]
     },
-    "costMult": 1.35,
     "cooldownMult": 1.25,
     "tune": {
       "knockdownChanceAdd": 0.25
-    }
+    },
+    "cost": 4
   },
   {
     "id": "ins-cold-wave",
@@ -226,7 +226,6 @@
         "cast"
       ]
     },
-    "costMult": 1.4,
     "cooldownMult": 1.25,
     "proc": {
       "on": "cast",
@@ -235,7 +234,7 @@
         "category": "cast",
         "abilityId": "insert-cold-wave",
         "shape": "nova",
-        "manaCost": 5,
+        "manaCost": 0,
         "resource": "mana",
         "cooldown": 0,
         "castTimeSec": 0,
@@ -252,7 +251,8 @@
         }
       }
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 6
   },
   {
     "id": "ins-arc-burst",
@@ -265,7 +265,6 @@
         "cast"
       ]
     },
-    "costMult": 1.4,
     "cooldownMult": 1.25,
     "proc": {
       "on": "cast",
@@ -274,7 +273,7 @@
         "category": "cast",
         "abilityId": "insert-arc-burst",
         "shape": "nova",
-        "manaCost": 4,
+        "manaCost": 0,
         "resource": "mana",
         "cooldown": 0,
         "castTimeSec": 0,
@@ -284,7 +283,8 @@
         "radius": 110
       }
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 5
   },
   {
     "id": "ins-quickening",
@@ -297,11 +297,11 @@
         "cast"
       ]
     },
-    "costMult": 1.0,
     "cooldownMult": 0.7,
     "tune": {
       "damageMultMul": 0.8
-    }
+    },
+    "cost": 0
   },
   {
     "id": "ins-thrift",
@@ -314,11 +314,11 @@
         "cast"
       ]
     },
-    "costMult": 0.7,
     "cooldownMult": 1.0,
     "tune": {
       "damageMultMul": 0.85
-    }
+    },
+    "cost": -3
   },
   {
     "id": "ins-ward",
@@ -331,7 +331,6 @@
         "cast"
       ]
     },
-    "costMult": 1.3,
     "cooldownMult": 1.2,
     "proc": {
       "on": "cast",
@@ -339,7 +338,7 @@
       "ability": {
         "category": "buff",
         "abilityId": "insert-ward",
-        "manaCost": 4,
+        "manaCost": 0,
         "resource": "mana",
         "cooldown": 0,
         "durationSec": 4,
@@ -352,7 +351,8 @@
         ]
       }
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 4
   },
   {
     "id": "ins-swiftness",
@@ -365,7 +365,6 @@
         "cast"
       ]
     },
-    "costMult": 1.25,
     "cooldownMult": 1.2,
     "proc": {
       "on": "cast",
@@ -373,7 +372,7 @@
       "ability": {
         "category": "buff",
         "abilityId": "insert-swiftness",
-        "manaCost": 3,
+        "manaCost": 0,
         "resource": "mana",
         "cooldown": 0,
         "durationSec": 3,
@@ -386,7 +385,8 @@
         ]
       }
     },
-    "costPool": "mana"
+    "costPool": "mana",
+    "cost": 3
   },
   {
     "id": "ins-blood-rhythm",
@@ -398,7 +398,6 @@
         "attack"
       ]
     },
-    "costMult": 1.2,
     "cooldownMult": 1.1,
     "tune": {
       "when": {
@@ -408,6 +407,7 @@
         "speedPer": 0.08,
         "damagePer": 0
       }
-    }
+    },
+    "cost": 2
   }
 ]

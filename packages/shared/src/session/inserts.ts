@@ -48,9 +48,6 @@ export type ResourcePool = 'mana' | 'stamina';
 export const insertPool = (ins: SkillInsert, carrier: ResourcePool): ResourcePool =>
   (ins.costPool === 'carrier' ? carrier : ins.costPool);
 
-/** Курс переноса надбавки в чужой пул (`balance.inserts`). */
-export interface InsertRates { manaPerStamina: number; staminaPerMana: number }
-
 export interface ResolvedActive {
   /** Способность носителя с наложенными вставками. При пустых гнёздах — ИСХОДНЫЙ объект. */
   active: ActiveAbility;
@@ -206,24 +203,24 @@ const addAt = (v: number, k: number): number => v * k;
  * РАНГ узла-донора усиливает прибавку и надбавку к цене, но СНИЖАЕТ надбавку к откату: на высоком
  * ранге вставка почти не удлиняет носителя — иначе качать её было бы наказанием, а не наградой.
  *
- * ⭐ ДВА НАКОПИТЕЛЯ ВМЕСТО ОДНОГО. Надбавка вставки со своим пулом уходит НЕ в цену носителя,
- * а во вторую цену (`extraCost`) — по курсу из баланса. Считается она от ИСХОДНОЙ цены носителя,
- * а не от накопленной: иначе результат зависел бы от порядка вставок в гнёздах.
+ * ⭐ ЦЕНА ВСТАВКИ ПЛОСКАЯ И СКЛАДЫВАЕТСЯ, а не множится на цену носителя. «Пламенное лезвие» стоит
+ * 5 маны и в дешёвом скиле, и в дорогом: ценник читается один раз и сравнивать сборки можно глазами.
+ * Своя цена идёт в свой пул: совпал с пулом носителя — прибавляется к его цене, нет — становится
+ * ВТОРОЙ ценой (`extraCost`).
  */
 function applyInserts(
-  active: ActiveAbility, list: readonly AppliedInsert[], rates: InsertRates,
+  active: ActiveAbility, list: readonly AppliedInsert[],
 ): { active: ActiveAbility; extraCost?: { pool: ResourcePool; amount: number } } {
   const a = structuredClone(active) as ActiveAbility;
   const carrier: ResourcePool = active.resource;
   const other: ResourcePool = carrier === 'stamina' ? 'mana' : 'stamina';
-  const rate = carrier === 'stamina' ? rates.manaPerStamina : rates.staminaPerMana;
-  let cost = 1, cd = 1, extra = 0;
+  let cost = 0, cd = 1, extra = 0;
   for (const { insert: ins, rank } of list) {
     const k = gainAt(ins, rank);
     const r = Math.max(1, rank) - 1;
-    const surplus = (ins.costMult - 1) * (1 + ins.perRank.cost * r);
-    if (insertPool(ins, carrier) === carrier) cost *= 1 + surplus;
-    else extra += active.manaCost * surplus * rate;
+    const price = ins.cost * (1 + ins.perRank.cost * r);
+    if (insertPool(ins, carrier) === carrier) cost += price;
+    else extra += price;
     cd *= 1 + (ins.cooldownMult - 1) * Math.max(0, 1 - ins.perRank.cooldownDecay * r);
     const t = ins.tune;
     if (!t) continue;
@@ -254,7 +251,7 @@ function applyInserts(
     if (a.category === 'cast' && t.radiusMul !== undefined) a.radius *= mulAt(t.radiusMul, k);
     if (a.category === 'curse' && t.ailment !== undefined) a.ailment = mergeAilment(a.ailment, scaleAilment(t.ailment, k));
   }
-  a.manaCost = r2(a.manaCost * cost);
+  a.manaCost = r2(Math.max(0, a.manaCost + cost));   // скидка не уводит цену ниже нуля
   a.cooldown = r2(a.cooldown * cd);
   // Скидочная вставка в чужом пуле не должна ВОЗВРАЩАТЬ ресурс из ниоткуда — вторая цена не бывает
   // отрицательной. Скидку имеет смысл давать в своём пуле, там она честно уменьшает цену носителя.
@@ -306,6 +303,6 @@ export function resolveActive(
     // ранге била бы ровно как на первом, и качать её было бы незачем.
     procs.push({ insertId: ins.id, on: ins.proc.on, chance: ins.proc.chance, ability: scaleProc(ins.proc.ability, gainAt(ins, rank)) });
   }
-  const { active, extraCost } = applyInserts(base, list, reg.get('balance').inserts);
+  const { active, extraCost } = applyInserts(base, list);
   return { active, procs, applied: [...list], ...(extraCost ? { extraCost } : {}) };
 }
