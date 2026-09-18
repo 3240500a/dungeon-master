@@ -12,7 +12,7 @@ import { applyGaitConfig } from './poseRuntime.js';
  *
  * Жалоба автора (19.09): «по страйфу настройка только в одну сторону происходит… у нас есть кнопка страйф
  * влево, свой съём, а настроить его нельзя». ЗАМЕР причины — две:
- *  1. ось страйфовости `st` считается по МОДУЛЮ боковой скорости (`strafeMix`), а сторона (`latRight`) в
+ *  1. ось страйфовости `st` считается по МОДУЛЮ боковой скорости (`strafeMix`), а сторона (`latPlusX`) в
  *     `pose.ts` не приезжала вовсе: одна колонка «СТРАЙФ» обслуживала обе стороны;
  *  2. съём левого страйфа подменялся ЗЕРКАЛОМ правого (`strafeMirror`), поэтому правка левого физически
  *     не могла никуда попасть — левый клип получался отражением правого, что в него ни пиши.
@@ -363,27 +363,33 @@ describe('⭐⭐ ЗЕРКАЛА ЛЕВОГО СТРАЙФА БОЛЬШЕ НЕТ'
 describe('⭐ РЕДАКТОР: выбранная сторона ведёт И КАРТУ, И ПРЕВЬЮ', () => {
   it('«обе» → общая колонка, «Л»/«П» → своя карта и свой суффикс', () => {
     // ⚠ Мутация «`colMapOf` не смотрит на `gaitStrSide`» валит это: ползунки стороны писали бы в общую колонку.
-    expect(SRC_ED).toMatch(/: gaitStrSide === 'R' \? gaitStrafeR : gaitStrSide === 'L' \? gaitStrafeL : gaitStrafe\)/);
-    expect(SRC_ED).toMatch(/: gaitStrSide === 'R' \? '@sr' : gaitStrSide === 'L' \? '@sl' : '@s'\)/);
-    expect(SRC_ED, 'карты — те же объекты, что читает игра').toMatch(/const gaitStrafeR = STRAFE_R;/);
-    expect(SRC_ED).toMatch(/const gaitStrafeL = STRAFE_L;/);
+    // ⚠⚠ 20.09 ЯРЛЫК ЗЕРКАЛЕН ХРАНИЛИЩУ НАРОЧНО: «Л» — это СВОЯ ЛЕВАЯ сторона персонажа, то есть локальный
+    // +X, а он исторически лежит в `STRAFE_R`/`@sr`. Имена карт — данные автора, их не переименовывали;
+    // полная цепь и замеры — `strafeTruth.test.ts` и «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`.
+    expect(SRC_ED).toMatch(/: gaitStrSide === 'L' \? gaitStrafeOwnL : gaitStrSide === 'R' \? gaitStrafeOwnR : gaitStrafe\)/);
+    expect(SRC_ED).toMatch(/: gaitStrSide === 'L' \? '@sr' : gaitStrSide === 'R' \? '@sl' : '@s'\)/);
+    expect(SRC_ED, 'карты — те же объекты, что читает игра').toMatch(/const gaitStrafeOwnL = STRAFE_R;/);
+    expect(SRC_ED).toMatch(/const gaitStrafeOwnR = STRAFE_L;/);
   });
 
-  it('⭐⭐ ПРЕВЬЮ ЛЕВОГО СТРАЙФА — СВОЙ ЗНАК СКОРОСТИ И СВОЯ ЯЧЕЙКА ПЛАНТА (6, а не жёсткая 2)', () => {
-    // ⚠ Мутация «`locoVx = v; plantDirSel = 2`» валит это: правишь левый страйф, а перед тобой едет вправо —
-    // ровно то, на что жаловался автор.
+  it('⭐⭐ У КАЖДОЙ СТОРОНЫ СВОЙ ЗНАК СКОРОСТИ И СВОЯ ЯЧЕЙКА ПЛАНТА (а не жёсткая 2 на обе)', () => {
+    // ⚠ Мутация «`locoVx = v; plantDirSel = 2`» валит это: правишь одну сторону, а перед тобой едет другая —
+    // ровно то, на что жаловался автор. ⚠⚠ 20.09 стороны названы ПО АНАТОМИИ: «Л» = +X = ячейка 2.
     const i = SRC_ED.indexOf('const applyView = (): void => {');
     expect(i).toBeGreaterThan(0);
     const body = SRC_ED.slice(i, SRC_ED.indexOf('\n  };', i));
-    expect(body).toMatch(/const left = gaitStrSide === 'L';/);
-    expect(body).toMatch(/locoVx = left \? -v : v; locoVz = 0; plantDirSel = left \? 6 : 2;/);
+    expect(body).toMatch(/const ownRight = gaitStrSide === 'R';/);
+    expect(body).toMatch(/locoVx = ownRight \? -v : v; locoVz = 0; plantDirSel = ownRight \? 6 : 2;/);
     expect(SRC_ED, 'переключатель стороны зовёт тот же `applyView`').toMatch(/const setStrSide = \(s: 'both' \| 'L' \| 'R'\): void => \{ gaitStrSide = s; applyView\(\); \};/);
   });
 
   it('сброс колонок и чип «Л≠П» знают новые суффиксы', () => {
     expect(SRC_ED, 'суффиксы сторон в общем списке колонок').toMatch(/const COL_SFX = \['@s', '@sr', '@sl', '@b', '@c'\] as const;/);
-    expect(SRC_ED, 'у каждой стороны своя кнопка сброса').toMatch(/colReset\('сброс страйфа П', gaitStrafeR, '@sr'\);/);
-    expect(SRC_ED).toMatch(/colReset\('сброс страйфа Л', gaitStrafeL, '@sl'\);/);
+    // ⚠ 20.09 пять поколоночных кнопок «сброс страйфа / Л / П / назад / бой» свёрнуты в ОДНУ по выбору
+    // (`resetScope`, режим + скорость; сторож — `gaitResetScope.test.ts`). Колонку и суффикс она берёт из
+    // тех же `colMapOf`/`colSfxOf`, что и ползунки, поэтому область сброса не может разойтись с правкой.
+    expect(SRC_ED, 'сброс идёт по выбранной колонке').toMatch(/column: onCol \? colMapOf\(gaitDir\) : null,/);
+    expect(SRC_ED, 'и по её суффиксу').toMatch(/sfx: onCol \? colSfxOf\(gaitDir\) : '',/);
     // `@sr`/`@sl` не оканчиваются на `@s` — «сброс страйфа» не уносит стороны молча.
     expect('stepRun@sr'.endsWith('@s')).toBe(false);
     expect('stepRun@sl'.endsWith('@s')).toBe(false);

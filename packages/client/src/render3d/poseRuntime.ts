@@ -1181,6 +1181,59 @@ export function migrateHipsOpen(c: GaitCfg | undefined): boolean {
   }
   return did;
 }
+/** Ручка панели «Бег»: объект-хозяин и пара ключей «ходьба/бег». `kr === null` — ручка одна на обе скорости. */
+export interface GaitSpeedKey { obj: Record<string, number>; kw: string; kr: string | null }
+
+/**
+ * ⭐⭐ СБРОС НАСТРОЕК БЕГА ПО ВЫБОРУ — ОДИН РЕЖИМ, ОДНА СКОРОСТЬ (просьба автора 20.09: «сброс пусть не
+ * сбрасывает все настройки в каждой вкладке, а только в той, которая выбрана»).
+ *
+ * Функция ЧИСТАЯ по входу (никакого DOM и никаких глобалов): что чистить — приходит списком ручек, ровно
+ * тем, который панель собрала, пока рисовала свои строки. Второй, отдельно поддерживаемый список ключей
+ * неминуемо разошёлся бы с первым, и сброс молча перестал бы доставать до новых ручек.
+ *
+ * ДВЕ РАЗНЫЕ ОПЕРАЦИИ, и путать их нельзя:
+ *  • КОЛОНКА (страйф / его сторона / назад / бой) — РАЗРЕЖЁННАЯ: ключ УДАЛЯЕТСЯ. «Записи нет» значит
+ *    «работает уровень ниже» (сторона → общая колонка → база). ⚠ Записать сюда дефолт нельзя: колонка
+ *    перестала бы откатываться вовсе, и это тихо — глазами не видно, пока не покрутишь соседний уровень.
+ *  • БАЗА («вперёд») — ПЛОТНАЯ: ключ возвращается к ДЕФОЛТУ КОДА (`defOf`), колонки не трогаются вовсе.
+ *
+ * ⚠ РУЧКА БЕЗ RUN-ТВИНА (`kr === null`) живёт на обеих скоростях — её сбрасывает и «ходьба», и «бег»,
+ * ровно как её и правит один и тот же ползунок на любой из скоростей.
+ * ⚠ Run-твин без своего дефолта берёт дефолт ходьбы — та же посадка, что делает панель на входе.
+ *
+ * @returns сколько записей реально изменилось (для сторожа и для подписи кнопки).
+ */
+export function resetGaitScope(
+  keys: readonly GaitSpeedKey[],
+  o: {
+    /** Выбрана скорость «бег»? */
+    run: boolean;
+    /** Разрежённая карта колонки, либо `null` — правим базу. */
+    column: Record<string, number> | null;
+    /** Суффикс пар Л/П этой колонки (`''` у базы). */
+    sfx: string;
+    /** Карта асимметрии Л/П (та же, что читает игра). */
+    asym: Record<string, [number, number]>;
+    /** Дефолты кода для объекта-хозяина ручки. Нужны только базе. */
+    defOf: (obj: Record<string, number>) => Record<string, number>;
+  },
+): number {
+  let n = 0;
+  for (const { obj, kw, kr } of keys) {
+    const key = o.run && kr ? kr : kw;               // тот же выбор ключа, что у самого ползунка
+    const pair = o.column ? key + o.sfx : key;
+    if (o.column) { if (key in o.column) { delete o.column[key]; n++; } }
+    else {
+      const d = o.defOf(obj);
+      const v = d[key] ?? (key === kr ? d[kw] : undefined);
+      if (v !== undefined && obj[key] !== v) { obj[key] = v; n++; }
+    }
+    if (o.asym[pair] !== undefined) { delete o.asym[pair]; n++; }
+  }
+  return n;
+}
+
 /** Загрузить тюн бега класса (pe_gait[charId]) в ГЛОБАЛЬНЫЕ GAIT/POSE и переданный gx; вернуть плант-сетку. Для ИГРОКА. */
 export function applyGaitConfig(charId: string, gx: GXKnobs): PlantGrid {
   const cfgs = readJSON<Record<string, GaitCfg>>('pe_gait', {});
@@ -2041,8 +2094,8 @@ export class PosePlayer {
    * Колонка клипов прошлого кадра и уходящая колонка (кроссфейд `COL_FADE`). Поля ПЕРЕИСПОЛЬЗУЮТСЯ (`has`/`w` вместо
    * null): кадр куклы не должен аллоцировать — этим кодом шагают и монстры, и чужие игроки.
    */
-  private colPrev = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latRight: false, has: false };
-  private colFade = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latRight: false, w: 0 };
+  private colPrev = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latPlusX: false, has: false };
+  private colFade = { axes: { sb: 0, st: 0, bt: 0 } as LocoAxes, latPlusX: false, w: 0 };
   /** Мемо разбора клипов `_open` НА ОДИН КАДР: слот = сторона (+X / −X) | бег·2, маска — что уже посчитано (см. `findOpen`). */
   readonly atk: AttackState = { clip: null, t: -1 };
   constructor(
@@ -2563,6 +2616,8 @@ export class PosePlayer {
       this.driver.legRest = this.human.legRest;   // длины бедра/голени и полутаз — из рига, не из констант
       this.driver.setWorld(this.px, this.pz, yaw, vx, vz);   // yaw таза → стопы в верном body-кадре + подшаг при повороте
       this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
+      // ⚠ ЯЧЕЙКИ СЕТКИ — В ЛОКАЛЬНЫХ ОСЯХ: 0 = вперёд (+Z), 2 = +X = СВОЯ ЛЕВАЯ сторона (клип `strafe_R`),
+      // 4 = назад, 6 = −X = СВОЯ ПРАВАЯ (клип `strafe_L`). См. «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`.
       let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
       const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
       // ⚠ ПОД СЕКТОРАМИ ЯЧЕЙКУ НЕ «ПРИЩЁЛКИВАЕМ» К ОСИ СЕКТОРА, хотя диагональные ячейки задеваются только на перебросе.
@@ -2648,24 +2703,28 @@ export class PosePlayer {
       // Ось ходьба↔бег остаётся общей с планировщиком: это скорость, у неё мёртвой зоны нет.
       const dir = locoDirWeights(fwdC, latC);
       const axes = { sb: tg.sb ?? 0, st: dir.st, bt: dir.bt };
-      const latRight = latC >= 0;
+      // ⚠⚠ ИМЯ ЧЕСТНОЕ, А НЕ «ВПРАВО». `latC ≥ 0` — ход вдоль ЛОКАЛЬНОГО +X, а +X — это сторона костей
+      // `Left*`, то есть СВОЯ ЛЕВАЯ сторона персонажа (модель смотрит в +Z; правая тройка Three). Клип и карта
+      // настроек, которые здесь выбираются, исторически названы `strafe_R`/`STRAFE_R` — имена зеркальны анатомии
+      // и НЕ переименовываются (опубликованные данные). Полная таблица — «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`.
+      const latPlusX = latC >= 0;
       // ⭐ КРОССФЕЙД ПРИ ДИСКРЕТНОЙ СМЕНЕ КОЛОНКИ. Сторона страйфа и вперёд↔назад выбираются дискретно; на
       // непрерывном повороте хода вес колонки в точке смены нулевой, и подмены не видно. Но инерции хода нет
       // (`moveInertia` выключена), и мгновенный разворот (R90→L90, 0→180) менял клип за кадр: ЗАМЕР (критика O2)
       // скачок ноги 90° за кадр. Поэтому уходящая колонка доигрывает `COL_FADE` той же фазой (Sync Group) и гаснет.
       {
         const pc = this.colPrev;
-        const sideFlip = pc.has && pc.latRight !== latRight && pc.axes.st * (1 - pc.axes.bt) > 0.05;
+        const sideFlip = pc.has && pc.latPlusX !== latPlusX && pc.axes.st * (1 - pc.axes.bt) > 0.05;
         const jump = pc.has && Math.abs(axes.st - pc.axes.st) + Math.abs(axes.bt - pc.axes.bt) > COL_JUMP;
         if (sideFlip || jump) {
           const f = this.colFade;
-          f.axes.sb = pc.axes.sb; f.axes.st = pc.axes.st; f.axes.bt = pc.axes.bt; f.latRight = pc.latRight; f.w = 1;
+          f.axes.sb = pc.axes.sb; f.axes.st = pc.axes.st; f.axes.bt = pc.axes.bt; f.latPlusX = pc.latPlusX; f.w = 1;
         }
-        pc.axes.sb = axes.sb; pc.axes.st = axes.st; pc.axes.bt = axes.bt; pc.latRight = latRight; pc.has = true;
+        pc.axes.sb = axes.sb; pc.axes.st = axes.st; pc.axes.bt = axes.bt; pc.latPlusX = latPlusX; pc.has = true;
       }
       const clipOf = (dir: LocoDir, fast: boolean): Clip | null =>
         this.content.locoClip!(locoClipNames(dir, fast), this.weapon);
-      const sd: LocoDir = latRight ? 'strafe_R' : 'strafe_L';
+      const sd: LocoDir = latPlusX ? 'strafe_R' : 'strafe_L';   // ⚠ `strafe_R` = ход в +X = в СВОЮ ЛЕВУЮ (см. выше)
       this.clipYawMeta = false;
       const domDir: LocoDir = axes.bt > axes.st ? 'back' : axes.st > 0.5 ? sd : 'fwd';
       const lead = clipOf(domDir, axes.sb > 0.5) ?? clipOf(domDir, axes.sb <= 0.5);
@@ -2732,14 +2791,14 @@ export class PosePlayer {
         this.clipYawMeta = true;
         return a ? unbakeYawCounter(p, a, c.hipsYawW) : p;
       };
-      locoPose = blendLocoPose(pickPose, axes, latRight, blendTwo);
+      locoPose = blendLocoPose(pickPose, axes, latPlusX, blendTwo);
       if (this.colFade.w > 0 && locoPose) {
         const f = this.colFade;
         // ⚠ УХОДЯЩАЯ КОЛОНКА ДОИГРЫВАЕТ СО СВОИМ ВЕСОМ БЕГА, а не с нынешним `axes.sb`. Инерции хода нет: остановка
         // роняет скорость в ноль за кадр, вес бега — тоже, и страйф/назад догорал бы как ХОДЬБА. ЗАМЕР (манекен,
         // «только клипы», 120 u/с вбок → стоп): с `sb` нынешним таз 35.0 → 8.1 → 6.0° (26.9°/кадр) и скачок ноги
         // 32.2° (на ходу 13.8°); со своим — 28.1 → 20.8 → 13.2° (7.6°/кадр) и 11.6°. В «ровно» скачок ноги 27.1 → 15.2°.
-        const old = blendLocoPose(pickPose, f.axes, f.latRight, blendTwo);
+        const old = blendLocoPose(pickPose, f.axes, f.latPlusX, blendTwo);
         if (old) locoPose = blendTwo(locoPose, old, f.w * f.w * (3 - 2 * f.w));   // smoothstep: без излома на входе и выходе
         f.w = Math.max(0, f.w - dt / COL_FADE);
       }

@@ -53,7 +53,7 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
@@ -4397,7 +4397,7 @@ function drawPad(cv: HTMLCanvasElement): void {
   ctx.strokeStyle = '#2a3040'; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) { const p = PADM + i * (PAD - 2 * PADM) / 4; ctx.beginPath(); ctx.moveTo(p, PADM); ctx.lineTo(p, PAD - PADM); ctx.moveTo(PADM, p); ctx.lineTo(PAD - PADM, p); ctx.stroke(); }
   ctx.strokeStyle = '#3a4258'; ctx.beginPath(); ctx.moveTo(PAD / 2, PADM); ctx.lineTo(PAD / 2, PAD - PADM); ctx.moveTo(PADM, PAD / 2); ctx.lineTo(PAD - PADM, PAD / 2); ctx.stroke();
-  ctx.fillStyle = '#5a6478'; ctx.font = '9px monospace'; ctx.fillText('вперёд', PAD / 2 + 3, PADM + 9); ctx.fillText('назад', PAD / 2 + 3, PAD - PADM - 3); ctx.fillText('П', PAD - PADM - 8, PAD / 2 - 3); ctx.fillText('Л', PADM + 2, PAD / 2 - 3);
+  ctx.fillStyle = '#5a6478'; ctx.font = '9px monospace'; ctx.fillText('вперёд', PAD / 2 + 3, PADM + 9); ctx.fillText('назад', PAD / 2 + 3, PAD - PADM - 3); ctx.fillText('Л', PAD - PADM - 8, PAD / 2 - 3); ctx.fillText('П', PADM + 2, PAD / 2 - 3);   // ⚠ СВОЯ сторона персонажа: +X (справа на паде) = его ЛЕВАЯ
   if (editPlant) {   // 16 точек-ячеек плантов: внешнее кольцо (mag .95) = БЕГ, внутреннее (.34) = ХОДЬБА; активная подсвечена
     for (const run of [false, true]) for (let i = 0; i < 8; i++) {
       const th = i * DIR_STEP, mag = run ? PAD_RUN : PAD_WALK; const [px, py] = velToPad(Math.sin(th) * mag, Math.cos(th) * mag);
@@ -4413,6 +4413,12 @@ function renderLoco(): void {
   const info = el('div', 'color:#9ae6a0;margin-bottom:4px'); info.textContent = `${curChar().name} · ${weapon} · бег = idle-стойка + физпокачивание + физ-ноги`; body.append(info);
   const cv = document.createElement('canvas'); cv.width = PAD; cv.height = PAD; cv.style.cssText = 'width:100%;max-width:250px;display:block;border:1px solid #39415a;border-radius:6px;touch-action:none;cursor:crosshair'; body.append(cv);
   const redraw = (): void => drawPad(cv); redraw();
+  // ⭐ ОДНА СТРОКА, ИЗ-ЗА ОТСУТСТВИЯ КОТОРОЙ «ЛЕВО И ПРАВО КАЖУТСЯ ПЕРЕПУТАННЫМИ» (жалоба 20.09).
+  // Л/П везде в панели — СВОИ стороны ПЕРСОНАЖА (как и Л/П у ползунков и у маркеров плантов). Манекен
+  // смотрит в камеру, поэтому на экране они видны наоборот — ровно как в зеркале.
+  const mirrorNote = el('div', 'color:#c08a50;font-size:10px;margin:2px 0');
+  mirrorNote.textContent = 'Л / П здесь — СВОИ стороны персонажа (кости Left*/Right*), как у ползунков и маркеров плантов. Манекен смотрит НА ТЕБЯ, поэтому его «Л» едет ВПРАВО по экрану — это зеркало, а не ошибка.';
+  body.append(mirrorNote);
   // Выбор ЯЧЕЙКИ планта = клик по одной из 16 точек на квадрате (8 внешних = бег, 8 внутренних = ходьба).
   const goDir = (i: number, run: boolean): void => { gaitFaceMove = false; gaitYawManual = 0; const th = i * DIR_STEP, mag = run ? PAD_RUN : PAD_WALK; locoVz = Math.cos(th) * mag; locoVx = Math.sin(th) * mag; plantDirSel = i; plantSpeedRun = run; if (!locoOn) { locoOn = true; gaitPx = 0; gaitPz = 0; locoPlayer?.resetPos(); void ensurePhysics(); } renderLoco(); };
   const hitPlantPoint = (ev: PointerEvent): boolean => {
@@ -4709,6 +4715,12 @@ function renderGaitTune(): void {
   const GXo = GX as unknown as NumRec, POSEo = POSE as unknown as NumRec, GAITo = GAIT as unknown as NumRec;
   // Run-твины, которых может не быть в старом сохранённом конфиге: садим из ходьбы → поведение не меняется.
   for (const [r, w] of [['armDownRun', 'armDown'], ['elbowBendRun', 'elbowBend']] as const) if (GXo[r] === undefined) GXo[r] = GXo[w]!;
+  /**
+   * Пары ключей «ходьба/бег» ВСЕХ ручек этой панели — их складывает сюда сама `row2`, пока рисует строки.
+   * Читает только кнопка сброса по выбору (`resetScope` ниже): область сброса обязана совпадать с тем, что
+   * правят ползунки, а не быть вторым, отдельно поддерживаемым списком.
+   */
+  const speedKeys: { obj: NumRec; kw: string; kr: string | null }[] = [];
 
   // ── Режим ───────────────────────────────────────────────────────────────────────────────────────
   const modeRow = el('div', 'display:flex;gap:4px;align-items:center'); box.append(modeRow);
@@ -4722,13 +4734,18 @@ function renderGaitTune(): void {
     const v = gaitSpeed === 'walk' ? PAD_WALK : PAD_RUN;
     // СТРАЙФ и НАЗАД показываем честно: тело смотрит ВПЕРЁД, а едет вбок или спиной. Иначе «лицом по
     // движению» разворачивает персонажа, и оба режима превращаются в обычный бег вперёд.
-    // ⭐⭐ СТОРОНА СТРАЙФА ВЕДЁТ И ПРЕВЬЮ. Было жёстко забито на правую (`locoVx = v`, ячейка 2), поэтому
-    // левый страйф автор в глаза не видел: правишь «СТРАЙФ» — перед тобой едет вправо. Теперь «Л» ставит и
-    // ЗНАК боковой скорости, и ячейку плант-сетки «влево» (6) — иначе маркеры планта показывали бы чужую ячейку.
+    // ⭐⭐ СТОРОНА СТРАЙФА ВЕДЁТ И ПРЕВЬЮ. Было жёстко забито на одну сторону (`locoVx = v`, ячейка 2), поэтому
+    // вторую автор в глаза не видел. «Л»/«П» ставят И ЗНАК боковой скорости, И ячейку плант-сетки — иначе
+    // маркеры планта показывали бы чужую ячейку.
+    // ⚠⚠ «Л» = СВОЯ ЛЕВАЯ СТОРОНА ПЕРСОНАЖА = локальный +X (кости `Left*`) = ячейка 2 и карта `STRAFE_R`/`@sr`.
+    // Манекен в кадре смотрит В КАМЕРУ, поэтому его левая сторона видна СПРАВА на экране — как в зеркале;
+    // подпись под пресетом об этом и говорит. Полная таблица — «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`.
     if (gaitDir === 'str') {
       gaitFaceMove = false; gaitYawManual = 0;
-      const left = gaitStrSide === 'L';
-      locoVx = left ? -v : v; locoVz = 0; plantDirSel = left ? 6 : 2;
+      // ⚠ «обе» ОСТАЁТСЯ НА ПРЕЖНЕЙ СТОРОНЕ (+X, ячейка 2): под ним правится общая колонка, зато ячейку
+      // плант-сетки автор уже правил — переехать ей молча нельзя. Выбор стороны двигает только «П».
+      const ownRight = gaitStrSide === 'R';
+      locoVx = ownRight ? -v : v; locoVz = 0; plantDirSel = ownRight ? 6 : 2;
     }
     else if (gaitDir === 'back') { gaitFaceMove = false; gaitYawManual = 0; locoVx = 0; locoVz = -v; plantDirSel = 4; }
     else { locoVx = 0; locoVz = v; plantDirSel = 0; }
@@ -4764,22 +4781,40 @@ function renderGaitTune(): void {
   modeRow.append(linkBtn);
   const asymN = Object.keys(gaitAsym).filter((k) => !COL_SFX.some((x) => k.endsWith(x))).length;
   if (asymN) modeRow.append(pbtn(`сброс асимметрии (${asymN})`, () => { for (const k of Object.keys(gaitAsym)) if (!COL_SFX.some((x) => k.endsWith(x))) delete gaitAsym[k]; saveGaitCfg(); renderLoco(); }));
-  // Сброс колонки — ПОКЛЮЧЕВОЙ по своему суффиксу. ⚠ Сторон это касается ОТДЕЛЬНО: «сброс страйфа» чистит только
-  // общую колонку (`@s`), а «сброс страйфа Л/П» — свою добавку. Иначе одна кнопка молча уносила бы три настройки.
-  const colReset = (label: string, map: NumRec, sfx: string): void => {
-    const n = Object.keys(map).length + Object.keys(gaitAsym).filter((k) => k.endsWith(sfx)).length;
-    if (!n) return;
-    modeRow.append(pbtn(`${label} (${n})`, () => {
-      for (const k of Object.keys(map)) delete map[k];
-      for (const k of Object.keys(gaitAsym)) if (k.endsWith(sfx)) delete gaitAsym[k];
-      saveGaitCfg(); renderLoco();
-    }));
+  // ⭐⭐ СБРОС — РОВНО ПО ВЫБОРУ: ЭТОТ РЕЖИМ И ЭТА СКОРОСТЬ (просьба автора 20.09: «сброс настроек бега пусть
+  // не сбрасывает все настройки в каждой вкладке, а только в той, которая выбрана»).
+  //
+  // БЫЛО пять кнопок, и каждая уносила СВОЮ КОЛОНКУ ЦЕЛИКОМ — обе скорости разом, независимо от того, что
+  // сейчас выбрано; плюс «сброс настроек бега» ниже сносил у персонажа вообще всё. Стало — ОДНА кнопка,
+  // чья область написана прямо на ней: «сбросить: СТРАЙФ Л · бег».
+  //
+  // ⚠ КЛЮЧИ БЕРУТСЯ ИЗ САМИХ РУЧЕК (`speedKeys` заполняет `row2`, пока панель рисует строки), а не из
+  // второго списка: второй список неминуемо разошёлся бы с первым, и сброс молча перестал бы доставать
+  // до новых ручек — ровно та форма ошибки, которая в этом файле уже случалась.
+  // ⚠ У РАЗРЕЖЁННОЙ КОЛОНКИ КЛЮЧ УДАЛЯЕТСЯ, А НЕ ПИШЕТСЯ ДЕФОЛТОМ: «записи нет» значит «работает уровень
+  // ниже» (сторона → общая колонка → база). Запиши мы туда число — колонка перестала бы откатываться
+  // вовсе, и это тихо: глазами не видно, пока не покрутишь соседний уровень.
+  // ⚠ У БАЗЫ («ВПЕРЁД») ключ возвращается к ДЕФОЛТУ КОДА, а колонки не трогаются ни одной записью.
+  // ⚠ РУЧКА БЕЗ RUN-ТВИНА (`kr === null`) живёт на обеих скоростях — её сбрасывает и «ходьба», и «бег»,
+  // ровно как её и правит один и тот же ползунок на любой из скоростей.
+  // ⚠ Ручки БЕЗ пары скоростей (`one1`: пороги страйфа, каденция…) сюда не попадают вовсе — у них нет
+  // «половины для этой скорости», и трогать их по выбору скорости было бы враньём.
+  const defRecOf = (obj: NumRec): NumRec => (obj === GAITo ? GAIT_DEF : obj === POSEo ? POSE_DEF : GX_DEF as unknown as NumRec);
+  const scopeName = (): string => (gaitDir === 'cbt' ? 'БОЙ' : gaitDir === 'back' ? 'НАЗАД'
+    : gaitDir === 'fwd' ? 'ВПЕРЁД (база)'
+      : gaitStrSide === 'L' ? 'СТРАЙФ Л' : gaitStrSide === 'R' ? 'СТРАЙФ П' : 'СТРАЙФ');
+  const resetScope = (): void => {
+    const onCol = gaitDir !== 'fwd';
+    rtResetGaitScope(speedKeys, {
+      run: gaitSpeed === 'run',
+      column: onCol ? colMapOf(gaitDir) : null,
+      sfx: onCol ? colSfxOf(gaitDir) : '',
+      asym: gaitAsym,
+      defOf: defRecOf,
+    });
+    saveGaitCfg(); renderLoco();   // тот же шов сохранения, что у ползунка — иначе правка не доедет до игры
   };
-  colReset('сброс страйфа', gaitStrafe, '@s');
-  colReset('сброс страйфа П', gaitStrafeR, '@sr');
-  colReset('сброс страйфа Л', gaitStrafeL, '@sl');
-  colReset('сброс «назад»', gaitBack, '@b');
-  colReset('сброс боя', gaitCombat, '@c');
+  modeRow.append(pbtn(`сбросить: ${scopeName()} · ${gaitSpeed === 'run' ? 'бег' : 'ходьба'}`, resetScope));
   const mh = el('div', 'color:#7a869e;font-size:10px;margin-top:2px');
   const spName = gaitSpeed === 'run' ? 'БЕГ' : 'ХОДЬБУ';
   mh.textContent = gaitDir === 'fwd'
@@ -4787,7 +4822,7 @@ function renderGaitTune(): void {
     : gaitDir === 'str'
       ? gaitStrSide === 'both'
         ? `Правишь ${spName} ВБОК, ОБЕ СТОРОНЫ. Отдельная колонка: подмешивается по боковитости хода и ход вперёд не трогает. Ползунок, который ты не тронул, здесь не задан — работает значение «вперёд».`
-        : `Правишь ${spName} ВБОК, ТОЛЬКО ${gaitStrSide === 'L' ? 'ВЛЕВО' : 'ВПРАВО'}. Это ДОБАВКА поверх колонки «обе»: не тронул ползунок — работает то, что задано на обе стороны. Доли сторон делят ту же боковитость (сумма = «обе»), поэтому на переходе через прямой ход настройки непрерывны.`
+        : `Правишь ${spName} ВБОК, ТОЛЬКО В ${gaitStrSide === 'L' ? 'СВОЮ ЛЕВУЮ' : 'СВОЮ ПРАВУЮ'} сторону персонажа (${gaitStrSide === 'L' ? 'на экране манекен едет ВПРАВО — он смотрит на тебя; клип «_strafe_R», ячейка 2' : 'на экране манекен едет ВЛЕВО; клип «_strafe_L», ячейка 6'}). Это ДОБАВКА поверх колонки «обе»: не тронул ползунок — работает то, что задано на обе стороны. Доли сторон делят ту же боковитость (сумма = «обе»), поэтому на переходе через прямой ход настройки непрерывны.`
       : gaitDir === 'back'
         ? `Правишь ${spName} НАЗАД. Отдельная колонка — затем и заведена, что наклон корпуса вперёд при ходе спиной складывается с посадкой тела и персонаж горбится. Не тронул ползунок — работает значение «вперёд».`
         : `Правишь БОЙ (${gaitSpeed === 'run' ? 'бег' : 'ходьба'}). Набор ног ОДИН — бой не второй набор, а те же ноги с другими числами: шире стойка, короче шаг. Подмешивается по боевому состоянию поверх направления; не тронул ползунок — в бою он как вне боя.`;
@@ -4822,6 +4857,7 @@ function renderGaitTune(): void {
    */
   const row2 = (label: string, obj: NumRec, kw: string, kr: string | null, min: number, max: number, step: number,
     opts?: { dep?: [NumRec, string, string | null][]; depLabel?: string; body?: boolean }): void => {
+    speedKeys.push({ obj, kw, kr });                 // ⚠ область кнопки сброса = ровно эти ручки (см. `resetScope`)
     const onCol = gaitDir !== 'fwd';                 // правим колонку, а не базу («вперёд» — это база)
     const sparse: NumRec = colMapOf(gaitDir);       // какую разрежённую колонку правим
     //  ⚠ НЕ `col`: так зовётся цвет ползунка в строке ниже, и затенение прошло бы молча.
@@ -5162,7 +5198,10 @@ function renderGaitTune(): void {
     }
   }
 
-  box.append(pbtn('сброс настроек бега', () => { delete gaitCfgs[curCharId]; try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ } applyGaitCfg(curCharId); renderLoco(); }));
+  // ⚠ ЭТО «СНЕСТИ ВСЁ», А НЕ СБРОС ПО ВЫБОРУ. Сброс выбранного режима и выбранной скорости — кнопка
+  // «сбросить: … · …» наверху панели тюнинга (`resetScope`). Название здесь названо вслух ровно затем,
+  // чтобы эти две кнопки нельзя было перепутать: у автора уже уносило настройки всех вкладок разом.
+  box.append(pbtn('снести ВСЕ настройки бега персонажа (все режимы и обе скорости)', () => { delete gaitCfgs[curCharId]; try { localStorage.setItem('pe_gait', JSON.stringify(gaitCfgs)); savePoseKey('pe_gait'); } catch { /* */ } applyGaitCfg(curCharId); renderLoco(); }));
   const twNote = el('div', 'color:#7a869e;font-size:10px;margin-top:6px'); twNote.textContent = 'Скрутка корпуса и приставной шаг при повороте — на вкладке «Повороты».'; box.append(twNote);
   // Экспорт/импорт настроек бега ВСЕХ персонажей (pe_gait) — портируемый артефакт (бэкап + вход для Ф5).
   const eh = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px;font-size:11px'); eh.textContent = 'НАСТРОЙКИ БЕГА → JSON (все персонажи)'; box.append(eh);
@@ -5568,8 +5607,21 @@ let learnInfo = '';
 let gaitLinkLR = true;       // связаны ли стороны: связаны → одно число на обе, иначе пара в ASYM
 const gaitAsym = ASYM;       // ссылка на карту асимметрии рантайма (правим её же, что читает игра)
 const gaitStrafe = STRAFE;   // ссылка на страйф-колонку рантайма (та же, что читает игра)
-const gaitStrafeR = STRAFE_R;   // страйф ВПРАВО — добавка поверх общей колонки (суффикс `@sr`)
-const gaitStrafeL = STRAFE_L;   // страйф ВЛЕВО  — добавка поверх общей колонки (суффикс `@sl`)
+/**
+ * ⭐⭐⭐ СТОРОНЫ СТРАЙФА В ПАНЕЛИ — ПО АНАТОМИИ ПЕРСОНАЖА, А ХРАНИЛИЩЕ ЗЕРКАЛЬНО ЕМУ (20.09).
+ *
+ * `STRAFE_R`/`@sr` — это ход в ЛОКАЛЬНЫЙ +X, а +X — сторона костей `Left*`, то есть СВОЯ ЛЕВАЯ сторона
+ * персонажа (замеры и полная таблица — «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`). Имена карт, клипов
+ * (`*_strafe_R`) и разделов `pe_gait` НЕ переименовываем — это опубликованные данные; зеркалим только
+ * ЯРЛЫК, который видит автор. Поэтому кнопка «Л» ведёт в `STRAFE_R`, а «П» — в `STRAFE_L`.
+ *
+ * ⚠ Почему именно анатомия, а не «лево на экране»: в ТОЙ ЖЕ панели «Л»/«П» на каждом ползунке и
+ * «СИНИЙ=Л / КРАСНЫЙ=П» у плантов означают ЛЕВУЮ/ПРАВУЮ НОГУ (индекс 0 = кость `LeftUpperLeg` на +X).
+ * Двух разных «Л» в одной панели быть не должно. Сторона экрана опорой быть не может вовсе: в игре
+ * персонаж смотрит на курсор, и «влево по экрану» — это то одна его сторона, то другая.
+ */
+const gaitStrafeOwnL = STRAFE_R;   // СВОЯ ЛЕВАЯ сторона персонажа (+X) — хранится как `STRAFE_R`, суффикс `@sr`
+const gaitStrafeOwnR = STRAFE_L;   // СВОЯ ПРАВАЯ сторона (−X)         — хранится как `STRAFE_L`, суффикс `@sl`
 const gaitBack = BACK;       // колонка хода спиной — устроена так же и живёт там же
 const gaitCombat = COMBAT;   // боевая колонка (Ф6) — устроена так же и живёт там же
 /**
@@ -5586,9 +5638,9 @@ let gaitStrSide: 'both' | 'L' | 'R' = 'both';
 const COL_SFX = ['@s', '@sr', '@sl', '@b', '@c'] as const;
 /** Карта и суффикс колонки по направлению (у страйфа — с учётом выбранной стороны). «Вперёд» колонки не имеет — это база. */
 const colMapOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): NumRec => (d === 'cbt' ? gaitCombat : d === 'back' ? gaitBack
-  : gaitStrSide === 'R' ? gaitStrafeR : gaitStrSide === 'L' ? gaitStrafeL : gaitStrafe);
+  : gaitStrSide === 'L' ? gaitStrafeOwnL : gaitStrSide === 'R' ? gaitStrafeOwnR : gaitStrafe);
 const colSfxOf = (d: 'fwd' | 'back' | 'str' | 'cbt'): string => (d === 'cbt' ? '@c' : d === 'back' ? '@b'
-  : gaitStrSide === 'R' ? '@sr' : gaitStrSide === 'L' ? '@sl' : '@s');
+  : gaitStrSide === 'L' ? '@sr' : gaitStrSide === 'R' ? '@sl' : '@s');
 let warpReadout: HTMLElement | null = null;                // живой угол доворота таза (Ф0) — глазами его на диагонали не отличить
 let stanceReadout: HTMLElement | null = null;              // живой вес и рыск таза авторской стойки — видно, как он гаснет на бегу и возвращается стоя
 let editorRootYaw = 0;                                      // зеркало pelvisYawWorld плеера (updateTurnTest идёт по тазу)
@@ -6230,7 +6282,10 @@ type XY = [number, number];
 type Leg2 = { l: XY; r: XY; lVia?: XY[]; rVia?: XY[] };
 type PlantGrid = { walk: Leg2[]; run: Leg2[] };   // walk/run — по 8 ячеек (направление 0=вперёд, шаг 45°)
 type PlantStored = Partial<PlantGrid> & { l?: XY; r?: XY };   // старый одиночный {l,r} ИЛИ новый {walk,run}
-const DIR8 = ['вперёд', 'вп-вправо', 'вправо', 'назад-вправо', 'назад', 'назад-влево', 'влево', 'вп-влево'];
+// ⚠⚠ ИМЕНА ЯЧЕЕК — ПО АНАТОМИИ ПЕРСОНАЖА, а не по экрану: ячейка 2 = локальный +X = сторона костей `Left*`,
+// то есть СВОЯ ЛЕВАЯ. На квадрате-паде +X нарисован СПРАВА (как в зеркале: манекен смотрит на тебя), поэтому
+// «влево» стоит у правого края. См. «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`.
+const DIR8 = ['вперёд', 'вп-влево', 'влево', 'назад-влево', 'назад', 'назад-вправо', 'вправо', 'вп-вправо'];
 const DIR_STEP = Math.PI / 4;
 const cloneVia = (v: XY[] | undefined): XY[] => (v ?? []).map((p) => [p[0], p[1]] as XY);
 const zeroLeg = (): Leg2 => ({ l: [0, 0], r: [0, 0], lVia: [], rVia: [] });

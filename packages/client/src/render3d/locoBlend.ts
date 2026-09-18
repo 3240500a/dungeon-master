@@ -150,7 +150,7 @@ export function locoDirWeights(fwd: number, lat: number): { st: number; bt: numb
 export function blendLocoPose<P>(
   pick: (dir: LocoDir, fast: boolean) => P | null,
   axes: LocoAxes,
-  latRight: boolean,
+  latPlusX: boolean,
   blend: (a: P, b: P, t: number) => P,
 ): P | null {
   const sb = clamp01(axes.sb), st = clamp01(axes.st), bt = clamp01(axes.bt);
@@ -175,7 +175,7 @@ export function blendLocoPose<P>(
   };
   // База нужна только пока её вес не съеден колонками: на чистом страйфе/ходе спиной она не читается.
   let out = st > 0.999 || bt > 0.999 ? null : col('fwd');
-  if (st > 0.001) { const s = col(latRight ? 'strafe_R' : 'strafe_L'); if (s) out = out ? blend(out, s, st) : s; }
+  if (st > 0.001) { const s = col(latPlusX ? 'strafe_R' : 'strafe_L'); if (s) out = out ? blend(out, s, st) : s; }
   if (bt > 0.001) { const b = col('back'); if (b) out = out ? blend(out, b, bt) : b; }
   return out ?? col('fwd');
 }

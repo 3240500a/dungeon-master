@@ -37,7 +37,7 @@ import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
  * 60 / 120 / 144 Гц сравнимы, и всё, что РАСТЁТ С ЧАСТОТОЙ КАДРОВ, — это грабля «порог на кадр вместо в секунду».
  *
  * Счётчики снимаются с приватных полей `PosePlayer` (в TS private — только на компиляции): защёлка `turning`,
- * сбросы `aimStableFor`, щелчки стороны страйфа `latRight`, срабатывания кроссфейда колонок, темп фазы клипа.
+ * сбросы `aimStableFor`, щелчки стороны страйфа `latPlusX`, срабатывания кроссфейда колонок, темп фазы клипа.
  *
  * ⭐⭐ РЕВЮ 19.09 добавило сюда: боевую каденцию рассылки (`SNAP_HZ` 20 при симе 30 — Δtick чередуется 2,1;
  * прежние 30 остались отдельной строкой матрицы), КАНАЛ ТАЗА в отчёте и сторожах (его не стерёг никто, и в
@@ -90,7 +90,7 @@ import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
  *    Событий мало (2 за 10 с), но каждое — самый большой одиночный рывок таза на прямом беге.
  *
  * 6. СНЯТЫ С ПОДОЗРЕНИЯ ЗАМЕРОМ:
- *    • сторона страйфа (`latRight`): абляция F (сторона закреплена правкой исходника в worktree) даёт
+ *    • сторона страйфа (`latPlusX`): абляция F (сторона закреплена правкой исходника в worktree) даёт
  *      числа БИТ В БИТ те же; щелчков 0.0–0.3/с, кроссфейд колонок не срабатывает НИ РАЗУ (`xf/s` 0.0);
  *    • клипы: абляция G (`locoMix` 0, чистая процедурка) почти не меняет картину (17332 → 16787 °/с²);
  *    • дрожание прихода само по себе: абляция I отличается от A только рябью скорости (см. п. 3).
@@ -300,7 +300,7 @@ function run(o: RunOpts): Row[] {
   const rows: Row[] = [];
   const priv = doll.p as unknown as {
     turning: boolean; aimStableFor: number; clipPhase: number;
-    colPrev: { latRight: boolean }; colFade: { w: number }; dirWarp: { sector: number };
+    colPrev: { latPlusX: boolean }; colFade: { w: number }; dirWarp: { sector: number };
     leadRate: number; turnAccelHold: boolean;
   };
   const qtmp = TORSO.map(() => new THREE.Quaternion());
@@ -353,7 +353,7 @@ function run(o: RunOpts): Row[] {
     ch.push(doll.p.aimRootYaw, doll.p.pelvisYawWorld - doll.p.aimRootYaw);   // разбор таза: torso-lead и ВЕСЬ прочий рыск
     rows.push({
       t, ch, q, aim: facing, turning: priv.turning, stable: priv.aimStableFor,
-      lat: priv.colPrev.latRight, fade: priv.colFade.w, phase: priv.clipPhase, turnClip: doll.p.turnClipName,
+      lat: priv.colPrev.latPlusX, fade: priv.colFade.w, phase: priv.clipPhase, turnClip: doll.p.turnClipName,
       sector: priv.dirWarp.sector, spd: Math.hypot(vel.x, vel.z),
       rate: priv.leadRate, hold: priv.turnAccelHold,
     });

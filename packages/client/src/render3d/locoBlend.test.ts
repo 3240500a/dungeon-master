@@ -37,10 +37,10 @@ describe('фаза и выбор клипа', () => {
   });
 
   /** Вместо позы — просто имя колонки: так видно, ЧТО и с каким весом легло в бленд. */
-  const mixNames = (axes: { sb: number; st: number; bt: number }, latRight = true, have: (d: LocoDir, f: boolean) => boolean = () => true): string =>
+  const mixNames = (axes: { sb: number; st: number; bt: number }, latPlusX = true, have: (d: LocoDir, f: boolean) => boolean = () => true): string =>
     blendLocoPose<string>(
       (d, f) => (have(d, f) ? `${f ? 'run' : 'walk'}_${d}` : null),
-      axes, latRight,
+      axes, latPlusX,
       (a, b, t) => (t <= 0.001 ? a : t >= 0.999 ? b : `${a}+${b}@${t.toFixed(2)}`),
     ) ?? '—';
 
