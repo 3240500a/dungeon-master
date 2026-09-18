@@ -53,13 +53,14 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope } from './poseRuntime.js';
+import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
-import { lookupLayers, readLayerStore, type LayerEntry, type LayerLookup, type LayerStore } from './layerWeights.js';   // ⭐ веса «локомоция ↔ стойка» по частям — один поиск с игрой
+import { lookupLayers, readLayerStore, type LayerEntry, type LayerLookup, type LayerStore } from './layerWeights.js';
+import { createLayerWeightsPanel, type LayerPanel } from './layerWeightsPanel.js';   // ⭐ веса «локомоция ↔ стойка» по частям — один поиск с игрой
 import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { createTestTab } from './testTab.js';
@@ -4940,40 +4941,13 @@ function renderGaitTune(): void {
   grp('поза (ретаргет)');
   row2('руки вниз', GXo, 'armDown', 'armDownRun', 0, 3, 0.01);
   grp('руки (мах)');
-  // ⚠ ПОЧЕМУ РУЧКИ РУК «МАЛО РЕАГИРУЮТ». Если у оружия есть авторская idle-стойка, верх тела
-  // блендится к ней с весом `hw = 1 − sway·moveMag` (`poseRuntime.applyUpper`), и гейту остаётся РОВНО
-  // `sway·moveMag`. При sway 0.2 это пятая часть хода ползунка (ЗАМЕР: «локоть — база» край→край даёт
-  // 183.3° без стойки и всего 36.7° с ней). Раньше об этом нигде не говорилось, и ручка выглядела сломанной.
-  {
-    const st = stanceClip(weapon);
-    if (st) {
-      const note = el('div', 'font-size:10px;margin:2px 0 3px');
-      const say = (sw: number): void => {
-        note.style.color = sw < 0.35 ? '#e0a05a' : '#7a869e';
-        note.textContent = '⚠ руками владеет авторская стойка «' + st.name + '» на ' + Math.round((1 - sw) * 100)
-          + ' %, ползункам ниже остаётся ' + Math.round(sw * 100) + ' % хода (на полном ходу; стоя стойка владеет целиком). '
-          + 'Видимый угол = ' + sw.toFixed(2) + '·гейт + ' + (1 - sw).toFixed(2) + '·стойка.';
-      };
-      say(swayOf(weapon));
-      box.append(note);
-      // ⭐ ДОЛЯ ГЕЙТА НАД РУКАМИ — ЗДЕСЬ, А НЕ ТОЛЬКО НА «АНИМАЦИИ». Это ТОТ ЖЕ `pe_sway`, не копия:
-      // ручка живёт там, где ею пользуются. Без неё «локоть на максимуме, а согнут чуть-чуть» не лечится
-      // вообще ничем на этой вкладке — потолок ставит не ползунок локтя, а вес стойки.
-      // ЗАМЕР (рыцарь+топор, обе скорости на максимуме): sway 0.30 → сгиб 63.2°, ход ручки 41.3°.
-      const swRow = el('label', 'display:flex;align-items:center;gap:6px;margin:0 0 5px');
-      swRow.innerHTML = '<span style="flex:1;font-size:11px;color:#9ae6a0">доля гейта над руками (остаточный мах)</span>';
-      const swS = el('input', 'width:120px') as HTMLInputElement;
-      swS.type = 'range'; swS.min = '0'; swS.max = '1'; swS.step = '0.05'; swS.value = String(swayOf(weapon));
-      const swV = el('span', 'width:34px;text-align:right;color:#9ae6a0;font-size:11px');
-      swV.textContent = swayOf(weapon).toFixed(2);
-      swS.oninput = () => {
-        const nv = parseFloat(swS.value);
-        (swayCfg[curCharId] ??= {})[weapon] = nv;
-        swV.textContent = nv.toFixed(2); say(nv); saveSway();
-      };
-      swRow.append(swS, swV); box.append(swRow);
-    }
-  }
+  // ⚠ ПОЧЕМУ РУЧКИ РУК «МАЛО РЕАГИРУЮТ». Если у оружия есть авторская стойка, верх тела блендится к ней весом
+  // `1 − вес(часть)·ход` (`poseRuntime.applyUpper`), и ручкам маха ниже достаётся ровно `вес·ход`. ЗАМЕР при одном числе
+  // на весь верх: «локоть — база» край→край даёт 183.3° без стойки и 36.7° при 0.2. Потолок ставит не ползунок локтя,
+  // а вес слоя — поэтому ручка веса стоит ЗДЕСЬ ЖЕ, и это ТА ЖЕ панель, что на вкладке «Тест» (`pe_layers`, не копия).
+  // ⭐ Раньше тут был одиночный ползунок `pe_sway`, и рисовался он только у ТОЧНОГО ключа оружия с клипом стойки: у
+  // `sword+shield` клипа нет — ползунка не было, хотя мах под мечом со щитом душился сильнее всего (умолчание 0.2).
+  if (resolveUpper(weapon, editorCombat, 0)) box.append(mountLayerPanel());
   row2('база плеча (− вперёд / + назад)', POSEo, 'armSh', 'armShRun', -1.6, 1.6, 0.01);
   row2('амплитуда маха', POSEo, 'armSwing', 'armSwingRun', 0, 3, 0.01);
   // ⚠ Потолок = предел сустава плеча (±1.7…1.9). Выше π рука заворачивается и «скачет назад».
@@ -5793,9 +5767,11 @@ let layerStore: LayerStore = (() => { try { return readLayerStore(JSON.parse(loc
 function saveLayers(): void { try { localStorage.setItem('pe_layers', JSON.stringify(layerStore)); savePoseKey('pe_layers'); } catch { /* */ } }
 /** Что действует для оружия — ТОТ ЖЕ поиск, что в игре (`lookupLayers`): точный ключ → базовое оружие → умолчание. */
 const layersFor = (w: string): LayerLookup => lookupLayers(layerStore, swayCfg, curCharId, w);
-// ⚠ ЧЕРЕЗ ОБЩИЙ ПОИСК, а не `swayCfg[…][w] ?? 0.2`: прямое чтение ключа расходилось с игрой (у `none+shield` редактор
-// показывал 0.2, пока игра играла 0.5 базового `none`).
-const swayOf = (w: string): number => layersFor(w).swing;   // остаточный мах поверх idle (легаси-число на весь верх)
+// ⭐ Игровая кукла вкладки «Тест» читает веса ИЗ ЭТИХ ЖЕ живых сторов, а не из снимка localStorage: ползунок панели
+// действует на бегу, без пересборки куклы (см. `setLayerSource`).
+rtSetLayerSource(() => ({ layers: layerStore, sway: swayCfg }));
+// ⚠ Прямого чтения `swayCfg[…][w] ?? 0.2` больше нет нигде: оно расходилось с игрой (у `none+shield` редактор показывал
+// 0.2, пока игра играла 0.5 базового `none`). Легаси-число берётся только через `layersFor(w).swing`.
 const combatStanceName = (w: string): string => animCfg().clipName('combat_idle', w);
 function combatStanceClip(w: string): Clip | null {
   for (const nm of animCfg().clipNames('combat_idle', w)) { const c = library.find((x) => x.name === nm && x.character === curCharId && x.weapon === w); if (c) return c; }
@@ -6058,8 +6034,9 @@ const testTab = createTestTab({
  * в начале координат. Жалоба «после того как нажал тест, появился ещё один меш» — это она.
  */
 function syncTestTab(): void {
-  if (tab === 'test') { if (!testTab.wanted) void testTab.start(); }
-  else if (testTab.wanted) testTab.stop();
+  if (tab === 'test') { if (!testTab.wanted) void testTab.start(); rtSetLocoMixOverride(testLoco); }
+  // ⚠ Перекрытие хода — ТОЛЬКО на вкладке «Тест»: на остальных манекен обязан слушаться ползунка «процедурно ↔ клип».
+  else { if (testTab.wanted) testTab.stop(); rtSetLocoMixOverride(null); }
 }
 let testStatus: HTMLElement | null = null;
 function renderTest(): void {
@@ -6078,9 +6055,47 @@ function renderTest(): void {
   testStatus = el('div', 'color:#9ae6a0;font-size:10px;margin-top:6px;font-family:monospace');
   body.append(testStatus);
   body.append(pbtn('в центр', () => testTab.rebuild()));
+  // ⭐ ЛОКОМОЦИЯ КУКЛЫ: как настроено / только клипы / планировщик. Личный выбор превью (на сервер не уходит): тем же
+  // перекрытием, что галка «бег клипами» в клиенте, — поэтому A/B здесь показывает ровно то, что будет в игре.
+  const ab = el('div', 'margin-top:6px');
+  const abL = el('span', 'color:#9aa3b8;font-size:10px;margin-right:4px'); abL.textContent = 'ход куклы:';
+  ab.append(abL);
+  for (const [v, label, tip] of [
+    [null, `как настроено (${GAIT.locoMix >= 0.999 ? 'клипы' : GAIT.locoMix <= 0.001 ? 'планировщик' : 'смесь ' + GAIT.locoMix.toFixed(2)})`, 'Доля клипа с вкладки «Бег» (pe_gait.locoMix).'],
+    [1, 'только клипы', 'Как в игре с галкой «бег клипами»: планировщик шагов не участвует вовсе.'],
+    [0, 'планировщик', 'Процедурная походка — для сравнения.'],
+  ] as const) {
+    const b = pbtn(label, () => { testLoco = v; setPref('testLoco', v); rtSetLocoMixOverride(v); renderTest(); }, testLoco === v);
+    b.title = tip; ab.append(b);
+  }
+  body.append(ab);
+  // ⭐ ВЕСА СЛОЁВ — ЗДЕСЬ: тянешь ползунок и тут же бежишь той самой куклой, что в игре. Запись живая, кукла читает её
+  // на следующем кадре (`resolveUpper` редактора отдаёт тот же объект), пересобирать её не нужно.
+  if (resolveUpper(weapon, 0, 0)) body.append(mountLayerPanel());
+  else {
+    const no = el('div', 'color:#e0a05a;font-size:10px;margin-top:8px');
+    no.textContent = `У «${weapon}» нет авторской стойки — верхом целиком владеет ход, делить нечего.`;
+    body.append(no);
+  }
   const hint = el('div', 'color:#7a869e;font-size:10px;margin-top:8px');
-  hint.textContent = 'Веса слоёв — тумблер «◫ слои» в тулбаре: он работает и здесь, и в игре.';
+  hint.textContent = 'Полная картина слоёв (ноги, стойка, предметы, удар) — тумблер «◫ слои» в тулбаре: он работает и здесь, и в игре.';
   body.append(hint);
+}
+/** Выбор хода куклы вкладки «Тест»: `null` — как настроено, 1 — только клипы, 0 — планировщик. Личная настройка. */
+let testLoco: number | null = getPref<number | null>('testLoco', null);
+/**
+ * Панель весов слоёв — ОДНА на редактор (вкладки «Тест» и «Бег» показывают её по очереди). Прежнюю снимаем явно: она
+ * держит подписку на трассу слоёв, а `body.innerHTML = ''` про подписки не знает.
+ */
+let layerPanel: LayerPanel | null = null;
+function mountLayerPanel(): HTMLElement {
+  layerPanel?.dispose();
+  layerPanel = createLayerWeightsPanel({
+    charId: () => curCharId, weapon: () => weapon,
+    layers: () => layerStore, sway: () => swayCfg,
+    save: saveLayers, live: true,
+  });
+  return layerPanel.el;
 }
 
 /**
@@ -6211,22 +6226,25 @@ function renderUpperPanel(): void {   // панель idle-стойки по о�
     const cbv = el('span', 'width:34px;text-align:right;color:#9ae6a0;font-size:11px'); cbv.textContent = GAIT.combatBlend.toFixed(2);
     cbs.oninput = () => { GAIT.combatBlend = parseFloat(cbs.value); cbv.textContent = GAIT.combatBlend.toFixed(2); saveGaitCfg(); }; cbrow.append(cbs, cbv); box.append(cbrow); }
   if (has) {
-    const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:4px'); row.innerHTML = '<span style="flex:1;font-size:11px">остаточный мах (сверх физики)</span>';
-    const s = el('input', 'flex:2') as HTMLInputElement; s.type = 'range'; s.min = '0'; s.max = '1'; s.step = '0.05'; s.value = String(swayOf(weapon));
-    const v = el('span', 'width:34px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = swayOf(weapon).toFixed(2);
-    s.oninput = () => { (swayCfg[curCharId] ??= {})[weapon] = parseFloat(s.value); v.textContent = parseFloat(s.value).toFixed(2); saveSway(); }; row.append(s, v); box.append(row);
+    // ⭐ «Остаточный мах» (одно число `pe_sway` на весь верх) заменён ВЕСАМИ ПО ЧАСТЯМ ТЕЛА (`pe_layers`): второй ползунок
+    // здесь молча переставал бы работать, как только у оружия появляется своя запись. Ручка одна — на «Тесте» и «Беге».
+    const lkNow = layersFor(weapon);
+    const swNote = el('div', 'color:#7a869e;font-size:10px;margin-top:4px');
+    swNote.textContent = (lkNow.source === 'layers' ? `веса слоёв: своя запись «${lkNow.weapon}»` : `веса слоёв: ${lkNow.swing.toFixed(2)} на весь верх`)
+      + ' — сколько рук, кистей, груди и головы берёт ход, настраивается на вкладках «▶ Тест» и «Бег».';
+    box.append(swNote);
     box.append(pbtn('сброс стойки', () => { library = library.filter((c) => !(c.name === stanceName(weapon) && c.character === curCharId && c.weapon === weapon)); saveLib(); renderLoco(); }));
   }
   {   // взять стойку с другого ОРУЖИЯ — единый список оружия (как в тулбаре); копирование в себя = no-op
     const r1 = el('div', 'display:flex;gap:2px;margin-top:4px'); const sel = el('select', 'flex:1;background:#20242f;color:#cfe;border:1px solid #39415a;border-radius:4px;font-size:11px') as HTMLSelectElement;
     WEAPONS.forEach((w) => { const o = document.createElement('option'); o.value = w; o.textContent = w; sel.append(o); });
-    r1.append(sel, pbtn('основа: оружие', () => { if (sel.value === weapon) return; const src = stanceClip(sel.value); if (src) { const nm = stanceName(weapon); const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon); putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: clonePose(src.keys[0]!.pose), t: 0 }] }, 'replace'); (swayCfg[curCharId] ??= {})[weapon] = swayCfg[curCharId]?.[sel.value] ?? 0.2; saveLib(); saveSway(); renderLoco(); } })); box.append(r1);
+    r1.append(sel, pbtn('основа: оружие', () => { if (sel.value === weapon) return; const src = stanceClip(sel.value); if (src) { const nm = stanceName(weapon); const i = library.findIndex((c) => c.name === nm && c.character === curCharId && c.weapon === weapon); putClip({ name: nm, character: curCharId, weapon, loop: false, keys: [{ pose: clonePose(src.keys[0]!.pose), t: 0 }] }, 'replace'); (swayCfg[curCharId] ??= {})[weapon] = swayCfg[curCharId]?.[sel.value] ?? 0.2; { const le = layerStore[curCharId]?.[sel.value]; if (le) { (layerStore[curCharId] ??= {})[weapon] = JSON.parse(JSON.stringify(le)) as LayerEntry; saveLayers(); } } saveLib(); saveSway(); renderLoco(); } })); box.append(r1);
   }
   const srcC = allChars().filter((c) => c.id !== curCharId && library.some((cl) => cl.character === c.id && cl.name.startsWith('idle_')));
   if (srcC.length) {   // взять ВЕСЬ набор (стойки+удары) с другого КЛАССА
     const r2 = el('div', 'display:flex;gap:2px;margin-top:4px'); const sel = el('select', 'flex:1;background:#20242f;color:#cfe;border:1px solid #39415a;border-radius:4px;font-size:11px') as HTMLSelectElement;
     srcC.forEach((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; sel.append(o); });
-    r2.append(sel, pbtn('основа: класс (весь верх)', () => { const src = sel.value; for (const cl of library.filter((c) => c.character === src && (c.name.startsWith('idle_') || c.name.startsWith('hit_') || c.name.startsWith('s_hit_')))) putClip(cloneClipTo(cl, curCharId), 'replace'); swayCfg[curCharId] = { ...(swayCfg[src] ?? {}) }; atkCfgs[curCharId] = JSON.parse(JSON.stringify(atkCfgs[src] ?? {})); saveLib(); saveSway(); saveAtk(); renderLoco(); })); box.append(r2);
+    r2.append(sel, pbtn('основа: класс (весь верх)', () => { const src = sel.value; for (const cl of library.filter((c) => c.character === src && (c.name.startsWith('idle_') || c.name.startsWith('hit_') || c.name.startsWith('s_hit_')))) putClip(cloneClipTo(cl, curCharId), 'replace'); swayCfg[curCharId] = { ...(swayCfg[src] ?? {}) }; if (layerStore[src]) { layerStore[curCharId] = JSON.parse(JSON.stringify(layerStore[src])) as Record<string, LayerEntry>; saveLayers(); } atkCfgs[curCharId] = JSON.parse(JSON.stringify(atkCfgs[src] ?? {})); saveLib(); saveSway(); saveAtk(); renderLoco(); })); box.append(r2);
   }
   body.append(box);
 }
@@ -7094,6 +7112,7 @@ function loop(): void {
     if (testStatus && testStatus.isConnected) testStatus.textContent = testTab.status();
   }
   traceView?.update();   // трасса заполняется в шаге куклы выше — здесь только рисуем
+  if (layerPanel) { if (layerPanel.el.isConnected) layerPanel.update(); else { layerPanel.dispose(); layerPanel = null; } }   // ушли с вкладки — подписку на трассу снять
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   ungroundView?.();                              // …и ТУТ ЖЕ возвращаем — авторская поза не тронута
   requestAnimationFrame(loop);

@@ -196,6 +196,16 @@ export function clearLayerCell(entry: LayerEntry, part: LayerPart, speed: LayerS
 }
 
 /**
+ * Запись под ключом для правки ОДНОЙ ячейки — РАЗРЕЖЁННАЯ: заводится пустой. Остальные части продолжают наследовать
+ * (легаси-число того же ключа либо умолчание), панель честно показывает их «без своей записи», а поздняя правка
+ * легаси-числа по-прежнему до них доезжает. Копия действующего нужна только при ОТДЕЛЕНИИ своей записи от чужого
+ * ключа (`ensureLayerEntry`): там наследовать было бы уже не от того.
+ */
+export function ownLayerEntry(layers: LayerStore, charId: string, key: string): LayerEntry {
+  return ((layers[charId] ??= {})[key] ??= {});
+}
+
+/**
  * Запись для ПРАВКИ под точным ключом: есть — она сама; нет — заводится КОПИЕЙ того, что действует сейчас
  * (`lookupLayers`), чтобы первое касание ползунка не сбрасывало остальные части в умолчание.
  */
@@ -210,6 +220,18 @@ export function ensureLayerEntry(layers: LayerStore, sway: SwayStore | null | un
     : cur.source === 'sway' ? entryFromSway(cur.swing) : {};
   (layers[charId] ??= {})[weapon] = copy;
   return copy;
+}
+
+/**
+ * ⭐ ПОД КАКИМ КЛЮЧОМ ПРАВИТ ПАНЕЛЬ. Есть своя запись точного ключа (`sword+shield`) — она; нет — ОБЩАЯ запись базового
+ * оружия (`sword`), чтобы настройка меча сразу работала и с щитом. Отделить свою — явным действием (`ensureLayerEntry`
+ * под точным ключом), а не побочным эффектом первого касания ползунка: иначе «покрутил под щитом» молча развело бы
+ * меч и меч+щит, и правка одного перестала бы доезжать до другого.
+ */
+export function layerEditKey(layers: LayerStore, charId: string, weapon: string): { key: string; own: boolean; base: string } {
+  const base = layerBaseWeapon(weapon);
+  const own = base !== weapon && !!layers[charId]?.[weapon];
+  return { key: own ? weapon : base, own, base };
 }
 
 /** Разобрать сырой `pe_layers` (чужой JSON): мусорные ветки отбрасываются, числа зажимаются. */

@@ -29,7 +29,7 @@ import { resolveGripPose, EMPTY_GRIP_CONFIG, type GripConfig } from './gripPoses
 import { deriveFingerAxes, type FingerAxes } from './fingerAxes.js';                    // оси сгиба выводятся из геометрии ЭТОГО рига
 import { fingersAnimated } from './clipModel.js';
 import type { Pose, Keyframe, Clip } from './clipModel.js';
-import { lookupLayers, resolveLayers, fillLayers, newResolvedLayers, readLayerStore, LAYER_LEGACY_DEFAULT, LAYER_PARTS, type LayerEntry, type ResolvedLayers, type SwayStore } from './layerWeights.js';   // ⭐ веса «локомоция ↔ стойка» по частям тела
+import { lookupLayers, resolveLayers, fillLayers, newResolvedLayers, readLayerStore, LAYER_LEGACY_DEFAULT, LAYER_PARTS, type LayerEntry, type LayerStore, type ResolvedLayers, type SwayStore } from './layerWeights.js';   // ⭐ веса «локомоция ↔ стойка» по частям тела
 export interface UpperPose {
   pose: Pose; swing: number;                 // idle-поза верха + остаточный мах (0..1) — ЛЕГАСИ: одно число на весь верх
   /**
@@ -440,6 +440,15 @@ const _lw: ResolvedLayers = newResolvedLayers();
  * не меняются. Клип помечается `Clip.upperPure` — редактор по метке предлагает перезапечь старые.
  */
 let layerBakeOverride = false;
+/**
+ * ⭐ ЖИВОЙ ИСТОЧНИК ВЕСОВ ДЛЯ РЕДАКТОРА. Контент игровой куклы (`localStorageContent`) — СНИМОК localStorage на момент
+ * сборки, а панель весов стоит на вкладке «Тест» рядом с этой самой куклой: ползунок обязан действовать на бегу, а
+ * пересборка куклы на каждый `input` (физика + GLB) — это секунды. Поэтому редактор отдаёт сюда свои живые сторы, и
+ * контент, пока источник задан, ищет веса в них, а не в снимке. В игре источника нет (`null`) — там снимок, как и было.
+ * ⚠ Функцией, а не объектом: редактор свои сторы ПЕРЕПРИСВАИВАЕТ (подтянул с сервера — новый объект).
+ */
+let layerSource: (() => { layers: LayerStore; sway: SwayStore }) | null = null;
+export function setLayerSource(src: (() => { layers: LayerStore; sway: SwayStore }) | null): void { layerSource = src; }
 export function setLayerBakeOverride(on: boolean): void { layerBakeOverride = on; }
 export function getLayerBakeOverride(): boolean { return layerBakeOverride; }
 /** Разобрать веса кадра в `_lw`. `clipHead` — режим «только клипы» (умолчание головы 0), иначе смешанный (1). */
@@ -1174,6 +1183,7 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   const layerStore = readLayerStore(readJSON<unknown>('pe_layers', {}));
   const layerMemo = new Map<string, ReturnType<typeof lookupLayers>>();
   const layersOf = (w: string): ReturnType<typeof lookupLayers> => {
+    if (layerSource) { const live = layerSource(); return lookupLayers(live.layers, live.sway, charId, w, fallbackId); }   // редактор: живые сторы (см. `setLayerSource`)
     let r = layerMemo.get(w);
     if (!r) { r = lookupLayers(layerStore, sway, charId, w, fallbackId); layerMemo.set(w, r); }
     return r;

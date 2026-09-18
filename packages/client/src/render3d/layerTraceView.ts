@@ -26,6 +26,16 @@ export interface LayerTraceView {
 }
 
 let watchers = 0;
+/**
+ * Подписаться на трассу: пока есть хоть один зритель, рантайм собирает строки. Возвращает отписку (идемпотентную).
+ * Нужна не только окну инспектора: панель весов слоёв показывает «сейчас NN %» из ТЕХ ЖЕ строк — свой пересчёт
+ * там был бы второй правдой.
+ */
+export function watchLayerTrace(): () => void {
+  watchers++; layerTrace.on = true;
+  let done = false;
+  return () => { if (done) return; done = true; watchers = Math.max(0, watchers - 1); if (!watchers) layerTrace.on = false; };
+}
 
 const css = {
   box: 'position:relative;width:300px;background:rgba(12,14,20,.92);border:1px solid #39415a;border-radius:6px;'
@@ -51,7 +61,7 @@ export function createLayerTraceView(): LayerTraceView {
   const body = document.createElement('div');
   el.append(head, mode, body);
 
-  watchers++; layerTrace.on = true;
+  const unwatch = watchLayerTrace();
   let stale = 0;
 
   const pct = (v: number): string => `${Math.round(v * 100)}%`;
@@ -97,6 +107,6 @@ export function createLayerTraceView(): LayerTraceView {
   return {
     el,
     update,
-    dispose(): void { watchers = Math.max(0, watchers - 1); if (!watchers) layerTrace.on = false; el.remove(); },
+    dispose(): void { unwatch(); el.remove(); },
   };
 }

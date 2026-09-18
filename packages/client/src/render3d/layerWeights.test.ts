@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, layerTrace, getLayerBakeOverride, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, setLayerSource, layerTrace, getLayerBakeOverride, type PoseContent, type UpperPose } from './poseRuntime.js';
 import { bakeGaitToClip, GAIT_PRESETS } from './clipBake.js';
 import { clipPoseAt, type Clip, type Pose } from './clipModel.js';
 import { GAIT } from './pose.js';
 import { lookupLayers, resolveLayers, newResolvedLayers, entryFromSway, ensureLayerEntry, layerCell, setLayerCell, clearLayerCell,
-  readLayerStore, LAYER_PARTS, LAYER_PART_OF, LAYER_LEGACY_DEFAULT, type LayerEntry, type LayerStore } from './layerWeights.js';
+  readLayerStore, layerEditKey, LAYER_PARTS, LAYER_PART_OF, LAYER_LEGACY_DEFAULT, type LayerEntry, type LayerStore } from './layerWeights.js';
 
 /**
  * ⭐⭐ ВЕСА СЛОЁВ ПО ЧАСТЯМ ТЕЛА (`pe_layers`) — сторожа.
@@ -41,7 +41,7 @@ beforeAll(() => {
   for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
 });
 afterAll(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
-afterEach(() => { setLocoMixOverride(null); layerTrace.on = false; });
+afterEach(() => { setLocoMixOverride(null); setLayerSource(null); layerTrace.on = false; });
 
 const content = (up: Partial<UpperPose>): PoseContent => ({
   ...localStorageContent('warrior'),
@@ -143,6 +143,20 @@ describe('pe_layers: разбор данных', () => {
     const l2: LayerStore = { warrior: { sword: base } };
     setLayerCell(ensureLayerEntry(l2, null, 'warrior', 'sword+shield'), 'armR', 'run', false, 0.1);
     expect(base.run!.armR).toBe(0.6);
+  });
+
+  it('⭐ КЛЮЧ ПРАВКИ ПАНЕЛИ: под щитом правится ОБЩАЯ запись меча, пока свою не отделили явно', () => {
+    const layers: LayerStore = {};
+    expect(layerEditKey(layers, 'warrior', 'sword+shield')).toEqual({ key: 'sword', own: false, base: 'sword' });
+    // Правка общей записи доезжает и до меча, и до меча со щитом.
+    setLayerCell(ensureLayerEntry(layers, null, 'warrior', 'sword'), 'armR', 'run', false, 0.8);
+    expect(lookupLayers(layers, null, 'warrior', 'sword+shield').entry!.run!.armR).toBe(0.8);
+    expect(layerEditKey(layers, 'warrior', 'sword+shield').key, 'общая запись ключ правки не меняет').toBe('sword');
+    // Отделили свою — дальше правится она, и меч от неё не зависит.
+    ensureLayerEntry(layers, null, 'warrior', 'sword+shield');
+    expect(layerEditKey(layers, 'warrior', 'sword+shield')).toEqual({ key: 'sword+shield', own: true, base: 'sword' });
+    expect(layers.warrior!['sword+shield']!.run!.armR, 'своя заведена копией действовавшей').toBe(0.8);
+    expect(layerEditKey(layers, 'warrior', 'sword'), 'у оружия без щита «своя» и «общая» — одно и то же').toEqual({ key: 'sword', own: false, base: 'sword' });
   });
 
   it('ячейка панели показывает то, что РЕАЛЬНО сработает; снятие записи возвращает уровень ниже и не оставляет мусора', () => {
@@ -363,6 +377,25 @@ describe('pe_layers: контент игры', () => {
       // ⚠ РАНЬШЕ редактор показывал здесь 0.2 (нашёл полную стойку по привязке), а игра играла 0.5 (искала по
       // историческому имени `idle_<w>` и не находила). Теперь поиск один.
       expect(c.resolveUpper('none+shield')).toMatchObject({ swing: 0.5, layers: null });
+    });
+  });
+
+  it('⭐ КУКЛА ВКЛАДКИ «ТЕСТ» ВИДИТ ПРАВКУ ПАНЕЛИ БЕЗ ПЕРЕСБОРКИ: живой источник бьёт снимок, в игре источника нет', () => {
+    // Контент игровой куклы — снимок localStorage на момент сборки. Панель весов стоит рядом с ЭТОЙ куклой, и без
+    // живого источника ползунок начинал бы действовать только после «в центр» (пересборка: физика + GLB).
+    withStore({ pe_clips: [idle('none'), idle('sword')], pe_sway: { warrior: { sword: 0.3 } } }, () => {
+      const c = localStorageContent('warrior');
+      expect(c.resolveUpper('sword')).toMatchObject({ swing: 0.3, layers: null });
+      const live: LayerStore = {};
+      let sway = { warrior: { sword: 0.3 } };
+      setLayerSource(() => ({ layers: live, sway }));
+      const e: LayerEntry = { run: { armR: 0.9 } };
+      (live.warrior ??= {}).sword = e;                                     // «потянули ползунок»
+      expect(c.resolveUpper('sword')!.layers, 'тот же контент, та же кукла — запись уже видна').toBe(e);
+      sway = { warrior: { sword: 0.7 } };                                  // редактор ПЕРЕПРИСВОИЛ стор (подтянул с сервера)
+      expect(c.resolveUpper('sword')!.swing, 'источник — функция: переприсвоенный стор тоже виден').toBe(0.7);
+      setLayerSource(null);
+      expect(c.resolveUpper('sword'), 'источника нет (игра) — снимок, как и было').toMatchObject({ swing: 0.3, layers: null });
     });
   });
 });
