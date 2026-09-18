@@ -4487,7 +4487,7 @@ function renderLoco(): void {
     () => { GAIT.warpOn = GAIT.warpOn ? 0 : 1; saveGaitCfg(); renderLoco(); }, !!GAIT.warpOn));
   warpReadout = el('span', 'color:#9ae6a0;font-size:11px'); warpReadout.textContent = 'таз 0°'; wr.append(warpReadout);
   if (GAIT.warpOn) {
-    const wsl = (label: string, key: 'warpMax' | 'warpSmooth', max: number, step: number, unit: string): void => {
+    const wsl = (label: string, key: 'warpMax' | 'warpSmooth' | 'warpRate', max: number, step: number, unit: string): void => {
       const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
       const nm = el('span', 'flex:1;font-size:11px'); nm.textContent = label; row.append(nm);
       const sl = el('input', 'flex:2') as HTMLInputElement;
@@ -4498,8 +4498,9 @@ function renderLoco(): void {
     };
     wsl('потолок доворота', 'warpMax', 80, 5, '°');
     wsl('сглаживание', 'warpSmooth', 0.4, 0.01, ' с');
+    wsl('предел скорости', 'warpRate', 900, 25, ' °/с');
     const wn = el('div', 'color:#7a869e;font-size:10px;margin-top:3px');
-    wn.textContent = 'Ход складывается к ближайшей из четырёх осей (вперёд / вбок / назад), доворачивается только остаток — потолок 45° его покрывает целиком.';
+    wn.textContent = 'Ход складывается к ближайшей из четырёх осей (вперёд / вбок / назад), доворачивается только остаток — потолок 45° его покрывает целиком. Предел скорости режет хлыст на перебросе сектора (цель прыгает на 85° за кадр); обычное ведение медленнее и им не задето.';
     wb.append(wn);
     hipsOpenBox(wb);
   }
@@ -6281,7 +6282,7 @@ function renderAttackPanel(): void {   // Феча 3: пометить клип�
   body.append(box);
 }
 // Настройки бега per персонаж (GAIT+POSE+GX): сохраняем/грузим при смене персонажа → у каждого класса свой бег.
-const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'hipsMode', 'hipsOpen', 'hipsOpenWalk', 'strafeMirror', 'planSmooth', 'stepSlack', 'stepUrge',
+const GAIT_KEYS = ['pelvisMin', 'stepWalk', 'stepRun', 'bobWalk', 'bobRun', 'liftWalk', 'liftRun', 'cadence', 'dutyWalk', 'dutyRun', 'speedWalk', 'speedRun', 'hipFwdLim', 'stanceWidth', 'strafeReach', 'crossClamp', 'turnStep', 'turnStepDist', 'turnLimitByAngle', 'turnLimitDeg', 'turnSettleTime', 'turnIdleTime', 'stepCommit', 'idleSettle', 'combatBlend', 'warpOn', 'warpMax', 'warpSmooth', 'warpRate', 'hipsMode', 'hipsOpen', 'hipsOpenWalk', 'strafeMirror', 'planSmooth', 'stepSlack', 'stepUrge',
   'pelvisMinRun', 'hipFwdLimRun', 'stanceWidthRun', 'strafeReachRun', 'crossClampRun',
   'hipSwing', 'hipSwingRun', 'strafeFrom', 'strafeTo',
   'hipFwdSoft', 'aheadMul', 'predictSec', 'fixTarget', 'footClear', 'locoMix',

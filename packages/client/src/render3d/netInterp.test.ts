@@ -160,6 +160,74 @@ describe('интерполяция снапшотов', () => {
     expect(makeNetInterp().at('нет такого', 1)).toEqual({ x: 0, z: 0, vx: 0, vz: 0 });
   });
 
+  /**
+   * ⭐⭐ СКОРОСТЬ СЧИТАЕТСЯ ПО ЧАСАМ СЕРВЕРА (`tick`), А НЕ ПО ИНТЕРВАЛУ ПРИХОДА.
+   *
+   * Приход дрожит вместе с сетью, а ±10 мс на 33 мс — это ±30 % мгновенной оценки скорости.
+   * ЗАМЕР (стенд `torsoJitter.test.ts`, бег 80 ед/с): рябь 11.2–11.8 % по приходу и 0.3–0.4 % по тику.
+   * Рябью живёт всё, что растёт из скорости: `moveMag`, оси бленда, часы клипа, планировщик.
+   */
+  it('⭐⭐ с тиком скорость ровная даже при дрожании прихода ±5 мс, без тика — рябит', () => {
+    // ⚠ Мутация ·знаменатель — интервал прихода· валит этот сторож (и сторожа стенда).
+    const err = (withTick: boolean): number => {
+      const ip = makeNetInterp();
+      let seed = 1;
+      const jit = (): number => { seed = (seed * 1664525 + 1013904223) >>> 0; return (seed / 0x100000000 - 0.5) * 0.010; };
+      let worst = 0;
+      for (let k = 0; k < 120; k++) {
+        const at = Math.max(0, k * TICK + (k ? jit() : 0));
+        if (withTick) ip.push('a', 0, SPEED * k * TICK, at, k);
+        else ip.push('a', 0, SPEED * k * TICK, at);
+        if (k > 40) worst = Math.max(worst, Math.abs(ip.at('a', at).vz - SPEED) / SPEED * 100);
+      }
+      return worst;
+    };
+    expect(err(true), 'по тику').toBeLessThan(1.5);
+    expect(err(false), 'по приходу — как было, с рябью').toBeGreaterThan(5);
+  });
+
+  it('калибровка «секунд в тике» сама находит темп сервера и не верит константе', () => {
+    // Снапшоты 20 Гц при симе 30 Гц — тики идут неровно (2, 1, 2, 1…), и именно они различают
+    // длинный интервал от короткого. Сгладить сам интервал прихода было бы неверно.
+    const ip = makeNetInterp();
+    const SIM = 1 / 30;
+    let t = 0, z = 0, tick = 0;
+    for (let k = 0; k < 80; k++) {
+      const d = k % 2 ? 1 : 2;                       // 2, 1, 2, 1 … — ровно так шлёт `room.step` при 20 Гц
+      tick += d; t += d * SIM; z += SPEED * d * SIM;
+      ip.push('a', 0, z, t, tick);
+    }
+    expect(ip.tickSec, 'замеренный тик').toBeCloseTo(SIM, 4);
+    expect(ip.at('a', t).vz).toBeCloseTo(SPEED, 2);
+  });
+
+  it('⚠ тик сброшен в ноль (смена этажа, `session.ts` `w.tick = 0`) — падаем на прежний путь, а не врём', () => {
+    const ip = makeNetInterp();
+    for (let k = 0; k < 40; k++) ip.push('a', 0, SPEED * k * TICK, k * TICK, k);
+    const cal = ip.tickSec;
+    // Новый этаж: тик с нуля, позиция рядом (не телепорт по мерке `TELEPORT`).
+    let t = 40 * TICK, z = SPEED * 40 * TICK;
+    for (let k = 0; k < 10; k++) { t += TICK; z += SPEED * TICK; ip.push('a', 0, z, t, k); }
+    expect(Number.isFinite(ip.at('a', t).vz), 'скорость осталась числом').toBe(true);
+    expect(ip.at('a', t).vz).toBeCloseTo(SPEED, 1);
+    expect(ip.tickSec, 'калибровка не сломалась откатом тика').toBeCloseTo(cal, 4);
+  });
+
+  it('снапшот с десятком актёров не забивает окно калибровки копиями ОДНОГО интервала', () => {
+    // ⚠ Мутация ·замер берётся с КАЖДОГО актёра· валит это (рябь 3.7 % при 20 актёрах): окно на 32 снапшота становится окном на один,
+    // и один дрожащий приход сдвигает масштаб скорости всем актёрам сразу.
+    const ip = makeNetInterp();
+    let seed = 7;
+    const jit = (): number => { seed = (seed * 1664525 + 1013904223) >>> 0; return (seed / 0x100000000 - 0.5) * 0.010; };
+    let worst = 0;
+    for (let k = 0; k < 120; k++) {
+      const at = Math.max(0, k * TICK + (k ? jit() : 0));
+      for (let a = 0; a < 20; a++) ip.push('a' + a, 0, SPEED * k * TICK, at, k);
+      if (k > 40) worst = Math.max(worst, Math.abs(ip.at('a3', at).vz - SPEED) / SPEED * 100);
+    }
+    expect(worst, 'рябь при 20 актёрах в снапшоте').toBeLessThan(1.5);
+  });
+
   it('учёт актёров: добавили и забыли', () => {
     const ip = makeNetInterp();
     ip.push('a', 0, 0, 0); ip.push('b', 0, 0, 0);

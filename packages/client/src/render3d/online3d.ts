@@ -1156,8 +1156,11 @@ export async function startOnline3d(): Promise<void> {
     if (!latest || snapSeq === seenSeq) return;
     seenSeq = snapSeq;
     const live = new Set<string>();
-    for (const p of latest.players) { const k = 'p' + p.id; live.add(k); interp.push(k, p.x, p.y, snapAt); }
-    for (const m of latest.monsters) { const k = 'm' + m.id; live.add(k); interp.push(k, m.x, m.y, snapAt); }
+    // ⭐ ТИК СНАПШОТА — ЧАСЫ СЕРВЕРА для оценки скорости: интервал прихода дрожит (±5 мс), тик — нет.
+    // Без него рябь скорости 11.2 % кормила `moveMag`, оси бленда и часы клипа (см. `netInterp.push`).
+    const tick = latest.tick;
+    for (const p of latest.players) { const k = 'p' + p.id; live.add(k); interp.push(k, p.x, p.y, snapAt, tick); }
+    for (const m of latest.monsters) { const k = 'm' + m.id; live.add(k); interp.push(k, m.x, m.y, snapAt, tick); }
     for (const k of interpKeys) if (!live.has(k)) interp.drop(k);
     interpKeys = live;
   }
