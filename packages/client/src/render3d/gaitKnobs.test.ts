@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { PoseDriver, GAIT, POSE, ASYM, STRAFE, BACK, COMBAT, sideLerp, locoVal, strafeMix, backMix, foldElbow, type LocoMix } from './pose.js';
 
 /** Смесь кадра одной строкой — в тестах читается лучше, чем четыре позиционных аргумента. */
@@ -281,5 +283,76 @@ describe('боевая ось — четвёртая колонка (Ф6)', () =
     expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 1))).toBe(14);
     expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 1, mix(0, 0, 0, 1))).toBe(20);
     expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 0)), 'вне боя — асимметрия ходьбы').toBe(4);
+  });
+});
+
+describe('⭐⭐ «ДЛИНА ШАГА»: КОНТРАКТ ДЕРЖИТСЯ У БАЗЫ, А КОЛОНКА ДВИГАЕТ ТОЛЬКО ВЫНОС', () => {
+  /**
+   * ЖАЛОБА АВТОРА (19.09): «длина шага странно работает: вперёд-назад всё норм, а на страйфах что-то странное».
+   *
+   * ЭТО НЕ БАГ, А ДВЕ РАЗНЫЕ ВЕЩИ ПОД ОДНИМ ИМЕНЕМ, и сторож их разводит:
+   *  • РИТМ (сколько тело проезжает за шаг) считается от БАЗОВОЙ пары `GAIT.stepWalk/stepRun`, без колонок;
+   *  • ВЫНОС ноги (`sl(i)` в `plant`) — от колоночного значения.
+   * Вперёд колонка И ЕСТЬ база, поэтому ручка двигает и то и другое, и контракт «шаг = скорость × период / 2»
+   * виден глазами. В колонке «СТРАЙФ»/«НАЗАД» ручка меняет только вынос — а на чистом боку вынос уходит ВБОК
+   * (`reach·mFwd` при `mFwd` = 0), то есть шире/уже разводит стопы. Отсюда «что-то странное».
+   *
+   * ⚠ ПОЧЕМУ РИТМ НЕ ОТДАЛИ КОЛОНКАМ (пробовали, замерено, откатили) — см. `StepPlanner.update`: доли
+   * направления ездят вместе с доворотом таза, и на опубликованном воине (`back.stepWalk` 18.5 против базы 25)
+   * рывок груди p99 шёл 2062 → 16437 °/с² при 60 Гц на стенде `torsoJitter`.
+   */
+  const stride = (col: Record<string, number> | null, knob: number | null, vx: number, vz: number): { spacing: number; reach: number } => {
+    clear();
+    if (knob !== null) {
+      if (col) { col['stepWalk'] = knob; col['stepRun'] = knob; }
+      else { GAIT.stepWalk = knob; GAIT.stepRun = knob; }
+    }
+    const d = new PoseDriver();
+    let x = 0, z = 0, prev = false;
+    const plants: [number, number][] = []; let rSum = 0, rN = 0;
+    for (let i = 0; i < 900; i++) {
+      x += vx * DT; z += vz * DT;
+      d.setWorld(x, z, 0, vx, vz);
+      const p0 = d.plantTarget(0), p1 = d.plantTarget(1);
+      d.setFeet(p0[0], p0[1], p1[0], p1[1]);
+      d.update(DT);
+      const sw = d.swingLegs[0];
+      if (sw && !prev && i > 300) { const t = d.plantTarget(0); plants.push([t[0], t[1]]); rSum += Math.hypot(t[0] - x, t[1] - z); rN++; }
+      prev = sw;
+    }
+    let s = 0;
+    for (let k = 1; k < plants.length; k++) s += Math.hypot(plants[k]![0] - plants[k - 1]![0], plants[k]![1] - plants[k - 1]![1]);
+    return { spacing: s / Math.max(1, plants.length - 1), reach: rSum / Math.max(1, rN) };
+  };
+
+  it('ВПЕРЁД (базовая колонка): шаг тела за полцикла РАВЕН ручке — контракт виден', () => {
+    for (const knob of [15, 25, 45]) {
+      const r = stride(null, knob, 0, 40);
+      expect(r.spacing / 2, `ручка ${knob} → шаг ${(r.spacing / 2).toFixed(2)}`).toBeCloseTo(knob, 0);
+    }
+  });
+
+  it('⚠ СТРАЙФ (колонка): ритм НЕ меняется, меняется ВЫНОС — и это задокументировано, а не случайно', () => {
+    GAIT.stepWalk = 25; GAIT.stepRun = 25;
+    const base = stride(STRAFE, null, 40, 0);
+    const small = stride(STRAFE, 15, 40, 0);
+    const big = stride(STRAFE, 45, 40, 0);
+    // ⚠ ДОПУСК 8 %, А НЕ НОЛЬ: при выносе сильно не по шагу включается СРОЧНОСТЬ (`urgency`) и поджимает цикл
+    // на единицы процентов (замер: 50.0 → 47.4 при ручке 45 против базы 25). Это не ручка ритма, а страховка
+    // от перетянутой опорной ноги; мутация «отдать ритм колонкам» даёт 30.0 и 90.0, то есть валит обе строки с запасом.
+    expect(Math.abs(small.spacing / base.spacing - 1), `ритм от колонки НЕ зависит: ${small.spacing.toFixed(2)} против ${base.spacing.toFixed(2)}`).toBeLessThan(0.08);
+    expect(Math.abs(big.spacing / base.spacing - 1), `и на большой ручке тоже: ${big.spacing.toFixed(2)} против ${base.spacing.toFixed(2)}`).toBeLessThan(0.08);
+    // А вынос — зависит, и монотонно: ручка не «ничего не делает», она делает ДРУГОЕ.
+    expect(small.reach, `вынос ${small.reach.toFixed(2)} против ${big.reach.toFixed(2)}`).toBeLessThan(big.reach - 1);
+  });
+
+  it('панель «Бег» говорит об этом автору прямо под ползунком', () => {
+    // ⚠ Мутация «убрать пояснение» валит это: молчаливая ручка, которая на страйфе делает не то, что на
+    // «вперёд», — ровно та беда, с которой автор пришёл.
+    const SRC = readFileSync(path.join(__dirname, 'pose-editor.ts'), 'utf8');
+    const i = SRC.indexOf('stepNote.textContent');
+    expect(i, 'пояснение про длину шага написано').toBeGreaterThan(0);
+    expect(SRC.slice(i, i + 900), '… и рассказывает именно про ритм против выноса').toMatch(/РИТМ[\s\S]{0,400}ВЫНОС/);
+    expect(SRC.slice(i, i + 900), '⚠ и ДЕЙСТВИТЕЛЬНО показывается, а не лежит мёртвым текстом').toMatch(/box\.append\(stepNote\);/);
   });
 });

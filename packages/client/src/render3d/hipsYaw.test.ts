@@ -204,15 +204,17 @@ describe('рыск таза: рантайм', () => {
     expect(Math.abs(flat.pelvis), 'без ручки таз ровный').toBeLessThan(3);
   });
 
-  it('⭐ СТАТИКА ИДЁТ В КУРС ПЛАНИРОВЩИКА, А КАЧАНИЕ — НЕТ (цели плантов не дрожат)', () => {
-    // Планировщик гоняется напрямую: его цели — это и есть «куда встанет стопа».
-    const trace = (turn: number, swing: number): { plants: number[]; yaw: number; drift: number } => {
+  it('⭐⭐ НИ ПОВОРОТ, НИ КАЧАНИЕ НЕ ДОЕЗЖАЮТ ДО ПЛАНИРОВЩИКА: планты и ноги БИТ В БИТ', () => {
+    // ТРЕБОВАНИЕ АВТОРА (19.09): «сделай так, чтобы поворот таза не влиял на планты и на движение ног».
+    // Планировщик гоняется напрямую: его цели — это и есть «куда встанет стопа», а `PoseTargets` — сами ноги.
+    const LEGK = ['hipL', 'hipR', 'knL', 'knR', 'hipLatL', 'hipLatR', 'ankL', 'ankR', 'bobY'] as const;
+    const trace = (turn: number, swing: number): { rows: number[]; yaw: number; drift: number } => {
       POSE.hipsTurn = POSE.hipsTurnRun = turn; POSE.hipsYawSwing = POSE.hipsYawSwingRun = swing;
       const h = buildHumanoid({});
       const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       setLocoMixOverride(0);                       // ЧИСТАЯ процедурка: клипов в этой пробе нет
       p.setVel(120, 0); p.setYaw(0); p.snapYaw();
-      const plants: number[] = []; let yaw = 0, drift = 0;
+      const rows: number[] = []; let yaw = 0, drift = 0;
       const anchor: ([number, number] | null)[] = [null, null];
       for (let i = 0; i < 300; i++) {
         p.step(1 / 60);
@@ -223,26 +225,162 @@ describe('рыск таза: рантайм', () => {
           else if (!anchor[L]) anchor[L] = [t[0], t[1]];
           else if (i >= 150) drift = Math.max(drift, Math.hypot(t[0] - anchor[L]![0], t[1] - anchor[L]![1]));
         }
-        if (i >= 150) { const a = p.driver.plantTarget(0), b = p.driver.plantTarget(1); plants.push(a[0], a[1], b[0], b[1]); yaw = p.hipsTurnRad; }
+        // Планты берём ОТНОСИТЕЛЬНО ТЕЛА: абсолютные растут вместе с ходом, и сравнение было бы шумным.
+        const a = p.driver.plantTarget(0), b = p.driver.plantTarget(1);
+        rows.push(a[0] - p.posX, a[1] - p.posZ, b[0] - p.posX, b[1] - p.posZ);
+        const o = p.driver.out as unknown as Record<string, number>;
+        for (const k of LEGK) rows.push(o[k]!);
+        if (i >= 150) yaw = p.hipsTurnRad;
       }
-      return { plants, yaw, drift };
+      return { rows, yaw, drift };
     };
     const base = trace(0, 0);
     const swung = trace(0, 0.25);
-    const turned = trace(20 * D, 0);
     const diff = (a: number[], b: number[]): number => a.reduce((m, v, i) => Math.max(m, Math.abs(v - (b[i] ?? 0))), 0);
-    // ⚠ ГЛАВНЫЙ СТОРОЖ КАЧАНИЯ. Мутация «подать качание в курс планировщика (`legsTurn += tg.hipsYaw`)» валит обе
-    // строки: цель под ОПОРНОЙ стопой начинает ехать каждый кадр (замер мутации — десятки единиц), и курс
-    // перестаёт быть нулевым. ⚠ Сравнивать сами цели с «ручка в нуле» нельзя: качание живёт в КОСТИ, ноги — её
-    // дети, и обратная связь по фактическим стопам (`setFeet`) честно двигает следующий плант. Дрожать не должна
-    // ЦЕЛЬ ПОД УЖЕ ПОСТАВЛЕННОЙ НОГОЙ — вот её и меряем.
+    // ⚠ ГЛАВНЫЙ СТОРОЖ КАЧАНИЯ. Мутация «подать качание в курс планировщика» валит обе строки: цель под ОПОРНОЙ
+    // стопой начинает ехать каждый кадр (замер мутации — десятки единиц), и курс перестаёт быть нулевым.
     expect(swung.drift, '⚠ цель под опорной стопой поехала — качание доехало до планировщика').toBeLessThan(1e-9);
     expect(base.drift, 'контроль: у ровного таза она тоже стоит').toBeLessThan(1e-9);
     expect(swung.yaw, 'качание в курс не попало').toBe(0);
-    // ⚠ Мутация «не класть статику в курс» валит ЭТУ: ноги перестанут идти за тазом, и поворот станет «крутить только таз».
-    expect(diff(turned.plants, base.plants), 'статический поворот ОБЯЗАН двигать планты (ноги за тазом)').toBeGreaterThan(1);
-    expect(turned.yaw / D, '⚠ ручка отдаёт РОВНО свой угол: боковитость считается от НЕповёрнутого курса, иначе петля').toBeCloseTo(20, 3);
-    expect(turned.drift, 'и цель под опорной стопой всё равно стоит').toBeLessThan(1e-9);
+    /**
+     * ⭐⭐ ПОВОРОТ — БИТ В БИТ. Валят эту строку ТРИ мутации, и каждая была живым багом 19.09:
+     *  1. вернуть `legsTurn` в курс (`yaw = rootYaw + warp + turn`) — ячейка плант-сетки уезжает на
+     *     `поворот/45°`, вес авторской ячейки 1.0000 → 0.2222 при 35° («хелперы двигают с коэффициентом»);
+     *  2. вернуть развод `mixYaw` (доли от одного курса, вынос по другому) — шаг уезжает от хода на угол ручки;
+     *  3. не вычитать `turnFeet` из фидбэка стоп — планировщик увидит СВОЙ ЖЕ повёрнутый риг, прибьёт плант к
+     *     уехавшей стопе и погонится за хвостом (ЗАМЕР мутации на рыцаре: расхождение 0 → 28 ед. за 8 с).
+     */
+    for (const deg of [8, 20, 35]) {
+      const t = trace(deg * D, 0);
+      expect(diff(t.rows, base.rows), `⚠ поворот ${deg}° сдвинул планты/ноги — он обязан быть ЧИСТО ВИДИМЫМ`).toBeLessThan(1e-9);
+      expect(t.yaw / D, 'ручка отдаёт РОВНО свой угол').toBeCloseTo(deg, 6);
+      expect(t.drift, 'и цель под опорной стопой всё равно стоит').toBeLessThan(1e-9);
+    }
+  });
+
+  it('⭐⭐ НА СЕРЕДИНЕ БЛЕНДА РУЧКА НЕ ПРОВИСАЕТ И НЕ УДВАИВАЕТСЯ', () => {
+    // Процедурный поворот гаснет долей клипа, а в клипе тот же угол уже запечён — сумма обязана быть ОДНА и та же
+    // на любой доле. ⚠ Мутация «не гасить вовсе» валит верхнюю границу (двойной счёт).
+    // ⚠ ЧЕГО ЭТОТ СТОРОЖ НЕ ЛОВИТ И НЕ ДОЛЖЕН: гашение своим `1 − locoW` вместо `1 − mix` даёт НА УСТАНОВИВШЕМСЯ
+    // бленде ТЕ ЖЕ числа (проверено мутацией) — отличается ровно кадр отставания НА ПЕРЕХОДЕ. `1 − mix` выбран
+    // потому, что этим же числом гасится вся остальная процедурная поза, а не потому, что второй замеренно хуже.
+    setTurn();   // те же углы по сторонам, с которыми снят `libs.yaw`: процедурка и клип обязаны совпасть
+    for (const mix of [0, 0.25, 0.5, 0.75, 1]) {
+      const r = run(libs.yaw, 120, { mix });
+      // ЗАМЕР с верным гашением: 20.000 / 19.999 / 19.998 / 19.997 / 19.996 — РОВНАЯ линия, поэтому и допуск узкий.
+      expect(Math.abs(r.pelvis), `доля клипа ${mix}: таз ${r.pelvis.toFixed(2)}° при ручке 20°`).toBeGreaterThan(19.5);
+      expect(Math.abs(r.pelvis), `доля клипа ${mix}: таз ${r.pelvis.toFixed(2)}° — не удвоен`).toBeLessThan(20.5);
+      expect(Math.abs(r.chest), `доля клипа ${mix}: грудь мимо прицела на ${r.chest.toFixed(1)}°`).toBeLessThan(2);
+    }
+  });
+
+  it('⭐⭐ ХЕЛПЕР ПЛАНТ-СЕТКИ ДВИГАЕТ ПЛАНТ 1:1 НА ОБЕИХ СТОРОНАХ СТРАЙФА — С ПОВОРОТОМ И БЕЗ', () => {
+    // ЖАЛОБА (19.09): «двигаю квадратные хелперы, а точки, куда нога ставится, двигаются как будто с
+    // коэффициентом». ПРИЧИНА замерена: ячейка сетки ищется по ходу В ОСЯХ ТАЗА, и повёрнутый таз уводил индекс —
+    // вес авторской ячейки выходил ровно `1 − поворот/45°` (1.0000 / 0.5556 / 0.2222 при 0 / 20 / 35°).
+    // ⚠ ОБХОД СТОП ВЫКЛЮЧЕН (`footClear` 0) НАРОЧНО: он — единственный законный потребитель, который двигает цель
+    // не на то, что просили (уводит её ВПЕРЁД, когда стопы сходятся ближе зазора). Мерить надо сам канал
+    // настройки, а не анти-столкновение; с авторскими данными оно живое, см. README.
+    const DL = 10;
+    const probe = (right: boolean, turn: number, bump: boolean): [number, number] => {
+      POSE.hipsTurn = POSE.hipsTurnRun = turn; POSE.hipsYawSwing = POSE.hipsYawSwingRun = 0;
+      const g = emptyGrid();
+      if (bump) g.walk[right ? 2 : 6]!.l[1] = DL;
+      const h = buildHumanoid({});
+      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, g);
+      setLocoMixOverride(0);
+      p.setVel(right ? 40 : -40, 0); p.setYaw(0); p.snapYaw();
+      let sx = 0, sz = 0, n = 0, prev = false;
+      for (let i = 0; i < 400; i++) {
+        p.step(1 / 60);
+        const sw = p.driver.swingLegs[0];
+        if (sw && !prev && i > 200) { const t = p.driver.plantTarget(0); sx += t[0] - p.posX; sz += t[1] - p.posZ; n++; }
+        prev = sw;
+      }
+      return [sx / Math.max(1, n), sz / Math.max(1, n)];
+    };
+    const was = GAIT.footClear; GAIT.footClear = 0;
+    try {
+      for (const right of [true, false]) for (const turn of [0, 20 * D, 35 * D]) {
+        const zero = probe(right, turn, false), lat = probe(right, turn, true);
+        const dx = lat[0] - zero[0], dz = lat[1] - zero[1];
+        const side = right ? 'вправо' : 'влево', deg = (turn / D).toFixed(0);
+        expect(Math.hypot(dx, dz) / DL, `${side}, поворот ${deg}°: плант поехал на ${(Math.hypot(dx, dz) / DL).toFixed(4)} от заданного`).toBeCloseTo(1, 3);
+        expect(Math.abs(dz), `${side}, поворот ${deg}°: сдвиг ушёл наискосок на ${dz.toFixed(3)}`).toBeLessThan(0.02);
+        expect(dx, `${side}: знак бокового сдвига`).toBeGreaterThan(0);
+      }
+    } finally { GAIT.footClear = was; }
+  });
+
+  it('⭐⭐ ШАГ ИДЁТ ВДОЛЬ ХОДА, А НЕ НАИСКОСОК — при любом повороте таза', () => {
+    // ЖАЛОБА (19.09): «шаг тоже как-то чуть наискосок происходит». ПРИЧИНА замерена: ход раскладывался на доли в
+    // ОДНОМ кадре (`mixYaw`), а вынос собирался в ДРУГОМ (`yaw` с поворотом) — вектор выноса уезжал от хода ровно
+    // на угол ручки (ЗАМЕР на рыцаре, чистый бок: 0.00 → 20.00 → 35.00°).
+    const reachAng = (turn: number, vx: number, vz: number): number => {
+      POSE.hipsTurn = POSE.hipsTurnRun = turn; POSE.hipsYawSwing = POSE.hipsYawSwingRun = 0;
+      const wW = GAIT.stanceWidth, wR = GAIT.stanceWidthRun;
+      GAIT.stanceWidth = 0; GAIT.stanceWidthRun = 0;
+      try {
+        const h = buildHumanoid({});
+        const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+        setLocoMixOverride(0);
+        p.setVel(vx, vz); p.setYaw(0); p.snapYaw();
+        let sx = 0, sz = 0, n = 0, prev = false;
+        for (let i = 0; i < 400; i++) {
+          p.step(1 / 60);
+          const sw = p.driver.swingLegs[0];
+          if (sw && !prev && i > 200) { const t = p.driver.plantTarget(0); sx += t[0] - p.posX; sz += t[1] - p.posZ; n++; }
+          prev = sw;
+        }
+        const travel = Math.atan2(vx, vz), got = Math.atan2(sx / n, sz / n);
+        return Math.atan2(Math.sin(got - travel), Math.cos(got - travel)) / D;
+      } finally { GAIT.stanceWidth = wW; GAIT.stanceWidthRun = wR; }
+    };
+    for (const [nm, vx, vz] of [['вбок вправо', 120, 0], ['вбок влево', -120, 0], ['вперёд', 0, 120], ['назад', 0, -120]] as [string, number, number][]) {
+      const a0 = reachAng(0, vx, vz);
+      for (const deg of [20, 35]) {
+        const a = reachAng(deg * D, vx, vz);
+        expect(Math.abs(a - a0), `${nm}, поворот ${deg}°: вынос уехал от хода на ${(a - a0).toFixed(3)}°`).toBeLessThan(0.01);
+      }
+    }
+  });
+
+  it('⭐⭐ У КАНАЛА ПОВОРОТА ЕСТЬ ПРЕДЕЛ СКОРОСТИ, И БЕЗ НЕГО РЫВОК РАСТЁТ С ЧАСТОТОЙ КАДРОВ', () => {
+    // ⚠ `st` и доли сторон НЕ сглажены по времени: отпустил страйф — скорость падает в ноль за тик и `st` щёлкает
+    // в 0; развернулся A↔D — полоса сторон ±3.44° проскакивается за полтора кадра. Без предела ЗАМЕР (±35°,
+    // ровно то, что пишет `migrateHipsOpen`): 2254 °/с при 60 Гц и вдвое больше при 144 — то есть рывок РОС с
+    // частотой кадров, ровно тот класс беды, который запрещает `torsoJitter.test.ts`. Предел — общий с
+    // доворотом (`GAIT.warpRate`): канал один и тот же, рыск таза.
+    const peak = (hz: number, rate: number): number => {
+      clearCols();
+      STRAFE_R['hipsTurn'] = 35 * D; STRAFE_R['hipsTurnRun'] = 35 * D;
+      STRAFE_L['hipsTurn'] = -35 * D; STRAFE_L['hipsTurnRun'] = -35 * D;
+      const was = GAIT.warpRate; GAIT.warpRate = rate;
+      try {
+        const dt = 1 / hz;
+        const h = buildHumanoid({});
+        const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+        setLocoMixOverride(0);
+        p.setYaw(0); p.snapYaw();
+        let prev = 0, mx = 0;
+        const flip = Math.round(2.5 * hz);
+        for (let i = 0; i < Math.round(5 * hz); i++) {
+          p.setVel(i < flip ? 120 : -120, 0); p.step(dt);
+          if (i > flip - 10) mx = Math.max(mx, Math.abs(p.hipsTurnRad - prev) / dt);
+          prev = p.hipsTurnRad;
+        }
+        return mx / D;
+      } finally { GAIT.warpRate = was; clearCols(); }
+    };
+    const HZ = [60, 120, 144];
+    const capped = HZ.map((hz) => peak(hz, 300));
+    HZ.forEach((hz, i) => {
+      expect(capped[i], `${hz} Гц: ${capped[i]!.toFixed(0)} °/с при пределе 300`).toBeLessThan(310);
+    });
+    // ⚠ Мутация «убрать предел» (`warpRate` мимо канала) валит ЭТО.
+    const free = [60, 144].map((hz) => peak(hz, 0));
+    expect(free[1]! / free[0]!, `без предела пик обязан расти с частотой кадров: ${free.map((v) => v.toFixed(0)).join(' → ')}`).toBeGreaterThan(1.5);
+    expect(free[0], 'и сам по себе быть много выше потолка').toBeGreaterThan(1000);
   });
 
   it('⭐ КАЧАНИЕ РЫСКА ДЕЙСТВИТЕЛЬНО ПРИКЛАДЫВАЕТСЯ, И ЕГО УГОЛ ИЗМЕРЕН, А НЕ ПРОЧИТАН ИЗ СЛОТА Y', () => {

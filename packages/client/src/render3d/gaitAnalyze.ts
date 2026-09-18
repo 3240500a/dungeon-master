@@ -252,7 +252,7 @@ export function gaitSuggestions(m: GaitMeasure, cur: Record<string, number>, fas
   const out: GaitSuggestion[] = [];
   // ⚠ СТРАЙФ И ХОД СПИНОЙ В ОСНОВНЫЕ КОЛОНКИ НЕ ИДУТ: шаг и размах меряются вдоль Z (у страйфа их нет), а доля опоры
   // и подъём у них — колонки «страйф» / «назад». Предложить их как основные значило бы затереть настроенный ход вперёд.
-  if (/_(strafe_[LR]|back)(_open)?$|^strafe_[LR]$/.test(clipName)) return out;   // `_open` — набор «таз открыт», тоже страйф
+  if (/_(strafe_[LR]|back)$|^strafe_[LR]$/.test(clipName)) return out;   // набора `_open` больше нет (снят 19.09)
   const put = (key: string, label: string, now: number | null): void => {
     if (now === null || !Number.isFinite(now)) return;
     const was = cur[key] ?? 0;

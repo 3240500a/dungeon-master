@@ -598,6 +598,47 @@ export function applyHipSplay(human: Humanoid, l: number, r: number): void {
  * ЗАМЕР (рыцарь, процедурка, 120 u/с вбок, качание рыска 0.25): сырое скольжение стопы за 200 кадров опоры
  * 23.99 без держания ног против 19.33 с ним (при 9.56 у ровного таза), а с поворотом 20° — 22.11 против 13.71; цели плантов не дрожат ни там, ни там.
  */
+const _htQ = new THREE.Quaternion(), _htH0 = new THREE.Quaternion(), _htS = new THREE.Vector3();
+const _htUp = new THREE.Vector3(0, 1, 0);
+/**
+ * ⭐⭐ АВТОРСКИЙ ПОВОРОТ ТАЗА (`POSE.hipsTurn`) — ЧИСТО ВИДИМЫЙ: таз и корпус крутятся, НОГИ НЕТ.
+ *
+ * Требование автора (19.09): «сделай так, чтобы поворот таза не влиял на планты и на движение ног». Раньше угол
+ * жил в КУРСЕ планировщика и ломал три вещи разом (ячейка плант-сетки, направление шага, `st` сама на себя).
+ *
+ * ⚠ ДЕРЖАНИЕ НОГ ЗДЕСЬ ТОЧНОЕ, А НЕ ВЫЧИТАНИЕМ ИЗ СЛОТА Y, как у крена/наклона (`applyHipsTiltHold`). Вычитание
+ * из эйлера — не обратный поворот: `Rx(a)·Ry(b−t)·Rz(c) ≠ Ry(−t)·Rx(a)·Ry(b)·Rz(c)` при ненулевых `a`/`c`, а на
+ * ходу они ненулевые ВСЕГДА. Здесь мы левым умножением крутим таз (`Ry(t)·H0`) и тем же сопряжением возвращаем
+ * бедро: `L' = H1⁻¹·H0·L` — МИРОВАЯ ориентация ноги сохраняется БИТ В БИТ, а значит стопа не «доворачивается».
+ *
+ * ⚠ ЧТО ЭТИМ УБРАТЬ НЕЛЬЗЯ И НЕ НУЖНО: сами ТАЗОБЕДРЕННЫЕ СУСТАВЫ уезжают, потому что таз — твёрдое тело
+ * (у рыцаря полутаз 3.6 → при 35° сустав идёт на 2.07 вбок и 0.65 вперёд). Это и ЕСТЬ поворот таза. Смещение
+ * возвращается РОВНО (`H1·s − H0·s`) и вычитается из фидбэка стоп — иначе планировщик увидел бы уехавшую стопу,
+ * прибил бы плант к ней и погнался за собственным хвостом (ЗАМЕР без вычета: расхождение плантов 0 → 28 ед. за 8 с).
+ *
+ * Возвращает смещение стопы каждой ноги в МИРОВЫХ X/Z: `[l.x, l.z, r.x, r.z]` (буфер переиспользуется).
+ */
+const _turnShift: [number, number, number, number] = [0, 0, 0, 0];
+export function applyHipsTurn(human: Humanoid, turn: number): readonly [number, number, number, number] {
+  _turnShift[0] = _turnShift[1] = _turnShift[2] = _turnShift[3] = 0;
+  if (!turn) return _turnShift;
+  const hb = human.bones.get('Hips'); if (!hb) return _turnShift;
+  _htH0.copy(hb.quaternion);
+  hb.quaternion.premultiply(_htQ.setFromAxisAngle(_htUp, turn));
+  // Сопряжение: `H1⁻¹·H0` в кадре таза. Считаем один раз — обеим ногам оно одно.
+  const conj = _htQ.copy(hb.quaternion).invert().multiply(_htH0);
+  const legs = ['LeftUpperLeg', 'RightUpperLeg'] as const;
+  for (let i = 0; i < 2; i++) {
+    const b = human.bones.get(legs[i]!); if (!b) continue;
+    b.quaternion.premultiply(conj);
+    // Смещение сустава: `H1·s − H0·s` (s — положение бедра в кадре таза, константа рига).
+    const after = _htS.copy(b.position).applyQuaternion(hb.quaternion);
+    const ax = after.x, az = after.z;
+    const before = _htS.copy(b.position).applyQuaternion(_htH0);
+    _turnShift[i * 2] = ax - before.x; _turnShift[i * 2 + 1] = az - before.z;
+  }
+  return _turnShift;
+}
 export function applyHipsTiltHold(human: Humanoid, roll: number, pitch: number, yaw = 0): void {
   const hb = clamp(POSE.hipsTiltHoldBody, 0, 1), hl = clamp(POSE.hipsTiltHoldLegs, 0, 1);
   const bz = roll * hb, bx = pitch * hb, lz = roll * hl, lx = pitch * hl, ly = yaw * hl;
@@ -1484,7 +1525,7 @@ export function stepDirWarp(
     // тазе (прицел дальше предела скрутки) утащит верх за предел.
     const residual = clamp(wrapPi(aimYaw - rootYaw), -maxTwist, maxTwist);
     // ⚠ ПОВОРОТ ТАЗА (`POSE.hipsTurn`) В ЭТОТ БЮДЖЕТ НЕ ВХОДИТ и входить не должен: он приходит от ручки
-    // походки уже ПОСЛЕ доворота (`PosePlayer.legsTurn`), и его собственный предел — отказ ЗАПЕКАНИЯ по
+    // походки и живёт ТОЛЬКО на кости таза, а его собственный предел — отказ ЗАПЕКАНИЯ по
     // «макс. скрутке верха» (`clipBake.assertYawBudget`, проверяется на КАЖДОМ кадре, то есть по ПИКУ качания).
     want = clamp(want, residual - maxTwist, residual + maxTwist);
   }
@@ -1688,7 +1729,7 @@ const PULL_W_DEF: [number, number, number, number, number] = [0.2, 0.4, 0.4, 0, 
  * сюда оно приходит слагаемым `clipHipsOpen` в `rootYaw` и `warp` (см. `step`), а не вторым поворотом таза.
  * ⚠ И ОБРАТНО: если когда-нибудь таз станет собираться из клипа хода С ЕГО РЫСКОМ АВТОМАТИЧЕСКИ (как `frameEdit.turnPelvisGameGap`
  *   просит для клипов поворота), раскрытие набора `_open` посчитается ДВАЖДЫ (35° → 70°): здесь рыск таза клипа уже входит
- *   в `rootYaw` (`clipHipsOpen` в `step`). Сторож — `hipsOpen.test.ts` (прицел 137°/−100° и наклон таза в клипе).
+ *   в `rootYaw` (`clipHipsOpen` в `step`). Сторож — `hipsYaw.test.ts` (прицел 137°/−100° и наклон таза в клипе).
  */
 export function applyTorsoTwist(human: Humanoid, rootYaw: number, residual: number, weights: [number, number, number, number, number], warp = 0): void {
   pelvisToWorld(human.bones.get('Hips')!, rootYaw);           // facing таза (углы ног body-local → корень на rootYaw)
@@ -1978,13 +2019,17 @@ export class PosePlayer {
   /** Курс таза БЕЗ доворота и поворота таза (прицельный корень): ровно его вычитает запекатель из клипа страйфа. */
   get aimRootYaw(): number { return this.rootYaw; }
   /**
-   * ⭐⭐ СТАТИЧЕСКИЙ ПОВОРОТ ТАЗА этого кадра (рад) — В КУРСЕ, а не в кости: ноги плантуются в повёрнутом кадре.
-   * Ровно то место, где раньше жило раскрытие «таз открыт» (`legsOpen`); угол теперь даёт обычная ручка
-   * `POSE.hipsTurn` (`PoseDriver.hipsTurn`), а значит и её колонки, включая стороны страйфа.
+   * ⭐⭐ СТАТИЧЕСКАЯ ЧАСТЬ рыска таза этого кадра (рад) — В КОСТИ, как и качание, а НЕ в курсе.
+   *
+   * ⚠ ЭТО ДИАГНОСТИКА И ПОДПИСЬ КЛИПА (`hipsYawDeg`), а не отдельный источник поворота: угол уже посчитан
+   * внутри `hipsYawSwingRad` (тот меряет ВЕСЬ рыск кости — качание плюс поворот). Складывать их — считать
+   * дважды; сторож съёма `assertPelvis` именно поэтому перечисляет только `hipsYawSwingRad`.
    */
-  get hipsTurnRad(): number { return this.legsTurn; }
-  private legsTurn = 0;
-  /** ЗАМЕРЕННЫЙ рыск таза, который в этом кадре положило на кость КАЧАНИЕ (`PoseTargets.hipsYaw`), рад. */
+  get hipsTurnRad(): number { return this.turnNow; }
+  private turnNow = 0;
+  /** Насколько ПОВОРОТ ТАЗА этого кадра сдвинул стопы в мире (X/Z на ногу) — ровно это вычитается из фидбэка. */
+  private turnFeet: [number, number, number, number] = [0, 0, 0, 0];
+  /** ЗАМЕРЕННЫЙ рыск таза, который в этом кадре положила на кость ПОХОДКА (качание + статический поворот), рад. */
   get hipsYawSwingRad(): number { return this.hipsYawNow; }
   private hipsYawNow = 0;
   /** ЗАМЕРЕННЫЙ рыск таза, пришедший ИЗ КЛИПОВ хода этого кадра (уже с весом клипа `mix`), рад. */
@@ -2216,7 +2261,7 @@ export class PosePlayer {
     this.cancelTurn();
     this.driver.resetPlanner();
     this.dirWarp = { ...DIR_WARP0 };
-    this.legsTurn = 0; this.hipsYawNow = 0; this.clipHipsYaw = 0; this.clipYawMeta = false;
+    this.turnNow = 0; this.turnFeet = [0, 0, 0, 0]; this.hipsYawNow = 0; this.clipHipsYaw = 0; this.clipYawMeta = false;
     this.legMag = 0; this.moveMag = 0; this.stepHold = 0; this.locoW = 0; this.clipPhase = 0;
     this.still = false; this.lockW = 0; this.footLock = [null, null]; this.clipContact = [true, true];
     this.locoSec = { section: 'idle', t: 0 }; this.locoMark = null;
@@ -2377,13 +2422,13 @@ export class PosePlayer {
    * (`neutralizeFacing`, `assertWarp`) нужен именно приложенный курс, иначе раскрытие вычтется из клипа, в котором
    * оно и должно остаться. Мировой угол — `pelvisYawWorld`.
    */
-  get pelvisYaw(): number { return this.rootYaw + this.dirWarp.warp + this.legsTurn; }
+  get pelvisYaw(): number { return this.rootYaw + this.dirWarp.warp; }
   /**
    * ⭐ МИРОВОЙ РЫСК ТАЗА этого кадра = курс + рыск таза из клипа. Читают те, кому нужен НАСТОЯЩИЙ разворот таза:
    * плант-сетка редактора (какая ячейка активна), читауты, пробы. ЗАМЕР: «только клипы» + «открыт», страйф вправо
    * 35° — `pelvisYaw` 0°, мир 35°, и ячейка сетки подсвечивалась на целое раскрытие мимо.
    */
-  get pelvisYawWorld(): number { return this.pelvisYaw + this.hipsYawNow + this.clipHipsYaw + this.stanceYawNow; }
+  get pelvisYawWorld(): number { return this.pelvisYaw + this.hipsYawNow + this.clipHipsYaw + this.stanceYawNow + this.turnNow; }
   /** Рыск, который таз авторской стойки РЕАЛЬНО добавил в этом кадре (рад) — читаут редактора и замеров. */
   get stancePelvisYaw(): number { return this.stanceYawNow; }
   /** Вес таза авторской стойки в этом кадре (0..1) — та же величина, что стоит в `wS`. */
@@ -2491,18 +2536,20 @@ export class PosePlayer {
       { on: GAIT.warpOn, maxDeg: GAIT.warpMax, smooth: GAIT.warpSmooth, sectors: this.warpSectorsNow, rateDeg: GAIT.warpRate });
     const warp = this.dirWarp.warp;
     /**
-     * ⭐⭐ СТАТИЧЕСКИЙ ПОВОРОТ ТАЗА — В КУРС (ноги за тазом), ровно туда, где раньше жило раскрытие «таз открыт».
-     * ⚠ ГАСНЕТ ДОЛЕЙ КЛИПА (`1 − locoW` прошлого кадра): в смешанном режиме тот же угол УЖЕ запечён в клипе
-     * страйфа, и без гашения он лёг бы дважды — курсом и клипом. В «только клипы» ноль целиком (клип ведёт всё).
-     * ⚠ `locoW` берётся ДО своего обновления ниже: курс нужен раньше (`setWorld` кормит планировщик уже
-     * повёрнутым кадром), а доля сглажена `LOCO_FADE` и за кадр не прыгает.
+     * ⭐⭐ КУРС ТАЗА = КОРЕНЬ + ДОВОРОТ, И БОЛЬШЕ НИЧЕГО.
+     *
+     * ⚠ СЮДА НЕЛЬЗЯ КЛАСТЬ АВТОРСКИЙ ПОВОРОТ ТАЗА (`POSE.hipsTurn`). Сутки (19.09) он тут лежал — и это ровно
+     * три жалобы автора: ячейка плант-сетки ищется по ходу В ЭТОМ курсе, вынос ноги раскладывается по ЕГО осям,
+     * и повёрнутый таз уводил и ячейку (вес авторской 1.0000 → 0.2222 при 35°), и сам шаг (плант уезжал от хода
+     * ровно на угол ручки). Теперь поворот — ТОЛЬКО КОСТЬ (`PoseTargets.hipsYaw`), и в курс он не приходит
+     * ни одним путём; гашение долей клипа ему тоже не нужно — процедурный рыск кости и так делится на `1 − mix`
+     * ниже, ровно как качание.
      */
-    this.legsTurn = clipOnly ? 0 : this.driver.hipsTurn * (1 - clamp(this.locoW, 0, 1));
     // Таз уезжает к ходу, верх на столько же отворачивается обратно — прицел остаётся на месте.
     // Подрезка — страховка на ПЕРЕХОДЕ: доворот сглаживается за `warpSmooth`, и если прицел за это
     // время улетел, сумма успевает вылезти за предел. Шею не выворачиваем ни на кадр.
-    const yaw = tl.rootYaw + warp + this.legsTurn;
-    let tw = clamp(tl.residual - warp - this.legsTurn, -twist.maxTwist, twist.maxTwist);
+    const yaw = tl.rootYaw + warp;
+    let tw = clamp(tl.residual - warp, -twist.maxTwist, twist.maxTwist);
     this.px += vx * dt; this.pz += vz * dt;
     // ⚠ ОДИН ПОЛ НА ПЛАНИРОВЩИК, ЗАЗЕМЛЕНИЕ И СТОЙКУ — И БЕРЁТСЯ ОН ИЗ РИГА (`ankleRest`).
     //
@@ -2514,9 +2561,7 @@ export class PosePlayer {
     if (!clipOnly) {
       this.driver.footFloor = this.human.ankleRest ?? (FOOT_Y + (this.human.footLift ?? 0));
       this.driver.legRest = this.human.legRest;   // длины бедра/голени и полутаз — из рига, не из констант
-      // ⚠ ШЕСТОЙ АРГУМЕНТ — КУРС БЕЗ АВТОРСКОГО ПОВОРОТА ТАЗА: от него планировщик считает боковитость (и стороны
-      // страйфа), иначе ручка поворота меряет саму себя и на 35° уходит в мигание (см. `StepPlanner.update`).
-      this.driver.setWorld(this.px, this.pz, yaw, vx, vz, yaw - this.legsTurn);   // yaw таза → стопы в верном body-кадре + подшаг при повороте
+      this.driver.setWorld(this.px, this.pz, yaw, vx, vz);   // yaw таза → стопы в верном body-кадре + подшаг при повороте
       this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
       let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
       const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
@@ -2566,7 +2611,12 @@ export class PosePlayer {
     if (!clipOnly) this.driver.setLegsHeld(legsHeld || turnLegs);
     if (!clipOnly && this.legMag > 0.5 && !legsHeld && !turnLegs) {   // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
       const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
-      this.driver.setFeet(fl.x + this.px, fl.z + this.pz, fr.x + this.px, fr.z + this.pz);
+      // ⚠ ВЫЧИТАЕМ СВОЙ СОБСТВЕННЫЙ ПОВОРОТ ТАЗА (`turnFeet` прошлого кадра — риг сейчас именно такой). Фидбэк
+      // существует, чтобы ловить ФИЗИКУ, а не нашу же авторскую позу: не вычесть — и планировщик прибьёт плант к
+      // уехавшей стопе, а дальше погонится за собственным хвостом (ЗАМЕР: расхождение плантов 0 → 28 ед. за 8 с
+      // при повороте 35°; с вычетом — 0.000e+0 бит в бит).
+      const t = this.turnFeet;
+      this.driver.setFeet(fl.x + this.px - t[0], fl.z + this.pz - t[1], fr.x + this.px - t[2], fr.z + this.pz - t[3]);
     }
     this.idleT += dt;
     // ⚠ В «только клипы» планировщик НЕ ОБНОВЛЯЕТСЯ: цели нейтральные, а ось ходьба↔бег — ВЕС БЕГА КЛИПОВ по скорости.
@@ -2755,16 +2805,39 @@ export class PosePlayer {
     // при возврате к той композиции эту строку надо менять вместе с ней.
     // В БЮДЖЕТ И В ОТВОРОТ он входит как обычно: верх обязан отвернуться и на него тоже, иначе грудь и оружие
     // уедут от прицела на весь угол.
-    // ⭐ ДВА СЛАГАЕМЫХ, И ОБА ЗАМЕРЕНЫ: процедурное КАЧАНИЕ (`_hipsYawApplied`, его положил `gaitToHumanoid`; клип
-    // разбавляет его своей долей — ровно как процедурную позу) и рыск, пришедший ИЗ КЛИПОВ (`clipHipsYaw`, уже с `mix`).
+    // ⭐ ДВА СЛАГАЕМЫХ, И ОБА ЗАМЕРЕНЫ: ПРОЦЕДУРНЫЙ рыск (`_hipsYawApplied`, его положил `gaitToHumanoid` — это
+    // качание ПЛЮС статический поворот таза; клип разбавляет его своей долей, ровно как процедурную позу) и рыск,
+    // пришедший ИЗ КЛИПОВ (`clipHipsYaw`, уже с `mix`).
+    // ⚠ ГАШЕНИЕ ДОЛЕЙ КЛИПА ЗДЕСЬ ОДНО НА ВЕСЬ РЫСК — отдельного `1 − locoW` у поворота больше нет и быть не
+    // должно: он гасил ДРУГИМ числом (`locoW` прошлого кадра против `mix` этого) и на середине бленда просаживал
+    // ручку (ЗАМЕР 19.09: 35° → 30.8° при `locoMix` 0.5).
     this.hipsYawNow = tg.hipsYaw === 0 ? 0 : _hipsYawApplied.v * (1 - mix);
+    // ⭐⭐ СТАТИЧЕСКИЙ ПОВОРОТ ТАЗА — третий источник рыска кости, и гаснет он ТЕМ ЖЕ `1 − mix`, что процедурная
+    // поза: в смешанном режиме тот же угол уже запечён в клипе страйфа и приходит через `clipHipsYaw`.
+    // ⚠ ГАСИМ ТЕМ ЖЕ `mix`, ЧТО И ПОЗУ, а не своим `1 − locoW` (доля ПРОШЛОГО кадра): на установившемся
+    // бленде оба числа совпадают, но во время САМОГО перехода `locoW` отстаёт на кадр, и держать два разных
+    // множителя на одно и то же гашение не за что. ЗАМЕР ручки 20° при `locoMix` 0 / .25 / .5 / .75 / 1:
+    // 20.000 / 19.999 / 19.998 / 19.997 / 19.996 — ровная линия. Без гашения вовсе — двойной счёт (сторож).
+    const wantTurn = clipOnly ? 0 : this.driver.hipsTurn * (1 - mix);
     const boneYaw = this.hipsYawNow + this.clipHipsYaw;
     // ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ — ЗДЕСЬ (после шва, до курса), см. `applyStancePelvis`. Его рыск идёт ТЕМ ЖЕ каналом,
     // что раскрытие `_open`: к курсу НЕ прибавляется (он уже в тазе, `pelvisToWorld` его сохраняет), но вычитается из
     // бюджета скрутки и уходит в отворот — грудь и оружие остаются на прицеле.
     const stanceYaw = this.applyStancePelvis(1 - this.legMag, 1 - mix);
-    if (boneYaw || stanceYaw) tw = clamp(tl.residual - warp - this.legsTurn - boneYaw - stanceYaw, -twist.maxTwist, twist.maxTwist);
-    applyTorsoTwist(this.human, yaw, tw, twist.weights, warp + this.legsTurn + boneYaw + stanceYaw);   // таз на курс + доворот; скрутка к прицелу, отворот — по Spine..UpperChest
+    if (boneYaw || stanceYaw || wantTurn) tw = clamp(tl.residual - warp - boneYaw - stanceYaw - wantTurn, -twist.maxTwist, twist.maxTwist);
+    applyTorsoTwist(this.human, yaw, tw, twist.weights, warp + boneYaw + stanceYaw + wantTurn);   // таз на курс + доворот; скрутка к прицелу, отворот — по Spine..UpperChest
+    // ⭐⭐ ПОВОРОТ ТАЗА — ПОСЛЕДНИМ, И ИМЕННО ЗДЕСЬ. Он обязан лечь ПОСЛЕ `applyTorsoTwist` (тот крутит весь риг
+    // курсом) и ПОСЛЕ того, как выше снят фидбэк фактических стоп: планировщик не должен увидеть повёрнутые ноги.
+    // Угол ИЗМЕРЯЕТСЯ по кости (`pelvisHeading` до/после), а не берётся с ручки — протокол рыска, как у таза стойки.
+    // Встречный отворот уже разложен по Spine..UpperChest строкой выше, поэтому грудь и оружие остаются на прицеле.
+    if (wantTurn === 0) { this.turnNow = 0; this.turnFeet[0] = this.turnFeet[1] = this.turnFeet[2] = this.turnFeet[3] = 0; }
+    else {
+      const hb0 = this.human.bones.get('Hips')!;
+      const before = pelvisHeading(hb0.quaternion);
+      const d = applyHipsTurn(this.human, wantTurn);
+      this.turnNow = wrapPi(pelvisHeading(hb0.quaternion) - before);
+      this.turnFeet[0] = d[0]; this.turnFeet[1] = d[1]; this.turnFeet[2] = d[2]; this.turnFeet[3] = d[3];
+    }
     // КАЧАНИЕ ТАЗА ВБОК — В КАДРЕ ТЕЛА, и именно ЗДЕСЬ, а не в `gaitToHumanoid`. `Hips.position` живёт в кадре
     // РОДИТЕЛЯ и рыском самой кости НЕ поворачивается — без доворота на `yaw` качание уехало бы в мировые оси
     // (та же грабля, что у переноса веса в `applyAttackPelvis`). Правая ось тела = (cos yaw, −sin yaw) — тот же

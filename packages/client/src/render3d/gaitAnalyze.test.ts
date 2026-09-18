@@ -78,7 +78,9 @@ describe('анализ запечённой походки', () => {
     const m = roundTrip(0.42);
     expect(gaitSuggestions(m, {}, false, 'walk_fwd').length).toBeGreaterThan(0);
     expect(gaitSuggestions(m, {}, false, 'walk_strafe_L')).toEqual([]);
-    expect(gaitSuggestions(m, {}, true, 'run_strafe_R_open'), 'набор «таз открыт» — тоже страйф').toEqual([]);
+    // ⚠ Набора `*_strafe_*_open` больше НЕТ (режим «таз открыт» снят 19.09, поворот таза стал обычной ручкой) —
+    // и суффикс из разбора имени убран вместе с ним: мёртвое имя обязано вести себя как ЧУЖОЕ, а не как страйф.
+    expect(gaitSuggestions(m, {}, true, 'run_strafe_R_open').length, 'мёртвое имя `_open` — не страйф').toBeGreaterThan(0);
     expect(gaitSuggestions(m, {}, true, 'run_back')).toEqual([]);
   });
 
