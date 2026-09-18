@@ -228,6 +228,70 @@ describe('интерполяция снапшотов', () => {
     expect(worst, 'рябь при 20 актёрах в снапшоте').toBeLessThan(1.5);
   });
 
+  /**
+   * ⭐⭐ КАЛИБРОВКА УМЕЕТ ВЫБРАТЬСЯ ИЗ ЛОЖНОГО ЗАМЕРА (`TICK_CAL_REJ`).
+   *
+   * Полоса «не дальше ×2 от текущего» защищает от лаг-спайка, но без выхода она же — ловушка: сел на
+   * ложное число один раз, и все настоящие замеры отвергаются НАВСЕГДА, скорость молча считается прежним
+   * путём по приходу, и ни один сторож этого не видит.
+   */
+  it('⭐⭐ КЛИН НА ПЕРВОМ ИНТЕРВАЛЕ (главный поток подвис, сообщения разобраны подряд) НЕ ТРАВИТ КАЛИБРОВКУ', () => {
+    // ⚠ Мутация «отвергать без счётчика» (как было до 19.09) валит это: рябь 11.9 % против 0.3 %.
+    const worst = (wedge: boolean): number => {
+      const ip = makeNetInterp();
+      let seed = 3;
+      const jit = (): number => { seed = (seed * 1664525 + 1013904223) >>> 0; return (seed / 0x100000000 - 0.5) * 0.010; };
+      let t = 0, z = 0, tick = 0, w = 0;
+      ip.push('a', 0, 0, 0, 0);
+      // Клин: Δтик 6 при Δприходе 2 мс — «секунда в тике» вышла бы 0.33 мс, и полоса отсечёт всё настоящее.
+      if (wedge) { tick += 6; t += 0.002; z += SPEED * 6 * TICK; ip.push('a', 0, z, t, tick); }
+      for (let k = 1; k <= 200; k++) {
+        tick += 1; z += SPEED * TICK; t = Math.max(0, tick * TICK + jit());
+        ip.push('a', 0, z, t, tick);
+        if (k > 60) w = Math.max(w, Math.abs(ip.at('a', t).vz - SPEED) / SPEED * 100);
+      }
+      return w;
+    };
+    const clean = worst(false), wedged = worst(true);
+    expect(clean, `без клина рябь ${clean.toFixed(2)} %`).toBeLessThan(1);
+    expect(wedged, `с клином рябь ${wedged.toFixed(2)} % (без выхода из полосы было 11.9 %)`).toBeLessThan(1);
+  });
+
+  it('⭐⭐ СМЕНА ТЕМПА СЕРВЕРА (30 → 10 Гц) ПОДХВАТЫВАЕТСЯ, а не отвергается навсегда', () => {
+    // ⚠ Та же мутация валит это: ЗАМЕР — скорость читалась 360 ед/с вместо 120 и не поправлялась НИКОГДА.
+    const ip = makeNetInterp();
+    let t = 0, z = 0, tick = 0;
+    ip.push('a', 0, 0, 0, 0);
+    for (let k = 1; k <= 120; k++) { tick += 1; t += TICK; z += SPEED * TICK; ip.push('a', 0, z, t, tick); }
+    expect(ip.at('a', t).vz, 'до смены').toBeCloseTo(SPEED, 3);
+    for (let k = 1; k <= 120; k++) { tick += 1; t += 0.1; z += SPEED * 0.1; ip.push('a', 0, z, t, tick); }
+    expect(ip.tickSec, 'новый темп замерен').toBeCloseTo(0.1, 4);
+    expect(ip.at('a', t).vz, `после смены ${ip.at('a', t).vz.toFixed(1)} (без выхода из полосы было 360)`).toBeCloseTo(SPEED, 3);
+  });
+
+  it('⭐⭐ БОЕВАЯ КАДЕНЦИЯ: сим 30 Гц, рассылка 20 — Δtick чередуется 2,1, а рябь остаётся долями процента', () => {
+    // ⚠ Мутация «среднее по коротким интервалам вместо длинной базы» валит это: ЗАМЕР — 1.12–1.57 % по
+    // восьми семенам против 0.21–0.27 %. На РОВНЫХ 30 Гц разницы почти нет (0.33 против 0.32), поэтому
+    // старая каденция стенда её и не показывала.
+    const worst = (seed0: number): number => {
+      const ip = makeNetInterp();
+      let seed = seed0 >>> 0;
+      const jit = (): number => { seed = (seed * 1664525 + 1013904223) >>> 0; return (seed / 0x100000000 - 0.5) * 0.010; };
+      let z = 0, tick = 0, acc = 0, w = 0, t = 0;
+      ip.push('a', 0, 0, 0, 0);
+      for (let k = 1; k <= 300; k++) {
+        acc += 30 / 20;
+        const d = Math.max(1, Math.round(acc)); acc -= d;      // 2, 1, 2, 1 … — ровно как `room.step`
+        tick += d; z += SPEED * d * TICK; t = Math.max(0, tick * TICK + jit());
+        ip.push('a', 0, z, t, tick);
+        if (k > 80) w = Math.max(w, Math.abs(ip.at('a', t).vz - SPEED) / SPEED * 100);
+      }
+      return w;
+    };
+    const all = [1, 2, 3, 4, 5, 6, 7, 8].map(worst);
+    expect(Math.max(...all), `рябь по восьми семенам: ${all.map((x) => x.toFixed(2))}`).toBeLessThan(0.6);
+  });
+
   it('учёт актёров: добавили и забыли', () => {
     const ip = makeNetInterp();
     ip.push('a', 0, 0, 0); ip.push('b', 0, 0, 0);

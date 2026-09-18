@@ -4,9 +4,10 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import {
   PosePlayer, localStorageContent, applyGaitConfig, loadTwistStates, loadFootLift, setLocoMixOverride,
+  TURN_ACCEL_SEC, WARP_ACCEL_SEC,
   type PoseContent, type GXKnobs, type TwistStates,
 } from './poseRuntime.js';
-import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS } from './clipBake.js';
+import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, openStrafePresets } from './clipBake.js';
 import { type Clip } from './clipModel.js';
 import { makeNetInterp } from './netInterp.js';
 import { driveActor, facingToYaw, type DriveState, type DrivenDoll } from './driveActor.js';
@@ -24,7 +25,7 @@ import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
  * может воспроизвести беду и контролем не является.
  *
  * Стенд собран из НАСТОЯЩИХ шипящих модулей, без единой переписанной копии:
- *   сервер 30 Гц (интеграция по постоянной скорости, дрожание прихода ±5 мс)
+ *   сервер БОЕВОЙ каденции (сим 30 Гц, рассылка 20 — см. `SIM_HZ`/`SNAP_HZ`; дрожание прихода ±5 мс)
  *     → `makeNetInterp` (`push` на снапшот, `at` на кадр — скорость держится постоянной между снапшотами)
  *     → `facingFrom` от НАРИСОВАННОЙ позиции к неподвижному курсору (ровно как `online3d.ts:775`)
  *     → `driveActor` (`setVel` → `setYaw` → `step`, порядок зеркалит `gamePlayerDoll.update`)
@@ -38,8 +39,11 @@ import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
  * Счётчики снимаются с приватных полей `PosePlayer` (в TS private — только на компиляции): защёлка `turning`,
  * сбросы `aimStableFor`, щелчки стороны страйфа `latRight`, срабатывания кроссфейда колонок, темп фазы клипа.
  *
- * ⚠ ПОРОГОВ ЗДЕСЬ ПОКА НЕТ. Единственная проверка — грубая санитарная (стенд вообще бежал и позировал);
- * настоящие сторожа ставятся ПОСЛЕ правки, числом из этого же замера.
+ * ⭐⭐ РЕВЮ 19.09 добавило сюда: боевую каденцию рассылки (`SNAP_HZ` 20 при симе 30 — Δtick чередуется 2,1;
+ * прежние 30 остались отдельной строкой матрицы), КАНАЛ ТАЗА в отчёте и сторожах (его не стерёг никто, и в
+ * дыру провалились две правки), сцены «встал посреди доворота» (`stopAt`/`stopLag`), «мышь событиями»
+ * (`mouseHz`/`aimW` — ввод квантован не кадром), «таз открыт» (`hipsMode`) и промахи мимо курсора меньше
+ * двух единиц (особая точка мягкой мёртвой зоны). Разбор находок — в README, раздел «Ревью 19.09».
  *
  * ЗАПУСК ПОЛНОЙ МАТРИЦЫ (сценарии × частоты × абляции, ~70 с):
  *   TJ_FULL=1 npx vitest run packages/client/src/render3d/torsoJitter.test.ts
@@ -142,6 +146,9 @@ beforeAll(() => {
   const p = new PosePlayer(h, () => [], localStorageContent(CHAR), 'none', GX, plant, loadTwistStates(CHAR));
   lib = new Map();
   for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: CHAR, weapon: 'none' }).clip);
+  // ⭐ Набор «таз открыт» (`*_strafe_*_open`) — без него `hipsMode` 1 в «только клипы» не делает НИЧЕГО
+  // (`openClipDeg` остаётся null), и сцены с раскрытием молча мерили бы «ровно».
+  for (const s of openStrafePresets(GAIT_BASE.hipsOpen ?? 35, GAIT_BASE.hipsOpenWalk ?? 10)) lib.set(s.name, bakeGaitToClip(p, h, s, { character: CHAR, weapon: 'none' }).clip);
   for (const r of bakeTurnSet(p, h, { character: CHAR, weapon: 'none' })) lib.set(r.clip.name, r.clip);
 });
 afterAll(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
@@ -215,14 +222,42 @@ interface Scene {
    */
   dMin?: number;
   tMin?: number;
+  /**
+   * ⭐ ВВОД СОБЫТИЯМИ: стоим на месте, прицел ведём мышью `mouseHz` событий в секунду со скоростью `aimW` рад/с.
+   * Именно так приходит мышь (125 Гц у обычной, 1000 у игровой), и именно на этом видно, что порог
+   * «прицел стоит» обязан быть РАТОЙ, а не сравнением приращения за кадр (см. `AIM_STILL_RATE`).
+   */
+  mouseHz?: number;
+  aimW?: number;
+  /**
+   * ⭐ «ВСТАЛ И ДОВОРАЧИВАЮСЬ К МОНСТРУ». В этот момент сервер роняет скорость в НОЛЬ ЗА ТИК
+   * (`balance.moveInertia.enabled` false — инерции нет вовсе), клиент гасит предсказание (`brake`), а
+   * прицел продолжает ехать `aimW` рад/с (игрок ведёт мышь). Ровно тот стык, на котором «разгон только
+   * на ходу» переключает привод таза посреди доворота.
+   */
+  stopAt?: number;
+  /** Через сколько после начала доворота игрок отпускает кнопку (сек). Ноль — встал ровно в тот же кадр. */
+  stopLag?: number;
+  /** `GAIT.hipsMode` на прогон: 1 — «таз открыт» (раскрытие тоже едет в рыск таза). */
+  hipsMode?: 0 | 1;
 }
 type Abl = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J';
 
-interface Row { t: number; ch: number[]; q: THREE.Quaternion[]; aim: number; turning: boolean; stable: number; lat: boolean; fade: number; phase: number; turnClip: string | null; sector: number; spd: number }
+interface Row { t: number; ch: number[]; q: THREE.Quaternion[]; aim: number; turning: boolean; stable: number; lat: boolean; fade: number; phase: number; turnClip: string | null; sector: number; spd: number; rate: number; hold: boolean }
 
-interface RunOpts { sc: Scene; hz: number; abl: Abl; secs?: number; jitter?: boolean; seed?: number }
+interface RunOpts { sc: Scene; hz: number; abl: Abl; secs?: number; jitter?: boolean; seed?: number; snapHz?: number }
 
-const SNAP_HZ = 30;
+/**
+ * ⭐⭐ КАДЕНЦИЯ СЕРВЕРА — ДВА РАЗНЫХ ЧИСЛА, и стенд обязан держать оба.
+ *
+ * `SIM_HZ` — темп симуляции и ЕДИНИЦА поля `tick` (`scheduler.TICK_MS` = 1000/30). `SNAP_HZ` — темп
+ * РАССЫЛКИ снапшотов (`room.SNAPSHOT_HZ`, умолчание 20). Они развязаны, поэтому Δtick между снапшотами
+ * ЧЕРЕДУЕТСЯ 2, 1, 2, 1 — и калибровка «секунд в тике» видит попеременно длинный и короткий интервал.
+ * ⚠ Первая версия стенда слала 30 снапшотов в секунду (Δtick всегда 1) — это НЕ боевая каденция, и
+ * остаточная рябь скорости на ней выходила втрое меньше настоящей. Умолчание здесь — боевое (20).
+ */
+const SIM_HZ = 30;
+const SNAP_HZ = 20;
 
 function run(o: RunOpts): Row[] {
   const { sc, hz } = o;
@@ -230,6 +265,7 @@ function run(o: RunOpts): Row[] {
   const twist = loadTwistStates(CHAR);
   if (o.abl === 'E') for (const k of ['stand', 'walk', 'run'] as const) twist[k].relaxTime = Infinity;
   const doll = makeDoll(twist, withLib(localStorageContent(CHAR)));
+  GAIT.hipsMode = sc.hipsMode ?? 0;
   setLocoMixOverride(o.abl === 'G' ? 0 : 1);
 
   // Курсор стоит на месте ВПЕРЕДИ (+X). Ход: вперёд +X (сближаемся) или назад −X (удаляемся, лицом к курсору).
@@ -240,25 +276,33 @@ function run(o: RunOpts): Row[] {
       : { x: sc.r0 * Math.cos(b), y: sc.r0 * Math.sin(b) };
   const x0 = sc.dMin != null ? -vx * (sc.tMin ?? 5) : 0, z0 = 0;
 
-  // ── сервер 30 Гц: интегрирует по постоянной скорости, шлёт снапшот каждые 1/30 с с дрожанием прихода ──
+  // ── сервер: сим 30 Гц, рассылка `snapHz` (Δtick чередуется 2,1 при 20), дрожание прихода ±5 мс ──
   let seed = (o.seed ?? 1) >>> 0;
   const rnd = (): number => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
   const snaps: { x: number; z: number; at: number; tick: number }[] = [];
-  for (let k = 0; k * (1 / SNAP_HZ) <= secs + 1; k++) {
-    const st = k / SNAP_HZ;
-    const j = o.jitter ? (rnd() - 0.5) * 0.010 : 0;      // ±5 мс
-    snaps.push({ x: x0 + vx * st, z: z0 + vz * st, at: Math.max(0, st + j), tick: k });
+  {
+    const snapHz = o.snapHz ?? SNAP_HZ;
+    let tick = 0, acc = 0;
+    for (; tick / SIM_HZ <= secs + 1; ) {
+      const st = tick / SIM_HZ, sm = Math.min(st, sc.stopAt != null ? sc.stopAt + (sc.stopLag ?? 0) : Infinity);
+      const j = o.jitter ? (rnd() - 0.5) * 0.010 : 0;      // ±5 мс
+      snaps.push({ x: x0 + vx * sm, z: z0 + vz * sm, at: Math.max(0, st + j), tick });
+      acc += SIM_HZ / snapHz;                              // 1.5 при 20 Гц → шаг тика 2, 1, 2, 1 …
+      const d = Math.max(1, Math.round(acc)); acc -= d; tick += d;
+    }
   }
 
   const interp = makeNetInterp();
   const ID = 'pself';
   const state: DriveState = { d: doll, vx: 0, vz: 0, lx: x0, lz: z0 };
-  let facing = Math.atan2(cursor.y - z0, cursor.x - x0);          // старт: смотрим на курсор
+  const aim0 = Math.atan2(cursor.y - z0, cursor.x - x0);
+  let facing = aim0, aimStop = aim0;                              // старт: смотрим на курсор
   let si = 0, drawX = x0, drawZ = z0;
   const rows: Row[] = [];
   const priv = doll.p as unknown as {
     turning: boolean; aimStableFor: number; clipPhase: number;
     colPrev: { latRight: boolean }; colFade: { w: number }; dirWarp: { sector: number };
+    leadRate: number; turnAccelHold: boolean;
   };
   const qtmp = TORSO.map(() => new THREE.Quaternion());
 
@@ -276,6 +320,9 @@ function run(o: RunOpts): Row[] {
       else interp.push(ID, sn.x, sn.z, sn.at, sn.tick);
       si++;
     }
+    // Отпустил кнопку: клиент гасит предсказание СВОЕЙ скорости мгновенно (инерции в балансе нет) —
+    // ровно `online3d.ts`, `interp.brake(focus, Infinity, …)`.
+    if (sc.stopAt != null && t >= sc.stopAt + (sc.stopLag ?? 0)) interp.brake(ID, Infinity, t, dt);
     const ip = interp.at(ID, t);
     const exact = { x: x0 + vx * t, z: z0 + vz * t };
     // ── позиция кадра и скорость: что именно видит кукла ──
@@ -283,9 +330,16 @@ function run(o: RunOpts): Row[] {
     drawX = drawn.x; drawZ = drawn.z;
     const vel = o.abl === 'B' || o.abl === 'C' || o.abl === 'H' ? { x: vx, z: vz } : { x: ip.vx, z: ip.vz };
     // ── прицел: РОВНО как `online3d.ts:775` — от НАРИСОВАННОЙ позиции к неподвижному курсору ──
-    if (o.abl === 'D' || o.abl === 'H') { /* прицел постоянный: не трогаем `facing` */ }
+    // ⭐ Мышь СОБЫТИЯМИ: курсор переставляется `mouseHz` раз в секунду, между событиями прицел СТОИТ.
+    // Кадр видит либо ноль, либо целый скачок события — и порог «прицел стоит» обязан этого не замечать.
+    if (sc.mouseHz) facing = aim0 + (sc.aimW ?? 0) * Math.floor(t * sc.mouseHz) / sc.mouseHz;
+    // После остановки прицел ведёт мышь (игрок доворачивается к монстру), а не пеленг на курсор.
+    // Дуга ограничена 90°: развернулись к монстру и встали — иначе прицел уезжает кругами и мера меряет кламп скрутки.
+    else if (sc.stopAt != null && t >= sc.stopAt) facing = aimStop + Math.min(Math.PI / 2, (sc.aimW ?? 0) * (t - sc.stopAt));
+    else if (o.abl === 'D' || o.abl === 'H') { /* прицел постоянный: не трогаем `facing` */ }
     else if (o.abl === 'C') facing = facingFrom(facing, cursor, exact.x, exact.z, { x: 0, y: 0 }, true, 0);
     else facing = facingFrom(facing, cursor, drawX, drawZ, { x: 0, y: 0 }, true, AIM_DEAD);
+    if (sc.stopAt != null && t < sc.stopAt) aimStop = facing;   // от какого угла мышь поведёт дугу после остановки
 
     driveActor(state, drawX, drawZ, facing, true, dt, { vel, combat: false });
 
@@ -302,16 +356,17 @@ function run(o: RunOpts): Row[] {
       t, ch, q, aim: facing, turning: priv.turning, stable: priv.aimStableFor,
       lat: priv.colPrev.latRight, fade: priv.colFade.w, phase: priv.clipPhase, turnClip: doll.p.turnClipName,
       sector: priv.dirWarp.sector, spd: Math.hypot(vel.x, vel.z),
+      rate: priv.leadRate, hold: priv.turnAccelHold,
     });
   }
-  setLocoMixOverride(null);
+  setLocoMixOverride(null); GAIT.hipsMode = 0;
   return rows;
 }
 
 // ─────────────────────────── меры ───────────────────────────
 
 interface ChStat { d1p99: number; d1max: number; d2p99: number; d2max: number; qp99: number; qmax: number; rev: number }
-interface Stat { ch: Record<Chan, ChStat>; turnTog: number; stabRst: number; latFlip: number; xfade: number; phaseRate: number; turnClips: number; sectFlip: number; rateLim: number; spdErr: number; spdD1: number; secs: number; lagP99: number; lagMax: number }
+interface Stat { ch: Record<Chan, ChStat>; turnTog: number; stabRst: number; latFlip: number; xfade: number; phaseRate: number; turnClips: number; sectFlip: number; rateLim: number; spdErr: number; spdD1: number; secs: number; lagP99: number; lagMax: number; stopStep: number }
 
 const pct = (a: number[], p: number): number => {
   if (!a.length) return 0;
@@ -326,7 +381,7 @@ const pct = (a: number[], p: number): number => {
  * что и у дёрганого, а вот `rev` (смен знака в секунду) и `d2` (°/с²) отличаются в разы. Поэтому в отчёте
  * стоят обе колонки, а контролем всегда идёт абляция H (путь редактора).
  */
-function stats(rows: Row[], hz: number, warm = 2): Stat {
+function stats(rows: Row[], hz: number, warm = 2, stopAt?: number): Stat {
   const dt = 1 / hz, i0 = Math.round(warm * hz);
   const w = rows.slice(i0);
   const ch = {} as Record<Chan, ChStat>;
@@ -366,10 +421,27 @@ function stats(rows: Row[], hz: number, warm = 2): Stat {
   const spdErr = tru > 1e-6 ? Math.max(...sp.map((v) => Math.abs(v - tru))) / tru * 100 : 0;
   const sd: number[] = [];
   for (let i = 1; i < w.length; i++) sd.push(Math.abs(sp[i]! - sp[i - 1]!) / dt);
+  /**
+   * ⭐ РЫВОК САМОГО ПРИВОДА ТАЗА (канал `rootYaw`, °/с²) в окне остановки. Мера точечная и НЕ по `Hips`:
+   * в мировом курсе таза на остановке живёт ещё и схлопывание доворота (`moving` false → цель 0), оно
+   * ограничено своим пределом и к закону привода отношения не имеет. Здесь мерится ровно то, что
+   * переключал порог «разгон только на ходу»: приращение скорости доворота за кадр, делённое на кадр.
+   * У ограничителя приращения потолок — `turnRate / TURN_ACCEL_SEC` и он НЕ зависит от частоты кадров;
+   * у прежнего переключения закона рывок рос вместе с ней.
+   */
+  let stopStep = 0;
+  if (stopAt != null) {
+    const hi = CHAN.indexOf('rootYaw');
+    for (let i = 2; i < w.length; i++) {
+      if (w[i]!.t < stopAt - 0.01 || w[i]!.t > stopAt + 0.06) continue;
+      const a = wrapPi(w[i]!.ch[hi]! - w[i - 1]!.ch[hi]!) * DEG / dt, b = wrapPi(w[i - 1]!.ch[hi]! - w[i - 2]!.ch[hi]!) * DEG / dt;
+      stopStep = Math.max(stopStep, Math.abs(a - b) / dt);
+    }
+  }
   return {
     ch, turnTog: turnTog / secs, stabRst: stabRst / secs, latFlip: latFlip / secs, xfade: xfade / secs,
     phaseRate, turnClips, sectFlip, rateLim: rateLim / (w.length - 1), spdErr, spdD1: pct(sd, 0.99), secs,
-    lagP99: pct(lag, 0.99), lagMax: Math.max(0, ...lag),
+    lagP99: pct(lag, 0.99), lagMax: Math.max(0, ...lag), stopStep,
   };
 }
 
@@ -391,6 +463,32 @@ const SCENES: readonly Scene[] = [
   { name: 'back45_r80', spd: 80, r0: 80, bearingDeg: 45, recede: true },
   { name: 'cross_miss25', spd: 80, r0: 300, bearingDeg: 0, missU: 25 },   // проходим рядом: пеленг разворачивается быстро
   { name: 'cross_miss4', spd: 80, r0: 300, bearingDeg: 0, missU: 4 },     // ВНУТРЬ мёртвой зоны (AIM_DEAD 10): её и ловим
+  /**
+   * ⭐ ПОЧТИ СКВОЗЬ КУРСОР. У мягкой зоны в середине радиуса есть ОСОБАЯ ТОЧКА: примесь прежнего
+   * направления длиной `dead − r` ровно гасит вектор на курсор, когда пеленг ему противоположен и
+   * `r = dead / 2`. Смесь — ноль, `atan2(0, 0)` = 0 (мировой +X), и прицел щёлкает на пол-оборота.
+   * Промах 1 и 0.05 ед проводят ровно через эту точку — на 4 ед она не достигается.
+   */
+  { name: 'cross_miss1', spd: 80, r0: 300, bearingDeg: 0, missU: 1 },
+  { name: 'cross_miss005', spd: 80, r0: 300, bearingDeg: 0, missU: 0.05 },
+  /**
+   * ⭐ МЫШЬ СОБЫТИЯМИ, СТОЯ. 125 Гц — обычная офисная мышь; кадр на 240 Гц видит либо ноль, либо целое
+   * событие. Порог «прицел стоит» обязан мерить РАТУ, а не приращение за кадр, иначе один и тот же
+   * медленный увод мыши включает выравнивание таза на одной машине и не включает на другой.
+   */
+  { name: 'mouse125_w04', spd: 0, r0: 300, bearingDeg: 0, mouseHz: 125, aimW: 0.4 },
+  { name: 'mouse125_w02', spd: 0, r0: 300, bearingDeg: 0, mouseHz: 125, aimW: 0.2 },
+  /** «Встал и доворачиваюсь к монстру»: бег → стоп за тик, дальше мышь ведёт прицел 2 рад/с. */
+  { name: 'stop_face', spd: 80, r0: 300, bearingDeg: 5, stopAt: 5, aimW: 2, stopLag: 0.03 },
+  /**
+   * ⭐ ОСТАНОВКА ПОСРЕДИ ДОВОРОТА — ровно тот стык, на котором «разгон только на ходу» менял ЗАКОН привода.
+   * Проходим в 25 ед от курсора (таз в этот миг доворачивается на упоре) и отпускаем кнопку на 3.78 с.
+   */
+  { name: 'stop_mid', spd: 80, r0: 300, bearingDeg: 0, missU: 25, stopAt: 3.78, aimW: 0, stopLag: 0 },
+  { name: 'stop_mid2', spd: 80, r0: 300, bearingDeg: 0, missU: 25, stopAt: 3.9, aimW: 0, stopLag: 0 },
+  /** «Таз открыт» (`hipsMode` 1): раскрытие ±35° едет в рыск таза наравне с доворотом. */
+  { name: 'fwd20_open', spd: 80, r0: 300, bearingDeg: 20, hipsMode: 1 },
+  { name: 'cross_miss25_open', spd: 80, r0: 300, bearingDeg: 0, missU: 25, hipsMode: 1 },
 ];
 /**
  * ⭐ ПОЛОСА ПОРОГА «ПРИЦЕЛ СТОИТ». Сближение на `dMin` при 80 ед/с даёт скорость прицела `80 / dMin` рад/с;
@@ -401,6 +499,8 @@ const BAND: readonly Scene[] = ([400, 133, 90, 55, 25] as const).map((d) => (
   { name: `band_d${d}`, spd: 80, r0: 0, bearingDeg: 0, dMin: d, tMin: 5 }));
 const SPEEDS = [40, 80, 120];
 const RATES = [60, 120, 144];
+/** Для ВВОДА СОБЫТИЯМИ нужна и частота ВЫШЕ частоты мыши: на 240 Гц кадр видит ровно одно событие или ноль. */
+const MRATES = [60, 120, 144, 240];
 const ABLS: readonly Abl[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
 const ABL_NAME: Record<Abl, string> = {
   A: 'база', B: 'точная скорость', C: 'аналит. пеленг без мёртвой зоны', D: 'постоянный прицел',
@@ -411,17 +511,19 @@ const ABL_NAME: Record<Abl, string> = {
 
 const f2 = (v: number): string => (Number.isFinite(v) ? v.toFixed(1).padStart(6) : '   n/a');
 const HEAD = [
-  'ключ'.padEnd(28), 'Hips d1 p99/ max'.padStart(15), 'rootd1'.padStart(7), 'warpd1'.padStart(7),
+  'ключ'.padEnd(28), 'Hips d1 p99/ max'.padStart(15), 'Hips d2 p99/ max'.padStart(15),
+  'rootd1'.padStart(7), 'warpd1/ max'.padStart(14),
   'Chest d1 p99/ max'.padStart(15), 'Chest d2'.padStart(8), 'UChest d1 p99/max'.padStart(15),
-  ' rev/s', ' turn/s', ' stab/s', '  lim%', ' sect', '  lat/s', '   xf/s', ' phase', ' vErr%', ' vD1', ' lag99', ' lagMx',
+  ' rev/s', ' turn/s', ' stab/s', '  lim%', ' sect', '  lat/s', '   xf/s', ' phase', ' vErr%', ' vD1', ' lag99', ' lagMx', ' stopΔ',
 ].join(' ');
 function line(key: string, s: Stat): string {
   const c = (n: Chan): string => `${f2(s.ch[n].d1p99)}/${f2(s.ch[n].d1max)}`;
   return [
-    key.padEnd(28), c('Hips'), f2(s.ch.rootYaw.d1p99).slice(1), f2(s.ch.warp.d1p99).slice(1), c('Chest'),
+    key.padEnd(28), c('Hips'), `${f2(s.ch.Hips.d2p99)}/${f2(s.ch.Hips.d2max)}`,
+    f2(s.ch.rootYaw.d1p99).slice(1), c('warp'), c('Chest'),
     f2(s.ch.Chest.d2p99).padStart(8), c('UpperChest'), f2(s.ch.Chest.rev), f2(s.turnTog), f2(s.stabRst),
     f2(s.rateLim * 100), `${String(s.sectFlip).padStart(4)}`, f2(s.latFlip), f2(s.xfade), f2(s.phaseRate),
-    f2(s.spdErr), f2(s.spdD1), f2(s.lagP99), f2(s.lagMax),
+    f2(s.spdErr), f2(s.spdD1), f2(s.lagP99), f2(s.lagMax), f2(s.stopStep),
   ].join(' ');
 }
 
@@ -438,19 +540,19 @@ function line(key: string, s: Stat): string {
  * имеют права вовсе. Рывок стережём абсолютными потолками на каждой частоте.
  */
 const MEMO = new Map<string, Stat>();
-const st = (sc: Scene, hz: number, abl: Abl = 'A'): Stat => {
-  const key = `${sc.name}|${hz}|${abl}`;
+const st = (sc: Scene, hz: number, abl: Abl = 'A', snapHz = SNAP_HZ): Stat => {
+  const key = `${sc.name}|${hz}|${abl}|${snapHz}`;
   let v = MEMO.get(key);
-  if (!v) { v = stats(run({ sc, hz, abl, jitter: abl !== 'H', secs: sc.dMin ? 12 : 10 }), hz); MEMO.set(key, v); }
+  if (!v) { v = stats(run({ sc, hz, abl, snapHz, jitter: abl !== 'H', secs: sc.dMin ? 12 : 10 }), hz, 2, sc.stopAt); MEMO.set(key, v); }
   return v;
 };
 const SC = (n: string): Scene => [...SCENES, ...BAND].find((x) => x.name === n)!;
 
 describe('подёргивание корпуса на бегу: сторожа', () => {
   it('⭐⭐ СЧЁТЧИКИ ЛОГИКИ НЕ ЗАВИСЯТ ОТ ЧАСТОТЫ КАДРОВ (порог «прицел стоит» — в секунду, а не на кадр)', () => {
-    // ⚠ Мутация «порог на кадр» (`|Δприцел| < 0.01` вместо `AIM_STILL_RATE * dt`) валит это.
+    // ⚠ Мутация «порог на кадр» (`|Δприцел| < 0.01` вместо `AIM_STILL_RATE`) валит это.
     // ЗАМЕР ДО правки: переключений `turning` 5.8 → 22.5 → 27.0 в секунду при 60 / 120 / 144 (4.7×),
-    // сбросов «прицел стоит» 0.6 → 0.0 → 0.0. СТАЛО: 3.8 / 4.0 / 4.2 и 0.6 / 0.5 / 0.5.
+    // сбросов «прицел стоит» 0.6 → 0.0 → 0.0. СТАЛО: 3.1 / 2.8 / 3.0 и 0.1 / 0.1 / 0.1.
     for (const nm of ['fwd20_r300', 'band_d133', 'cross_miss25']) {
       const sc = SC(nm), a = RATES.map((hz) => st(sc, hz));
       const rng = (f: (s: Stat) => number): number => {
@@ -463,17 +565,34 @@ describe('подёргивание корпуса на бегу: сторожа'
     }
   }, 180_000);
 
+  it('⭐⭐ СОБЫТИЙНЫЙ ВВОД (мышь 125 Гц, стоим): «прицел стоит» решается ОДИНАКОВО на 60…240 кадрах', () => {
+    // ⚠ Мутация «скорость прицела = |Δ| / кадр» (как было до 19.09) валит это: ЗАМЕР при увода прицела
+    // 0.4 рад/с — сбросов «прицел стоит» 0.0 / 5.0 / 0.0 / 115.0 в секунду при 60 / 120 / 144 / 240 и
+    // отставание таза p99 47.5 / 101.5 / 47.4 / 133.8°, то есть выравнивание таза включалось на одной
+    // машине и не включалось на другой. СТАЛО: 0.0 везде и 47.5 / 47.4 / 47.4 / 47.4°.
+    for (const nm of ['mouse125_w04', 'mouse125_w02']) {
+      const sc = SC(nm), a = MRATES.map((hz) => st(sc, hz));
+      expect(Math.max(...a.map((x) => x.stabRst)), `${nm}: сбросов «прицел стоит» ${a.map((x) => x.stabRst.toFixed(1))}`).toBeLessThan(0.5);
+      const lag = a.map((x) => x.lagP99);
+      expect(Math.max(...lag) / Math.min(...lag), `${nm}: отставание таза ${lag.map((x) => x.toFixed(1))}`).toBeLessThan(1.15);
+      const tt = a.map((x) => x.turnTog);
+      expect(Math.max(...tt) - Math.min(...tt), `${nm}: переключений turning ${tt.map((x) => x.toFixed(1))}`).toBeLessThan(0.6);
+    }
+  }, 300_000);
+
   it('⭐⭐ РЫВОК КОРПУСА НА ПРЯМОМ БЕГУ: потолок на каждой частоте (разгон таза + скорость по тику)', () => {
     // ⚠ Мутации, каждая валит свою строку: «разгон таза выключен» (`TURN_ACCEL_SEC` мимо `stepTorsoLead`)
     // и «скорость по приходу, без серверного тика» (`netInterp.push` без `tick`).
-    // ЗАМЕР рывка груди p99 (°/с²) при 60 / 120 / 144, до → после:
-    //   бег вперёд     6874 / 17332 / 21520 → 3670 / 6877 / 7858
-    //   бег спиной 45° 4271 / 11904 / 15191 → 2525 / 2472 / 2357
+    // ЗАМЕР рывка груди p99 (°/с²) при 60 / 120 / 144 на БОЕВОЙ каденции (сим 30 Гц, рассылка 20), до → после:
+    //   бег вперёд 20°  4057 /  6401 /  8279 → 2062 / 1995 / 2158
+    //   бег вперёд 45°  4109 /  8280 /  9786 → 2366 / 2357 / 2228
+    //   бег спиной 45°  2579 /  2294 /  2207 → 1832 / 1697 / 1906
     // Контроль (путь редактора) — 494 / 499 / 502 на всех частотах.
     const CAP: Record<string, [number, number, number]> = {
-      fwd20_r300: [5200, 9500, 11000],
-      back45_r300: [3600, 3600, 3600],
-      back20_r300: [2600, 2600, 2600],
+      fwd20_r300: [2800, 2800, 2900],
+      fwd45_r300: [3200, 3200, 3100],
+      back45_r300: [2500, 2500, 2600],
+      back20_r300: [2200, 2500, 2200],
     };
     for (const [nm, caps] of Object.entries(CAP)) {
       const sc = SC(nm);
@@ -490,22 +609,72 @@ describe('подёргивание корпуса на бегу: сторожа'
     }
   }, 180_000);
 
+  it('⭐⭐ КАНАЛ ТАЗА ТОЖЕ СТЕРЕЖЁТСЯ: рывок `Hips` ограничен разгонами и НЕ растёт с частотой кадров', () => {
+    // ⚠ ЭТОГО СТОРОЖА НЕ БЫЛО ВОВСЕ, и в дыру провалились сразу две правки: закон торможения таза
+    // обрывался защёлкой (`TWIST_SETTLE`), а предел доворота резал ШАГ, а не ускорение. Обе мутации —
+    // «интегрировать по `turning`, а не по `rate`» и «`WARP_ACCEL_SEC` мимо `stepDirWarp`» — валят это.
+    // ЗАМЕР рывка таза max (°/с²) при 60 / 120 / 144, до → после:
+    //   бег вперёд 20°   19 098 / 38 865 / 43 406 → 6 041 / 7 865 / 7 865
+    //   бег вперёд 45°   20 865 / 38 865 / 46 065 → 7 865 / 7 865 / 7 865
+    //   бег спиной 45°    5 730 / 11 459 / 14 324 → 3 145 / 3 362 / 3 410
+    //   мимо курсора     20 357 / 41 019 / 49 390 → 5 000 / 5 000 / 5 940
+    // Потолок не с потолка: это СУММА двух документированных пределов ускорения —
+    // `turnRate / TURN_ACCEL_SEC` (2865 °/с² на бегу) и `warpRate / WARP_ACCEL_SEC` (5000 °/с²).
+    const cap = (GAIT.warpRate / WARP_ACCEL_SEC + 3 * DEG / TURN_ACCEL_SEC) * 1.3;
+    for (const nm of ['fwd20_r300', 'fwd45_r300', 'back45_r300', 'back20_r300', 'cross_miss25', 'cross_miss4', 'band_d133']) {
+      const sc = SC(nm), v = RATES.map((hz) => st(sc, hz).ch.Hips.d2max);
+      for (let i = 0; i < RATES.length; i++) {
+        expect(v[i]!, `${nm} @${RATES[i]}: рывок таза ${v[i]!.toFixed(0)} (потолок ${cap.toFixed(0)})`).toBeLessThan(cap);
+      }
+      expect(Math.max(...v) / Math.min(...v), `${nm}: рост с частотой кадров ${v.map((x) => x.toFixed(0))}`).toBeLessThan(1.6);
+    }
+  }, 300_000);
+
+  it('⭐ ОСТАНОВКА ПОСРЕДИ ДОВОРОТА: закон привода таза НЕ ПЕРЕКЛЮЧАЕТСЯ (`turnAccelHold`)', () => {
+    // ⚠ Мутация «разгон снимается скоростью НОГ» (`spd > MOVE_EPS_WARP` вместо `turnAccelHold`) валит это.
+    // Инерции в балансе нет (`moveInertia.enabled` false), скорость падает 80 → 0 ЗА ТИК, и таз посреди
+    // доворота перескакивал с разогнанной скорости на полный `turnRate`. ЗАМЕР рывка привода таза (°/с²)
+    // при 60 / 120 / 144: 6 876 / 13 751 / 16 501 → 4 775 / 4 775 / 4 775 — ровно `turnRate / TURN_ACCEL_SEC`
+    // стоячего профиля, и рост с частотой кадров исчез.
+    const cap = 5 / TURN_ACCEL_SEC * DEG * 1.3;   // turnRate стоя (опубликованный воин) / разгон
+    for (const nm of ['stop_mid', 'stop_mid2']) {
+      const sc = SC(nm);
+      for (const abl of ['A', 'G'] as const) {
+        const v = RATES.map((hz) => st(sc, hz, abl).stopStep);
+        for (let i = 0; i < RATES.length; i++) {
+          expect(v[i]!, `${nm}|${abl} @${RATES[i]}: рывок привода ${v[i]!.toFixed(0)}`).toBeLessThan(cap);
+        }
+        expect(Math.max(...v) / Math.max(1, Math.min(...v)), `${nm}|${abl}: рост с кадрами ${v.map((x) => x.toFixed(0))}`).toBeLessThan(1.2);
+      }
+    }
+  }, 300_000);
+
   it('⭐ ПРОХОД СКВОЗЬ КУРСОР (мёртвая зона) НЕ ДАЁТ ОДНОКАДРОВОГО СКАЧКА', () => {
     // ⚠ Мутация «жёсткая мёртвая зона» (`r > dead` → прежний угол) валит это: ЗАМЕР на проходе в 4 ед —
     // верх груди 2666 / 5068 / 5922 °/с при 60 / 120 / 144, РОВНО линейно по частоте (подпись скачка за кадр).
-    // СТАЛО: 651 / 711 / 723 — и роста нет. Без зоны вовсе было бы 683 / 740 / 749, то есть цена зоны ушла.
+    // СТАЛО: 624 / 683 / 654 — и роста нет. Без зоны вовсе было бы 683 / 740 / 749, то есть цена зоны ушла.
+    // ⚠ И ПРОМАХ МЕНЬШЕ ДВУХ ЕДИНИЦ — тоже: там у прежней ВЕКТОРНОЙ смеси была особая точка (см.
+    // `selfFacing.test.ts`). ЗАМЕР верха груди на промахе 0.05 ед: 3035 / 4111 / 4196 → 1673 / 2318 / 2706.
     const sc = SC('cross_miss4'), v = RATES.map((hz) => st(sc, hz).ch.UpperChest.d1max);
     for (const hz of RATES) {
       const s = st(sc, hz);
       expect(s.ch.UpperChest.d1max, `проход в 4 ед @${hz}: верх груди ${s.ch.UpperChest.d1max.toFixed(0)} °/с`).toBeLessThan(1000);
     }
     expect(Math.max(...v) / Math.min(...v), `рост с частотой кадров: ${v.map((x) => x.toFixed(0))}`).toBeLessThan(1.4);
+    for (const [nm, cap] of [['cross_miss1', 2200], ['cross_miss005', 3400]] as const) {
+      for (const hz of RATES) {
+        const s = st(SC(nm), hz);
+        expect(s.ch.UpperChest.d1max, `${nm} @${hz}: верх груди ${s.ch.UpperChest.d1max.toFixed(0)} °/с`).toBeLessThan(cap);
+      }
+    }
   }, 180_000);
 
-  it('⭐ ХЛЫСТ ДОВОРОТА НА ПЕРЕБРОСЕ СЕКТОРА ОГРАНИЧЕН (`GAIT.warpRate`)', () => {
+  it('⭐ ХЛЫСТ ДОВОРОТА НА ПЕРЕБРОСЕ СЕКТОРА ОГРАНИЧЕН (`GAIT.warpRate`) — И С «ТАЗ ОТКРЫТ» ТОЖЕ', () => {
     // ⚠ Мутация «предела скорости доворота нет» (`rateDeg` 0) валит это: ЗАМЕР — канал доворота p99
     // 400–435 °/с при пике 610–795, то есть вчетверо выше физического потолка torso-lead (172 °/с).
-    // СТАЛО: ровно потолок 300. Сцены выбраны так, чтобы переброс сектора в окне ЗАМЕРА точно был.
+    // ⚠ Мутация «предел только на довороте, раскрытие мимо» (как было до 19.09) валит строки `_open`:
+    // 35° раскрытия переезжали за `warpSmooth` свободно, и ЗАМЕР давал 350 / 356 / 353 и 359 / 366 / 369 °/с
+    // против потолка 300. Сцены выбраны так, чтобы переброс сектора в окне ЗАМЕРА точно был.
     const cap = GAIT.warpRate * 1.02;
     for (const nm of ['fwd20_r300', 'cross_miss25', 'band_d133']) {
       const sc = SC(nm);
@@ -515,23 +684,38 @@ describe('подёргивание корпуса на бегу: сторожа'
         expect(s.ch.warp.d1max, `${nm} @${hz}: доворот ${s.ch.warp.d1max.toFixed(0)} °/с`).toBeLessThan(cap);
       }
     }
-  }, 180_000);
+    // «Таз открыт»: и в «только клипы» (A), и на процедурке (G) — там раскрытие едет в `legsOpen`.
+    for (const nm of ['fwd20_open', 'cross_miss25_open']) {
+      const sc = SC(nm);
+      for (const abl of ['A', 'G'] as const) for (const hz of RATES) {
+        const s = st(sc, hz, abl);
+        expect(s.sectFlip, `${nm}|${abl} @${hz}: сторож пустой`).toBeGreaterThan(0);
+        expect(s.ch.warp.d1max, `${nm}|${abl} @${hz}: рыск таза ${s.ch.warp.d1max.toFixed(0)} °/с`).toBeLessThan(cap * 1.03);
+      }
+    }
+  }, 300_000);
 
   it('⭐⭐ РЯБЬ ОЦЕНКИ СКОРОСТИ — ОТ ЧАСОВ СЕРВЕРА, А НЕ ОТ ПРИХОДА СНАПШОТА', () => {
     // ⚠ Мутация «скорость по интервалу прихода» (`netInterp.push` без `tick`) валит это — она же абляция J.
-    // ЗАМЕР: дрожание прихода ±5 мс даёт 11.2–11.8 % ряби при делении на интервал ПРИХОДА и 0.3–0.4 % на
-    // `Δтик × секунд-в-тике`. Рябью живёт всё, что растёт из скорости: `moveMag`, оси бленда, часы клипа.
+    // ⚠ И мутация «среднее по коротким интервалам вместо длинной базы» валит СТРОКУ 20 Гц: на БОЕВОЙ
+    // каденции (сим 30 Гц, рассылка 20 — Δtick чередуется 2, 1) среднее давало 1.6 %, то есть выше
+    // собственного порога прежнего сторожа; на ровных 30 Гц разницы почти не было (0.33 против 0.32),
+    // поэтому прежняя каденция стенда её не показывала вовсе.
+    // ЗАМЕР ряби (%) при 60 / 120 / 144: рассылка 20 Гц 1.64 / 1.72 / 1.72 → 0.22 / 0.21 / 0.21;
+    // рассылка 30 Гц 0.33 / 0.34 / 0.35 → 0.32 / 0.32 / 0.32; по приходу (абляция J) — 12.3 %.
     for (const hz of RATES) {
       const a = st(SC('fwd20_r300'), hz), j = st(SC('fwd20_r300'), hz, 'J');
-      expect(a.spdErr, `рябь скорости @${hz}: ${a.spdErr.toFixed(1)} %`).toBeLessThan(1.5);
+      const a30 = st(SC('fwd20_r300'), hz, 'A', 30);
+      expect(a.spdErr, `рябь скорости (рассылка ${SNAP_HZ} Гц) @${hz}: ${a.spdErr.toFixed(2)} %`).toBeLessThan(0.5);
+      expect(a30.spdErr, `рябь скорости (рассылка 30 Гц) @${hz}: ${a30.spdErr.toFixed(2)} %`).toBeLessThan(0.5);
       expect(j.spdErr, `абляция J (по приходу) @${hz} обязана быть хуже: ${j.spdErr.toFixed(1)} %`).toBeGreaterThan(5);
     }
   }, 180_000);
 
   it('⚠ ЦЕНА ТОРМОЖЕНИЯ ТАЗА: отставание от прицела не выросло сверх замеренного', () => {
     // Грудь и оружие остаются НА ПРИЦЕЛЕ (это отдельный инвариант, его стерегут `clipOnly`/`hipsOpen`),
-    // а вот таз отстаёт — и это цена разгона. ЗАМЕР p99 отставания таза (°): бег вперёд 37.0 → 37.7,
-    // мимо курсора в 25 ед 38.2 → 42.7, «таз почти догнал» 1.7 → 3.4. Порог — с запасом над этими числами.
+    // а вот таз отстаёт — и это цена разгона. ЗАМЕР p99 отставания таза (°): бег вперёд 37.5 → 37.9,
+    // мимо курсора в 25 ед 42.6 → 43.9, «таз почти догнал» 3.4 → 3.4. Порог — с запасом над этими числами.
     for (const [nm, cap] of [['fwd20_r300', 42], ['cross_miss25', 48], ['back45_r300', 6]] as const) {
       for (const hz of RATES) {
         const s = st(SC(nm), hz);
@@ -561,17 +745,30 @@ describe('подёргивание корпуса на бегу: стенд ди
     else console.log(out.join('\n'));
   }, 180_000);
 
+  it.runIf(process.env.TJ_ROWS)('строки по списку сцен (TJ_ROWS=<сцена>,<сцена>… [|<абляция>])', () => {
+    const [names, abl] = (process.env.TJ_ROWS ?? '').split('|');
+    const out = [HEAD];
+    for (const nm of (names ?? '').split(',')) {
+      const sc = [...SCENES, ...BAND].find((x) => x.name === nm);
+      if (!sc) continue;
+      for (const hz of (sc.mouseHz ? MRATES : RATES)) out.push(line(`${nm}|${hz}`, st(sc, hz, (abl as Abl) || 'A')));
+    }
+    console.log(out.join('\n'));
+    expect(out.length).toBeGreaterThan(1);
+  }, 600_000);
+
   it.runIf(process.env.TJ_DUMP)('покадровый дамп одного сценария (TJ_DUMP=<сцена>|<Гц>|<абляция>)', () => {
     const [nm, hzs, abl] = (process.env.TJ_DUMP ?? '').split('|');
     const sc = [...SCENES, ...BAND].find((s) => s.name === nm) ?? SCENES[1]!;
     const hz = Number(hzs) || 60;
     const rows = run({ sc, hz, abl: (abl as Abl) ?? 'A', jitter: true, secs: sc.dMin ? 12 : 10 });
     const dt = 1 / hz;
-    const csv = ['t,aim,turning,stable,lat,fade,phase,' + CHAN.map((n) => `${n},d${n}`).join(',')];
+    const csv = ['t,aim,turning,stable,lat,fade,phase,rate,hold,clip,' + CHAN.map((n) => `${n},d${n}`).join(',')];
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i]!, p = rows[i - 1]!;
       csv.push([r.t.toFixed(5), (r.aim * DEG).toFixed(4), r.turning ? 1 : 0,
         r.stable.toFixed(4), r.lat ? 1 : 0, r.fade.toFixed(3), r.phase.toFixed(4),
+        r.rate.toFixed(4), r.hold ? 1 : 0, r.turnClip ?? '-',
         ...CHAN.map((_, b) => `${(r.ch[b]! * DEG).toFixed(4)},${(wrapPi(r.ch[b]! - p.ch[b]!) * DEG / dt).toFixed(3)}`)].join(','));
     }
     const f = `${OUT || 'tj'}_dump_${sc.name}_${hz}_${abl ?? 'A'}.csv`;
@@ -582,13 +779,32 @@ describe('подёргивание корпуса на бегу: стенд ди
 
   it.runIf(FULL)('ПОЛНАЯ МАТРИЦА: сценарии × скорости × частоты + абляции', () => {
     const lines: string[] = [], json: Record<string, unknown> = {};
-    lines.push('# СЦЕНАРИИ (абляция A = база, снапшоты 30 Гц с дрожанием прихода ±5 мс)');
+    lines.push(`# СЦЕНАРИИ (абляция A = база, сим ${SIM_HZ} Гц, рассылка ${SNAP_HZ} Гц — боевая, дрожание прихода ±5 мс)`);
     lines.push('# d1 — первая разность мирового курса, °/с; d2 — вторая, °/с²; rev/s — смен знака d1 в секунду');
     lines.push('# root = torso-lead (рейт-лимит turnRate 172 °/с), warp = доворот таза под ход (pelvisYaw − rootYaw)');
     lines.push(HEAD);
-    for (const sc of SCENES) for (const spd of SPEEDS) for (const hz of RATES) {
-      const s = stats(run({ sc: { ...sc, spd }, hz, abl: 'A', jitter: true }), hz);
-      const key = `${sc.name}|v${spd}|${hz}`;
+    for (const sc of SCENES) for (const spd of SPEEDS) for (const hz of (sc.mouseHz ? MRATES : RATES)) {
+      if (sc.mouseHz && spd !== SPEEDS[0]) continue;   // мышь стоя: скорость не при чём, одна строка
+      const s = stats(run({ sc: { ...sc, spd: sc.mouseHz ? 0 : spd }, hz, abl: 'A', jitter: true }), hz, 2, sc.stopAt);
+      const key = `${sc.name}|v${sc.mouseHz ? 0 : spd}|${hz}`;
+      lines.push(line(key, s)); json[key] = s;
+    }
+    lines.push('');
+    lines.push('# «ТАЗ ОТКРЫТ» (hipsMode 1) — в «только клипы» (A) и на процедурке (G, раскрытие едет в `legsOpen`)');
+    lines.push(HEAD);
+    for (const nm of ['fwd20_open', 'cross_miss25_open']) for (const abl of ['A', 'G'] as const) for (const hz of RATES) {
+      const sc = [...SCENES].find((x) => x.name === nm)!;
+      const s = stats(run({ sc, hz, abl, jitter: true }), hz, 2, sc.stopAt);
+      const key = `${abl}|${nm}|${hz}`;
+      lines.push(line(key, s)); json[key] = s;
+    }
+    lines.push('');
+    lines.push('# ТА ЖЕ БАЗА НА СТАРОЙ КАДЕНЦИИ СТЕНДА (30 снапшотов в секунду, Δtick всегда 1) — для сверки с ЗАМЕРОМ 18.09');
+    lines.push(HEAD);
+    for (const sc of SCENES) for (const hz of RATES) {
+      if (sc.mouseHz) continue;
+      const s = stats(run({ sc, hz, abl: 'A', jitter: true, snapHz: 30 }), hz, 2, sc.stopAt);
+      const key = `snap30|${sc.name}|${hz}`;
       lines.push(line(key, s)); json[key] = s;
     }
     lines.push('');
@@ -607,7 +823,7 @@ describe('подёргивание корпуса на бегу: стенд ди
       lines.push(`# ${abl} — ${ABL_NAME[abl]}`);
       if (abl === 'F') { lines.push('#   (нужна правка исходника — идёт отдельным прогоном в worktree)'); continue; }
       for (const sc of [...SCENES, ...BAND]) for (const hz of RATES) {
-        const s = stats(run({ sc, hz, abl: abl === 'I' ? 'A' : abl, jitter: abl !== 'I', secs: sc.dMin ? 12 : 10 }), hz);
+        const s = stats(run({ sc, hz, abl: abl === 'I' ? 'A' : abl, jitter: abl !== 'I', secs: sc.dMin ? 12 : 10 }), hz, 2, sc.stopAt);
         const key = `${abl}|${sc.name}|${hz}`;
         lines.push(line(key, s)); json[key] = s;
       }

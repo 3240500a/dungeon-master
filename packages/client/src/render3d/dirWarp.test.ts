@@ -33,7 +33,7 @@ describe('доворот таза: чистая функция', () => {
   it('выключенный доворот — ровно ноль, чем его ни корми', () => {
     expect(settle(0, 0, 100, 100, { on: 0, maxDeg: 50, smooth: 0 })).toBe(0);
     // и накопленный доворот гасится, а не залипает: тумблер выключили — таз вернулся.
-    let w: DirWarp = { warp: 40 * D, sector: 0, moving: true, open: 0 };
+    let w: DirWarp = { warp: 40 * D, sector: 0, moving: true, open: 0, rate: 0 };
     for (let i = 0; i < 240; i++) w = stepDirWarp(w, 0, 0, 100, 100, TWIST, 1 / 60, { on: 0, maxDeg: 50, smooth: 0.12 });
     expect(Math.abs(w.warp)).toBeLessThan(1e-6);
   });

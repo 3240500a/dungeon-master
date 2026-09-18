@@ -77,4 +77,44 @@ describe('свой фейсинг', () => {
     expect(half).toBeLessThan(Math.PI / 2 - 0.1);
     for (let r = 0.5; r < D; r += 0.5) expect(at(r), `r=${r}`).toBeLessThan(at(r + 0.5) + 1e-12);
   });
+
+  it('⭐⭐ ВНУТРИ ЗОНЫ НЕТ ОСОБОЙ ТОЧКИ: пеленг РОВНО назад — прицел едет непрерывно, а не щёлкает', () => {
+    // ⚠ Мутация «доля кладётся на ВЕКТОР» (примесь прежнего направления длиной `dead − r`, как было до
+    // 19.09) валит это: на `r = dead / 2` слагаемые гасят друг друга, `atan2(0, 0)` отдаёт 0, и ЗАМЕР
+    // давал 0.00° на r = 4.99 и 5.00 против 180.00° на 5.01 — пол-оборота через бесконечно малый шаг.
+    const D = 10, prev = 0;                       // смотрим в +X, курсор РОВНО позади
+    const at = (r: number): number => facingFrom(prev, { x: -r, y: 0 }, 0, 0, { x: 0, y: 0 }, true, D);
+    // Непрерывность по радиусу: соседние радиусы не имеют права отличаться на градусы.
+    let worst = 0, worstR = 0;
+    for (let r = 0.01; r < D; r += 0.01) {
+      const d = Math.abs(at(r + 0.01) - at(r));
+      if (d > worst) { worst = d; worstR = r; }
+    }
+    expect(worst * 180 / Math.PI, `скачок ${(worst * 180 / Math.PI).toFixed(2)}° около r=${worstR.toFixed(2)}`).toBeLessThan(1);
+    // И доля власти курсора та же, что у прежней смеси: ровно `r / dead` от поворота к пеленгу.
+    expect(at(D / 2)).toBeCloseTo(Math.PI / 2, 6);
+    expect(at(D / 4)).toBeCloseTo(Math.PI / 4, 6);
+  });
+
+  it('⭐ ПРОБЕГ РОВНО СКВОЗЬ КУРСОР: разворот прицела не отдаётся одним кадром', () => {
+    // ⚠ Та же мутация валит это. ЗАМЕР (80 ед/с, промах 0 ед): 10 800 / 21 600 / 25 920 °/с при
+    // 60 / 120 / 144 — РОВНО линейно по частоте кадров (подпись скачка за кадр). Стало 2 746 / 3 727 / 4 030.
+    const wrap = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+    const worst = (hz: number, miss: number): number => {
+      const dt = 1 / hz;
+      let f = 0, prev = 0, w = 0;
+      for (let i = 0; i <= Math.round(1.2 * hz); i++) {
+        f = facingFrom(f, { x: 0, y: miss }, -40 + 80 * i * dt, 0, { x: 0, y: 0 }, true, 10);
+        if (i) w = Math.max(w, Math.abs(wrap(f - prev)) * 180 / Math.PI / dt);
+        prev = f;
+      }
+      return w;
+    };
+    const v = [60, 120, 144].map((hz) => worst(hz, 0));
+    expect(Math.max(...v), `сквозь курсор: ${v.map((x) => x.toFixed(0))} °/с`).toBeLessThan(5500);
+    expect(Math.max(...v) / Math.min(...v), 'рост с частотой кадров').toBeLessThan(1.8);
+    // Промах 0.05 ед — та же особая точка задевается вскользь.
+    const u = [60, 120, 144].map((hz) => worst(hz, 0.05));
+    expect(Math.max(...u), `промах 0.05 ед: ${u.map((x) => x.toFixed(0))} °/с`).toBeLessThan(5500);
+  });
 });

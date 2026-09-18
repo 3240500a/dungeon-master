@@ -1227,14 +1227,20 @@ const TWIST_RELAX_ON = TWIST_SETTLE * 2;
  * догнал, и +4.4° на быстром развороте мимо курсора. ЗАМЕР при `0.10` давал рывок ещё вдвое ниже, но
  * отставание +8.6° — выбрано `0.06`: отзывчивость таза дороже последних 25 % рывка.
  *
- * ⚠⚠ РАЗГОН — ТОЛЬКО НА ХОДУ (`PosePlayer.step` даёт его при `spd > MOVE_EPS_WARP`, стоя передаёт 0).
- * Причина не в «на ходу заметнее», а в том, что СТОЯ ЭТИМ ЖЕ ПРИВОДОМ СНИМАЕТСЯ НАБОР ПОВОРОТОВ
- * (`bakeTurnToClip` крутит ровно `stepTorsoLead` при нулевой скорости). Разгон стоя меняет снятые клипы,
- * и это не «чуть другие числа»: ЗАМЕР на опубликованном воине — у `turn_L_90` ключей 11 против 16,
- * курс гладкого набора расходится с плотным на 2.61° (порог 2.5), размах таза за поворот 0.291 против
- * порога 0.2, а подшагов в 90° клипе становится ОДИН вместо двух. Это перепечка набора и решение автора,
- * а не побочный эффект правки бега. Порог непрерывен по построению: меняется не скорость таза, а предел
- * её ПРИРАЩЕНИЯ, поэтому на 4 ед/с ничего не щёлкает.
+ * ⚠⚠ РАЗГОН — ТОЛЬКО НА ХОДУ (`PosePlayer.step`, поле `turnAccelHold`). Причина не в «на ходу заметнее»,
+ * а в том, что СТОЯ ЭТИМ ЖЕ ПРИВОДОМ СНИМАЕТСЯ НАБОР ПОВОРОТОВ (`bakeTurnToClip` крутит ровно
+ * `stepTorsoLead` при нулевой скорости). Разгон стоя меняет снятые клипы, и это не «чуть другие числа»:
+ * ЗАМЕР на опубликованном воине — у `turn_L_90` ключей 11 против 16, курс гладкого набора расходится с
+ * плотным на 2.61° (порог 2.5), размах таза за поворот 0.291 против порога 0.2, а подшагов в 90° клипе
+ * становится ОДИН вместо двух. Это перепечка набора и решение автора, а не побочный эффект правки бега.
+ *
+ * ⚠⚠ И ПЕРЕКЛЮЧАЕТСЯ РАЗГОН НЕ ПО СКОРОСТИ НОГ, А ПО ОСТАНОВКЕ САМОГО ТАЗА (`turnAccelHold`). Прежний
+ * порог «`spd > MOVE_EPS_WARP`» обещал непрерывность и НЕ ДАВАЛ ЕЁ: инерции в балансе нет вовсе
+ * (`moveInertia.enabled` false), скорость падает 80 → 0 ЗА ТИК, и таз посреди доворота перескакивал с
+ * разогнанной скорости на полный `turnRate`. ЗАМЕР (стенд `torsoJitter`, сцена `stop_face` — «встал и
+ * довернулся к монстру»): шаг скорости таза 255 / 270 / 273 °/с за кадр при 60 / 120 / 144, то есть
+ * рывок 15 000 / 32 000 / 39 000 °/с². Теперь разгон доживает до `rate === 0`: на остановке ничего не
+ * щёлкает, а следующий поворот С МЕСТА снова идёт прежним законом — тем самым, которым снят набор.
  */
 export const TURN_ACCEL_SEC = 0.06;
 /**
@@ -1253,6 +1259,47 @@ export const TURN_ACCEL_SEC = 0.06;
  * а 120 / 144 подтягиваются к ней. Тот же класс, что `driveActor.VEL_TAU` и `netInterp.VEL_TAU`.
  */
 export const AIM_STILL_RATE = 0.6;
+/**
+ * ⭐⭐ И ЗНАМЕНАТЕЛЬ СКОРОСТИ ПРИЦЕЛА — ИНТЕРВАЛ МЕЖДУ ЕГО ИЗМЕНЕНИЯМИ, А НЕ КАДР (`PosePlayer.aimGap`).
+ *
+ * Порог-в-секунду починил СРАВНЕНИЕ, но не МЕРКУ: делить приращение на кадр можно только при РАВНОМЕРНОМ
+ * вводе, а ввод событийный. Обычная мышь шлёт 125 отчётов в секунду, и кадр на 240 Гц видит либо ноль,
+ * либо ЦЕЛОЕ событие — тогда `|Δ| / dt` это не скорость прицела, а частота кадров, делённая на частоту мыши.
+ * ЗАМЕР (стенд `torsoJitter`, сцена `mouse125_w04`: стоим, мышь 125 Гц ведёт прицел 0.4 рад/с — заведомо
+ * «стоит»): сбросов «прицел стоит» 0.0 / 5.0 / 0.0 / 115.0 в секунду при 60 / 120 / 144 / 240 и отставание
+ * таза p99 47.5 / 101.5 / 47.4 / 133.8° — одно и то же движение мыши включало выравнивание таза на одной
+ * машине и не включало на другой. Стало 0.0 / 0.0 / 0.0 / 0.0 и 47.5 / 47.4 / 47.4 / 47.4°.
+ *
+ * КАК: копим время, пока прицел НЕ МЕНЯЛСЯ, и когда он меняется — делим приращение на это время. При
+ * непрерывном вводе (пеленг на курсор считается каждый кадр) знаменатель равен кадру, то есть правило
+ * прежнее БИТ В БИТ; при событийном — настоящему интервалу события. Нулевое приращение — скорость 0,
+ * поэтому у замороженного прицела счёт «сколько стоит» начинается там же, где раньше, и ЗАПЕЧЁННЫЙ
+ * НАБОР не двигается (сторож — хэш всего набора).
+ * ⚠ ОТВЕРГНУТО ЗАМЕРОМ: «дырявое ведро» (копить перебег сверх порога, опустошать на срабатывании). Для
+ * ровного быстрого увода прицела оно ДРЕБЕЗЖИТ: ведро наполняется и опустошается циклом, и сбросов
+ * «прицел стоит» на проходе мимо курсора стало 1.6 / 5.4 / 5.8 в секунду вместо 0.1 / 0.1 / 0.1.
+ */
+/**
+ * ⚠ И ЗНАМЕНАТЕЛЬ ОГРАНИЧЕН СВЕРХУ (сек). Прицел может простоять секунду, а потом РЫВКОМ уехать на 45°
+ * — это «прицел едет», а не «0.8 рад/с за секунду». Потолок — темп самого медленного мыслимого потока
+ * ввода (20 отчётов в секунду; у обычной мыши 125, у игровой 1000): всё, что реже, — не поток, а скачок.
+ * ЗАМЕР: без потолка запечённый набор поворотов расходится (у поворота на 45° прицел «не едет»,
+ * включается выравнивание) — хэш набора это ловит.
+ */
+export const AIM_GAP_MAX = 0.05;
+/**
+ * ⭐ ОКНО СРЕДНЕЙ СКОРОСТИ ПРИЦЕЛА (сек) — ВТОРАЯ МЕРКА, и «едет» объявляется, только когда СОГЛАСНЫ ОБЕ.
+ *
+ * Одного интервала события мало: сам интервал наблюдается КАДРАМИ. Мышь 125 Гц на 240 кадрах ложится то в
+ * один кадр от прошлого события, то в два, и мгновенная оценка скачет 0.77 ↔ 0.38 рад/с вокруг истинных 0.4
+ * — половина отсчётов перелетает порог 0.6. ЗАМЕР: сбросов «прицел стоит» 115 → 10 в секунду (одного
+ * интервала мало) → 0 (обе мерки). Средняя за окно этой дроби не видит вовсе.
+ * ⚠ ПОЧЕМУ «И», А НЕ «ИЛИ» И НЕ ОДНА СРЕДНЯЯ. У средней есть память: после скачка прицела она спадает
+ * `AIM_RATE_TAU`-экспонентой, и счёт «прицел стоит» начинался бы на 0.2–0.3 с позже — а на нём стоит
+ * `relax`, которым СНИМАЕТСЯ НАБОР ПОВОРОТОВ. Мгновенная мерка у замороженного прицела ровно 0, поэтому
+ * «И» возвращает «стоит» в том же кадре, что и раньше, и набор остаётся бит в бит (сторож — хэш набора).
+ */
+export const AIM_RATE_TAU = 0.05;
 export function stepTorsoLead(
   prevRoot: number, aimYaw: number, twist: TwistProfile, dt: number, prevTurning: boolean, relax = false,
   /** Скорость таза прошлого кадра (рад/с) — состояние разгона. Не передали — считаем, что таз уже разогнан. */
@@ -1268,14 +1315,21 @@ export function stepTorsoLead(
   // ⭐⭐ РЕЙТ-ЛИМИТ С РАЗГОНОМ (см. `TURN_ACCEL_SEC`). Целевая скорость умеет затормозить к остатку
   // (`sqrt(2·a·err)` — та же формула, что у любого сервопривода с пределом ускорения), сама скорость
   // меняется не быстрее `a`. Потолок скорости остался прежний — `turnRate`, менять его тут нечего.
-  let rate: number;
-  if (accelSec > 0) {
-    const acc = twist.turnRate / accelSec;
-    const want = turning ? Math.min(twist.turnRate, Math.sqrt(2 * acc * Math.abs(err))) : 0;
-    rate = prevRate + clamp(want - prevRate, -acc * dt, acc * dt);
-  } else rate = turning ? twist.turnRate : 0;   // без предела ускорения — прежний голый рейт-лимит
+  //
+  // ⚠⚠ ПЕРЕКЛЮЧАЕТСЯ ТОЛЬКО ПРЕДЕЛ ПРИРАЩЕНИЯ `acc`, А НЕ САМА СКОРОСТЬ. `accelSec` 0 — предел
+  // бесконечен, и тогда `rate` = цель, то есть в точности прежний голый рейт-лимит (путь запекания).
+  // Раньше эти две ветки писались как разные ЗАКОНЫ, и переключение между ними на ходу щёлкало скоростью
+  // таза на 124–275 °/с за кадр (см. `PosePlayer.step`, `turnAccelHold`).
+  // ⚠ Бесконечный предел — отдельной строкой, а не `clamp(…, -Infinity, Infinity)`: `prevRate +
+  // (want − prevRate)` отличается от `want` на последние биты, а запечённый набор обязан быть бит в бит.
+  const acc = accelSec > 0 ? twist.turnRate / accelSec : Infinity;
+  const want = !turning ? 0
+    : accelSec > 0 ? Math.min(twist.turnRate, Math.sqrt(2 * acc * Math.abs(err))) : twist.turnRate;
+  const rate = accelSec > 0 ? prevRate + clamp(want - prevRate, -acc * dt, acc * dt) : want;
+  // ⭐⭐ ВЕДЁТ ТАЗ СКОРОСТЬ, А НЕ ЗАЩЁЛКА (см. `TWIST_SETTLE`): пока `rate` ещё не упала в ноль, таз
+  // продолжает идти — иначе торможение обрывается на полпути и это САМ ПО СЕБЕ рывок.
   let root = prevRoot;
-  if (turning) root += Math.sign(err) * Math.min(Math.abs(err), rate * dt);   // без перелёта
+  if (rate > 0) root += Math.sign(err) * Math.min(Math.abs(err), rate * dt);   // без перелёта
   let residual = wrapPi(aimYaw - root);                     // скрутка ВЕРХА к прицелу
   if (Math.abs(residual) > twist.maxTwist) residual = Math.sign(residual) * twist.maxTwist;   // кламп (не выворачивать шею)
   return { rootYaw: root, residual, turning, rate };
@@ -1325,8 +1379,8 @@ export type WarpSector = 0 | 1 | 2 | 3;
  * `open` — сглаженная ДОЛЯ раскрытия таза «таз открыт» (−1..1, знак — сторона хода, `openFrac`); угол раскрытия
  * (°) живёт снаружи (`GAIT.hipsOpen*` или угол, с которым снят набор `_open`). При `hipsMode` 0 — всегда 0.
  */
-export type DirWarp = { warp: number; sector: WarpSector; moving: boolean; open: number };
-export const DIR_WARP0: DirWarp = { warp: 0, sector: 0, moving: false, open: 0 };
+export type DirWarp = { warp: number; sector: WarpSector; moving: boolean; open: number; rate: number };
+export const DIR_WARP0: DirWarp = { warp: 0, sector: 0, moving: false, open: 0, rate: 0 };
 /**
  * ⭐ ДОЛЯ РАСКРЫТИЯ ТАЗА «ТАЗ ОТКРЫТ» по ходу `d` (рад, от таза) и сектору: только в секторах страйфа — 1 от 45° до 90°,
  * к 135° гаснет в 0 (знак — сторона). Без гашения ход назад-вбок держал бы таз на 45° + раскрытие, и переброс в сектор
@@ -1359,7 +1413,7 @@ export function stepDirWarp(
   maxTwist: number, dt: number,
   cfg: { on: number; maxDeg: number; smooth: number; sectors?: boolean; openDeg?: number; rateDeg?: number },
 ): DirWarp {
-  let want = 0, sector = prev.sector, wantOpen = 0;
+  let want = 0, sector = prev.sector, wantOpen = 0, prevRateOut = 0;
   const moving = Math.hypot(vx, vz) > MOVE_EPS_WARP;
   if (cfg.on > 0.5 && moving) {
     const d = wrapPi(Math.atan2(vx, vz) - rootYaw);
@@ -1392,13 +1446,51 @@ export function stepDirWarp(
   // ⭐⭐ ПРЕДЕЛ СКОРОСТИ ДОВОРОТА (°/с) — против ХЛЫСТА НА ПЕРЕБРОСЕ СЕКТОРА (ограничитель 5, см. шапку).
   // Сглаживание `smooth` — доля пути за кадр, и на ПРЫЖКЕ цели она даёт скорость «прыжок / smooth»,
   // а не «сглаженную». Предел режет ровно эти прыжки и не трогает обычное ведение.
-  const step = (want - prev.warp) * k;
   const lim = (cfg.rateDeg ?? 0) > 0 ? (cfg.rateDeg as number) * Math.PI / 180 * dt : Infinity;
-  return {
-    warp: prev.warp + clamp(step, -lim, lim), sector, moving,
-    open: prev.open + (wantOpen - prev.open) * k,
-  };
+  /**
+   * ⭐⭐ У ПРЕДЕЛА ЕСТЬ РАЗГОН — ТОТ ЖЕ, ЧТО У ПРИВОДА ТАЗА (`TURN_ACCEL_SEC`). Голый предел режет ШАГ, и
+   * ВХОД в него — обрыв: на перебросе сектора скорость доворота прыгала с 17 до 300 °/с ЗА КАДР. ЗАМЕР
+   * (стенд `torsoJitter`, прямой бег вперёд): рывок таза max 18 994 / 38 865 / 46 065 °/с² при 60 / 120 / 144
+   * — ровно `warpRate × Гц`, то есть подпись однокадрового скачка, и именно она оставалась самой большой
+   * после всех прочих правок. Со скоростью-состоянием: 5 002 на ВСЕХ частотах (это и есть `warpRate/0.06`).
+   * ⚠ Тормозить умеет: цель скорости подрезана `sqrt(2·a·|ошибка|)`, поэтому перелёта нет — иначе
+   * пропорциональный регулятор с пределом ускорения проскакивает цель на `v²/2a` (для 300 °/с это 8°) и звенит.
+   * ЦЕНА — ЗАМЕР (переброс на 30° при `warpSmooth` 0.12): 90 % пути 267 / 267 / 271 мс → 267 / 283 / 285 мс
+   * при 60 / 120 / 144, перелёт 0.00 % там и там; отставание таза от прицела p99 не меняется вовсе (37.6°).
+   */
+  const errW = want - prev.warp;
+  let step: number;
+  if (lim < Infinity) {
+    const accW = lim / dt / WARP_ACCEL_SEC;                    // рад/с²: потолок скорости за `WARP_ACCEL_SEC`
+    const vCap = Math.min(lim / dt, Math.sqrt(2 * accW * Math.abs(errW)));
+    const vWant = Math.sign(errW) * Math.min(Math.abs(errW) * k / dt, vCap);
+    const v = prev.rate + clamp(vWant - prev.rate, -accW * dt, accW * dt);
+    step = Math.sign(v) * Math.min(Math.abs(errW), Math.abs(v) * dt);
+    prevRateOut = v;
+  } else { step = errW * k; prevRateOut = k > 0 ? step / dt : 0; }   // предела нет — прежнее сглаживание бит в бит
+  const stepOpen = (wantOpen - prev.open) * k;
+  /**
+   * ⭐⭐ ПРЕДЕЛ — НА ВЕСЬ РЫСК ТАЗА, А НЕ НА ОДИН ДОВОРОТ. Раскрытие «таз открыт» ложится в тот же угол
+   * (`pelvisYaw = rootYaw + warp + legsOpen`, а в «только клипы» — `clipHipsOpen`), и на перебросе сектора
+   * оно прыгает ВМЕСТЕ с доворотом: доля раскрытия переезжает с ±1 на 0 за `warpSmooth`, то есть 35° за
+   * 0.12 с ≈ 292 °/с, и никакого предела на ней не стояло.
+   * ЗАМЕР (стенд `torsoJitter`, `hipsMode` 1 = «таз открыт», процедурка, проход мимо курсора): канал таза
+   * 350–369 °/с при потолке 300 — сторож `GAIT.warpRate` проходил только потому, что у опубликованного
+   * воина `hipsMode` 0. Обе части режутся ОДНОЙ долей: тогда направление суммарного шага не меняется,
+   * а раскрытие и доворот не расходятся между собой.
+   * ⚠ При `hipsMode` 0 (`openDeg` 0) доля ровно 1 — прежнее поведение бит в бит.
+   */
+  const openRad = Math.abs(cfg.openDeg ?? 0) * Math.PI / 180;
+  const tot = Math.abs(step + stepOpen * openRad);
+  const f = openRad > 0 && tot > lim ? lim / tot : 1;
+  return { warp: prev.warp + step * f, sector, moving, open: prev.open + stepOpen * f, rate: prevRateOut * f };
 }
+/**
+ * ⭐ ЗА СТОЛЬКО СЕКУНД ДОВОРОТ ТАЗА РАЗГОНЯЕТСЯ ДО `GAIT.warpRate` — и ровно столько же тормозит.
+ * Одно число с `TURN_ACCEL_SEC` по смыслу и по величине: оба ограничивают ПРИРАЩЕНИЕ скорости таза,
+ * просто у разных его слагаемых. См. подробности у самого ограничителя в `stepDirWarp`.
+ */
+export const WARP_ACCEL_SEC = 0.06;
 /** Ниже этой скорости (u/с) направление хода — шум, доворачивать не по чему. */
 const MOVE_EPS_WARP = 4;
 /**
@@ -1659,7 +1751,11 @@ export class PosePlayer {
   private yawInit = false;
   private turning = false;   // защёлка доворота таза (torso-lead): вкл за порогом, выкл когда догнал
   private leadRate = 0;      // скорость доворота таза, рад/с (состояние разгона — см. `TURN_ACCEL_SEC`)
+  /** Взведён ли разгон таза: взводит ходьба, снимает ОСТАНОВКА ТАЗА (не ног) — см. `TURN_ACCEL_SEC`. */
+  private turnAccelHold = false;
   private prevAim = 0; private aimStableFor = 0;   // сколько прицел стабилен (для relaxTime — доворот таза к нейтрали)
+  private aimGap = 0;        // сколько прицел НЕ МЕНЯЛСЯ (сек) — знаменатель его скорости, см. `AIM_STILL_RATE`
+  private aimRate = 0;       // средняя скорость прицела за окно `AIM_RATE_TAU` (рад/с)
   moveMag = 0; atkSpeed = 1;
   /** Множитель темпа удара ПОВЕРХ расчётной скорости (ползунок редактора).
    *  Отдельным полем, а не записью в `atkSpeed`: та затирала расчёт `triggerAttack`, и превью редактора
@@ -2057,7 +2153,7 @@ export class PosePlayer {
    * порогу играет клип нужной величины, ведущий таз по своей кривой. Клипов нет — ровно прежнее
    * поведение: процедурный доворот и подшаги планировщика.
    */
-  private stepTurn(dt: number, twist: TwistProfile): { rootYaw: number; residual: number; turning: boolean } | null {
+  private stepTurn(dt: number, twist: TwistProfile): { rootYaw: number; residual: number; turning: boolean; rate?: number } | null {
     this.turnMode = false;
     const clampTw = (r: number): number => Math.abs(r) > twist.maxTwist ? Math.sign(r) * twist.maxTwist : r;
     const t = this.turn;
@@ -2092,6 +2188,15 @@ export class PosePlayer {
       return { rootYaw: this.rootYaw, residual: clampTw(residual), turning: true };
     }
     // Стоим ниже порога: таз держит курс, верх докручивается к прицелу скруткой.
+    // ⭐ НО ЕСЛИ ТАЗ ЕЩЁ ЕХАЛ (встали посреди доворота) — он ДОТОРМАЖИВАЕТ тем же пределом, а не встаёт
+    // насмерть: иначе передача таза приводу поворотов на месте сама по себе рывок. ЗАМЕР (сцена
+    // `stop_face`): 13 369 °/с² на кадре передачи против 0 с доторможением. Тот же закон, что в
+    // `stepTorsoLead`, и ровно он же копил `leadRate` до этого кадра.
+    if (this.leadRate > 0 && this.turnAccelHold) {
+      const rate = Math.max(0, this.leadRate - twist.turnRate / TURN_ACCEL_SEC * dt);
+      if (rate > 0) this.rootYaw += Math.sign(residual) * Math.min(Math.abs(residual), rate * dt);
+      return { rootYaw: this.rootYaw, residual: clampTw(wrapPi(this.aimYaw - this.rootYaw)), turning: false, rate };
+    }
     return { rootYaw: this.rootYaw, residual: clampTw(residual), turning: false };
   }
   /**
@@ -2269,11 +2374,24 @@ export class PosePlayer {
     // и Hips → приставной шаг случается ровно когда таз доворачивает. Остаток `tw` размажем по позвоночнику после позинга.
     // Таз догоняет прицел (одна система стоя и на бегу): голова ведёт, таз держится в зоне и плавно доворачивает.
     // relaxTime: прицел стабилен долго и есть скрутка → таз доворачивается к нейтрали (не держим лид вечно).
-    this.aimStableFor = Math.abs(wrapPi(this.aimYaw - this.prevAim)) < AIM_STILL_RATE * dt ? this.aimStableFor + dt : 0;
+    // «Прицел стоит»: скорость мерится по интервалу МЕЖДУ ИЗМЕНЕНИЯМИ ПРИЦЕЛА, а не по кадру (см. `AIM_STILL_RATE`).
+    const dAim = Math.abs(wrapPi(this.aimYaw - this.prevAim));
+    this.aimGap = Math.min(this.aimGap + dt, AIM_GAP_MAX);
+    const aimNow = dAim > 0 ? dAim / this.aimGap : 0;       // по интервалу СОБЫТИЯ, а не кадра
+    if (dAim > 0) this.aimGap = 0;
+    this.aimRate += (dAim / dt - this.aimRate) * (1 - Math.exp(-dt / AIM_RATE_TAU));   // средняя за окно
+    // «Едет» — только если ОБЕ мерки согласны (см. `AIM_STILL_RATE`).
+    this.aimStableFor = aimNow >= AIM_STILL_RATE && this.aimRate >= AIM_STILL_RATE ? 0 : this.aimStableFor + dt;
     this.prevAim = this.aimYaw;
     const turnWas = this.turn, turnT0 = this.turn?.t ?? 0;   // поворот ДО шага: по пройденному отрезку ищем его метки
+    // ⭐⭐ РАЗГОН ТАЗА ВЗВОДИТСЯ ХОДЬБОЙ, А СНИМАЕТСЯ ОСТАНОВКОЙ ТАЗА (см. `TURN_ACCEL_SEC`). Снимать его
+    // по скорости ног нельзя: она падает в ноль ЗА ОДИН ТИК, и предел приращения исчезал посреди доворота.
+    // Пока таз ещё едет (`leadRate > 0`), закон не меняется; когда встал — оба закона дают одно и то же,
+    // и переключение бесплатно. Запекание (скорость ровно 0 с первого кадра) сюда не попадает никогда.
+    if (spd > MOVE_EPS_WARP) this.turnAccelHold = true;
+    else if (this.leadRate <= 0) this.turnAccelHold = false;
     const tl = this.stepTurn(dt, twist) ?? stepTorsoLead(this.rootYaw, this.aimYaw, twist, dt, this.turning,
-      this.aimStableFor > twist.relaxTime, this.leadRate, spd > MOVE_EPS_WARP ? TURN_ACCEL_SEC : 0);
+      this.aimStableFor > twist.relaxTime, this.leadRate, this.turnAccelHold ? TURN_ACCEL_SEC : 0);
     // ⚠ ВЕТКА КЛИПА ПОВОРОТА СВОЕЙ СКОРОСТИ НЕ ИМЕЕТ: таз там ведёт клип, а не сервопривод. Разгон начинается
     // заново, когда таз снова отдан `stepTorsoLead` — иначе после поворота он дёрнулся бы с чужой скоростью.
     this.leadRate = (tl as { rate?: number }).rate ?? 0;
