@@ -544,9 +544,15 @@ const TURN_TAIL_SEC = 0.25;
  *    разошлись (связь «угол ↔ момент шага» есть только внутри клипа);
  *  • `__swing` — какая нога в воздухе: заземление по нему решает, кого прижимать к полу.
  *
- * ⚠ ПРОРЕЖИВАНИЕ — ПО ОТРЕЗКАМ МЕЖДУ СМЕНАМИ ОПОРЫ. Прореживатель меряет ошибку только по костям и
- * позициям, флаги переноса для него «не движение» — и он бы их размазал. Режем по кадрам, где
- * меняется опора: концы отрезков он сохраняет всегда.
+ * ⭐ КЛЮЧИ — ГЛАДКИЕ ПРОРЕЖЕННЫЕ, КАК У ЦИКЛА ПОХОДКИ (`clipFit`, режим `loop: false`). Раньше это был отдельный
+ * путь: плотный поток резался на отрезки по сменам опоры и каждый прореживался ЛОМАНОЙ с допуском 0.5° —
+ * 28–47 ключей на клип (201 на шесть) против 11–15 у цикла. Теперь тот же сплайн и тот же допуск
+ * (`SMOOTH_EPS_DEG` 2°), сигма — те же 2.4 % длины клипа, что у цикла.
+ *
+ * ⚠ ЧТО ЗАМЕНЯЕТ РЕЗКУ НА ОТРЕЗКИ: подгонка меряет ошибку по костям, позициям и КУРСУ КОРНЯ, а флаги переноса
+ * для неё «не движение» — она бы их размазала. Поэтому времена смены опоры уходят в подгонку ОБЯЗАТЕЛЬНЫМИ
+ * ключами (`pin`, обе стороны смены — флаг переключается за один кадр, как и раньше), а концы клипа
+ * закрепляются значением: на них стоят `turnYawAt(dur)`, `turnSupportAt(0/dur)` и шов поворота.
  */
 export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSpec, opts: BakeGaitOptions): BakeGaitResult {
   return procedural(player, () => {
@@ -580,15 +586,29 @@ export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSp
       calm = settled ? calm + dt : 0;
       if (calm >= TURN_TAIL_SEC) break;
     }
-    // Прореживание по отрезкам между сменами опоры (см. шапку функции).
-    const keys: Keyframe[] = [];
-    let from = 0;
+    // Смены опоры — обязательные ключи, обе стороны: флаг переключается ровно за кадр, как при резке на отрезки.
     const swingOf = (k: Keyframe): string => (k.pose[SWING_KEY] ?? [0, 0, 0]).join();
-    for (let i = 1; i <= dense.length; i++) {
-      if (i < dense.length && swingOf(dense[i]!) === swingOf(dense[i - 1]!)) continue;
-      const seg = reduceKeyframes(dense.slice(from, i), opts.epsDeg ?? 0.5);
-      for (const k of seg) if (!keys.length || k.t > keys[keys.length - 1]!.t) keys.push(k);
-      from = i;
+    const pin: number[] = [];
+    for (let i = 1; i < dense.length; i++) if (swingOf(dense[i]!) !== swingOf(dense[i - 1]!)) pin.push(i - 1, i);
+    const eps = opts.epsDeg ?? 0.5;
+    let keys: Keyframe[];
+    if ((opts.smooth ?? true) && eps > 0 && dense.length >= 5) {
+      const durSec = dense[dense.length - 1]!.t;
+      keys = fitSmoothLoop(dense, {
+        epsDeg: opts.smoothEpsDeg ?? SMOOTH_EPS_DEG, sigmaFrames: (opts.smoothSigmaCycle ?? SMOOTH_SIGMA_CYCLE) * durSec * fps,
+        loop: false, pin,
+      }).keys;
+    } else {
+      // Ломаная (ручной режим редактора и плотный проход `epsDeg: 0`) — по отрезкам между сменами опоры: их концы
+      // прореживатель сохраняет всегда, иначе флаги размазались бы.
+      keys = [];
+      let from = 0;
+      for (let i = 1; i <= dense.length; i++) {
+        if (i < dense.length && swingOf(dense[i]!) === swingOf(dense[i - 1]!)) continue;
+        const seg = reduceKeyframes(dense.slice(from, i), eps);
+        for (const k of seg) if (!keys.length || k.t > keys[keys.length - 1]!.t) keys.push(k);
+        from = i;
+      }
     }
     return {
       clip: { name: spec.name, character: opts.character, weapon: opts.weapon, loop: false, rootYaw: true, keys },

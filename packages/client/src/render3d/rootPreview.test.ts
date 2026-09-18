@@ -262,7 +262,11 @@ describe('⭐ на запечённых поворотах корень возв
         truth.set(t.toFixed(4), BONES.map((b) => worldPos(h, b)));
         return base();
       };
-      const c = bakeTurnToClip(player, h, spec, { character: 'warrior', weapon: 'none', readPose: read }).clip;
+      // ⚠ ПЛОТНЫЙ ПРОХОД (`epsDeg: 0`): сверка «поза ключа против снятого кадра» требует, чтобы ключ БЫЛ кадром.
+      // С 18.09 обычное запекание поворота подбирает значения ключей МНК (`clipFit`, `loop: false`), и кадру равны
+      // только закреплённые концы — на фитованном ключе нога честно отходит от снятого кадра до ~5u. Предпросмотр
+      // корня от этого не зависит (он читает `__rootY`), и что курс ОБЫЧНОГО набора совпадает с плотным — ниже.
+      const c = bakeTurnToClip(player, h, spec, { character: 'warrior', weapon: 'none', readPose: read, epsDeg: 0 }).clip;
       const { h: man, pivot } = underPivot();
       let inPlace = 0, shown = 0, n = 0;
       for (const k of c.keys) {
@@ -276,6 +280,18 @@ describe('⭐ на запечённых поворотах корень возв
       expect(n, 'ключи сопоставлены со снятыми кадрами').toBeGreaterThan(3);
       expect(inPlace, 'на месте — видно расхождение').toBeGreaterThan(5);
       expect(shown, `с корнем ${shown.toFixed(3)}u (на месте ${inPlace.toFixed(2)}u)`).toBeLessThan(0.1);
+      // И курс ОБЫЧНОГО (гладкого) запекания — тот же: концы точно, между ними в допуске подгонки.
+      const h2 = buildHumanoid({});
+      const p2 = new PosePlayer(h2, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const sm = bakeTurnToClip(p2, h2, spec, { character: 'warrior', weapon: 'none' }).clip;
+      expect(sm.keys.slice(0, -1).every((k) => k.interp === 'smooth'), 'обычное запекание — сплайн').toBe(true);
+      const dur = clipDur(c);
+      expect(clipDur(sm)).toBeCloseTo(dur, 9);
+      expect(turnYawAt(sm, 0)).toBe(turnYawAt(c, 0));
+      expect(turnYawAt(sm, dur)).toBe(turnYawAt(c, dur));
+      let dy = 0;
+      for (let x = 0; x <= dur; x += 1 / 60) dy = Math.max(dy, Math.abs(turnYawAt(sm, x) - turnYawAt(c, x)) / D);
+      expect(dy, `курс гладкого набора против плотного: ${dy.toFixed(2)}°`).toBeLessThan(2.5);
     }, 60_000);
   }
 });
