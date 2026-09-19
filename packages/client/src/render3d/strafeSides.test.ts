@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { GAIT, POSE, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, locoVal, strafeMix, strafeSide, strafeSideOf, STRAFE_SIDE_BAND, type LocoMix } from './gaitKnobs.js';
+import { GAIT, POSE, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, locoVal, strafeMix, backMix, strafeSide, strafeSideOf, STRAFE_SIDE_BAND, type LocoMix } from './gaitKnobs.js';
 import { PoseDriver } from './stepPlanner.js';
 import { applyGaitConfig } from './poseRuntime.js';
 
@@ -127,8 +127,51 @@ describe('колонки сторон — разрежённые ДОБАВКИ 
   it('ПОРЯДОК: сторона ложится ПОВЕРХ общей, но ПОД «назад» и бой', () => {
     STRAFE['stanceWidth'] = 10; STRAFE_R['stanceWidth'] = 14; BACK['stanceWidth'] = 20; COMBAT['stanceWidth'] = 18;
     expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 1, 1, 0)), 'страйф вправо').toBe(14);
-    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 1, 1, 0, 1)), 'назад перекрывает сторону').toBe(20);
+    // ⚠⚠ ЗДЕСЬ СТОЯЛА СМЕСЬ `st = 1` И `bt = 1` ОДНОВРЕМЕННО — с 19.09 она НЕДОСТИЖИМА. Боковитость и
+    // назадность стали дополняющими (`bt = 1 − st` позади), ровно чтобы остаток не доставался молча базе
+    // «вперёд». На «обоих по единице» старая цепочка lerp'ов отдавала всё последнему слагаемому, и тест
+    // проверял этот артефакт порядка, а не правило. Берём РЕАЛИЗУЕМУЮ заднюю диагональ.
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0.02, 0.02, 0, 0.98)),
+      'на задней диагонали распоряжается «назад»').toBeCloseTo(19.684, 3);
+    expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 0, 0, 0, 1)),
+      'на чистом ходе спиной — только «назад»').toBe(20);
     expect(locoVal('stanceWidth', 'stanceWidthRun', 6, 6, 0, mix(0, 1, 1, 0, 0, 1)), 'бой перекрывает всё').toBe(18);
+  });
+
+  /**
+   * ⭐⭐ БАЗА «ВПЕРЁД» НЕ ПОЛУЧАЕТ ВЕСА ПОЗАДИ ПЕРСОНАЖА.
+   *
+   * Было: `bt` резался множителем продольности `lon = |cos θ|`, который равен 1 только ровно на 180°, а
+   * боковитость падает ниже 1 уже после 100°. На всей дуге между ними обе меньше единицы, и остаток
+   * `1 − st − bt` вложенные lerp'ы молча отдавали ПЕРВОМУ слагаемому — базе «вперёд». ЗАМЕР: вес базы
+   * вылезал с 100.2° по 179.2° с пиком **0.345 на 127°**, и настроить этот кусок было НЕЧЕМ ни на одной
+   * вкладке. Это и есть тяжёлая часть жалобы «на зад половина настроек не работает».
+   */
+  it('⭐⭐ ПОЗАДИ БАЗА ВЕСИТ НОЛЬ НА ВСЕЙ ДУГЕ (был пик 0.345 на 127°)', () => {
+    // База 100, обе колонки 0 → показанное значение и есть вес базы.
+    STRAFE['k'] = 0; STRAFE['kR'] = 0; BACK['k'] = 0; BACK['kR'] = 0;
+    let worst = 0, at = 0;
+    for (let d = 91; d <= 180; d += 0.25) {
+      const t = d * Math.PI / 180, f = Math.cos(t), l = Math.sin(t);
+      const m = mix(0, strafeMix(f, l), 0, 0, backMix(f, l));
+      const wF = locoVal('k', 'kR', 100, 100, 0, m) / 100;
+      if (wF > worst) { worst = wF; at = d; }
+      expect(m.st + m.bt, `сумма долей колонок на ${d}°`).toBeCloseTo(1, 9);
+    }
+    expect(worst, `⚠ база «вперёд» снова весит ${worst.toFixed(3)} на ${at}° — там её нечем настроить`).toBeLessThan(1e-9);
+  });
+
+  it('⭐ ЧИСТЫЕ НАПРАВЛЕНИЯ НЕ СДВИНУЛИСЬ: 0° — база, 90° — страйф, 180° — назад', () => {
+    STRAFE['k'] = 10; BACK['k'] = 20;
+    const at = (deg: number): number => {
+      const t = deg * Math.PI / 180, f = Math.cos(t), l = Math.sin(t);
+      return locoVal('k', 'kR', 100, 100, 0, mix(0, strafeMix(f, l), 0, 0, backMix(f, l)));
+    };
+    expect(at(0), 'вперёд — база бит в бит').toBe(100);
+    expect(at(90), 'чистый бок — колонка страйфа').toBe(10);
+    expect(at(180), 'чистый ход спиной — колонка «назад»').toBe(20);
+    // …и передняя полуплоскость целиком ведёт себя как раньше: «назад» там весит ноль.
+    expect(at(30), 'в мёртвой зоне страйфа — база').toBe(100);
   });
 
   it('доля стороны ЧАСТИЧНАЯ — добавка подмешивается ею, а не включается ступенькой', () => {
