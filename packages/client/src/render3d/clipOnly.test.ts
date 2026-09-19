@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, resetNoLocoSetWarnings, type PoseContent } from './poseRuntime.js';
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { bakedLocoSpeed, locoRunWeight, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
 import { clipDur, type Clip } from './clipModel.js';
@@ -155,26 +155,71 @@ describe('«только клипы»: планировщика нет', () => {
     expect(settings).not.toMatch(/type = 'checkbox'[^\n]*loco/i);
   });
 
-  it('⭐⭐ КУКЛА БЕЗ ЗАПЕЧЁННОГО НАБОРА НЕ ЕДЕТ СТОЛБОМ: «только клипы» требует набор, иначе ноги ведёт планировщик', () => {
-    // Игра просит «только клипы» у ВСЕХ кукол разом. Раньше режим включался по одному лишь перекрытию: планировщик
-    // выключен, клипа нет — персонаж скользил по полу в позе стоя (ЗАМЕР ниже: подъём стопы 0).
-    const lift = (content: PoseContent): number => {
-      const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
-      p.setVel(0, R); p.setYaw(0); p.snapYaw();
-      setLocoMixOverride(1);
-      let lo = Infinity, hi = -Infinity;
-      for (let i = 0; i < 240; i++) { p.step(1 / 60); if (i >= 120) { const y = footW(h, p, 0).y; lo = Math.min(lo, y); hi = Math.max(hi, y); } }
-      return hi - lo;
-    };
+  /**
+   * ⭐⭐ КУКЛА БЕЗ НАБОРА — НОВЫЙ КОНТРАКТ (Э13б).
+   *
+   * Раньше здесь стоял прямо противоположный сторож: «без набора ноги ОБЯЗАН вести планировщик».
+   * Именно эта ветка (`hasLocoSet`) и была последней живой точкой входа планировщика в игру, и
+   * срабатывала молча — вплоть до смены оружия прямо в бою.
+   *
+   * ⚠⚠ НАИВНОЕ СНЯТИЕ ДАЁТ НЕ «СТОЛБ», А ВОЛОЧЕНИЕ НОГ. ЗАМЕР на беге 120 u/с без набора:
+   * без защёлки стопа уезжает от тела на **29.21 ед** (нога растянута до предела досягаемости),
+   * с защёлкой — **4.00 ед** (ширина стойки). Причина: без клипа `clipContact` навсегда [true,true],
+   * вес фиксации на ходу равен 1, замок не снимается никогда — и `warpStanceFeet` прибивает ОБЕ стопы
+   * к точке первого кадра, пока персонаж от неё уезжает.
+   *
+   * Новое поведение выбрано сознательно: персонаж СКОЛЬЗИТ в авторской стойке и ОДИН РАЗ говорит об этом
+   * в консоль. Скольжение заметно и починка очевидна (запечь набор либо дать донора); волочение ног —
+   * тоже заметно, но читается как поломка физики, а не как дыра в контенте.
+   */
+  it('⭐⭐ БЕЗ НАБОРА КУКЛА НЕ ВОЛОЧИТ НОГИ И НЕ ТРОГАЕТ ПЛАНИРОВЩИКА', () => {
     const none = localStorageContent('warrior');   // localStorage пуст — клипов нет вовсе
     expect(none.locoClip!(['run_fwd'], 'none')).toBe(null);
-    expect(lift(none), '⚠ СТОЛБ: набора нет, а планировщик выключен — ноги не идут').toBeGreaterThan(3);
-    expect(lift(withLib(none)), 'с набором ноги ведёт клип').toBeGreaterThan(3);
-    // …и с набором планировщик по-прежнему не создаётся вовсе (первый сторож файла), а без него — работает он.
-    const h = buildHumanoid({}); const p = new PosePlayer(h, () => [], none, 'none', GX, emptyGrid());
-    setLocoMixOverride(1); p.setVel(0, R); p.step(1 / 60);
-    expect((p.driver as unknown as { planner: unknown }).planner, 'без набора ноги обязан вести планировщик').not.toBe(null);
+    const h = buildHumanoid({});
+    const p = new PosePlayer(h, () => [], none, 'none', GX, emptyGrid());
+    p.setVel(0, R); p.setYaw(0); p.snapYaw();
+    setLocoMixOverride(1);
+    const { touched, restore } = trap(p);
+    let worst = 0;
+    try {
+      for (let i = 0; i < 300; i++) {
+        p.step(1 / 60);
+        const f = h.bones.get('LeftFoot')!.getWorldPosition(new THREE.Vector3());
+        worst = Math.max(worst, Math.hypot(f.x, f.z));   // стопа ОТНОСИТЕЛЬНО тела
+      }
+    } finally { restore(); }
+    expect(touched, '⚠ планировщик тронут: кукла без набора больше НЕ уезжает на процедурку').toEqual([]);
+    expect(worst, '⚠⚠ ВОЛОЧЕНИЕ НОГ: без защёлки стопа уезжает на 29.21 ед от тела').toBeLessThan(8);
+  });
+
+  it('⭐ «НАБОРА НЕТ» ГОВОРИТСЯ ОДИН РАЗ НА ПАРУ (персонаж, оружие), а не каждый кадр', () => {
+    // Без этого дыра в контенте либо молчит совсем, либо топит консоль 60 раз в секунду на каждую куклу.
+    resetNoLocoSetWarnings();
+    const said: string[] = [];
+    const real = console.warn;
+    console.warn = (...a: unknown[]): void => { said.push(String(a[0])); };
+    try {
+      for (const w of ['none', 'none', 'sword']) {
+        const h = buildHumanoid({});
+        const p = new PosePlayer(h, () => [], localStorageContent('warrior'), w, GX, emptyGrid());
+        p.setVel(0, R); p.setYaw(0); p.snapYaw();
+        setLocoMixOverride(1);
+        for (let i = 0; i < 30; i++) p.step(1 / 60);
+      }
+    } finally { console.warn = real; }
+    expect(said.length, '⚠ две куклы одной пары → одно сообщение; другое оружие → своё').toBe(2);
+    expect(said[0], '⚠ сообщение обязано называть персонажа и оружие — иначе его не привязать к строке панели').toContain('warrior');
+    expect(said[1]).toContain('sword');
+  });
+
+  it('⭐ С НАБОРОМ — ноги ведёт клип (контроль: защёлка не съела походку)', () => {
+    const h = buildHumanoid({});
+    const p = new PosePlayer(h, () => [], withLib(localStorageContent('warrior')), 'none', GX, emptyGrid());
+    p.setVel(0, R); p.setYaw(0); p.snapYaw();
+    setLocoMixOverride(1);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < 240; i++) { p.step(1 / 60); if (i >= 120) { const y = footW(h, p, 0).y; lo = Math.min(lo, y); hi = Math.max(hi, y); } }
+    expect(hi - lo, 'с набором ноги ведёт клип').toBeGreaterThan(3);
   });
 
   it('⭐ МОНСТР БЕЗ СВОИХ КЛИПОВ ХОДИТ НАБОРОМ ПЕРСОНАЖА-ФОЛБЭКА — и тоже без планировщика', () => {

@@ -956,6 +956,38 @@ const _lockV = new THREE.Vector3();
  */
 const MODE_FADE = 0.25;
 /**
+ * ⭐ ДОЛЯ КЛИПА, ПРИ КОТОРОЙ КАДР СЧИТАЕТСЯ «ТОЛЬКО КЛИПЫ». Игра ставит 1 безусловно;
+ * промежуточные доли бывают только в редакторе (A/B на вкладке «Тест») и в запекателе.
+ */
+const CLIP_ONLY_MIX = 0.999;
+/**
+ * ⭐ ДОЛЯ, С КОТОРОЙ ПОВОРОТЫ НА МЕСТЕ ИГРАЮТСЯ КЛИПАМИ — НИЖЕ, чем `CLIP_ONLY_MIX`, и нарочно.
+ *
+ * ⚠ Разница видна только в редакторе: там надо сравнивать поворот клипами с процедурным на
+ * промежуточных долях. В игре оба порога всегда истинны одновременно.
+ */
+const CLIP_TURN_MIX = 0.5;
+/**
+ * ⭐⭐ «НАБОРА НЕТ» — ОДИН РАЗ НА ПАРУ (персонаж, оружие), А НЕ КАЖДЫЙ КАДР.
+ *
+ * До Э13б кукла без набора молча уезжала на процедурный планировщик — выглядело это как
+ * «просто другая походка», и дыру в контенте было нечем заметить. Теперь персонаж просто скользит
+ * в стойке — тоже молча, если не сказать. Сообщение называет КОГО и ПОД ЧТО не хватает — именно эти
+ * два ключа нужны, чтобы найти строку в панели покрытия.
+ */
+const noSetWarned = new Set<string>();
+export function warnNoLocoSet(charId: string, weapon: string): void {
+  // ⚠ Разделитель — ОБЫЧНЫЙ символ. Здесь стоял NUL и попал в файл НАСТОЯЩИМ байтом:
+  // git счёл исходник БИНАРНЫМ (эвристика «NUL в первых 8 КБ»), перестал нормализовать переводы строк,
+  // и коммит показал дифф на ВЕСЬ файл (6748 строк) вместо десятка правок.
+  const k = charId + ' / ' + weapon;
+  if (noSetWarned.has(k)) return;
+  noSetWarned.add(k);
+  console.warn(`[loco] нет набора хода: персонаж «${charId || '?'}», оружие «${weapon || 'none'}» — персонаж будет скользить в стойке. Запеки ему набор либо проверь донора (панель «ПОКРЫТИЕ НАБОРА»).`);
+}
+/** Только для тестов: забыть, кому уже говорили. */
+export function resetNoLocoSetWarnings(): void { noSetWarned.clear(); }
+/**
  * ⭐⭐ ШАГИ (звук): ОДИН ШОВ НА ВСЕ РЕЖИМЫ — `onMark` с меткой `footstep`, той же, что ставится в клипе руками.
  *
  *   кто ведёт ноги            откуда шаг
@@ -2316,11 +2348,23 @@ export class PosePlayer {
    * следующего кадра. Зовётся и из `snapYaw`.
    */
   cancelTurn(): void { if (this.turn) { this.turn = null; this.replantPlanner(); } this.seamW = 0; this.shownOk = false; }
-  /** Режим «только клипы» на этом кадре (см. `CLIP_ONLY_TG`): планировщик не обновлялся и не читался. */
-  private clipOnlyNow = false;
-  get clipOnly(): boolean { return this.clipOnlyNow; }
+  /**
+   * Режим «только клипы» на этом кадре (см. `CLIP_ONLY_TG`): планировщик не обновлялся и не читался.
+   * ⚠ `null` — кадров ещё не было, режим НЕИЗВЕСТЕН. Было `false` — и каждая кукла на первом же кадре
+   * «меняла режим», снимала снимок всех костей и четверть секунды перетекала из позы, оставленной конструктором.
+   */
+  private clipOnlyNow: boolean | null = null;
+  get clipOnly(): boolean { return this.clipOnlyNow === true; }
+  /**
+   * ⭐⭐ ЕСТЬ ЛИ У ЭТОГО КАДРА НАСТОЯЩИЙ КЛИП ХОДА — не «набор где-то есть», а поза в руках.
+   *
+   * Это замена снятому `hasLocoSet`. Разница принципиальная: старая проверка спрашивала библиотеку про
+   * `run_fwd` и по одному ответу переключала ВЕСЬ режим куклы; эта смотрит, что реально собралось В ЭТОМ
+   * кадре, и гасит только то, что без клипа бессмысленно (фиксацию стоп).
+   */
+  private clipLoco = false;
   /** Пересадить стопы планировщика после поворота — только если он в деле: в «только клипы» его не трогаем вовсе. */
-  private replantPlanner(): void { if (!this.clipOnlyNow) this.driver.replant(); }
+  private replantPlanner(): void { if (!this.clipOnly) this.driver.replant(); }
   /** Часы клипов в режиме «только клипы»: фаза по пройденному пути (рад, π на шаг — как у планировщика). */
   private clipPhase = 0;
   /** Поза в момент смены режима и доля, с которой она ещё держится (см. `MODE_FADE`). */
@@ -2332,8 +2376,8 @@ export class PosePlayer {
   /** Вес фиксации стоп (см. место чтения): на ходу 1, встали — гаснет за `LOCO_FADE`. */
   private lockW = 0;
   /** Веса заземления: в «только клипы» опору решает контакт, окон планировщика нет. */
-  get groundWeights(): [number, number] { return this.clipOnlyNow ? [1, 1] : this.driver.groundWeights; }
-  get plantWeights(): [number, number] { return this.clipOnlyNow ? [1, 1] : this.driver.plantWeights; }
+  get groundWeights(): [number, number] { return this.clipOnly ? [1, 1] : this.driver.groundWeights; }
+  get plantWeights(): [number, number] { return this.clipOnly ? [1, 1] : this.driver.plantWeights; }
   /**
    * КАКИЕ СТОПЫ ЗАЗЕМЛЯТЬ. Обычно — опорные по планировщику; на время клипа поворота — по флагам
    * переноса ИЗ КЛИПА: ноги у планировщика отобраны, он считает обе опорными и положил бы маховую
@@ -2341,7 +2385,7 @@ export class PosePlayer {
    */
   get groundSupport(): [boolean, boolean] {
     if (this.turn && this.turn.w > 0.5) return turnSupportAt(this.turn.clip, this.turn.t);
-    if (this.clipOnlyNow) return [this.clipContact[0], this.clipContact[1]];
+    if (this.clipOnly) return [this.clipContact[0], this.clipContact[1]];
     const sw = this.driver.swingLegs;
     return [!sw[0], !sw[1]];
   }
@@ -2376,20 +2420,13 @@ export class PosePlayer {
     return val;
   }
   /**
-   * ⭐ ЕСТЬ ЛИ У ЭТОЙ КУКЛЫ НАБОР ХОДА под текущее оружие: хватает клипа «вперёд» любой скорости — остальные колонки
-   * бленд добирает им же (`blendLocoPose`: нет колонки → играет база). Кэш — тот же, что у `strafeClipsFresh`, и по той же
-   * причине: поиск идёт по библиотеке, а шагает этим кодом каждая кукла на сцене. Монстры без своих клипов находят набор
-   * персонажа-фолбэка (`localStorageContent(gaitId, 'warrior')`) — для них ответ «да».
+   * ⚠⚠ ЗДЕСЬ ЖИЛ `hasLocoSet()` — ПОСЛЕДНЯЯ ЖИВАЯ ТОЧКА ВХОДА ПЛАНИРОВЩИКА В ИГРУ (снят Э13б).
+   *
+   * Он спрашивал библиотеку про `run_fwd`/`walk_fwd` ПОД ТЕКУЩЕЕ ОРУЖИЕ и по одному этому ответу
+   * переключал ВЕСЬ режим куклы — молча и прямо в бою, потому что ключ кэша — оружие.
+   * Заменен не пустотой, а `clipLoco`: проверкой того, что клип РЕАЛЬНО собрался в ЭТОМ кадре.
+   * См. `clipLoco` выше и место решения `clipOnly` в `step`.
    */
-  private setCache = { weapon: '', at: -1e9, val: false, has: false };
-  private hasLocoSet(): boolean {
-    const lc = this.content.locoClip; if (!lc) return false;
-    const c = this.setCache;
-    if (c.has && c.weapon === this.weapon && this.stepClock - c.at < FRESH_TTL) return c.val;
-    const found = lc(locoClipNames('fwd', true), this.weapon) ?? lc(locoClipNames('fwd', false), this.weapon);
-    c.weapon = this.weapon; c.at = this.stepClock; c.val = !!found && found.keys.length > 0; c.has = true;
-    return c.val;
-  }
   /** Забыть доворот (запекание, телепорт): таз ровно, сектор «вперёд». */
   resetDirWarp(): void { this.dirWarp = { ...DIR_WARP0 }; }
   /** Курс таза БЕЗ доворота и поворота таза (прицельный корень): ровно его вычитает запекатель из клипа страйфа. */
@@ -2467,7 +2504,7 @@ export class PosePlayer {
     this.clipStandY = p.standY;
     // «Только клипы»: планировщику стойку НЕ отдаём (в этом режиме к нему ни одного обращения), но высоту таза
     // держим сами — см. `clipStandY`. −1 = при возврате в планировщик замерить заново.
-    if (this.clipOnlyNow) { this.stanceCombat = -1; this.clipStanceCombat = this.combat; return; }
+    if (this.clipOnly) { this.stanceCombat = -1; this.clipStanceCombat = this.combat; return; }
     this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY, p.foot);
     this.stanceCombat = this.combat; this.clipStanceCombat = -1;
   }
@@ -2675,7 +2712,16 @@ export class PosePlayer {
       if (t.t >= dur) { this.turn = null; this.replantPlanner(); }   // встал в стойку на новом курсе → стопы туда же
       return { rootYaw: this.rootYaw, residual: clampTw(wrapPi(this.aimYaw - this.rootYaw)), turning: true };
     }
-    const clipMode = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) >= 0.5;
+    // ⚠⚠ ПОРОГ ЗДЕСЬ НАРОЧНО НИЖЕ, ЧЕМ У РЕЖИМА КАДРА — и это НЕ рассогласованность.
+    //
+    // План требовал свести два гейта в один, но реальный дефект был другой: этот гейт не спрашивал `hasLocoSet`,
+    // а тот — спрашивал. С удалением `hasLocoSet` (Э13б) расхождение исчезло само.
+    //
+    // А оставшаяся разница порогов РАБОТАЕТ НА АВТОРА: смешанный режим бывает только в редакторе (игра
+    // ставит долю в 1 безусловно), и там повороты ОБЯЗАНЫ играть клипами уже на половинной доле — иначе
+    // сравнивать A/B нечего. Попытка свести пороги к одному сломала 5 тестов на доле 0.99 — они эту
+    // границу и стерегут. Что было настоящей бедой — безымянные числа в четырёх местах; имена ниже.
+    const clipMode = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) >= CLIP_TURN_MIX;
     if (!clipMode || !this.still || this.atk.clip || !this.content.locoClip) return null;
     const has = (name: string): boolean => !!this.content.locoClip!([name], this.weapon);
     if (!this.content.locoClip(TURN_NAMES, this.weapon)) return null;     // поворотов не запекали — процедурный доворот
@@ -2853,11 +2899,21 @@ export class PosePlayer {
     // ⭐⭐ «ТОЛЬКО КЛИПЫ»: доля клипа ровно 1 и контенту есть откуда брать клипы. Решается ПЕРВЫМ — от него зависит,
     // трогаем ли планировщик на этом кадре вообще: в этом режиме ему не уходит НИ ОДИН вызов, даже сеттер
     // (и если режим включён с первого кадра, планировщик так и не создаётся — `PoseDriver.setWorld` его не позовёт).
-    // ⚠ И НАБОР ОБЯЗАН БЫТЬ (`hasLocoSet`): с 19.09 игра всегда просит «только клипы», и кукла без запечённого набора
-    // (новый класс, контент без клипов) иначе ехала бы СТОЛБОМ — планировщик выключен, а клипа нет. Нет набора —
-    // остаёмся на планировщике: некрасиво, но ноги идут, и дыра видна сразу.
-    const clipOnly = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) >= 0.999 && this.hasLocoSet();
-    if (clipOnly !== this.clipOnlyNow) {
+    // ⚠⚠ ЗДЕСЬ СТОЯЛО `&& this.hasLocoSet()` — ПОСЛЕДНЯЯ ЖИВАЯ ТОЧКА ВХОДА ПЛАНИРОВЩИКА В ИГРУ, и срабатывала
+    // она МОЛЧА: нет запечённого `run_fwd` — вся кукла уезжает на процедурную походку, причём достижимо это
+    // сменой оружия прямо в бою (ключ кэша — оружие). Убрана вместе с самой проверкой.
+    //
+    // ⚠ ЧЕМ ЗАМЕНЕНА, А НЕ «ПРОСТО УБРАНА». Наивное снятие даёт не «столб», а куклу, ВОЛОЧАЩУЮ НОГИ:
+    // без клипа `clipContact` навсегда [true, true], `lockW` на ходу равен 1, замок не снимается — и
+    // `warpStanceFeet` прибивает ОБЕ стопы к точке первого кадра, пока персонаж от неё уезжает. Поэтому
+    // условие не исчезло, а переехало ТУДА, ГДЕ ОНО ЧЕСТНОЕ: фиксация стоп требует РЕАЛЬНОГО клипа этого
+    // кадра (`clipLoco` ниже), а не «набор где-то есть». Руки чинить не пришлось — аддитивный шов при
+    // `locoPose = null` сам отдаёт авторскую стойку (дельта маха вырождается в единицу).
+    const clipOnly = clamp(locoMixOverride ?? GAIT.locoMix, 0, 1) >= CLIP_ONLY_MIX;
+    // ⚠ Первый кадр куклы: режим ещё НЕ ИЗВЕСТЕН (`null`), а не «был процедурным». Иначе каждая кукла
+    // начинала жизнь со снимка позы, оставленной `measureStance` в конструкторе, и 0.25 с перетекала из неё —
+    // плюс аллокация карты кватернионов ВСЕХ костей ровно там, где кадр куклы не должен аллоцировать.
+    if (this.clipOnlyNow !== null && clipOnly !== this.clipOnlyNow) {
       this.footLock = [null, null]; this.clipContact = [true, true];
       // Поза прошлого кадра ещё на гуманоиде — её и запоминаем, из неё новый режим и перетечёт.
       const rot = new Map<string, THREE.Quaternion>();
@@ -3153,7 +3209,13 @@ export class PosePlayer {
     // опоры по фазе с долей опоры, с которой клипы сняты (`clipDuty` выше): клипы сняты по фазе планировщика, так что
     // для запечённых это та же разметка. Стоим — обе на полу.
     if (clipOnly) {
-      if (mix > 0.001 && locoPose) {
+      // ⭐⭐ ЕСТЬ ЛИ КЛИП В ЭТОМ КАДРЕ. От этого зависит фиксация стоп ниже: без клипа она прибивает
+      // ОБЕ стопы к точке первого кадра, пока персонаж от неё уезжает (`clipContact` навсегда [true,true],
+      // `lockW` на ходу = 1, замок не снимается) — то есть кукла не «стоит столбом», а ВОЛОЧИТ НОГИ.
+      this.clipLoco = mix > 0.001 && !!locoPose;
+      // Предупреждаем только тогда, когда клип ДОЛЖЕН был быть: идём (доля выросла), а позы нет.
+      if (mix > 0.001 && !locoPose) warnNoLocoSet(this.content.charId ?? '', this.weapon);
+      if (this.clipLoco && locoPose) {
         const s = leadSwing ?? locoPose[SWING_KEY];
         if (s) this.clipContact = [s[0] < 0.5, s[1] < 0.5];
         else {
@@ -3253,12 +3315,19 @@ export class PosePlayer {
       // её долей, ехала за позой — замер старта с места в бег: 2.62 ед. Идём — держим целиком (точка берётся в
       // кадр, когда вес поднялся, поэтому рывка нет); встали — отпускаем за то же время, что гаснет клип.
       // На ОСТАНОВКЕ это всё равно скольжение: шагнуть в стойку нечем — нужен клип остановки, его пока нет.
-      this.lockW = this.still ? Math.max(0, this.lockW - dt / LOCO_FADE) : 1;
+      // ⚠⚠ И «КЛИПА НЕТ» ОТПУСКАЕТ ТАК ЖЕ, КАК ОСТАНОВКА. Опору называет КЛИП; нет клипа — нет
+      // и опоры, о которой он мог бы говорить. Без этого условия кукла без набора не «стоит столбом»,
+      // а ВОЛОЧИТ НОГИ: `clipContact` навсегда [true,true], вес на ходу 1, замок не снимается никогда —
+      // и обе стопы прибиты к точке первого кадра, пока персонаж от неё уезжает.
+      this.lockW = (this.still || !this.clipLoco) ? Math.max(0, this.lockW - dt / LOCO_FADE) : 1;
       this.human.root.updateMatrixWorld(true);
       const tgt: [[number, number], [number, number]] = [[0, 0], [0, 0]];
       for (let i = 0; i < 2; i++) {
         // ⚠ Клип поворота (и его гашение) — ноги его: фиксации нет, и точку не держим — после поворота её снимут заново
         // с той позы, что будет тогда, а не со стоп-кадра до поворота (см. `seamW`, ступень ног).
+        // ⚠ Про «клипа нет» здесь НЕ спрашиваем второй раз: без клипа `lockW` уже гаснет до нуля выше,
+        // и этот же `lockW <= 0.001` снимает замок. Две защёлки на одно условие — это два места правды,
+        // и проверить ни одну из них нельзя: мутация любой по отдельности проходит мимо сторожа (проверено).
         if (!this.clipContact[i] || this.lockW <= 0.001 || this.turn) { this.footLock[i] = null; continue; }
         if (!this.footLock[i]) {
           const f = this.human.bones.get(i === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(_lockV);
