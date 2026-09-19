@@ -306,6 +306,11 @@
         "materialId": "plate-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 1,
+        "max": 2
       }
     ]
   },
@@ -321,6 +326,16 @@
         "materialId": "plate-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 1,
+        "max": 1
+      },
+      {
+        "materialId": "hide-1",
+        "min": 1,
+        "max": 1
       }
     ]
   },
@@ -336,6 +351,16 @@
         "materialId": "plate-1",
         "min": 2,
         "max": 3
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 1,
+        "max": 1
+      },
+      {
+        "materialId": "hide-1",
+        "min": 1,
+        "max": 2
       }
     ]
   },
@@ -384,6 +409,11 @@
         "materialId": "plate-1",
         "min": 1,
         "max": 2
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 1,
+        "max": 1
       }
     ]
   },
@@ -400,6 +430,11 @@
         "materialId": "plate-1",
         "min": 1,
         "max": 2
+      },
+      {
+        "materialId": "cloth-1",
+        "min": 1,
+        "max": 1
       }
     ]
   },
@@ -416,6 +451,11 @@
         "materialId": "plate-1",
         "min": 1,
         "max": 2
+      },
+      {
+        "materialId": "hide-1",
+        "min": 1,
+        "max": 1
       }
     ]
   },

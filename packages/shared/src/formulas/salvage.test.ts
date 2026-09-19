@@ -217,7 +217,13 @@ describe('⭐ разбор вещи: поле дешевле, кузница п�
       rarityTier: tuning.rarityTier,
       knownMaterial: (id) => reg.get('craft-materials').some((c) => c.id === id),
     });
-    expect(Object.keys(got).sort()).toEqual(['iron-3', 'plate-1']);
+    // ⚠ Проверяем ПРАВИЛО (ступень берётся с конкретной вещи), а не список выходов: у доспеха их
+    // несколько (пластины + поддоспешник), и список меняется при правке данных, а правило — нет.
+    const keys = Object.keys(got);
+    expect(keys, 'меч редкий → калёная сталь').toContain('iron-3');
+    expect(keys, 'кольчуга обычная → ржавые пластины').toContain('plate-1');
+    expect(keys.filter((k) => !k.startsWith('iron')).every((k) => k.endsWith('-1')),
+      'всё бронное с обычной вещи — первой ступени').toBe(true);
   });
 
   it('дробный выход округляется вероятностно: не «всегда ноль» и не «всегда единица»', () => {
