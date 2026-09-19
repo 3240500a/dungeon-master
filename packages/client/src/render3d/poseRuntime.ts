@@ -7,7 +7,7 @@ import { GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, STRAFE_
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
-import { clipSections } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
+import { clipSections, clipChannelAt } from './clipModel.js';   // re-export выше только реэкспортит, в модуле имени не создаёт
 import { legGroundIK, legGeomFor, legBones, LEG_COUNT } from './footIk.js';   // footIk ничего у нас не импортирует — цикла нет
 import { readAnimCfg } from './animConfig.js';
 
@@ -84,12 +84,14 @@ export interface LayerTrace {
   speed: number; sb: number; st: number; moveMag: number; legMag: number; combat: number;
   /** Скрутка корпуса: от походки (в такт шагу) и от прицела (torso-lead) — разные вещи, путать нельзя. */
   twistGait: number; twistAim: number;
+  /** ⭐ Опора этого кадра УГАДАНА по доле, а не взята из канала клипа — без этого «стопа едет» неотличимо от «клип протухший». */
+  swingGuessed: boolean;
   rows: TraceRow[];
   items: StanceLayerInfo[];
 }
 export const layerTrace: LayerTrace = {
   on: false, t: 0, speed: 0, sb: 0, st: 0, moveMag: 0, legMag: 0, combat: 0,
-  twistGait: 0, twistAim: 0, rows: [], items: [],
+  twistGait: 0, twistAim: 0, swingGuessed: false, rows: [], items: [],
 };
 const traceRow = (layer: string, src: string, w: number, note?: string): void => {
   if (layerTrace.on) layerTrace.rows.push({ layer, src, w, note });
@@ -956,6 +958,7 @@ const _lockV = new THREE.Vector3();
 const MODE_FADE = 0.25;
 // ⚠ ОТВЕТЫ ШВОВ БЕЗ ПЛАНИРОВЩИКА — ОБЩИЕ КОНСТАНТЫ, а не свежие массивы: кадр куклы не должен
 // аллокировать, а швы читаются по несколько раз за кадр на каждую куклу сцены. Читатели их НЕ МУТИРУЮТ.
+const _swBuf: [number, number, number] = [0, 0, 0];   // буфер чтения канала опоры — кадр куклы не аллокирует
 const NO_SWING: readonly [boolean, boolean] = [false, false];
 const NO_PLANT: readonly [number, number] = [0, 0];
 const ONE_ONE: readonly [number, number] = [1, 1];
@@ -1116,7 +1119,15 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
   const m = legMag;
   // Трасса собирается СНИЗУ ВВЕРХ, в порядке наложения слоёв — так же, как её показывает корень графа.
   if (layerTrace.on) { layerTrace.rows.length = 0; layerTrace.t = Date.now(); }
-  traceRow('НОГИ / ТАЗ', 'планировщик шагов', m, m < 0.99 ? 'остальное — ноги из стойки' : undefined);
+  // ⚠⚠ ЗДЕСЬ ВСЕГДА ПИСАЛОСЬ «планировщик шагов» — ИСТОЧНИК, КОТОРОГО В ИГРЕ НЕТ.
+  // В режиме клипов `legMag` прибит в 0, то есть строка читалась как «планировщик, 0 %» — и ни слова
+  // про то, что ноги на самом деле ведёт КЛИП хода. Панель, по которой ищут причину, называла не тот слой.
+  traceRow('НОГИ / ТАЗ', clipOnly ? 'клип хода' : 'планировщик шагов',
+    clipOnly ? locoMix : m,
+    clipOnly
+      ? (locoPose ? (layerTrace.swingGuessed ? 'опора УГАДАНА по доле: в клипе нет канала опоры' : 'опора из канала клипа')
+        : '⚠ НЕТ КЛИПА ХОДА — ноги держат стойку, персонаж скользит')
+      : (m < 0.99 ? 'остальное — ноги из стойки' : undefined));
   human.bones.get('Hips')!.position.set(0, 30 + t.bobY, 0);   // боб таза (множитель ходьба/бег уже в bobY)
   // КРЕН И НАКЛОН ТАЗА (две плоскости) — в кадре персонажа. Ставим ДО `applyTorsoTwist`: курс он кладёт СЛЕВА
   // (`pelvisFrame.pelvisToWorld`), и наклон остаётся наклоном вперёд на любом курсе. Боковое смещение `bobX` — отдельно, в кадре ТЕЛА.
@@ -2438,6 +2449,14 @@ export class PosePlayer {
   private modeBlend = 0;
   /** Опорные стопы клипа (true = на полу) и точки, где они коснулись пола (мир), — фиксация стопы. */
   private clipContact: [boolean, boolean] = [true, true];
+  /**
+   * ⭐ ОПОРА ЭТОГО КАДРА НЕ ИЗ КАНАЛА, А ПРИНЯТА ПО УМОЛЧАНИЮ (обе стопы на полу).
+   * Значит ведущий клип снят до канала `__swing` либо пришёл импортом — фиксации стоп нет.
+   * Читает трасса слоёв: без этого «стопа едет» неотличимо от «клип протухший».
+   */
+  private swingGuessed = false;
+  /** Источник опоры этого кадра — редактору и трассе. */
+  get swingSource(): 'clip' | 'guessed' { return this.swingGuessed ? 'guessed' : 'clip'; }
   private footLock: [{ x: number; z: number } | null, { x: number; z: number } | null] = [null, null];
   /** Вес фиксации стоп (см. место чтения): на ходу 1, встали — гаснет за `LOCO_FADE`. */
   private lockW = 0;
@@ -3124,6 +3143,7 @@ export class PosePlayer {
     let locoPose: Pose | null = null;
     let locoRef: Pose | null = null;   // нейтраль маха смеси (см. `armBlend.swingRefOf`)
     let leadSwing: [number, number, number] | undefined;   // опора ВЕДУЩЕГО клипа (бинарный канал смешивать нельзя)
+    this.swingGuessed = false;
     let leadNow: LeadMark | null = null;   // ведущий клип бега в «только клипы» — с него звучат метки (см. `emitSteps`)
     let clipDuty = -1;                     // доля опоры смеси клипов (см. окна опоры ниже); −1 — не считалась
     if (mix > 0.001 && this.content.locoClip) {
@@ -3230,7 +3250,10 @@ export class PosePlayer {
       // бленд колонок размазывает его в дробь: порог 0.5 тогда срабатывает не там, где у самих клипов. ЗАМЕР на
       // диагонали 60°: скольжение опорной стопы 10.4 % из смеси против 4.8 % у прямого хода. Ровно так же решает
       // Blend Space в Unreal (режим «Highest Weighted Animation»), и ровно так же у нас уже берутся МЕТКИ ШАГОВ.
-      if (lead) { const lp = clipPoseAt(lead, u)[SWING_KEY]; if (lp) leadSwing = [lp[0], lp[1], lp[2]]; }
+      // ⚠ ОДИН КАНАЛ, А НЕ ВСЯ ПОЗА. Здесь стоял `clipPoseAt`, собиравший ПОЛНУЮ позу ведущего клипа
+      // (все кости + slerp каждой) ради ОДНОГО трёхмерного числа — и поверх уже собранной позы смеси,
+      // на каждую куклу сцены каждый кадр. `clipChannelAt` даёт тот же ответ бит в бит (стережёт `rootPreview`).
+      if (lead) { const lp = clipChannelAt(lead, u, SWING_KEY, _swBuf); if (lp) leadSwing = [lp[0], lp[1], lp[2]]; }
       if (this.colFade.w > 0 && locoPose) {
         const f = this.colFade;
         // ⚠ УХОДЯЩАЯ КОЛОНКА ДОИГРЫВАЕТ СО СВОИМ ВЕСОМ БЕГА, а не с нынешним `axes.sb`. Инерции хода нет: остановка
@@ -3259,15 +3282,28 @@ export class PosePlayer {
       // Предупреждаем только тогда, когда клип ДОЛЖЕН был быть: идём (доля выросла), а позы нет.
       if (mix > 0.001 && !locoPose) warnNoLocoSet(this.content.charId ?? '', this.weapon);
       if (this.clipLoco && locoPose) {
-        const s = leadSwing ?? locoPose[SWING_KEY];
-        if (s) this.clipContact = [s[0] < 0.5, s[1] < 0.5];
+        // ⚠⚠ ФОЛБЭК НА СМЕСЬ УБРАН — ОН ВЕЛ В ЯМУ. `__swing` бинарен, а `blendTwo` считает ОТСУТСТВУЮЩИЙ
+        // канал НУЛЁМ: смесь клипа ревизии 3 со старым (без канала) на 50/50 даёт ровно 0.5, и порог `< 0.5`
+        // объявляет ОПОРНУЮ ногу маховой — то есть фиксация отпускает стопу там, где она стоит. Ровно ради
+        // этого канал берётся с ВЕДУЩЕГО клипа выше, а фолбэк на смесь сводил это на нет.
+        if (leadSwing) this.clipContact = [leadSwing[0] < 0.5, leadSwing[1] < 0.5];
         else {
-          const duty = clipDuty >= 0 ? clipDuty : lerpN(GAIT.dutyWalk, GAIT.dutyRun, tg.sb ?? 0);
-          const inStance = (i: number): boolean => Math.abs(wrapPi(this.clipPhase - i * Math.PI)) <= Math.PI * duty;
+          // КЛИП БЕЗ КАНАЛА (импортный мокап, съём до ревизии 3): окно опоры УГАДЫВАЕТСЯ по доле,
+          // с которой клип снят. Работает, но хуже канала — поэтому кадр помечается «опора угадана» и это
+          // видно в трассе: без пометки «стопа едет» неотличимо от «клип протухший».
+          //
+          // ⚠ ЗДЕСЬ БЫЛ МЁРТВЫЙ ТЕРНАРНИК `clipDuty >= 0 ? clipDuty : lerp(dutyWalk, dutyRun, tg.sb)`.
+          // Правая часть недостижима: `clipDuty` безусловно присваивается выше в том же кадре,
+          // и условие её блока — ПОДМНОЖЕСТВО здешнего (`locoPose` ставится только там).
+          const inStance = (i: number): boolean => Math.abs(wrapPi(this.clipPhase - i * Math.PI)) <= Math.PI * clipDuty;
           this.clipContact = [inStance(0), inStance(1)];
+          this.swingGuessed = true;
         }
       } else this.clipContact = [true, true];
     }
+    // ⚠ Источник опоры — В ТРАССУ ДО отрисовки строки: строку «НОГИ / ТАЗ» пишет сам `gaitToHumanoid`,
+    // и флаг, поставленный после него, показывал бы ПРОШЛЫЙ кадр.
+    if (layerTrace.on) layerTrace.swingGuessed = this.swingGuessed;
     gaitToHumanoid(this.human, this.weaponGroups(), this.gx, this.legMag, tg, this.content, this.weapon, this.atk, this.moveMag, this.noIk, this.combat, this.fade, this.idleT, locoPose, mix, this.atkLegsW, clipOnly, locoRef);
     if (layerTrace.on) {
       layerTrace.speed = Math.hypot(this.vx, this.vz);
