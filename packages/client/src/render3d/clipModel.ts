@@ -655,7 +655,18 @@ export function migrateClip(c0: unknown): Clip {
     bakeId: typeof c.bakeId === 'number' && Number.isFinite(c.bakeId) ? c.bakeId : undefined,
     // «Таз открыт»: потеряй угол или доли на чтении — рантайм не снимет отворот, и грудь уедет от прицела на 41 % угла.
     hipsYawDeg: typeof c.hipsYawDeg === 'number' && Number.isFinite(c.hipsYawDeg) ? c.hipsYawDeg : undefined,
-    hipsYawW: Array.isArray(c.hipsYawW) && c.hipsYawW.length === 3 && c.hipsYawW.every((v: unknown) => typeof v === 'number' && Number.isFinite(v)) ? [...c.hipsYawW] as number[] : undefined };
+    hipsYawW: Array.isArray(c.hipsYawW) && c.hipsYawW.length === 3 && c.hipsYawW.every((v: unknown) => typeof v === 'number' && Number.isFinite(v)) ? [...c.hipsYawW] as number[] : undefined,
+    // ⚠⚠ ЧИСТЫЙ ВЕРХ И НЕЙТРАЛЬ МАХА — ровно та грабля, о которой предупреждает комментарий выше, и я на неё наступил.
+    // Поля завёл 19.09 вместе с ревизией 3, а СЮДА не дописал. Утечка тихая и с ОТЛОЖЕННЫМ разрушением: игра читает
+    // `pe_clips` спредом (`{...c}`) и оба поля видит, а редактор читает через `migrateClip` — то есть свежезапечённый
+    // набор живёт правильно ровно до перезагрузки страницы редактора. После неё панель покрытия объявляет только что
+    // снятые клипы `dirty_upper`+`no_ref`, а первый же `saveLib()` пишет обрезанную копию обратно в localStorage —
+    // и тогда поля теряет И ИГРА. То есть данные съедались не при чтении, а при следующем сохранении.
+    upperPure: c.upperPure === true ? true : undefined,
+    // Нейтраль маха — ПОЗА (кости → тройки). Прогоняем через `migratePose`, как и ключи: иначе легаси-канал таза
+    // внутри опоры разошёлся бы с ключами клипа. Битую (не-объект) молча отбрасываем — `swingRefOf` тогда посчитает
+    // её лениво по 24 сэмплам, то есть деградация, а не поломка.
+    swingRef: c.swingRef && typeof c.swingRef === 'object' ? migratePose({ ...c.swingRef }) : undefined };
 }
 
 /**

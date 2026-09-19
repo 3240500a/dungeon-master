@@ -5994,7 +5994,24 @@ function saveAtk(): void { try { localStorage.setItem('pe_attacks', JSON.stringi
 function atkList(): string[] { return atkCfgs[curCharId]?.[weapon] ?? []; }
 function toggleAtk(name: string): void { const byC = (atkCfgs[curCharId] ??= {}); const arr = (byC[weapon] ??= []); const i = arr.indexOf(name); if (i >= 0) arr.splice(i, 1); else arr.push(name); saveAtk(); }
 const clonePose = (p: Pose): Pose => JSON.parse(JSON.stringify(p)) as Pose;
-const cloneClipTo = (c: Clip, char: string): Clip => ({ name: c.name, character: char, weapon: c.weapon, loop: c.loop, keys: c.keys.map((k) => ({ pose: clonePose(k.pose), t: k.t })) });
+/**
+ * ⚠⚠ КОПИЯ КЛИПА ДРУГОМУ ПЕРСОНАЖУ — СПРЕДОМ, А НЕ ПЕРЕЧИСЛЕНИЕМ ПОЛЕЙ.
+ *
+ * Было перечисление `{name, character, weapon, loop, keys}` — и копия молча теряла ВСЮ метаинформацию съёма.
+ * Цена по замеру: без `bakeSpeed` часы режима «только клипы» читают скорость легаси-долями (50.4 / 102 вместо
+ * 40 / 120) — цикл ходьбы −21 %, бега +18 %, стопы едут; без `bakeRev` у персонажа-приёмника выключаются сектора
+ * доворота; без `upperPure` панель покрытия считает свежий набор протухшим; без `swingRef` рантайм каждый раз
+ * считает нейтраль маха лениво; без `hipsYawW` не снимается встречный отворот и грудь уходит от прицела.
+ *
+ * ⚠ Ключи клонируются ГЛУБОКО (позы), но `marks` раньше тоже терялись — теперь едут вместе с ключом: разметка
+ * шагов и ударов принадлежит кадру, а не персонажу.
+ */
+const cloneClipTo = (c: Clip, char: string): Clip => ({
+  ...c, character: char,
+  keys: c.keys.map((k) => ({ ...k, pose: clonePose(k.pose), marks: k.marks?.map((m) => ({ ...m })) })),
+  swingRef: c.swingRef ? clonePose(c.swingRef) : undefined,
+  hipsYawW: c.hipsYawW ? [...c.hipsYawW] : undefined,
+});
 
 // ── СИД «Волкодав»: idle-стойка (клип «idle_<w>») + удар (клип «hit_<w>», начинается ИЗ idle) на КАЖДОЕ из 16 оружий (+ без оружия) ──
 type V3 = [number, number, number];
