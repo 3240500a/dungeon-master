@@ -228,16 +228,6 @@ const colLerp = (map: Record<string, number>, sfx: string, kw: string, kr: strin
   return w + (r - w) * sb;
 };
 
-/** Страйф-значение ключа на сторону (одиночная запись, без пары — для панели и тестов). */
-export const strafeOf = (key: string, i: 0 | 1): number | undefined => colOf(STRAFE, '@s', key, i);
-/** Значение ключа при ходе спиной. */
-export const backOf = (key: string, i: 0 | 1): number | undefined => colOf(BACK, '@b', key, i);
-/** Боевое значение ключа. */
-export const combatOf = (key: string, i: 0 | 1): number | undefined => colOf(COMBAT, '@c', key, i);
-/**
- * Значение ключа в колонке СТОРОНЫ страйфа. `plusX` — ход в сторону +X, то есть в СВОЮ ЛЕВУЮ сторону
- * персонажа; исторически эта карта зовётся `STRAFE_R`/`@sr` (см. «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» выше).
- */
 export const strafeSideOf = (key: string, plusX: boolean, i: 0 | 1): number | undefined =>
   colOf(plusX ? STRAFE_R : STRAFE_L, plusX ? '@sr' : '@sl', key, i);
 
@@ -246,8 +236,6 @@ export const strafeSideOf = (key: string, plusX: boolean, i: 0 | 1): number | un
  * ⚠ `stR + stL === st` ПО ПОСТРОЕНИЮ — иначе сторона могла бы подмешать больше, чем сам страйф.
  */
 export interface LocoMix { sb: number; st: number; stR: number; stL: number; bt: number; ct: number }
-/** Смесь «стоим вперёд мирно» — ею считается всё, у чего нет планировщика (монстры, превью). */
-export const MIX0: LocoMix = { sb: 0, st: 0, stR: 0, stL: 0, bt: 0, ct: 0 };
 
 /**
  * ПОЛНАЯ ЦЕПОЧКА: ходьба→бег по `sb`, затем колонки направления и боя.
@@ -802,17 +790,6 @@ export const backMix = (mFwd: number, mLat: number): number => {
   return Math.min(1 - strafeMix(mFwd, mLat), lon);
 };
 
-/**
- * ЖИВАЯ боевая idle-СТОЙКА «меч+щит» (только для вооружённого — `PoseDriver.setArmed`, монстры без неё).
- * Держится и в покое, и на ходу (щит/меч не болтаются). Крутится панелью G. X впер/наз, Z вбок, Y скрутка.
- * Левая — ЩИТ (вверх-вперёд гардом), правая — МЕЧ (отведена, клинок вперёд). Ноги-стойка — позже (планировщик).
- */
-export const GUARD = {
-  shLX: -0.5, shLY: 0, shLZ: 0.45, elL: 1.45,    // щит: плечо вперёд+вбок, локоть ~90°
-  shRX: -0.35, shRY: 0, shRZ: 0.25, elR: 1.15,   // меч: плечо чуть вперёд+вбок, локоть согнут
-  wRX: 0, wRY: 0, wRZ: 0,                         // запястье меча: X сгиб, Y скрутка (клинок вокруг оси руки), Z вбок
-  lean: 0.12,                                    // корпус чуть вперёд
-};
 
 /** Зажать в границы. Экспортируется: нужен и ручкам здесь, и планировщику (44 вызова). Положить его там — цикл импортов; скопировать — четыре копии одной формулы. */
 export const clamp = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);

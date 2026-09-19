@@ -9,19 +9,18 @@
  * движение, которое запекается в клипы. Игра ходит КЛИПАМИ и планировщик НЕ исполняет.
  *
  * Разрезано из `pose.ts` (Э11). Зависимость СТРОГО ОДНОСТОРОННЯЯ: отсюда в `gaitKnobs.ts`, никогда обратно.
- * Константы и хелперы ниже (`ATTACK_DUR`, `lerp`, `walkingAmp`, длины костей, `STAND_Y`, `RIG_PELVIS_Y`,
+ * Константы и хелперы ниже (`lerp`, `walkingAmp`, длины костей, `STAND_Y`, `RIG_PELVIS_Y`,
  * `MOVE_EPS`, `smooth01`) лежали в блоке ручек, но читал их ТОЛЬКО планировщик — переехали сюда вместе с ним.
  *
  * Файл ЧИСТЫЙ: ни THREE, ни DOM.
  */
 import {
   GAIT, POSE, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT,
-  HIP_DX, FOOT_Y, STRAFE_SIDE_BAND, GUARD,
+  HIP_DX, FOOT_Y, STRAFE_SIDE_BAND,
   clamp, locoVal, sideLerp, sideOf, strafeSideOf, strafeSide, strafeMix, backMix, toeCurve, foldElbow,
   type PoseTargets, type StanceFoot, type LocoMix,
 } from './gaitKnobs.js';
 
-const ATTACK_DUR = 0.62;   // взмах небыстрый: мотор рук физически не развернёт большой мах за 0.1с (иначе рука «зависает»)
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 /** Амплитуда маха по «доле хода»: 0 стоя, растёт с движением. Одна на руки и на плечевой пояс. */
 /**
@@ -35,13 +34,13 @@ const walkingAmp = (drive: number): number => (drive > 0.05 ? POSE.swingBase + d
 // длиннее, чем она есть, и стопа не достаёт до пола).
 // ⚠ Это размеры ПРОЦЕДУРНОГО манекена и только его. У модели длины берутся из рига
 // (`Humanoid.legRest` → `StepPlanner.legRest`), см. `thighL`/`shinL`/`hipHalf` ниже.
-const L_THIGH = 15, L_SHIN = 13.5, LEG = L_THIGH + L_SHIN;
+const L_THIGH = 15, L_SHIN = 13.5;   // ⚠ была ещё `LEG = L_THIGH + L_SHIN` — не читалась нигде вовсе
 /**
  * Высота таза в стойке. КРИТИЧНО: заметно МЕНЬШЕ длины ноги (30). При таз=30 нога выпрямлена в струну,
  * стопа дотягивается только до точки прямо под тазом — шаг невозможен в принципе. 26.5 → колени чуть
  * согнуты (как у человека) и появляется вылет стопы ~17u, т.е. шаг ~1 м.
  */
-export const STAND_Y = 27;   // высота таза стоя (для init позы; живая — в GAIT.standY)
+const STAND_Y = 27;          // высота таза стоя (для init позы; живая — в GAIT.standY). ⚠ Был экспортом с нулём импортёров
 const RIG_PELVIS_Y = 30;     // высота таза в опорной позе рига (таблица BONES в ragdoll.ts)
 const MOVE_EPS = 8;          // ниже этой скорости (u/с) считаем, что стоим
 /** Сглаженная ступенька 0..1 (smoothstep): нулевая производная на обоих концах — вход в опору без рывка. */
@@ -836,9 +835,6 @@ class StepPlanner {
 export class PoseDriver {
   private phase = Math.random() * 6.283;
   private move = 0;
-  private attackT = 0;
-  private attackPow = 1;
-  private dead = false;
   private planner: StepPlanner | null = null;
   private stanceLatL: number | null = null; private stanceFwdL = 0; private stanceLatR = 0; private stanceFwdR = 0; private standY = GAIT.standY;
   /**
@@ -853,7 +849,6 @@ export class PoseDriver {
    */
   private stanceFoot: StanceFoot = { pitchL: 0, yawL: 0, pitchR: 0, yawR: 0, liftL: 0, liftR: 0 };
   private w = { x: 0, z: 0, yaw: 0, vx: 0, vz: 0 };
-  private armed = false;  // вооружён меч+щит → в покое/на ходу держит боевой ГАРД (не машет руками)
   private combat = 0;     // мирно(0) ↔ бой(1): боевая колонка настроек (Ф6). Нет записей — ведёт себя как раньше.
   /** Боевое состояние 0..1 — ИЗ ИГРЫ (серверный `inCombat`), тот же, что блендит стойку. */
   /** Высота кости-лодыжки при подошве на полу — из рига (см. `StepPlanner.footFloor`). */
@@ -966,13 +961,17 @@ export class PoseDriver {
   get plantWeights(): [number, number] { return this.planner ? this.planner.plantWeights : [1, 1]; }
   /** Во сколько раз сейчас ускорена фаза — диагностика срочности шага. */
   get debugUrge(): number { return this.planner ? this.planner.debugUrge : 1; }
-  attack(power = 1): void { if (!this.dead) { this.attackT = ATTACK_DUR; this.attackPow = power; } }
-  setDead(d: boolean): void { this.dead = d; }
-  get isDead(): boolean { return this.dead; }
-  /** Вооружён меч+щит → боевой гард (GUARD) вместо расслабленных рук. */
-  setArmed(on: boolean): void { this.armed = on; }
-  /** Идёт ли взмах (для триггера VFX/звука). */
-  get attacking(): boolean { return this.attackT > 0; }
+  /**
+   * ⚠⚠ ЗДЕСЬ БЫЛИ `attack` / `setDead` / `setArmed` / `isDead` / `attacking` — УДАЛЕНЫ (Э11b).
+   *
+   * У всех пяти было НОЛЬ внешних вызовов по всему `packages/` — включая тесты. Одноимённые
+   * вызовы в проекте есть, но они чужие: `.attack(` — трёхаргументный на `PosePlayer`/кукле, `.setDead(` —
+   * на рэгдолле, `.attacking` — свойство `PosePlayer`. Именно поэтому мёртвый код так долго выглядел
+   * живым: grep по имени давал десятки попаданий, и ни одно из них не вело сюда.
+   *
+   * Удар и смерть у нас делают КЛИПЫ и РЭГДОЛЛ, а не планировщик: процедурный взмах и боевой гард
+   * остались от времён, когда клипов не было вовсе.
+   */
 
   update(dt: number): PoseTargets {
     const o = this.out;
@@ -983,12 +982,6 @@ export class PoseDriver {
     o.twChest = o.twUpper = 0;
     o.headNod = o.headTurn = o.headTilt = 0;
     o.wLX = o.wLY = o.wLZ = o.wRX = o.wRY = o.wRZ = 0;
-    if (this.dead) {
-      o.splay = 1; o.bobY = -26; o.lean = 1.4; o.twist = 0;
-      o.hipL = 0.7; o.hipR = -0.7; o.knL = 1.2; o.knR = 1.2; o.shL = 0.7; o.shR = -0.7; o.elL = 1.2; o.elR = 1.2;
-      this.turnNow = 0;   // у трупа поворота таза нет: иначе он замер бы на угле последнего страйфа
-      return o;
-    }
     // «Ход» для рук/наклона: кинематике (монстры) — из setMove, рэгдоллу — из реальной скорости тела
     // (setMove ему не зовут), которую планировщик отдаёт сглаженной в moveAmt.
     let drive = this.move;
@@ -1095,7 +1088,6 @@ export class PoseDriver {
     // иначе планировщик увидит повёрнутые стопы и погонится за ними (см. `PoseDriver.hipsTurn`).
     o.hipsYaw = s * amp * body('hipsYawSwing', 'hipsYawSwingRun', POSE.hipsYawSwing, POSE.hipsYawSwingRun);
     this.stepHipsTurn(dt, m, gaitStepD);   // угол этого кадра (с пределом скорости) → `hipsTurn`
-    const eArmSh = armSh(0), eArmEl = armEl(0);   // для веток, где стороны не разводятся (удар/гард)
     // ── КЛЮЧИЦЫ. Плечевой пояс больше не «сводится в ноль» на ходу: у него своя поза и своё качание.
     // dev — отклонение плеча своей руки от базы (<0 = рука ушла вперёд). Пояс идёт за рукой вперёд
     // (shoSwing) и одновременно чуть поднимается (shoLift) — так плечо катится, а не едет по прямой.
@@ -1119,15 +1111,10 @@ export class PoseDriver {
       else { o.shoRX = sg * tw; o.shoRY = -sg * fwd; o.shoRZ = sg * up; }
     }
 
-    if (this.attackT <= 0 && this.armed) {
-      // БОЕВОЙ ГАРД меч+щит: держим позу всегда (и в покое, и на ходу — не машем).
-      // ⚠️ Риг L/R зеркальны: роль ЩИТ (GUARD.*L, визуально слева) шлём на R-кости, роль МЕЧ (GUARD.*R,
-      // визуально справа) — на L-кости. Так панель («щит/меч») человеко-корректна, а стороны верные.
-      o.shR = GUARD.shLX; o.shSpR = GUARD.shLZ; o.shTwR = GUARD.shLY; o.elR = GUARD.elL;   // ЩИТ (виз. слева)
-      o.shL = GUARD.shRX; o.shSpL = GUARD.shRZ; o.shTwL = GUARD.shRY; o.elL = GUARD.elR;   // МЕЧ (виз. справа)
-      o.wLX = GUARD.wRX; o.wLY = GUARD.wRY; o.wLZ = GUARD.wRZ;                              // запястье меча (L-кисть)
-      o.lean = GUARD.lean; o.twist = 0;
-    } else if (this.attackT <= 0) {
+    // ⚠⚠ ЗДЕСЬ БЫЛО ТРИ ВЕТВИ: боевой ГАРД (`armed`), поза рук и ПРОЦЕДУРНЫЙ УДАР (`attackT`).
+    // Две крайние были НЕДОСТИЖИМЫ: включать их было некому (`setArmed`/`attack` не звал никто,
+    // включая тесты). Удар и боевую стойку у нас делают клипы и слой действия, а не планировщик.
+    {
       // ПОЗА РУК (без оружия). База в покое: плечи чуть вперёд (POSE.armSh), локти согнуты (POSE.armEl) — чтобы
       // не висели палками. На ходу машем вокруг базы (анти-фаза ног), локоть добираем сгиб.
       const swL = s * amp * armSwing(0) * armPh(0), swR = s * amp * armSwing(1) * armPh(1);
@@ -1150,37 +1137,6 @@ export class PoseDriver {
       o.twist = twA * body('twistSwing', 'twistSwingRun', POSE.twistSwing, POSE.twistSwingRun);
       o.twChest = twA * body('twistChest', 'twistChestRun', POSE.twistChest, POSE.twistChestRun);
       o.twUpper = twA * body('twistUpper', 'twistUpperRun', POSE.twistUpper, POSE.twistUpperRun);
-    } else {
-      this.attackT -= dt;
-      const p = 1 - this.attackT / ATTACK_DUR;                 // 0..1 по ходу взмаха
-      const ss = (t: number): number => { const c = clamp(t, 0, 1); return c * c * (3 - 2 * c); };
-      // УДАР МЕЧОМ СВЕРХУ. Замах: правая рука вверх (плечо назад-вверх), локоть согнут, корпус чуть назад →
-      // Удар: резко вниз-вперёд, локоть разгибается, корпус вперёд + доворот → Возврат в стойку.
-      // Замах — ОТВЕДЕНИЕМ (плечо вбок-вверх, shSpR): плечо по X только машет назад-вперёд и упирается в конус,
-      // а НАЗАД рука прячется за спину («тычок»). Отведение вбок видно с изо-камеры как поднятая рука. Удар —
-      // по диагонали вниз-поперёк-вперёд (shSpR→0, shR→вперёд, локоть разгибается) — хлёсткий рубящий мах.
-      let shR: number, shSp: number, elR: number;
-      if (p < 0.36) {                                          // ЗАМАХ: рука вверх-вбок, локоть взведён
-        const t = ss(p / 0.36);
-        shR = lerp(eArmSh, -0.25, t); shSp = lerp(0, 1.2, t); elR = lerp(eArmEl, 1.35, t);
-        o.lean = lerp(0.02, -0.06, t); o.twist = lerp(0, -0.2, t);
-      } else if (p < 0.68) {                                   // УДАР: рука падает со стороны ВНИЗ-вперёд (диагональ)
-        const t = ss((p - 0.36) / 0.32);
-        shR = lerp(-0.25, -0.45, t); shSp = lerp(1.2, -0.1, t); elR = lerp(1.35, 0.15, t);
-        o.lean = lerp(-0.06, 0.24, t); o.twist = lerp(-0.2, 0.26, t);
-      } else {                                                 // ВОЗВРАТ в стойку
-        const t = ss((p - 0.68) / 0.32);
-        shR = lerp(-0.45, eArmSh, t); shSp = lerp(-0.1, 0, t); elR = lerp(0.15, eArmEl, t);
-        o.lean = lerp(0.24, 0.02, t); o.twist = lerp(0.26, 0, t);
-      }
-      // ⚠️ Риг L/R зеркальны: МЕЧ визуально СПРАВА = L-кости. Машем L-рукой, twist зеркалим.
-      o.shL = shR; o.shSpL = shSp; o.elL = elR;
-      o.twist = -o.twist;
-      if (this.armed) {   // off-рука (виз. слева = R-кости) держит щит-гард
-        o.shR = GUARD.shLX; o.shSpR = GUARD.shLZ; o.shTwR = GUARD.shLY; o.elR = GUARD.elL;
-      } else {
-        o.shR = eArmSh; o.elR = eArmEl;                // не-бьющая рука в базовой позе
-      }
     }
     return o;
   }
