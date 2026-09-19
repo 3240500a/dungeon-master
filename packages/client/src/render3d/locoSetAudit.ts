@@ -1,7 +1,7 @@
 /**
  * ⭐⭐ ПОКРЫТИЕ НАБОРА ЛОКОМОЦИИ: у кого есть походка, у кого нет и что протухло.
  *
- * Зачем. Игра ходит ТОЛЬКО клипами, а набор есть не у всех: кукла без набора остаётся на планировщике, монстры
+ * Зачем. Игра ходит ТОЛЬКО клипами, а набор есть не у всех: кукла без набора СКОЛЬЗИТ в стойке (планировщика в игре нет с Э13б), монстры
  * ходят набором персонажа-донора. Пока это нигде не показано, состояние контента — догадка: «вроде запекал». Ровно
  * этот вопрос встаёт первым, когда автор садится делать походки монстрам.
  *
@@ -18,7 +18,7 @@ import type { Clip } from './clipModel.js';
 
 /** Что именно не так с клипом (или с его отсутствием). Порядок — по убыванию тяжести. */
 export type DefectKind =
-  | 'missing'       // клипа нет вовсе, и донор его тоже не даёт — кукла останется на планировщике
+  | 'missing'       // клипа нет вовсе, и донор его тоже не даёт — персонаж будет СКОЛЬЗИТЬ в стойке
   | 'fallback'      // своего нет, играет донорский: работает, но походка чужая
   | 'stale_rev'     // снят С ДОВОРОТОМ (до кардинальной ревизии) — сектора доворота на нём выключены
   | 'stale_speed'   // снят на другой скорости, чем нынешний пресет: стопы поедут на разницу
@@ -60,6 +60,19 @@ export const REQUIRED_NAMES: readonly string[] = [
 const presetSpeed = (name: string): number | null =>
   name.startsWith('run_') ? LOCO_BAKE_RUN_SPD : name.startsWith('walk_') ? LOCO_BAKE_WALK_SPD : null;
 const isGait = (name: string): boolean => name.startsWith('run_') || name.startsWith('walk_');
+/**
+ * ⚠⚠ ТЕГ ОРУЖИЯ БЕССМЫСЛЕН И У ПОВОРОТОВ ТОЖЕ — первая версия этой проверки их пропустила.
+ *
+ * Обоснование было «у стоек и поворотов тег осмысленный». Для стоек (`idle_sword` — стойка МЕЧА) это
+ * верно, для поворотов — НЕТ: их пишет ТА ЖЕ кнопка тем же тегом, и `bakeTurnToClip` идёт через тот же
+ * `procedural()` с `setLayerBakeOverride(true)` — то есть руки в клипе поворота точно так же безоружные.
+ *
+ * Цена пропуска: у автора уже лежат повороты со СТАРЫМ тегом. Перезапекание теперь пишет `none`,
+ * то есть кладёт НОВЫЙ клип РЯДОМ (ключ дедупа — тройка с оружием), а под тем самым оружием `findLocoClip`
+ * продолжает отдавать СТАРЫЙ — ровно та жалоба «перезапёк, а не доехало», ради которой проверка и заводилась.
+ * Панель при этом показывала зелёное `ok`. Поймано состязательным обзором диффа, а не тестами.
+ */
+const isBaked = (name: string): boolean => isGait(name) || name.startsWith('turn_');
 const hasSwing = (c: Clip): boolean => c.keys.some((k) => !!k.pose[SWING_KEY]);
 
 /**
@@ -79,7 +92,7 @@ export function auditChar(clips: readonly Clip[], charId: string, fallbackId?: s
     // настроек не доехала». Ровно этот класс жалобы.
     const tagged = clips.filter((c) => c.name === name && c.character === charId);
     const bad = tagged.filter((c) => (c.weapon ?? 'none') !== 'none');
-    if (bad.length && isGait(name)) {
+    if (bad.length && isBaked(name)) {
       const tags = [...new Set(bad.map((c) => c.weapon))].join(', ');
       defects.push({ charId, name, kind: 'weapon_tag',
         note: tagged.length > bad.length || bad.length > 1
@@ -89,7 +102,9 @@ export function auditChar(clips: readonly Clip[], charId: string, fallbackId?: s
     const mine = findLocoClip(clips, name, charId, weapon);
     const c = mine ?? (fallbackId ? findLocoClip(clips, name, fallbackId, weapon) : null);
     if (!c) {
-      defects.push({ charId, name, kind: 'missing', note: 'клипа нет ни у себя, ни у донора — кукла останется на планировщике' });
+      // ⚠ Раньше здесь обещался откат на планировщик — с Э13б его у игровой куклы НЕТ ВООБЩЕ.
+      // Обещание отката, которого нет, хуже молчания: автор решит, что дыра не срочная.
+      defects.push({ charId, name, kind: 'missing', note: 'клипа нет ни у себя, ни у донора — персонаж будет СКОЛЬЗИТЬ в стойке (планировщика в игре нет)' });
       continue;
     }
     if (!mine) {
