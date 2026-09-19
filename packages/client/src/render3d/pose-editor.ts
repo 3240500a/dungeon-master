@@ -54,7 +54,7 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, GAIT, POSE, HIP_DX, RUNTIME_GAIT_KEYS, BOTH_GAIT_KEYS, type PoseTargets } from './gaitKnobs.js';
 import { PoseDriver } from './stepPlanner.js';
-import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LOCO_BAKE_REV, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, type UpperPose, weaponChain, isLocoClipFresh, LOCO_BAKE_REV, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
 import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
@@ -77,7 +77,7 @@ import { TURN_NAMES } from './turnInPlace.js';
 import { findLocoClip, gaitBakeTag, BASE_GAIT_CHAR, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
 import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
-import { hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';   // Ф12: офсет таза — ДЕЛЬТА от rest, а не абсолют
+import { hipsOffset, setHipsOffset, normalizeClipHips, fingersAnimated } from './clipModel.js';   // Ф12: офсет таза — ДЕЛЬТА от rest, а не абсолют
 import { blendTwo, clipPoseAt, clipSegmentAt, segmentPose, clipDur, slerpEuler, lerpAng, mirrorSide, migrateClip, WPN_KEYS, WPN_POS, DEF_GAP,
   type Pose, type Keyframe, type Clip } from './clipModel.js';   // Ф1.1: одна модель клипа на редактор и игру
 import { createModelsTab } from './poseModelsTab.js';
@@ -5913,7 +5913,20 @@ const editorContent: PoseContent = {
   gripPose: (w, axes, clipName) => resolveGripPose(gripCfg, curCharId, w, axes, clipName),
 };
 // ── Верх тела по оружию (Феча 2): idle-СТОЙКА = клип «idle_<оружие>» (правится в Анимации) + остаточный мах (pe_sway) ──
-interface UpperPose { pose: Pose; swing: number; layers?: LayerEntry | null; hands?: { main: string; off: string } }
+// ⚠⚠ ЗДЕСЬ ЖИЛ СВОЙ `interface UpperPose` — УРЕЗАННАЯ КОПИЯ РАНТАЙМОВОГО, И ЭТО БЫЛ БАРЬЕР В ОБЕ СТОРОНЫ.
+//
+// В нём не было `clipName` и `fingersAnimated`. Недостающие поля опциональны, поэтому присваивание
+// в `PoseContent` проходило без единой ошибки — а дописать их в возврат было НЕЛЬЗЯ: срабатывал excess
+// property check по ЛОКАЛЬНОМУ типу. То есть копия типа одновременно скрывала проблему и мешала её чинить.
+//
+// Цена была не теоретическая: без `clipName` не работал хват КЛИПА (`GripConfig.byClip`) на вкладках,
+// идущих через `PosePlayer` («Бег», «Повороты», кукла «Тест») — живой хват всегда перебивал авторский,
+// то есть редактор и игра расходились РОВНО НА ШВАХ ХВАТА — там, где автор сверяет меч.
+// Теперь тип ОДИН — импортируется из рантайма.
+//
+// ⚠ Что это НЕ чинит: манекен вкладки «Анимация» идёт не через `PosePlayer`, а через `applyGripOver`,
+// и там имя клипа передаётся правильно уже сейчас; зато там нет гейта `fingersAnimated` — это осознанное
+// решение Ҥ17 («хват ведёт фаланги всегда»), и трогать его здесь не стал.
 /** Конфиг контроллера (`pe_anim`): настройка предметов (чем подмешивается, в какой руке, с какой силой)
  *  и привязка клипов ПО ССЫЛКЕ — поэтому переименовывать существующие клипы не нужно. */
 let animStore: AnimStore = (() => { try { return JSON.parse(localStorage.getItem('pe_anim') || '{}') as AnimStore; } catch { return {}; } })();
@@ -5975,12 +5988,19 @@ let editorCombat = 0;   // превью боевой стойки в редак�
  *  ключ в приоритете, иначе сборка из безоружной базы и дельт предметов по рукам. */
 function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   const cfg = animCfg();
+  /** Клип стойки по тому же правилу, что у рантайма: привязка → конвенция. */
+  const lookClip = (kind: 'idle' | 'combat_idle', item: string): Clip | null =>
+    library.find((x) => x.name === cfg.clipName(kind, item) && x.character === curCharId)
+    ?? (kind === 'idle' ? stanceClip(item) : combatStanceClip(item));
   const look = (kind: 'idle' | 'combat_idle', item: string, tt: number): Pose | null => {
-    const nm = cfg.clipName(kind, item);
-    const c = library.find((x) => x.name === nm && x.character === curCharId)
-      ?? (kind === 'idle' ? stanceClip(item) : combatStanceClip(item));   // нет привязки — конвенция
+    const c = lookClip(kind, item);
     return c ? stancePoseAt(c, tt) : null;   // многокадровая стойка играет циклом — как в игре
   };
+  // ⭐⭐ ВЕДУЩИЙ КЛИП СТОЙКИ — ТЕМ ЖЕ ПРАВИЛОМ, ЧТО В ИГРЕ (`localStorageContent.resolveUpper`):
+  // боевая стойка при `combat > 0.5`, иначе обычная; нет — полная стойка по конвенции.
+  // По нему берётся хват КЛИПА и решается, анимированы ли пальцы.
+  const lead = (combat > 0.5 ? lookClip('combat_idle', wpn) : lookClip('idle', wpn)) ?? stanceClip(wpn);
+  const meta = { clipName: lead?.name, fingersAnimated: fingersAnimated(lead) };
   // ⚠ СОСТАВ РУК ОТДАЁТСЯ ВСЕГДА — по нему резолвится мах руки (`pe_swing`). Без него манекен редактора считал бы
   // обе руки пустыми и махал бы полным клипом, пока игра приглушает занятую: «редактор ≡ игра» держится тем, что
   // РАЗБОР ВХОДОВ у них один, а не тем, что числа похожи.
@@ -5991,7 +6011,7 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   let main = 'none', off = 'none';
   for (const l of layersOut) { if (l.hand === 'main') main = l.item; else off = l.item; }
   const hands = { main, off };
-  if (pose) return { pose, swing: lk.swing, layers: lk.entry, hands };
+  if (pose) return { pose, swing: lk.swing, layers: lk.entry, hands, ...meta };
   // Сборка не сложилась (нет ни точной позы, ни безоружной базы) — прежний фолбэк по базовому оружию класса.
   let c = stanceClip(wpn); let wk = wpn;
   if (!c) { wk = rtBaseWeapon(wpn); c = stanceClip(wk); }
@@ -5999,7 +6019,7 @@ function resolveUpper(wpn: string, combat = 0, t = 0): UpperPose | null {
   if (!c || !c.keys[0]) return null;
   let p2 = c.keys[0]!.pose;
   if (combat > 0.001) { const cc = combatStanceClip(wpn) ?? combatStanceClip(rtBaseWeapon(wpn)); if (cc && cc.keys[0]) p2 = blendTwo(p2, cc.keys[0]!.pose, combat); }
-  return { pose: p2, swing: lk.swing, layers: lk.entry, hands };
+  return { pose: p2, swing: lk.swing, layers: lk.entry, hands, ...meta };
 }
 // Удары — клипы «hit_<w>» (базовый) и «s_hit_<w>» (спец/скил) из 6 кадров; кадры 1 и последний = idle-стойка (не редактируются, синк ОДНОСТОРОННЕ idle→удар).
 const isAttackClip = (c: Clip): boolean => c.name.startsWith('hit_') || c.name.startsWith('s_hit_');
