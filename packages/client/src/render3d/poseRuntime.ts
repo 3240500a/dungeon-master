@@ -1124,11 +1124,31 @@ export function gaitToHumanoid(human: Humanoid, weaponGroups: THREE.Group[], gx:
     clipOnly && locoMix > 0.001 ? locoPose : null, clipOnly && locoMix > 0.001 ? locoRef : null);
   // ЩИТ: подмешать позу левой руки+корпуса + хват щита ПОВЕРХ (после удара). В покое держит guard; на ударе — по спаду
   // от щита (кисть держит, корпус/плечо свободны для маха), огибающая удара плавно вводит/выводит это.
+  // ⭐⭐ ЩИТ: ПОЗА — ТОЛЬКО НА УДАРЕ, ХВАТ — ВСЕГДА.
+  //
+  // ⚠ ЭТО БЫЛА СПЯЩАЯ МИНА ДВОЙНОГО ПРИМЕНЕНИЯ. Поза щита уже подмешана АДДИТИВНОЙ дельтой офф-руки внутри
+  // `resolveStancePose` (слой предмета `none+shield`), а этот оверлей клал ТУ ЖЕ позу ВТОРОЙ раз, поверх всего и
+  // весом `mix` (0.85), не зная ни про веса слоёв, ни про мах руки. Вне удара он ещё и плоский: маска
+  // `SHIELD_FALLOFF` умножается на огибающую удара, то есть при `aenv = 0` не действует вовсе. Итог был бы «левая
+  // рука встала колом»: мах 0.2 × остаток 0.15 ≈ 3 %.
+  //
+  // На живых данных оверлей МОЛЧАЛ (`shieldOverlay` ищет клип по ТОЧНОМУ имени конвенции — `idle_sword+shield`
+  // либо `idle_shield`, а авторский называется `idle_none+shield_relax` и находится только по привязке `pe_anim`).
+  // То есть беды не было видно — она ждала первого клипа, названного по-старому.
+  //
+  // ЧТО ОСТАЁТСЯ ЗА ОВЕРЛЕЕМ: только УДАР. Там у него настоящая работа, которой нет ни у кого другого, — маска по
+  // расстоянию от щита: кисть держит щит, а локоть, плечо и корпус освобождаются под мах (`SHIELD_FALLOFF` ×
+  // огибающая). Локомоцией же щита теперь заведует обычный слой предмета и ручка его руки.
   if (weapon.endsWith('+shield')) {
     const ov = content.shieldOverlay?.(weapon);
-    if (ov && ov.mix > 0.001) {
+    if (ov) {
       const aenv = (atk.clip && atk.t >= 0) ? attackEnv(atk.t, clipDur(atk.clip) || 0.001) : 0;
       applyShieldOverlay(human, weaponGroups, ov.pose, ov.mix, aenv);
+      if (layerTrace.on) {
+        traceRow('ЩИТ', aenv > 0.001 ? 'поза щита на ударе' : 'только хват (позу ведёт слой предмета)',
+          aenv > 0.001 ? clamp(ov.mix * aenv, 0, 1) : 0,
+          'вне удара поза щита НЕ кладётся: она уже в стойке аддитивной дельтой офф-руки');
+      }
     }
   }
   // ДВУРУЧНЫЙ ХВАТ: левая кисть IK-ом держит точку __lgripP на оружии (едет с оружием). Точка покадрово: idle → перехват в
@@ -1161,14 +1181,17 @@ function applyOffhandGrip(human: Humanoid, weaponGroups: THREE.Group[], lgP: [nu
  *  группа[1], переносим полностью. Читаем __wpnOff, иначе __wpnMain (иначе брали бы грип ОРУЖИЯ и щит улетал). */
 export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[], pose: Pose, mix: number, aenv = 0): void {
   const H = human.bones;
-  for (const nm of SHIELD_BONES) {
+  // ⚠⚠ ПОЗА — ТОЛЬКО ПОД ОГИБАЮЩЕЙ УДАРА. Вне удара её кладёт слой предмета в `resolveStancePose`, и второй раз
+  // класть нельзя (см. вызывающий). Вес падает по расстоянию от щита: кисть держит его до конца, локоть и плечо
+  // освобождаются под мах — в этом вся работа оверлея и она есть ТОЛЬКО на ударе.
+  for (const nm of aenv > 0.001 ? SHIELD_BONES : []) {
     const e = pose[nm]; if (!e) continue; const b = H.get(nm); if (!b) continue;
-    const w = clamp(mix * (1 - aenv * (1 - (SHIELD_FALLOFF[nm] ?? 0.1))), 0, 1);   // на ударе дальние кости освобождаются
+    const w = clamp(mix * aenv * (SHIELD_FALLOFF[nm] ?? 0.1), 0, 1);
     if (w < 0.002) continue;
     qEuler(e, _qSh); b.quaternion.slerp(_qSh, w);
   }
   const g = weaponGroups[1];   // щит для '+shield'-оружия — вторая группа (первая — оружие в правой руке)
-  if (g) {   // ХВАТ щита — ПОЛНОСТЬЮ (щит всегда сидит в кулаке как выставлено; mix влияет только на позу руки/корпуса)
+  if (g) {   // ХВАТ щита — ВСЕГДА И ПОЛНОСТЬЮ: щит сидит в кулаке как выставлено, что бы ни делала рука
     const r = pose['__wpnOff'] ?? pose['__wpnMain'], p = pose['__wpnOffP'] ?? pose['__wpnMainP'];
     if (r) g.rotation.set(r[0], r[1], r[2]);
     if (p) g.position.set(p[0], p[1], p[2]);

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, resetSwingSnapshot, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, resetSwingSnapshot, applyShieldOverlay, type PoseContent, type UpperPose } from './poseRuntime.js';
 import { bakeGaitToClip, GAIT_PRESETS } from './clipBake.js';
 import { TWO_HANDED } from './poseLayers.js';
 import { blendArmKey, swingRefOf, meanPose, clearSwingRefCache } from './armBlend.js';
@@ -202,6 +202,28 @@ describe('ось настройки: ключ — предмет И рука', (
     expect(ARM_BONE_OF['Neck'], '⚠ шея не рука: её ведёт свой вес, и по первой букве имени она уехала бы в «правую»').toBeUndefined();
   });
 
+  it('⭐⭐ ВОРОТА ХОДА ГАСЯТ МАХ: стоя рука в авторской стойке при ЛЮБОМ `k`', () => {
+    // Пара `{a,k}` описывает руку НА ПОЛНОМ ХОДУ. Стоя локомоции нет вовсе, и рука обязана быть в стойке — иначе
+    // стоящий персонаж держит беговую позу, а на остановке щёлкает в неё (замер до правки: 34.4° за кадр, и
+    // запечённая стойка `idle` уезжала от авторской на 47°).
+    const still = (hands: { main: string; off: string } | undefined, k: number): THREE.Quaternion => {
+      const st = withStore(k === 1 ? { warrior: { sword: { run: { arm: { k: 1 } }, walk: { arm: { k: 1 } } } } } : {},
+        () => {
+          const stand = makeStand({ content: content(hands) });
+          stand.run({ vz: 0, warm: 180, frames: 2 });
+          const q = stand.human.bones.get('RightUpperArm')!.quaternion.clone();
+          stand.dispose();
+          return q;
+        });
+      return st;
+    };
+    const want = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(STANCE_MAIN['RightUpperArm'] as [number, number, number]), 'XYZ'));
+    for (const k of [0, 1]) {
+      const got = still({ main: 'sword', off: 'none' }, k);
+      expect(got.angleTo(want) * DEG, `стоя при k=${k} рука обязана быть в авторской стойке`).toBeLessThan(0.5);
+    }
+  });
+
   it('печать: что видно глазами', () => {
     const rows = ['состав рук                  плечо Л   плечо П   локоть Л  локоть П   руки↔клип'];
     for (const [label, hands] of [
@@ -218,4 +240,53 @@ describe('ось настройки: ключ — предмет И рука', (
     console.log('\n' + rows.join('\n') + '\n');
     expect(rows.length).toBeGreaterThan(1);
   }, 300000);
+});
+
+describe('щит: поза только на ударе, хват всегда', () => {
+  const SHIELD: Pose = {
+    LeftHand: [1.2, 0, 0], LeftLowerArm: [0, -1.4, 0], LeftUpperArm: [0.9, 0, -1.1], LeftShoulder: [0.3, 0, 0],
+    UpperChest: [0.2, 0, 0], Chest: [0.15, 0, 0], Spine: [0.1, 0, 0],
+    __wpnOff: [0.5, 0.6, 0.7], __wpnOffP: [1, 2, 3],
+  };
+  const mkGroup = (): THREE.Group => { const g = new THREE.Group(); g.userData.baseRot = new THREE.Euler(); g.userData.basePos = new THREE.Vector3(); return g; };
+
+  it('⭐⭐ ВНЕ УДАРА ПОЗА ЩИТА НЕ КЛАДЁТСЯ — она уже в стойке аддитивной дельтой офф-руки', () => {
+    // ⚠ СПЯЩАЯ МИНА ДВОЙНОГО ПРИМЕНЕНИЯ: оверлей клал ту же позу ВТОРОЙ раз, поверх всего, весом 0.85 и не зная ни
+    // про веса слоёв, ни про мах руки. Левая рука встала бы колом (0.2 × 0.15 ≈ 3 % маха). На живых данных оверлей
+    // молчал (ищет клип по ТОЧНОМУ имени конвенции), то есть беда ждала первого клипа, названного по-старому.
+    const h = buildHumanoid({});
+    const before = new Map([...h.bones].map(([k, b]) => [k, b.quaternion.clone()]));
+    const groups = [mkGroup(), mkGroup()];
+    applyShieldOverlay(h, groups, SHIELD, 0.85, 0);
+    for (const nm of ['LeftHand', 'LeftLowerArm', 'LeftUpperArm', 'Chest']) {
+      expect(h.bones.get(nm)!.quaternion.angleTo(before.get(nm)!) * DEG, `${nm} тронута вне удара`).toBeLessThan(1e-6);
+    }
+    // …а ХВАТ переносится всегда: щит сидит в кулаке как выставлено, что бы ни делала рука.
+    expect([groups[1]!.rotation.x, groups[1]!.rotation.y, groups[1]!.rotation.z]).toEqual([0.5, 0.6, 0.7]);
+    expect([groups[1]!.position.x, groups[1]!.position.y, groups[1]!.position.z]).toEqual([1, 2, 3]);
+  });
+
+  it('⭐ НА УДАРЕ ПОЗА КЛАДЁТСЯ С МАСКОЙ ПО РАССТОЯНИЮ: кисть держит щит, плечо и корпус свободны под мах', () => {
+    const h = buildHumanoid({});
+    const groups = [mkGroup(), mkGroup()];
+    applyShieldOverlay(h, groups, SHIELD, 1, 1);
+    const moved = (nm: string): number => h.bones.get(nm)!.quaternion.angleTo(new THREE.Quaternion()) * DEG;
+    // Маска: LeftHand 1.0 > LeftLowerArm 0.38 > LeftUpperArm 0.22 > Spine 0.04 — в этом вся работа оверлея.
+    expect(moved('LeftHand')).toBeGreaterThan(1);
+    expect(moved('LeftHand') / Math.max(0.01, moved('LeftUpperArm')), 'кисть обязана держать сильнее плеча').toBeGreaterThan(1.5);
+    expect(moved('Spine'), 'корпус почти свободен').toBeLessThan(moved('LeftLowerArm'));
+  });
+
+  it('⭐⭐ ОФФ-РУКА СО ЩИТОМ ПРОДОЛЖАЕТ МАХАТЬ: оверлей её больше не держит', () => {
+    // Интеграция: контент отдаёт оверлей (как если бы автор завёл клип под старым именем) — мах офф-руки обязан
+    // остаться настроенным, а не сойтись к позе щита.
+    const withShield = (hands: { main: string; off: string }): PoseContent => ({
+      ...content(hands),
+      shieldOverlay: () => ({ pose: SHIELD, mix: 0.85 }),
+    });
+    const noOverlay = measure(content({ main: 'sword', off: 'shield' }));
+    const overlay = measure(withShield({ main: 'sword', off: 'shield' }));
+    expect(overlay.L, '⚠ оверлей снова держит офф-руку — мина вернулась').toBeCloseTo(noOverlay.L, 1);
+    expect(overlay.R, 'и главную руку он не трогает').toBeCloseTo(noOverlay.R, 1);
+  });
 });
