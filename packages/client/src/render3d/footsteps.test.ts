@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, GAIT_PRESETS, TURN_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { clipDur, clipPoseAt, carryMarks, loopMarksInRange, marksInRange, type Clip, type Mark, type MarkEvent } from './clipModel.js';
 import { soundForMark, earShot, EAR_NEAR, EAR_FAR, STEP_PACE_DEFAULT } from './animSfx.js';
@@ -125,7 +126,7 @@ describe('шаги в рантайме', () => {
       getItem: () => null, setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
     } as Storage;
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     lib = new Map();
     for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
     for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib.set(r.clip.name, r.clip);
@@ -142,9 +143,9 @@ describe('шаги в рантайме', () => {
   };
   interface Ev { i: number; foot: string | undefined; type: string; pace: number | undefined; clip: string | undefined; t: number }
   /** Прогон: `drive(i)` задаёт ход на кадре; события копятся с номером кадра. */
-  const run = (l: Map<string, Clip>, mix: number, frames: number, drive: (p: PosePlayer, i: number) => void, subscribeAt = 0): { ev: Ev[]; p: PosePlayer; landings: number } => {
+  const run = (l: Map<string, Clip>, mix: number, frames: number, drive: (p: BakePlayer, i: number) => void, subscribeAt = 0): { ev: Ev[]; p: BakePlayer; landings: number } => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], content(l), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], content(l), 'none', GX, emptyGrid());
     setLocoMixOverride(mix);
     p.setVel(0, 0); p.setYaw(0); p.snapYaw();
     const ev: Ev[] = [];
@@ -304,7 +305,7 @@ describe('шаги в рантайме', () => {
   it('⚠ ЗАПЕКАНИЕ МОЛЧИТ: сотни кадров съёма за один вызов не звучат пачкой, подписчик после — на месте', () => {
     // ⚠ Мутация «не глушить метки на время съёма» валит это: в редакторе «запечь» выстреливало бы все шаги разом.
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     let n = 0;
     const sub = (): void => { n++; };
     p.onMark = sub;

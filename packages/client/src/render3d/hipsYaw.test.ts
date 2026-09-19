@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, migrateHipsOpen, type PoseContent, type GaitCfg } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, migrateHipsOpen, type PoseContent, type GaitCfg } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitSet, GAIT_PRESETS } from './clipBake.js';
 import { clipPoseAt, type Clip } from './clipModel.js';
 import { pelvisHeading } from './pelvisFrame.js';
@@ -53,7 +54,7 @@ beforeAll(() => {
     getItem: () => null, setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
   } as Storage;
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
   const bake = (): Map<string, Clip> =>
     new Map(bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, GAIT_PRESETS).map((r) => [r.clip.name, r.clip]));
   GAIT.warpOn = 1; GAIT.warpMax = 45;   // съём обязан от тумблеров НЕ зависеть
@@ -88,7 +89,7 @@ const yawOf = (h: Humanoid, bone: string): number => {
 };
 const wrapD = (a: number): number => ((a + 540) % 360) - 180;
 
-interface Run { pelvis: number; chest: number; player: PosePlayer; human: Humanoid }
+interface Run { pelvis: number; chest: number; player: BakePlayer; human: Humanoid }
 /** Стойка со смешиванием груди (`swing` 0.45 = `pe_sway` воина): без неё разбавление отворота не проверялось бы. */
 const run = (lib: Map<string, Clip>, vx: number, o: { mix?: number; aim?: number; frames?: number } = {}): Run => {
   GAIT.warpOn = 1; GAIT.warpMax = 45;
@@ -100,7 +101,7 @@ const run = (lib: Map<string, Clip>, vx: number, o: { mix?: number; aim?: number
   };
   const aim = o.aim ?? 0;
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid());
   setLocoMixOverride(o.mix ?? 1);
   p.setVel(vx * Math.cos(aim * D), -vx * Math.sin(aim * D)); p.setYaw(aim * D); p.snapYaw();
   const N = o.frames ?? 240;
@@ -182,7 +183,7 @@ describe('рыск таза: съём', () => {
     // ⚠ Мутация «проверять только статический поворот» (как было у раскрытия) пропускает вторую строку:
     // средний рыск там 0, а на пике качания таз уходит за предел, и в клип уходит НЕДОкрученный отворот.
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const one = (): void => { bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, GAIT_PRESETS.filter((s) => s.name === 'run_strafe_R')); };
     const maxTw = p.twistStates.run.maxTwist / D;
     clearCols();
@@ -212,7 +213,7 @@ describe('рыск таза: съём', () => {
     // и правка одной ручки двигала КАЖДЫЙ клип, снятый ПОСЛЕ неё (`run_back` на 22.48°, `walk_strafe_R` на 2.22°,
     // при 0.00° у всего, снятого ДО). Мутация «убрать `resetGaitState` из `bakeGaitWarpFree`» валит это.
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const bake = (specs: typeof GAIT_PRESETS): Map<string, Clip> =>
       new Map(bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, specs).map((r) => [r.clip.name, r.clip]));
     const straight = bake(GAIT_PRESETS);
@@ -261,7 +262,7 @@ describe('рыск таза: рантайм', () => {
     const trace = (turn: number, swing: number): { rows: number[]; yaw: number; drift: number } => {
       POSE.hipsTurn = POSE.hipsTurnRun = turn; POSE.hipsYawSwing = POSE.hipsYawSwingRun = swing;
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       setLocoMixOverride(0);                       // ЧИСТАЯ процедурка: клипов в этой пробе нет
       p.setVel(120, 0); p.setYaw(0); p.snapYaw();
       const rows: number[] = []; let yaw = 0, drift = 0;
@@ -334,7 +335,7 @@ describe('рыск таза: рантайм', () => {
       POSE.hipsRollSwing = POSE.hipsRollSwingRun = 0.08;
       POSE.hipsPitchSwing = POSE.hipsPitchSwingRun = 0.12;
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       setLocoMixOverride(0);                       // ЧИСТАЯ процедурка: держание живёт в ней, клип несёт своё запечённое
       p.setVel(vx, vz); p.setYaw(0); p.snapYaw();
       const rows: number[] = []; let yaw = 0;
@@ -413,7 +414,7 @@ describe('рыск таза: рантайм', () => {
       const g = emptyGrid();
       if (bump) g.walk[right ? 2 : 6]!.l[1] = DL;
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, g);
+      const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, g);
       setLocoMixOverride(0);
       p.setVel(right ? 40 : -40, 0); p.setYaw(0); p.snapYaw();
       let sx = 0, sz = 0, n = 0, prev = false;
@@ -448,7 +449,7 @@ describe('рыск таза: рантайм', () => {
       GAIT.stanceWidth = 0; GAIT.stanceWidthRun = 0;
       try {
         const h = buildHumanoid({});
-        const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+        const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
         setLocoMixOverride(0);
         p.setVel(vx, vz); p.setYaw(0); p.snapYaw();
         let sx = 0, sz = 0, n = 0, prev = false;
@@ -485,7 +486,7 @@ describe('рыск таза: рантайм', () => {
       try {
         const dt = 1 / hz;
         const h = buildHumanoid({});
-        const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+        const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
         setLocoMixOverride(0);
         p.setYaw(0); p.snapYaw();
         let prev = 0, mx = 0;
@@ -512,11 +513,11 @@ describe('рыск таза: рантайм', () => {
   it('⭐ КАЧАНИЕ РЫСКА ДЕЙСТВИТЕЛЬНО ПРИКЛАДЫВАЕТСЯ, И ЕГО УГОЛ ИЗМЕРЕН, А НЕ ПРОЧИТАН ИЗ СЛОТА Y', () => {
     // ⚠ Мутация «`this.hipsYawNow = tg.hipsYaw`» (чтение слота вместо замера) валит вторую половину: при
     // ненулевом НАКЛОНЕ таза курс композиции `Rx(наклон)·Ry(рыск)·Rz(крен)` слоту Y не равен.
-    const mk = (swing: number, pitch: number): PosePlayer => {
+    const mk = (swing: number, pitch: number): BakePlayer => {
       POSE.hipsYawSwing = POSE.hipsYawSwingRun = swing;
       POSE.hipsPitchSwing = POSE.hipsPitchSwingRun = pitch;
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       setLocoMixOverride(0);
       p.setVel(0, 120); p.setYaw(0); p.snapYaw();
       return p;
@@ -586,7 +587,7 @@ describe('миграция «таз открыт» → поворот таза',
     for (const [k, v] of Object.entries(cfg.strafeR!)) STRAFE_R[k] = v;
     for (const [k, v] of Object.entries(cfg.strafeL!)) STRAFE_L[k] = v;
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     setLocoMixOverride(0);
     GAIT.warpOn = 1; GAIT.warpMax = 45;
     p.setVel(120, 0); p.setYaw(0); p.snapYaw();
@@ -597,7 +598,7 @@ describe('миграция «таз открыт» → поворот таза',
 
     // «Только клипы»: тот же угол приезжает из клипа, снятого С ЭТОЙ ЖЕ ручкой.
     const h2 = buildHumanoid({});
-    const p2 = new PosePlayer(h2, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p2 = new BakePlayer(h2, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const lib = new Map(bakeGaitSet(p2, h2, { character: 'warrior', weapon: 'none' },
       GAIT_PRESETS.filter((s) => /_strafe_|_fwd|_back/.test(s.name))).map((r) => [r.clip.name, r.clip]));
     const r = run(lib, 120);

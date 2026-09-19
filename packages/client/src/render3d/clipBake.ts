@@ -49,7 +49,8 @@ import type { Clip, Keyframe, Pose } from './clipModel.js';
 import { setHipsOffset, blendTwo, isAngleKey, ROOT_YAW, HIPS_DEL } from './clipModel.js';
 import { pelvisEulerToWorld, pelvisOffsetToWorld } from './pelvisFrame.js';   // ⭐ вычет фейсинга — обратная композиция игры
 import type { Humanoid } from './humanoid.js';
-import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, setLayerBakeOverride, getLayerBakeOverride, LOCO_BAKE_REV, yawCounterWeights, blendTwist, type PosePlayer } from './poseRuntime.js';
+import { setLocoMixOverride, getLocoMixOverride, setDirWarpOverride, getDirWarpOverride, setStancePelvisOverride, getStancePelvisOverride, setLayerBakeOverride, getLayerBakeOverride, LOCO_BAKE_REV, yawCounterWeights, blendTwist } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { pelvisHeading } from './pelvisFrame.js';
 import { TURN_ANGLES_DEG, turnClipName, SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN } from './locoBlend.js';
@@ -79,7 +80,7 @@ import { meanPose, SWING_BONES } from './armBlend.js';   // ⭐ нейтраль
  * смешивался со стойкой второй раз — под мечом (0.2) от маха оставалось 10 %, и в позу меча подмешивалась безоружная.
  * Теперь клип хода несёт ЧИСТУЮ локомоцию верха и помечен `upperPure`; вес кладёт рантайм — один раз.
  */
-function procedural<T>(player: PosePlayer, fn: () => T): T {
+function procedural<T>(player: BakePlayer, fn: () => T): T {
   const was = getLocoMixOverride(), mark = player.onMark, stance = getStancePelvisOverride(), layers = getLayerBakeOverride();
   setLocoMixOverride(0);
   setStancePelvisOverride(0);
@@ -94,7 +95,7 @@ function procedural<T>(player: PosePlayer, fn: () => T): T {
  * сброшен — флаг сектора от прошлого пресета не доезжает до следующего. Вложенный вызов безопасен: восстанавливаем
  * то, что было на входе.
  */
-function warpFree<T>(player: PosePlayer, warpRad: number, fn: () => T): T {
+function warpFree<T>(player: BakePlayer, warpRad: number, fn: () => T): T {
   const was = getDirWarpOverride();
   setDirWarpOverride(warpRad);
   player.resetDirWarp();
@@ -114,7 +115,7 @@ function warpFree<T>(player: PosePlayer, warpRad: number, fn: () => T): T {
  *
  * `warpDeg` — доворот, который на этом съёме разрешён (всегда 0: клип хода кардинальный, доворачивает рантайм).
  */
-function assertPelvis(player: PosePlayer, human: Humanoid, warpDeg: number, name: string): void {
+function assertPelvis(player: BakePlayer, human: Humanoid, warpDeg: number, name: string): void {
   const D = 180 / Math.PI;
   const got = wrapPiLocal(pelvisHeading(human.bones.get('Hips')!.quaternion) - player.aimRootYaw) * D;
   const want = (player.dirWarpDeg / D + player.hipsTurnRad + player.hipsYawSwingRad + player.clipHipsYawRad + player.stancePelvisYaw) * D;
@@ -301,7 +302,7 @@ function loopKeys(dense: Keyframe[], periodSec: number, cyclic: boolean, loop: b
  * Запечь один режим походки в клип. `player` и `human` должны быть уже связаны
  * (плеер построен на этом же гуманоиде), иначе снимем чужую позу.
  */
-export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions): BakeGaitResult {
+export function bakeGaitToClip(player: BakePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions): BakeGaitResult {
   // ⚠ ПРОЦЕДУРКА И БЕЗ ДОВОРОТА — И У ОДИНОЧНОГО СЪЁМА, а не только у набора (`bakeGaitSet`). Было: одиночный вызов
   // при опубликованном `locoMix` 1 шёл в «только клипы», фаза планировщика стояла, фронт не ловился — и клип молча
   // снимался окном 1 с С САМИХ ЗАПЕЧЁННЫХ клипов (поймано зондом: период ровно 1.000 у всех страйфов).
@@ -323,7 +324,7 @@ export function bakeGaitToClip(player: PosePlayer, human: Humanoid, spec: GaitSp
  * упирается ПИК `|поворот| + |качание|`, а не его среднее, и посчитать пик «на бумаге» нельзя (амплитуда качания
  * зависит от `walkingAmp(drive)`, то есть от вышедшей на режим скорости планировщика).
  */
-function assertYawBudget(player: PosePlayer, name: string, maxTwist: number): void {
+function assertYawBudget(player: BakePlayer, name: string, maxTwist: number): void {
   const a = player.hipsTurnRad + player.hipsYawSwingRad;
   if (Math.abs(a) <= maxTwist + 1e-9) return;
   const D = 180 / Math.PI;
@@ -331,7 +332,7 @@ function assertYawBudget(player: PosePlayer, name: string, maxTwist: number): vo
     + `«макс. скрутка верха» ${(maxTwist * D).toFixed(0)}° — верх не отвернётся обратно, и клип вышел бы НЕ каноническим: `
     + `грудь уедет с прицела. Подними «макс. скрутка верха» или опусти поворот/качание таза.`);
 }
-function bakeGaitWarpFree(player: PosePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions): BakeGaitResult {
+function bakeGaitWarpFree(player: BakePlayer, human: Humanoid, spec: GaitSpec, opts: BakeGaitOptions): BakeGaitResult {
   const fps = Math.max(1, opts.fps ?? 60);
   const dt = 1 / fps;
   const warm = opts.warmSec ?? 2;
@@ -510,7 +511,7 @@ export const defaultBakePick = (specs: readonly { name: string }[] = [...GAIT_PR
 
 /** Запечь весь набор. Плеер переиспользуется — между режимами он сам выходит на новый через разогрев. */
 export function bakeGaitSet(
-  player: PosePlayer, human: Humanoid, opts: BakeGaitOptions,
+  player: BakePlayer, human: Humanoid, opts: BakeGaitOptions,
   specs: readonly GaitSpec[] = GAIT_PRESETS,
 ): BakeGaitResult[] {
   return procedural(player, () => specs.map((s) => bakeGaitToClip(player, human, s, opts)));
@@ -557,7 +558,7 @@ const TURN_TAIL_SEC = 0.25;
  * ключами (`pin`, обе стороны смены — флаг переключается за один кадр, как и раньше), а концы клипа
  * закрепляются значением: на них стоят `turnYawAt(dur)`, `turnSupportAt(0/dur)` и шов поворота.
  */
-export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSpec, opts: BakeGaitOptions): BakeGaitResult {
+export function bakeTurnToClip(player: BakePlayer, human: Humanoid, spec: TurnSpec, opts: BakeGaitOptions): BakeGaitResult {
   return procedural(player, () => {
     const fps = Math.max(1, opts.fps ?? 60), dt = 1 / fps;
     const read = opts.readPose ?? defaultReadPose(human);
@@ -622,6 +623,6 @@ export function bakeTurnToClip(player: PosePlayer, human: Humanoid, spec: TurnSp
 }
 
 /** Запечь набор поворотов (по умолчанию — все шесть). */
-export function bakeTurnSet(player: PosePlayer, human: Humanoid, opts: BakeGaitOptions, specs: readonly TurnSpec[] = TURN_PRESETS): BakeGaitResult[] {
+export function bakeTurnSet(player: BakePlayer, human: Humanoid, opts: BakeGaitOptions, specs: readonly TurnSpec[] = TURN_PRESETS): BakeGaitResult[] {
   return specs.map((s) => bakeTurnToClip(player, human, s, opts));
 }

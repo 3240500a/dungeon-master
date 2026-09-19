@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, setLayerSource, layerTrace, getLayerBakeOverride, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, setLayerSource, layerTrace, getLayerBakeOverride, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitToClip, GAIT_PRESETS } from './clipBake.js';
 import { clipPoseAt, type Clip, type Pose } from './clipModel.js';
 import { GAIT } from './gaitKnobs.js';
@@ -36,7 +37,7 @@ beforeAll(() => {
   } as Storage;
   // Набор хода — как кнопка редактора, без стойки (чистый мах в руках клипа).
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
   lib = new Map();
   for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
 });
@@ -52,7 +53,7 @@ type Snap = Record<string, THREE.Quaternion>;
 /** Прогон и снимок локальных поворотов верха на последнем кадре. Детерминирован: одни входы → одна поза. */
 const run = (up: Partial<UpperPose>, o: { mix: number; spd: number; combat?: boolean; frames?: number }): { snap: Snap; h: Humanoid } => {
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], content(up), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], content(up), 'none', GX, emptyGrid());
   setLocoMixOverride(o.mix);
   p.setYaw(0); p.snapYaw(); p.setVel(0, o.spd); p.setCombat(!!o.combat);
   for (let i = 0; i < (o.frames ?? 200); i++) p.step(1 / 60);
@@ -290,7 +291,7 @@ describe('pe_layers: запекание снимает верх ЧИСТЫМ', (
   const IDLE = GAIT_PRESETS.find((s) => s.name === 'idle')!;
   const bake = (up: Partial<UpperPose>, spec = RUN): Clip => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], content(up), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], content(up), 'none', GX, emptyGrid());
     return bakeGaitToClip(p, h, spec, { character: 'warrior', weapon: 'none' }).clip;
   };
   const arcOf = (c: Clip, bone: string): number => {
@@ -339,7 +340,7 @@ describe('pe_layers: запекание снимает верх ЧИСТЫМ', (
     bake({ swing: 0.2 });
     expect(getLayerBakeOverride()).toBe(false);
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], content({}), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], content({}), 'none', GX, emptyGrid());
     expect(() => bakeGaitToClip(p, h, RUN, { character: 'warrior', weapon: 'none', readPose: () => { throw new Error('сбой чтения'); } })).toThrow('сбой чтения');
     expect(getLayerBakeOverride(), 'иначе игра после неудачного съёма играла бы без стойки в руках').toBe(false);
   });

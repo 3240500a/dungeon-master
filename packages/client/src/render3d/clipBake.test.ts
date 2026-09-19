@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, getDirWarpOverride, isLocoClipFresh, LOCO_BAKE_REV, mirrorPlantCell, mirrorPlantDir, plantMirrorGaps } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, getDirWarpOverride, isLocoClipFresh, LOCO_BAKE_REV, mirrorPlantCell, mirrorPlantDir, plantMirrorGaps } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { clipPoseAt, clipDur, hipsOffset, type Clip, type Pose } from './clipModel.js';
 import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
 import { locoPhaseU, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD } from './locoBlend.js';
@@ -13,8 +14,8 @@ import { GAIT, GAIT_BASE, POSE, POSE_BASE, STRAFE_R } from './gaitKnobs.js';
  */
 
 const GX = { armDown: 1.35, elbowBend: 0.25 };
-const mkPlayer = (h: Humanoid): PosePlayer =>
-  new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid());
+const mkPlayer = (h: Humanoid): BakePlayer =>
+  new BakePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid());
 
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _ea = new THREE.Euler(), _eb = new THREE.Euler();
 /** Макс. угловое расхождение двух поз по костям, в градусах. */
@@ -33,7 +34,7 @@ function maxAngleDeg(a: Pose, b: Pose, only?: (bone: string) => boolean): { deg:
 }
 
 /** Прогнать плеер до фронта «левая нога в перенос» — та же точка, с которой начинается запечённый клип. */
-function runToCycleStart(p: PosePlayer, dt: number, warmSec: number, maxSec = 6): boolean {
+function runToCycleStart(p: BakePlayer, dt: number, warmSec: number, maxSec = 6): boolean {
   for (let t = 0; t < warmSec; t += dt) p.step(dt);
   let prev = p.driver.swingLegs[0];
   for (let t = 0; t < maxSec; t += dt) {
@@ -483,7 +484,7 @@ describe('clipBake — страйфы кардинальные при любом
     // Плеер с библиотекой клипов и долей 1 — то, что стоит у автора.
     const h2 = buildHumanoid({});
     const content = { ...localStorageContent('warrior'), locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } };
-    const p2 = new PosePlayer(h2, () => [], content, 'sword', GX, emptyGrid());
+    const p2 = new BakePlayer(h2, () => [], content, 'sword', GX, emptyGrid());
     GAIT.locoMix = 1;
     try {
       const r = bakeGaitToClip(p2, h2, GAIT_PRESETS.find((s) => s.name === 'run_strafe_R')!, { character: 'warrior', weapon: 'none' });
@@ -556,7 +557,7 @@ describe('плант-сетка: зеркало ячейки', () => {
     };
     const bake = (name: string, g: ReturnType<typeof emptyGrid>): number => {
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, g);
+      const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, g);
       return sep(bakeGaitToClip(p, h, GAIT_PRESETS.find((s) => s.name === name)!, { character: 'warrior', weapon: 'none' }).clip, buildHumanoid({}));
     };
     const g = emptyGrid();

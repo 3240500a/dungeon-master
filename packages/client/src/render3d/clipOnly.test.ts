@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, resetNoLocoSetWarnings, type PoseContent } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, resetNoLocoSetWarnings, type PoseContent } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { bakedLocoSpeed, locoRunWeight, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
 import { clipDur, type Clip } from './clipModel.js';
@@ -38,7 +39,7 @@ beforeAll(() => {
   } as Storage;
   // Набор — ровно как кнопка редактора: 8 клипов хода + стойка + повороты на месте.
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
   lib = new Map();
   for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
   for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib.set(r.clip.name, r.clip);
@@ -52,7 +53,7 @@ const libContent = (l: Map<string, Clip>): PoseContent =>
 /** Доля кадров, в которых нога считается опорной (обе ноги, после разогрева). */
 const share = (l: Map<string, Clip>, spd: number): number => {
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], libContent(l), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], libContent(l), 'none', GX, emptyGrid());
   p.setVel(0, 0); p.setYaw(0); p.snapYaw();
   setLocoMixOverride(1);
   let on = 0, n = 0;
@@ -73,15 +74,15 @@ const withStance = (base: PoseContent): PoseContent => ({ ...base, resolveUpper:
   LeftUpperArm: [0.3, 0, -0.6], RightUpperArm: [0.3, 0, 0.6], LeftLowerArm: [0, -0.9, 0], RightLowerArm: [0, 0.9, 0],
 } }) });
 
-const make = (content?: PoseContent): { h: ReturnType<typeof buildHumanoid>; p: PosePlayer } => {
+const make = (content?: PoseContent): { h: ReturnType<typeof buildHumanoid>; p: BakePlayer } => {
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], content ?? withLib(localStorageContent('warrior')), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], content ?? withLib(localStorageContent('warrior')), 'none', GX, emptyGrid());
   p.setVel(0, 0); p.setYaw(0); p.snapYaw();
   return { h, p };
 };
 
 /** Ловушка вместо планировщика: ЛЮБОЕ обращение записывается и роняет кадр. */
-const trap = (p: PosePlayer): { touched: string[]; restore: () => void } => {
+const trap = (p: BakePlayer): { touched: string[]; restore: () => void } => {
   const holder = p as unknown as { driver: unknown };
   const real = holder.driver, touched: string[] = [];
   const hit = (what: string): never => { touched.push(what); throw new Error(`⚠ планировщик тронут в «только клипы»: ${what}`); };
@@ -93,7 +94,7 @@ const trap = (p: PosePlayer): { touched: string[]; restore: () => void } => {
   return { touched, restore: () => { holder.driver = real; } };
 };
 
-const footW = (h: ReturnType<typeof buildHumanoid>, p: PosePlayer, leg: number): { x: number; y: number; z: number } => {
+const footW = (h: ReturnType<typeof buildHumanoid>, p: BakePlayer, leg: number): { x: number; y: number; z: number } => {
   const f = h.bones.get(leg === 0 ? 'LeftFoot' : 'RightFoot')!.getWorldPosition(new THREE.Vector3());
   return { x: f.x + p.posX, y: f.y, z: f.z + p.posZ };
 };
@@ -176,7 +177,7 @@ describe('«только клипы»: планировщика нет', () => {
     const none = localStorageContent('warrior');   // localStorage пуст — клипов нет вовсе
     expect(none.locoClip!(['run_fwd'], 'none')).toBe(null);
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], none, 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], none, 'none', GX, emptyGrid());
     p.setVel(0, R); p.setYaw(0); p.snapYaw();
     setLocoMixOverride(1);
     const { touched, restore } = trap(p);
@@ -201,7 +202,7 @@ describe('«только клипы»: планировщика нет', () => {
     try {
       for (const w of ['none', 'none', 'sword']) {
         const h = buildHumanoid({});
-        const p = new PosePlayer(h, () => [], localStorageContent('warrior'), w, GX, emptyGrid());
+        const p = new BakePlayer(h, () => [], localStorageContent('warrior'), w, GX, emptyGrid());
         p.setVel(0, R); p.setYaw(0); p.snapYaw();
         setLocoMixOverride(1);
         for (let i = 0; i < 30; i++) p.step(1 / 60);
@@ -214,7 +215,7 @@ describe('«только клипы»: планировщика нет', () => {
 
   it('⭐ С НАБОРОМ — ноги ведёт клип (контроль: защёлка не съела походку)', () => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], withLib(localStorageContent('warrior')), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], withLib(localStorageContent('warrior')), 'none', GX, emptyGrid());
     p.setVel(0, R); p.setYaw(0); p.snapYaw();
     setLocoMixOverride(1);
     let lo = Infinity, hi = -Infinity;
@@ -233,7 +234,7 @@ describe('«только клипы»: планировщика нет', () => {
       const content = localStorageContent('mon_undead', 'warrior');
       expect(content.locoClip!(['run_fwd'], 'axe')?.character, 'набор воина найден через фолбэк — под любым оружием').toBe('warrior');
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], content, 'axe', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], content, 'axe', GX, emptyGrid());
       p.setVel(0, 0); p.setYaw(0); p.snapYaw();
       setLocoMixOverride(1);
       const { touched, restore } = trap(p);
@@ -350,7 +351,7 @@ describe('«только клипы»: планировщика нет', () => {
   const oldLib = (): Map<string, Clip> => {
     if (oldSet) return oldSet;
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     oldSet = new Map();
     for (const s of GAIT_PRESETS) {
       if (s.name === 'idle') continue;

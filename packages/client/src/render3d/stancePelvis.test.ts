@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import {
-  PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, measureStancePlants,
-  type PoseContent, type UpperPose, type Pose,
-} from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, measureStancePlants, type PoseContent, type UpperPose, type Pose } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitSet, bakeTurnSet, GAIT_PRESETS } from './clipBake.js';
 import { clipPoseAt, type Clip } from './clipModel.js';
 import { pelvisHeading } from './pelvisFrame.js';
@@ -64,7 +62,7 @@ beforeAll(() => {
   } as Storage;
   Object.assign(GAIT, GAIT_BASE);
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], content(), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], content(), 'none', GX, emptyGrid());
   lib = new Map(bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, GAIT_PRESETS).map((r) => [r.clip.name, r.clip]));
   for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib.set(r.clip.name, r.clip);
 });
@@ -78,11 +76,11 @@ function content(withClips = false): PoseContent {
   const c: PoseContent = { ...base, resolveUpper: () => up };
   return withClips ? { ...c, locoClip: (names) => { for (const n of names) { const cl = lib.get(n); if (cl) return cl; } return null; } } : c;
 }
-interface Rig { p: PosePlayer; h: Humanoid }
+interface Rig { p: BakePlayer; h: Humanoid }
 function mk(knob: number, o: { yawK?: number; clips?: boolean } = {}): Rig {
   GAIT.stancePelvis = knob; GAIT.stancePelvisYaw = o.yawK ?? 1;
   const h = buildHumanoid({});
-  return { p: new PosePlayer(h, () => [], content(o.clips), 'none', GX, emptyGrid()), h };
+  return { p: new BakePlayer(h, () => [], content(o.clips), 'none', GX, emptyGrid()), h };
 }
 function run(r: Rig, vx: number, vz: number, aim: number, n: number, dt = 1 / 60): Rig {
   r.p.setYaw(aim); r.p.snapYaw();
@@ -174,7 +172,7 @@ describe('таз авторской стойки: игра', () => {
       const base = localStorageContent('warrior');
       const c: PoseContent = { ...base, resolveUpper: () => ({ swing: 0.45, pose: onlyY }),
         locoClip: clips ? (names) => { for (const n of names) { const cl = lib.get(n); if (cl) return cl; } return null; } : base.locoClip };
-      return { p: new PosePlayer(hh, () => [], c, 'none', GX, emptyGrid()), h: hh };
+      return { p: new BakePlayer(hh, () => [], c, 'none', GX, emptyGrid()), h: hh };
     };
     for (const clips of [false, true]) {
       setLocoMixOverride(clips ? 1 : 0);
@@ -251,7 +249,7 @@ describe('таз авторской стойки: игра', () => {
     const bake = (knob: number): Map<string, Clip> => {
       Object.assign(GAIT, GAIT_BASE); GAIT.stancePelvis = knob; GAIT.stancePelvisYaw = 1;
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], content(), 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], content(), 'none', GX, emptyGrid());
       const m = new Map(bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, GAIT_PRESETS).map((r) => [r.clip.name, r.clip]));
       for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) m.set(r.clip.name, r.clip);
       return m;
@@ -357,7 +355,7 @@ describe('таз авторской стойки: игра', () => {
         const bs = localStorageContent('warrior');
         const c: PoseContent = { ...bs, resolveUpper: () => ({ swing: 0.45, pose }),
           locoClip: (names) => { for (const n of names) { const cl = lib.get(n); if (cl) return cl; } return null; } };
-        const r: Rig = { p: new PosePlayer(hh, () => [], c, 'none', GX, emptyGrid()), h: hh };
+        const r: Rig = { p: new BakePlayer(hh, () => [], c, 'none', GX, emptyGrid()), h: hh };
         r.p.setYaw(0); r.p.snapYaw();
         const out: ReturnType<typeof frame>[] = [];
         for (let i = 0; i < 360; i++) {

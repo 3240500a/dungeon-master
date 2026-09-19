@@ -54,7 +54,8 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
 import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, GAIT, POSE, HIP_DX, type PoseTargets } from './gaitKnobs.js';
 import { PoseDriver } from './stepPlanner.js';
-import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LOCO_BAKE_REV, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
+import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LOCO_BAKE_REV, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';
 import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
@@ -5708,10 +5709,10 @@ let reviveT = -1; const reviveFrom = new THREE.Vector3(); const reviveDur = 0.9;
 let locoOn = false, locoPhase = 0, locoVx = 0, locoVz = 0.7, locoTempo = 1, locoGait = true;   // превью локомоции (движок: gait/бленд)
 // ── Превью бега/поворотов: ТОТ ЖЕ PosePlayer, что и игра (единый пайплайн, Ф2) — редактор ≡ игра 1:1, без второй реализации.
 //    lp() лениво (пере)создаёт плеер, когда меняется `human` (смена персонажа/стиля/пропорций пересобирает манекен).
-let locoPlayer: PosePlayer | null = null; let locoPlayerHuman: Humanoid | null = null;
-function lp(): PosePlayer {
+let locoPlayer: BakePlayer | null = null; let locoPlayerHuman: Humanoid | null = null;
+function lp(): BakePlayer {
   if (!locoPlayer || locoPlayerHuman !== human) {
-    locoPlayer = new PosePlayer(human, () => weaponGroups, editorContent, weapon, GX, gaitPlant, editorTwistStates);
+    locoPlayer = new BakePlayer(human, () => weaponGroups, editorContent, weapon, GX, gaitPlant, editorTwistStates);
     locoPlayerHuman = human;
     // Шаги и метки превью «Бег»/«Повороты» звучат ТАК ЖЕ, как в игре: тот же шов `onMark` и тот же синтез.
     locoPlayer.onMark = (e) => { if (markSound) editorMarkSfx(e); };

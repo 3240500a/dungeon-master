@@ -4,7 +4,6 @@
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
 import { GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets, type StanceFoot, locoVal } from './gaitKnobs.js';
-import { PoseDriver } from './stepPlanner.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';
@@ -955,6 +954,11 @@ const _lockV = new THREE.Vector3();
  * а не держим оба источника). Иначе щелчок галки в настройках был бы рывком позы на 100°.
  */
 const MODE_FADE = 0.25;
+// ⚠ ОТВЕТЫ ШВОВ БЕЗ ПЛАНИРОВЩИКА — ОБЩИЕ КОНСТАНТЫ, а не свежие массивы: кадр куклы не должен
+// аллокировать, а швы читаются по несколько раз за кадр на каждую куклу сцены. Читатели их НЕ МУТИРУЮТ.
+const NO_SWING: readonly [boolean, boolean] = [false, false];
+const NO_PLANT: readonly [number, number] = [0, 0];
+const ONE_ONE: readonly [number, number] = [1, 1];
 /**
  * ⭐ ДОЛЯ КЛИПА, ПРИ КОТОРОЙ КАДР СЧИТАЕТСЯ «ТОЛЬКО КЛИПЫ». Игра ставит 1 безусловно;
  * промежуточные доли бывают только в редакторе (A/B на вкладке «Тест») и в запекателе.
@@ -986,7 +990,22 @@ export function warnNoLocoSet(charId: string, weapon: string): void {
   console.warn(`[loco] нет набора хода: персонаж «${charId || '?'}», оружие «${weapon || 'none'}» — персонаж будет скользить в стойке. Запеки ему набор либо проверь донора (панель «ПОКРЫТИЕ НАБОРА»).`);
 }
 /** Только для тестов: забыть, кому уже говорили. */
-export function resetNoLocoSetWarnings(): void { noSetWarned.clear(); }
+export function resetNoLocoSetWarnings(): void { noSetWarned.clear(); noPlannerWarned = false; }
+/**
+ * ⭐⭐ КУКЛА БЕЗ ПЛАНИРОВЩИКА ПОПАЛА В ПРОЦЕДУРНУЮ ВЕТКУ — ГРОМКО, А НЕ МОЛЧА.
+ *
+ * После Э12 швы `planner*` в базе — пустышки. В игре до них не дойти (доля клипа всегда 1), но если
+ * кто-то построит голый `PosePlayer` и пустит его без перекрытия — ноги просто замрут, без единой ошибки.
+ * ⚠ Это уже случилось при самом Э12: два теста процедурной ветки не упали на компиляции, а тихо
+ * поменяли числа (0.15 вместо 0.3) — то есть отлавливалось только порогами, а не типом. Нужен планировщик
+ * — строй `BakePlayer`.
+ */
+let noPlannerWarned = false;
+function warnNoPlanner(): void {
+  if (noPlannerWarned) return;
+  noPlannerWarned = true;
+  console.warn('[loco] процедурная ветка у куклы БЕЗ планировщика (доля клипа < 1 у `PosePlayer`): ноги замрут. Нужен планировщик — строй `BakePlayer`.');
+}
 /**
  * ⭐⭐ ШАГИ (звук): ОДИН ШОВ НА ВСЕ РЕЖИМЫ — `onMark` с меткой `footstep`, той же, что ставится в клипе руками.
  *
@@ -1248,7 +1267,7 @@ export function applyShieldOverlay(human: Humanoid, weaponGroups: THREE.Group[],
 type XY = [number, number];
 export type Leg2 = { l: XY; r: XY; lVia?: XY[]; rVia?: XY[] };
 export type PlantGrid = { walk: Leg2[]; run: Leg2[] };         // walk/run — по 8 ячеек (0=вперёд, шаг 45°)
-const DIR_STEP = Math.PI / 4;
+export const DIR_STEP = Math.PI / 4;   // шаг ячейки плант-сетки (8 направлений); читает и `BakePlayer`
 const STEP_HOLD = 0.35;   // сек: держим ноги на гейте после подшага (settled мерцает → иначе мигание idle↔гейт)
 const zeroLeg = (): Leg2 => ({ l: [0, 0], r: [0, 0], lVia: [], rVia: [] });
 export const emptyGrid = (): PlantGrid => ({ walk: Array.from({ length: 8 }, zeroLeg), run: Array.from({ length: 8 }, zeroLeg) });
@@ -2231,9 +2250,11 @@ export function measureStancePlants(human: Humanoid, idle: Pose | null, pelvisW 
 // ── PosePlayer: драйвер гейта для ИГРЫ (владеет своим состоянием) — тредмил-ноги + idle-стойка + физ-удар ──
 const _vfl = new THREE.Vector3(), _vfr = new THREE.Vector3();
 export class PosePlayer {
-  readonly driver = new PoseDriver();
-  private px = 0; private pz = 0; private vx = 0; private vz = 0;
-  private aimYaw = 0;    // прицел (курсор/facing с сервера)
+  // ⚠⚠ ЗДЕСЬ БЫЛО `readonly driver = new PoseDriver()` — НА КАЖДОЙ КУКЛЕ СЦЕНЫ, включая монстров
+  // и чужих игроков. Планировщик живёт в `BakePlayer` (`bakePlayer.ts`): граница проведена ВЛАДЕНИЕМ,
+  // а не флагом — тогда «вырезан ли планировщик» доказывает тип, а не дисциплина.
+  protected px = 0; protected pz = 0; private vx = 0; private vz = 0;   // px/pz — шов `plannerFeed` отдаёт мир планировщику
+  protected aimYaw = 0;  // прицел (курсор/facing с сервера); читает шов `plannerFeed`
   private rootYaw = 0;   // таз — догоняет aimYaw с задержкой (torso-lead)
   private yawInit = false;
   private turning = false;   // защёлка доворота таза (torso-lead): вкл за порогом, выкл когда догнал
@@ -2363,8 +2384,53 @@ export class PosePlayer {
    * кадре, и гасит только то, что без клипа бессмысленно (фиксацию стоп).
    */
   private clipLoco = false;
+
+  // ── ⭐⭐ ШВЫ ПЛАНИРОВЩИКА (Э12) ───────────────────────────────────────────────────
+  //
+  // Базовый `PosePlayer` — ИГРОВОЙ: он не знает про `PoseDriver` ВООБЩЕ, и именно это делает
+  // вырезание доказуемым: нет ссылки — нет класса в бандле. Планировщик живёт в `BakePlayer`
+  // (`bakePlayer.ts`) — его строят редактор и запекатель.
+  //
+  // ⚠⚠ ГРАНИЦА — ВЛАДЕНИЕМ, А НЕ ФЛАГОМ, и `step()` ОСТАЁТСЯ ОДИН. Переопределить `step()` целиком
+  // было бы копией кадрового конвейера — второй правдой на самом горячем месте. Поэтому
+  // тернарники `clipOnly ? … : шов` остаются в `step()` как были: в базе вторая ветка просто не берётся.
+  //
+  // ⚠ ПОРЯДОК ЧТЕНИЙ — КОНТРАКТ, а не стиль. `plannerSwing` читается ДВАЖДЫ за кадр с РАЗНЫМ
+  // смыслом: до `plannerUpdate` — состояние прошлого кадра (им считаются `busy`/`legsHeld`), после — свежее
+  // (им `warpStanceFeet` выбирает ногу). Кэш на кадр тихо меняет поведение на границе переноса ноги.
+  // То же про `plannerHipsTurn`: угол считается ВНУТРИ `plannerUpdate`, читать его раньше — угол прошлого кадра.
+
+  /** Есть ли у этой куклы планировщик вообще. У игровой — нет, и это не режим, а тип. */
+  protected get hasPlanner(): boolean { return false; }
+  /** Переставить стопы планировщика на место (поворот, возврат из «только клипы»). */
+  protected plannerReplant(): void { /* игра: планировщика нет */ }
+  /** Выбросить состояние походки целиком (запекание). */
+  protected plannerReset(): void { /* игра: нечего сбрасывать */ }
+  /** Замеренная стойка → планировщику. ⚠ Зовётся ИЗ КОНСТРУКТОРА БАЗЫ — см. `BakePlayer.driver`. */
+  protected plannerStance(_p: ReturnType<typeof measureStancePlants>): void { /* игра */ }
+  /** Боевая колонка настроек → планировщику. ⚠ СТРОГО ДО `plannerStance` в кадре: внутри `StepPlanner` порядок значим. */
+  protected plannerCombat(_c: number): void { /* игра */ }
+  /** Весь вход кадра: пол, длины рига, мир, прицел, смещения и обводы плантов. */
+  protected plannerFeed(_yaw: number, _vx: number, _vz: number, _spd: number, _fwdC: number, _latC: number): void { /* игра */ }
+  /** Идёт ли сейчас подшаг. */
+  protected get plannerStepping(): boolean { return false; }
+  /** Какие ноги в переносе. ⚠ МЕТОД, а не кэш: читается до и после `plannerUpdate` с разным смыслом. */
+  protected plannerSwing(): readonly [boolean, boolean] { return NO_SWING; }
+  /** Ноги отобраны слоем действия / поворотом + фидбэк фактических стоп. */
+  protected plannerLegs(_held: boolean, _feedback: boolean): void { /* игра */ }
+  /** Шаг планировщика → цели позы. В базе недостижим — ветка за ним прячется за `clipOnly`. */
+  protected plannerUpdate(_dt: number): PoseTargets { return CLIP_ONLY_TG(); }
+  /** Фаза походки планировщика — часы съёма у запекателя. */
+  protected get plannerPhase(): number { return 0; }
+  /** Поворот таза этого кадра. ⚠ Считается внутри `plannerUpdate` — читать ТОЛЬКО после него. */
+  protected get plannerHipsTurn(): number { return 0; }
+  /** Плант-цель ноги в мире. */
+  protected plannerPlant(_i: 0 | 1): readonly [number, number] { return NO_PLANT; }
+  /** Веса заземления / постановки от планировщика. */
+  protected plannerGroundW(): readonly [number, number] { return ONE_ONE; }
+  protected plannerPlantW(): readonly [number, number] { return ONE_ONE; }
   /** Пересадить стопы планировщика после поворота — только если он в деле: в «только клипы» его не трогаем вовсе. */
-  private replantPlanner(): void { if (!this.clipOnly) this.driver.replant(); }
+  private replantPlanner(): void { if (!this.clipOnly) this.plannerReplant(); }
   /** Часы клипов в режиме «только клипы»: фаза по пройденному пути (рад, π на шаг — как у планировщика). */
   private clipPhase = 0;
   /** Поза в момент смены режима и доля, с которой она ещё держится (см. `MODE_FADE`). */
@@ -2376,8 +2442,8 @@ export class PosePlayer {
   /** Вес фиксации стоп (см. место чтения): на ходу 1, встали — гаснет за `LOCO_FADE`. */
   private lockW = 0;
   /** Веса заземления: в «только клипы» опору решает контакт, окон планировщика нет. */
-  get groundWeights(): [number, number] { return this.clipOnly ? [1, 1] : this.driver.groundWeights; }
-  get plantWeights(): [number, number] { return this.clipOnly ? [1, 1] : this.driver.plantWeights; }
+  get groundWeights(): [number, number] { const w = this.clipOnly ? ONE_ONE : this.plannerGroundW(); return [w[0], w[1]]; }
+  get plantWeights(): [number, number] { const w = this.clipOnly ? ONE_ONE : this.plannerPlantW(); return [w[0], w[1]]; }
   /**
    * КАКИЕ СТОПЫ ЗАЗЕМЛЯТЬ. Обычно — опорные по планировщику; на время клипа поворота — по флагам
    * переноса ИЗ КЛИПА: ноги у планировщика отобраны, он считает обе опорными и положил бы маховую
@@ -2386,7 +2452,7 @@ export class PosePlayer {
   get groundSupport(): [boolean, boolean] {
     if (this.turn && this.turn.w > 0.5) return turnSupportAt(this.turn.clip, this.turn.t);
     if (this.clipOnly) return [this.clipContact[0], this.clipContact[1]];
-    const sw = this.driver.swingLegs;
+    const sw = this.plannerSwing();
     return [!sw[0], !sw[1]];
   }
   /** Доворот таза этого кадра — редактору для читаута. */
@@ -2441,7 +2507,7 @@ export class PosePlayer {
   get hipsTurnRad(): number { return this.turnNow; }
   private turnNow = 0;
   /** Насколько ПОВОРОТ ТАЗА этого кадра сдвинул стопы в мире (X/Z на ногу) — ровно это вычитается из фидбэка. */
-  private turnFeet: [number, number, number, number] = [0, 0, 0, 0];
+  protected turnFeet: [number, number, number, number] = [0, 0, 0, 0];   // читает шов `plannerLegs` (вычет своего поворота)
   /** ЗАМЕРЕННЫЙ рыск таза, который в этом кадре положила на кость ПОХОДКА (качание + статический поворот), рад. */
   get hipsYawSwingRad(): number { return this.hipsYawNow; }
   private hipsYawNow = 0;
@@ -2459,7 +2525,7 @@ export class PosePlayer {
   /** Мемо разбора клипов `_open` НА ОДИН КАДР: слот = сторона (+X / −X) | бег·2, маска — что уже посчитано (см. `findOpen`). */
   readonly atk: AttackState = { clip: null, t: -1 };
   constructor(
-    private human: Humanoid,
+    protected human: Humanoid,
     private weaponGroups: () => THREE.Group[],
     private content: PoseContent,
     public weapon: string,
@@ -2505,7 +2571,7 @@ export class PosePlayer {
     // «Только клипы»: планировщику стойку НЕ отдаём (в этом режиме к нему ни одного обращения), но высоту таза
     // держим сами — см. `clipStandY`. −1 = при возврате в планировщик замерить заново.
     if (this.clipOnly) { this.stanceCombat = -1; this.clipStanceCombat = this.combat; return; }
-    this.driver.setStance(p.latL, p.fwdL, p.latR, p.fwdR, p.standY, p.foot);
+    this.plannerStance(p);
     this.stanceCombat = this.combat; this.clipStanceCombat = -1;
   }
   /**
@@ -2672,7 +2738,7 @@ export class PosePlayer {
    */
   resetGaitState(): void {
     this.cancelTurn();
-    this.driver.resetPlanner();
+    this.plannerReset();
     this.dirWarp = { ...DIR_WARP0 };
     this.turnNow = 0; this.turnFeet = [0, 0, 0, 0]; this.hipsYawNow = 0; this.clipHipsYaw = 0; this.clipYawMeta = false;
     this.legMag = 0; this.moveMag = 0; this.stepHold = 0; this.locoW = 0; this.clipPhase = 0;
@@ -2921,13 +2987,18 @@ export class PosePlayer {
       this.modeSnap = { rot, hips: this.human.bones.get('Hips')!.position.clone() };
       this.modeBlend = 1;
       // Назад к планировщику: его планты остались там, где он их бросил (за метры отсюда), — ставим стопы заново.
-      if (!clipOnly) this.driver.replant();
+      // ⚠ НЕ `replantPlanner()`: тот смотрит на `clipOnlyNow`, а здесь он ещё СТАРЫЙ (true) — и реплант стал бы
+      // no-op ровно в кадр возврата к планировщику, оставив планты там, где он их бросил — за метры отсюда.
+      if (!clipOnly) this.plannerReplant();
     }
+    // ⚠ ГРОМКО О МОЛЧАЛИВОЙ ЛОВУШКЕ: у базы швы планировщика — пустышки, и процедурная ветка
+    // даст замершие ноги без единой ошибки. В игре сюда не попасть (доля всегда 1).
+    if (!clipOnly && !this.hasPlanner) warnNoPlanner();
     this.clipOnlyNow = clipOnly;
     // Доля таза стойки поменялась (ползунок редактора / перекрытие запекания) → планты сняты под другим тазом (см. `stanceKnob`).
     const knobStale = this.stanceKnob !== stancePelvisKnob();
     if (!clipOnly) {
-      this.driver.setCombat(this.combat);   // боевая колонка настроек (Ф6) — тот же плавный combat, что блендит стойку
+      this.plannerCombat(this.combat);   // боевая колонка настроек (Ф6) — тот же плавный combat, что блендит стойку
       // ⭐ …и СТОЙКА ПЛАНИРОВЩИКА следует за той же осью: иначе поворот на месте в бою поднимал бы таз
       // на релакс-высоту (см. `measureStance`). Порог 0.02 — чтобы не мерить каждый кадр кроссфейда:
       // замер зовёт `human.reset()`, а поза всё равно собирается заново в `gaitToHumanoid`.
@@ -2997,34 +3068,13 @@ export class PosePlayer {
     // `ankleRest` считается по САМОМУ ригу, поэтому следует и за моделью, и за телосложением.
     const fwdC = vx * Math.sin(yaw) + vz * Math.cos(yaw), latC = vx * Math.cos(yaw) - vz * Math.sin(yaw);
     if (!clipOnly) {
-      this.driver.footFloor = this.human.ankleRest ?? (FOOT_Y + (this.human.footLift ?? 0));
-      this.driver.legRest = this.human.legRest;   // длины бедра/голени и полутаз — из рига, не из констант
-      this.driver.setWorld(this.px, this.pz, yaw, vx, vz);   // yaw таза → стопы в верном body-кадре + подшаг при повороте
-      this.driver.setGoalYaw(this.aimYaw);                        // прицел → подшаг целит в идл-стойку ПОСЛЕ доворота (не в промежуток)
-      // ⚠ ЯЧЕЙКИ СЕТКИ — В ЛОКАЛЬНЫХ ОСЯХ: 0 = вперёд (+Z), 2 = +X = СВОЯ ЛЕВАЯ сторона (клип `strafe_R`),
-      // 4 = назад, 6 = −X = СВОЯ ПРАВАЯ (клип `strafe_L`). См. «ТАБЛИЦА ИСТИНЫ «СТОРОНА»» в `pose.ts`.
-      let ang = Math.atan2(latC, fwdC) / DIR_STEP; ang = ((ang % 8) + 8) % 8;   // направление плант-сетки (тело-локальное)
-      const i0 = Math.floor(ang) % 8, i1 = (i0 + 1) % 8, ft = ang - Math.floor(ang);
-      // ⚠ ПОД СЕКТОРАМИ ЯЧЕЙКУ НЕ «ПРИЩЁЛКИВАЕМ» К ОСИ СЕКТОРА, хотя диагональные ячейки задеваются только на перебросе.
-      // Пробовал: переброс меняет ячейку скачком (ходьба «вправо» [−9, 1.86] → «назад» [−5, 0]), и планировщик ловит
-      // рывок. ЗАМЕР (рыцарь, опубликованный воин, доворот 45°, планировщик): поворот прицела 90°/с — скачок голени
-      // 41.2° (p99 29.4) с прищёлкиванием против 32.2° (p99 22.2) без; ход 120°→150° — 33.4° против 20.7°. Угол в
-      // осях довёрнутого таза едет НЕПРЕРЫВНО (доворот сглажен), и сетка вслед за ним — тоже. Косые ячейки — данные
-      // автора: редактор показывает «не зеркально» и зеркалит по кнопке.
-      const spB = clamp((spd - GAIT.speedWalk) / Math.max(1, GAIT.speedRun - GAIT.speedWalk), 0, 1);
-      const bl = (leg: 'l' | 'r', k: 0 | 1): number => {
-        const w = this.plant.walk[i0]![leg][k] + (this.plant.walk[i1]![leg][k] - this.plant.walk[i0]![leg][k]) * ft;
-        const r = this.plant.run[i0]![leg][k] + (this.plant.run[i1]![leg][k] - this.plant.run[i0]![leg][k]) * ft;
-        return w + (r - w) * spB;
-      };
-      this.driver.setPlantOffset(bl('l', 0), bl('l', 1), bl('r', 0), bl('r', 1));
-      this.driver.setPlantVia(blendVia(this.plant, 'lVia', i0, i1, ft, spB), blendVia(this.plant, 'rVia', i0, i1, ft, spB));
+      this.plannerFeed(yaw, vx, vz, spd, fwdC, latC);
     }
     // Вес гейта в ногах: идём/подшагиваем (разворот на месте) → ноги ведёт планировщик, иначе — поза idle-стойки.
     // Без этого при стоянии ноги целиком из idle: подшаг НЕ виден, а фидбэк setFeet отдаёт планировщику чужие стопы.
     // ⚠ `stepping` МЕРЦАЕТ (settled щёлкает по гистерезису) → держим ещё STEP_HOLD после конца подшага, иначе ноги
     // мигают idle↔гейт = тик при развороте на месте.
-    if (!clipOnly && this.driver.stepping) this.stepHold = STEP_HOLD; else this.stepHold = Math.max(0, this.stepHold - dt);
+    if (!clipOnly && this.plannerStepping) this.stepHold = STEP_HOLD; else this.stepHold = Math.max(0, this.stepHold - dt);
     const want = clipOnly ? 0 : this.stepHold > 0 ? 1 : this.moveMag;   // «только клипы»: процедурных ног нет вовсе
     // Асимметрия скорости: ВХОД в гейт (шаг) — резво (отзывчивый подшаг); ВЫХОД в idle (конец поворота) — мягче, иначе поза
     // «оседает» рывком при остановке (ноги морфятся гейт→idle-стойка плавно). Резкое переключение idle↔гейт дребезжит.
@@ -3038,7 +3088,7 @@ export class PosePlayer {
     // ⚠ Гистерезис на «стоим» обязателен: скорость шумит (снапшоты реже кадров), и один порог
     // дребезжал — ЗАМЕР давал 107–119 переключений за пару секунд.
     this.still = this.still ? this.moveMag < STILL_OFF : this.moveMag < STILL_ON;
-    const sw = clipOnly ? [!this.clipContact[0], !this.clipContact[1]] : this.driver.swingLegs;
+    const sw = clipOnly ? [!this.clipContact[0], !this.clipContact[1]] : this.plannerSwing();
     const busy = !this.still || this.turning || sw[0] || sw[1];
     const legsHeld = !!this.atk.clip && this.atk.t >= 0
       && (this.atk.legs === 'always' || (this.atk.legs !== 'never' && !busy));
@@ -3048,23 +3098,16 @@ export class PosePlayer {
     // на каждом входе-выходе был бы щелчок.
     this.atkLegsW += ((legsHeld ? 1 : 0) - this.atkLegsW) * Math.min(1, dt / LEGS_FADE);
     const turnLegs = this.turnMode;                               // поворот клипами (идёт или ждём решения): планировщик шагов не начинает
-    if (!clipOnly) this.driver.setLegsHeld(legsHeld || turnLegs);
-    if (!clipOnly && this.legMag > 0.5 && !legsHeld && !turnLegs) {   // фидбэк фактических стоп (иначе шпагат) — только когда ноги ведёт гейт
-      const fl = this.human.bones.get('LeftFoot')!.getWorldPosition(_vfl), fr = this.human.bones.get('RightFoot')!.getWorldPosition(_vfr);
-      // ⚠ ВЫЧИТАЕМ СВОЙ СОБСТВЕННЫЙ ПОВОРОТ ТАЗА (`turnFeet` прошлого кадра — риг сейчас именно такой). Фидбэк
-      // существует, чтобы ловить ФИЗИКУ, а не нашу же авторскую позу: не вычесть — и планировщик прибьёт плант к
-      // уехавшей стопе, а дальше погонится за собственным хвостом (ЗАМЕР: расхождение плантов 0 → 28 ед. за 8 с
-      // при повороте 35°; с вычетом — 0.000e+0 бит в бит).
-      const t = this.turnFeet;
-      this.driver.setFeet(fl.x + this.px - t[0], fl.z + this.pz - t[1], fr.x + this.px - t[2], fr.z + this.pz - t[3]);
-    }
+    // ⚠ Фидбэк стоп даётся ТОЛЬКО когда ноги ведёт гейт (иначе шпагат) — условие считается ЗДЕСЬ,
+    // чтобы шов не лез в состояние базы, а база не знала про планировщик.
+    if (!clipOnly) this.plannerLegs(legsHeld || turnLegs, this.legMag > 0.5 && !legsHeld && !turnLegs);
     this.idleT += dt;
     // ⚠ В «только клипы» планировщик НЕ ОБНОВЛЯЕТСЯ: цели нейтральные, а ось ходьба↔бег — ВЕС БЕГА КЛИПОВ по скорости.
     // ⭐ Было `(v − speedWalk) / (speedRun − speedWalk)` — ось планировщика 40…115, а клипы сняты на 50.4 / 102: свой
     // темп клип получал только ВНЕ своей скорости (замер: цикл на 50.4 длиннее планировщика на 6.2 %, на 102 короче
     // на 5.9 %), а на игровых 80 u/с бег весил 53 % и целиком не был виден никогда. Решение автора: набор 40 / 120,
     // бег на 100 % с 80 (`locoRunWeight`). Планировщиковую ось не трогаем — вне «только клипы» всё как было.
-    const tg = clipOnly ? CLIP_ONLY_TG() : this.driver.update(dt);
+    const tg = clipOnly ? CLIP_ONLY_TG() : this.plannerUpdate(dt);
     // ⚠ ТАЗ СТОЯ — НА ВЫСОТЕ СТОЙКИ, а не на базе 30 из `gaitToHumanoid` (см. `clipStandY`): иначе клип поворота и клип
     // хода, кладущие таз на `hipsRest.y + __hipsD`, дёргали его вверх на входе и вниз на выходе.
     if (clipOnly) { tg.sb = locoRunWeight(spd); tg.bobY = this.clipStandY - 30; }
@@ -3155,7 +3198,7 @@ export class PosePlayer {
         // «опорной», когда клип уже несёт её, и фиксация тянет стопу, а на отпускании бьёт.
         clipDuty = mixed((c) => lerpN(GAIT.dutyWalk, GAIT.dutyRun, plannerSb(bakedLocoSpeed(c)))) ?? lerpN(GAIT.dutyWalk, GAIT.dutyRun, axes.sb);
       }
-      let u = locoPhaseU(clipOnly ? this.clipPhase : this.driver.gaitPhase);
+      let u = locoPhaseU(clipOnly ? this.clipPhase : this.plannerPhase);
       if (lead && lead.keys.length) {
         const dur = clipDur(lead) || 1;
         const sc = clipSections(lead);
@@ -3279,7 +3322,7 @@ export class PosePlayer {
     // бленде оба числа совпадают, но во время САМОГО перехода `locoW` отстаёт на кадр, и держать два разных
     // множителя на одно и то же гашение не за что. ЗАМЕР ручки 20° при `locoMix` 0 / .25 / .5 / .75 / 1:
     // 20.000 / 19.999 / 19.998 / 19.997 / 19.996 — ровная линия. Без гашения вовсе — двойной счёт (сторож).
-    const wantTurn = clipOnly ? 0 : this.driver.hipsTurn * (1 - mix);
+    const wantTurn = clipOnly ? 0 : this.plannerHipsTurn * (1 - mix);
     const boneYaw = this.hipsYawNow + this.clipHipsYaw;
     // ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ — ЗДЕСЬ (после шва, до курса), см. `applyStancePelvis`. Его рыск идёт ТЕМ ЖЕ каналом,
     // что раскрытие `_open`: к курсу НЕ прибавляется (он уже в тазе, `pelvisToWorld` его сохраняет), но вычитается из
@@ -3340,10 +3383,10 @@ export class PosePlayer {
       // ⚠ ПОСЛЕ `applyTorsoTwist`, А НЕ ДО. Он ставит тазу фейсинг, то есть ПОВОРАЧИВАЕТ ВЕСЬ РИГ, и
       // подтяжка, сделанная раньше, была бы посчитана в другом кадре и уехала бы вместе с поворотом.
       // Планты у планировщика в МИРЕ, риг локальный → вычитаем позицию персонажа.
-      const p0 = this.driver.plantTarget(0), p1 = this.driver.plantTarget(1);
+      const p0 = this.plannerPlant(0), p1 = this.plannerPlant(1);
       warpStanceFeet(this.human,
         [[p0[0] - this.px, p0[1] - this.pz], [p1[0] - this.px, p1[1] - this.pz]],
-        this.driver.swingLegs, mix);
+        this.plannerSwing() as [boolean, boolean], mix);
     }
     this.easeSeamLegs(dt);   // шов поворота, ноги — ПОСЛЕ подтяжек: смещение снимается с того, что реально показано
     // ТАЗ УДАРА ГАСНЕТ ЛОКОМОЦИЕЙ. Удар — слой ВЕРХА, низом владеет походка (в Unreal такой слой кладут

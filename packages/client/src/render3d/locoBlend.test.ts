@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, type PoseContent } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, type PoseContent } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { GAIT } from './gaitKnobs.js';
 import { locoClipName, blendLocoPose, locoDirWeights, locoPhaseU, stepLocoSection, sectionClipTime, type LocoDir,
   bakedLocoSpeed, locoRunWeight, LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
@@ -120,7 +121,7 @@ describe('смешивание в рантайме', () => {
 
   const run = (content: PoseContent, frames = 120): { bones: number[]; feet: number[] } => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], content, 'sword', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], content, 'sword', GX, emptyGrid());
     p.setVel(0, 115); p.setYaw(0);
     for (let i = 0; i < frames; i++) p.step(DT);
     h.root.updateMatrixWorld(true);
@@ -134,7 +135,7 @@ describe('смешивание в рантайме', () => {
 
   it('НА НУЛЕ — БИТ В БИТ сегодняшняя походка, даже когда клип привязан', () => {
     const h = buildHumanoid({});
-    const src = bakeGaitToClip(new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
+    const src = bakeGaitToClip(new BakePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
       { name: 'run_fwd', vx: 0, vz: 0.95 }, { character: 'warrior', weapon: 'sword' }).clip;
     GAIT.locoMix = 0;
     const plain = run(localStorageContent('warrior'));
@@ -151,7 +152,7 @@ describe('смешивание в рантайме', () => {
   it('на единице поза МЕНЯЕТСЯ — иначе ползунок был бы декоративным', () => {
     const h = buildHumanoid({});
     // Клип другой скорости: его форма заведомо не совпадает с текущей процедурной.
-    const other = bakeGaitToClip(new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
+    const other = bakeGaitToClip(new BakePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
       { name: 'walk_fwd', vx: 0, vz: 0.3 }, { character: 'warrior', weapon: 'sword' }).clip;
     GAIT.locoMix = 0;
     const at0 = run(withLoco(other));
@@ -164,11 +165,11 @@ describe('смешивание в рантайме', () => {
 
   it('ОПОРНАЯ СТОПА ДЕРЖИТСЯ У ПЛАНТА даже на чужом клипе — иначе ползунок кончился бы скольжением', () => {
     const h = buildHumanoid({});
-    const other = bakeGaitToClip(new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
+    const other = bakeGaitToClip(new BakePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
       { name: 'walk_fwd', vx: 0, vz: 0.3 }, { character: 'warrior', weapon: 'sword' }).clip;
     const content = withLoco(other);
     const hh = buildHumanoid({});
-    const p = new PosePlayer(hh, () => [], content, 'sword', GX, emptyGrid());
+    const p = new BakePlayer(hh, () => [], content, 'sword', GX, emptyGrid());
     // ⚠ 0.99, А НЕ 1: единица — режим «только клипы», где планировщика нет вовсе и подтягивать стопу
     // не к чему (её держит фиксация). Подтяжка к плантам живёт в СМЕШАННОМ режиме — его и стережём.
     GAIT.locoMix = 0.99;
@@ -198,10 +199,10 @@ describe('смешивание в рантайме', () => {
     // ничего не решает. Разница появляется только когда курс МЕНЯЕТСЯ: подтяжка, сделанная до
     // доворота, уезжает вместе с ригом на приращение угла за кадр.
     const h = buildHumanoid({});
-    const other = bakeGaitToClip(new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
+    const other = bakeGaitToClip(new BakePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
       { name: 'walk_fwd', vx: 0, vz: 0.3 }, { character: 'warrior', weapon: 'sword' }).clip;
     const hh = buildHumanoid({});
-    const p = new PosePlayer(hh, () => [], withLoco(other), 'sword', GX, emptyGrid());
+    const p = new BakePlayer(hh, () => [], withLoco(other), 'sword', GX, emptyGrid());
     GAIT.locoMix = 0.99;   // смешанный режим — см. выше: на единице планировщика нет
     const v = new THREE.Vector3(), hip = new THREE.Vector3(), knee = new THREE.Vector3(), tgt = new THREE.Vector3();
     let worst = 0, seen = 0;
@@ -235,10 +236,10 @@ describe('смешивание в рантайме', () => {
     // отдельный прогон под углом: `applyTorsoTwist` крутит весь риг, и подтяжка, сделанная раньше,
     // уехала бы вместе с поворотом.
     const h = buildHumanoid({});
-    const other = bakeGaitToClip(new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
+    const other = bakeGaitToClip(new BakePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid()), h,
       { name: 'walk_fwd', vx: 0, vz: 0.3 }, { character: 'warrior', weapon: 'sword' }).clip;
     const hh = buildHumanoid({});
-    const p = new PosePlayer(hh, () => [], withLoco(other), 'sword', GX, emptyGrid());
+    const p = new BakePlayer(hh, () => [], withLoco(other), 'sword', GX, emptyGrid());
     GAIT.locoMix = 0.99;   // смешанный режим — см. выше: на единице планировщика нет
     const yaw = Math.PI / 3;
     p.setVel(115 * Math.sin(yaw), 115 * Math.cos(yaw)); p.setYaw(yaw);

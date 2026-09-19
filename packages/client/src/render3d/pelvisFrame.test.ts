@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { pelvisToWorld, pelvisPoseToWorld, pelvisPoseToChar, pelvisHeading } from './pelvisFrame.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { GAIT, GAIT_BASE, POSE, POSE_BASE } from './gaitKnobs.js';
 import { bakeGaitSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS } from './clipBake.js';
 import { poseRig } from './frameEdit.js';
@@ -135,7 +136,7 @@ let libMemo: Clip[] | null = null;
 function bakedLoco(): Clip[] {
   if (!libMemo) {
     setCfg(WARP, SWAY);
-    const h = buildHumanoid({}), p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const h = buildHumanoid({}), p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     libMemo = bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }, GAIT_PRESETS.filter((s) => s.name === 'walk_fwd' || s.name === 'walk_strafe_R')).map((r) => r.clip);
   }
   return libMemo;
@@ -163,7 +164,7 @@ function run(s: Scn, h0: number): Frame[] {
   const h: Humanoid = buildHumanoid({});
   const lib = s.clips;
   const content = { ...localStorageContent('warrior'), ...(lib ? { locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.find((x) => x.name === n); if (c) return c; } return null; } } : {}) };
-  const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid());
   setLocoMixOverride(s.mix);
   const a = (h0 + s.rel) * D;
   const drive = (): void => { p.setVel(s.spd * Math.sin(a), s.spd * Math.cos(a)); p.setYaw(h0 * D); };
@@ -225,7 +226,7 @@ describe('⭐ вычет фейсинга запекателя (`neutralizeFacin
   it('процедурка с наклоном таза, курсы 40 / 90 / 180 / −135, вперёд и наискосок: снятая поза + курс = таз игры', () => {
     for (const [aim, rel] of [[40, 0], [90, 0], [180, 60], [-135, 120]] as const) {
       setCfg(WARP, { ...SWAY, hipsPitchSwing: 0.15, hipsPitchSwingRun: 0.15 });
-      const h = buildHumanoid({}), p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const h = buildHumanoid({}), p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       const a = (aim + rel) * D, read = defaultReadPose(h), fresh = buildHumanoid({});
       p.setVel(50 * Math.sin(a), 50 * Math.cos(a)); p.setYaw(aim * D); p.snapYaw();
       let worstDeg = 0, worstU = 0, warp = 0;

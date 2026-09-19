@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, type PlantGrid } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, type PlantGrid } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком
 import { GAIT_PRESETS } from './clipBake.js';
 import { blendLocoPose, type LocoDir } from './locoBlend.js';
 import { CAM_AZ, moveFromKeys } from './playerInput.js';
@@ -60,9 +61,9 @@ const boneX = (h: Humanoid, name: string): number => {
  * прогона (первая — разгон). Среднее, а не мгновенный кадр: за цикл стопа ходит вперёд-назад, и один кадр
  * шумит на всю амплитуду маха. Тело едет по X, поэтому X стопы берётся ОТНОСИТЕЛЬНО таза.
  */
-function feetAfter(vx: number, vz: number, sec: number, tune?: (p: PosePlayer, h: Humanoid) => void): { l: number; r: number } {
+function feetAfter(vx: number, vz: number, sec: number, tune?: (p: BakePlayer, h: Humanoid) => void): { l: number; r: number } {
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
   tune?.(p, h);
   p.setYaw(0); p.snapYaw(); p.resetPos();
   const n = Math.round(sec / DT);
@@ -201,7 +202,7 @@ describe('знак боковой скорости ведёт ВСЮ цепоч�
 
   it('⭐⭐ ЯЧЕЙКА ПЛАНТА ЧИТАЕТСЯ ПО ТОМУ ЖЕ ЗНАКУ: +X → 2, −X → 6 (замер по стопам; мутация E валит)', () => {
     const LAT = 26;                       // боковой офсет планта, ед. — заведомо больше шума походки
-    const grid = (cell: number): ((p: PosePlayer) => void) => (p: PosePlayer): void => {
+    const grid = (cell: number): ((p: BakePlayer) => void) => (p: BakePlayer): void => {
       const g: PlantGrid = p.plant;
       for (const sp of ['walk', 'run'] as const) g[sp][cell] = { l: [0, LAT], r: [0, LAT], lVia: [], rVia: [] };
     };
@@ -217,8 +218,11 @@ describe('знак боковой скорости ведёт ВСЮ цепоч�
     }
   });
 
-  it('⭐ ЯЧЕЙКИ СЕТКИ — РОВНО ПО ЭТОЙ ФОРМУЛЕ (шов в `poseRuntime`, чтобы замер выше не отвязался от кода)', () => {
-    expect(SRC_RT).toMatch(/let ang = Math\.atan2\(latC, fwdC\) \/ DIR_STEP;/);
+  it('⭐ ЯЧЕЙКИ СЕТКИ — РОВНО ПО ЭТОЙ ФОРМУЛЕ (шов в `bakePlayer`, чтобы замер выше не отвязался от кода)', () => {
+    // ⚠ Формула переехала в `BakePlayer.plannerFeed` (Э12): плант-сетку читает ТОЛЬКО планировщик,
+    // а игровая кукла про неё не знает вовсе.
+    expect(SRC('bakePlayer.ts'))
+      .toMatch(/let ang = Math\.atan2\(latC, fwdC\) \/ DIR_STEP;/);
     const idx = (fwd: number, lat: number): number => ((Math.round(Math.atan2(lat, fwd) / (Math.PI / 4)) % 8) + 8) % 8;
     expect(idx(1, 0), 'вперёд').toBe(0);
     expect(idx(0, 1), '+X').toBe(2);

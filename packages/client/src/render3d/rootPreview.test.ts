@@ -4,7 +4,8 @@ import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { groundFeet } from './footIk.js';
 import { flipPose, clipDur, clipPoseAt, clipChannelAt, hipsOffset, setHipsOffset, type Clip, type Pose } from './clipModel.js';
 import { turnYawAt, turnSupportAt } from './turnInPlace.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeTurnToClip, bakeTurnSet, defaultReadPose, TURN_PRESETS } from './clipBake.js';
 import {
   poseRig, clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, rootViewMatrix, placeRootView, composeRootView,
@@ -253,7 +254,7 @@ describe('⭐ на запечённых поворотах корень возв
     it(name, () => {
       const spec = TURN_PRESETS.find((s) => s.name === name)!;
       const h = buildHumanoid({});
-      const player = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const player = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       const base = defaultReadPose(h), truth = new Map<string, THREE.Vector3[]>();
       let t = 0, first = true;
       const read = (): Pose => {
@@ -282,7 +283,7 @@ describe('⭐ на запечённых поворотах корень возв
       expect(shown, `с корнем ${shown.toFixed(3)}u (на месте ${inPlace.toFixed(2)}u)`).toBeLessThan(0.1);
       // И курс ОБЫЧНОГО (гладкого) запекания — тот же: концы точно, между ними в допуске подгонки.
       const h2 = buildHumanoid({});
-      const p2 = new PosePlayer(h2, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const p2 = new BakePlayer(h2, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       const sm = bakeTurnToClip(p2, h2, spec, { character: 'warrior', weapon: 'none' }).clip;
       expect(sm.keys.slice(0, -1).every((k) => k.interp === 'smooth'), 'обычное запекание — сплайн').toBe(true);
       const dur = clipDur(c);
@@ -443,7 +444,7 @@ describe('⭐ таз клипа поворота: игра (настоящий `
   let lib0: Map<string, Clip> | null = null;
   const bakedTurns = (): Map<string, Clip> => {
     if (!lib0) {
-      const h = buildHumanoid({}), p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const h = buildHumanoid({}), p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       lib0 = new Map<string, Clip>();
       for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib0.set(r.clip.name, r.clip);
     }
@@ -464,7 +465,7 @@ describe('⭐ таз клипа поворота: игра (настоящий `
   const playTurn = (lib: Map<string, Clip>, name: string, h0: number, deg: number, mix: number): Gap => {
     const h = buildHumanoid({}), rest = h.hipsRest;
     const content = { ...localStorageContent('warrior'), locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } };
-    const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid());
     const { h: man, pivot } = underPivot();
     const gq = new THREE.Quaternion(), gp = new THREE.Vector3();
     const out: Gap = { deg: 0, u: 0, model: 0, frames: 0, course: 0, played: null };

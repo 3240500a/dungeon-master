@@ -2,11 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import {
-  PosePlayer, localStorageContent, applyGaitConfig, loadTwistStates, loadFootLift, setLocoMixOverride,
-  TURN_ACCEL_SEC, WARP_ACCEL_SEC,
-  type PoseContent, type GXKnobs, type TwistStates,
-} from './poseRuntime.js';
+import { localStorageContent, applyGaitConfig, loadTwistStates, loadFootLift, setLocoMixOverride, TURN_ACCEL_SEC, WARP_ACCEL_SEC, type PoseContent, type GXKnobs, type TwistStates } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS } from './clipBake.js';
 import { type Clip } from './clipModel.js';
 import { makeNetInterp } from './netInterp.js';
@@ -145,7 +142,7 @@ beforeAll(() => {
   const plant = applyGaitConfig(CHAR, GX);
   const h = buildHumanoid(rigOpts());
   h.footLift = loadFootLift(CHAR);
-  const p = new PosePlayer(h, () => [], localStorageContent(CHAR), 'none', GX, plant, loadTwistStates(CHAR));
+  const p = new BakePlayer(h, () => [], localStorageContent(CHAR), 'none', GX, plant, loadTwistStates(CHAR));
   lib = new Map();
   for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: CHAR, weapon: 'none' }).clip);
   for (const r of bakeTurnSet(p, h, { character: CHAR, weapon: 'none' })) lib.set(r.clip.name, r.clip);
@@ -170,13 +167,13 @@ const withLib = (base: PoseContent): PoseContent => ({
  * Всё остальное (физика, скин, заземление) к подёргиванию корпуса отношения не имеет и сюда не тащится:
  * поза собирается ровно тем же `PosePlayer`, что и в игре.
  */
-interface Doll extends DrivenDoll { p: PosePlayer; h: Humanoid }
+interface Doll extends DrivenDoll { p: BakePlayer; h: Humanoid }
 function makeDoll(twist: TwistStates, content: PoseContent): Doll {
   Object.assign(GAIT, GAIT_BASE); Object.assign(POSE, POSE_BASE);
   const plant = applyGaitConfig(CHAR, GX);
   const h = buildHumanoid(rigOpts());
   h.footLift = loadFootLift(CHAR);
-  const p = new PosePlayer(h, () => [], content, 'none', GX, plant, twist);
+  const p = new BakePlayer(h, () => [], content, 'none', GX, plant, twist);
   let yaw = 0, wvx = 0, wvz = 0, first = true;
   return {
     p, h,

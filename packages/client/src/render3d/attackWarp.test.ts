@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
+import { localStorageContent, emptyGrid } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком
 import { buildHumanoid } from './humanoid.js';
 import * as THREE from 'three';
 import type { Clip, Mark, MarkEvent } from './clipModel.js';
@@ -17,14 +18,14 @@ describe('удар: тайм-варп под серверный вайндап',
   });
   afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
 
-  const mk = (): PosePlayer => new PosePlayer(buildHumanoid({}), () => [], localStorageContent('warrior'), 'sword', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+  const mk = (): BakePlayer => new BakePlayer(buildHumanoid({}), () => [], localStorageContent('warrior'), 'sword', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
   /** Клип 1.0 с; контакт на 0.6 (как в мокапе — примерно 60 % клипа). */
   const clip = (marks?: Mark[], impactAt = 0.6): Clip => ({
     name: 'hit_sword', character: 'warrior', weapon: 'sword', loop: false,
     keys: [{ pose: {}, t: 0 }, { pose: {}, t: impactAt, marks }, { pose: {}, t: 1 }],
   });
   /** Прогнать удар до конца, вернуть время (сек), когда сработала метка `impact`. */
-  function runToImpact(p: PosePlayer, dt = 1 / 240): number | null {
+  function runToImpact(p: BakePlayer, dt = 1 / 240): number | null {
     let t = 0, hit: number | null = null;
     p.onMark = (e: MarkEvent) => { if (e.mark.type === 'impact' && hit === null) hit = t; };
     for (let i = 0; i < 4000 && p.attacking; i++) { p.step(dt); t += dt; }
@@ -137,7 +138,7 @@ describe('удар: цепочка без возврата в стойку', () 
     } as Storage;
   });
   afterEach(() => { delete (globalThis as unknown as { localStorage?: Storage }).localStorage; });
-  const mk = (): PosePlayer => new PosePlayer(buildHumanoid({}), () => [], localStorageContent('warrior'), 'sword', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+  const mk = (): BakePlayer => new BakePlayer(buildHumanoid({}), () => [], localStorageContent('warrior'), 'sword', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
   /** Удар idle→замах→удар→idle: концы — стойка, на 0.25 размечен замах, на 0.6 — импакт. */
   const combo = (): Clip => ({
     name: 'hit_sword', character: 'warrior', weapon: 'sword', loop: false, idleEnds: true,
@@ -234,7 +235,7 @@ describe('удар: таз не берётся из клипа на бегу', (
   /** Прогнать плеер `n` кадров с заданной скоростью и вернуть мировую позицию таза. */
   function run(vel: number, clip: Clip | null, warm = 60, after = 24): THREE.Vector3 {
     const H = buildHumanoid({});
-    const p = new PosePlayer(H, () => [], localStorageContent('warrior'), 'axe', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+    const p = new BakePlayer(H, () => [], localStorageContent('warrior'), 'axe', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
     p.setVel(0, vel);
     for (let i = 0; i < warm; i++) p.step(1 / 60);        // дать legMag устаканиться
     if (clip) p.triggerAttack(clip, 0.8);
@@ -264,7 +265,7 @@ describe('удар: таз не берётся из клипа на бегу', (
   it('верх удара на бегу играет КАК И БЫЛ (гасится только таз)', () => {
     const armAt = (clip: Clip | null): THREE.Quaternion => {
       const H = buildHumanoid({});
-      const p = new PosePlayer(H, () => [], localStorageContent('warrior'), 'axe', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+      const p = new BakePlayer(H, () => [], localStorageContent('warrior'), 'axe', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
       p.setVel(0, 160);
       for (let i = 0; i < 60; i++) p.step(1 / 60);
       if (clip) p.triggerAttack(clip, 0.8);

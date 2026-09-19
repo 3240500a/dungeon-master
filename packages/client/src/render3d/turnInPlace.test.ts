@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { GAIT } from './gaitKnobs.js';
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, TURN_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { clipDur, clipPoseAt, hipsOffset, setHipsOffset, type Clip } from './clipModel.js';
@@ -78,7 +79,7 @@ describe('поворот на месте в рантайме', () => {
   /** Запечь походку и повороты так же, как кнопка редактора. */
   const bake = (turns: boolean): Map<string, Clip> => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const lib = new Map<string, Clip>();
     for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
     if (turns) for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib.set(r.clip.name, r.clip);
@@ -91,7 +92,7 @@ describe('поворот на месте в рантайме', () => {
     const h = buildHumanoid({});
     const base = localStorageContent('warrior');
     const content = { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } };
-    const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid());
     setLocoMixOverride(mix);
     p.setVel(0, 0); p.setYaw(0); p.snapYaw();
     for (let i = 0; i < 120; i++) p.step(1 / 60);
@@ -184,7 +185,7 @@ describe('поворот на месте в рантайме', () => {
     const flick = (deg: number, sec: number): { clips: string[]; firstAt: number } => {
       const h = buildHumanoid({});
       const base = localStorageContent('warrior');
-      const p = new PosePlayer(h, () => [], { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
       setLocoMixOverride(1);
       p.setVel(0, 0); p.setYaw(0); p.snapYaw();
       for (let i = 0; i < 120; i++) p.step(1 / 60);
@@ -248,7 +249,7 @@ describe('шов клипа поворота: таз и ноги не прыга
   };
   /** Повороты — как кнопкой редактора: процедуркой и в РЕЛАКС-стойке (боевой оси у набора нет). */
   const bakeTurns = (content: PoseContent): Map<string, Clip> => {
-    const h = buildHumanoid({}); const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+    const h = buildHumanoid({}); const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid());
     const lib = new Map<string, Clip>();
     for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) lib.set(r.clip.name, r.clip);
     // ⚠ И КЛИП ХОДА: с 19.09 режим «только клипы» требует у куклы запечённый НАБОР (`PosePlayer.hasLocoSet`) — без него
@@ -261,9 +262,9 @@ describe('шов клипа поворота: таз и ноги не прыга
    * Стоим 2 с, прицел прыгает на `deg`, смотрим 3 с. По кадрам: высота таза, наибольший поворот кости ноги за кадр (°),
    * кадр старта и конца клипа. `hook` зовётся после шага кадра `i` (1…180).
    */
-  const play = (lib: Map<string, Clip>, content: PoseContent, mix: number, o: { deg?: number; combat?: boolean; hook?: (p: PosePlayer, i: number, out: Play) => void } = {}): Play => {
+  const play = (lib: Map<string, Clip>, content: PoseContent, mix: number, o: { deg?: number; combat?: boolean; hook?: (p: BakePlayer, i: number, out: Play) => void } = {}): Play => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], { ...content, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], { ...content, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
     setLocoMixOverride(mix);
     p.setCombat(!!o.combat);
     p.setVel(0, 0); p.setYaw(0); p.snapYaw();
@@ -389,7 +390,7 @@ describe('шов клипа поворота: таз и ноги не прыга
     GAIT.idleSettle = 0;
     const content = authored(), lib = bakeTurns(content);
     {
-      const h = buildHumanoid({}); const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+      const h = buildHumanoid({}); const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid());
       for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
     }
     const legStep = (legs: readonly THREE.Quaternion[], prev: THREE.Quaternion[]): number => {
@@ -406,7 +407,7 @@ describe('шов клипа поворота: таз и ноги не прыга
      */
     const run = (mix: number, aimAt: number, walkOff = -1): Run => {
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], { ...content, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], { ...content, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
       const w = p as unknown as { lockW: number; locoW: number; turn: unknown };
       setLocoMixOverride(mix);
       p.setVel(0, 0); p.setYaw(0); p.snapYaw();
@@ -461,14 +462,14 @@ describe('шов клипа поворота: таз и ноги не прыга
     // подбрасывается к высоте стойки за 0.15 с шва. Здесь: 0.043. ⚠ Мутация «`lift` = 0» — 0.780.
     const content = authored(), lib = bakeTurns(content);
     {
-      const h = buildHumanoid({}); const p = new PosePlayer(h, () => [], content, 'none', GX, emptyGrid());
+      const h = buildHumanoid({}); const p = new BakePlayer(h, () => [], content, 'none', GX, emptyGrid());
       for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
     }
     interface Stop { stand: number; ys: number[]; start: number; end: number; locoW0: number }
     /** Стоим 2 с; если `walk` — идём 1 с на 40 и встаём; прицел +90 в кадр остановки. Кадры — от него. */
     const stopTurn = (mix: number, walk: boolean): Stop => {
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], { ...content, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], { ...content, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } }, 'none', GX, emptyGrid());
       const w = p as unknown as { locoW: number; turn: unknown };   // ⚠ приватные — читаем приведением
       setLocoMixOverride(mix);
       p.setVel(0, 0); p.setYaw(0); p.snapYaw();
@@ -552,7 +553,7 @@ describe('запекание поворотов', () => {
     // ⚠ Мутация «конец съёма — когда таз ДОШЁЛ до прицела» валит длительность: у доворота мёртвая зона,
     // таз встаёт на 88.8° вместо 90°, и съём шёл до `maxSec` — клип на 6 с, из них пять стояния.
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     for (const r of bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' })) {
       const want = TURN_PRESETS.find((s) => s.name === r.clip.name)!.deg;
       const dur = clipDur(r.clip);
@@ -573,12 +574,12 @@ describe('запекание поворотов', () => {
     // ⚠ Мутация «не форсировать процедурку при съёме» валит это.
     const spec = TURN_PRESETS.find((s) => s.name === 'turn_R_90')!;
     const h0 = buildHumanoid({});
-    const p0 = new PosePlayer(h0, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p0 = new BakePlayer(h0, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const ref = bakeTurnSet(p0, h0, { character: 'warrior', weapon: 'none' }, [spec])[0]!;
     const slow: Clip = { ...ref.clip, keys: ref.clip.keys.map((k) => ({ ...k, t: k.t * 2 })) };
     const h = buildHumanoid({});
     const base = localStorageContent('warrior');
-    const p = new PosePlayer(h, () => [], { ...base, locoClip: (names: readonly string[]) => (names.includes('turn_R_90') ? slow : null) }, 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], { ...base, locoClip: (names: readonly string[]) => (names.includes('turn_R_90') ? slow : null) }, 'none', GX, emptyGrid());
     setLocoMixOverride(1);
     const got = bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' }, [spec])[0]!;
     expect(Math.abs(clipDur(got.clip) - clipDur(ref.clip)), `⚠ клип снят с уже запечённого: ${clipDur(got.clip).toFixed(2)} с против ${clipDur(ref.clip).toFixed(2)}`).toBeLessThan(0.1);

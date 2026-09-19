@@ -16,7 +16,8 @@ import { fitSmoothLoop, smoothLoopFrames } from './clipFit.js';
 import { clipDur, clipPoseAt, poseErrorDeg, ROOT_YAW, type Clip, type Keyframe, type Pose } from './clipModel.js';
 import { SWING_KEY, turnSupportAt, turnYawAt } from './turnInPlace.js';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
+import { localStorageContent, emptyGrid } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeTurnSet, TURN_PRESETS, SMOOTH_EPS_DEG, SMOOTH_SIGMA_CYCLE } from './clipBake.js';
 
 const GX = { armDown: 1.35, elbowBend: 0.25 };
@@ -169,13 +170,13 @@ describe('запечённые повороты', () => {
     // Средняя ошибка к плотному проходу по костям без стоп 0.075–0.156° — как у цикла походки (0.056–0.103°).
     // ⚠ Мутация «ломаная по умолчанию» (`smooth: false`) валит это.
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const smooth = bakeTurnSet(p, h, { character: 'warrior', weapon: 'none' });
     const h2 = buildHumanoid({});
-    const p2 = new PosePlayer(h2, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p2 = new BakePlayer(h2, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const линия = bakeTurnSet(p2, h2, { character: 'warrior', weapon: 'none', smooth: false });
     const h3 = buildHumanoid({});
-    const p3 = new PosePlayer(h3, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p3 = new BakePlayer(h3, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     const dense = bakeTurnSet(p3, h3, { character: 'warrior', weapon: 'none', epsDeg: 0, smooth: false });
     let sum = 0, sumLin = 0;
     for (const r of smooth) {

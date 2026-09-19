@@ -19,7 +19,8 @@ vi.mock('./footIk.js', async (importOriginal) => {
 });
 
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { LOCO_BAKE_REV, LOCO_CARDINAL_REV, isLocoClipFresh } from './poseRuntime.js';
 import { GAIT } from './gaitKnobs.js';
 import { bakeGaitSet } from './clipBake.js';
@@ -38,7 +39,7 @@ describe('страйф в «только клипах»: кардинальны�
     } as Storage;
     GAIT.warpOn = 1; GAIT.warpMax = 45;
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
     lib = new Map(bakeGaitSet(p, h, { character: 'warrior', weapon: 'none' }).map((r) => [r.clip.name, r.clip]));
   });
   afterEach(() => { setLocoMixOverride(null); hook.fn = null; });
@@ -50,7 +51,7 @@ describe('страйф в «только клипах»: кардинальны�
   /** Прогон: `drive(t)` — направление хода (°, от прицела 0) и скорость. Замер с `rec` сек. */
   const measure = (drive: (t: number) => { dir: number; spd: number }, total: number, rec: number): M => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], content(), 'none', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], content(), 'none', GX, emptyGrid());
     setLocoMixOverride(1);
     p.setYaw(0); p.snapYaw();
     const LF = h.bones.get('LeftFoot')!, RF = h.bones.get('RightFoot')!, hips = h.bones.get('Hips')!, uc = h.bones.get('UpperChest')!;

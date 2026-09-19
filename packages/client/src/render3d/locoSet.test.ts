@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, getLocoMixOverride } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, getLocoMixOverride } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { GAIT } from './gaitKnobs.js';
 import { LOCO_NAMES, LOCO_DIRS, locoClipName, locoClipNames, findLocoClip } from './locoBlend.js';
 import { GAIT_PRESETS, TURN_PRESETS, defaultBakePick, bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
@@ -113,7 +114,7 @@ describe('плавность на смене режима', () => {
   /** Запечь набор так же, как это делает кнопка в редакторе. */
   const bakeAll = (): Map<string, Clip> => {
     const h = buildHumanoid({});
-    const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX2, emptyGrid());
+    const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX2, emptyGrid());
     const out = new Map<string, Clip>();
     for (const sp of GAIT_PRESETS) out.set(sp.name, bakeGaitToClip(p, h, sp, { character: 'warrior', weapon: 'none' }).clip);
     return out;
@@ -124,7 +125,7 @@ describe('плавность на смене режима', () => {
     const h = buildHumanoid({});
     const base = localStorageContent('warrior');
     const content = lib ? { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } } : base;
-    const p = new PosePlayer(h, () => [], content, 'none', GX2, emptyGrid());
+    const p = new BakePlayer(h, () => [], content, 'none', GX2, emptyGrid());
     setLocoMixOverride(lib ? 1 : 0);
     const names = [...h.bones.keys()].sort();
     let prev: number[] | null = null, max = 0;
@@ -200,7 +201,7 @@ describe('наискосок: стопы не скользят на остатк
     const h = buildHumanoid({});
     const base = localStorageContent('warrior');
     const content = lib ? { ...base, locoClip: (names: readonly string[]) => { for (const n of names) { const c = lib.get(n); if (c) return c; } return null; } } : base;
-    const p = new PosePlayer(h, () => [], content, 'none', GX3, emptyGrid());
+    const p = new BakePlayer(h, () => [], content, 'none', GX3, emptyGrid());
     setLocoMixOverride(lib ? 1 : 0);
     const a = deg * Math.PI / 180, R = 0.85 * BAKE_MAXSPD;
     const prev: ({ x: number; z: number } | null)[] = [null, null];
@@ -227,7 +228,7 @@ describe('наискосок: стопы не скользят на остатк
       GAIT.warpOn = on; GAIT.warpMax = max;
       // Набор одним плеером, как кнопка редактора: запекатель сам снимает кардинальные клипы при любом тумблере.
       const h0 = buildHumanoid({});
-      const p0 = new PosePlayer(h0, () => [], localStorageContent('warrior'), 'none', GX3, emptyGrid());
+      const p0 = new BakePlayer(h0, () => [], localStorageContent('warrior'), 'none', GX3, emptyGrid());
       const lib = new Map<string, Clip>();
       for (const sp of GAIT_PRESETS) lib.set(sp.name, bakeGaitToClip(p0, h0, sp, { character: 'warrior', weapon: 'none' }).clip);
       for (const deg of degs) {
@@ -258,7 +259,7 @@ describe('галка «бег клипами» в настройках клие�
   const frame = (locoOf: (names: readonly string[], weapon: string) => Clip | null): number[] => {
     const h = buildHumanoid({});
     const base = localStorageContent('warrior');
-    const p = new PosePlayer(h, () => [], { ...base, locoClip: locoOf }, 'sword', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], { ...base, locoClip: locoOf }, 'sword', GX, emptyGrid());
     p.setVel(0, 115); p.setYaw(0);
     for (let i = 0; i < 90; i++) p.step(1 / 60);
     h.root.updateMatrixWorld(true);
@@ -290,7 +291,7 @@ describe('галка «бег клипами» в настройках клие�
     GAIT.locoMix = 0;
     const h = buildHumanoid({});
     const base = localStorageContent('warrior');
-    const p = new PosePlayer(h, () => [], { ...base, locoClip: () => flat }, 'sword', GX, emptyGrid());
+    const p = new BakePlayer(h, () => [], { ...base, locoClip: () => flat }, 'sword', GX, emptyGrid());
     p.setVel(0, 115); p.setYaw(0);
     setLocoMixOverride(0);
     for (let i = 0; i < 120; i++) p.step(1 / 60);

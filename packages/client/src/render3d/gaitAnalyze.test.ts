@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
+import { localStorageContent, emptyGrid } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { GAIT, POSE } from './gaitKnobs.js';
 import { bakeGaitToClip, BAKE_MAXSPD, GAIT_PRESETS } from './clipBake.js';
 import { analyzeGait, gaitSuggestions, locoClipWarning } from './gaitAnalyze.js';
@@ -18,7 +19,7 @@ import { analyzeGait, gaitSuggestions, locoClipWarning } from './gaitAnalyze.js'
  * а не назначенные.
  */
 const GX = { armDown: 1.35, elbowBend: 0.25 };
-const mk = (h: Humanoid): PosePlayer => new PosePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid());
+const mk = (h: Humanoid): BakePlayer => new BakePlayer(h, () => [], localStorageContent('warrior'), 'sword', GX, emptyGrid());
 
 describe('анализ запечённой походки', () => {
   const GAIT0 = { ...GAIT }, POSE0 = { ...POSE };

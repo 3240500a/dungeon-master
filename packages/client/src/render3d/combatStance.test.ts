@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { PosePlayer, measureStancePlants, emptyGrid, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { measureStancePlants, emptyGrid, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { buildHumanoid } from './humanoid.js';
 import { setHipsOffset } from './clipModel.js';
 import type { Pose } from './clipModel.js';
@@ -27,15 +28,15 @@ describe('боевая стойка и поворот на месте', () => {
     resolveUpper: (_w: string, combat = 0): UpperPose | null => ({ pose: stance(-DROP * combat), swing: 0 }),
   };
 
-  const mk = (): PosePlayer =>
-    new PosePlayer(buildHumanoid({}), () => [], content, 'none', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
+  const mk = (): BakePlayer =>
+    new BakePlayer(buildHumanoid({}), () => [], content, 'none', { armDown: 1.35, elbowBend: 0.25 }, emptyGrid());
 
   /** Высота таза, которую даст замер стойки при данном `combat`. */
   const measured = (combat: number): number =>
     measureStancePlants(buildHumanoid({}), content.resolveUpper('none', combat)!.pose).standY;
 
   /** Прогон «стоим и крутимся на месте»: максимум высоты таза за оборот. */
-  function spin(p: PosePlayer): number {
+  function spin(p: BakePlayer): number {
     p.setVel(0, 0);
     let top = -1e9, yaw = 0;
     for (let i = 0; i < 240; i++) {

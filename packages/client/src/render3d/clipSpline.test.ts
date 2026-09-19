@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { clipPoseAt, clipSegmentAt, easeU, poseErrorDeg, type Clip, type Keyframe, type Pose } from './clipModel.js';
 import { fitSmoothLoop, smoothLoopFrames } from './clipFit.js';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
+import { localStorageContent, emptyGrid } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitToClip, GAIT_PRESETS, SMOOTH_EPS_DEG, SMOOTH_SIGMA_CYCLE } from './clipBake.js';
 import { reduceKeyframes } from './clipBaker.js';
 import { poseClipToAnimationClip } from './clipToAnimation.js';
@@ -186,7 +187,7 @@ describe('запечённый набор — ключей в разы мень�
     for (const s of GAIT_PRESETS) {
       if (s.name === 'idle') continue;
       const h = buildHumanoid({});
-      const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
+      const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', GX, emptyGrid());
       // ⚠ Ломаную и сплайн сравниваем на ОДНОМ проходе: два запекания отличаются стартовой фазой планировщика,
       // и счёт ключей гулял бы на ±3 сам по себе.
       const raw = bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none', epsDeg: 0 });

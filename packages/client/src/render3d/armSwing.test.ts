@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
-import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, resetSwingSnapshot, applyShieldOverlay, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { localStorageContent, emptyGrid, setLocoMixOverride, resetSwingSnapshot, applyShieldOverlay, type PoseContent, type UpperPose } from './poseRuntime.js';
+import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
 import { bakeGaitToClip, GAIT_PRESETS } from './clipBake.js';
 import { TWO_HANDED } from './poseLayers.js';
 import { blendArmKey, swingRefOf, meanPose, clearSwingRefCache } from './armBlend.js';
@@ -33,7 +34,7 @@ beforeAll(() => {
     getItem: () => null, setItem: () => { /* */ }, removeItem: () => { /* */ }, clear: () => { /* */ }, key: () => null, length: 0,
   } as Storage;
   const h = buildHumanoid({});
-  const p = new PosePlayer(h, () => [], localStorageContent('warrior'), 'none', HARNESS_GX, emptyGrid());
+  const p = new BakePlayer(h, () => [], localStorageContent('warrior'), 'none', HARNESS_GX, emptyGrid());
   lib = new Map();
   for (const s of GAIT_PRESETS) lib.set(s.name, bakeGaitToClip(p, h, s, { character: 'warrior', weapon: 'none' }).clip);
 });
