@@ -51,11 +51,13 @@ describe('форма походки: стопа, бедро и таз в дву�
     }
     return out;
   }
-  const col = (f: PoseDriver['out'][], k: keyof PoseDriver['out']): number[] => f.map((o) => o[k] ?? 0);
-  const rng = (f: PoseDriver['out'][], k: keyof PoseDriver['out']): number => {
+  /** Числовые поля целей позы. ⚠ `mix` — не число, а смесь направлений (её читают ручки, живущие в рантайме). */
+  type NumKey = Exclude<{ [K in keyof PoseDriver['out']]: PoseDriver['out'][K] extends number | undefined ? K : never }[keyof PoseDriver['out']], undefined>;
+  const col = (f: PoseDriver['out'][], k: NumKey): number[] => f.map((o) => (o[k] as number | undefined) ?? 0);
+  const rng = (f: PoseDriver['out'][], k: NumKey): number => {
     const c = col(f, k); return Math.max(...c) - Math.min(...c);
   };
-  const avg = (f: PoseDriver['out'][], k: keyof PoseDriver['out']): number =>
+  const avg = (f: PoseDriver['out'][], k: NumKey): number =>
     col(f, k).reduce((s, v) => s + v, 0) / f.length;
 
   it('умолчания — ровный ноль: ни одна новая ручка не трогает прежнюю походку', () => {

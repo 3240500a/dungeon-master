@@ -4943,8 +4943,28 @@ function renderGaitTune(): void {
     // скорости. Первое касание ползунка тогда ничего не дёргает — оно лишь создаёт оверрайд тем же числом.
     // ⭐ У СТОРОНЫ страйфа затравка — ОБЩАЯ КОЛОНКА (если она задана), а не «вперёд»: сторона ложится ПОВЕРХ
     // общей, и без этого первое касание ползунка «Л» сбрасывало бы настроенный общий страйф к значению хода вперёд.
-    const seed = gaitDir === 'str' && gaitStrSide !== 'both' ? gaitStrafe[key] ?? +obj[key]! : +obj[key]!;
-    const setOn = onCol && (sparse[key] !== undefined || gaitAsym[key + sfx] !== undefined);
+    // ⭐⭐ ЗАТРАВКА — ТО, ЧТО РЕАЛЬНО ИГРАЕТ, И СЧИТАЕТСЯ ОНА ТЕМ ЖЕ ПРАВИЛОМ, ЧТО У РАНТАЙМА (`colLerp`).
+    //
+    // ⚠ БЫЛО `+obj[key]` — базовое значение «вперёд». И это ВРАЛО ровно в том случае, на который жаловался автор:
+    // если в колонке задана только ОДНА скорость, она играет на ОБЕИХ (`colLerp` при отсутствии второй записи
+    // возвращает первую). ЗАМЕР: база `stepWalk 35 / stepRun 44`, в колонке «назад» задано только `stepWalk = 15` —
+    // бегом назад персонаж идёт с 15, а ползунок «назад · бег» показывает 44; первое касание пишет 44, и поза
+    // прыгает на 29 единиц. Отсюда дословное «странно себя ведёт, пока не подёргаешь»: после первого касания обе
+    // записи есть, показ и игра сходятся. Две правды — показ и расчёт — расходятся молча, и врёт всегда ПОКАЗ.
+    const seedOf = (map: NumRec, sfx2: string): number | undefined => {
+      const w = gaitAsym[kw + sfx2]?.[0] ?? map[kw];
+      const r = kr ? gaitAsym[kr + sfx2]?.[0] ?? map[kr] : undefined;
+      const mine = gaitSpeed === 'run' && kr ? r : w;
+      return mine ?? (gaitSpeed === 'run' && kr ? w : r);   // ровно правило `colLerp`: нет своей — играет чужая
+    };
+    const seed = onCol
+      ? seedOf(sparse, sfx)
+        ?? (gaitDir === 'str' && gaitStrSide !== 'both' ? seedOf(gaitStrafe, '@s') : undefined)
+        ?? +obj[key]!
+      : +obj[key]!;
+    let setOn = onCol && (sparse[key] !== undefined || gaitAsym[key + sfx] !== undefined);
+    /** Перерисовать метку «задан / не задан» НА МЕСТЕ (ставится ниже, когда метка создана). */
+    let markSet: () => void = () => { /* до создания метки делать нечего */ };
     const base = onCol ? sparse[key] ?? seed : seed;
     const pair = gaitAsym[onCol ? key + sfx : key];
     const head = el('div', 'display:flex;align-items:baseline;gap:6px;margin-top:6px');
@@ -4957,7 +4977,12 @@ function renderGaitTune(): void {
       const mk = el('span', `color:${setOn ? '#9ae6a0' : '#6b7180'};font-size:10px`);
       // У стороны «не задан» значит «как в общей колонке», а не «как вперёд»: она ложится ПОВЕРХ общей.
       const off = gaitDir === 'str' && gaitStrSide !== 'both' ? 'не задан (= как «обе»)' : 'не задан (= как вперёд)';
-      mk.textContent = setOn ? `${what} задан` : off;
+      markSet = (): void => {
+        mk.style.color = setOn ? '#9ae6a0' : '#6b7180';
+        mk.textContent = setOn ? `${what} задан` : off;
+        nm.style.color = dead ? '#6b7180' : setOn ? '#cfd3e0' : '#6b7180';
+      };
+      markSet();
       head.append(mk);
     }
     box.append(head);
@@ -4978,7 +5003,12 @@ function renderGaitTune(): void {
         } else if (solo) { obj[key] = nv; delete gaitAsym[key]; }
         else { const cur = gaitAsym[key] ?? [base, base]; cur[i] = nv; gaitAsym[key] = cur; }
         saveGaitCfg();
-        if (onCol && !setOn) renderLoco();   // «не задан» → «задан»: перерисовать метку строки
+        // ⚠⚠ ЗДЕСЬ СТОЯЛ `renderLoco()`, А ОН НАЧИНАЕТСЯ С `body.innerHTML = ''`. То есть первое же движение
+        // «не заданного» ползунка УДАЛЯЛО ИЗ DOM тот самый ползунок, который тянут: браузер терял захват
+        // указателя, и перетаскивание обрывалось на первом шаге. Второе движение работало (метка уже «задан»,
+        // перерисовки нет) — вторая половина жалобы «пока не подёргаешь туда-сюда».
+        // Перерисовывать панель из обработчика ввода нельзя в принципе: метку правим НА МЕСТЕ.
+        if (onCol && !setOn) { setOn = true; markSet(); }
       };
       sl.oninput = () => { const nv = parseFloat(sl.value); num.value = sl.value; put(nv); };
       num.oninput = () => { const nv = parseFloat(num.value); if (!Number.isFinite(nv)) return; sl.value = String(nv); put(nv); };

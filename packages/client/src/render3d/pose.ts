@@ -44,6 +44,13 @@ export interface PoseTargets {
   ankL: number; ankR: number;
   shL: number; shR: number; elL: number; elR: number;
   lean: number; twist: number; bobY: number; splay: number;
+  /**
+   * ⭐ ПОЛНАЯ СМЕСЬ НАПРАВЛЕНИЙ ЭТОГО КАДРА. Нужна тем ручкам, которые читаются НЕ в `pose.ts`, а в рантайме позы
+   * (`applyUpper`): без неё они не могут спросить колонку, и их ползунки на вкладках «НАЗАД»/«СТРАЙФ» мертвы.
+   * Отдельных `sb`/`st`/`bt` ниже для этого мало: в них нет сторон страйфа и боя.
+   * Нет поля (тесты, чужой источник) — колонок нет, работает база: прежнее поведение.
+   */
+  mix?: LocoMix;
   /** Скрутка ГРУДИ и ВЕРХНЕЙ ГРУДИ в такт шагу (рад, вокруг Y). `twist` крутит поясницу, эти две —
    *  выше по цепочке, у самых ключиц: именно они разводят плечи «одно вперёд, другое назад». */
   twChest: number; twUpper: number;
@@ -1805,6 +1812,7 @@ export class PoseDriver {
     const stR = this.planner?.stR ?? 0, stL = this.planner?.stL ?? 0;
     o.st = st; o.bt = bt;
     const m: LocoMix = { sb, st, stR, stL, bt, ct: this.combat };
+    o.mix = m;   // ⭐ полная смесь наружу: ею читают колонки те ручки, что живут в `poseRuntime` (см. `PoseTargets.mix`)
     // Руки — на сторону (ASYM/STRAFE пусты → оба значения одинаковы и это ровно прежние числа).
     const armSh = (i: 0 | 1): number => locoVal('armSh', 'armShRun', POSE.armSh, POSE.armShRun, i, m);
     const armEl = (i: 0 | 1): number => locoVal('armEl', 'armElRun', POSE.armEl, POSE.armElRun, i, m);
@@ -1878,11 +1886,17 @@ export class PoseDriver {
     const sPh = s, ampS = amp;   // фаза и амплитуда у пояса ТЕ ЖЕ, что у рук — иначе ручка чинит половину
     for (let i = 0 as 0 | 1; i < 2; i = (i + 1) as 0 | 1) {
       const dev = (i === 0 ? -1 : 1) * sPh * ampS * armSwing(i) * armPh(i) * shoPh(i);
-      const up = sideLerp('shoUp', 'shoUpRun', POSE.shoUp, POSE.shoUpRun, i, sb)
-        + sideLerp('shoLift', 'shoLiftRun', POSE.shoLift, POSE.shoLiftRun, i, sb) * -dev;
-      const fwd = sideLerp('shoFwd', 'shoFwdRun', POSE.shoFwd, POSE.shoFwdRun, i, sb)
-        + sideLerp('shoSwing', 'shoSwingRun', POSE.shoSwing, POSE.shoSwingRun, i, sb) * -dev;
-      const tw = sideLerp('shoTw', 'shoTwRun', POSE.shoTw, POSE.shoTwRun, i, sb);
+      // ⚠⚠ ЧЕРЕЗ `locoVal`, А НЕ `sideLerp`. Пять ручек пояса читались `sideLerp`, у которого `LocoMix` нет в
+      // принципе — то есть КОЛОНКУ НАПРАВЛЕНИЯ они не спрашивали вовсе. Редактор при этом честно рисовал их на
+      // вкладках «НАЗАД», «СТРАЙФ», «БОЙ», запись уходила в карту колонки, и её никто не читал: ползунок был
+      // МЁРТВЫМ. Жалоба автора «на назад половина настроек не работает» — про это.
+      // ⚠ Разрыв был ВНУТРИ ОДНОЙ СВЯЗКИ: `armSh`/`armEl` строкой выше колонку читают, а пояс, который идёт за
+      // той же рукой и множится на то же `dev`, — нет. Настраиваешь половину связки, вторая молчит.
+      const up = locoVal('shoUp', 'shoUpRun', POSE.shoUp, POSE.shoUpRun, i, m)
+        + locoVal('shoLift', 'shoLiftRun', POSE.shoLift, POSE.shoLiftRun, i, m) * -dev;
+      const fwd = locoVal('shoFwd', 'shoFwdRun', POSE.shoFwd, POSE.shoFwdRun, i, m)
+        + locoVal('shoSwing', 'shoSwingRun', POSE.shoSwing, POSE.shoSwingRun, i, m) * -dev;
+      const tw = locoVal('shoTw', 'shoTwRun', POSE.shoTw, POSE.shoTwRun, i, m);
       // Риг зеркальный (Left на +X): подъём = вокруг Z со знаком стороны, вынос вперёд = вокруг −Y, скрутка = вдоль X.
       const sg = i === 0 ? 1 : -1;
       if (i === 0) { o.shoLX = sg * tw; o.shoLY = -sg * fwd; o.shoLZ = sg * up; }
