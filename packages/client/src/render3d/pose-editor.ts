@@ -60,7 +60,8 @@ import { savePoseKey, setPublishPrepare, dirtyKeys } from './poseServer.js';
 import { resolveStancePose, splitHands, isTwoHanded, stancePoseAt, type StanceLayerInfo } from './poseLayers.js';
 import { readAnimCfg, defaultStanceName, type AnimCfg, type AnimItem, type AnimStore } from './animConfig.js';
 import { lookupLayers, readLayerStore, readSwingStore, type LayerEntry, type LayerLookup, type LayerStore, type SwingStore } from './layerWeights.js';
-import { createLayerWeightsPanel, type LayerPanel } from './layerWeightsPanel.js';   // ⭐ веса «локомоция ↔ стойка» по частям — один поиск с игрой
+import { createLayerWeightsPanel, type LayerPanel } from './layerWeightsPanel.js';
+import { auditLocoSet, staleNames, severityOf, CURRENT_BAKE_REV } from './locoSetAudit.js';   // ⭐ покрытие набора: у кого есть походка   // ⭐ веса «локомоция ↔ стойка» по частям — один поиск с игрой
 import { createAnimGraphPanel } from './animGraphPanel.js';
 import { createLayerTraceView, type LayerTraceView } from './layerTraceView.js';
 import { createTestTab } from './testTab.js';
@@ -4600,7 +4601,65 @@ const setBakeList = (names: string[]): void => {
   try { localStorage.setItem('pe_gaitbake', JSON.stringify(bakePick)); savePoseKey('pe_gaitbake'); } catch { /* приватный режим */ }
 };
 
+/**
+ * ⭐⭐ ПОКРЫТИЕ НАБОРА: у кого походка есть, у кого чужая, что протухло.
+ *
+ * Игра ходит только клипами, и первый вопрос при заходе на нового персонажа — «а у него вообще есть набор?».
+ * До этой панели ответ был догадкой. Числа берёт `locoSetAudit` теми же функциями поиска, что и рантайм.
+ *
+ * ⚠ СВОИМ КОНТЕЙНЕРОМ, к соседям не прикасаемся: разметка панелей тут плоская, и подъём по `parentElement` уже
+ * однажды снёс 122 ползунка (см. память проекта).
+ */
+function locoCoverageSection(): void {
+  /** Строка с текстом: `el` в этом файле принимает только тег и стиль. */
+  const txt = (tag: string, css: string, text: string): HTMLElement => { const e = el(tag, css); e.textContent = text; return e; };
+  const box = el('div', 'margin:8px 0;padding:6px 7px;background:#161a26;border:1px solid #39415a;border-radius:5px');
+  const h = el('div', 'color:#8fb7ff;font-weight:bold;margin-bottom:2px'); h.textContent = 'ПОКРЫТИЕ НАБОРА — у кого есть походка';
+  box.append(h);
+  const ids = rosterChars().map((c) => c.id);
+  // ⚠ Донор — тот же, что в игре у монстров (`gaitFallback: 'warrior'`): панель обязана показывать ТУ ЖЕ цепочку,
+  // иначе «у монстра всё есть» на экране и «монстр ходит чужим набором» в игре разойдутся.
+  const cov = auditLocoSet(library, ids, 'warrior');
+  const TINT: Record<string, string> = { ok: '#46d07a', info: '#9aa3b8', warn: '#e0b050', block: '#c05050' };
+  const WORD: Record<string, string> = { ok: 'свой набор', info: 'чужой набор', warn: 'протухло', block: 'НЕТ КЛИПОВ' };
+  for (const c of cov) {
+    const sev = severityOf(c);
+    const row = el('div', 'display:flex;align-items:center;gap:6px;margin-top:3px;font-size:11px');
+    const nm = rosterChars().find((x) => x.id === c.charId)?.name ?? c.charId;
+    row.append(txt('span', 'flex:0 0 96px;color:' + (c.charId === curCharId ? '#9ae6a0' : '#cfd3e0'), nm));
+    row.append(txt('span', 'flex:0 0 58px;color:#9aa3b8;font-size:10px', `${c.own}/${c.total}`));
+    row.append(txt('span', 'flex:1;font-size:10px;color:' + TINT[sev], WORD[sev]!));
+    const stale = staleNames(c);
+    if (stale.length && c.charId === curCharId) {
+      // ⚠ Только СВОЕМУ персонажу: съём гоняет плеера текущей куклы, и печь чужого отсюда значило бы молча
+      // подменить персонажа. Для чужого панель показывает, но не делает.
+      const b = pbtn(`отметить протухшее (${stale.length})`, () => { setBakeList([...new Set([...bakeList(), ...stale])]); renderLoco(); });
+      b.style.cssText += ';font-size:10px;padding:1px 5px';
+      row.append(b);
+    } else if (stale.length) {
+      row.append(txt('span', 'flex:0 0 auto;font-size:10px;color:#6b7180', `протухло ${stale.length} — выбери персонажа`));
+    }
+    box.append(row);
+    // Подробности — только у выбранного: иначе панель превращается в простыню и её перестают читать.
+    if (c.charId === curCharId) {
+      for (const d of c.defects.slice(0, 8)) {
+        const line = el('div', 'font-size:10px;color:#7a869e;margin-left:100px');
+        line.textContent = `${d.name} — ${d.note}`;
+        box.append(line);
+      }
+      if (c.defects.length > 8) box.append(txt('div', 'font-size:10px;color:#6b7180;margin-left:100px', `…и ещё ${c.defects.length - 8}`));
+    }
+  }
+  {
+    const foot = el('div', 'color:#6b7180;font-size:10px;margin-top:4px');
+    foot.textContent = `Набор ищется так же, как в игре: свой клип → клип донора («warrior») → его нет. Текущая ревизия запекателя ${CURRENT_BAKE_REV}.`;
+    box.append(foot);
+  }
+  body.append(box);
+}
+
 function bakeGaitSection(): void {
+  locoCoverageSection();
   const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); h.textContent = 'ЗАПЕЧЬ ПОХОДКУ В КЛИПЫ'; body.append(h);
   const picked = bakeList();
   const info = el('div', 'color:#6b7180;font-size:10px');
