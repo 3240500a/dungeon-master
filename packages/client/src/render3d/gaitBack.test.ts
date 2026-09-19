@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { GAIT, POSE, ASYM, STRAFE, BACK, COMBAT, sideLerp, locoVal, strafeMix, backMix, PoseDriver, type LocoMix } from './pose.js';
+import { GAIT, POSE, ASYM, STRAFE, BACK, COMBAT, sideLerp, locoVal, strafeMix, backMix, type LocoMix } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { applyGaitConfig } from './poseRuntime.js';
 
 /**

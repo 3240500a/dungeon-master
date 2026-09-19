@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { PoseDriver, HIP_DX } from './pose.js';
+import { HIP_DX } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ РАЗМЕРЫ ТЕЛА ПЛАНИРОВЩИК БЕРЁТ ИЗ РИГА, А НЕ ИЗ КОНСТАНТ.

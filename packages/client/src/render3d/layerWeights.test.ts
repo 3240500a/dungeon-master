@@ -4,7 +4,7 @@ import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, setLayerSource, layerTrace, getLayerBakeOverride, type PoseContent, type UpperPose } from './poseRuntime.js';
 import { bakeGaitToClip, GAIT_PRESETS } from './clipBake.js';
 import { clipPoseAt, type Clip, type Pose } from './clipModel.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { lookupLayers, resolveLayers, newResolvedLayers, entryFromSway, ensureLayerEntry, layerCell, setLayerCell, clearLayerCell,
   readLayerStore, layerEditKey, LAYER_PARTS, LAYER_PART_OF, LAYER_LEGACY_DEFAULT, type LayerEntry, type LayerStore } from './layerWeights.js';
 

@@ -8,7 +8,7 @@ import {
 import { bakeGaitSet, bakeTurnSet, GAIT_PRESETS } from './clipBake.js';
 import { clipPoseAt, type Clip } from './clipModel.js';
 import { pelvisHeading } from './pelvisFrame.js';
-import { GAIT, GAIT_BASE } from './pose.js';
+import { GAIT, GAIT_BASE } from './gaitKnobs.js';
 
 /**
  * ⭐⭐ ТАЗ АВТОРСКОЙ СТОЙКИ В ИГРЕ (`GAIT.stancePelvis`, план §1).

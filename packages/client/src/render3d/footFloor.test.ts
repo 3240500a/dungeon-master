@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { PoseDriver, FOOT_Y } from './pose.js';
+import { FOOT_Y } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ ПЛАНИРОВЩИК ШАГОВ И ЗАЗЕМЛЕНИЕ ЦЕЛЯТ ЛОДЫЖКУ В ОДНУ ВЫСОТУ.

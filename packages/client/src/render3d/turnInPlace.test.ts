@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, TURN_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { clipDur, clipPoseAt, hipsOffset, setHipsOffset, type Clip } from './clipModel.js';
 import { pickTurn, turnClipName, turnSupportAt, turnYawAt, shouldCommitTurn, TURN_NAMES, SWING_KEY, TURN_SETTLE_SEC, TURN_URGENT_SEC } from './turnInPlace.js';

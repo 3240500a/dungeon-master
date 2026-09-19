@@ -7,7 +7,8 @@ import { clipPoseAt, type Clip } from './clipModel.js';
 import { pelvisHeading } from './pelvisFrame.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { GAIT, POSE, STRAFE_R, STRAFE_L, PoseDriver } from './pose.js';
+import { GAIT, POSE, STRAFE_R, STRAFE_L } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐⭐ РЫСК ТАЗА — ТРЕТЬЯ ПЛОСКОСТЬ ТАЗА (19.09, просьба автора: «настраивать страйф с чуть повёрнутым тазом»).

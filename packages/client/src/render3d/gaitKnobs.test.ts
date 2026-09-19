@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { PoseDriver, GAIT, POSE, ASYM, STRAFE, BACK, COMBAT, sideLerp, locoVal, strafeMix, backMix, foldElbow, type LocoMix } from './pose.js';
+import { GAIT, POSE, ASYM, STRAFE, BACK, COMBAT, sideLerp, locoVal, strafeMix, backMix, foldElbow, type LocoMix } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /** Смесь кадра одной строкой — в тестах читается лучше, чем четыре позиционных аргумента. */
 const mix = (sb: number, st = 0, bt = 0, ct = 0, stR = 0, stL = 0): LocoMix => ({ sb, st, stR, stL, bt, ct });

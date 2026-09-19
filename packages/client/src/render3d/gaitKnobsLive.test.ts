@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { PoseDriver, GAIT, POSE, ASYM, STRAFE, type PoseTargets } from './pose.js';
+import { GAIT, POSE, ASYM, STRAFE, type PoseTargets } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { buildHumanoid } from './humanoid.js';
 import { gaitToHumanoid, type PoseContent, type GXKnobs } from './poseRuntime.js';
 

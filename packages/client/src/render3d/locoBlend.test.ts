@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, type PoseContent } from './poseRuntime.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { locoClipName, blendLocoPose, locoDirWeights, locoPhaseU, stepLocoSection, sectionClipTime, type LocoDir,
   bakedLocoSpeed, locoRunWeight, LOCO_BAKE_MAXSPD, LOCO_WALK, LOCO_RUN, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
 import { bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';

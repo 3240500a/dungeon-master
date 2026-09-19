@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { PoseDriver, GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { migratePoseName, retargetClipName, localStorageContent, solveTwoBoneIK, PosePlayer, emptyGrid, stepTorsoLead, TWIST_DEFAULT, measureStancePlants, resolveTwistStates, blendTwist, twistTorso, applyTorsoTwist } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
 import * as THREE from 'three';

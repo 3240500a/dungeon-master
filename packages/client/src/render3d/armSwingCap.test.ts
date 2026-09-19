@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as THREE from 'three';
-import { PoseDriver, POSE, POSE_BASE } from './pose.js';
+import { POSE, POSE_BASE } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ПОТОЛОК МАХА ПЛЕЧА.

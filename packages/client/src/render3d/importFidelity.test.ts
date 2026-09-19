@@ -8,7 +8,7 @@ import { autoBoneMap, enforceTPose, normalizeUpAxis, measureBoneOffsets, measure
 import { buildHumanoid } from './humanoid.js';
 import { dedupeSkeletons } from './skeletonDedupe.js';
 import { lowestSkinY, measureFootLift } from './footIk.js';
-import { FOOT_Y } from './pose.js';
+import { FOOT_Y } from './gaitKnobs.js';
 import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
 
 /**

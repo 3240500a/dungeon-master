@@ -6,7 +6,7 @@ import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type Po
 import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, GAIT_PRESETS, TURN_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { clipDur, clipPoseAt, carryMarks, loopMarksInRange, marksInRange, type Clip, type Mark, type MarkEvent } from './clipModel.js';
 import { soundForMark, earShot, EAR_NEAR, EAR_FAR, STEP_PACE_DEFAULT } from './animSfx.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { bakedLocoSpeed } from './locoBlend.js';
 
 /**

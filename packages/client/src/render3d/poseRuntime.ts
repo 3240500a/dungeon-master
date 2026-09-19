@@ -3,7 +3,8 @@
 // (без модульных глобалов), поэтому переиспользуются и в pose-editor.ts (превью), и в игре (gamePlayerDoll.ts, per игрок).
 import * as THREE from 'three';
 import type { Humanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets , type StanceFoot, locoVal } from './pose.js';
+import { GAIT, POSE, GAIT_BASE, POSE_BASE, HIP_DX, FOOT_Y, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, foldElbow, type PoseTargets, type StanceFoot, locoVal } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { resolveStancePose, stancePoseAt, splitHands, type StanceLayerInfo } from './poseLayers.js';
 import { locoClipNames, locoPhaseU, stepLocoSection, sectionClipTime, findLocoClip, blendLocoPose, locoDirWeights, bakedLocoSpeed, locoRunWeight, type LocoSectionState, type LocoSection, type LocoDir, type LocoAxes } from './locoBlend.js';
 import { pickTurn, turnYawAt, turnSupportAt, shouldCommitTurn, TURN_NAMES, SWING_KEY } from './turnInPlace.js';

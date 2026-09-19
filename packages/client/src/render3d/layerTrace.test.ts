@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { resolveStancePose, type StanceLayerInfo } from './poseLayers.js';
 import type { Pose } from './clipModel.js';
 import { buildHumanoid } from './humanoid.js';
-import { PoseDriver, GAIT, POSE } from './pose.js';
+import { GAIT, POSE } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { gaitToHumanoid, layerTrace, type PoseContent, type GXKnobs } from './poseRuntime.js';
 
 /**

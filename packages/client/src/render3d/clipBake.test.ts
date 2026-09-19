@@ -5,7 +5,7 @@ import { PosePlayer, localStorageContent, emptyGrid, getDirWarpOverride, isLocoC
 import { clipPoseAt, clipDur, hipsOffset, type Clip, type Pose } from './clipModel.js';
 import { bakeGaitToClip, bakeGaitSet, bakeTurnSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS, BAKE_MAXSPD, removeLoopDrift, type GaitSpec } from './clipBake.js';
 import { locoPhaseU, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD } from './locoBlend.js';
-import { GAIT, GAIT_BASE, POSE, POSE_BASE, STRAFE_R } from './pose.js';
+import { GAIT, GAIT_BASE, POSE, POSE_BASE, STRAFE_R } from './gaitKnobs.js';
 
 /**
  * ГЛАВНАЯ ПРОВЕРКА Ф2: запечённый клип воспроизводит ЖИВУЮ походку.

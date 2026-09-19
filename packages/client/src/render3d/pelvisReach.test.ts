@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, GAIT, GAIT_BASE } from './pose.js';
+import { GAIT, GAIT_BASE } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ ТАЗ ЕДЕТ ПО ДОСЯГАЕМОСТИ ОПОРНОЙ НОГИ (`GAIT.pelvisReach`).

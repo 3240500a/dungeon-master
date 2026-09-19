@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
-import { PoseDriver, GAIT, GAIT_BASE, ASYM, STRAFE, BACK, COMBAT, locoVal, toeCurve, type LocoMix, type PoseTargets } from './pose.js';
+import { GAIT, GAIT_BASE, ASYM, STRAFE, BACK, COMBAT, locoVal, toeCurve, type LocoMix, type PoseTargets } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { gaitToHumanoid, localStorageContent, type AttackState } from './poseRuntime.js';
 
 /**

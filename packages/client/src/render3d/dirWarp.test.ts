@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { PosePlayer, stepDirWarp, nearestWarpSector, DIR_WARP0, SECTOR_HYST, localStorageContent, emptyGrid, type DirWarp } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 
 /**
  * ДОВОРОТ ТАЗА ПОД НАПРАВЛЕНИЕ ДВИЖЕНИЯ — ЧЕТЫРЕ СЕКТОРА (Lyra / UE Orientation Warping).

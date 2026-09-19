@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ ПОДЪЁМ И ЗАГИБ НОСКА — ТОЛЬКО ДЛЯ ШАГА ПОХОДКИ, НЕ ДЛЯ ДОВОРОТА.

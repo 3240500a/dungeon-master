@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, GAIT, POSE, ASYM, sideOf, sideLerp } from './pose.js';
+import { GAIT, POSE, ASYM, sideOf, sideLerp } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * РАЗДЕЛЬНЫЕ СТОРОНЫ И ПЛЕЧЕВОЙ ПОЯС.

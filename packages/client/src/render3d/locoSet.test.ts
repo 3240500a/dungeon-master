@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, getLocoMixOverride } from './poseRuntime.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { LOCO_NAMES, LOCO_DIRS, locoClipName, locoClipNames, findLocoClip } from './locoBlend.js';
 import { GAIT_PRESETS, TURN_PRESETS, defaultBakePick, bakeGaitToClip, BAKE_MAXSPD } from './clipBake.js';
 import type { Clip } from './clipModel.js';

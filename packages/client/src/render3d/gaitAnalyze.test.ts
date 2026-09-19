@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
-import { GAIT, POSE } from './pose.js';
+import { GAIT, POSE } from './gaitKnobs.js';
 import { bakeGaitToClip, BAKE_MAXSPD, GAIT_PRESETS } from './clipBake.js';
 import { analyzeGait, gaitSuggestions, locoClipWarning } from './gaitAnalyze.js';
 

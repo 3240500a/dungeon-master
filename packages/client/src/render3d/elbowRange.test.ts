@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, POSE, POSE_BASE } from './pose.js';
+import { POSE, POSE_BASE } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ ЛОКОТЬ: ПОЛЗУНОК НЕ ДОЛЖЕН УПИРАТЬСЯ В МЁРТВЫЙ ХОД, А УГОЛ — СКЛАДЫВАТЬСЯ ОБ НОЛЬ.

@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import {
-  GAIT, POSE, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT,
-  sideLerp, locoVal, strafeMix, strafeSide, strafeSideOf, STRAFE_SIDE_BAND, PoseDriver, type LocoMix,
-} from './pose.js';
+import { GAIT, POSE, ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, sideLerp, locoVal, strafeMix, strafeSide, strafeSideOf, STRAFE_SIDE_BAND, type LocoMix } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { applyGaitConfig } from './poseRuntime.js';
 
 /**
@@ -323,7 +321,10 @@ describe('pe_gait: новые разделы едут в игру', () => {
 
 const SRC_ED = readFileSync(path.join(__dirname, 'pose-editor.ts'), 'utf8');
 const SRC_BAKE = readFileSync(path.join(__dirname, 'clipBake.ts'), 'utf8');
-const SRC_POSE = readFileSync(path.join(__dirname, 'pose.ts'), 'utf8');
+// ⚠ `pose.ts` разрезан (Э11) на ручки и планировщик. Сторож зеркала обязан видеть ОБА куска: ключ `strafeMirror`
+// жил бы в `GAIT` (ручки), а вызовы зеркаления — в планировщике; проверять один значит сторожить половину.
+const SRC_POSE = readFileSync(path.join(__dirname, 'gaitKnobs.ts'), 'utf8')
+  + readFileSync(path.join(__dirname, 'stepPlanner.ts'), 'utf8');
 
 describe('⭐⭐ ЗЕРКАЛА ЛЕВОГО СТРАЙФА БОЛЬШЕ НЕТ', () => {
   it('ни ручки, ни функций, ни обвязки — ни в одном из трёх файлов', () => {
@@ -331,7 +332,7 @@ describe('⭐⭐ ЗЕРКАЛА ЛЕВОГО СТРАЙФА БОЛЬШЕ НЕТ'
     // что ни пиши в настройки, левый клип получался отражением правого.
     // Ищем ВЫЗОВ/ОБЪЯВЛЕНИЕ (со скобкой), а не упоминание: в комментариях снесённые имена остаются нарочно —
     // это единственный след того, почему левый страйф когда-то был ненастраиваемым.
-    for (const [name, src] of [['pose.ts', SRC_POSE], ['clipBake.ts', SRC_BAKE], ['pose-editor.ts', SRC_ED]] as const) {
+    for (const [name, src] of [['gaitKnobs+stepPlanner', SRC_POSE], ['clipBake.ts', SRC_BAKE], ['pose-editor.ts', SRC_ED]] as const) {
       for (const bad of ['mirrorStrafeL(', 'withMirroredStrafeL(', 'mirrorIfAsked(', 'specsForBake(', 'gaitIsAsymmetric(']) {
         expect(src.includes(bad), `${name}: ${bad}`).toBe(false);
       }

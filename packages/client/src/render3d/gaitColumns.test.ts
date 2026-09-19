@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { PoseDriver, GAIT, POSE, BACK, STRAFE, STRAFE_R, STRAFE_L, COMBAT, ASYM } from './pose.js';
+import { GAIT, POSE, BACK, STRAFE, STRAFE_R, STRAFE_L, COMBAT, ASYM } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐⭐ КОЛОНКИ НАПРАВЛЕНИЯ: ползунок, который редактор показывает, ОБЯЗАН читаться.
@@ -36,8 +37,14 @@ const columnKeys = (): { kw: string; kr: string | null }[] => {
  * объявляет мёртвыми 11 ИСПРАВНЫХ ручек — и чинить бросаются работающее (проверено на себе). Поэтому имена
  * обёрток находятся здесь же, ПО ИХ ОПРЕДЕЛЕНИЮ, а не перечисляются руками: список растёт вместе с кодом.
  */
-const columnAware = (): Set<string> => {
-  const src = SRC('pose.ts') + SRC('poseRuntime.ts');
+/**
+ * ⚠ `pose.ts` РАЗРЕЗАН (Э11): ручки в `gaitKnobs.ts`, планировщик в `stepPlanner.ts`.
+ * Сторож обязан читать ОБА куска плюс рантайм — иначе он объявит мёртвыми 54 исправные ручки
+ * (почти все вызовы `locoVal` живут внутри `StepPlanner.update`/`PoseDriver.update`).
+ */
+const KNOBS = 'gaitKnobs.ts', PLANNER = 'stepPlanner.ts', RUNTIME = 'poseRuntime.ts';
+const columnAware = (where: readonly string[] = [KNOBS, PLANNER, RUNTIME]): Set<string> => {
+  const src = where.map(SRC).join('\n');
   const out = new Set<string>();
   const names = ['locoVal'];
   const wrap = /\bconst\s+([A-Za-z0-9_]+)\s*=\s*\([^)]*\)\s*:\s*number\s*=>\s*locoVal\(/g;
@@ -70,6 +77,26 @@ describe('мёртвых ползунков нет', () => {
     const aware = columnAware();
     const half = columnKeys().filter((k) => k.kr && aware.has(k.kw) !== aware.has(k.kr));
     expect(half.map((k) => k.kw + '/' + k.kr), 'одна половина пары читает колонку, другая нет').toEqual([]);
+  });
+
+  /**
+   * ⭐⭐ ЗАМЕР ПОСЛЕ РАЗРЕЗА: из 55 ручек, показанных в колонках вкладки «Бег», **54 читает ТОЛЬКО
+   * планировщик**, и ровно одна — `armDown` — живой игровой кадр.
+   *
+   * Это не поломка, а устройство: ручки походки лепят ПЛАНИРОВЩИК, планировщик запекается в клипы, игра
+   * играет клипы. Ровно поэтому «правка ручки доезжает до игры только через перезапекание». Но факт обязан
+   * быть ЗАПЕРТ: если ручка походки начнёт править живой кадр напрямую, это молча заведёт вторую правду —
+   * в игре одно, в запечённом клипе другое, и разойдутся они тем сильнее, чем дольше не перезапекали.
+   */
+  it('⭐⭐ ИЗ КОЛОНОЧНЫХ РУЧЕК ЖИВОЙ КАДР ЧИТАЕТ РОВНО ОДНУ', () => {
+    const game = columnAware([KNOBS, RUNTIME]);
+    const shown = [...new Set(columnKeys().map((k) => k.kw))];
+    expect(shown.filter((k) => game.has(k)).sort(),
+      '⚠ состав «ручек походки, правящих живой кадр» изменился. Это осознанное решение, а не мелочь: ' +
+      'такая ручка действует в игре СРАЗУ, а в клипе — только после перезапекания, и две картинки разойдутся. ' +
+      'Либо верни ручку в планировщик, либо обнови этот список И пометь её в панели как рантаймовую.',
+    ).toEqual(['armDown']);
+    expect(shown.filter((k) => !game.has(k)).length, 'остальные — через запекание').toBe(shown.length - 1);
   });
 });
 

@@ -4,7 +4,7 @@ import { detrendTravel, rootTravel, type Vec3 } from './footLock.js';
 import { ROOT_POS, ROOT_YAW, blendTwo, flipPose, migrateClip, rootMotion, setRootMotion, type Clip, type Keyframe, type Pose } from './clipModel.js';
 import { poseClipToAnimationClip, animationClipToPoseClip, ROOT_POS_TRACK, ROOT_ROT_TRACK } from './clipToAnimation.js';
 import { buildHumanoid } from './humanoid.js';
-import { PoseDriver } from './pose.js';
+import { PoseDriver } from './stepPlanner.js';
 import { gaitToHumanoid, type PoseContent, type GXKnobs } from './poseRuntime.js';
 
 /**

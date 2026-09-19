@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, GAIT, HIP_DX } from './pose.js';
+import { GAIT, HIP_DX } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * РЕЗКАЯ СМЕНА НАПРАВЛЕНИЯ: «шагает неестественно широко» и «шагает на скрещенных ногах».

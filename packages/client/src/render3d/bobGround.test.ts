@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, GAIT, GAIT_BASE } from './pose.js';
+import { GAIT, GAIT_BASE } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ ПЛАВНОСТЬ БОБА ТАЗА И ОКНО ЗАЗЕМЛЕНИЯ — НАСТРОЙКИ, А НЕ ЗАШИТЫЕ ЧИСЛА.

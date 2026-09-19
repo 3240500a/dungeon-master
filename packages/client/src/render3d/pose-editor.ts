@@ -52,7 +52,8 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
   rootViewJump, turnHipsTarget, seedMotionChannels, copyRootView, rootPointToLocal, rootPointToWorld, rootDirToLocal, rootDirToWorld,
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
-import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, PoseDriver, GAIT, POSE, HIP_DX, type PoseTargets } from './pose.js';
+import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, GAIT, POSE, HIP_DX, type PoseTargets } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { PosePlayer, gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LOCO_BAKE_REV, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
 import { WEAPONS, OFFHANDS, attachWeapons , hostWeaponOnHand} from './weapon3d.js';
 import { CLASS_CHARS, MONSTER_CHARS, type Char } from './chars3d.js';

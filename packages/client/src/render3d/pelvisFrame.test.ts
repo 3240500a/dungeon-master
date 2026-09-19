@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildHumanoid, type Humanoid } from './humanoid.js';
 import { pelvisToWorld, pelvisPoseToWorld, pelvisPoseToChar, pelvisHeading } from './pelvisFrame.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride } from './poseRuntime.js';
-import { GAIT, GAIT_BASE, POSE, POSE_BASE } from './pose.js';
+import { GAIT, GAIT_BASE, POSE, POSE_BASE } from './gaitKnobs.js';
 import { bakeGaitSet, defaultReadPose, neutralizeFacing, GAIT_PRESETS } from './clipBake.js';
 import { poseRig } from './frameEdit.js';
 import { hipsOffset, setHipsOffset, type Clip, type Pose } from './clipModel.js';

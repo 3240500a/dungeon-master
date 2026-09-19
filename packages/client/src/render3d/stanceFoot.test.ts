@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, POSE } from './pose.js';
+import { POSE } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ СТОПА В ПОКОЕ = АВТОРСКАЯ СТОЙКА, а не «прямо».

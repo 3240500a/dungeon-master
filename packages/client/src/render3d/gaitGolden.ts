@@ -10,7 +10,8 @@
  * интегрирования позиции. Непрерывные траектории (idle/walk/run/strafe/diag) — гладкие, ветвление стабильно →
  * чистый сигнал паритета. Повороты на месте (branch-heavy) проверяются поведенчески отдельно, не пер-кадрово.
  */
-import { PoseDriver, GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 export interface GoldenFrame { dt: number; x: number; z: number; yaw: number; vx: number; vz: number; goalYaw: number | null }
 export interface GoldenOut { hipL: number; hipR: number; knL: number; knR: number; hipLatL: number; hipLatR: number; bobY: number }

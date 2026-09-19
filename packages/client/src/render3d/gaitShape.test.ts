@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { PoseDriver, POSE, POSE_BASE, GAIT, GAIT_BASE } from './pose.js';
+import { POSE, POSE_BASE, GAIT, GAIT_BASE } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 
 /**
  * ⭐ ШЕСТЬ НОВЫХ РУЧЕК ФОРМЫ ПОХОДКИ — И НИ ОДНА НЕ МЕНЯЕТ ПОВЕДЕНИЕ ПО УМОЛЧАНИЮ.

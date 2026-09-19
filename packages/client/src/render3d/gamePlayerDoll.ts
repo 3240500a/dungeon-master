@@ -14,7 +14,7 @@ import { buildHumanoid, type BuildScale } from './humanoid.js';
 import { PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
 import { pickAttack, ATTACK_VARY } from './attackPick.js';   // ⭐ очередь ударов: порядок + шанс разнообразия
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, renderMatchWeight, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons , hostWeaponOnHand, dropWeaponHost} from './weapon3d.js';
 import { charFor } from './chars3d.js';

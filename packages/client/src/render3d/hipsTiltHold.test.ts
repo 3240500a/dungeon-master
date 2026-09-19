@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { buildHumanoid } from './humanoid.js';
-import { POSE, POSE_BASE } from './pose.js';
+import { POSE, POSE_BASE } from './gaitKnobs.js';
 import { applyHipsTiltHold } from './poseRuntime.js';
 
 /**

@@ -21,7 +21,7 @@ vi.mock('./footIk.js', async (importOriginal) => {
 import { buildHumanoid } from './humanoid.js';
 import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type PoseContent } from './poseRuntime.js';
 import { LOCO_BAKE_REV, LOCO_CARDINAL_REV, isLocoClipFresh } from './poseRuntime.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { bakeGaitSet } from './clipBake.js';
 import type { Clip } from './clipModel.js';
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildHumanoid } from './humanoid.js';
-import { PoseDriver, GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
+import { PoseDriver } from './stepPlanner.js';
 import { groundFeet } from './footIk.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

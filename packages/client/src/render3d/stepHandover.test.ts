@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PosePlayer, localStorageContent, emptyGrid } from './poseRuntime.js';
-import { GAIT, GAIT_BASE } from './pose.js';
+import { GAIT, GAIT_BASE } from './gaitKnobs.js';
 import { buildHumanoid } from './humanoid.js';
 
 /**

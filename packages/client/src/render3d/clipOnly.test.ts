@@ -7,7 +7,7 @@ import { PosePlayer, localStorageContent, emptyGrid, setLocoMixOverride, type Po
 import { bakeGaitToClip, bakeTurnSet, GAIT_PRESETS, BAKE_MAXSPD } from './clipBake.js';
 import { bakedLocoSpeed, locoRunWeight, LOCO_BAKE_WALK_SPD, LOCO_BAKE_RUN_SPD, LOCO_RUN_FULL_SPD } from './locoBlend.js';
 import { clipDur, type Clip } from './clipModel.js';
-import { GAIT } from './pose.js';
+import { GAIT } from './gaitKnobs.js';
 import { SWING_KEY } from './turnInPlace.js';
 import { LOCO_BAKE_REV } from './poseRuntime.js';
 

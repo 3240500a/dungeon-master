@@ -13,7 +13,7 @@ import { makeNetInterp } from './netInterp.js';
 import { driveActor, facingToYaw, type DriveState, type DrivenDoll } from './driveActor.js';
 import { facingFrom, AIM_DEAD } from './playerInput.js';
 import { pelvisHeading } from './pelvisFrame.js';
-import { GAIT, POSE, GAIT_BASE, POSE_BASE } from './pose.js';
+import { GAIT, POSE, GAIT_BASE, POSE_BASE } from './gaitKnobs.js';
 import MODELS from '@dm/shared/config/data/models.json' with { type: 'json' };
 
 /**

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { gaitToHumanoid, emptyGrid, localStorageContent } from './poseRuntime.js';
 import type { PoseContent } from './poseRuntime.js';
 import { buildHumanoid } from './humanoid.js';
-import { PoseDriver } from './pose.js';
+import { PoseDriver } from './stepPlanner.js';
 import type { Pose, Clip } from './clipModel.js';
 import { fingersAnimated } from './clipModel.js';
 

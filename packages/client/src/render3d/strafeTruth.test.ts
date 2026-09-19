@@ -8,9 +8,7 @@ import { GAIT_PRESETS } from './clipBake.js';
 import { blendLocoPose, type LocoDir } from './locoBlend.js';
 import { CAM_AZ, moveFromKeys } from './playerInput.js';
 import { CAMERA_FALLBACK, placeCamera } from './cameraRig.js';
-import {
-  ASYM, STRAFE, STRAFE_R, STRAFE_L, locoVal, strafeMix, strafeSide, strafeSideOf, type LocoMix,
-} from './pose.js';
+import { ASYM, STRAFE, STRAFE_R, STRAFE_L, locoVal, strafeMix, strafeSide, strafeSideOf, type LocoMix } from './gaitKnobs.js';
 
 /**
  * ⭐⭐⭐ ТАБЛИЦА ИСТИНЫ «СТОРОНА СТРАЙФА» — ОДНА ЦЕПЬ ОТ ЭКРАНА ДО ЯЧЕЙКИ ПЛАНТА.
