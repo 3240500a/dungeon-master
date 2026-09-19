@@ -52,7 +52,7 @@ import { clipRootChannels, rootPreviewAt, rootViewOfPose, rootViewTime, sameRoot
   rootViewJump, turnHipsTarget, seedMotionChannels, copyRootView, rootPointToLocal, rootPointToWorld, rootDirToLocal, rootDirToWorld,
   rootQuatToLocal, rootQuatToWorld, ROOT_VIEW_ZERO, type RootView, type RootWant } from './frameEdit.js';   // ⭐ предпросмотр корня клипа
 import { dofSpec, quatFromDof, clampDof, dofFromQuat, ringDelta, ringAxis, gimbalFrame, swingRing, type Dof } from './jointDof.js';
-import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, GAIT, POSE, HIP_DX, type PoseTargets } from './gaitKnobs.js';
+import { ASYM, STRAFE, STRAFE_R, STRAFE_L, BACK, COMBAT, foldElbow, GAIT, POSE, HIP_DX, RUNTIME_GAIT_KEYS, BOTH_GAIT_KEYS, type PoseTargets } from './gaitKnobs.js';
 import { PoseDriver } from './stepPlanner.js';
 import { gaitToHumanoid as rtGaitToHumanoid, baseWeapon as rtBaseWeapon, measureStancePlants, blendVia, migratePoseName, retargetClipName, solveTwoBoneIK, stepTorsoLead, applyTorsoTwist, twistTorso, bendTorso, BEND_W, TWIST_BONES, applyHeadLookAt, applyBaseGrip, renderMatchWeight, TWIST_DEFAULT, TWIST_STATES_DEFAULT, blendTwist, resolveTwistStates, DEFAULT_MATCH, type TwistProfile, type TwistStates, type TwistCfgStored, type PoseContent, weaponChain, isLocoClipFresh, LOCO_BAKE_REV, LEGACY_OPEN_SUFFIX, migrateHipsOpen, mirrorPlantDir as rtMirrorPlantDir, mirrorPlantCell as rtMirrorPlantCell, resetGaitScope as rtResetGaitScope, setLocoMixOverride as rtSetLocoMixOverride, setLayerSource as rtSetLayerSource } from './poseRuntime.js';
 import { BakePlayer } from './bakePlayer.js';   // ⭐ кукла С планировщиком: редактор и запекатель
@@ -5077,9 +5077,27 @@ function renderGaitTune(): void {
     else { one(0, '#5aa0ff', 'Л'); one(1, '#ff6a6a', 'П'); }
   };
   /** Ползунок БЕЗ сторон и без режима — то, чего у тела ровно одно. */
+  /**
+   * ⭐⭐ ПОМЕТКА «ДЕЙСТВУЕТ СРАЗУ» — ВЫВОДИТСЯ ИЗ КОДА, А НЕ ПИШЕТСЯ РУКАМИ.
+   *
+   * Шапка вкладки говорит: «правка доезжает до игры через перезапекание». Для 74 ручек из 89 это
+   * правда, для 12 — НЕТ: они правят ЖИВОЙ кадр. Список — `RUNTIME_GAIT_KEYS` рядом с самими
+   * ручками, и сторож пересчитывает его по исходникам — то есть пометка не может протухнуть молча.
+   */
+  const rtMark = (key: string): HTMLElement | null => {
+    if (!RUNTIME_GAIT_KEYS.includes(key)) return null;
+    const both = BOTH_GAIT_KEYS.includes(key);
+    const e = el('span', 'font-size:9px;margin-left:4px;color:' + (both ? '#e0b050' : '#46d07a'));
+    e.textContent = both ? '⚡+⚙' : '⚡';
+    e.title = both
+      ? 'Читают ОБА: и живой кадр игры, и съём. Правка сработает в игре СРАЗУ — но разойдётся с УЖЕ ЗАПЕЧЁННЫМИ клипами, пока не перезапечёшь.'
+      : 'РАНТАЙМ: правка действует в игре СРАЗУ, перезапекания НЕ требует.';
+    return e;
+  };
   const one1 = (label: string, obj: NumRec, key: string, min: number, max: number, step: number): void => {
     const row = el('label', 'display:flex;align-items:center;gap:6px;margin-top:3px');
     const nm = el('span', 'flex:0 0 138px;font-size:11px'); nm.textContent = label; row.append(nm);
+    const rm = rtMark(key); if (rm) nm.append(rm);   // ⚡ — правка доезжает до игры без перезапекания
     const sl = el('input', 'flex:1 1 auto;min-width:0') as HTMLInputElement; sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(obj[key]);
     const v = el('span', 'width:42px;text-align:right;color:#9ae6a0;font-size:11px'); v.textContent = (+obj[key]!).toFixed(2);
     sl.oninput = () => { obj[key] = parseFloat(sl.value); v.textContent = obj[key]!.toFixed(2); saveGaitCfg(); };
@@ -5193,10 +5211,10 @@ function renderGaitTune(): void {
   // жёстко [1, 1]: канал `__swing` бинарен и говорит только ГДЕ окно, но не КАК в него входить.
   // Не пометить это — автор будет крутить их, видеть перемену в редакторе и не понимать, почему в игре её нет.
   const gndOnly = el('div', 'color:#e0b050;font-size:10px;margin:2px 0');
-  gndOnly.textContent = '⚠ ТОЛЬКО РЕДАКТОР. В игре эти три ручки не действуют и перезапеканием не оживают: там веса заземления жёстко [1, 1], '
-    + 'потому что канал опоры в клипе БИНАРЕН — он говорит ГДЕ опора, но не как мягко в неё входить. Здесь они влияют на вид манекена и на съём.';
+  gndOnly.textContent = '⚠ ТОЛЬКО РЕДАКТОР — три ОКОННЫЕ ручки ниже (вход, выход, мягкость). В игре они не действуют и перезапеканием не оживают: там веса заземления жёстко [1, 1], '
+    + 'потому что канал опоры в клипе БИНАРЕН — он говорит ГДЕ опора, но не как мягко в неё входить. Здесь они влияют на вид манекена и на съём. А вот «плавность заземления» (gndLag) — РАНТАЙМОВАЯ и действует в игре сразу.';
   box.append(gndOnly);
-  one1('плавность заземления (меньше = мягче) — только редактор', GAITo, 'gndLag', 1, 40, 0.5);
+  one1('плавность заземления (меньше = мягче)', GAITo, 'gndLag', 1, 40, 0.5);
   row2('окно: вход в опору (доля фазы) — только редактор', GAITo, 'gndIn', 'gndInRun', 0, 0.9, 0.01, { body: true });
   row2('окно: выход из опоры (доля фазы) — только редактор', GAITo, 'gndOut', 'gndOutRun', 0.1, 1, 0.01, { body: true });
   // ⭐ ОТДЕЛЬНО ОТ ОКНА: то правит ВЫСОТУ, а это — УГОЛ («стопа приколачивается к полу»).
@@ -5275,9 +5293,13 @@ function renderGaitTune(): void {
     // ⭐ С 19.09 ИГРА ЭТОТ ПОЛЗУНОК НЕ ЧИТАЕТ: она всегда ходит клипами (`online3d`: `setLocoMixOverride(1)`), планировщик
     // остался здесь — им настраивается походка и запекается набор. Сказать это надо прямо у ручки, иначе «поставил 0.5 —
     // а в игре по-другому» выглядит поломкой.
+    // ⚠⚠ ЗДЕСЬ СТОЯЛО «ТОЛЬКО через перезапекание» — и это было НЕПРАВДОЙ для каждой седьмой ручки.
+    // ЗАМЕР по исходникам: из 89 показанных ручек 74 действительно только через съём, а 12 правят ЖИВОЙ кадр.
     const n0 = el('div', 'color:#e0b050;font-size:10px;margin-top:2px');
-    n0.textContent = '⚠ Только превью редактора. Игра всегда ходит клипами (планировщик из неё убран), а клипы снимаются '
-      + 'с планировщика кнопкой «запечь набор» — поэтому правка ручек походки доезжает до игры ТОЛЬКО через перезапекание.';
+    n0.textContent = '⚠ Почти всё здесь — превью редактора. Игра всегда ходит клипами (планировщик из неё убран), а клипы снимаются '
+      + 'с планировщика кнопкой «запечь набор» — то есть правка доезжает до игры перезапеканием. '
+      + 'НО НЕ ВСЁ: ручки со значком ⚡ действуют в игре СРАЗУ (доворот таза, таз стойки, кроссфейд боя, плавность заземления), '
+      + 'а ⚡+⚙ — сразу И в съёме, то есть разойдутся с уже запечёнными клипами, пока не перезапечёшь.';
     box.append(n0);
   }
   {
