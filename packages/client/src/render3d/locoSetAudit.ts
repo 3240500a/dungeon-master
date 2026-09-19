@@ -25,7 +25,8 @@ export type DefectKind =
   | 'dirty_upper'   // в руки впечена стойка — при проигрывании вес стойки ложится ВТОРОЙ раз
   | 'no_swing'      // нет канала опоры: окно опоры угадывается по доле `dutyRun`
   | 'no_ref'        // нет нейтрали маха: считается на лету (работает, но лишняя работа в кадре)
-  | 'split_bake';   // клипы набора сняты РАЗНЫМИ прогонами — настройки между ними могли поменяться
+  | 'split_bake'    // клипы набора сняты РАЗНЫМИ прогонами — настройки между ними могли поменяться
+  | 'weapon_tag';   // набор помечен ОРУЖИЕМ, хотя руки в нём безоружные — перезапекание разойдётся по оружиям
 
 export interface Defect {
   charId: string;
@@ -70,6 +71,21 @@ export function auditChar(clips: readonly Clip[], charId: string, fallbackId?: s
   let own = 0, borrowed = 0;
   const bakeIds = new Set<number>();
   for (const name of REQUIRED_NAMES) {
+    // ⚠⚠ ТЕГ ОРУЖИЯ У НАБОРА ХОДА. Запекатель ПРИНУДИТЕЛЬНО гасит авторскую стойку (`setLayerBakeOverride`), то есть
+    // руки в клипе всегда безоружные — а тег до 19.09 брался из текущего выбора редактора. Снял набор при выбранном
+    // мече → он лёг тегом `sword`. Ключ дедупа библиотеки — тройка (имя, персонаж, ОРУЖИЕ), поэтому следующее
+    // запекание при другом выборе НЕ заменяет набор, а кладёт ВТОРОЙ рядом. Дальше `findLocoClip` выдаёт каждому
+    // оружию свой: под мечом играет один набор, под топором — другой, и автор видит «перезапёк, а половина
+    // настроек не доехала». Ровно этот класс жалобы.
+    const tagged = clips.filter((c) => c.name === name && c.character === charId);
+    const bad = tagged.filter((c) => (c.weapon ?? 'none') !== 'none');
+    if (bad.length && isGait(name)) {
+      const tags = [...new Set(bad.map((c) => c.weapon))].join(', ');
+      defects.push({ charId, name, kind: 'weapon_tag',
+        note: tagged.length > bad.length || bad.length > 1
+          ? `набор раздвоился по оружию (${tags}) — разным оружиям играют РАЗНЫЕ клипы под одним именем`
+          : `помечен оружием «${tags}», хотя руки в нём безоружные — перезапекание под другим оружием ляжет рядом` });
+    }
     const mine = findLocoClip(clips, name, charId, weapon);
     const c = mine ?? (fallbackId ? findLocoClip(clips, name, fallbackId, weapon) : null);
     if (!c) {
@@ -120,7 +136,7 @@ export const staleNames = (cov: CharCoverage): string[] =>
 export type Severity = 'ok' | 'info' | 'warn' | 'block';
 export const severityOf = (cov: CharCoverage): Severity => {
   if (cov.defects.some((d) => d.kind === 'missing')) return 'block';
-  if (cov.defects.some((d) => d.kind === 'stale_rev' || d.kind === 'stale_speed' || d.kind === 'dirty_upper' || d.kind === 'split_bake')) return 'warn';
+  if (cov.defects.some((d) => d.kind === 'stale_rev' || d.kind === 'stale_speed' || d.kind === 'dirty_upper' || d.kind === 'split_bake' || d.kind === 'weapon_tag')) return 'warn';
   if (cov.defects.length) return 'info';
   return 'ok';
 };

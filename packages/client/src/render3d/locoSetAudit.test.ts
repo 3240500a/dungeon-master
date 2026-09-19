@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { auditChar, auditLocoSet, staleNames, severityOf, REQUIRED_NAMES, REBAKEABLE, CURRENT_BAKE_REV } from './locoSetAudit.js';
-import { LOCO_BAKE_RUN_SPD, LOCO_BAKE_WALK_SPD } from './locoBlend.js';
+import { LOCO_BAKE_RUN_SPD, LOCO_BAKE_WALK_SPD, gaitBakeTag, findLocoClip, BASE_LOCO_WEAPON } from './locoBlend.js';
 import { SWING_KEY, TURN_NAMES } from './turnInPlace.js';
 import { LOCO_CARDINAL_REV } from './poseRuntime.js';
 import type { Clip } from './clipModel.js';
@@ -25,6 +27,7 @@ const good = (name: string, charId = 'warrior'): Clip => {
   } as unknown as Clip;
 };
 const fullSet = (charId = 'warrior'): Clip[] => REQUIRED_NAMES.map((n) => good(n, charId));
+const isGaitName = (n: string): boolean => n.startsWith('run_') || n.startsWith('walk_');
 const kinds = (c: ReturnType<typeof auditChar>): string[] => [...new Set(c.defects.map((d) => d.kind))].sort();
 
 describe('покрытие набора локомоции', () => {
@@ -107,5 +110,86 @@ describe('покрытие набора локомоции', () => {
     expect(all.map((c) => c.charId)).toEqual(['warrior', 'mon_undead']);
     expect(all[0]!.defects, 'у самого донора «играет чужой» быть не может').toEqual([]);
     expect(all[1]!.borrowed).toBe(REQUIRED_NAMES.length);
+  });
+});
+
+/**
+ * ⚠⚠ ТЕГ ОРУЖИЯ У НАБОРА ХОДА.
+ *
+ * Запекатель гасит авторскую стойку принудительно — руки в клипе походки безоружные ВСЕГДА. А тег до 19.09 брался
+ * из текущего выбора редактора. Ключ дедупа библиотеки — тройка (имя, персонаж, ОРУЖИЕ), поэтому второе запекание
+ * при другом выборе кладёт ВТОРОЙ набор рядом, а не заменяет первый: `findLocoClip` дальше выдаёт каждому оружию
+ * свой, и автор видит «перезапёк, а половина настроек не доехала». Заметить нечем — имена одинаковые.
+ */
+describe('тег оружия у набора хода', () => {
+  const tagged = (name: string, w: string): Clip => ({ ...good(name), weapon: w });
+
+  it('⚠⚠ НАБОР, ПОМЕЧЕННЫЙ ОРУЖИЕМ, — ЭТО ДЕФЕКТ, А НЕ НОРМА', () => {
+    const cov = auditChar(fullSet().map((c) => (c.name === 'run_fwd' ? tagged('run_fwd', 'sword') : c)), 'warrior');
+    const d = cov.defects.filter((x) => x.kind === 'weapon_tag');
+    expect(d.length, '⚠ тег оружия у безоружного набора не показан — автор его не увидит').toBe(1);
+    expect(d[0]!.name).toBe('run_fwd');
+    expect(d[0]!.note).toContain('sword');
+    expect(severityOf(cov), 'это предупреждение, а не мелочь: набор молча разъедется по оружиям').toBe('warn');
+  });
+
+  it('⭐ РАЗДВОЕНИЕ НАБОРА ПО ОРУЖИЮ названо своими словами', () => {
+    // Ровно то, что получается после двух запеканий при разном выборе оружия.
+    const cov = auditChar([...fullSet(), tagged('run_fwd', 'sword')], 'warrior');
+    const d = cov.defects.find((x) => x.kind === 'weapon_tag');
+    expect(d?.note, '⚠ «раздвоился» — единственная формулировка, по которой понятно, что играют РАЗНЫЕ клипы').toContain('раздвоился');
+  });
+
+  it('пооружный набор виден и тогда, когда БАЗОВОГО нет вовсе (клип всё равно найдётся — через «любой»)', () => {
+    const cov = auditChar(fullSet().map((c) => (isGaitName(c.name) ? { ...c, weapon: 'greatsword' } : c)), 'warrior');
+    expect(cov.defects.filter((d) => d.kind === 'weapon_tag').length).toBe(8);
+    expect(cov.defects.filter((d) => d.kind === 'missing'), 'клипы находятся — жалоба именно на тег').toEqual([]);
+  });
+
+  it('стойку и повороты тег не касается: у них он осмысленный (`idle_sword` — это стойка МЕЧА)', () => {
+    const cov = auditChar(fullSet().map((c) => (c.name === 'idle' ? { ...c, weapon: 'sword' } : c)), 'warrior');
+    expect(cov.defects.filter((d) => d.kind === 'weapon_tag')).toEqual([]);
+  });
+
+  it('исправный безоружный набор дефекта тега не даёт', () => {
+    expect(auditChar(fullSet(), 'warrior').defects.filter((d) => d.kind === 'weapon_tag')).toEqual([]);
+  });
+
+  it('⚠⚠ БЕЗ ГАЛКИ ТЕГ = БАЗОВЫЙ, ЧЕМ БЫ НИ ПОЗИРОВАЛИ', () => {
+    // Правило живёт в `locoBlend` рядом с поиском по тегу — и проверяется ПО-НАСТОЯЩЕМУ, а не чтением исходника.
+    for (const w of ['sword', 'greatsword', 'bow', 'none', '']) {
+      expect(gaitBakeTag(false, w), `позировали «${w}» — набор всё равно базовый`).toBe(BASE_LOCO_WEAPON);
+    }
+  });
+
+  it('с галкой тег = выбранное оружие, но пустой выбор всё равно даёт базовый', () => {
+    expect(gaitBakeTag(true, 'greatsword')).toBe('greatsword');
+    expect(gaitBakeTag(true, '')).toBe(BASE_LOCO_WEAPON);
+  });
+
+  it('⭐⭐ БАЗОВЫЙ ТЕГ — ТОТ ЖЕ, ЧТО РАНТАЙМ СЧИТАЕТ БАЗОЙ (а не просто «находится»)', () => {
+    // ⚠ Проверять «клип нашёлся» НЕДОСТАТОЧНО: у `findLocoClip` последняя ступень — «любой», и она находит что
+    // угодно. Поэтому рядом кладётся ЧУЖОЙ набор, стоящий в массиве ПЕРВЫМ: если базовый тег разойдётся с тем,
+    // что рантайм считает базой, победит чужой — молча и именно так, как это случается в живой библиотеке.
+    const decoy = { ...good('run_fwd'), weapon: 'zzz_другое_оружие' };
+    const base = { ...good('run_fwd'), weapon: gaitBakeTag(false, 'sword') };
+    for (const w of ['axe', 'bow']) {
+      expect(findLocoClip([decoy, base], 'run_fwd', 'warrior', w)?.weapon,
+        `под «${w}» обязан играть БАЗОВЫЙ набор, а не первый попавшийся`).toBe(BASE_LOCO_WEAPON);
+    }
+    expect(findLocoClip([decoy, base], 'run_fwd', 'warrior', 'zzz_другое_оружие')?.weapon,
+      'а точный пооружный набор по-прежнему бьёт базовый').toBe('zzz_другое_оружие');
+  });
+
+  it('⚠⚠ РЕДАКТОР ЗОВЁТ ИМЕННО ЭТО ПРАВИЛО, А НЕ СВОЮ КОПИЮ', () => {
+    // Сам вызов — единственное, что осталось проверять по исходнику: модуль DOM-ный и в node не импортируется.
+    const src = readFileSync(path.join(__dirname, 'pose-editor.ts'), 'utf8');
+    const i = src.indexOf('const opts = { character: curCharId,');
+    expect(i, '⚠ разбор настроек запекания сломался').toBeGreaterThan(0);
+    expect(src.slice(i, i + 200).includes('weapon: bakeTag()'),
+      '⚠ тег снова берётся из выбора панели: два запекания при разном оружии положат ДВА набора под одним именем')
+      .toBe(true);
+    expect(src.includes('const bakeTag = (): string => gaitBakeTag(bakePerWeapon, weapon);'),
+      '⚠ редактор завёл СВОЮ копию правила — она разойдётся с поиском набора молча').toBe(true);
   });
 });

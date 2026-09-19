@@ -72,7 +72,7 @@ import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
 import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick, BAKE_MAXSPD } from './clipBake.js';   // Ф2.1: процедурка → клипы
 import { TURN_NAMES } from './turnInPlace.js';
-import { findLocoClip, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
+import { findLocoClip, gaitBakeTag, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
 import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
 import { hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';   // Ф12: офсет таза — ДЕЛЬТА от rest, а не абсолют
@@ -4602,6 +4602,36 @@ const setBakeList = (names: string[]): void => {
 };
 
 /**
+ * ⚠⚠ ТЕГ ОРУЖИЯ У ЗАПЕКАЕМОГО НАБОРА — ЯВНЫЙ ВЫБОР, А НЕ ПОБОЧНЫЙ ЭФФЕКТ ТОГО, ЧЕМ СЕЙЧАС ПОЗИРУЮТ.
+ *
+ * Было: тег брался из текущего `weapon` редактора. Но запекатель ПРИНУДИТЕЛЬНО гасит авторскую стойку
+ * (`setLayerBakeOverride`) — руки в клипе походки безоружные ВСЕГДА, чем бы ни позировали. То есть тег описывал
+ * не содержимое клипа, а случайное состояние панели.
+ *
+ * Цена. Ключ дедупа библиотеки — тройка (имя, персонаж, ОРУЖИЕ): запёк при мече, потом при топоре — и в
+ * библиотеке ДВА набора под одним именем. `findLocoClip` отдаёт каждому оружию свой (точный → `none` → любой),
+ * поэтому под мечом играет один, под топором другой, а автор видит «перезапёк, а половина не доехала» — и ищет
+ * причину в ручках. Заметить нечем: имена одинаковые, в списке клипов оба выглядят как один.
+ *
+ * Пооружный набор — вещь законная (двуручник ходит иначе), но это ОТДЕЛЬНОЕ решение: тяжёлое оружие меняет НОГИ,
+ * а не руки. Поэтому — галка, и её состояние всегда написано прямо на кнопке запекания.
+ */
+let bakePerWeapon = (() => { try { return localStorage.getItem('pe_gaitbake_perweapon') === '1'; } catch { return false; } })();
+/**
+ * Тег, который получат клипы этого прогона.
+ * ⚠ САМО ПРАВИЛО — в `locoBlend.gaitBakeTag`, рядом с поиском набора по тегу: тег и поиск это две половины
+ * одного решения. Здесь только подстановка состояния панели, чтобы «что запишем» и «как потом найдём» не
+ * разъехались молча (и чтобы правило проверялось настоящим тестом, а не чтением исходника).
+ */
+const bakeTag = (): string => gaitBakeTag(bakePerWeapon, weapon);
+// ⚠ Ключ МЕСТНЫЙ и на сервер не публикуется (в `POSE_KEYS` его нет осознанно): это настройка ИНСТРУМЕНТА —
+// какой тег писать в СЛЕДУЮЩЕМ прогоне, — а не контент. Сам тег живёт в клипе, и его видят и игра, и аудит.
+const setBakePerWeapon = (on: boolean): void => {
+  bakePerWeapon = on;
+  try { localStorage.setItem('pe_gaitbake_perweapon', on ? '1' : '0'); } catch { /* приватный режим */ }
+};
+
+/**
  * ⭐⭐ ПОКРЫТИЕ НАБОРА: у кого походка есть, у кого чужая, что протухло.
  *
  * Игра ходит только клипами, и первый вопрос при заходе на нового персонажа — «а у него вообще есть набор?».
@@ -4662,11 +4692,30 @@ function bakeGaitSection(): void {
   locoCoverageSection();
   const h = el('div', 'color:#8fb7ff;font-weight:bold;margin:8px 0 2px'); h.textContent = 'ЗАПЕЧЬ ПОХОДКУ В КЛИПЫ'; body.append(h);
   const picked = bakeList();
+  // ⚠⚠ ТЕГ ОРУЖИЯ — ЯВНАЯ ГАЛКА, А НЕ ТЕКУЩИЙ ВЫБОР ПАНЕЛИ (см. `bakeTag`). Руки в клипе походки безоружные
+  // ВСЕГДА (запекатель гасит стойку), поэтому тег «меч» описывал не клип, а состояние редактора — и разводил
+  // библиотеку на два набора под одним именем.
+  const tagRow = el('label', 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;margin:2px 0');
+  const tagCb = document.createElement('input'); tagCb.type = 'checkbox'; tagCb.checked = bakePerWeapon;
+  tagCb.disabled = weapon === 'none';
   const info = el('div', 'color:#6b7180;font-size:10px');
-  info.textContent = weapon === 'none'
-    ? 'БЕЗ ОРУЖИЯ = базовый набор: работает со всеми оружиями, пока им не запечён свой'
-    : `набор для «${weapon}» — перекроет безоружный только для этого оружия`;
-  body.append(info);
+  const syncInfo = (): void => {
+    info.textContent = bakeTag() === 'none'
+      ? 'тег «none» = БАЗОВЫЙ набор: играет под всеми оружиями, пока им не запечён свой'
+      : `тег «${weapon}»: набор перекроет базовый ТОЛЬКО для этого оружия — базовый при этом обязан существовать`;
+    info.style.color = bakeTag() === 'none' ? '#6b7180' : '#e0b050';
+  };
+  tagCb.addEventListener('change', () => { setBakePerWeapon(tagCb.checked); syncInfo(); refreshAll(); });
+  const tagLab = el('span', 'flex:1');
+  tagLab.textContent = weapon === 'none'
+    ? 'пооружный набор (недоступно: в панели выбрано «без оружия»)'
+    : `пооружный набор под «${weapon}» — отдельная походка, а не отдельные руки`;
+  tagRow.append(tagCb, tagLab);
+  tagRow.title = 'Руки в клипе походки безоружные всегда: запекатель принудительно гасит авторскую стойку. '
+    + 'Пооружный набор имеет смысл там, где оружие меняет НОГИ (двуручник, лук), и тогда он перекрывает базовый '
+    + 'только для этого ключа. Без галки набор пишется тегом «none» и играет под всем.';
+  body.append(tagRow, info);
+  syncInfo();
 
   // ── Список режимов: что запекаем ────────────────────────────────────────────────────────────
   // Видно сразу две вещи: что включено и что уже запечено (и под каким оружием найдётся). Набор —
@@ -4724,14 +4773,18 @@ function bakeGaitSection(): void {
 
   // ⭐ ОТДЕЛЬНОГО СЪЁМА «ТАЗ ОТКРЫТ» БОЛЬШЕ НЕТ: поворот таза — обычная ручка походки, и он печётся прямо в эти
   // клипы страйфа. Один набор, одна кнопка, одно протухание.
-  body.append(pbtn(`⚙ запечь набор походки (${picked.length})`, () => {
+  // ⚠ Тег НАПИСАН НА КНОПКЕ: решение «под какое оружие лёг набор» принимается один раз и необратимо разводит
+  // библиотеку, а заметить его потом нечем — имена клипов одинаковые.
+  body.append(pbtn(`⚙ запечь набор походки (${picked.length}) → тег: ${bakeTag()}`, () => {
     const wasLoco = locoOn; locoOn = false;                   // бейк сам гоняет плеера — цикл не должен мешать
     try {
       const player = lp();
       if (player.weapon !== weapon) player.setWeapon(weapon);
       player.gx = GX; player.plant = gaitPlant; player.twistStates = editorTwistStates;
       const t0 = performance.now();
-      const opts = { character: curCharId, weapon, readPose: bakeReadPose(human), bakeId: Date.now() };
+      // ⚠⚠ ТЕГ — из `bakeTag()`, а НЕ из `weapon`. Позируют одним, а набор снимается безоружным (стойку гасит
+      // `setLayerBakeOverride`): тег «меч» описывал бы состояние панели, а не клип. См. шапку `bakeTag`.
+      const opts = { character: curCharId, weapon: bakeTag(), readPose: bakeReadPose(human), bakeId: Date.now() };
       // Планировщик ставит стопы в МИРОВЫХ X/Z — корень обязан быть в нуле (вне «Анимации» он и так ноль; держим явно).
       // ⭐ ЛЕВЫЙ СТРАЙФ ИДЁТ СВОИМ ПРОХОДОМ, как и любой другой режим: фильтра спеков под зеркало больше нет.
       // ⭐⭐ И ПОРЯДОК ПРЕСЕТОВ БОЛЬШЕ НЕ ВЛИЯЕТ НА СОДЕРЖИМОЕ КЛИПОВ (`PosePlayer.resetGaitState`).
