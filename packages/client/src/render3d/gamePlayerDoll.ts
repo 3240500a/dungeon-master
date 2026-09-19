@@ -15,6 +15,7 @@ import { PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeHumanoidRagdoll, PIN_SRC, RAG_NAMES, weaponHandMasses, renderRagdollGhost, renderKinematicPose, newGhostGround, PHYS } from './humanoidRagdoll.js';
 import { pickAttack, ATTACK_VARY } from './attackPick.js';   // ⭐ очередь ударов: порядок + шанс разнообразия
 import { GAIT } from './gaitKnobs.js';
+import { BASE_GAIT_CHAR } from './locoBlend.js';   // ⭐ донор набора хода — один на игроков и монстров
 import { PosePlayer, localStorageContent, applyGaitConfig, loadGaitLocal, loadPlantGrid, loadMatch, loadFootLift, loadTwistStates, applyBaseGrip, renderMatchWeight, type GXKnobs } from './poseRuntime.js';
 import { attachWeapons , hostWeaponOnHand, dropWeaponHost} from './weapon3d.js';
 import { charFor } from './chars3d.js';
@@ -53,8 +54,12 @@ export function makeHumanoidDoll(pw: PhysWorld, opts: HumanoidDollOpts): Ragdoll
   const plant = opts.classId ? applyGaitConfig(opts.classId, gx)
     : opts.gaitId ? loadGaitLocal(opts.gaitId, gx, opts.gaitFallback)
       : loadPlantGrid(undefined);
-  const content = opts.classId ? localStorageContent(opts.classId)
-    : opts.gaitId ? localStorageContent(opts.gaitId, opts.gaitFallback)
+  // ⭐⭐ ДОНОР ПОХОДКИ ЕСТЬ У ВСЕХ, включая игроков. До 19.09 класс собирался БЕЗ донора вовсе, и класс
+  // без своего запечённого `run_fwd` уезжал в игре на процедурный планировщик (`clipOnly` требует
+  // `hasLocoSet()`). ⚠ Донор ХОДА узкий и подменяет ТОЛЬКО клип локомоции: обычный `fallbackId` отдал бы
+  // магу ещё и воинские стойки, удары и классификацию предметов (`readAnimCfg` берёт конфиг целиком).
+  const content = opts.classId ? localStorageContent(opts.classId, undefined, BASE_GAIT_CHAR)
+    : opts.gaitId ? localStorageContent(opts.gaitId, opts.gaitFallback, BASE_GAIT_CHAR)
       : localStorageContent('__none__');
   // Вес совпадения рендера с манекеном (RB2) — настроенный в редакторе per-персонаж (pe_phys). Монстр → фолбэк.
   const matchWeight = opts.classId ? loadMatch(opts.classId) : opts.gaitId ? loadMatch(opts.gaitId, opts.gaitFallback) : 0;

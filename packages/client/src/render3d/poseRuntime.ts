@@ -167,6 +167,14 @@ export interface PoseContent {
   charId?: string;
   /** Персонаж-донор (монстры → воин): у него ищутся и клипы, и настройки. */
   fallbackId?: string;
+  /**
+   * ⭐⭐ ДОНОР ТОЛЬКО ПОХОДКИ — последняя ступень поиска клипа локомоции, и БОЛЬШЕ НИЧЕГО.
+   *
+   * Нужен игрокам: `fallbackId` подменяет весь контент персонажа (стойки, удары, привязки, вид
+   * предметов), и раздать его классам значило бы молча отдать магу воинские стойки. А без всякого
+   * донора класс без своего `run_fwd` уезжает на процедурный планировщик прямо в игре.
+   */
+  gaitFallbackId?: string;
   resolveUpper(weapon: string, combat?: number, t?: number): UpperPose | null;   // combat 0..1 — блендит relaxed idle ↔ combat_idle; t — время живой стойки (сек), 0 = первый кадр
   shieldOverlay?(weaponKey: string): { pose: Pose; mix: number } | null;   // per-оружие: поза стойка_<wk> (фолбэк стойка_shield) + mix
   /** Клип состояния (`stagger`, `knockdown_fall`, `getup`…) по привязке из `pe_anim`. Нет клипа → null. */
@@ -1303,7 +1311,7 @@ export const weaponChain = (w: string): string[] => {
 };
 const readJSON = <T,>(key: string, fb: T): T => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as T : fb; } catch { return fb; } };
 /** Контент (стойка/удар/sway) по charId; если у него нет клипа — берём у fallbackId (монстры → Волкодав). */
-export function localStorageContent(charId: string, fallbackId?: string): GamePoseContent {
+export function localStorageContent(charId: string, fallbackId?: string, gaitFallbackId?: string): GamePoseContent {
   // Имена клипов нормализуем на чтении (старая конвенция стойка_/удар_ → idle_/hit_), чтобы старые данные работали сразу.
   const clips = readJSON<Clip[]>('pe_clips', []).map((c) => (c && typeof c.name === 'string' ? { ...c, name: migratePoseName(c.name) } : c));
   const sway = readJSON<SwayStore>('pe_sway', {});
@@ -1342,7 +1350,7 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
   /** Состав рук последнего разбора — заполняет `resolveStancePose`. Переиспользуемый: два вызова за кадр на куклу. */
   const layersOut: StanceLayerInfo[] = [];
   return {
-    charId, fallbackId,
+    charId, fallbackId, gaitFallbackId,
     // Idle-стойка: ПОЛНАЯ авторская поза per-оружие (idle_<weapon>) в приоритете — так стойка с щитом/дуалом целиком как в
     // редакторе (оба оружия + грипы). Нет полной → по БАЗОВОМУ оружию (axe+shield → axe) + щит идёт оверлеем.
     /**
@@ -1394,8 +1402,14 @@ export function localStorageContent(charId: string, fallbackId?: string): GamePo
       for (const n of [bound, ...names]) {
         if (!n) continue;
         const nm = migratePoseName(n);
+        // ⭐⭐ ТРИ СТУПЕНИ ПЕРСОНАЖА: свой → общий донор контента → ДОНОР ТОЛЬКО ПОХОДКИ.
+        // Третья — последняя надежда не уехать на процедурный планировщик. Она нарочно узкая: одалживает
+        // ровно клип хода и ничего больше (см. `BASE_GAIT_CHAR`), поэтому стойки, удары и привязки у
+        // персонажа остаются свои. Порядок важен: свой набор всегда бьёт донорский.
         const c = findLocoClip(clips, nm, charId, weapon)
-          ?? (fallbackId ? findLocoClip(clips, nm, fallbackId, weapon) : null);
+          ?? (fallbackId ? findLocoClip(clips, nm, fallbackId, weapon) : null)
+          ?? (gaitFallbackId && gaitFallbackId !== charId && gaitFallbackId !== fallbackId
+            ? findLocoClip(clips, nm, gaitFallbackId, weapon) : null);
         if (c) return c;
       }
       return null;

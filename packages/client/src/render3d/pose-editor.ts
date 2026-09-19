@@ -73,7 +73,7 @@ import { configDirtyKeys, publishConfigEdits } from './configEdits.js';
 import { makeHistory } from './history.js';
 import { bakeGaitSet, bakeTurnSet, defaultReadPose, GAIT_PRESETS, TURN_PRESETS, defaultBakePick, BAKE_MAXSPD } from './clipBake.js';   // Ф2.1: процедурка → клипы
 import { TURN_NAMES } from './turnInPlace.js';
-import { findLocoClip, gaitBakeTag, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
+import { findLocoClip, gaitBakeTag, BASE_GAIT_CHAR, LOCO_NAMES, locoClipNames, LOCO_DIRS } from './locoBlend.js';           // Ф4: какой клип локомоции читает движок
 import { exportClipsToGLB, downloadFile } from './clipExport.js';                              // Ф2.3: клипы → GLB + манифест
 import type { NameProfile } from './clipToAnimation.js';   // Ф1.3: единый откат — и поза, и структура клипа/библиотеки
 import { hipsOffset, setHipsOffset, normalizeClipHips } from './clipModel.js';   // Ф12: офсет таза — ДЕЛЬТА от rest, а не абсолют
@@ -4648,9 +4648,11 @@ function locoCoverageSection(): void {
   const h = el('div', 'color:#8fb7ff;font-weight:bold;margin-bottom:2px'); h.textContent = 'ПОКРЫТИЕ НАБОРА — у кого есть походка';
   box.append(h);
   const ids = rosterChars().map((c) => c.id);
-  // ⚠ Донор — тот же, что в игре у монстров (`gaitFallback: 'warrior'`): панель обязана показывать ТУ ЖЕ цепочку,
-  // иначе «у монстра всё есть» на экране и «монстр ходит чужим набором» в игре разойдутся.
-  const cov = auditLocoSet(library, ids, 'warrior');
+  // ⚠ Донор — ТА ЖЕ константа, что в игре (`BASE_GAIT_CHAR`), а не литерал: панель обязана показывать ту же
+  // цепочку, иначе «у монстра всё есть» на экране и «монстр ходит чужим набором» в игре разойдутся.
+  // ⭐ С 19.09 донор походки есть И У ИГРОКОВ — до этого класс без своего набора уезжал на процедурный
+  // планировщик, а панель этого не показывала вовсе: строка читалась как «чужой набор», хотя набора не было вовсе.
+  const cov = auditLocoSet(library, ids, BASE_GAIT_CHAR);
   const TINT: Record<string, string> = { ok: '#46d07a', info: '#9aa3b8', warn: '#e0b050', block: '#c05050' };
   const WORD: Record<string, string> = { ok: 'свой набор', info: 'чужой набор', warn: 'протухло', block: 'НЕТ КЛИПОВ' };
   for (const c of cov) {

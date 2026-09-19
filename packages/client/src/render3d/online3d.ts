@@ -13,6 +13,7 @@ import { GameState } from '../core/gameState.js';
 import { TILE, Cell, monsterCombatStats, debuffIcon, weapon3dKeyFromEquipment, type Grid, type FloorInit, type WorldSnapshot, type WorldSnapshotFull, type PeerInfo, type DamageType, type PlayerInput, type SaveState, type ScaledMonster, type DebuffKind } from '@dm/shared';
 import { initPhysics, PhysWorld, type RagdollHandle } from './ragdoll.js';
 import { makeGamePlayerDoll, makeHumanoidDoll } from './gamePlayerDoll.js';
+import { BASE_GAIT_CHAR } from './locoBlend.js';   // ⭐ донор набора хода — ОДНО имя на игроков и монстров
 import { markSfx, shakeForMark, burstForMark, playHitSound, earShot } from './animSfx.js';
 import { setLocoMixOverride } from './poseRuntime.js';   // галка «бег клипами» из настроек клиента   // ⭐ метки клипа звучат (вжух/шаг), а удар — от события (см. `animSfx`)
 import { makeCamShake } from './camShake.js';
@@ -339,7 +340,7 @@ export async function startOnline3d(): Promise<void> {
       const atl = monsterAtlasBody(def.atlasKey);   // пропорции/скелет из собственного атласа монстра (физ-скелет 1:1 под меш)
       const d = makeHumanoidDoll(pw, {
         x: m.x, z: m.y, weapon: def.weaponKey ?? mc.weapon, weaponModels: { main: def.weaponModelId, off: def.shieldModelId },
-        atlasKey: def.atlasKey, baseAppearance: atlasBaseAppearanceOf(def.atlasKey), gaitId: monsterCharId(faction), gaitFallback: 'warrior',
+        atlasKey: def.atlasKey, baseAppearance: atlasBaseAppearanceOf(def.atlasKey), gaitId: monsterCharId(faction), gaitFallback: BASE_GAIT_CHAR,
         gender: mc.gender, build: mc.build, colors: { body: col, limb: 0x5a5a64, head: col },
         profile: atl?.body && Object.keys(atl.body).length ? atl.body : undefined,
         boneScale: atl?.boneScale && Object.keys(atl.boneScale).length ? atl.boneScale : undefined,
