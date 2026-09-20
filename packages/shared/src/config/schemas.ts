@@ -1048,7 +1048,7 @@ export const monsterGearSchema = z.array(
       enabled: z.boolean().default(true),
       weaponClass: z.enum(['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff']),
       /** Вес оружия — задаёт долю скейла по атрибуту (STR/DEX/INT). */
-      weight: z.enum(['superlight', 'light', 'medium', 'heavy', 'magical']).default('medium'),
+      weight: z.enum(['superlight', 'light', 'medium', 'massive', 'heavy', 'mystic', 'magical']).default('medium'),
       attackType: z.enum(['melee', 'ranged']).default('melee'),
       hands: z.number().int().min(1).max(2).default(1),
       damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).default('physical'),

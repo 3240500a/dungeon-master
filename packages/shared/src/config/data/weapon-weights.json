@@ -20,10 +20,19 @@
   {
     "id": "medium",
     "name": "Среднее",
+    "strength": 0.5,
+    "dexterity": 0.5,
+    "intelligence": 0,
+    "weight": 12,
+    "reqBase": 25
+  },
+  {
+    "id": "massive",
+    "name": "Массивное",
     "strength": 0.65,
     "dexterity": 0.35,
     "intelligence": 0,
-    "weight": 12,
+    "weight": 18,
     "reqBase": 25
   },
   {
@@ -36,8 +45,17 @@
     "reqBase": 18
   },
   {
+    "id": "mystic",
+    "name": "Мистическое",
+    "strength": 0,
+    "dexterity": 0.4,
+    "intelligence": 0.6,
+    "weight": 6,
+    "reqBase": 25
+  },
+  {
     "id": "magical",
-    "name": "Магическое",
+    "name": "Волшебное",
     "strength": 0,
     "dexterity": 0,
     "intelligence": 1,

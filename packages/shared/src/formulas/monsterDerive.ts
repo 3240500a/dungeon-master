@@ -64,11 +64,17 @@ const FACTION_RES: Record<MonsterFaction, Partial<Record<'resFire' | 'resCold' |
   beast: {},
 };
 
-/** Ведущий атрибут урона по оружию: магия→INT, дальний физ→DEX, мили тяж/сред→STR, лёгкий→DEX. */
+/**
+ * Ведущий атрибут урона по оружию: магия→INT, дальний физ→DEX, мили с силовым перевесом→STR, иначе DEX.
+ * ⚠ Список весов здесь ДУБЛИРУЕТ лестницу из `weapon-weights.json` (у монстра таблицы весов под рукой
+ * нет — приходит только id). Добавили вес с перевесом силы — допишите его сюда, иначе монстр с ним
+ * начнёт бить от ловкости, которой у него нет.
+ */
+const STR_WEIGHTS = new Set(['heavy', 'massive', 'medium']);
 function damageAttr(w: GearWeapon, str: number, dex: number, int: number): number {
   if (w.damageType !== 'physical') return int;
   if (w.attackType === 'ranged') return dex;
-  return w.weight === 'heavy' || w.weight === 'medium' ? str : dex;
+  return STR_WEIGHTS.has(w.weight ?? '') ? str : dex;
 }
 
 export function deriveMonsterStats(
