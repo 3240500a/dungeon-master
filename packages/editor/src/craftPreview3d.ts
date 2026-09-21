@@ -1,44 +1,25 @@
 import * as THREE from 'three';
-import { CRAFT_SLOT_LIST, anatomyOf, craftWeapon, partById, partFamily, slotName, stepLabel, type ConfigRegistry, type CraftSlot } from '@dm/shared';
-import { makeWeaponMesh } from '@dm/client/render3d/weapon3d.js';
+import { CRAFT_SLOT_LIST, anatomyOf, partById, slotName, stepLabel, type ConfigRegistry, type CraftSlot } from '@dm/shared';
+import { buildCraftMesh, type CraftMeshResult } from '@dm/client/modules/town/craftMesh/index.js';
 import type { CraftWindowState } from '@dm/client/modules/town/craftPanel.js';
 
 /**
- * 3D-ПРЕВЬЮ СБОРКИ (docs/CRAFT_WEAPONS.md §18, фаза визуала Ф1): процедурный меш ИГРЫ
- * (`weapon3d.ts`) с параметрами от деталей и цветом от материала. Никаких новых мешей: ровно то,
- * что ГДД называет «почти ноль работы художнику» — ширина ударной части от её оси, длина держака,
- * ширина гарды, навершие-противовес, тинт по материалу КАЖДОЙ детали (у деталей свои ступени).
+ * 3D-ПРЕВЬЮ СБОРКИ (docs/CRAFT_WEAPONS.md §18, визуал Ф1): модель собирается из ТЕХ ЖЕ деталей,
+ * что и вещь (`client/modules/town/craftMesh`): форма клинка по типу, своя гарда и навершие,
+ * полотно и обух топора, рога и концы лука; цвет — материал каждой детали. Модель та же, что
+ * потом встанет в окно кузницы игры, — песочница лишь показывает её.
  *
- * ⚠ `weapon3d.ts` принадлежит рендеру игры и здесь только ЧИТАЕТСЯ: материалы меша клонируются,
- * прежде чем их красить, иначе покраска уехала бы во все руки в редакторе.
+ * Управление: тянуть мышью — повернуть, колесо — приблизить, двойной клик — снова крутить самой.
  */
 
-// Цвета ступеней 1..5 по семьям — от исторического материала (§10).
-const TINT: Record<string, number[]> = {
-  iron: [0x6b5a4e, 0x86837c, 0xa3aab0, 0x9aa6b4, 0xd2d8de],   // болотное → кричное → уклад → дамаск → булат
-  wood: [0xb08a5a, 0xa98b62, 0x7a5638, 0x2a2420, 0x6a5238],   // сосна → ясень → граб → морёный дуб → клееное
-  stave: [0x8a6a44, 0xa0522d, 0xd8c8a0, 0x4a4a46, 0x9aa2aa],  // вяз → тис → рог и жила → китовый ус → сталь
-  trim: [0x2e2e30, 0x9c6b30, 0x2a3440, 0xc8ccd2, 0xd4af37],   // чёрное железо → бронза → воронёная → серебро → золото
-  focus: [0x7fb3a8, 0x151515, 0x2a1f35, 0xe8f0ff, 0xe8a33a],  // паста → гагат → обсидиан → хрусталь → янтарь
-  hide: [0x8a6a4a, 0x6b4a2e, 0x4a3220, 0x3a2418, 0x9aa0a0],
-  cloth: [0xb8a888, 0xd0c0a0, 0xe8e0c8, 0xf0ead8, 0xe0d6f0],
-};
+const W = 260, H = 440;
 
 let renderer: THREE.WebGLRenderer | null = null;
 let raf = 0;
 let scene: THREE.Scene | null = null;
-
-function kindFor(weaponClass: string, hands: number): string {
-  if (weaponClass === 'sword') return hands === 2 ? 'greatsword' : 'sword';
-  if (weaponClass === 'axe') return hands === 2 ? 'greataxe' : 'axe';
-  if (weaponClass === 'mace') return hands === 2 ? 'greatmaul' : 'mace';
-  if (weaponClass === 'wand') return 'staff'; // у жезла меша в игре нет вовсе — показываем укороченный посох
-  return weaponClass;
-}
-
-const disposeScene = (s: THREE.Scene): void => {
-  s.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); const mat = m.material as THREE.Material | THREE.Material[] | undefined; if (Array.isArray(mat)) mat.forEach((x) => x.dispose()); else mat?.dispose(); });
-};
+let current: CraftMeshResult | null = null;
+/** Ракурс переживает перерисовку окна: крутишь модель — выбор детали её не сбрасывает. */
+const view = { yaw: 0.6, pitch: 0.12, zoom: 1, auto: true };
 
 export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTMLElement {
   const box = document.createElement('div');
@@ -48,94 +29,77 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
   title.textContent = '3D-превью сборки';
   box.append(title);
 
-  const pv = craftWeapon(reg, { weaponClass: st.weaponClass, hands: st.hands, parts: st.parts });
-  const base = reg.get('items.base').find((b) => b.id === pv.type?.baseId);
   const anat = anatomyOf(reg, st.weaponClass);
-  if (!base || base.kind !== 'weapon' || !anat) return box;
-
   cancelAnimationFrame(raf);
-  if (scene) { disposeScene(scene); scene = null; }
+  if (current) { current.dispose(); current = null; }
+  scene = null;
+  const built = anat ? buildCraftMesh(reg, st.weaponClass, st.hands, st.parts) : null;
+  if (!anat || !built) { box.append(document.createTextNode('Сборка не строится')); return box; }
+  current = built;
+
   if (!renderer) {
     try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); } catch { box.append(document.createTextNode('WebGL недоступен')); return box; }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    renderer.setSize(232, 300);
+    renderer.setSize(W, H);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.domElement.style.cssText = 'display:block;cursor:grab;border-radius:6px;background:radial-gradient(ellipse at 50% 40%, #1d2330 0%, #0e1117 70%)';
+    bindControls(renderer.domElement);
   }
   box.append(renderer.domElement);
 
   const s = new THREE.Scene();
   scene = s;
-  s.add(new THREE.HemisphereLight(0xfff0d8, 0x202030, 1.1));
-  const key = new THREE.DirectionalLight(0xffffff, 2.4); key.position.set(40, 60, 80); s.add(key);
-  const rim = new THREE.DirectionalLight(0xe39a3c, 1.2); rim.position.set(-60, -20, -40); s.add(rim);
+  s.add(new THREE.HemisphereLight(0xfff0d8, 0x202030, 1.0));
+  const key = new THREE.DirectionalLight(0xffffff, 2.6); key.position.set(60, 80, 120); s.add(key);
+  const rim = new THREE.DirectionalLight(0xe39a3c, 1.4); rim.position.set(-90, -30, -80); s.add(rim);
+  const fill = new THREE.DirectionalLight(0x8fb0ff, 0.6); fill.position.set(-60, 40, 90); s.add(fill);
 
-  const g = makeWeaponMesh(kindFor(st.weaponClass, base.hands ?? 1));
-  if (st.weaponClass === 'wand') g.scale.setScalar(0.55);
-  const axis = (slot: CraftSlot): number => partById(reg, st.parts[slot].id)?.axis ?? 0;
-  // Цвет детали — по СВОЕМУ материалу: семья гнезда (или своя у формы) × ступень этой детали.
-  const tintOf = (slot: CraftSlot): number => {
-    const p = partById(reg, st.parts[slot].id);
-    const fam = p ? partFamily(anat, slot, p) : anat[slot].family;
-    return TINT[fam]?.[Math.max(0, Math.min(4, st.parts[slot].step - 1))] ?? 0x888888;
-  };
-
-  // Роль меша по его материалу: сталь — ударная часть, дерево — держак, латунь — обвязка.
-  // У лука и арбалета «дерево» — это плечи/дуга, то есть ударная часть.
-  const ranged = st.weaponClass === 'bow' || st.weaponClass === 'crossbow';
-  let top = -Infinity;
-  g.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (!m.isMesh) return;
-    const src = m.material as THREE.MeshStandardMaterial;
-    const hex = src.color?.getHex?.() ?? 0;
-    const mat = src.clone();
-    m.material = mat;
-    if (hex === 0xc2c8d2) { // сталь
-      if (!ranged) { mat.color.setHex(tintOf('strike')); m.scale.x *= 1 + 0.35 * axis('strike'); m.scale.z *= 1 + 0.2 * axis('strike'); }
-      else mat.color.setHex(tintOf('bind'));
-    } else if (hex === 0x6e4a2c) { // дерево
-      if (ranged) { mat.color.setHex(tintOf('strike')); m.scale.x *= 1 + 0.25 * axis('strike'); }
-      else { mat.color.setHex(tintOf('grip')); m.scale.y *= 1 + 0.18 * axis('grip'); }
-    } else if (hex === 0xc9a34a) { // латунь — гарда/обвязка
-      mat.color.setHex(tintOf('bind')); m.scale.x *= 1 - 0.3 * axis('bind');
-    } else if (st.weaponClass === 'wand' || st.weaponClass === 'staff') {
-      mat.color.setHex(tintOf('strike')); mat.emissive?.setHex(tintOf('strike')); mat.emissiveIntensity = 0.35;
-      m.scale.setScalar(1 + 0.3 * axis('strike'));
-    }
-    m.updateMatrixWorld();
-    const bb = new THREE.Box3().setFromObject(m);
-    top = Math.max(top, bb.max.y);
-  });
-
-  // Оголовье: навершие-противовес на конце держака. Упор (+) — тяжелее и крупнее, укус (−) — острое.
-  const a4 = axis('head');
-  const headMat = new THREE.MeshStandardMaterial({ color: tintOf('head'), metalness: 0.7, roughness: 0.35 });
-  const head = a4 < 0 ? new THREE.Mesh(new THREE.ConeGeometry(1.1, 3.2, 6), headMat) : new THREE.Mesh(new THREE.SphereGeometry(1.2 * (1 + 0.45 * a4), 14, 10), headMat);
-  head.position.y = (Number.isFinite(top) ? top : 2) + (a4 < 0 ? 1.4 : 0.9);
-  g.add(head);
-
-  // Вертикально, по центру, с подгоном камеры под размер.
+  // Рабочим концом вверх — так оружие читается на стенде.
+  const g = built.group;
+  g.rotation.z = Math.PI;
   const bb = new THREE.Box3().setFromObject(g);
   const size = bb.getSize(new THREE.Vector3());
   const center = bb.getCenter(new THREE.Vector3());
-  g.position.sub(center);
-  const pivot = new THREE.Group(); pivot.add(g); s.add(pivot);
-  const cam = new THREE.PerspectiveCamera(30, 232 / 300, 0.1, 2000);
-  const dist = Math.max(size.y, size.x) * 1.9 + 10;
-  cam.position.set(0, 0, dist); cam.lookAt(0, 0, 0);
+  const holder = new THREE.Group(); holder.add(g); g.position.sub(center);
+  const pivot = new THREE.Group(); pivot.add(holder); s.add(pivot);
+  const cam = new THREE.PerspectiveCamera(28, W / H, 0.5, 5000);
+  const fitDist = Math.max(size.y / (2 * Math.tan((28 * Math.PI) / 360)), size.x * 1.4, 30) * 1.12;
 
   const loop = (): void => {
     // Холст убран со страницы (переключили вкладку) — цикл гаснет, а не рисует в пустоту.
     if (scene !== s || !renderer || !renderer.domElement.isConnected) return;
-    pivot.rotation.y += 0.012;
+    if (view.auto) view.yaw += 0.01;
+    pivot.rotation.set(view.pitch, view.yaw, 0);
+    const d = fitDist / view.zoom;
+    cam.position.set(0, 0, d); cam.lookAt(0, 0, 0);
     renderer.render(s, cam);
     raf = requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
 
   const caption = document.createElement('div');
-  caption.style.cssText = 'color:#8f897c;font-size:11px;margin-top:4px;line-height:1.4';
-  const nm = (slot: CraftSlot): string => { const p = partById(reg, st.parts[slot].id); return p ? `${slotName(anat, slot, st.hands)}: ${stepLabel(reg, anat, slot, p, st.parts[slot].step)}` : slot; };
-  caption.innerHTML = `Процедурный меш игры: ширина от оси ударной части, длина от держака, гарда от обвязки, навершие от оголовья.<br>${CRAFT_SLOT_LIST.map(nm).join(' · ')}`;
+  caption.style.cssText = 'color:#8f897c;font-size:11px;margin-top:6px;line-height:1.5';
+  const line = (slot: CraftSlot): string => {
+    const p = partById(reg, st.parts[slot].id);
+    return p ? `<b style="color:#c9bfae">${slotName(anat, slot, st.hands)}</b>: ${p.name} · ${stepLabel(reg, anat, slot, p, st.parts[slot].step)}` : '';
+  };
+  caption.innerHTML = `${CRAFT_SLOT_LIST.map(line).join('<br>')}<br><span style="color:#6b665c">${Math.round(size.y)} см · тянуть — повернуть, колесо — ближе, двойной клик — крутить</span>`;
   box.append(caption);
   return box;
+}
+
+/** Мышь: повернуть, приблизить, вернуть авто-вращение. Вешается один раз на общий холст. */
+function bindControls(el: HTMLCanvasElement): void {
+  let drag: { x: number; y: number; yaw: number; pitch: number } | null = null;
+  el.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch }; view.auto = false; el.setPointerCapture(e.pointerId); el.style.cursor = 'grabbing'; });
+  el.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    view.yaw = drag.yaw + (e.clientX - drag.x) * 0.012;
+    view.pitch = Math.max(-1.2, Math.min(1.2, drag.pitch + (e.clientY - drag.y) * 0.01));
+  });
+  const up = (): void => { drag = null; el.style.cursor = 'grab'; };
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('wheel', (e) => { e.preventDefault(); view.zoom = Math.max(0.6, Math.min(6, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); }, { passive: false });
+  el.addEventListener('dblclick', () => { view.auto = true; view.pitch = 0.12; view.zoom = 1; });
 }

@@ -263,13 +263,20 @@ export function renderCraftPage(page: HTMLElement, data: Record<string, unknown>
   if (sb.tab === 'catalog') { renderCraftCatalog(main, reg, sb, rerender); return; }
 
   const host = sandboxHost(reg, sb, save);
-  const forgeRow = h('div', 'display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:12px;align-items:start');
+  const forgeRow = h('div', 'display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:12px;align-items:start');
   const winBox = h('div', 'background:#171b24;border:1px solid #2b323f;border-radius:8px;padding:12px;min-width:0');
-  winBox.append(craftWindow(app, host, sb.win, rerender));
-  forgeRow.append(winBox);
-  // 3D-превью сборки (П6): процедурный меш с параметрами деталей и цветом материала.
+  // 3D-превью сборки: модель из тех же деталей. Обновляется СРАЗУ на любой выбор в окне (onChange),
+  // а не по «Ковать»; одинаковую сборку заново не строим — иначе модель мигала бы на каждое сообщение.
   const side = h('div', 'display:flex;flex-direction:column;gap:10px');
-  side.append(weaponPreview3d(reg, sb.win));
+  let shownKey = '';
+  const refresh3d = (w: CraftWindowState): void => {
+    const k = JSON.stringify([w.weaponClass, w.hands, w.parts]);
+    if (k === shownKey) return;
+    shownKey = k;
+    side.replaceChildren(weaponPreview3d(reg, w));
+  };
+  winBox.append(craftWindow(app, host, sb.win, rerender, refresh3d));
+  forgeRow.append(winBox);
   forgeRow.append(side);
   main.append(forgeRow);
   main.append(checksPanel(reg, sb, save, rerender));

@@ -137,8 +137,10 @@ function baseLine(reg: ConfigRegistry, baseId: string | undefined): string {
 /**
  * ⭐ ОКНО КОВКИ. Возвращает корневой элемент; сам перерисовывается на любой выбор.
  * `onAfter` зовётся после ковки/зачарования — чтобы вызывающий пересчитал свои панели.
+ * `onChange` зовётся после КАЖДОЙ перерисовки (сменил деталь, материал, семейство) — чтобы
+ * вызывающий сразу обновил то, что показывает сборку рядом с окном (3D-модель), не дожидаясь ковки.
  */
-export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onAfter?: () => void): HTMLElement {
+export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onAfter?: () => void, onChange?: (st: CraftWindowState) => void): HTMLElement {
   const root = mk('div', `color:${COLORS.text};font-size:13px`);
   const reg = app.config;
 
@@ -351,6 +353,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     }
     out.append(right);
     root.append(out);
+    onChange?.(st);
   };
 
   draw();
