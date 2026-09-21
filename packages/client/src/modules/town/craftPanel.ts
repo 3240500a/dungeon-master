@@ -1,8 +1,9 @@
 import {
-  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, craftTierRange, craftTiers, craftWeapon, defaultParts,
-  enchantCost, makePlayerModel, materialBand, partById, variantsFor, weaponCard,
+  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, baseTierRange, clampStep, craftTiers, craftWeapon, defaultParts,
+  enchantCost, familiesOf, keySlotOf, keyVariantsByBase, makePlayerModel, partById, slotName, stepLabel,
+  tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
-  type Rarity, type SaveState, type WeaponCard,
+  type Rarity, type SaveState, type WeaponCard, type WeaponPart,
 } from '@dm/shared';
 import type { App } from '../../core/app.js';
 import { COLORS, FONT_TITLE, button, mk } from '../../ui/kit.js';
@@ -16,8 +17,9 @@ import { itemTooltipHtml } from '../inventory/itemView.js';
  * локально тем же ядром (`craftWeapon`), в игре — командой серверу, который зовёт то же ядро.
  * Сама панель ни сети, ни сейва не трогает — поэтому переносится без правок.
  *
- * Всё, что окно показывает, считает ядро `@dm/shared`: вещь — `craftWeapon`, характеристики —
- * `weaponCard` на модели героя (`makePlayerModel`), те же функции, что у боя. Своих формул здесь нет.
+ * Порядок — от деталей: семейство (класс × хват) → ключевая деталь, она «определяет тип» →
+ * остальные детали, у каждой — свой материал. Тип, историческое имя и ступень вещи окно НЕ
+ * спрашивает, а показывает: их выводит ядро (`craftWeapon`, `craftType.ts`). Своих формул здесь нет.
  */
 
 export interface CraftHost {
@@ -38,10 +40,10 @@ export interface CraftHost {
 /** Состояние окна живёт у ВЫЗЫВАЮЩЕГО: тело перерисовывается часто, а выбор должен переживать это. */
 export interface CraftWindowState {
   weaponClass: string;
-  baseId: string;
-  step: number;
-  tier: number;
-  parts: Omit<CraftParts, 'step'>;
+  /** Семейство: 1 — одноручное, 2 — двуручное. */
+  hands: number;
+  /** Четыре детали, у каждой — своя ступень материала. */
+  parts: CraftParts;
   /** Последняя скованная вещь — её можно зачаровать и надеть. */
   crafted: Item | null;
   /** Итог последнего действия, одной строкой. */
@@ -56,43 +58,47 @@ const pct = (x: number, d = 0): string => `${(x * 100).toFixed(d)} %`;
 const fx = (x: number, d = 1): string => x.toFixed(d);
 const signed = (x: number, unit = '', d = 0): string => `${x > 0 ? '+' : x < 0 ? '−' : '±'}${Math.abs(x).toFixed(d)}${unit}`;
 
-/** Начальное состояние: первый класс, первая база, эталонные детали, лучшая доступная ступень. */
-export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword'): CraftWindowState {
-  const st: CraftWindowState = { weaponClass, baseId: '', step: 3, tier: 3, parts: defaultParts(reg, weaponClass)!, crafted: null, message: '' };
-  return st;
+/** Начальное состояние: первое семейство класса, эталонные детали из кричного железа (ступень 2). */
+export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword', hands?: number): CraftWindowState {
+  const h = hands ?? familiesOf(reg, weaponClass)[0] ?? 1;
+  return { weaponClass, hands: h, parts: defaultParts(reg, weaponClass, h, 2)!, crafted: null, message: '' };
 }
 
 /**
- * Приводит выбор к допустимому: база своего класса и открытая, ступень материала подходит базе,
- * ступень вещи внутри полосы, детали — своего класса и открытые. Правит состояние на месте.
+ * Приводит выбор к допустимому: семейство есть у класса, ключевая деталь — открытой базы, детали
+ * своего семейства и открытые, ступени — внутри окна материалов каждой формы. Правит на месте.
  */
 export function normalizeCraftState(reg: ConfigRegistry, st: CraftWindowState, j: CraftJournal): void {
-  const bases = reg.get('items.base').filter((b) => b.kind === 'weapon' && (b as { weaponClass: string }).weaponClass === st.weaponClass);
-  const open = bases.filter((b) => j.bases.includes(b.id));
-  if (!open.some((b) => b.id === st.baseId)) {
-    // По умолчанию — база с самым высоким потолком: иначе окно открывалось бы на коротком мече
-    // (потолок t3), и дорогие материалы стояли бы серыми без объяснения.
-    const rank = (b: (typeof bases)[number]): number => craftTiers(reg).findIndex((t) => t.id === (b.maxTier ?? 't6'));
-    const best = [...open].sort((a, b) => rank(b) - rank(a))[0];
-    st.baseId = best?.id ?? bases[0]?.id ?? '';
-  }
-  const base = bases.find((b) => b.id === st.baseId);
-  if (base) {
-    let range = craftTierRange(reg, base, st.step, j);
-    if (!range) {
-      for (let k = 5; k >= 1 && !range; k--) { range = craftTierRange(reg, base, k, j); if (range) st.step = k; }
-    }
-    if (range) st.tier = Math.max(range.lo, Math.min(range.hi, st.tier));
-  }
-  const def = defaultParts(reg, st.weaponClass);
+  const fams = familiesOf(reg, st.weaponClass);
+  if (!fams.includes(st.hands)) st.hands = fams[0] ?? 1;
+  const keySlot = keySlotOf(reg, st.weaponClass);
+  const def = defaultParts(reg, st.weaponClass, st.hands, 2);
+  if (!st.parts) st.parts = def!;
+  const closest = (pool: WeaponPart[]): WeaponPart | undefined => [...pool].sort((a, b) => Math.abs(a.axis) - Math.abs(b.axis))[0];
   for (const slot of CRAFT_SLOT_LIST) {
-    const pool = variantsFor(reg, st.weaponClass, slot);
-    const openPool = pool.filter((p) => j.variants.includes(p.id));
-    const cur = pool.find((p) => p.id === st.parts[slot]);
-    if (!cur || !j.variants.includes(cur.id)) {
-      const pref = def && openPool.find((p) => p.id === def[slot]);
-      st.parts[slot] = (pref ?? [...openPool].sort((a, b) => Math.abs(a.axis) - Math.abs(b.axis))[0] ?? pool[0])?.id ?? '';
+    let pool: WeaponPart[];
+    if (slot === keySlot) {
+      const groups = keyVariantsByBase(reg, st.weaponClass, st.hands).filter((g) => j.bases.includes(g.baseId));
+      pool = groups.flatMap((g) => g.variants).filter((p) => j.variants.includes(p.id));
+      const cur = st.parts[slot] && pool.find((p) => p.id === st.parts[slot].id);
+      if (!cur) {
+        // По умолчанию — база с самым высоким потолком: иначе окно открывалось бы на коротком мече
+        // (потолок t3), и дорогие материалы упирались бы в потолок без объяснения.
+        const rank = (id: string): number => { const b = reg.get('items.base').find((x) => x.id === id); return b ? baseTierRange(reg, b).hi : -1; };
+        const g = [...groups].sort((a, b) => rank(b.baseId) - rank(a.baseId)).find((x) => x.variants.some((p) => j.variants.includes(p.id)));
+        const p = g ? closest(g.variants.filter((v) => j.variants.includes(v.id))) : closest(keyVariantsByBase(reg, st.weaponClass, st.hands)[0]?.variants ?? []);
+        st.parts[slot] = { id: p?.id ?? '', step: st.parts[slot]?.step ?? 2 };
+      }
+    } else {
+      pool = variantsFor(reg, st.weaponClass, slot, st.hands);
+      const open = pool.filter((p) => j.variants.includes(p.id));
+      if (!st.parts[slot] || !open.some((p) => p.id === st.parts[slot].id)) {
+        const pref = def && open.find((p) => p.id === def[slot].id);
+        st.parts[slot] = { id: (pref ?? closest(open) ?? pool[0])?.id ?? '', step: st.parts[slot]?.step ?? 2 };
+      }
     }
+    const p = partById(reg, st.parts[slot].id);
+    if (p) st.parts[slot].step = clampStep(p, st.parts[slot].step);
   }
 }
 
@@ -117,6 +123,17 @@ function partEffect(reg: ConfigRegistry, slot: CraftSlot, axis: number, weaponCl
   return `${brace} · статус ${axis < 0 ? 'чаще' : axis > 0 ? 'реже' : 'как есть'}`;
 }
 
+/** Строка механики базы: урон, хват, грань, вес — чтобы тип читался как числа, а не только как имя. */
+function baseLine(reg: ConfigRegistry, baseId: string | undefined): string {
+  const base = reg.get('items.base').find((b) => b.id === baseId);
+  if (!base || base.kind !== 'weapon') return '';
+  const flat = (s: string): number | undefined => base.baseStats.find((m) => m.stat === s && m.kind === 'flat')?.value;
+  const w = reg.get('weapon-weights').find((x) => x.id === base.weight);
+  const edge = base.physSub ? reg.get('phys-subtypes').find((p) => p.id === base.physSub)?.name.toLowerCase() : reg.get('magic-subtypes').find((m) => m.id === base.damageType)?.name?.toLowerCase();
+  const dmg = flat('minDamage') !== undefined ? `${flat('minDamage')}–${flat('maxDamage')}` : '';
+  return [base.name, dmg, base.hands === 2 ? 'двуручное' : 'одноручное', edge ?? 'без грани', w ? `вес: ${w.name.toLowerCase()}` : ''].filter(Boolean).join(' · ');
+}
+
 /**
  * ⭐ ОКНО КОВКИ. Возвращает корневой элемент; сам перерисовывается на любой выбор.
  * `onAfter` зовётся после ковки/зачарования — чтобы вызывающий пересчитал свои панели.
@@ -133,102 +150,139 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     const tiers = craftTiers(reg);
     const mats = reg.get('craft-materials');
     const matName = (id: string): string => mats.find((m) => m.id === id)?.name ?? id;
+    const matOn = (id: string): boolean => host.allowDisabledMaterials || mats.find((m) => m.id === id)?.enabled !== false;
+    const keySlot = keySlotOf(reg, st.weaponClass);
+    const chip = (on: boolean, disabled: boolean): string =>
+      `padding:3px 8px;border-radius:5px;font-size:11.5px;cursor:${disabled ? 'default' : 'pointer'};border:1px solid ${on ? COLORS.accent : COLORS.borderHi};` +
+      `background:${on ? '#26221a' : COLORS.panel};color:${disabled ? '#4a4a4a' : on ? COLORS.accent : COLORS.text}`;
+    const reset = (): void => { st.crafted = null; st.message = ''; };
 
-    // ── Класс ──
-    const clsRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px');
+    // ── Класс и семейство ──
+    const clsRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px');
     for (const a of [...reg.get('weapon-anatomy')].sort((x, y) => ORDER.indexOf(x.id) - ORDER.indexOf(y.id))) {
       const on = a.id === st.weaponClass;
       const b = mk('button', `padding:4px 10px;border-radius:5px;cursor:pointer;font-size:12px;border:1px solid ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${on ? COLORS.accent : COLORS.text}`, a.name);
-      b.addEventListener('click', () => { st.weaponClass = a.id; st.parts = defaultParts(reg, a.id)!; st.crafted = null; st.message = ''; draw(); });
+      b.addEventListener('click', () => { if (on) return; Object.assign(st, initialCraftState(reg, a.id)); draw(); });
       clsRow.append(b);
     }
     root.append(clsRow);
-
-    // ── Чертёж ──
-    const bases = reg.get('items.base').filter((b) => b.kind === 'weapon' && (b as { weaponClass: string }).weaponClass === st.weaponClass);
-    const base = bases.find((b) => b.id === st.baseId);
-    const row = (label: string): HTMLElement => {
-      const r = mk('div', 'display:grid;grid-template-columns:92px 1fr;gap:8px;align-items:center;margin-bottom:8px');
-      r.append(mk('div', `color:${COLORS.dim};font-size:12px`, label));
-      root.append(r);
-      return r;
-    };
-    const baseSel = mk('select', `padding:5px 8px;background:${COLORS.panel2};color:${COLORS.text};border:1px solid ${COLORS.borderHi};border-radius:4px`);
-    for (const b of bases) {
-      const o = mk('option', '', `${b.name}${j.bases.includes(b.id) ? '' : ' — 🔒 не открыт'}`);
-      o.value = b.id; o.disabled = !j.bases.includes(b.id); o.selected = b.id === st.baseId;
-      baseSel.append(o);
+    const fams = familiesOf(reg, st.weaponClass);
+    if (fams.length > 1) {
+      const famRow = mk('div', 'display:flex;gap:6px;margin-bottom:10px;align-items:center');
+      famRow.append(mk('span', `color:${COLORS.dim};font-size:12px;margin-right:4px`, 'Семейство'));
+      for (const h of fams) {
+        const b = mk('button', chip(h === st.hands, false), h === 2 ? 'Двуручное' : 'Одноручное');
+        b.addEventListener('click', () => { if (h === st.hands) return; Object.assign(st, initialCraftState(reg, st.weaponClass, h)); draw(); });
+        famRow.append(b);
+      }
+      root.append(famRow);
+    } else {
+      root.append(mk('div', `color:${COLORS.dim};font-size:11.5px;margin-bottom:10px`, fams[0] === 2 ? 'Семейство одно: двуручное' : 'Семейство одно: одноручное'));
     }
-    baseSel.addEventListener('change', () => { st.baseId = baseSel.value; st.crafted = null; draw(); });
-    const baseInfo = mk('span', `margin-left:10px;color:${COLORS.dim};font-size:12px`);
-    if (base && base.kind === 'weapon') {
-      const w = reg.get('weapon-weights').find((x) => x.id === base.weight);
-      const edge = base.physSub ? reg.get('phys-subtypes').find((p) => p.id === base.physSub)?.name.toLowerCase() : base.damageType;
-      baseInfo.textContent = `${base.hands === 2 ? 'двуручное' : 'одноручное'} · ${edge ?? 'без грани'} · вес: ${w?.name.toLowerCase() ?? base.weight}`;
-    }
-    const baseCell = mk('div'); baseCell.append(baseSel, baseInfo);
-    row('Чертёж').append(baseCell);
 
-    // ── Материал (ступень) ──
-    const matRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px');
-    for (let k = 1; k <= 5; k++) {
-      const range = base ? craftTierRange(reg, base, k, j) : null;
-      const band = materialBand(k);
-      const on = k === st.step;
-      const disabled = !range;
-      const main = anat ? matName(`${anat.strike.family}-${k}`) : `ступень ${k}`;
-      const off = anat && !host.allowDisabledMaterials && CRAFT_SLOT_LIST.some((s) => mats.find((m) => m.id === `${anat[s].family}-${k}`)?.enabled === false);
-      const b = mk('button',
-        `padding:5px 9px;border-radius:5px;cursor:${disabled ? 'default' : 'pointer'};font-size:12px;text-align:left;line-height:1.25;` +
-        `border:1px solid ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${disabled ? '#555' : on ? COLORS.accent : COLORS.text}`);
-      b.innerHTML = `<b>${main}</b><br><span style="font-size:10.5px;color:${COLORS.dim}">ст. ${k} · ${tiers[band.lo]?.id}–${tiers[band.hi]?.id}${off ? ' · нет в игре' : ''}</span>`;
-      b.disabled = disabled;
-      b.title = anat ? CRAFT_SLOT_LIST.map((s) => `${anat[s].name}: ${matName(`${anat[s].family}-${k}`)}`).join('\n') : '';
-      b.addEventListener('click', () => { st.step = k; st.crafted = null; draw(); });
-      matRow.append(b);
+    // ── Предпросмотр: тип, имя, ступень ──
+    const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts) };
+    const pv = craftWeapon(reg, input, { journal: j, materialsOn: !host.allowDisabledMaterials });
+    const type = pv.type;
+    const head = mk('div', `border:1px solid ${COLORS.borderHi};border-radius:6px;padding:10px 12px;margin-bottom:10px;background:${COLORS.panel2}`);
+    const top = mk('div', 'display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap');
+    const nameBox = mk('div');
+    nameBox.append(mk('div', `color:${COLORS.dim};font-size:11px;letter-spacing:.06em;text-transform:uppercase`, 'Получилось'));
+    nameBox.append(mk('div', `font-family:${FONT_TITLE};color:${COLORS.accent};font-size:20px;line-height:1.2`, type?.ok ? type.name : '—'));
+    top.append(nameBox);
+    const { q, tier } = tierOfSteps(reg, st.parts);
+    const tierBox = mk('div', 'text-align:right');
+    tierBox.append(mk('div', `color:${COLORS.dim};font-size:11px`, 'Ступень из деталей'));
+    tierBox.append(mk('div', `font-size:15px;color:${pv.ok ? COLORS.gold : COLORS.bad}`, `${tiers[tier]?.id} ${tiers[tier]?.name}`));
+    const w = reg.get('balance').craft.tierFromParts.weights;
+    tierBox.title = `Средний уровень материала по массе: Q = (${w.strike}·${st.parts.strike.step} + ${st.parts.grip.step} + ${st.parts.bind.step} + ${st.parts.head.step}) / ${w.strike + w.grip + w.bind + w.head} = ${q}`;
+    tierBox.append(mk('div', `color:${COLORS.dim};font-size:10.5px;font-family:monospace`, `Q = ${fx(q, 2)}`));
+    top.append(tierBox);
+    head.append(top);
+    if (type?.ok) {
+      if (type.subtitle) head.append(mk('div', `font-size:12px;color:${COLORS.text};margin-top:2px`, type.subtitle));
+      if (type.formula) head.append(mk('div', `font-size:11.5px;color:${COLORS.info};margin-top:4px`, type.formula));
+      head.append(mk('div', `font-size:11.5px;color:${COLORS.dim};margin-top:2px`, `механика: ${baseLine(reg, type.baseId)}`));
+      const src = type.fantasy ? 'фэнтези — без исторической подписи' : type.source;
+      if (src) head.append(mk('div', `font-size:10.5px;color:${COLORS.dim};margin-top:2px;font-style:italic`, src));
     }
-    row('Материал').append(matRow);
+    if (!pv.ok && pv.reason) head.append(mk('div', `font-size:12px;color:${COLORS.bad};margin-top:6px`, `⚠ ${pv.reason}`));
+    root.append(head);
 
-    // ── Ступень вещи ──
-    const range = base ? craftTierRange(reg, base, st.step, j) : null;
-    const tierRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center');
-    tiers.forEach((t, i) => {
-      const ok = !!range && i >= range.lo && i <= range.hi;
-      const on = i === st.tier;
-      const b = mk('button', `padding:4px 9px;border-radius:5px;font-size:12px;cursor:${ok ? 'pointer' : 'default'};border:1px solid ${on ? COLORS.accent : COLORS.borderHi};background:${on ? '#26221a' : COLORS.panel};color:${!ok ? '#4a4a4a' : on ? COLORS.accent : COLORS.text}`, `${t.id} ${t.name}`);
-      b.disabled = !ok;
-      b.addEventListener('click', () => { st.tier = i; st.crafted = null; draw(); });
-      tierRow.append(b);
-    });
-    if (range && st.tier === range.hi && range.hi < 6 && materialBand(st.step).hi === range.hi) {
-      tierRow.append(mk('span', `color:${COLORS.bad};font-size:11px;margin-left:6px`, `⚠ потолок материала: выше ${tiers[range.hi]?.id} эту вещь уже не поднять`));
+    // ── Вся вещь из… ──
+    if (anat) {
+      const allRow = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px');
+      allRow.append(mk('span', `color:${COLORS.dim};font-size:12px;margin-right:4px`, 'Вся вещь из'));
+      for (let k = 1; k <= 5; k++) {
+        const b = mk('button', chip(CRAFT_SLOT_LIST.every((s) => st.parts[s].step === k), false), `ст. ${k} · ${matName(`${anat[keySlot].family}-${k}`)}`);
+        b.title = 'Каждой детали — эта ступень, прижатая к окну её формы';
+        b.addEventListener('click', () => {
+          for (const s of CRAFT_SLOT_LIST) { const p = partById(reg, st.parts[s].id); if (p) st.parts[s].step = clampStep(p, k); }
+          reset(); draw();
+        });
+        allRow.append(b);
+      }
+      root.append(allRow);
     }
-    row('Ступень').append(tierRow);
 
-    // ── Четыре гнезда ──
-    const slotsGrid = mk('div', 'display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin:6px 0 10px');
-    for (const slot of CRAFT_SLOT_LIST) {
-      const card = mk('div', `border:1px solid ${COLORS.border};background:${COLORS.panel2};border-radius:6px;padding:8px`);
-      const nm = anat ? anat[slot].name : slot;
-      const fam = anat ? matName(`${anat[slot].family}-${st.step}`) : '';
-      card.append(mk('div', `font-family:${FONT_TITLE};color:${COLORS.accent};font-size:14px`, nm));
-      card.append(mk('div', `color:${COLORS.dim};font-size:11px;margin-bottom:6px`, `${CRAFT_SLOT_ROLE[slot]} · ${fam}`));
-      const list = mk('div', 'display:flex;flex-direction:column;gap:3px');
-      for (const p of variantsFor(reg, st.weaponClass, slot)) {
-        const open = j.variants.includes(p.id);
-        const on = p.id === st.parts[slot];
+    // ── Четыре гнезда: ключ первым ──
+    const slotsGrid = mk('div', 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;margin:6px 0 10px');
+    const order: CraftSlot[] = [keySlot, ...CRAFT_SLOT_LIST.filter((s) => s !== keySlot)];
+    for (const slot of order) {
+      const isKey = slot === keySlot;
+      const card = mk('div', `border:1px solid ${isKey ? COLORS.accent : COLORS.border};background:${COLORS.panel2};border-radius:6px;padding:8px;display:flex;flex-direction:column`);
+      const title = mk('div', 'display:flex;justify-content:space-between;align-items:baseline;gap:6px');
+      title.append(mk('div', `font-family:${FONT_TITLE};color:${COLORS.accent};font-size:14px`, anat ? slotName(anat, slot, st.hands) : slot));
+      if (isKey) title.append(mk('span', `font-size:10.5px;color:${COLORS.gold};border:1px solid ${COLORS.gold};border-radius:3px;padding:0 4px`, 'определяет тип'));
+      card.append(title);
+      card.append(mk('div', `color:${COLORS.dim};font-size:11px;margin-bottom:6px`, CRAFT_SLOT_ROLE[slot]));
+
+      const list = mk('div', 'display:flex;flex-direction:column;gap:2px;max-height:250px;overflow:auto;margin-bottom:6px');
+      const row = (p: WeaponPart, baseOpen = true): HTMLElement => {
+        const open = j.variants.includes(p.id) && baseOpen;
+        const on = p.id === st.parts[slot].id;
         const b = mk('button', `display:flex;align-items:center;gap:6px;text-align:left;padding:3px 6px;border-radius:4px;font-size:12px;cursor:${open ? 'pointer' : 'default'};` +
           `border:1px solid ${on ? COLORS.accent : 'transparent'};background:${on ? '#26221a' : 'transparent'};color:${!open ? '#4d4d4d' : on ? COLORS.accent : COLORS.text}`);
         b.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${open ? RARITY_DOT[p.rarity] : '#333'};flex:none"></span>` +
-          `<span style="flex:1">${open ? '' : '🔒 '}${p.name}</span><span style="font-size:10px;color:${COLORS.dim};font-family:monospace">${p.axis > 0 ? '+' : ''}${p.axis}</span>`;
-        b.title = `${p.caption} · ${RARITY_NAME[p.rarity]}`;
+          `<span style="flex:1">${open ? '' : '🔒 '}${p.name}</span>` +
+          `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace">ст.${p.stepMin}–${p.stepMax}</span>` +
+          `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace;width:30px;text-align:right">${p.axis > 0 ? '+' : ''}${p.axis}</span>`;
+        b.title = [p.caption, p.lore, `${RARITY_NAME[p.rarity]} · материал: ступени ${p.stepMin}–${p.stepMax}`].filter(Boolean).join('\n');
         b.disabled = !open;
-        b.addEventListener('click', () => { st.parts[slot] = p.id; st.crafted = null; draw(); });
-        list.append(b);
+        b.addEventListener('click', () => { st.parts[slot] = { id: p.id, step: clampStep(p, st.parts[slot].step) }; reset(); draw(); });
+        return b;
+      };
+      if (isKey) {
+        for (const g of keyVariantsByBase(reg, st.weaponClass, st.hands)) {
+          const baseOpen = j.bases.includes(g.baseId);
+          const b = reg.get('items.base').find((x) => x.id === g.baseId);
+          const hr = b ? baseTierRange(reg, b) : { lo: 0, hi: 6 };
+          const cap = hr.hi < tiers.length - 1 ? ` · до ${tiers[hr.hi]?.id}` : '';
+          list.append(mk('div', `font-size:10.5px;color:${baseOpen ? COLORS.gold : '#555'};margin:4px 0 1px;border-bottom:1px solid ${COLORS.border}`, `${baseOpen ? '' : '🔒 '}${baseLine(reg, g.baseId)}${cap}`));
+          for (const p of g.variants) list.append(row(p, baseOpen));
+        }
+      } else {
+        for (const p of variantsFor(reg, st.weaponClass, slot, st.hands)) list.append(row(p));
       }
       card.append(list);
-      const sel = partById(reg, st.parts[slot]);
-      if (sel) {
+
+      // Материал этой детали — внутри окна формы.
+      const sel = partById(reg, st.parts[slot].id);
+      if (sel && anat) {
+        const matRow = mk('div', 'display:flex;flex-wrap:wrap;gap:4px;margin-top:auto');
+        for (let k = 1; k <= 5; k++) {
+          const inWin = k >= sel.stepMin && k <= sel.stepMax;
+          const id = `${sel.family || anat[slot].family}-${k}`;
+          const on = st.parts[slot].step === k;
+          const b = mk('button', chip(on, !inWin), stepLabel(reg, anat, slot, sel, k));
+          b.disabled = !inWin;
+          b.title = inWin ? `${matName(id)} (${id})${matOn(id) ? '' : ' — ещё нет в игре'}` : `«${sel.name}» из этого не куётся: только ступени ${sel.stepMin}–${sel.stepMax}`;
+          if (inWin && !matOn(id)) b.style.borderStyle = 'dashed';
+          b.addEventListener('click', () => { st.parts[slot].step = k; reset(); draw(); });
+          matRow.append(b);
+        }
+        card.append(mk('div', `font-size:10.5px;color:${COLORS.dim};margin:2px 0 3px`, `Материал · ${anat[slot].stepNames.length && !sel.family ? 'обработка' : matName(`${sel.family || anat[slot].family}-${st.parts[slot].step}`)}`));
+        card.append(matRow);
         card.append(mk('div', `margin-top:6px;font-size:11.5px;color:${COLORS.text}`, sel.caption));
         card.append(mk('div', `font-size:11px;color:${COLORS.gold};font-family:monospace`, partEffect(reg, slot, sel.axis, st.weaponClass)));
       }
@@ -236,37 +290,32 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     }
     root.append(slotsGrid);
 
-    // ── Предпросмотр ──
-    const input: CraftInput = { baseId: st.baseId, tier: st.tier, step: st.step, parts: { ...st.parts } };
-    const pv = craftWeapon(reg, input, { journal: j, materialsOn: !host.allowDisabledMaterials });
+    // ── Вещь, цена, кнопки ──
     const out = mk('div', 'display:grid;grid-template-columns:minmax(220px,1fr) minmax(260px,1.3fr);gap:12px;align-items:start');
-
     const left = mk('div', `border:1px solid ${COLORS.border};border-radius:6px;padding:10px;background:${COLORS.panel2}`);
     const shown = st.crafted ?? pv.item;
     if (shown) {
       const tip = mk('div'); tip.innerHTML = itemTooltipHtml(shown);
       left.append(tip);
       if (shown.affixCap) left.append(mk('div', `margin-top:6px;font-size:12px;color:${COLORS.info}`, `Ёмкость: ${shown.affixCap.prefix} преф. + ${shown.affixCap.suffix} суф. — примет при зачаровании`));
-      if (pv.ceiling !== undefined && !st.crafted) left.append(mk('div', `font-size:11.5px;color:${COLORS.dim}`, `Потолок вещи: ${tiers[pv.ceiling]?.id} ${tiers[pv.ceiling]?.name}`));
     } else {
       left.append(mk('div', `color:${COLORS.bad}`, pv.reason ?? 'Не собирается'));
     }
     for (const n of pv.bake?.notes ?? []) left.append(mk('div', `margin-top:6px;font-size:11.5px;color:${COLORS.gold}`, `⚠ ${n}`));
 
-    // Цена
-    if (pv.cost) {
+    if (pv.cost && anat) {
       const wallet = host.wallet();
       const costBox = mk('div', `margin-top:10px;border-top:1px solid ${COLORS.border};padding-top:8px`);
-      costBox.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-bottom:4px`, `Цена (форма ×${fx(pv.cost.mult, 2)})`));
-      for (const [id, n] of Object.entries(pv.cost.materials)) {
-        const have = wallet[id] ?? 0;
-        costBox.append(mk('div', `font-size:12px;color:${have >= n ? COLORS.text : COLORS.bad}`, `${matName(id)} — ${n}  (есть ${have})`));
+      costBox.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-bottom:4px`, `Цена: каждая деталь своим материалом (форма ×${fx(pv.cost.mult, 2)})`));
+      for (const l of pv.cost.lines) {
+        const need = pv.cost.materials[l.id] ?? 0;
+        const have = wallet[l.id] ?? 0;
+        costBox.append(mk('div', `font-size:12px;color:${have >= need ? COLORS.text : COLORS.bad}`, `${slotName(anat, l.slot, st.hands)}: ${matName(l.id)} — ${l.n}  (есть ${have})`));
       }
       costBox.append(mk('div', `font-size:12px;color:${host.gold() >= pv.cost.gold ? COLORS.gold : COLORS.bad}`, `Золото — ${pv.cost.gold}  (есть ${host.gold()})`));
       left.append(costBox);
     }
 
-    // Кнопки
     const btns = mk('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:10px');
     const doCraft = (): void => {
       const r = host.craft(input);
@@ -286,7 +335,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
         }, 'default', host.gold() < cost));
       }
       if (host.equip) btns.append(button('Надеть', () => { host.equip!(st.crafted!); st.message = 'Надето'; onAfter?.(); draw(); }));
-      btns.append(button('Новая заготовка', () => { st.crafted = null; st.message = ''; draw(); }));
+      btns.append(button('Новая заготовка', () => { reset(); draw(); }));
     }
     left.append(btns);
     if (st.message) left.append(mk('div', `margin-top:6px;font-size:12px;color:${st.message.startsWith('Не') ? COLORS.bad : COLORS.good}`, st.message));

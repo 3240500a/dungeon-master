@@ -24,6 +24,7 @@ import itemTiers from './data/item-tiers.json' with { type: 'json' };
 import craftMaterials from './data/craft-materials.json' with { type: 'json' };
 import weaponAnatomy from './data/weapon-anatomy.json' with { type: 'json' };
 import weaponParts from './data/weapon-parts.json' with { type: 'json' };
+import weaponTypes from './data/weapon-types.json' with { type: 'json' };
 import salvageRules from './data/salvage-rules.json' with { type: 'json' };
 import chests from './data/chests.json' with { type: 'json' };
 import armorClasses from './data/armor-classes.json' with { type: 'json' };
@@ -75,6 +76,7 @@ export const defaultConfigData: Record<string, unknown> = {
   'craft-materials': craftMaterials,
   'weapon-anatomy': weaponAnatomy,
   'weapon-parts': weaponParts,
+  'weapon-types': weaponTypes,
   'salvage-rules': salvageRules,
   chests,
   'armor-classes': armorClasses,

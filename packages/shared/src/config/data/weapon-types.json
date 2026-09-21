@@ -1,0 +1,2246 @@
+[
+  {
+    "id": "sword",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 1,
+        "key": "short",
+        "base": "short-sword"
+      },
+      {
+        "hands": 1,
+        "key": "roman",
+        "base": "gladius"
+      },
+      {
+        "hands": 1,
+        "key": "arming",
+        "base": "long-sword"
+      },
+      {
+        "hands": 2,
+        "key": "great",
+        "base": "greatsword"
+      },
+      {
+        "hands": 2,
+        "key": "huge",
+        "base": "claymore"
+      }
+    ],
+    "names": [
+      {
+        "id": "sw-zweihander",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.blade": [
+            "huge"
+          ],
+          "strike.ricasso": [
+            "yes"
+          ],
+          "bind.guard": [
+            "rings-hooks"
+          ]
+        },
+        "name": "Цвайхендер",
+        "gender": "m",
+        "subtitle": "двуручный меч XVI в.: клинок с рикассо, кольца и крюки",
+        "source": "Wikipedia: Zweihänder"
+      },
+      {
+        "id": "sw-flammenschwert",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.type": [
+            "wavy"
+          ],
+          "bind.guard": [
+            "rings-hooks"
+          ]
+        },
+        "name": "Фламменшверт",
+        "gender": "m",
+        "subtitle": "пламенеющий клинок — не «фламберг»",
+        "source": "Wikipedia: Flame-bladed sword"
+      },
+      {
+        "id": "sw-claymore",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "bind.guard": [
+            "claymore"
+          ],
+          "head.pommel": [
+            "wheel"
+          ]
+        },
+        "name": "Клеймор",
+        "gender": "m",
+        "subtitle": "claidheamh dà làimh, Шотландия, ок. 1400–1700",
+        "source": "Wikipedia: Claymore"
+      },
+      {
+        "id": "sw-great",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.blade": [
+            "great"
+          ],
+          "bind.guard": [
+            "long-straight"
+          ],
+          "head.pommel": [
+            "disc",
+            "wheel",
+            "faceted"
+          ]
+        },
+        "name": "Большой меч",
+        "gender": "m",
+        "subtitle": "grant espée: Окшотт XIIIa, семейство C",
+        "source": "Oakeshott 1964; Кирпичников 1966, тип VII"
+      },
+      {
+        "id": "sw-gladius",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.blade": [
+            "roman"
+          ],
+          "bind.guard": [
+            "shield"
+          ],
+          "head.pommel": [
+            "ball"
+          ]
+        },
+        "name": "Гладиус типа {strike.type}",
+        "gender": "m",
+        "subtitle": "римский пехотный меч",
+        "source": "Ulbert 1969; Miks 2007"
+      },
+      {
+        "id": "sw-messer",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.edge": [
+            "single"
+          ],
+          "grip.build": [
+            "knife"
+          ],
+          "bind.guard": [
+            "nagel"
+          ]
+        },
+        "name": "Мессер",
+        "gender": "m",
+        "subtitle": "однолезвийный «большой нож» на накладках, с нагелем",
+        "source": "Элмсли 2015, конструкция M"
+      },
+      {
+        "id": "sw-falchion",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "falchion"
+          ]
+        },
+        "name": "Фальшион",
+        "gender": "m",
+        "subtitle": "однолезвийный клинок, расширенный к концу",
+        "source": "Элмсли 2015"
+      },
+      {
+        "id": "sw-sabre",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "sabre"
+          ]
+        },
+        "name": "Сабля",
+        "gender": "f",
+        "subtitle": "ранняя слабоизогнутая",
+        "source": "Кирпичников 1966 (сабли X–XIII вв.)"
+      },
+      {
+        "id": "sw-carolingian",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "X"
+          ],
+          "grip.hold": [
+            "cramped",
+            "one"
+          ],
+          "bind.guard": [
+            "short-cross"
+          ],
+          "head.pommel": [
+            "lobed",
+            "triangular"
+          ]
+        },
+        "name": "Каролингский меч",
+        "gender": "m",
+        "subtitle": "меч эпохи викингов, IX–X вв.",
+        "source": "Petersen 1919; Кирпичников 1966"
+      },
+      {
+        "id": "sw-romanesque",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.blade": [
+            "arming"
+          ],
+          "strike.type": [
+            "X",
+            "XI",
+            "XII",
+            "XIII"
+          ],
+          "bind.guard": [
+            "long-straight"
+          ],
+          "head.pommel": [
+            "brazil-nut",
+            "disc"
+          ]
+        },
+        "name": "Романский меч",
+        "gender": "m",
+        "subtitle": "рыцарский меч XI–XIII вв.",
+        "source": "Окшотт, навершия A и G; Кирпичников 1966, тип VI"
+      },
+      {
+        "id": "sw-short-knightly",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "XIV"
+          ],
+          "bind.guard": [
+            "curved"
+          ],
+          "head.pommel": [
+            "wheel"
+          ]
+        },
+        "name": "Короткий рыцарский меч",
+        "gender": "m",
+        "subtitle": "Окшотт XIV, семейство B",
+        "source": "Oakeshott 1964"
+      },
+      {
+        "id": "sw-bastard",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "grip.hold": [
+            "hand-half",
+            "long"
+          ],
+          "strike.type": [
+            "XV",
+            "XVIII"
+          ],
+          "bind.guard": [
+            "curved",
+            "figured"
+          ],
+          "head.pommel": [
+            "pear",
+            "fishtail"
+          ]
+        },
+        "name": "Меч-бастард",
+        "gender": "m",
+        "subtitle": "полуторный меч: рукоять под полторы руки",
+        "source": "Окшотт XV, XVIIIb; навершия T, V"
+      }
+    ],
+    "fallback": {
+      "template": "{strike.type.adj} {noun} {head.pommel.epoch}",
+      "subtitle": "вольная сборка: исторического имени у такого сочетания нет",
+      "noun": [
+        {
+          "when": {
+            "hands": [
+              "2"
+            ]
+          },
+          "text": "двуручный меч",
+          "gender": "m"
+        },
+        {
+          "when": {
+            "strike.blade": [
+              "roman"
+            ]
+          },
+          "text": "гладиус",
+          "gender": "m"
+        },
+        {
+          "when": {
+            "grip.hold": [
+              "hand-half",
+              "long"
+            ]
+          },
+          "text": "полуторный меч",
+          "gender": "m"
+        },
+        {
+          "when": {},
+          "text": "меч",
+          "gender": "m"
+        }
+      ]
+    },
+    "formula": {
+      "title": "Окшотт",
+      "refs": [
+        "strike.type",
+        "bind.guard",
+        "head.pommel"
+      ]
+    }
+  },
+  {
+    "id": "dagger",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 1,
+        "key": "rhomb",
+        "base": "dagger"
+      },
+      {
+        "hands": 1,
+        "key": "faceted",
+        "base": "stiletto"
+      },
+      {
+        "hands": 1,
+        "key": "long-narrow",
+        "base": "assassin-blade"
+      },
+      {
+        "hands": 1,
+        "key": "wavy",
+        "base": "kris"
+      },
+      {
+        "hands": 1,
+        "key": "single",
+        "base": "cleaver"
+      }
+    ],
+    "names": [
+      {
+        "id": "dg-kris",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "wavy"
+          ],
+          "bind.guard": [
+            "ganja"
+          ],
+          "head.pommel": [
+            "hulu"
+          ]
+        },
+        "name": "Крис",
+        "gender": "m",
+        "subtitle": "волнистый клинок, ганджа и хулу",
+        "source": "Harsrinuksmo 2008; Wikipedia: Kris"
+      },
+      {
+        "id": "dg-flaming-dagger",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "wavy"
+          ],
+          "bind.guard": [
+            "ring"
+          ]
+        },
+        "name": "Пламенеющая дага",
+        "gender": "f",
+        "subtitle": "дага с волнистыми кромками",
+        "source": "Dean 1929"
+      },
+      {
+        "id": "dg-rondel",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "long-narrow",
+            "rhomb"
+          ],
+          "bind.guard": [
+            "disc"
+          ],
+          "head.pommel": [
+            "disc"
+          ]
+        },
+        "name": "Рондель",
+        "gender": "m",
+        "subtitle": "кинжал с дисками на обоих концах рукояти, XV в.",
+        "source": "Dean 1929; Wikipedia: Rondel dagger"
+      },
+      {
+        "id": "dg-stiletto-rondel",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "faceted"
+          ],
+          "bind.guard": [
+            "disc"
+          ],
+          "head.pommel": [
+            "disc"
+          ]
+        },
+        "name": "Стилет-рондель",
+        "gender": "m",
+        "subtitle": "гранёный клинок на эфесе ронделя",
+        "source": "Dean 1929 (правило «база-прозвание»)"
+      },
+      {
+        "id": "dg-dirk",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "single"
+          ],
+          "bind.guard": [
+            "kidney"
+          ],
+          "head.pommel": [
+            "washer"
+          ]
+        },
+        "name": "Дирк",
+        "gender": "m",
+        "subtitle": "однолезвийный кинжал с «почками»",
+        "source": "Dean 1929"
+      },
+      {
+        "id": "dg-ballock",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "rhomb"
+          ],
+          "bind.guard": [
+            "kidney"
+          ],
+          "head.pommel": [
+            "washer"
+          ]
+        },
+        "name": "Баллок",
+        "gender": "m",
+        "subtitle": "«kidney dagger» — викторианский эвфемизм",
+        "source": "Dean 1929"
+      },
+      {
+        "id": "dg-baselard",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "rhomb"
+          ],
+          "bind.guard": [
+            "bar"
+          ],
+          "head.pommel": [
+            "crescent"
+          ]
+        },
+        "name": "Базелард",
+        "gender": "m",
+        "subtitle": "эфес в форме буквы H; вероятно, от Базеля",
+        "source": "Dean 1929; Wikipedia: Baselard"
+      },
+      {
+        "id": "dg-ear",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "rhomb"
+          ],
+          "head.pommel": [
+            "ears"
+          ]
+        },
+        "name": "Ушастый кинжал",
+        "gender": "m",
+        "subtitle": "оголовок из двух расходящихся дисков",
+        "source": "Dean 1929"
+      },
+      {
+        "id": "dg-parry",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "rhomb"
+          ],
+          "bind.guard": [
+            "ring"
+          ]
+        },
+        "name": "Дага",
+        "gender": "f",
+        "subtitle": "кинжал левой руки для парирования",
+        "source": "Dean 1929; Wikipedia: Parrying dagger"
+      },
+      {
+        "id": "dg-bauernwehr",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "single"
+          ],
+          "bind.guard": [
+            "nagel"
+          ]
+        },
+        "name": "Баурнвер",
+        "gender": "m",
+        "subtitle": "крестьянский нож с нагелем",
+        "source": "Элмсли 2015 (K); Wikipedia: Messer"
+      },
+      {
+        "id": "dg-scramasax",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "single"
+          ],
+          "bind.guard": [
+            "none"
+          ]
+        },
+        "name": "Скрамасакс",
+        "gender": "m",
+        "subtitle": "боевой нож без гарды, до 50 см",
+        "source": "Кирпичников 1966; Schmitt 2006"
+      },
+      {
+        "id": "dg-stiletto",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "faceted"
+          ],
+          "bind.guard": [
+            "cross"
+          ]
+        },
+        "name": "Стилет",
+        "gender": "m",
+        "subtitle": "гранёный клинок с крестовиной",
+        "source": "Dean 1929"
+      },
+      {
+        "id": "dg-quillon",
+        "enabled": true,
+        "when": {
+          "strike.family": [
+            "rhomb"
+          ],
+          "bind.guard": [
+            "cross"
+          ],
+          "head.pommel": [
+            "sword"
+          ]
+        },
+        "name": "Рыцарский кинжал",
+        "gender": "m",
+        "subtitle": "quillon dagger: крестовина и мечевое навершие — эфес повторяет меч",
+        "source": "Dean 1929"
+      }
+    ],
+    "fallback": {
+      "template": "{base} {bind.guard.with}",
+      "subtitle": "вольная сборка: прозвание даёт эфес, а такого эфеса у этого клинка в источниках нет",
+      "noun": []
+    },
+    "formula": {
+      "title": "Dean 1929",
+      "refs": [
+        "strike.family",
+        "bind.guard",
+        "head.pommel"
+      ]
+    }
+  },
+  {
+    "id": "axe",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 1,
+        "key": "narrow",
+        "base": "hand-axe"
+      },
+      {
+        "hands": 1,
+        "key": "bearded",
+        "base": "war-axe"
+      },
+      {
+        "hands": 1,
+        "key": "broad",
+        "base": "broad-axe"
+      },
+      {
+        "hands": 2,
+        "key": "broad-thin",
+        "base": "battle-axe"
+      },
+      {
+        "hands": 2,
+        "key": "crescent",
+        "base": "executioner-axe"
+      }
+    ],
+    "names": [
+      {
+        "id": "ax-chekan-ia",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "narrow"
+          ],
+          "strike.form": [
+            "notched"
+          ],
+          "head.butt": [
+            "hammer"
+          ]
+        },
+        "name": "Чекан, тип IА",
+        "gender": "m",
+        "subtitle": "узкое полотно с выемкой и молоточек на обухе",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-chekan-i",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "narrow"
+          ],
+          "head.butt": [
+            "hammer"
+          ]
+        },
+        "name": "Чекан, тип I",
+        "gender": "m",
+        "subtitle": "узкое полотно и обух-молоточек",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-chekan-ii",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "narrow"
+          ],
+          "head.butt": [
+            "plate"
+          ]
+        },
+        "name": "Чекан, тип II",
+        "gender": "m",
+        "subtitle": "пластина на обухе всегда тупая — это не «двусечный»",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-iii",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "narrow"
+          ],
+          "bind.lugs": [
+            "cape"
+          ],
+          "head.butt": [
+            "notched"
+          ]
+        },
+        "name": "Боевой топорик, тип III",
+        "gender": "m",
+        "subtitle": "мысовидные щекавицы и вырезной обух",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-viiia",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "narrow"
+          ],
+          "bind.lugs": [
+            "none"
+          ],
+          "head.butt": [
+            "long"
+          ]
+        },
+        "name": "Топорик, тип VIIIА",
+        "gender": "m",
+        "subtitle": "без щекавиц, с длинным затыльником",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-iv",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "bearded"
+          ],
+          "bind.lugs": [
+            "two-pairs"
+          ],
+          "head.butt": [
+            "notched"
+          ]
+        },
+        "name": "Бородовидный топор, тип IV",
+        "gender": "m",
+        "subtitle": "две пары щекавиц, вырезной обух",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-va",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "bearded"
+          ],
+          "bind.lugs": [
+            "tube"
+          ]
+        },
+        "name": "Бородовидный топор, тип VА",
+        "gender": "m",
+        "subtitle": "трубчатая проушина",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-v",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "bearded"
+          ],
+          "strike.form": [
+            "hanging-beard"
+          ],
+          "bind.lugs": [
+            "lower"
+          ]
+        },
+        "name": "Бородовидный топор, тип V",
+        "gender": "m",
+        "subtitle": "висячая борода, нижние щекавицы (≈ Петерсен C)",
+        "source": "Кирпичников 1966; Petersen 1919"
+      },
+      {
+        "id": "ax-vi",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "bearded"
+          ],
+          "bind.lugs": [
+            "two-pairs"
+          ],
+          "head.butt": [
+            "plain"
+          ]
+        },
+        "name": "Бородовидный топор, тип VI",
+        "gender": "m",
+        "subtitle": "две пары щекавиц, простой обух",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "ax-short-beard",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "bearded"
+          ],
+          "strike.form": [
+            "short-beard"
+          ]
+        },
+        "name": "Топор с короткой бородкой",
+        "gender": "m",
+        "subtitle": "Петерсен E",
+        "source": "Petersen 1919"
+      },
+      {
+        "id": "ax-vii",
+        "enabled": true,
+        "when": {
+          "strike.blade": [
+            "broad"
+          ]
+        },
+        "name": "Широкий топор, тип VII",
+        "gender": "m",
+        "subtitle": "широкое симметричное полотно (≈ Петерсен L)",
+        "source": "Кирпичников 1966; Petersen 1919"
+      },
+      {
+        "id": "ax-dane",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.blade": [
+            "broad-thin"
+          ]
+        },
+        "name": "Датская секира",
+        "gender": "f",
+        "subtitle": "Петерсен M; Уилер VI",
+        "source": "Petersen 1919; Wheeler 1927"
+      },
+      {
+        "id": "ax-executioner",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.blade": [
+            "crescent"
+          ]
+        },
+        "name": "Секира палача",
+        "gender": "f",
+        "subtitle": "орудие казни, а не боевое",
+        "fantasy": true
+      },
+      {
+        "id": "ax-sekira-chekan",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "head.butt": [
+            "hammer"
+          ]
+        },
+        "name": "Секира-чекан",
+        "gender": "f",
+        "subtitle": "полотно и молоточек, XIV–XV вв.",
+        "source": "Кирпичников 1976"
+      }
+    ],
+    "fallback": {
+      "template": "{strike.form.adj} {base} {head.butt.with}",
+      "subtitle": "вольная сборка: номера типа у такого сочетания нет",
+      "noun": []
+    },
+    "formula": {
+      "title": "Кирпичников 1966",
+      "refs": [
+        "strike.form",
+        "bind.lugs",
+        "head.butt"
+      ]
+    }
+  },
+  {
+    "id": "mace",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 1,
+        "key": "wood",
+        "base": "club"
+      },
+      {
+        "hands": 1,
+        "key": "metal",
+        "base": "mace"
+      },
+      {
+        "hands": 1,
+        "key": "spiked",
+        "base": "morningstar"
+      },
+      {
+        "hands": 2,
+        "key": "hammer-beak",
+        "base": "war-hammer"
+      },
+      {
+        "hands": 2,
+        "key": "crude",
+        "base": "maul"
+      }
+    ],
+    "names": [
+      {
+        "id": "mc-club-butt",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "club-butt"
+          ]
+        },
+        "name": "Комлевая дубина",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "дубина из комля с корнем"
+      },
+      {
+        "id": "mc-burl",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "burl"
+          ]
+        },
+        "name": "Капо́вая палица",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "кап — нарост на стволе; часть типа V"
+      },
+      {
+        "id": "mc-cue",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "cue"
+          ]
+        },
+        "name": "Кий",
+        "gender": "m",
+        "subtitle": "булава · одноручная",
+        "source": "лёгкая палка с утолщением"
+      },
+      {
+        "id": "mc-sphere",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "sphere"
+          ]
+        },
+        "name": "Шаровая булава",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип V"
+      },
+      {
+        "id": "mc-cube",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "cube"
+          ]
+        },
+        "name": "Кубовидная булава",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип II — самая массовая (45 находок)"
+      },
+      {
+        "id": "mc-ribbed",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "ribbed"
+          ]
+        },
+        "name": "Ребристая булава",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип V"
+      },
+      {
+        "id": "mc-flanged",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "flanged"
+          ]
+        },
+        "name": "Шестопёр",
+        "gender": "m",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип VI; больше шести перьев — пернач"
+      },
+      {
+        "id": "mc-beak",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "beak"
+          ]
+        },
+        "name": "Булава-клевец",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип IIА"
+      },
+      {
+        "id": "mc-spikes12",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "spikes12"
+          ]
+        },
+        "name": "Двенадцатишипная булава",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип IV (26 находок)"
+      },
+      {
+        "id": "mc-spikes-peas",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "spikes-peas"
+          ]
+        },
+        "name": "Булава с «горошками»",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип III"
+      },
+      {
+        "id": "mc-spikes4",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "spikes4"
+          ]
+        },
+        "name": "Четырёхшипная булава",
+        "gender": "f",
+        "subtitle": "булава · одноручная",
+        "source": "Кирпичников 1966, вып. 2, тип I"
+      },
+      {
+        "id": "mc-lucerne",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "lucerne"
+          ]
+        },
+        "name": "Люцернский молот",
+        "gender": "m",
+        "subtitle": "древковое · двуручное",
+        "source": "Met Museum; Wikipedia: Lucerne hammer"
+      },
+      {
+        "id": "mc-crow",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "crow"
+          ]
+        },
+        "name": "Вороний клюв",
+        "gender": "m",
+        "subtitle": "древковое · двуручное",
+        "source": "bec de corbin — Wikipedia: Bec de corbin"
+      },
+      {
+        "id": "mc-falcon",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "falcon"
+          ]
+        },
+        "name": "Соколиный клюв",
+        "gender": "m",
+        "subtitle": "древковое · двуручное",
+        "source": "bec de faucon — облегчённый клюв"
+      },
+      {
+        "id": "mc-lead",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "lead"
+          ]
+        },
+        "name": "Свинцовый молот",
+        "gender": "m",
+        "subtitle": "древковое · двуручное",
+        "source": "восстание майотенов, Париж 1382"
+      },
+      {
+        "id": "mc-oslop",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "oslop"
+          ]
+        },
+        "name": "Ослоп",
+        "gender": "m",
+        "subtitle": "древковое · двуручное",
+        "source": "тяжёлая дубина с железом; летопись 1444 г."
+      },
+      {
+        "id": "mc-goedendag",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "goedendag"
+          ]
+        },
+        "name": "Гёдендаг",
+        "gender": "m",
+        "subtitle": "древковое · двуручное",
+        "source": "дубина с шипом; Кортрейк, 1302"
+      },
+      {
+        "id": "mc-sprinkler",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "sprinkler"
+          ]
+        },
+        "name": "Моргенштерн",
+        "gender": "m",
+        "subtitle": "древковое · двуручное",
+        "source": "«кропило»: шипастое било на древке — Royal Armouries"
+      }
+    ],
+    "fallback": {
+      "template": "{strike.form.name} {bind.mount.with}",
+      "subtitle": "",
+      "noun": []
+    },
+    "formula": {
+      "title": "Кирпичников 1966, вып. 2",
+      "refs": [
+        "strike.form",
+        "bind.mount",
+        "head.end"
+      ]
+    }
+  },
+  {
+    "id": "spear",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 1,
+        "key": "leaf",
+        "base": "short-spear"
+      },
+      {
+        "hands": 1,
+        "key": "broad",
+        "base": "short-spear"
+      },
+      {
+        "hands": 1,
+        "key": "faceted",
+        "base": "short-spear"
+      },
+      {
+        "hands": 1,
+        "key": "winged",
+        "base": "trident"
+      },
+      {
+        "hands": 2,
+        "key": "leaf",
+        "base": "spear"
+      },
+      {
+        "hands": 2,
+        "key": "broad",
+        "base": "lance"
+      },
+      {
+        "hands": 2,
+        "key": "faceted",
+        "base": "pike"
+      },
+      {
+        "hands": 2,
+        "key": "winged",
+        "base": "spear"
+      }
+    ],
+    "names": [
+      {
+        "id": "sp-ostroga",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.form": [
+            "two-spike"
+          ]
+        },
+        "name": "Острога",
+        "gender": "f",
+        "subtitle": "двушипный наконечник",
+        "source": "Кирпичников 1966, тип VII"
+      },
+      {
+        "id": "sp-winged",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "winged"
+          ]
+        },
+        "name": "Крылатое копьё",
+        "gender": "n",
+        "subtitle": "упоры-крылья под пером",
+        "source": "Flügellanze"
+      },
+      {
+        "id": "sp-trident",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.form": [
+            "trident"
+          ]
+        },
+        "name": "Трезубец",
+        "gender": "m",
+        "subtitle": "одноручного боевого трезубца в Европе нет",
+        "fantasy": true
+      },
+      {
+        "id": "sp-korseka",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.form": [
+            "trident"
+          ]
+        },
+        "name": "Корсека",
+        "gender": "f",
+        "subtitle": "древковое с тремя зубцами",
+        "source": "Уолдман 2005, гл. 15"
+      },
+      {
+        "id": "sp-twospike",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.form": [
+            "two-spike"
+          ]
+        },
+        "name": "Двушипное копьё",
+        "gender": "n",
+        "subtitle": "двушипный наконечник на длинном древке",
+        "source": "Кирпичников 1966, тип VII"
+      },
+      {
+        "id": "sp-sulica",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.group": [
+            "leaf",
+            "broad",
+            "faceted"
+          ]
+        },
+        "name": "{strike.form.adj} сулица",
+        "gender": "f",
+        "subtitle": "метательное копьё, древко 1,2–1,5 м",
+        "source": "Кирпичников 1966; Чубинский"
+      },
+      {
+        "id": "sp-rogatina-bar",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.form": [
+            "rogatina"
+          ],
+          "bind.mount": [
+            "crossbar"
+          ]
+        },
+        "name": "Рогатина с перекладиной",
+        "gender": "f",
+        "subtitle": "тяжёлое перо и упор против зверя",
+        "source": "Кирпичников 1966, тип IVА"
+      },
+      {
+        "id": "sp-rogatina",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.form": [
+            "rogatina"
+          ]
+        },
+        "name": "Рогатина",
+        "gender": "f",
+        "subtitle": "самое тяжёлое перо; ≈ boar spear",
+        "source": "Кирпичников 1966, тип IVА"
+      },
+      {
+        "id": "sp-long",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.group": [
+            "broad"
+          ]
+        },
+        "name": "{strike.form.adj} длинное копьё",
+        "gender": "n",
+        "subtitle": "широкое перо на длинном древке",
+        "source": "Кирпичников 1966"
+      },
+      {
+        "id": "sp-halfpike",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.group": [
+            "faceted"
+          ],
+          "grip.hold": [
+            "middle"
+          ]
+        },
+        "name": "Полупика",
+        "gender": "f",
+        "subtitle": "пика с хватом посередине",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "sp-pike",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.group": [
+            "faceted"
+          ]
+        },
+        "name": "{strike.form.adj} пика",
+        "gender": "f",
+        "subtitle": "гранёное перо, самое длинное древко",
+        "source": "Кирпичников 1966, тип V; Двуреченский"
+      },
+      {
+        "id": "sp-spear",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "strike.group": [
+            "leaf"
+          ]
+        },
+        "name": "{strike.form.adj} копьё",
+        "gender": "n",
+        "subtitle": "листовидное перо",
+        "source": "Кирпичников 1966"
+      }
+    ],
+    "fallback": {
+      "template": "{strike.form.adj} {base} {bind.mount.with}",
+      "subtitle": "",
+      "noun": []
+    },
+    "formula": {
+      "title": "Кирпичников 1966 (номера сверить)",
+      "refs": [
+        "strike.form",
+        "grip.hold",
+        "bind.mount"
+      ]
+    }
+  },
+  {
+    "id": "halberd",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 2,
+        "key": "glaive",
+        "base": "glaive"
+      },
+      {
+        "hands": 2,
+        "key": "halberd",
+        "base": "halberd"
+      },
+      {
+        "hands": 2,
+        "key": "partisan",
+        "base": "partisan"
+      },
+      {
+        "hands": 2,
+        "key": "bardiche",
+        "base": "bardiche"
+      },
+      {
+        "hands": 2,
+        "key": "poleaxe",
+        "base": "poleaxe"
+      }
+    ],
+    "names": [
+      {
+        "id": "hb-early-rings",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "early"
+          ],
+          "bind.mount": [
+            "rings"
+          ]
+        },
+        "name": "Ранняя алебарда на кольцах",
+        "gender": "f",
+        "subtitle": "Sichelbarte: полотно на двух кольцах",
+        "source": "ван Дейк 2020"
+      },
+      {
+        "id": "hb-vouge-langets",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "vouge"
+          ],
+          "bind.mount": [
+            "langets",
+            "rondel"
+          ]
+        },
+        "name": "Вуж",
+        "gender": "m",
+        "subtitle": "узкий однолезвийный клинок на втулке, ланцеты и рондель, Франция, XV в.",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-vouge",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "vouge"
+          ]
+        },
+        "name": "Вуж",
+        "gender": "m",
+        "subtitle": "узкий однолезвийный клинок на втулке",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-glaive",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "glaive"
+          ]
+        },
+        "name": "Глефа",
+        "gender": "f",
+        "subtitle": "клинок-нож на древке",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-bill",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "bill"
+          ]
+        },
+        "name": "Билл",
+        "gender": "m",
+        "subtitle": "клинок с крюком",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-late",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "late"
+          ]
+        },
+        "name": "Поздняя алебарда",
+        "gender": "f",
+        "subtitle": "малое лезвие, длинное жало",
+        "source": "Швейцарский нацмузей 2022"
+      },
+      {
+        "id": "hb-swiss",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "swiss"
+          ]
+        },
+        "name": "Швейцарская алебарда",
+        "gender": "f",
+        "subtitle": "топор, клюв и жало",
+        "source": "ван Дейк 2020"
+      },
+      {
+        "id": "hb-early",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "early"
+          ]
+        },
+        "name": "Ранняя алебарда",
+        "gender": "f",
+        "subtitle": "секач на древке",
+        "source": "ван Дейк 2020"
+      },
+      {
+        "id": "hb-spetum",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "spetum"
+          ]
+        },
+        "name": "Спетум",
+        "gender": "m",
+        "subtitle": "узкое жало и два отростка",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-partisan",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "partisan"
+          ]
+        },
+        "name": "Протазан",
+        "gender": "m",
+        "subtitle": "широкое колющее перо; исторически — копейное семейство",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-broad-partisan",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "broad-partisan"
+          ]
+        },
+        "name": "Широкий протазан",
+        "gender": "m",
+        "subtitle": "парадное широкое перо",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-bard1",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "bard1"
+          ]
+        },
+        "name": "Бердыш, тип 1",
+        "gender": "m",
+        "subtitle": "топоровидный",
+        "source": "Двуреченский 2008"
+      },
+      {
+        "id": "hb-bard2",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "bard2"
+          ]
+        },
+        "name": "Бердыш, тип 2",
+        "gender": "m",
+        "subtitle": "месяцевидный",
+        "source": "Двуреченский 2008"
+      },
+      {
+        "id": "hb-bard3",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "bard3"
+          ]
+        },
+        "name": "Бердыш, тип 3",
+        "gender": "m",
+        "subtitle": "двурогий",
+        "source": "Двуреченский 2008"
+      },
+      {
+        "id": "hb-poleaxe-beak",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "poleaxe-beak"
+          ]
+        },
+        "name": "Полэкс с клювом",
+        "gender": "m",
+        "subtitle": "топор и клюв на древке",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-poleaxe",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "poleaxe"
+          ]
+        },
+        "name": "Полэкс",
+        "gender": "m",
+        "subtitle": "топор и молот на древке, латы XV в.",
+        "source": "Уолдман 2005"
+      },
+      {
+        "id": "hb-poleaxe-heavy",
+        "enabled": true,
+        "when": {
+          "strike.form": [
+            "poleaxe-heavy"
+          ]
+        },
+        "name": "Тяжёлый полэкс",
+        "gender": "m",
+        "subtitle": "массивное полотно и молот",
+        "source": "Уолдман 2005"
+      }
+    ],
+    "fallback": {
+      "template": "{base} {bind.mount.with}",
+      "subtitle": "",
+      "noun": []
+    },
+    "formula": {
+      "title": "",
+      "refs": [
+        "strike.form",
+        "bind.mount"
+      ]
+    }
+  },
+  {
+    "id": "bow",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 2,
+        "key": "short-sigma",
+        "base": "short-bow"
+      },
+      {
+        "hands": 2,
+        "key": "self",
+        "base": "hunting-bow"
+      },
+      {
+        "hands": 2,
+        "key": "long-straight",
+        "base": "long-bow"
+      },
+      {
+        "hands": 2,
+        "key": "composite",
+        "base": "composite-bow"
+      },
+      {
+        "hands": 2,
+        "key": "long-reflex",
+        "base": "war-bow"
+      }
+    ],
+    "names": [
+      {
+        "id": "bw-scythian",
+        "enabled": true,
+        "when": {
+          "strike.limbs": [
+            "short-sigma"
+          ],
+          "head.tips": [
+            "flexible",
+            "working"
+          ]
+        },
+        "name": "Скифский лук",
+        "gender": "m",
+        "subtitle": "короткий сложный лук 60–80 см",
+        "source": "Черненко 1981"
+      },
+      {
+        "id": "bw-self",
+        "enabled": true,
+        "when": {
+          "strike.limbs": [
+            "self"
+          ],
+          "head.tips": [
+            "flexible"
+          ]
+        },
+        "name": "Простой лук",
+        "gender": "m",
+        "subtitle": "из цельной палки",
+        "source": "Анучин; хольмегорский тип"
+      },
+      {
+        "id": "bw-english",
+        "enabled": true,
+        "when": {
+          "strike.limbs": [
+            "long-straight"
+          ],
+          "head.tips": [
+            "horn-nocks"
+          ]
+        },
+        "name": "Длинный лук",
+        "gender": "m",
+        "subtitle": "английский: тис, роговые ноки",
+        "source": "Mary Rose; Strickland & Hardy 2005"
+      },
+      {
+        "id": "bw-composite",
+        "enabled": true,
+        "when": {
+          "strike.limbs": [
+            "composite"
+          ],
+          "head.tips": [
+            "siyah"
+          ]
+        },
+        "name": "Сложный лук",
+        "gender": "m",
+        "subtitle": "рог, жила и дерево, жёсткие концы-сияхи",
+        "source": "Кирпичников 1971"
+      },
+      {
+        "id": "bw-manchu",
+        "enabled": true,
+        "when": {
+          "strike.limbs": [
+            "long-reflex"
+          ],
+          "head.tips": [
+            "big-siyah"
+          ]
+        },
+        "name": "Маньчжурский лук",
+        "gender": "m",
+        "subtitle": "около 196 см, большие сияхи",
+        "source": "Wikipedia: Manchu bow"
+      },
+      {
+        "id": "bw-hunnic",
+        "enabled": true,
+        "when": {
+          "strike.limbs": [
+            "long-reflex"
+          ],
+          "head.tips": [
+            "siyah"
+          ],
+          "head.plates": [
+            "seven"
+          ]
+        },
+        "name": "Гуннский лук",
+        "gender": "m",
+        "subtitle": "семь роговых накладок, тип Кум-Дарья",
+        "source": "Coulston 1985"
+      }
+    ],
+    "fallback": {
+      "template": "{strike.limbs.adj} лук {head.tips.with}",
+      "subtitle": "вольная сборка: материал рогов — приставка, тип задаёт форма",
+      "noun": []
+    },
+    "formula": {
+      "title": "",
+      "refs": [
+        "strike.limbs",
+        "head.tips",
+        "head.plates"
+      ]
+    }
+  },
+  {
+    "id": "crossbow",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 1,
+        "key": "pistol",
+        "base": "hand-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "narrow-stirrup",
+        "base": "light-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "wide-stirrup",
+        "base": "crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "cranequin-pin",
+        "base": "heavy-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "windlass-long",
+        "base": "arbalest"
+      }
+    ],
+    "names": [
+      {
+        "id": "cb-balestrino",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "pistol"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Балестрино",
+        "gender": "n",
+        "subtitle": "малый арбалет XVI–XVIII вв.",
+        "source": "Payne-Gallwey 1903"
+      },
+      {
+        "id": "cb-one-foot",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "narrow-stirrup"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Арбалет «в одну ногу»",
+        "gender": "m",
+        "subtitle": "arbalista ad unum pedem; у древнерусских — «самострел»",
+        "source": "Кирпичников 1971"
+      },
+      {
+        "id": "cb-belt-hook",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "wide-stirrup"
+          ],
+          "head.span": [
+            "belt-hook"
+          ]
+        },
+        "name": "Арбалет с поясным крюком",
+        "gender": "m",
+        "subtitle": "крюк из Изяславля — древнейший в Европе",
+        "source": "Кирпичников 1971"
+      },
+      {
+        "id": "cb-goats-foot",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "wide-stirrup"
+          ],
+          "head.span": [
+            "goats-foot"
+          ]
+        },
+        "name": "Арбалет с козьей ногой",
+        "gender": "m",
+        "subtitle": "рычаг-«козья нога», с середины XIV в.",
+        "source": "Payne-Gallwey 1903"
+      },
+      {
+        "id": "cb-cranequin",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "cranequin-pin"
+          ],
+          "head.span": [
+            "cranequin"
+          ]
+        },
+        "name": "Кранекинный арбалет",
+        "gender": "m",
+        "subtitle": "реечный взвод; медленнее ворота — 35 с против 12",
+        "source": "Payne-Gallwey 1903"
+      },
+      {
+        "id": "cb-windlass",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "windlass-long"
+          ],
+          "head.span": [
+            "windlass"
+          ]
+        },
+        "name": "Воротовый арбалет",
+        "gender": "m",
+        "subtitle": "à moulinet, XV в.; крепостной «à tour»",
+        "source": "Payne-Gallwey 1903"
+      }
+    ],
+    "fallback": {
+      "template": "{base} {head.span.with}",
+      "subtitle": "вольная сборка: такого сочетания ложа и взвода в источниках нет",
+      "noun": []
+    },
+    "formula": {
+      "title": "",
+      "refs": [
+        "grip.stock",
+        "bind.lock",
+        "head.span"
+      ]
+    }
+  },
+  {
+    "id": "wand",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 1,
+        "key": "hazel",
+        "base": "storm-wand"
+      },
+      {
+        "hands": 1,
+        "key": "thorn",
+        "base": "frost-wand"
+      },
+      {
+        "hands": 1,
+        "key": "yew",
+        "base": "venom-wand"
+      },
+      {
+        "hands": 1,
+        "key": "pitch",
+        "base": "apprentice-wand"
+      },
+      {
+        "hands": 1,
+        "key": "ebony",
+        "base": "archmage-wand"
+      }
+    ],
+    "names": [
+      {
+        "id": "wd-thunder",
+        "enabled": true,
+        "when": {
+          "grip.wood": [
+            "hazel"
+          ],
+          "strike.silhouette": [
+            "fork"
+          ],
+          "head.heel": [
+            "cap"
+          ]
+        },
+        "name": "Громовой жезл",
+        "gender": "m",
+        "subtitle": "Verge foudroyante: развилка из дикой лещины",
+        "source": "Большой гримуар, XVIII в."
+      },
+      {
+        "id": "wd-sceptre",
+        "enabled": true,
+        "when": {
+          "grip.wood": [
+            "ebony"
+          ],
+          "strike.silhouette": [
+            "orb",
+            "hand"
+          ]
+        },
+        "name": "Скипетр",
+        "gender": "m",
+        "subtitle": "держава или «длань правосудия»",
+        "source": "регалии"
+      },
+      {
+        "id": "wd-fang",
+        "enabled": true,
+        "when": {
+          "grip.wood": [
+            "yew"
+          ],
+          "strike.silhouette": [
+            "fang"
+          ]
+        },
+        "name": "Клык-оберег",
+        "gender": "m",
+        "subtitle": "апотропейный «жезл» Среднего царства — защита, а не яд",
+        "source": "египетские «магические жезлы»"
+      },
+      {
+        "id": "wd-prism",
+        "enabled": true,
+        "when": {
+          "strike.silhouette": [
+            "prism"
+          ]
+        },
+        "name": "Жезл с призмой",
+        "gender": "m",
+        "subtitle": "жезл мага по Элифасу Леви",
+        "source": "Элифас Леви, XIX в."
+      }
+    ],
+    "fallback": {
+      "template": "{base}",
+      "subtitle": "навершие — {strike.silhouette.name}, ствол — {grip.wood.name}",
+      "noun": []
+    },
+    "formula": {
+      "title": "",
+      "refs": [
+        "grip.wood",
+        "strike.silhouette",
+        "bind.mount"
+      ]
+    }
+  },
+  {
+    "id": "staff",
+    "enabled": true,
+    "bases": [
+      {
+        "hands": 2,
+        "key": "hazel",
+        "base": "storm-staff"
+      },
+      {
+        "hands": 2,
+        "key": "thorn",
+        "base": "frost-staff"
+      },
+      {
+        "hands": 2,
+        "key": "yew",
+        "base": "blight-staff"
+      },
+      {
+        "hands": 2,
+        "key": "pitch",
+        "base": "flame-staff"
+      },
+      {
+        "hands": 2,
+        "key": "ebony",
+        "base": "archmage-staff"
+      }
+    ],
+    "names": [
+      {
+        "id": "st-archbishop",
+        "enabled": true,
+        "when": {
+          "grip.wood": [
+            "ebony"
+          ],
+          "strike.silhouette": [
+            "orb"
+          ],
+          "bind.mount": [
+            "apples"
+          ]
+        },
+        "name": "Архиерейский посох",
+        "gender": "m",
+        "subtitle": "держава на «яблоке», «яблоки» на древке",
+        "source": "Catholic Encyclopedia 1908"
+      },
+      {
+        "id": "st-tau",
+        "enabled": true,
+        "when": {
+          "grip.wood": [
+            "yew"
+          ],
+          "strike.silhouette": [
+            "tau"
+          ]
+        },
+        "name": "Тау-посох",
+        "gender": "m",
+        "subtitle": "эмблема антонитов; «антонов огонь» — отравление спорыньёй",
+        "source": "Catholic Encyclopedia 1908"
+      },
+      {
+        "id": "st-lituus",
+        "enabled": true,
+        "when": {
+          "grip.wood": [
+            "hazel"
+          ],
+          "strike.silhouette": [
+            "crook"
+          ]
+        },
+        "name": "Литуус",
+        "gender": "m",
+        "subtitle": "«посох без сучков, загнутый»",
+        "source": "Ливий I.18"
+      },
+      {
+        "id": "st-serpents",
+        "enabled": true,
+        "when": {
+          "strike.silhouette": [
+            "serpents"
+          ]
+        },
+        "name": "Посох-двузмий",
+        "gender": "m",
+        "subtitle": "медный змий Моисея; на Руси — с середины XVII в.",
+        "source": "Catholic Encyclopedia 1908"
+      },
+      {
+        "id": "st-cage",
+        "enabled": true,
+        "when": {
+          "grip.wood": [
+            "pitch"
+          ],
+          "bind.mount": [
+            "cage"
+          ]
+        },
+        "name": "Посох с клеткой",
+        "gender": "m",
+        "subtitle": "по мотивам железного посоха Petersen 227",
+        "source": "Petersen 1951"
+      }
+    ],
+    "fallback": {
+      "template": "{base}",
+      "subtitle": "{strike.silhouette.name} · {grip.wood.name}",
+      "noun": []
+    },
+    "formula": {
+      "title": "",
+      "refs": [
+        "grip.wood",
+        "strike.silhouette",
+        "bind.mount"
+      ]
+    }
+  }
+]

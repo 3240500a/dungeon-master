@@ -211,11 +211,16 @@ export interface Item extends WeaponSignature {
   /** id материала из конфига `craft-materials` — только у `kind:'material'`. */
   materialId?: string;
   /**
-   * ДЕТАЛИ СКОВАННОЙ ВЕЩИ (docs/CRAFT_WEAPONS.md): четыре варианта из `weapon-parts` и ступень
-   * материала. Только ИД — значения выводятся из конфига. У найденной вещи поля нет: её детали
-   * выводятся детерминированно (`partsOf`), так что старые сейвы читаются без миграции.
+   * ДЕТАЛИ СКОВАННОЙ ВЕЩИ (docs/CRAFT_WEAPONS.md): четыре варианта из `weapon-parts`, у каждого —
+   * своя ступень материала. Только ИД — значения выводятся из конфига. У найденной вещи поля нет:
+   * её детали выводятся детерминированно (`partsOf`), так что старые сейвы читаются без миграции.
    */
   parts?: CraftParts;
+  /**
+   * ИСТОРИЧЕСКИЙ ТИП скованной вещи — id правила из `weapon-types.names` на момент ковки
+   * («Каролингский меч»). Нет поля — имя собрано фолбэком или вещь найдена. Статов не несёт.
+   */
+  typeId?: string;
   /**
    * ЁМКОСТЬ АФФИКСОВ, объявленная при ковке: сколько префиксов и суффиксов вещь примет при
    * зачаровании. ⚠ Обязана лежать НА ПРЕДМЕТЕ: иначе перекатка пересчитала бы слоты по редкости
@@ -224,11 +229,16 @@ export interface Item extends WeaponSignature {
   affixCap?: { prefix: number; suffix: number };
 }
 
-/** Четыре гнезда скованной вещи + ступень материала (1..5), из которого она сделана. */
-export interface CraftParts {
-  strike: string;
-  grip: string;
-  bind: string;
-  head: string;
+/** Деталь скованной вещи: вариант из `weapon-parts` и ступень материала (1..5), из которого она сделана. */
+export interface CraftPartPick {
+  id: string;
   step: number;
+}
+
+/** Четыре гнезда скованной вещи. Ступень ВЕЩИ выводится из ступеней деталей (`tierOfSteps`). */
+export interface CraftParts {
+  strike: CraftPartPick;
+  grip: CraftPartPick;
+  bind: CraftPartPick;
+  head: CraftPartPick;
 }

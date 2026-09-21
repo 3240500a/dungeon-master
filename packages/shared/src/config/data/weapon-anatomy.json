@@ -3,210 +3,1860 @@
     "id": "sword",
     "enabled": true,
     "name": "Меч",
+    "keySlot": "strike",
     "strike": {
       "name": "Клинок",
-      "family": "iron"
+      "family": "iron",
+      "tags": [
+        {
+          "key": "blade",
+          "name": "Класс клинка",
+          "role": "key",
+          "values": [
+            {
+              "id": "short",
+              "name": "короткий"
+            },
+            {
+              "id": "roman",
+              "name": "римский"
+            },
+            {
+              "id": "arming",
+              "name": "рыцарский"
+            },
+            {
+              "id": "great",
+              "name": "двуручный"
+            },
+            {
+              "id": "huge",
+              "name": "огромный"
+            }
+          ]
+        },
+        {
+          "key": "type",
+          "name": "Тип клинка",
+          "role": "name",
+          "label": "клинок",
+          "values": [
+            {
+              "id": "XXII",
+              "name": "XXII",
+              "code": "XXII",
+              "adj": "широкий короткий"
+            },
+            {
+              "id": "XIIIb",
+              "name": "XIIIb",
+              "code": "XIIIb",
+              "adj": "короткий"
+            },
+            {
+              "id": "XIV",
+              "name": "XIV",
+              "code": "XIV",
+              "adj": "короткий"
+            },
+            {
+              "id": "hisp",
+              "name": "Хиспаниенсис",
+              "code": "Hispaniensis",
+              "adj": "испанский"
+            },
+            {
+              "id": "mainz",
+              "name": "Майнц",
+              "code": "Майнц"
+            },
+            {
+              "id": "fulham",
+              "name": "Майнц, вариант Фулхэм",
+              "code": "Фулхэм"
+            },
+            {
+              "id": "pompeii",
+              "name": "Помпеи",
+              "code": "Помпеи",
+              "adj": "узкий"
+            },
+            {
+              "id": "X",
+              "name": "X",
+              "code": "X",
+              "adj": "широкий"
+            },
+            {
+              "id": "XI",
+              "name": "XI",
+              "code": "XI",
+              "adj": "узкий"
+            },
+            {
+              "id": "XII",
+              "name": "XII",
+              "code": "XII"
+            },
+            {
+              "id": "XIII",
+              "name": "XIII",
+              "code": "XIII",
+              "adj": "широкий"
+            },
+            {
+              "id": "XV",
+              "name": "XV",
+              "code": "XV",
+              "adj": "гранёный"
+            },
+            {
+              "id": "XVI",
+              "name": "XVI",
+              "code": "XVI"
+            },
+            {
+              "id": "XVIII",
+              "name": "XVIII",
+              "code": "XVIII"
+            },
+            {
+              "id": "XIX",
+              "name": "XIX",
+              "code": "XIX"
+            },
+            {
+              "id": "falchion",
+              "name": "фальшион",
+              "code": "фальшион"
+            },
+            {
+              "id": "sabre",
+              "name": "саблевидный",
+              "code": "саблевидный"
+            },
+            {
+              "id": "XIIIa",
+              "name": "XIIIa",
+              "code": "XIIIa",
+              "adj": "широкий"
+            },
+            {
+              "id": "XX",
+              "name": "XX",
+              "code": "XX"
+            },
+            {
+              "id": "XIIa",
+              "name": "XIIa",
+              "code": "XIIa"
+            },
+            {
+              "id": "XVII",
+              "name": "XVII",
+              "code": "XVII",
+              "adj": "гранёный"
+            },
+            {
+              "id": "XVa",
+              "name": "XVa",
+              "code": "XVa",
+              "adj": "узкий"
+            },
+            {
+              "id": "wide-ricasso",
+              "name": "широкий с рикассо",
+              "code": "широкий с рикассо",
+              "adj": "широкий"
+            },
+            {
+              "id": "straight",
+              "name": "прямой",
+              "code": "прямой",
+              "adj": "прямой"
+            },
+            {
+              "id": "wavy",
+              "name": "волнистый",
+              "code": "волнистый",
+              "adj": "волнистый"
+            },
+            {
+              "id": "narrow-ricasso",
+              "name": "узкий с рикассо",
+              "code": "XVIIIe",
+              "adj": "узкий"
+            }
+          ]
+        },
+        {
+          "key": "edge",
+          "name": "Лезвие",
+          "role": "name",
+          "default": "double",
+          "values": [
+            {
+              "id": "double",
+              "name": "двулезвийный"
+            },
+            {
+              "id": "single",
+              "name": "однолезвийный"
+            }
+          ]
+        },
+        {
+          "key": "ricasso",
+          "name": "Рикассо",
+          "role": "name",
+          "default": "no",
+          "values": [
+            {
+              "id": "no",
+              "name": "нет"
+            },
+            {
+              "id": "yes",
+              "name": "есть"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Рукоять",
-      "family": "hide"
+      "family": "hide",
+      "tags": [
+        {
+          "key": "hold",
+          "name": "Хват",
+          "role": "hold",
+          "label": "рукоять",
+          "values": [
+            {
+              "id": "cramped",
+              "name": "тесная"
+            },
+            {
+              "id": "short",
+              "name": "короткая"
+            },
+            {
+              "id": "one",
+              "name": "обычная"
+            },
+            {
+              "id": "hand-half",
+              "name": "полуторная"
+            },
+            {
+              "id": "long",
+              "name": "длинная"
+            },
+            {
+              "id": "two",
+              "name": "двуручная"
+            },
+            {
+              "id": "two-long",
+              "name": "длинная двуручная"
+            }
+          ]
+        },
+        {
+          "key": "build",
+          "name": "Устройство",
+          "role": "name",
+          "label": "конструкция",
+          "default": "tang",
+          "values": [
+            {
+              "id": "tang",
+              "name": "на хвостовике",
+              "code": "F"
+            },
+            {
+              "id": "knife",
+              "name": "ножевая на накладках",
+              "code": "M"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
       "name": "Гарда",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "guard",
+          "name": "Стиль крестовины",
+          "role": "name",
+          "label": "перекрестье",
+          "values": [
+            {
+              "id": "short-cross",
+              "name": "короткое перекрестье",
+              "code": "3",
+              "with": "с коротким перекрестьем"
+            },
+            {
+              "id": "long-straight",
+              "name": "длинное перекрестье",
+              "code": "1",
+              "with": "с длинным перекрестьем"
+            },
+            {
+              "id": "curved",
+              "name": "изогнутое перекрестье",
+              "code": "6",
+              "with": "с изогнутым перекрестьем"
+            },
+            {
+              "id": "figured",
+              "name": "фигурное перекрестье",
+              "code": "8",
+              "with": "с фигурным перекрестьем"
+            },
+            {
+              "id": "rings-hooks",
+              "name": "кольца и крюки",
+              "with": "с кольцами и крюками"
+            },
+            {
+              "id": "claymore",
+              "name": "клейморная гарда",
+              "with": "с клейморной гардой"
+            },
+            {
+              "id": "shield",
+              "name": "щиток",
+              "with": "со щитком"
+            },
+            {
+              "id": "nagel",
+              "name": "с нагелем",
+              "with": "с нагелем"
+            }
+          ]
+        }
+      ]
     },
     "head": {
       "name": "Навершие",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "pommel",
+          "name": "Навершие",
+          "role": "name",
+          "label": "навершие",
+          "values": [
+            {
+              "id": "lobed",
+              "name": "трёхчастное",
+              "epoch": "каролингской эпохи"
+            },
+            {
+              "id": "triangular",
+              "name": "треугольное",
+              "epoch": "каролингской эпохи"
+            },
+            {
+              "id": "brazil-nut",
+              "name": "«бразильский орех»",
+              "code": "A",
+              "epoch": "раннероманской эпохи"
+            },
+            {
+              "id": "disc",
+              "name": "диск",
+              "code": "G",
+              "epoch": "романской эпохи"
+            },
+            {
+              "id": "wheel",
+              "name": "колесо",
+              "code": "H",
+              "epoch": "романской эпохи"
+            },
+            {
+              "id": "faceted",
+              "name": "гранёное",
+              "epoch": "позднего образца"
+            },
+            {
+              "id": "pear",
+              "name": "груша",
+              "code": "T",
+              "epoch": "позднего образца"
+            },
+            {
+              "id": "fishtail",
+              "name": "рыбий хвост",
+              "code": "V",
+              "epoch": "позднего образца"
+            },
+            {
+              "id": "ball",
+              "name": "шаровое"
+            },
+            {
+              "id": "spiked",
+              "name": "шипастое",
+              "epoch": "с шипастым навершием"
+            }
+          ]
+        }
+      ]
     }
   },
   {
     "id": "dagger",
     "enabled": true,
     "name": "Кинжал",
+    "keySlot": "strike",
     "strike": {
       "name": "Клинок",
-      "family": "iron"
+      "family": "iron",
+      "tags": [
+        {
+          "key": "family",
+          "name": "Семейство клинка",
+          "role": "key",
+          "label": "клинок",
+          "values": [
+            {
+              "id": "rhomb",
+              "name": "двулезвийный ромбический"
+            },
+            {
+              "id": "faceted",
+              "name": "гранёный без лезвий"
+            },
+            {
+              "id": "long-narrow",
+              "name": "длинный узкий"
+            },
+            {
+              "id": "wavy",
+              "name": "волнистый"
+            },
+            {
+              "id": "single",
+              "name": "однолезвийный"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Черен",
-      "family": "hide"
+      "family": "hide",
+      "tags": [
+        {
+          "key": "grip",
+          "name": "Черен",
+          "role": "name",
+          "label": "черен",
+          "values": [
+            {
+              "id": "spindle",
+              "name": "веретённая стержневая"
+            },
+            {
+              "id": "knife",
+              "name": "ножевая на накладках"
+            },
+            {
+              "id": "metal",
+              "name": "цельнометаллическая"
+            },
+            {
+              "id": "hulu",
+              "name": "хулу"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
-      "name": "Крестовина",
-      "family": "trim"
+      "name": "Гарда",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "guard",
+          "name": "Гарда",
+          "role": "name",
+          "label": "гарда",
+          "values": [
+            {
+              "id": "none",
+              "name": "нет",
+              "with": "без гарды"
+            },
+            {
+              "id": "nagel",
+              "name": "нагель",
+              "with": "с нагелем"
+            },
+            {
+              "id": "cross",
+              "name": "крестовина",
+              "with": "с крестовиной"
+            },
+            {
+              "id": "disc",
+              "name": "диск",
+              "with": "с диском"
+            },
+            {
+              "id": "kidney",
+              "name": "«почки»",
+              "with": "с «почками»"
+            },
+            {
+              "id": "bar",
+              "name": "брус",
+              "with": "с брусом"
+            },
+            {
+              "id": "ring",
+              "name": "кольцо или щиток",
+              "with": "с кольцом"
+            },
+            {
+              "id": "ganja",
+              "name": "ганджа",
+              "with": "с ганджей"
+            }
+          ]
+        }
+      ]
     },
     "head": {
       "name": "Оголовок",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "pommel",
+          "name": "Оголовок",
+          "role": "name",
+          "label": "оголовок",
+          "values": [
+            {
+              "id": "cap",
+              "name": "колпачок"
+            },
+            {
+              "id": "disc",
+              "name": "диск"
+            },
+            {
+              "id": "ears",
+              "name": "«уши»"
+            },
+            {
+              "id": "crescent",
+              "name": "брус-полумесяц"
+            },
+            {
+              "id": "washer",
+              "name": "торец с шайбой"
+            },
+            {
+              "id": "sword",
+              "name": "мечевое"
+            },
+            {
+              "id": "hulu",
+              "name": "торец хулу"
+            }
+          ]
+        }
+      ]
     }
   },
   {
     "id": "axe",
     "enabled": true,
     "name": "Топор",
+    "keySlot": "strike",
     "strike": {
       "name": "Полотно",
-      "family": "iron"
+      "family": "iron",
+      "tags": [
+        {
+          "key": "blade",
+          "name": "Класс полотна",
+          "role": "key",
+          "values": [
+            {
+              "id": "narrow",
+              "name": "узкое"
+            },
+            {
+              "id": "bearded",
+              "name": "оттянутое вниз"
+            },
+            {
+              "id": "broad",
+              "name": "широкое"
+            },
+            {
+              "id": "broad-thin",
+              "name": "широкое тонкое"
+            },
+            {
+              "id": "crescent",
+              "name": "полулунное"
+            }
+          ]
+        },
+        {
+          "key": "form",
+          "name": "Форма полотна",
+          "role": "name",
+          "label": "полотно",
+          "values": [
+            {
+              "id": "wedge",
+              "name": "клиновидное",
+              "adj": "клиновидный"
+            },
+            {
+              "id": "narrow",
+              "name": "узкое",
+              "adj": "узкий"
+            },
+            {
+              "id": "notched",
+              "name": "с выемкой",
+              "adj": "выемчатый"
+            },
+            {
+              "id": "hanging-beard",
+              "name": "висячая борода",
+              "adj": "бородатый"
+            },
+            {
+              "id": "bearded",
+              "name": "бородовидное",
+              "adj": "бородовидный"
+            },
+            {
+              "id": "short-beard",
+              "name": "короткая бородка",
+              "adj": "бородчатый"
+            },
+            {
+              "id": "broad",
+              "name": "широкое",
+              "adj": "широкий"
+            },
+            {
+              "id": "dane",
+              "name": "датское",
+              "adj": "датский"
+            },
+            {
+              "id": "crescent",
+              "name": "полулунное",
+              "adj": "полулунный"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Топорище",
-      "family": "wood"
+      "family": "wood",
+      "tags": [
+        {
+          "key": "hold",
+          "name": "Хват",
+          "role": "hold",
+          "label": "топорище",
+          "values": [
+            {
+              "id": "one",
+              "name": "одноручное"
+            },
+            {
+              "id": "two",
+              "name": "двуручное"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
       "name": "Проушина",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "lugs",
+          "name": "Щекавицы",
+          "role": "name",
+          "label": "щекавицы",
+          "values": [
+            {
+              "id": "none",
+              "name": "без щекавиц"
+            },
+            {
+              "id": "lower",
+              "name": "только нижние"
+            },
+            {
+              "id": "two-pairs",
+              "name": "две пары"
+            },
+            {
+              "id": "cape",
+              "name": "мысовидные"
+            },
+            {
+              "id": "tube",
+              "name": "трубчатая"
+            }
+          ]
+        }
+      ]
     },
     "head": {
-      "name": "Затыльник",
-      "family": "trim"
+      "name": "Обух",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "butt",
+          "name": "Обух",
+          "role": "name",
+          "label": "обух",
+          "values": [
+            {
+              "id": "hammer",
+              "name": "молоточек",
+              "with": "с молоточком"
+            },
+            {
+              "id": "notched",
+              "name": "вырезной с мысками",
+              "with": "с вырезным обухом"
+            },
+            {
+              "id": "plain",
+              "name": "простой",
+              "with": "с простым обухом"
+            },
+            {
+              "id": "plate",
+              "name": "пластинчатый",
+              "with": "с пластинчатым обухом"
+            },
+            {
+              "id": "beak",
+              "name": "клюв",
+              "with": "с клювом"
+            },
+            {
+              "id": "long",
+              "name": "длинный затыльник",
+              "with": "с длинным затыльником"
+            }
+          ]
+        }
+      ]
     }
   },
   {
     "id": "mace",
     "enabled": true,
     "name": "Булава",
+    "keySlot": "strike",
     "strike": {
       "name": "Било",
-      "family": "iron"
+      "family": "iron",
+      "tags": [
+        {
+          "key": "family",
+          "name": "Семейство била",
+          "role": "key",
+          "values": [
+            {
+              "id": "wood",
+              "name": "деревянное"
+            },
+            {
+              "id": "metal",
+              "name": "металлическое"
+            },
+            {
+              "id": "spiked",
+              "name": "шипастое"
+            },
+            {
+              "id": "hammer-beak",
+              "name": "молот и клюв"
+            },
+            {
+              "id": "crude",
+              "name": "грубое древковое"
+            }
+          ]
+        },
+        {
+          "key": "form",
+          "name": "Форма била",
+          "role": "name",
+          "label": "било",
+          "values": [
+            {
+              "id": "club-butt",
+              "name": "комлевая дубина"
+            },
+            {
+              "id": "burl",
+              "name": "капо́вая палица"
+            },
+            {
+              "id": "cue",
+              "name": "кий"
+            },
+            {
+              "id": "sphere",
+              "name": "шаровая булава"
+            },
+            {
+              "id": "cube",
+              "name": "кубовидная булава"
+            },
+            {
+              "id": "ribbed",
+              "name": "ребристая булава"
+            },
+            {
+              "id": "flanged",
+              "name": "шестопёр"
+            },
+            {
+              "id": "beak",
+              "name": "булава-клевец"
+            },
+            {
+              "id": "spikes12",
+              "name": "двенадцатишипная булава"
+            },
+            {
+              "id": "spikes-peas",
+              "name": "булава с «горошками»"
+            },
+            {
+              "id": "spikes4",
+              "name": "четырёхшипная булава"
+            },
+            {
+              "id": "lucerne",
+              "name": "люцернский молот"
+            },
+            {
+              "id": "crow",
+              "name": "вороний клюв"
+            },
+            {
+              "id": "falcon",
+              "name": "соколиный клюв"
+            },
+            {
+              "id": "lead",
+              "name": "свинцовый молот"
+            },
+            {
+              "id": "oslop",
+              "name": "ослоп"
+            },
+            {
+              "id": "goedendag",
+              "name": "гёдендаг"
+            },
+            {
+              "id": "sprinkler",
+              "name": "моргенштерн"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Рукоять",
-      "family": "wood"
+      "name2h": "Древко",
+      "family": "wood",
+      "tags": [
+        {
+          "key": "hold",
+          "name": "Хват",
+          "role": "hold",
+          "label": "хват",
+          "values": [
+            {
+              "id": "one",
+              "name": "рукоять 50–70 см"
+            },
+            {
+              "id": "two",
+              "name": "древко 1–2,4 м"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
       "name": "Обоймица",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "mount",
+          "name": "Крепление",
+          "role": "epithet",
+          "label": "обоймица",
+          "values": [
+            {
+              "id": "wrap",
+              "name": "обмотка",
+              "with": "с обмоткой"
+            },
+            {
+              "id": "ferrule",
+              "name": "оковка",
+              "with": "окованная"
+            },
+            {
+              "id": "tube",
+              "name": "трубчатая втулка",
+              "with": "на втулке"
+            },
+            {
+              "id": "langets",
+              "name": "ланцеты",
+              "with": "с ланцетами"
+            }
+          ]
+        }
+      ]
     },
     "head": {
-      "name": "Противовес",
-      "family": "trim"
+      "name": "Конец рукояти",
+      "name2h": "Подток",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "end",
+          "name": "Конец",
+          "role": "epithet",
+          "label": "конец",
+          "values": [
+            {
+              "id": "lanyard",
+              "name": "темляк",
+              "with": "с темляком"
+            },
+            {
+              "id": "ring",
+              "name": "кольцо-гарда",
+              "with": "с кольцом"
+            },
+            {
+              "id": "knob",
+              "name": "набалдашник",
+              "with": "с набалдашником"
+            },
+            {
+              "id": "hook",
+              "name": "крюк",
+              "with": "с крюком"
+            },
+            {
+              "id": "butt",
+              "name": "подток",
+              "with": "с подтоком"
+            },
+            {
+              "id": "spike",
+              "name": "острый подток",
+              "with": "с острым подтоком"
+            }
+          ]
+        }
+      ]
     }
   },
   {
     "id": "spear",
     "enabled": true,
     "name": "Копьё",
+    "keySlot": "strike",
     "strike": {
-      "name": "Наконечник",
-      "family": "iron"
+      "name": "Перо",
+      "family": "iron",
+      "tags": [
+        {
+          "key": "group",
+          "name": "Группа пера",
+          "role": "key",
+          "values": [
+            {
+              "id": "leaf",
+              "name": "листовидное"
+            },
+            {
+              "id": "broad",
+              "name": "широкое"
+            },
+            {
+              "id": "faceted",
+              "name": "гранёное"
+            },
+            {
+              "id": "winged",
+              "name": "с отростками"
+            }
+          ]
+        },
+        {
+          "key": "form",
+          "name": "Форма пера",
+          "role": "name",
+          "label": "перо",
+          "values": [
+            {
+              "id": "lanceolate",
+              "name": "Ланцетовидное (I)",
+              "adj": "ланцетовидный"
+            },
+            {
+              "id": "rhombic",
+              "name": "Ромбическое (II)",
+              "adj": "ромбический"
+            },
+            {
+              "id": "ovate",
+              "name": "Яйцевидное (IV)",
+              "adj": "яйцевидный"
+            },
+            {
+              "id": "triangular",
+              "name": "Удлинённо-треугольное (III)",
+              "adj": "удлинённо-треугольный"
+            },
+            {
+              "id": "laurel",
+              "name": "Лавролистное (IVА)",
+              "adj": "лавролистный"
+            },
+            {
+              "id": "rogatina",
+              "name": "Рогатинное (IVА)",
+              "adj": "рогатинный"
+            },
+            {
+              "id": "awl",
+              "name": "Шиловидное",
+              "adj": "шиловидный"
+            },
+            {
+              "id": "tetra",
+              "name": "Четырёхгранное (V)",
+              "adj": "четырёхгранный"
+            },
+            {
+              "id": "facet-broad",
+              "name": "Гранёное широкое",
+              "adj": "гранёный"
+            },
+            {
+              "id": "two-spike",
+              "name": "Двушипное (VII)",
+              "adj": "двушипный"
+            },
+            {
+              "id": "winged",
+              "name": "Крылатое",
+              "adj": "крылатый"
+            },
+            {
+              "id": "trident",
+              "name": "Трезубое",
+              "adj": "трезубый"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Древко",
-      "family": "wood"
+      "family": "wood",
+      "tags": [
+        {
+          "key": "hold",
+          "name": "Хват",
+          "role": "hold",
+          "label": "хват",
+          "values": [
+            {
+              "id": "one",
+              "name": "сулица 1,2–1,5 м"
+            },
+            {
+              "id": "heel",
+              "name": "хват у пяты"
+            },
+            {
+              "id": "middle",
+              "name": "хват посередине"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
-      "name": "Втулка и ланцеты",
-      "family": "trim"
+      "name": "Втулка",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "mount",
+          "name": "Крепление",
+          "role": "epithet",
+          "label": "крепление",
+          "values": [
+            {
+              "id": "socket",
+              "name": "втулка"
+            },
+            {
+              "id": "tang",
+              "name": "черешок",
+              "with": "на черешке"
+            },
+            {
+              "id": "langets",
+              "name": "ланцеты",
+              "with": "с ланцетами"
+            },
+            {
+              "id": "crossbar",
+              "name": "перекладина",
+              "with": "с перекладиной"
+            }
+          ]
+        }
+      ]
     },
     "head": {
       "name": "Подток",
-      "family": "trim"
+      "family": "trim",
+      "tags": []
     }
   },
   {
     "id": "halberd",
     "enabled": true,
     "name": "Алебарда",
+    "keySlot": "strike",
     "strike": {
-      "name": "Полотно с крюком",
-      "family": "iron"
+      "name": "Полотно",
+      "family": "iron",
+      "tags": [
+        {
+          "key": "group",
+          "name": "Группа",
+          "role": "key",
+          "values": [
+            {
+              "id": "glaive",
+              "name": "глефа"
+            },
+            {
+              "id": "halberd",
+              "name": "алебарда"
+            },
+            {
+              "id": "partisan",
+              "name": "протазан"
+            },
+            {
+              "id": "bardiche",
+              "name": "бердыш"
+            },
+            {
+              "id": "poleaxe",
+              "name": "полэкс"
+            }
+          ]
+        },
+        {
+          "key": "form",
+          "name": "Форма",
+          "role": "name",
+          "label": "полотно",
+          "values": [
+            {
+              "id": "vouge",
+              "name": "вуж"
+            },
+            {
+              "id": "glaive",
+              "name": "глефа"
+            },
+            {
+              "id": "bill",
+              "name": "билл"
+            },
+            {
+              "id": "late",
+              "name": "поздняя алебарда"
+            },
+            {
+              "id": "swiss",
+              "name": "швейцарская алебарда"
+            },
+            {
+              "id": "early",
+              "name": "ранняя алебарда"
+            },
+            {
+              "id": "spetum",
+              "name": "спетум"
+            },
+            {
+              "id": "partisan",
+              "name": "протазан"
+            },
+            {
+              "id": "broad-partisan",
+              "name": "широкий протазан"
+            },
+            {
+              "id": "bard1",
+              "name": "бердыш, тип 1"
+            },
+            {
+              "id": "bard2",
+              "name": "бердыш, тип 2"
+            },
+            {
+              "id": "bard3",
+              "name": "бердыш, тип 3"
+            },
+            {
+              "id": "poleaxe-beak",
+              "name": "полэкс с клювом"
+            },
+            {
+              "id": "poleaxe",
+              "name": "полэкс"
+            },
+            {
+              "id": "poleaxe-heavy",
+              "name": "тяжёлый полэкс"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Древко",
-      "family": "wood"
+      "family": "wood",
+      "tags": []
     },
     "bind": {
-      "name": "Ланцеты",
-      "family": "trim"
+      "name": "Обоймица",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "mount",
+          "name": "Крепление",
+          "role": "name",
+          "label": "крепление",
+          "values": [
+            {
+              "id": "rings",
+              "name": "на двух кольцах",
+              "with": "на кольцах"
+            },
+            {
+              "id": "socket",
+              "name": "втулка"
+            },
+            {
+              "id": "langets",
+              "name": "ланцеты",
+              "with": "с ланцетами"
+            },
+            {
+              "id": "rondel",
+              "name": "рондель",
+              "with": "с ронделью"
+            }
+          ]
+        }
+      ]
     },
     "head": {
       "name": "Подток",
-      "family": "trim"
+      "family": "trim",
+      "tags": []
     }
   },
   {
     "id": "bow",
     "enabled": true,
     "name": "Лук",
+    "keySlot": "strike",
     "strike": {
-      "name": "Плечи",
-      "family": "stave"
+      "name": "Рога",
+      "family": "stave",
+      "tags": [
+        {
+          "key": "limbs",
+          "name": "Рога",
+          "role": "key",
+          "label": "рога",
+          "values": [
+            {
+              "id": "short-sigma",
+              "name": "короткие сигмовидные",
+              "adj": "короткий"
+            },
+            {
+              "id": "self",
+              "name": "простые плоские",
+              "adj": "простой"
+            },
+            {
+              "id": "long-straight",
+              "name": "длинные прямые",
+              "adj": "длинный"
+            },
+            {
+              "id": "composite",
+              "name": "средние рефлексные",
+              "adj": "сложный"
+            },
+            {
+              "id": "long-reflex",
+              "name": "длинные рефлексные",
+              "adj": "большой"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
-      "name": "Кибить",
-      "family": "wood"
+      "name": "Рукоять",
+      "family": "wood",
+      "tags": [
+        {
+          "key": "riser",
+          "name": "Рукоять",
+          "role": "epithet",
+          "label": "рукоять",
+          "values": [
+            {
+              "id": "bend",
+              "name": "гнущаяся"
+            },
+            {
+              "id": "rigid",
+              "name": "жёсткая, выложенная костью"
+            },
+            {
+              "id": "offset",
+              "name": "выносная"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
       "name": "Тетива",
-      "family": "cloth"
+      "family": "cloth",
+      "tags": []
     },
     "head": {
-      "name": "Ноки и накладки",
-      "family": "stave"
+      "name": "Концы и накладки",
+      "family": "stave",
+      "tags": [
+        {
+          "key": "tips",
+          "name": "Концы",
+          "role": "name",
+          "label": "концы",
+          "values": [
+            {
+              "id": "flexible",
+              "name": "гибкие",
+              "with": "с гибкими концами"
+            },
+            {
+              "id": "horn-nocks",
+              "name": "с роговыми ноками",
+              "with": "с роговыми ноками"
+            },
+            {
+              "id": "working",
+              "name": "рабочий загиб",
+              "with": "с рабочим загибом"
+            },
+            {
+              "id": "siyah",
+              "name": "сияхи",
+              "with": "с сияхами"
+            },
+            {
+              "id": "big-siyah",
+              "name": "большие сияхи",
+              "with": "с большими сияхами"
+            }
+          ]
+        },
+        {
+          "key": "plates",
+          "name": "Накладки",
+          "role": "name",
+          "label": "накладки",
+          "default": "none",
+          "values": [
+            {
+              "id": "none",
+              "name": "нет"
+            },
+            {
+              "id": "four",
+              "name": "4 концевые",
+              "code": "Ирзи"
+            },
+            {
+              "id": "seven",
+              "name": "7",
+              "code": "Кум-Дарья"
+            }
+          ]
+        }
+      ]
     }
   },
   {
     "id": "crossbow",
     "enabled": true,
     "name": "Арбалет",
+    "keySlot": "grip",
     "strike": {
       "name": "Дуга",
-      "family": "stave"
+      "family": "stave",
+      "tags": []
     },
     "grip": {
-      "name": "Ложе",
-      "family": "wood"
+      "name": "Ложе и стремя",
+      "family": "wood",
+      "tags": [
+        {
+          "key": "stock",
+          "name": "Ложе",
+          "role": "key",
+          "label": "ложе",
+          "values": [
+            {
+              "id": "pistol",
+              "name": "короткое пистолетное"
+            },
+            {
+              "id": "narrow-stirrup",
+              "name": "узкое стремя"
+            },
+            {
+              "id": "wide-stirrup",
+              "name": "широкое стремя"
+            },
+            {
+              "id": "cranequin-pin",
+              "name": "со штифтом под кранекин"
+            },
+            {
+              "id": "windlass-long",
+              "name": "длинное под ворот"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
       "name": "Замок",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "lock",
+          "name": "Замок",
+          "role": "epithet",
+          "label": "замок",
+          "values": [
+            {
+              "id": "pin",
+              "name": "подъёмный штифт"
+            },
+            {
+              "id": "nut",
+              "name": "орех без оси"
+            },
+            {
+              "id": "nut-axle",
+              "name": "орех на оси"
+            }
+          ]
+        }
+      ]
     },
     "head": {
-      "name": "Стремя и затыльник",
-      "family": "trim"
+      "name": "Взвод",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "span",
+          "name": "Взвод",
+          "role": "name",
+          "label": "взвод",
+          "values": [
+            {
+              "id": "hands",
+              "name": "руками или рычагом",
+              "with": "со взводом рукой"
+            },
+            {
+              "id": "belt-hook",
+              "name": "поясной крюк",
+              "with": "с поясным крюком"
+            },
+            {
+              "id": "goats-foot",
+              "name": "козья нога",
+              "with": "с козьей ногой"
+            },
+            {
+              "id": "cranequin",
+              "name": "кранекин",
+              "with": "с кранекином"
+            },
+            {
+              "id": "windlass",
+              "name": "ворот",
+              "with": "с воротом"
+            }
+          ]
+        }
+      ]
     }
   },
   {
     "id": "wand",
     "enabled": true,
     "name": "Жезл",
+    "keySlot": "grip",
     "strike": {
-      "name": "Фокус",
-      "family": "focus"
+      "name": "Навершие",
+      "family": "focus",
+      "tags": [
+        {
+          "key": "silhouette",
+          "name": "Силуэт",
+          "role": "name",
+          "label": "навершие",
+          "values": [
+            {
+              "id": "orb",
+              "name": "держава"
+            },
+            {
+              "id": "hand",
+              "name": "длань"
+            },
+            {
+              "id": "prism",
+              "name": "призма"
+            },
+            {
+              "id": "fang",
+              "name": "клык"
+            },
+            {
+              "id": "fork",
+              "name": "рогулька"
+            },
+            {
+              "id": "cabochon",
+              "name": "кабошон"
+            },
+            {
+              "id": "faceted",
+              "name": "гранёный камень"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Ствол",
-      "family": "wood"
+      "family": "wood",
+      "stepNames": [
+        "сырой",
+        "колотый",
+        "в олифе",
+        "морёный",
+        "клеёный"
+      ],
+      "tags": [
+        {
+          "key": "wood",
+          "name": "Порода",
+          "role": "key",
+          "label": "порода",
+          "values": [
+            {
+              "id": "hazel",
+              "name": "лещина"
+            },
+            {
+              "id": "thorn",
+              "name": "тёрн"
+            },
+            {
+              "id": "yew",
+              "name": "тис"
+            },
+            {
+              "id": "pitch",
+              "name": "осмол"
+            },
+            {
+              "id": "ebony",
+              "name": "эбен"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
       "name": "Оправа",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "mount",
+          "name": "Оправа",
+          "role": "name",
+          "label": "оправа",
+          "values": [
+            {
+              "id": "apples",
+              "name": "«яблоки»"
+            },
+            {
+              "id": "rings",
+              "name": "кольца"
+            },
+            {
+              "id": "cage",
+              "name": "клетка",
+              "with": "с клеткой"
+            },
+            {
+              "id": "ferrules",
+              "name": "обоймицы"
+            },
+            {
+              "id": "filigree",
+              "name": "филигрань"
+            }
+          ]
+        }
+      ]
     },
     "head": {
-      "name": "Пятка",
-      "family": "trim"
+      "name": "Пята",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "heel",
+          "name": "Пята",
+          "role": "epithet",
+          "label": "пята",
+          "values": [
+            {
+              "id": "spear",
+              "name": "копьецо"
+            },
+            {
+              "id": "shoe",
+              "name": "оковец"
+            },
+            {
+              "id": "horseshoe",
+              "name": "подковец"
+            },
+            {
+              "id": "cap",
+              "name": "стальной колпачок"
+            }
+          ]
+        }
+      ]
     }
   },
   {
     "id": "staff",
     "enabled": true,
     "name": "Посох",
+    "keySlot": "grip",
     "strike": {
-      "name": "Навершие-фокус",
-      "family": "focus"
+      "name": "Навершие",
+      "family": "focus",
+      "tags": [
+        {
+          "key": "silhouette",
+          "name": "Силуэт",
+          "role": "name",
+          "label": "навершие",
+          "values": [
+            {
+              "id": "orb",
+              "name": "держава (ферула)"
+            },
+            {
+              "id": "serpents",
+              "name": "двузмий"
+            },
+            {
+              "id": "tau",
+              "name": "тау (кроция)"
+            },
+            {
+              "id": "crook",
+              "name": "крюк (педум, литуус)"
+            },
+            {
+              "id": "fork",
+              "name": "рогулька"
+            },
+            {
+              "id": "skull",
+              "name": "череп"
+            }
+          ]
+        }
+      ]
     },
     "grip": {
       "name": "Древко",
-      "family": "wood"
+      "family": "wood",
+      "stepNames": [
+        "сырой",
+        "колотый",
+        "в олифе",
+        "морёный",
+        "клеёный"
+      ],
+      "tags": [
+        {
+          "key": "wood",
+          "name": "Порода",
+          "role": "key",
+          "label": "порода",
+          "values": [
+            {
+              "id": "hazel",
+              "name": "лещина"
+            },
+            {
+              "id": "thorn",
+              "name": "тёрн"
+            },
+            {
+              "id": "yew",
+              "name": "тис"
+            },
+            {
+              "id": "pitch",
+              "name": "осмол"
+            },
+            {
+              "id": "ebony",
+              "name": "эбен"
+            }
+          ]
+        }
+      ]
     },
     "bind": {
       "name": "Оковка",
-      "family": "trim"
+      "family": "trim",
+      "tags": [
+        {
+          "key": "mount",
+          "name": "Оправа",
+          "role": "name",
+          "label": "оправа",
+          "values": [
+            {
+              "id": "apples",
+              "name": "«яблоки»"
+            },
+            {
+              "id": "rings",
+              "name": "кольца"
+            },
+            {
+              "id": "cage",
+              "name": "клетка",
+              "with": "с клеткой"
+            },
+            {
+              "id": "ferrules",
+              "name": "обоймицы"
+            },
+            {
+              "id": "filigree",
+              "name": "филигрань"
+            }
+          ]
+        }
+      ]
     },
     "head": {
-      "name": "Подток",
-      "family": "trim"
+      "name": "Пята",
+      "family": "trim",
+      "tags": [
+        {
+          "key": "heel",
+          "name": "Пята",
+          "role": "epithet",
+          "label": "пята",
+          "values": [
+            {
+              "id": "spear",
+              "name": "копьецо"
+            },
+            {
+              "id": "shoe",
+              "name": "оковец"
+            },
+            {
+              "id": "horseshoe",
+              "name": "подковец"
+            },
+            {
+              "id": "cap",
+              "name": "стальной колпачок"
+            }
+          ]
+        }
+      ]
     }
   }
 ]

@@ -1,1523 +1,286 @@
 [
-  {
-    "id": "sw-broad",
-    "enabled": true,
-    "name": "Широкое",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "удар крупнее, взмахов меньше"
-  },
-  {
-    "id": "sw-falchion",
-    "enabled": true,
-    "name": "Фальшион",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": 0.6,
-    "rarity": "uncommon",
-    "caption": "тяжёлая кромка: рубит глубже, ведётся медленнее"
-  },
-  {
-    "id": "sw-lozenge",
-    "enabled": true,
-    "name": "Ромбическое",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": 0.3,
-    "rarity": "common",
-    "caption": "чуть тяжелее в кисти"
-  },
-  {
-    "id": "sw-straight",
-    "enabled": true,
-    "name": "Прямое",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "sw-fuller",
-    "enabled": true,
-    "name": "Ложчатое",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": -0.3,
-    "rarity": "uncommon",
-    "caption": "долы снимают вес — темп чуть выше"
-  },
-  {
-    "id": "sw-narrow",
-    "enabled": true,
-    "name": "Узкое",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": -0.6,
-    "rarity": "common",
-    "caption": "взмахов больше, каждый мельче — статусы и проки чаще"
-  },
-  {
-    "id": "sw-yataghan",
-    "enabled": true,
-    "name": "Изогнутое (ятаган)",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": -0.8,
-    "rarity": "uncommon",
-    "caption": "тянет рез: серии ударов и статусы чаще"
-  },
-  {
-    "id": "sw-flat",
-    "enabled": true,
-    "name": "Плоское",
-    "slot": "strike",
-    "classes": [
-      "sword"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самый быстрый клинок в пуле"
-  },
-  {
-    "id": "dg-broad",
-    "enabled": true,
-    "name": "Широкое",
-    "slot": "strike",
-    "classes": [
-      "dagger"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "удар крупнее, взмахов меньше"
-  },
-  {
-    "id": "dg-leaf",
-    "enabled": true,
-    "name": "Листовидное",
-    "slot": "strike",
-    "classes": [
-      "dagger"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "клинок потяжелее, укол глубже"
-  },
-  {
-    "id": "dg-straight",
-    "enabled": true,
-    "name": "Прямое",
-    "slot": "strike",
-    "classes": [
-      "dagger"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "dg-stiletto",
-    "enabled": true,
-    "name": "Гранёное (стилет)",
-    "slot": "strike",
-    "classes": [
-      "dagger"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "лёгкий граненый укол"
-  },
-  {
-    "id": "dg-kris",
-    "enabled": true,
-    "name": "Волнистое (крис)",
-    "slot": "strike",
-    "classes": [
-      "dagger"
-    ],
-    "axis": -0.8,
-    "rarity": "rare",
-    "caption": "волна клинка: частые мелкие раны"
-  },
-  {
-    "id": "dg-needle",
-    "enabled": true,
-    "name": "Игольчатое",
-    "slot": "strike",
-    "classes": [
-      "dagger"
-    ],
-    "axis": -1.0,
-    "rarity": "uncommon",
-    "caption": "самый быстрый клинок в пуле"
-  },
-  {
-    "id": "ax-broad",
-    "enabled": true,
-    "name": "Широкое",
-    "slot": "strike",
-    "classes": [
-      "axe"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "удар крупнее, взмахов меньше"
-  },
-  {
-    "id": "ax-bearded",
-    "enabled": true,
-    "name": "Бородовидное",
-    "slot": "strike",
-    "classes": [
-      "axe"
-    ],
-    "axis": 0.6,
-    "rarity": "uncommon",
-    "caption": "длинная нижняя кромка — тяжёлый рубящий удар"
-  },
-  {
-    "id": "ax-wedge",
-    "enabled": true,
-    "name": "Клиновое",
-    "slot": "strike",
-    "classes": [
-      "axe"
-    ],
-    "axis": 0.3,
-    "rarity": "common",
-    "caption": "колет и рубит, чуть тяжелее"
-  },
-  {
-    "id": "ax-straight",
-    "enabled": true,
-    "name": "Прямое",
-    "slot": "strike",
-    "classes": [
-      "axe"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "ax-pick",
-    "enabled": true,
-    "name": "Чекан",
-    "slot": "strike",
-    "classes": [
-      "axe"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "клюв вместо полотна: быстрее, но мельче"
-  },
-  {
-    "id": "ax-narrow",
-    "enabled": true,
-    "name": "Узкое",
-    "slot": "strike",
-    "classes": [
-      "axe"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самое быстрое полотно в пуле"
-  },
-  {
-    "id": "mc-ball",
-    "enabled": true,
-    "name": "Шаровое",
-    "slot": "strike",
-    "classes": [
-      "mace"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "удар крупнее, взмахов меньше"
-  },
-  {
-    "id": "mc-ribbed",
-    "enabled": true,
-    "name": "Ребристое",
-    "slot": "strike",
-    "classes": [
-      "mace"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "рёбра вминают доспех — удар тяжелее"
-  },
-  {
-    "id": "mc-faceted",
-    "enabled": true,
-    "name": "Гранёное",
-    "slot": "strike",
-    "classes": [
-      "mace"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "mc-flanged",
-    "enabled": true,
-    "name": "Шестопёр",
-    "slot": "strike",
-    "classes": [
-      "mace"
-    ],
-    "axis": -0.4,
-    "rarity": "uncommon",
-    "caption": "перья легче шара — темп выше"
-  },
-  {
-    "id": "mc-pick",
-    "enabled": true,
-    "name": "Клевец",
-    "slot": "strike",
-    "classes": [
-      "mace"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "клюв: самые частые удары в пуле"
-  },
-  {
-    "id": "sp-broad",
-    "enabled": true,
-    "name": "Широкое перо",
-    "slot": "strike",
-    "classes": [
-      "spear"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "удар крупнее, взмахов меньше"
-  },
-  {
-    "id": "sp-leaf",
-    "enabled": true,
-    "name": "Листовое",
-    "slot": "strike",
-    "classes": [
-      "spear"
-    ],
-    "axis": 0.4,
-    "rarity": "common",
-    "caption": "укол чуть тяжелее"
-  },
-  {
-    "id": "sp-faceted",
-    "enabled": true,
-    "name": "Гранёное",
-    "slot": "strike",
-    "classes": [
-      "spear"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "sp-winged",
-    "enabled": true,
-    "name": "Крылатое",
-    "slot": "strike",
-    "classes": [
-      "spear"
-    ],
-    "axis": -0.4,
-    "rarity": "uncommon",
-    "caption": "упоры за пером — удар короче и чаще"
-  },
-  {
-    "id": "sp-trihedral",
-    "enabled": true,
-    "name": "Трёхгранное",
-    "slot": "strike",
-    "classes": [
-      "spear"
-    ],
-    "axis": -0.7,
-    "rarity": "uncommon",
-    "caption": "лёгкое трёхгранное жало"
-  },
-  {
-    "id": "sp-needle",
-    "enabled": true,
-    "name": "Иглоподобное",
-    "slot": "strike",
-    "classes": [
-      "spear"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самое быстрое перо в пуле"
-  },
-  {
-    "id": "hb-broad",
-    "enabled": true,
-    "name": "Широкое полотно",
-    "slot": "strike",
-    "classes": [
-      "halberd"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "удар крупнее, взмахов меньше"
-  },
-  {
-    "id": "hb-hooked",
-    "enabled": true,
-    "name": "Секира с крюком",
-    "slot": "strike",
-    "classes": [
-      "halberd"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "тяжёлый рубящий замах"
-  },
-  {
-    "id": "hb-glaive",
-    "enabled": true,
-    "name": "Глефа",
-    "slot": "strike",
-    "classes": [
-      "halberd"
-    ],
-    "axis": 0.0,
-    "rarity": "uncommon",
-    "caption": "эталон"
-  },
-  {
-    "id": "hb-partisan",
-    "enabled": true,
-    "name": "Протазан",
-    "slot": "strike",
-    "classes": [
-      "halberd"
-    ],
-    "axis": -0.5,
-    "rarity": "common",
-    "caption": "колющее полотно — темп выше"
-  },
-  {
-    "id": "hb-narrow",
-    "enabled": true,
-    "name": "Узкое полотно",
-    "slot": "strike",
-    "classes": [
-      "halberd"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самое быстрое полотно в пуле"
-  },
-  {
-    "id": "bw-long",
-    "enabled": true,
-    "name": "Длинные плечи",
-    "slot": "strike",
-    "classes": [
-      "bow"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "выстрел мощнее, натяг дольше"
-  },
-  {
-    "id": "bw-reinforced",
-    "enabled": true,
-    "name": "Усиленные",
-    "slot": "strike",
-    "classes": [
-      "bow"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "туже тетива — стрела тяжелее"
-  },
-  {
-    "id": "bw-straight",
-    "enabled": true,
-    "name": "Прямые",
-    "slot": "strike",
-    "classes": [
-      "bow"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "bw-recurve",
-    "enabled": true,
-    "name": "Рекурсивные",
-    "slot": "strike",
-    "classes": [
-      "bow"
-    ],
-    "axis": -0.6,
-    "rarity": "uncommon",
-    "caption": "загнутые концы: быстрый выстрел, стрела легче"
-  },
-  {
-    "id": "bw-short",
-    "enabled": true,
-    "name": "Короткие",
-    "slot": "strike",
-    "classes": [
-      "bow"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самые частые выстрелы в пуле"
-  },
-  {
-    "id": "cb-heavy",
-    "enabled": true,
-    "name": "Тяжёлая дуга",
-    "slot": "strike",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "болт мощнее, перезаряд дольше"
-  },
-  {
-    "id": "cb-reinforced",
-    "enabled": true,
-    "name": "Усиленная дуга",
-    "slot": "strike",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "туже взвод"
-  },
-  {
-    "id": "cb-straight",
-    "enabled": true,
-    "name": "Прямая дуга",
-    "slot": "strike",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "cb-light",
-    "enabled": true,
-    "name": "Лёгкая дуга",
-    "slot": "strike",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "быстрее взвод, болт легче"
-  },
-  {
-    "id": "cb-slim",
-    "enabled": true,
-    "name": "Облегчённая дуга",
-    "slot": "strike",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самые частые выстрелы в пуле"
-  },
-  {
-    "id": "wd-large",
-    "enabled": true,
-    "name": "Крупный камень",
-    "slot": "strike",
-    "classes": [
-      "wand"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "разряд сильнее, копится дольше"
-  },
-  {
-    "id": "wd-facet",
-    "enabled": true,
-    "name": "Гранёный камень",
-    "slot": "strike",
-    "classes": [
-      "wand"
-    ],
-    "axis": 0.4,
-    "rarity": "common",
-    "caption": "разряд чуть плотнее"
-  },
-  {
-    "id": "wd-cabochon",
-    "enabled": true,
-    "name": "Кабошон",
-    "slot": "strike",
-    "classes": [
-      "wand"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "wd-needle",
-    "enabled": true,
-    "name": "Игла",
-    "slot": "strike",
-    "classes": [
-      "wand"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "тонкий фокус — частые мелкие разряды"
-  },
-  {
-    "id": "wd-shard",
-    "enabled": true,
-    "name": "Осколок",
-    "slot": "strike",
-    "classes": [
-      "wand"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самые частые разряды в пуле"
-  },
-  {
-    "id": "st-orb",
-    "enabled": true,
-    "name": "Шар",
-    "slot": "strike",
-    "classes": [
-      "staff"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "разряд сильнее, копится дольше"
-  },
-  {
-    "id": "st-crown",
-    "enabled": true,
-    "name": "Венец",
-    "slot": "strike",
-    "classes": [
-      "staff"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "зубцы собирают заряд плотнее"
-  },
-  {
-    "id": "st-crystal",
-    "enabled": true,
-    "name": "Кристалл",
-    "slot": "strike",
-    "classes": [
-      "staff"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "st-ring",
-    "enabled": true,
-    "name": "Кольцо",
-    "slot": "strike",
-    "classes": [
-      "staff"
-    ],
-    "axis": -0.5,
-    "rarity": "common",
-    "caption": "кольцо пропускает заряд быстрее"
-  },
-  {
-    "id": "st-skull",
-    "enabled": true,
-    "name": "Череп",
-    "slot": "strike",
-    "classes": [
-      "staff"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "самые частые разряды в пуле"
-  },
-  {
-    "id": "gh-long",
-    "enabled": true,
-    "name": "Длинная рукоять",
-    "slot": "grip",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "достаёт дальше, задевает уже"
-  },
-  {
-    "id": "gh-hand-half",
-    "enabled": true,
-    "name": "Полуторная",
-    "slot": "grip",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "чуть дальше, чуть уже"
-  },
-  {
-    "id": "gh-plain",
-    "enabled": true,
-    "name": "Обычная",
-    "slot": "grip",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "gh-short",
-    "enabled": true,
-    "name": "Короткая",
-    "slot": "grip",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": -0.6,
-    "rarity": "common",
-    "caption": "бьёт ближе, но шире — по толпе"
-  },
-  {
-    "id": "gh-fist",
-    "enabled": true,
-    "name": "Кулачная",
-    "slot": "grip",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "вплотную, но самым широким взмахом"
-  },
-  {
-    "id": "ga-long",
-    "enabled": true,
-    "name": "Длинное топорище",
-    "slot": "grip",
-    "classes": [
-      "axe",
-      "mace"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "достаёт дальше, задевает уже"
-  },
-  {
-    "id": "ga-extended",
-    "enabled": true,
-    "name": "Удлинённое",
-    "slot": "grip",
-    "classes": [
-      "axe",
-      "mace"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "чуть дальше, чуть уже"
-  },
-  {
-    "id": "ga-plain",
-    "enabled": true,
-    "name": "Обычное",
-    "slot": "grip",
-    "classes": [
-      "axe",
-      "mace"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "ga-curved",
-    "enabled": true,
-    "name": "Изогнутое",
-    "slot": "grip",
-    "classes": [
-      "axe",
-      "mace"
-    ],
-    "axis": -0.4,
-    "rarity": "uncommon",
-    "caption": "короче хват — шире мах"
-  },
-  {
-    "id": "ga-short",
-    "enabled": true,
-    "name": "Короткое",
-    "slot": "grip",
-    "classes": [
-      "axe",
-      "mace"
-    ],
-    "axis": -1.0,
-    "rarity": "common",
-    "caption": "бьёт ближе, но шире — по толпе"
-  },
-  {
-    "id": "gp-long",
-    "enabled": true,
-    "name": "Длинное древко",
-    "slot": "grip",
-    "classes": [
-      "spear",
-      "halberd"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "достаёт дальше, задевает уже"
-  },
-  {
-    "id": "gp-extended",
-    "enabled": true,
-    "name": "Удлинённое",
-    "slot": "grip",
-    "classes": [
-      "spear",
-      "halberd"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "чуть дальше, чуть уже"
-  },
-  {
-    "id": "gp-plain",
-    "enabled": true,
-    "name": "Обычное",
-    "slot": "grip",
-    "classes": [
-      "spear",
-      "halberd"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "gp-shortened",
-    "enabled": true,
-    "name": "Укороченное",
-    "slot": "grip",
-    "classes": [
-      "spear",
-      "halberd"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "ближе, но шире мах"
-  },
-  {
-    "id": "gp-short",
-    "enabled": true,
-    "name": "Короткое",
-    "slot": "grip",
-    "classes": [
-      "spear",
-      "halberd"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "бьёт ближе, но шире — по толпе"
-  },
-  {
-    "id": "gr-anatomic",
-    "enabled": true,
-    "name": "Анатомическая",
-    "slot": "grip",
-    "classes": [
-      "bow",
-      "crossbow"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"
-  },
-  {
-    "id": "gr-plain",
-    "enabled": true,
-    "name": "Прямая",
-    "slot": "grip",
-    "classes": [
-      "bow",
-      "crossbow"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"
-  },
-  {
-    "id": "gr-light",
-    "enabled": true,
-    "name": "Облегчённая",
-    "slot": "grip",
-    "classes": [
-      "bow",
-      "crossbow"
-    ],
-    "axis": -0.5,
-    "rarity": "common",
-    "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"
-  },
-  {
-    "id": "gm-twisted",
-    "enabled": true,
-    "name": "Витой ствол",
-    "slot": "grip",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"
-  },
-  {
-    "id": "gm-plain",
-    "enabled": true,
-    "name": "Прямой ствол",
-    "slot": "grip",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"
-  },
-  {
-    "id": "gm-knotted",
-    "enabled": true,
-    "name": "Узловатый",
-    "slot": "grip",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"
-  },
-  {
-    "id": "bh-narrow",
-    "enabled": true,
-    "name": "Узкая гарда",
-    "slot": "bind",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "больше префиксов: урон, крит, стихия"
-  },
-  {
-    "id": "bh-curved",
-    "enabled": true,
-    "name": "Изогнутая гарда",
-    "slot": "bind",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "чуть больше префиксов"
-  },
-  {
-    "id": "bh-straight",
-    "enabled": true,
-    "name": "Прямая гарда",
-    "slot": "bind",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "поровну"
-  },
-  {
-    "id": "bh-figured",
-    "enabled": true,
-    "name": "Фигурная гарда",
-    "slot": "bind",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": -0.5,
-    "rarity": "rare",
-    "caption": "чуть больше суффиксов"
-  },
-  {
-    "id": "bh-broad",
-    "enabled": true,
-    "name": "Широкая гарда",
-    "slot": "bind",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": -1.0,
-    "rarity": "common",
-    "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"
-  },
-  {
-    "id": "bp-forged",
-    "enabled": true,
-    "name": "Кованая обоймица",
-    "slot": "bind",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "больше префиксов: урон, крит, стихия"
-  },
-  {
-    "id": "bp-faceted",
-    "enabled": true,
-    "name": "Гранёная",
-    "slot": "bind",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "чуть больше префиксов"
-  },
-  {
-    "id": "bp-plain",
-    "enabled": true,
-    "name": "Простая обоймица",
-    "slot": "bind",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "поровну"
-  },
-  {
-    "id": "bp-twisted",
-    "enabled": true,
-    "name": "Витая",
-    "slot": "bind",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": -0.5,
-    "rarity": "rare",
-    "caption": "чуть больше суффиксов"
-  },
-  {
-    "id": "bp-langets",
-    "enabled": true,
-    "name": "Длинные ланцеты",
-    "slot": "bind",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": -1.0,
-    "rarity": "common",
-    "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"
-  },
-  {
-    "id": "bb-double",
-    "enabled": true,
-    "name": "Двойная тетива",
-    "slot": "bind",
-    "classes": [
-      "bow"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "больше префиксов: урон, крит, стихия"
-  },
-  {
-    "id": "bb-waxed",
-    "enabled": true,
-    "name": "Навощённая",
-    "slot": "bind",
-    "classes": [
-      "bow"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "чуть больше префиксов"
-  },
-  {
-    "id": "bb-single",
-    "enabled": true,
-    "name": "Одинарная",
-    "slot": "bind",
-    "classes": [
-      "bow"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "поровну"
-  },
-  {
-    "id": "bb-braided",
-    "enabled": true,
-    "name": "Плетёная",
-    "slot": "bind",
-    "classes": [
-      "bow"
-    ],
-    "axis": -0.5,
-    "rarity": "rare",
-    "caption": "чуть больше суффиксов"
-  },
-  {
-    "id": "bb-twisted",
-    "enabled": true,
-    "name": "Витая",
-    "slot": "bind",
-    "classes": [
-      "bow"
-    ],
-    "axis": -1.0,
-    "rarity": "common",
-    "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"
-  },
-  {
-    "id": "bc-lever",
-    "enabled": true,
-    "name": "Рычажный замок",
-    "slot": "bind",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "больше префиксов: урон, крит, стихия"
-  },
-  {
-    "id": "bc-sear",
-    "enabled": true,
-    "name": "Шептало",
-    "slot": "bind",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 0.5,
-    "rarity": "uncommon",
-    "caption": "чуть больше префиксов"
-  },
-  {
-    "id": "bc-nut",
-    "enabled": true,
-    "name": "Простой орех",
-    "slot": "bind",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "поровну"
-  },
-  {
-    "id": "bc-hidden",
-    "enabled": true,
-    "name": "Потайной замок",
-    "slot": "bind",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": -0.5,
-    "rarity": "rare",
-    "caption": "чуть больше суффиксов"
-  },
-  {
-    "id": "bc-double",
-    "enabled": true,
-    "name": "Двойной орех",
-    "slot": "bind",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": -1.0,
-    "rarity": "common",
-    "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"
-  },
-  {
-    "id": "bm-claw",
-    "enabled": true,
-    "name": "Лапчатая оправа",
-    "slot": "bind",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "больше префиксов: урон, крит, стихия"
-  },
-  {
-    "id": "bm-runic",
-    "enabled": true,
-    "name": "Руническая",
-    "slot": "bind",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": 0.5,
-    "rarity": "rare",
-    "caption": "чуть больше префиксов"
-  },
-  {
-    "id": "bm-ring",
-    "enabled": true,
-    "name": "Кольцевая",
-    "slot": "bind",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "поровну"
-  },
-  {
-    "id": "bm-spiral",
-    "enabled": true,
-    "name": "Спиральная",
-    "slot": "bind",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": -0.5,
-    "rarity": "common",
-    "caption": "чуть больше суффиксов"
-  },
-  {
-    "id": "bm-filigree",
-    "enabled": true,
-    "name": "Филигрань",
-    "slot": "bind",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": -1.0,
-    "rarity": "uncommon",
-    "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"
-  },
-  {
-    "id": "hh-disc",
-    "enabled": true,
-    "name": "Дисковое навершие",
-    "slot": "head",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "держит удар крепче — блок выше, статус реже"
-  },
-  {
-    "id": "hh-pear",
-    "enabled": true,
-    "name": "Грушевидное",
-    "slot": "head",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "чуть крепче держит удар"
-  },
-  {
-    "id": "hh-wheel",
-    "enabled": true,
-    "name": "Колесо",
-    "slot": "head",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "hh-ball",
-    "enabled": true,
-    "name": "Шаровое",
-    "slot": "head",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "чуть чаще вешает статус"
-  },
-  {
-    "id": "hh-spiked",
-    "enabled": true,
-    "name": "Шипастое",
-    "slot": "head",
-    "classes": [
-      "sword",
-      "dagger"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "статус своей грани чаще — блок ниже"
-  },
-  {
-    "id": "hp-counter",
-    "enabled": true,
-    "name": "Тяжёлый противовес",
-    "slot": "head",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "держит удар крепче — блок выше, статус реже"
-  },
-  {
-    "id": "hp-ring",
-    "enabled": true,
-    "name": "Кольцевой",
-    "slot": "head",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": 0.5,
-    "rarity": "common",
-    "caption": "чуть крепче держит удар"
-  },
-  {
-    "id": "hp-plain",
-    "enabled": true,
-    "name": "Простой подток",
-    "slot": "head",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "hp-faceted",
-    "enabled": true,
-    "name": "Гранёный подток",
-    "slot": "head",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": -0.5,
-    "rarity": "uncommon",
-    "caption": "чуть чаще вешает статус"
-  },
-  {
-    "id": "hp-spike",
-    "enabled": true,
-    "name": "Острый подток",
-    "slot": "head",
-    "classes": [
-      "axe",
-      "mace",
-      "spear",
-      "halberd"
-    ],
-    "axis": -1.0,
-    "rarity": "rare",
-    "caption": "статус своей грани чаще — блок ниже"
-  },
-  {
-    "id": "hb-horn",
-    "enabled": true,
-    "name": "Роговые накладки",
-    "slot": "head",
-    "classes": [
-      "bow"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "выстрел держится при оглушении — стойкость выше"
-  },
-  {
-    "id": "hb-bone",
-    "enabled": true,
-    "name": "Костяные ноки",
-    "slot": "head",
-    "classes": [
-      "bow"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "hb-light",
-    "enabled": true,
-    "name": "Лёгкие ноки",
-    "slot": "head",
-    "classes": [
-      "bow"
-    ],
-    "axis": -1.0,
-    "rarity": "uncommon",
-    "caption": "статус чаще, стойкость ниже"
-  },
-  {
-    "id": "hc-heavy",
-    "enabled": true,
-    "name": "Тяжёлое стремя",
-    "slot": "head",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "держит удар крепче — блок выше, статус реже"
-  },
-  {
-    "id": "hc-plain",
-    "enabled": true,
-    "name": "Простое стремя",
-    "slot": "head",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "hc-light",
-    "enabled": true,
-    "name": "Лёгкое стремя",
-    "slot": "head",
-    "classes": [
-      "crossbow"
-    ],
-    "axis": -1.0,
-    "rarity": "uncommon",
-    "caption": "статус своей грани чаще — блок ниже"
-  },
-  {
-    "id": "hm-shod",
-    "enabled": true,
-    "name": "Окованная пятка",
-    "slot": "head",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": 1.0,
-    "rarity": "common",
-    "caption": "держит удар крепче — блок выше, статус реже"
-  },
-  {
-    "id": "hm-plain",
-    "enabled": true,
-    "name": "Простая пятка",
-    "slot": "head",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": 0.0,
-    "rarity": "common",
-    "caption": "эталон"
-  },
-  {
-    "id": "hm-sharp",
-    "enabled": true,
-    "name": "Острая пятка",
-    "slot": "head",
-    "classes": [
-      "wand",
-      "staff"
-    ],
-    "axis": -1.0,
-    "rarity": "uncommon",
-    "caption": "стихийный статус чаще — блок ниже"
-  }
+  {"id": "sw-s-xxii", "enabled": true, "name": "Широкий короткий, XXII", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"blade": "short", "type": "XXII"}, "caption": "удар крупнее, взмахов меньше", "lore": "Окшотт XXII: широкий короткий клинок, два коротких дола у пяты; конец XV в."},
+  {"id": "sw-s-xiiib", "enabled": true, "name": "Короткий, XIIIb", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"blade": "short", "type": "XIIIb"}, "caption": "эталон", "lore": "Окшотт XIIIb: укороченный вариант XIII, лезвия почти параллельны."},
+  {"id": "sw-s-xiv", "enabled": true, "name": "Короткий заострённый, XIV", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 3, "tags": {"blade": "short", "type": "XIV"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Окшотт XIV: широкий у пяты, резко сужается; 1270–1340."},
+  {"id": "sw-r-hisp", "enabled": true, "name": "Хиспаниенсис", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 3, "tags": {"blade": "roman", "type": "hisp"}, "caption": "удар крупнее, взмахов меньше", "lore": "Gladius Hispaniensis: длинный республиканский клинок с «талией»."},
+  {"id": "sw-r-mainz", "enabled": true, "name": "Майнц", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 0.3, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "roman", "type": "mainz"}, "caption": "тяжелее в руке: удар крупнее", "lore": "Тип Майнц (Ульберт 1969): длинное остриё, слегка сужающийся клинок."},
+  {"id": "sw-r-fulham", "enabled": true, "name": "Майнц, вариант Фулхэм", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -0.3, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "roman", "type": "fulham"}, "caption": "легче в руке: темп выше, удар мельче", "lore": "Вариант Фулхэм: прямые лезвия, треугольное остриё (Микс 2007)."},
+  {"id": "sw-r-pompeii", "enabled": true, "name": "Помпеи", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"blade": "roman", "type": "pompeii"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Тип Помпеи: параллельные лезвия и короткое остриё — массовый клинок I в."},
+  {"id": "sw-a-x", "enabled": true, "name": "Широкий с долом, X", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"blade": "arming", "type": "X"}, "caption": "удар крупнее, взмахов меньше", "lore": "Окшотт X: широкий, дол во всю длину, скруглённое остриё; эпоха викингов и позже."},
+  {"id": "sw-a-xiii", "enabled": true, "name": "Широкий рубящий, XIII", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 0.6, "rarity": "common", "stepMin": 2, "stepMax": 4, "tags": {"blade": "arming", "type": "XIII"}, "caption": "тяжелее в руке: удар крупнее", "lore": "Окшотт XIII: широкий, лезвия параллельны, остриё скруглено; XIII–XIV вв."},
+  {"id": "sw-a-falchion", "enabled": true, "name": "Фальшион", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 0.6, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"blade": "arming", "type": "falchion", "edge": "single"}, "caption": "тяжелее в руке: удар крупнее", "lore": "Однолезвийный клинок с расширением к концу (Элмсли 2015)."},
+  {"id": "sw-a-xviii", "enabled": true, "name": "Ромбический, XVIII", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 0.3, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"blade": "arming", "type": "XVIII"}, "caption": "тяжелее в руке: удар крупнее", "lore": "Окшотт XVIII: ромбическое сечение, широкий у пяты; XV в."},
+  {"id": "sw-a-xii", "enabled": true, "name": "Классический, XII", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "arming", "type": "XII"}, "caption": "эталон", "lore": "Окшотт XII: сужающийся клинок, дол на две трети; XII–XIV вв."},
+  {"id": "sw-a-xvi", "enabled": true, "name": "Колюще-рубящий, XVI", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -0.3, "rarity": "common", "stepMin": 2, "stepMax": 4, "tags": {"blade": "arming", "type": "XVI"}, "caption": "легче в руке: темп выше, удар мельче", "lore": "Окшотт XVI: верхняя половина с долом, нижняя — ромбическое остриё."},
+  {"id": "sw-a-xi", "enabled": true, "name": "Узкий, XI", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -0.6, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"blade": "arming", "type": "XI"}, "caption": "легче в руке: темп выше, удар мельче", "lore": "Окшотт XI: узкий длинный клинок с узким долом; XII в."},
+  {"id": "sw-a-xv", "enabled": true, "name": "Гранёный, XV", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -0.8, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"blade": "arming", "type": "XV"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Окшотт XV: ромбическое сечение, прямое сужение к острию — против доспеха."},
+  {"id": "sw-a-sabre", "enabled": true, "name": "Саблевидный", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -0.8, "rarity": "rare", "stepMin": 1, "stepMax": 4, "tags": {"blade": "arming", "type": "sabre", "edge": "single"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Слабо изогнутый однолезвийный клинок; ранние сабли X–XIII вв. (Кирпичников 1966)."},
+  {"id": "sw-a-xix", "enabled": true, "name": "Узкий с рикассо, XIX", "slot": "strike", "classes": ["sword"], "hands": [1], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"blade": "arming", "type": "XIX"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Окшотт XIX: узкий клинок с коротким рикассо и шестигранным сечением."},
+  {"id": "sw-g-xiiia", "enabled": true, "name": "Двуручный широкий, XIIIa", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"blade": "great", "type": "XIIIa"}, "caption": "удар крупнее, взмахов меньше", "lore": "Окшотт XIIIa: большой меч, широкий клинок с параллельными лезвиями."},
+  {"id": "sw-g-xx", "enabled": true, "name": "Двуручный с двумя долами, XX", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": 0.5, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"blade": "great", "type": "XX"}, "caption": "тяжелее в руке: удар крупнее", "lore": "Окшотт XX: широкий, с двумя-тремя долами; XIV–XV вв."},
+  {"id": "sw-g-xiia", "enabled": true, "name": "Двуручный классический, XIIa", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "great", "type": "XIIa"}, "caption": "эталон", "lore": "Окшотт XIIa: удлинённый XII под две руки."},
+  {"id": "sw-g-xvii", "enabled": true, "name": "Двуручный гранёный, XVII", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"blade": "great", "type": "XVII"}, "caption": "легче в руке: темп выше, удар мельче", "lore": "Окшотт XVII: шестигранное сечение, длинная рукоять."},
+  {"id": "sw-g-xva", "enabled": true, "name": "Двуручный узкий, XVa", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "great", "type": "XVa"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Окшотт XVa: узкий колющий клинок под две руки."},
+  {"id": "sw-h-wide", "enabled": true, "name": "Огромный широкий с рикассо", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "huge", "type": "wide-ricasso", "ricasso": "yes"}, "caption": "удар крупнее, взмахов меньше", "lore": "Двуручник XVI в.: рикассо под перехват второй рукой."},
+  {"id": "sw-h-straight", "enabled": true, "name": "Огромный прямой", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "huge", "type": "straight"}, "caption": "эталон", "lore": "Прямой клинок огромного меча без рикассо."},
+  {"id": "sw-h-wavy", "enabled": true, "name": "Пламенеющий", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": -0.5, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"blade": "huge", "type": "wavy"}, "caption": "легче в руке: темп выше, удар мельче", "lore": "Волнистые лезвия (Flammenschwert) — ковал только хороший мастер из хорошей стали."},
+  {"id": "sw-h-narrow", "enabled": true, "name": "Огромный узкий с рикассо, XVIIIe", "slot": "strike", "classes": ["sword"], "hands": [2], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "huge", "type": "narrow-ricasso", "ricasso": "yes"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Окшотт XVIIIe: длинный узкий клинок с рикассо."},
+  {"id": "sw-gr-cramped", "enabled": true, "name": "Тесная", "slot": "grip", "classes": ["sword"], "hands": [1], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"hold": "cramped"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "sw-gr-short", "enabled": true, "name": "Короткая", "slot": "grip", "classes": ["sword"], "hands": [1], "axis": -0.6, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "short"}, "caption": "ближе, но шире — по толпе"},
+  {"id": "sw-gr-knife", "enabled": true, "name": "Ножевая на накладках", "slot": "grip", "classes": ["sword"], "hands": [1], "axis": -0.3, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"hold": "one", "build": "knife"}, "caption": "ближе, но шире — по толпе"},
+  {"id": "sw-gr-one", "enabled": true, "name": "Обычная", "slot": "grip", "classes": ["sword"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "one"}, "caption": "эталон"},
+  {"id": "sw-gr-hand-half", "enabled": true, "name": "Полуторная", "slot": "grip", "classes": ["sword"], "hands": [1], "axis": 0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"hold": "hand-half"}, "caption": "чуть дальше, чуть уже"},
+  {"id": "sw-gr-long", "enabled": true, "name": "Длинная", "slot": "grip", "classes": ["sword"], "hands": [1], "axis": 1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"hold": "long"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "sw-gr2-short", "enabled": true, "name": "Короткая двуручная", "slot": "grip", "classes": ["sword"], "hands": [2], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"hold": "two"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "sw-gr2-two", "enabled": true, "name": "Двуручная", "slot": "grip", "classes": ["sword"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "two"}, "caption": "эталон"},
+  {"id": "sw-gr2-long", "enabled": true, "name": "Длинная двуручная", "slot": "grip", "classes": ["sword"], "hands": [2], "axis": 1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"hold": "two-long"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "sw-gd-short", "enabled": true, "name": "Короткое перекрестье", "slot": "bind", "classes": ["sword"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"guard": "short-cross"}, "caption": "больше префиксов: урон, крит, стихия", "lore": "Стиль 3 по Окшотту: короткая прямая крестовина эпохи викингов."},
+  {"id": "sw-gd-curved", "enabled": true, "name": "Изогнутое перекрестье", "slot": "bind", "classes": ["sword"], "axis": 0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"guard": "curved"}, "caption": "чуть больше префиксов", "lore": "Стили 4, 6, 7: концы загнуты к клинку."},
+  {"id": "sw-gd-shield", "enabled": true, "name": "Щиток", "slot": "bind", "classes": ["sword"], "hands": [1], "axis": 0.3, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"guard": "shield"}, "caption": "чуть больше префиксов", "lore": "Римская гарда: пластина-щиток перед рукоятью гладиуса."},
+  {"id": "sw-gd-long", "enabled": true, "name": "Длинное перекрестье", "slot": "bind", "classes": ["sword"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"guard": "long-straight"}, "caption": "поровну", "lore": "Стиль 1: длинная прямая крестовина, классика XII–XIV вв."},
+  {"id": "sw-gd-claymore", "enabled": true, "name": "Клейморная гарда", "slot": "bind", "classes": ["sword"], "hands": [2], "axis": 0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"guard": "claymore"}, "caption": "чуть больше префиксов", "lore": "Дужки наклонены к клинку и кончаются четырёхлистниками — шотландский двуручник."},
+  {"id": "sw-gd-figured", "enabled": true, "name": "Фигурное перекрестье", "slot": "bind", "classes": ["sword"], "axis": -0.5, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"guard": "figured"}, "caption": "чуть больше суффиксов", "lore": "Стили 5, 8, 9, 12: расширенные и фигурные концы — работа хорошего мастера."},
+  {"id": "sw-gd-nagel", "enabled": true, "name": "С нагелем", "slot": "bind", "classes": ["sword"], "hands": [1], "axis": -0.6, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"guard": "nagel"}, "caption": "чуть больше суффиксов", "lore": "Нагель — боковой шип, прикрывающий пальцы; признак мессера (Элмсли 2015)."},
+  {"id": "sw-gd-rings", "enabled": true, "name": "Кольца и крюки", "slot": "bind", "classes": ["sword"], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"guard": "rings-hooks"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть", "lore": "Боковые кольца и парирующие крюки — эфес позднего двуручника."},
+  {"id": "sw-pm-lobed", "enabled": true, "name": "Трёхчастное", "slot": "head", "classes": ["sword"], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"pommel": "lobed"}, "caption": "чуть крепче держит удар", "lore": "Петерсен: трёх- и пятичастные навершия мечей IX–X вв."},
+  {"id": "sw-pm-triangular", "enabled": true, "name": "Треугольное", "slot": "head", "classes": ["sword"], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 3, "tags": {"pommel": "triangular"}, "caption": "эталон", "lore": "Петерсен: треугольное навершие, эпоха викингов."},
+  {"id": "sw-pm-brazil", "enabled": true, "name": "«Бразильский орех»", "slot": "head", "classes": ["sword"], "axis": 0.3, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"pommel": "brazil-nut"}, "caption": "чуть крепче держит удар", "lore": "Окшотт A: навершие в форме ореха, X–XII вв."},
+  {"id": "sw-pm-disc", "enabled": true, "name": "Диск", "slot": "head", "classes": ["sword"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"pommel": "disc"}, "caption": "держит удар крепче — блок выше, статус реже", "lore": "Окшотт G: дисковое навершие, самое массовое в XII–XIV вв."},
+  {"id": "sw-pm-wheel", "enabled": true, "name": "Колесо", "slot": "head", "classes": ["sword"], "axis": 0, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"pommel": "wheel"}, "caption": "эталон", "lore": "Окшотт H–K: диск со скошенными краями."},
+  {"id": "sw-pm-faceted", "enabled": true, "name": "Гранёное", "slot": "head", "classes": ["sword"], "axis": -0.3, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"pommel": "faceted"}, "caption": "чуть чаще вешает статус", "lore": "Гранёное навершие позднего меча (Кирпичников 1966, тип VII)."},
+  {"id": "sw-pm-pear", "enabled": true, "name": "Груша", "slot": "head", "classes": ["sword"], "axis": 0.5, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"pommel": "pear"}, "caption": "чуть крепче держит удар", "lore": "Окшотт T: грушевидное навершие XV в."},
+  {"id": "sw-pm-fishtail", "enabled": true, "name": "Рыбий хвост", "slot": "head", "classes": ["sword"], "axis": -0.5, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"pommel": "fishtail"}, "caption": "чуть чаще вешает статус", "lore": "Окшотт V: навершие «рыбий хвост», XV в."},
+  {"id": "sw-pm-ball", "enabled": true, "name": "Шаровое", "slot": "head", "classes": ["sword"], "axis": -0.5, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"pommel": "ball"}, "caption": "чуть чаще вешает статус", "lore": "Шаровое навершие римского гладиуса."},
+  {"id": "sw-pm-spiked", "enabled": true, "name": "Шипастое", "slot": "head", "classes": ["sword"], "axis": -1, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"pommel": "spiked"}, "caption": "статус своей грани чаще — блок ниже", "lore": "Фэнтези: исторических шипастых наверший нет."},
+  {"id": "dg-rhomb-stout", "enabled": true, "name": "Ромбический, массивный", "slot": "strike", "classes": ["dagger"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "rhomb"}, "caption": "удар крупнее, взмахов меньше", "lore": "Dean 1929, корень B: двулезвийный клинок плоского ромбического сечения."},
+  {"id": "dg-rhomb-even", "enabled": true, "name": "Ромбический, ровный", "slot": "strike", "classes": ["dagger"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "rhomb"}, "caption": "эталон", "lore": "Dean 1929, корень B: двулезвийный клинок плоского ромбического сечения."},
+  {"id": "dg-rhomb-slim", "enabled": true, "name": "Ромбический, облегчённый", "slot": "strike", "classes": ["dagger"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "rhomb"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Dean 1929, корень B: двулезвийный клинок плоского ромбического сечения."},
+  {"id": "dg-faceted-stout", "enabled": true, "name": "Гранёный, массивный", "slot": "strike", "classes": ["dagger"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "faceted"}, "caption": "удар крупнее, взмахов меньше", "lore": "Стилет: без лезвий, три-четыре грани (Dean 1929, XVI–XVIII вв.)."},
+  {"id": "dg-faceted-even", "enabled": true, "name": "Гранёный, ровный", "slot": "strike", "classes": ["dagger"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "faceted"}, "caption": "эталон", "lore": "Стилет: без лезвий, три-четыре грани (Dean 1929, XVI–XVIII вв.)."},
+  {"id": "dg-faceted-slim", "enabled": true, "name": "Гранёный, облегчённый", "slot": "strike", "classes": ["dagger"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "faceted"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Стилет: без лезвий, три-четыре грани (Dean 1929, XVI–XVIII вв.)."},
+  {"id": "dg-long-narrow-stout", "enabled": true, "name": "Длинный узкий, массивный", "slot": "strike", "classes": ["dagger"], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "long-narrow"}, "caption": "удар крупнее, взмахов меньше", "lore": "Рондель середины XV в.: длинный узкий клинок с усиленным остриём — против кольчуги."},
+  {"id": "dg-long-narrow-even", "enabled": true, "name": "Длинный узкий, ровный", "slot": "strike", "classes": ["dagger"], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "long-narrow"}, "caption": "эталон", "lore": "Рондель середины XV в.: длинный узкий клинок с усиленным остриём — против кольчуги."},
+  {"id": "dg-long-narrow-slim", "enabled": true, "name": "Длинный узкий, облегчённый", "slot": "strike", "classes": ["dagger"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "long-narrow"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Рондель середины XV в.: длинный узкий клинок с усиленным остриём — против кольчуги."},
+  {"id": "dg-wavy-stout", "enabled": true, "name": "Волнистый, массивный", "slot": "strike", "classes": ["dagger"], "axis": 1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"family": "wavy"}, "caption": "удар крупнее, взмахов меньше", "lore": "Дапур кериса: волны-луки всегда в нечётном числе (Harsrinuksmo 2008)."},
+  {"id": "dg-wavy-even", "enabled": true, "name": "Волнистый, ровный", "slot": "strike", "classes": ["dagger"], "axis": 0, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"family": "wavy"}, "caption": "эталон", "lore": "Дапур кериса: волны-луки всегда в нечётном числе (Harsrinuksmo 2008)."},
+  {"id": "dg-wavy-slim", "enabled": true, "name": "Волнистый, облегчённый", "slot": "strike", "classes": ["dagger"], "axis": -1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"family": "wavy"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Дапур кериса: волны-луки всегда в нечётном числе (Harsrinuksmo 2008)."},
+  {"id": "dg-single-stout", "enabled": true, "name": "Однолезвийный, массивный", "slot": "strike", "classes": ["dagger"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "single"}, "caption": "удар крупнее, взмахов меньше", "lore": "Dean 1929, корень A: толстая спинка — сакс и его потомки."},
+  {"id": "dg-single-even", "enabled": true, "name": "Однолезвийный, ровный", "slot": "strike", "classes": ["dagger"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "single"}, "caption": "эталон", "lore": "Dean 1929, корень A: толстая спинка — сакс и его потомки."},
+  {"id": "dg-single-slim", "enabled": true, "name": "Однолезвийный, облегчённый", "slot": "strike", "classes": ["dagger"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "single"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Dean 1929, корень A: толстая спинка — сакс и его потомки."},
+  {"id": "dg-gr-long", "enabled": true, "name": "Удлинённый веретённый", "slot": "grip", "classes": ["dagger"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"grip": "spindle"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "dg-gr-metal", "enabled": true, "name": "Цельнометаллический", "slot": "grip", "classes": ["dagger"], "axis": 0.5, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"grip": "metal"}, "caption": "чуть дальше, чуть уже"},
+  {"id": "dg-gr-spindle", "enabled": true, "name": "Веретённый", "slot": "grip", "classes": ["dagger"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"grip": "spindle"}, "caption": "эталон"},
+  {"id": "dg-gr-knife", "enabled": true, "name": "На накладках", "slot": "grip", "classes": ["dagger"], "axis": -0.5, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"grip": "knife"}, "caption": "ближе, но шире — по толпе"},
+  {"id": "dg-gr-hulu", "enabled": true, "name": "Хулу", "slot": "grip", "classes": ["dagger"], "axis": -1, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"grip": "hulu"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "dg-gd-none", "enabled": true, "name": "Без гарды", "slot": "bind", "classes": ["dagger"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"guard": "none"}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "dg-gd-nagel", "enabled": true, "name": "Нагель", "slot": "bind", "classes": ["dagger"], "axis": 0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"guard": "nagel"}, "caption": "чуть больше префиксов"},
+  {"id": "dg-gd-kidney", "enabled": true, "name": "«Почки»", "slot": "bind", "classes": ["dagger"], "axis": 0.3, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"guard": "kidney"}, "caption": "чуть больше префиксов"},
+  {"id": "dg-gd-cross", "enabled": true, "name": "Крестовина", "slot": "bind", "classes": ["dagger"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"guard": "cross"}, "caption": "поровну"},
+  {"id": "dg-gd-bar", "enabled": true, "name": "Брус", "slot": "bind", "classes": ["dagger"], "axis": 0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"guard": "bar"}, "caption": "чуть больше префиксов"},
+  {"id": "dg-gd-disc", "enabled": true, "name": "Диск", "slot": "bind", "classes": ["dagger"], "axis": -0.3, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"guard": "disc"}, "caption": "чуть больше суффиксов"},
+  {"id": "dg-gd-ring", "enabled": true, "name": "Кольцо или щиток", "slot": "bind", "classes": ["dagger"], "axis": -0.6, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"guard": "ring"}, "caption": "чуть больше суффиксов"},
+  {"id": "dg-gd-ganja", "enabled": true, "name": "Ганджа", "slot": "bind", "classes": ["dagger"], "axis": -1, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"guard": "ganja"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "dg-pm-disc", "enabled": true, "name": "Диск", "slot": "head", "classes": ["dagger"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"pommel": "disc"}, "caption": "держит удар крепче — блок выше, статус реже"},
+  {"id": "dg-pm-crescent", "enabled": true, "name": "Брус-полумесяц", "slot": "head", "classes": ["dagger"], "axis": 0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"pommel": "crescent"}, "caption": "чуть крепче держит удар"},
+  {"id": "dg-pm-sword", "enabled": true, "name": "Мечевое", "slot": "head", "classes": ["dagger"], "axis": 0.3, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"pommel": "sword"}, "caption": "чуть крепче держит удар"},
+  {"id": "dg-pm-washer", "enabled": true, "name": "Торец с шайбой", "slot": "head", "classes": ["dagger"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"pommel": "washer"}, "caption": "эталон"},
+  {"id": "dg-pm-cap", "enabled": true, "name": "Колпачок", "slot": "head", "classes": ["dagger"], "axis": -0.5, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"pommel": "cap"}, "caption": "чуть чаще вешает статус"},
+  {"id": "dg-pm-hulu", "enabled": true, "name": "Торец хулу", "slot": "head", "classes": ["dagger"], "axis": -0.6, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"pommel": "hulu"}, "caption": "чуть чаще вешает статус"},
+  {"id": "dg-pm-ears", "enabled": true, "name": "«Уши»", "slot": "head", "classes": ["dagger"], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"pommel": "ears"}, "caption": "статус своей грани чаще — блок ниже"},
+  {"id": "ax-n-wedge", "enabled": true, "name": "Клиновидное", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "narrow", "form": "wedge"}, "caption": "удар крупнее, взмахов меньше", "lore": "Узкое клиновидное полотно 7–9 см — рабочий и боевой топор одновременно."},
+  {"id": "ax-n-narrow", "enabled": true, "name": "Узкое", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "narrow", "form": "narrow"}, "caption": "эталон", "lore": "Кирпичников 1966: узкие боевые топорики."},
+  {"id": "ax-n-notched", "enabled": true, "name": "С полулунной выемкой", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "narrow", "form": "notched"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Кирпичников 1966, тип IА: выемка на нижней грани облегчает полотно."},
+  {"id": "ax-b-hanging", "enabled": true, "name": "Висячая борода", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "bearded", "form": "hanging-beard"}, "caption": "удар крупнее, взмахов меньше", "lore": "Прямая верхняя грань и оттянутая вниз борода — длинная кромка при малой массе."},
+  {"id": "ax-b-bearded", "enabled": true, "name": "Бородовидное", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "bearded", "form": "bearded"}, "caption": "эталон", "lore": "Кирпичников 1966, типы IV–VI: бородовидные топоры Руси."},
+  {"id": "ax-b-short", "enabled": true, "name": "Короткая бородка", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "bearded", "form": "short-beard"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Петерсен E: бородка едва намечена."},
+  {"id": "ax-w-heavy", "enabled": true, "name": "Широкое массивное", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "broad", "form": "broad"}, "caption": "удар крупнее, взмахов меньше", "lore": "Кирпичников 1966, тип VII: широкое симметричное полотно (≈ Петерсен L)."},
+  {"id": "ax-w-even", "enabled": true, "name": "Широкое ровное", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "broad", "form": "broad"}, "caption": "эталон", "lore": "Широкое полотно обычной толщины."},
+  {"id": "ax-w-light", "enabled": true, "name": "Широкое облегчённое", "slot": "strike", "classes": ["axe"], "hands": [1], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "broad", "form": "broad"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Тонкое широкое полотно — быстрее в руке."},
+  {"id": "ax-d-heavy", "enabled": true, "name": "Датское массивное", "slot": "strike", "classes": ["axe"], "hands": [2], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "broad-thin", "form": "dane"}, "caption": "удар крупнее, взмахов меньше", "lore": "Петерсен M: широкое тонкое полотно на длинном топорище."},
+  {"id": "ax-d-even", "enabled": true, "name": "Датское", "slot": "strike", "classes": ["axe"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "broad-thin", "form": "dane"}, "caption": "эталон", "lore": "Датская секира (Уилер VI) — оружие хускарлов."},
+  {"id": "ax-d-light", "enabled": true, "name": "Датское облегчённое", "slot": "strike", "classes": ["axe"], "hands": [2], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "broad-thin", "form": "dane"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Тонкое полотно датской секиры."},
+  {"id": "ax-c-heavy", "enabled": true, "name": "Полулунное массивное", "slot": "strike", "classes": ["axe"], "hands": [2], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"blade": "crescent", "form": "crescent"}, "caption": "удар крупнее, взмахов меньше", "lore": "Фэнтези: тяжёлая полулунная секира."},
+  {"id": "ax-c-even", "enabled": true, "name": "Полулунное", "slot": "strike", "classes": ["axe"], "hands": [2], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"blade": "crescent", "form": "crescent"}, "caption": "эталон", "lore": "Фэнтези: секира палача — орудие казни, а не боевое."},
+  {"id": "ax-c-light", "enabled": true, "name": "Полулунное облегчённое", "slot": "strike", "classes": ["axe"], "hands": [2], "axis": -1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"blade": "crescent", "form": "crescent"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Фэнтези."},
+  {"id": "ax-gr-long", "enabled": true, "name": "Длинное", "slot": "grip", "classes": ["axe"], "hands": [1], "axis": 1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"hold": "one"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "ax-gr-plain", "enabled": true, "name": "Обычное", "slot": "grip", "classes": ["axe"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "one"}, "caption": "эталон"},
+  {"id": "ax-gr-curved", "enabled": true, "name": "Изогнутое", "slot": "grip", "classes": ["axe"], "hands": [1], "axis": -0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"hold": "one"}, "caption": "ближе, но шире — по толпе"},
+  {"id": "ax-gr-short", "enabled": true, "name": "Короткое", "slot": "grip", "classes": ["axe"], "hands": [1], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"hold": "one"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "ax-gr2-long", "enabled": true, "name": "Длинное двуручное", "slot": "grip", "classes": ["axe"], "hands": [2], "axis": 1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"hold": "two"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "ax-gr2-plain", "enabled": true, "name": "Двуручное", "slot": "grip", "classes": ["axe"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "two"}, "caption": "эталон"},
+  {"id": "ax-gr2-short", "enabled": true, "name": "Укороченное двуручное", "slot": "grip", "classes": ["axe"], "hands": [2], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"hold": "two"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "ax-lg-none", "enabled": true, "name": "Без щекавиц", "slot": "bind", "classes": ["axe"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"lugs": "none"}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "ax-lg-lower", "enabled": true, "name": "Только нижние", "slot": "bind", "classes": ["axe"], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"lugs": "lower"}, "caption": "чуть больше префиксов"},
+  {"id": "ax-lg-two", "enabled": true, "name": "Две пары", "slot": "bind", "classes": ["axe"], "axis": 0, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"lugs": "two-pairs"}, "caption": "поровну"},
+  {"id": "ax-lg-cape", "enabled": true, "name": "Мысовидные", "slot": "bind", "classes": ["axe"], "axis": -0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"lugs": "cape"}, "caption": "чуть больше суффиксов"},
+  {"id": "ax-lg-tube", "enabled": true, "name": "Трубчатая", "slot": "bind", "classes": ["axe"], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"lugs": "tube"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "ax-bt-hammer", "enabled": true, "name": "Молоточек", "slot": "head", "classes": ["axe"], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"butt": "hammer"}, "caption": "держит удар крепче — блок выше, статус реже"},
+  {"id": "ax-bt-plate", "enabled": true, "name": "Пластинчатый", "slot": "head", "classes": ["axe"], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"butt": "plate"}, "caption": "чуть крепче держит удар"},
+  {"id": "ax-bt-plain", "enabled": true, "name": "Простой", "slot": "head", "classes": ["axe"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"butt": "plain"}, "caption": "эталон"},
+  {"id": "ax-bt-notched", "enabled": true, "name": "Вырезной с мысками", "slot": "head", "classes": ["axe"], "axis": -0.3, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"butt": "notched"}, "caption": "чуть чаще вешает статус"},
+  {"id": "ax-bt-long", "enabled": true, "name": "Длинный затыльник", "slot": "head", "classes": ["axe"], "axis": -0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"butt": "long"}, "caption": "чуть чаще вешает статус"},
+  {"id": "ax-bt-beak", "enabled": true, "name": "Клюв", "slot": "head", "classes": ["axe"], "axis": -1, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"butt": "beak"}, "caption": "статус своей грани чаще — блок ниже"},
+  {"id": "mc-club-butt", "enabled": true, "name": "Комлевая дубина", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "family": "wood", "tags": {"family": "wood", "form": "club-butt"}, "caption": "удар крупнее, взмахов меньше", "lore": "дубина из комля с корнем"},
+  {"id": "mc-burl", "enabled": true, "name": "Капо́вая палица", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "family": "wood", "tags": {"family": "wood", "form": "burl"}, "caption": "эталон", "lore": "кап — нарост на стволе; часть типа V"},
+  {"id": "mc-cue", "enabled": true, "name": "Кий", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "family": "wood", "tags": {"family": "wood", "form": "cue"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "лёгкая палка с утолщением"},
+  {"id": "mc-sphere", "enabled": true, "name": "Шаровая булава", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "metal", "form": "sphere"}, "caption": "удар крупнее, взмахов меньше", "lore": "Кирпичников 1966, вып. 2, тип V"},
+  {"id": "mc-cube", "enabled": true, "name": "Кубовидная булава", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "metal", "form": "cube"}, "caption": "тяжелее в руке: удар крупнее", "lore": "Кирпичников 1966, вып. 2, тип II — самая массовая (45 находок)"},
+  {"id": "mc-ribbed", "enabled": true, "name": "Ребристая булава", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "metal", "form": "ribbed"}, "caption": "эталон", "lore": "Кирпичников 1966, вып. 2, тип V"},
+  {"id": "mc-flanged", "enabled": true, "name": "Шестопёр", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": -0.4, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"family": "metal", "form": "flanged"}, "caption": "легче в руке: темп выше, удар мельче", "lore": "Кирпичников 1966, вып. 2, тип VI; больше шести перьев — пернач"},
+  {"id": "mc-beak", "enabled": true, "name": "Булава-клевец", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": -1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"family": "metal", "form": "beak"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Кирпичников 1966, вып. 2, тип IIА"},
+  {"id": "mc-spikes12", "enabled": true, "name": "Двенадцатишипная булава", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "spiked", "form": "spikes12"}, "caption": "удар крупнее, взмахов меньше", "lore": "Кирпичников 1966, вып. 2, тип IV (26 находок)"},
+  {"id": "mc-spikes-peas", "enabled": true, "name": "Булава с «горошками»", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "spiked", "form": "spikes-peas"}, "caption": "эталон", "lore": "Кирпичников 1966, вып. 2, тип III"},
+  {"id": "mc-spikes4", "enabled": true, "name": "Четырёхшипная булава", "slot": "strike", "classes": ["mace"], "hands": [1], "axis": -1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"family": "spiked", "form": "spikes4"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Кирпичников 1966, вып. 2, тип I"},
+  {"id": "mc-lucerne", "enabled": true, "name": "Люцернский молот", "slot": "strike", "classes": ["mace"], "hands": [2], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "hammer-beak", "form": "lucerne"}, "caption": "удар крупнее, взмахов меньше", "lore": "Met Museum; Wikipedia: Lucerne hammer"},
+  {"id": "mc-crow", "enabled": true, "name": "Вороний клюв", "slot": "strike", "classes": ["mace"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "hammer-beak", "form": "crow"}, "caption": "эталон", "lore": "bec de corbin — Wikipedia: Bec de corbin"},
+  {"id": "mc-falcon", "enabled": true, "name": "Соколиный клюв", "slot": "strike", "classes": ["mace"], "hands": [2], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "hammer-beak", "form": "falcon"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "bec de faucon — облегчённый клюв"},
+  {"id": "mc-lead", "enabled": true, "name": "Свинцовый молот", "slot": "strike", "classes": ["mace"], "hands": [2], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"family": "crude", "form": "lead"}, "caption": "удар крупнее, взмахов меньше", "lore": "восстание майотенов, Париж 1382"},
+  {"id": "mc-oslop", "enabled": true, "name": "Ослоп", "slot": "strike", "classes": ["mace"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "crude", "form": "oslop"}, "caption": "эталон", "lore": "тяжёлая дубина с железом; летопись 1444 г."},
+  {"id": "mc-goedendag", "enabled": true, "name": "Гёдендаг", "slot": "strike", "classes": ["mace"], "hands": [2], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"family": "crude", "form": "goedendag"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "дубина с шипом; Кортрейк, 1302"},
+  {"id": "mc-sprinkler", "enabled": true, "name": "Моргенштерн", "slot": "strike", "classes": ["mace"], "hands": [2], "axis": -0.5, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"family": "crude", "form": "sprinkler"}, "caption": "легче в руке: темп выше, удар мельче", "lore": "«кропило»: шипастое било на древке — Royal Armouries"},
+  {"id": "mc-gr-long", "enabled": true, "name": "Длинная рукоять", "slot": "grip", "classes": ["mace"], "hands": [1], "axis": 1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"hold": "one"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "mc-gr-plain", "enabled": true, "name": "Рукоять", "slot": "grip", "classes": ["mace"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "one"}, "caption": "эталон"},
+  {"id": "mc-gr-short", "enabled": true, "name": "Короткая рукоять", "slot": "grip", "classes": ["mace"], "hands": [1], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"hold": "one"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "mc-gr2-long", "enabled": true, "name": "Длинное древко", "slot": "grip", "classes": ["mace"], "hands": [2], "axis": 1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"hold": "two"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "mc-gr2-plain", "enabled": true, "name": "Древко", "slot": "grip", "classes": ["mace"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "two"}, "caption": "эталон"},
+  {"id": "mc-gr2-short", "enabled": true, "name": "Укороченное древко", "slot": "grip", "classes": ["mace"], "hands": [2], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"hold": "two"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "mc-mt-wrap", "enabled": true, "name": "Обмотка", "slot": "bind", "classes": ["mace"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"mount": "wrap"}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "mc-mt-ferrule", "enabled": true, "name": "Оковка", "slot": "bind", "classes": ["mace"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"mount": "ferrule"}, "caption": "поровну"},
+  {"id": "mc-mt-tube", "enabled": true, "name": "Трубчатая втулка", "slot": "bind", "classes": ["mace"], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"mount": "tube"}, "caption": "чуть больше суффиксов"},
+  {"id": "mc-mt-langets", "enabled": true, "name": "Ланцеты", "slot": "bind", "classes": ["mace"], "axis": -1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"mount": "langets"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "mc-end-knob", "enabled": true, "name": "Набалдашник", "slot": "head", "classes": ["mace"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"end": "knob"}, "caption": "держит удар крепче — блок выше, статус реже"},
+  {"id": "mc-end-ring", "enabled": true, "name": "Кольцо-гарда", "slot": "head", "classes": ["mace"], "hands": [1], "axis": 0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"end": "ring"}, "caption": "чуть крепче держит удар"},
+  {"id": "mc-end-lanyard", "enabled": true, "name": "Темляк", "slot": "head", "classes": ["mace"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"end": "lanyard"}, "caption": "эталон"},
+  {"id": "mc-end-hook", "enabled": true, "name": "Крюк", "slot": "head", "classes": ["mace"], "hands": [1], "axis": -1, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"end": "hook"}, "caption": "статус своей грани чаще — блок ниже"},
+  {"id": "mc-end2-butt", "enabled": true, "name": "Подток", "slot": "head", "classes": ["mace"], "hands": [2], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"end": "butt"}, "caption": "держит удар крепче — блок выше, статус реже"},
+  {"id": "mc-end2-plain", "enabled": true, "name": "Лёгкий подток", "slot": "head", "classes": ["mace"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"end": "butt"}, "caption": "эталон"},
+  {"id": "mc-end2-spike", "enabled": true, "name": "Острый подток", "slot": "head", "classes": ["mace"], "hands": [2], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"end": "spike"}, "caption": "статус своей грани чаще — блок ниже"},
+  {"id": "sp-lanceolate", "enabled": true, "name": "Ланцетовидное (I)", "slot": "strike", "classes": ["spear"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "leaf", "form": "lanceolate"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Кирпичников 1966, тип I (сверить)"},
+  {"id": "sp-rhombic", "enabled": true, "name": "Ромбическое (II)", "slot": "strike", "classes": ["spear"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "leaf", "form": "rhombic"}, "caption": "эталон", "lore": "Кирпичников 1966, тип II (сверить)"},
+  {"id": "sp-ovate", "enabled": true, "name": "Яйцевидное (IV)", "slot": "strike", "classes": ["spear"], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "leaf", "form": "ovate"}, "caption": "удар крупнее, взмахов меньше", "lore": "Кирпичников 1966, тип IV (сверить)"},
+  {"id": "sp-triangular", "enabled": true, "name": "Удлинённо-треугольное (III)", "slot": "strike", "classes": ["spear"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "broad", "form": "triangular"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Кирпичников 1966, тип III (сверить)"},
+  {"id": "sp-laurel", "enabled": true, "name": "Лавролистное (IVА)", "slot": "strike", "classes": ["spear"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "broad", "form": "laurel"}, "caption": "эталон", "lore": "Кирпичников 1966, тип IVА"},
+  {"id": "sp-rogatina", "enabled": true, "name": "Рогатинное (IVА)", "slot": "strike", "classes": ["spear"], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "broad", "form": "rogatina"}, "caption": "удар крупнее, взмахов меньше", "lore": "Самое тяжёлое перо, Кирпичников 1966, тип IVА"},
+  {"id": "sp-awl", "enabled": true, "name": "Шиловидное", "slot": "strike", "classes": ["spear"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "faceted", "form": "awl"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Узкое бронебойное перо"},
+  {"id": "sp-tetra", "enabled": true, "name": "Четырёхгранное (V)", "slot": "strike", "classes": ["spear"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "faceted", "form": "tetra"}, "caption": "эталон", "lore": "Кирпичников 1966, тип V"},
+  {"id": "sp-facet-broad", "enabled": true, "name": "Гранёное широкое", "slot": "strike", "classes": ["spear"], "axis": 1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"group": "faceted", "form": "facet-broad"}, "caption": "удар крупнее, взмахов меньше", "lore": "Условная форма"},
+  {"id": "sp-two-spike", "enabled": true, "name": "Двушипное (VII)", "slot": "strike", "classes": ["spear"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "winged", "form": "two-spike"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "Кирпичников 1966, тип VII"},
+  {"id": "sp-winged", "enabled": true, "name": "Крылатое", "slot": "strike", "classes": ["spear"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "winged", "form": "winged"}, "caption": "эталон", "lore": "Flügellanze: упоры-крылья под пером"},
+  {"id": "sp-trident", "enabled": true, "name": "Трезубое", "slot": "strike", "classes": ["spear"], "axis": 1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"group": "winged", "form": "trident"}, "caption": "удар крупнее, взмахов меньше", "lore": "Три зубца на одной втулке"},
+  {"id": "sp-gr-long", "enabled": true, "name": "Длинное древко сулицы", "slot": "grip", "classes": ["spear"], "hands": [1], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "one"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "sp-gr-plain", "enabled": true, "name": "Древко сулицы", "slot": "grip", "classes": ["spear"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "one"}, "caption": "эталон"},
+  {"id": "sp-gr-short", "enabled": true, "name": "Короткое древко", "slot": "grip", "classes": ["spear"], "hands": [1], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"hold": "one"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "sp-gr2-heel", "enabled": true, "name": "Хват у пяты", "slot": "grip", "classes": ["spear"], "hands": [2], "axis": 1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"hold": "heel"}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "sp-gr2-plain", "enabled": true, "name": "Обычный хват", "slot": "grip", "classes": ["spear"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"hold": "heel"}, "caption": "эталон"},
+  {"id": "sp-gr2-mid", "enabled": true, "name": "Хват посередине", "slot": "grip", "classes": ["spear"], "hands": [2], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"hold": "middle"}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "sp-mt-tang", "enabled": true, "name": "Черешок", "slot": "bind", "classes": ["spear"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"mount": "tang"}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "sp-mt-crossbar", "enabled": true, "name": "Перекладина", "slot": "bind", "classes": ["spear"], "axis": 0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"mount": "crossbar"}, "caption": "чуть больше префиксов"},
+  {"id": "sp-mt-socket", "enabled": true, "name": "Втулка", "slot": "bind", "classes": ["spear"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"mount": "socket"}, "caption": "поровну"},
+  {"id": "sp-mt-ribbed", "enabled": true, "name": "Гранёная втулка", "slot": "bind", "classes": ["spear"], "axis": -0.5, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"mount": "socket"}, "caption": "чуть больше суффиксов"},
+  {"id": "sp-mt-langets", "enabled": true, "name": "Ланцеты", "slot": "bind", "classes": ["spear"], "axis": -1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"mount": "langets"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "pl-bt-heavy", "enabled": true, "name": "Тяжёлый подток", "slot": "head", "classes": ["spear", "halberd"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "держит удар крепче — блок выше, статус реже"},
+  {"id": "pl-bt-ring", "enabled": true, "name": "Кольцевой подток", "slot": "head", "classes": ["spear", "halberd"], "axis": 0.5, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {}, "caption": "чуть крепче держит удар"},
+  {"id": "pl-bt-plain", "enabled": true, "name": "Простой подток", "slot": "head", "classes": ["spear", "halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "эталон"},
+  {"id": "pl-bt-faceted", "enabled": true, "name": "Гранёный подток", "slot": "head", "classes": ["spear", "halberd"], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {}, "caption": "чуть чаще вешает статус"},
+  {"id": "pl-bt-spike", "enabled": true, "name": "Острый подток", "slot": "head", "classes": ["spear", "halberd"], "axis": -1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "статус своей грани чаще — блок ниже"},
+  {"id": "hb-vouge", "enabled": true, "name": "Вуж", "slot": "strike", "classes": ["halberd"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "glaive", "form": "vouge"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "узкий однолезвийный клинок на втулке (Уолдман 2005)"},
+  {"id": "hb-glaive", "enabled": true, "name": "Глефа", "slot": "strike", "classes": ["halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "glaive", "form": "glaive"}, "caption": "эталон", "lore": "клинок-нож на древке (Уолдман 2005)"},
+  {"id": "hb-bill", "enabled": true, "name": "Билл", "slot": "strike", "classes": ["halberd"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "glaive", "form": "bill"}, "caption": "удар крупнее, взмахов меньше", "lore": "клинок с крюком (Уолдман 2005)"},
+  {"id": "hb-late", "enabled": true, "name": "Поздняя алебарда", "slot": "strike", "classes": ["halberd"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "halberd", "form": "late"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "малое лезвие, длинное жало (Швейцарский нацмузей 2022)"},
+  {"id": "hb-swiss", "enabled": true, "name": "Швейцарская алебарда", "slot": "strike", "classes": ["halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "halberd", "form": "swiss"}, "caption": "эталон", "lore": "топор, клюв и жало (ван Дейк 2020)"},
+  {"id": "hb-early", "enabled": true, "name": "Ранняя алебарда", "slot": "strike", "classes": ["halberd"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "halberd", "form": "early"}, "caption": "удар крупнее, взмахов меньше", "lore": "секач на древке (ван Дейк 2020)"},
+  {"id": "hb-spetum", "enabled": true, "name": "Спетум", "slot": "strike", "classes": ["halberd"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "partisan", "form": "spetum"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "узкое жало и два отростка (Уолдман 2005)"},
+  {"id": "hb-partisan", "enabled": true, "name": "Протазан", "slot": "strike", "classes": ["halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "partisan", "form": "partisan"}, "caption": "эталон", "lore": "широкое колющее перо; исторически — копейное семейство (Уолдман 2005)"},
+  {"id": "hb-broad-partisan", "enabled": true, "name": "Широкий протазан", "slot": "strike", "classes": ["halberd"], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "partisan", "form": "broad-partisan"}, "caption": "удар крупнее, взмахов меньше", "lore": "парадное широкое перо (Уолдман 2005)"},
+  {"id": "hb-bard1", "enabled": true, "name": "Бердыш, тип 1", "slot": "strike", "classes": ["halberd"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "bardiche", "form": "bard1"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "топоровидный (Двуреченский 2008)"},
+  {"id": "hb-bard2", "enabled": true, "name": "Бердыш, тип 2", "slot": "strike", "classes": ["halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "bardiche", "form": "bard2"}, "caption": "эталон", "lore": "месяцевидный (Двуреченский 2008)"},
+  {"id": "hb-bard3", "enabled": true, "name": "Бердыш, тип 3", "slot": "strike", "classes": ["halberd"], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "bardiche", "form": "bard3"}, "caption": "удар крупнее, взмахов меньше", "lore": "двурогий (Двуреченский 2008)"},
+  {"id": "hb-poleaxe-beak", "enabled": true, "name": "Полэкс с клювом", "slot": "strike", "classes": ["halberd"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"group": "poleaxe", "form": "poleaxe-beak"}, "caption": "самый быстрый в пуле: статусы и проки чаще", "lore": "топор и клюв на древке (Уолдман 2005)"},
+  {"id": "hb-poleaxe", "enabled": true, "name": "Полэкс", "slot": "strike", "classes": ["halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"group": "poleaxe", "form": "poleaxe"}, "caption": "эталон", "lore": "топор и молот на древке, латы XV в. (Уолдман 2005)"},
+  {"id": "hb-poleaxe-heavy", "enabled": true, "name": "Тяжёлый полэкс", "slot": "strike", "classes": ["halberd"], "axis": 1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"group": "poleaxe", "form": "poleaxe-heavy"}, "caption": "удар крупнее, взмахов меньше", "lore": "массивное полотно и молот (Уолдман 2005)"},
+  {"id": "hb-gr-long", "enabled": true, "name": "Длинное древко", "slot": "grip", "classes": ["halberd"], "axis": 1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {}, "caption": "достаёт дальше, задевает уже"},
+  {"id": "hb-gr-plain", "enabled": true, "name": "Древко", "slot": "grip", "classes": ["halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "эталон"},
+  {"id": "hb-gr-short", "enabled": true, "name": "Укороченное древко", "slot": "grip", "classes": ["halberd"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {}, "caption": "вплотную, но самым широким взмахом"},
+  {"id": "hb-mt-rings", "enabled": true, "name": "На двух кольцах", "slot": "bind", "classes": ["halberd"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 3, "tags": {"mount": "rings"}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "hb-mt-forged", "enabled": true, "name": "Кованая втулка", "slot": "bind", "classes": ["halberd"], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"mount": "socket"}, "caption": "чуть больше префиксов"},
+  {"id": "hb-mt-socket", "enabled": true, "name": "Втулка", "slot": "bind", "classes": ["halberd"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"mount": "socket"}, "caption": "поровну"},
+  {"id": "hb-mt-langets", "enabled": true, "name": "Ланцеты", "slot": "bind", "classes": ["halberd"], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"mount": "langets"}, "caption": "чуть больше суффиксов"},
+  {"id": "hb-mt-rondel", "enabled": true, "name": "Рондель", "slot": "bind", "classes": ["halberd"], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"mount": "rondel"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "bw-short-sigma-tight", "enabled": true, "name": "Короткие сигмовидные, тугие", "slot": "strike", "classes": ["bow"], "axis": 1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "short-sigma"}, "caption": "выстрел мощнее, натяг дольше", "lore": "Скифский сложный лук 60–80 см (Черненко 1981)."},
+  {"id": "bw-short-sigma-even", "enabled": true, "name": "Короткие сигмовидные, ровные", "slot": "strike", "classes": ["bow"], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "short-sigma"}, "caption": "эталон", "lore": "Скифский сложный лук 60–80 см (Черненко 1981)."},
+  {"id": "bw-short-sigma-soft", "enabled": true, "name": "Короткие сигмовидные, мягкие", "slot": "strike", "classes": ["bow"], "axis": -1, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "short-sigma"}, "caption": "самые частые выстрелы в пуле", "lore": "Скифский сложный лук 60–80 см (Черненко 1981)."},
+  {"id": "bw-self-tight", "enabled": true, "name": "Простые плоские, тугие", "slot": "strike", "classes": ["bow"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "self"}, "caption": "выстрел мощнее, натяг дольше", "lore": "Простой лук из цельной палки; хольмегорский тип, вяз."},
+  {"id": "bw-self-even", "enabled": true, "name": "Простые плоские, ровные", "slot": "strike", "classes": ["bow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "self"}, "caption": "эталон", "lore": "Простой лук из цельной палки; хольмегорский тип, вяз."},
+  {"id": "bw-self-soft", "enabled": true, "name": "Простые плоские, мягкие", "slot": "strike", "classes": ["bow"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "self"}, "caption": "самые частые выстрелы в пуле", "lore": "Простой лук из цельной палки; хольмегорский тип, вяз."},
+  {"id": "bw-long-straight-tight", "enabled": true, "name": "Длинные прямые, тугие", "slot": "strike", "classes": ["bow"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "long-straight"}, "caption": "выстрел мощнее, натяг дольше", "lore": "D-сечение; Mary Rose, 1,87–2,11 м."},
+  {"id": "bw-long-straight-even", "enabled": true, "name": "Длинные прямые, ровные", "slot": "strike", "classes": ["bow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "long-straight"}, "caption": "эталон", "lore": "D-сечение; Mary Rose, 1,87–2,11 м."},
+  {"id": "bw-long-straight-soft", "enabled": true, "name": "Длинные прямые, мягкие", "slot": "strike", "classes": ["bow"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "long-straight"}, "caption": "самые частые выстрелы в пуле", "lore": "D-сечение; Mary Rose, 1,87–2,11 м."},
+  {"id": "bw-composite-tight", "enabled": true, "name": "Средние рефлексные, тугие", "slot": "strike", "classes": ["bow"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "composite"}, "caption": "выстрел мощнее, натяг дольше", "lore": "Древнерусский, тюркский, крымский сложный лук."},
+  {"id": "bw-composite-even", "enabled": true, "name": "Средние рефлексные, ровные", "slot": "strike", "classes": ["bow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "composite"}, "caption": "эталон", "lore": "Древнерусский, тюркский, крымский сложный лук."},
+  {"id": "bw-composite-soft", "enabled": true, "name": "Средние рефлексные, мягкие", "slot": "strike", "classes": ["bow"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "composite"}, "caption": "самые частые выстрелы в пуле", "lore": "Древнерусский, тюркский, крымский сложный лук."},
+  {"id": "bw-long-reflex-tight", "enabled": true, "name": "Длинные рефлексные, тугие", "slot": "strike", "classes": ["bow"], "axis": 1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "long-reflex"}, "caption": "выстрел мощнее, натяг дольше", "lore": "Гуннский 130–160 см; маньчжурский около 196 см."},
+  {"id": "bw-long-reflex-even", "enabled": true, "name": "Длинные рефлексные, ровные", "slot": "strike", "classes": ["bow"], "axis": 0, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "long-reflex"}, "caption": "эталон", "lore": "Гуннский 130–160 см; маньчжурский около 196 см."},
+  {"id": "bw-long-reflex-soft", "enabled": true, "name": "Длинные рефлексные, мягкие", "slot": "strike", "classes": ["bow"], "axis": -1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {"limbs": "long-reflex"}, "caption": "самые частые выстрелы в пуле", "lore": "Гуннский 130–160 см; маньчжурский около 196 см."},
+  {"id": "bw-gr-rigid", "enabled": true, "name": "Жёсткая, выложенная костью", "slot": "grip", "classes": ["bow"], "axis": 0.5, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"riser": "rigid"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"},
+  {"id": "bw-gr-bend", "enabled": true, "name": "Гнущаяся", "slot": "grip", "classes": ["bow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"riser": "bend"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"},
+  {"id": "bw-gr-offset", "enabled": true, "name": "Выносная", "slot": "grip", "classes": ["bow"], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"riser": "offset"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)"},
+  {"id": "bw-st-double", "enabled": true, "name": "Двойная тетива", "slot": "bind", "classes": ["bow"], "axis": 1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "bw-st-waxed", "enabled": true, "name": "Навощённая", "slot": "bind", "classes": ["bow"], "axis": 0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {}, "caption": "чуть больше префиксов"},
+  {"id": "bw-st-single", "enabled": true, "name": "Одинарная", "slot": "bind", "classes": ["bow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "поровну"},
+  {"id": "bw-st-braided", "enabled": true, "name": "Плетёная", "slot": "bind", "classes": ["bow"], "axis": -0.5, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {}, "caption": "чуть больше суффиксов"},
+  {"id": "bw-st-twisted", "enabled": true, "name": "Витая", "slot": "bind", "classes": ["bow"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "bw-tp-flex", "enabled": true, "name": "Гибкие концы", "slot": "head", "classes": ["bow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"tips": "flexible"}, "caption": "эталон"},
+  {"id": "bw-tp-horn", "enabled": true, "name": "С роговыми ноками", "slot": "head", "classes": ["bow"], "axis": 0.5, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"tips": "horn-nocks"}, "caption": "чуть крепче держит выстрел"},
+  {"id": "bw-tp-working", "enabled": true, "name": "Рабочий загиб", "slot": "head", "classes": ["bow"], "axis": -0.5, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"tips": "working"}, "caption": "чуть легче концы"},
+  {"id": "bw-tp-siyah", "enabled": true, "name": "Сияхи", "slot": "head", "classes": ["bow"], "axis": 1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"tips": "siyah"}, "caption": "выстрел держится при оглушении — стойкость выше"},
+  {"id": "bw-tp-siyah4", "enabled": true, "name": "Сияхи, 4 концевые накладки", "slot": "head", "classes": ["bow"], "axis": 0.5, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"tips": "siyah", "plates": "four"}, "caption": "чуть крепче держит выстрел"},
+  {"id": "bw-tp-siyah7", "enabled": true, "name": "Сияхи, 7 накладок", "slot": "head", "classes": ["bow"], "axis": 1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"tips": "siyah", "plates": "seven"}, "caption": "выстрел держится при оглушении — стойкость выше"},
+  {"id": "bw-tp-big", "enabled": true, "name": "Большие сияхи с подтетивниками", "slot": "head", "classes": ["bow"], "axis": -1, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"tips": "big-siyah"}, "caption": "стойкость к прерыванию ниже — сторона укуса луку пока не платит"},
+  {"id": "cb-pr-heavy", "enabled": true, "name": "Тяжёлая дуга", "slot": "strike", "classes": ["crossbow"], "axis": 1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {}, "caption": "выстрел мощнее, натяг дольше"},
+  {"id": "cb-pr-reinforced", "enabled": true, "name": "Усиленная дуга", "slot": "strike", "classes": ["crossbow"], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "туже: стрела тяжелее"},
+  {"id": "cb-pr-straight", "enabled": true, "name": "Прямая дуга", "slot": "strike", "classes": ["crossbow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "эталон"},
+  {"id": "cb-pr-light", "enabled": true, "name": "Лёгкая дуга", "slot": "strike", "classes": ["crossbow"], "axis": -0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {}, "caption": "мягче: выстрел чаще, стрела легче"},
+  {"id": "cb-pr-slim", "enabled": true, "name": "Облегчённая дуга", "slot": "strike", "classes": ["crossbow"], "axis": -1, "rarity": "rare", "stepMin": 1, "stepMax": 5, "tags": {}, "caption": "самые частые выстрелы в пуле"},
+  {"id": "cb-st-pistol", "enabled": true, "name": "Пистолетное ложе", "slot": "grip", "classes": ["crossbow"], "hands": [1], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"stock": "pistol"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "Балестрино XVI–XVIII вв.: спорт и мелкая дичь."},
+  {"id": "cb-st-narrow", "enabled": true, "name": "Узкое стремя", "slot": "grip", "classes": ["crossbow"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"stock": "narrow-stirrup"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "«В одну ногу» — arbalista ad unum pedem."},
+  {"id": "cb-st-wide", "enabled": true, "name": "Широкое стремя", "slot": "grip", "classes": ["crossbow"], "hands": [2], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"stock": "wide-stirrup"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "«В две ноги», XIII–XIV вв."},
+  {"id": "cb-st-cranequin", "enabled": true, "name": "Ложе под кранекин", "slot": "grip", "classes": ["crossbow"], "hands": [2], "axis": 0, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"stock": "cranequin-pin"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "Короткое, расширено у замка, поперечный штифт; ок. 1460–1480 (Payne-Gallwey 1903)."},
+  {"id": "cb-st-windlass", "enabled": true, "name": "Длинное ложе под ворот", "slot": "grip", "classes": ["crossbow"], "hands": [2], "axis": 0, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"stock": "windlass-long"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "Воротовый арбалет à moulinet, XV в."},
+  {"id": "cb-lk-lever", "enabled": true, "name": "Рычажный спуск", "slot": "bind", "classes": ["crossbow"], "axis": 1, "rarity": "common", "stepMin": 2, "stepMax": 5, "tags": {"lock": "nut-axle"}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "cb-lk-pin", "enabled": true, "name": "Подъёмный штифт", "slot": "bind", "classes": ["crossbow"], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"lock": "pin"}, "caption": "чуть больше префиксов"},
+  {"id": "cb-lk-nut", "enabled": true, "name": "Орех без оси", "slot": "bind", "classes": ["crossbow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"lock": "nut"}, "caption": "поровну"},
+  {"id": "cb-lk-axle", "enabled": true, "name": "Орех на оси", "slot": "bind", "classes": ["crossbow"], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"lock": "nut-axle"}, "caption": "чуть больше суффиксов"},
+  {"id": "cb-lk-hidden", "enabled": true, "name": "Потайной замок", "slot": "bind", "classes": ["crossbow"], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"lock": "nut-axle"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "cb-sp-cranequin", "enabled": true, "name": "Кранекин", "slot": "head", "classes": ["crossbow"], "axis": 1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"span": "cranequin"}, "caption": "держит удар крепче — блок выше, статус реже"},
+  {"id": "cb-sp-hook", "enabled": true, "name": "Поясной крюк", "slot": "head", "classes": ["crossbow"], "axis": 0.5, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"span": "belt-hook"}, "caption": "чуть крепче держит удар"},
+  {"id": "cb-sp-hands", "enabled": true, "name": "Руками или рычагом", "slot": "head", "classes": ["crossbow"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"span": "hands"}, "caption": "эталон"},
+  {"id": "cb-sp-goat", "enabled": true, "name": "Козья нога", "slot": "head", "classes": ["crossbow"], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"span": "goats-foot"}, "caption": "чуть чаще вешает статус"},
+  {"id": "cb-sp-windlass", "enabled": true, "name": "Ворот", "slot": "head", "classes": ["crossbow"], "axis": -1, "rarity": "uncommon", "stepMin": 3, "stepMax": 5, "tags": {"span": "windlass"}, "caption": "статус своей грани чаще — блок ниже"},
+  {"id": "wd-orb", "enabled": true, "name": "Держава", "slot": "strike", "classes": ["wand"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"silhouette": "orb"}, "caption": "разряд сильнее, копится дольше", "lore": "Шар-держава: знак власти."},
+  {"id": "wd-hand", "enabled": true, "name": "Длань", "slot": "strike", "classes": ["wand"], "axis": 0.6, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"silhouette": "hand"}, "caption": "плотнее разряд", "lore": "«Длань правосудия» французских королей."},
+  {"id": "wd-faceted", "enabled": true, "name": "Гранёный камень", "slot": "strike", "classes": ["wand"], "axis": 0.4, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"silhouette": "faceted"}, "caption": "плотнее разряд"},
+  {"id": "wd-cabochon", "enabled": true, "name": "Кабошон", "slot": "strike", "classes": ["wand"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"silhouette": "cabochon"}, "caption": "эталон"},
+  {"id": "wd-prism", "enabled": true, "name": "Призма", "slot": "strike", "classes": ["wand"], "axis": -0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"silhouette": "prism"}, "caption": "тоньше фокус: разряды чаще и мельче", "lore": "Жезл с призмой — Элифас Леви, XIX в."},
+  {"id": "wd-fang", "enabled": true, "name": "Клык", "slot": "strike", "classes": ["wand"], "axis": -0.7, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"silhouette": "fang"}, "caption": "тоньше фокус: разряды чаще и мельче", "lore": "Египетские апотропейные «жезлы» Среднего царства — защита, а не яд."},
+  {"id": "wd-fork", "enabled": true, "name": "Рогулька", "slot": "strike", "classes": ["wand"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"silhouette": "fork"}, "caption": "самые частые разряды в пуле", "lore": "Развилка из лещины — «Verge foudroyante» Большого гримуара."},
+  {"id": "st-orb", "enabled": true, "name": "Держава (ферула)", "slot": "strike", "classes": ["staff"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"silhouette": "orb"}, "caption": "разряд сильнее, копится дольше", "lore": "Ферула — посох с державой (Catholic Encyclopedia 1908)."},
+  {"id": "st-serpents", "enabled": true, "name": "Двузмий", "slot": "strike", "classes": ["staff"], "axis": 0.5, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"silhouette": "serpents"}, "caption": "плотнее разряд", "lore": "На Руси — с середины XVII в., при Никоне."},
+  {"id": "st-tau", "enabled": true, "name": "Тау (кроция)", "slot": "strike", "classes": ["staff"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"silhouette": "tau"}, "caption": "эталон", "lore": "Крюк-тау; эмблема антонитов."},
+  {"id": "st-crook", "enabled": true, "name": "Крюк (педум, литуус)", "slot": "strike", "classes": ["staff"], "axis": -0.5, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"silhouette": "crook"}, "caption": "тоньше фокус: разряды чаще и мельче", "lore": "«Посох без сучков, загнутый» — Ливий I.18."},
+  {"id": "st-fork", "enabled": true, "name": "Рогулька", "slot": "strike", "classes": ["staff"], "axis": -1, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"silhouette": "fork"}, "caption": "самые частые разряды в пуле"},
+  {"id": "st-skull", "enabled": true, "name": "Череп", "slot": "strike", "classes": ["staff"], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"silhouette": "skull"}, "caption": "самые частые разряды в пуле", "lore": "Фэнтези."},
+  {"id": "mg-hazel", "enabled": true, "name": "Лещина", "slot": "grip", "classes": ["wand", "staff"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"wood": "hazel"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "Лоза из лещины — Агрикола 1556; стихия молний — наша привязка «по мотивам»."},
+  {"id": "mg-thorn", "enabled": true, "name": "Тёрн", "slot": "grip", "classes": ["wand", "staff"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"wood": "thorn"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "«Терновая зима» — фольклор; стихия холода."},
+  {"id": "mg-yew", "enabled": true, "name": "Тис", "slot": "grip", "classes": ["wand", "staff"], "axis": 0, "rarity": "uncommon", "stepMin": 1, "stepMax": 5, "tags": {"wood": "yew"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "Таксин во всех частях, кроме присемянника; стихия яда."},
+  {"id": "mg-pitch", "enabled": true, "name": "Осмол", "slot": "grip", "classes": ["wand", "staff"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 4, "tags": {"wood": "pitch"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "Смолистая сосна — лучина и факел; стихия огня."},
+  {"id": "mg-ebony", "enabled": true, "name": "Эбен", "slot": "grip", "classes": ["wand", "staff"], "axis": 0, "rarity": "rare", "stepMin": 2, "stepMax": 5, "tags": {"wood": "ebony"}, "caption": "пока только вид: у снаряда нет честной оси геометрии (§5.2)", "lore": "Царское привозное дерево (эбеновые посохи Тутанхамона)."},
+  {"id": "mg-mt-apples", "enabled": true, "name": "«Яблоки»", "slot": "bind", "classes": ["wand", "staff"], "axis": 1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"mount": "apples"}, "caption": "больше префиксов: урон, крит, стихия"},
+  {"id": "mg-mt-cage", "enabled": true, "name": "Клетка", "slot": "bind", "classes": ["wand", "staff"], "axis": 0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"mount": "cage"}, "caption": "чуть больше префиксов"},
+  {"id": "mg-mt-rings", "enabled": true, "name": "Кольца", "slot": "bind", "classes": ["wand", "staff"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"mount": "rings"}, "caption": "поровну"},
+  {"id": "mg-mt-ferrules", "enabled": true, "name": "Обоймицы", "slot": "bind", "classes": ["wand", "staff"], "axis": -0.5, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"mount": "ferrules"}, "caption": "чуть больше суффиксов"},
+  {"id": "mg-mt-filigree", "enabled": true, "name": "Филигрань", "slot": "bind", "classes": ["wand", "staff"], "axis": -1, "rarity": "rare", "stepMin": 3, "stepMax": 5, "tags": {"mount": "filigree"}, "caption": "больше суффиксов: атрибуты, вампиризм, живучесть"},
+  {"id": "mg-hl-shoe", "enabled": true, "name": "Оковец", "slot": "head", "classes": ["wand", "staff"], "axis": 1, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"heel": "shoe"}, "caption": "держит удар крепче — блок выше, статус реже"},
+  {"id": "mg-hl-horseshoe", "enabled": true, "name": "Подковец", "slot": "head", "classes": ["wand", "staff"], "axis": 0.5, "rarity": "uncommon", "stepMin": 1, "stepMax": 4, "tags": {"heel": "horseshoe"}, "caption": "чуть крепче держит удар"},
+  {"id": "mg-hl-cap", "enabled": true, "name": "Стальной колпачок", "slot": "head", "classes": ["wand", "staff"], "axis": 0, "rarity": "common", "stepMin": 1, "stepMax": 5, "tags": {"heel": "cap"}, "caption": "эталон"},
+  {"id": "mg-hl-spear", "enabled": true, "name": "Копьецо", "slot": "head", "classes": ["wand", "staff"], "axis": -1, "rarity": "uncommon", "stepMin": 2, "stepMax": 5, "tags": {"heel": "spear"}, "caption": "статус своей грани чаще — блок ниже"}
 ]

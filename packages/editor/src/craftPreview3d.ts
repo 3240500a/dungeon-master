@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { anatomyOf, partById, type ConfigRegistry } from '@dm/shared';
+import { CRAFT_SLOT_LIST, anatomyOf, craftWeapon, partById, partFamily, slotName, stepLabel, type ConfigRegistry, type CraftSlot } from '@dm/shared';
 import { makeWeaponMesh } from '@dm/client/render3d/weapon3d.js';
 import type { CraftWindowState } from '@dm/client/modules/town/craftPanel.js';
 
@@ -7,7 +7,7 @@ import type { CraftWindowState } from '@dm/client/modules/town/craftPanel.js';
  * 3D-ПРЕВЬЮ СБОРКИ (docs/CRAFT_WEAPONS.md §18, фаза визуала Ф1): процедурный меш ИГРЫ
  * (`weapon3d.ts`) с параметрами от деталей и цветом от материала. Никаких новых мешей: ровно то,
  * что ГДД называет «почти ноль работы художнику» — ширина ударной части от её оси, длина держака,
- * ширина гарды, навершие-противовес, тинт по ступени материала.
+ * ширина гарды, навершие-противовес, тинт по материалу КАЖДОЙ детали (у деталей свои ступени).
  *
  * ⚠ `weapon3d.ts` принадлежит рендеру игры и здесь только ЧИТАЕТСЯ: материалы меша клонируются,
  * прежде чем их красить, иначе покраска уехала бы во все руки в редакторе.
@@ -48,7 +48,8 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
   title.textContent = '3D-превью сборки';
   box.append(title);
 
-  const base = reg.get('items.base').find((b) => b.id === st.baseId);
+  const pv = craftWeapon(reg, { weaponClass: st.weaponClass, hands: st.hands, parts: st.parts });
+  const base = reg.get('items.base').find((b) => b.id === pv.type?.baseId);
   const anat = anatomyOf(reg, st.weaponClass);
   if (!base || base.kind !== 'weapon' || !anat) return box;
 
@@ -69,8 +70,13 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
 
   const g = makeWeaponMesh(kindFor(st.weaponClass, base.hands ?? 1));
   if (st.weaponClass === 'wand') g.scale.setScalar(0.55);
-  const axis = (slot: 'strike' | 'grip' | 'bind' | 'head'): number => partById(reg, st.parts[slot])?.axis ?? 0;
-  const tint = (fam: string): number => TINT[fam]?.[Math.max(0, Math.min(4, st.step - 1))] ?? 0x888888;
+  const axis = (slot: CraftSlot): number => partById(reg, st.parts[slot].id)?.axis ?? 0;
+  // Цвет детали — по СВОЕМУ материалу: семья гнезда (или своя у формы) × ступень этой детали.
+  const tintOf = (slot: CraftSlot): number => {
+    const p = partById(reg, st.parts[slot].id);
+    const fam = p ? partFamily(anat, slot, p) : anat[slot].family;
+    return TINT[fam]?.[Math.max(0, Math.min(4, st.parts[slot].step - 1))] ?? 0x888888;
+  };
 
   // Роль меша по его материалу: сталь — ударная часть, дерево — держак, латунь — обвязка.
   // У лука и арбалета «дерево» — это плечи/дуга, то есть ударная часть.
@@ -84,15 +90,15 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
     const mat = src.clone();
     m.material = mat;
     if (hex === 0xc2c8d2) { // сталь
-      if (!ranged) { mat.color.setHex(tint(anat.strike.family)); m.scale.x *= 1 + 0.35 * axis('strike'); m.scale.z *= 1 + 0.2 * axis('strike'); }
-      else mat.color.setHex(tint(anat.bind.family));
+      if (!ranged) { mat.color.setHex(tintOf('strike')); m.scale.x *= 1 + 0.35 * axis('strike'); m.scale.z *= 1 + 0.2 * axis('strike'); }
+      else mat.color.setHex(tintOf('bind'));
     } else if (hex === 0x6e4a2c) { // дерево
-      if (ranged) { mat.color.setHex(tint(anat.strike.family)); m.scale.x *= 1 + 0.25 * axis('strike'); }
-      else { mat.color.setHex(tint(anat.grip.family)); m.scale.y *= 1 + 0.18 * axis('grip'); }
+      if (ranged) { mat.color.setHex(tintOf('strike')); m.scale.x *= 1 + 0.25 * axis('strike'); }
+      else { mat.color.setHex(tintOf('grip')); m.scale.y *= 1 + 0.18 * axis('grip'); }
     } else if (hex === 0xc9a34a) { // латунь — гарда/обвязка
-      mat.color.setHex(tint(anat.bind.family)); m.scale.x *= 1 - 0.3 * axis('bind');
+      mat.color.setHex(tintOf('bind')); m.scale.x *= 1 - 0.3 * axis('bind');
     } else if (st.weaponClass === 'wand' || st.weaponClass === 'staff') {
-      mat.color.setHex(tint(anat.strike.family)); mat.emissive?.setHex(tint(anat.strike.family)); mat.emissiveIntensity = 0.35;
+      mat.color.setHex(tintOf('strike')); mat.emissive?.setHex(tintOf('strike')); mat.emissiveIntensity = 0.35;
       m.scale.setScalar(1 + 0.3 * axis('strike'));
     }
     m.updateMatrixWorld();
@@ -102,7 +108,7 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
 
   // Оголовье: навершие-противовес на конце держака. Упор (+) — тяжелее и крупнее, укус (−) — острое.
   const a4 = axis('head');
-  const headMat = new THREE.MeshStandardMaterial({ color: tint(anat.head.family), metalness: 0.7, roughness: 0.35 });
+  const headMat = new THREE.MeshStandardMaterial({ color: tintOf('head'), metalness: 0.7, roughness: 0.35 });
   const head = a4 < 0 ? new THREE.Mesh(new THREE.ConeGeometry(1.1, 3.2, 6), headMat) : new THREE.Mesh(new THREE.SphereGeometry(1.2 * (1 + 0.45 * a4), 14, 10), headMat);
   head.position.y = (Number.isFinite(top) ? top : 2) + (a4 < 0 ? 1.4 : 0.9);
   g.add(head);
@@ -128,9 +134,8 @@ export function weaponPreview3d(reg: ConfigRegistry, st: CraftWindowState): HTML
 
   const caption = document.createElement('div');
   caption.style.cssText = 'color:#8f897c;font-size:11px;margin-top:4px;line-height:1.4';
-  const mat = reg.get('craft-materials');
-  const nm = (fam: string): string => mat.find((m) => m.id === `${fam}-${st.step}`)?.name ?? fam;
-  caption.innerHTML = `Процедурный меш игры: ширина от оси ударной части, длина от держака, гарда от обвязки, навершие от оголовья.<br>${nm(anat.strike.family)} · ${nm(anat.grip.family)} · ${nm(anat.bind.family)}`;
+  const nm = (slot: CraftSlot): string => { const p = partById(reg, st.parts[slot].id); return p ? `${slotName(anat, slot, st.hands)}: ${stepLabel(reg, anat, slot, p, st.parts[slot].step)}` : slot; };
+  caption.innerHTML = `Процедурный меш игры: ширина от оси ударной части, длина от держака, гарда от обвязки, навершие от оголовья.<br>${CRAFT_SLOT_LIST.map(nm).join(' · ')}`;
   box.append(caption);
   return box;
 }

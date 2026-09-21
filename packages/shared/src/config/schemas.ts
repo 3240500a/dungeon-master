@@ -571,21 +571,55 @@ export const balanceSchema = z.object({
       capacityByTier: z.array(z.number().int().min(0).max(5)).default([2, 2, 3, 4, 4, 5, 5]),
       /** Множитель цены формы M = 1 / частота такой формы у найденных редких (§6.1). Ключ «P+S». */
       formMult: z.record(z.string(), z.number().min(1)).default({}),
-      /** Сырьё за ковку: `cheap` единиц ступени ниже выбранной + `dear` единиц выбранной, по гнёздам (§13). */
+      /**
+       * ⭐ СТУПЕНЬ ИЗ ДЕТАЛЕЙ (§11): средний уровень материала ПО МАССЕ. Q = Σ(вес·ступень) / Σвес,
+       * ступень вещи = round(scale · (Q − 1)). При 2/1/1/1 и 1.5 вещь целиком из одной ступени k
+       * даёт t0, t2, t3, t5, t6 — ровно полы старых полос; достижим каждый тир, а «булатный клинок
+       * при болотном прочем» даёт t2, а не мифик.
+       */
+      tierFromParts: z
+        .object({
+          weights: z.object({
+            strike: z.number().min(0).default(2), grip: z.number().min(0).default(1),
+            bind: z.number().min(0).default(1), head: z.number().min(0).default(1),
+          }).default({}),
+          scale: z.number().min(0).default(1.5),
+        })
+        .default({}),
+      /**
+       * Сырьё за ковку: каждая деталь — своим материалом, единиц по её МАССЕ (те же доли, что у
+       * ступени: сколько материала ушло, столько он и весит в итоге), × M формы ёмкости (§13).
+       */
       cost: z
         .object({
-          strike: z.object({ cheap: z.number().int().min(0).default(12), dear: z.number().int().min(0).default(4) }).default({}),
-          grip: z.object({ cheap: z.number().int().min(0).default(8), dear: z.number().int().min(0).default(3) }).default({}),
-          /** Обвязка и оголовье — одна семья прибора на два гнезда. */
-          trim: z.object({ cheap: z.number().int().min(0).default(10), dear: z.number().int().min(0).default(3) }).default({}),
+          units: z.object({
+            strike: z.number().int().min(0).default(16), grip: z.number().int().min(0).default(8),
+            bind: z.number().int().min(0).default(8), head: z.number().int().min(0).default(8),
+          }).default({}),
           /** Золото ковки = это × reqMult тира, плоско. */
           goldPerReqMult: z.number().min(0).default(300),
           /** Золото зачарования = это × reqMult × priceMult редкости × M формы. */
           enchantGold: z.number().min(0).default(100),
         })
         .default({}),
-      /** Переплавка скованного: доля возврата дешёвой и дорогой ступени. */
-      melt: z.object({ cheap: z.number().min(0).max(1).default(0.5), dear: z.number().min(0).max(1).default(1) }).default({}),
+      /** Переплавка скованного: доля возврата каждого материала (§16). Меньше 1 — иначе прачечная. */
+      melt: z.object({ share: z.number().min(0).max(1).default(0.6) }).default({}),
+      /**
+       * Разбор найденного оружия (§10.9): сколько единиц материала даёт каждая деталь — из той ступени,
+       * из которой она сделана. Редкость добавляет единицы ударной части: редкую вещь разбирать выгоднее.
+       */
+      salvage: z
+        .object({
+          units: z.object({
+            strike: z.number().int().min(0).default(3), grip: z.number().int().min(0).default(2),
+            bind: z.number().int().min(0).default(1), head: z.number().int().min(0).default(1),
+          }).default({}),
+          rarityBonus: z.object({
+            normal: z.number().int().min(0).default(0), magic: z.number().int().min(0).default(1),
+            rare: z.number().int().min(0).default(2), unique: z.number().int().min(0).default(2),
+          }).default({}),
+        })
+        .default({}),
       /** Журнал кузнеца: жалость и ворота t6 (§12). */
       journal: z
         .object({
@@ -1259,17 +1293,61 @@ export const WEAPON_CLASSES = ['sword', 'axe', 'mace', 'dagger', 'spear', 'halbe
  */
 export const CRAFT_SLOTS = ['strike', 'grip', 'bind', 'head'] as const;
 
+/**
+ * ТЕГ ГНЕЗДА — классификатор из типологий историков (Окшотт, Кирпичников, Dean…). Числа тег НЕ несёт
+ * никогда: их несёт только `axis` варианта. Роль тега:
+ * `key` — выбирает базу (тип целиком: урон, скорость, вес, требования, грань), ровно один на класс;
+ * `name` — даёт историческое имя и номер типа; `hold` — слово хвата; `epithet` — эпитет в имени.
+ */
+const craftTagValue = z.object({
+  id: z.string(),
+  /** Как значение читается игроку: «короткое перекрестье», «трёхчастное». */
+  name: z.string().default(''),
+  /** Код по типологии для строки-формулы: «XI», «A», «3». Пусто — формула берёт `name`. */
+  code: z.string().default(''),
+  /** Прилагательное для имени-фолбэка в МУЖСКОМ роде: «узкий», «гранёный» (склоняется само). */
+  adj: z.string().default(''),
+  /** Оборот «с …» для имени-фолбэка: «с коротким перекрестьем». */
+  with: z.string().default(''),
+  /**
+   * Эпоха для имени-фолбэка — оборотом в родительном: «каролингской эпохи», «позднего образца».
+   * ⚠ Не прилагательным: «каролингский меч» — имя ПРАВИЛА, и вольная сборка не должна им зваться.
+   */
+  epoch: z.string().default(''),
+});
+
+const craftTagDef = z.object({
+  key: z.string(),
+  /** Подпись тега: «Класс клинка», «Стиль крестовины». */
+  name: z.string(),
+  role: z.enum(['key', 'name', 'hold', 'epithet']).default('name'),
+  /** Слово в строке-формуле: «клинок», «перекрестье», «навершие». Пусто — берётся `name`. */
+  label: z.string().default(''),
+  /** Значение, когда вариант тег не указал. */
+  default: z.string().default(''),
+  values: z.array(craftTagValue).default([]),
+});
+
 const partSlotAnatomy = z.object({
   /** Как деталь зовётся у этого класса: «Клинок», «Полотно», «Плечи»… */
   name: z.string(),
+  /** Имя гнезда у ДВУРУЧНОГО семейства, если другое: у булавы «Рукоять» → «Древко». */
+  name2h: z.string().default(''),
   /** Из какой семьи материалов куётся (`craft-materials.family`). */
   family: z.string(),
+  /**
+   * Как показывать ступени семьи в ЭТОМ гнезде, если имя материала спорит с формой. У жезла ствол —
+   * порода (тис, эбен), а лестница `wood` — сосна, ясень… поэтому ступень читается обработкой:
+   * «сырой», «морёный». Пусто — имя материала.
+   */
+  stepNames: z.array(z.string()).default([]),
+  /** Словарь тегов гнезда (классификатор). */
+  tags: z.array(craftTagDef).default([]),
 });
 
 /**
- * АНАТОМИЯ КЛАССА: как называются четыре гнезда и из какой семьи материалов куётся каждое.
- * Гнездо несёт РОЛЬ, класс даёт ИМЯ и СЕМЬЮ. Правило «ровно три семьи на вещь» (§10.7)
- * проверяется тестом по этой таблице.
+ * АНАТОМИЯ КЛАССА: как называются четыре гнезда, из какой семьи материалов куётся каждое и какие
+ * теги-классификаторы у деталей этого гнезда. Гнездо несёт РОЛЬ, класс даёт ИМЯ и СЕМЬЮ.
  */
 export const weaponAnatomySchema = z.array(
   z.object({
@@ -1278,6 +1356,11 @@ export const weaponAnatomySchema = z.array(
     enabled: z.boolean().default(true),
     /** Подпись класса в окне ковки. */
     name: z.string(),
+    /**
+     * ⭐ КЛЮЧЕВОЕ ГНЕЗДО: деталь, по которой историки узнают тип и по которой ковка выбирает базу.
+     * У семи классов — ударная часть; у арбалета — ложе со стременем; у жезла и посоха — порода ствола.
+     */
+    keySlot: z.enum(CRAFT_SLOTS).default('strike'),
     strike: partSlotAnatomy,
     grip: partSlotAnatomy,
     bind: partSlotAnatomy,
@@ -1286,7 +1369,8 @@ export const weaponAnatomySchema = z.array(
 );
 
 /**
- * ВАРИАНТЫ ДЕТАЛЕЙ — форма, а не качество (§9). Вариант = ТОЧКА на оси своего гнезда плюс имя.
+ * ВАРИАНТЫ ДЕТАЛЕЙ — форма, а не качество (§9). Вариант = ТОЧКА на оси своего гнезда плюс имя,
+ * теги-классификаторы и ОКНО материалов.
  * ⭐ Числа в вариант руками НЕ пишутся: вклад выводится из `axis` умножением на шаг гнезда
  * (`balance.craft`). Поэтому вариантов может быть сколько угодно, а балансная поверхность
  * остаётся одной таблицей, и «деталь написала в чужой стат» невозможно по построению.
@@ -1300,6 +1384,8 @@ export const weaponPartsSchema = z.array(
     slot: z.enum(CRAFT_SLOTS),
     /** Каким классам доступен. Ударная часть обычно класс-специфична, остальное общее по родству. */
     classes: z.array(z.enum(WEAPON_CLASSES)).min(1),
+    /** В каких семействах (хват 1 / 2) вариант есть. Пусто — в любых. */
+    hands: z.array(z.number().int().min(1).max(2)).default([]),
     /**
      * Точка на оси гнезда, −1…+1. strike: +1 тяжёлая (урон), −1 лёгкая (скорость); grip: +1 длинный,
      * −1 короткий; bind: +1 префиксы, −1 суффиксы; head: +1 упор (блок), −1 укус (статус).
@@ -1307,8 +1393,75 @@ export const weaponPartsSchema = z.array(
     axis: z.number().min(-1).max(1),
     /** Как часто вариант стоит на найденных вещах: обычный / нечастый / редкий. */
     rarity: z.enum(['common', 'uncommon', 'rare']).default('common'),
+    /**
+     * ⭐ ОКНО МАТЕРИАЛОВ: из каких ступеней своей семьи эта форма куётся. Широкое лезвие — из болотного
+     * и кричного железа, пламенеющий клинок — только из хорошей стали. Ступень вещи потом
+     * считается из материалов всех четырёх деталей (§11).
+     */
+    stepMin: z.number().int().min(1).max(5).default(1),
+    stepMax: z.number().int().min(1).max(5).default(5),
+    /** Семья материала, если не та, что у гнезда: у дубины било деревянное, а не железное. */
+    family: z.string().default(''),
+    /** Теги-классификаторы: ключи и значения — из словаря гнезда в анатомии. */
+    tags: z.record(z.string(), z.string()).default({}),
     /** ⚠ ПОДПИСЬ-СЛЕДСТВИЕ для окна ковки. Строка без неё — незаконченная строка данных (§17). */
     caption: z.string(),
+    /** Историческая справка для подсказки: что это за форма и откуда она. */
+    lore: z.string().default(''),
+  }),
+);
+
+/**
+ * Условие правила: ключ — `hands` или `<гнездо>.<тег>` (или `<гнездо>.id` — точный вариант),
+ * значение — список «любое из». Пустое условие совпадает всегда. Хват пишется строкой: "1" / "2".
+ */
+const typeWhen = z.record(z.string(), z.array(z.string())).default({});
+
+/**
+ * КЛАССИФИКАТОР ТИПОВ (docs/CRAFT_WEAPONS.md §3.3): одна запись на класс оружия.
+ * `bases` — ТОТАЛЬНАЯ таблица «семейство × значение ключевого тега → база»: тип целиком (урон,
+ * скорость, вес, требования, грань) приходит из существующей базы, поэтому скованное равно
+ * найденному по построению. `names` — историческое имя по деталям: упорядочены, срабатывает первое
+ * совпадение. ⚠ Числовых полей у имени нет и быть не может: имя — коллекция, а не сила.
+ */
+export const weaponTypesSchema = z.array(
+  z.object({
+    id: z.enum(WEAPON_CLASSES),
+    enabled: z.boolean().default(true),
+    bases: z.array(z.object({
+      hands: z.number().int().min(1).max(2),
+      /** Значение ключевого тега ключевого гнезда. */
+      key: z.string(),
+      /** id базы из `items.base`. */
+      base: z.string(),
+    })).default([]),
+    names: z.array(z.object({
+      id: z.string(),
+      enabled: z.boolean().default(true),
+      when: typeWhen,
+      /** Имя. Можно подставлять значения тегов: «Гладиус типа {strike.type}», «{strike.form.adj} пика». */
+      name: z.string(),
+      /** Род имени (m/f/n/p) — по нему склоняется приставка тира: «Мастерская дага». */
+      gender: z.enum(['m', 'f', 'n', 'p']).default('m'),
+      /** Подзаголовок: эпоха, размеры, чем отличается. */
+      subtitle: z.string().default(''),
+      /** Откуда имя: типология, музей, летопись. */
+      source: z.string().default(''),
+      /** Имя придумано нами — показывается без исторической подписи. */
+      fantasy: z.boolean().default(false),
+    })).default([]),
+    /** Имя, когда ни одно правило не сработало: шаблон и существительное по условиям. */
+    fallback: z.object({
+      /** Шаблон: {noun}, {base}, {<гнездо>.<тег>.<поле>} где поле — name/code/adj/with/epoch. */
+      template: z.string().default('{base}'),
+      subtitle: z.string().default(''),
+      noun: z.array(z.object({ when: typeWhen, text: z.string(), gender: z.enum(['m', 'f', 'n', 'p']).default('m') })).default([]),
+    }).default({}),
+    /** Строка-формула в духе Элмсли: «Окшотт: клинок XI · перекрестье 1 · навершие G». */
+    formula: z.object({
+      title: z.string().default(''),
+      refs: z.array(z.string()).default([]),
+    }).default({}),
   }),
 );
 
@@ -2609,6 +2762,7 @@ export const configSchemas = {
   'craft-materials': craftMaterialsSchema,
   'weapon-anatomy': weaponAnatomySchema,
   'weapon-parts': weaponPartsSchema,
+  'weapon-types': weaponTypesSchema,
   'salvage-rules': salvageRulesSchema,
   chests: chestsSchema,
   'armor-classes': armorClassesSchema,

@@ -1,14 +1,19 @@
 import {
-  craftWeapon, formOf, materialBand, meltReturn, variantsFor, rollAffixes, createRng,
-  type ConfigRegistry, type Item, type SaveState, type CraftSlot,
+  CRAFT_SLOT_LIST, anatomyOf, clampStep, craftTiers, craftWeapon, familiesOf, formOf, keySlotOf, keyVariantsByBase, matchWhen,
+  meltReturn, partById, typesRow, variantsFor, rollAffixes, createRng,
+  type ConfigRegistry, type CraftInput, type Item, type PartSet, type SaveState, type CraftSlot, type WeaponPart,
 } from '@dm/shared';
 import { cardWith } from '@dm/client/modules/town/craftPanel.js';
 import { fightCheck, sandboxHero, type CraftSandbox } from './craft.js';
 
 /**
  * «▦ Сетка баланса» — проверка инвариантов ГДД на ТЕКУЩИХ данных (docs/CRAFT_WEAPONS.md §16, §22).
- * Правишь шаги осей в «Баланс → Ковка» или варианты в «Ковка → Детали» — возвращаешься сюда и
- * видишь, не сломалось ли. Формула считается мгновенно; бой (`simulateMicroFight`) — по кнопке.
+ * Правишь шаги осей в «Баланс → Ковка», варианты в «Ковка → Детали» или правила имён в «Ковка →
+ * Типы» — возвращаешься сюда и видишь, не сломалось ли. Формула считается мгновенно; бой
+ * (`simulateMicroFight`) — по кнопке.
+ *
+ * ⚠ Все замеры идут при ФИКСИРОВАННОЙ базе: смена ключевой детали — это смена типа (другой чертёж),
+ * а не надбавка, поэтому ключ перебирается только внутри своей базы.
  */
 
 const h = (tag: string, css: string, html = ''): HTMLElement => { const e = document.createElement(tag); e.style.cssText = css; if (html) e.innerHTML = html; return e; };
@@ -29,18 +34,44 @@ let gripFight: { name: string; dps: number; hps: number }[] | null = null;
 let formFreq: { key: string; measured: number; config: number }[] | null = null;
 let lastKey = '';
 
-/** Сборка текущего окна с подменой одного гнезда. */
-function variantItem(reg: ConfigRegistry, sb: CraftSandbox, slot: CraftSlot, id: string): Item | undefined {
-  const w = sb.win!;
-  return craftWeapon(reg, { baseId: w.baseId, tier: w.tier, step: w.step, parts: { ...w.parts, [slot]: id } }).item;
+const inputOf = (sb: CraftSandbox): CraftInput => ({ weaponClass: sb.win!.weaponClass, hands: sb.win!.hands, parts: structuredClone(sb.win!.parts) });
+
+/**
+ * Сборка текущего окна с подменой одного гнезда — на ТОЙ ЖЕ ступени вещи (`atTier`): у новой формы
+ * может быть другое окно материалов, и без фиксации замер мерил бы сдвиг ступени, а не форму.
+ */
+function variantItem(reg: ConfigRegistry, sb: CraftSandbox, slot: CraftSlot, p: WeaponPart): Item | undefined {
+  const input = inputOf(sb);
+  input.parts[slot] = { id: p.id, step: clampStep(p, input.parts[slot].step) };
+  return craftWeapon(reg, input, { atTier: craftWeapon(reg, inputOf(sb)).tier }).item;
+}
+
+/** Правила имён класса, которые ни на одной сборке не срабатывают первыми (затенены верхними). */
+export function deadNameRules(reg: ConfigRegistry, cls: string): string[] {
+  const row = typesRow(reg, cls);
+  const anat = anatomyOf(reg, cls);
+  if (!row || !anat) return [];
+  const first = new Set<string>();
+  for (const h2 of familiesOf(reg, cls)) {
+    const pools = CRAFT_SLOT_LIST.map((s) => variantsFor(reg, cls, s, h2));
+    for (const a of pools[0]!) for (const b of pools[1]!) for (const c of pools[2]!) for (const d of pools[3]!) {
+      const ps: PartSet = { strike: a, grip: b, bind: c, head: d };
+      const r = row.names.find((x) => x.enabled !== false && matchWhen(anat, x.when, h2, ps));
+      if (r) first.add(r.id);
+    }
+  }
+  return row.names.filter((r) => r.enabled !== false && !first.has(r.id)).map((r) => r.id);
 }
 
 export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: CraftSandbox, save: SaveState): void {
   const w = sb.win!;
-  const key = `${w.baseId}|${w.tier}|${w.step}|${JSON.stringify(w.parts)}|${sb.heroClass}|${sb.level}|${sb.preset}`;
+  const key = `${JSON.stringify(w.parts)}|${w.hands}|${sb.heroClass}|${sb.level}|${sb.preset}`;
   if (key !== lastKey) { gripFight = null; lastKey = key; }
-  const base = reg.get('items.base').find((b) => b.id === w.baseId);
-  main.append(h('div', 'color:#aaa;font-size:12px;margin-bottom:10px', `Проверяется сборка из окна ковки: <b style="color:#e39a3c">${base?.name ?? '—'}</b>, ${reg.get('item-tiers').find((_, i) => i === w.tier)?.name ?? ''}. Герой: уровень ${sb.level}, ${sb.preset}. Поменяй сборку во вкладке «Ковка».`));
+  const pv = craftWeapon(reg, inputOf(sb));
+  const base = reg.get('items.base').find((b) => b.id === pv.type?.baseId);
+  const keySlot = keySlotOf(reg, w.weaponClass);
+  const tierName = pv.tier !== undefined ? craftTiers(reg)[pv.tier]?.name ?? '' : '';
+  main.append(h('div', 'color:#aaa;font-size:12px;margin-bottom:10px', `Проверяется сборка из окна ковки: <b style="color:#e39a3c">${pv.type?.name ?? '—'}</b> (база ${base?.name ?? '—'}), ${tierName}. Герой: уровень ${sb.level}, ${sb.preset}. Поменяй сборку во вкладке «Ковка».`));
 
   // ── Лампочки ──
   const lamps = card(main, 'Инварианты ГДД — на текущих данных');
@@ -51,38 +82,40 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
     lamps.append(r);
   };
 
-  // 1. Разброс ДПС ударной части по конверту — реальной цепочкой статов (makePlayerModel → weaponCard).
-  const strikes = variantsFor(reg, w.weaponClass, 'strike');
+  // 1. Разброс ДПС ударной части по конверту — реальной цепочкой статов. Ключ — только формы своей базы.
+  const strikes = keySlot === 'strike'
+    ? keyVariantsByBase(reg, w.weaponClass, w.hands).find((g) => g.baseId === base?.id)?.variants ?? []
+    : variantsFor(reg, w.weaponClass, 'strike', w.hands);
   const heat: number[][] = [];
   let worst = 0;
   strikes.forEach(() => heat.push([]));
   for (const D of D_GRID) for (const S of S_GRID) {
     const hero = sandboxHero(reg, { ...sb, bonusDmg: D, bonusSpd: S });
-    const dps = strikes.map((p) => { const it = variantItem(reg, sb, 'strike', p.id); return it ? cardWith(reg, hero, it).dps : 0; });
+    const dps = strikes.map((p) => { const it = variantItem(reg, sb, 'strike', p); return it ? cardWith(reg, hero, it).dps : 0; });
     const ref = dps[strikes.findIndex((p) => Math.abs(p.axis) === Math.min(...strikes.map((x) => Math.abs(x.axis))))] || 1;
     dps.forEach((v, i) => heat[i]!.push(v / ref));
     const pos = dps.filter((v) => v > 0);
     if (pos.length) worst = Math.max(worst, Math.max(...pos) / Math.min(...pos) - 1);
   }
-  lamp(worst <= 0.08, `Разброс ДПС между вариантами ударной части: ${(worst * 100).toFixed(1)} % (порог 8 %)`, 'Худшая клетка конверта «бонус урона 0.3…1.5 × бонус скорости 0.05…0.6» (§4). Считается теми же функциями, что у боя.');
+  lamp(worst <= 0.08, `Разброс ДПС между формами ударной части: ${(worst * 100).toFixed(1)} % (порог 8 %)`, 'Худшая клетка конверта «бонус урона 0.3…1.5 × бонус скорости 0.05…0.6» (§4), база фиксирована. Считается теми же функциями, что у боя.');
 
   // 2. Держак площадь-нейтрален.
-  const grips = variantsFor(reg, w.weaponClass, 'grip');
+  const grips = variantsFor(reg, w.weaponClass, 'grip', w.hands);
   let areaDev = 0;
   const areaBase = (base as { arcMult?: number; reachMult?: number } | undefined);
   const a0 = (areaBase?.arcMult ?? 1) * (areaBase?.reachMult ?? 1) ** 2;
   const isMelee = (base as { attackType?: string } | undefined)?.attackType === 'melee';
-  for (const g of grips) { const it = variantItem(reg, sb, 'grip', g.id); if (it && isMelee) areaDev = Math.max(areaDev, Math.abs(((it.arcMult ?? 1) * (it.reachMult ?? 1) ** 2) / a0 - 1)); }
+  for (const g of grips) { const it = variantItem(reg, sb, 'grip', g); if (it && isMelee) areaDev = Math.max(areaDev, Math.abs(((it.arcMult ?? 1) * (it.reachMult ?? 1) ** 2) / a0 - 1)); }
   lamp(!isMelee || areaDev < 0.005, isMelee ? `Площадь взмаха держака постоянна: отклонение ${(areaDev * 100).toFixed(2)} %` : 'Держак стрелкового/магического — только вид', isMelee ? '`дуга × дальность²` одна у всех вариантов (§5.1). Прежняя пара давала +27.6 %.' : 'У снаряда нет честной оси геометрии (§5.2): дальность — константа, радиус — скрытый ДПС.');
 
-  // 3. Гнёзда 2–4 не двигают ДПС формулы.
-  const refDps = (() => { const it = variantItem(reg, sb, 'strike', w.parts.strike); return it ? cardWith(reg, save, it).dps : 1; })();
+  // 3. Неключевые гнёзда 2–4 не двигают ДПС формулы.
+  const refDps = pv.item ? cardWith(reg, save, pv.item).dps : 1;
   let shift = 0;
-  for (const slot of ['grip', 'bind', 'head'] as const) for (const p of variantsFor(reg, w.weaponClass, slot)) {
-    const it = variantItem(reg, sb, slot, p.id);
+  for (const slot of (['grip', 'bind', 'head'] as const).filter((s) => s !== keySlot)) for (const p of variantsFor(reg, w.weaponClass, slot, w.hands)) {
+    const it = variantItem(reg, sb, slot, p);
     if (it) shift = Math.max(shift, Math.abs(cardWith(reg, save, it).dps / refDps - 1));
   }
-  lamp(shift < 1e-6, `Держак, обвязка и оголовье не двигают ДПС формулы: ${(shift * 100).toFixed(2)} %`, 'Замок «одна ось ДПС» (§3.2). ⚠ Статус оголовья двигает ДПС в БОЮ — это меряет вкладка «Ковка → настоящий бой».');
+  lamp(shift < 1e-6, `Неключевые гнёзда не двигают ДПС формулы: ${(shift * 100).toFixed(2)} %`, 'Замок «одна ось ДПС внутри типа» (§3.2). ⚠ Статус оголовья двигает ДПС в БОЮ — это меряет вкладка «Ковка → настоящий бой».');
 
   // 4. Форма ёмкости не выходит за дроп.
   let formOk = true;
@@ -93,19 +126,22 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
   const price = new Map(reg.get('craft-materials').map((m) => [m.id, m.sellPrice]));
   const val = (c: Record<string, number>): number => Object.entries(c).reduce((s, [id, n]) => s + (price.get(id) ?? 0) * n, 0);
   let meltOk = true; let worstMelt = '';
-  for (let step = 1; step <= 5; step++) {
-    const band = materialBand(step);
-    for (let t = band.lo; t <= band.hi; t++) {
-      const r = craftWeapon(reg, { baseId: w.baseId, tier: t, step, parts: w.parts });
-      if (!r.ok || !r.item || !r.cost) continue;
-      const m = val(meltReturn(reg, r.item)), c = val(r.cost.materials);
-      if (m >= c) { meltOk = false; worstMelt = `t${t} ст.${step}: вернула ${m} при цене ${c}`; }
-    }
+  for (let k = 1; k <= 5; k++) {
+    const input = inputOf(sb);
+    for (const s of CRAFT_SLOT_LIST) { const p = partById(reg, input.parts[s].id); if (p) input.parts[s].step = clampStep(p, k); }
+    const r = craftWeapon(reg, input);
+    if (!r.ok || !r.item || !r.cost) continue;
+    const m = val(meltReturn(reg, r.item)), c = val(r.cost.materials);
+    if (m >= c) { meltOk = false; worstMelt = `ст.${k}: вернула ${m} при цене ${c}`; }
   }
-  lamp(meltOk, 'Сковать и переплавить — всегда в минус', meltOk ? 'Проверено на каждой паре «ступень × материал» этой базы (§13).' : `⚠ ${worstMelt}`);
+  lamp(meltOk, 'Сковать и переплавить — всегда в минус', meltOk ? 'Проверено на «вся вещь из ступени 1…5» этой сборки (§13).' : `⚠ ${worstMelt}`);
+
+  // 6. Мёртвые правила имён.
+  const dead = deadNameRules(reg, w.weaponClass);
+  lamp(!dead.length, dead.length ? `Затенённые правила имён: ${dead.join(', ')}` : 'Правила имён класса: мёртвых нет', 'Правила проверяются сверху вниз, первое совпадение побеждает. Правило, которое ни на одной сборке не срабатывает первым, — мёртвое: его закрыло верхнее (§3.3).');
 
   // ── Тепловая карта ──
-  const hm = card(main, 'Ударная часть × конверт билдов — индекс ДПС (эталон = 100)', 'Строки — варианты от тяжёлых к лёгким, столбцы — бонус урона D и бонус скорости S. Зелёный — в пределах ±4 %, жёлтый — до ±8 %, красный — хуже.');
+  const hm = card(main, 'Ударная часть × конверт билдов — индекс ДПС (эталон = 100)', 'Строки — формы от тяжёлых к лёгким (у ключевого гнезда — только формы текущей базы), столбцы — бонус урона D и бонус скорости S. Зелёный — в пределах ±4 %, жёлтый — до ±8 %, красный — хуже.');
   const tbl = h('table', 'border-collapse:collapse;font-family:monospace;font-size:11px');
   const hr = h('tr', '');
   hr.append(h('td', 'padding:3px 6px;color:#888', ''));
@@ -128,7 +164,7 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
   const gt = h('table', 'border-collapse:collapse;font-size:12px;width:100%');
   gt.innerHTML = '<tr style="color:#888"><td></td><td style="text-align:right">дальность, px</td><td style="text-align:right">дуга, °</td><td style="text-align:right">площадь</td><td style="text-align:right">ДПС в бою</td><td style="text-align:right">попаданий/с</td></tr>';
   for (const g of grips) {
-    const it = variantItem(reg, sb, 'grip', g.id);
+    const it = variantItem(reg, sb, 'grip', g);
     const c = it ? cardWith(reg, save, it) : undefined;
     const f = gripFight?.find((x) => x.name === g.name);
     gt.innerHTML += `<tr><td>${g.name} <span style="color:#777">${g.axis > 0 ? '+' : ''}${g.axis}</span></td><td style="text-align:right;font-family:monospace">${c?.rangePx?.toFixed(0) ?? '—'}</td><td style="text-align:right;font-family:monospace">${c?.arcDeg?.toFixed(0) ?? '—'}</td><td style="text-align:right;font-family:monospace">${c?.area ? '×' + c.area.toFixed(3) : '—'}</td><td style="text-align:right;font-family:monospace">${f ? f.dps.toFixed(1) : ''}</td><td style="text-align:right;font-family:monospace">${f ? f.hps.toFixed(2) : ''}</td></tr>`;
@@ -139,7 +175,7 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
   gb.addEventListener('click', () => {
     gb.textContent = 'считаю…';
     setTimeout(() => {
-      gripFight = grips.map((g) => { const it = variantItem(reg, sb, 'grip', g.id); const r = fightCheck(reg, save, it, sb.monsterId, 5, 8); return { name: g.name, dps: r.dps, hps: r.hitsPerSec }; });
+      gripFight = grips.map((g) => { const it = variantItem(reg, sb, 'grip', g); const r = fightCheck(reg, save, it, sb.monsterId, 5, 8); return { name: g.name, dps: r.dps, hps: r.hitsPerSec }; });
       main.innerHTML = ''; renderCraftGrid(main, reg, sb, save);
     }, 20);
   });
@@ -149,8 +185,8 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
   const hc = card(main, 'Оголовье: укус ↔ упор', 'Упор поднимает блок (у лука — стойкость к прерыванию), укус — статус своей грани. Стаки — по модели ОБЩЕГО таймера, как в бою.');
   const ht = h('table', 'border-collapse:collapse;font-size:12px;width:100%');
   ht.innerHTML = '<tr style="color:#888"><td></td><td style="text-align:right">блок</td><td style="text-align:right">стойкость</td><td style="text-align:right">статус</td><td style="text-align:right">шанс</td><td style="text-align:right">стаков</td></tr>';
-  for (const p of variantsFor(reg, w.weaponClass, 'head')) {
-    const it = variantItem(reg, sb, 'head', p.id);
+  for (const p of variantsFor(reg, w.weaponClass, 'head', w.hands)) {
+    const it = variantItem(reg, sb, 'head', p);
     const c = it ? cardWith(reg, save, it) : undefined;
     ht.innerHTML += `<tr><td>${p.name} <span style="color:#777">${p.axis > 0 ? '+' : ''}${p.axis}</span></td><td style="text-align:right;font-family:monospace">${c ? (c.block * 100).toFixed(1) + ' %' : '—'}</td><td style="text-align:right;font-family:monospace">${c ? (c.interruptResist * 100).toFixed(0) + ' %' : '—'}</td><td style="text-align:right">${c?.status?.name ?? '<span style="color:#c85a48">нет грани</span>'}</td><td style="text-align:right;font-family:monospace;color:${c?.status?.over100 ? '#c85a48' : 'inherit'}">${c?.status ? (c.status.chance * 100).toFixed(1) + ' %' : ''}</td><td style="text-align:right;font-family:monospace">${c?.status ? c.status.avgStacks.toFixed(2) + ' / ' + c.status.maxStacks : ''}</td></tr>`;
   }
@@ -170,7 +206,6 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
       formFreq.map((f) => { const d = f.config ? f.measured / f.config - 1 : 0; return `<tr><td>${f.key}</td><td style="text-align:right">${f.measured.toFixed(2)}</td><td style="text-align:right">${f.config.toFixed(2)}</td><td style="text-align:right;color:${Math.abs(d) <= 0.05 ? '#8aa84a' : '#e39a3c'}">${(d * 100).toFixed(1)} %</td></tr>`; }).join('');
     fc.append(ft);
   }
-
 }
 
 function measureForms(reg: ConfigRegistry): { key: string; measured: number; config: number }[] {

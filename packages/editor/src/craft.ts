@@ -150,6 +150,8 @@ function sandboxHost(reg: ConfigRegistry, sb: CraftSandbox, save: SaveState): Cr
         for (const [id, n] of Object.entries(pv.cost.materials)) sb.wallet[id] = (sb.wallet[id] ?? 0) - n;
         sb.gold -= pv.cost.gold;
       }
+      // Кодекс: скованный исторический тип отмечается в журнале песочницы.
+      if (pv.type?.typeId && !sb.journal.typesForged.includes(pv.type.typeId)) sb.journal.typesForged.push(pv.type.typeId);
       sb.drop = null; sb.fight = null;
       return { ok: true, item: pv.item };
     },
@@ -322,7 +324,7 @@ function sandboxPanel(reg: ConfigRegistry, sb: CraftSandbox, save: SaveState, re
     const clr = h('button', BTN, 'Очистить'); clr.addEventListener('click', () => { sb.wallet = {}; sb.gold = 0; rerender(); });
     row.append(give, clr); res.append(row);
   }
-  check(res, 'Журнал: всё открыто', sb.fullJournal, (v) => { sb.fullJournal = v; }, 'выключи — и открывать придётся разбором (вкладка «Каталог»)');
+  check(res, 'Журнал: всё открыто', sb.fullJournal, (v) => { sb.fullJournal = v; }, 'выключи — и открывать типы и детали придётся разбором (вкладка «Каталог»)');
   check(res, 'Материалы, которых ещё нет в игре', sb.showDisabled, (v) => { sb.showDisabled = v; }, 'ступени 4–5 и семьи stave/trim/focus выключены в конфиге до разбора по тиру (§10.9)');
 
   const ov = sec('Песочные правки данных');

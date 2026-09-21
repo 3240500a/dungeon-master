@@ -88,7 +88,9 @@ export function pickTierClamped(
 }
 
 function scaleBaseStats(stats: StatModifier[], mult: number): StatModifier[] {
-  if (mult === 1) return stats;
+  // ⚠ Всегда НОВЫЙ массив, даже при ×1: вещь с общим массивом базы превращала любую правку статов
+  // вещи (ковка дописывает вклад деталей) в правку САМОЙ БАЗЫ в конфиге — и всех следующих вещей.
+  if (mult === 1) return stats.map((m) => ({ ...m }));
   return stats.map((m) =>
     m.kind === 'flat' && TIER_SCALED.has(m.stat) ? { ...m, value: Math.round(m.value * mult) } : m);
 }

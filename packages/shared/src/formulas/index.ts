@@ -11,6 +11,7 @@ export * from './salvage.js';
 export * from './trophy.js';
 // Ковка оружия из деталей: одно ядро для сервера, окна ковки и песочницы редактора.
 export * from './craft.js';
+export * from './craftType.js';
 export * from './craftCard.js';
 export * from './itemReq.js';
 export * from './itemDescribe.js';

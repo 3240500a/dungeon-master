@@ -347,25 +347,21 @@
       "3+2": 5.97,
       "2+3": 6.02
     },
+    "tierFromParts": {
+      "weights": { "strike": 2, "grip": 1, "bind": 1, "head": 1 },
+      "scale": 1.5
+    },
     "cost": {
-      "strike": {
-        "cheap": 12,
-        "dear": 4
-      },
-      "grip": {
-        "cheap": 8,
-        "dear": 3
-      },
-      "trim": {
-        "cheap": 10,
-        "dear": 3
-      },
+      "units": { "strike": 16, "grip": 8, "bind": 8, "head": 8 },
       "goldPerReqMult": 300,
       "enchantGold": 100
     },
     "melt": {
-      "cheap": 0.5,
-      "dear": 1
+      "share": 0.6
+    },
+    "salvage": {
+      "units": { "strike": 3, "grip": 2, "bind": 1, "head": 1 },
+      "rarityBonus": { "normal": 0, "magic": 1, "rare": 2, "unique": 2 }
     },
     "journal": {
       "sketchAfter": 8,

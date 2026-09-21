@@ -1,88 +1,321 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
+import { defaultConfigData } from '../config/defaults.js';
 import {
-  CRAFT_SLOT_LIST, anatomyOf, bakeParts, craftCost, craftTierRange, craftTiers, craftWeapon, defaultParts,
-  emptyJournal, enchantItem, formOf, fullJournal, journalTierCap, materialBand, meltReturn, partsOf,
-  resolveParts, salvageIntoJournal, salvageStep, stepsForTier, variantsFor, type CraftSlot,
+  anatomyOf, bakeParts, baseTierRange, capacityOf, clampStep, craftCost, craftSalvageYield, craftTiers, craftWeapon,
+  emptyJournal, enchantItem, formOf, fullJournal, journalTierCap, keyVariantsByBase, meltReturn, partById,
+  partsOf, resolveParts, salvageIntoJournal, sketchable, tierIndexOfItem, tierOfSteps, typeOfItem, useSketch,
+  variantsFor, type CraftInput,
 } from './craft.js';
-import { generateItem, itemFromBaseId } from './itemgen.js';
+import {
+  CRAFT_SLOT_LIST, agree, baseOfKeyPart, familiesOf, keySlotOf, matchWhen, resolveType, tagValue,
+  typesRow, type CraftSlot, type PartSet,
+} from './craftType.js';
+import { generateItem } from './itemgen.js';
 import { createRng } from './rng.js';
 import { forgeReroll } from '../economy/townActions.js';
 import type { SaveState } from '../types/save.js';
+import type { CraftParts } from '../types/items.js';
 
 const reg = new ConfigRegistry();
 reg.loadAll();
-const weapons = reg.get('items.base').filter((b) => b.kind === 'weapon');
-const CLASSES = [...new Set(weapons.map((w) => (w as { weaponClass: string }).weaponClass))];
+type WBase = Extract<ReturnType<typeof reg.get<'items.base'>>[number], { kind: 'weapon' }>;
+const weapons = reg.get('items.base').filter((b): b is WBase => b.kind === 'weapon');
+const CLASSES = [...new Set(weapons.map((w) => w.weaponClass))];
 const price = new Map(reg.get('craft-materials').map((m) => [m.id, m.sellPrice]));
 const value = (c: Record<string, number>): number => Object.entries(c).reduce((s, [id, n]) => s + (price.get(id) ?? 0) * n, 0);
+const baseOf = (id: string): WBase => weapons.find((b) => b.id === id)!;
 
-describe('материалы: одна полоса на все семьи (docs/CRAFT_WEAPONS.md §10.1)', () => {
-  it('ступень k строит t(k)…t(k+1), первая — t0…t2', () => {
-    expect([1, 2, 3, 4, 5].map(materialBand)).toEqual([
-      { lo: 0, hi: 2 }, { lo: 2, hi: 3 }, { lo: 3, hi: 4 }, { lo: 4, hi: 5 }, { lo: 5, hi: 6 },
-    ]);
+type Steps = Record<CraftSlot, number>;
+const uniform = (k: number): Steps => ({ strike: k, grip: k, bind: k, head: k });
+
+/** Пулы семейства базы: ключ — только варианты этой базы. */
+function poolsOf(baseId: string): Record<CraftSlot, ReturnType<typeof variantsFor>> {
+  const b = baseOf(baseId);
+  const keySlot = keySlotOf(reg, b.weaponClass);
+  const out = {} as Record<CraftSlot, ReturnType<typeof variantsFor>>;
+  for (const slot of CRAFT_SLOT_LIST) {
+    out[slot] = slot === keySlot
+      ? keyVariantsByBase(reg, b.weaponClass, b.hands ?? 1).find((g) => g.baseId === baseId)?.variants ?? []
+      : variantsFor(reg, b.weaponClass, slot, b.hands ?? 1);
+  }
+  return out;
+}
+
+/** Сборка базы: в каждом гнезде ближайший к эталону вариант, чьё окно берёт нужную ступень. */
+function buildFor(baseId: string, steps: Steps, pick: Partial<Record<CraftSlot, string>> = {}): CraftInput {
+  const b = baseOf(baseId);
+  const pools = poolsOf(baseId);
+  const parts = {} as CraftParts;
+  for (const slot of CRAFT_SLOT_LIST) {
+    const want = steps[slot];
+    const p = pick[slot] ? partById(reg, pick[slot]!)! : [...pools[slot]].filter((v) => v.stepMin <= want && want <= v.stepMax).sort((x, y) => Math.abs(x.axis) - Math.abs(y.axis))[0] ?? pools[slot][0]!;
+    parts[slot] = { id: p.id, step: clampStep(p, want) };
+  }
+  return { weaponClass: b.weaponClass, hands: b.hands ?? 1, parts };
+}
+
+/** Ступени, из которых эта база куётся ровно в ступень t (ровные предпочтительнее), или null. */
+function stepsForTierOf(baseId: string, t: number): Steps | null {
+  const pools = poolsOf(baseId);
+  const has = (slot: CraftSlot, s: number): boolean => pools[slot].some((p) => p.stepMin <= s && s <= p.stepMax);
+  let best: { s: Steps; spread: number } | null = null;
+  for (let a = 1; a <= 5; a++) for (let b = 1; b <= 5; b++) for (let c = 1; c <= 5; c++) for (let d = 1; d <= 5; d++) {
+    const s: Steps = { strike: a, grip: b, bind: c, head: d };
+    if (!CRAFT_SLOT_LIST.every((sl) => has(sl, s[sl]))) continue;
+    if (tierOfSteps(reg, { strike: { step: a }, grip: { step: b }, bind: { step: c }, head: { step: d } }).tier !== t) continue;
+    const spread = Math.max(a, b, c, d) - Math.min(a, b, c, d);
+    if (!best || spread < best.spread) best = { s, spread };
+  }
+  return best?.s ?? null;
+}
+
+const partsSet = (input: CraftInput): PartSet => {
+  const r = resolveParts(reg, input.weaponClass, input.hands, input.parts);
+  if (!r.ok) throw new Error(r.reason);
+  return r.parts;
+};
+const stepsObj = (s: Steps) => ({ strike: { step: s.strike }, grip: { step: s.grip }, bind: { step: s.bind }, head: { step: s.head } });
+
+describe('⭐ ступень вещи из материалов деталей (docs/CRAFT_WEAPONS.md §11)', () => {
+  it('вещь целиком из одной ступени k даёт t0, t2, t3, t5, t6 — полы прежних полос', () => {
+    expect([1, 2, 3, 4, 5].map((k) => tierOfSteps(reg, stepsObj(uniform(k))).tier)).toEqual([0, 2, 3, 5, 6]);
   });
-  it('на t2…t5 на выбор ровно два материала — дешёвый на потолке и дорогой на полу', () => {
-    expect([0, 1, 2, 3, 4, 5, 6].map((t) => stepsForTier(t).length)).toEqual([1, 1, 2, 2, 2, 2, 1]);
+  it('каждая ступень t0…t6 достижима смешением материалов', () => {
+    const seen = new Set<number>();
+    for (let a = 1; a <= 5; a++) for (let b = 1; b <= 5; b++) for (let c = 1; c <= 5; c++) for (let d = 1; d <= 5; d++) {
+      seen.add(tierOfSteps(reg, stepsObj({ strike: a, grip: b, bind: c, head: d })).tier);
+    }
+    expect([...seen].sort()).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+  it('булатный клинок при болотном прочем — t2, а не мифик: клинок весит две пятых', () => {
+    expect(tierOfSteps(reg, stepsObj({ strike: 5, grip: 1, bind: 1, head: 1 })).tier).toBe(2);
+    expect(tierOfSteps(reg, stepsObj({ strike: 1, grip: 5, bind: 5, head: 5 })).tier).toBe(4);
+  });
+  it('мифик требует булатного клинка: без ступени 5 в ударной части t6 не собрать', () => {
+    expect(tierOfSteps(reg, stepsObj({ strike: 4, grip: 5, bind: 5, head: 5 })).tier).toBe(5);
   });
 });
 
-describe('анатомия: четыре гнезда у всех десяти классов', () => {
-  it('у каждого класса оружия есть анатомия, и её семьи существуют в craft-materials', () => {
+describe('анатомия и варианты', () => {
+  it('у каждого класса есть анатомия и классификатор, семьи существуют в craft-materials', () => {
     const fams = new Set(reg.get('craft-materials').map((m) => m.family));
     for (const cls of CLASSES) {
       const a = anatomyOf(reg, cls);
       expect(a, cls).toBeTruthy();
+      expect(typesRow(reg, cls), cls).toBeTruthy();
       for (const s of CRAFT_SLOT_LIST) expect(fams.has(a![s].family), `${cls}.${s}`).toBe(true);
     }
+    for (const p of reg.get('weapon-parts')) if (p.family) expect(fams.has(p.family), p.id).toBe(true);
   });
-  it('⭐ ровно три семьи на вещь — не пятнадцать материалов ради одного меча (§10.7)', () => {
+  it('⭐ не больше трёх семей материала на вещь — не пятнадцать материалов ради одного меча (§10.7)', () => {
     for (const cls of CLASSES) {
       const a = anatomyOf(reg, cls)!;
-      expect(new Set(CRAFT_SLOT_LIST.map((s) => a[s].family)).size, cls).toBe(3);
+      expect(new Set(CRAFT_SLOT_LIST.map((s) => a[s].family)).size, cls).toBeLessThanOrEqual(3);
     }
   });
-  it('в каждом гнезде каждого класса есть выбор — хотя бы три варианта с обеих сторон оси', () => {
-    for (const cls of CLASSES) for (const s of CRAFT_SLOT_LIST) {
-      const v = variantsFor(reg, cls, s);
-      expect(v.length, `${cls}.${s}`).toBeGreaterThanOrEqual(3);
-      expect(v.some((p) => p.axis > 0) && v.some((p) => p.axis < 0), `${cls}.${s}`).toBe(true);
+  it('в каждом неключевом гнезде каждого семейства есть выбор по обе стороны оси', () => {
+    for (const cls of CLASSES) for (const h of familiesOf(reg, cls)) for (const s of CRAFT_SLOT_LIST) {
+      if (s === keySlotOf(reg, cls)) continue;
+      const v = variantsFor(reg, cls, s, h);
+      expect(v.length, `${cls}/${h}.${s}`).toBeGreaterThanOrEqual(3);
+      expect(v.some((p) => p.axis > 0) && v.some((p) => p.axis < 0), `${cls}/${h}.${s}`).toBe(true);
     }
   });
-  it('у каждого варианта есть подпись-следствие: строка без неё — незаконченная (§17)', () => {
-    for (const p of reg.get('weapon-parts')) expect(p.caption.trim().length, p.id).toBeGreaterThan(0);
+  it('у каждого варианта есть подпись-следствие, id уникальны, окно материалов корректно', () => {
     const ids = reg.get('weapon-parts').map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
+    for (const p of reg.get('weapon-parts')) {
+      expect(p.caption.trim().length, p.id).toBeGreaterThan(0);
+      expect(p.stepMin <= p.stepMax && p.stepMin >= 1 && p.stepMax <= 5, p.id).toBe(true);
+    }
+  });
+  it('⭐ словарь тегов: у каждого варианта есть все теги гнезда без умолчания, значения — из словаря', () => {
+    for (const p of reg.get('weapon-parts')) for (const cls of p.classes) {
+      const tags = anatomyOf(reg, cls)![p.slot].tags;
+      for (const [k, v] of Object.entries(p.tags)) {
+        const def = tags.find((t) => t.key === k);
+        expect(def, `${p.id}: тег ${k} не в словаре ${cls}.${p.slot}`).toBeTruthy();
+        expect(def!.values.some((x) => x.id === v), `${p.id}: ${k}=${v}`).toBe(true);
+      }
+      for (const t of tags) if (!t.default) expect(p.tags[t.key], `${p.id}: нет тега ${t.key}`).toBeTruthy();
+    }
   });
 });
 
-/** Запечь сборку «все гнёзда эталон, кроме одного на заданной оси». */
+describe('⭐ классификатор: тип из ключевой детали (§3.3)', () => {
+  it('тотальность: семейство × значение ключа → ровно одна включённая база своего класса и хвата; каждая база достижима', () => {
+    const reached = new Set<string>();
+    for (const cls of CLASSES) {
+      const row = typesRow(reg, cls)!;
+      const pairs = row.bases.map((b) => `${b.hands}|${b.key}`);
+      expect(new Set(pairs).size, `${cls}: дубли`).toBe(pairs.length);
+      for (const b of row.bases) {
+        const base = baseOf(b.base);
+        expect(base, `${cls}: нет базы ${b.base}`).toBeTruthy();
+        expect(base.weaponClass, b.base).toBe(cls);
+        expect(base.hands ?? 1, b.base).toBe(b.hands);
+      }
+      for (const h of familiesOf(reg, cls)) for (const g of keyVariantsByBase(reg, cls, h)) {
+        expect(g.variants.length, `${cls}/${h}: у базы ${g.baseId} нет ключевых вариантов`).toBeGreaterThan(0);
+        reached.add(g.baseId);
+      }
+      // Каждый ключевой вариант куда-то ведёт.
+      for (const h of familiesOf(reg, cls)) for (const p of variantsFor(reg, cls, keySlotOf(reg, cls), h)) {
+        expect(baseOfKeyPart(reg, cls, h, p), `${p.id} в семействе ${cls}/${h}`).toBeTruthy();
+      }
+    }
+    expect([...reached].sort()).toEqual(weapons.map((w) => w.id).sort());
+  });
+  it('каждая база куётся в каждой своей ступени — от minTier до maxTier', () => {
+    for (const b of weapons) {
+      const r = baseTierRange(reg, b);
+      for (let t = r.lo; t <= r.hi; t++) expect(stepsForTierOf(b.id, t), `${b.id} t${t}`).not.toBeNull();
+    }
+  });
+  it('покрытие оси: ключевые формы каждой базы (ключ — ударная часть) дотягиваются до −1 и +1', () => {
+    for (const b of weapons) {
+      if (keySlotOf(reg, b.weaponClass) !== 'strike') continue;
+      const axes = poolsOf(b.id).strike.map((p) => p.axis);
+      expect(Math.min(...axes), b.id).toBeLessThanOrEqual(-0.99);
+      expect(Math.max(...axes), b.id).toBeGreaterThanOrEqual(0.99);
+    }
+  });
+  it('⭐ на ЛЮБОЙ ступени материала у базы есть и тяжёлая, и лёгкая форма — ступень не выбирает стиль боя', () => {
+    for (const b of weapons) {
+      if (keySlotOf(reg, b.weaponClass) !== 'strike') continue;
+      const pool = poolsOf(b.id).strike;
+      for (let s = 1; s <= 5; s++) {
+        const at = pool.filter((p) => p.stepMin <= s && s <= p.stepMax);
+        if (!at.length) continue;
+        expect(at.some((p) => p.axis > 0) && at.some((p) => p.axis < 0), `${b.id} ст.${s}`).toBe(true);
+      }
+    }
+  });
+  it('замена НЕключевой детали никогда не меняет базу', () => {
+    for (const b of weapons) {
+      const input = buildFor(b.id, uniform(3));
+      const keySlot = keySlotOf(reg, b.weaponClass);
+      for (const slot of CRAFT_SLOT_LIST) {
+        if (slot === keySlot) continue;
+        for (const v of variantsFor(reg, b.weaponClass, slot, b.hands ?? 1)) {
+          const ps = { ...partsSet(input), [slot]: v } as PartSet;
+          expect(resolveType(reg, b.weaponClass, b.hands ?? 1, ps).baseId, `${b.id} ${v.id}`).toBe(b.id);
+        }
+      }
+    }
+  });
+  it('⭐ мёртвых правил нет: каждое имя срабатывает первым хотя бы на одной сборке', () => {
+    for (const cls of CLASSES) {
+      const row = typesRow(reg, cls)!;
+      const anat = anatomyOf(reg, cls)!;
+      const first = new Set<string>();
+      for (const h of familiesOf(reg, cls)) {
+        const pools = CRAFT_SLOT_LIST.map((s) => variantsFor(reg, cls, s, h));
+        for (const a of pools[0]!) for (const b of pools[1]!) for (const c of pools[2]!) for (const d of pools[3]!) {
+          const ps: PartSet = { strike: a, grip: b, bind: c, head: d };
+          const r = row.names.find((x) => x.enabled !== false && matchWhen(anat, x.when, h, ps));
+          if (r) first.add(r.id);
+        }
+      }
+      for (const r of row.names) if (r.enabled !== false) expect(first.has(r.id), `${cls}: правило ${r.id} ни разу не первое`).toBe(true);
+    }
+  });
+  it('у каждого имени есть источник или пометка «фэнтези»; условия ссылаются на существующие теги', () => {
+    for (const cls of CLASSES) {
+      const anat = anatomyOf(reg, cls)!;
+      for (const r of typesRow(reg, cls)!.names) {
+        expect(r.source.trim().length > 0 || r.fantasy, `${cls}: ${r.id}`).toBe(true);
+        for (const [k, vals] of Object.entries(r.when)) {
+          if (k === 'hands') continue;
+          const [slot, key] = k.split('.') as [CraftSlot, string];
+          if (key === 'id') continue;
+          const def = anat[slot].tags.find((t) => t.key === key);
+          expect(def, `${r.id}: ${k}`).toBeTruthy();
+          for (const v of vals) expect(def!.values.some((x) => x.id === v), `${r.id}: ${k}=${v}`).toBe(true);
+        }
+      }
+    }
+  });
+  it('⭐ имя не несёт статов: выключение всех правил имён не меняет ни одного числа', () => {
+    const data = structuredClone(defaultConfigData) as Record<string, unknown>;
+    for (const row of data['weapon-types'] as { names: { enabled: boolean }[] }[]) for (const n of row.names) n.enabled = false;
+    const bare = new ConfigRegistry();
+    bare.loadAll(data);
+    for (const b of weapons) {
+      const input = buildFor(b.id, uniform(3));
+      const x = craftWeapon(reg, input).item!, y = craftWeapon(bare, input).item!;
+      expect(y.baseStats, b.id).toEqual(x.baseStats);
+      expect(y.requirements, b.id).toEqual(x.requirements);
+      expect(y.affixCap, b.id).toEqual(x.affixCap);
+      expect(y.baseId, b.id).toBe(x.baseId);
+    }
+  });
+  it('каролингский меч узнаётся по деталям, формула — в духе Элмсли', () => {
+    const input = buildFor('long-sword', uniform(2), { strike: 'sw-a-x', grip: 'sw-gr-one', bind: 'sw-gd-short', head: 'sw-pm-lobed' });
+    const t = resolveType(reg, 'sword', 1, partsSet(input));
+    expect(t.name).toBe('Каролингский меч');
+    expect(t.typeId).toBe('sw-carolingian');
+    expect(t.formula).toBe('Окшотт: клинок X · перекрестье 3 · навершие трёхчастное');
+    const r = craftWeapon(reg, input);
+    expect(r.item!.name).toBe('Крепкий каролингский меч');
+    expect(r.item!.typeId).toBe('sw-carolingian');
+  });
+  it('⭐ вольная сборка никогда не зовётся именем правила, которого не выполнила', () => {
+    for (const cls of CLASSES) {
+      const row = typesRow(reg, cls)!;
+      const canon = new Set(row.names.map((r) => r.name.toLowerCase()));
+      for (const h of familiesOf(reg, cls)) {
+        const pools = CRAFT_SLOT_LIST.map((s) => variantsFor(reg, cls, s, h));
+        for (const a of pools[0]!) for (const b of pools[1]!) for (const c of pools[2]!) for (const d of pools[3]!) {
+          const t = resolveType(reg, cls, h, { strike: a, grip: b, bind: c, head: d });
+          if (t.ok && t.fallback) expect(canon.has(t.name.toLowerCase()), `${cls}: «${t.name}»`).toBe(false);
+        }
+      }
+    }
+  });
+  it('без правила имя собирается шаблоном и согласуется по роду', () => {
+    const input = buildFor('long-sword', uniform(3), { strike: 'sw-a-xi', grip: 'sw-gr-one', bind: 'sw-gd-long', head: 'sw-pm-pear' });
+    const t = resolveType(reg, 'sword', 1, partsSet(input));
+    expect(t.fallback).toBe(true);
+    expect(t.name).toBe('Узкий меч позднего образца');
+    const spear = buildFor('pike', uniform(3), { strike: 'sp-awl', grip: 'sp-gr2-heel' });
+    expect(resolveType(reg, 'spear', 2, partsSet(spear)).name).toBe('Шиловидная пика');
+    expect(agree('поздний', 'f')).toBe('поздняя');
+    expect(agree('широкий', 'n')).toBe('широкое');
+    expect(agree('каролингский', 'f')).toBe('каролингская');
+    expect(agree('большой', 'p')).toBe('большие');
+    expect(agree('с долом', 'f')).toBe('с долом');
+  });
+});
+
+/** Запечь сборку «все гнёзда эталон, кроме одного на заданной оси» (база фиксирована). */
 function bakeWith(baseId: string, slot: CraftSlot, axisSign: 1 | -1) {
-  const base = weapons.find((b) => b.id === baseId)! as Extract<(typeof weapons)[number], { kind: 'weapon' }>;
-  const parts = defaultParts(reg, base.weaponClass)!;
-  const pool = variantsFor(reg, base.weaponClass, slot);
-  parts[slot] = (axisSign > 0 ? pool[0] : pool[pool.length - 1])!.id;
-  const res = resolveParts(reg, base.weaponClass, parts);
-  if (!res.ok) throw new Error(res.reason);
-  return { base, bake: bakeParts(reg, base, 3, res.parts) };
+  const base = baseOf(baseId);
+  const pools = poolsOf(baseId);
+  const pool = pools[slot];
+  const pick = (axisSign > 0 ? pool[0] : pool[pool.length - 1])!;
+  const input = buildFor(baseId, uniform(3), { [slot]: pick.id });
+  input.parts[slot].step = clampStep(pick, 3);
+  return { base, bake: bakeParts(reg, base, 3, partsSet(input)) };
 }
 
-describe('⭐ замок «одна ось ДПС»: вклад выводится из оси, а не пишется руками', () => {
+describe('⭐ замок «одна ось ДПС внутри типа»: вклад выводится из оси, а не пишется руками', () => {
   const DPS_STATS = new Set(['damagePct', 'attackSpeed']);
-  it('ударная часть пишет ТОЛЬКО урон и скорость, остальные гнёзда — ни то ни другое', () => {
-    for (const b of weapons) for (const slot of CRAFT_SLOT_LIST) for (const sign of [1, -1] as const) {
-      const { bake } = bakeWith(b.id, slot, sign);
-      const touchesDps = bake.mods.some((m) => DPS_STATS.has(m.stat));
-      expect(touchesDps, `${b.id} ${slot} ${sign}`).toBe(slot === 'strike');
+  it('урон и скорость двигает ТОЛЬКО ударная часть: остальные гнёзда их не трогают вовсе', () => {
+    const dps = (mods: { stat: string; value: number }[]) => mods.filter((m) => DPS_STATS.has(m.stat)).map((m) => `${m.stat}:${m.value}`).sort();
+    for (const b of weapons) {
+      const ref = dps(bakeParts(reg, b, 3, partsSet(buildFor(b.id, uniform(3)))).mods);
+      for (const slot of CRAFT_SLOT_LIST) for (const sign of [1, -1] as const) {
+        const { bake } = bakeWith(b.id, slot, sign);
+        if (slot !== 'strike') expect(dps(bake.mods), `${b.id} ${slot} ${sign}`).toEqual(ref);
+      }
     }
   });
   it('урон и скорость ударной части зеркальны: +урон всегда платит скоростью', () => {
     const { bake: heavy } = bakeWith('long-sword', 'strike', 1);
-    const dmg = heavy.mods.find((m) => m.stat === 'damagePct')!.value;
-    const spd = heavy.mods.find((m) => m.stat === 'attackSpeed')!.value;
-    expect(dmg).toBeGreaterThan(0);
-    expect(spd).toBeLessThan(0);
+    expect(heavy.mods.find((m) => m.stat === 'damagePct')!.value).toBeGreaterThan(0);
+    expect(heavy.mods.find((m) => m.stat === 'attackSpeed')!.value).toBeLessThan(0);
   });
   it('разброс ДПС по оси ударной части ≤ 8 % во всём объявленном конверте (§4)', () => {
     const k = reg.get('balance').craft.strike;
@@ -93,21 +326,27 @@ describe('⭐ замок «одна ось ДПС»: вклад выводитс
     }
     expect(worst).toBeLessThanOrEqual(0.08);
   });
+  it('вес вещи = вес базы: деталь не пишет в вес, урон и требования поверх типа', () => {
+    for (const b of weapons) {
+      const r = craftWeapon(reg, buildFor(b.id, uniform(3)));
+      expect(r.ok, `${b.id}: ${r.reason}`).toBe(true);
+      expect(r.item!.weight, b.id).toBe(b.weight);
+      for (const m of r.item!.baseStats.filter((x) => x.stat === 'minDamage' || x.stat === 'maxDamage')) expect(m.kind, b.id).toBe('flat');
+    }
+  });
 });
 
 describe('⭐ держак площадь-нейтрален: `дуга × дальность²` постоянна (§5.1)', () => {
-  it('у каждого варианта держака на каждой базе ближнего боя площадь = площади базы ± 0.5 %', () => {
+  it('у каждого крайнего держака на каждой базе ближнего боя площадь = площади базы ± 0.5 %', () => {
     for (const b of weapons.filter((w) => w.attackType === 'melee')) for (const sign of [1, -1] as const) {
       const { base, bake } = bakeWith(b.id, 'grip', sign);
       const baseArea = (base.arcMult ?? 1) * (base.reachMult ?? 1) ** 2;
-      const area = bake.arcMult! * bake.reachMult! ** 2;
-      expect(Math.abs(area / baseArea - 1), `${b.id} ${sign}`).toBeLessThan(0.005);
+      expect(Math.abs((bake.arcMult! * bake.reachMult! ** 2) / baseArea - 1), `${b.id} ${sign}`).toBeLessThan(0.005);
     }
   });
   it('длинный держак действительно дальше, короткий — шире', () => {
-    const long = bakeWith('long-sword', 'grip', 1).bake, short = bakeWith('long-sword', 'grip', -1).bake;
-    expect(long.reachMult!).toBeGreaterThan(1);
-    expect(short.arcMult!).toBeGreaterThan(1);
+    expect(bakeWith('long-sword', 'grip', 1).bake.reachMult!).toBeGreaterThan(1);
+    expect(bakeWith('long-sword', 'grip', -1).bake.arcMult!).toBeGreaterThan(1);
   });
 });
 
@@ -124,25 +363,24 @@ describe('ёмкость аффиксов: потолок выведен из д
     const forms = new Set([-1, -0.5, 0, 0.5, 1].map((a) => { const f = formOf(5, a); return `${f.prefix}+${f.suffix}`; }));
     expect([...forms].sort()).toEqual(['2+3', '3+2']);
   });
-  it('⭐ зачарование до редкого ложится РОВНО в объявленную форму', () => {
-    const base = weapons.find((b) => b.id === 'long-sword')!;
-    const parts = defaultParts(reg, 'sword')!;
-    for (const bindAxis of [1, -1]) {
-      const pool = variantsFor(reg, 'sword', 'bind');
-      parts.bind = (bindAxis > 0 ? pool[0] : pool[pool.length - 1])!.id;
-      const res = craftWeapon(reg, { baseId: base.id, tier: 4, step: 4, parts });
+  it('⭐ зачарование до редкого ложится РОВНО в объявленную форму, имя строится от типа', () => {
+    for (const bindId of ['sw-gd-short', 'sw-gd-rings']) {
+      const input = buildFor('long-sword', { strike: 4, grip: 4, bind: 4, head: 3 }, { bind: bindId });
+      const res = craftWeapon(reg, input);
       expect(res.ok, res.reason).toBe(true);
       const cap = res.item!.affixCap!;
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 40; i++) {
         const e = enchantItem(reg, res.item!, 'rare', createRng(100 + i));
         const kinds = new Map(e.affixes.map((a) => [a.affixId, a.kind]));
         const p = [...kinds.values()].filter((k) => k === 'prefix').length;
         expect({ p, s: kinds.size - p }).toEqual({ p: cap.prefix, s: cap.suffix });
       }
     }
+    const caro = craftWeapon(reg, buildFor('long-sword', uniform(2), { strike: 'sw-a-x', grip: 'sw-gr-one', bind: 'sw-gd-short', head: 'sw-pm-lobed' })).item!;
+    expect(enchantItem(reg, caro, 'magic', createRng(7)).name.toLowerCase()).toContain('каролингск');
   });
   it('⚠ перекатка у кузнеца не сносит купленную форму', () => {
-    const res = craftWeapon(reg, { baseId: 'long-sword', tier: 4, step: 4, parts: defaultParts(reg, 'sword')! });
+    const res = craftWeapon(reg, buildFor('long-sword', { strike: 4, grip: 4, bind: 4, head: 3 }));
     const item = enchantItem(reg, res.item!, 'rare', createRng(3));
     const save = { gold: 1e9, inventory: [item] } as unknown as SaveState;
     for (let i = 0; i < 3; i++) {
@@ -157,11 +395,11 @@ describe('ёмкость аффиксов: потолок выведен из д
 describe('ковка: каркас — существующая база (правило Р1)', () => {
   it('скованная вещь по урону и требованиям равна найденной той же базы и ступени', () => {
     for (const b of weapons) {
-      const t = craftTiers(reg).findIndex((x) => x.id === (b.maxTier ?? 't6'));
-      const step = t === 6 ? 5 : Math.max(1, Math.min(5, t));
-      const res = craftWeapon(reg, { baseId: b.id, tier: t, step, parts: defaultParts(reg, (b as { weaponClass: string }).weaponClass)! });
+      const t = baseTierRange(reg, b).hi;
+      const steps = stepsForTierOf(b.id, t)!;
+      const res = craftWeapon(reg, buildFor(b.id, steps));
       expect(res.ok, `${b.id}: ${res.reason}`).toBe(true);
-      // Найденная — через ДРОП (generateItem), то есть другим путём, чем ковка.
+      expect(res.tier, b.id).toBe(t);
       const tier = craftTiers(reg)[t]!;
       const found = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
         dropBias: 1, itemLevel: tier.minItemLevel, tierLevel: tier.minItemLevel, baseId: b.id,
@@ -175,68 +413,112 @@ describe('ковка: каркас — существующая база (пра
       expect(res.item!.requirements, b.id).toEqual(found.requirements);
     }
   });
+  it('⚠ ковка не портит базу в конфиге: сто ковок на t0 (множитель ×1) — статы базы те же', () => {
+    const before = JSON.stringify(baseOf('long-sword').baseStats);
+    const input = buildFor('long-sword', uniform(1), { strike: 'sw-a-x' });
+    const first = craftWeapon(reg, input).item!.baseStats;
+    for (let i = 0; i < 100; i++) craftWeapon(reg, input);
+    expect(JSON.stringify(baseOf('long-sword').baseStats)).toBe(before);
+    expect(craftWeapon(reg, input).item!.baseStats).toEqual(first);
+  });
   it('вещь выходит ОБЫЧНОЙ, без аффиксов, с записанными деталями и ёмкостью', () => {
-    const res = craftWeapon(reg, { baseId: 'battle-axe', tier: 3, step: 3, parts: defaultParts(reg, 'axe')! });
+    const input = buildFor('battle-axe', uniform(3));
+    const res = craftWeapon(reg, input);
     expect(res.item!.rarity).toBe('normal');
     expect(res.item!.affixes).toEqual([]);
-    expect(res.item!.parts?.step).toBe(3);
-    expect(res.item!.affixCap).toEqual({ prefix: 2, suffix: 2 });
+    expect(res.item!.parts).toEqual(input.parts);
+    expect(res.item!.affixCap!.prefix + res.item!.affixCap!.suffix).toBe(capacityOf(reg, res.tier!));
   });
-  it('⭐ ступень вне полосы материала не куётся — «дешёвой t6» не существует (Р6)', () => {
-    const parts = defaultParts(reg, 'sword')!;
-    expect(craftWeapon(reg, { baseId: 'long-sword', tier: 6, step: 1, parts }).ok).toBe(false);
-    expect(craftWeapon(reg, { baseId: 'long-sword', tier: 0, step: 5, parts }).ok).toBe(false);
-    expect(craftWeapon(reg, { baseId: 'long-sword', tier: 6, step: 5, parts }).ok).toBe(true);
+  it('⭐ окно материалов: форма не куётся из чужой ступени, и причина названа', () => {
+    const input = buildFor('long-sword', uniform(3), { strike: 'sw-a-x' });
+    input.parts.strike.step = 5; // клинок X — только ступени 1–3
+    const r = craftWeapon(reg, input);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/ступеней 1–3/);
   });
-  it('потолок базы уважается: короткий меч (maxTier t3) не куётся выше t3', () => {
-    const r = craftTierRange(reg, weapons.find((b) => b.id === 'short-sword')!, 4);
-    expect(r).toBeNull();
+  it('потолок базы уважается: короткий меч (maxTier t3) не куётся выше t3, и окно говорит почему', () => {
+    const r = craftWeapon(reg, buildFor('short-sword', { strike: 3, grip: 5, bind: 5, head: 5 }));
+    expect(r.ok).toBe(false);
+    expect(r.tier).toBeGreaterThan(3);
+    expect(r.reason).toMatch(/не бывает выше/);
+  });
+  it('журнал режет ступень, а t6 требует mythicSalvages мифических разборов', () => {
+    const j = { ...fullJournal(reg), mythic: 0 };
+    const r = craftWeapon(reg, buildFor('long-sword', stepsForTierOf('long-sword', 6)!), { journal: j });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/мифических/);
+    expect(craftWeapon(reg, buildFor('long-sword', stepsForTierOf('long-sword', 6)!), { journal: fullJournal(reg) }).ok).toBe(true);
   });
 });
 
-describe('цена: относительная, и переплавка не печатает деньги (§13)', () => {
-  it('тир X платится ступенью ниже выбранной и самой выбранной', () => {
-    const base = weapons.find((b) => b.id === 'long-sword')! as Parameters<typeof craftCost>[1];
-    const c = craftCost(reg, base, 5, 5, { prefix: 2, suffix: 2 });
-    const steps = new Set(Object.keys(c.materials).map((id) => Number(id.split('-')[1])));
-    expect([...steps].sort()).toEqual([4, 5]);
+describe('цена: каждая деталь своим материалом, по массе (§13)', () => {
+  it('клинок — 16 единиц своего материала, остальные детали — по 8, всё × M формы', () => {
+    const input = buildFor('long-sword', { strike: 3, grip: 2, bind: 3, head: 1 });
+    const r = craftWeapon(reg, input);
+    const M = r.cost!.mult;
+    expect(r.cost!.materials['iron-3']).toBe(Math.ceil(16 * M));
+    expect(r.cost!.materials['hide-2']).toBe(Math.ceil(8 * M));
+    expect(r.cost!.materials['trim-3']).toBe(Math.ceil(8 * M));
+    expect(r.cost!.materials['trim-1']).toBe(Math.ceil(8 * M));
   });
-  it('⭐ «сковать и переплавить» ни на одной паре ступеней не возвращает больше потраченного', () => {
-    for (let step = 1; step <= 5; step++) {
-      const band = materialBand(step);
-      for (let t = band.lo; t <= band.hi; t++) {
-        const res = craftWeapon(reg, { baseId: 'long-sword', tier: t, step, parts: defaultParts(reg, 'sword')! });
-        if (!res.ok) continue;
-        expect(value(meltReturn(reg, res.item!)), `t${t} ст.${step}`).toBeLessThan(value(res.cost!.materials));
-      }
+  it('⭐ «сковать и переплавить» ни на одной ступени не возвращает больше потраченного', () => {
+    for (let k = 1; k <= 5; k++) {
+      const res = craftWeapon(reg, buildFor('long-sword', uniform(k)));
+      if (!res.ok) continue;
+      expect(value(meltReturn(reg, res.item!)), `ст.${k}`).toBeLessThan(value(res.cost!.materials));
     }
   });
 });
 
 describe('журнал кузнеца: разобрал — открыл (§12)', () => {
+  const drop = (baseId: string, level: number, seed: number) => generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+    dropBias: 1, itemLevel: level, tierLevel: level, baseId, tiers: reg.get('item-tiers'), rarities: reg.get('rarities'),
+    forceRarity: 'normal', maxReqTotal: reg.get('balance').maxTotalRequirement,
+  }, createRng(seed));
   it('детали найденной вещи выводятся из неё самой — одна вещь всегда даёт одно и то же', () => {
-    const it1 = itemFromBaseId(reg.get('items.base'), 'war-axe', reg.get('item-tiers'))!;
+    const it1 = drop('war-axe', 30, 5);
     expect(partsOf(reg, it1)).toEqual(partsOf(reg, { ...it1 }));
   });
-  it('ступень сырья = та, из которой вещь и была бы собрана (§10.9)', () => {
-    expect([0, 1, 2, 3, 4, 5, 6].map((t) => salvageStep(t, 'normal'))).toEqual([1, 1, 1, 2, 3, 4, 5]);
-    expect([0, 1, 2, 3, 4, 5, 6].map((t) => salvageStep(t, 'rare'))).toEqual([1, 1, 2, 3, 4, 5, 5]);
-    // Булат (5) ниже t5 физически недостижим.
-    for (let t = 0; t < 5; t++) expect(salvageStep(t, 'rare')).toBeLessThan(5);
+  it('⭐ тождество разбора: тип найденной вещи = её база, а ступень из её деталей = её ступень', () => {
+    let exact = 0, total = 0;
+    for (const b of weapons) for (const lvl of [1, 12, 25, 40, 55, 70, 85]) {
+      const it1 = drop(b.id, lvl, lvl * 7 + b.id.length);
+      const picks = partsOf(reg, it1)!;
+      expect(picks, `${b.id} ур.${lvl}`).toBeTruthy();
+      expect(typeOfItem(reg, it1)?.baseId, `${b.id} ур.${lvl}`).toBe(b.id);
+      total++;
+      if (tierOfSteps(reg, picks).tier === tierIndexOfItem(reg, it1)) exact++;
+    }
+    expect(exact).toBe(total);
+  });
+  it('разбор отдаёт материалы деталей их ступеней; редкость добавляет единицы клинку', () => {
+    const it1 = drop('long-sword', 40, 3);
+    const picks = partsOf(reg, it1)!;
+    const y = craftSalvageYield(reg, it1);
+    expect(y[`iron-${picks.strike.step}`]).toBeGreaterThanOrEqual(3);
+    const rare = craftSalvageYield(reg, { ...it1, rarity: 'rare' });
+    expect(rare[`iron-${picks.strike.step}`]).toBe((y[`iron-${picks.strike.step}`] ?? 0) + 2);
   });
   it('разбор открывает базу и четыре детали, а каждые N разборов класса дают эскиз', () => {
     let j = emptyJournal();
     const n = reg.get('balance').craft.journal.sketchAfter;
     let sketches = 0;
     for (let i = 0; i < n; i++) {
-      const it1 = itemFromBaseId(reg.get('items.base'), 'war-axe', reg.get('item-tiers'))!;
-      const r = salvageIntoJournal(reg, j, it1);
+      const r = salvageIntoJournal(reg, j, drop('war-axe', 10, 100 + i));
       if (i === 0) { expect(r.newBase).toBe(true); expect(r.unlocked.length).toBeGreaterThan(0); }
       if (r.sketch) sketches++;
       j = r.journal;
     }
     expect(j.bases).toContain('war-axe');
     expect(sketches).toBe(1);
+  });
+  it('⚠ эскиз не открывает ключевую форму неоткрытой базы — базы открываются только разбором', () => {
+    const j = { ...emptyJournal(), bases: ['long-sword'], sketches: 3 };
+    expect(sketchable(reg, j, 'sw-a-xv')).toBe(true);    // ключ открытой базы
+    expect(sketchable(reg, j, 'sw-h-wavy')).toBe(false); // ключ неоткрытого огромного меча
+    expect(sketchable(reg, j, 'sw-gd-rings')).toBe(true); // не ключ
+    expect(useSketch(reg, j, 'sw-h-wavy')).toBe(j);
+    expect(useSketch(reg, j, 'sw-gd-rings').variants).toContain('sw-gd-rings');
   });
   it('⭐ t6 не открывается одной мифической вещью — нужно mythicSalvages штук', () => {
     const j = { ...emptyJournal(), tierHi: 6, mythic: 1 };
@@ -245,9 +527,14 @@ describe('журнал кузнеца: разобрал — открыл (§12)'
     expect(journalTierCap(reg, fullJournal(reg))).toBe(6);
   });
   it('скованное не открывает журнал — у него свой глагол «переплавить»', () => {
-    const res = craftWeapon(reg, { baseId: 'long-sword', tier: 2, step: 2, parts: defaultParts(reg, 'sword')! });
+    const res = craftWeapon(reg, buildFor('long-sword', uniform(2)));
     const r = salvageIntoJournal(reg, emptyJournal(), res.item!);
     expect(r.unlocked).toEqual([]);
     expect(r.journal.bases).toEqual([]);
+  });
+  it('тег у варианта читается со словарным умолчанием', () => {
+    const anat = anatomyOf(reg, 'sword')!;
+    expect(tagValue(anat, 'strike', partById(reg, 'sw-a-x')!, 'edge')).toBe('double');
+    expect(tagValue(anat, 'strike', partById(reg, 'sw-a-falchion')!, 'edge')).toBe('single');
   });
 });
