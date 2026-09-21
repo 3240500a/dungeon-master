@@ -590,6 +590,55 @@ export function generateItem(
   });
 }
 
+/**
+ * ⭐ ВХОД КОВКИ В ЕДИНЫЙ КОНВЕЙЕР (docs/CRAFT_WEAPONS.md §19). Скованная вещь собирается ТОЙ ЖЕ
+ * `buildItem`, что и дроп, — второго конвейера нет, и «скованный Мастерский» по каркасу равен
+ * «Мастерскому» с пола. Выходит всегда ОБЫЧНОЙ: аффиксы — отдельным глаголом «зачаровать».
+ */
+export function buildCraftShell(
+  base: ItemsBase[number],
+  tier: ItemTiers[number],
+  maxReqTotal?: number,
+): Item {
+  return buildItem(base, {
+    rarity: 'normal',
+    name: tieredName(tier.name, base.name, base.gender),
+    itemLevel: tier.minItemLevel,
+    statMult: tier.statMult,
+    reqMult: tier.reqMult,
+    tierId: tier.id,
+    affixes: [],
+    maxReqTotal,
+  });
+}
+
+/** Цель фильтра аффиксов по базе — та же, по которой катает дроп. */
+export function affixTargetOfBase(base: ItemsBase[number]): AffixTarget {
+  return affixTargetOf(base);
+}
+
+/**
+ * Имя вещи ПОСЛЕ зачарования — тем же правилом, что у дропа: magic — слова аффиксов вокруг базы,
+ * rare — «основа эпитет» по свойствам. Своя формула имени здесь значила бы, что скованная редкая
+ * зовётся иначе, чем такая же найденная.
+ */
+export function nameByRarity(
+  base: ItemsBase[number],
+  tierName: string,
+  rarity: Rarity,
+  rolled: RolledAffix[],
+  affixes: Affixes,
+  rareNames: { nouns: RareNoun[]; epithets: RareEpithet[] } | undefined,
+  rng: Rng,
+): string {
+  if (rarity === 'magic') {
+    const mn = magicName(base.name, base.gender, rolled, new Map(affixes.map((a) => [a.id, a.word])));
+    return mn === base.name ? tierName : mn;
+  }
+  if (rarity === 'rare') return rareItemName(base.name, base.gender, rareNames, rolled, rng, tierName);
+  return tierName;
+}
+
 /** Взвешенный индекс по массиву весов (роллит `rng.next()`); -1 при нулевой сумме. */
 function weightedIndex(weights: number[], rng: Rng): number {
   const total = weights.reduce((s, w) => s + Math.max(0, w), 0);

@@ -20,6 +20,11 @@ export const STAT_LABEL: Record<string, string> = {
   damagePct: 'Ко всему урону', physPct: 'К физ. урону', firePct: 'К урону огнём', coldPct: 'К урону холодом',
   lightningPct: 'К урону молнией', poisonPct: 'К урону ядом', ailmentPct: 'К наложению статусов',
   lifeLeechPct: 'Вампиризм жизни', manaLeechPct: 'Вампиризм маны', lifeOnKill: 'Жизнь за убийство', manaOnKill: 'Мана за убийство',
+  // Статы статусов: ими торгует оголовье скованного оружия (docs/CRAFT_WEAPONS.md §7).
+  woundChancePct: 'Шанс раны', bleedChancePct: 'Шанс кровотечения', sunderChancePct: 'Шанс увечья', dazeChancePct: 'Шанс ошеломления',
+  burnChancePct: 'Шанс поджига', poisonChancePct: 'Шанс отравления', shockChancePct: 'Шанс шока', freezeChancePct: 'Шанс заморозки',
+  woundPowerPct: 'Сила раны', bleedPowerPct: 'Сила кровотечения', sunderPowerPct: 'Сила увечья', dazePowerPct: 'Сила ошеломления',
+  burnPowerPct: 'Сила поджига', poisonPowerPct: 'Сила отравления', shockPowerPct: 'Сила шока', freezePowerPct: 'Сила заморозки',
 };
 
 export const SLOT_LABEL: Record<string, string> = {
@@ -37,6 +42,9 @@ const SHIELD_CLASS_LABEL: Record<string, string> = { light: 'лёгкий', medi
 export const PERCENT_STATS = new Set([
   'critChance', 'blockChance', 'resFire', 'resCold', 'resLightning', 'resPoison',
   'damagePct', 'physPct', 'firePct', 'coldPct', 'lightningPct', 'poisonPct', 'ailmentPct', 'lifeLeechPct', 'manaLeechPct',
+  'interruptResist',
+  'woundChancePct', 'bleedChancePct', 'sunderChancePct', 'dazeChancePct', 'burnChancePct', 'poisonChancePct', 'shockChancePct', 'freezeChancePct',
+  'woundPowerPct', 'bleedPowerPct', 'sunderPowerPct', 'dazePowerPct', 'burnPowerPct', 'poisonPowerPct', 'shockPowerPct', 'freezePowerPct',
 ]);
 
 /** Резолверы имён из ЖИВЫХ конфигов (data-driven); дефолт — сырой id. */
@@ -55,8 +63,12 @@ export function slotSuffix(item: Item): string {
 
 function fmtMod(m: StatModifier): string {
   const label = STAT_LABEL[m.stat] ?? m.stat;
-  if (m.kind === 'increased' || PERCENT_STATS.has(m.stat)) return `+${Math.round(m.value * 100)}% ${label}`;
-  return `+${Number.isInteger(m.value) ? m.value : m.value.toFixed(2)} ${label}`;
+  // ⚠ Знак — от значения, а не «+» всегда. У 38 аффиксов минусов нет, поэтому раньше это не всплывало;
+  // скованное оружие пишет отрицательные моды (лёгкий клинок: −скорость у тяжёлого), и было бы «+-8%».
+  const sign = m.value < 0 ? '−' : '+';
+  const abs = Math.abs(m.value);
+  if (m.kind === 'increased' || PERCENT_STATS.has(m.stat)) return `${sign}${Math.round(abs * 100)}% ${label}`;
+  return `${sign}${Number.isInteger(abs) ? abs : abs.toFixed(2)} ${label}`;
 }
 
 /** Строки эффекта расходника (базовые, без цвета редкости). */

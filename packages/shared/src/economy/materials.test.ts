@@ -73,20 +73,28 @@ describe('секция конфига craft-materials', () => {
   reg.loadAll();
   const mats = reg.get('craft-materials');
 
-  it('15 базовых видов: 2 семьи на оружие × 3 тира + 3 семьи на броню × 3 тира', () => {
-    expect(mats).toHaveLength(15);
+  it('восемь семей по пять ступеней (docs/CRAFT_WEAPONS.md §10)', () => {
+    expect(mats).toHaveLength(40);
     const byFamily = new Map<string, number>();
     for (const m of mats) byFamily.set(m.family, (byFamily.get(m.family) ?? 0) + 1);
-    expect([...byFamily.keys()].sort()).toEqual(['cloth', 'hide', 'iron', 'plate', 'wood']);
-    for (const [, n] of byFamily) expect(n).toBe(3);
+    expect([...byFamily.keys()].sort()).toEqual(['cloth', 'focus', 'hide', 'iron', 'plate', 'stave', 'trim', 'wood']);
+    for (const [, n] of byFamily) expect(n).toBe(5);
   });
 
-  it('у каждой семьи ровно три ступени 1-2-3 и растущая цена', () => {
-    for (const fam of ['iron', 'wood', 'cloth', 'hide', 'plate']) {
-      const tiers = mats.filter((m) => m.family === fam).sort((a, b) => a.tier - b.tier);
-      expect(tiers.map((t) => t.tier)).toEqual([1, 2, 3]);
-      expect(tiers[0]!.sellPrice).toBeLessThan(tiers[2]!.sellPrice);
+  it('у каждой семьи ступени 1…5 и цена ×3 со второй ступени (1 · 4 · 12 · 36 · 108)', () => {
+    for (const fam of new Set(mats.map((m) => m.family))) {
+      const steps = mats.filter((m) => m.family === fam).sort((a, b) => a.tier - b.tier);
+      expect(steps.map((t) => t.tier)).toEqual([1, 2, 3, 4, 5]);
+      expect(steps.map((t) => t.sellPrice)).toEqual([1, 4, 12, 36, 108]);
     }
+  });
+
+  it('⚠ игра видит ровно те же 15 материалов, что и до ковки — остальные ждут разбора по тиру (§10.9)', () => {
+    // Склад рисует три столбца «обычные / магические / редкие»: включи ступени 4–5 или новые семьи
+    // раньше, чем разбор научится их ронять, — и игрок увидит полки, которые ничто не наполняет.
+    const live = mats.filter((m) => m.enabled);
+    expect(live).toHaveLength(15);
+    expect(live.every((m) => m.tier <= 3 && ['iron', 'wood', 'cloth', 'hide', 'plate'].includes(m.family))).toBe(true);
   });
 
   it('id уникальны, иначе кошелёк схлопнет два материала в один', () => {
@@ -94,6 +102,8 @@ describe('секция конфига craft-materials', () => {
   });
 
   it('⚠ продажа держится дешёвой: золото должно оставаться дефицитным', () => {
-    for (const m of mats) expect(m.sellPrice).toBeLessThanOrEqual(12);
+    // Пятой ступени хватает на 108: шестая (≈330) превратила бы один стек верхнего сырья в состояние.
+    for (const m of mats) expect(m.sellPrice).toBeLessThanOrEqual(108);
+    for (const m of mats.filter((x) => x.enabled)) expect(m.sellPrice).toBeLessThanOrEqual(12);
   });
 });

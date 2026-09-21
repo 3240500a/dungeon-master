@@ -14,6 +14,7 @@ import { renderCalcPage } from './calc.js';
 import { renderSkillBuildPage } from './skillBuild.js';
 import { devFetch } from '@dm/client/devAuth.js';   // инструментальные роуты требуют роли admin
 import { renderRoadmapPage } from './roadmap.js';
+import { renderCraftPage } from './craft.js';
 import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
@@ -52,6 +53,8 @@ const LABELS: Record<ConfigKey, string> = {
   'run-templates': 'Шаблоны забега',
   'item-tiers': 'Предметы: тиры',
   'craft-materials': 'Предметы: материалы крафта',
+  'weapon-anatomy': 'Ковка: анатомия классов',
+  'weapon-parts': 'Ковка: варианты деталей',
   'salvage-rules': 'Предметы: правила разбора',
   chests: 'Подземелье: сундуки',
   'armor-classes': 'Классы брони',
@@ -94,6 +97,7 @@ const NAV_GROUPS: NavGroup[] = [
     { title: 'Защита', keys: ['armor-classes'] },
   ] },
   { title: 'Предметы', keys: ['items.base', 'item-tiers', 'craft-materials', 'salvage-rules', 'rarities', 'affixes', 'uniques', 'rare-names'] },
+  { title: 'Ковка', keys: ['weapon-anatomy', 'weapon-parts'] },
   { title: 'Монстры', keys: ['monsters', 'monster-gear', 'depth-tiers', 'monster-derive', 'monster-item-affixes', 'monster-affixes', 'monster-behaviors', 'monster-roles', 'subfactions', 'monster-rarity', 'monster-uniques', 'packs'] },
   { title: 'Мир', keys: ['biomes', 'objects', 'environment', 'floors', 'room-prefabs', 'difficulties', 'run-templates', 'run-modifiers'] },
   { title: 'Скиллы', keys: ['skill-tree', 'skill-inserts', 'skill-insert-types', 'mastery-tree'] },
@@ -104,7 +108,7 @@ const NAV_GROUPS: NavGroup[] = [
 const groupKeys = (g: NavGroup): ConfigKey[] => (g.subs ? g.subs.flatMap((s) => s.keys) : (g.keys ?? []));
 /** Короткие подписи внутри группы (без префикса, он ясен из группы). */
 const NAV_SHORT: Partial<Record<ConfigKey, string>> = {
-  'item-tiers': 'Тиры', 'craft-materials': 'Материалы', 'salvage-rules': 'Разбор', chests: 'Сундуки', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'depth-tiers': 'Тиры глубины', 'monster-derive': 'Деривация', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
+  'item-tiers': 'Тиры', 'craft-materials': 'Материалы', 'weapon-anatomy': 'Анатомия', 'weapon-parts': 'Детали', 'salvage-rules': 'Разбор', chests: 'Сундуки', rarities: 'Редкости', 'armor-classes': 'Классы брони', 'phys-subtypes': 'Физ. подтипы', 'weapon-weights': 'Веса оружия', 'damage-kinds': 'Тип урона', 'magic-subtypes': 'Маг. подтипы', debuffs: 'Состояния', 'monster-gear': 'Экипировка', 'depth-tiers': 'Тиры глубины', 'monster-derive': 'Деривация', 'monster-affixes': 'Аффиксы', 'monster-behaviors': 'Поведение', 'monster-roles': 'Роли', packs: 'Пачки',
   'skill-tree': 'Древо скилов', 'skill-inserts': 'Вставки', 'skill-insert-types': 'Типы вставок', 'mastery-tree': 'Мастерства',
   'quests.main': 'Основные', 'quests.random': 'Случайные',
   'run-modifiers': 'Модификаторы забега', 'run-templates': 'Шаблоны забега', 'room-prefabs': 'Комнаты',
@@ -123,6 +127,7 @@ const BALANCE_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Монстры', keys: ['monsterXpGrowth', 'uniqueXpMult', 'monsterScaling'] },
   { title: 'Лут', keys: ['loot', 'autoPickup', 'salvage'] },
   { title: 'Экономика', keys: ['forgePrices', 'respecCost', 'passiveRespecCostPct', 'skillRespecCostPerPoint'] },
+  { title: 'Ковка', keys: ['craft'] },
   { title: 'Инвентарь и сундук', keys: ['inventory', 'stash'] },
   { title: 'Забег, смерть, свет', keys: ['dungeonAccess', 'reconnectGraceSec', 'deathPenalty', 'lighting'] },
 ];
@@ -148,7 +153,7 @@ const bc = 'BroadcastChannel' in window ? new BroadcastChannel('dm-config') : nu
 
 let current: ConfigKey = 'balance';
 let selectedIndex = 0;
-let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' | 'loot' = 'config';
+let view: 'config' | 'sim' | 'rungen' | 'itemgen' | 'monstergen' | 'calc' | 'skillbuild' | 'sweep' | 'loot' | 'craft' = 'config';
 // Верхняя секция редактора: Игра (конфиги+инструменты) / 3D-эдитор (поз-редактор) / Документация (описания механик).
 type Section = 'game' | 'pose' | 'docs' | 'roadmap';
 let section: Section = (() => { try { const s = localStorage.getItem('editor_section'); return s === 'pose' || s === 'docs' || s === 'roadmap' ? s : 'game'; } catch { return 'game'; } })();
@@ -693,6 +698,13 @@ function renderGame(host: HTMLElement): void {
   sweepBtn.addEventListener('click', () => { view = 'sweep'; render(); });
   nav.appendChild(sweepBtn);
 
+  // Отдельная вкладка-инструмент: прототип ковки оружия из деталей (docs/CRAFT_WEAPONS.md).
+  const craftBtn = document.createElement('button');
+  craftBtn.textContent = '🔨 Ковка';
+  craftBtn.style.cssText = `text-align:left;padding:8px 10px;cursor:pointer;border-radius:6px;border:1px solid #2c2c3a;background:${view === 'craft' ? '#3a3a4c' : '#1c1c26'};color:#e8e8f0;margin-bottom:6px;font-weight:600`;
+  craftBtn.addEventListener('click', () => { view = 'craft'; render(); });
+  nav.appendChild(craftBtn);
+
   // (Поз-редактор переехал в верхнюю секцию «3D-эдитор».)
 
   // Группы страниц — свёртываемые секции. Некрытые ключи (если появятся) — в «Прочее».
@@ -761,6 +773,7 @@ function renderGame(host: HTMLElement): void {
   else if (view === 'calc') renderCalcPage(page, data);
   else if (view === 'skillbuild') renderSkillBuildPage(page, data);
   else if (view === 'sweep') renderSweepPage(page, data);
+  else if (view === 'craft') renderCraftPage(page, data);
   else renderPage(page);
 
   layout.append(nav, page);

@@ -546,6 +546,60 @@ export const balanceSchema = z.object({
     })
     .default({}),
   /**
+   * ⭐ КОВКА ОРУЖИЯ ИЗ ДЕТАЛЕЙ (docs/CRAFT_WEAPONS.md). Все шаги осей, ёмкость, цены и журнал.
+   * Детали пишут вклад как `axis × шаг`, поэтому ВЕСЬ баланс ковки — здесь, а не в вариантах.
+   */
+  craft: z
+    .object({
+      /** Гнездо 1 при axis = +1: +урон, −скорость (зеркально при −1). Замер: пара ±10/∓8 держит разброс ДПС ≤ 8 % в конверте (§4). */
+      strike: z.object({ damagePct: z.number().min(0).default(0.1), attackSpeed: z.number().min(0).default(0.08) }).default({}),
+      /**
+       * Гнездо 2: дальность = K^axis, дуга = K^(−2·axis). Площадь сектора `дуга × дальность²` постоянна
+       * при ЛЮБОМ axis — это и есть замок «держак не трогает ДПС» (§5.1). K = 1.12 → ×1.12 / ×0.797.
+       */
+      gripK: z.number().min(1).default(1.12),
+      /** Гнездо 4, сторона «упор» при axis = +1: +блок (зеркально −блок при −1). */
+      headBlock: z.number().min(0).default(0.02),
+      /** Гнездо 4 у лука: блокировать нечем, упор — стойкость к прерыванию. */
+      headInterrupt: z.number().min(0).default(0.12),
+      /**
+       * Гнездо 4, сторона «укус» при axis = −1: какой стат и насколько, ПО СТАТУСУ грани/стихии.
+       * Магнитуда пер-статус, потому что одна общая ручка стоит разного (§7.1). При axis = +1 — с минусом.
+       */
+      bite: z.record(z.string(), z.object({ stat: z.string(), value: z.number() })).default({}),
+      /** Потолок Σ ёмкости аффиксов по индексу тира t0..t6 (§6.2). Форма — от обвязки. */
+      capacityByTier: z.array(z.number().int().min(0).max(5)).default([2, 2, 3, 4, 4, 5, 5]),
+      /** Множитель цены формы M = 1 / частота такой формы у найденных редких (§6.1). Ключ «P+S». */
+      formMult: z.record(z.string(), z.number().min(1)).default({}),
+      /** Сырьё за ковку: `cheap` единиц ступени ниже выбранной + `dear` единиц выбранной, по гнёздам (§13). */
+      cost: z
+        .object({
+          strike: z.object({ cheap: z.number().int().min(0).default(12), dear: z.number().int().min(0).default(4) }).default({}),
+          grip: z.object({ cheap: z.number().int().min(0).default(8), dear: z.number().int().min(0).default(3) }).default({}),
+          /** Обвязка и оголовье — одна семья прибора на два гнезда. */
+          trim: z.object({ cheap: z.number().int().min(0).default(10), dear: z.number().int().min(0).default(3) }).default({}),
+          /** Золото ковки = это × reqMult тира, плоско. */
+          goldPerReqMult: z.number().min(0).default(300),
+          /** Золото зачарования = это × reqMult × priceMult редкости × M формы. */
+          enchantGold: z.number().min(0).default(100),
+        })
+        .default({}),
+      /** Переплавка скованного: доля возврата дешёвой и дорогой ступени. */
+      melt: z.object({ cheap: z.number().min(0).max(1).default(0.5), dear: z.number().min(0).max(1).default(1) }).default({}),
+      /** Журнал кузнеца: жалость и ворота t6 (§12). */
+      journal: z
+        .object({
+          /** Столько разборов оружия своего класса дают «эскиз» — любой неоткрытый вариант класса на выбор. */
+          sketchAfter: z.number().int().min(1).default(8),
+          /** Столько разборов мифических вещей нужно, чтобы открыть полосу t6. */
+          mythicSalvages: z.number().int().min(1).default(5),
+        })
+        .default({}),
+      /** Вес варианта в пуле найденных вещей по его редкости. */
+      rarityWeight: z.object({ common: z.number().min(0).default(10), uncommon: z.number().min(0).default(4), rare: z.number().min(0).default(1) }).default({}),
+    })
+    .default({}),
+  /**
    * ЧТО ПОДБИРАЕТСЯ САМО при проходе рядом; остальное лежит и берётся по клику или [E].
    * ⚠ Раньше это был массив редкостей, который НЕ ЧИТАЛА НИ ОДНА СТРОКА КОДА. Ключ ожил вместе
    * с физическим дропом золота и материалов: без автоподбора каждая монета требовала бы клика.
@@ -1164,12 +1218,24 @@ export const craftMaterialsSchema = z.array(
     /** Выключенный материал не падает и не участвует в рецептах. */
     enabled: z.boolean().default(true),
     name: z.string(),
-    /** Семья: iron / wood / cloth / hide / plate. Внутри семьи материалы взаимозаменяемы по смыслу. */
+    /**
+     * Семья: `iron` `wood` `stave` `trim` `focus` (оружие) и `hide` `cloth` `plate` (броня; кожа и
+     * волокно дают ещё и хват и тетиву). Внутри семьи ступени взаимозаменяемы по смыслу.
+     */
     family: z.string(),
-    /** Ступень качества 1..3. Чем глубже забег, тем выше ступень в дропе. */
-    tier: z.number().int().min(1).max(3),
+    /**
+     * Ступень качества 1..5. Ступень `k` строит вещи тиров t(k)…t(k+1), первая дотягивается до t0
+     * (docs/CRAFT_WEAPONS.md §10.1). ⚠ Было 1..3 — по числу небелых редкостей, потому что ступень
+     * задавала только РЕДКОСТЬ разобранной вещи. Под лестницу деталей ковки трёх не хватило.
+     */
+    tier: z.number().int().min(1).max(5),
     /** Куда идёт: оружие и щиты, броня, или и туда и туда. */
     usedFor: z.enum(['weapon', 'armor', 'any']).default('any'),
+    /**
+     * Историческая справка для тултипа: что это и чем платит (docs/CRAFT_WEAPONS.md §10).
+     * ⚠ Только проверенное: легенды из §10.10 сюда не пишутся никогда.
+     */
+    note: z.string().default(''),
     /** id иконки (файл в /assets, папка icons). Пусто — рисуем заглушку по семье. */
     icon: z.string().default(''),
     /**
@@ -1178,6 +1244,71 @@ export const craftMaterialsSchema = z.array(
      * золото должно оставаться дефицитным всю игру (docs/ECONOMY.md §1).
      */
     sellPrice: z.number().int().min(0).default(0),
+  }),
+);
+
+// ── ковка оружия из деталей (docs/CRAFT_WEAPONS.md) ─────────────────────────────
+/** Классы оружия — те же, что у баз. Вынесены, чтобы анатомия и детали ссылались на один список. */
+export const WEAPON_CLASSES = ['sword', 'axe', 'mace', 'dagger', 'spear', 'halberd', 'bow', 'crossbow', 'wand', 'staff'] as const;
+/**
+ * ЧЕТЫРЕ ГНЕЗДА с фиксированной РОЛЬЮ — одинаковые у всех десяти классов (§3.2).
+ * `strike` — ударная часть: единственная ось ДПС, урон ↔ скорость.
+ * `grip`   — держак: дальше по одному ↔ шире по многим, площадь взмаха постоянна.
+ * `bind`   — обвязка: форма ёмкости аффиксов, префиксы ↔ суффиксы.
+ * `head`   — оголовье: укус ↔ упор, шанс статуса ↔ блок (у лука — стойкость к прерыванию).
+ */
+export const CRAFT_SLOTS = ['strike', 'grip', 'bind', 'head'] as const;
+
+const partSlotAnatomy = z.object({
+  /** Как деталь зовётся у этого класса: «Клинок», «Полотно», «Плечи»… */
+  name: z.string(),
+  /** Из какой семьи материалов куётся (`craft-materials.family`). */
+  family: z.string(),
+});
+
+/**
+ * АНАТОМИЯ КЛАССА: как называются четыре гнезда и из какой семьи материалов куётся каждое.
+ * Гнездо несёт РОЛЬ, класс даёт ИМЯ и СЕМЬЮ. Правило «ровно три семьи на вещь» (§10.7)
+ * проверяется тестом по этой таблице.
+ */
+export const weaponAnatomySchema = z.array(
+  z.object({
+    /** Класс оружия — совпадает с `items.base[].weaponClass`. */
+    id: z.enum(WEAPON_CLASSES),
+    enabled: z.boolean().default(true),
+    /** Подпись класса в окне ковки. */
+    name: z.string(),
+    strike: partSlotAnatomy,
+    grip: partSlotAnatomy,
+    bind: partSlotAnatomy,
+    head: partSlotAnatomy,
+  }),
+);
+
+/**
+ * ВАРИАНТЫ ДЕТАЛЕЙ — форма, а не качество (§9). Вариант = ТОЧКА на оси своего гнезда плюс имя.
+ * ⭐ Числа в вариант руками НЕ пишутся: вклад выводится из `axis` умножением на шаг гнезда
+ * (`balance.craft`). Поэтому вариантов может быть сколько угодно, а балансная поверхность
+ * остаётся одной таблицей, и «деталь написала в чужой стат» невозможно по построению.
+ * Редкость — это ЧАСТОТА появления на дропе, никогда не сила (правило Р5).
+ */
+export const weaponPartsSchema = z.array(
+  z.object({
+    id: z.string(),
+    enabled: z.boolean().default(true),
+    name: z.string(),
+    slot: z.enum(CRAFT_SLOTS),
+    /** Каким классам доступен. Ударная часть обычно класс-специфична, остальное общее по родству. */
+    classes: z.array(z.enum(WEAPON_CLASSES)).min(1),
+    /**
+     * Точка на оси гнезда, −1…+1. strike: +1 тяжёлая (урон), −1 лёгкая (скорость); grip: +1 длинный,
+     * −1 короткий; bind: +1 префиксы, −1 суффиксы; head: +1 упор (блок), −1 укус (статус).
+     */
+    axis: z.number().min(-1).max(1),
+    /** Как часто вариант стоит на найденных вещах: обычный / нечастый / редкий. */
+    rarity: z.enum(['common', 'uncommon', 'rare']).default('common'),
+    /** ⚠ ПОДПИСЬ-СЛЕДСТВИЕ для окна ковки. Строка без неё — незаконченная строка данных (§17). */
+    caption: z.string(),
   }),
 );
 
@@ -2476,6 +2607,8 @@ export const configSchemas = {
   'run-templates': runTemplatesSchema,
   'item-tiers': itemTiersSchema,
   'craft-materials': craftMaterialsSchema,
+  'weapon-anatomy': weaponAnatomySchema,
+  'weapon-parts': weaponPartsSchema,
   'salvage-rules': salvageRulesSchema,
   chests: chestsSchema,
   'armor-classes': armorClassesSchema,

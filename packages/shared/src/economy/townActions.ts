@@ -5,6 +5,7 @@ import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { finalAttributes, meetsRequirements, modifiersFromItems } from '../formulas/stats.js';
 import { rollAffixes, nextTier, inferTierId, retierItem } from '../formulas/itemgen.js';
+import { affixSlotsFor } from '../formulas/craft.js';
 import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
@@ -304,11 +305,16 @@ export function forgeReroll(reg: ConfigRegistry, save: SaveState, uid: string, r
   save.gold -= cost;
   item.rerolls = (item.rerolls ?? 0) + 1;
   const rDef = reg.get('rarities').find((r) => r.id === item.rarity);
+  // ⚠ Слоты — с учётом объявленной ёмкости скованной вещи (docs/CRAFT_WEAPONS.md §6.3): возьми их
+  // прямо из редкости, и перекатка снесёт купленную форму первым нажатием (вернуть ровно 3+2 — 16.7 %).
+  // У найденной вещи ёмкости нет, и слоты те же, что были.
   item.affixes = rollAffixes(
     reg.get('affixes'),
     { kind: item.kind ?? '', slot: item.slot, attackType: item.attackType, damageKind: item.damageKind },
     item.rarity,
-    { minAffixes: rDef?.minAffixes ?? 1, maxAffixes: rDef?.maxAffixes ?? 1, maxPrefix: rDef?.maxPrefix ?? 3, maxSuffix: rDef?.maxSuffix ?? 3 },
+    item.affixCap
+      ? affixSlotsFor(rDef, item.affixCap)
+      : { minAffixes: rDef?.minAffixes ?? 1, maxAffixes: rDef?.maxAffixes ?? 1, maxPrefix: rDef?.maxPrefix ?? 3, maxSuffix: rDef?.maxSuffix ?? 3 },
     item.itemLevel, rng);
   return { ok: true };
 }

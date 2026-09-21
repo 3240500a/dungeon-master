@@ -1,0 +1,212 @@
+[
+  {
+    "id": "sword",
+    "enabled": true,
+    "name": "Меч",
+    "strike": {
+      "name": "Клинок",
+      "family": "iron"
+    },
+    "grip": {
+      "name": "Рукоять",
+      "family": "hide"
+    },
+    "bind": {
+      "name": "Гарда",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Навершие",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "dagger",
+    "enabled": true,
+    "name": "Кинжал",
+    "strike": {
+      "name": "Клинок",
+      "family": "iron"
+    },
+    "grip": {
+      "name": "Черен",
+      "family": "hide"
+    },
+    "bind": {
+      "name": "Крестовина",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Оголовок",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "axe",
+    "enabled": true,
+    "name": "Топор",
+    "strike": {
+      "name": "Полотно",
+      "family": "iron"
+    },
+    "grip": {
+      "name": "Топорище",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Проушина",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Затыльник",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "mace",
+    "enabled": true,
+    "name": "Булава",
+    "strike": {
+      "name": "Било",
+      "family": "iron"
+    },
+    "grip": {
+      "name": "Рукоять",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Обоймица",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Противовес",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "spear",
+    "enabled": true,
+    "name": "Копьё",
+    "strike": {
+      "name": "Наконечник",
+      "family": "iron"
+    },
+    "grip": {
+      "name": "Древко",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Втулка и ланцеты",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Подток",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "halberd",
+    "enabled": true,
+    "name": "Алебарда",
+    "strike": {
+      "name": "Полотно с крюком",
+      "family": "iron"
+    },
+    "grip": {
+      "name": "Древко",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Ланцеты",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Подток",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "bow",
+    "enabled": true,
+    "name": "Лук",
+    "strike": {
+      "name": "Плечи",
+      "family": "stave"
+    },
+    "grip": {
+      "name": "Кибить",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Тетива",
+      "family": "cloth"
+    },
+    "head": {
+      "name": "Ноки и накладки",
+      "family": "stave"
+    }
+  },
+  {
+    "id": "crossbow",
+    "enabled": true,
+    "name": "Арбалет",
+    "strike": {
+      "name": "Дуга",
+      "family": "stave"
+    },
+    "grip": {
+      "name": "Ложе",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Замок",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Стремя и затыльник",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "wand",
+    "enabled": true,
+    "name": "Жезл",
+    "strike": {
+      "name": "Фокус",
+      "family": "focus"
+    },
+    "grip": {
+      "name": "Ствол",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Оправа",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Пятка",
+      "family": "trim"
+    }
+  },
+  {
+    "id": "staff",
+    "enabled": true,
+    "name": "Посох",
+    "strike": {
+      "name": "Навершие-фокус",
+      "family": "focus"
+    },
+    "grip": {
+      "name": "Древко",
+      "family": "wood"
+    },
+    "bind": {
+      "name": "Оковка",
+      "family": "trim"
+    },
+    "head": {
+      "name": "Подток",
+      "family": "trim"
+    }
+  }
+]
