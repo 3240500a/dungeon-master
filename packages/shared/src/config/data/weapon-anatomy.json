@@ -1470,20 +1470,88 @@
               "name": "короткое пистолетное"
             },
             {
+              "id": "balestrino",
+              "name": "цельностальное с винтом"
+            },
+            {
+              "id": "lady-stonebow",
+              "name": "малое пулевое, дамское"
+            },
+            {
+              "id": "chu-repeater",
+              "name": "короб-магазин с рукоятью"
+            },
+            {
               "id": "narrow-stirrup",
               "name": "узкое стремя"
+            },
+            {
+              "id": "stonebow-bent",
+              "name": "выгнутое пулевое"
+            },
+            {
+              "id": "schnepper",
+              "name": "шнепперное с прикладом"
+            },
+            {
+              "id": "kugel-lever",
+              "name": "стальная колонна с рычагом"
+            },
+            {
+              "id": "zhuge-magazine",
+              "name": "с магазином и рычагом"
             },
             {
               "id": "wide-stirrup",
               "name": "широкое стремя"
             },
             {
+              "id": "spanish-straight",
+              "name": "прямое испанское со щеками"
+            },
+            {
+              "id": "cheek-butt",
+              "name": "с прикладом под щёку"
+            },
+            {
+              "id": "barrel",
+              "name": "со стволом"
+            },
+            {
+              "id": "vertical-grip",
+              "name": "с вертикальной рукоятью"
+            },
+            {
               "id": "cranequin-pin",
               "name": "со штифтом под кранекин"
             },
             {
+              "id": "ganze-ruestung",
+              "name": "массивное с прикладом"
+            },
+            {
+              "id": "target-rest",
+              "name": "мишенное с выступом снизу"
+            },
+            {
+              "id": "horse-stirrup",
+              "name": "с железным «конским» стременем"
+            },
+            {
               "id": "windlass-long",
               "name": "длинное под ворот"
+            },
+            {
+              "id": "rampart",
+              "name": "крепостное"
+            },
+            {
+              "id": "belly-slider",
+              "name": "с ползуном и упором под живот"
+            },
+            {
+              "id": "waist-short",
+              "name": "короткое под поясной взвод"
             }
           ]
         }

@@ -1874,8 +1874,43 @@
         "base": "hand-crossbow"
       },
       {
+        "hands": 1,
+        "key": "balestrino",
+        "base": "hand-crossbow"
+      },
+      {
+        "hands": 1,
+        "key": "lady-stonebow",
+        "base": "hand-crossbow"
+      },
+      {
+        "hands": 1,
+        "key": "chu-repeater",
+        "base": "hand-crossbow"
+      },
+      {
         "hands": 2,
         "key": "narrow-stirrup",
+        "base": "light-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "stonebow-bent",
+        "base": "light-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "schnepper",
+        "base": "light-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "kugel-lever",
+        "base": "light-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "zhuge-magazine",
         "base": "light-crossbow"
       },
       {
@@ -1885,12 +1920,62 @@
       },
       {
         "hands": 2,
+        "key": "spanish-straight",
+        "base": "crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "cheek-butt",
+        "base": "crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "barrel",
+        "base": "crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "vertical-grip",
+        "base": "crossbow"
+      },
+      {
+        "hands": 2,
         "key": "cranequin-pin",
         "base": "heavy-crossbow"
       },
       {
         "hands": 2,
+        "key": "ganze-ruestung",
+        "base": "heavy-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "target-rest",
+        "base": "heavy-crossbow"
+      },
+      {
+        "hands": 2,
+        "key": "horse-stirrup",
+        "base": "heavy-crossbow"
+      },
+      {
+        "hands": 2,
         "key": "windlass-long",
+        "base": "arbalest"
+      },
+      {
+        "hands": 2,
+        "key": "rampart",
+        "base": "arbalest"
+      },
+      {
+        "hands": 2,
+        "key": "belly-slider",
+        "base": "arbalest"
+      },
+      {
+        "hands": 2,
+        "key": "waist-short",
         "base": "arbalest"
       }
     ],
@@ -1900,7 +1985,7 @@
         "enabled": true,
         "when": {
           "grip.stock": [
-            "pistol"
+            "balestrino"
           ],
           "head.span": [
             "hands"
@@ -1908,8 +1993,75 @@
         },
         "name": "Балестрино",
         "gender": "n",
-        "subtitle": "малый арбалет XVI–XVIII вв.",
-        "source": "Payne-Gallwey 1903"
+        "subtitle": "малый цельностальной арбалет с винтом взвода в рукояти, XVI–XVIII вв.",
+        "source": "Met 54.46.4; Royal Armouries XI.286; Breiding 2013, cat. 28"
+      },
+      {
+        "id": "cb-pistol-crossbow",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "pistol"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Арбалет-пистолет",
+        "gender": "m",
+        "subtitle": "комнатная стрельба, XIX в.; по Breiding — потомок балестрино",
+        "source": "Breiding 2013, p. 83; de.wikipedia «Armbrust» (Pistolenarmbrust)"
+      },
+      {
+        "id": "cb-lady-stonebow",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "lady-stonebow"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Дамский каменный арбалет",
+        "gender": "m",
+        "subtitle": "XVI в.: такой лёгкий, что наводили одной рукой",
+        "source": "Payne-Gallwey 1903, гл. XXXIII, с. 158; Musée national de la Renaissance, E.Cl. 9440"
+      },
+      {
+        "id": "cb-chu-repeater",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "chu-repeater"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Чуский двузарядный арбалет",
+        "gender": "m",
+        "subtitle": "Циньцзяцзуй M47, IV в. до н. э.: 20 стрел, по две за выстрел",
+        "source": "Dong et al., Mechanical Sciences 11 (2020); Цзинчжоуский музей"
+      },
+      {
+        "id": "cb-samostrel",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "narrow-stirrup"
+          ],
+          "head.span": [
+            "hands"
+          ],
+          "bind.lock": [
+            "nut"
+          ]
+        },
+        "name": "Самострел",
+        "gender": "m",
+        "subtitle": "древнерусский: стремя на носу ложа, орех без оси; в летописях с 1159 г.",
+        "source": "Кирпичников 1976, раздел «Самострелы»"
       },
       {
         "id": "cb-one-foot",
@@ -1924,40 +2076,156 @@
         },
         "name": "Арбалет «в одну ногу»",
         "gender": "m",
-        "subtitle": "arbalista ad unum pedem; у древнерусских — «самострел»",
-        "source": "Кирпичников 1971"
+        "subtitle": "arbalista ad unum pedem — толкование Payne-Gallwey; у древнерусских — «самострел»",
+        "source": "Payne-Gallwey 1903, гл. X; Кирпичников 1976"
       },
       {
-        "id": "cb-belt-hook",
+        "id": "cb-stonebow",
         "enabled": true,
         "when": {
           "grip.stock": [
-            "wide-stirrup"
+            "stonebow-bent"
           ],
           "head.span": [
-            "belt-hook"
+            "hands"
           ]
         },
-        "name": "Арбалет с поясным крюком",
+        "name": "Каменный арбалет",
         "gender": "m",
-        "subtitle": "крюк из Изяславля — древнейший в Европе",
-        "source": "Кирпичников 1971"
+        "subtitle": "stonebow, arbalète à jalet: ложе выгнуто вниз, пуля из кармашка двойной тетивы; XVI–XVII вв.",
+        "source": "Payne-Gallwey 1903, гл. XXXIII; Breiding 2013, §3"
       },
       {
-        "id": "cb-goats-foot",
+        "id": "cb-schnepper",
         "enabled": true,
         "when": {
           "grip.stock": [
-            "wide-stirrup"
+            "schnepper"
+          ],
+          "head.span": [
+            "hands",
+            "goats-foot"
+          ]
+        },
+        "name": "Шнеппер",
+        "gender": "m",
+        "subtitle": "лёгкий саксонский, XVII–XVIII вв.: ружейный приклад, защёлка вместо ореха, толкающий рычаг",
+        "source": "Breiding 2013, cats. 13–15; Payne-Gallwey 1903, гл. XXXV–XXXVI"
+      },
+      {
+        "id": "cb-kugelschnepper",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "kugel-lever"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Кугельшнеппер",
+        "gender": "m",
+        "subtitle": "пулевой: железная колонна, насаженный приклад, рычаг на ложе; Германия, 1600–1650",
+        "source": "Breiding 2013, cats. 23–24; DHM «Jagdwaffen der Renaissance»"
+      },
+      {
+        "id": "cb-zhuge",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "zhuge-magazine"
+          ],
+          "head.span": [
+            "hands"
+          ],
+          "bind.lock": [
+            "pin"
+          ]
+        },
+        "name": "Чжугэ-ну",
+        "gender": "m",
+        "subtitle": "諸葛弩: короб на 10–12 стрел, рычаг и взводит, и спускает; Мин–Цин",
+        "source": "Payne-Gallwey 1903, гл. XLIX; Needham 1994; Сун Инсин, «Тяньгун кайу», 1637"
+      },
+      {
+        "id": "cb-spanish-gafa",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "spanish-straight"
           ],
           "head.span": [
             "goats-foot"
           ]
         },
-        "name": "Арбалет с козьей ногой",
+        "name": "Бальеста де гафа",
+        "gender": "f",
+        "subtitle": "испанская: прямое ложе, железные щёки у ореха, рычаг-гафа; Эспинар, 1644",
+        "source": "Espinar 1644 по Payne-Gallwey 1903, гл. XXXII; Met 34904; Patrimonio Nacional, глоссарий Real Armería"
+      },
+      {
+        "id": "cb-spanish",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "spanish-straight"
+          ],
+          "head.span": [
+            "cranequin"
+          ]
+        },
+        "name": "Испанский арбалет",
         "gender": "m",
-        "subtitle": "рычаг-«козья нога», с середины XIV в.",
-        "source": "Payne-Gallwey 1903"
+        "subtitle": "с западным («испанским») кранекином: рейка зубьями вверх; XV–XVII вв.",
+        "source": "Breiding 2013, pp. 94–95"
+      },
+      {
+        "id": "cb-german-hunting",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "cheek-butt"
+          ],
+          "head.span": [
+            "cranequin"
+          ]
+        },
+        "name": "Немецкий охотничий арбалет",
+        "gender": "m",
+        "subtitle": "Halbe Rüstung, ок. 1540–1750: приклад под щёку, шнеллер, кранекин",
+        "source": "Breiding 2013, cats. 7, 8, 10, 12, 16; Payne-Gallwey 1903, гл. XXX"
+      },
+      {
+        "id": "cb-slurbow",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "barrel"
+          ],
+          "head.span": [
+            "cranequin"
+          ]
+        },
+        "name": "Слёрбоу",
+        "gender": "m",
+        "subtitle": "ствольный арбалет: болт без оперения в стволе с прорезью; Мадрид, 1549",
+        "source": "Payne-Gallwey 1903, гл. XXIX; Breiding 2013, p. 83"
+      },
+      {
+        "id": "cb-han-nu",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "vertical-grip"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Ханьский арбалет",
+        "gender": "m",
+        "subtitle": "армейский ну Цинь–Хань: бронзовый замок с прицелом «ваншань», вертикальная рукоять",
+        "source": "秦俑百问 (ложа ямы №1 армии Цинь); Selby, ATARN"
       },
       {
         "id": "cb-cranequin",
@@ -1976,6 +2244,56 @@
         "source": "Payne-Gallwey 1903"
       },
       {
+        "id": "cb-ganze",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "ganze-ruestung"
+          ],
+          "head.span": [
+            "cranequin"
+          ]
+        },
+        "name": "Большой арбалет",
+        "gender": "m",
+        "subtitle": "Ganze Rüstung («полное снаряжение»): Рехенберг, 1663 — 83 см, 11,7 кг",
+        "source": "Met 33741; Breiding 2013, cat. 11"
+      },
+      {
+        "id": "cb-target",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "target-rest"
+          ],
+          "head.span": [
+            "windlass",
+            "goats-foot",
+            "hands"
+          ]
+        },
+        "name": "Мишенный арбалет",
+        "gender": "m",
+        "subtitle": "гильдейская стрельба по мишени и «птице», XVII–XIX вв.; выступ под ложем для левой руки",
+        "source": "Met 33743–33744; Payne-Gallwey 1903, гл. XLI–XLV"
+      },
+      {
+        "id": "cb-shenbi",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "horse-stirrup"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Шэньби-гун",
+        "gender": "m",
+        "subtitle": "神臂弓, «божественная рука»: железное стремя, ложе ≈1 м; Сун, 1068–1077",
+        "source": "Шэнь Ко, «Мэнси би тань», гл. 19; «Сун ши», гл. 197"
+      },
+      {
         "id": "cb-windlass",
         "enabled": true,
         "when": {
@@ -1988,7 +2306,87 @@
         },
         "name": "Воротовый арбалет",
         "gender": "m",
-        "subtitle": "à moulinet, XV в.; крепостной «à tour»",
+        "subtitle": "à moulinet / à tour, XV в.; ≈12 с на взвод",
+        "source": "Payne-Gallwey 1903"
+      },
+      {
+        "id": "cb-rampart",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "rampart"
+          ],
+          "head.span": [
+            "windlass"
+          ]
+        },
+        "name": "Крепостной арбалет",
+        "gender": "m",
+        "subtitle": "Wallarmbrust, XV в.: 125 см, 8,6 кг; стреляли с парапета или треножника",
+        "source": "KHM Wien A 108; Payne-Gallwey 1903, гл. III"
+      },
+      {
+        "id": "cb-gastraphetes",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "belly-slider"
+          ],
+          "head.span": [
+            "hands"
+          ]
+        },
+        "name": "Гастрафет",
+        "gender": "m",
+        "subtitle": "«брюшной лук»: ползун с храповиком, упор под живот; не позже 399 г. до н. э.",
+        "source": "Герон, «Белопоэйка» (пер. Marsden 1971); DeVries 2003"
+      },
+      {
+        "id": "cb-waist-ming",
+        "enabled": true,
+        "when": {
+          "grip.stock": [
+            "waist-short"
+          ],
+          "head.span": [
+            "belt-hook"
+          ]
+        },
+        "name": "Поясной арбалет",
+        "gender": "m",
+        "subtitle": "腰開弩, Мин: ложе ≈52 см под дугу ≈195 см, взвод сидя поясным крюком",
+        "source": "«У бэй чжи» (1621) по блогу Great Ming Military — пересчёт не проверен"
+      },
+      {
+        "id": "cb-belt-hook",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "head.span": [
+            "belt-hook"
+          ]
+        },
+        "name": "Арбалет с поясным крюком",
+        "gender": "m",
+        "subtitle": "крюк из Изяславля, 1200–1240 гг.",
+        "source": "Кирпичников 1971 (КСИА, вып. 125)"
+      },
+      {
+        "id": "cb-goats-foot",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "2"
+          ],
+          "head.span": [
+            "goats-foot"
+          ]
+        },
+        "name": "Арбалет с козьей ногой",
+        "gender": "m",
+        "subtitle": "рычаг-«козья нога», с середины XIV в.",
         "source": "Payne-Gallwey 1903"
       }
     ],
