@@ -138,7 +138,8 @@ function sandboxHost(reg: ConfigRegistry, sb: CraftSandbox, save: SaveState): Cr
     save: () => save,
     allowDisabledMaterials: sb.showDisabled,
     craft: (input) => {
-      const pv = craftWeapon(reg, input, { journal: host.journal(), materialsOn: !sb.showDisabled });
+      // Ковка = тот же расчёт, что предпросмотр, плюс бросок базы (`rng`): до ковки окно видит вилку.
+      const pv = craftWeapon(reg, input, { journal: host.journal(), materialsOn: !sb.showDisabled, rng: createRng(sb.seed++) });
       if (!pv.ok || !pv.item || !pv.cost) return { ok: false, reason: pv.reason };
       const lack = craftMissing(host.wallet(), host.gold(), pv.cost);
       const lackIds = Object.keys(lack.materials);
@@ -202,6 +203,7 @@ function dropCompare(reg: ConfigRegistry, save: SaveState, crafted: Item): DropC
     const it = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
       dropBias: 1, itemLevel: tier?.minItemLevel ?? 1, tierLevel: tier?.minItemLevel ?? 1, baseId: crafted.baseId,
       tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: rarity, maxReqTotal: reg.get('balance').maxTotalRequirement,
+      baseRoll: reg.get('balance').loot.baseRoll,
     }, rng);
     dps.push(cardWith(reg, save, it).dps);
   }

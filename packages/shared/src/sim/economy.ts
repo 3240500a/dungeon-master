@@ -211,6 +211,7 @@ export function visitForge(reg: ConfigRegistry, save: SaveState, policy: BuildPo
     const after = retierItem(base, item, tier, {
       reqDiscount: reg.get('balance').forgePrices.upgradeReqDiscount,
       maxReqTotal: reg.get('balance').maxTotalRequirement,
+      spread: reg.get('balance').loot.baseRoll,
     });
     if (!meetsRequirements(after, save.attributes)) continue;
     const gold0 = save.gold;
@@ -237,7 +238,7 @@ export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, r
   let spent = 0, sold = 0; const bought: Item[] = [];
   for (let i = 0; i < 8; i++) {
     const item = generateItem(itemsBase, affixes, uniques,
-      { dropBias: 1.3, itemLevel: level + 1, tiers: reg.get('item-tiers'), rarities }, rng);
+      { dropBias: 1.3, itemLevel: level + 1, tiers: reg.get('item-tiers'), rarities, baseRoll: reg.get('balance').loot.baseRoll }, rng);
     const price = buyPrice(item, rarities);
     if (!item.slot || save.gold < price || !meetsRequirements(item, save.attributes)) continue;
     const cur = save.equipment[item.slot];

@@ -162,6 +162,10 @@
       "softK": 0.5,
       "hardCap": 95
     },
+    "baseRoll": {
+      "weapon": 0.15,
+      "armor": 0.2
+    },
     "depthRarity": {
       "freeDepth": 15,
       "step": 12,
@@ -356,6 +360,12 @@
       "goldPerReqMult": 300,
       "enchantGold": 100
     },
+    "finish": [
+      { "id": "plain", "name": "Обычная работа", "floor": 0, "strikeUnits": 0, "goldMult": 1 },
+      { "id": "careful", "name": "Тщательная доводка", "floor": 0.35, "strikeUnits": 4, "goldMult": 1.25 },
+      { "id": "painstaking", "name": "Кропотливая доводка", "floor": 0.6, "strikeUnits": 8, "goldMult": 1.5 },
+      { "id": "master", "name": "Ювелирная доводка", "floor": 0.8, "strikeUnits": 16, "goldMult": 2 }
+    ],
     "melt": {
       "share": 0.6
     },

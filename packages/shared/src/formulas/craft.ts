@@ -1,10 +1,10 @@
 import type { ConfigRegistry } from '../config/registry.js';
 import type { ConfigShapes } from '../config/schemas.js';
-import type { CraftPartPick, CraftParts, Item, Rarity } from '../types/items.js';
+import type { BaseRoll, CraftPartPick, CraftParts, Item, Rarity, RolledStat } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { MaterialCost } from '../economy/materials.js';
 import { createRng, type Rng } from './rng.js';
-import { affixTargetOfBase, buildCraftShell, inferTierId, nameByRarity, rollAffixes } from './itemgen.js';
+import { affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, rollAffixes, rollBaseQ, snapFloor } from './itemgen.js';
 import {
   CRAFT_SLOT_LIST, agree, anatomyRow, baseOfKeyPart, keySlotOf, partFits, resolveType,
   type CraftSlot, type PartSet, type TypeInfo, type WeaponAnatomy, type WeaponPart,
@@ -59,7 +59,7 @@ export function tierIndex(reg: ConfigRegistry, id: string | undefined): number {
 /** Индекс ступени ЛЮБОЙ вещи: записанная, иначе выведенная по статам (старые сейвы). */
 export function tierIndexOfItem(reg: ConfigRegistry, item: Item): number {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
-  const id = item.tier ?? (base ? inferTierId(reg.get('item-tiers'), base, item) : undefined);
+  const id = item.tier ?? (base ? inferTierId(reg.get('item-tiers'), base, item, reg.get('balance').loot.baseRoll) : undefined);
   return Math.max(0, tierIndex(reg, id));
 }
 
@@ -363,7 +363,18 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
 // ── Цена ────────────────────────────────────────────────────────────────────────────────────────
 
 export interface CraftCostLine { slot: CraftSlot; family: string; id: string; n: number }
-export interface CraftCost { materials: MaterialCost; gold: number; lines: CraftCostLine[]; mult: number }
+/** Доводка в цене: отдельной строкой, а не в `lines` — переплавка возвращает долю `lines`, доводку нет. */
+export interface CraftFinishCost { index: number; name: string; floor: number; id: string; n: number; goldMult: number }
+export interface CraftCost { materials: MaterialCost; gold: number; lines: CraftCostLine[]; mult: number; finish?: CraftFinishCost }
+
+type FinishRow = CraftTuning['finish'][number];
+/** Уровень доводки по индексу; вне списка или список пуст — «без доводки» (пол 0). */
+export function finishOf(reg: ConfigRegistry, index: number | undefined): FinishRow & { index: number } {
+  const list = reg.get('balance').craft.finish;
+  const i = Math.max(0, Math.min(list.length - 1, Math.round(index ?? 0)));
+  const row = list[i];
+  return row ? { ...row, index: i } : { id: 'plain', name: 'Обычная работа', floor: 0, strikeUnits: 0, goldMult: 1, index: 0 };
+}
 
 /**
  * ЦЕНА КОВКИ (§13): каждая деталь — СВОИМ материалом, единиц по её МАССЕ (клинок вдвое тяжелее
@@ -371,7 +382,7 @@ export interface CraftCost { materials: MaterialCost; gold: number; lines: Craft
  * сбалансированной. Дешёвая рукоять под дорогим клинком — законный способ сэкономить: она же и
  * тянет ступень вещи вниз ровно на свою долю.
  */
-export function craftCost(reg: ConfigRegistry, weaponClass: string, parts: ResolvedParts, picks: CraftParts, t: number, form: AffixForm): CraftCost {
+export function craftCost(reg: ConfigRegistry, weaponClass: string, parts: ResolvedParts, picks: CraftParts, t: number, form: AffixForm, finish?: number): CraftCost {
   const k = reg.get('balance').craft;
   const anat = anatomyRow(reg, weaponClass);
   const tier = craftTiers(reg)[t];
@@ -387,7 +398,19 @@ export function craftCost(reg: ConfigRegistry, weaponClass: string, parts: Resol
       if (n > 0) materials[id] = (materials[id] ?? 0) + n;
     }
   }
-  return { materials, gold: Math.round(k.cost.goldPerReqMult * (tier?.reqMult ?? 1)), lines, mult: M };
+  const gold = Math.round(k.cost.goldPerReqMult * (tier?.reqMult ?? 1));
+  // Доводка — сырьём УДАРНОЙ части (клинок доводят его же металлом) и золотом ×goldMult. Каждая строка
+  // платит и действует СВОИМИ числами: «первая = без доводки» — лишь договорённость данных, не код,
+  // иначе удалённая «Обычная работа» сделала бы бесплатной следующую строку.
+  const f = finishOf(reg, finish);
+  const strike = lines.find((l) => l.slot === 'strike');
+  const neutral = f.floor <= 0 && f.strikeUnits <= 0 && f.goldMult === 1;
+  if (neutral || !strike) return { materials, gold, lines, mult: M };
+  if (f.strikeUnits > 0) materials[strike.id] = (materials[strike.id] ?? 0) + f.strikeUnits;
+  return {
+    materials, gold: Math.round(gold * f.goldMult), lines, mult: M,
+    finish: { index: f.index, name: f.name, floor: f.floor, id: strike.id, n: f.strikeUnits, goldMult: f.goldMult },
+  };
 }
 
 /** Хватает ли сырья и золота. Пустой список — хватает. */
@@ -405,6 +428,8 @@ export interface CraftInput {
   hands: number;
   /** Четыре детали, у каждой — своя ступень материала. База, имя и ступень вещи выводятся. */
   parts: CraftParts;
+  /** Уровень доводки — индекс в `balance.craft.finish`; нет — без доводки. */
+  finish?: number;
 }
 
 export interface CraftPreview {
@@ -418,6 +443,12 @@ export interface CraftPreview {
   /** Ступень вещи (индекс) и средний уровень материала по массе. */
   tier?: number;
   q?: number;
+  /**
+   * ⭐ ВИЛКА: что может выпасть при этой доводке — [низ, верх] по каждой катаемой стате (без формы
+   * клинка: её множитель накладывает подсказка). У предпросмотра вещь — середина вилки, а числа
+   * игрок видит только так; настоящий бросок — при ковке (`opts.rng`).
+   */
+  ranges?: Partial<Record<RolledStat, [number, number]>>;
 }
 
 /** Имя скованной вещи: приставка тира, согласованная с родом ТИПА, + имя типа. */
@@ -438,7 +469,7 @@ export function craftedName(tier: Tier, type: TypeInfo): string {
 export function craftWeapon(
   reg: ConfigRegistry,
   input: CraftInput,
-  opts: { journal?: CraftJournal; materialsOn?: boolean; atTier?: number } = {},
+  opts: { journal?: CraftJournal; materialsOn?: boolean; atTier?: number; rng?: Rng; at?: 'lo' | 'hi' } = {},
 ): CraftPreview {
   const res = resolveParts(reg, input.weaponClass, input.hands, input.parts);
   if (!res.ok) return { ok: false, reason: res.reason };
@@ -473,13 +504,26 @@ export function craftWeapon(
   }
   const tier = tiers[t]!;
   const bake = bakeParts(reg, base, t, res.parts);
-  const cost = craftCost(reg, input.weaponClass, res.parts, input.parts, t, bake.affixCap);
+  const cost = craftCost(reg, input.weaponClass, res.parts, input.parts, t, bake.affixCap, input.finish);
   if (opts.materialsOn) {
     const off = Object.keys(cost.materials).find((id) => !reg.get('craft-materials').some((m) => m.id === id && m.enabled !== false));
     if (off) return { ok: false, reason: `Материал ещё не в игре: ${off}`, cost, bake, ...view };
   }
 
-  const item = buildCraftShell(base, tier, reg.get('balance').maxTotalRequirement);
+  // ⭐ Бросок базы: без `rng` — предпросмотр (середина вилки + сама вилка), с `rng` — ковка.
+  // Доводка поднимает только ПОЛ броска; верх вилки тот же, что у найденной вещи этого тира.
+  const spread = reg.get('balance').loot.baseRoll;
+  const floor = cost.finish?.floor ?? 0;
+  const ranges = baseStatRange(base, tier.statMult, spread, floor);
+  // `at` — вещь на краю вилки (низ при этой доводке / верх): окно сравнивает «от и до», а не середину.
+  // Предпросмотр — середина СВОЕЙ вилки: при доводке без пола это прежнее число (поле не пишем), с полом —
+  // середина [пол, 1], иначе вещь окна несла бы урон, которого ковка не даст никогда.
+  const lo = snapFloor(floor);
+  const baseRoll: BaseRoll | undefined = opts.rng ? rollBaseQ(base, opts.rng, floor)
+    : opts.at ? fixedBaseRoll(base, opts.at === 'lo' ? lo : 1)
+    : lo > 0 ? fixedBaseRoll(base, (lo + 1) / 2) : undefined;
+  const item = buildCraftShell(base, tier, reg.get('balance').maxTotalRequirement, { baseRoll, spread });
+  if (!opts.rng && !opts.at) item.rollPreview = ranges;
   item.name = craftedName(tier, type);
   item.baseStats = [...item.baseStats, ...bake.mods]; // новый массив: статы базы в конфиге не трогаем
   if (bake.damageMult !== 1) item.damageMult = bake.damageMult;
@@ -488,7 +532,7 @@ export function craftWeapon(
   item.affixCap = bake.affixCap;
   item.parts = structuredClone(input.parts);
   if (type.typeId) item.typeId = type.typeId;
-  return { ok: true, item, cost, bake, ...view };
+  return { ok: true, item, cost, bake, ranges, ...view };
 }
 
 /** Тип вещи по её деталям (скованной — записанным, найденной — выведенным). */

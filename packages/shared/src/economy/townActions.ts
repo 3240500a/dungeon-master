@@ -172,6 +172,7 @@ export function forgeUpgrade(reg: ConfigRegistry, save: SaveState, uid: string, 
   // ⚠ Результат считает `upgradedItem` — ТА ЖЕ функция, которой кузница рисует предпросмотр
   // «было → станет». Будь здесь своя копия расчёта, скидка на требования или потолок их суммы
   // разъехались бы молча, и окно обещало бы игроку не то, за что он платит.
+  if (item.parts) return { ok: false, reason: 'Скованную вещь поднимает замена детали, а не подъём тира' };
   const next = upgradedItem(reg, item);
   if (!next) return { ok: false, reason: 'Лучше эту вещь уже не сделать' };
   const gold = forgeGold(reg, item, 'upgrade');
@@ -217,7 +218,7 @@ export function forgeGold(reg: ConfigRegistry, item: Item, op: ForgeOp): number 
   const tiers = reg.get('item-tiers');
   const itemsBase = reg.get('items.base');
   const b = itemsBase.find((x) => x.id === item.baseId);
-  const curId = b ? inferTierId(tiers, b, item) : item.tier;
+  const curId = b ? inferTierId(tiers, b, item, reg.get('balance').loot.baseRoll) : item.tier;
   const tierId = op === 'upgrade' && b ? nextTier(tiers, b, curId)?.id ?? curId : curId;
   const tier = tiers.find((t) => t.id === tierId);
   const rarity = reg.get('rarities').find((r) => r.id === item.rarity);
@@ -229,7 +230,7 @@ export function nextTierOf(reg: ConfigRegistry, item: Item): { id: string; name:
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   if (!base) return undefined;
   const tiers = reg.get('item-tiers');
-  return nextTier(tiers, base, inferTierId(tiers, base, item));
+  return nextTier(tiers, base, inferTierId(tiers, base, item, reg.get('balance').loot.baseRoll));
 }
 
 /**
@@ -237,18 +238,24 @@ export function nextTierOf(reg: ConfigRegistry, item: Item): { id: string; name:
  * улучшения (`forgeUpgrade` зовёт эту же функцию). `undefined` — нет базы либо вещь на потолке.
  */
 export function upgradedItem(reg: ConfigRegistry, item: Item): Item | undefined {
+  // ⚠ СКОВАННУЮ не поднимаем (docs/CRAFT_WEAPONS.md §11): её ступень — функция материалов деталей.
+  // `retierItem` пересобрал бы статы от базы и молча стёр вклад деталей (поле `parts` при этом
+  // выжило бы), а доводка, оплаченная по цене дешёвой ступени, доехала бы до мифической.
+  if (item.parts) return undefined;
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   if (!base) return undefined;
   const tiers = reg.get('item-tiers');
   // ⚠ Тир БЕРЁТСЯ ИЗ ВЕЩИ, а при отсутствии поля — ВОССТАНАВЛИВАЕТСЯ по статам (`inferTierId`).
   // Без этого вещь из старого сейва считалась стоящей ниже первой ступени, «улучшалась» до t0
   // и становилась слабее: замер — алебарда 14–30 → 11–23 за 200 золота и сырьё.
-  const tier = nextTier(tiers, base, inferTierId(tiers, base, item));
-  if (!tier) return undefined;
   const bal = reg.get('balance');
+  const tier = nextTier(tiers, base, inferTierId(tiers, base, item, bal.loot.baseRoll));
+  if (!tier) return undefined;
+  // Бросок базы переживает подъём: доля q та же, поэтому «удачный» меч остаётся удачным на новом тире.
   return retierItem(base, item, tier, {
     reqDiscount: bal.forgePrices.upgradeReqDiscount,
     maxReqTotal: bal.maxTotalRequirement,
+    spread: bal.loot.baseRoll,
   });
 }
 

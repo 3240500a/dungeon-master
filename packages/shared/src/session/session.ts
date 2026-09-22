@@ -1598,6 +1598,7 @@ export class GameSession {
           baseId, tiers: this.cfg.get('item-tiers'), rarities: this.cfg.get('rarities'),
           categoryWeights: loot.categoryWeights, rareNames: this.cfg.get('rare-names'),
           maxReqTotal: this.cfg.get('balance').maxTotalRequirement,
+          baseRoll: loot.baseRoll,
         },
         this.rng,
       );
@@ -1708,6 +1709,7 @@ export class GameSession {
           categoryWeights: { ...bal.loot.categoryWeights, consumable: 0 },
           rareNames: this.cfg.get('rare-names'),
           maxReqTotal: bal.maxTotalRequirement,
+          baseRoll: bal.loot.baseRoll,
         },
         this.rng,
       );

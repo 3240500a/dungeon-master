@@ -1,4 +1,4 @@
-import type { Item, RolledAffix, Rarity } from '../types/items.js';
+import type { Item, RolledAffix, Rarity, BaseRoll, RolledStat } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { Rng } from './rng.js';
@@ -87,12 +87,79 @@ export function pickTierClamped(
   return sorted[clamped];
 }
 
-function scaleBaseStats(stats: StatModifier[], mult: number): StatModifier[] {
-  // ⚠ Всегда НОВЫЙ массив, даже при ×1: вещь с общим массивом базы превращала любую правку статов
-  // вещи (ковка дописывает вклад деталей) в правку САМОЙ БАЗЫ в конфиге — и всех следующих вещей.
-  if (mult === 1) return stats.map((m) => ({ ...m }));
-  return stats.map((m) =>
-    m.kind === 'flat' && TIER_SCALED.has(m.stat) ? { ...m, value: Math.round(m.value * mult) } : m);
+/**
+ * ⭐ ВИЛКА БАЗЫ (как в D2): урон и броня катаются вокруг числа тира, ±`spread`. Центр вилки —
+ * прежнее число, поэтому вещь без броска (q = 0.5) ровно такая, какой была до бросков.
+ * Умолчание совпадает с `balance.loot.baseRoll` (схема) — для вызовов, которым конфиг не передан.
+ */
+export const DEFAULT_ROLL_SPREAD: RollSpread = { weapon: 0.15, armor: 0.2 };
+export interface RollSpread { weapon: number; armor: number }
+const spreadOf = (stat: string, s: RollSpread): number => (stat === 'armor' ? s.armor : s.weapon);
+/** Множитель вилки для доли q: 1 − s … 1 + s. */
+export const rollFactor = (q: number, spread: number): number => 1 + spread * (2 * Math.max(0, Math.min(1, q)) - 1);
+
+/**
+ * Статы базы на тире с броском. ⚠ Всегда НОВЫЙ массив, даже при ×1: вещь с общим массивом базы
+ * превращала любую правку статов вещи (ковка дописывает вклад деталей) в правку САМОЙ БАЗЫ в
+ * конфиге — и всех следующих вещей. Считается всегда ОТ БАЗЫ (не домножением текущих), поэтому
+ * подъём тира не копит ошибку округления, а бросок переживает его долей q.
+ */
+export function scaleBaseStats(stats: StatModifier[], mult: number, roll?: BaseRoll, spread: RollSpread = DEFAULT_ROLL_SPREAD): StatModifier[] {
+  const out = stats.map((m) => {
+    if (m.kind !== 'flat' || !TIER_SCALED.has(m.stat)) return { ...m };
+    const q = roll?.[m.stat as RolledStat];
+    const f = q === undefined ? 1 : rollFactor(q, spreadOf(m.stat, spread));
+    return { ...m, value: Math.round(m.value * mult * f) };
+  });
+  // Мин и макс катаются порознь — на узкой вилке макс не может оказаться ниже мина.
+  const mn = out.find((m) => m.stat === 'minDamage' && m.kind === 'flat');
+  const mx = out.find((m) => m.stat === 'maxDamage' && m.kind === 'flat');
+  if (mn && mx && mx.value < mn.value) mx.value = mn.value;
+  return out;
+}
+
+/** Катаемые статы базы (есть в базе, масштабируются тиром, ненулевые). */
+function rolledStatsOf(base: ItemsBase[number]): RolledStat[] {
+  return base.baseStats.filter((m) => m.kind === 'flat' && TIER_SCALED.has(m.stat) && m.value !== 0).map((m) => m.stat as RolledStat);
+}
+
+/**
+ * Пол броска на сетке сотых, ВВЕРХ: доля хранится до сотых, и без этого пол 0.333 давал бы бросок 0.33 —
+ * ниже показанного края вилки. Через ×1e4 — иначе 0.07·100 = 7.000000000000001 уехало бы в 0.08.
+ */
+export const snapFloor = (floor: number): number => Math.ceil(Math.round(Math.max(0, Math.min(1, floor)) * 1e4) / 100) / 100;
+
+/**
+ * БРОСОК БАЗЫ: по доле q на каждую катаемую стату, порознь. `floor` поднимает НИЖНЮЮ границу
+ * (доводка при ковке): q ∈ [floor, 1] — верх вилки не растёт никогда. Доля округляется до сотых:
+ * вещь не тащит в сейв шум плавающей точки, а крайние значения вилки достижимы.
+ */
+export function rollBaseQ(base: ItemsBase[number], rng: Rng, floor = 0): BaseRoll | undefined {
+  const stats = rolledStatsOf(base);
+  if (!stats.length) return undefined;
+  const f = snapFloor(floor);
+  const out: BaseRoll = {};
+  for (const st of stats) out[st] = Math.max(f, Math.round((f + (1 - f) * rng.next()) * 100) / 100);
+  return out;
+}
+
+/** Бросок, у которого КАЖДАЯ катаемая стата стоит на доле q (край вилки — для показа «от и до»). */
+export function fixedBaseRoll(base: ItemsBase[number], q: number): BaseRoll | undefined {
+  const stats = rolledStatsOf(base);
+  return stats.length ? (Object.fromEntries(stats.map((s) => [s, Math.max(0, Math.min(1, q))])) as BaseRoll) : undefined;
+}
+
+/** ВИЛКА статов базы на тире: [значение при q = floor, значение при q = 1] по каждой катаемой стате. */
+export function baseStatRange(base: ItemsBase[number], statMult: number, spread: RollSpread = DEFAULT_ROLL_SPREAD, floor = 0): Partial<Record<RolledStat, [number, number]>> {
+  const stats = rolledStatsOf(base);
+  const at = (q: number) => scaleBaseStats(base.baseStats, statMult, Object.fromEntries(stats.map((s) => [s, q])) as BaseRoll, spread);
+  const lo = at(snapFloor(floor)), hi = at(1);
+  const out: Partial<Record<RolledStat, [number, number]>> = {};
+  for (const st of stats) {
+    const a = lo.find((m) => m.stat === st && m.kind === 'flat')?.value, b = hi.find((m) => m.stat === st && m.kind === 'flat')?.value;
+    if (a !== undefined && b !== undefined) out[st] = [a, b];
+  }
+  return out;
 }
 
 /** Дефолт капа суммы требований (если не передан из `balance.maxTotalRequirement`). */
@@ -254,9 +321,9 @@ const nextUid = uuidv7;
  */
 function buildItem(
   base: ItemsBase[number],
-  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string },
+  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string; baseRoll?: BaseRoll; spread?: RollSpread },
 ): Item {
-  return {
+  const item: Item = {
     uid: nextUid(),
     baseId: base.id,
     kind: base.kind,
@@ -266,12 +333,14 @@ function buildItem(
     itemLevel: o.itemLevel,
     tier: o.tierId,
     requirements: scaleReqs(base.requirements, o.reqMult, o.maxReqTotal),
-    baseStats: scaleBaseStats(base.baseStats, o.statMult),
+    baseStats: scaleBaseStats(base.baseStats, o.statMult, o.baseRoll, o.spread),
     affixes: o.affixes,
     gridW: base.gridW,
     gridH: base.gridH,
     pos: null,
   };
+  if (o.baseRoll) item.baseRoll = o.baseRoll;
+  return item;
 }
 
 /**
@@ -295,7 +364,8 @@ function buildItem(
 export function inferTierId(
   tiers: ItemTiers | undefined,
   base: ItemsBase[number],
-  item: { tier?: string; baseStats: StatModifier[]; itemLevel: number },
+  item: { tier?: string; baseStats: StatModifier[]; itemLevel: number; baseRoll?: BaseRoll },
+  spread: RollSpread = DEFAULT_ROLL_SPREAD,
 ): string | undefined {
   if (item.tier) return item.tier;
   if (!tiers?.length) return undefined;
@@ -311,7 +381,12 @@ export function inferTierId(
   let bestErr = Infinity;
   for (const t of pool) {
     let err = 0;
-    for (const p of pairs) err += Math.abs(p.cur.value - Math.round(p.b.value * t.statMult)) / Math.abs(p.b.value);
+    // Вещь с броском сравниваем с ЕЁ местом в вилке, а не с центром: иначе край вилки читался бы соседним тиром.
+    for (const p of pairs) {
+      const q = item.baseRoll?.[p.b.stat as RolledStat];
+      const f = q === undefined ? 1 : rollFactor(q, spreadOf(p.b.stat, spread));
+      err += Math.abs(p.cur.value - Math.round(p.b.value * t.statMult * f)) / Math.abs(p.b.value);
+    }
     if (err < bestErr) { bestErr = err; best = t; }
   }
   return best?.id;
@@ -347,7 +422,7 @@ export function retierItem(
   base: ItemsBase[number],
   item: Item,
   tier: ItemTiers[number],
-  opts: { reqDiscount?: number; maxReqTotal?: number } = {},
+  opts: { reqDiscount?: number; maxReqTotal?: number; spread?: RollSpread } = {},
 ): Item {
   const reqMult = tier.reqMult * (1 - (opts.reqDiscount ?? 0));
   return {
@@ -355,7 +430,8 @@ export function retierItem(
     tier: tier.id,
     name: item.rarity === 'normal' ? tieredName(tier.name, base.name, base.gender) : item.name,
     requirements: scaleReqs(base.requirements, reqMult, opts.maxReqTotal),
-    baseStats: scaleBaseStats(base.baseStats, tier.statMult),
+    // Бросок переживает подъём: та же доля q на новом тире — вещь остаётся на своём месте вилки.
+    baseStats: scaleBaseStats(base.baseStats, tier.statMult, item.baseRoll, opts.spread),
   };
 }
 
@@ -518,7 +594,7 @@ export function generateItem(
   itemsBase: ItemsBase,
   affixes: Affixes,
   uniques: Uniques,
-  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number },
+  opts: { dropBias: number; itemLevel: number; tierLevel?: number; baseId?: string; tiers?: ItemTiers; rarities: Rarities; categoryWeights?: Record<string, number>; rareNames?: { nouns: RareNoun[]; epithets: RareEpithet[] }; forceRarity?: Rarity; maxReqTotal?: number; baseRoll?: RollSpread },
   rng: Rng,
 ): Item {
   const rarity = opts.forceRarity ?? rollRarity(opts.dropBias, rng, opts.rarities); // песочница-редактор может форсить редкость
@@ -547,6 +623,9 @@ export function generateItem(
         tierId: tier?.id,
         affixes: unique.fixedAffixes.map((fa) => ({ affixId: unique.id, kind: fa.kind, modifier: fa.modifier })),
         maxReqTotal: opts.maxReqTotal,
+        // Бросок базы — ПОСЛЕДНИМ из rng: остальной поток (редкость, аффиксы, имя) не сдвигается.
+        baseRoll: rollBaseQ(base, rng),
+        spread: opts.baseRoll,
       });
     }
   }
@@ -589,6 +668,10 @@ export function generateItem(
     tierId: tier?.id,
     affixes: rolled,
     maxReqTotal: opts.maxReqTotal,
+    // Бросок базы — ПОСЛЕДНИМ из rng: остальной поток (редкость, аффиксы, имя) не сдвигается.
+    // Колбы не катаются.
+    baseRoll: isConsumable ? undefined : rollBaseQ(base, rng),
+    spread: opts.baseRoll,
   });
 }
 
@@ -601,6 +684,7 @@ export function buildCraftShell(
   base: ItemsBase[number],
   tier: ItemTiers[number],
   maxReqTotal?: number,
+  roll?: { baseRoll?: BaseRoll; spread?: RollSpread },
 ): Item {
   return buildItem(base, {
     rarity: 'normal',
@@ -611,6 +695,8 @@ export function buildCraftShell(
     tierId: tier.id,
     affixes: [],
     maxReqTotal,
+    baseRoll: roll?.baseRoll,
+    spread: roll?.spread,
   });
 }
 

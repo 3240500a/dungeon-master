@@ -1,6 +1,6 @@
 import {
   CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, baseTierRange, clampStep, craftTiers, craftWeapon, defaultParts,
-  enchantCost, familiesOf, keySlotOf, keyVariantsByBase, makePlayerModel, partById, slotName, stepLabel,
+  enchantCost, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel, partById, rangeLabel, slotName, stepLabel,
   tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
   type Rarity, type SaveState, type WeaponCard, type WeaponPart,
@@ -46,6 +46,8 @@ export interface CraftWindowState {
   parts: CraftParts;
   /** Последняя скованная вещь — её можно зачаровать и надеть. */
   crafted: Item | null;
+  /** Доводка — индекс в `balance.craft.finish`; поднимает нижнюю границу вилки урона. */
+  finish?: number;
   /** Итог последнего действия, одной строкой. */
   message: string;
 }
@@ -69,6 +71,9 @@ export function initialCraftState(reg: ConfigRegistry, weaponClass = 'sword', ha
  * своего семейства и открытые, ступени — внутри окна материалов каждой формы. Правит на месте.
  */
 export function normalizeCraftState(reg: ConfigRegistry, st: CraftWindowState, j: CraftJournal): void {
+  // Индекс доводки — к существующей строке: список правится в редакторе, а чип, цена и ковка обязаны
+  // видеть ОДНУ строку (иначе платишь за доводку, а выбранной не подсвечено ничего).
+  st.finish = finishOf(reg, st.finish).index;
   const fams = familiesOf(reg, st.weaponClass);
   if (!fams.includes(st.hands)) st.hands = fams[0] ?? 1;
   const keySlot = keySlotOf(reg, st.weaponClass);
@@ -109,6 +114,23 @@ export function cardWith(reg: ConfigRegistry, save: SaveState, weapon: Item | un
   const m = makePlayerModel(reg, s);
   return weaponCard(reg, { derived: m.derived, attrs: m.attrs, weapon: s.equipment.weapon, scaling: m.scaling, weights: m.weights, attackInterval: m.attackInterval });
 }
+
+/**
+ * Куда лёг бросок скованной вещи — одной фразой к сообщению «Скована»: сколько вышло и из какой
+ * вилки. До ковки игрок видел только вилку, это первое место, где он видит результат.
+ */
+function rollVerdict(item: Item, ranges: CraftPreviewRanges | undefined, floor: number): string {
+  const mn = item.baseStats.find((m) => m.stat === 'minDamage' && m.kind === 'flat')?.value;
+  const mx = item.baseStats.find((m) => m.stat === 'maxDamage' && m.kind === 'flat')?.value;
+  if (mn === undefined || mx === undefined || !ranges?.minDamage || !ranges.maxDamage) return '';
+  const k = item.damageMult ?? 1, r = (v: number): number => Math.round(v * k);
+  // Процент — место внутри ПОКАЗАННОЙ вилки (она уже сужена доводкой): 0 % — её низ, 100 % — верх.
+  // Долю на всей вилке ступени не показываем: при ювелирной доводке худший бросок читался бы «80 %».
+  const q = item.baseRoll ? ((item.baseRoll.minDamage ?? 0.5) + (item.baseRoll.maxDamage ?? 0.5)) / 2 : 0.5;
+  const pos = floor >= 1 ? 100 : Math.round((Math.max(0, q - floor) / (1 - floor)) * 100);
+  return ` · урон ${r(mn)}–${r(mx)} из вилки ${rangeLabel(ranges.minDamage, k)}–${rangeLabel(ranges.maxDamage, k)} · бросок ${pos} % вилки`;
+}
+type CraftPreviewRanges = NonNullable<ReturnType<typeof craftWeapon>['ranges']>;
 
 /** Что вариант даёт в своём гнезде — числом, для подписи под выбором. */
 function partEffect(reg: ConfigRegistry, slot: CraftSlot, axis: number, weaponClass: string): string {
@@ -183,7 +205,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     }
 
     // ── Предпросмотр: тип, имя, ступень ──
-    const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts) };
+    const input: CraftInput = { weaponClass: st.weaponClass, hands: st.hands, parts: structuredClone(st.parts), finish: st.finish ?? 0 };
     const pv = craftWeapon(reg, input, { journal: j, materialsOn: !host.allowDisabledMaterials });
     const type = pv.type;
     const head = mk('div', `border:1px solid ${COLORS.borderHi};border-radius:6px;padding:10px 12px;margin-bottom:10px;background:${COLORS.panel2}`);
@@ -305,6 +327,25 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     }
     for (const n of pv.bake?.notes ?? []) left.append(mk('div', `margin-top:6px;font-size:11.5px;color:${COLORS.gold}`, `⚠ ${n}`));
 
+    // ── Доводка: сдвигает НИЗ вилки, верх не трогает. Результат — только после ковки. ──
+    const finishes = reg.get('balance').craft.finish;
+    if (finishes.length > 1 && pv.cost && anat) {
+      const fin = mk('div', `margin-top:10px;border-top:1px solid ${COLORS.border};padding-top:8px`);
+      fin.append(mk('div', `font-size:11px;color:${COLORS.dim};margin-bottom:4px`, `Доводка: ${slotName(anat, 'strike', st.hands)} — поднимает нижнюю границу урона, верх вилки не растёт`));
+      const frow = mk('div', 'display:flex;flex-wrap:wrap;gap:4px');
+      const strikeMat = pv.cost.lines.find((l) => l.slot === 'strike');
+      finishes.forEach((f, i) => {
+        const on = (st.finish ?? 0) === i;
+        const extra = f.strikeUnits <= 0 && f.goldMult === 1 ? 'без надбавки' : `+${f.strikeUnits} ${strikeMat ? matName(strikeMat.id) : ''} · золото ×${fx(f.goldMult, 2)}`;
+        const b = mk('button', chip(on, false), f.name);
+        b.title = `${extra}\nНиже ${Math.round(f.floor * 100)} % вилки урон не выпадет`;
+        b.addEventListener('click', () => { if (on) return; st.finish = i; reset(); draw(); });
+        frow.append(b);
+      });
+      fin.append(frow);
+      left.append(fin);
+    }
+
     if (pv.cost && anat) {
       const wallet = host.wallet();
       const costBox = mk('div', `margin-top:10px;border-top:1px solid ${COLORS.border};padding-top:8px`);
@@ -314,6 +355,12 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
         const have = wallet[l.id] ?? 0;
         costBox.append(mk('div', `font-size:12px;color:${have >= need ? COLORS.text : COLORS.bad}`, `${slotName(anat, l.slot, st.hands)}: ${matName(l.id)} — ${l.n}  (есть ${have})`));
       }
+      // Доводка — отдельной строкой: её сырьё уходит в клинок безвозвратно, переплавка его не вернёт.
+      const fc = pv.cost.finish;
+      if (fc && fc.n > 0) {
+        const need = pv.cost.materials[fc.id] ?? 0, have = wallet[fc.id] ?? 0;
+        costBox.append(mk('div', `font-size:12px;color:${have >= need ? COLORS.text : COLORS.bad}`, `${fc.name}: ${matName(fc.id)} — ${fc.n}  (всего ${need}, есть ${have})`));
+      }
       costBox.append(mk('div', `font-size:12px;color:${host.gold() >= pv.cost.gold ? COLORS.gold : COLORS.bad}`, `Золото — ${pv.cost.gold}  (есть ${host.gold()})`));
       left.append(costBox);
     }
@@ -322,7 +369,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     const doCraft = (): void => {
       const r = host.craft(input);
       st.crafted = r.ok ? r.item ?? null : st.crafted;
-      st.message = r.ok ? `Скована: ${r.item?.name}` : `Не вышло: ${r.reason}`;
+      st.message = r.ok ? `Скована: ${r.item?.name}${r.item ? rollVerdict(r.item, pv.ranges, pv.cost?.finish?.floor ?? 0) : ''}` : `Не вышло: ${r.reason}`;
       onAfter?.(); draw();
     };
     btns.append(button('🔨 Ковать', doCraft, 'primary', !pv.ok));
@@ -349,7 +396,13 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
     const now = save.equipment.weapon;
     if (shown) {
       const a = cardWith(reg, save, now), b = cardWith(reg, save, shown);
-      right.append(compareTable(a, b, now?.name ?? 'без оружия', shown.name, save));
+      // До ковки чисел нет — сравниваем с КРАЯМИ вилки (низ при этой доводке и верх), а не с серединой.
+      const edge = (at: 'lo' | 'hi'): WeaponCard | undefined => {
+        const it = craftWeapon(reg, input, { journal: j, materialsOn: !host.allowDisabledMaterials, at }).item;
+        return it ? cardWith(reg, save, it) : undefined;
+      };
+      const lo = st.crafted ? undefined : edge('lo'), hi = st.crafted ? undefined : edge('hi');
+      right.append(compareTable(a, b, now?.name ?? 'без оружия', shown.name, save, lo && hi ? { lo, hi } : undefined));
     }
     out.append(right);
     root.append(out);
@@ -361,7 +414,7 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
 }
 
 /** Таблица «в руках → скую»: все характеристики, которые у нас есть, с разницей. */
-export function compareTable(a: WeaponCard, b: WeaponCard, aName: string, bName: string, save: SaveState): HTMLElement {
+export function compareTable(a: WeaponCard, b: WeaponCard, aName: string, bName: string, save: SaveState, bRange?: { lo: WeaponCard; hi: WeaponCard }): HTMLElement {
   const t = mk('table', 'width:100%;border-collapse:collapse;font-size:12px');
   const head = mk('tr');
   for (const [txt, css] of [['', ''], [aName, 'text-align:right'], [bName, `text-align:right;color:${COLORS.accent}`], ['разница', 'text-align:right']] as const) {
@@ -386,14 +439,34 @@ export function compareTable(a: WeaponCard, b: WeaponCard, aName: string, bName:
     r.append(mk('td', `padding:2px 6px;text-align:right;font-family:monospace;color:${col}`, diff));
     t.append(r);
   };
+  /**
+   * Строка-ВИЛКА: у ещё не скованной вещи числа нет — в колонке «от и до», в разнице тоже вилка.
+   * Цвет — по середине: тусклый, если вилка захватывает ноль (может выйти и хуже, и лучше).
+   */
+  const rangeLine = (label: string, x: number, lo: number, hi: number, fmt: (v: number) => string): void => {
+    const r = mk('tr');
+    r.append(mk('td', `padding:2px 6px;color:${COLORS.dim}`, label));
+    r.append(mk('td', 'padding:2px 6px;text-align:right;font-family:monospace', fmt(x)));
+    r.append(mk('td', 'padding:2px 6px;text-align:right;font-family:monospace', `${fmt(lo)}–${fmt(hi)}`));
+    const d = (y: number): number => (Math.abs(x) > 1e-9 ? ((y - x) / Math.abs(x)) * 100 : 0);
+    const col = d(lo) > 0 ? COLORS.good : d(hi) < 0 ? COLORS.bad : COLORS.dim;
+    r.append(mk('td', `padding:2px 6px;text-align:right;font-family:monospace;color:${col}`, `${signed(d(lo), '')}…${signed(d(hi), ' %')}`));
+    t.append(r);
+  };
+  const mid = (c: WeaponCard): number => (c.hitMin + c.hitMax) / 2;
   sec('Удар');
-  line('урон за удар', (a.hitMin + a.hitMax) / 2, (b.hitMin + b.hitMax) / 2, (v) => fx(v, 1));
+  if (bRange) rangeLine('урон за удар', mid(a), mid(bRange.lo), mid(bRange.hi), (v) => fx(v, 1));
+  else line('урон за удар', mid(a), mid(b), (v) => fx(v, 1));
   line('разброс', undefined, undefined, fx);
   (t.lastChild as HTMLElement).children[1]!.textContent = `${fx(a.hitMin, 0)}–${fx(a.hitMax, 0)}`;
-  (t.lastChild as HTMLElement).children[2]!.textContent = `${fx(b.hitMin, 0)}–${fx(b.hitMax, 0)}`;
+  const span = (lo: number, hi: number): string => (fx(lo, 0) === fx(hi, 0) ? fx(lo, 0) : `(${fx(lo, 0)}–${fx(hi, 0)})`);
+  (t.lastChild as HTMLElement).children[2]!.textContent = bRange
+    ? `${span(bRange.lo.hitMin, bRange.hi.hitMin)}–${span(bRange.lo.hitMax, bRange.hi.hitMax)}`
+    : `${fx(b.hitMin, 0)}–${fx(b.hitMax, 0)}`;
   line('ударов в секунду', a.aps, b.aps, (v) => fx(v, 2));
   line('шанс крита', a.critChance, b.critChance, (v) => pct(v, 1), false, 'up', (d) => signed(d * 100, ' п.п.', 1));
-  line('ДПС (формула)', a.dps, b.dps, (v) => fx(v, 1));
+  if (bRange) rangeLine('ДПС (формула)', a.dps, bRange.lo.dps, bRange.hi.dps, (v) => fx(v, 1));
+  else line('ДПС (формула)', a.dps, b.dps, (v) => fx(v, 1));
   line('вклад атрибутов', a.attrBonus, b.attrBonus, (v) => fx(v, 1));
   if (a.attackType === 'melee' || b.attackType === 'melee') {
     sec('Геометрия взмаха');

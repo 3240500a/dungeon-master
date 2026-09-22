@@ -3,7 +3,7 @@ import { ConfigRegistry } from '../config/registry.js';
 import { defaultConfigData } from '../config/defaults.js';
 import {
   anatomyOf, bakeParts, baseTierRange, capacityOf, clampStep, craftCost, craftSalvageYield, craftTiers, craftWeapon,
-  emptyJournal, enchantItem, formOf, fullJournal, journalTierCap, keyVariantsByBase, meltReturn, partById,
+  emptyJournal, enchantItem, finishOf, formOf, fullJournal, journalTierCap, keyVariantsByBase, meltReturn, partById,
   partsOf, resolveParts, salvageIntoJournal, sketchable, tierIndexOfItem, tierOfSteps, typeOfItem, useSketch,
   variantsFor, type CraftInput,
 } from './craft.js';
@@ -11,14 +11,16 @@ import {
   CRAFT_SLOT_LIST, agree, baseOfKeyPart, familiesOf, keySlotOf, matchWhen, resolveType, tagValue,
   typesRow, type CraftSlot, type PartSet,
 } from './craftType.js';
-import { generateItem } from './itemgen.js';
+import {
+  DEFAULT_ROLL_SPREAD, baseStatRange, fixedBaseRoll, generateItem, inferTierId, retierItem, rollBaseQ, scaleBaseStats, snapFloor,
+} from './itemgen.js';
 import { describeItem } from './itemDescribe.js';
 import { weaponCard } from './craftCard.js';
 import { makePlayerModel, newBotSave } from '../sim/playerBot.js';
 
 const ITEM_LABELS = { armorClass: (id: string) => id, weight: (id: string) => id, physSub: (id: string) => id, skill: (id: string) => id, dmgShort: (dt: string) => dt };
 import { createRng } from './rng.js';
-import { forgeReroll } from '../economy/townActions.js';
+import { forgeReroll, forgeUpgrade, upgradedItem } from '../economy/townActions.js';
 import type { SaveState } from '../types/save.js';
 import type { CraftParts } from '../types/items.js';
 
@@ -334,8 +336,13 @@ describe('⭐ замок «одна ось ДПС внутри типа»: вк�
     expect(f(light, 'maxDamage')).toBe(f(plain, 'maxDamage')); // цифры базы в статах не трогаем
     expect(f(light, 'attackSpeed')).toBeCloseTo(0.6 * k.attackSpeed, 6);
     const lines = describeItem(light, ITEM_LABELS).map((l) => l.text);
-    const shown = lines.find((t) => t.startsWith('Урон:'))!;
-    expect(shown).toContain(`${Math.round(f(plain, 'minDamage') * light.damageMult!)}–${Math.round(f(plain, 'maxDamage') * light.damageMult!)}`);
+    // Предпросмотр — вилкой, и она тоже умножена на форму клинка.
+    const r = light.rollPreview!, dm = light.damageMult!, R = (v: number) => Math.round(v * dm);
+    expect(lines.find((t) => t.startsWith('Урон:'))).toContain(`(${R(r.minDamage![0])}–${R(r.minDamage![1])})–(${R(r.maxDamage![0])}–${R(r.maxDamage![1])})`);
+    // Скованная (бросок случился) — просто числа × форма клинка.
+    const forged = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xi' }), { rng: createRng(7) }).item!;
+    const shown = describeItem(forged, ITEM_LABELS).map((l) => l.text).find((t) => t.startsWith('Урон:'))!;
+    expect(shown).toContain(`${R(f(forged, 'minDamage'))}–${R(f(forged, 'maxDamage'))} (`);
     expect(lines.some((t) => t.startsWith('Скорость: ×1.05'))).toBe(true);
     expect(lines.some((t) => /Скор\. атаки|урон/i.test(t) && !t.startsWith('Урон:'))).toBe(false);
   });
@@ -451,9 +458,16 @@ describe('ковка: каркас — существующая база (пра
       }, createRng(1));
       expect(found.tier, b.id).toBe(tier.id);
       const flat = (it: typeof found, stat: string) => it.baseStats.find((m) => m.stat === stat && m.kind === 'flat')?.value;
-      // Цифры урона — ровно найденной вещи; форма клинка живёт отдельным множителем удара.
-      expect(flat(res.item!, 'minDamage'), b.id).toBe(flat(found, 'minDamage'));
-      expect(flat(res.item!, 'maxDamage'), b.id).toBe(flat(found, 'maxDamage'));
+      // ⭐ Найденная и скованная катаются в ОДНОЙ вилке: края вилки ковки = найденная вещь на долях 0 и 1
+      // (пересборка тира дропа — та же, что у кузницы), середина = прежнее число без броска.
+      const spread = reg.get('balance').loot.baseRoll;
+      const at = (q: number) => retierItem(b, { ...found, baseRoll: fixedBaseRoll(b, q) }, tier, { maxReqTotal: reg.get('balance').maxTotalRequirement, spread });
+      for (const st of ['minDamage', 'maxDamage'] as const) {
+        expect(res.ranges![st], `${b.id} ${st}`).toEqual([flat(at(0), st), flat(at(1), st)]);
+        expect(flat(res.item!, st), `${b.id} ${st}`).toBe(flat(at(0.5), st));
+        expect(flat(found, st)!, `${b.id} ${st}`).toBeGreaterThanOrEqual(res.ranges![st]![0]);
+        expect(flat(found, st)!, `${b.id} ${st}`).toBeLessThanOrEqual(res.ranges![st]![1]);
+      }
       expect(res.item!.requirements, b.id).toEqual(found.requirements);
     }
   });
@@ -492,6 +506,176 @@ describe('ковка: каркас — существующая база (пра
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/мифических/);
     expect(craftWeapon(reg, buildFor('long-sword', stepsForTierOf('long-sword', 6)!), { journal: fullJournal(reg) }).ok).toBe(true);
+  });
+});
+
+describe('⭐ вилка базы: урон и броня катаются, ковка двигает низ вилки (§13.1)', () => {
+  const tiers = reg.get('item-tiers');
+  const spread = reg.get('balance').loot.baseRoll;
+  const flat = (it: { baseStats: { stat: string; kind: string; value: number }[] }, stat: string) =>
+    it.baseStats.find((m) => m.stat === stat && m.kind === 'flat')?.value;
+
+  it('вещь без броска = прежние числа: центр вилки — число тира, бросок 0.5 его не меняет', () => {
+    for (const b of reg.get('items.base')) {
+      for (const t of tiers) {
+        const plain = scaleBaseStats(b.baseStats, t.statMult);
+        const mid = scaleBaseStats(b.baseStats, t.statMult, fixedBaseRoll(b as never, 0.5), spread);
+        expect(mid, `${b.id} ${t.id}`).toEqual(plain);
+      }
+    }
+  });
+  it('умолчание в коде совпадает с конфигом — вызов без вилки не расходится с игрой', () => {
+    expect(DEFAULT_ROLL_SPREAD).toEqual(spread);
+  });
+  it('макс урона не бывает ниже мина: мин на верху вилки, макс на дне — на любой базе и ступени', () => {
+    for (const b of weapons) {
+      for (const t of tiers) {
+        const st = scaleBaseStats(b.baseStats, t.statMult, { minDamage: 1, maxDamage: 0 }, spread);
+        expect(flat({ baseStats: st }, 'maxDamage')!, `${b.id} ${t.id}`).toBeGreaterThanOrEqual(flat({ baseStats: st }, 'minDamage')!);
+      }
+    }
+  });
+  it('бросок — по доле на каждую катаемую стату, в [пол, 1], до сотых; кольцо не катается', () => {
+    const rng = createRng(3);
+    for (let i = 0; i < 200; i++) {
+      const r = rollBaseQ(baseOf('long-sword'), rng, 0.6)!;
+      expect(Object.keys(r).sort()).toEqual(['maxDamage', 'minDamage']);
+      for (const q of Object.values(r)) {
+        expect(q).toBeGreaterThanOrEqual(0.6);
+        expect(q).toBeLessThanOrEqual(1);
+        expect(Math.round(q! * 100) / 100).toBe(q);
+      }
+    }
+    const ring = reg.get('items.base').find((b) => !b.baseStats.some((m) => ['minDamage', 'maxDamage', 'armor'].includes(m.stat)));
+    if (ring) expect(rollBaseQ(ring, createRng(1))).toBeUndefined();
+  });
+  it('найденные вещи одного тира разбросаны по вилке и не выходят за неё', () => {
+    const b = baseOf('long-sword');
+    const t = tiers.find((x) => x.id === b.maxTier) ?? tiers[0]!;
+    const range = baseStatRange(b, t.statMult, spread);
+    const mins = new Set<number>(), maxs = new Set<number>();
+    for (let s = 0; s < 300; s++) {
+      const it = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+        dropBias: 1, itemLevel: t.minItemLevel, tierLevel: t.minItemLevel, baseId: b.id, tiers,
+        rarities: reg.get('rarities'), forceRarity: 'normal', baseRoll: spread,
+      }, createRng(s));
+      if (it.tier !== t.id) continue;
+      const mn = flat(it, 'minDamage')!, mx = flat(it, 'maxDamage')!;
+      mins.add(mn); maxs.add(mx);
+      expect(mn).toBeGreaterThanOrEqual(range.minDamage![0]); expect(mn).toBeLessThanOrEqual(range.minDamage![1]);
+      expect(mx).toBeGreaterThanOrEqual(range.maxDamage![0]); expect(mx).toBeLessThanOrEqual(range.maxDamage![1]);
+    }
+    expect(maxs.size).toBeGreaterThan(5); // вилка живая, а не одно число
+  });
+  it('⭐ подъём тира сохраняет место в вилке: удачный меч остаётся удачным', () => {
+    const b = baseOf('long-sword');
+    const lo = tiers.find((x) => x.id === b.minTier) ?? tiers[0]!;
+    const item = retierItem(b, { ...craftWeapon(reg, buildFor('long-sword', uniform(1))).item!, rollPreview: undefined, parts: undefined, damageMult: undefined, affixCap: undefined, baseRoll: { minDamage: 0.9, maxDamage: 0.2 } }, lo, { spread });
+    const up = upgradedItem(reg, item)!;
+    expect(up.baseRoll).toEqual({ minDamage: 0.9, maxDamage: 0.2 });
+    const next = tiers.find((x) => x.id === up.tier)!;
+    expect(up.baseStats.filter((m) => m.stat !== 'attackSpeed')).toEqual(
+      scaleBaseStats(b.baseStats, next.statMult, { minDamage: 0.9, maxDamage: 0.2 }, spread).filter((m) => m.stat !== 'attackSpeed'));
+  });
+  it('тир восстанавливается по статам и на КРАЮ вилки (старый сейв без поля tier)', () => {
+    for (const b of reg.get('items.base').filter((x) => x.baseStats.some((m) => ['minDamage', 'armor'].includes(m.stat)))) {
+      for (const t of tiers) {
+        for (const q of [0, 1]) {
+          const baseRoll = fixedBaseRoll(b as never, q);
+          const it = { baseStats: scaleBaseStats(b.baseStats, t.statMult, baseRoll, spread), itemLevel: t.minItemLevel, baseRoll };
+          // На мелких числах (перчатки с бронёй 2) соседние тиры неотличимы округлением — тогда годится любой
+          // тир, дающий ТЕ ЖЕ статы. Главное — край вилки не читается соседним тиром с другими числами.
+          const got = tiers.find((x) => x.id === inferTierId(tiers, b as never, it, spread))!;
+          expect(scaleBaseStats(b.baseStats, got.statMult, baseRoll, spread), `${b.id} ${t.id} q=${q} → ${got.id}`).toEqual(it.baseStats);
+        }
+      }
+    }
+  });
+  it('⭐ доводка поднимает НИЗ вилки, верх не растёт никогда', () => {
+    const input = buildFor('long-sword', uniform(3));
+    const plain = craftWeapon(reg, { ...input, finish: 0 }).ranges!;
+    const levels = reg.get('balance').craft.finish;
+    expect(levels.length).toBeGreaterThan(1);
+    let prevLo = -Infinity;
+    for (let i = 0; i < levels.length; i++) {
+      const r = craftWeapon(reg, { ...input, finish: i }).ranges!;
+      expect(r.maxDamage![1], `ур.${i}`).toBe(plain.maxDamage![1]);
+      expect(r.minDamage![1], `ур.${i}`).toBe(plain.minDamage![1]);
+      expect(r.maxDamage![0], `ур.${i}`).toBeGreaterThanOrEqual(prevLo);
+      prevLo = r.maxDamage![0];
+    }
+    expect(prevLo).toBeGreaterThan(plain.maxDamage![0]);
+  });
+  it('ковка катает бросок в вилке своей доводки; предпросмотр — детерминированная середина СВОЕЙ вилки', () => {
+    const top = reg.get('balance').craft.finish.length - 1;
+    const input = { ...buildFor('long-sword', uniform(3)), finish: top };
+    const pv = craftWeapon(reg, input);
+    const fl = snapFloor(finishOf(reg, top).floor);
+    expect(pv.item!.baseRoll).toEqual(fixedBaseRoll(baseOf('long-sword'), (fl + 1) / 2));
+    expect(craftWeapon(reg, { ...input, finish: 0 }).item!.baseRoll).toBeUndefined(); // без пола — прежние числа
+    expect(pv.item!.rollPreview).toEqual(pv.ranges);
+    // Вещь предпросмотра не несёт чисел, которых ковка не даст: на ВСЕХ базах, ступенях и доводках.
+    for (const b of weapons) {
+      for (let k = 1; k <= 5; k++) {
+        for (let f = 0; f <= top; f++) {
+          const p = craftWeapon(reg, { ...buildFor(b.id, uniform(k)), finish: f });
+          if (!p.ok) continue;
+          for (const st of ['minDamage', 'maxDamage'] as const) {
+            const v = flat(p.item!, st)!, r = p.ranges![st]!;
+            expect(v >= r[0] && v <= r[1], `${b.id} ст.${k} дов.${f} ${st}: ${v} вне ${r}`).toBe(true);
+          }
+        }
+      }
+    }
+    for (let s = 0; s < 100; s++) {
+      const it = craftWeapon(reg, input, { rng: createRng(s) }).item!;
+      expect(it.rollPreview).toBeUndefined();
+      for (const st of ['minDamage', 'maxDamage'] as const) {
+        expect(it.baseRoll![st]!).toBeGreaterThanOrEqual(finishOf(reg, top).floor);
+        expect(flat(it, st)!).toBeGreaterThanOrEqual(pv.ranges![st]![0]);
+        expect(flat(it, st)!).toBeLessThanOrEqual(pv.ranges![st]![1]);
+      }
+    }
+    // Края для окна сравнения — ровно края вилки.
+    const lo = craftWeapon(reg, input, { at: 'lo' }).item!, hi = craftWeapon(reg, input, { at: 'hi' }).item!;
+    expect([flat(lo, 'maxDamage'), flat(hi, 'maxDamage')]).toEqual(pv.ranges!.maxDamage);
+  });
+  it('пол вне сетки сотых не даёт броска ниже показанного края вилки', () => {
+    expect(snapFloor(0.07)).toBe(0.07);
+    expect(snapFloor(0.333)).toBe(0.34);
+    const rng = createRng(11);
+    for (let i = 0; i < 5000; i++) for (const q of Object.values(rollBaseQ(baseOf('long-sword'), rng, 0.333)!)) expect(q!).toBeGreaterThanOrEqual(0.34);
+  });
+  it('строка доводки действует своими числами, где бы ни стояла: «первая = без доводки» — только данные', () => {
+    const rows = reg.get('balance').craft.finish;
+    const cut = new ConfigRegistry();
+    cut.loadAll({ ...defaultConfigData, balance: { ...(defaultConfigData.balance as object), craft: { ...reg.get('balance').craft, finish: rows.slice(1) } } });
+    const input = buildFor('long-sword', uniform(3));
+    const a = craftWeapon(cut, { ...input, finish: 0 }), z = craftWeapon(reg, { ...input, finish: 1 });
+    expect(a.cost!.finish?.floor).toBe(rows[1]!.floor);
+    expect(a.cost!.gold).toBe(z.cost!.gold);
+    expect(a.ranges).toEqual(z.ranges);
+  });
+  it('⚠ скованную не поднимает кузнечный подъём тира: он стёр бы детали, а доводка доехала бы до мифика', () => {
+    const forged = craftWeapon(reg, { ...buildFor('long-sword', uniform(1)), finish: 3 }, { rng: createRng(2) }).item!;
+    expect(upgradedItem(reg, forged)).toBeUndefined();
+    const save = newBotSave(reg, 'warrior');
+    save.inventory.push(forged); save.gold = 1e9;
+    const r = forgeUpgrade(reg, save, forged.uid, {});
+    expect(r.ok).toBe(false);
+    expect(forged.tier).toBe(craftTiers(reg)[0]!.id);
+  });
+  it('доводка стоит сырья ударной части и золота; переплавка её НЕ возвращает', () => {
+    const input = buildFor('long-sword', uniform(3));
+    const top = reg.get('balance').craft.finish.length - 1;
+    const a = craftWeapon(reg, { ...input, finish: 0 }), z = craftWeapon(reg, { ...input, finish: top });
+    const f = finishOf(reg, top);
+    const strikeId = a.cost!.lines.find((l) => l.slot === 'strike')!.id;
+    expect(z.cost!.materials[strikeId]).toBe(a.cost!.materials[strikeId]! + f.strikeUnits);
+    expect(z.cost!.gold).toBe(Math.round(a.cost!.gold * f.goldMult));
+    expect(z.cost!.lines).toEqual(a.cost!.lines);
+    const forged = craftWeapon(reg, { ...input, finish: top }, { rng: createRng(1) }).item!;
+    expect(meltReturn(reg, forged)).toEqual(meltReturn(reg, a.item!));
   });
 });
 

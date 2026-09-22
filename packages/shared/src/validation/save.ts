@@ -38,6 +38,8 @@ const item = z.object({
     }),
   ),
   baseStats: z.array(statModifier),
+  // Доля броска базы (урон/броня в вилке тира): без неё подъём тира вернул бы вещь в центр вилки.
+  baseRoll: z.record(z.string(), z.number().min(0).max(1)).optional(),
   gridW: z.number().int().min(1).default(1),
   gridH: z.number().int().min(1).default(1),
   pos: z.object({ x: z.number(), y: z.number() }).nullish(),

@@ -71,6 +71,15 @@ function fmtMod(m: StatModifier): string {
   return `${sign}${Number.isInteger(abs) ? abs : abs.toFixed(2)} ${label}`;
 }
 
+/**
+ * Вилка одной статы подписью: «(11–14)», а если после множителя концы совпали — одно число. Сравнивать
+ * ПОСЛЕ округления: 5 и 6 при ×0.9 оба дают 5, и «(5–5)» читалось бы как ошибка.
+ */
+export function rangeLabel(r: [number, number], k = 1): string {
+  const a = Math.round(r[0] * k), b = Math.round(r[1] * k);
+  return a === b ? `${a}` : `(${a}–${b})`;
+}
+
 /** Строки эффекта расходника (базовые, без цвета редкости). */
 export function consumableLines(item: Item): string[] {
   const u = item.use;
@@ -148,7 +157,10 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   const hasDmg = item.attackType && minD && maxD;
   // Урон — уже с множителем удара вещи (форма клинка скованного оружия): приписки «+10 %» нет.
   const hm = item.damageMult ?? 1;
-  if (hasDmg) base(`Урон: ${Math.round(minD!.value * hm)}–${Math.round(maxD!.value * hm)} (${R.dmgShort(item.damageType ?? 'physical')})`);
+  // Предпросмотр ковки: чисел ещё нет — вилка «(низ–верх)» по каждой границе, как у D2 на базе.
+  const rp = item.rollPreview;
+  const span = (r: [number, number] | undefined, v: number, k = 1): string => rangeLabel(r ?? [v, v], k);
+  if (hasDmg) base(`Урон: ${span(rp?.minDamage, minD!.value, hm)}–${span(rp?.maxDamage, maxD!.value, hm)} (${R.dmgShort(item.damageType ?? 'physical')})`);
   // Скорость оружия — множителем от эталона, а не строкой «−15 % скор. атаки»: собственные моды
   // скорости вещи и есть этот множитель, отдельными строками их не дублируем.
   if (hasDmg) {
@@ -159,6 +171,7 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   if (sig) base(`✦ ${sig}`);
   for (const m of item.baseStats) {
     if (hasDmg && (m === minD || m === maxD || m.stat === 'attackSpeed')) continue;
+    if (rp?.armor && m.stat === 'armor' && m.kind === 'flat') { base(`+${span(rp.armor, m.value)} ${STAT_LABEL.armor}`); continue; }
     base(fmtMod(m));
   }
   for (const a of item.affixes) {

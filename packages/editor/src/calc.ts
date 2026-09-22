@@ -212,6 +212,7 @@ function gearPanel(app: App, onChange: () => void, reg: ConfigRegistry): HTMLEle
     const item = generateItem(itemsBase, reg.get('affixes'), reg.get('uniques'), {
       dropBias: 1, itemLevel: level, baseId: createBaseId, tiers: reg.get('item-tiers'), rarities, rareNames: reg.get('rare-names'),
       categoryWeights: reg.get('balance').loot.categoryWeights, forceRarity: itemRarity || undefined, maxReqTotal: reg.get('balance').maxTotalRequirement,
+      baseRoll: reg.get('balance').loot.baseRoll,
     }, createRng(rollSeed++));
     if (!addToInventory(save.inventory, item, dims)) { msg.textContent = 'Нет места в инвентаре'; return; }
     onChange();

@@ -768,7 +768,7 @@ export class Room implements Tickable {
     const rollFrom = (pool: typeof itemsBase, count: number): void => {
       for (let i = 0; i < count && pool.length; i++) {
         this.shop.push(generateItem(itemsBase, affixes, uniques,
-          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement }, rng));
+          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement, baseRoll: this.cfg.get('balance').loot.baseRoll }, rng));
       }
     };
     rollFrom(meleeBases, 9); rollFrom(rangedBases, 6); rollFrom(armorBases, 9);

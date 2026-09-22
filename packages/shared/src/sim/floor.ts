@@ -96,7 +96,7 @@ export function simulateFloor(
           // Сложность двигает уровень МОНСТРОВ, а не уровень вещи напрямую (`ilvlBonus` вырезан).
           { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, cl),
             tierLevel: rollTierLevel(Math.max(1, cl), reg.get('balance').loot.tierWindow, rng),
-            tiers: reg.get('item-tiers'), rarities: reg.get('rarities') }, rng);
+            tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), baseRoll: reg.get('balance').loot.baseRoll }, rng);
         drops += 1;
         // Лут сразу оседает: экип лучшего, остальное в золото (мутирует save).
         considerDrop(reg, save, item, policy);
