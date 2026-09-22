@@ -12,6 +12,11 @@ import {
   typesRow, type CraftSlot, type PartSet,
 } from './craftType.js';
 import { generateItem } from './itemgen.js';
+import { describeItem } from './itemDescribe.js';
+import { weaponCard } from './craftCard.js';
+import { makePlayerModel, newBotSave } from '../sim/playerBot.js';
+
+const ITEM_LABELS = { armorClass: (id: string) => id, weight: (id: string) => id, physSub: (id: string) => id, skill: (id: string) => id, dmgShort: (dt: string) => dt };
 import { createRng } from './rng.js';
 import { forgeReroll } from '../economy/townActions.js';
 import type { SaveState } from '../types/save.js';
@@ -303,28 +308,66 @@ function bakeWith(baseId: string, slot: CraftSlot, axisSign: 1 | -1) {
 describe('⭐ замок «одна ось ДПС внутри типа»: вклад выводится из оси, а не пишется руками', () => {
   const DPS_STATS = new Set(['damagePct', 'attackSpeed']);
   it('урон и скорость двигает ТОЛЬКО ударная часть: остальные гнёзда их не трогают вовсе', () => {
-    const dps = (mods: { stat: string; value: number }[]) => mods.filter((m) => DPS_STATS.has(m.stat)).map((m) => `${m.stat}:${m.value}`).sort();
+    const dps = (b: { damageMult: number; mods: { stat: string; value: number }[] }) =>
+      [`dmg:${b.damageMult}`, ...b.mods.filter((m) => DPS_STATS.has(m.stat)).map((m) => `${m.stat}:${m.value}`)].sort();
     for (const b of weapons) {
-      const ref = dps(bakeParts(reg, b, 3, partsSet(buildFor(b.id, uniform(3)))).mods);
+      const ref = dps(bakeParts(reg, b, 3, partsSet(buildFor(b.id, uniform(3)))));
       for (const slot of CRAFT_SLOT_LIST) for (const sign of [1, -1] as const) {
         const { bake } = bakeWith(b.id, slot, sign);
-        if (slot !== 'strike') expect(dps(bake.mods), `${b.id} ${slot} ${sign}`).toEqual(ref);
+        if (slot !== 'strike') expect(dps(bake), `${b.id} ${slot} ${sign}`).toEqual(ref);
       }
     }
   });
-  it('урон и скорость ударной части зеркальны: +урон всегда платит скоростью', () => {
+  it('урон и скорость ударной части зеркальны: тяжёлая форма — урон больше, скорость меньше', () => {
     const { bake: heavy } = bakeWith('long-sword', 'strike', 1);
-    expect(heavy.mods.find((m) => m.stat === 'damagePct')!.value).toBeGreaterThan(0);
+    expect(heavy.damageMult).toBeGreaterThan(1);
     expect(heavy.mods.find((m) => m.stat === 'attackSpeed')!.value).toBeLessThan(0);
+    expect(heavy.mods.some((m) => m.stat === 'damagePct')).toBe(false); // урон — в цифрах, не строкой «+10 %»
   });
-  it('разброс ДПС по оси ударной части ≤ 8 % во всём объявленном конверте (§4)', () => {
+  it('⭐ форма клинка — множитель удара вещи и плоская часть скорости оружия; в подсказке без приписок', () => {
+    const light = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xi' })).item!;
+    const plain = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xii' })).item!;
+    const f = (it: typeof light, st: string) => it.baseStats.find((m) => m.stat === st && m.kind === 'flat')?.value ?? 0;
     const k = reg.get('balance').craft.strike;
+    expect(light.damageMult).toBeCloseTo(1 - 0.6 * k.damagePct, 6);
+    expect(plain.damageMult).toBeUndefined();
+    expect(f(light, 'maxDamage')).toBe(f(plain, 'maxDamage')); // цифры базы в статах не трогаем
+    expect(f(light, 'attackSpeed')).toBeCloseTo(0.6 * k.attackSpeed, 6);
+    const lines = describeItem(light, ITEM_LABELS).map((l) => l.text);
+    const shown = lines.find((t) => t.startsWith('Урон:'))!;
+    expect(shown).toContain(`${Math.round(f(plain, 'minDamage') * light.damageMult!)}–${Math.round(f(plain, 'maxDamage') * light.damageMult!)}`);
+    expect(lines.some((t) => t.startsWith('Скорость: ×1.05'))).toBe(true);
+    expect(lines.some((t) => /Скор\. атаки|урон/i.test(t) && !t.startsWith('Урон:'))).toBe(false);
+  });
+  it('⭐ соотношение ДПС форм одинаково у любого героя: атрибуты и бонусы форму не размывают', () => {
+    const heavy = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-x' })).item!;
+    const light = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xix' })).item!;
+    const ratios: number[] = [];
+    for (const [cls, lvl, pts] of [['warrior', 1, 0], ['warrior', 40, 120], ['warrior', 80, 300]] as const) {
+      const save = newBotSave(reg, cls);
+      save.level = lvl;
+      const a = save.attributes as unknown as Record<string, number>;
+      a.strength = (a.strength ?? 0) + pts; a.dexterity = (a.dexterity ?? 0) + pts / 2;
+      const dps = (w: typeof heavy): number => {
+        const s = structuredClone(save); s.equipment.weapon = w;
+        const m = makePlayerModel(reg, s);
+        return weaponCard(reg, { derived: m.derived, attrs: m.attrs, weapon: w, scaling: m.scaling, weights: m.weights, attackInterval: m.attackInterval }).dps;
+      };
+      ratios.push(dps(heavy) / dps(light));
+    }
+    const k = reg.get('balance').craft.strike;
+    const expected = ((1 + k.damagePct) * (1 - k.attackSpeed)) / ((1 - k.damagePct) * (1 + k.attackSpeed));
+    for (const r of ratios) expect(r).toBeCloseTo(expected, 2);
+  });
+  it('⭐ ДПС формы не зависит ни от базы, ни от билда: (1+0.1a)(1−0.08a), разброс ≤ 5 % везде', () => {
+    const k = reg.get('balance').craft.strike;
+    // Бой: урон оружия × (1 + D) × (1 + flat) × (1 + S). Форма множит урон и flat — D и S сокращаются.
     let worst = 0;
-    for (let D = 0.3; D <= 1.5 + 1e-9; D += 0.1) for (let S = 0.05; S <= 0.6 + 1e-9; S += 0.05) {
-      const dps = [-1, -0.5, 0, 0.5, 1].map((a) => (1 + D + k.damagePct * a) * (1 + S - k.attackSpeed * a));
+    for (let D = 0; D <= 2 + 1e-9; D += 0.25) for (let S = -0.3; S <= 1 + 1e-9; S += 0.1) {
+      const dps = [-1, -0.5, 0, 0.5, 1].map((a) => (1 + k.damagePct * a) * (1 + D) * (1 - k.attackSpeed * a) * (1 + S));
       worst = Math.max(worst, Math.max(...dps) / Math.min(...dps) - 1);
     }
-    expect(worst).toBeLessThanOrEqual(0.08);
+    expect(worst).toBeLessThanOrEqual(0.05);
   });
   it('вес вещи = вес базы: деталь не пишет в вес, урон и требования поверх типа', () => {
     for (const b of weapons) {
@@ -408,6 +451,7 @@ describe('ковка: каркас — существующая база (пра
       }, createRng(1));
       expect(found.tier, b.id).toBe(tier.id);
       const flat = (it: typeof found, stat: string) => it.baseStats.find((m) => m.stat === stat && m.kind === 'flat')?.value;
+      // Цифры урона — ровно найденной вещи; форма клинка живёт отдельным множителем удара.
       expect(flat(res.item!, 'minDamage'), b.id).toBe(flat(found, 'minDamage'));
       expect(flat(res.item!, 'maxDamage'), b.id).toBe(flat(found, 'maxDamage'));
       expect(res.item!.requirements, b.id).toEqual(found.requirements);

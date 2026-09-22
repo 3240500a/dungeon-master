@@ -123,7 +123,8 @@ export function buildAttackPacket(
   const min = weapon ? Math.max(1, flatOf(weapon, 'minDamage')) : 1;
   const max = weapon ? Math.max(min, flatOf(weapon, 'maxDamage')) : 2;
   const attrBonus = attrScaleBonus(attrs, weapon, at, scaling, weights);
-  packet[dtype] += rng.float(min, max) + attrBonus;
+  // Множитель удара вещи (форма клинка скованного оружия) — на весь удар, вместе с атрибутами.
+  packet[dtype] += (rng.float(min, max) + attrBonus) * (weapon?.damageMult ?? 1);
 
   packet.fire += d.addFire;
   packet.cold += d.addCold;
@@ -153,8 +154,9 @@ export function attackByType(
     lightning: { min: 0, max: 0 },
     poison: { min: 0, max: 0 },
   };
-  out[dtype].min += min + attrBonus;
-  out[dtype].max += max + attrBonus;
+  const hm = weapon?.damageMult ?? 1;
+  out[dtype].min += (min + attrBonus) * hm;
+  out[dtype].max += (max + attrBonus) * hm;
   out.fire.min += d.addFire; out.fire.max += d.addFire;
   out.cold.min += d.addCold; out.cold.max += d.addCold;
   out.lightning.min += d.addLightning; out.lightning.max += d.addLightning;
@@ -181,7 +183,7 @@ export function estimateAttack(
   const attrBonus = attrScaleBonus(attrs, weapon, at, scaling, weights);
   // Каждый тип — со своим множителем (damagePct + свой *Pct), как в реальном пакете.
   return (
-    ((min + max) / 2 + attrBonus) * damageMultOf(d, dtype) +
+    ((min + max) / 2 + attrBonus) * (weapon?.damageMult ?? 1) * damageMultOf(d, dtype) +
     d.addFire * damageMultOf(d, 'fire') +
     d.addCold * damageMultOf(d, 'cold') +
     d.addLightning * damageMultOf(d, 'lightning') +

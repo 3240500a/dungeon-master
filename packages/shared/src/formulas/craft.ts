@@ -284,7 +284,12 @@ export function resolveParts(
 // ── Запекание деталей ───────────────────────────────────────────────────────────────────────────
 
 export interface CraftBake {
-  /** Что добавить в `baseStats` вещи. */
+  /**
+   * Множитель УДАРА от ударной части: ложится в `Item.damageMult`, бой множит на него весь удар
+   * (оружие + атрибуты), подсказка — цифры урона. Не строка «+10 % урона» и не сложение с бонусами героя.
+   */
+  damageMult: number;
+  /** Что добавить в `baseStats` вещи (скорость ударной части — плоской частью скорости оружия). */
   mods: StatModifier[];
   /** Итоговые множители дальности и дуги (только ближний бой). */
   reachMult?: number;
@@ -312,10 +317,13 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
     if (v !== 0) mods.push({ stat, kind, value: v } as StatModifier);
   };
 
-  // 1 · Ударная часть — единственная ось ДПС внутри типа, зеркальная.
+  // 1 · Ударная часть — единственная ось ДПС внутри типа, зеркальная, и она МНОЖИТ само оружие:
+  // урон — в цифрах урона вещи, скорость — плоской частью скорости оружия, которую бой умножает на
+  // все проценты скорости (`(1 + flat) × (1 + increased)`). Тогда ДПС формы = (1+0.1a)(1−0.08a) — один
+  // и тот же у любой базы и любого билда (разброс 4.1 %), а не зависящий от бонусов героя.
   const a1 = parts.strike.axis;
-  push('damagePct', 'flat', k.strike.damagePct * a1);
-  push('attackSpeed', 'increased', -k.strike.attackSpeed * a1);
+  const damageMult = r4(1 + k.strike.damagePct * a1);
+  push('attackSpeed', 'flat', -k.strike.attackSpeed * a1);
 
   // 2 · Держак — площадь-нейтрально: дальность K^a, дуга K^(−2a), `дуга × дальность²` постоянна.
   let reachMult: number | undefined;
@@ -349,7 +357,7 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
   // 3 · Обвязка — форма ёмкости. Число слотов даёт ступень.
   const affixCap = formOf(capacityOf(reg, t), parts.bind.axis);
 
-  return { mods, reachMult, arcMult, affixCap, statusKind, notes };
+  return { damageMult, mods, reachMult, arcMult, affixCap, statusKind, notes };
 }
 
 // ── Цена ────────────────────────────────────────────────────────────────────────────────────────
@@ -474,6 +482,7 @@ export function craftWeapon(
   const item = buildCraftShell(base, tier, reg.get('balance').maxTotalRequirement);
   item.name = craftedName(tier, type);
   item.baseStats = [...item.baseStats, ...bake.mods]; // новый массив: статы базы в конфиге не трогаем
+  if (bake.damageMult !== 1) item.damageMult = bake.damageMult;
   if (bake.reachMult !== undefined) item.reachMult = bake.reachMult;
   if (bake.arcMult !== undefined) item.arcMult = bake.arcMult;
   item.affixCap = bake.affixCap;

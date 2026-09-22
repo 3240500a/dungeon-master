@@ -98,6 +98,23 @@ function signatureLine(item: Item, R: ItemLabels): string | null {
 
 export interface ItemLine { text: string; affix: boolean }
 
+/**
+ * ЭТАЛОН СКОРОСТИ, как «скорость оружия» в D2: ×1.00 = базовая скорость движка — удар в секунду
+ * (`stats.ts`: attackSpeed 1), то есть 60 ударов в минуту без бонусов героя.
+ */
+export const BASE_ATTACKS_PER_MIN = 60;
+
+/**
+ * СОБСТВЕННАЯ СКОРОСТЬ ОРУЖИЯ — множитель к эталону из модов самой вещи (у базы «−15 %», у скованной
+ * ещё и вклад клинка). Тем же правилом, что считает бой: `(1 + flat) × (1 + increased)`. Аффиксы и
+ * бонусы героя сюда не входят — это свойство оружия, а не билда.
+ */
+export function weaponSpeedOf(item: Pick<Item, 'baseStats'>): number {
+  let flat = 0, inc = 0;
+  for (const m of item.baseStats) if (m.stat === 'attackSpeed') { if (m.kind === 'flat') flat += m.value; else inc += m.value; }
+  return (1 + flat) * (1 + inc);
+}
+
 /** Описание предмета строками с пометкой affix (база=false → белый, аффикс=true → цвет редкости). */
 export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   if (item.kind === 'consumable') return consumableLines(item).map((text) => ({ text, affix: false }));
@@ -129,10 +146,21 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   const minD = item.baseStats.find((m) => m.stat === 'minDamage' && m.kind === 'flat');
   const maxD = item.baseStats.find((m) => m.stat === 'maxDamage' && m.kind === 'flat');
   const hasDmg = item.attackType && minD && maxD;
-  if (hasDmg) base(`Урон: ${minD!.value}–${maxD!.value} (${R.dmgShort(item.damageType ?? 'physical')})`);
+  // Урон — уже с множителем удара вещи (форма клинка скованного оружия): приписки «+10 %» нет.
+  const hm = item.damageMult ?? 1;
+  if (hasDmg) base(`Урон: ${Math.round(minD!.value * hm)}–${Math.round(maxD!.value * hm)} (${R.dmgShort(item.damageType ?? 'physical')})`);
+  // Скорость оружия — множителем от эталона, а не строкой «−15 % скор. атаки»: собственные моды
+  // скорости вещи и есть этот множитель, отдельными строками их не дублируем.
+  if (hasDmg) {
+    const w = weaponSpeedOf(item);
+    base(`Скорость: ×${w.toFixed(2)} · ${Math.round(w * BASE_ATTACKS_PER_MIN)} уд/мин`);
+  }
   const sig = signatureLine(item, R);
   if (sig) base(`✦ ${sig}`);
-  for (const m of item.baseStats) { if (hasDmg && (m === minD || m === maxD)) continue; base(fmtMod(m)); }
+  for (const m of item.baseStats) {
+    if (hasDmg && (m === minD || m === maxD || m.stat === 'attackSpeed')) continue;
+    base(fmtMod(m));
+  }
   for (const a of item.affixes) {
     if (a.modifier) aff(fmtMod(a.modifier));
     else if (a.proc) aff(`${Math.round(a.proc.chance * 100)}% скаст «${R.skill(a.proc.skillId)}» (ур.${a.proc.level}) ${a.proc.trigger === 'struck' ? 'при получении удара' : 'при ударе'}`);

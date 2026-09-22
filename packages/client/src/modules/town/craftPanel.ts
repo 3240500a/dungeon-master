@@ -113,7 +113,7 @@ export function cardWith(reg: ConfigRegistry, save: SaveState, weapon: Item | un
 /** Что вариант даёт в своём гнезде — числом, для подписи под выбором. */
 function partEffect(reg: ConfigRegistry, slot: CraftSlot, axis: number, weaponClass: string): string {
   const k = reg.get('balance').craft;
-  if (slot === 'strike') return `урон ${signed(k.strike.damagePct * axis * 100, ' п.п.')} · скорость ${signed(-k.strike.attackSpeed * axis * 100, ' %')}`;
+  if (slot === 'strike') return `урон ×${fx(1 + k.strike.damagePct * axis, 2)} · скорость ×${fx(1 - k.strike.attackSpeed * axis, 2)}`;
   if (slot === 'grip') {
     const r = k.gripK ** axis, a = k.gripK ** (-2 * axis);
     return ['bow', 'crossbow', 'wand', 'staff'].includes(weaponClass) ? 'только вид (§5.2)' : `дальность ×${fx(r, 2)} · дуга ×${fx(a, 2)}`;
