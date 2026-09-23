@@ -258,14 +258,14 @@ describe('⭐ классификатор: тип из ключевой дета�
       expect(y.baseId, b.id).toBe(x.baseId);
     }
   });
-  it('каролингский меч узнаётся по деталям, формула — в духе Элмсли', () => {
+  it('ранний меч узнаётся по деталям, формула — по своду', () => {
     const input = buildFor('long-sword', uniform(2), { strike: 'sw-a-x', grip: 'sw-gr-one', bind: 'sw-gd-short', head: 'sw-pm-lobed' });
     const t = resolveType(reg, 'sword', 1, partsSet(input));
-    expect(t.name).toBe('Каролингский меч');
+    expect(t.name).toBe('Ранний меч');
     expect(t.typeId).toBe('sw-carolingian');
-    expect(t.formula).toBe('Окшотт: клинок X · перекрестье 3 · навершие трёхчастное');
+    expect(t.formula).toBe('Свод: клинок X · перекрестье 3 · навершие трёхчастное');
     const r = craftWeapon(reg, input);
-    expect(r.item!.name).toBe('Крепкий каролингский меч');
+    expect(r.item!.name).toBe('Крепкий ранний меч');
     expect(r.item!.typeId).toBe('sw-carolingian');
   });
   it('⭐ вольная сборка никогда не зовётся именем правила, которого не выполнила', () => {
@@ -285,12 +285,12 @@ describe('⭐ классификатор: тип из ключевой дета�
     const input = buildFor('long-sword', uniform(3), { strike: 'sw-a-xi', grip: 'sw-gr-one', bind: 'sw-gd-long', head: 'sw-pm-pear' });
     const t = resolveType(reg, 'sword', 1, partsSet(input));
     expect(t.fallback).toBe(true);
-    expect(t.name).toBe('Узкий меч позднего образца');
+    expect(t.name).toBe('Узкий меч имперской эпохи');
     const spear = buildFor('pike', uniform(3), { strike: 'sp-awl', grip: 'sp-gr2-heel' });
     expect(resolveType(reg, 'spear', 2, partsSet(spear)).name).toBe('Шиловидная пика');
     expect(agree('поздний', 'f')).toBe('поздняя');
     expect(agree('широкий', 'n')).toBe('широкое');
-    expect(agree('каролингский', 'f')).toBe('каролингская');
+    expect(agree('ранний', 'f')).toBe('ранняя');
     expect(agree('большой', 'p')).toBe('большие');
     expect(agree('с долом', 'f')).toBe('с долом');
   });
@@ -427,7 +427,7 @@ describe('ёмкость аффиксов: потолок выведен из д
       }
     }
     const caro = craftWeapon(reg, buildFor('long-sword', uniform(2), { strike: 'sw-a-x', grip: 'sw-gr-one', bind: 'sw-gd-short', head: 'sw-pm-lobed' })).item!;
-    expect(enchantItem(reg, caro, 'magic', createRng(7)).name.toLowerCase()).toContain('каролингск');
+    expect(enchantItem(reg, caro, 'magic', createRng(7)).name.toLowerCase()).toContain('ранний меч');
   });
   it('⚠ перекатка у кузнеца не сносит купленную форму', () => {
     const res = craftWeapon(reg, buildFor('long-sword', { strike: 4, grip: 4, bind: 4, head: 3 }));

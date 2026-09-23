@@ -227,8 +227,8 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
       if (type.subtitle) head.append(mk('div', `font-size:12px;color:${COLORS.text};margin-top:2px`, type.subtitle));
       if (type.formula) head.append(mk('div', `font-size:11.5px;color:${COLORS.info};margin-top:4px`, type.formula));
       head.append(mk('div', `font-size:11.5px;color:${COLORS.dim};margin-top:2px`, `механика: ${baseLine(reg, type.baseId)}`));
-      const src = type.fantasy ? 'фэнтези — без исторической подписи' : type.source;
-      if (src) head.append(mk('div', `font-size:10.5px;color:${COLORS.dim};margin-top:2px;font-style:italic`, src));
+      // ⚠ `source` игроку НЕ печатаем: там реальная типология («Окшотт XV»), а мир фэнтезийный.
+      // Справка нужна нам и моделлеру — её видно в редакторе (каталог ковки).
     }
     if (!pv.ok && pv.reason) head.append(mk('div', `font-size:12px;color:${COLORS.bad};margin-top:6px`, `⚠ ${pv.reason}`));
     root.append(head);

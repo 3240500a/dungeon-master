@@ -237,7 +237,7 @@ export interface Item extends WeaponSignature {
   rollPreview?: Partial<Record<RolledStat, [number, number]>>;
   /**
    * ИСТОРИЧЕСКИЙ ТИП скованной вещи — id правила из `weapon-types.names` на момент ковки
-   * («Каролингский меч»). Нет поля — имя собрано фолбэком или вещь найдена. Статов не несёт.
+   * («Ранний меч»). Нет поля — имя собрано фолбэком или вещь найдена. Статов не несёт.
    */
   typeId?: string;
   /**
