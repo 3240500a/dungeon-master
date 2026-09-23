@@ -31,6 +31,107 @@
     ],
     "names": [
       {
+        "id": "sw-seax",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "arch-backed"
+          ]
+        },
+        "name": "Сакс",
+        "gender": "m",
+        "subtitle": "однолезвийный, с прямой толстой спинкой",
+        "source": "Скрамасакс"
+      },
+      {
+        "id": "sw-spatha",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "arch-watered",
+            "arch-blunt"
+          ]
+        },
+        "name": "Спата",
+        "gender": "f",
+        "subtitle": "длинный прямой клинок конницы: рубит с седла",
+        "source": "Римская спата, Miks 2007"
+      },
+      {
+        "id": "sw-xiphos",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "arch-leaf"
+          ],
+          "bind.guard": [
+            "short-cross",
+            "shield"
+          ]
+        },
+        "name": "Ксифос",
+        "gender": "m",
+        "subtitle": "литой лист с высоким ребром на короткой крестовине",
+        "source": "Греческий ксифос"
+      },
+      {
+        "id": "sw-akinakes",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "arch-stub"
+          ]
+        },
+        "name": "Акинак",
+        "gender": "m",
+        "subtitle": "короткий поясной клинок всадника",
+        "source": "Скифо-персидский акинак"
+      },
+      {
+        "id": "sw-kopis",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "arch-falling"
+          ]
+        },
+        "name": "Копис",
+        "gender": "m",
+        "subtitle": "полотно клонится вперёд: рубит весом, а не кистью",
+        "source": "Греческий копис, иберийская фальката"
+      },
+      {
+        "id": "sw-khopesh",
+        "enabled": true,
+        "when": {
+          "hands": [
+            "1"
+          ],
+          "strike.type": [
+            "arch-sickle"
+          ]
+        },
+        "name": "Хопеш",
+        "gender": "m",
+        "subtitle": "серп с наружной заточкой: заходит за щит и тянет на себя",
+        "source": "Египетский хопеш, Новое царство"
+      },
+      {
         "id": "sw-zweihander",
         "enabled": true,
         "when": {

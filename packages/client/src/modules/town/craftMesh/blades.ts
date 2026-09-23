@@ -366,6 +366,68 @@ function swordBlade(ctx: MeshCtx): BladeDef {
     case 'mainz': d = { len: 57, w: taper(2.85 * A, 2.3 * A, 0.64, -0.3), th: th(0.72, 0.3), shape: () => LENS, tipFrom: 0.64, tipN: 8 }; break;
     case 'fulham': d = { len: 54, w: taper(2.6 * A, 2.45 * A, 0.8, 0), th: th(0.7, 0.32), shape: () => LENS, tipFrom: 0.8 }; break;
     case 'pompeii': d = { len: 50, w: taper(2.45 * A, 2.45 * A, 0.89, 0.25), th: th(0.7, 0.34), shape: () => LENS, tipFrom: 0.89 }; break;
+    // ─ архаичные: бронза и раннее железо ─
+    case 'arch-leaf': {
+      // Ксифос: полотно раздаётся к середине и оттуда сходится в остриё — вес уходит туда, где
+      // клинок встречает цель. Тонкое бронзовое полотно держит от складывания высокий гребень.
+      const w0 = 1.95 * A, wm = 3.4 * A, tm = 0.5;
+      d = { len: 60, th: th(0.8, 0.34), shape: () => DIAM, n: 20, tipFrom: tm, tipN: 10, breaks: [tm],
+        w: (t) => (t <= tm ? lerp(w0, wm, smooth(t / tm)) : wm * pw(1 - (t - tm) / (1 - tm), 0.75)) };
+      break;
+    }
+    case 'arch-cast': {
+      // Науэ II отлит заодно с рукоятью: сразу над пятой остаётся «талия» — туда металл в форму
+      // приходит последним. Чечевичное сечение и лишняя толщина — запас против излома по литью.
+      const tw = 0.16, wm = 3.1 * A, tm = 0.6;
+      d = { len: 62, th: th(0.95, 0.42), shape: () => LENS, n: 22, tipFrom: tm, tipN: 8, breaks: [tw],
+        w: (t) => {
+          if (t < tw) return lerp(3.0 * A, 1.85 * A, smooth(t / tw));
+          if (t < tm) return lerp(1.85 * A, wm, smooth((t - tw) / (tm - tw)));
+          return wm * pw(1 - (t - tm) / (1 - tm), 0.9);
+        } };
+      break;
+    }
+    case 'arch-needle': {
+      // Рапира Сандарса: резать ей нечем — кромки идут почти параллельно, весь смысл в уколе.
+      // Потому гребень тянется во всю длину и толщина близка к полуширине: иначе сложится о кость.
+      d = { len: 68, w: taper(1.3 * A, 1.1 * A, 0.9, 0.15), th: th(1.2, 0.5), shape: () => DIAM,
+        lay: { lean: true }, n: 20, tipFrom: 0.9, tipN: 8 };
+      break;
+    }
+    case 'arch-tongue': {
+      // «Язык карпа»: рубит широким полотном, а колет узким языком, и переход между ними — СТУПЕНЬ.
+      // Ступень короткая (2% длины): растяни её — и вместо уступа читается обычное сужение.
+      const st = 0.72, sw = 0.02, wn = 1.05 * A;
+      d = { len: 64, th: th(0.68, 0.36), n: 22, tipFrom: st + sw, tipN: 7, breaks: [st, st + sw],
+        w: (t) => {
+          if (t < st) return lerp(3.15 * A, 2.95 * A, t / st);
+          if (t < st + sw) return lerp(2.95 * A, wn, (t - st) / sw);
+          const u = (t - st - sw) / (1 - st - sw);
+          return wn * (1 - u) * (1 + 0.3 * u);
+        } };
+      break;
+    }
+    case 'arch-stub': {
+      // Акинак: самое короткое полотно, какое ещё зовут мечом. Кромки параллельны до последней
+      // пятой части и там ломаются в прямое остриё — плавного схода нет, отсюда излом на 0.8.
+      d = { len: 45, w: taper(1.95 * A, 1.8 * A, 0.8, 0.05), th: th(0.72, 0.42), shape: () => LENS,
+        n: 16, tipFrom: 0.8, tipN: 5, breaks: [0.8] };
+      break;
+    }
+    case 'arch-blunt': {
+      // Латен III: острия нет вовсе — конец срезан и скруглён, колоть таким нечем. Широкий дол
+      // почти во всю длину снимает вес с полотна, которому остаётся только рубить.
+      d = { len: 70, w: taper(2.95 * A, 2.8 * A, 0.95, 'round'), th: th(0.55, 0.38),
+        fuller: fullerFn(0.88, 0.9 * A, 0.7 * A, 0.17), tipFrom: 0.95, tipN: 8 };
+      break;
+    }
+    case 'arch-watered': {
+      // Спата — конная мера: длинное ровное полотно и скруглённый конец. Дол широкий, но мелкий:
+      // сварной узор живёт в самой поверхности, глубокая канавка срезала бы его вместе с металлом.
+      d = { len: 69, w: taper(2.45 * A, 2.25 * A, 0.86, 'round'), th: th(0.5, 0.32),
+        fuller: fullerFn(0.74, 1.05 * A, 0.9 * A, 0.1), tipFrom: 0.86, tipN: 7 };
+      break;
+    }
     // ─ рыцарские ─
     case 'X': d = { len: 80, w: taper(2.9 * A, 2.45 * A, 0.9, 0.9), th: th(0.5, 0.3), fuller: fullerFn(0.86, 0.85 * A, 0.62 * A, 0.18), tipFrom: 0.9 }; break;
     case 'XI': d = { len: 85, w: taper(2.1 * A, 1.75 * A, 0.86, 0.6), th: th(0.5, 0.3), fuller: fullerFn(0.82, 0.32, 0.26, 0.13), tipFrom: 0.86 }; break;
@@ -430,6 +492,59 @@ function swordBlade(ctx: MeshCtx): BladeDef {
         const u = (t - 0.85) / 0.15;
         const xL = spine + 0.55 * A * u * u;
         return singleSec(xL, xL + w1 * (1 - u) * (1 + 0.6 * u), lerp(0.75, 0.35, t) * At, f.g, f.gd);
+      },
+    };
+  }
+
+  // Архаичные однолезвийные — тем же приёмом, что фальшион и сабля: кромка в +X, спинка в −X.
+  if (type === 'arch-sickle') {
+    // Хопеш: у рукояти прямая незаточенная пята, дальше полотно валится серпом. Заточен он по
+    // ВНЕШНЕЙ стороне изгиба, поэтому ось уходит в −X: выпуклой выходит кромка, а не спинка.
+    const tr = 0.2, hook = 10.5 * A, wm = 3.6 * A;
+    return {
+      len: 55, lay: { center: false, side: false }, n: 26, tipFrom: 0.86, tipN: 7, breaks: [tr - 0.015, tr],
+      prof: (t) => {
+        const tk = lerp(0.85, 0.5, t) * At;
+        // Пята — симметричный тупой брусок: за неё берутся второй рукой, затачивать её нечем.
+        if (t < tr - 0.015) return { xC: 0, xR: 0.95 * A, xL: -0.95 * A, th: tk * 1.2, shR: BLUNT.sh, zsR: BLUNT.zs, shL: BLUNT.sh, zsL: BLUNT.zs };
+        const u = clamp((t - tr) / (1 - tr), 0, 1);
+        const back = -1.2 * A - hook * pw(u, 1.7);
+        const w = lerp(2.1 * A, wm, smooth(u));
+        if (t <= 0.86) return singleSec(back, back + w, tk);
+        const v = (t - 0.86) / 0.14;
+        return singleSec(back + 0.45 * w * v * v, back + w * (1 - v) * (1 + 0.5 * v), tk);
+      },
+    };
+  }
+  if (type === 'arch-falling') {
+    // Копис: полотно валится вперёд, но заточка ложится на ВНУТРЕННЮЮ, вогнутую сторону — потому
+    // ось уходит в +X, к кромке. У рукояти полотно поджато в «горло», к концу распирает: сам падает.
+    const drop = 6.2 * A, wm = 4.25 * A;
+    return {
+      len: 58, lay: { center: true, side: false }, n: 26, tipFrom: 0.84, tipN: 7,
+      prof: (t) => {
+        const back = -1.45 * A + drop * pw(t, 1.8);
+        const f = fullerFn(0.72, 0.24, 0.2, 0.11)(t);
+        const tk = lerp(0.9, 0.46, t) * At;
+        const w = t < 0.3 ? lerp(2.6 * A, 2.2 * A, t / 0.3) : lerp(2.2 * A, wm, smooth((t - 0.3) / 0.54));
+        if (t <= 0.84) return singleSec(back, back + w, tk, f.g, f.gd);
+        const v = (t - 0.84) / 0.16;
+        return singleSec(back + 0.5 * A * v * v, back + wm * (1 - v) * (1 + 0.55 * v), tk, f.g, f.gd);
+      },
+    };
+  }
+  if (type === 'arch-backed') {
+    // Сакс: спинка прямая и толстая во всю длину, заточка одна. Остриё сидит У СПИНКИ — к концу
+    // поднимается кромка, а спинка не опускается: на такой обух кузнецу хватает и полосы железа.
+    const back = -1.6 * A, edge = 2.6 * A, tb = 0.64;
+    return {
+      len: 52, lay: { center: true, side: false }, n: 18, tipFrom: tb, tipN: 8, breaks: [tb],
+      prof: (t) => {
+        const f = fullerFn(0.58, 0.22, 0.18, 0.1)(t);
+        const tk = lerp(1.0, 0.6, t) * At;
+        if (t < tb) return singleSec(back, lerp(edge, edge * 0.94, t / tb), tk, f.g, f.gd);
+        const u = (t - tb) / (1 - tb);
+        return singleSec(back, lerp(edge * 0.94, back + 0.3 * A, pw(u, 1.7)), tk, f.g, f.gd);
       },
     };
   }
