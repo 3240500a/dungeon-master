@@ -42,7 +42,9 @@ function cast(r: ConfigRegistry, node: string | null, secs: number, seed = 7, st
   const s = new GameSession(r, seed, 'normal');
   const save = newBotSave(r, 'warrior');
   if (node) save.skills[node] = 1;
-  save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'short-sword', r.get('item-tiers'))!;
+  // ⚠ Длинный меч — единственная мечевая база БЕЗ своей скорости (архаичный +12 %, короткий +6 %,
+  // полуторный −5 %, двуручный −15 %): на нём шаг серии считается от чистой 1 атаки/с.
+  save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'long-sword', r.get('item-tiers'))!;
   const p = s.addPlayer('p1', save);
   p.stamina = 1e6; p.mana = 1e6;                               // ресурс не должен мешать мерить тайминг
   const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'),
@@ -113,7 +115,7 @@ describe('серия ударов скилла (`hits`)', () => {
     const s = new GameSession(r, 7, 'normal');
     const save = newBotSave(r, 'warrior');
     save.skills[NODE] = 1;
-    save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'short-sword', r.get('item-tiers'))!;
+    save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'long-sword', r.get('item-tiers'))!;
     const p = s.addPlayer('p1', save);
     s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [] });
     p.stamina = 20;
@@ -130,7 +132,7 @@ describe('серия ударов скилла (`hits`)', () => {
     const s = new GameSession(r, 7, 'normal');
     const save = newBotSave(r, 'warrior');
     save.skills[NODE] = 1;
-    save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'short-sword', r.get('item-tiers'))!;
+    save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'long-sword', r.get('item-tiers'))!;
     const p = s.addPlayer('p1', save);
     p.stamina = 1e6;
     s.enterFloor(1, { grid: openField(20, 12), spawn: cellToWorld(6, 6), monsters: [] });
@@ -153,7 +155,7 @@ describe('серия ударов скилла (`hits`)', () => {
     const save = newBotSave(r, 'warrior');
     save.skills[NODE] = 20; save.skills[donor.id] = 1;         // ранг 20 = все гнёзда открыты
     save.sockets = { [NODE]: ['ins-cold-wave'] };
-    save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'short-sword', r.get('item-tiers'))!;
+    save.equipment.weapon = itemFromBaseId(r.get('items.base'), 'long-sword', r.get('item-tiers'))!;
     const p = s.addPlayer('p1', save);
     const def = generateMonster(r.get('monsters'), r.get('monster-gear'), r.get('monster-affixes'),
       { baseId: r.get('biomes')[0]!.monsterPool[0]!, depth: 1 }, createRng(4));

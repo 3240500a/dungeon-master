@@ -6,22 +6,27 @@
     "enabled": true,
     "gender": "m",
     "minTier": "t0",
-    "maxTier": "t3",
+    "maxTier": "t6",
     "baseStats": [
       {
         "stat": "minDamage",
         "kind": "flat",
-        "value": 5
+        "value": 6
       },
       {
         "stat": "maxDamage",
         "kind": "flat",
-        "value": 9
+        "value": 11
       },
       {
         "stat": "blockChance",
         "kind": "flat",
         "value": 0.08
+      },
+      {
+        "stat": "attackSpeed",
+        "kind": "increased",
+        "value": 0.06
       },
       {
         "stat": "accuracy",
@@ -57,27 +62,27 @@
       {
         "stat": "minDamage",
         "kind": "flat",
-        "value": 6
+        "value": 5
       },
       {
         "stat": "maxDamage",
         "kind": "flat",
-        "value": 10
+        "value": 9
       },
       {
         "stat": "attackSpeed",
         "kind": "increased",
-        "value": 0.1
+        "value": 0.12
       },
       {
         "stat": "accuracy",
         "kind": "flat",
-        "value": 10
+        "value": 12
       }
     ],
     "requirements": {
-      "strength": 10,
-      "dexterity": 15
+      "strength": 8,
+      "dexterity": 16
     },
     "gridW": 1,
     "gridH": 2,
@@ -140,7 +145,7 @@
   {
     "kind": "weapon",
     "id": "greatsword",
-    "name": "Двуручный меч",
+    "name": "Полуторный меч",
     "enabled": true,
     "gender": "m",
     "minTier": "t0",
@@ -149,26 +154,32 @@
       {
         "stat": "minDamage",
         "kind": "flat",
-        "value": 11
+        "value": 9
       },
       {
         "stat": "maxDamage",
         "kind": "flat",
-        "value": 19
+        "value": 16
       },
       {
         "stat": "blockChance",
         "kind": "flat",
-        "value": 0.06
+        "value": 0.05
+      },
+      {
+        "stat": "attackSpeed",
+        "kind": "increased",
+        "value": -0.05
       },
       {
         "stat": "accuracy",
         "kind": "flat",
-        "value": 20
+        "value": 16
       }
     ],
     "requirements": {
-      "strength": 29
+      "strength": 22,
+      "dexterity": 12
     },
     "gridW": 2,
     "gridH": 3,
@@ -185,7 +196,7 @@
   {
     "kind": "weapon",
     "id": "claymore",
-    "name": "Клеймор",
+    "name": "Двуручный меч",
     "enabled": true,
     "gender": "m",
     "minTier": "t0",

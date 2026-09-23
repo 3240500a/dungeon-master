@@ -334,7 +334,9 @@ function bladeGroup(def: BladeDef, y0: number, ctx: MeshCtx): THREE.Group {
 
 // ── МЕЧ: клинки ─────────────────────────────────────────────────────────────────────────────────
 
-const SWORD_LEN: Record<string, number> = { short: 52, roman: 58, arming: 80, great: 102, huge: 122 };
+// Середины вилок по длине клинка (§3.3): архаичный ≤70 · короткий 70–80 · длинный 85–90 ·
+// полуторный 95–105 · двуручный 110–150. ⚠ Это ФОЛБЭК: у каждого типа своя длина в его `case`.
+const SWORD_LEN: Record<string, number> = { short: 76, roman: 58, arming: 87, great: 102, huge: 128 };
 const BASE_BLADE: Record<string, string> = { 'short-sword': 'short', gladius: 'roman', 'long-sword': 'arming', greatsword: 'great', claymore: 'huge' };
 
 /** Клинок меча по типу Окшотта / римскому типу, пропорции — от оси. */
@@ -351,10 +353,10 @@ function swordBlade(ctx: MeshCtx): BladeDef {
   let d: SymDef | null = null;
   switch (type) {
     // ─ короткие ─
-    case 'XXII': d = { len: 50, w: taper(3.3 * A, 2.3 * A, 0.74, 0.5), th: th(0.6, 0.32),
+    case 'XXII': d = { len: 78, w: taper(3.3 * A, 2.3 * A, 0.74, 0.5), th: th(0.6, 0.32),
       side: (t) => ({ sx: 0.75 * A, sg: t < 0.3 ? 0.26 * Math.sqrt(clamp((0.3 - t) / 0.03, 0, 1)) : 0, sgd: 0.13 }), n: 18, tipFrom: 0.74, breaks: [0.28, 0.3] }; break;
-    case 'XIIIb': d = { len: 54, w: taper(2.75 * A, 2.55 * A, 0.9, 'round'), th: th(0.55, 0.32), fuller: fullerFn(0.5, 0.62 * A), tipFrom: 0.9, tipN: 7 }; break;
-    case 'XIV': d = { len: 52, w: taper(3.35 * A, 1.25 * A, 0.82, 0.35), th: th(0.6, 0.3), fuller: fullerFn(0.38, 0.8 * A, 0.5 * A), tipFrom: 0.82 }; break;
+    case 'XIIIb': d = { len: 75, w: taper(2.75 * A, 2.55 * A, 0.9, 'round'), th: th(0.55, 0.32), fuller: fullerFn(0.5, 0.62 * A), tipFrom: 0.9, tipN: 7 }; break;
+    case 'XIV': d = { len: 72, w: taper(3.35 * A, 1.25 * A, 0.82, 0.35), th: th(0.6, 0.3), fuller: fullerFn(0.38, 0.8 * A, 0.5 * A), tipFrom: 0.82 }; break;
     // ─ римские ─
     case 'hisp': d = { len: 66, th: th(0.75, 0.35), shape: () => LENS, tipFrom: 0.7, tipN: 8,
       w: (t) => {
@@ -366,18 +368,18 @@ function swordBlade(ctx: MeshCtx): BladeDef {
     case 'pompeii': d = { len: 50, w: taper(2.45 * A, 2.45 * A, 0.89, 0.25), th: th(0.7, 0.34), shape: () => LENS, tipFrom: 0.89 }; break;
     // ─ рыцарские ─
     case 'X': d = { len: 80, w: taper(2.9 * A, 2.45 * A, 0.9, 0.9), th: th(0.5, 0.3), fuller: fullerFn(0.86, 0.85 * A, 0.62 * A, 0.18), tipFrom: 0.9 }; break;
-    case 'XI': d = { len: 84, w: taper(2.1 * A, 1.75 * A, 0.86, 0.6), th: th(0.5, 0.3), fuller: fullerFn(0.82, 0.32, 0.26, 0.13), tipFrom: 0.86 }; break;
-    case 'XII': d = { len: 80, w: taper(2.6 * A, 1.5 * A, 0.84, 0.5), th: th(0.55, 0.3), fuller: fullerFn(0.66, 0.68 * A, 0.4 * A), tipFrom: 0.84 }; break;
+    case 'XI': d = { len: 85, w: taper(2.1 * A, 1.75 * A, 0.86, 0.6), th: th(0.5, 0.3), fuller: fullerFn(0.82, 0.32, 0.26, 0.13), tipFrom: 0.86 }; break;
+    case 'XII': d = { len: 86, w: taper(2.6 * A, 1.5 * A, 0.84, 0.5), th: th(0.55, 0.3), fuller: fullerFn(0.66, 0.68 * A, 0.4 * A), tipFrom: 0.84 }; break;
     case 'XIIa': d = { len: 102, w: taper(2.75 * A, 1.55 * A, 0.85, 0.5), th: th(0.6, 0.3), fuller: fullerFn(0.66, 0.72 * A, 0.42 * A), tipFrom: 0.85 }; break;
-    case 'XIII': d = { len: 82, w: taper(2.8 * A, 2.68 * A, 0.915, 'round'), th: th(0.5, 0.32), fuller: fullerFn(0.5, 0.75 * A), tipFrom: 0.915, tipN: 7 }; break;
+    case 'XIII': d = { len: 88, w: taper(2.8 * A, 2.68 * A, 0.915, 'round'), th: th(0.5, 0.32), fuller: fullerFn(0.5, 0.75 * A), tipFrom: 0.915, tipN: 7 }; break;
     case 'XIIIa': d = { len: 104, w: taper(3.05 * A, 2.85 * A, 0.925, 'round'), th: th(0.55, 0.32), fuller: fullerFn(0.5, 0.8 * A), tipFrom: 0.925, tipN: 7 }; break;
-    case 'XV': d = { len: 78, w: (t) => 2.4 * A * (1 - t) * (1 + 0.15 * t), th: th(1.0, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
+    case 'XV': d = { len: 89, w: (t) => 2.4 * A * (1 - t) * (1 + 0.15 * t), th: th(1.0, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
     case 'XVa': d = { len: 104, w: (t) => 1.95 * A * (1 - t) * (1 + 0.25 * t), th: th(1.1, 0.35), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
-    case 'XVI': d = { len: 80, w: taper(2.6 * A, 1.85 * A, 0.58, 0.25), th: th(0.6, 0.45), fuller: fullerFn(0.47, 0.62 * A),
+    case 'XVI': d = { len: 79, w: taper(2.6 * A, 1.85 * A, 0.58, 0.25), th: th(0.6, 0.45), fuller: fullerFn(0.47, 0.62 * A),
       shape: (t) => mixShape(FLAT, DIAM, smooth((t - 0.42) / 0.14)), tipFrom: 0.58, breaks: [0.47, 0.5, 0.56] }; break;
     case 'XVII': d = { len: 98, w: (t) => 2.25 * A * (1 - t) * (1 + 0.35 * t), th: th(1.0, 0.35), shape: () => HEX, fuller: fullerFn(0.2, 0.38), tipFrom: 0.85 }; break;
-    case 'XVIII': d = { len: 80, w: (t) => 3.0 * A * (1 - t) * (1 + 0.5 * t), th: th(0.95, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
-    case 'XIX': d = { len: 82, w: taper(1.85 * A, 1.7 * A, 0.88, 0.5), th: th(0.72, 0.35), shape: () => HEX, fuller: fullerFn(0.34, 0.28, 0.24, 0.12, 0.07),
+    case 'XVIII': d = { len: 87, w: (t) => 3.0 * A * (1 - t) * (1 + 0.5 * t), th: th(0.95, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
+    case 'XIX': d = { len: 90, w: taper(1.85 * A, 1.7 * A, 0.88, 0.5), th: th(0.72, 0.35), shape: () => HEX, fuller: fullerFn(0.34, 0.28, 0.24, 0.12, 0.07),
       ric: { len: 5, w: 1.45 * A, wrap: false, lug: 0 }, tipFrom: 0.88 }; break;
     case 'XX': d = { len: 100, w: taper(3.0 * A, 2.1 * A, 0.85, 0.5), th: th(0.6, 0.3), fuller: fullerFn(0.55, 0.55 * A, 0.4 * A),
       side: (t) => ({ sx: 1.45 * A, sg: t < 0.3 ? 0.3 * Math.sqrt(clamp((0.3 - t) / 0.03, 0, 1)) : 0, sgd: 0.12 }), n: 17, tipFrom: 0.85, breaks: [0.28, 0.3] }; break;
@@ -406,7 +408,7 @@ function swordBlade(ctx: MeshCtx): BladeDef {
   if (type === 'falchion') {
     const back = -1.45 * A, tipX = back + 0.5 * A, wMax = 4.4 * A;
     return {
-      len: 72, lay: { center: true, side: false }, tipFrom: 0.8, tipN: 8, breaks: [0.84],
+      len: 73, lay: { center: true, side: false }, tipFrom: 0.8, tipN: 8, breaks: [0.84],
       prof: (t) => {
         const xL = t < 0.84 ? back : lerp(back, tipX, smooth((t - 0.84) / 0.16));
         const xR = t <= 0.8
@@ -420,7 +422,7 @@ function swordBlade(ctx: MeshCtx): BladeDef {
   if (type === 'sabre') {
     const sag = 4.2, w0 = 3.25 * A, w1 = 2.75 * A;
     return {
-      len: 84, lay: { center: true, side: false }, tipFrom: 0.85, tipN: 7, n: 26,
+      len: 88, lay: { center: true, side: false }, tipFrom: 0.85, tipN: 7, n: 26,
       prof: (t) => {
         const spine = -sag * t * t - 1.15 * A;
         const f = fullerFn(0.72, 0.26, 0.22, 0.11)(t);

@@ -347,7 +347,7 @@ describe('⭐ замок «одна ось ДПС внутри типа»: вк�
     expect(lines.some((t) => /Скор\. атаки|урон/i.test(t) && !t.startsWith('Урон:'))).toBe(false);
   });
   it('⭐ соотношение ДПС форм одинаково у любого героя: атрибуты и бонусы форму не размывают', () => {
-    const heavy = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-x' })).item!;
+    const heavy = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xiii' })).item!;
     const light = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xix' })).item!;
     const ratios: number[] = [];
     for (const [cls, lvl, pts] of [['warrior', 1, 0], ['warrior', 40, 120], ['warrior', 80, 300]] as const) {
@@ -488,14 +488,21 @@ describe('ковка: каркас — существующая база (пра
     expect(res.item!.affixCap!.prefix + res.item!.affixCap!.suffix).toBe(capacityOf(reg, res.tier!));
   });
   it('⭐ окно материалов: форма не куётся из чужой ступени, и причина названа', () => {
-    const input = buildFor('long-sword', uniform(3), { strike: 'sw-a-x' });
-    input.parts.strike.step = 5; // клинок X — только ступени 1–3
+    const input = buildFor('long-sword', uniform(3), { strike: 'sw-a-xi' });
+    input.parts.strike.step = 5; // узкий клинок XI — только ступени 1–3
     const r = craftWeapon(reg, input);
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/ступеней 1–3/);
   });
-  it('потолок базы уважается: короткий меч (maxTier t3) не куётся выше t3, и окно говорит почему', () => {
-    const r = craftWeapon(reg, buildFor('short-sword', { strike: 3, grip: 5, bind: 5, head: 5 }));
+  it('потолок базы уважается: выше своего maxTier база не куётся, и окно говорит почему', () => {
+    // ⚠ Потолок задаётся ДАННЫМИ, и сегодня все оружейные базы открыты до t6 (пять вилок мечей —
+    // полноценные, а не «низкая ступень»). Поэтому механизм проверяем на копии конфига с потолком.
+    const capped = new ConfigRegistry();
+    const data = structuredClone(defaultConfigData) as Record<string, unknown>;
+    const bases = data['items.base'] as { id: string; maxTier?: string }[];
+    bases.find((b) => b.id === 'short-sword')!.maxTier = 't3';
+    capped.loadAll(data);
+    const r = craftWeapon(capped, buildFor('short-sword', { strike: 3, grip: 5, bind: 5, head: 5 }));
     expect(r.ok).toBe(false);
     expect(r.tier).toBeGreaterThan(3);
     expect(r.reason).toMatch(/не бывает выше/);

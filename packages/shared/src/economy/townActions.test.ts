@@ -67,7 +67,7 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
     baseStats: [{ kind: 'flat', stat: 'minDamage', value: 10 }, { kind: 'increased', stat: 'attackSpeed', value: 5 }],
   } as unknown as Item);
   /** Кошелёк, которого заведомо хватает на любое улучшение. */
-  const rich = (): Record<string, number> => ({ 'iron-1': 99, 'iron-2': 99, 'iron-3': 99 });
+  const rich = (): Record<string, number> => ({ 'iron-1': 99, 'iron-2': 99, 'iron-3': 99, 'iron-4': 99, 'iron-5': 99 });
 
   /** Настоящий предмет из конвейера генерации — у выдуманного нет ни тира, ни базовых статов. */
   const rolled = (ilvl: number): Item => generateItem(
@@ -106,13 +106,16 @@ describe('forgeUpgrade / forgeReroll (авторитетная кузница)',
 
   it('⚠ выше потолка базы не поднять — лестница конечна по построению', () => {
     const it = rolled(1);
-    const save = { gold: 10_000_000, inventory: [it], materials: { 'iron-1': 9999, 'iron-2': 9999, 'iron-3': 9999 } } as unknown as SaveState;
+    const save = { gold: 10_000_000, inventory: [it], materials: { 'iron-1': 9999, 'iron-2': 9999, 'iron-3': 9999, 'iron-4': 9999, 'iron-5': 9999 } } as unknown as SaveState;
     let steps = 0;
-    while (forgeUpgrade(reg, save, it.uid, wallet).ok && steps < 50) steps++;
+    // ⚠ Кошелёк отдельный и заведомо бездонный: мечу открыты все шесть ступеней, и на общем
+    // кошельке теста улучшения кончались не по потолку базы, а по сырью.
+    const deep: Record<string, number> = Object.fromEntries(reg.get('craft-materials').map((m) => [m.id, 9999]));
+    while (forgeUpgrade(reg, save, it.uid, deep).ok && steps < 50) steps++;
     expect(steps).toBeGreaterThan(0);
     expect(steps).toBeLessThan(20);                          // упёрлись, а не крутили бесконечно
     expect(it.tier).toBe(swordBase.maxTier);
-    expect(forgeUpgrade(reg, save, it.uid, wallet).reason).toContain('Лучше');
+    expect(forgeUpgrade(reg, save, it.uid, deep).reason).toContain('Лучше');
   });
 
   it('⚠ перекатка КОНЕЧНА: предел из конфига', () => {
