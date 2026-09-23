@@ -305,6 +305,17 @@ export const balanceSchema = z.object({
   weaponAttrScaling: z.number(),
   /** Доп. множитель силовых сигнатур двуручного оружия. */
   twoHandedPowerMult: z.number().min(1).default(1.3),
+  /**
+   * ⭐ ПОЛУТОРНЫЙ ХВАТ (§21): во что обходится взять двуручное оружие одной рукой, со щитом.
+   * В Д2 падал только урон (×0.52 при двуручниках вдвое сильнее одноручных); у нас разрыв в полтора
+   * раза, поэтому урон ×0.8, и добавлен темп ×0.9 — иначе у двуручного хвата остаётся один довод.
+   * Сторожа в тестах: одноручный хват не сильнее хорошего одноручника, а двуручный выгоднее
+   * одноручного не меньше чем в 1.35 раза.
+   */
+  versatile: z.object({
+    oneHandDamage: z.number().min(0.1).max(1).default(0.8),
+    oneHandSpeed: z.number().min(0.1).max(1).default(0.9),
+  }).default({}),
   /** Множитель ТРЕБОВАНИЙ двуручного оружия при авто-заполнении по весу (магнитуда ×это). */
   twoHandReqMult: z.number().min(0).default(1.6),
   /** Кап СУММЫ требуемых атрибутов предмета (после тира). Превышение ужимается пропорционально
@@ -844,6 +855,12 @@ const weaponBaseSchema = z.object({
   physSub: z.string().optional(),
   damageType: z.enum(['physical', 'fire', 'cold', 'lightning', 'poison']).default('physical'),
   hands: z.number().int().min(1).max(2).default(1),
+  /**
+   * ⭐ ПОЛУТОРНОЕ: родной хват — две руки, но оружие можно взять и одной, со щитом, за штраф
+   * (`balance.versatile`). Режим нигде не хранится: занята вторая рука — значит одна рука.
+   * Только для `hands: 2`; у одноручного флага смысла нет.
+   */
+  versatile: z.boolean().default(false),
   // Сигнатурные свойства (см. WeaponSignature). Скейл урона задаёт ТИП ВЕСА (weapon-weights), отдельного scaleAttr нет.
   stunChance: z.number().min(0).max(1).optional(),
   armorPenPct: z.number().min(0).max(1).optional(),

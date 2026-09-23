@@ -8,6 +8,7 @@ import { DEFAULT_HP_MANA_SCALING } from '../types/attributes.js';
 import { armorClassModifiers } from '../formulas/resolveArmor.js';
 import { passiveTreeModifiers, skillTreeModifiers, skillTreeSetBonus, skillTreeTriggers, type ResolvedTrigger } from '../formulas/skills.js';
 import { combatStatsOf } from '../formulas/playerCombat.js';
+import { DEFAULT_GRIP, asHeld, type GripTuning } from '../formulas/versatile.js';
 
 /**
  * Headless-версия расчётов персонажа (то, что в клиенте делает GameState): те же
@@ -26,14 +27,20 @@ export interface PlayerSnapshot {
   triggers: ResolvedTrigger[];
 }
 
-/** Все надетые предметы списком. */
-export function equippedItems(save: SaveState): Item[] {
-  return Object.values(save.equipment).filter(Boolean) as Item[];
+/**
+ * Все надетые предметы списком — оружие уже «как его держат»: полуторное со щитом отдаётся
+ * урезанной копией (`versatile.ts`). Один шов на все статы: панели, бой и сим читают одно и то же.
+ */
+export function equippedItems(save: SaveState, grip: GripTuning = DEFAULT_GRIP): Item[] {
+  const out = Object.values(save.equipment).filter(Boolean) as Item[];
+  return out.map((it) => (it.uid === save.equipment.weapon?.uid ? asHeld(it, save, grip) ?? it : it));
 }
 
 /** Все модификаторы: экипировка + штрафы класса брони + пассивки + мастерства. */
 export function playerModifiers(save: SaveState, cfg: ConfigRegistry): StatModifier[] {
-  const eq = equippedItems(save);
+  const eq = equippedItems(save, cfg.get('balance').versatile && {
+    damage: cfg.get('balance').versatile.oneHandDamage, speed: cfg.get('balance').versatile.oneHandSpeed,
+  });
   const mods = modifiersFromItems(eq);
   mods.push(...armorClassModifiers(eq, cfg.get('armor-classes')));
   mods.push(...passiveTreeModifiers(cfg.get('mastery-tree'), save.masteries));

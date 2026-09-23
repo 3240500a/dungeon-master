@@ -96,7 +96,11 @@
   "skillPointsPerLevel": 1,
   "masteryPointsPerLevel": 2,
   "moveSpeedBase": 80,
-  "moveInertia": { "enabled": false, "accel": 900, "decel": 300 },
+  "moveInertia": {
+    "enabled": false,
+    "accel": 900,
+    "decel": 300
+  },
   "camera": {
     "minDist": 120,
     "maxDist": 360,
@@ -177,6 +181,10 @@
   },
   "weaponAttrScaling": 0.5,
   "twoHandedPowerMult": 1.3,
+  "versatile": {
+    "oneHandDamage": 0.88,
+    "oneHandSpeed": 0.92
+  },
   "twoHandReqMult": 1.5,
   "maxTotalRequirement": 190,
   "forgePrices": {
@@ -199,7 +207,11 @@
   "respecCost": 500,
   "passiveRespecCostPct": 0.5,
   "skillRespecCostPerPoint": 100,
-  "skillSocketRanks": [1, 6, 12],
+  "skillSocketRanks": [
+    1,
+    6,
+    12
+  ],
   "inventory": {
     "cols": 10,
     "rows": 6,
@@ -352,26 +364,70 @@
       "2+3": 6.02
     },
     "tierFromParts": {
-      "weights": { "strike": 2, "grip": 1, "bind": 1, "head": 1 },
+      "weights": {
+        "strike": 2,
+        "grip": 1,
+        "bind": 1,
+        "head": 1
+      },
       "scale": 1.5
     },
     "cost": {
-      "units": { "strike": 16, "grip": 8, "bind": 8, "head": 8 },
+      "units": {
+        "strike": 16,
+        "grip": 8,
+        "bind": 8,
+        "head": 8
+      },
       "goldPerReqMult": 300,
       "enchantGold": 100
     },
     "finish": [
-      { "id": "plain", "name": "Обычная работа", "floor": 0, "strikeUnits": 0, "goldMult": 1 },
-      { "id": "careful", "name": "Тщательная доводка", "floor": 0.35, "strikeUnits": 4, "goldMult": 1.25 },
-      { "id": "painstaking", "name": "Кропотливая доводка", "floor": 0.6, "strikeUnits": 8, "goldMult": 1.5 },
-      { "id": "master", "name": "Ювелирная доводка", "floor": 0.8, "strikeUnits": 16, "goldMult": 2 }
+      {
+        "id": "plain",
+        "name": "Обычная работа",
+        "floor": 0,
+        "strikeUnits": 0,
+        "goldMult": 1
+      },
+      {
+        "id": "careful",
+        "name": "Тщательная доводка",
+        "floor": 0.35,
+        "strikeUnits": 4,
+        "goldMult": 1.25
+      },
+      {
+        "id": "painstaking",
+        "name": "Кропотливая доводка",
+        "floor": 0.6,
+        "strikeUnits": 8,
+        "goldMult": 1.5
+      },
+      {
+        "id": "master",
+        "name": "Ювелирная доводка",
+        "floor": 0.8,
+        "strikeUnits": 16,
+        "goldMult": 2
+      }
     ],
     "melt": {
       "share": 0.6
     },
     "salvage": {
-      "units": { "strike": 3, "grip": 2, "bind": 1, "head": 1 },
-      "rarityBonus": { "normal": 0, "magic": 1, "rare": 2, "unique": 2 }
+      "units": {
+        "strike": 3,
+        "grip": 2,
+        "bind": 1,
+        "head": 1
+      },
+      "rarityBonus": {
+        "normal": 0,
+        "magic": 1,
+        "rare": 2,
+        "unique": 2
+      }
     },
     "journal": {
       "sketchAfter": 8,

@@ -115,8 +115,10 @@ export interface ItemBase extends WeaponSignature {
   damageKind?: DamageKind;
   /** Тип базового урона оружия (physical для мили/луков, стихия для посохов). */
   damageType?: DamageType;
-  /** Сколько рук занимает оружие (1 или 2). Двуручное блокирует offhand. */
+  /** Сколько рук занимает оружие (1 или 2). Двуручное блокирует offhand — кроме полуторного. */
   hands?: number;
+  /** Полуторное: двуручное, но можно держать и одной рукой со щитом, за штраф (`versatile.ts`). */
+  versatile?: boolean;
   itemLevel: number;
   /** Базовые модификаторы, которые даёт сама база (без аффиксов). */
   baseStats: StatModifier[];
@@ -168,6 +170,8 @@ export interface Item extends WeaponSignature {
   damageKind?: DamageKind;
   damageType?: DamageType;
   hands?: number;
+  /** Полуторное: двуручное, но держится и одной рукой со щитом, за штраф (`formulas/versatile.ts`). */
+  versatile?: boolean;
   rarity: Rarity;
   /**
    * ТИР КАЧЕСТВА базы (`item-tiers`): Убогий → … → Мифический. До Ч5 тира в предмете НЕ БЫЛО

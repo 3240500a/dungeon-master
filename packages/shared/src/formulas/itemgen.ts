@@ -283,6 +283,7 @@ function gearFields(base: ItemsBase[number]): Partial<Item> {
       damageKind: base.damageKind,
       damageType: base.damageType,
       hands: base.hands,
+      versatile: base.versatile || undefined,
       weaponClass: base.weaponClass,
       weight: base.weight,
       physSub: base.physSub,

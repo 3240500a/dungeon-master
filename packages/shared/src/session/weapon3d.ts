@@ -1,5 +1,5 @@
 /** Структурный минимум для маппинга 3D-ключа: подходит и игроцкий Item, и гир монстра (GearWeapon/GearShield). */
-type Weaponish = { weaponClass?: string; hands?: number; kind?: string };
+type Weaponish = { weaponClass?: string; hands?: number; kind?: string; versatile?: boolean };
 
 /** Ключ одноручного оружия по weaponClass (для офф-руки: дуал). null — не одноручное/неизвестно. */
 function oneHandKey(weaponClass: string | undefined): string | null {
@@ -28,7 +28,9 @@ export function weapon3dKeyFromEquipment(weapon: Weaponish | undefined, offhand:
     if (offhand?.kind === 'weapon' && (offhand.hands ?? 1) < 2) { const ob = oneHandKey(offhand.weaponClass); if (ob) return 'none+' + ob; }
     return null;
   }
-  const two = (weapon.hands ?? 1) >= 2;
+  // ⚠ Ключ анимации — по ФАКТИЧЕСКОМУ хвату: полуторное со щитом держат одной рукой, и набор
+  // двуручных взмахов на нём смотрелся бы ложью.
+  const two = (weapon.hands ?? 1) >= 2 && !(weapon.versatile && offhand);
   let base: string;
   switch (weapon.weaponClass) {
     case 'sword': base = two ? 'greatsword' : 'sword'; break;

@@ -6,6 +6,7 @@ import type { Item, AttackType } from '../types/items.js';
 import type { SaveState } from '../types/save.js';
 import type { ConfigShapes } from '../config/schemas.js';
 import type { Rng } from './rng.js';
+import { DEFAULT_GRIP, asHeld, type GripTuning } from './versatile.js';
 
 type WeaponWeights = ConfigShapes['weapon-weights'];
 
@@ -77,9 +78,12 @@ export function combatStatsOf(d: DerivedStats, level: number): CombatStats {
   };
 }
 
-/** Оружие рук для атаки: основное + offhand, если там второе оружие (дуал-вилд). */
-export function attackWeaponsOf(save: SaveState): (Item | undefined)[] {
-  const main = save.equipment.weapon;
+/**
+ * Оружие рук для атаки: основное + offhand, если там второе оружие (дуал-вилд).
+ * Основное отдаётся «как его держат»: полуторное со щитом — с урезанным уроном (`versatile.ts`).
+ */
+export function attackWeaponsOf(save: SaveState, grip: GripTuning = DEFAULT_GRIP): (Item | undefined)[] {
+  const main = asHeld(save.equipment.weapon, save, grip);
   const off = save.equipment.offhand;
   const hands: (Item | undefined)[] = [main];
   if (off && off.slot === 'weapon') hands.push(off);

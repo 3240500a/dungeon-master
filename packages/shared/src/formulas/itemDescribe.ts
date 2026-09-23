@@ -1,5 +1,6 @@
 import type { Item } from '../types/items.js';
 import type { StatModifier } from '../types/attributes.js';
+import { DEFAULT_GRIP, gripAdjust, isVersatile, type GripTuning } from './versatile.js';
 
 /**
  * ЕДИНЫЙ форматтер описания предмета (без DOM/Phaser) — используется и игрой (клиентский itemView),
@@ -49,6 +50,8 @@ export const PERCENT_STATS = new Set([
 
 /** Резолверы имён из ЖИВЫХ конфигов (data-driven); дефолт — сырой id. */
 export interface ItemLabels {
+  /** Цена одноручного хвата у полуторного оружия; нет — умолчание из `versatile.ts`. */
+  grip?: GripTuning;
   armorClass: (id: string) => string;
   weight: (id: string) => string;
   physSub: (id: string) => string;
@@ -166,6 +169,15 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   if (hasDmg) {
     const w = weaponSpeedOf(item);
     base(`Скорость: ×${w.toFixed(2)} · ${Math.round(w * BASE_ATTACKS_PER_MIN)} уд/мин`);
+  }
+  // ⭐ ПОЛУТОРНОЕ: обе строки сразу, иначе игрок не узнает, что меч можно взять и одной рукой.
+  // Режим в подсказке не показываем — он зависит от того, занята ли вторая рука прямо сейчас.
+  if (hasDmg && isVersatile(item)) {
+    const one = gripAdjust(item, R.grip ?? DEFAULT_GRIP);
+    const o1 = one.baseStats.find((m) => m.stat === 'minDamage' && m.kind === 'flat')!.value;
+    const o2 = one.baseStats.find((m) => m.stat === 'maxDamage' && m.kind === 'flat')!.value;
+    const ow = weaponSpeedOf(one);
+    base(`Одной рукой (со щитом): ${Math.round(o1 * hm)}–${Math.round(o2 * hm)} · ×${ow.toFixed(2)} · ${Math.round(ow * BASE_ATTACKS_PER_MIN)} уд/мин`);
   }
   const sig = signatureLine(item, R);
   if (sig) base(`✦ ${sig}`);

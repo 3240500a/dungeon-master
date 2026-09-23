@@ -154,12 +154,12 @@
       {
         "stat": "minDamage",
         "kind": "flat",
-        "value": 9
+        "value": 11
       },
       {
         "stat": "maxDamage",
         "kind": "flat",
-        "value": 16
+        "value": 19
       },
       {
         "stat": "blockChance",
@@ -181,6 +181,7 @@
       "strength": 22,
       "dexterity": 12
     },
+    "versatile": true,
     "gridW": 2,
     "gridH": 3,
     "dropWeight": 1,
@@ -205,12 +206,12 @@
       {
         "stat": "minDamage",
         "kind": "flat",
-        "value": 13
+        "value": 17
       },
       {
         "stat": "maxDamage",
         "kind": "flat",
-        "value": 22
+        "value": 29
       },
       {
         "stat": "attackSpeed",

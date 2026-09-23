@@ -21,6 +21,7 @@ export * from './spawnWeight.js';
 export * from './power.js';
 export * from './skills.js';
 export * from './playerCombat.js';
+export * from './versatile.js';
 export * from './resolveWeapon.js';
 export * from './resolveArmor.js';
 export * from './hitMaterial.js';

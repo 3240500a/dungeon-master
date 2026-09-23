@@ -441,8 +441,10 @@ export function equip(reg: ConfigRegistry, save: SaveState, uid: string): Action
   const slot = item.slot;
   if (!meetsRequirements(item, effectiveAttrs(save, item))) return { ok: false, reason: 'Недостаточно атрибутов' };
 
-  const twoH = slot === 'weapon' && (item.hands ?? 1) >= 2;
-  const mainTwoH = (save.equipment.weapon?.hands ?? 1) >= 2;
+  // ⭐ Полуторное оружие вторую руку НЕ запирает: со щитом оно просто переходит в одноручный хват
+  // и теряет часть урона и темпа (`versatile.ts`). Настоящий двуручник — запирает, как и раньше.
+  const twoH = slot === 'weapon' && (item.hands ?? 1) >= 2 && !item.versatile;
+  const mainTwoH = (save.equipment.weapon?.hands ?? 1) >= 2 && !save.equipment.weapon?.versatile;
   if (slot === 'offhand' && mainTwoH) return { ok: false, reason: 'Занято двумя руками' };
 
   const prev = save.equipment[slot];
