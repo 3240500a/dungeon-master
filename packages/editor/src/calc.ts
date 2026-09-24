@@ -1,4 +1,4 @@
-import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, microFightStats, type MicroFightStats, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType } from '@dm/shared';
+import { ConfigRegistry, newBotSave, makePlayerModel, estimateAttack, estimateLearnedSkills, generateMonster, generateItem, createRng, hitChance, armorMitigation, addToInventory, xpForLevel, microFightStats, type MicroFightStats, type SaveState, type EquipSlot, type Rarity, type DerivedStats, type DamageType, shapeFoundWeapon } from '@dm/shared';
 import { makeHarness } from './gameHarness.js';
 import type { App } from '@dm/client/core/app.js';
 import type { DomUi, Panel } from '@dm/client/ui/domUi.js';
@@ -209,11 +209,11 @@ function gearPanel(app: App, onChange: () => void, reg: ConfigRegistry): HTMLEle
   const mkBtn = document.createElement('button'); mkBtn.textContent = '＋ создать';
   mkBtn.style.cssText = 'padding:6px 12px;cursor:pointer;background:#3a3a4c;color:#e8e8f0;border:1px solid #4a4a5c;border-radius:5px;font-size:12px';
   mkBtn.addEventListener('click', () => {
-    const item = generateItem(itemsBase, reg.get('affixes'), reg.get('uniques'), {
+    const item = shapeFoundWeapon(reg, generateItem(itemsBase, reg.get('affixes'), reg.get('uniques'), {
       dropBias: 1, itemLevel: level, baseId: createBaseId, tiers: reg.get('item-tiers'), rarities, rareNames: reg.get('rare-names'),
       categoryWeights: reg.get('balance').loot.categoryWeights, forceRarity: itemRarity || undefined, maxReqTotal: reg.get('balance').maxTotalRequirement,
       baseRoll: reg.get('balance').loot.baseRoll,
-    }, createRng(rollSeed++));
+    }, createRng(rollSeed++)));
     if (!addToInventory(save.inventory, item, dims)) { msg.textContent = 'Нет места в инвентаре'; return; }
     onChange();
   });

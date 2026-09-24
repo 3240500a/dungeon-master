@@ -70,7 +70,11 @@ function fmtMod(m: StatModifier): string {
   // скованное оружие пишет отрицательные моды (лёгкий клинок: −скорость у тяжёлого), и было бы «+-8%».
   const sign = m.value < 0 ? '−' : '+';
   const abs = Math.abs(m.value);
-  if (m.kind === 'increased' || PERCENT_STATS.has(m.stat)) return `${sign}${Math.round(abs * 100)}% ${label}`;
+  if (m.kind === 'increased' || PERCENT_STATS.has(m.stat)) {
+    // Доли процента (блок точки баланса клинка, §26: +0.4 п.п.) — с десятой, иначе читались бы «+0%».
+    const pct = abs * 100;
+    return `${sign}${Math.round(pct) === 0 ? pct.toFixed(1) : Math.round(pct)}% ${label}`;
+  }
   return `${sign}${Number.isInteger(abs) ? abs : abs.toFixed(2)} ${label}`;
 }
 
@@ -181,8 +185,19 @@ export function describeItem(item: Item, R: ItemLabels): ItemLine[] {
   }
   const sig = signatureLine(item, R);
   if (sig) base(`✦ ${sig}`);
+  // Одинаковые моды — одной строкой, суммой: блок базы и блок точки баланса клинка (§26) игрок видит
+  // итогом «Шанс блока 9 %», а не двумя слагаемыми. Сумма в ноль строку не печатает.
+  const merged: StatModifier[] = [];
   for (const m of item.baseStats) {
     if (hasDmg && (m === minD || m === maxD || m.stat === 'attackSpeed')) continue;
+    const same = merged.find((x) => x.stat === m.stat && x.kind === m.kind);
+    if (same) same.value = Math.round((same.value + m.value) * 1e4) / 1e4;
+    else merged.push({ ...m });
+  }
+  const isPct = (m: StatModifier): boolean => m.kind === 'increased' || PERCENT_STATS.has(m.stat);
+  for (const m of merged) {
+    // Ноль и то, что при показе стало бы нулём (меньше 0.05 %), строкой не печатаем.
+    if (m.value === 0 || (isPct(m) && Math.abs(m.value) < 0.0005)) continue;
     if (rp?.armor && m.stat === 'armor' && m.kind === 'flat') { base(`+${span(rp.armor, m.value)} ${STAT_LABEL.armor}`); continue; }
     base(fmtMod(m));
   }

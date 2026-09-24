@@ -3,7 +3,7 @@ import type { GameConn } from './conn.js';
 import {
   GameSession, spawnPacksEl, townLayout, arenaLayout, serializeWorld, floorInit, peerInfoOf, SnapshotDelta, worldChecksum, encodeWorldFrame, snapshotToDelta, WIRE_FULL, WIRE_DELTA,
   generateRunPlan, generateFloor, decorSpecsFor, obstaclesFromDecor, resolveMonsterPool, effectiveLevel,
-  generateItem, itemFromBaseId, createRng,
+  generateItem, itemFromBaseId, createRng, shapeFoundWeapon,
   buyItem, sellItem, forgeUpgrade, forgeReroll, forgeSalvage, forgeRepair, fieldSalvage, depositMaterials, equip, unequip, allocAttr, respec, respecPassives, respecSkills, allocActive, allocPassive, socketInsert, socketClear, applyConsumable, moveToBelt, moveInventoryItem, setBinding,
   migrateWalletToStash, stashMove, stashDims, stashTabCount,
   ensureMainQuest, generateBoard, acceptQuest, turnInQuest, trackObjective, trackFloor,
@@ -767,8 +767,9 @@ export class Room implements Tickable {
     const armorBases = itemsBase.filter((b) => b.kind === 'armor' || b.kind === 'shield' || b.kind === 'jewelry');
     const rollFrom = (pool: typeof itemsBase, count: number): void => {
       for (let i = 0; i < count && pool.length; i++) {
-        this.shop.push(generateItem(itemsBase, affixes, uniques,
-          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement, baseRoll: this.cfg.get('balance').loot.baseRoll }, rng));
+        // Меч с прилавка — как с пола: клинок несёт статы своей геометрии (§26).
+        this.shop.push(shapeFoundWeapon(this.cfg, generateItem(itemsBase, affixes, uniques,
+          { dropBias: 1.3, itemLevel: level + 1, baseId: rng.pick(pool).id, tiers, rarities, rareNames: this.cfg.get('rare-names'), maxReqTotal: this.cfg.get('balance').maxTotalRequirement, baseRoll: this.cfg.get('balance').loot.baseRoll }, rng)));
       }
     };
     rollFrom(meleeBases, 9); rollFrom(rangedBases, 6); rollFrom(armorBases, 9);

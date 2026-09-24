@@ -1,5 +1,6 @@
 import { ConfigRegistry } from '../config/registry.js';
 import { generateItem } from '../formulas/itemgen.js';
+import { shapeFoundWeapon } from '../formulas/craft.js';
 import { meetsRequirements } from '../formulas/stats.js';
 import { createRng } from '../formulas/rng.js';
 import { nextTier, retierItem } from '../formulas/itemgen.js';
@@ -88,9 +89,11 @@ export function scoreItem(reg: ConfigRegistry, save: SaveState, item: Item, poli
     const attrs = botAttrs(reg, save);
     const scaling = reg.get('balance').weaponAttrScaling;
     const avg = estimateAttack(d, attrs, item, scaling, reg.get('weapon-weights'));
-    let incAps = 0;
-    for (const m of itemMods(item)) if (m.stat === 'attackSpeed' && m.kind === 'increased') incAps += m.value;
-    const dps = avg * (1 + incAps);
+    // Скорость — как считает бой: (1 + плоская) × (1 + проценты). Плоская часть — плата клинка за длину
+    // (§26): без неё бот видел бы длинный клинок на ±10 % сильнее, а он сильнее лишь на ≈1 %.
+    let flatAps = 0, incAps = 0;
+    for (const m of itemMods(item)) if (m.stat === 'attackSpeed') { if (m.kind === 'flat') flatAps += m.value; else incAps += m.value; }
+    const dps = avg * (1 + flatAps) * (1 + incAps);
     const onType = item.attackType === classAttackType(reg, save.classId) ? 1.1 : 1.0;
     return dps * onType + scoreMods(itemMods(item), policy.offenseBias) * 0.1;
   }
@@ -237,8 +240,8 @@ export function visitShop(reg: ConfigRegistry, save: SaveState, level: number, r
   const rarities = reg.get('rarities');
   let spent = 0, sold = 0; const bought: Item[] = [];
   for (let i = 0; i < 8; i++) {
-    const item = generateItem(itemsBase, affixes, uniques,
-      { dropBias: 1.3, itemLevel: level + 1, tiers: reg.get('item-tiers'), rarities, baseRoll: reg.get('balance').loot.baseRoll }, rng);
+    const item = shapeFoundWeapon(reg, generateItem(itemsBase, affixes, uniques,
+      { dropBias: 1.3, itemLevel: level + 1, tiers: reg.get('item-tiers'), rarities, baseRoll: reg.get('balance').loot.baseRoll }, rng));
     const price = buyPrice(item, rarities);
     if (!item.slot || save.gold < price || !meetsRequirements(item, save.attributes)) continue;
     const cur = save.equipment[item.slot];

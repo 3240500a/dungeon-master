@@ -1,10 +1,10 @@
 import {
-  CRAFT_SLOT_LIST, anatomyOf, clampStep, craftTiers, craftWeapon, familiesOf, formOf, keySlotOf, keyVariantsByBase, matchWhen,
-  meltReturn, partById, typesRow, variantsFor, rollAffixes, createRng,
+  CRAFT_SLOT_LIST, anatomyOf, axisOf, balanceAxisOf, bladeStats, clampStep, craftTiers, craftWeapon, familiesOf, formOf, keySlotOf,
+  keyVariantsByBase, matchWhen, meltReturn, partById, typesRow, variantsFor, rollAffixes, createRng,
   type ConfigRegistry, type CraftInput, type Item, type PartSet, type SaveState, type CraftSlot, type WeaponPart,
 } from '@dm/shared';
 import { cardWith } from '@dm/client/modules/town/craftPanel.js';
-import { fightCheck, sandboxHero, type CraftSandbox } from './craft.js';
+import { craftDataRev, fightCheck, sandboxHero, type CraftSandbox } from './craft.js';
 
 /**
  * «▦ Сетка баланса» — проверка инвариантов ГДД на ТЕКУЩИХ данных (docs/CRAFT_WEAPONS.md §16, §22).
@@ -33,8 +33,20 @@ const S_GRID = [0.05, 0.2, 0.4, 0.6];
 let gripFight: { name: string; dps: number; hps: number }[] | null = null;
 let formFreq: { key: string; measured: number; config: number }[] | null = null;
 let lastKey = '';
+let lastRev = -1;
 
 const inputOf = (sb: CraftSandbox): CraftInput => ({ weaponClass: sb.win!.weaponClass, hands: sb.win!.hands, parts: structuredClone(sb.win!.parts) });
+
+/**
+ * Ось варианта для таблиц — та, что считает ядро (`axisOf`): у клинка с геометрией выведенная из замера
+ * (§26), ручное число у него задаёт только вид заглушки. Рядом — разброс от ширины, если он не ×1.
+ */
+function axisTag(reg: ConfigRegistry, p: WeaponPart): string {
+  const a = Math.round(axisOf(reg, p) * 100) / 100;
+  const b = bladeStats(reg, p);
+  const spread = b && b.spread !== 1 ? ` ×${b.spread.toFixed(2)}` : '';
+  return `<span style="color:#777" title="${b ? 'ось по длине в вилке · разброс от ширины (§26)' : 'ось из данных'}">${a > 0 ? '+' : ''}${a}${spread}</span>`;
+}
 
 /**
  * Сборка текущего окна с подменой одного гнезда — на ТОЙ ЖЕ ступени вещи (`atTier`): у новой формы
@@ -65,8 +77,11 @@ export function deadNameRules(reg: ConfigRegistry, cls: string): string[] {
 
 export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: CraftSandbox, save: SaveState): void {
   const w = sb.win!;
-  const key = `${JSON.stringify(w.parts)}|${w.hands}|${sb.heroClass}|${sb.level}|${sb.preset}`;
+  // Ревизия данных — в ключе: правка ручек во вкладке «Клинки» обязана сбросить прогон боя и частоты форм.
+  const rev = craftDataRev();
+  const key = `${rev}|${JSON.stringify(w.parts)}|${w.hands}|${sb.heroClass}|${sb.level}|${sb.preset}`;
   if (key !== lastKey) { gripFight = null; lastKey = key; }
+  if (rev !== lastRev) { formFreq = null; lastRev = rev; }
   const pv = craftWeapon(reg, inputOf(sb));
   const base = reg.get('items.base').find((b) => b.id === pv.type?.baseId);
   const keySlot = keySlotOf(reg, w.weaponClass);
@@ -89,15 +104,30 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
   const heat: number[][] = [];
   let worst = 0;
   strikes.forEach(() => heat.push([]));
+  // ⭐ Ось — та, что считает ядро: у клинков с геометрией место по длине в вилке (§26). Крайних ±1 у
+  // такой базы может не быть (вилка заполнена неровно), поэтому лампа меряет ФАКТИЧЕСКИЙ разброс форм,
+  // а эталоном берёт форму с осью ближе всего к нулю — какой бы она ни была.
+  const axes = strikes.map((p) => axisOf(reg, p));
+  const minAbs = Math.min(...axes.map(Math.abs));
+  const refIdx = axes.findIndex((a) => Math.abs(a) === minAbs);
   for (const D of D_GRID) for (const S of S_GRID) {
     const hero = sandboxHero(reg, { ...sb, bonusDmg: D, bonusSpd: S });
     const dps = strikes.map((p) => { const it = variantItem(reg, sb, 'strike', p); return it ? cardWith(reg, hero, it).dps : 0; });
-    const ref = dps[strikes.findIndex((p) => Math.abs(p.axis) === Math.min(...strikes.map((x) => Math.abs(x.axis))))] || 1;
+    const ref = dps[refIdx] || 1;
     dps.forEach((v, i) => heat[i]!.push(v / ref));
     const pos = dps.filter((v) => v > 0);
     if (pos.length) worst = Math.max(worst, Math.max(...pos) / Math.min(...pos) - 1);
   }
-  lamp(worst <= 0.08, `Разброс ДПС между формами ударной части: ${(worst * 100).toFixed(1)} % (порог 8 %)`, 'Худшая клетка конверта «бонус урона 0.3…1.5 × бонус скорости 0.05…0.6» (§4), база фиксирована. Считается теми же функциями, что у боя.');
+  // Сколько разброса дают сами оси: (1 + урон·a)(1 − скорость·a) на крайних ФАКТИЧЕСКИХ осях. Остаток замера
+  // сверх этого — округление чисел базы (в т.ч. разведённых шириной клинка) и плоская скорость базы.
+  const ks = reg.get('balance').craft.strike;
+  const byAxis = axes.map((a) => (1 + ks.damagePct * a) * (1 - ks.attackSpeed * a));
+  const expect = byAxis.length ? Math.max(...byAxis) / Math.min(...byAxis) - 1 : 0;
+  const geomN = strikes.filter((p) => bladeStats(reg, p)).length;
+  const axRange = axes.length ? `${Math.min(...axes).toFixed(2)}…${Math.max(...axes).toFixed(2)}` : '—';
+  lamp(worst <= 0.08, `Разброс ДПС между формами ударной части: ${(worst * 100).toFixed(1)} % (порог 8 %)`,
+    `Худшая клетка конверта «бонус урона 0.3…1.5 × бонус скорости 0.05…0.6» (§4), база фиксирована. Считается теми же функциями, что у боя. ` +
+    `Оси форм ${axRange}${geomN ? ` (${geomN} из ${strikes.length} — из геометрии клинка, §26)` : ''}; по одним осям ≈ ${(expect * 100).toFixed(1)} %.`);
 
   // 2. Держак площадь-нейтрален.
   const grips = variantsFor(reg, w.weaponClass, 'grip', w.hands);
@@ -149,7 +179,7 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
   tbl.append(hr);
   strikes.forEach((p, i) => {
     const r = h('tr', '');
-    r.append(h('td', 'padding:3px 6px;font-family:sans-serif;white-space:nowrap', `${p.name} <span style="color:#777">${p.axis > 0 ? '+' : ''}${p.axis}</span>`));
+    r.append(h('td', 'padding:3px 6px;font-family:sans-serif;white-space:nowrap', `${p.name} ${axisTag(reg, p)}`));
     for (const v of heat[i]!) {
       const d = Math.abs(v - 1);
       const bg = d <= 0.04 ? '#1f3320' : d <= 0.08 ? '#3a3418' : '#3a1f18';
@@ -167,7 +197,7 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
     const it = variantItem(reg, sb, 'grip', g);
     const c = it ? cardWith(reg, save, it) : undefined;
     const f = gripFight?.find((x) => x.name === g.name);
-    gt.innerHTML += `<tr><td>${g.name} <span style="color:#777">${g.axis > 0 ? '+' : ''}${g.axis}</span></td><td style="text-align:right;font-family:monospace">${c?.rangePx?.toFixed(0) ?? '—'}</td><td style="text-align:right;font-family:monospace">${c?.arcDeg?.toFixed(0) ?? '—'}</td><td style="text-align:right;font-family:monospace">${c?.area ? '×' + c.area.toFixed(3) : '—'}</td><td style="text-align:right;font-family:monospace">${f ? f.dps.toFixed(1) : ''}</td><td style="text-align:right;font-family:monospace">${f ? f.hps.toFixed(2) : ''}</td></tr>`;
+    gt.innerHTML += `<tr><td>${g.name} ${axisTag(reg, g)}</td><td style="text-align:right;font-family:monospace">${c?.rangePx?.toFixed(0) ?? '—'}</td><td style="text-align:right;font-family:monospace">${c?.arcDeg?.toFixed(0) ?? '—'}</td><td style="text-align:right;font-family:monospace">${c?.area ? '×' + c.area.toFixed(3) : '—'}</td><td style="text-align:right;font-family:monospace">${f ? f.dps.toFixed(1) : ''}</td><td style="text-align:right;font-family:monospace">${f ? f.hps.toFixed(2) : ''}</td></tr>`;
   }
   gc.append(gt);
   const gb = h('button', `${BTN};margin-top:8px`, isMelee ? 'Прогнать бой по пачке ×5 для каждого держака' : 'У стрелкового держак только вид');
@@ -182,13 +212,17 @@ export function renderCraftGrid(main: HTMLElement, reg: ConfigRegistry, sb: Craf
   gc.append(gb);
 
   // ── Оголовье ──
-  const hc = card(main, 'Оголовье: укус ↔ упор', 'Упор поднимает блок (у лука — стойкость к прерыванию), укус — статус своей грани. Стаки — по модели ОБЩЕГО таймера, как в бою.');
+  // ⭐ Рычаг оголовья — ТОЧКА БАЛАНСА вещи (§26): у клинка с геометрией это клинок и оголовье вместе,
+  // поэтому то же оголовье на другом клинке даёт другой блок. Колонка «баланс» — число, которое ест ядро.
+  const strikeSel = partById(reg, w.parts.strike.id);
+  const hc = card(main, 'Оголовье: укус ↔ упор', 'Упор поднимает блок (у лука — стойкость к прерыванию), укус — статус своей грани. «Баланс» — точка баланса вещи: у клинка с геометрией клинок и оголовье вместе (§26), иначе ось оголовья. Стаки — по модели ОБЩЕГО таймера, как в бою.');
   const ht = h('table', 'border-collapse:collapse;font-size:12px;width:100%');
-  ht.innerHTML = '<tr style="color:#888"><td></td><td style="text-align:right">блок</td><td style="text-align:right">стойкость</td><td style="text-align:right">статус</td><td style="text-align:right">шанс</td><td style="text-align:right">стаков</td></tr>';
+  ht.innerHTML = '<tr style="color:#888"><td></td><td style="text-align:right">баланс</td><td style="text-align:right">блок</td><td style="text-align:right">стойкость</td><td style="text-align:right">статус</td><td style="text-align:right">шанс</td><td style="text-align:right">стаков</td></tr>';
   for (const p of variantsFor(reg, w.weaponClass, 'head', w.hands)) {
     const it = variantItem(reg, sb, 'head', p);
     const c = it ? cardWith(reg, save, it) : undefined;
-    ht.innerHTML += `<tr><td>${p.name} <span style="color:#777">${p.axis > 0 ? '+' : ''}${p.axis}</span></td><td style="text-align:right;font-family:monospace">${c ? (c.block * 100).toFixed(1) + ' %' : '—'}</td><td style="text-align:right;font-family:monospace">${c ? (c.interruptResist * 100).toFixed(0) + ' %' : '—'}</td><td style="text-align:right">${c?.status?.name ?? '<span style="color:#c85a48">нет грани</span>'}</td><td style="text-align:right;font-family:monospace;color:${c?.status?.over100 ? '#c85a48' : 'inherit'}">${c?.status ? (c.status.chance * 100).toFixed(1) + ' %' : ''}</td><td style="text-align:right;font-family:monospace">${c?.status ? c.status.avgStacks.toFixed(2) + ' / ' + c.status.maxStacks : ''}</td></tr>`;
+    const bal = strikeSel ? balanceAxisOf(reg, strikeSel, p) : p.axis;
+    ht.innerHTML += `<tr><td>${p.name} ${axisTag(reg, p)}</td><td style="text-align:right;font-family:monospace">${bal > 0 ? '+' : ''}${bal.toFixed(2)}</td><td style="text-align:right;font-family:monospace">${c ? (c.block * 100).toFixed(1) + ' %' : '—'}</td><td style="text-align:right;font-family:monospace">${c ? (c.interruptResist * 100).toFixed(0) + ' %' : '—'}</td><td style="text-align:right">${c?.status?.name ?? '<span style="color:#c85a48">нет грани</span>'}</td><td style="text-align:right;font-family:monospace;color:${c?.status?.over100 ? '#c85a48' : 'inherit'}">${c?.status ? (c.status.chance * 100).toFixed(1) + ' %' : ''}</td><td style="text-align:right;font-family:monospace">${c?.status ? c.status.avgStacks.toFixed(2) + ' / ' + c.status.maxStacks : ''}</td></tr>`;
   }
   hc.append(ht);
 

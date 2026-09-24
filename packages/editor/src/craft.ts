@@ -1,6 +1,6 @@
 import {
   ConfigRegistry, newBotSave, xpForLevel, generateItem, generateMonster, createRng, simulateMicroFight,
-  craftWeapon, craftMissing, enchantCost, enchantItem, fullJournal, emptyJournal,
+  craftWeapon, craftMissing, enchantCost, enchantItem, fullJournal, emptyJournal, shapeFoundWeapon,
   type CraftJournal, type Item, type SaveState, type StatModifier,
 } from '@dm/shared';
 import type { App } from '@dm/client/core/app.js';
@@ -8,6 +8,7 @@ import { craftWindow, cardWith, type CraftHost, type CraftWindowState, initialCr
 import { makeHarness } from './gameHarness.js';
 import { renderCraftGrid } from './craftGrid.js';
 import { renderCraftCatalog } from './craftCatalog.js';
+import { renderCraftBlades } from './craftBlades.js';
 import { weaponPreview3d } from './craftPreview3d.js';
 
 /**
@@ -19,7 +20,9 @@ import { weaponPreview3d } from './craftPreview3d.js';
  * Ядро одно (`@dm/shared` — craft.ts / craftCard.ts), поэтому «врезать в игру» значит сменить
  * хозяина окна, а не переписать логику.
  *
- * ⚠ Скованные вещи живут только здесь, в памяти страницы. Игру вкладка не трогает ни строкой.
+ * ⚠ Скованные вещи живут только здесь, в памяти страницы. Игру вкладка не трогает ни строкой — кроме
+ * «🗡 Клинков» (`craftBlades.ts`): там правят сами данные (ручки клинка, форма и замер деталей), и они
+ * уходят в игру кнопками сохранения, как со страниц конфига.
  */
 
 export type HeroPreset = 'str' | 'dex' | 'hybrid' | 'int';
@@ -27,7 +30,7 @@ const PRESET_NAME: Record<HeroPreset, string> = { str: 'чистая сила', 
 
 /** Песочница переживает перерисовку — это состояние вкладки, а не страницы. */
 export interface CraftSandbox {
-  tab: 'forge' | 'grid' | 'catalog';
+  tab: 'forge' | 'grid' | 'catalog' | 'blades';
   heroClass: string;
   level: number;
   preset: HeroPreset;
@@ -200,11 +203,13 @@ function dropCompare(reg: ConfigRegistry, save: SaveState, crafted: Item): DropC
   const rng = createRng(4242);
   const dps: number[] = [];
   for (let i = 0; i < 200; i++) {
-    const it = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+    // Найденные — как в игре: меч с пола несёт статы своего клинка (§26), иначе скованный мерился бы
+    // против дропа, которого больше не бывает.
+    const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
       dropBias: 1, itemLevel: tier?.minItemLevel ?? 1, tierLevel: tier?.minItemLevel ?? 1, baseId: crafted.baseId,
       tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), forceRarity: rarity, maxReqTotal: reg.get('balance').maxTotalRequirement,
       baseRoll: reg.get('balance').loot.baseRoll,
-    }, rng);
+    }, rng));
     dps.push(cardWith(reg, save, it).dps);
   }
   dps.sort((a, b) => a - b);
@@ -215,22 +220,66 @@ function dropCompare(reg: ConfigRegistry, save: SaveState, crafted: Item): DropC
 
 // ── Страница ─────────────────────────────────────────────────────────────────────────────────────
 
-export function renderCraftPage(page: HTMLElement, data: Record<string, unknown>): void {
+/**
+ * Как вкладка сохраняет правки конфига: те же кнопки, что у страниц конфига (`main.ts`), только ключей
+ * несколько сразу — «Клинки» правят и ручки (`balance`), и детали (`weapon-parts`).
+ */
+export interface CraftIo {
+  /** Оверрайд в БД сервера (тест): действует сразу, в файлы не попадает. `onOk` — сервер подтвердил запись. */
+  push(keys: string[], onOk?: () => void): void;
+  /** Запись в `data/*.json` (git, деплой). `onOk` — сервер подтвердил запись. */
+  toFile(keys: string[], onOk?: () => void): void;
+}
+
+/**
+ * Ревизия данных: вкладка «Клинки» правит рабочую копию конфига, и мост к игре (`harness`) обязан
+ * пересобраться — иначе «Ковка» показывала бы старые числа рядом с новыми в таблице клинков.
+ */
+let dataRev = 0;
+/** Ревизия данных для кэшей других вкладок (сетка баланса держит прогон боя по держакам). */
+export const craftDataRev = (): number => dataRev;
+
+export function renderCraftPage(page: HTMLElement, data: Record<string, unknown>, io?: CraftIo): void {
   page.innerHTML = '';
   const sb = sandbox;
-  const baseReg = new ConfigRegistry(); baseReg.loadAll(data);
+  const rerender = (): void => renderCraftPage(page, data, io);
+
+  // ── Шапка и вкладки ──
+  const head = h('div', 'display:flex;align-items:baseline;gap:14px;margin-bottom:10px;flex-wrap:wrap');
+  head.append(h('h2', 'margin:0;font-size:20px', '🔨 Ковка оружия — прототип'));
+  head.append(h('span', 'color:#9aa;font-size:12px', 'Игровая панель на настоящих данных. Скованное живёт только здесь — игру вкладка не трогает. Документ: docs/CRAFT_WEAPONS.md'));
+  page.append(head);
+  const tabs = h('div', 'display:flex;gap:6px;margin-bottom:12px');
+  for (const [id, label] of [['forge', '⚒ Ковка'], ['grid', '▦ Сетка баланса'], ['catalog', '📖 Каталог и разбор'], ['blades', '🗡 Клинки']] as const) {
+    const b = h('button', `${BTN};${sb.tab === id ? 'border-color:#e39a3c;color:#e39a3c;background:#26221a' : ''}`, label);
+    b.addEventListener('click', () => { sb.tab = id; rerender(); });
+    tabs.append(b);
+  }
+  page.append(tabs);
+
+  // «Клинки» — во всю ширину и без героя: там правят сами данные, и неверная ручка не должна ронять
+  // страницу — вкладка сама собирает реестр и показывает ошибку схемы.
+  if (sb.tab === 'blades') { renderCraftBlades(page, data, { rerender, changed: () => { dataRev++; }, io }); return; }
+
+  const baseReg = new ConfigRegistry();
+  try { baseReg.loadAll(data); } catch (e) {
+    const err = h('div', 'background:#2a1616;border:1px solid #6b2a2a;border-radius:8px;padding:10px;font-size:12px;color:#f0b0a8;white-space:pre-wrap;max-height:320px;overflow:auto');
+    err.textContent = `Конфиг не проходит схему — ковка не соберётся. Поправь ручку во вкладке «🗡 Клинки» или на странице конфига.\n\n${e instanceof Error ? e.message : String(e)}`;
+    page.append(err);
+    return;
+  }
   if (!sb.heroClass || !baseReg.get('classes').some((c) => c.id === sb.heroClass)) sb.heroClass = baseReg.get('classes')[0]?.id ?? '';
   if (!sb.monsterId) sb.monsterId = baseReg.get('monsters')[0]?.id ?? '';
 
   const sdata = sandboxData(data, sb);
-  const key = JSON.stringify([sb.heroClass, sb.level, sb.preset, sb.bonusDmg, sb.bonusSpd, sb.blockLadder, sb.rangedEdge]);
+  const key = JSON.stringify([dataRev, sb.heroClass, sb.level, sb.preset, sb.bonusDmg, sb.bonusSpd, sb.blockLadder, sb.rangedEdge]);
   if (!harness || key !== hkey) {
     const reg0 = new ConfigRegistry(); reg0.loadAll(sdata);
     const keepWeapon = heroSave?.equipment.weapon;
     heroSave = sandboxHero(reg0, sb);
     // Надетое скованное переживает смену пресета — иначе сравнение «в руках» сбрасывалось бы на старт.
     if (keepWeapon && keepWeapon.parts) heroSave.equipment.weapon = keepWeapon;
-    harness = makeHarness(sdata, heroSave, () => renderCraftPage(page, data));
+    harness = makeHarness(sdata, heroSave, rerender);
     heroSave.gold = sb.gold; // мост раздувает золото — нам нужен кошелёк песочницы
     hkey = key;
     sb.fight = null; sb.drop = null;
@@ -239,21 +288,6 @@ export function renderCraftPage(page: HTMLElement, data: Record<string, unknown>
   const reg = app.config;
   const save = heroSave!;
   if (!sb.win) sb.win = initialCraftState(reg, 'sword');
-
-  const rerender = (): void => renderCraftPage(page, data);
-
-  // ── Шапка и вкладки ──
-  const head = h('div', 'display:flex;align-items:baseline;gap:14px;margin-bottom:10px;flex-wrap:wrap');
-  head.append(h('h2', 'margin:0;font-size:20px', '🔨 Ковка оружия — прототип'));
-  head.append(h('span', 'color:#9aa;font-size:12px', 'Игровая панель на настоящих данных. Скованное живёт только здесь — игру вкладка не трогает. Документ: docs/CRAFT_WEAPONS.md'));
-  page.append(head);
-  const tabs = h('div', 'display:flex;gap:6px;margin-bottom:12px');
-  for (const [id, label] of [['forge', '⚒ Ковка'], ['grid', '▦ Сетка баланса'], ['catalog', '📖 Каталог и разбор']] as const) {
-    const b = h('button', `${BTN};${sb.tab === id ? 'border-color:#e39a3c;color:#e39a3c;background:#26221a' : ''}`, label);
-    b.addEventListener('click', () => { sb.tab = id; rerender(); });
-    tabs.append(b);
-  }
-  page.append(tabs);
 
   const cols = h('div', 'display:grid;grid-template-columns:270px minmax(0,1fr);gap:14px;align-items:start');
   page.append(cols);

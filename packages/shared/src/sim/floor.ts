@@ -1,6 +1,7 @@
 import { ConfigRegistry } from '../config/registry.js';
 import { generateMonster } from '../formulas/monstergen.js';
 import { generateItem, rollTierLevel } from '../formulas/itemgen.js';
+import { shapeFoundWeapon } from '../formulas/craft.js';
 import { effectiveLevel, startChallenge, challengeAtFloor, type Difficulty } from '../formulas/power.js';
 import type { Rng } from '../formulas/rng.js';
 import type { SaveState } from '../types/save.js';
@@ -92,11 +93,11 @@ export function simulateFloor(
     for (const m of pack) {
       save.gold += Math.max(1, Math.round(rng.int(1, 5 + m.level * 2) * diff.goldMult));
       if (rng.chance(DROP_CHANCE)) {
-        const item = generateItem(itemsBase, affixes, uniques,
+        const item = shapeFoundWeapon(reg, generateItem(itemsBase, affixes, uniques,
           // Сложность двигает уровень МОНСТРОВ, а не уровень вещи напрямую (`ilvlBonus` вырезан).
           { dropBias: theme.dropBias * diff.magicFind, itemLevel: Math.max(1, cl),
             tierLevel: rollTierLevel(Math.max(1, cl), reg.get('balance').loot.tierWindow, rng),
-            tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), baseRoll: reg.get('balance').loot.baseRoll }, rng);
+            tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), baseRoll: reg.get('balance').loot.baseRoll }, rng));
         drops += 1;
         // Лут сразу оседает: экип лучшего, остальное в золото (мутирует save).
         considerDrop(reg, save, item, policy);

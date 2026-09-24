@@ -1,7 +1,7 @@
 import {
   CRAFT_SLOT_LIST, anatomyOf, craftSalvageYield, craftTiers, createRng, emptyJournal, familiesOf, fullJournal, generateItem,
   partById, partsOf, rollTierLevel, salvageIntoJournal, sketchable, slotName, tierIndexOfItem, typeOfItem, typeReach,
-  typesRow, useSketch, variantsFor,
+  shapeFoundWeapon, typesRow, useSketch, variantsFor,
   type ConfigRegistry,
 } from '@dm/shared';
 import type { CraftSandbox } from './craft.js';
@@ -38,11 +38,11 @@ export function renderCraftCatalog(main: HTMLElement, reg: ConfigRegistry, sb: C
     const rng = createRng(sb.seed++ * 7717);
     const bal = reg.get('balance');
     for (let i = 0; i < n; i++) {
-      const it = generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+      const it = shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
         dropBias: 1, itemLevel: sb.level, tierLevel: rollTierLevel(sb.level, bal.loot.tierWindow, rng), categoryWeights: { weapon: 1 },
         tiers: reg.get('item-tiers'), rarities: reg.get('rarities'), rareNames: reg.get('rare-names'), maxReqTotal: bal.maxTotalRequirement,
         baseRoll: bal.loot.baseRoll,
-      }, rng);
+      }, rng));
       if (it.kind === 'weapon' && it.rarity !== 'unique') sb.drops.push(it);
     }
     rerender();

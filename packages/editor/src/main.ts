@@ -14,7 +14,7 @@ import { renderCalcPage } from './calc.js';
 import { renderSkillBuildPage } from './skillBuild.js';
 import { devFetch } from '@dm/client/devAuth.js';   // инструментальные роуты требуют роли admin
 import { renderRoadmapPage } from './roadmap.js';
-import { renderCraftPage } from './craft.js';
+import { renderCraftPage, type CraftIo } from './craft.js';
 import { renderSweepPage } from './sweep.js';
 import { setEditorNav } from './editorNav.js';
 import { renderPassiveGraph } from './passiveGraph.js';
@@ -774,7 +774,7 @@ function renderGame(host: HTMLElement): void {
   else if (view === 'calc') renderCalcPage(page, data);
   else if (view === 'skillbuild') renderSkillBuildPage(page, data);
   else if (view === 'sweep') renderSweepPage(page, data);
-  else if (view === 'craft') renderCraftPage(page, data);
+  else if (view === 'craft') renderCraftPage(page, data, toolIo());
   else renderPage(page);
 
   layout.append(nav, page);
@@ -1061,14 +1061,56 @@ function setStatus(msg: string, color: string): void {
 }
 
 function apply(): void {
-  const result = (configSchemas[current] as z.ZodTypeAny).safeParse(data[current]);
-  if (!result.success) {
-    setStatus('Ошибка валидации: ' + result.error.issues[0]?.message + ' @ ' + result.error.issues[0]?.path.join('.'), '#ff8080');
-    return;
+  applyKeys([current]);
+}
+
+/**
+ * Проверить схемой НЕСКОЛЬКО ключей разом и вернуть разобранные значения. Первая ошибка — в статус и
+ * `null`: частично не отправляем ничего (вкладка «Ковка → Клинки» правит `balance` и `weapon-parts`
+ * вместе, и половина правки на сервере хуже, чем никакой).
+ */
+function validatedKeys(keys: readonly string[]): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    const schema = configSchemas[key as ConfigKey] as z.ZodTypeAny | undefined;
+    if (!schema) { setStatus(`Нет такого конфига: ${key}`, '#ff8080'); return null; }
+    const result = schema.safeParse(data[key]);
+    if (!result.success) {
+      const where = keys.length > 1 ? ` «${LABELS[key as ConfigKey] ?? key}»` : '';
+      setStatus(`Ошибка валидации${where}: ` + result.error.issues[0]?.message + ' @ ' + result.error.issues[0]?.path.join('.'), '#ff8080');
+      return null;
+    }
+    out[key] = result.data;
   }
-  bc?.postMessage({ key: current, value: result.data }); // клиент: мгновенно (вью/тултипы)
-  pushToServer({ [current]: result.data }); // сервер: персист в БД + авторитетная игра
+  return out;
+}
+
+/** «Применить на сервере» для набора ключей: клиенту — сразу (вью/тултипы), серверу — оверрайд в БД. */
+function applyKeys(keys: readonly string[], onOk?: () => void): void {
+  const values = validatedKeys(keys);
+  if (!values) return;
+  for (const [key, value] of Object.entries(values)) bc?.postMessage({ key, value }); // клиент: мгновенно (вью/тултипы)
+  pushToServer(values, onOk); // сервер: персист в БД + авторитетная игра
   setStatus('Сохранение на сервере (БД, для тестов)…', '#9fb0c0');
+}
+
+/** Уже проверенные значения — в файлы `data/*.json` (и оверрайдом на сервер, см. роут). */
+function writeKeysToFile(values: Record<string, unknown>, onOk?: () => void): void {
+  for (const [key, value] of Object.entries(values)) bc?.postMessage({ key, value });
+  sendConfig(
+    () => devFetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) }),
+    'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
+    onOk,
+  );
+  setStatus('Запись в файл…', '#9fb0c0');
+}
+
+/** Сохранение для инструментов, которые правят несколько конфигов сразу (вкладка «Ковка → Клинки»). */
+function toolIo(): CraftIo {
+  return {
+    push: (keys, onOk) => applyKeys(keys, onOk),
+    toFile: (keys, onOk) => { const values = validatedKeys(keys); if (values) writeKeysToFile(values, onOk); },
+  };
 }
 
 /**
@@ -1077,19 +1119,9 @@ function apply(): void {
  * локального сервера). Сервер заодно держит оверрайд, чтобы живой конфиг не откатился до рестарта.
  */
 function applyToFile(): void {
-  const result = (configSchemas[current] as z.ZodTypeAny).safeParse(data[current]);
-  if (!result.success) {
-    setStatus('Ошибка валидации: ' + result.error.issues[0]?.message + ' @ ' + result.error.issues[0]?.path.join('.'), '#ff8080');
-    return;
-  }
-  const publish = (): void => {
-    bc?.postMessage({ key: current, value: result.data });
-    sendConfig(
-      () => devFetch('/api/dev/config-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [current]: result.data }) }),
-      'Записано в ФАЙЛ data/*.json (попадёт в git/деплой) и применено к игре. Не забудь закоммитить.',
-    );
-    setStatus('Запись в файл…', '#9fb0c0');
-  };
+  const values = validatedKeys([current]);
+  if (!values) return;
+  const publish = (): void => writeKeysToFile(values);
   // Гейт публикации 3D-ассетов: не пускать в файл/деплой битые ссылки без подтверждения (форма проходит zod, а граф
   // ссылок — нет). Прочие секции публикуются как раньше (без сетевой проверки файлов).
   if (['textures', 'models', 'materials', 'objects'].includes(current)) {
@@ -1108,10 +1140,10 @@ function applyToFile(): void {
  * ровно в это окно. Сетевую ошибку/5xx/404 (сервер поднимается) ретраим; 422 (данные не прошли
  * валидацию) — не ретраим, это реальный отказ.
  */
-function sendConfig(req: () => Promise<Response>, okMsg: string, attempt = 0): void {
+function sendConfig(req: () => Promise<Response>, okMsg: string, onOk?: () => void, attempt = 0): void {
   req()
     .then((r) => {
-      if (r.ok) { setStatus(okMsg, '#7fd67f'); return; }
+      if (r.ok) { setStatus(okMsg, '#7fd67f'); onOk?.(); return; }
       if (r.status === 422) {
         r.json().then((e: { error?: string }) => setStatus(`Сервер отклонил конфиг: ${e?.error ?? '422'}`, '#ffb020'))
           .catch(() => setStatus('Сервер отклонил конфиг (422).', '#ffb020'));
@@ -1122,7 +1154,7 @@ function sendConfig(req: () => Promise<Response>, okMsg: string, attempt = 0): v
     .catch(() => {
       if (attempt < 4) {
         setStatus(`Сервер перезапускается… повтор (${attempt + 1}/4)`, '#9fb0c0');
-        setTimeout(() => sendConfig(req, okMsg, attempt + 1), 800);
+        setTimeout(() => sendConfig(req, okMsg, onOk, attempt + 1), 800);
       } else {
         setStatus('Сервер недоступен — не сохранено. Запусти `npm run dev` и повтори.', '#ffb020');
       }
@@ -1135,10 +1167,11 @@ function sendConfig(req: () => Promise<Response>, okMsg: string, attempt = 0): v
  * статы/бой/лут считает сервер и в игре ничего не меняется. Клиентский путь
  * (BroadcastChannel) оставляем для мгновенного вью/тултипов.
  */
-function pushToServer(overrides: Record<string, unknown>): void {
+function pushToServer(overrides: Record<string, unknown>, onOk?: () => void): void {
   sendConfig(
     () => devFetch('/api/dev/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(overrides) }),
     'Сохранено на сервере (переживёт рестарт) и применено к игре. Balance — сразу; статы монстров/лут — со следующего этажа.',
+    onOk,
   );
 }
 

@@ -5,7 +5,7 @@ import type { Item, EquipSlot, Rarity, ConsumableUse } from '../types/items.js';
 import { ATTRIBUTES, type Attribute, type Attributes } from '../types/attributes.js';
 import { finalAttributes, meetsRequirements, modifiersFromItems } from '../formulas/stats.js';
 import { rollAffixes, nextTier, inferTierId, retierItem } from '../formulas/itemgen.js';
-import { affixSlotsFor } from '../formulas/craft.js';
+import { affixSlotsFor, restepParts, shapeFoundWeapon, tierIndex } from '../formulas/craft.js';
 import type { Rng } from '../formulas/rng.js';
 import { addToInventory, hasSpace, placeWithDisplacement, type Dims } from '../inventory/grid.js';
 import type { DebuffState } from '../world/debuffs.js';
@@ -252,11 +252,15 @@ export function upgradedItem(reg: ConfigRegistry, item: Item): Item | undefined 
   const tier = nextTier(tiers, base, inferTierId(tiers, base, item, bal.loot.baseRoll));
   if (!tier) return undefined;
   // Бросок базы переживает подъём: доля q та же, поэтому «удачный» меч остаётся удачным на новом тире.
-  return retierItem(base, item, tier, {
+  const next = retierItem(base, item, tier, {
     reqDiscount: bal.forgePrices.upgradeReqDiscount,
     maxReqTotal: bal.maxTotalRequirement,
     spread: bal.loot.baseRoll,
   });
+  // ⭐ Найденный меч с записанными деталями (§26): клинок тот же, ступени деталей — под новый тир (разбор
+  // отдаёт то, из чего вещь сделана), статы клинка — заново от деталей, а не вычитанием из старых статов.
+  if (!next.foundParts) return next;
+  return shapeFoundWeapon(reg, { ...next, foundParts: restepParts(reg, next.foundParts, tierIndex(reg, tier.id)) });
 }
 
 /**

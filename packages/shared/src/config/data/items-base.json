@@ -70,6 +70,11 @@
         "value": 9
       },
       {
+        "stat": "blockChance",
+        "kind": "flat",
+        "value": 0.02
+      },
+      {
         "stat": "attackSpeed",
         "kind": "increased",
         "value": 0.12
@@ -212,6 +217,11 @@
         "stat": "maxDamage",
         "kind": "flat",
         "value": 29
+      },
+      {
+        "stat": "blockChance",
+        "kind": "flat",
+        "value": 0.02
       },
       {
         "stat": "attackSpeed",

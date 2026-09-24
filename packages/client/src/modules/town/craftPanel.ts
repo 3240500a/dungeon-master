@@ -1,7 +1,7 @@
 import {
-  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, baseTierRange, clampStep, craftTiers, craftWeapon, defaultParts,
-  enchantCost, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel, partById, rangeLabel, slotName, stepLabel,
-  tierOfSteps, variantsFor, weaponCard,
+  CRAFT_SLOT_LIST, CRAFT_SLOT_ROLE, anatomyOf, axisOf, balanceAxisOf, baseTierRange, bladeCaption, bladeStats, clampStep,
+  craftTiers, craftWeapon, defaultParts, enchantCost, familiesOf, finishOf, keySlotOf, keyVariantsByBase, makePlayerModel,
+  partById, rangeLabel, slotName, statusKindOf, stepLabel, tierOfSteps, variantsFor, weaponCard,
   type ConfigRegistry, type CraftInput, type CraftJournal, type CraftParts, type CraftSlot, type Item,
   type Rarity, type SaveState, type WeaponCard, type WeaponPart,
 } from '@dm/shared';
@@ -79,7 +79,8 @@ export function normalizeCraftState(reg: ConfigRegistry, st: CraftWindowState, j
   const keySlot = keySlotOf(reg, st.weaponClass);
   const def = defaultParts(reg, st.weaponClass, st.hands, 2);
   if (!st.parts) st.parts = def!;
-  const closest = (pool: WeaponPart[]): WeaponPart | undefined => [...pool].sort((a, b) => Math.abs(a.axis) - Math.abs(b.axis))[0];
+  // Эталон — ось ближе всего к нулю; у клинков с геометрией ось выведенная (§26), ручное число у них — только вид.
+  const closest = (pool: WeaponPart[]): WeaponPart | undefined => [...pool].sort((a, b) => Math.abs(axisOf(reg, a)) - Math.abs(axisOf(reg, b)))[0];
   for (const slot of CRAFT_SLOT_LIST) {
     let pool: WeaponPart[];
     if (slot === keySlot) {
@@ -132,17 +133,67 @@ function rollVerdict(item: Item, ranges: CraftPreviewRanges | undefined, floor: 
 }
 type CraftPreviewRanges = NonNullable<ReturnType<typeof craftWeapon>['ranges']>;
 
-/** Что вариант даёт в своём гнезде — числом, для подписи под выбором. */
-function partEffect(reg: ConfigRegistry, slot: CraftSlot, axis: number, weaponClass: string): string {
+const FORM_NAME: Record<string, string> = { falchion: 'фальшион', sabre: 'сабля' };
+
+/** Ось варианта для строки списка: у клинка с геометрией — выведенная (§26), два знака без хвостовых нулей. */
+const axisLabel = (x: number): string => `${x > 0 ? '+' : ''}${Math.round(x * 100) / 100}`;
+
+/** Подпись варианта: у клинка с геометрией — из его чисел (`bladeCaption`), ручная писалась под ручную ось. */
+function partCaption(reg: ConfigRegistry, p: WeaponPart): string {
+  const b = bladeStats(reg, p);
+  return b ? bladeCaption(b) : p.caption;
+}
+
+/** Замер клинка — для подсказок: из каких сантиметров вышли ось, разброс и баланс. Нет геометрии — пусто. */
+function bladeMeasureLine(reg: ConfigRegistry, p: WeaponPart): string {
+  const b = bladeStats(reg, p), g = p.geom;
+  if (!b || !g) return '';
+  const br = b.bracket;
+  const fk = b.form ? reg.get('balance').craft.blade.forms[b.form] : undefined;
+  return [
+    `клинок ${g.len} см${br ? ` · вилка «${br.name}» ${br.lo}–${br.hi} см` : ' · вне вилок'}${b.outOfBracket && br ? ' (вне вилки — ось в упоре)' : ''} → место ${signed(b.place, '', 2)}, ось ${signed(b.axis, '', 2)}`,
+    `ширина ${g.width} см${br ? ` (эталон ${br.width})` : ''} → разброс ×${fx(b.spread, 2)}`,
+    `центр тяжести ${pct(g.bal)} длины → баланс клинка ${signed(b.balance, '', 2)}`,
+    fk && b.form ? `${FORM_NAME[b.form]}: длина ${signed(fk.length, '', 2)}, баланс ${signed(fk.balance, '', 2)}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * Что вариант даёт в своём гнезде — числом, для подписи под выбором. Считает то же, что ядро
+ * (`bakeParts`): у клинка с геометрией ось выведенная, у оголовья — ТОЧКА БАЛАНСА ВЕЩИ вместе с
+ * выбранным клинком (§26), иначе подпись обещала бы блок, которого в вещи нет.
+ */
+function partEffect(reg: ConfigRegistry, slot: CraftSlot, part: WeaponPart, st: CraftWindowState, baseId: string | undefined): string {
   const k = reg.get('balance').craft;
-  if (slot === 'strike') return `урон ×${fx(1 + k.strike.damagePct * axis, 2)} · скорость ×${fx(1 - k.strike.attackSpeed * axis, 2)}`;
+  const weaponClass = st.weaponClass;
+  if (slot === 'strike') {
+    const b = bladeStats(reg, part);
+    const axis = b?.axis ?? part.axis;
+    const out = [`урон ×${fx(1 + k.strike.damagePct * axis, 2)}`, `скорость ×${fx(1 - k.strike.attackSpeed * axis, 2)}`];
+    if (b) out.push(`разброс ×${fx(b.spread, 2)}`);
+    if (b?.form) out.push(FORM_NAME[b.form]!);
+    return out.join(' · ');
+  }
+  const axis = part.axis;
   if (slot === 'grip') {
     const r = k.gripK ** axis, a = k.gripK ** (-2 * axis);
     return ['bow', 'crossbow', 'wand', 'staff'].includes(weaponClass) ? 'только вид (§5.2)' : `дальность ×${fx(r, 2)} · дуга ×${fx(a, 2)}`;
   }
   if (slot === 'bind') return axis > 0 ? 'больше префиксов' : axis < 0 ? 'больше суффиксов' : 'поровну';
-  const brace = weaponClass === 'bow' ? `стойкость ${signed(k.headInterrupt * axis * 100, ' п.п.')}` : `блок ${signed(k.headBlock * axis * 100, ' п.п.')}`;
-  return `${brace} · статус ${axis < 0 ? 'чаще' : axis > 0 ? 'реже' : 'как есть'}`;
+  // Оголовье: рычаг — точка баланса клинка и оголовья вместе; у клинка без геометрии это ось оголовья.
+  const strike = partById(reg, st.parts.strike.id);
+  const bal = strike ? balanceAxisOf(reg, strike, part) : axis;
+  const lead = strike && bladeStats(reg, strike) ? `баланс ${signed(bal, '', 2)}: ` : '';
+  const base = reg.get('items.base').find((b) => b.id === baseId);
+  // Минус упирается в ноль (своего блока у базы нет или мало): число честно, но в вещи его не будет.
+  const own = base?.baseStats.filter((m) => m.stat === 'blockChance' && m.kind === 'flat').reduce((s, m) => s + m.value, 0) ?? 0;
+  const floor = weaponClass === 'bow' ? (bal < 0 ? ' (в ноль)' : '') : base && own + k.headBlock * bal < 0 ? ` (у базы ${fx(own * 100, 0)} % — в ноль)` : '';
+  const brace = (weaponClass === 'bow' ? `стойкость ${signed(k.headInterrupt * bal * 100, ' п.п.', 1)}` : `блок ${signed(k.headBlock * bal * 100, ' п.п.', 1)}`) + floor;
+  // Статус — по грани базы: у лука её нет, торговать нечем, и строка «статус реже» врала бы.
+  const kind = base?.kind === 'weapon' ? statusKindOf(reg, base) : undefined;
+  if (base && !(kind && k.bite[kind])) return `${lead}${brace}`;
+  const name = kind ? reg.get('debuffs').find((d) => d.id === kind)?.name.toLowerCase() ?? kind : 'статус';
+  return `${lead}${brace} · ${name} ${bal < 0 ? 'чаще' : bal > 0 ? 'реже' : 'как есть'}`;
 }
 
 /** Строка механики базы: урон, хват, грань, вес — чтобы тип читался как числа, а не только как имя. */
@@ -267,11 +318,12 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
         const on = p.id === st.parts[slot].id;
         const b = mk('button', `display:flex;align-items:center;gap:6px;text-align:left;padding:3px 6px;border-radius:4px;font-size:12px;cursor:${open ? 'pointer' : 'default'};` +
           `border:1px solid ${on ? COLORS.accent : 'transparent'};background:${on ? '#26221a' : 'transparent'};color:${!open ? '#4d4d4d' : on ? COLORS.accent : COLORS.text}`);
+        // Ось и подпись — те, что считает ядро: у клинка с геометрией выведенные из замера (§26).
         b.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${open ? RARITY_DOT[p.rarity] : '#333'};flex:none"></span>` +
           `<span style="flex:1">${open ? '' : '🔒 '}${p.name}</span>` +
           `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace">ст.${p.stepMin}–${p.stepMax}</span>` +
-          `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace;width:30px;text-align:right">${p.axis > 0 ? '+' : ''}${p.axis}</span>`;
-        b.title = [p.caption, p.lore, `${RARITY_NAME[p.rarity]} · материал: ступени ${p.stepMin}–${p.stepMax}`].filter(Boolean).join('\n');
+          `<span style="font-size:10px;color:${COLORS.dim};font-family:monospace;width:34px;text-align:right">${axisLabel(axisOf(reg, p))}</span>`;
+        b.title = [partCaption(reg, p), p.lore, bladeMeasureLine(reg, p), `${RARITY_NAME[p.rarity]} · материал: ступени ${p.stepMin}–${p.stepMax}`].filter(Boolean).join('\n');
         b.disabled = !open;
         b.addEventListener('click', () => { st.parts[slot] = { id: p.id, step: clampStep(p, st.parts[slot].step) }; reset(); draw(); });
         return b;
@@ -307,8 +359,16 @@ export function craftWindow(app: App, host: CraftHost, st: CraftWindowState, onA
         }
         card.append(mk('div', `font-size:10.5px;color:${COLORS.dim};margin:2px 0 3px`, `Материал · ${anat[slot].stepNames.length && !sel.family ? 'обработка' : matName(`${sel.family || anat[slot].family}-${st.parts[slot].step}`)}`));
         card.append(matRow);
-        card.append(mk('div', `margin-top:6px;font-size:11.5px;color:${COLORS.text}`, sel.caption));
-        card.append(mk('div', `font-size:11px;color:${COLORS.gold};font-family:monospace`, partEffect(reg, slot, sel.axis, st.weaponClass)));
+        card.append(mk('div', `margin-top:6px;font-size:11.5px;color:${COLORS.text}`, partCaption(reg, sel)));
+        const eff = mk('div', `font-size:11px;color:${COLORS.gold};font-family:monospace`, partEffect(reg, slot, sel, st, type?.baseId));
+        const measure = bladeMeasureLine(reg, sel);
+        const strikeSel = partById(reg, st.parts.strike.id);
+        if (measure) eff.title = measure;
+        else if (slot === 'head' && strikeSel && bladeStats(reg, strikeSel)) {
+          const bk = reg.get('balance').craft.blade.balance;
+          eff.title = `Точка баланса вещи: ${Math.round(bk.bladeShare * 100)} % — клинок, ${Math.round((1 - bk.bladeShare) * 100)} % — оголовье (+ поправка формы), в ±1.\nВес у руки — упор (блок), вес к концу — укус (статус грани).`;
+        }
+        card.append(eff);
       }
       slotsGrid.append(card);
     }

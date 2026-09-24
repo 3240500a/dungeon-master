@@ -1,4 +1,4 @@
-import { ConfigRegistry, generateItem, pickTierClamped, createRng, describeItem, slotSuffix, type Item, type Rarity, type ItemLabels } from '@dm/shared';
+import { ConfigRegistry, generateItem, pickTierClamped, createRng, describeItem, slotSuffix, type Item, type Rarity, type ItemLabels, shapeFoundWeapon } from '@dm/shared';
 
 /**
  * Вкладка «Генератор предметов» (песочница дропа): выбираешь базу + уровень (+редкость/MF),
@@ -85,12 +85,13 @@ export function renderItemGenPage(page: HTMLElement, data: Record<string, unknow
   page.appendChild(out);
 
   // ── ролл ────────────────────────────────────────────────────────────────
-  const rollOne = (s: number): Item => generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
+  // Меч с клинком — как в игре: статы геометрии клинка (§26), иначе ролл показывал бы не тот меч.
+  const rollOne = (s: number): Item => shapeFoundWeapon(reg, generateItem(reg.get('items.base'), reg.get('affixes'), reg.get('uniques'), {
     dropBias, itemLevel, baseId: baseId || undefined, tiers, rarities, rareNames: reg.get('rare-names'),
     categoryWeights: reg.get('balance').loot.categoryWeights, forceRarity: forceRarity || undefined,
     maxReqTotal: reg.get('balance').maxTotalRequirement,
     baseRoll: reg.get('balance').loot.baseRoll,
-  }, createRng(s));
+  }, createRng(s)));
 
   const tierName = (item: Item): string => {
     const b = baseById(item.baseId); if (!b) return '—';

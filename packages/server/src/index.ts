@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
 import { ConfigRegistry, configSchemas, newCharacterSave } from '@dm/shared';
 import { configKeyForFile } from './configFiles.js';
+import { arrayElementSchema, formatConfigFile } from './configFileFormat.js';
 import { hashPassword, verifyPassword } from './auth/password.js';
 import {
   createUser, getUserByName, createSession, deleteSession, getSession, countRecentRegistrations,
@@ -259,7 +260,10 @@ app.post('/api/dev/config-file', ah(async (req, res) => {
   const written: string[] = [];
   try {
     for (const [key, value] of Object.entries(overrides)) {
-      writeFileSync(configFileFor(key), JSON.stringify(value, null, 2) + '\n');
+      // Файл «строка на запись» (weapon-parts) пишем в его же формате и без умолчаний zod — иначе одна правка
+      // детали давала diff на весь файл (`configFileFormat.ts`).
+      const path = configFileFor(key);
+      writeFileSync(path, formatConfigFile(value, existsSync(path) ? readFileSync(path, 'utf8') : null, arrayElementSchema(key)));
       await setConfigOverride(key, value); // живой конфиг остаётся верным независимо от импортов в памяти
       written.push(key);
     }

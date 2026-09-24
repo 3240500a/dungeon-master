@@ -4,7 +4,8 @@ import type { BaseRoll, CraftPartPick, CraftParts, Item, Rarity, RolledStat } fr
 import type { StatModifier } from '../types/attributes.js';
 import type { MaterialCost } from '../economy/materials.js';
 import { createRng, type Rng } from './rng.js';
-import { affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, rollAffixes, rollBaseQ, snapFloor } from './itemgen.js';
+import { affixTargetOfBase, baseStatRange, buildCraftShell, fixedBaseRoll, inferTierId, nameByRarity, rollAffixes, rollBaseQ, scaleBaseStats, snapFloor, type BaseShape } from './itemgen.js';
+import { axisOf, balanceAxisOf, bladeStats, strikeAxisOf } from './bladeStats.js';
 import {
   CRAFT_SLOT_LIST, agree, anatomyRow, baseOfKeyPart, keySlotOf, partFits, resolveType,
   type CraftSlot, type PartSet, type TypeInfo, type WeaponAnatomy, type WeaponPart,
@@ -164,11 +165,16 @@ export function journalTierCap(reg: ConfigRegistry, j: CraftJournal): number {
 
 export const anatomyOf = anatomyRow;
 
-/** Варианты гнезда для семейства, по оси от «+1» к «−1» (так их и показывает окно ковки). */
+/**
+ * Варианты гнезда для семейства, по оси от «+1» к «−1» (так их и показывает окно ковки). У клинков с
+ * измеренной геометрией — по ВЫВЕДЕННОЙ оси (§26): ручное число у них задаёт только вид заглушки.
+ */
 export function variantsFor(reg: ConfigRegistry, weaponClass: string, slot: CraftSlot, hands?: number): WeaponPart[] {
   return reg.get('weapon-parts')
     .filter((p) => p.enabled !== false && p.slot === slot && (p.classes as string[]).includes(weaponClass) && (hands === undefined || !p.hands.length || p.hands.includes(hands)))
-    .sort((a, b) => b.axis - a.axis || a.id.localeCompare(b.id));
+    .map((p) => ({ p, a: axisOf(reg, p) }))
+    .sort((x, y) => y.a - x.a || x.p.id.localeCompare(y.p.id))
+    .map((x) => x.p);
 }
 
 export function partById(reg: ConfigRegistry, id: string): WeaponPart | undefined {
@@ -192,16 +198,24 @@ export const clampStep = (p: WeaponPart, step: number): number => clamp(Math.rou
 
 /**
  * Сборка по умолчанию для семейства: в каждом гнезде вариант с осью ближе всего к нулю («эталон»),
- * у ключа — эталон базы с самым высоким потолком (при равенстве — с самым богатым пулом форм:
- * у меча это рыцарский, а не короткий с потолком t3); материалы — `step`, прижатый к окну формы.
+ * у ключа — эталон базы с самым высоким потолком (при равенстве — эталонной базы класса, чья своя скорость
+ * ближе всего к ×1, потом — с самым богатым пулом форм: у меча это рыцарский, а не архаичный); материалы —
+ * `step`, прижатый к окну формы.
  */
 export function defaultParts(reg: ConfigRegistry, weaponClass: string, hands: number, step = 1): CraftParts | null {
   const keySlot = keySlotOf(reg, weaponClass);
   const hiOf = (id: string): number => { const b = reg.get('items.base').find((x) => x.id === id); return b ? baseTierRange(reg, b).hi : -1; };
-  const keyGroup = [...keyVariantsByBase(reg, weaponClass, hands)].sort((a, b) => hiOf(b.baseId) - hiOf(a.baseId) || b.variants.length - a.variants.length)[0];
+  // При равном потолке — ЭТАЛОННАЯ база класса: своя скорость ближе всего к ×1 (рыцарский меч, а не архаичный
+  // с его +12 % — у того пул больше, но он не эталон). Потом — пул богаче.
+  const speedOff = (id: string): number => {
+    const b = reg.get('items.base').find((x) => x.id === id);
+    return Math.abs(b ? baseFlat(b, 'attackSpeed') + b.baseStats.filter((m) => m.stat === 'attackSpeed' && m.kind === 'increased').reduce((s, m) => s + m.value, 0) : 0);
+  };
+  const keyGroup = [...keyVariantsByBase(reg, weaponClass, hands)]
+    .sort((a, b) => hiOf(b.baseId) - hiOf(a.baseId) || speedOff(a.baseId) - speedOff(b.baseId) || b.variants.length - a.variants.length)[0];
   const pick = (slot: CraftSlot): CraftPartPick | undefined => {
     const pool = slot === keySlot ? (keyGroup?.variants ?? []) : variantsFor(reg, weaponClass, slot, hands);
-    const p = [...pool].sort((a, b) => Math.abs(a.axis) - Math.abs(b.axis))[0];
+    const p = [...pool].sort((a, b) => Math.abs(axisOf(reg, a)) - Math.abs(axisOf(reg, b)))[0];
     return p ? { id: p.id, step: clampStep(p, step) } : undefined;
   };
   const out = { strike: pick('strike'), grip: pick('grip'), bind: pick('bind'), head: pick('head') };
@@ -296,6 +310,13 @@ export interface CraftBake {
   arcMult?: number;
   affixCap: AffixForm;
   statusKind?: string;
+  /**
+   * Разброс мин–макс от ширины клинка (§26): ложится в числа базы (`scaleBaseStats`) и на вещь как
+   * `spreadMult`. Нет — клинок без геометрии, числа базы как есть.
+   */
+  spread?: number;
+  /** Точка баланса вещи, в ±1: клинок + оголовье (§26); у клинка без геометрии — ось оголовья. */
+  balance: number;
   /** Честные оговорки для окна: где ось сегодня не работает и почему. */
   notes: string[];
 }
@@ -321,9 +342,16 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
   // урон — в цифрах урона вещи, скорость — плоской частью скорости оружия, которую бой умножает на
   // все проценты скорости (`(1 + flat) × (1 + increased)`). Тогда ДПС формы = (1+0.1a)(1−0.08a) — один
   // и тот же у любой базы и любого билда (разброс 4.1 %), а не зависящий от бонусов героя.
-  const a1 = parts.strike.axis;
+  // ⭐ У клинка с измеренной геометрией ось — его место в вилке по длине (+ поправка формы), §26.
+  const blade = bladeStats(reg, parts.strike);
+  const a1 = blade ? blade.axis : strikeAxisOf(reg, parts.strike);
   const damageMult = r4(1 + k.strike.damagePct * a1);
   push('attackSpeed', 'flat', -k.strike.attackSpeed * a1);
+  if (blade?.outOfBracket) {
+    notes.push(blade.bracket
+      ? `Клинок ${parts.strike.geom!.len} см вне вилки «${blade.bracket.name}» (${blade.bracket.lo}–${blade.bracket.hi}): ось упёрлась в край.`
+      : 'У клинка нет вилки по тегу `blade`: длина и ширина не считаются.');
+  }
 
   // 2 · Держак — площадь-нейтрально: дальность K^a, дуга K^(−2a), `дуга × дальность²` постоянна.
   let reachMult: number | undefined;
@@ -337,7 +365,9 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
   }
 
   // 4 · Оголовье — укус ↔ упор. Упор: блок (у лука — стойкость к прерыванию). Укус: статус грани.
-  const a4 = parts.head.axis;
+  // ⭐ У клинка с геометрией рычаг — ТОЧКА БАЛАНСА вещи: клинок и оголовье вместе, в ±1 (§26). Один
+  // продавец блока и статуса, а не два — иначе крайние детали складывались бы вдвое (§23).
+  const a4 = balanceAxisOf(reg, parts.strike, parts.head);
   const isBow = base.weaponClass === 'bow';
   if (isBow) {
     push('interruptResist', 'flat', k.headInterrupt * a4);
@@ -357,8 +387,13 @@ export function bakeParts(reg: ConfigRegistry, base: WeaponBase, t: number, part
   // 3 · Обвязка — форма ёмкости. Число слотов даёт ступень.
   const affixCap = formOf(capacityOf(reg, t), parts.bind.axis);
 
-  return { damageMult, mods, reachMult, arcMult, affixCap, statusKind, notes };
+  const spread = blade && blade.spread !== 1 ? blade.spread : undefined;
+  return { damageMult, mods, reachMult, arcMult, affixCap, statusKind, spread, balance: a4, notes };
 }
+
+/** Форма чисел базы по запеканию: разброс клинка (или ничего). */
+export const shapeOfBake = (bake: Pick<CraftBake, 'spread'>): BaseShape | undefined =>
+  bake.spread !== undefined ? { spread: bake.spread } : undefined;
 
 // ── Цена ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -514,7 +549,9 @@ export function craftWeapon(
   // Доводка поднимает только ПОЛ броска; верх вилки тот же, что у найденной вещи этого тира.
   const spread = reg.get('balance').loot.baseRoll;
   const floor = cost.finish?.floor ?? 0;
-  const ranges = baseStatRange(base, tier.statMult, spread, floor);
+  // Форма клинка (разброс от ширины, §26) — в числа базы ДО тира и броска: вилка «от и до» уже с ней.
+  const shape = shapeOfBake(bake);
+  const ranges = baseStatRange(base, tier.statMult, spread, floor, shape);
   // `at` — вещь на краю вилки (низ при этой доводке / верх): окно сравнивает «от и до», а не середину.
   // Предпросмотр — середина СВОЕЙ вилки: при доводке без пола это прежнее число (поле не пишем), с полом —
   // середина [пол, 1], иначе вещь окна несла бы урон, которого ковка не даст никогда.
@@ -522,7 +559,7 @@ export function craftWeapon(
   const baseRoll: BaseRoll | undefined = opts.rng ? rollBaseQ(base, opts.rng, floor)
     : opts.at ? fixedBaseRoll(base, opts.at === 'lo' ? lo : 1)
     : lo > 0 ? fixedBaseRoll(base, (lo + 1) / 2) : undefined;
-  const item = buildCraftShell(base, tier, reg.get('balance').maxTotalRequirement, { baseRoll, spread });
+  const item = buildCraftShell(base, tier, reg.get('balance').maxTotalRequirement, { baseRoll, spread, shape });
   if (!opts.rng && !opts.at) item.rollPreview = ranges;
   item.name = craftedName(tier, type);
   item.baseStats = [...item.baseStats, ...bake.mods]; // новый массив: статы базы в конфиге не трогаем
@@ -626,10 +663,17 @@ function weighted<T>(items: T[], weight: (x: T) => number, rng: Rng): T | undefi
  * вещи — разбор отдаёт то, из чего вещь сделана. Ключевая деталь берётся из пула СВОЕЙ базы, поэтому
  * тип найденной вещи = её база. Редкость варианта = его частота на дропе (`rarityWeight`), не сила.
  * ⚠ Вывод стабилен, пока не меняются пулы вариантов: добавишь вариант — у старых вещей детали могут
- * переехать. Перед врезкой в игру: записывать `parts` на вещь при первом чтении.
+ * переехать. Поэтому меч, клинок которого несёт статы (§26), получает детали НАВСЕГДА в момент
+ * выпадения (`foundParts`, `shapeFoundWeapon`) — после этого вывод для него не зовётся.
  */
 export function partsOf(reg: ConfigRegistry, item: Item): CraftParts | null {
   if (item.parts) return item.parts;
+  if (item.foundParts) return item.foundParts;
+  return deriveParts(reg, item, hashStr(`${item.uid}|${item.baseId}`));
+}
+
+/** Вывод деталей найденной вещи с заданным сидом (ступени — под её тир, варианты — по частоте на дропе). */
+function deriveParts(reg: ConfigRegistry, item: Item, seed: number): CraftParts | null {
   const base = reg.get('items.base').find((b) => b.id === item.baseId);
   if (!base || base.kind !== 'weapon') return null;
   const cls = base.weaponClass;
@@ -645,8 +689,8 @@ export function partsOf(reg: ConfigRegistry, item: Item): CraftParts | null {
     pools[slot] = [...pool].sort((a, b) => a.id.localeCompare(b.id));
   }
   const t = tierIndexOfItem(reg, item);
-  const rng = createRng(hashStr(`${item.uid}|${item.baseId}`));
-  const has = (slot: CraftSlot, s: number): boolean => pools[slot].some((p) => p.stepMin <= s && s <= p.stepMax);
+  const rng = createRng(seed);
+  const has =(slot: CraftSlot, s: number): boolean => pools[slot].some((p) => p.stepMin <= s && s <= p.stepMax);
 
   // Ступени: все четвёрки, из которых кузнец собрал бы ровно эту ступень, — ровные предпочтительнее.
   type Steps = Record<CraftSlot, { step: number }>;
@@ -669,6 +713,73 @@ export function partsOf(reg: ConfigRegistry, item: Item): CraftParts | null {
     const p = weighted(fit, (x) => w[x.rarity] ?? 0, rng)!;
     out[slot] = { id: p.id, step };
   }
+  return out;
+}
+
+/**
+ * СТУПЕНИ ЗАПИСАННЫХ ДЕТАЛЕЙ ПОД НОВУЮ СТУПЕНЬ ВЕЩИ — для подъёма найденного меча в кузнице (§26).
+ * Варианты те же (клинок не меняется вместе с тиром), а ступени материала — такие, чтобы из них ковалась
+ * ровно ступень `t`: разбор обязан отдавать то, из чего вещь сделана (§10.9). Из подходящих четвёрок —
+ * ближайшая к прежней; ровно не собирается (окна материалов не пускают) — ближайшая по ступени.
+ */
+export function restepParts(reg: ConfigRegistry, parts: CraftParts, t: number): CraftParts {
+  const recs = CRAFT_SLOT_LIST.map((slot) => partById(reg, parts[slot].id));
+  if (recs.some((p) => !p)) return parts;
+  const win = recs.map((p) => { const a: number[] = []; for (let s = p!.stepMin; s <= p!.stepMax; s++) a.push(s); return a; });
+  let best: { s: CraftParts; d: number; move: number } | null = null;
+  for (const a of win[0]!) for (const b of win[1]!) for (const c of win[2]!) for (const e of win[3]!) {
+    const steps = [a, b, c, e];
+    const s = {} as CraftParts;
+    CRAFT_SLOT_LIST.forEach((slot, i) => { s[slot] = { id: parts[slot].id, step: steps[i]! }; });
+    const d = Math.abs(tierOfSteps(reg, s).tier - t);
+    const move = CRAFT_SLOT_LIST.reduce((acc, slot) => acc + Math.abs(s[slot].step - parts[slot].step), 0);
+    if (!best || d < best.d || (d === best.d && move < best.move)) best = { s, d, move };
+  }
+  return best?.s ?? parts;
+}
+
+/**
+ * Сид деталей найденной вещи — из того, что уже выпало: база, редкость, уровень, тир, бросок, аффиксы,
+ * имя. Не из `uid`: тот сделан из времени и `Math.random`, и сим с сидом перестал бы повторяться; и не
+ * новым броском `rng` — лишний бросок сдвинул бы всю следующую добычу.
+ */
+function foundSeed(item: Item): number {
+  const aff = item.affixes.map((a) => `${a.affixId}:${a.modifier?.value ?? ''}`).join(',');
+  return hashStr(`${item.baseId}|${item.rarity}|${item.itemLevel}|${item.tier ?? ''}|${JSON.stringify(item.baseRoll ?? {})}|${aff}|${item.name}`);
+}
+
+/**
+ * ⭐ НАЙДЕННЫЙ МЕЧ = СКОВАННЫЙ ИЗ ТЕХ ЖЕ ДЕТАЛЕЙ (§26). Вид вещи обязан совпадать с её числами:
+ * меч с широким клинком бьёт ровно и с пола, и из кузницы. Детали выводятся один раз и
+ * записываются на вещь (`foundParts`), дальше они не переезжают ни при подъёме тира, ни при новом
+ * варианте в пуле.
+ *
+ * Что берётся от деталей: ось длины (удар ↔ скорость), разброс ширины и точка баланса (блок ↔ укус).
+ * Держак (дальность и дуга) и обвязка (ёмкость аффиксов) у найденной вещи не трогаются — её аффиксы
+ * уже выпали. Уникальные не трогаются вовсе: они собраны руками. Ударная часть без геометрии — вещь
+ * возвращается как была: остальные классы перейдут на эту систему сами, как только их ударные части
+ * получат модели. Идемпотентна: статы пересобираются от базы, повторный вызов даёт то же самое.
+ */
+export function shapeFoundWeapon(reg: ConfigRegistry, item: Item): Item {
+  if (item.parts || item.rarity === 'unique' || item.kind !== 'weapon') return item;
+  const base = reg.get('items.base').find((b) => b.id === item.baseId);
+  if (!base || base.kind !== 'weapon') return item;
+  const picks = item.foundParts ?? deriveParts(reg, item, foundSeed(item));
+  if (!picks) return item;
+  const res = resolveParts(reg, base.weaponClass, base.hands ?? 1, picks);
+  if (!res.ok || !bladeStats(reg, res.parts.strike)) return item;
+  const t = tierIndexOfItem(reg, item);
+  const statMult = reg.get('item-tiers').find((x) => x.id === item.tier)?.statMult ?? craftTiers(reg)[t]?.statMult ?? 1;
+  const bake = bakeParts(reg, base, t, res.parts);
+  const shape = shapeOfBake(bake);
+  const out: Item = {
+    ...item,
+    foundParts: structuredClone(picks),
+    // От базы, а не от текущих статов: повторный вызов не накопит вклад клинка дважды.
+    baseStats: [...scaleBaseStats(base.baseStats, statMult, item.baseRoll, reg.get('balance').loot.baseRoll, shape), ...bake.mods],
+  };
+  if (bake.damageMult !== 1) out.damageMult = bake.damageMult; else delete out.damageMult;
+  if (shape?.spread !== undefined) out.spreadMult = shape.spread; else delete out.spreadMult;
   return out;
 }
 

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigRegistry } from '../config/registry.js';
-import { pickDropBase, generateItem, rollRarity, rollAffixes, itemFromBase } from './itemgen.js';
+import {
+  pickDropBase, generateItem, rollRarity, rollAffixes, itemFromBase,
+  DEFAULT_ROLL_SPREAD, bakedExtras, baseStatRange, fixedBaseRoll, inferTierId, retierItem, scaleBaseStats, shapedBaseStats, shapeOfItem,
+} from './itemgen.js';
 import { createRng } from './rng.js';
 
 const reg = (() => { const r = new ConfigRegistry(); r.loadAll(); return r; })();
@@ -257,5 +260,96 @@ describe('кап суммы требований (maxTotalRequirement)', () => {
     expect(sum(b)).toBeLessThanOrEqual(90);
     expect(sum(b)).toBeLessThan(sum(a)); // кап 90 реально ужимает
     expect(Object.keys(a.requirements)).toEqual(['strength']); // тяжёлое = только сила → весь кап в силу
+  });
+});
+
+describe('⭐ форма чисел базы от клинка (docs/CRAFT_WEAPONS.md §26)', () => {
+  const swords = bases.filter((b) => b.kind === 'weapon' && b.weaponClass === 'sword');
+  type Mods = { stat: string; kind: string; value: number }[];
+  const val = (st: Mods, stat: string): number => st.find((m) => m.stat === stat && m.kind === 'flat')!.value;
+  const rest = (st: Mods): Mods => st.filter((m) => m.stat !== 'minDamage' && m.stat !== 'maxDamage');
+  const R = DEFAULT_ROLL_SPREAD;
+
+  it('shapedBaseStats: середина та же, полуразмах ×s, прочие статы не трогаются; без формы и ×1 — тот же массив', () => {
+    expect(swords.length).toBeGreaterThan(0);
+    for (const b of swords) {
+      const mid0 = (val(b.baseStats, 'minDamage') + val(b.baseStats, 'maxDamage')) / 2;
+      const half0 = (val(b.baseStats, 'maxDamage') - val(b.baseStats, 'minDamage')) / 2;
+      for (const s of [0.4, 0.7, 1.3, 1.6]) {
+        const out = shapedBaseStats(b.baseStats, { spread: s });
+        expect((val(out, 'minDamage') + val(out, 'maxDamage')) / 2, `${b.id} ×${s}`).toBeCloseTo(mid0, 12);
+        expect((val(out, 'maxDamage') - val(out, 'minDamage')) / 2, `${b.id} ×${s}`).toBeCloseTo(half0 * s, 12);
+        expect(rest(out), `${b.id} ×${s}`).toEqual(rest(b.baseStats));
+      }
+      expect(shapedBaseStats(b.baseStats)).toBe(b.baseStats);
+      expect(shapedBaseStats(b.baseStats, { spread: 1 })).toBe(b.baseStats);
+    }
+    // Мелкая база под узким клинком: мин не падает ниже 0.5 — удара в ноль не бывает.
+    const tiny = [{ stat: 'minDamage', kind: 'flat', value: 1 }, { stat: 'maxDamage', kind: 'flat', value: 9 }] as Parameters<typeof shapedBaseStats>[0];
+    expect(val(shapedBaseStats(tiny, { spread: 1.6 }), 'minDamage')).toBe(0.5);
+    expect(tiny[0]!.value).toBe(1); // вход не мутирует
+  });
+  it('shapeOfItem: ×1 и отсутствие поля — формы нет', () => {
+    expect(shapeOfItem({})).toBeUndefined();
+    expect(shapeOfItem({ spreadMult: 1 })).toBeUndefined();
+    expect(shapeOfItem({ spreadMult: 0.6 })).toEqual({ spread: 0.6 });
+  });
+  it('baseStatRange с формой: края вилки = числа при доле пола и 1 С ФОРМОЙ; широкий сужает вилку с обеих сторон, узкий — расширяет', () => {
+    for (const b of swords) for (const t of tiers) for (const s of [0.4, 1.6]) {
+      const shape = { spread: s };
+      const at = (q: number) => scaleBaseStats(b.baseStats, t.statMult, fixedBaseRoll(b, q), R, shape);
+      const r = baseStatRange(b, t.statMult, R, 0, shape);
+      const plain = baseStatRange(b, t.statMult, R);
+      for (const st of ['minDamage', 'maxDamage'] as const) expect(r[st], `${b.id} ${t.id} ×${s} ${st}`).toEqual([val(at(0), st), val(at(1), st)]);
+      const tag = `${b.id} ${t.id} ×${s}`;
+      if (s < 1) {
+        expect(r.minDamage![0], tag).toBeGreaterThanOrEqual(plain.minDamage![0]);
+        expect(r.maxDamage![1], tag).toBeLessThanOrEqual(plain.maxDamage![1]);
+      } else {
+        expect(r.minDamage![0], tag).toBeLessThanOrEqual(plain.minDamage![0]);
+        expect(r.maxDamage![1], tag).toBeGreaterThanOrEqual(plain.maxDamage![1]);
+      }
+      // Пол доводки поднимает низ вилки и с формой.
+      expect(baseStatRange(b, t.statMult, R, 0.5, shape).maxDamage![0], tag).toBe(val(at(0.5), 'maxDamage'));
+    }
+  });
+  it('inferTierId: вещь с формой клинка без поля tier читается СВОИМ тиром — и в середине, и на краях вилки', () => {
+    for (const b of swords) for (const t of tiers) for (const s of [0.4, 1.6]) for (const q of [0, 0.5, 1]) {
+      const baseRoll = fixedBaseRoll(b, q);
+      const it = { baseStats: scaleBaseStats(b.baseStats, t.statMult, baseRoll, R, { spread: s }), itemLevel: 1, baseRoll, spreadMult: s };
+      expect(inferTierId(tiers, b, it, R), `${b.id} ${t.id} ×${s} q=${q}`).toBe(t.id);
+    }
+  });
+  it('bakedExtras: вклад деталей сверх базы — по паре (стат, вид) с вычёркиванием; правка базы после выпадения срез не сдвигает', () => {
+    const base = [
+      { stat: 'minDamage', kind: 'flat', value: 7 }, { stat: 'maxDamage', kind: 'flat', value: 13 },
+      { stat: 'blockChance', kind: 'flat', value: 0.08 },
+    ] as Parameters<typeof bakedExtras>[0];
+    const item = [
+      { stat: 'minDamage', kind: 'flat', value: 20 }, { stat: 'maxDamage', kind: 'flat', value: 30 },
+      { stat: 'blockChance', kind: 'flat', value: 0.08 },
+      { stat: 'attackSpeed', kind: 'flat', value: -0.05 }, { stat: 'blockChance', kind: 'flat', value: 0.01 }, { stat: 'bleedChancePct', kind: 'flat', value: -0.03 },
+    ] as Parameters<typeof bakedExtras>[1];
+    const want = item.slice(3);
+    expect(bakedExtras(base, item)).toEqual(want);
+    // В базу дописали стат, которого у старой вещи нет, — вклад всё равно тот же, а не «съехавший» на соседа.
+    expect(bakedExtras([...base, { stat: 'accuracy', kind: 'flat', value: 12 }] as typeof base, item)).toEqual(want);
+    expect(bakedExtras(base, item)[0]).not.toBe(item[3]); // копии, а не ссылки в вещь
+  });
+  it('retierItem держит форму клинка: числа нового тира вокруг той же формы; вклад деталей — от базы заново, не вычитанием', () => {
+    const b = swords.find((x) => x.id === 'long-sword')!;
+    const [lo, hi] = [tiers[0]!, tiers[3]!];
+    const baseRoll = { minDamage: 0.8, maxDamage: 0.3 };
+    const shape = { spread: 0.5 };
+    const extras = [{ stat: 'attackSpeed', kind: 'flat', value: -0.05 }, { stat: 'blockChance', kind: 'flat', value: 0.01 }] as Parameters<typeof bakedExtras>[1];
+    const item = { ...itemFromBase(b, tiers), tier: lo.id, baseRoll, spreadMult: 0.5, baseStats: [...scaleBaseStats(b.baseStats, lo.statMult, baseRoll, R, shape), ...extras] };
+    const up = retierItem(b, item, hi, { spread: R });
+    expect(up.spreadMult).toBe(0.5);
+    expect(up.baseRoll).toEqual(baseRoll);
+    // Статы — от базы, как у любой вещи: вклад деталей возвращает `upgradedItem` → `shapeFoundWeapon` от ДЕТАЛЕЙ.
+    // Вычитание «что сверх базы» застревало бы навсегда, если базу правили после выпадения вещи.
+    expect(up.baseStats).toEqual(scaleBaseStats(b.baseStats, hi.statMult, baseRoll, R, shape));
+    // Обратный путь на исходный тир — числа базы исходного тира с той же формой: ничего не копится.
+    expect(retierItem(b, up, lo, { spread: R }).baseStats).toEqual(scaleBaseStats(b.baseStats, lo.statMult, baseRoll, R, shape));
   });
 });

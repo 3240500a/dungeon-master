@@ -99,13 +99,38 @@ const spreadOf = (stat: string, s: RollSpread): number => (stat === 'armor' ? s.
 export const rollFactor = (q: number, spread: number): number => 1 + spread * (2 * Math.max(0, Math.min(1, q)) - 1);
 
 /**
+ * ⭐ ФОРМА ЧИСЕЛ БАЗЫ от клинка (docs/CRAFT_WEAPONS.md §26): `spread` разводит мин и макс урона вокруг
+ * ТОЙ ЖЕ середины (×0.4 — широкий, ровный удар; ×1.6 — узкий, вразнобой). Средний урон не меняется,
+ * поэтому ДПС ширина не двигает. Нет формы или ×1 — числа базы как есть.
+ */
+export interface BaseShape { spread?: number }
+
+/**
+ * Статы базы с формой клинка — ДО тира и броска: форма живёт в числах базы, поэтому тир (множитель)
+ * её сохраняет от «Сломанного» до «Мифического», а бросок вилки катается уже вокруг формы.
+ * Значения дробные — округляет `scaleBaseStats` вместе с тиром, иначе ×0.4 на 5–9 съедалось бы дважды.
+ */
+export function shapedBaseStats(stats: StatModifier[], shape?: BaseShape): StatModifier[] {
+  const s = shape?.spread;
+  const mn = stats.find((m) => m.stat === 'minDamage' && m.kind === 'flat');
+  const mx = stats.find((m) => m.stat === 'maxDamage' && m.kind === 'flat');
+  if (s === undefined || s === 1 || !mn || !mx) return stats;
+  const mid = (mn.value + mx.value) / 2, half = ((mx.value - mn.value) / 2) * Math.max(0, s);
+  return stats.map((m) => (m === mn ? { ...m, value: Math.max(0.5, mid - half) } : m === mx ? { ...m, value: mid + half } : m));
+}
+
+/** Форма, записанная на вещи (`spreadMult`), — для подъёма тира и вывода тира старых сейвов. */
+export const shapeOfItem = (item: { spreadMult?: number }): BaseShape | undefined =>
+  item.spreadMult !== undefined && item.spreadMult !== 1 ? { spread: item.spreadMult } : undefined;
+
+/**
  * Статы базы на тире с броском. ⚠ Всегда НОВЫЙ массив, даже при ×1: вещь с общим массивом базы
  * превращала любую правку статов вещи (ковка дописывает вклад деталей) в правку САМОЙ БАЗЫ в
  * конфиге — и всех следующих вещей. Считается всегда ОТ БАЗЫ (не домножением текущих), поэтому
  * подъём тира не копит ошибку округления, а бросок переживает его долей q.
  */
-export function scaleBaseStats(stats: StatModifier[], mult: number, roll?: BaseRoll, spread: RollSpread = DEFAULT_ROLL_SPREAD): StatModifier[] {
-  const out = stats.map((m) => {
+export function scaleBaseStats(stats: StatModifier[], mult: number, roll?: BaseRoll, spread: RollSpread = DEFAULT_ROLL_SPREAD, shape?: BaseShape): StatModifier[] {
+  const out = shapedBaseStats(stats, shape).map((m) => {
     if (m.kind !== 'flat' || !TIER_SCALED.has(m.stat)) return { ...m };
     const q = roll?.[m.stat as RolledStat];
     const f = q === undefined ? 1 : rollFactor(q, spreadOf(m.stat, spread));
@@ -114,6 +139,10 @@ export function scaleBaseStats(stats: StatModifier[], mult: number, roll?: BaseR
   // Мин и макс катаются порознь — на узкой вилке макс не может оказаться ниже мина.
   const mn = out.find((m) => m.stat === 'minDamage' && m.kind === 'flat');
   const mx = out.find((m) => m.stat === 'maxDamage' && m.kind === 'flat');
+  // ⚠ Форма клинка округляется так же, ПОРОЗНЬ: мин зависит только от своего броска, макс — от своего, и
+  // вилка «от и до» держит каждый. Цена — шум округления: середина клинка уезжает до полединицы, и на малых
+  // числах архаичного меча (5–9, t1) ширина двигает ДПС до ~7 % у героя 1-го уровня. Подгонка суммы мин + макс
+  // убирала шум, но связывала мин с броском макса — и вещь выкатывалась за показанную вилку (§26).
   if (mn && mx && mx.value < mn.value) mx.value = mn.value;
   return out;
 }
@@ -150,9 +179,9 @@ export function fixedBaseRoll(base: ItemsBase[number], q: number): BaseRoll | un
 }
 
 /** ВИЛКА статов базы на тире: [значение при q = floor, значение при q = 1] по каждой катаемой стате. */
-export function baseStatRange(base: ItemsBase[number], statMult: number, spread: RollSpread = DEFAULT_ROLL_SPREAD, floor = 0): Partial<Record<RolledStat, [number, number]>> {
+export function baseStatRange(base: ItemsBase[number], statMult: number, spread: RollSpread = DEFAULT_ROLL_SPREAD, floor = 0, shape?: BaseShape): Partial<Record<RolledStat, [number, number]>> {
   const stats = rolledStatsOf(base);
-  const at = (q: number) => scaleBaseStats(base.baseStats, statMult, Object.fromEntries(stats.map((s) => [s, q])) as BaseRoll, spread);
+  const at = (q: number) => scaleBaseStats(base.baseStats, statMult, Object.fromEntries(stats.map((s) => [s, q])) as BaseRoll, spread, shape);
   const lo = at(snapFloor(floor)), hi = at(1);
   const out: Partial<Record<RolledStat, [number, number]>> = {};
   for (const st of stats) {
@@ -322,7 +351,7 @@ const nextUid = uuidv7;
  */
 function buildItem(
   base: ItemsBase[number],
-  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string; baseRoll?: BaseRoll; spread?: RollSpread },
+  o: { rarity: Rarity; name: string; itemLevel: number; statMult: number; reqMult: number; affixes: RolledAffix[]; maxReqTotal?: number; tierId?: string; baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape },
 ): Item {
   const item: Item = {
     uid: nextUid(),
@@ -334,13 +363,14 @@ function buildItem(
     itemLevel: o.itemLevel,
     tier: o.tierId,
     requirements: scaleReqs(base.requirements, o.reqMult, o.maxReqTotal),
-    baseStats: scaleBaseStats(base.baseStats, o.statMult, o.baseRoll, o.spread),
+    baseStats: scaleBaseStats(base.baseStats, o.statMult, o.baseRoll, o.spread, o.shape),
     affixes: o.affixes,
     gridW: base.gridW,
     gridH: base.gridH,
     pos: null,
   };
   if (o.baseRoll) item.baseRoll = o.baseRoll;
+  if (o.shape?.spread !== undefined && o.shape.spread !== 1) item.spreadMult = o.shape.spread;
   return item;
 }
 
@@ -365,7 +395,7 @@ function buildItem(
 export function inferTierId(
   tiers: ItemTiers | undefined,
   base: ItemsBase[number],
-  item: { tier?: string; baseStats: StatModifier[]; itemLevel: number; baseRoll?: BaseRoll },
+  item: { tier?: string; baseStats: StatModifier[]; itemLevel: number; baseRoll?: BaseRoll; spreadMult?: number },
   spread: RollSpread = DEFAULT_ROLL_SPREAD,
 ): string | undefined {
   if (item.tier) return item.tier;
@@ -373,7 +403,8 @@ export function inferTierId(
   const usable = tiers.filter((t) => t.enabled !== false);
   const pool = usable.length ? usable : tiers;
   // Сравнивать можно только то, что тир вообще масштабирует (`scaleBaseStats`), и только `flat`.
-  const pairs = base.baseStats
+  // Числа базы — С ФОРМОЙ клинка (`spreadMult`): узкий 5–15 на «Сломанном» не должен читаться чужим тиром.
+  const pairs = shapedBaseStats(base.baseStats, shapeOfItem(item))
     .filter((b) => b.kind === 'flat' && TIER_SCALED.has(b.stat) && b.value !== 0)
     .map((b) => ({ b, cur: item.baseStats.find((m) => m.stat === b.stat && m.kind === 'flat') }))
     .filter((p): p is { b: StatModifier; cur: StatModifier } => !!p.cur);
@@ -432,8 +463,30 @@ export function retierItem(
     name: item.rarity === 'normal' ? tieredName(tier.name, base.name, base.gender) : item.name,
     requirements: scaleReqs(base.requirements, reqMult, opts.maxReqTotal),
     // Бросок переживает подъём: та же доля q на новом тире — вещь остаётся на своём месте вилки.
-    baseStats: scaleBaseStats(base.baseStats, tier.statMult, item.baseRoll, opts.spread),
+    // Форма клинка (`spreadMult`) — тоже: мин и макс нового тира разводятся вокруг той же середины.
+    // ⚠ Вклад деталей (скорость клинка, блок, укус) отсюда НЕ переносится: статы собираются от базы, как и
+    // раньше. Найденному мечу его клинок возвращает `upgradedItem` → `shapeFoundWeapon` — от деталей, а не
+    // вычитанием из текущих статов (правка базы после выпадения иначе застряла бы в вещи навсегда).
+    baseStats: scaleBaseStats(base.baseStats, tier.statMult, item.baseRoll, opts.spread, shapeOfItem(item)),
   };
+}
+
+/**
+ * Что лежит в статах вещи СВЕРХ статов базы — вклад деталей, дописанный ковкой или клинком найденного
+ * меча. Сверка по паре (стат, вид) с вычёркиванием, а не срезом по длине. Для показа и проверок: статы
+ * вещи из этого не собираются.
+ */
+export function bakedExtras(baseStats: StatModifier[], itemStats: StatModifier[]): StatModifier[] {
+  const left = new Map<string, number>();
+  for (const m of baseStats) { const k = `${m.stat}|${m.kind}`; left.set(k, (left.get(k) ?? 0) + 1); }
+  const out: StatModifier[] = [];
+  for (const m of itemStats) {
+    const k = `${m.stat}|${m.kind}`;
+    const n = left.get(k) ?? 0;
+    if (n > 0) left.set(k, n - 1);
+    else out.push({ ...m });
+  }
+  return out;
 }
 
 /**
@@ -685,7 +738,7 @@ export function buildCraftShell(
   base: ItemsBase[number],
   tier: ItemTiers[number],
   maxReqTotal?: number,
-  roll?: { baseRoll?: BaseRoll; spread?: RollSpread },
+  roll?: { baseRoll?: BaseRoll; spread?: RollSpread; shape?: BaseShape },
 ): Item {
   return buildItem(base, {
     rarity: 'normal',
@@ -698,6 +751,7 @@ export function buildCraftShell(
     maxReqTotal,
     baseRoll: roll?.baseRoll,
     spread: roll?.spread,
+    shape: roll?.shape,
   });
 }
 

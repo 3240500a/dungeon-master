@@ -437,6 +437,69 @@
       "common": 10,
       "uncommon": 4,
       "rare": 1
+    },
+    "blade": {
+      "brackets": [
+        {
+          "tag": "roman",
+          "name": "архаичный",
+          "lo": 45,
+          "hi": 70,
+          "width": 4.7
+        },
+        {
+          "tag": "short",
+          "name": "короткий",
+          "lo": 70,
+          "hi": 80,
+          "width": 5.2
+        },
+        {
+          "tag": "arming",
+          "name": "длинный",
+          "lo": 85,
+          "hi": 90,
+          "width": 3.3
+        },
+        {
+          "tag": "great",
+          "name": "полуторный",
+          "lo": 95,
+          "hi": 105,
+          "width": 3.8
+        },
+        {
+          "tag": "huge",
+          "name": "двуручный",
+          "lo": 110,
+          "hi": 150,
+          "width": 4.8
+        }
+      ],
+      "spread": {
+        "k": 0.9,
+        "min": 0.4,
+        "max": 1.6
+      },
+      "balance": {
+        "center": 0.45,
+        "span": 0.1,
+        "bladeShare": 0.6
+      },
+      "forms": {
+        "falchion": {
+          "length": 1,
+          "balance": -0.4
+        },
+        "sabre": {
+          "length": -1,
+          "balance": 0.4
+        }
+      },
+      "detect": {
+        "flare": 1.15,
+        "spine": 3
+      }
     }
   },
   "autoPickup": {

@@ -16,6 +16,7 @@ import { weaponDebuffs, mergeElementOnHit, shapeSkillPacket } from '../formulas/
 import { skillWeaponAllowed } from '../formulas/skills.js';
 import { armorPoise, armorNoise } from '../formulas/resolveArmor.js';
 import { generateItem, itemFromBase, rollTierLevel } from '../formulas/itemgen.js';
+import { shapeFoundWeapon } from '../formulas/craft.js';
 import { salvageFromMonster } from '../formulas/salvage.js';
 import { monsterTrophyBase } from '../formulas/trophy.js';
 import { giveMaterials } from '../economy/materials.js';
@@ -1582,7 +1583,8 @@ export class GameSession {
             loot.categoryWeights,
           )
         : undefined;
-      const item = generateItem(
+      // ⭐ Меч с пола = меч из кузницы из тех же деталей: клинок несёт статы своей геометрии (§26).
+      const item = shapeFoundWeapon(this.cfg, generateItem(
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),
         this.cfg.get('uniques'),
@@ -1601,7 +1603,7 @@ export class GameSession {
           baseRoll: loot.baseRoll,
         },
         this.rng,
-      );
+      ));
       // Снято с трупа — значит в негодном виде: чинить у кузнеца или разбирать (docs/ECONOMY.md, Ч4).
       // Сломанными падают ТОЛЬКО трофеи: обычная находка не снята с тела и цела, иначе
       // надеть в забеге было бы нечего вовсе.
@@ -1690,7 +1692,7 @@ export class GameSession {
     const bal = this.cfg.get('balance');
     const n = tier ? this.rng.int(tier.itemsMin, Math.max(tier.itemsMin, tier.itemsMax)) : 1;
     for (let i = 0; i < n; i++) {
-      const item = generateItem(
+      const item = shapeFoundWeapon(this.cfg, generateItem(
         this.cfg.get('items.base'),
         this.cfg.get('affixes'),
         this.cfg.get('uniques'),
@@ -1712,7 +1714,7 @@ export class GameSession {
           baseRoll: bal.loot.baseRoll,
         },
         this.rng,
-      );
+      ));
       // ⚠ Содержимое сундука ЦЕЛОЕ: сломанным падает только снятое с тела (Ч4).
       const { x, y } = this.spawnDrop(ch.pos, { kind: 'item', item }, p.pos);
       this.events.push({ type: 'item-dropped', item, x, y, from: 'chest' });
