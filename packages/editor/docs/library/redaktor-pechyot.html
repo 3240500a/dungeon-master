@@ -1,0 +1,358 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Редактор печёт, движки играют</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@600;700&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap&subset=cyrillic,latin">
+<style>
+  :root{
+    --ground:#F4F5F6; --surface:#EAECEE; --surface-2:#E0E3E6;
+    --ink:#14171A; --ink-2:#3A4147; --muted:#5E686E;
+    --line:#D3D8DC; --line-strong:#B7BEC4;
+    --accent:#1F5C8C; --accent-soft:#DCE7F0;
+    --warm:#8F5A12; --warm-soft:#F2E7D5;
+    --good:#2C6A46; --good-soft:#DBE9E0;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0F1215; --surface:#161A1E; --surface-2:#1C2126;
+      --ink:#E6EAED; --ink-2:#BAC3C9; --muted:#8A959C;
+      --line:#232A30; --line-strong:#333C44;
+      --accent:#63ABE0; --accent-soft:#112430;
+      --warm:#DBA455; --warm-soft:#2A2317;
+      --good:#6CBF8E; --good-soft:#14291D;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0F1215; --surface:#161A1E; --surface-2:#1C2126;
+    --ink:#E6EAED; --ink-2:#BAC3C9; --muted:#8A959C;
+    --line:#232A30; --line-strong:#333C44;
+    --accent:#63ABE0; --accent-soft:#112430;
+    --warm:#DBA455; --warm-soft:#2A2317;
+    --good:#6CBF8E; --good-soft:#14291D;
+  }
+
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:980px;margin:0 auto;padding:56px 26px 100px;display:flex;flex-direction:column;gap:60px}
+  .col{max-width:70ch}
+  h1,h2,h3{font-family:"Golos Text","IBM Plex Sans",sans-serif;font-weight:700;line-height:1.16;text-wrap:balance;margin:0}
+  h1{font-size:clamp(30px,5.2vw,46px);letter-spacing:-.02em}
+  h2{font-size:clamp(21px,3vw,27px);letter-spacing:-.01em}
+  h3{font-size:17px;font-weight:600}
+  p{margin:0}
+  strong{font-weight:600;color:var(--ink)}
+  code{font-family:"IBM Plex Mono",monospace;font-size:.87em;background:var(--surface-2);padding:.1em .36em;border-radius:3px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:var(--accent)}
+
+  header{border-bottom:1px solid var(--line);padding-bottom:34px}
+  .lede{font-size:19.5px;color:var(--ink-2);margin-top:16px}
+  .meta{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);margin-top:18px}
+
+  section{display:flex;flex-direction:column;gap:18px}
+  .sechead{display:flex;flex-direction:column;gap:8px}
+
+  .thesis{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);padding:26px 28px;display:flex;flex-direction:column;gap:14px}
+  .thesis p{font-size:19px}
+
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+  .tile{border:1px solid var(--line);background:var(--surface);padding:20px;display:flex;flex-direction:column;gap:6px}
+  .tile .n{font-family:"Golos Text",sans-serif;font-weight:700;font-size:34px;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .tile .l{font-size:14.5px;color:var(--ink-2)}
+  .tile .s{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);background:var(--surface)}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:15px}
+  th,td{text-align:left;padding:11px 15px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);background:var(--surface-2);border-bottom:1px solid var(--line-strong)}
+  tbody tr:last-child td{border-bottom:none}
+  td.name{font-weight:600;white-space:nowrap}
+  td.num{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .zero{color:var(--good);font-weight:600}
+  .cost{color:var(--warm);font-weight:600}
+  tr.total td{background:var(--surface-2);font-weight:600;border-top:1px solid var(--line-strong)}
+
+  .flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:12px;align-items:stretch}
+  @media(max-width:760px){.flow{grid-template-columns:1fr}.flow .arrow{transform:rotate(90deg);padding:4px 0}}
+  .node{border:1px solid var(--line);background:var(--surface);padding:18px;display:flex;flex-direction:column;gap:9px}
+  .node.hi{border-color:var(--accent);background:var(--accent-soft)}
+  .node h3{font-size:15px}
+  .node ul{margin:0;padding-left:17px;font-size:14px;color:var(--ink-2);display:flex;flex-direction:column;gap:5px}
+  .arrow{display:grid;place-items:center;color:var(--line-strong);font-size:22px}
+
+  .note{padding:16px 20px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:8px;color:var(--ink-2);font-size:16px}
+  .note.key{background:var(--accent-soft);border-color:transparent}
+  .note.warn{background:var(--warm-soft);border-color:transparent}
+  .note.good{background:var(--good-soft);border-color:transparent}
+  .note .tag{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase}
+  .note.key .tag{color:var(--accent)}
+  .note.warn .tag{color:var(--warm)}
+  .note.good .tag{color:var(--good)}
+
+  ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px;color:var(--ink-2)}
+  ul.plain li::marker{color:var(--line-strong)}
+
+  ol.steps{margin:0;padding:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:13px}
+  ol.steps li{counter-increment:s;display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:baseline;color:var(--ink-2)}
+  ol.steps li::before{content:counter(s);font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--accent);border:1px solid var(--line-strong);width:22px;height:22px;display:grid;place-items:center}
+
+  footer{border-top:1px solid var(--line);padding-top:22px;color:var(--muted);font-size:14px}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <div class="eyebrow">Архитектура анимации</div>
+  <h1 style="margin-top:10px">Редактор печёт, движки играют</h1>
+  <p class="lede">Вынести всю процедурку в авторский инструмент, запечь её в обычные клипы — и отдавать в любой движок как FBX-анимацию. Разбор: что вырезается, что остаётся, чем чревато.</p>
+  <div class="meta">Ashes of the past · замеры 5 сентября 2026</div>
+</header>
+
+<div class="thesis col">
+  <div class="eyebrow">Тезис</div>
+  <p><strong>Данные переезжают между движками бесплатно. Код — нет.</strong></p>
+  <p>Атаки поехали в Unity сразу, потому что клип — это данные: повороты костей во времени. StepPlanner болел, потому что это код, который <strong>жуёт мировое состояние</strong> — позицию, скорость, yaw. А зеркало координат живёт именно во входе.</p>
+</div>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Диагноз</div>
+    <h2>Почему атаки поехали, а походка нет</h2>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th></th><th>Атаки — клипы</th><th>Походка — StepPlanner</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Что это</td><td>данные: кость → поворот во времени</td><td>код: реактивная система</td></tr>
+        <tr><td class="name">Что жуёт на входе</td><td class="zero">ничего</td><td class="cost">мировая позиция, скорость, yaw, прицел</td></tr>
+        <tr><td class="name">Где живёт зеркало</td><td class="zero">не касается</td><td class="cost">ровно здесь — <code>mirrorX</code> во входе</td></tr>
+        <tr><td class="name">Перенос в Unity</td><td class="zero">заработало сразу</td><td class="cost">290 строк C# и сессия отладки</td></tr>
+        <tr><td class="name">Зависит от движка</td><td class="zero">только ретаргет скелета</td><td class="cost">система координат, кадр мира, порядок осей</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note key">
+      <span class="tag">Вывод</span>
+      <p>Проблема была не в математике StepPlanner — она чистая и сошлась байт в байт по golden-векторам. Проблема в том, что <strong>реактивная система обязана читать мир движка</strong>. Запечённый клип не читает ничего.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Предложение</div>
+    <h2>Процедурка уезжает в авторское время</h2>
+    <p>StepPlanner остаётся — но только в редакторе, как генератор. Клиенты его не видят никогда.</p>
+  </div>
+  <div class="flow">
+    <div class="node hi">
+      <h3>Редактор (веб)</h3>
+      <ul>
+        <li>ручные позы и клипы</li>
+        <li>StepPlanner и плант-грид</li>
+        <li>запекатель → клипы</li>
+        <li>экспорт glTF</li>
+      </ul>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <h3>Клипы</h3>
+      <ul>
+        <li>обычная скелетная анимация</li>
+        <li>кватернионные ключи</li>
+        <li>канонический гуманоид</li>
+        <li>около 78 KB весь набор</li>
+      </ul>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <h3>Любой движок</h3>
+      <ul>
+        <li>проигрывание — нативное</li>
+        <li>foot IK — нативный</li>
+        <li>рагдолл — нативный</li>
+        <li>ретаргет — нативный</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Экономия</div>
+    <h2>Что вырезается из каждого клиента</h2>
+  </div>
+  <div class="tiles">
+    <div class="tile"><div class="s">процедурный рантайм</div><div class="n">~855</div><div class="l">строк C#, которые пришлось портировать в Unity — станет 0 в любом новом движке</div></div>
+    <div class="tile"><div class="s">весь набор локомоции</div><div class="n">78 KB</div><div class="l">19 клипов после прореживания ключей; пять наборов оружия — 0,38 MB</div></div>
+    <div class="tile"><div class="s">запекатель</div><div class="n">3 из 4</div><div class="l">кусков уже написаны: прореживание, прогон траекторий, glTF-экспорт</div></div>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Компонент</th><th>Веб, строк</th><th>Unity, строк</th><th>После запекания</th></tr></thead>
+      <tbody>
+        <tr><td class="name">StepPlanner</td><td class="num">589</td><td class="num">290</td><td class="zero">только в редакторе</td></tr>
+        <tr><td class="name">PosePlayer / gaitToHumanoid</td><td class="num">726</td><td class="num">219</td><td class="zero">только в редакторе</td></tr>
+        <tr><td class="name">GaitParams, плант-грид</td><td class="num">—</td><td class="num">126</td><td class="zero">только в редакторе</td></tr>
+        <tr><td class="name">TwistProfile, torso-lead</td><td class="num">—</td><td class="num">88</td><td class="cost">частично: aim-офсеты запекаемы</td></tr>
+        <tr><td class="name">FootPlanter</td><td class="num">104</td><td class="num">132</td><td class="cost">остаётся, но нативным компонентом</td></tr>
+        <tr class="total"><td class="name">Итого на движок</td><td class="num">1 419</td><td class="num">855</td><td class="zero">около нуля своего кода</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Что остаётся</div>
+    <h2>Рантайм в клиенте — но чужой, не наш</h2>
+    <p>Ключевая разница: остаётся не наш код для портирования, а <strong>штатные узлы движка</strong>, которые настраиваются, а не пишутся.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Задача</th><th>Unity</th><th>Unreal</th><th>Godot</th><th>Three.js</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Проигрывание клипов</td><td>Animator / Playables</td><td>AnimGraph</td><td>AnimationPlayer</td><td>AnimationMixer</td></tr>
+        <tr><td class="name">Смешивание направлений</td><td>Blend Tree 2D</td><td>Blend Space</td><td>BlendSpace2D</td><td>вручную, ~50 строк</td></tr>
+        <tr><td class="name">Стопы по земле</td><td>Animation Rigging</td><td>Control Rig / IK</td><td>SkeletonIK3D</td><td>наш footIk, 104 строки</td></tr>
+        <tr><td class="name">Ретаргет на персонажа</td><td>Humanoid Avatar</td><td>IK Retargeter</td><td>ретаргет импорта</td><td>наш retarget3d</td></tr>
+        <tr><td class="name">Рагдолл и физика</td><td>ArticulationBody</td><td>PhysicsAsset</td><td>PhysicalBone3D</td><td>Jolt, уже есть</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note good">
+      <span class="tag">Почему это меняет всё</span>
+      <p>Сегодня новый движок означает портировать 855 строк тонкой математики и заново воевать с координатами. После запекания новый движок означает <strong>настроить пять штатных узлов</strong>. Это разница между неделями и днём.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Бюджет</div>
+    <h2>Сколько весят запечённые клипы</h2>
+    <p>22 кости, кватернионы, 30 fps, бинарь. Прореживание — уже написанный <code>reduceKeyframes</code>.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Что</th><th>Плотно 30 fps</th><th>После прореживания</th><th>Замечание</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Клип 0,6 с</td><td class="num">6,2 KB</td><td class="num">≈2,5 KB</td><td>удар</td></tr>
+        <tr><td class="name">Клип 1,0 с</td><td class="num">10,3 KB</td><td class="num">≈4,1 KB</td><td>цикл шага</td></tr>
+        <tr><td class="name">Набор локомоции, 19 клипов</td><td class="num">196 KB</td><td class="num">78 KB</td><td>8 направлений на шаг и бег, 2 разворота, idle</td></tr>
+        <tr><td class="name">Пять наборов оружия</td><td class="num">980 KB</td><td class="num">390 KB</td><td>если ноги различаются по оружию</td></tr>
+        <tr class="total"><td class="name">Сейчас авторских клипов</td><td class="num">—</td><td class="num">62 KB</td><td>41 клип, 3,3 ключа на клип</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p>Порядок величин безобидный: полный набор процедурной локомоции весит меньше одной текстуры. Вопрос веса здесь просто не стоит.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Формат</div>
+    <h2>Во что печь</h2>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Формат</th><th>Писать из браузера</th><th>Unity</th><th>Unreal</th><th>Godot</th><th>Вердикт</th></tr></thead>
+      <tbody>
+        <tr><td class="name">glTF / GLB</td><td class="zero">легко, <code>GLTFExporter</code> уже подключён</td><td>glTFast, уже используем</td><td>импортёр есть</td><td class="zero">нативно, отлично</td><td class="zero">основной</td></tr>
+        <tr><td class="name">FBX</td><td class="cost">тяжело: проприетарный бинарь, нужен Autodesk SDK</td><td class="zero">эталонный</td><td class="zero">эталонный</td><td>ок</td><td>только если припрёт</td></tr>
+        <tr><td class="name">Свой JSON</td><td class="zero">тривиально</td><td>импортёр</td><td>импортёр</td><td>импортёр</td><td>исходник авторинга</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note key">
+      <span class="tag">Решение</span>
+      <p>Свой JSON остаётся <strong>исходником</strong> — в нём авторишь и хранишь на сервере. glTF — <strong>поставочный формат</strong> в движки. Это ровно модель Blender: свой .blend для работы, glTF на выдачу.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Риски</div>
+    <h2>Чем это чревато</h2>
+    <p>Честно, без сглаживания — вот что мы теряем, отказываясь от живой процедурки в рантайме.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Риск</th><th>В чём суть</th><th>Чем закрывается</th><th>Оценка</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Скольжение стоп</td><td>у клипа фиксированная длина шага; на другой скорости стопы едут</td><td>скорость проигрывания пропорционально скорости, foot IK, несколько скоростных вариантов</td><td class="cost">главный, но решённый в индустрии</td></tr>
+        <tr><td class="name">Переходы направлений</td><td>процедурка меняет направление непрерывно, блендер — кроссфейдом</td><td>короткие бленды и foot IK; для топ-даун ARPG незаметно</td><td>низкий</td></tr>
+        <tr><td class="name">Разворот на месте</td><td>переступы — реактивная логика с состоянием</td><td>клипы разворота и стейт-машина по порогу yaw</td><td class="cost">средний, требует тюнинга</td></tr>
+        <tr><td class="name">Обратная связь от физики</td><td>сейчас <code>setFeet</code> плантует туда, где нога реально стоит</td><td>рантайм foot IK по земле — штатный в каждом движке</td><td>низкий</td></tr>
+        <tr><td class="name">Прицел и скрутка корпуса</td><td>зависит от живого прицела, целиком не запекается</td><td>aim-офсеты как позы плюс бленд по углу — стандарт шутеров</td><td>низкий</td></tr>
+        <tr><td class="name">Цикл итерации</td><td>покрутил параметр походки — надо перепечь набор</td><td>запекание это чистая математика, секунды; зато детерминировано</td><td class="zero">скорее плюс</td></tr>
+        <tr><td class="name">Комбинаторика клипов</td><td>направления на скорости на оружие</td><td>blend space вместо клипа на каждую комбинацию</td><td>низкий</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note warn">
+      <span class="tag">Что важно понимать</span>
+      <p>Мы меняем <strong>бесконечную адаптивность на переносимость</strong>. Для топ-даун ARPG это выгодный обмен — так шипятся все ARPG. Для файтинга или паркур-экшена с точным контактом я бы так не делал.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Готовность</div>
+    <h2>Что уже написано</h2>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Кусок запекателя</th><th>Где</th><th>Статус</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Прогон траекторий через процедурку</td><td><code>gaitGolden.ts</code> — 15 трасс, покадровый выход</td><td class="zero">готов</td></tr>
+        <tr><td class="name">Прореживание в разрежённые ключи</td><td><code>clipBaker.reduceKeyframes</code> и метрика ошибки</td><td class="zero">готов</td></tr>
+        <tr><td class="name">Экспорт glTF</td><td><code>modelAssets.exportGLB</code>, GLTFExporter подключён</td><td class="zero">готов</td></tr>
+        <tr><td class="name">Клей: процедурка → кадры → клип → glTF</td><td>—</td><td class="cost">надо написать</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note good">
+      <span class="tag">Приятная неожиданность</span>
+      <p>Запекатель почти собран из готовых деталей. <code>gaitGolden.ts</code> я писал под golden-тесты паритета — он оказался ровно тем, что нужно генератору клипов: гоняет траектории и пишет покадровый результат.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">План</div>
+    <h2>Порядок работ</h2>
+  </div>
+  <div class="col">
+    <ol class="steps">
+      <li><span><strong>Прототип запекателя.</strong> Склеить готовые куски: прогнать шаг вперёд через StepPlanner, прорядить ключи, получить клип. Проверить в редакторе — играется ли запечённый клип неотличимо от живой процедурки.</span></li>
+      <li><span><strong>Набор локомоции.</strong> 8 направлений на шаг и бег, развороты, idle. Кнопка «перепечь всё» в редакторе.</span></li>
+      <li><span><strong>Клиент на клипах.</strong> В Unity выключить StepPlanner, включить blend space по запечённым клипам и foot IK. Сравнить с текущим глазами.</span></li>
+      <li><span><strong>Экспорт glTF.</strong> Клипы и канонический скелет одним GLB — то, что уедет в Unreal или Godot без нашего кода вообще.</span></li>
+      <li><span><strong>Вырезать процедурку из клиентов.</strong> Только после того, как шаг 3 выглядит не хуже. StepPlanner остаётся жить в редакторе.</span></li>
+    </ol>
+    <div class="note key" style="margin-top:6px">
+      <span class="tag">Короткая версия</span>
+      <p>Ты нащупал правильную границу: <strong>процедурка — это авторский инструмент, а не рантайм</strong>. Двигаем её в редактор, отдаём наружу обычные клипы — и каждый следующий движок стоит день настройки штатных узлов вместо недель порта и войны с координатами.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="col">
+  Замеры: <code>pose-seed.json</code>, <code>packages/client/src/render3d</code>, <code>Assets/DM/PoseEditor</code>. Бюджет клипов посчитан для 22 костей, кватернионы, 30 fps.
+</footer>
+
+</div>
+
+</body></html>

@@ -1,0 +1,135 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Мечи: эпохи и вилки</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+SC:wght@500&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #eeeae4; --surface: #fbf9f6; --surface2: #f3efe9; --ink: #201d1a; --muted: #645d55; --rule: #d8d1c7;
+    --seal: #8c2f39; --seal-soft: #f4e6e5; --steel: #41566b; --steel-soft: #e4eaf0; --gold: #8a6a22; --good: #35633f;
+    --shadow: 0 1px 2px rgba(40, 30, 20, .07), 0 6px 20px rgba(40, 30, 20, .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14130f; --surface: #1c1a16; --surface2: #23201b; --ink: #ece7df; --muted: #9d968c; --rule: #332f28;
+      --seal: #d98189; --seal-soft: #33201f; --steel: #9db6cd; --steel-soft: #1e2833; --gold: #d3ab5c; --good: #7fbb8c;
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 6px 20px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14130f; --surface: #1c1a16; --surface2: #23201b; --ink: #ece7df; --muted: #9d968c; --rule: #332f28;
+    --seal: #d98189; --seal-soft: #33201f; --steel: #9db6cd; --steel-soft: #1e2833; --gold: #d3ab5c; --good: #7fbb8c;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 6px 20px rgba(0,0,0,.3);
+  }
+  body { background: var(--paper); color: var(--ink); font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 15px; line-height: 1.6; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 30px 72px; }
+  h1, h2, h3 { font-family: "Alegreya SC", Georgia, serif; font-weight: 500; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(32px, 6vw, 46px); line-height: 1.05; }
+  h2 { font-size: 27px; margin: 46px 0 12px; }
+  h3 { font-size: 19px; margin: 24px 0 6px; }
+  p { margin: 0 0 10px; max-width: 74ch; }
+  code { font-family: "IBM Plex Mono", monospace; font-size: .87em; background: var(--surface2); border-radius: 3px; padding: 1px 5px; }
+  small { color: var(--muted); }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--seal); }
+  .lede { font-size: 17px; color: var(--muted); max-width: 70ch; margin-top: 10px; }
+  .tw { overflow-x: auto; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface); margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--surface2); border-bottom: 1px solid var(--rule); padding: 8px 10px; white-space: nowrap; }
+  td { border-top: 1px solid var(--rule); padding: 8px 10px; vertical-align: top; }
+  tbody tr:first-child td { border-top: 0; }
+  .num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .was { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .now { font-weight: 600; }
+  .done { color: var(--good); font-weight: 600; white-space: nowrap; }
+  .todo { color: var(--gold); font-weight: 600; white-space: nowrap; }
+  .note { background: var(--steel-soft); border: 1px solid color-mix(in srgb, var(--steel) 30%, transparent); border-radius: 7px; padding: 12px 16px; margin: 14px 0; }
+  .warn { background: var(--seal-soft); border: 1px solid color-mix(in srgb, var(--seal) 32%, transparent); border-radius: 7px; padding: 12px 16px; margin: 14px 0; }
+  ul, ol { max-width: 74ch; padding-left: 22px; }
+  li { margin-bottom: 5px; }
+  .stage { background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--gold); border-radius: 7px; padding: 14px 16px; margin: 12px 0; }
+  .stage.ready { border-left-color: var(--good); }
+  .stage h3 { margin: 0 0 4px; font-size: 17px; }
+  @media (max-width: 640px) { .wrap { padding-inline: 16px; } }
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Ковка · мечи · решения приняты</div>
+  <h1>Мечи: эпохи и вилки</h1>
+  <p class="lede">Что решено по названиям и классификации мечей, что уже в игре, и что осталось сделать. Формы остаются историческими, названия — свои, но колоритные слова для оружия сохранены.</p>
+
+  <h2>Четыре эпохи</h2>
+  <p>Единственная хронология, которую видит игрок. Заменяет все реальные привязки.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Эпоха</th><th>Что было раньше</th><th>Где встречается</th></tr></thead>
+    <tbody>
+      <tr><td class="now">Архаичная</td><td class="was">римский, античный</td><td>гладиусы, шаровое навершие, щиток</td></tr>
+      <tr><td class="now">Ранняя</td><td class="was">каролингский, эпоха викингов</td><td>клинок X, короткое перекрестье, трёхчастное и треугольное навершия</td></tr>
+      <tr><td class="now">Классическая</td><td class="was">романский, раннероманский</td><td>рыцарские клинки, длинное перекрестье, диск и колесо</td></tr>
+      <tr><td class="now">Имперская</td><td class="was">«позднего образца», позднее средневековье</td><td>гранёное, груша, рыбий хвост, кольца и крюки; сюда же пойдут палаши и рапиры</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Что осталось настоящим</h2>
+  <p>Слова для самого оружия не трогаем — иначе текст становится сухим: <b>меч, гладиус, клеймор, цвайхендер, фальшион, сабля, мессер, нагель, рикассо, дол, перекрестье, навершие</b>.</p>
+  <p>Ушли только привязки к реальной истории: фамилии учёных из подсказок (Окшотт встречался в 23 строках, плюс Петерсен, Кирпичников, Элмсли, Ульберт, Микс), реальные века и датировки, и названия по местам находок.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Клинки гладиуса: было</th><th>Стало</th></tr></thead>
+    <tbody>
+      <tr><td class="was">Хиспаниенсис</td><td class="now">Длинный, I <small>— и тип зовётся «Длинный гладиус»</small></td></tr>
+      <tr><td class="was">Майнц</td><td class="now">Широкий, II</td></tr>
+      <tr><td class="was">Майнц, вариант Фулхэм</td><td class="now">Прямой, III</td></tr>
+      <tr><td class="was">Помпеи</td><td class="now">Короткий, IV</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><b>Историческая основа не потеряна, а спрятана.</b> У каждой детали теперь есть поле справки: «Окшотт XII», «Gladius Mainz», «Петерсен, IX–X вв.». Игрок его не видит — окно ковки больше не печатает строку источника. Справка нужна при моделировании и правках, её видно в редакторе.</div>
+
+  <h2>Пять вилок по длине клинка</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Вилка</th><th>Клинок</th><th>Что внутри</th><th>Состояние</th></tr></thead>
+    <tbody>
+      <tr><td class="now">Архаичный меч</td><td class="num">до 70 см</td><td>4 клинка гладиуса (I–IV) + 10 древних: хопеш, ксифос, копис, акинак, литой, игольчатый, щучий язык, тупоконечный, спата, сакс</td><td><span class="done">14 клинков</span></td></tr>
+      <tr><td class="now">Короткий меч</td><td class="num">70–80</td><td>клинок X (ранней эпохи), XVI, XXII, XIIIb, XIV, фальшион</td><td><span class="done">переложено</span></td></tr>
+      <tr><td class="now">Длинный меч</td><td class="num">85–90</td><td>XI, XII, XIII, XV, XVIII, XIX, сабля</td><td><span class="done">длины прописаны</span></td></tr>
+      <tr><td class="now">Полуторный меч</td><td class="num">95–105</td><td>XIIa, XIIIa, XVa, XVII, XX · урон 11–19, носится и одной рукой</td><td><span class="done">хват работает</span></td></tr>
+      <tr><td class="now">Двуручный меч</td><td class="num">110–150</td><td>прямой, широкий и узкий с рикассо, пламенеющий · урон 17–29</td><td><span class="done">готово</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="warn"><b>Почему это не одно переименование.</b> Сейчас «короткий меч» — это клинки по 50–54 см, а меч викингов (тип X, 80 см) лежит в «длинных». Вторая вилка наполовину пустая. Длины заданы в коде на каждый тип клинка отдельно, общей таблицы нет — значит, нужно и переложить клинки между вилками, и прописать новые длины, и посмотреть, как это ляжет на модель.</div>
+
+  <h2>Полуторный хват: как это сделано в Diablo 2</h2>
+  <div class="tw"><table>
+    <thead><tr><th>В Diablo 2</th><th>У нас</th></tr></thead>
+    <tbody>
+      <tr><td>Два набора урона в данных: обычный и двуручный</td><td>Один катаемый профиль (двуручный), одноручные числа считаются на лету — иначе вилка базы и доводка разъедутся между хватами</td></tr>
+      <tr><td>Скорость атаки одна на оба хвата</td><td>Одноручный хват медленнее на 10%: второй повод брать двумя руками</td></tr>
+      <tr><td>Режим по занятости второй руки, без кнопки</td><td>Так же: взял щит — одноручные числа</td></tr>
+      <tr><td>Требования силы и ловкости одинаковые</td><td>Так же</td></tr>
+      <tr><td>Только варвар, жёстко по классу</td><td>Свойство вещи, доступно всем: у нас общее древо навыков</td></tr>
+      <tr><td>Одноручный хват ≈ половина двуручного урона</td><td><b>×0,88 к урону и ×0,92 к темпу</b> — числа подобраны замером</td></tr>
+    </tbody>
+  </table></div>
+  <p><b>Почему не половина.</b> В Diablo 2 двуручники били вдвое сильнее одноручных, и половина выводила такой меч вровень с обычным одноручником. У нас разрыв всего в полтора раза — половина сделала бы одноручный хват заведомо хуже обычного меча, и его бы никто не брал.</p>
+  <div class="warn"><b>Числа пришлось подбирать замером, а не расчётом.</b> Вклад атрибутов размывает разницу оружия: ×0,80 урона и ×0,90 скорости «на бумаге» дают −28% урона в секунду, а в модели героя 30-го уровня — всего −12%, и одноручный хват выходил слабее длинного меча, то есть мёртвым выбором. Заодно вскрылось, что сам двуручный меч был слабоват — всего на 6% выше длинного.</div>
+  <p>Итог после замера на герое 1, 30 и 60 уровня: штраф <b>×0,88 урона и ×0,92 темпа</b>, полуторный 11–19, двуручный 17–29. Одноручный хват идёт вровень с длинным мечом (0,99) при требовании силы 22 против 15; двуручный выгоднее одноручного в 1,13 раза; двуручник остаётся сильнее полуторного. Все три величины стерегут тесты.</p>
+  <p>В подсказке обе строки сразу: «Урон: 11–19» и «Одной рукой (со щитом): 10–17 · ×0,87 · 52 уд/мин».</p>
+
+  <h2>Порядок работ</h2>
+  <div class="stage ready">
+    <h3>1. Названия и чистка текста <span class="done">— сделано</span></h3>
+    <p>Четыре эпохи, имена клинков гладиуса, 44 переписанные подсказки, скрытая справка, «Свод» вместо фамилии в строке формулы. База «Гладиус» стала «Архаичным мечом». Проверено в окне ковки: «Длинный гладиус», «Ранний меч», вольная сборка — «Узкий меч имперской эпохи».</p>
+  </div>
+  <div class="stage ready">
+    <h3>2. Вилки и древние клинки <span class="done">— сделано</span></h3>
+    <p>Клинки переложены по пяти вилкам, длины прописаны заново, базы переименованы. Добавлено 10 древних форм со своими силуэтами в модели; имена типов — настоящие слова оружия: хопеш, копис, акинак, ксифос, спата, сакс.</p>
+  </div>
+  <div class="stage ready">
+    <h3>3. Полуторный хват <span class="done">— сделано</span></h3>
+    <p>Режим по занятости второй руки, обе строки в подсказке, щит надевается, анимация по фактическому хвату, числа проверены боем. Осталось по желанию: узел в дереве навыков, поднимающий множитель к 0,95.</p>
+  </div>
+  <div class="stage">
+    <h3>4. Что дальше</h3>
+    <p>Дальность пока не привязана к вилке: длина клинка живёт только в модели. Лестницу дальности вводить вместе с обратной правкой дуги и мерить боем, иначе вилки превратятся в лестницу силы. И остальные девять классов оружия ждут такой же чистки имён — там ещё около 114 правил с реальными привязками.</p>
+  </div>
+</div>
+
+</body></html>

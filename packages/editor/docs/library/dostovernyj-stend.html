@@ -1,0 +1,655 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Достоверный стенд</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground: #EBEEEC; --surface: #FFFFFF; --surface-2: #F3F6F4;
+    --ink: #12181A; --ink-2: #354345; --muted: #647576;
+    --line: #D2DCD8; --line-strong: #B4C3BE;
+    --accent: #0F6E63; --accent-soft: #D9EAE6;
+    --ok: #2F7D5B; --warn: #96690A; --crit: #A32B23; --crit-soft: #F5DEDB;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+      --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+      --line: #253133; --line-strong: #34464A;
+      --accent: #45B7A5; --accent-soft: #12312E;
+      --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+    --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+    --line: #253133; --line-strong: #34464A;
+    --accent: #45B7A5; --accent-soft: #12312E;
+    --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 16.5px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1100px; margin: 0 auto; padding: 0 24px 96px; }
+  .col { max-width: 66ch; }
+
+  h1, h2, h3, .label, th, .tid { font-family: "IBM Plex Sans Condensed", system-ui, sans-serif; }
+  h1 { font-size: clamp(30px, 4.6vw, 46px); line-height: 1.06; letter-spacing: -.015em; margin: 0; text-wrap: balance; font-weight: 700; }
+  h2 { font-size: 25px; line-height: 1.15; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  h3 { font-size: 18px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+  code { font-size: .87em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: .5px 4px; color: var(--ink-2); }
+  .label { font-size: 11.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  strong { font-weight: 600; }
+
+  header.top { padding: 54px 0 26px; border-bottom: 2px solid var(--ink); }
+  .kicker { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 16px; }
+  .lede { font-size: 19px; line-height: 1.5; color: var(--ink-2); margin: 20px 0 0; max-width: 62ch; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0 28px; margin-top: 24px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  section { padding: 46px 0 8px; }
+  section + section { border-top: 1px solid var(--line); }
+  .sec-head { display: grid; grid-template-columns: 112px 1fr; gap: 20px; align-items: start; margin-bottom: 22px; }
+  .sec-head .label { padding-top: 7px; }
+  @media (max-width: 760px) { .sec-head { grid-template-columns: 1fr; gap: 4px; } }
+
+  /* две машины */
+  .rig { display: grid; grid-template-columns: 1fr 96px 1fr; gap: 0; align-items: stretch; margin: 8px 0 22px; }
+  .rig .box { background: var(--surface); border: 1px solid var(--line); padding: 18px 20px; }
+  .rig .box h3 { margin-bottom: 10px; }
+  .rig .box .spec { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+  .rig .link { display: grid; place-items: center; text-align: center; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted); position: relative; }
+  .rig .link::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--line-strong); }
+  .rig .link span { position: relative; background: var(--ground); padding: 4px 6px; }
+  @media (max-width: 780px) {
+    .rig { grid-template-columns: 1fr; }
+    .rig .link { padding: 12px 0; }
+    .rig .link::before { display: none; }
+  }
+
+  .claim { display: grid; grid-template-columns: 190px 1fr; gap: 24px; align-items: baseline; padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .claim:last-of-type { border-bottom: 0; }
+  .claim .n { font-family: "IBM Plex Mono", monospace; font-size: 30px; font-weight: 600; letter-spacing: -.02em; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .claim .n small { display: block; font-size: 12.5px; color: var(--muted); font-weight: 400; letter-spacing: 0; margin-top: 4px; }
+  .claim p { margin: 0; font-size: 15.5px; color: var(--ink-2); max-width: 68ch; }
+
+  .scroll { overflow-x: auto; margin: 20px 0 24px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  caption { text-align: left; padding: 12px 14px 2px; font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tr.hi td { background: var(--accent-soft); }
+
+  .task { display: grid; grid-template-columns: 62px 1fr 240px; gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--line); align-items: start; }
+  .tasks { border-top: 1px solid var(--line); margin: 10px 0; }
+  .task .tid { font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .04em; padding-top: 2px; }
+  .task .body p { margin: 0 0 8px; font-size: 15px; color: var(--ink-2); }
+  .task .body p:last-child { margin-bottom: 0; }
+  .task .check { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); line-height: 1.55; border-left: 1px solid var(--line); padding-left: 16px; }
+  .task .check b { display: block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin-bottom: 5px; }
+  @media (max-width: 900px) {
+    .task { grid-template-columns: 52px 1fr; }
+    .task .check { grid-column: 2; border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 10px; }
+  }
+  .task.key .tid { color: var(--accent); }
+
+  .note { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 16px 18px; margin: 22px 0; border-radius: 2px; font-size: 15px; }
+  .note.alarm { border-left-color: var(--crit); }
+  .note.warnb { border-left-color: var(--warn); }
+  .note p:last-child { margin-bottom: 0; }
+
+  pre { background: var(--surface); border: 1px solid var(--line); border-radius: 2px; padding: 14px 16px; overflow-x: auto; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; line-height: 1.62; color: var(--ink-2); margin: 18px 0; }
+  pre b { color: var(--accent); font-weight: 500; }
+  pre i { color: var(--muted); font-style: normal; }
+
+  ul.plain { list-style: none; padding: 0; margin: 14px 0; }
+  ul.plain li { padding: 9px 0 9px 24px; border-bottom: 1px solid var(--line); position: relative; font-size: 15.5px; }
+  ul.plain li::before { content: "→"; position: absolute; left: 0; color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  ul.plain li:last-child { border-bottom: 0; }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 16px 0; }
+  ol.steps li { counter-increment: s; position: relative; padding: 12px 0 12px 44px; border-bottom: 1px solid var(--line); font-size: 15.5px; }
+  ol.steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 12px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--accent);
+    border: 1px solid var(--line-strong); border-radius: 2px; width: 26px; height: 23px;
+    display: grid; place-items: center;
+  }
+  ol.steps li:last-child { border-bottom: 0; }
+
+  footer { padding-top: 34px; border-top: 2px solid var(--ink); margin-top: 46px; font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="kicker">
+    <span class="label">Часть 5 · план</span>
+    <span class="label" style="color:var(--accent)">9 сентября 2026</span>
+  </div>
+  <h1>Достоверный стенд: две машины и настоящая сеть</h1>
+  <p class="lede">
+    Все прежние числа получены стендом, который ел процессор рядом с сервером и мерил задержку
+    вместе с паузами собственного сборщика мусора. Вторая машина это снимает: сервер уезжает
+    на Ryzen 9 9950X, нагрузка идёт с ноутбука, а генератор переписывается на Rust — иначе
+    ноутбук такой сервер не нагрузит. <strong>Но канал между машинами оказался Wi-Fi, и он режет
+    вдесятеро сильнее, чем нужно</strong> — поэтому первым разделом идёт именно он.
+  </p>
+  <div class="meta">
+    <span><b>Основание:</b> прогоны частей 4 и ночи Ф4</span>
+    <span><b>Rust:</b> 1.98.1, tokio + tungstenite собираются офлайн за 1,5 с</span>
+    <span><b>Канал:</b> Wi-Fi 5 ГГц через одну точку — ~250 игроков потолка</span>
+  </div>
+</header>
+
+<!-- ══════════ СТЕНД ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Стенд</span>
+    <div class="col">
+      <h2>Кто что делает</h2>
+    </div>
+  </div>
+
+  <div class="rig">
+    <div class="box">
+      <h3>Сервер — Ryzen 9 9950X</h3>
+      <div class="spec">
+        16 ядер / 32 потока · 32 ГБ<br>
+        192.168.1.146 · Wi-Fi 5 ГГц<br>
+        линия 351 приём / <b style="color:var(--crit)">87 передача</b> Мбит/с<br>
+        <i>кластер: гейтвей + ~13 нод</i>
+      </div>
+    </div>
+    <div class="link"><span>через точку<br>доступа<br>~25 Мбит/с</span></div>
+    <div class="box">
+      <h3>Нагрузка — ноутбук i7-11800H</h3>
+      <div class="spec">
+        8 ядер / 16 потоков<br>
+        192.168.1.69 · Wi-Fi 5 ГГц<br>
+        линия 234 приём / 130 передача Мбит/с<br>
+        <i>dmload на Rust, один процесс</i>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>
+      Важная деталь устройства: <strong>отчёт собирается на ноутбуке целиком.</strong> Стенд
+      сам ходит на <code>/metrics</code> и <code>/api/cluster</code> сервера по сети и кладёт
+      его показатели в тот же отчёт, что и свои. На сервере не нужно ничего читать глазами —
+      он просто работает.
+    </p>
+  </div>
+
+  <div class="note alarm">
+    <h3>Канал режет впятеро ниже того, что мы УЖЕ измерили</h3>
+    <p>
+      Вниз к игрокам летит передача сервера, а у него скорость линии <strong>87 Мбит/с</strong>.
+      Реальная пропускная TCP по Wi-Fi — половина от линии, и это ещё не всё: обе машины висят
+      на одной точке доступа, значит каждый пакет идёт по воздуху дважды и делит эфир сам
+      с собой. Остаётся <strong>примерно 22–26 Мбит/с</strong>.
+    </p>
+    <p>
+      При 0,1 Мбит/с на игрока это <strong>около 250 игроков</strong> — а на одном ноутбуке мы
+      уже держали тысячу. То есть по Wi-Fi мы будем мерить точку доступа, а не сервер. И задержку
+      тоже: у 5 ГГц под нагрузкой всплески в десятки миллисекунд, тогда как серверный p99
+      на потолке был 11 мс — сигнал утонет в шуме целиком.
+    </p>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>что даёт какой канал · 12,8 КБ/с на игрока = 0,1 Мбит/с</caption>
+      <thead><tr><th>Вариант</th><th class="n">Реально</th><th class="n">Игроков</th><th>Что этим измеряем</th></tr></thead>
+      <tbody>
+        <tr><td>Обе машины по Wi-Fi <i>(как сейчас)</i></td><td class="n">~25 Мбит/с</td><td class="n">~250</td><td>точку доступа</td></tr>
+        <tr><td>Сервер по кабелю, ноутбук по Wi-Fi</td><td class="n">~45 Мбит/с</td><td class="n">~450</td><td>всё ещё сеть, но вдвое дальше</td></tr>
+        <tr class="hi"><td><strong>Обе машины по кабелю</strong></td><td class="n">~940 Мбит/с</td><td class="n"><strong>~6800</strong></td><td><strong>сервер</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <h3>Кабель будет, но не сегодня — значит дорожек две</h3>
+    <p>
+      Существенно вот что: <strong>стенд от этого не зависит вообще.</strong> Один и тот же
+      бинарь работает и рядом с сервером, и через сеть — меняется только адрес и то, какой
+      вопрос мы задаём. Поэтому ждать кабеля незачем: пишем стенд сейчас, а кабель добавит
+      третий сценарий, когда появится.
+    </p>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>две дорожки · работа одна и та же, вопросы разные</caption>
+      <thead><tr><th>Дорожка</th><th>Где стенд</th><th>Что меряет</th><th>Чего НЕ меряет</th></tr></thead>
+      <tbody>
+        <tr class="hi">
+          <td><strong>Сегодня — А</strong><br><span class="muted" style="font-size:13.5px">ёмкость</span></td>
+          <td>на самом 9950X, рядом с сервером</td>
+          <td>потолок железа, хвосты задержки, сутки под нагрузкой, реконнект-шторм, медленный клиент</td>
+          <td>сеть — её тут нет вовсе (петля)</td>
+        </tr>
+        <tr class="hi">
+          <td><strong>Сегодня — Б</strong><br><span class="muted" style="font-size:13.5px">сеть</span></td>
+          <td>на ноутбуке, через Wi-Fi</td>
+          <td>поведение при настоящих потерях и джиттере, ~200 игроков</td>
+          <td>потолок — упрётся канал на 250</td>
+        </tr>
+        <tr>
+          <td><strong>С кабелем — В</strong><br><span class="muted" style="font-size:13.5px">и то, и другое</span></td>
+          <td>на ноутбуке, через витую пару</td>
+          <td>всё сразу: потолок железа при настоящей сети, до ~6800 игроков</td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <p>
+      <strong>Дорожка А честна благодаря Rust.</strong> Раньше мерить ёмкость на той же машине
+      было нельзя: стенд на Node съедал 30 % общей нагрузки. Стенд на Rust стоит около 3 мкс
+      на сообщение вместо 31 — на четырёх тысячах ботов это меньше одного ядра из шестнадцати,
+      то есть загрязнение порядка 4 %. И оно не на глаз: стенд сообщает своё процессорное время
+      и сам помечает ступень недостоверной, если перестал быть фоном.
+    </p>
+    <p>
+      <strong>Дорожка Б — не утешительный приз, а отдельный опыт,</strong> которого у нас
+      не было никогда. На петле нельзя воспроизвести ни потерю пакета, ни всплеск задержки,
+      ни клиента, который перестал читать. Wi-Fi всё это даёт бесплатно и по-настоящему.
+      Двести ботов для такой проверки более чем достаточно.
+    </p>
+    <p>
+      <strong>Дорожка В</strong> — это А и Б одновременно, и ради неё стоит дотянуть кабель.
+      Но она не первая в очереди: сперва должен появиться сам стенд, а он нужен всем трём.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ ЧТО ОЖИДАЕМ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Гипотеза</span>
+    <div class="col">
+      <h2>Чего ждать от 9950X — и почему это гипотеза, а не обещание</h2>
+      <p>
+        Прикидка от наших измеренных чисел. Записываю заранее, чтобы потом сверить: предсказание,
+        не сошедшееся с замером, полезнее удачного — оно показывает, где модель врёт.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>расчёт от измеренного: 250 игроков на ноду и 108 % ядра на ноутбуке</caption>
+      <thead><tr><th>Величина</th><th class="n">Ноутбук (измерено)</th><th class="n">9950X (ожидание)</th><th>Откуда</th></tr></thead>
+      <tbody>
+        <tr><td>Ядро против нашего</td><td class="n">1,0</td><td class="n">1,25–1,4</td><td>Zen 5 против Tiger Lake, выше и частота, и IPC</td></tr>
+        <tr><td>Игроков на ноду</td><td class="n">250</td><td class="n">310–350</td><td>линейно по скорости ядра</td></tr>
+        <tr><td>Игровых нод</td><td class="n">4</td><td class="n">13</td><td>16 ядер минус гейтвей, база и запас ОС</td></tr>
+        <tr class="hi"><td><strong>Потолок сервера</strong></td><td class="n">1000</td><td class="n"><strong>4000–4500</strong></td><td>произведение двух строк выше</td></tr>
+        <tr><td>Трафик на потолке</td><td class="n">12 МБ/с</td><td class="n">51 МБ/с ≈ 410 Мбит</td><td>12,8 КБ/с на игрока — <b style="color:var(--crit)">в Wi-Fi не влезает в 16 раз</b></td></tr>
+        <tr><td>Память сервера</td><td class="n">1,5 ГБ</td><td class="n">≈ 4 ГБ</td><td>~270 МБ на процесс; 32 ГБ хватает с запасом</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <p>
+      Из этого следует главное: <strong>на витой паре упрётся процессор, а не сеть</strong> —
+      410 Мбит против гигабита. А на нынешнем Wi-Fi (25 Мбит/с) сеть кончится в шестнадцать раз
+      раньше процессора, и до потолка сервера мы не доберёмся даже близко.
+    </p>
+    <p>
+      И следствие для нагрузки: ноутбуку надо будет держать четыре тысячи ботов. Нынешний
+      стенд на Node тратил 31 мкс на сообщение — это <strong>6,2 ядра из восьми</strong>,
+      с паузами сборщика мусора поверх. Поэтому Rust здесь не улучшение, а условие: без него
+      второй машины просто не хватит нагрузить.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ ЗАЧЕМ RUST ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Зачем Rust</span>
+    <div class="col">
+      <h2>Три довода, каждый с числом из наших прогонов</h2>
+    </div>
+  </div>
+
+  <div class="claim">
+    <span class="n">31 мкс<small>на сообщение у бота</small></span>
+    <p>
+      На ступени 1200 ботов стенд занимал <strong>1,87 ядра</strong> при 60 000 сообщений
+      в секунду. Серверное входящее сообщение мерилось в 13 мкс. <strong>Прибор дороже
+      измеряемого в 2,4 раза</strong> — бот на JS разбирает кадр, применяет дельту и считает
+      контрольную сумму, порождая мусор на каждом кадре.
+    </p>
+  </div>
+
+  <div class="claim">
+    <span class="n">p95 с примесью<small>чужие паузы в наших хвостах</small></span>
+    <p>
+      RTT меряет процесс со своей сборкой мусора: его паузы попадают в перцентили и выглядят
+      как задержка сервера. У Rust пауз нет — хвосты станут наконец про сервер. Это важнее
+      медианы: играбельность решают именно они.
+    </p>
+  </div>
+
+  <div class="claim">
+    <span class="n">3 ступени<small>не собрались вовсе</small></span>
+    <p>
+      Одиночный процесс на 400, кластер на 500 и 1200 — ступень не удавалось даже собрать:
+      регистрация ботов шла через тот же цикл, что и игра, а стенд ещё и отнимал у него ядра.
+      На двух машинах эта помеха исчезает, и мы увидим, где сервер сдаётся на самом деле.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ ПОДКЛЮЧЕНИЕ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Подготовка</span>
+    <div class="col">
+      <h2>Что нужно сделать на второй машине</h2>
+      <p>Один раз. Дальше сервер просто живёт, а все прогоны запускаются с ноутбука.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <ol class="steps">
+      <li><b>Перенести код.</b> Сейчас 195 коммитов не запушены. Либо запушить ветку и склонировать, либо скопировать папку по сети — решать вам, но пуш всё равно понадобится для деплоя.</li>
+      <li><b>Node 24 и PostgreSQL 17.</b> Для базы годится тот же скрипт, что мы использовали на ноутбуке — он ставит службу, заводит пользователя и базы.</li>
+      <li><b>Собрать и поднять кластер</b> одной командой (ниже).</li>
+      <li><b>Открыть порты в брандмауэре</b> — Windows по умолчанию закроет их для чужих машин.</li>
+    </ol>
+  </div>
+
+<pre><i># на сервере: кластер наружу, а не только на петлю</i>
+set PORT=3001
+set DM_ROLE=supervisor
+set DM_NODES=13
+set DM_PG=postgresql://dm:dmpass@127.0.0.1:5432/dungeon
+set NODE_ENV=production
+<b>set DM_NODE_HOST=192.168.1.146</b>   <i>← IP сервера, ИНАЧЕ ГЕЙТВЕЙ РАЗДАСТ 127.0.0.1</i>
+npx tsx packages/server/src/index.ts
+
+<i># и разрешить порты (от администратора, один раз)</i>
+netsh advfirewall firewall add rule name="dm" dir=in action=allow protocol=TCP localport=3001-3014</pre>
+
+  <div class="note alarm">
+    <h3>Грабля, на которую мы наступим гарантированно, если не предупредить</h3>
+    <p>
+      Гейтвей отдаёт клиенту адрес игровой ноды. По умолчанию это <code>ws://127.0.0.1:порт/ws</code>
+      — на самой машине работает, а с ноутбука ведёт в никуда. Нужен
+      <code>DM_NODE_HOST</code> с сетевым адресом сервера. Это первое, что я проверю в фазе С1:
+      стенд обязан ругаться внятно, а не «соединение не открылось».
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ АРХИТЕКТУРА ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Устройство</span>
+    <div class="col">
+      <h2>Как устроен dmload</h2>
+    </div>
+  </div>
+
+<pre><b>dmload/</b>            <i>отдельный бинарь на Rust, вне рабочего пространства npm</i>
+  src/
+    main.rs        <i>режимы: net · ramp · soak · reconnect · slowclient</i>
+    net.rs         <i>замер канала: пропускная способность и задержка ДО нагрузки</i>
+    http.rs        <i>регистрация, персонаж, /api/route, чтение /metrics сервера</i>
+    bot.rs         <i>задача tokio: WS, ввод 30 Гц, приём, ping/RTT</i>
+    proto/
+      wire.rs      <i>порт decodeWorldFrame (~110 строк)</i>
+      delta.rs     <i>порт applyWorldDelta + worldChecksum (~90 строк)</i>
+    stats.rs       <i>гистограмма RTT корзинами, счётчики, своё процессорное время</i>
+    report.rs      <i>вывод как у нынешнего стенда + JSON для сравнения прогонов</i></pre>
+
+  <div class="col">
+    <p>
+      <strong>Один процесс, N задач</strong> вместо восьми процессов Node с агрегацией через
+      IPC. Задача tokio — это килобайты, поэтому пять тысяч ботов помещаются в один процесс,
+      а их статистика складывается без межпроцессной возни.
+    </p>
+    <p>
+      <strong>Зрячие и немые боты.</strong> Разбирать кадры будет настраиваемая доля ботов
+      (по умолчанию, скажем, каждый двадцатый). Серверу безразлично, понимает клиент присланное
+      или выбрасывает — работа сервера та же; а расхождение протокола видно и на одном боте.
+      Так мы получаем и полную проверку корректности, и дешёвую массу.
+    </p>
+    <p>
+      <strong>Стенд меряет сам себя</strong> — как нынешний: сообщает своё процессорное время
+      и помечает ступень недостоверной, если сам стал узким местом. На двух машинах это
+      превращается из постоянной угрозы в редкую страховку.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ ФАЗЫ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">План</span>
+    <div class="col">
+      <h2>Пять фаз</h2>
+      <p>Оценки в днях работы. Каждая фаза заканчивается числом, а не кодом.</p>
+    </div>
+  </div>
+
+  <div class="tasks">
+    <div class="task key">
+      <span class="tid">С0</span>
+      <div class="body">
+        <h3>Связь и канал</h3>
+        <p>
+          Поднять кластер на 9950X, добиться, чтобы бот с ноутбука вошёл в игру. Измерить
+          канал ФАКТИЧЕСКИ: пропускную способность в обе стороны и задержку без нагрузки —
+          прикидка выше даёт 22–26 Мбит/с, но врать может и она.
+        </p>
+        <p>
+          По результату канал распределяется между дорожками: ёмкость идёт на дорожку А
+          (стенд рядом с сервером), сетевые сценарии — на дорожку Б (через Wi-Fi).
+        </p>
+        <p>Оценка: <strong>полдня</strong>, из них половина — брандмауэр и адреса.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        один бот с ноутбука играет на сервере; известны пропускная способность канала
+        и задержка вхолостую
+      </div>
+    </div>
+
+    <div class="task key">
+      <span class="tid">С1</span>
+      <div class="body">
+        <h3>Массовый стенд: HTTP, WS, ввод, RTT</h3>
+        <p>
+          Регистрация и маршрут через <code>/api/route</code>, подключение, ввод 30 Гц, приём
+          кадров, эхо-ping для задержки. Гистограмма RTT корзинами — точные p50/p95/p99/p999
+          без аллокаций. Вывод тот же, что у нынешнего стенда, чтобы числа сравнивались напрямую.
+        </p>
+        <p>Оценка: <strong>1 день</strong>.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        те же 1000 ботов, что ночью: сервер показывает ту же нагрузку, стенд — в разы
+        меньшую; первым делом стенд меряет сам себя
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">С2</span>
+      <div class="body">
+        <h3>Зрячие боты: разбор кадров и сверка</h3>
+        <p>
+          Порт декодера кадра, применения дельт и контрольной суммы. Доля зрячих настраивается.
+          Обязательно с золотыми векторами: TypeScript порождает случайные миры и кадры,
+          Rust обязан дать те же контрольные суммы, иначе тест падает.
+        </p>
+        <p>Оценка: <strong>1,5 дня</strong> вместе с векторами.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        золотые вектора совпадают; на живом прогоне ноль расхождений — как у нынешнего стенда
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">С3</span>
+      <div class="body">
+        <h3>Режимы, которых у нас нет</h3>
+        <p>
+          <code>soak</code> — часы на фиксированной нагрузке с графиком памяти и лага цикла.
+          <code>reconnect</code> — доля игроков переподключается каждые N секунд.
+          <code>slowclient</code> — часть ботов читает медленно или не читает вовсе.
+          <code>burst</code> — залповый вход тысячи игроков разом.
+        </p>
+        <p>Оценка: <strong>1 день</strong>.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        медленный клиент отключается сервером и не роняет остальных; реконнект-шторм
+        не теряет забеги; залп упирается в очередь, а не в отказ
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">С4</span>
+      <div class="body">
+        <h3>Сравнение прогонов вместо чтения глазами</h3>
+        <p>
+          Каждый прогон пишет JSON: ступени, перцентили, CPU сервера и стенда, память, трафик.
+          Отдельная команда сравнивает два прогона и показывает, что ухудшилось. Это же делает
+          возможным гейт: «правка не должна ронять потолок больше чем на 5 %».
+        </p>
+        <p>Оценка: <strong>полдня</strong>.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        два прогона подряд отличаются в пределах шума; подсунутая регрессия видна
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <p>
+      Итого <strong>около четырёх с половиной дней работы</strong>. Порядок выбран так, что
+      после каждой фазы есть чем пользоваться: С0 даёт связь, С1 — честные числа, С2 — доверие
+      к ним, С3 — сценарии, которых не было, С4 — автоматическое сравнение.
+    </p>
+    <p>
+      <strong>Ни одна фаза не ждёт кабеля.</strong> С1 и С2 проверяются на этом же ноутбуке
+      против нашего сервера — там уже есть с чем сравнивать: те же 1000 ботов, которыми мы
+      ночью нашли потолок. Вторая машина нужна начиная с С3, кабель — только для дорожки В.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ РИСКИ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Риски</span>
+    <div class="col">
+      <h2>Где именно две реализации разъедутся</h2>
+      <p>
+        Не общие слова: я прочитал наш кодек и контрольную сумму и выписал места, на которых
+        порт молча соврёт.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>ловушки порта · фаза С2</caption>
+      <thead><tr><th>Место</th><th>В чём подвох</th><th>Как делать</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>Math.round</code></td>
+          <td>JS округляет половину В СТОРОНУ ПЛЮС БЕСКОНЕЧНОСТИ: <code>-2.5 → -2</code>.
+              У Rust <code>f64::round</code> — от нуля: <code>-2.5 → -3</code></td>
+          <td><code>(v + 0.5).floor()</code>, а не <code>round()</code></td>
+        </tr>
+        <tr>
+          <td><code>| 0</code> и <code>Math.imul</code></td>
+          <td>Это арифметика 32-битных со знаком и переполнением по кругу, а не обычные числа</td>
+          <td>считать в <code>i32</code> через <code>wrapping_add</code> / <code>wrapping_mul</code></td>
+        </tr>
+        <tr>
+          <td><code>charCodeAt</code> в хеше id</td>
+          <td>Это единицы UTF-16, а не байты и не символы</td>
+          <td><code>encode_utf16()</code>; сейчас id из ASCII, но правило важнее</td>
+        </tr>
+        <tr>
+          <td>Порядок сущностей</td>
+          <td>Сумма коммутативна намеренно — у реконструкции свой порядок</td>
+          <td>не «чинить» сортировкой: расхождение спрячется</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>Риски самой связки двух машин</h3>
+    <ul class="plain">
+      <li><b>Гейтвей раздаёт 127.0.0.1</b> — самая вероятная первая ошибка. Лечится <code>DM_NODE_HOST</code>; стенд обязан сказать об этом словами.</li>
+      <li><b>Брандмауэр Windows</b> закроет порты нод, и симптом будет неотличим от «сервер не отвечает».</li>
+      <li><b>Wi-Fi вместо витой пары — уже подтверждено.</b> Потолок упрётся в канал на ~250 игроках. Либо кабель, либо ёмкость меряем на самом сервере, а Wi-Fi оставляем под сценарий «настоящая сеть».</li>
+      <li><b>Антивирус на пути</b> — на Windows он умеет добавлять миллисекунды к каждому соединению; заметно только на тысячах.</li>
+      <li><b>Вторая реализация протокола живёт до первой правки первой.</b> Отсюда золотые вектора: расхождение обязано ронять тест, а не всплывать через месяц загадочными процентами.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ══════════ ЧТО ИЗМЕРИМ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Ради чего</span>
+    <div class="col">
+      <h2>Что мы узнаем впервые</h2>
+    </div>
+  </div>
+  <div class="col">
+    <ul class="plain">
+      <li><b>Настоящий потолок железа.</b> Ночью дошли до 1000 на четырёх нодах и не смогли нагрузить восемь. Здесь узнаем, линейно ли идёт дальше и где предел на самом деле.</li>
+      <li><b>Хвосты задержки без примеси.</b> p99 и p999 на потолке — именно они решают, играбельно ли, а не медиана.</li>
+      <li><b>Влияние реальной сети.</b> Всё прежнее меряно на петле с нулевой задержкой; поведение TCP при заторе там другое.</li>
+      <li><b>Медленный клиент.</b> Защита в сервере есть (<code>maxBackpressure</code> 16 МБ), но её никто ни разу не трогал.</li>
+      <li><b>Реконнект-шторм.</b> Мобильная аудитория переподключается постоянно; грейс-механика под штормом не проверялась.</li>
+      <li><b>Сутки работы.</b> Утечки, дрейф и рост базы видны на часах, а не на минутах — и Rust-стенд, в отличие от Node, столько выдержит сам.</li>
+    </ul>
+  </div>
+
+  <div class="note">
+    <p>
+      И предостережение из опыта этих суток: <strong>сначала замер, потом работа.</strong>
+      За сутки два предсказания выигрыша не подтвердились (uWS на сотне ботов дал ноль, общая
+      дельта выиграла не тем местом, которое чинили), а третье было отменено замером до начала
+      работы и сэкономило день. Ожидание «4000–4500 игроков» из таблицы выше — тоже
+      предсказание, и оно записано именно затем, чтобы его проверить.
+    </p>
+  </div>
+</section>
+
+<footer>
+  Часть 5 серии. Опорные числа — из прогонов частей 4 и Ф4, полные протоколы в
+  <code>packages/server/src/loadtest/README.md</code>.
+</footer>
+
+</div>
+
+</body></html>

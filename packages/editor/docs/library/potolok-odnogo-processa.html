@@ -1,0 +1,554 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Потолок одного процесса</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground: #EBEEEC; --surface: #FFFFFF; --surface-2: #F3F6F4;
+    --ink: #12181A; --ink-2: #354345; --muted: #647576;
+    --line: #D2DCD8; --line-strong: #B4C3BE;
+    --accent: #0F6E63; --accent-soft: #D9EAE6;
+    --ok: #2F7D5B; --warn: #96690A; --crit: #A32B23; --crit-soft: #F5DEDB;
+    --bar-track: #E3E9E6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+      --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+      --line: #253133; --line-strong: #34464A;
+      --accent: #45B7A5; --accent-soft: #12312E;
+      --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+      --bar-track: #1E2A2C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+    --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+    --line: #253133; --line-strong: #34464A;
+    --accent: #45B7A5; --accent-soft: #12312E;
+    --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+    --bar-track: #1E2A2C;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 16.5px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1080px; margin: 0 auto; padding: 0 24px 90px; }
+  .col { max-width: 66ch; }
+
+  h1, h2, h3, .label, th, .tid { font-family: "IBM Plex Sans Condensed", system-ui, sans-serif; }
+  h1 { font-size: clamp(30px, 4.4vw, 44px); line-height: 1.06; letter-spacing: -.015em; margin: 0; text-wrap: balance; font-weight: 700; }
+  h2 { font-size: 25px; line-height: 1.15; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  h3 { font-size: 17.5px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+  p { margin: 0 0 14px; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+  code { font-size: .87em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: .5px 4px; color: var(--ink-2); }
+  .label { font-size: 11.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  strong { font-weight: 600; }
+
+  header.top { padding: 54px 0 26px; border-bottom: 2px solid var(--ink); }
+  .kicker { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 16px; }
+  .lede { font-size: 19px; line-height: 1.5; color: var(--ink-2); margin: 20px 0 0; max-width: 62ch; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0 28px; margin-top: 24px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  section { padding: 44px 0 6px; }
+  section + section { border-top: 1px solid var(--line); }
+  .sec-head { display: grid; grid-template-columns: 108px 1fr; gap: 20px; align-items: start; margin-bottom: 22px; }
+  .sec-head .label { padding-top: 7px; }
+  @media (max-width: 760px) { .sec-head { grid-template-columns: 1fr; gap: 4px; } }
+
+  /* ── приговор: обещано против измеренного ─────────────── */
+  .verdict { border-top: 1px solid var(--line); margin: 6px 0 4px; }
+  .vrow { display: grid; grid-template-columns: 1fr 190px 190px 96px; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  .vrow .what { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; font-size: 16.5px; }
+  .vrow .was, .vrow .now { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .vrow .now { color: var(--ink); }
+  .vrow .note { grid-column: 1 / -1; margin: -4px 0 0; font-size: 14.5px; color: var(--ink-2); max-width: 74ch; }
+  @media (max-width: 820px) {
+    .vrow { grid-template-columns: 1fr 92px; }
+    .vrow .was, .vrow .now { grid-column: 1; }
+  }
+  .chip { display: inline-block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: 2px; white-space: nowrap; }
+  .chip.ok { background: var(--accent-soft); color: var(--ok); }
+  .chip.miss { background: var(--crit-soft); color: var(--crit); }
+  .chip.part { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+
+  .scroll { overflow-x: auto; margin: 18px 0 22px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  caption { text-align: left; padding: 12px 14px 2px; font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  thead th { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tr.cap td { background: var(--accent-soft); }
+  tr.fail td { color: var(--crit); }
+  tr.fail td.n { color: var(--crit); }
+
+  /* ── полоса «одно ядро» ─────────────────────────────────
+     Дорожка = 110 % ядра, отметка на 100 %. Столбик, перешагнувший отметку,
+     и есть тот момент, когда процесс упёрся в единственное доступное ему ядро. */
+  .core { position: relative; width: 132px; height: 15px; background: var(--bar-track); border-radius: 2px; overflow: hidden; }
+  .core i { position: absolute; inset: 0 auto 0 0; display: block; background: var(--ok); }
+  .core i.warn { background: var(--warn); }
+  .core i.over { background: var(--crit); }
+  .core u { position: absolute; top: -2px; bottom: -2px; left: 90.9%; width: 1.5px; background: var(--ink); opacity: .55; }
+  .corewrap { display: flex; align-items: center; gap: 10px; }
+  .corewrap span { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+  .note { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 15px 18px; margin: 20px 0; border-radius: 2px; font-size: 15px; }
+  .note.alarm { border-left-color: var(--crit); }
+  .note h3 { margin-bottom: 4px; }
+  .note p:last-child { margin-bottom: 0; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; margin: 18px 0 6px; }
+  @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+
+  /* разбор стоимости комнаты */
+  .cost { display: flex; height: 30px; border: 1px solid var(--line-strong); border-radius: 2px; overflow: hidden; margin: 10px 0 6px; }
+  .cost div { display: flex; align-items: center; justify-content: center; font-family: "IBM Plex Mono", monospace; font-size: 12px; color: #fff; }
+  .cost .sim { background: var(--accent); flex: 18.97; }
+  .cost .frame { background: var(--warn); flex: 22.54; }
+  .costkey { display: flex; gap: 18px; font-size: 13px; color: var(--ink-2); font-family: "IBM Plex Mono", monospace; }
+  .costkey b { font-weight: 500; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+
+  ul.plain { list-style: none; padding: 0; margin: 12px 0; }
+  ul.plain li { padding: 8px 0 8px 24px; border-bottom: 1px solid var(--line); position: relative; font-size: 15.5px; }
+  ul.plain li::before { content: "→"; position: absolute; left: 0; color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  ul.plain li:last-child { border-bottom: 0; }
+
+  footer { padding-top: 32px; border-top: 2px solid var(--ink); margin-top: 44px; font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="kicker">
+    <span class="label">Часть 4 · финальный замер</span>
+    <span class="label" style="color:var(--accent)">9 сентября 2026</span>
+  </div>
+  <h1>Потолок одного процесса: что из плана сбылось</h1>
+  <p class="lede">
+    Четыре фазы доработки закрыты. Здесь — не пересказ сделанного, а проверка обещаний числами:
+    новый стенд ищет потолок ступенями, а не подтверждает заранее выбранное N. Одно обещание
+    выполнено с запасом, одно не выполнено вовсе — и причина у второго оказалась не там,
+    где её ждали. В конце — оптимизация, которую этот замер породил, и её результат:
+    он тоже пришёл не оттуда, откуда ожидался.
+  </p>
+  <div class="meta">
+    <span><b>Машина:</b> 16 ядер, Node 24.18, Postgres 17.6</span>
+    <span><b>Ступень:</b> 40 с, ввод 30 Гц</span>
+    <span><b>Сверок дельт:</b> 635 тыс., расхождений 0</span>
+  </div>
+</header>
+
+<!-- ══════════ ПРИГОВОР ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Приговор</span>
+    <div class="col">
+      <h2>Обещано в плане — измерено сейчас</h2>
+      <p>«До» взято из замеров части 1, «после» — из прогонов этой ночи на той же машине.</p>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <div class="vrow">
+      <span class="what">Трафик на игрока</span>
+      <span class="was">было 228 КБ/с</span>
+      <span class="now">стало 6,2 КБ/с</span>
+      <span><span class="chip ok">выполнено</span></span>
+      <p class="note" style="background:none;border:0;padding:0;margin:0">
+        План обещал 6–10 КБ/с. Попали в нижнюю границу: в 37 раз меньше исходного.
+      </p>
+    </div>
+
+    <div class="vrow">
+      <span class="what">Задержка на сотне игроков</span>
+      <span class="was">было 12 449 мс</span>
+      <span class="now">стало 6 мс</span>
+      <span><span class="chip ok">выполнено</span></span>
+      <p class="note" style="background:none;border:0;padding:0;margin:0">
+        Не «улучшилось на проценты», а перестало быть коллапсом: очередь исходящих больше
+        не растёт, память стабильна.
+      </p>
+    </div>
+
+    <div class="vrow">
+      <span class="what">Мир идёт в реальном времени</span>
+      <span class="was">13,9 Гц вместо 30</span>
+      <span class="now">30,0 Гц на всех ступенях</span>
+      <span><span class="chip ok">выполнено</span></span>
+      <p class="note" style="background:none;border:0;padding:0;margin:0">
+        Слоу-мо ушло. Теперь это ещё и автоматические ворота стенда: ниже 28 Гц ступень
+        не засчитывается.
+      </p>
+    </div>
+
+    <div class="vrow">
+      <span class="what">Игроков на ядро</span>
+      <span class="was">50 — край, 100 — коллапс</span>
+      <span class="now">250 соло · 400 в пати</span>
+      <span><span class="chip part">почти</span></span>
+      <p class="note" style="background:none;border:0;padding:0;margin:0">
+        План обещал <strong>около 500</strong>. На момент замера было 150 и 300; оптимизация,
+        которую этот замер породил (последний раздел), подняла до 250 и 400 — то есть обещание
+        почти достигнуто в пати и вдвое перевыполнено относительно исходного состояния.
+      </p>
+    </div>
+
+    <div class="vrow">
+      <span class="what">Дюп предметов</span>
+      <span class="was">воспроизводился PoC</span>
+      <span class="now">закрыт, есть журнал</span>
+      <span><span class="chip ok">выполнено</span></span>
+      <p class="note" style="background:none;border:0;padding:0;margin:0">
+        Вещь не может быть в двух местах, приход с чужого аккаунта отклоняет запись целиком,
+        журнал переходов нельзя переписать — это запрещает сама база.
+      </p>
+    </div>
+
+    <div class="vrow">
+      <span class="what">Античит</span>
+      <span class="was">не было ничего</span>
+      <span class="now">телеметрия + пометки</span>
+      <span><span class="chip part">с оговоркой</span></span>
+      <p class="note" style="background:none;border:0;padding:0;margin:0">
+        Работает и никого не банит автоматически — как и требовало правило фазы. Но пороги
+        нельзя считать проверенными, пока нет живых игроков: собственные боты сигнатуру
+        «метроном» не вызывают, потому что темп атак задаёт сервер.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ ПОТОЛОК ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Потолок</span>
+    <div class="col">
+      <h2>Ступени: где сервер перестал держать</h2>
+      <p>
+        Боты добавляются, пока держатся все ворота качества — кадры, частота симуляции, задержка,
+        никто не отвалился, расхождений дельт нет. Полоса справа — доля одного ядра;
+        засечка на ней отмечает 100 %.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>Соло: каждый игрок в своей комнате со своим этажом — худший возможный случай</caption>
+      <thead>
+        <tr>
+          <th>Игроков</th><th class="n">Кадров/с</th><th class="n">Тик</th><th class="n">RTT мед. / p95</th>
+          <th class="n">КБ/с</th><th>CPU процесса</th><th class="n">RSS</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="n">50</td><td class="n">20,0</td><td class="n">30,1 Гц</td><td class="n">4 / 5 мс</td><td class="n">6,6</td>
+          <td><div class="corewrap"><div class="core"><i style="width:30.9%"></i><u></u></div><span>34 %</span></div></td>
+          <td class="n">338 МБ</td>
+        </tr>
+        <tr>
+          <td class="n">100</td><td class="n">20,0</td><td class="n">30,0 Гц</td><td class="n">6 / 7 мс</td><td class="n">6,3</td>
+          <td><div class="corewrap"><div class="core"><i style="width:42.7%"></i><u></u></div><span>47 %</span></div></td>
+          <td class="n">386 МБ</td>
+        </tr>
+        <tr class="cap">
+          <td class="n"><strong>150</strong></td><td class="n">20,0</td><td class="n">30,0 Гц</td><td class="n">10 / 12 мс</td><td class="n">6,2</td>
+          <td><div class="corewrap"><div class="core"><i class="warn" style="width:56.4%"></i><u></u></div><span>62 %</span></div></td>
+          <td class="n">429 МБ</td>
+        </tr>
+        <tr class="fail">
+          <td class="n">200</td><td class="n">18,2</td><td class="n">30,0 Гц</td><td class="n">19 / 22 мс</td><td class="n">5,5</td>
+          <td><div class="corewrap"><div class="core"><i class="over" style="width:100%"></i><u></u></div><span>103 %</span></div></td>
+          <td class="n">482 МБ</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>Пати по 4: как играют люди — на комнату приходится четверо</caption>
+      <thead>
+        <tr>
+          <th>Игроков</th><th class="n">Комнат</th><th class="n">Кадров/с</th><th class="n">Тик</th>
+          <th class="n">RTT мед. / p95</th><th class="n">КБ/с</th><th>CPU процесса</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="n">100</td><td class="n">25</td><td class="n">20,0</td><td class="n">30,0 Гц</td><td class="n">5 / 6 мс</td><td class="n">9,4</td>
+          <td><div class="corewrap"><div class="core"><i style="width:40.9%"></i><u></u></div><span>45 %</span></div></td>
+        </tr>
+        <tr>
+          <td class="n">200</td><td class="n">50</td><td class="n">20,0</td><td class="n">30,0 Гц</td><td class="n">8 / 9 мс</td><td class="n">9,0</td>
+          <td><div class="corewrap"><div class="core"><i style="width:58.2%"></i><u></u></div><span>64 %</span></div></td>
+        </tr>
+        <tr class="cap">
+          <td class="n"><strong>300</strong></td><td class="n">75</td><td class="n">20,0</td><td class="n">30,0 Гц</td><td class="n">12 / 15 мс</td><td class="n">8,9</td>
+          <td><div class="corewrap"><div class="core"><i class="warn" style="width:87.3%"></i><u></u></div><span>96 %</span></div></td>
+        </tr>
+        <tr class="fail">
+          <td class="n">400</td><td class="n">—</td><td colspan="4">ступень не собралась: сервер уже не успевал принимать новых игроков</td>
+          <td><div class="corewrap"><span style="color:var(--crit)">ядро занято</span></div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <h3>Упёрлись не в алгоритмы, а в одно ядро</h3>
+    <p>
+      При двухстах сольных игроках процесс съел <strong>103 % ядра</strong>. Node однопоточен —
+      это физический потолок одного процесса, и ровно про него написана невыполненная пока Ф4.
+      На машине шестнадцать ядер; пятнадцать простаивали всё время замера.
+    </p>
+  </div>
+
+  <p class="col">
+    Отдельно стоит сказать про достоверность. Прошлый стенд крутил всех ботов рядом с сервером
+    в одном процессе, и однажды прогон на 400 ботах выдал <em>одинаковые</em> 11 кадров/с у двух
+    разных транспортов — то есть мерил сам себя. Теперь боты разложены по восьми процессам и
+    каждый сообщает свой расход процессора: в этих прогонах стенд занимал 24–49 % ядра при
+    шестнадцати доступных. Мерили сервер.
+  </p>
+</section>
+
+<!-- ══════════ ГДЕ ДЕНЬГИ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Разбор</span>
+    <div class="col">
+      <h2>Почему не 500: считали не ту работу</h2>
+      <p>
+        Оценка «около 500 игроков на ядро» выводилась из цены ОТПРАВКИ кадра — 19 мкс,
+        независимо от размера. Но отправке предшествует сборка, и она дороже.
+      </p>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>
+      Замер боевого ядра без сети (<code>npm run bench:tick</code>) раскладывает стоимость
+      одной комнаты за тик:
+    </p>
+  </div>
+
+  <div class="cost">
+    <div class="sim">18,97 мкс — симуляция</div>
+    <div class="frame">22,54 мкс — сборка кадра</div>
+  </div>
+  <div class="costkey">
+    <b><span class="sw" style="background:var(--accent)"></span>тик мира: ИИ, движение, бой</b>
+    <b><span class="sw" style="background:var(--warn)"></span>кадр: область интереса, дельта, кодек</b>
+  </div>
+
+  <div class="col">
+    <p style="margin-top:16px">
+      Итого <strong>41,5 мкс на комнату</strong> — при бюджете 30 Гц это 0,12 % ядра, то есть
+      теоретически около <strong>800 комнат на ядро</strong>. Фактически удержали 150. Разница
+      в пять раз — всё, что лежит вне этого замера: персональный вид считается
+      <em>для каждого клиента отдельно</em>, плюс отправка, сборка мусора и автосейвы.
+    </p>
+    <p>
+      И вот главное, что из этого следует. <strong>Симуляция больше не узкое место</strong> — она
+      занимает меньше половины стоимости комнаты и продолжает дешеветь от любой оптимизации
+      математики. Дорого стоит то, что мы построили в Ф1: каждому клиенту считается свой вид мира.
+      Соседи по комнате при этом пересчитывают почти одно и то же.
+    </p>
+  </div>
+
+  <div class="note">
+    <h3>Следующая оптимизация — не там, где искали</h3>
+    <p>
+      Удешевлять надо сборку персонального кадра, а не тик. Самое очевидное: игроки в одной
+      комнате видят почти одинаковый набор сущностей — их кадр можно считать один раз на всех,
+      а не по разу на каждого. <strong>Сделано в ту же ночь; что из этого вышло — последний
+      раздел.</strong>
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ ЯЗЫКИ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Языки</span>
+    <div class="col">
+      <h2>Node против Rust, C# и C++ на одинаковой работе</h2>
+      <p>
+        Один и тот же алгоритм тика, один и тот же результат: контрольная сумма
+        <code>36973272</code> совпала у всех четырёх реализаций. Значит сравниваются языки,
+        а не разные программы.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>мкс на тик · 60 монстров, 4 игрока, грид 64×48, 200 000 тиков</caption>
+      <thead>
+        <tr><th>Вариант</th><th class="n">Node</th><th class="n">Rust</th><th class="n">C#</th><th class="n">C++</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>как принято в языке</td><td class="n">20,41</td><td class="n">9,99</td><td class="n">10,38</td><td class="n">9,31</td></tr>
+        <tr><td>массивы вместо объектов</td><td class="n">20,33</td><td class="n">10,69</td><td class="n">10,46</td><td class="n">9,34</td></tr>
+        <tr class="cap"><td><strong>быстрая нормализация угла</strong> — наш вариант</td><td class="n"><strong>15,68</strong></td><td class="n">8,58</td><td class="n">8,43</td><td class="n">7,79</td></tr>
+        <tr><td>кадр в JSON вместо бинаря</td><td class="n">53,80</td><td class="n">—</td><td class="n">48,76</td><td class="n">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="split">
+    <div>
+      <h3>Что подтвердилось</h3>
+      <p style="font-size:15px;color:var(--ink-2)">
+        JSON-кадр стоит дороже всей симуляции: +33 мкс к тику и 9971 байт против 185.
+        Показательно, что в C# он дорог ровно так же (+38 мкс) — значит дело было не в языке,
+        и бинарный кадр Ф1.4 оправдан задним числом.
+      </p>
+      <p style="font-size:15px;color:var(--ink-2)">
+        <code>Math.hypot</code> в V8 по-прежнему в 8 раз дороже <code>sqrt</code>
+        (11,41 против 1,41 нс) — тот замер, которым обосновывалась замена математики в Ф0.11.
+      </p>
+    </div>
+    <div>
+      <h3>Что это меняет в решении по языку</h3>
+      <p style="font-size:15px;color:var(--ink-2)">
+        Компилируемые языки быстрее Node на симуляции <strong>примерно вдвое</strong>. Переезд
+        превратил бы 19 мкс симуляции в 9 — это минус четверть стоимости комнаты.
+      </p>
+      <p style="font-size:15px;color:var(--ink-2)">
+        Но свободных ядер пятнадцать из шестнадцати. <strong>Кластер даёт ×16 там, где смена
+        языка даёт ×1,3.</strong> Решение «остаёмся на Node» после этого замера только окрепло —
+        и укрепится ещё, когда сборка кадра станет дешевле.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ ОПТИМИЗАЦИЯ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Что сделали</span>
+    <div class="col">
+      <h2>Один кадр на комнату вместо кадра на игрока</h2>
+      <p>
+        Возможной эту оптимизацию сделала не техника, а устройство игры. Подземелье — инстанс
+        одной пати: все игроки заодно, и миникарта у них общая по замыслу. Арена PvP умещается
+        примерно в два экрана, карта видна целиком. Город — тоже инстанс пати.
+        Значит вид мира у всех в комнате <strong>один</strong>, и персональный вид никому не нужен.
+      </p>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>
+      Снимок, контрольная сумма, дельта и бинарный кадр теперь считаются один раз на комнату,
+      и всем уходит один и тот же буфер. Персональным остался ровно один момент: подключившийся
+      посреди забега получает полный кадр <em>того же тика</em>, от которого посчитана общая
+      дельта, и со следующего тика идёт в общем потоке.
+    </p>
+    <p>
+      Область интереса при этом не удалена, а выключена — <code>DM_AOI_RADIUS=1000</code>
+      возвращает персональный вид. Вернуть его придётся там, где рядом окажутся не союзники:
+      публичная зона, большая арена со стенами, открытый мир.
+    </p>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <caption>Потолок до и после · ступени по 40 с, ввод 30 Гц, та же машина, прогоны подряд</caption>
+      <thead>
+        <tr><th>Сценарий</th><th class="n">Было</th><th class="n">Стало</th><th class="n">На потолке</th><th class="n">Сверок дельт</th></tr>
+      </thead>
+      <tbody>
+        <tr class="cap">
+          <td>Соло — каждый в своей комнате</td>
+          <td class="n">150</td><td class="n"><strong>250</strong> · +67 %</td>
+          <td class="n">CPU 103 % · RTT 17 мс · 8,0 КБ/с</td><td class="n">196 975 → 0 ✓</td>
+        </tr>
+        <tr class="cap">
+          <td>Пати по 4</td>
+          <td class="n">300</td><td class="n"><strong>400</strong> · +33 %</td>
+          <td class="n">CPU 108 % · RTT 19 мс · 10,5 КБ/с</td><td class="n">318 543 → 0 ✓</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note alarm">
+    <h3>Выиграло не то, что чинили</h3>
+    <p>
+      Соло выиграло <strong>больше</strong> (+67 %), хотя делить там не с кем — в комнате
+      один клиент. Значит дело не в общей дельте, а в том, что вместе с ней ушла
+      <strong>персональная фильтрация</strong>: на каждого клиента каждый кадр создавались
+      три новых массива и делался проход по всем монстрам. Это стоило дороже, чем подорожавший
+      кадр.
+    </p>
+    <p>
+      Арифметика по общей дельте сходится, но объясняет мало: на 300 игроках она давала около
+      десяти пунктов ядра, измерено семь. Всё остальное держит то, что <strong>разделить между
+      игроками нельзя в принципе</strong> — отправка каждому в свой сокет и разбор входящего
+      ввода. На четырёхстах игроках это 8 000 отправок и 12 000 приёмов в секунду, линейно
+      по игрокам. Лечится только вторым процессом.
+    </p>
+  </div>
+
+  <div class="col">
+    <p>
+      Цена — трафик: клиент получает весь этаж вместо полутора экранов, 6,2 → 8,0 КБ/с соло
+      и 9,4 → 10,5 в пати. Против исходных 228 КБ/с это по-прежнему в двадцать два раза меньше,
+      а общая карта у пати — не потеря, а нужное поведение.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════ ДАЛЬШЕ ══════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Дальше</span>
+    <div class="col">
+      <h2>Что честно сказать про состояние сервера</h2>
+    </div>
+  </div>
+
+  <div class="col">
+    <ul class="plain">
+      <li><b>Сегодня сервер держит 250 соло или 400 в пати</b> на одном процессе, с задержкой 17–19 мс и миром в реальном времени. Для запуска и первой тысячи игроков этого достаточно.</li>
+      <li><b>Крупных оптимизаций внутри процесса не осталось.</b> То, что ещё стоит дорого, — отправка каждому в свой сокет и разбор ввода; это линейно по игрокам и не делится между ними.</li>
+      <li><b>Дальше только Ф4</b>, и она не про оптимизацию, а про раскладку: гейтвей, процессы по ядрам, общий замок в Redis, очередь на вход. Пятнадцать простаивающих ядер — это ×16 к потолку.</li>
+      <li><b>Античит проверен на ботах, но не на людях.</b> Пороги детектора выставлены в сторону «лучше пропустить, чем оболгать», и калибровать их можно только на живой популяции.</li>
+      <li><b>Торговли между игроками нет — и это защищает экономику лучше любого лимита.</b> Вводить её можно только вместе с проверкой Ф2 и Ф3 на реальном трафике.</li>
+    </ul>
+  </div>
+
+  <div class="note alarm">
+    <h3>Оговорка о том, чего этот замер не проверял</h3>
+    <p>
+      Все прогоны — на одной машине, боты и сервер делят её. Стенд честно сообщал свой расход,
+      и в этих ступенях он был мал, но настоящий потолок ищется с ОТДЕЛЬНОГО нагрузчика.
+      Не проверялись: долгая работа (часы, а не минуты), реконнекты под нагрузкой, поведение
+      при отказе базы и деплой без потери забегов. Это работа Ф4, и её ещё предстоит сделать.
+      Отдельно: клиент теперь рисует всех монстров этажа, а не ближних — на стенде это незаметно,
+      потому что боты не рисуют, и живой 3D-клиент стоит проверить глазами.
+    </p>
+  </div>
+</section>
+
+<footer>
+  Часть 4 серии. Все числа получены прогонами этой ночи на одной машине; команды и полные
+  протоколы — в <code>packages/server/src/loadtest/README.md</code> репозитория.
+</footer>
+
+</div>
+
+</body></html>

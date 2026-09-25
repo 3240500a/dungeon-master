@@ -1,0 +1,980 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Потолок сервера Dungeon Master</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground: #EBEEEC;
+    --surface: #FFFFFF;
+    --surface-2: #F3F6F4;
+    --ink: #12181A;
+    --ink-2: #354345;
+    --muted: #647576;
+    --line: #D2DCD8;
+    --line-strong: #B4C3BE;
+    --accent: #0F6E63;
+    --accent-soft: #D9EAE6;
+    --ok: #2F7D5B;
+    --warn: #96690A;
+    --crit: #A32B23;
+    --crit-soft: #F5DEDB;
+    --shadow: 0 1px 2px rgba(18, 24, 26, .06), 0 8px 24px -18px rgba(18, 24, 26, .35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1214;
+      --surface: #141C1E;
+      --surface-2: #192325;
+      --ink: #E3EBE8;
+      --ink-2: #BCCBC7;
+      --muted: #8B9C9A;
+      --line: #253133;
+      --line-strong: #34464A;
+      --accent: #45B7A5;
+      --accent-soft: #12312E;
+      --ok: #57AC80;
+      --warn: #D3A33B;
+      --crit: #E27163;
+      --crit-soft: #3A1F1D;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -20px rgba(0, 0, 0, .8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D1214;
+    --surface: #141C1E;
+    --surface-2: #192325;
+    --ink: #E3EBE8;
+    --ink-2: #BCCBC7;
+    --muted: #8B9C9A;
+    --line: #253133;
+    --line-strong: #34464A;
+    --accent: #45B7A5;
+    --accent-soft: #12312E;
+    --ok: #57AC80;
+    --warn: #D3A33B;
+    --crit: #E27163;
+    --crit-soft: #3A1F1D;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -20px rgba(0, 0, 0, .8);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 96px; }
+  .col { max-width: 66ch; }
+
+  h1, h2, h3, h4, .label, th, .tag, .num {
+    font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  }
+  h1 { font-size: clamp(30px, 4.6vw, 46px); line-height: 1.06; letter-spacing: -.015em; margin: 0; text-wrap: balance; font-weight: 700; }
+  h2 { font-size: 25px; line-height: 1.15; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  h3 { font-size: 18.5px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -.005em; text-wrap: balance; }
+  h4 { font-size: 14px; margin: 0 0 4px; letter-spacing: .01em; }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  code, .mono, .num, td.n, th.n { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+  code { font-size: .87em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: .5px 4px; color: var(--ink-2); }
+
+  .label {
+    font-size: 11.5px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+  }
+
+  /* ── шапка ─────────────────────────────────────────── */
+  header.top { padding: 54px 0 28px; border-bottom: 2px solid var(--ink); }
+  .kicker { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 16px; }
+  .lede { font-size: 19px; line-height: 1.5; color: var(--ink-2); margin: 20px 0 0; max-width: 62ch; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 0 28px; margin-top: 26px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted);
+  }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  /* ── секции ────────────────────────────────────────── */
+  section { padding: 44px 0 8px; }
+  section + section { border-top: 1px solid var(--line); }
+  .sec-head { display: grid; grid-template-columns: 92px 1fr; gap: 20px; align-items: start; margin-bottom: 22px; }
+  .sec-head .label { padding-top: 7px; }
+  @media (max-width: 720px) { .sec-head { grid-template-columns: 1fr; gap: 4px; } }
+
+  /* ── таблицы ───────────────────────────────────────── */
+  .scroll { overflow-x: auto; margin: 20px 0 24px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  caption { text-align: left; padding: 12px 14px 0; font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+    font-weight: 600; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tbody tr:hover { background: var(--surface-2); }
+  .rowhead { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; white-space: nowrap; }
+
+  /* ── чипы состояния ────────────────────────────────── */
+  .chip {
+    display: inline-block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11.5px;
+    font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 2px; white-space: nowrap;
+  }
+  .chip.ok { background: var(--accent-soft); color: var(--ok); }
+  .chip.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+  .chip.crit { background: var(--crit-soft); color: var(--crit); }
+
+  /* ── находки ───────────────────────────────────────── */
+  .findings { display: grid; gap: 0; margin: 22px 0 8px; border-top: 1px solid var(--line); }
+  .finding {
+    display: grid; grid-template-columns: 34px 1fr 150px; gap: 18px;
+    padding: 16px 0; border-bottom: 1px solid var(--line); align-items: start;
+  }
+  .finding .rank { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--muted); padding-top: 2px; }
+  .finding .body { font-size: 15.5px; line-height: 1.55; }
+  .finding .body p { margin: 6px 0 0; color: var(--ink-2); font-size: 14.5px; }
+  .finding .fig {
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--muted);
+    text-align: right; line-height: 1.5; padding-top: 2px;
+  }
+  .finding .fig b { display: block; font-size: 17px; color: var(--ink); font-weight: 500; }
+  @media (max-width: 720px) {
+    .finding { grid-template-columns: 26px 1fr; }
+    .finding .fig { grid-column: 2; text-align: left; padding-top: 8px; }
+  }
+  .sev { border-left: 3px solid transparent; padding-left: 11px; margin-left: -14px; }
+  .sev.crit { border-color: var(--crit); }
+  .sev.warn { border-color: var(--warn); }
+  .sev.ok { border-color: var(--ok); }
+
+  /* ── этапы дорожной карты ──────────────────────────── */
+  .stage {
+    display: grid; grid-template-columns: 132px 1fr; gap: 24px;
+    padding: 22px 0; border-bottom: 1px solid var(--line);
+  }
+  .stage:first-of-type { border-top: 1px solid var(--line); }
+  .stage .when { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--muted); }
+  .stage .when b { display: block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 15px; color: var(--accent); letter-spacing: .02em; margin-bottom: 3px; }
+  .stage ul { margin: 8px 0 0; padding-left: 18px; }
+  .stage li { margin-bottom: 5px; font-size: 15px; }
+  .stage li::marker { color: var(--line-strong); }
+  .gain {
+    display: inline-block; margin-top: 10px; font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px; color: var(--ink-2); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 2px; padding: 4px 9px;
+  }
+  @media (max-width: 720px) { .stage { grid-template-columns: 1fr; gap: 8px; } }
+
+  /* ── графики ───────────────────────────────────────── */
+  figure { margin: 24px 0 28px; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 10px; font-family: "IBM Plex Mono", monospace; }
+  .chart { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--line); border-radius: 2px; }
+  .ax { fill: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 11px; }
+  .axb { fill: var(--ink); font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 12.5px; font-weight: 600; }
+  .grid-l { stroke: var(--line); stroke-width: 1; }
+  .ref { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 3; }
+
+  /* ── врезки ────────────────────────────────────────── */
+  .note {
+    background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    padding: 16px 18px; margin: 22px 0; border-radius: 2px; font-size: 15px;
+  }
+  .note.alarm { border-left-color: var(--crit); }
+  .note h4 { color: var(--ink); }
+  .note p:last-child { margin-bottom: 0; }
+
+  pre {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 2px;
+    padding: 14px 16px; overflow-x: auto; font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px; line-height: 1.6; color: var(--ink-2); margin: 18px 0;
+  }
+  pre b { color: var(--crit); font-weight: 500; }
+
+  ul.plain { list-style: none; padding: 0; margin: 14px 0; }
+  ul.plain li { padding: 7px 0 7px 22px; border-bottom: 1px solid var(--line); position: relative; font-size: 15.5px; }
+  ul.plain li::before { content: "→"; position: absolute; left: 0; color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  ul.plain li:last-child { border-bottom: 0; }
+
+  footer { padding-top: 34px; border-top: 2px solid var(--ink); margin-top: 46px; font-size: 14px; color: var(--muted); }
+  footer a { color: var(--accent); }
+  footer ul { padding-left: 18px; }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="kicker">
+    <span class="label">Нагрузочный аудит · сервер + клиент</span>
+    <span class="label" style="color:var(--accent)">8 сентября 2026</span>
+  </div>
+  <h1>Потолок сервера: где он на самом деле и куда переезжать</h1>
+  <p class="lede">
+    Всё, что ниже, — не оценка «на глаз». Комната прогнана бенчмарком, живой сервер
+    обстрелян настоящими WebSocket-клиентами, дюп воспроизведён скриптом. Числа —
+    измеренные; там, где начинается экстраполяция, это сказано прямо.
+  </p>
+  <div class="meta">
+    <span><b>Стенд:</b> i7-11800H, 16 логич. ядер, 32 ГБ, Node 24.18</span>
+    <span><b>Ветка:</b> feat/3d-online-client</span>
+    <span><b>Метод:</b> бенч ядра + обстрел 50/100/200 клиентов + PoC дюпа</span>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Как устроено</span>
+    <div class="col">
+      <h2>Один процесс делает всё сразу</h2>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>
+      Архитектурно комната (<code>Room</code> = <code>GameSession</code>) — это ровно та
+      единица, которой пользуется Path of Exile: у каждой пати свой изолированный экземпляр
+      мира, город тоже свой. Это <b>правильная</b> основа: нагрузка растёт линейно по комнатам,
+      «общего мира» с толпой в 200 человек на локации нет и не будет. Хорошая новость
+      в том, что переезжать с этой модели никуда не надо.
+    </p>
+    <p>
+      Плохая — в том, что вокруг этой модели сейчас нет ничего. Один Node-процесс
+      (<code>packages/server/src/index.ts</code>) одновременно: отдаёт 7,4 МБ клиентского
+      бандла и 31 МБ GLB-ассетов, обслуживает <code>/api</code>, держит все WebSocket-соединения,
+      крутит по <code>setInterval</code> тик каждой комнаты и синхронно пишет в SQLite —
+      в одном и том же потоке. Каждый из этих пунктов ворует время у игрового цикла.
+    </p>
+  </div>
+
+  <pre>клиент ──ws──┐
+              ├─► [ ОДИН процесс Node, ОДНО ядро ]
+клиент ──ws──┤      express.static  7,4 МБ бандл + 31 МБ GLB
+              │      GET /api/config  <b>8,58 мс блокировки, 436 КБ</b>
+клиент ──ws──┤      RoomManager → N × Room (каждая — свой setInterval 30 Гц)
+              │      per-message-deflate → <b>libuv threadpool (4 потока)</b>
+              └─►    node:sqlite <b>синхронно</b> (автосейв каждые 10 с на комнату)</pre>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Замеры</span>
+    <div class="col">
+      <h2>Симуляция дешёвая. Дорогая — доставка</h2>
+      <p>
+        Само игровое ядро считает быстро: полный этаж 48×38 с полусотней монстров, все в агро,
+        стоит <b>0,1–0,5 мс на тик</b>. Если бы дело было только в симуляции, одно ядро тянуло бы
+        сотни комнат. Всё съедает путь «состояние мира → байты в сокете».
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <caption>А. Чистое ядро без сети: <code>GameSession.tick</code> + <code>serializeWorld</code> + <code>JSON.stringify</code>, 30 Гц</caption>
+    <table>
+      <thead>
+        <tr>
+          <th>Сценарий</th>
+          <th class="n">Монстров</th>
+          <th class="n">tick</th>
+          <th class="n">сериализация</th>
+          <th class="n">снапшот</th>
+          <th class="n">комнат / ядро</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="rowhead">Город, соло</td><td class="n">0</td><td class="n">0,035 мс</td><td class="n">—</td><td class="n">0,4 КБ</td><td class="n">948</td></tr>
+        <tr><td class="rowhead">Подземелье, соло</td><td class="n">40</td><td class="n">0,102 мс</td><td class="n">0,028 мс</td><td class="n">6,5 КБ</td><td class="n">255</td></tr>
+        <tr><td class="rowhead">Пати ×4</td><td class="n">40</td><td class="n">0,221 мс</td><td class="n">0,041 мс</td><td class="n">7,5 КБ</td><td class="n">127</td></tr>
+        <tr><td class="rowhead">Пати ×8, весь этаж в агро</td><td class="n">43</td><td class="n">0,470 мс</td><td class="n">0,052 мс</td><td class="n">10,9 КБ</td><td class="n">63</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="scroll">
+    <caption>Б. Живой сервер: N настоящих ws-клиентов, регистрация → персонаж → комната → ввод 60 Гц → спуск в подземелье</caption>
+    <table>
+      <thead>
+        <tr>
+          <th>Нагрузка</th>
+          <th class="n">CPU процесса</th>
+          <th class="n">RSS</th>
+          <th class="n">Частота мира</th>
+          <th class="n">RTT медиана</th>
+          <th>Вердикт</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rowhead">50 соло <span class="mono" style="color:var(--muted)">(сжатие вкл.)</span></td>
+          <td class="n">72–100 %</td><td class="n">280 МБ</td><td class="n">23,2 Гц</td><td class="n">66 мс</td>
+          <td><span class="chip warn">край</span></td>
+        </tr>
+        <tr>
+          <td class="rowhead">100 соло <span class="mono" style="color:var(--muted)">(сжатие вкл.)</span></td>
+          <td class="n">140 %</td><td class="n">270→730 МБ</td><td class="n">23,3 Гц</td><td class="n">10 852 мс</td>
+          <td><span class="chip crit">коллапс</span></td>
+        </tr>
+        <tr>
+          <td class="rowhead">100 соло <span class="mono" style="color:var(--muted)">(сжатие выкл.)</span></td>
+          <td class="n">70–85 %</td><td class="n">300 МБ</td><td class="n">22,1 Гц</td><td class="n">8 мс</td>
+          <td><span class="chip warn">край</span></td>
+        </tr>
+        <tr>
+          <td class="rowhead">100 в пати ×4 <span class="mono" style="color:var(--muted)">(сжатие выкл.)</span></td>
+          <td class="n">42 %</td><td class="n">350 МБ</td><td class="n">22,9 Гц</td><td class="n">7 мс</td>
+          <td><span class="chip ok">запас есть</span></td>
+        </tr>
+        <tr>
+          <td class="rowhead">200 соло <span class="mono" style="color:var(--muted)">(сжатие выкл.)</span></td>
+          <td class="n">95 %</td><td class="n">420 МБ</td><td class="n">13,9 Гц</td><td class="n">35 мс</td>
+          <td><span class="chip crit">стена</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure>
+    <svg class="chart" viewBox="0 0 900 300" role="img" aria-label="Частота тика мира падает с ростом онлайна: 23,2 Гц при 50 игроках, 22,1 при 100, 13,9 при 200 — при норме 30 Гц">
+      <text class="axb" x="20" y="26">Частота мира, Гц (норма 30)</text>
+      <text class="ax" x="20" y="44">измерено на одном процессе, сжатие выключено</text>
+
+      <!-- сетка -->
+      <line class="grid-l" x1="70" y1="240" x2="870" y2="240"></line>
+      <line class="grid-l" x1="70" y1="180" x2="870" y2="180"></line>
+      <line class="grid-l" x1="70" y1="120" x2="870" y2="120"></line>
+      <line class="ref"    x1="70" y1="90"  x2="870" y2="90"></line>
+      <text class="ax" x="60" y="244" text-anchor="end">0</text>
+      <text class="ax" x="60" y="184" text-anchor="end">10</text>
+      <text class="ax" x="60" y="124" text-anchor="end">20</text>
+      <text class="ax" x="60" y="94"  text-anchor="end">30</text>
+      <text class="ax" x="878" y="94" fill="currentColor" style="fill:var(--muted)">норма</text>
+
+      <!-- столбцы: 30 Гц = 150 px высоты (240 → 90) -->
+      <g>
+        <rect x="120" y="124" width="120" height="116" fill="var(--ok)" rx="1"></rect>
+        <text class="axb" x="180" y="116" text-anchor="middle">23,2</text>
+        <text class="ax" x="180" y="262" text-anchor="middle">50 игроков</text>
+        <text class="ax" x="180" y="278" text-anchor="middle">RTT 8 мс</text>
+      </g>
+      <g>
+        <rect x="310" y="130" width="120" height="110" fill="var(--warn)" rx="1"></rect>
+        <text class="axb" x="370" y="122" text-anchor="middle">22,1</text>
+        <text class="ax" x="370" y="262" text-anchor="middle">100 игроков</text>
+        <text class="ax" x="370" y="278" text-anchor="middle">RTT 8 мс</text>
+      </g>
+      <g>
+        <rect x="500" y="125" width="120" height="115" fill="var(--accent)" rx="1"></rect>
+        <text class="axb" x="560" y="117" text-anchor="middle">22,9</text>
+        <text class="ax" x="560" y="262" text-anchor="middle">100 в пати ×4</text>
+        <text class="ax" x="560" y="278" text-anchor="middle">RTT 7 мс</text>
+      </g>
+      <g>
+        <rect x="690" y="170" width="120" height="70" fill="var(--crit)" rx="1"></rect>
+        <text class="axb" x="750" y="162" text-anchor="middle">13,9</text>
+        <text class="ax" x="750" y="262" text-anchor="middle">200 игроков</text>
+        <text class="ax" x="750" y="278" text-anchor="middle">RTT 35 мс</text>
+      </g>
+    </svg>
+    <figcaption>
+      Мир не «лагает» — он <b>замедляется</b>: <code>session.tick</code> всегда получает фиксированный
+      <code>dt = 1/30</code>, а реальный интервал уезжает. При 200 игроках игровое время идёт
+      в 46 % от реального: монстры двигаются в слоу-мо, кулдауны тикают медленнее.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Узкие места</span>
+    <div class="col">
+      <h2>Семь мест, где утекает производительность</h2>
+      <p>Отсортированы по тому, сколько вернёт исправление.</p>
+    </div>
+  </div>
+
+  <div class="findings">
+
+    <div class="finding sev crit">
+      <div class="rank">01</div>
+      <div class="body">
+        <b>per-message-deflate убивает сервер на сотне игроков.</b>
+        <p>
+          <code>ws</code> жмёт каждый кадр <b>каждому клиенту отдельно</b>, и делает это в
+          libuv-threadpool из 4 потоков. На 100 клиентах × 30 кадров/с пул захлёбывается,
+          очередь исходящих растёт (RSS 270 → 730 МБ), задержка уходит в <b>10,8 секунды</b>.
+          Выключение сжатия на том же тесте: RTT 8 мс, память стабильна.
+          <code>wsServer.ts:14–19</code>
+        </p>
+      </div>
+      <div class="fig"><b>0,179 мс</b>на кадр<br>на клиента</div>
+    </div>
+
+    <div class="finding sev crit">
+      <div class="rank">02</div>
+      <div class="body">
+        <b>Снапшот полный, а не дельта — и без интерес-менеджмента.</b>
+        <p>
+          Каждый тик каждому клиенту едет весь этаж: все монстры, все дропы, все снаряды —
+          включая тех, кто в другом конце карты. Внутри повторяются данные, которые вообще
+          не меняются: <code>name</code>, <code>classId</code>, <code>maxHp</code>,
+          <code>weaponKey</code>, <code>armorModels</code> в каждом кадре на каждого игрока.
+          Это же и есть встроенный маphack: клиент знает всё об этаже. <code>serialize.ts:38</code>
+        </p>
+      </div>
+      <div class="fig"><b>180 КБ/с</b>вниз<br>на игрока</div>
+    </div>
+
+    <div class="finding sev crit">
+      <div class="rank">03</div>
+      <div class="body">
+        <b>У каждой комнаты свой <code>setInterval</code>, и он дрейфует.</b>
+        <p>
+          Node переставляет интервал <i>после</i> колбэка, поэтому любая занятость цикла
+          накапливается в дрейф — отсюда 13,9 Гц вместо 30 и мир в слоу-мо. Плюс все таймеры
+          были заведены почти одновременно и срабатывают одной пачкой: 25 комнат = всплеск
+          ~13 мс в одном обороте цикла. Нужен один планировщик с аккумулятором и раскладкой
+          комнат по корзинам. <code>room.ts:89</code>
+        </p>
+      </div>
+      <div class="fig"><b>13,9 Гц</b>вместо 30<br>при 200 CCU</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">04</div>
+      <div class="body">
+        <b>SQLite синхронный и в том же потоке.</b>
+        <p>
+          <code>node:sqlite</code> блокирующий: автосейв каждые 10 с на комнату, плюс запись
+          на вход, левелап и смену этажа. Сейчас сейв 3 КБ и это незаметно, но в эндгейме
+          (полный инвентарь, сундук, дерево пассивок) он вырастет в разы, а число комнат — в сотни.
+          Отсюда же выбросы <code>loop max 200–300 мс</code> в замерах.
+        </p>
+      </div>
+      <div class="fig"><b>1 поток</b>на игру<br>и на БД</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">05</div>
+      <div class="body">
+        <b>Ввод принимается на частоте кадров клиента.</b>
+        <p>
+          <code>sendInput()</code> зовётся из рендер-цикла, то есть 60–144 раза в секунду,
+          и каждый кадр — это <code>JSON.parse</code> на сервере. Полезны из них 30:
+          <code>setInput</code> просто перезаписывает последний. Ограничение частоты нужно
+          и на клиенте, и (обязательно) на сервере. <code>online3d.ts:1033</code>
+        </p>
+      </div>
+      <div class="fig"><b>×2–5</b>лишних<br>разборов кадра</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">06</div>
+      <div class="body">
+        <b><code>GET /api/config</code> блокирует цикл на 8,58 мс.</b>
+        <p>
+          <code>structuredClone</code> всего конфига + <code>JSON.stringify</code> на каждый
+          запрос, без кэша и без ETag. Один вход игрока съедает четверть тикового бюджета;
+          100 входов в секунду — 86 % ядра на один этот роут. Тело можно сериализовать и сжать
+          один раз при старте. <code>registry.ts:55</code>
+        </p>
+      </div>
+      <div class="fig"><b>436 КБ</b>тела,<br>0 кэша</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">07</div>
+      <div class="body">
+        <b>38 МБ статики раздаёт игровой процесс.</b>
+        <p>
+          7,4 МБ бандла и 31 МБ GLB идут через <code>express.static</code> того же процесса,
+          что крутит тики. Один холодный заход = десятки мегабайт с игрового ядра.
+          На 100 тыс. новых игроков это 3,8 ТБ — место для CDN, а не для Node.
+        </p>
+      </div>
+      <div class="fig"><b>38 МБ</b>холодная<br>загрузка</div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <h4>Оговорка по стенду</h4>
+    <p>
+      Замеры сделаны на Windows, где гранулярность таймеров 15,6 мс — «холостой» цикл уже
+      показывает <code>p50 15,4 мс</code>, поэтому 30 Гц на этой машине недостижимы даже
+      без нагрузки. Все выводы про CPU нормализованы к 30 Гц; на Linux частота будет ровнее,
+      но потребление ядра — тем же или чуть выше.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Цена игрока</span>
+    <div class="col">
+      <h2>Сколько стоит один онлайн, в миллисекундах ядра</h2>
+      <p>
+        Три независимых замера (100 соло, 100 в пати, 200 соло) сходятся к одной цифре,
+        если нормализовать к 30 Гц. Это и есть база для всех расчётов ниже.
+      </p>
+    </div>
+  </div>
+
+  <figure>
+    <svg class="chart" viewBox="0 0 900 264" role="img" aria-label="Стоимость одного игрока в процентах ядра: сейчас 1,54 процента соло, после этапа 0 — 0,75, после этапа 1 — 0,2, после этапа 2 — 0,12">
+      <text class="axb" x="20" y="28">Ядро на одного игрока, % (30 Гц, соло)</text>
+
+      <line class="grid-l" x1="230" y1="52" x2="230" y2="238"></line>
+
+      <!-- шкала: 1,6% = 620 px -->
+      <g>
+        <text class="axb" x="216" y="76" text-anchor="end">сейчас</text>
+        <rect x="232" y="60" width="387" height="20" fill="var(--crit)"></rect>
+        <rect x="619" y="60" width="210" height="20" fill="var(--crit)" opacity=".45"></rect>
+        <text class="ax" x="843" y="75">1,54 %</text>
+        <text class="ax" x="240" y="97">симуляция + сеть 1,00</text>
+        <text class="ax" x="627" y="97">сжатие 0,54</text>
+      </g>
+      <g>
+        <text class="axb" x="216" y="134" text-anchor="end">после Ф0</text>
+        <rect x="232" y="118" width="291" height="20" fill="var(--warn)"></rect>
+        <text class="ax" x="537" y="133">0,75 %</text>
+      </g>
+      <g>
+        <text class="axb" x="216" y="180" text-anchor="end">после Ф1</text>
+        <rect x="232" y="164" width="78" height="20" fill="var(--accent)"></rect>
+        <text class="ax" x="324" y="179">0,20 % — оценка</text>
+      </g>
+      <g>
+        <text class="axb" x="216" y="226" text-anchor="end">после Ф2</text>
+        <rect x="232" y="210" width="47" height="20" fill="var(--ok)"></rect>
+        <text class="ax" x="293" y="225">0,12 % — оценка</text>
+      </g>
+    </svg>
+    <figcaption>
+      Ф0 и красные полосы — измерено. Ф1/Ф2 — расчёт по типовому выигрышу дельта-протокола,
+      AoI и <code>uWebSockets.js</code>; проверять после внедрения.
+      В пати ×4 цена на игрока примерно вдвое ниже: этаж считается один раз на комнату.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Расчёт</span>
+    <div class="col">
+      <h2>1 000 / 10 000 / 100 000 / 1 000 000 онлайна</h2>
+      <p>
+        Допущения: средняя пати 1,5 игрока (соло преобладает) → комнат = CCU / 1,5;
+        запас по загрузке ×1,5 (пик ≠ среднее); 3 МБ RAM на комнату; сервер-нода — 48 ядер,
+        из них 32 под игру. Трафик «сейчас» — со сжатием ×7.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <caption>Сценарий A — «как есть»: та же архитектура, просто больше процессов</caption>
+    <table>
+      <thead>
+        <tr>
+          <th>Онлайн</th><th class="n">Комнат</th><th class="n">Ядер</th>
+          <th class="n">Нод 48c</th><th class="n">RAM</th>
+          <th class="n">Исходящий трафик</th><th class="n">Записей в БД</th><th>Что сломается первым</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rowhead">1 000</td><td class="n">670</td><td class="n">21</td><td class="n">1</td><td class="n">2 ГБ</td>
+          <td class="n">0,2 Гбит/с</td><td class="n">67 /с</td><td>Ничего. Это уже работает — после Ф0.</td>
+        </tr>
+        <tr>
+          <td class="rowhead">10 000</td><td class="n">6 700</td><td class="n">210</td><td class="n">7</td><td class="n">20 ГБ</td>
+          <td class="n">2 Гбит/с</td><td class="n">670 /с</td><td>SQLite (один файл на всё) и отсутствие реестра комнат между процессами</td>
+        </tr>
+        <tr>
+          <td class="rowhead">100 000</td><td class="n">67 000</td><td class="n">2 100</td><td class="n">66</td><td class="n">200 ГБ</td>
+          <td class="n">20 Гбит/с</td><td class="n">6 700 /с</td><td>Трафик: ~6 ПБ/мес. На облачном egress это дороже железа в разы</td>
+        </tr>
+        <tr>
+          <td class="rowhead">1 000 000</td><td class="n">670 000</td><td class="n">21 000</td><td class="n">660</td><td class="n">2 ТБ</td>
+          <td class="n">200 Гбит/с</td><td class="n">67 000 /с</td><td>Всё. Этот сценарий не считается реалистичным</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="scroll">
+    <caption>Сценарий Б — после Ф1 (дельты + область интереса + бинарный кадр + 20 Гц)</caption>
+    <table>
+      <thead>
+        <tr>
+          <th>Онлайн</th><th class="n">Ядер</th><th class="n">Нод 48c</th>
+          <th class="n">Исходящий трафик</th><th class="n">В месяц</th><th>Форма инфраструктуры</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rowhead">1 000</td><td class="n">3</td><td class="n">1</td><td class="n">64 Мбит/с</td><td class="n">20 ТБ</td>
+          <td>Одна машина. Postgres рядом, статика на CDN</td>
+        </tr>
+        <tr>
+          <td class="rowhead">10 000</td><td class="n">30</td><td class="n">1–2</td><td class="n">0,6 Гбит/с</td><td class="n">200 ТБ</td>
+          <td>Гейтвей + 1–2 игровые ноды + Postgres + Redis-реестр</td>
+        </tr>
+        <tr>
+          <td class="rowhead">100 000</td><td class="n">300</td><td class="n">10</td><td class="n">6,4 Гбит/с</td><td class="n">2 ПБ</td>
+          <td>2–3 региона, шардированная БД персонажей, свой bare-metal под трафик</td>
+        </tr>
+        <tr>
+          <td class="rowhead">1 000 000</td><td class="n">3 000</td><td class="n">94</td><td class="n">64 Гбит/с</td><td class="n">20 ПБ</td>
+          <td>Уровень GGG: несколько регионов, аллокатор инстансов, очередь на вход</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note alarm">
+    <h4>Главный вывод расчёта: считать надо трафик, а не ядра</h4>
+    <p>
+      Ядра дешевеют, гигабайты — нет. При 100 тыс. онлайна разница между «как есть» и
+      «после Ф1» — это 6 ПБ против 2 ПБ исходящего трафика в месяц. На облачном egress
+      (~$0,05/ГБ) первое стоит около трёхсот тысяч долларов в месяц, второе — сотню.
+      На bare-metal с безлимитным каналом оба варианта — стоимость аренды пары стоек.
+      <b>Протокол — это статья расходов номер один, а не оптимизация ради красоты.</b>
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Ориентиры</span>
+    <div class="col">
+      <h2>Что показывают PoE 2 и D2R</h2>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>
+      <b>Path of Exile 2</b> — исторический пик <b>578 569</b> одновременных игроков в Steam
+      (8 декабря 2024), всплеск до ~353 тыс. при переходе в f2p в августе 2025, «спокойная»
+      лига держит 80–120 тыс.; вне Steam — ещё примерно +40 %. То есть миллион онлайна
+      в ARPG-жанре не брал никто: это не инженерная цель, а верхняя граница жанра,
+      и планировать под неё бессмысленно. Планировать надо так, чтобы <i>масштабирование
+      было линейным по комнатам</i> — тогда 100 тыс. становятся вопросом бюджета, а не переписывания.
+    </p>
+    <p>
+      Архитектурно PoE делает ровно то, что уже делаете вы: всё вне города — инстансы,
+      у каждой пати свой; инстанс живёт 8–15 минут после выхода. Ваша <code>Room</code> — это оно.
+      Разница только в том, что у них комната умеет жить на любой из сотен машин, а у вас — только
+      в текущем процессе.
+    </p>
+    <p>
+      <b>Diablo II: Resurrected</b> в 2021-м лёг на старте, и разбор причин читается как
+      список ваших ближайших задач: слишком частые записи в <i>глобальную</i> БД вместо
+      региональной; game-list как синглтон, который нельзя размножить; монолит вместо
+      сервисов. Чинили это переносом сохранений в региональные базы, дроблением на сервисы
+      и очередью на вход. Три готовых урока:
+    </p>
+    <ul class="plain">
+      <li><b>Сейв персонажа — в региональную БД и редко.</b> У вас сейчас — в один файл SQLite и каждые 10 секунд.</li>
+      <li><b>Любой синглтон станет потолком.</b> У вас <code>RoomManager</code> живёт в памяти процесса, и между процессами реестра комнат нет вообще.</li>
+      <li><b>Очередь на вход — не позор, а страховка.</b> Дешевле держать 500 человек в очереди, чем уронить 5 000.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Безопасность</span>
+    <div class="col">
+      <h2>Что уже правильно</h2>
+      <p>
+        Фундамент честный, и это важнее всего остального: переделывать модель доверия
+        не придётся.
+      </p>
+    </div>
+  </div>
+
+  <div class="col">
+    <ul class="plain">
+      <li>Клиент шлёт <b>только ввод и команды</b>. Ни предметов, ни координат, ни урона — сервер не принимает такого кадра в принципе.</li>
+      <li>Вектор движения <b>нормализуется</b> на сервере, скорость берётся из серверных статов — спидхак через <code>move: {x: 999}</code> не работает.</li>
+      <li>Бой, лут, магазин, кузница, сундук, распределение очков — всё считается на сервере (<code>townActions</code>), клиент только рисует результат.</li>
+      <li>Владение персонажем проверяется по <code>userId</code> при каждом входе; сейв всегда читается из БД, а не приходит от клиента.</li>
+      <li>Пароли — <code>scrypt</code> со своей солью и сравнением постоянного времени; токен сессии — 32 случайных байта.</li>
+    </ul>
+  </div>
+
+  <div class="sec-head" style="margin-top:40px">
+    <span class="label">Дыры</span>
+    <div class="col">
+      <h2>Что сломано</h2>
+    </div>
+  </div>
+
+  <div class="findings">
+
+    <div class="finding sev crit">
+      <div class="rank">Д1</div>
+      <div class="body">
+        <b>Один персонаж может играть в двух комнатах одновременно. Воспроизведено.</b>
+        <p>
+          <code>Room.attach</code> отсекает дубль <i>внутри своей комнаты</i>, но глобального
+          реестра «этот charId уже в игре» нет: второй <code>join</code> без кода просто создаёт
+          вторую комнату. Обе держат свою копию сейва и пишут её в БД каждые 10 секунд —
+          last-writer-wins. Схема дюпа очевидна: положил вещь в сундук из комнаты A,
+          комната B через 10 секунд сохраняет свою (уже устаревшую) копию инвентаря —
+          вещь есть и там, и там. <code>roomManager.ts:108–120</code>
+        </p>
+        <pre style="margin-top:12px">СЕССИЯ A: joined комната=3SU0 pid=p_6d64c456…
+СЕССИЯ B: joined комната=RQFC pid=p_722a1a2b…   <b>← тот же charId</b></pre>
+      </div>
+      <div class="fig"><b>дюп</b>подтверждён<br>PoC-скриптом</div>
+    </div>
+
+    <div class="finding sev crit">
+      <div class="rank">Д2</div>
+      <div class="body">
+        <b>Перенос предмета инвентарь ↔ сундук не атомарен.</b>
+        <p>
+          Сейв персонажа и сундук аккаунта — две разные строки в двух разных таблицах,
+          пишутся раздельно и без транзакции. Падение процесса между записями = предмет
+          продублирован или потерян. При переходе на несколько процессов
+          («кэша нет намеренно… last-writer-wins» в <code>accountStash.ts</code>) это
+          перестаёт быть теоретическим риском.
+        </p>
+      </div>
+      <div class="fig"><b>2 записи</b>без<br>транзакции</div>
+    </div>
+
+    <div class="finding sev crit">
+      <div class="rank">Д3</div>
+      <div class="body">
+        <b>Нет ограничения частоты — вообще нигде.</b>
+        <p>
+          <code>/api/register</code> и <code>/api/login</code> открыты без лимита и капчи, а каждая
+          попытка — это <code>scryptSync</code> (десятки мегабайт и ~100 мс на вызов): один
+          скрипт кладёт сервер, не открыв ни одного WebSocket. Каждый <code>join</code> без кода
+          создаёт новую комнату с собственным таймером — тысяча join'ов кладёт процесс.
+          Кадры <code>input</code> принимаются с любой частотой.
+        </p>
+      </div>
+      <div class="fig"><b>DoS</b>с одного<br>ноутбука</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">Д4</div>
+      <div class="body">
+        <b>У предмета нет настоящего идентификатора.</b>
+        <p>
+          <code>uid = it_&lt;время&gt;_&lt;счётчик&gt;</code>, счётчик обнуляется при рестарте
+          и локален для процесса — два процесса выдадут одинаковые uid. Команды адресуют
+          предметы именно по uid. И главное: раз предмет живёт только внутри JSON-блоба сейва,
+          <b>найти и откатить дюп нечем</b> — ни владельца, ни истории. Нужен UUIDv7/snowflake,
+          отдельная таблица предметов и журнал переходов. <code>itemgen.ts:194</code>
+        </p>
+      </div>
+      <div class="fig"><b>нет</b>аудита<br>предметов</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">Д5</div>
+      <div class="body">
+        <b>Кадр от клиента не валидируется, а приводится типом.</b>
+        <p>
+          <code>JSON.parse(raw) as ClientFrame</code> — то есть <code>NaN</code>,
+          <code>Infinity</code>, отрицательные индексы и произвольные строки уходят прямо
+          в игровое ядро. Схемы zod уже есть в проекте для конфигов — та же дисциплина
+          нужна на сетевой границе. <code>roomManager.ts:56</code>
+        </p>
+      </div>
+      <div class="fig"><b>0</b>схем на<br>границе сети</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">Д6</div>
+      <div class="body">
+        <b>Редакторские роуты закрыты одной переменной окружения.</b>
+        <p>
+          <code>NODE_ENV !== 'production'</code> — единственное, что отделяет чужого от
+          <code>/api/dev/config</code> (переписать баланс сервера), <code>/api/dev/assets/:id</code>
+          (залить 64 МБ файла) и <code>/api/dev/characters</code> (прочитать всех персонажей всех
+          игроков). Одна ошибка в деплое — и это открыто. Должна быть авторизация с ролью,
+          а не флаг среды.
+        </p>
+      </div>
+      <div class="fig"><b>1 env</b>вместо<br>роли</div>
+    </div>
+
+    <div class="finding sev warn">
+      <div class="rank">Д7</div>
+      <div class="body">
+        <b>Нет ни одной метрики поведения.</b>
+        <p>
+          Сервер не пишет ни темпа килов, ни темпа золота, ни числа входов с одного IP.
+          Для ARPG с экономикой ботоводство — угроза номер один в долгую, и ловится оно
+          только телеметрией: распределение «золота в час» по популяции, аномалии по аккаунту,
+          сессии длиннее суток. Это дешевле встроить сейчас, чем достраивать по факту.
+        </p>
+      </div>
+      <div class="fig"><b>0</b>сигналов<br>античита</div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <h4>Про маphack — принять и не бороться</h4>
+    <p>
+      Кадр <code>FloorInit</code> отдаёт весь этаж целиком: сетку, весь декор, всех монстров
+      с их характеристиками. Веб-клиент открыт по определению, так что скрыть это невозможно
+      без стриминга по областям. PoE живёт с тем же и считает приемлемым. Решение принимать
+      осознанно: либо соглашаемся (тогда не тратим силы), либо AoI из Ф1 закрывает заодно
+      и это — что ещё один аргумент делать Ф1.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Куда ехать</span>
+    <div class="col">
+      <h2>Четыре этапа, и ни один из них не переписывание</h2>
+      <p>
+        Этапы упорядочены по отношению «выигрыш / риск». Каждый заканчивается работающей
+        игрой — останавливаться можно на любом.
+      </p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="when"><b>Ф0 · Тушим</b>дни, без смены архитектуры</div>
+    <div>
+      <h3>Снять три потолка, которые уже мешают</h3>
+      <ul>
+        <li>Выключить <code>perMessageDeflate</code> (или увести на level 1 с большим порогом). Измеренный эффект: RTT 10 852 → 8 мс на 100 клиентах.</li>
+        <li>Один планировщик на все комнаты: аккумулятор фиксированного шага + раскладка комнат по корзинам вместо N дрейфующих <code>setInterval</code>. Чинит «мир в слоу-мо».</li>
+        <li>Троттл ввода на сервере до 30 Гц; на клиенте — не чаще тика.</li>
+        <li>Кэшировать <code>/api/config</code>: сериализовать и сжать один раз при старте, отдавать с ETag.</li>
+        <li>Статику и <code>/assets</code> — на CDN или хотя бы в отдельный процесс.</li>
+        <li>Лимиты частоты: <code>register</code>/<code>login</code>, создание комнат, кадры ws.</li>
+        <li>Глобальный замок «charId уже в игре» + версия сейва с проверкой при записи → <b>дюп Д1 закрыт</b>.</li>
+        <li>SQLite в WAL, запись пачками, автосейв разнести по времени между комнатами.</li>
+      </ul>
+      <span class="gain">ожидаемо: 1,54 % → ~0,75 % ядра на игрока · 1 нода уверенно держит 1 000 CCU</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="when"><b>Ф1 · Протокол</b>2–4 недели</div>
+    <div>
+      <h3>Перестать возить весь мир каждому и каждый тик</h3>
+      <ul>
+        <li><b>Дельта-снапшоты:</b> шлём только изменившиеся поля изменившихся сущностей, с базовым кадром и подтверждениями.</li>
+        <li><b>Область интереса (AoI):</b> клиент получает то, что рядом, — примерно полтора экрана. Заодно закрывает маphack.</li>
+        <li><b>Статику вынести из кадра:</b> <code>name</code>, <code>classId</code>, <code>maxHp</code>, <code>weaponKey</code>, <code>armorModels</code> — один раз при входе и при изменении.</li>
+        <li><b>Бинарный кадр:</b> координаты в int16 в долях тайла, флаги битами. JSON остаётся для редких команд.</li>
+        <li>Снапшоты 20 Гц + интерполяция на клиенте; симуляция может остаться 30 Гц.</li>
+      </ul>
+      <span class="gain">ожидаемо: 180 → 6–10 КБ/с на игрока · ~0,2 % ядра · та же нода держит 10 000 CCU</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="when"><b>Ф2 · Раскладка</b>1–2 месяца</div>
+    <div>
+      <h3>Разделить роли и научиться жить в нескольких процессах</h3>
+      <ul>
+        <li><b>Гейтвей</b> (авторизация, ростер, конфиг) отдельно от <b>игровых нод</b> (комнаты) отдельно от <b>БД</b>.</li>
+        <li>Реестр в Redis: <code>roomCode → нода</code>, <code>charId → живая сессия</code>. Это же и глобальный замок из Ф0, только правильный.</li>
+        <li>Node cluster: по процессу на ядро, комнаты закреплены за процессом; переезд комнаты не нужен — она живёт минуты.</li>
+        <li><code>uWebSockets.js</code> вместо <code>ws</code>: путь отправки кадра — ровно то место, где сейчас уходит больше половины ядра.</li>
+        <li>Postgres вместо SQLite; предметы — отдельной таблицей с владельцем и журналом (закрывает Д2 и Д4).</li>
+        <li>Контейнеры + оркестрация, автомасштабирование по числу комнат, аккуратный слив ноды перед выключением.</li>
+      </ul>
+      <span class="gain">ожидаемо: ~0,12 % ядра на игрока · горизонтальный рост до ~100 000 CCU становится вопросом счёта нод</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="when"><b>Ф3 · Регионы</b>только если дойдёт до 100k+</div>
+    <div>
+      <h3>То, что делают GGG и Blizzard</h3>
+      <ul>
+        <li>Гейтвеи по регионам, комнаты не выезжают за регион (пинг + локальный трафик).</li>
+        <li>Глобальная база аккаунтов, региональные базы персонажей и сундуков — прямой урок D2R.</li>
+        <li>Очередь на вход и мягкая деградация вместо падения на пике лиги.</li>
+        <li>Телеметрия экономики как продукт: дропрейты, золото в час, аномалии по аккаунтам.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="col" style="margin-top:34px">
+    <h3>Отдельно: менять ли Node на Go / Rust / C#</h3>
+    <p>
+      Нет, и вот почему. Узкое место — не язык: симуляция стоит 0,1–0,5 мс на тик и это
+      уже дёшево. Съедают ядро сжатие, полный снапшот и путь отправки. Переписывание ядра
+      на Go даст, оптимистично, три-четыре раза на той части, которая и так не является
+      проблемой, а протокол из Ф1 даёт десять-двадцать раз на той, которая является.
+    </p>
+    <p>
+      Есть и более весомый аргумент. Архитектурный принцип проекта — «формулы чистые,
+      одни и те же у клиента и сервера» (<code>packages/shared</code>): именно он даёт
+      серверную авторитетность почти бесплатно и держит баланс в одном месте. Переезд
+      сервера на другой язык означает второй экземпляр всей боевой математики и вечную
+      сверку двух реализаций. Это самая дорогая вещь, которую можно сделать с этим проектом.
+    </p>
+    <p>
+      Если понадобится ещё производительность внутри Node — берите <code>uWebSockets.js</code>
+      (транспорт, где сейчас и уходит время) и <code>worker_threads</code> под комнаты и запись
+      в БД. Это те же три-четыре раза, но без раздвоения истины.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Итог</span>
+    <div class="col">
+      <h2>Короткая версия</h2>
+    </div>
+  </div>
+  <div class="col">
+    <ul class="plain">
+      <li><b>Сейчас:</b> 50 игроков — предел комфорта, 100 — коллапс из-за сжатия, 200 — стена. Одна нода, одно ядро.</li>
+      <li><b>После Ф0 (дни):</b> те же 1 000 CCU на одной машине, честные 30 Гц, дюп закрыт.</li>
+      <li><b>После Ф1 (недели):</b> 10 000 CCU на одной-двух машинах; трафик падает в 20 раз — это и есть главная экономия.</li>
+      <li><b>После Ф2 (месяцы):</b> 100 000 CCU — вопрос количества нод, а не переписывания.</li>
+      <li><b>1 000 000:</b> выше исторического пика PoE 2. Цель не в том, чтобы дотянуться, а в том, чтобы масштабирование оставалось линейным по комнатам. Оно и останется — фундамент правильный.</li>
+      <li><b>Первое, что сделать завтра:</b> выключить <code>perMessageDeflate</code> и поставить глобальный замок на charId. Один вечер, минус два самых дорогих дефекта.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <p><b>Источники внешних цифр</b></p>
+  <ul>
+    <li>Пики онлайна PoE 2 — <a href="https://steamdb.info/app/2694490/charts/">SteamDB</a>, <a href="https://www.kitguru.net/desktop-pc/mustafa-mahmoud/path-of-exile-2-peaks-at-over-half-a-million-players-on-steam/">KitGuru</a>, <a href="https://gamerant.com/path-of-exile-2-steam-player-count-spike-august-2025/">GameRant</a></li>
+    <li>Инстансы PoE — <a href="https://en.wikipedia.org/wiki/Path_of_Exile">Wikipedia: Path of Exile</a></li>
+    <li>Разбор падения D2R — <a href="https://www.pcgamesn.com/diablo-2-resurrected/server-fix">PCGamesN</a>, <a href="https://kotaku.com/fixing-the-diablo-ii-resurrected-servers-sounds-like-a-1847871074">Kotaku</a></li>
+  </ul>
+  <p style="margin-top:18px">
+    Внутренние числа получены на стенде i7-11800H / Node 24.18 временными скриптами
+    (бенч ядра, обстрел ws-клиентами, PoC дюпа); скрипты после замеров удалены,
+    рабочее дерево не изменено.
+  </p>
+</footer>
+
+</div>
+
+</body></html>

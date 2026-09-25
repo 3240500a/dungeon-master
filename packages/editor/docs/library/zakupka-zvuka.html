@@ -1,0 +1,412 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Закупка звука</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f0f0f4;
+    --surface: #ffffff;
+    --edge: #d6d6e0;
+    --hair: #e4e4ec;
+    --text: #1c1c26;
+    --dim: #55556b;
+    --faint: #7c7c92;
+    --brass: #8a6520;
+    --brass-soft: #f3ead8;
+    --good: #2f7a4a;
+    --warn: #a8412c;
+    --serif: 'Literata', 'Iowan Old Style', Georgia, serif;
+    --sans: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', 'Consolas', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #1c1c26; --surface: #22222e; --edge: #333342; --hair: #2c2c3a;
+      --text: #e8e8f0; --dim: #a4a4b8; --faint: #7b7b92;
+      --brass: #c79a44; --brass-soft: #2c2718; --good: #5fbf7f; --warn: #d4634a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #1c1c26; --surface: #22222e; --edge: #333342; --hair: #2c2c3a;
+    --text: #e8e8f0; --dim: #a4a4b8; --faint: #7b7b92;
+    --brass: #c79a44; --brass-soft: #2c2718; --good: #5fbf7f; --warn: #d4634a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--text); font-family: var(--sans);
+    font-size: 16px; line-height: 1.65; margin: 0; padding: 0 24px 96px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+
+  header { padding: 56px 0 30px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 600; font-size: clamp(34px, 6vw, 50px);
+    line-height: 1.08; letter-spacing: -.015em; text-wrap: balance; margin: 0 0 16px;
+  }
+  .lede { font-size: 18px; line-height: 1.6; color: var(--dim); max-width: 62ch; margin: 0; }
+
+  .facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    margin-top: 32px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair);
+  }
+  .fact { padding: 16px 18px 16px 0; }
+  .fact dt {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 4px;
+  }
+  .fact dd {
+    margin: 0; font-family: var(--serif); font-size: 21px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  section { padding-top: 50px; }
+  h2 {
+    font-family: var(--serif); font-size: 27px; font-weight: 600; line-height: 1.2;
+    letter-spacing: -.01em; text-wrap: balance; margin: 0 0 6px;
+  }
+  .sub { color: var(--faint); font-size: 14.5px; margin: 0 0 24px; max-width: 62ch; }
+  p { max-width: 68ch; margin: 0 0 16px; }
+  strong { font-weight: 600; }
+
+  code, .q {
+    font-family: var(--mono); font-size: .875em;
+    background: var(--brass-soft); padding: .12em .42em; border-radius: 3px;
+  }
+  .q { display: inline-block; margin: 2px 4px 2px 0; user-select: all; cursor: text; }
+
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 16px 11px 0; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--faint); font-weight: 400; border-bottom-color: var(--edge);
+  }
+  td.src { font-weight: 600; white-space: nowrap; }
+  .ok { color: var(--good); font-weight: 500; }
+  .no { color: var(--warn); font-weight: 500; }
+
+  /* Ловушки */
+  .trap { display: grid; grid-template-columns: 26px 1fr; gap: 14px; padding: 18px 0; border-top: 1px solid var(--hair); }
+  .trap:last-of-type { border-bottom: 1px solid var(--hair); }
+  .trap .n { font-family: var(--mono); font-size: 13px; color: var(--warn); padding-top: 3px; }
+  .trap h3 { font-family: var(--sans); font-size: 16.5px; font-weight: 600; margin: 0 0 5px; }
+  .trap p { margin: 0; color: var(--dim); font-size: 15px; max-width: 64ch; }
+
+  /* Группы запросов */
+  .grp { padding: 22px 0; border-top: 1px solid var(--hair); }
+  .grp:last-of-type { border-bottom: 1px solid var(--hair); }
+  .grp-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .grp h3 { font-family: var(--serif); font-size: 19px; font-weight: 600; margin: 0; }
+  .count {
+    font-family: var(--mono); font-size: 12px; color: var(--brass);
+    border: 1px solid var(--brass); border-radius: 20px; padding: 1px 9px; flex: none;
+  }
+  .cat { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .grp .note { color: var(--dim); font-size: 14.5px; margin: 6px 0 10px; max-width: 66ch; }
+  .queries { margin: 0; }
+
+  .steps { counter-reset: s; padding: 0; margin: 0; list-style: none; }
+  .steps li {
+    counter-increment: s; display: grid; grid-template-columns: 26px 1fr; gap: 14px;
+    padding: 12px 0; border-top: 1px solid var(--hair);
+  }
+  .steps li::before {
+    content: counter(s); font-family: var(--mono); font-size: 13px; color: var(--brass); padding-top: 2px;
+  }
+  .steps p { margin: 0; color: var(--dim); font-size: 15px; }
+  .steps b { color: var(--text); font-weight: 600; }
+
+  a { color: var(--brass); text-underline-offset: 3px; }
+  :focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+
+  @media (max-width: 620px) {
+    .trap, .steps li { grid-template-columns: 1fr; gap: 6px; }
+  }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">The Fourth Bequest · веха М02 · базовый набор</p>
+  <h1>Закупка звука</h1>
+  <p class="lede">Где брать 38 звуков базового набора, как их там искать и на каких лицензиях
+    можно обжечься. Запросы — на английском: русские теги в этих библиотеках не работают.</p>
+
+  <dl class="facts">
+    <div class="fact"><dt>Звуков в наборе</dt><dd>38</dd></div>
+    <div class="fact"><dt>Источник №1</dt><dd class="ok">бесплатно</dd></div>
+    <div class="fact"><dt>Формат в игре</dt><dd>.ogg</dd></div>
+    <div class="fact"><dt>Музыка</dt><dd>отдельно, М05</dd></div>
+  </dl>
+</header>
+
+<section>
+  <h2>Где брать</h2>
+  <p class="sub">Порядок — по тому, с чего начинать. Первая строка закрывает больше половины набора
+    и не стоит ничего.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Источник</th><th>Лицензия</th><th>Цена</th><th>Для чего у нас</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="src">Sonniss GDC<br><span style="font-weight:400;color:var(--faint);font-size:13px">gdc.sonniss.com</span></td>
+          <td class="ok">Royalty-free, коммерция, <strong>без указания авторства</strong>, навсегда</td>
+          <td class="ok">бесплатно</td>
+          <td><strong>Начинать отсюда.</strong> Ежегодные сборники к GDC, в архиве девяти лет более 200 ГБ от студий уровня Boom Library и Krotos. Удары, металл, шаги, огонь — всё есть.</td>
+        </tr>
+        <tr>
+          <td class="src">Freesound</td>
+          <td>Смешанная: CC0 / CC-BY / <span class="no">CC-BY-NC</span></td>
+          <td class="ok">бесплатно</td>
+          <td>Добор редкого. ⚠ Обязательно включить в поиске фильтр лицензий — иначе поймаешь некоммерческую.</td>
+        </tr>
+        <tr>
+          <td class="src">Pixabay</td>
+          <td class="ok">Своя лицензия: коммерция, без указания авторства</td>
+          <td class="ok">бесплатно</td>
+          <td>Интерфейс и простые звуки. Качество плавает, но лицензия самая необременительная.</td>
+        </tr>
+        <tr>
+          <td class="src">ZapSplat</td>
+          <td>Бесплатно — <span class="no">с указанием авторства</span>; Premium — без</td>
+          <td>бесплатно / подписка</td>
+          <td>Огромный каталог. На бесплатном тарифе кредит обязателен, и это надо помнить при выпуске.</td>
+        </tr>
+        <tr>
+          <td class="src">A Sound Effect</td>
+          <td class="ok">Покупка навсегда, коммерция</td>
+          <td>от ~$20 за пак</td>
+          <td>Точечная докупка: «удары по броне», «зомби». Магазин независимых библиотек.</td>
+        </tr>
+        <tr>
+          <td class="src">Boom Library</td>
+          <td class="ok">Покупка навсегда</td>
+          <td>$$ за пак</td>
+          <td>Если нужен один эталонный пак под бой — их «Fight» и «Gore» считаются образцовыми.</td>
+        </tr>
+        <tr>
+          <td class="src">Unity Asset Store<br>itch.io · GameDev Market</td>
+          <td>По паку, читать каждую</td>
+          <td>$5–50</td>
+          <td>Готовые «наборы для ARPG» — быстро, но однообразно: у половины инди-игр те же звуки.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Три ловушки лицензий</h2>
+  <p class="sub">Игра продаётся годами. Всё, что «действует, пока платишь», для нас опасно.</p>
+
+  <div class="trap">
+    <div class="n">Л1</div>
+    <div>
+      <h3>Подписка ≠ право навсегда</h3>
+      <p>У Epidemic Sound и Artlist лицензия живёт, пока активна подписка. Для ролика это нормально,
+        для игры в продаже — нет: прекратил платить, а игра продолжает продаваться. Для музыки бери
+        либо выкуп навсегда, либо заказ у композитора. Двух тем это касается напрямую.</p>
+    </div>
+  </div>
+  <div class="trap">
+    <div class="n">Л2</div>
+    <div>
+      <h3>На Freesound лицензия у каждого файла своя</h3>
+      <p>CC0 — бери и молчи. CC-BY — можно, но укажи автора. <strong>CC-BY-NC — нельзя вообще</strong>,
+        это некоммерческая. Фильтр лицензий стоит в боковой панели поиска; включи его сразу, иначе
+        придётся выкидывать уже вставленное.</p>
+    </div>
+  </div>
+  <div class="trap">
+    <div class="n">Л3</div>
+    <div>
+      <h3>Бесплатный ZapSplat требует кредита</h3>
+      <p>Указание «ZapSplat» обязательно везде, где разумно — в титрах или описании. Не смертельно,
+        но если брать оттуда много, придётся вести список. Premium снимает требование, и звуки,
+        скачанные при активной подписке, остаются свободными от кредита навсегда.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Как искать, чтобы находить</h2>
+  <p class="sub">Четыре приёма, которые отличают поиск профессионала от перебора наугад.</p>
+
+  <ol class="steps">
+    <li><p><b>Ищи по-английски и по звуку, а не по событию.</b> В библиотеках нет тега «удар по зомби».
+      Есть <code>flesh impact</code>, <code>gore squish</code>, <code>blade stab</code>. Думай не
+      «что произошло в игре», а «что физически звучало».</p></li>
+    <li><p><b>Пользуйся UCS — отраслевым стандартом имён.</b> Это публичная система категорий
+      (82 категории, 753 подкатегории), по которой названы файлы в профессиональных библиотеках.
+      Нужные нам: <code>FOLYFoot</code> шаги · <code>SWSH</code> взмахи · <code>IMPT</code> удары ·
+      <code>GORE</code> плоть · <code>METL</code> металл · <code>CREA</code> твари ·
+      <code>VOX</code> человеческие усилия · <code>UI</code> интерфейс · <code>AMB</code> атмосфера ·
+      <code>FIRE</code> огонь. Поиск по CatID отсекает мусор мгновенно.</p></li>
+    <li><p><b>Отличай <code>designed</code> от <code>source</code>.</b> Designed — готовый звук,
+      можно ставить в игру как есть. Source или raw — сырьё для монтажа. Нам нужны designed,
+      кроме случаев, когда собираем удар слоями.</p></li>
+    <li><p><b>Удар собирается слоями, а не ищется целиком.</b> Хороший удар по латнику — это
+      <code>impact</code> + хвост <code>metal ring</code> + короткий <code>flesh</code> под ним.
+      Поэтому не ищи «удар мечом по рыцарю», ищи три слоя и сведи.</p></li>
+  </ol>
+</section>
+
+<section>
+  <h2>Запросы по нашему списку</h2>
+  <p class="sub">Цифра в кружке — сколько вариантов нужно. Вариативность важна ровно там, где звук
+    слышно тысячи раз за сессию.</p>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Шаги игрока по камню</h3><span class="count">×4</span><span class="cat">FOLYFoot</span></div>
+    <p class="note">Ищи наборы «с вариациями»: четыре шага должны быть одной обувью по одной
+      поверхности, иначе персонаж зазвучит как четыре разных человека.</p>
+    <p class="queries">
+      <span class="q">footsteps stone designed</span><span class="q">boot footstep concrete</span><span class="q">leather boot stone step variations</span><span class="q">footstep dungeon stone</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Шаги зомби, шаркающие</h3><span class="count">×3</span><span class="cat">FOLYFoot · CREA</span></div>
+    <p class="note">Ключевое слово — не «шаг», а «волочение».</p>
+    <p class="queries">
+      <span class="q">zombie shuffle footstep</span><span class="q">foot drag scrape</span><span class="q">shamble walk dirt</span><span class="q">body drag scrape stone</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Замах оружия по весам</h3><span class="count">×3</span><span class="cat">SWSH</span></div>
+    <p class="note">Лёгкое — короткий высокий свист, тяжёлое — низкий и длинный. Веса уже заданы
+      в конфиге оружия, так что три файла ложатся на готовое поле.</p>
+    <p class="queries">
+      <span class="q">sword whoosh light fast</span><span class="q">weapon swing whoosh medium</span><span class="q">heavy axe swoosh air low</span><span class="q">whoosh designed weapon</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Попадание по плоти</h3><span class="count">×3</span><span class="cat">GORE · IMPT</span></div>
+    <p class="note">Осторожно с перебором: слишком «мясной» звук быстро надоедает, когда слышишь
+      его каждые две секунды. Бери короткие и глухие.</p>
+    <p class="queries">
+      <span class="q">flesh impact designed</span><span class="q">gore squish hit short</span><span class="q">blade stab flesh</span><span class="q">meat punch impact dull</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Попадание по броне-металлу</h3><span class="count">×2</span><span class="cat">METL · IMPT</span></div>
+    <p class="note">Вешается по классу брони цели — в конфиге пять классов, но звука берём два.</p>
+    <p class="queries">
+      <span class="q">sword hit metal armor</span><span class="q">blade clang chainmail</span><span class="q">metal impact ring short</span><span class="q">armor hit plate</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Блок щитом</h3><span class="count">×2</span><span class="cat">IMPT · METL</span></div>
+    <p class="queries">
+      <span class="q">shield block impact</span><span class="q">wooden shield hit thud</span><span class="q">metal shield deflect</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Промах, свист мимо</h3><span class="count">×2</span><span class="cat">SWSH</span></div>
+    <p class="note">Отличается от замаха: тише, короче, без «тела». По сути тот же взмах, но
+      без удара в конце — можно брать из того же пака.</p>
+    <p class="queries">
+      <span class="q">whoosh miss air swish</span><span class="q">swoosh light quick</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Смерть зомби</h3><span class="count">×2</span><span class="cat">CREA</span></div>
+    <p class="queries">
+      <span class="q">zombie death groan</span><span class="q">creature death vocal low</span><span class="q">monster die growl</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Получение урона игроком</h3><span class="count">×2</span><span class="cat">VOX Efrt</span></div>
+    <p class="note">⚠ Голос привязан к полу персонажа. Мужское тело есть, женское по плану в М05 —
+      значит когда-нибудь понадобится второй комплект. Пока берём мужской, но ищи пак, где есть оба.</p>
+    <p class="queries">
+      <span class="q">male grunt pain short</span><span class="q">human hurt effort vocal</span><span class="q">male vocal efforts pack</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Подбор предмета</h3><span class="count">×2</span><span class="cat">FOLY · UI</span></div>
+    <p class="note">Обычный и редкий обязаны звучать по-разному: редкий — это награда, он должен
+      звенеть иначе, иначе игрок не заметит находку.</p>
+    <p class="queries">
+      <span class="q">item pickup</span><span class="q">inventory pick up cloth</span><span class="q">magic pickup shimmer reward</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Золото · уклонение</h3><span class="count">×2</span><span class="cat">FOLY · SWSH</span></div>
+    <p class="queries">
+      <span class="q">coins pickup jingle</span><span class="q">gold coin drop</span><span class="q">cloth whoosh dodge</span><span class="q">fabric swish quick roll</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Редкие события</h3><span class="count">×5</span><span class="cat">VOX · IMPT · UI</span></div>
+    <p class="note">Смерть игрока · левелап · сбивание с ног · оглушение · этаж зачищен.
+      Каждого хватает по одному — слышно раз за забег.</p>
+    <p class="queries">
+      <span class="q">human death gasp fall</span><span class="q">level up chime magic positive</span><span class="q">body fall thud heavy</span><span class="q">stun daze ring head</span><span class="q">short fanfare success stinger</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Интерфейс</h3><span class="count">×4</span><span class="cat">UI</span></div>
+    <p class="note">Наведение · клик · открыть-закрыть панель · отказ. Бери из ОДНОГО пака —
+      интерфейс должен звучать как один инструмент, а не как четыре случайных.</p>
+    <p class="queries">
+      <span class="q">ui hover subtle soft</span><span class="q">ui click button select</span><span class="q">ui panel open close whoosh</span><span class="q">ui error denied negative</span>
+    </p>
+  </div>
+
+  <div class="grp">
+    <div class="grp-head"><h3>Атмосфера</h3><span class="count">×2</span><span class="cat">AMB · FIRE</span></div>
+    <p class="note">Обязательно со словом <code>loop</code> — иначе получишь кусок с началом
+      и концом, который нельзя зациклить без щелчка.</p>
+    <p class="queries">
+      <span class="q">dungeon ambience loop drips</span><span class="q">cave ambience reverb dark loop</span><span class="q">torch fire crackle loop</span><span class="q">small fire loop close</span>
+    </p>
+  </div>
+</section>
+
+<section>
+  <h2>Что делать с файлом дальше</h2>
+  <p class="sub">Библиотеки отдают WAV высокого разрешения, игре нужен другой формат.</p>
+
+  <ol class="steps">
+    <li><p><b>Обрезать тишину</b> в начале и конце. Лишние миллисекунды в начале — это задержка
+      удара, которую слышно как рассинхрон с анимацией.</p></li>
+    <li><p><b>Выровнять громкость</b> внутри группы. Четыре шага должны быть одинаковыми по уровню,
+      иначе один будет выпрыгивать.</p></li>
+    <li><p><b>Экспорт в .ogg</b> — счётчик в роадмапе считает именно файлы <code>.ogg</code>
+      на сервере, так что набор сам покажет прогресс, как только файлы поедут наверх.</p></li>
+    <li><p><b>Имена по событию, а не по источнику.</b> Игра дёргает звук по событию сервера или
+      метке кадра, поэтому имя должно совпадать с событием: <code>step_stone_01</code>,
+      <code>swing_heavy_01</code>, <code>hit_flesh_02</code>, <code>ui_click</code>.
+      Номер в конце = вариант.</p></li>
+  </ol>
+
+  <p style="margin-top:22px">⚠ Музыка сюда не входит намеренно. Две темы — город и подземелье —
+    стоят в вехе М05, когда будет понятен тон игры. И к ним применима ловушка Л1: подписочная
+    лицензия для игры в продаже не годится.</p>
+</section>
+
+</div>
+
+</body></html>

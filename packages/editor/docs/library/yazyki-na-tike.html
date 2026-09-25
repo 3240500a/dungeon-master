@@ -1,0 +1,602 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Node, Rust, C#, C++ на нашем тике</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground: #EBEEEC; --surface: #FFFFFF; --surface-2: #F3F6F4;
+    --ink: #12181A; --ink-2: #354345; --muted: #647576;
+    --line: #D2DCD8; --line-strong: #B4C3BE;
+    --accent: #0F6E63; --accent-soft: #D9EAE6;
+    --ok: #2F7D5B; --warn: #96690A; --crit: #A32B23; --crit-soft: #F5DEDB;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+      --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+      --line: #253133; --line-strong: #34464A;
+      --accent: #45B7A5; --accent-soft: #12312E;
+      --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+    --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+    --line: #253133; --line-strong: #34464A;
+    --accent: #45B7A5; --accent-soft: #12312E;
+    --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 16.5px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 96px; }
+  .col { max-width: 66ch; }
+
+  h1, h2, h3, h4, .label, th { font-family: "IBM Plex Sans Condensed", system-ui, sans-serif; }
+  h1 { font-size: clamp(30px, 4.6vw, 46px); line-height: 1.06; letter-spacing: -.015em; margin: 0; text-wrap: balance; font-weight: 700; }
+  h2 { font-size: 25px; line-height: 1.15; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  h3 { font-size: 18.5px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -.005em; text-wrap: balance; }
+  h4 { font-size: 14px; margin: 0 0 4px; letter-spacing: .01em; }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+  code { font-size: .87em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: .5px 4px; color: var(--ink-2); }
+  .label { font-size: 11.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+  header.top { padding: 54px 0 28px; border-bottom: 2px solid var(--ink); }
+  .kicker { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 16px; }
+  .lede { font-size: 19px; line-height: 1.5; color: var(--ink-2); margin: 20px 0 0; max-width: 62ch; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0 28px; margin-top: 26px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  section { padding: 44px 0 8px; }
+  section + section { border-top: 1px solid var(--line); }
+  .sec-head { display: grid; grid-template-columns: 92px 1fr; gap: 20px; align-items: start; margin-bottom: 22px; }
+  .sec-head .label { padding-top: 7px; }
+  @media (max-width: 720px) { .sec-head { grid-template-columns: 1fr; gap: 4px; } }
+
+  .scroll { overflow-x: auto; margin: 20px 0 24px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  caption { text-align: left; padding: 12px 14px 0; font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tbody tr:hover { background: var(--surface-2); }
+  .rowhead { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; white-space: nowrap; }
+  tr.hi td { background: var(--accent-soft); }
+  tr.hi:hover td { background: var(--accent-soft); }
+
+  .chip { display: inline-block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 2px; white-space: nowrap; }
+  .chip.m { background: var(--accent-soft); color: var(--ok); }
+  .chip.e { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+  .chip.crit { background: var(--crit-soft); color: var(--crit); }
+
+  figure { margin: 24px 0 28px; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 10px; font-family: "IBM Plex Mono", monospace; }
+  .chart { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--line); border-radius: 2px; }
+  .ax { fill: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 11px; }
+  .axb { fill: var(--ink); font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 12.5px; font-weight: 600; }
+  .grid-l { stroke: var(--line); stroke-width: 1; }
+
+  .note { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 16px 18px; margin: 22px 0; border-radius: 2px; font-size: 15px; }
+  .note.alarm { border-left-color: var(--crit); }
+  .note.warnb { border-left-color: var(--warn); }
+  .note p:last-child { margin-bottom: 0; }
+
+  pre { background: var(--surface); border: 1px solid var(--line); border-radius: 2px; padding: 14px 16px; overflow-x: auto; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); margin: 18px 0; }
+  pre b { color: var(--accent); font-weight: 500; }
+
+  ul.plain { list-style: none; padding: 0; margin: 14px 0; }
+  ul.plain li { padding: 7px 0 7px 22px; border-bottom: 1px solid var(--line); position: relative; font-size: 15.5px; }
+  ul.plain li::before { content: "→"; position: absolute; left: 0; color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  ul.plain li:last-child { border-bottom: 0; }
+
+  .opt { display: grid; grid-template-columns: 168px 1fr; gap: 24px; padding: 22px 0; border-bottom: 1px solid var(--line); }
+  .opt:first-of-type { border-top: 1px solid var(--line); }
+  .opt .who b { display: block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 17px; color: var(--ink); margin-bottom: 5px; }
+  .opt .who span { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted); display: block; line-height: 1.5; }
+  .opt .verdict { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 13.5px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--ink-2); }
+  .opt .verdict b { font-weight: 700; color: var(--ink); }
+  @media (max-width: 720px) { .opt { grid-template-columns: 1fr; gap: 10px; } }
+
+  .revision { display: grid; grid-template-columns: 118px 1fr; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  .revision:last-child { border-bottom: 0; }
+  .revision .stage { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+  .revision .val { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 15px; }
+  .revision .val b { font-size: 19px; }
+
+  footer { padding-top: 34px; border-top: 2px solid var(--ink); margin-top: 46px; font-size: 14px; color: var(--muted); }
+  footer a { color: var(--accent); }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="kicker">
+    <span class="label">Часть 2 · выбор рантайма · измерено</span>
+    <span class="label" style="color:var(--accent)">8 сентября 2026</span>
+  </div>
+  <h1>Node, Rust, C#, C++ на нашем тике</h1>
+  <p class="lede">
+    Один и тот же тик написан заново на четырёх языках и прогнан до совпадения контрольных сумм.
+    Транспорт измерен на пяти стеках, включая <code>uWebSockets.js</code>. Оценок не осталось
+    почти нигде — и там, где замер опроверг мою же прикидку, это сказано отдельным блоком.
+    Короткий ответ: разница между рантаймами на этой задаче — <b>4 %</b>.
+  </p>
+  <div class="meta">
+    <span><b>Стенд:</b> i7-11800H, 16 логич. ядер, Windows</span>
+    <span><b>Рантаймы:</b> Node 24.18 · .NET 10.0.11 · Rust 1.98.1 · GCC 16.2</span>
+    <span><b>Тик:</b> 150 000 повторов · <b>Транспорт:</b> 500 клиентов, 45 с</span>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Симуляция</span>
+    <div class="col">
+      <h2>C++, Rust и C# идут вровень. Node отстаёт вдвое</h2>
+      <p>
+        В бенчмарк перенесено то, что ест CPU в <code>Room.step</code>: поиск ближайшего игрока,
+        конус зрения, луч видимости по Брезенхэму, ветка ИИ, движение круга с раздельным резолвом
+        осей, расталкивание тел <span class="mono">O(n²)</span> и кадр наружу. Все реализации
+        выдали контрольную сумму <code>27724800</code> и кадр <code>185 Б</code>.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <caption>Стоимость одного тика комнаты, микросекунды. Все строки — измерение</caption>
+    <table>
+      <thead>
+        <tr><th>Реализация</th><th class="n">мкс / тик</th><th class="n">против Node</th><th>Замечание</th></tr>
+      </thead>
+      <tbody>
+        <tr class="hi"><td class="rowhead">Node 24 · объекты</td><td class="n">20,93</td><td class="n">1,00×</td>
+          <td>База. Идиоматичный TS, как в <code>shared</code> сейчас</td></tr>
+        <tr><td class="rowhead">Node 24 · SoA <code>Float64Array</code></td><td class="n">22,23</td><td class="n">0,94×</td>
+          <td>Типизированные массивы <b>медленнее</b>: V8 и так хорошо жмёт мономорфные объекты</td></tr>
+        <tr class="hi"><td class="rowhead">C++ · GCC 16, <code>-O3 -march=native</code></td><td class="n">10,09</td><td class="n">2,07×</td>
+          <td>Быстрейший результат</td></tr>
+        <tr class="hi"><td class="rowhead">Rust 1.98 · системная математика</td><td class="n">10,40</td><td class="n">2,01×</td>
+          <td>На 3 % медленнее C++ — в пределах шума</td></tr>
+        <tr class="hi"><td class="rowhead">C# .NET 10 · классы</td><td class="n">10,43</td><td class="n">2,01×</td>
+          <td><b>Неотличим от Rust.</b> Разница 0,3 %</td></tr>
+        <tr><td class="rowhead">C# · сырые указатели <code>unsafe</code></td><td class="n">12,19</td><td class="n">1,72×</td>
+          <td>Снятие проверок границ не помогает — узкое место не там</td></tr>
+        <tr><td class="rowhead">Node · объекты + JSON-кадр</td><td class="n">61,15</td><td class="n">0,34×</td>
+          <td>Как сервер работает сегодня</td></tr>
+        <tr><td class="rowhead">C# · классы + JSON-кадр</td><td class="n">55,45</td><td class="n">0,38×</td>
+          <td>C# с плохим протоколом втрое хуже Node с хорошим</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note warnb">
+    <h4>Ловушка, на которую я сам наступил: Rust сначала показал 14,6 мкс</h4>
+    <p>
+      Первый прогон дал Rust медленнее C#. Причина — не язык: у Rust на windows-gnu собственная
+      реализация <code>atan2</code> стоит <b>34,5 нс</b>, тогда как у .NET 9,3 нс, у Node 10,2 нс,
+      у GCC 9,5 нс. Переключение на системную математику UCRT (те же функции, что линкует g++)
+      вернуло Rust на 10,4 мкс. Тик на 60 % состоит из тригонометрии, поэтому его скорость
+      определяет <b>математическая библиотека, а не компилятор</b>.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Транспорт</span>
+    <div class="col">
+      <h2>Здесь Rust проигрывает Node</h2>
+      <p>
+        500 клиентов, бинарный кадр каждому, входящий поток 30 Гц с каждого, никакой игровой
+        логики. Считается процессорное время серверного процесса, делённое на число отправленных
+        кадров. Все стеки получили одинаковую входящую нагрузку — 15 000 сообщений в секунду.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <caption>500 клиентов, 45 секунд, кадр 1500 Б. Все строки — измерение</caption>
+    <table>
+      <thead>
+        <tr><th>Стек</th><th class="n">CPU процесса</th><th class="n">исх. кадров / с</th><th class="n">мкс на кадр</th><th>Замечание</th></tr>
+      </thead>
+      <tbody>
+        <tr class="hi">
+          <td class="rowhead">Node 24 + <code>ws</code></td>
+          <td class="n">28,0 %</td><td class="n">14 619</td><td class="n">19,2</td>
+          <td>Больше всех кадров и меньше CPU, чем у Rust</td>
+        </tr>
+        <tr class="hi">
+          <td class="rowhead">Node 24 + <code>uWS</code>, publish</td>
+          <td class="n">21,5 %</td><td class="n">10 821</td><td class="n">19,9</td>
+          <td>Самый дешёвый процесс в тесте</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Rust + tokio + tungstenite</td>
+          <td class="n">30,2 %</td><td class="n">10 774</td><td class="n">28,1</td>
+          <td><b>Столько же кадров, что и uWS, но CPU в 1,4 раза выше</b></td>
+        </tr>
+        <tr>
+          <td class="rowhead">.NET 10 + Kestrel WebSockets</td>
+          <td class="n">105,5 %</td><td class="n">15 150</td><td class="n">69,6</td>
+          <td>Втрое-вчетверо дороже всех. Единственный, кто вышел за одно ядро</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Node + <code>ws</code> со сжатием <span class="chip crit">как сейчас</span></td>
+          <td class="n">—</td><td class="n">—</td><td class="n">179,0</td>
+          <td>Из первого отчёта, 200 клиентов: сжатие дороже отправки в 6,6 раза</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note alarm">
+    <h4>Прямое сравнение без поправок</h4>
+    <p>
+      <code>uWS</code> и Rust отправили практически одинаковое число кадров — <b>32 464</b> против
+      <b>32 321</b> за три секунды — при одинаковом входящем потоке. CPU: <b>21,5 %</b> против
+      <b>30,2 %</b>. Это не нормировка и не пересчёт, а два числа из одного и того же теста:
+      <b>Rust-стек оказался в 1,4 раза дороже Node-стека на той же работе.</b>
+    </p>
+  </div>
+
+  <div class="note">
+    <h4>Кадр в 15 раз меньше стоит столько же</h4>
+    <p>
+      100 байт вместо 1500 не изменили ничего (Node 26,9 → 28,0 мкс; Rust 30,6 → 32,3 на тесте
+      с 200 клиентами). Платим не за байты, а за сам факт отправки сообщения — системный вызов
+      и обслуживание сокета. Он одинаков в любом рантайме.
+    </p>
+    <p>
+      И ещё: разложив замеры <code>uWS</code> на 30 Гц и 10 Гц, получаем <b>~11,8 мкс на исходящее
+      сообщение и ~13,3 мкс на входящее</b>. Приём стоит столько же, сколько отправка — а клиент
+      сейчас шлёт ввод на частоте кадров (60–144 Гц). Троттлинг ввода экономит примерно столько же,
+      сколько снижение частоты снапшотов.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Сумма</span>
+    <div class="col">
+      <h2>Сколько игроков держит одно ядро</h2>
+      <p>
+        Тик комнаты плюс отправка кадра. Худший случай — соло-комната с тяжёлым этажом на
+        60 монстров; в пати симуляция делится на четверых и разрыв между рантаймами ещё меньше.
+        Практическая колонка — при 60 % загрузки ядра.
+      </p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <caption>Соло-игрок, 30 Гц, после протокольной правки (бинарная дельта, без сжатия)</caption>
+    <table>
+      <thead>
+        <tr>
+          <th>Стек</th><th class="n">тик</th><th class="n">кадр</th><th class="n">итого</th>
+          <th class="n">игроков / ядро</th><th class="n">CCU с ноды 48c</th><th class="n">процессов</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rowhead">Node сегодня <span class="chip crit">JSON + сжатие</span></td>
+          <td class="n">61,2</td><td class="n">179,0</td><td class="n">240 мкс</td>
+          <td class="n">39</td><td class="n">1 900</td><td class="n">48</td>
+        </tr>
+        <tr class="hi">
+          <td class="rowhead">Node + <code>ws</code></td>
+          <td class="n">20,9</td><td class="n">19,2</td><td class="n">40,1 мкс</td>
+          <td class="n">498</td><td class="n">23 900</td><td class="n">48</td>
+        </tr>
+        <tr class="hi">
+          <td class="rowhead">Node + <code>uWS</code></td>
+          <td class="n">20,9</td><td class="n">19,9</td><td class="n">40,8 мкс</td>
+          <td class="n">490</td><td class="n">23 500</td><td class="n">48</td>
+        </tr>
+        <tr class="hi">
+          <td class="rowhead">Rust + tokio</td>
+          <td class="n">10,4</td><td class="n">28,1</td><td class="n">38,5 мкс</td>
+          <td class="n">519</td><td class="n">24 900</td><td class="n">1</td>
+        </tr>
+        <tr>
+          <td class="rowhead">C# + Kestrel</td>
+          <td class="n">10,4</td><td class="n">69,6</td><td class="n">80,0 мкс</td>
+          <td class="n">250</td><td class="n">12 000</td><td class="n">1</td>
+        </tr>
+        <tr>
+          <td class="rowhead">C# + свой транспорт <span class="chip e">оценка</span></td>
+          <td class="n">10,4</td><td class="n">~20</td><td class="n">~30 мкс</td>
+          <td class="n">~660</td><td class="n">~31 700</td><td class="n">1</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure>
+    <svg class="chart" viewBox="0 0 900 300" role="img" aria-label="Игроков на одно ядро при 60 процентах загрузки: сегодня 39, C-sharp с Kestrel 250, Node с uWS 490, Node с ws 498, Rust 519, C-sharp со своим транспортом около 660">
+      <text class="axb" x="20" y="26">Игроков на одно ядро при 60 % загрузки</text>
+      <text class="ax" x="20" y="44">сплошное — измерено, штриховка — оценка транспорта</text>
+
+      <line class="grid-l" x1="248" y1="58" x2="248" y2="286"></line>
+      <defs>
+        <pattern id="hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <rect width="6" height="6" fill="var(--accent-soft)"></rect>
+          <line x1="0" y1="0" x2="0" y2="6" stroke="var(--warn)" stroke-width="3"></line>
+        </pattern>
+      </defs>
+
+      <!-- шкала: 700 игроков = 630 px -->
+      <g>
+        <text class="axb" x="236" y="80" text-anchor="end">сегодня</text>
+        <rect x="250" y="64" width="35" height="20" fill="var(--crit)"></rect>
+        <text class="ax" x="295" y="79">39</text>
+      </g>
+      <g>
+        <text class="axb" x="236" y="122" text-anchor="end">C# + Kestrel</text>
+        <rect x="250" y="106" width="225" height="20" fill="var(--warn)"></rect>
+        <text class="ax" x="485" y="121">250</text>
+      </g>
+      <g>
+        <text class="axb" x="236" y="164" text-anchor="end">Node + uWS</text>
+        <rect x="250" y="148" width="441" height="20" fill="var(--accent)"></rect>
+        <text class="ax" x="701" y="163">490</text>
+      </g>
+      <g>
+        <text class="axb" x="236" y="206" text-anchor="end">Node + ws</text>
+        <rect x="250" y="190" width="448" height="20" fill="var(--accent)"></rect>
+        <text class="ax" x="708" y="205">498</text>
+      </g>
+      <g>
+        <text class="axb" x="236" y="248" text-anchor="end">Rust + tokio</text>
+        <rect x="250" y="232" width="467" height="20" fill="var(--ok)"></rect>
+        <text class="ax" x="727" y="247">519</text>
+      </g>
+      <g>
+        <text class="axb" x="236" y="290" text-anchor="end">C# + свой транспорт</text>
+        <rect x="250" y="274" width="594" height="20" fill="url(#hatch)" stroke="var(--warn)" stroke-width="1"></rect>
+        <text class="ax" x="854" y="289">~660</text>
+      </g>
+    </svg>
+    <figcaption>
+      Node, Rust и uWS лежат в полосе <b>490–519</b> — это 6 % разброса, то есть один результат.
+      Вдвое более быстрая симуляция Rust съедается его же более дорогим транспортом.
+    </figcaption>
+  </figure>
+
+  <div class="note alarm">
+    <h4>Как менялась эта цифра, пока её мерили</h4>
+    <div class="revision">
+      <span class="stage">оценка</span>
+      <span class="val"><b>×2,7</b> — Rust ~1110 игроков/ядро. Предполагал, что и транспорт станет вдвое дешевле</span>
+    </div>
+    <div class="revision">
+      <span class="stage">первый замер</span>
+      <span class="val"><b>+17 %</b> — Rust 488. Транспорт оказался не дешевле, а дороже</span>
+    </div>
+    <div class="revision">
+      <span class="stage">500 клиентов</span>
+      <span class="val"><b>+4 %</b> — Rust 519 против Node 498. Прогон с бо́льшим сигналом и меньшим шумом</span>
+    </div>
+    <p style="margin-top:14px">
+      Это и есть цена полного переписывания сервера: <b>четыре процента</b> на соло-игроке
+      и около двух в пати. Замеры на 200 клиентах шумели на ±30 %, поэтому итоговые числа взяты
+      из прогона на 500 — там разброс между выборками упал до ±13 %.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Бесплатно</span>
+    <div class="col">
+      <h2>Одна правка, которая работает в любом языке</h2>
+    </div>
+  </div>
+  <div class="col">
+    <p>
+      В <code>ai.ts</code> нормализация угла сделана как <code>atan2(sin a, cos a)</code> — три
+      тригонометрические функции там, где хватает вычитания. Вызывается на каждого монстра каждый
+      тик. Замена на <code>a − 2π·round(a/2π)</code> даёт тот же результат до бита (контрольная
+      сумма не изменилась).
+    </p>
+  </div>
+
+  <div class="scroll">
+    <caption>Тот же тик с быстрой нормализацией угла</caption>
+    <table>
+      <thead><tr><th>Рантайм</th><th class="n">было</th><th class="n">стало</th><th class="n">выигрыш</th></tr></thead>
+      <tbody>
+        <tr><td class="rowhead">Node 24</td><td class="n">20,93</td><td class="n">19,85</td><td class="n">−5 %</td></tr>
+        <tr><td class="rowhead">C# .NET 10</td><td class="n">10,43</td><td class="n">8,88</td><td class="n">−15 %</td></tr>
+        <tr><td class="rowhead">Rust 1.98</td><td class="n">10,40</td><td class="n">8,68</td><td class="n">−17 %</td></tr>
+        <tr><td class="rowhead">C++ 16</td><td class="n">10,09</td><td class="n">8,13</td><td class="n">−19 %</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="col">
+    Туда же: <code>Math.hypot</code> в V8 стоит <b>12,8 нс</b> против <b>1,5 нс</b> у
+    <code>sqrt(dx*dx+dy*dy)</code> — в 8,7 раза дороже, а в боевом коде он в каждом горячем цикле.
+  </p>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Что решает</span>
+    <div class="col">
+      <h2>Раз производительность одинаковая, остаются три довода</h2>
+      <p>Ни один из них не про скорость.</p>
+    </div>
+  </div>
+  <div class="col">
+    <ul class="plain">
+      <li>
+        <b>Потоки против процессов.</b> Node — одно ядро на процесс: 48-ядерная нода это
+        48 процессов, каждому нужен внешний реестр комнат, свой замок на персонажа и свои ~60 МБ
+        базовой памяти. На Rust, C# и C++ та же нода — <b>один процесс</b>: общая таблица комнат
+        в памяти, замок на персонажа обычным мьютексом, комнату можно перекинуть между потоками.
+        На 100 тыс. онлайна это 240 процессов против 3.
+      </li>
+      <li>
+        <b>Паузы сборщика мусора.</b> В нагрузочном тесте первого отчёта цикл Node вставал на
+        200–300 мс — шесть потерянных тиков подряд. Лечится дисциплиной «ноль аллокаций в тике»
+        навсегда и во всём коде. В Rust и C++ проблемы нет.
+      </li>
+      <li>
+        <b>Где живёт единая истина формул.</b> <code>packages/shared</code> общий для клиента
+        и сервера — главный архитектурный актив проекта. Смена языка ломает это ровно настолько,
+        насколько клиент остаётся на TypeScript.
+      </li>
+    </ul>
+  </div>
+
+  <pre>Где может жить одна копия боевой математики:
+
+  Node/TS сервер  + веб-клиент TS       →  <b>одна копия</b> (как сейчас)
+  C# сервер       + Unity-клиент C#     →  <b>одна копия</b>, но веб-клиент выпадает
+  Rust сервер     + wasm-ядро в браузер →  <b>одна копия</b> + FFI-обвязка под Unity
+  любой сервер    + два клиента без wasm →  <b>две-три копии формул</b></pre>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Варианты</span>
+    <div class="col">
+      <h2>Кандидаты после всех замеров</h2>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="who"><b>Node + ws</b><span>тик 20,9 · кадр 19,2<br>498 игроков/ядро<br>23 900 CCU с ноды</span></div>
+    <div>
+      <h3>Остаться и выпрямить</h3>
+      <p>
+        Ноль работы по переносу, общая с браузером кодовая база формул, и по итоговой цене игрока
+        отставание от лучшего кандидата — 4 %. Потолок после Ф0+Ф1 — около 24 тыс. онлайна
+        с одной 48-ядерной ноды. Цена — 48 процессов на ноду, внешний реестр состояния и
+        дисциплина «не аллоцировать в тике».
+      </p>
+      <div class="verdict"><b>Рекомендация.</b> Делать Ф0 и Ф1 из первого отчёта, язык не трогать.</div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="who"><b>Node + uWebSockets.js</b><span>тик 20,9 · кадр 19,9<br>490 игроков/ядро<br>CPU процесса −23 %</span></div>
+    <div>
+      <h3>Прогнали. Не то, чего я ожидал</h3>
+      <p>
+        Прошлая оценка «~10 мкс на кадр» <b>не подтвердилась</b>: вышло 19,9 — столько же, сколько
+        у обычного <code>ws</code>. Но сам процесс при равной работе ест на 23 % меньше CPU, чем
+        <code>ws</code>, и заметно меньше, чем Rust. Плюс режим <code>publish</code> по топикам
+        ложится ровно на нашу схему «кадр всем в комнате», а таймеры в нём держат частоту ближе
+        к 30 Гц.
+      </p>
+      <div class="verdict">
+        <b>Брать, но без ожиданий чуда.</b> Правок на день, выигрыш в запасе по CPU, а не в разы.
+      </div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="who"><b>Rust</b><span>тик 10,4 · кадр 28,1<br>519 игроков/ядро<br>+4 % к Node</span></div>
+    <div>
+      <h3>Вдвое быстрее там, где это не решает</h3>
+      <p>
+        Симуляция действительно вдвое быстрее, GC-пауз нет, многопоточность настоящая. Но транспорт
+        <b>дороже</b> Node-стеков в 1,4 раза, а весит в общей цене больше симуляции. Итог — плюс
+        четыре процента за переписывание всей боевой математики, экономики и генерации подземелий.
+      </p>
+      <div class="verdict"><b>Не окупается.</b> Худшая сделка в списке.</div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="who"><b>C# / .NET 10</b><span>тик 10,4 · кадр 69,6 (Kestrel)<br>250 сейчас · ~660 со своим транспортом</span></div>
+    <div>
+      <h3>Единственный кандидат с потенциалом выше Node</h3>
+      <p>
+        Тик неотличим от Rust. Kestrel для широковещательной рассылки не годится — 105 % ядра
+        на 500 клиентов, единственный в тесте, кто вышел за одно ядро. Но если написать транспорт
+        на <code>System.Net.Sockets</code> и выйти хотя бы на уровень <code>ws</code>, получится
+        ~660 игроков на ядро — лучший результат в таблице. Это <b>оценка</b>, не замер.
+      </p>
+      <div class="verdict">
+        <b>Единственный сценарий переезда — и он не про скорость.</b> Если Unity станет основным
+        клиентом и веб отомрёт, C# даёт одну кодовую базу формул на клиент и сервер.
+      </div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="who"><b>C++</b><span>тик 10,1 — быстрейший<br>на 3 % впереди Rust</span></div>
+    <div>
+      <h3>Формально первый, практически неотличим</h3>
+      <p>
+        Выигрыш над Rust — 3 %, над C# — 3 %. За эти три процента вы получаете гонки данных,
+        висячие указатели и сборку, которую надо поддерживать руками.
+      </p>
+      <div class="verdict"><b>Не выбирать.</b> Всё, что даёт C++, даёт Rust — и безопаснее.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Ответ</span>
+    <div class="col">
+      <h2>Правим свой сервер, а не переписываем</h2>
+    </div>
+  </div>
+  <div class="col">
+    <p>
+      Второй этап вашего плана решается измеренными числами. Полное переписывание на самом
+      быстром из кандидатов даёт <b>+4 % к соло-игроку</b>. Те же силы, вложенные в протокол
+      на текущем Node, уже дали <b>×12,8</b> — с 39 игроков на ядро до 498.
+    </p>
+    <ul class="plain">
+      <li><b>C++, Rust и C# на симуляции различаются на 3 %.</b> Это один класс, а не три.</li>
+      <li><b>Node на симуляции отстаёт ровно вдвое</b> — устойчиво, во всех прогонах.</li>
+      <li><b>На транспорте Node выигрывает у Rust в 1,4 раза</b> при одинаковой работе. Это единственная неожиданность всей серии замеров.</li>
+      <li><b>Kestrel — ловушка:</b> C# с ним вдвое хуже Node, хотя его тик вдвое быстрее.</li>
+      <li><b>uWS полезен, но не волшебен:</b> цена кадра та же, экономия — в общем расходе процесса.</li>
+      <li><b>Триггер для C#</b> остаётся один: Unity стал основным клиентом, веб отмирает.</li>
+      <li><b>Триггера для Rust нет.</b> Он держался на оценке, которую замер опроверг дважды.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <p>
+    Стенд: i7-11800H, Windows, временные бенчмарки вне репозитория. Node 24.18.0,
+    .NET 10.0.11, Rust 1.98.1 (windows-gnu, системная математика UCRT), GCC 16.2.0
+    (<code>-O3 -march=native</code>), uWebSockets.js v20.69.0.
+    Симуляция: 150 000 тиков, сверка по контрольной сумме <code>27724800</code> и размеру
+    дельта-кадра 185 Б. Транспорт: 500 клиентов, 45 с, входящий поток 30 Гц с каждого,
+    процессорное время процесса делено на число отправленных кадров; разброс между выборками
+    ±13 %. Рабочее дерево игры не изменялось.
+  </p>
+  <p style="margin-top:14px">
+    Первая часть — «Потолок сервера: где он на самом деле и куда переезжать» —
+    <a href="https://claude.ai/code/artifact/38153fa2-73fc-40b9-9730-c47e4d5e2f60">открыть</a>.
+  </p>
+</footer>
+
+</div>
+
+</body></html>

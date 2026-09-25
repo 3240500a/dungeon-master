@@ -1,0 +1,848 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Ковка оружия</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Spectral:ital,wght@0,400;0,500;1,400&display=swap">
+<style>
+  :root {
+    --bg: #efe9df; --panel: #faf7f1; --panel-2: #e7e0d3; --ink: #221d16; --dim: #6b6255;
+    --faint: #938976; --rule: #cfc5b4; --amber: #a8620c; --steel: #3f5c72; --good: #3f7a46;
+    --warn: #96700f; --bad: #9a3412; --shadow: 0 1px 0 rgba(34,29,22,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15120e; --panel: #1d1914; --panel-2: #252017; --ink: #e9e1d2; --dim: #a19786;
+      --faint: #7d7566; --rule: #342d23; --amber: #d99a3a; --steel: #8fa8bd; --good: #7db07f;
+      --warn: #d6b247; --bad: #d97757; --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15120e; --panel: #1d1914; --panel-2: #252017; --ink: #e9e1d2; --dim: #a19786;
+    --faint: #7d7566; --rule: #342d23; --amber: #d99a3a; --steel: #8fa8bd; --good: #7db07f;
+    --warn: #d6b247; --bad: #d97757; --shadow: none;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.62 Spectral, Georgia, serif; -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 1180px; margin: 0 auto; padding: 0 20px; padding-block: 40px 72px;
+    display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 0 48px; align-items: start;
+  }
+  @media (max-width: 920px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+
+  h1, h2, h3, .eyebrow, th, .chip, .navlist a, .lead-tag, .axis dt { font-family: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif; }
+  h1 { font-size: clamp(34px, 6vw, 52px); font-weight: 700; letter-spacing: -.015em; line-height: 1.02; margin: 0; text-wrap: balance; }
+  h2 { font-size: 25px; font-weight: 600; letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+  h3 { font-size: 17px; font-weight: 600; margin: 22px 0 8px; letter-spacing: .005em; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  a { color: var(--amber); }
+  code, td.n, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  code { font-size: .86em; background: var(--panel-2); padding: 1px 5px; border-radius: 3px; }
+
+  header.head { grid-column: 1 / -1; border-bottom: 2px solid var(--ink); padding-bottom: 26px; margin-bottom: 34px; }
+  .eyebrow { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--amber); font-weight: 600; margin-bottom: 12px; }
+  .sub { color: var(--dim); font-size: 17px; max-width: 62ch; margin: 14px 0 0; font-style: italic; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 10px; margin-top: 20px; }
+  .chip { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; border: 1px solid var(--rule); border-radius: 2px; padding: 4px 9px; color: var(--dim); background: var(--panel); }
+  .chip.on { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, var(--rule)); }
+  .chip.off { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--rule)); }
+
+  nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+  @media (max-width: 920px) { nav.toc { position: static; margin-bottom: 34px; border: 1px solid var(--rule); background: var(--panel); padding: 14px 16px; } }
+  .navgroup { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 16px 0 5px 12px; }
+  .navgroup:first-child { margin-top: 0; }
+  .navlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  .navlist a { display: block; padding: 3px 0 3px 12px; font-size: 13.5px; color: var(--dim); text-decoration: none; border-left: 2px solid var(--rule); }
+  .navlist a:hover { color: var(--ink); border-left-color: var(--amber); }
+  .navlist .n { color: var(--faint); font-size: 11px; margin-right: 7px; }
+
+  .hero { background: var(--panel); border: 1px solid var(--rule); box-shadow: var(--shadow); padding: 22px; margin-bottom: 40px; display: grid; grid-template-columns: 290px minmax(0,1fr); gap: 26px; align-items: center; }
+  @media (max-width: 720px) { .hero { grid-template-columns: minmax(0,1fr); } }
+  .hero svg { width: 100%; height: auto; max-width: 290px; display: block; margin: 0 auto; }
+  .axes { display: flex; flex-direction: column; gap: 13px; }
+  .axis { display: grid; grid-template-columns: 116px minmax(0,1fr); gap: 12px; align-items: baseline; }
+  .axis dt { font-weight: 600; font-size: 13.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--amber); }
+  .axis dd { margin: 0; font-size: 14.5px; }
+  .axis dd em { font-style: normal; color: var(--dim); }
+
+  section { margin: 0 0 46px; scroll-margin-top: 20px; }
+  .sechead { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--rule); padding-bottom: 8px; margin-bottom: 18px; }
+  .sechead .n { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--amber); }
+
+  .tw { overflow-x: auto; margin: 0 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 460px; }
+  th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); font-weight: 600; border-bottom-color: var(--ink); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; padding-right: 16px; font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td strong { font-weight: 500; color: var(--amber); }
+  caption { caption-side: top; text-align: left; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); padding-bottom: 8px; font-family: "IBM Plex Sans Condensed", sans-serif; }
+
+  .rules { display: grid; gap: 14px; }
+  .rule { border-left: 3px solid var(--amber); padding: 2px 0 2px 16px; }
+  .rule h3 { color: var(--ink); margin-top: 0; }
+  .rule p { margin: 0; color: var(--dim); font-size: 15px; }
+
+  .note { border: 1px solid var(--rule); background: var(--panel); padding: 14px 16px; margin: 0 0 16px; }
+  .note.warn { border-left: 3px solid var(--warn); }
+  .note.star { border-left: 3px solid var(--amber); }
+  .note.bad { border-left: 3px solid var(--bad); }
+  .note p:last-child { margin-bottom: 0; }
+  .note .lead-tag { font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 600; color: var(--warn); display: block; margin-bottom: 5px; }
+  .note.star .lead-tag { color: var(--amber); }
+  .note.bad .lead-tag { color: var(--bad); }
+
+  pre.flow { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; line-height: 1.7; background: var(--panel-2); border: 1px solid var(--rule); padding: 14px 16px; overflow-x: auto; margin: 0 0 18px; color: var(--ink); }
+  ul.plain { margin: 0 0 16px; padding-left: 20px; }
+  ul.plain li { margin-bottom: 7px; max-width: 66ch; }
+  blockquote { margin: 0 0 16px; padding: 10px 0 10px 16px; border-left: 3px solid var(--rule); color: var(--dim); font-style: italic; max-width: 64ch; }
+  .done { color: var(--good); font-weight: 600; }
+  .stop { color: var(--bad); font-weight: 600; }
+  footer { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 18px; color: var(--faint); font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="head">
+    <div class="eyebrow">Гейм-дизайн · документ решений · docs/CRAFT_WEAPONS.md</div>
+    <h1>Ковка оружия из деталей</h1>
+    <p class="sub">Четыре гнезда у всех десяти классов. Деталь — это форма и материал. Всё, что здесь написано, замерено по коду: три опоры первой версии держались на числах, которых в игре нет.</p>
+    <div class="meta">
+      <span class="chip on">весы оружия — сделано</span>
+      <span class="chip on">баг сырья — починен</span>
+      <span class="chip off">масса: ось мертва</span>
+      <span class="chip off">блок: 6 баз из 50</span>
+      <span class="chip off">магазин — кран t6</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="navgroup">Рамка</div>
+    <ul class="navlist">
+      <li><a href="#otmena"><span class="n">00</span>Что отменено</a></li>
+      <li><a href="#ramka"><span class="n">01</span>Решения владельца</a></li>
+      <li><a href="#pravila"><span class="n">02</span>Шесть правил</a></li>
+    </ul>
+    <div class="navgroup">Конструкция</div>
+    <ul class="navlist">
+      <li><a href="#gnezda"><span class="n">03</span>Четыре гнезда</a></li>
+      <li><a href="#udar"><span class="n">04</span>Ударная часть</a></li>
+      <li><a href="#derzhak"><span class="n">05</span>Держак</a></li>
+      <li><a href="#obvyazka"><span class="n">06</span>Обвязка: ёмкость</a></li>
+      <li><a href="#ogolovye"><span class="n">07</span>Оголовье: укус ↔ упор</a></li>
+      <li><a href="#ves"><span class="n">08</span>Ловкость или сила</a></li>
+    </ul>
+    <div class="navgroup">Деталь</div>
+    <ul class="navlist">
+      <li><a href="#forma"><span class="n">09</span>Форма: варианты</a></li>
+      <li><a href="#material"><span class="n">10</span>Материал: лестницы</a></li>
+      <li><a href="#stupen"><span class="n">11</span>Ступень вещи</a></li>
+      <li><a href="#zhurnal"><span class="n">12</span>Открытие разбором</a></li>
+      <li><a href="#cena"><span class="n">13</span>Цена</a></li>
+    </ul>
+    <div class="navgroup">Проверка</div>
+    <ul class="navlist">
+      <li><a href="#matem"><span class="n">14</span>Что запекается</a></li>
+      <li><a href="#primery"><span class="n">15</span>Три примера</a></li>
+      <li><a href="#zamki"><span class="n">16</span>Замки против имбы</a></li>
+      <li><a href="#ui"><span class="n">17</span>Экран ковки</a></li>
+      <li><a href="#vizual"><span class="n">18</span>Визуал</a></li>
+    </ul>
+    <div class="navgroup">Работа</div>
+    <ul class="navlist">
+      <li><a href="#kod"><span class="n">19</span>Что есть в коде</a></li>
+      <li><a href="#dolgi"><span class="n">20</span>Долги до ковки</a></li>
+      <li><a href="#fazy"><span class="n">21</span>Фазы</a></li>
+      <li><a href="#proverka"><span class="n">22</span>Чем проверяем</a></li>
+      <li><a href="#net"><span class="n">23</span>Чего не делаем</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <svg viewBox="0 0 300 420" role="img" aria-label="Схема: четыре гнезда оружия">
+        <g fill="none" stroke="var(--steel)" stroke-width="2">
+          <path d="M150 24 L164 74 L164 244 L136 244 L136 74 Z" fill="color-mix(in srgb, var(--steel) 16%, transparent)"/>
+          <path d="M150 24 L150 244"/>
+        </g>
+        <rect x="104" y="248" width="92" height="14" rx="2" fill="color-mix(in srgb, var(--amber) 22%, transparent)" stroke="var(--amber)" stroke-width="2"/>
+        <rect x="140" y="262" width="20" height="78" rx="3" fill="color-mix(in srgb, var(--amber) 12%, transparent)" stroke="var(--amber)" stroke-width="2"/>
+        <circle cx="150" cy="354" r="13" fill="color-mix(in srgb, var(--amber) 22%, transparent)" stroke="var(--amber)" stroke-width="2"/>
+        <g stroke="var(--rule)" stroke-width="1">
+          <path d="M166 140 L236 140"/><path d="M198 255 L236 255"/>
+          <path d="M162 300 L236 300"/><path d="M165 354 L236 354"/>
+        </g>
+        <g font-family="IBM Plex Sans Condensed, sans-serif" font-size="12.5" font-weight="600" fill="var(--ink)">
+          <text x="242" y="136">1 · Ударная</text>
+          <text x="242" y="251">3 · Обвязка</text>
+          <text x="242" y="296">2 · Держак</text>
+          <text x="242" y="350">4 · Оголовье</text>
+        </g>
+        <g font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--faint)">
+          <text x="242" y="150">урон ↔ скорость</text>
+          <text x="242" y="265">преф. ↔ суфф.</text>
+          <text x="242" y="310">дальше ↔ шире</text>
+          <text x="242" y="364">укус ↔ упор</text>
+        </g>
+      </svg>
+      <dl class="axes">
+        <div class="axis"><dt>1 · Ударная</dt><dd>Урон против скорости. <em>Единственная ось ДПС, ±10 / ∓8. Статусы едут на ней сами: быстрее — чаще прок.</em></dd></div>
+        <div class="axis"><dt>2 · Держак</dt><dd>Дальше по одному против шире по многим. <em>Площадь взмаха постоянна: дуга × дальность² = const.</em></dd></div>
+        <div class="axis"><dt>3 · Обвязка</dt><dd>Форма ёмкости аффиксов. <em>Сколько префиксов против скольких суффиксов, видно при ковке.</em></dd></div>
+        <div class="axis"><dt>4 · Оголовье</dt><dd>Шанс статуса против блока и стойкости. <em>Сюда же легла просьба «обыграть блок».</em></dd></div>
+      </dl>
+    </div>
+
+    <section id="otmena">
+      <div class="sechead"><span class="n">00</span><h2>Что отменено из первой версии</h2></div>
+      <p>Первая версия писалась до замеров. Шесть независимых разборов кода плюс три сверки вскрыли, что три её опоры держались на числах, которых в игре нет.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Было</th><th>Почему отменено</th><th>Стало</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Навершие: масса ↔ требования</strong></td><td>Ось мертва с обеих сторон. Вся лестница весов (кинжал 3 → молот 25) двигает шанс сбить с ног на <strong>0.44 п.п.</strong> — <code>chanceBase</code> 0.85 растворяет вклад оружия, а сопротивление по массе цели упирается в кап 0.95 у 11 монстров из 13. Потолок всей механики нокдауна +2.37 % урона. Требования с другой стороны: кап 190 душит <strong>42 базы из 50 на t6</strong></td><td>Гнездо 4 торгует <strong>укусом против упора</strong></td></tr>
+          <tr><td><strong>Р5: ковка до t5, t6 только с дропа</strong></td><td>Решение владельца</td><td>t6 куётся через счётчик разобранных мификов</td></tr>
+          <tr><td><strong>Чертежи падают с монстров</strong></td><td>Решение владельца</td><td>Разбор открывает и базу, и четыре детали</td></tr>
+          <tr><td><strong>Лезвие ±15 / ∓12, «разброс ≤ 6 %»</strong></td><td>Замер на сетке из самого документа: пара 15/12 даёт <strong>19.2 %</strong>. И документ спорил сам с собой — 6 % в одном месте, 8 % в другом</td><td>Пара <strong>±10 / ∓8</strong> и один объявленный конверт</td></tr>
+          <tr><td><strong>Рукоять: +20 % дальности ↔ −20 % дуги</strong></td><td><code>meleeSwing</code> бьёт всех в секторе, площадь = дуга × дальность². Длинная сметала на <strong>27.6 % больше</strong> — то есть гнездо, объявленное «ДПС не трогает», было почти втрое сильнее единственной разрешённой оси ДПС</td><td>Площадь-нейтральная пара</td></tr>
+          <tr><td><strong>У лука рукоять торгует дальностью</strong></td><td>Дальность снаряда — константа 1100 px при зрении монстра 240–320. Поля «разброс» у оружия нет вовсе</td><td>Пробой с затуханием, и он требует правки кода</td></tr>
+          <tr><td><strong>Новых семейств сырья не вводим</strong></td><td>Трёх ступеней железа не хватает под лестницу «болотное → кричное → уклад → дамаск → булат»</td><td>Восемь семей по пять ступеней</td></tr>
+          <tr><td><strong>Скованное равно найденному</strong></td><td>Замер: форма 3+2 несёт <strong>2.78</strong> полезных аффикса против <strong>2.22</strong> у среднего редкого</td><td>«Равно верхним 17 % найденных редких и платит шестикратно»</td></tr>
+          <tr><td><strong>Три клика</strong></td><td>Честный флоу — 8 действий при 5 решениях</td><td>Пишем 8 и не врём</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="ramka">
+      <div class="sechead"><span class="n">01</span><h2>Решения владельца</h2></div>
+      <div class="tw"><table>
+        <tbody>
+          <tr><td>Что делает крафт</td><td><strong>Создаёт вещь с нуля</strong> из деталей</td></tr>
+          <tr><td>Охват</td><td><strong>Все 10 классов</strong> равным числом деталей — четыре гнезда у каждого</td></tr>
+          <tr><td>Откуда детали</td><td><strong>Разобрал вещь у кузнеца — открылись части, которые в ней стояли.</strong> Чертежей как предметов нет</td></tr>
+          <tr><td>Редкость деталей</td><td>Прямая гарда часто, изогнутая реже, фигурная ещё реже</td></tr>
+          <tr><td>Тиры деталей</td><td><strong>Материал задаёт полосу ступеней.</strong> Правдоподобно, по историческим источникам</td></tr>
+          <tr><td>Уровень вещи</td><td>Вычисляется из уровня частей</td></tr>
+          <tr><td>Аффиксы</td><td>Сперва база, потом отдельно редкость. Сколько каких аффиксов примет база — <strong>видно в момент создания</strong></td></tr>
+          <tr><td>t6</td><td><strong>Куётся</strong>, но разобрав некоторое количество t6, и очень дорого</td></tr>
+          <tr><td>Варианты</td><td><strong>Не по три.</strong> Лезвий много — плоское, широкое, фальшион, узкое, изогнутое</td></tr>
+          <tr><td>Статусы и блок</td><td>Шанс наложения эффекта от детали с противовесом; свой шанс блока у оружия — обыграть</td></tr>
+          <tr><td>⭐ Главное</td><td><strong>Приятное дополнение, а не вторая работа.</strong> Не ломать флоу D2 и PoE 2</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="pravila">
+      <div class="sechead"><span class="n">02</span><h2>Шесть правил</h2></div>
+      <div class="rules">
+        <div class="rule"><h3>Р1. Крафт не создаёт мощности, которой нет в дропе</h3><p>Каркас скованного — та же база и та же ступень. После замера формулировка точная: скованное равно <strong>верхним 17 % найденных редких</strong> и платит за это шестикратной ценой. Больше лучшего дропа — ни на единицу.</p></div>
+        <div class="rule"><h3>Р2. У каждой детали заполнены обе колонки</h3><p>Ни одной детали, которая просто лучше другой. Урок Warframe и Destiny 2: части давали чистый плюс, и через месяц остались две-три мета-сборки.</p></div>
+        <div class="rule"><h3>Р3. Случайность — только в значении</h3><p>Детали выбираются осознанно, вилка видна заранее. Отсюда же: детали найденной вещи выводятся детерминированно из неё самой, а не катаются в момент разбора.</p></div>
+        <div class="rule"><h3>Р4. Провал не «кирпичит» вещь</h3><p>Любую сборку можно переплавить. Главная жалоба на Last Epoch и на темперинг Diablo 4 — именно про это.</p></div>
+        <div class="rule"><h3>Р5. Редкость варианта — это частота, а не сила</h3><p>Фигурная гарда не лучше прямой, она реже. Все варианты одного гнезда сидят на одной его оси, просто в разных точках.</p></div>
+        <div class="rule"><h3>Р6. Ступень вещи задают детали, а не кошелёк</h3><p>Материал несёт полосу ступеней; ступень зажата снизу материалами, сверху журналом. Дешёвой t6-детали не существует как объекта — «три дешёвые плюс одна дорогая» невозможно по построению.</p></div>
+      </div>
+    </section>
+
+    <section id="gnezda">
+      <div class="sechead"><span class="n">03</span><h2>Четыре гнезда, десять классов</h2></div>
+      <pre class="flow">ЧЕРТЁЖ                  ЧЕТЫРЕ ГНЕЗДА                       АФФИКСЫ
+(какая база)            (какой характер)                    (потом, отдельным глаголом)
+
+«Длинный меч»           1 ударная часть  урон ↔ скорость     форма объявлена при ковке,
+урон 7–13, треб. 25     2 держак         дальше ↔ шире       значения катаются как у дропа
+грань: режущий          3 обвязка        префиксы ↔ суффиксы
+вес: среднее            4 оголовье       укус ↔ упор
+
+у каждого гнезда: ФОРМА (точка на оси) × МАТЕРИАЛ (полоса ступеней)</pre>
+      <p>Гнездо несёт роль, класс даёт имя и меш. Анатомии хватило у всех десяти — ни одну деталь не пришлось нагружать двумя показателями.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Класс</th><th>1 · Ударная часть</th><th>2 · Держак</th><th>3 · Обвязка</th><th>4 · Оголовье</th></tr></thead>
+        <tbody>
+          <tr><td>Меч</td><td>Клинок</td><td>Рукоять</td><td>Гарда</td><td>Навершие</td></tr>
+          <tr><td>Кинжал</td><td>Клинок</td><td>Черен</td><td>Крестовина</td><td>Оголовок</td></tr>
+          <tr><td>Топор</td><td>Полотно</td><td>Топорище</td><td>Проушина</td><td>Затыльник</td></tr>
+          <tr><td>Булава</td><td>Било</td><td>Рукоять</td><td>Обоймица</td><td>Противовес</td></tr>
+          <tr><td>Копьё</td><td>Наконечник</td><td>Древко</td><td>Тулея и ланцеты</td><td>Подток</td></tr>
+          <tr><td>Алебарда</td><td>Полотно с крюком</td><td>Древко</td><td>Ланцеты</td><td>Подток</td></tr>
+          <tr><td>Лук</td><td>Плечи</td><td>Кибить</td><td>Тетива</td><td>Ноки и накладки</td></tr>
+          <tr><td>Арбалет</td><td>Дуга</td><td>Ложе</td><td>Замок (орех)</td><td>Стремя и затыльник</td></tr>
+          <tr><td>Жезл</td><td>Фокус</td><td>Ствол</td><td>Оправа</td><td>Пятка</td></tr>
+          <tr><td>Посох</td><td>Навершие-фокус</td><td>Древко</td><td>Оковка</td><td>Подток</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note star">
+        <span class="lead-tag">замок «одна ось ДПС»</span>
+        <p><code>mods</code> детали <strong>выводятся</strong> из её поля <code>axis</code> (−1…+1) умножением на шаг гнезда, а не пишутся руками. Тогда «деталь написала в чужой стат» физически невозможно, а не запрещено правилом. Но гнездо 4 через шанс статуса всё равно сдвигает ДПС — поэтому сторож звучит как «суммарный сдвиг от гнёзд 2–4 ≤ 3 %» и мерится на реальном бою.</p>
+      </div>
+    </section>
+
+    <section id="udar">
+      <div class="sechead"><span class="n">04</span><h2>Гнездо 1 — урон ↔ скорость</h2></div>
+      <div class="tw"><table>
+        <thead><tr><th>Точка оси</th><th class="n">Множитель урона</th><th class="n">Скорость</th><th>Кому</th></tr></thead>
+        <tbody>
+          <tr><td><strong>τ = +1</strong> тяжёлая</td><td class="n">+10 п.п.</td><td class="n">−8 %</td><td>крит-билды, кровотечение (считается от размера удара), редкие крупные удары</td></tr>
+          <tr><td>τ = 0 ровная</td><td class="n">—</td><td class="n">—</td><td>дефолт</td></tr>
+          <tr><td><strong>τ = −1</strong> лёгкая</td><td class="n">−10 п.п.</td><td class="n">+8 %</td><td>статусы и проки за удар, вампиризм, серии ударов</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tw"><table>
+        <caption>Замер разброса ДПС на сетке «бонус урона 0…0.9 × бонус скорости 0…0.9»</caption>
+        <thead><tr><th>Пара</th><th class="n">Худший угол</th><th class="n">В конверте</th><th class="n">На типовых сборках</th></tr></thead>
+        <tbody>
+          <tr><td>±15 / ∓12 (прежняя)</td><td class="n">19.2 %</td><td class="n">12.5 %</td><td class="n">7.8 %</td></tr>
+          <tr><td><strong>±10 / ∓8 (принята)</strong></td><td class="n">12.3 %</td><td class="n"><strong>7.5 %</strong></td><td class="n"><strong>4.4 %</strong></td></tr>
+          <tr><td>±7 / ∓6</td><td class="n">8.6 %</td><td class="n">5.2 %</td><td class="n">3.1 %</td></tr>
+        </tbody>
+      </table></div>
+      <p>Конверт объявляется явно: <strong>разброс ДПС ≤ 8 % при бонусе урона 0.3…1.5 и бонусе скорости 0.05…0.6</strong>. Без объявленного конверта фраза «разброс ≤ N %» бессмысленна — у любой аддитивной пары есть угол, где она врёт. Пара ±7/∓6 дала бы буквальные 6 %, но там ось перестаёт читаться в тултипе.</p>
+      <div class="note star">
+        <span class="lead-tag">статусы едут на этой оси сами</span>
+        <p>Это и есть ответ на просьбу «шанс эффекта с противовесом» — без единого нового стата. Статусы катаются за удар, значит темп ими уже торгует: замер ступеньки 1.00 → 1.05 удара/с даёт <strong>+62 % стаков раны и +41 % кровотечения при неизменном ДПС</strong>.</p>
+      </div>
+      <blockquote>Лёгкий клинок — взмахов больше: статусы, вампиризм и проки срабатывают чаще. Каждый удар мельче.<br>Тяжёлый клинок — удар крупнее: крит и кровотечение считаются от его размера. Взмахов меньше.</blockquote>
+      <div class="note warn">
+        <span class="lead-tag">дуал-вилд удваивает всё, что деталь запекает</span>
+        <p><code>combatStatsOf</code> собирает один стат-блок из обеих рук, одноручных баз 22 из 50. Пара 10/8 в двух руках становится 20/16 и даёт разброс 15.8 % вместо 7.5 %. Значит инвариант объявляется <strong>на руку</strong>, а форма слотов и блок считаются по главной — иначе четыре слота станут восемью.</p>
+      </div>
+    </section>
+
+    <section id="derzhak">
+      <div class="sechead"><span class="n">05</span><h2>Гнездо 2 — геометрия</h2></div>
+      <p><code>meleeSwing</code> бьёт всех монстров в секторе, площадь сектора = дуга × дальность². Значит честная пара обязана держать произведение постоянным.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Точка оси</th><th class="n">Дальность</th><th class="n">Дуга</th><th class="n">Площадь</th><th>Кому</th></tr></thead>
+        <tbody>
+          <tr><td><strong>+1</strong> длинный</td><td class="n">×1.12</td><td class="n">×0.797</td><td class="n">1.000</td><td>достать первым, бить из второй линии</td></tr>
+          <tr><td>0 обычный</td><td class="n">—</td><td class="n">—</td><td class="n">1.000</td><td>дефолт</td></tr>
+          <tr><td><strong>−1</strong> короткий</td><td class="n">×0.89</td><td class="n">×1.26</td><td class="n">0.998</td><td>толпы: задеть троих одним взмахом</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note bad">
+        <span class="lead-tag">прежние числа были дырой</span>
+        <p>«+20 % дальности ↔ −20 % дуги» даёт 0.8 × 1.2² = 1.152 против 1.25 × 0.85² = 0.903 у короткой — длинная сметала на <strong>27.6 % больше площади</strong>. При пачках по 3–6 монстров это прямой ДПС, почти втрое сильнее всей оси лезвия.</p>
+      </div>
+      <h3>Стрелковое и магическое: честного рычага сегодня нет</h3>
+      <p>Снаряд живёт 440 × 2.5 = 1100 px при зрении монстра 240–320 px — стрелять дальше, чем видишь, можно уже вчетверо. Радиус попадания (16 px) трогать нельзя: <code>projectileHit</code> сравнивает расстояние только с ним и радиус цели игнорирует, то есть это весь коридор попадания и переодетая вторая ось ДПС.</p>
+      <div class="tw"><table>
+        <caption>Кандидат: <code>proj.pierce</code> уже есть в коде, ему нужно затухание</caption>
+        <thead><tr><th>Точка оси</th><th>Что делает</th><th>Цена</th></tr></thead>
+        <tbody>
+          <tr><td><strong>+1</strong> одна цель</td><td>снаряд встаёт в первой цели, урон полный</td><td>по толпе бьёт одного</td></tr>
+          <tr><td><strong>−1</strong> пробойный</td><td>летит сквозь, <strong>урон × 0.65 за каждую пройденную цель</strong></td><td>одиночной цели — как обычный</td></tr>
+        </tbody>
+      </table></div>
+      <p>Точный аналог дуги: больше целей — меньше на каждую. Стоит около десяти строк, и до этой правки гнездо 2 у 20 баз из 50 честно объявляется косметическим — меш и имя, без обещаний.</p>
+    </section>
+
+    <section id="obvyazka">
+      <div class="sechead"><span class="n">06</span><h2>Гнездо 3 — ёмкость аффиксов</h2></div>
+      <p>Ковка выдаёт <strong>обычную вещь</strong> (ноль аффиксов) с записанной ёмкостью — парой «сколько префиксов, сколько суффиксов». Редкость поднимается отдельным глаголом.</p>
+      <div class="tw"><table>
+        <caption>Потолок выводится из дропа, а не калибруется</caption>
+        <thead><tr><th>Форма</th><th class="n">Встречается у редких</th><th class="n">Множитель цены M</th></tr></thead>
+        <tbody>
+          <tr><td>1+1</td><td class="n">91.7 %</td><td class="n">1.09</td></tr>
+          <tr><td>2+1</td><td class="n">68.8 %</td><td class="n">1.45</td></tr>
+          <tr><td><strong>2+2</strong></td><td class="n">45.8 %</td><td class="n">2.18</td></tr>
+          <tr><td>3+0</td><td class="n">31.2 %</td><td class="n">3.21</td></tr>
+          <tr><td><strong>3+1</strong></td><td class="n">27.1 %</td><td class="n">3.69</td></tr>
+          <tr><td><strong>3+2</strong></td><td class="n">16.7 %</td><td class="n">5.99</td></tr>
+          <tr><td>3+3</td><td class="n"><strong>0 %</strong></td><td class="n">невозможна</td></tr>
+        </tbody>
+      </table></div>
+      <p>Отсюда всё и выводится: потолок ковки — (3,2) и (2,3), потому что 3+3 дроп не даёт вовсе. Цена формы — во сколько раз реже дроп даёт такую же или лучшую. Перекошенная форма дороже сбалансированной при том же числе слотов, и «заплатил больше» перестаёт быть просто «купил ещё слот».</p>
+      <div class="tw"><table>
+        <caption>Потолок ёмкости растёт со ступенью вещи</caption>
+        <thead><tr><th>Ступень</th><th class="n">Потолок Σ</th><th>Доступные формы</th></tr></thead>
+        <tbody>
+          <tr><td>t0–t1</td><td class="n">2</td><td>2+0 · 1+1 · 0+2</td></tr>
+          <tr><td>t2</td><td class="n">3</td><td>3+0 · 2+1 · 1+2 · 0+3</td></tr>
+          <tr><td>t3–t4</td><td class="n">4</td><td>3+1 · 2+2 · 1+3</td></tr>
+          <tr><td>t5–t6</td><td class="n">5</td><td>3+2 · 2+3</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tw"><table>
+        <caption>Что игрок реально получает (200 000 бросков по весам аффиксов)</caption>
+        <thead><tr><th>Что</th><th class="n">Полезных аффиксов</th><th class="n">Против среднего дропа</th></tr></thead>
+        <tbody>
+          <tr><td>Средний найденный редкий</td><td class="n">2.22</td><td class="n">—</td></tr>
+          <tr><td>Скованная 2+2</td><td class="n">2.21</td><td class="n">−0.5 %</td></tr>
+          <tr><td>Скованная 3+1</td><td class="n">2.24</td><td class="n">+1 %</td></tr>
+          <tr><td>Скованная 3+2</td><td class="n"><strong>2.78</strong></td><td class="n"><strong>+25 %</strong>, цена ×6</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note warn">
+        <span class="lead-tag">новый глагол «зачаровать» и две правки в том же коммите</span>
+        <p>Движок не меняется ни на строку: <code>rollAffixes</code> уже принимает <code>slots</code> отдельным аргументом. Но <code>forgeReroll</code> берёт лимиты прямо из <code>rarities</code> и снесёт купленную форму первым же нажатием (шанс вернуть ровно 3+2 — 16.7 %), а <code>forgeGold</code> читает текущую редкость и даст скидку ×2.4 ровно на самом дорогом действии.</p>
+      </div>
+    </section>
+
+    <section id="ogolovye">
+      <div class="sechead"><span class="n">07</span><h2>Гнездо 4 — укус ↔ упор</h2></div>
+      <p>Здесь живут обе просьбы: «шанс наложения эффекта с противовесом» и «обыграть блок». Ось одна: <strong>чаще вешаешь статус ↔ крепче держишь удар</strong>.</p>
+      <div class="tw"><table>
+        <caption>Укус — рычаг по грани, а не одно число</caption>
+        <thead><tr><th>Грань / стихия</th><th>Статус</th><th class="n">База</th><th class="n">Стаков при 1 уд/с</th><th>Рычаг</th><th>Чем является</th></tr></thead>
+        <tbody>
+          <tr><td>Режущий</td><td>кровотечение</td><td class="n">0.25</td><td class="n">1.51 из 5</td><td class="mono">bleedChance +0.25</td><td>ДПС во времени</td></tr>
+          <tr><td>Рубящий</td><td>увечье</td><td class="n">0.50</td><td class="n"><strong>3.65 из 5</strong></td><td class="mono">sunderPower +0.15</td><td>+получаемый урон</td></tr>
+          <tr><td>Дробящий</td><td>ошеломление</td><td class="n">0.60</td><td class="n"><strong>6.25 из 8</strong></td><td class="mono">dazePower ≤ +0.06</td><td>контроль + броня</td></tr>
+          <tr><td>Колющий</td><td>рана</td><td class="n">0.20</td><td class="n">0.77 из 4</td><td class="mono">woundChance +0.50</td><td>чистая оборона</td></tr>
+          <tr><td>Огонь</td><td>поджиг</td><td class="n">0.10</td><td class="n">0.30 из 3</td><td class="mono">burnChance +0.50</td><td>ДПС во времени</td></tr>
+          <tr><td>Яд</td><td>отравление</td><td class="n">0.10</td><td class="n">0.40 из 5</td><td class="mono">poisonChance +0.60</td><td>ДПС во времени</td></tr>
+          <tr><td>Молния</td><td>шок</td><td class="n">0.12</td><td class="n">0.36 из 2</td><td class="mono">shockChance +0.60</td><td>+получаемый урон</td></tr>
+          <tr><td>Холод</td><td>заморозка</td><td class="n">0.15</td><td class="n">0.30 из 1</td><td class="mono">freezeChance +0.50</td><td>контроль</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note warn">
+        <span class="lead-tag">магнитуды посчитаны по реальной механике стаков</span>
+        <p><code>addDebuffStack</code> обновляет <strong>общий</strong> таймер всего стака, а не таймер на стак — поэтому стаки копятся почти до капа и сбрасываются целиком только при длинной паузе. Наивная модель «шанс × темп × длительность» даёт увечью 2.0 стака вместо реальных 3.65, ошеломлению 2.4 вместо 6.25, и все магнитуды по ней завышены в 1.5–2 раза. У рубящего рычаг вдобавок <strong>разворачивается с темпом</strong>: шанс ×1.5 стоит +4.8 % ДПС при 1.0 уд/с и всего +1.5 % при 1.4.</p>
+      </div>
+      <div class="note bad">
+        <span class="lead-tag">«у оружия есть свой небольшой шанс блока» — сегодня неверно для 44 баз из 50</span>
+        <p>Блок стоит ровно на шести: short-sword .08, long-sword .08, greatsword .06, short-spear .05, mace .04, dagger .03. У всех топоров, алебард, луков, арбалетов, жезлов, посохов и у гладиуса с клеймором его нет вовсе. Пока это так, «упор» у 44 баз платит нулём — <code>blockChance</code> клампится снизу нулём, и отрицательный мод съедается молча.</p>
+        <p>Лестница блока по классу (меч .08, копьё .06, алебарда и посох .05, кинжал и булава .04, топор, арбалет и жезл .03, лук — ноль) это чинит, но блок гасит урон <strong>полностью</strong>: долить 0.03 двуручному топору = +3.1 % eHP всем сразу. Это глобальный бафф выживаемости и требует прогона сима, а не одной правки конфига.</p>
+      </div>
+      <p>Цена стороны: <strong>+2.7…3.3 % эффективного HP</strong> против <strong>∓1…2 п.п. ДПС</strong>. Настоящая, но не решающая развилка — ровно то, что нужно.</p>
+    </section>
+
+    <section id="ves">
+      <div class="sechead"><span class="n">08</span><h2>Ловкость или сила — решает чертёж</h2></div>
+      <div class="tw"><table>
+        <thead><tr><th>Вес</th><th class="n">Ловк.</th><th class="n">Сила</th><th class="n">Инт.</th><th class="n">Масса</th><th>Примеры</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Сверхлёгкое</strong></td><td class="n">1.0</td><td class="n">—</td><td class="n">—</td><td class="n">3</td><td>кинжалы, короткий лук</td></tr>
+          <tr><td>Лёгкое</td><td class="n">0.65</td><td class="n">0.35</td><td class="n">—</td><td class="n">6</td><td>короткий меч, гладиус, ручной топор</td></tr>
+          <tr><td>Среднее</td><td class="n">0.5</td><td class="n">0.5</td><td class="n">—</td><td class="n">12</td><td>длинный меч, боевая секира, копьё</td></tr>
+          <tr><td>Массивное</td><td class="n">0.35</td><td class="n">0.65</td><td class="n">—</td><td class="n">18</td><td>двуручный меч, алебарда, осадный арбалет</td></tr>
+          <tr><td><strong>Тяжёлое</strong></td><td class="n">—</td><td class="n">1.0</td><td class="n">—</td><td class="n">25</td><td>боевой топор, молот, длинное копьё</td></tr>
+          <tr><td>Мистическое</td><td class="n">0.4</td><td class="n">—</td><td class="n">0.6</td><td class="n">6</td><td>жезлы</td></tr>
+          <tr><td>Волшебное</td><td class="n">—</td><td class="n">—</td><td class="n">1.0</td><td class="n">8</td><td>посохи</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note star">
+        <span class="lead-tag">эту ось нельзя купить деталью</span>
+        <p>Двигай вес деталь — чистый билд всегда сдвигал бы оружие к своему атрибуту и получал +30…40 % вклада даром. Хочешь меч под ловкача — куёшь короткий меч, а не длинный. Гибрид при этом получает ровно 45 на любом весе, чистый билд — свой край лестницы (15 против 75).</p>
+      </div>
+    </section>
+
+    <section id="forma">
+      <div class="sechead"><span class="n">09</span><h2>Форма: вариантов сколько угодно</h2></div>
+      <p><strong>Вариант — это точка на оси своего гнезда плюс имя и меш.</strong> Числа выводятся из поля <code>axis</code> умножением на шаг гнезда; руками в вариант не пишется ни одно число. Поэтому вариантов может быть сколько угодно, а балансная поверхность остаётся одной таблицей на четыре строки: контент растёт именами и силуэтами, баланс — нет.</p>
+      <div class="tw"><table>
+        <caption>Каталог ударного гнезда меча</caption>
+        <thead><tr><th>Вариант</th><th class="n">τ</th><th class="n">Урон</th><th class="n">Скорость</th><th>Редкость</th><th>Подпись в UI</th></tr></thead>
+        <tbody>
+          <tr><td>Широкое</td><td class="n">+1.0</td><td class="n">+10</td><td class="n">−8 %</td><td>обычный</td><td>удар крупнее, взмахов меньше</td></tr>
+          <tr><td>Фальшион</td><td class="n">+0.6</td><td class="n">+6</td><td class="n">−5 %</td><td>нечастый</td><td>тяжёлая кромка: рубит глубже, ведётся медленнее</td></tr>
+          <tr><td>Ромбическое</td><td class="n">+0.3</td><td class="n">+3</td><td class="n">−2 %</td><td>обычный</td><td>чуть тяжелее в кисти</td></tr>
+          <tr><td>Прямое</td><td class="n">0</td><td class="n">—</td><td class="n">—</td><td>обычный</td><td>эталон</td></tr>
+          <tr><td>Ложчатое</td><td class="n">−0.3</td><td class="n">−3</td><td class="n">+2 %</td><td>нечастый</td><td>долы снимают вес, темп чуть выше</td></tr>
+          <tr><td>Узкое</td><td class="n">−0.6</td><td class="n">−6</td><td class="n">+5 %</td><td>обычный</td><td>взмахов больше, каждый мельче</td></tr>
+          <tr><td>Изогнутое (ятаган)</td><td class="n">−0.8</td><td class="n">−8</td><td class="n">+6 %</td><td>нечастый</td><td>тянет рез: серии ударов и статусы чаще</td></tr>
+          <tr><td>Плоское</td><td class="n">−1.0</td><td class="n">−10</td><td class="n">+8 %</td><td>редкий</td><td>самый быстрый клинок в пуле</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tw"><table>
+        <caption>Тот же приём на других классах: меняются имя, силуэт и грань — не числа</caption>
+        <thead><tr><th>Класс</th><th>Гнездо 1 зовётся</th><th>Варианты</th></tr></thead>
+        <tbody>
+          <tr><td>Топор</td><td>Полотно</td><td>бородовидное · клиновое · широкое · чекан · двулезвийное</td></tr>
+          <tr><td>Булава</td><td>Било</td><td>шестопёр · гранёное · шаровое · клевец · ребристое</td></tr>
+          <tr><td>Копьё</td><td>Перо</td><td>листовое · гранёное · крылатое · иглоподобное · трёхгранное</td></tr>
+          <tr><td>Лук</td><td>Плечи</td><td>прямые · рекурсивные · короткие · длинные · усиленные</td></tr>
+          <tr><td>Посох</td><td>Фокус</td><td>шар · кристалл · череп · кольцо · венец</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="material">
+      <div class="sechead"><span class="n">10</span><h2>Материал: исторические лестницы</h2></div>
+      <p>У детали две независимые оси: <strong>форма</strong> (характер) и <strong>материал</strong> (какой ступени вещь из неё можно собрать). Полосы перекрываются — на каждом шве два материала: дешёвый на своём потолке и дорогой на своём полу.</p>
+      <div class="note star">
+        <span class="lead-tag">перекрытие — это настоящий выбор</span>
+        <p>Материал задаёт не только пол, но и <strong>потолок вещи</strong>: сковав t3 из уклада (его потолок), получаешь дешёвую вещь, которую уже никогда не поднять; сковав t3 из дамаска (его пол), платишь дороже, но оставляешь запас — эту вещь потом поднимет <code>forgeUpgrade</code> до t4 и t5.</p>
+      </div>
+      <div class="tw"><table>
+        <caption>Полоса одна и та же у всех восьми семей</caption>
+        <thead><tr><th>Ступень предмета</th><th class="n">ст. 1</th><th class="n">ст. 2</th><th class="n">ст. 3</th><th class="n">ст. 4</th><th class="n">ст. 5</th><th>На выбор</th></tr></thead>
+        <tbody>
+          <tr><td>t0 Убогий</td><td class="n">✔</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td>один</td></tr>
+          <tr><td>t1 Старый</td><td class="n">✔</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td>один</td></tr>
+          <tr><td>t2 Крепкий</td><td class="n">потолок</td><td class="n">пол</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td><strong>два</strong></td></tr>
+          <tr><td>t3 Отличный</td><td class="n">—</td><td class="n">потолок</td><td class="n">пол</td><td class="n">—</td><td class="n">—</td><td><strong>два</strong></td></tr>
+          <tr><td>t4 Мастерский</td><td class="n">—</td><td class="n">—</td><td class="n">потолок</td><td class="n">пол</td><td class="n">—</td><td><strong>два</strong></td></tr>
+          <tr><td>t5 Элитный</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">потолок</td><td class="n">пол</td><td><strong>два</strong></td></tr>
+          <tr><td>t6 Мифический</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">✔</td><td>один</td></tr>
+        </tbody>
+      </table></div>
+      <p>Отсюда бесплатно следует согласованность гнёзд: «сталь уже дамасская, а древко ещё трухлявое» невозможно <strong>по построению</strong>. На t3 игрок видит по всем гнёздам сразу: кричное железо против уклада, колотый ясень против граба в олифе, тисовый стан против рога с жилой, литая бронза против воронёной стали, гагат против обсидиана.</p>
+
+      <div class="note star">
+        <span class="lead-tag">фэнтези на доске ноль ступеней</span>
+        <p>История закрывает t0…t6 целиком, включая верх: булат, золочёный прибор, шёлк, пружинная сталь. «Небесное железо», «Эфирное стекло» и «Рог Разлома» с лестниц сняты — они уходят в уникумы и дроп с боссов, где им и место.</p>
+      </div>
+
+      <h3>Чёрный металл <code>iron</code> — кромка и масса</h3>
+      <p>Каркас владельца проверен и исправлен в одном месте: «низкокачественное» и «кричное» железо — это одно и то же. Разница идёт по <strong>руде</strong>, а между кричным железом и дамаском зияла целая эпоха — туда встал «уклад», момент, когда железо впервые начало брать закалку.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Материал</th><th class="n">Полоса</th><th>Что это исторически</th><th>Чем лучше</th><th>Чем платит</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Болотное железо</strong></td><td class="n">t0–t2</td><td>Сыродутный горн, болотная руда. Железо в нём не плавится — выходит крица, пористый ком со шлаком</td><td>Руда валяется под ногами</td><td>Фосфор даёт хладноломкость, шлаковые включения работают как надрезы, закалку не держит вовсе</td></tr>
+          <tr><td><strong>Кричное железо</strong></td><td class="n">t2–t3</td><td>Тот же горн, но нормальная руда и многократная проковка, выжимающая шлак. «Древесный» излом</td><td>Металл стал вязким — гнётся, но не колется</td><td>Углерода всё ещё нет: кромка мнётся, а не режет. Десятки проковок на брусок</td></tr>
+          <tr><td><strong>Уклад</strong></td><td class="n">t3–t4</td><td>Русская сырцовая сталь: цементация кричного железа в горне</td><td><strong>Впервые берёт закалку</strong></td><td>Углерод сидит только в корке и набрался неровно; монолитом не ковали, наваривали на железо</td></tr>
+          <tr><td><strong>Сварочный дамаск</strong></td><td class="n">t4–t5</td><td>Узорчатая сварка: пакет из полос разного сорта с наварными кромками. Японский родственник — кобусэ</td><td>Выигрыш конструктивный: вязкий сердечник не даёт переломиться. И это ответ на непостоянное сырьё</td><td>По металлографическим обзорам сам узор прочности не добавляет. Десятки швов — десятки мест расслоения</td></tr>
+          <tr><td><strong>Булат</strong></td><td class="n">t5–t6</td><td>Тигельная сталь: индийский вутц, дендритный узор. На Ближнем Востоке его клинки и звались «дамасскими»</td><td>Монолит, которому нечему расслаиваться. Карбидные полосы работают как микропила</td><td>Узкое окно ковки: перегрел — узор пропал навсегда. И слиток мал: <strong>одна лепёшка — один клинок</strong></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Древесина <code>wood</code> — восемь классов из десяти</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Материал</th><th class="n">Полоса</th><th>Что это</th><th>Чем платит</th></tr></thead>
+        <tbody>
+          <tr><td>Сырая сосна</td><td class="n">t0–t2</td><td>Мягкая хвоя, не просушенная</td><td>Вминается, колется вдоль, при высыхании расшатывает голову</td></tr>
+          <tr><td>Колотый ясень</td><td class="n">t2–t3</td><td>Ключ не в породе, а в <strong>расколе</strong>: колотая заготовка идёт по волокну, пилёная режет кольца поперёк</td><td>Колоть можно только прямослойный ствол — бо́льшая часть бревна в отход</td></tr>
+          <tr><td>Граб в олифе</td><td class="n">t3–t4</td><td>Олифа полимеризуется внутри волокон и запечатывает дерево от влаги</td><td>Тяжелее ясеня; масло надо сушить сезон</td></tr>
+          <tr><td>Морёный дуб</td><td class="n">t4–t5</td><td>Пролежал в болоте сотни лет: танины реагируют с железом грунта, дерево чернеет и минерализуется</td><td>Его не растят, его находят; сушить надо осторожно, брака много</td></tr>
+          <tr><td>Клееное древко</td><td class="n">t5–t6</td><td>Технология, а не порода: для длинных японских яри древки клеили из полос дерева и бамбука</td><td>Неделя работы против дня; клеевой шов расслаивается от сырости</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Остальные пять семей</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Семья</th><th>Ступени</th><th>Кого кормит</th></tr></thead>
+        <tbody>
+          <tr><td><code>stave</code> пружина</td><td>вязовое плечо · тисовый стан · рог и жила · варёный рог · пружинная сталь</td><td>плечи луков и дуги арбалетов</td></tr>
+          <tr><td><code>trim</code> прибор</td><td>чёрное железо · литая бронза · воронёная сталь · насечной прибор · золочёный прибор</td><td><strong>два гнезда у девяти классов</strong> — самый расходуемый материал в игре</td></tr>
+          <tr><td><code>focus</code> фокус</td><td>стеклянная паста · гагат · обсидиан · горный хрусталь · янтарь</td><td>сигнатурное гнездо жезлов и посохов</td></tr>
+          <tr><td><code>hide</code> кожа</td><td>+ оружейный сток</td><td>хват меча и кинжала, плюс кожаная броня</td></tr>
+          <tr><td><code>cloth</code> волокно</td><td>+ оружейный сток</td><td>тетива лука, плюс стёганая броня</td></tr>
+        </tbody>
+      </table></div>
+      <p>Восемь семей на игру, <strong>ровно три на любую вещь</strong>. Меч берёт железо, кожу и прибор; топор — железо, дерево и прибор; лук — плечи, дерево и волокно; посох — фокус, дерево и прибор.</p>
+
+      <div class="note star">
+        <span class="lead-tag">половина красивых материалов уехала в формы, а не в ступени</span>
+        <p>Витая латунная и серебряная проволока — <strong>форма</strong> оплётки поверх кожи (исторически проволоку мотали по коже, а не вместо неё). Лещина, тёрн, кладбищенский тис и эбен — <strong>формы</strong> ствола посоха. Кожа ската — <strong>форма</strong> хвата. Качество и характер — разные оси.</p>
+      </div>
+
+      <h3>Разбор наконец видит тир</h3>
+      <p>Сегодня ступень выпавшего сырья задаёт <strong>только редкость</strong> вещи, а тир не влияет вовсе: мифический обычный топор даёт ровно то же, что убогий обычный. Пяти ступеней из трёх редкостей не выжать.</p>
+      <pre class="flow">ступень = пол_полосы(тир вещи) + надбавка(редкость)
+  пол_полосы:  t0,t1,t2 → 1 · t3 → 2 · t4 → 3 · t5 → 4 · t6 → 5
+  надбавка:    обычная +0 · магическая +0.5 · редкая +1 · уникальная — не разбирается
+  дробь 0.5 округляется ВЕРОЯТНОСТНО — тем же rng.chance, что уже стоит в salvageFromItem</pre>
+      <div class="tw"><table>
+        <caption>Решение не надбавкой, а тождеством: ступень сырья = та, из которой вещь и была бы собрана</caption>
+        <thead><tr><th>Тир вещи</th><th class="n">обычная</th><th class="n">магическая</th><th class="n">редкая</th></tr></thead>
+        <tbody>
+          <tr><td>t0–t1</td><td class="n">1</td><td class="n">1</td><td class="n">1</td></tr>
+          <tr><td>t2</td><td class="n">1</td><td class="n">1 или 2</td><td class="n">2</td></tr>
+          <tr><td>t3</td><td class="n">2</td><td class="n">2 или 3</td><td class="n">3</td></tr>
+          <tr><td>t4</td><td class="n">3</td><td class="n">3 или 4</td><td class="n">4</td></tr>
+          <tr><td>t5</td><td class="n">4</td><td class="n">4 или 5</td><td class="n"><strong>5 Булат</strong></td></tr>
+          <tr><td>t6</td><td class="n">5</td><td class="n">5</td><td class="n">5</td></tr>
+        </tbody>
+      </table></div>
+      <p>Булат физически недостижим ниже t5; низ лестницы не умирает, потому что цена ковки <strong>относительная</strong> — вещь тира X всегда куётся из ступеней X−1 и X, то есть ровно из того, что на этом тире и падает; три редкости остаются различимы внутри окна из двух ступеней.</p>
+
+      <div class="note warn">
+        <span class="lead-tag">легенды, которые нельзя писать никогда</span>
+        <p>«Дамаск резал шёлк, падающий в воздухе». «Секрет булата утрачен навсегда» — <strong>производство прервалось, а не тайна исчезла</strong>, тигельную сталь с дендритным узором воспроизвели в 1990-х. «Викинги закаляли клинки в крови». «Японский меч складывали тысячу раз». «Кольчугу пробивал любой бодкин» — почти все исследованные бодкины оказались незакалёнными. Одна такая строка в тултипе обесценит остальные сорок.</p>
+        <p>Числа без источника из документа сняты сознательно: линии чёрного металла и прибора пришли без единой ссылки, поэтому вторые значащие цифры (твёрдость, проценты фосфора, точное окно ковки) убраны. Правдоподобие держится на механизме, а не на цифре, которую нечем подтвердить.</p>
+      </div>
+    </section>
+
+    <section id="stupen">
+      <div class="sechead"><span class="n">11</span><h2>Ступень вещи из деталей</h2></div>
+      <pre class="flow">tierLo  = max(нижняя граница полос четырёх материалов)   ← ниже не собрать
+tierHi  = min(верхняя граница полос, потолок журнала, base.maxTier)
+tier    = выбор игрока в [tierLo, tierHi]
+ilvl    = minItemLevel(tier)</pre>
+      <p>Дальше всё едет по существующему руслу без единой новой кривой: <code>pickTierClamped</code> → <code>statMult</code> масштабирует урон, <code>reqMult</code> — требования.</p>
+      <div class="note star">
+        <span class="lead-tag">деталь носит порог, а не собственную ступень</span>
+        <p>Будь у детали своя ступень, сборку «три дешёвые плюс одна t6» пришлось бы запрещать отдельным правилом. А так все четыре детали куются <strong>на ступени вещи и по её цене</strong> — дешёвой t6-детали не существует как объекта.</p>
+      </div>
+      <div class="note warn">
+        <span class="lead-tag">две ловушки</span>
+        <p><code>ilvl</code> берётся от ступени, а не от уровня героя: <code>rollSpec</code> всегда берёт лучшую доступную ступень аффикса, а высшая по оружию — ilvl 24, поэтому «по уровню героя» открывало бы станок — дешёвая t0-рама на 90-м уровне получала бы топовые аффиксы.</p>
+        <p><code>retierItem</code> пересобирает статы <strong>от базы</strong>, то есть подъём ступени молча сотрёт запечённый вклад деталей — причём поле <code>parts</code> переживёт, и вещь будет выглядеть правильной.</p>
+      </div>
+    </section>
+
+    <section id="zhurnal">
+      <div class="sechead"><span class="n">12</span><h2>Открытие деталей разбором</h2></div>
+      <p><strong>Чертежей как предметов нет.</strong> Разобрал вещь у кузнеца — открылась и её база, и четыре детали, которые в ней стояли. Один глагол, один поток открытий, и каждый мусорный дроп становится прогрессом.</p>
+      <div class="tw"><table>
+        <caption>Журнал живёт на аккаунте, рядом с кошельком материалов</caption>
+        <thead><tr><th>Ось журнала</th><th>Что хранит</th><th>Как открывается</th></tr></thead>
+        <tbody>
+          <tr><td>Варианты</td><td>множество открытых форм</td><td>первым же разбором вещи, где вариант стоял</td></tr>
+          <tr><td>Потолок ступени</td><td>одно число: высший разобранный тир</td><td>первым разбором вещи этого тира</td></tr>
+          <tr><td>Счётчик мификов</td><td>сколько t6 с меткой происхождения разобрано</td><td>ворота t6</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tw"><table>
+        <caption>Сколько это в убийствах (443 убийства/ч, 53.2 вещи/ч)</caption>
+        <thead><tr><th>Редкость варианта</th><th class="n">Вес</th><th class="n">Ожидание</th><th class="n">В часах</th><th class="n">95-й перцентиль</th></tr></thead>
+        <tbody>
+          <tr><td>Обычный</td><td class="n">10</td><td class="n">1 111</td><td class="n">2.5 ч</td><td class="n">7.4 ч</td></tr>
+          <tr><td>Нечастый</td><td class="n">4</td><td class="n">2 778</td><td class="n">6.3 ч</td><td class="n">18.5 ч</td></tr>
+          <tr><td>Редкий</td><td class="n">1</td><td class="n">5 556</td><td class="n">12.5 ч</td><td class="n"><strong>36.4 ч</strong></td></tr>
+        </tbody>
+      </table></div>
+      <div class="note star">
+        <span class="lead-tag">жалость — часть конструкции, а не украшение</span>
+        <p>Хвост распределения делает каталог издевательством, поэтому: <strong>8 разборов оружия своего класса дают «эскиз»</strong>, открывающий любой неоткрытый вариант этого класса на выбор. 2 667 убийств ≈ 6 ч — потолок ожидания вместо 36-часового хвоста.</p>
+      </div>
+      <div class="note bad">
+        <span class="lead-tag">ворота t6 сегодня невыполнимы: магазин — бесконечный кран</span>
+        <p><code>regenShop</code> зовётся на <strong>каждый</strong> вход в город и катает 15 оружий; ступень берётся детерминированно высшая, потому что <code>tierLevel</code> не передаётся — тогда как дроп передаёт бросок со смещением вниз. На 80-м уровне вся витрина t6, а <code>shopItemValue</code> тира не видит вовсе: обычный t6 ≈ <strong>339 золота ≈ 8 убийств</strong>. Двадцать мификов покупаются за 163 убийства вместо 22 часов фарма.</p>
+        <p>Лечится двумя правками, обе полезны сами по себе: передать <code>tierLevel</code> в <code>regenShop</code> (одна строка) и научить <code>shopItemValue</code> видеть тир.</p>
+      </div>
+    </section>
+
+    <section id="cena">
+      <div class="sechead"><span class="n">13</span><h2>Цена</h2></div>
+      <p>Две кассы, и они не пересекаются: <strong>сырьё за ковку, золото за зачарование</strong>. И цена ковки относительная, а не абсолютная — иначе низ лестницы умирает.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Действие</th><th>Сырьё</th><th>Золото</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Ковка вещи тира X</strong></td><td>30 единиц ступени X−1 + 10 единиц ступени X, всё ×M</td><td class="mono">300 × reqMult</td></tr>
+          <tr><td>Разложение по семьям — не поровну</td><td>сигнатурное гнездо 12+4 · геометрия 8+3 · прибор (два гнезда) 10+3</td><td>—</td></tr>
+          <tr><td><strong>Зачаровать</strong> до редкого</td><td>—</td><td class="mono">100 × reqMult × priceMult × M</td></tr>
+          <tr><td>Замена одной детали</td><td>10 дешёвой + 3 дорогой</td><td class="mono">100 × reqMult</td></tr>
+          <tr><td><strong>Переплавить</strong></td><td>50 % дешёвой и 100 % дорогой</td><td>—</td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>Цены продажи сырья:</strong> 1 · 4 · 12 · 36 · 108. Множитель ×3 не на глаз: замер прихода за 100 убийств (126 / 21 / 8) при ценах 1/4/12 даёт 126 / 84 / 96 золота — поток почти ровный, и ×3 его ровным оставляет. Шестой ступени нет намеренно: 330× вместо 108× превратило бы один стек верхнего сырья в состояние.</p>
+      <div class="note star">
+        <span class="lead-tag">сторож против прачечной золота</span>
+        <p>Ковка t5 стоит 30×36 + 10×108 = <strong>2 160</strong> в золотом эквиваленте, переплавка возвращает 15×36 + 10×108 = <strong>1 620</strong>. Денег не печатается — и это надо проверять на каждой паре соседних ступеней, а не только на верхней.</p>
+      </div>
+      <p><strong>Якорь:</strong> подъём до t6 стоит 2 000 золота. Ковка t6 верхней формы — 3 000 за ковку плюс ≈ 14 400 за зачарование, около <strong>17 400</strong>, то есть порядка 200 убийств на 80-м уровне. «Дорого очень» выполнено.</p>
+    </section>
+
+    <section id="matem">
+      <div class="sechead"><span class="n">14</span><h2>Что запекается в предмет</h2></div>
+      <pre class="flow">ковка:
+  база     = чертёж (items-base.json)
+  ступень  = из материалов и журнала
+  статы    = scaleBaseStats(база, statMult ступени)
+             + { damagePct: ±0.10, attackSpeed: ∓0.08 }   ← гнездо 1
+             + { reachMult, arcMult }                      ← гнездо 2 (ближний бой)
+             + { &lt;грань&gt;ChancePct | PowerPct, blockChance } ← гнездо 4
+  affixCap = { prefix, suffix }                            ← гнездо 3
+  parts    = четыре ИД (форма + материал)
+  аффиксы  = НЕТ. Вещь выходит обычной</pre>
+      <p>Детали не создают нового множительного слоя в бою: их вклад записывается в статы самого предмета — туда же, где живут урон и скорость любой найденной вещи. Любой новый множитель пришлось бы вручную вкрутить в бой, в ИИ, в симулятор и в калькулятор редактора; пропустишь одно — числа разойдутся молча.</p>
+      <p>Сервер считает сам: на предмете лежат только ИД деталей. Предпросмотр редактора и результат сервера считает <strong>одна чистая функция</strong> — иначе окно обещает не то, за что игрок платит. И предпросмотр показывает <strong>вилку, а не бросок</strong>.</p>
+    </section>
+
+    <section id="primery">
+      <div class="sechead"><span class="n">15</span><h2>Три примера</h2></div>
+      <p>Герой 40 уровня, длинный меч t4 (база 7–13 → 24–44), бонус урона +45 %, скорости +15 %.</p>
+      <div class="tw"><table>
+        <caption>Быстрый меч под статусы · плоский клинок, короткая рукоять, широкая гарда, оголовье в укус</caption>
+        <thead><tr><th></th><th class="n">Найденный редкий</th><th class="n">Скованный</th><th class="n">Разница</th></tr></thead>
+        <tbody>
+          <tr><td>ДПС</td><td class="n">122</td><td class="n">121</td><td class="n">−1 %</td></tr>
+          <tr><td>Ударов в секунду</td><td class="n">0.92</td><td class="n">1.01</td><td class="n">+9 %</td></tr>
+          <tr><td>Стаков кровотечения</td><td class="n">1.38</td><td class="n">1.79</td><td class="n"><strong>+30 %</strong></td></tr>
+          <tr><td>Площадь взмаха</td><td class="n">×1.00</td><td class="n">×1.00</td><td>нейтрально</td></tr>
+          <tr><td>Форма</td><td class="n">2+2 случайная</td><td class="n">1+3 выбрана</td><td>сопротивления и реген</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tw"><table>
+        <caption>Тяжёлый под один большой удар · широкий клинок, длинная рукоять, узкая гарда, оголовье в упор</caption>
+        <thead><tr><th></th><th class="n">Найденный редкий</th><th class="n">Скованный</th><th class="n">Разница</th></tr></thead>
+        <tbody>
+          <tr><td>ДПС</td><td class="n">122</td><td class="n">121</td><td class="n">−1 %</td></tr>
+          <tr><td>Урон одного удара</td><td class="n">133</td><td class="n">145</td><td class="n">+9 %</td></tr>
+          <tr><td>Дальность / дуга</td><td class="n">—</td><td class="n">×1.12 / ×0.797</td><td>дальше, но уже</td></tr>
+          <tr><td>Блок</td><td class="n">0.08</td><td class="n">0.10</td><td class="n">+2.6 % eHP</td></tr>
+          <tr><td>Форма</td><td class="n">2+2</td><td class="n">3+1</td><td>урон, крит, стихия</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tw"><table>
+        <caption>Попытка собрать имбу · всё в урон</caption>
+        <thead><tr><th>Что игрок хотел</th><th>Что вышло</th></tr></thead>
+        <tbody>
+          <tr><td>Сложить урон клинка и урон рукояти</td><td><strong>Нечем.</strong> Рукоять урона не даёт вовсе, и площадь взмаха у неё постоянна</td></tr>
+          <tr><td>Добрать урон статусом с оголовья</td><td>Можно — но оголовье тогда отдаёт блок в пол, и вещь становится стеклянной</td></tr>
+          <tr><td>ДПС</td><td>121 против 122 — <strong>−1 %</strong></td></tr>
+          <tr><td>Удар</td><td>+9 % на удар при −8 % частоты: тот же ДПС, иначе разложенный</td></tr>
+          <tr><td>Геометрия</td><td>дальше, но уже: по пачке из пяти бьёт одного</td></tr>
+        </tbody>
+      </table></div>
+      <p>Имба не выходит <strong>по построению</strong>: складывать нечего. Крайняя сборка перекладывает тот же ДПС в один крупный удар или в частые мелкие и платит за это геометрией, формой слотов и блоком.</p>
+    </section>
+
+    <section id="zamki">
+      <div class="sechead"><span class="n">16</span><h2>Шесть замков против имбы</h2></div>
+      <div class="tw"><table>
+        <thead><tr><th>Замок</th><th>Как работает</th><th>Чем проверяется</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Каркас — существующая база</strong></td><td>у скованного не может быть статов, которых нет у дропа</td><td>тест по всем 50 базам</td></tr>
+          <tr><td><strong>Одна ось ДПС</strong></td><td><code>mods</code> выводятся из <code>axis</code>, руками не пишутся</td><td>сдвиг от гнёзд 2–4 ≤ 3 % на реальном бою</td></tr>
+          <tr><td><strong>Площадь взмаха постоянна</strong></td><td>дуга × дальность² = const ± 3 %</td><td>сторож мерит <strong>число задетых целей</strong>, а не формулу</td></tr>
+          <tr><td><strong>Вес не покупается</strong></td><td>ось «ловкость ↔ сила» живёт в чертеже</td><td>тест «детали не пишут в доли атрибутов»</td></tr>
+          <tr><td><strong>Потолок ёмкости выведен из дропа</strong></td><td>Σ ≤ 5, префиксов ≤ 3, суффиксов ≤ 3</td><td>тест «ковка не даёт формы, которой нет у дропа»</td></tr>
+          <tr><td><strong>Переплавка вместо разбора</strong></td><td>у скованного свой глагол, журналу он не пишет</td><td>тест «не создаёт ни сырья, ни знаний»</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note warn">
+        <span class="lead-tag">последний замок держит сразу две прачечные</span>
+        <p>Сырья («скуй обычную → разбери как редкую») и знаний («накуй t1 ради журнала»). Плюс переплавка обходит <code>rerollLimit: 3</code> — единственное, что сегодня удерживает аффиксы от бесконечного пережимания; её цена обязана быть не ниже цены перекатки.</p>
+      </div>
+    </section>
+
+    <section id="ui">
+      <div class="sechead"><span class="n">17</span><h2>Экран ковки</h2></div>
+      <pre class="flow">Кузница → вкладка «Ковка»
+  1. Чертёж:   [Длинный меч ▾]      открытые · режет · средний вес
+  2. Ступень:  [t4 Мастерский ▾]    доступно до t5 · выше — разбери мифическую вещь
+  3. Материал: [Уклад ▾]            ст. 3 · t3–t4 · дешевле · ⚠ потолок вещи t4
+               [Сварочный дамаск]   ст. 4 · t4–t5 · дороже · вещь поднимется до t5
+  4. Клинок:   [Широкое ▾]          удар крупнее, взмахов меньше
+  5. Рукоять:  [Длинная ▾]          достаёт дальше, задевает уже
+  6. Гарда:    [Узкая 3+1 ▾]        три префикса — урон, крит, стихия
+  7. Оголовье: [Тяжёлое ▾]          держит удар крепче: блок 8 % → 10 %
+  8. [Ковать]  24–44 урона · 1.24 уд/с · требования 115 · сырьё 45/15/8 · 1 380 золота</pre>
+      <p>Полей восемь, но <strong>осмысленных решений пять</strong>: ступень и материал почти всегда берутся лучшие доступные, а четыре гнезда предзаполнены прошлым выбором.</p>
+      <ul class="plain">
+        <li><strong>Подпись говорит следствие с числом, а не стат.</strong> Не «+40 % bleedChancePct», а «кровотечение вешается чаще: 1.4 → 1.8 стака». Строка каталога без подписи — незаконченная строка данных, и это закон схемы.</li>
+        <li><strong>Потолок материала предупреждает заранее</strong> — иначе игрок узнает о нём через десять уровней.</li>
+        <li><strong>Серая кнопка объясняет себя:</strong> «не хватает 4 калёной стали».</li>
+        <li><strong>Сервер отказывает до списания</strong>, если пул аффиксов не наберёт оплаченную форму: <code>rollAffixes</code> при пустом пуле делает <code>break</code> молча.</li>
+      </ul>
+      <div class="note bad">
+        <span class="lead-tag">чего в системе не хватает</span>
+        <p><strong>Момента радости.</strong> Детерминизм вынес из ковки всю эмоцию: превью есть предмет. Лечение не в возврате азарта в ковку, а в переносе церемонии на <strong>зачарование</strong>, где случайность уже есть и законна. Ковка — спокойная, зачарование — громкое.</p>
+        <p><strong>Причины возвращаться.</strong> Куёшь оружие раз в двадцать уровней. Живой систему делает связка «разбор хлама кормит каталог» — и её надо поднять из механизма в фичу: страница каталога с силуэтами незакрытых деталей, счётчик «6 из 8 клинков меча», всплывашка прямо в момент разбора.</p>
+        <p><strong>Глагола «заменить деталь в найденной вещи».</strong> Система обслуживает только тех, кто кует с нуля; игрок с хорошим найденным раром не откроет вкладку никогда. А детали у найденной вещи уже выводятся детерминированно — значит слоты у неё есть. Самая крупная дыра в охвате, и стоит она одного глагола.</p>
+      </div>
+    </section>
+
+    <section id="vizual">
+      <div class="sechead"><span class="n">18</span><h2>Визуал</h2></div>
+      <p>Процедурное оружие уже собрано из нужных кусков: <code>weapon3d.ts</code> строит меч из четырёх примитивов — клинок, остриё, гарда, рукоять. Ровно наши гнёзда.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Фаза</th><th>Что рисуем</th><th>Объём</th></tr></thead>
+        <tbody>
+          <tr><td>Ф1</td><td>тинт по материалу + толщина ударной части параметром</td><td>почти ноль работы художнику</td></tr>
+          <tr><td>Ф2</td><td>5–8 GLB ударных частей на класс — они решают силуэт</td><td>~50 мешей</td></tr>
+          <tr><td>Ф3</td><td>свои держаки, обвязки и оголовья</td><td>по желанию</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note warn">
+        <span class="lead-tag">три шва до первой GLB</span>
+        <p><code>weapon3d.ts</code> — хардкод <code>if/else</code> на 14 видов с числами прямо в коде, у жезла меша нет вовсе; четыре куска реально собраны только у меча, кинжала и двуручника; <code>applyWeaponModels</code> сносит всех процедурных детей при появлении GLB. Плюс сосед по кооперативу деталей не увидит в принципе — от оружия пиру едет одно поле.</p>
+      </div>
+    </section>
+
+    <section id="kod">
+      <div class="sechead"><span class="n">19</span><h2>Что уже есть в коде</h2></div>
+      <div class="tw"><table>
+        <thead><tr><th>Шов</th><th>Где</th><th>Как используем</th></tr></thead>
+        <tbody>
+          <tr><td>Единая сборка предмета</td><td><code>itemgen.ts</code> — <code>buildItem</code></td><td>ковка становится вторым вызывающим ⚠ функция не экспортирована</td></tr>
+          <tr><td>Слоты аффиксов аргументом</td><td><code>rollAffixes(…, slots, …)</code></td><td>ёмкость = <strong>ноль правок движка</strong></td></tr>
+          <tr><td>Аккаунтное хранилище</td><td><code>AccountStash.materials?</code> + <code>withStash</code></td><td>готовое место для журнала вне персонажного сейва</td></tr>
+          <tr><td>Транзакция «сейв + сундук»</td><td><code>stashMove</code></td><td>ковка тратит сырьё аккаунта и рождает вещь персонажа — обязана идти тем же путём</td></tr>
+          <tr><td>Оракул баланса</td><td><code>session/microFight.ts</code></td><td>настоящий бой с DoT, статусами, темпом и ИИ</td></tr>
+          <tr><td>Пробой снаряда</td><td><code>proj.pierce</code>, <code>hitIds</code></td><td>ось держака стрелкового — плюс затухание</td></tr>
+          <tr><td>Физ-грани и статусы</td><td><code>phys-subtypes</code>, <code>debuffs</code>, статы <code>*ChancePct</code></td><td>гнездо 4 ничего не изобретает</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note warn">
+        <span class="lead-tag">ночной аудит заорёт в первую же ночь</span>
+        <p>Скованная вещь — это рождение в леджере: проверка метит выброс при ≥5× медианы созданных вещей за сутки, а другая сверяет причину со списком известных, где «craft» нет. Обе правки копеечные, но сработают сразу.</p>
+      </div>
+    </section>
+
+    <section id="dolgi">
+      <div class="sechead"><span class="n">20</span><h2>Долги: починить до ковки</h2></div>
+      <p>Ни одна из этих вещей ковкой не создана — но на каждой она встанет криво. Отдельным коммитом, до первой фазы.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Находка</th><th>Замер</th><th>Цена правки</th></tr></thead>
+        <tbody>
+          <tr><td>Веса оружия</td><td>было пять ступеней с провалом посередине</td><td><span class="done">сделано</span></td></tr>
+          <tr><td>Разбор брал всегда первую вещь</td><td>98.2 % оружейного сырья против 1.8 %</td><td><span class="done">сделано</span></td></tr>
+          <tr><td><strong>Магазин — бесконечный кран t6</strong></td><td>на 80-м вся витрина t6 по 339 золота ≈ 8 убийств</td><td><span class="stop">блокер</span> одна строка + цена</td></tr>
+          <tr><td><strong>Разбор не видит тир</strong></td><td>поля <code>tier</code> в записи разбора нет вовсе</td><td><span class="stop">блокер</span> поле + фолбэк</td></tr>
+          <tr><td><strong>Копья, алебарды и жезлы не носит никто</strong></td><td>топор 3, меч 2, посох 2, остальные по 1. Этих трёх — <strong>ноль</strong></td><td><span class="stop">блокер</span> три записи в json</td></tr>
+          <tr><td>Шанс статуса не клампится</td><td>деревья дают множитель до 1.788 — ошеломление уходит за 1.0</td><td>кламп 0.95</td></tr>
+          <tr><td>Ошеломление и увечье сломаны до всякой ковки</td><td>при 1 уд/с ошеломление держит 6.25 стака из 8 → броня цели ×0.70 и 0.24 стана за удар</td><td>отдельный проход</td></tr>
+          <tr><td><code>fmtMod</code> печатает «+» жёстко</td><td>у 38 аффиксов минусов нет ни одного, поэтому баг ни разу не срабатывал</td><td>две строки</td></tr>
+          <tr><td>Требования на t6 в капе</td><td>t0–t3 не давит ни на одну базу, t4 — на 2, t5 — на 24, <strong>t6 — на 42 из 50</strong></td><td>решение отдельно</td></tr>
+          <tr><td>Три аффикса урона в одной группе</td><td>вместе не выпадают никогда — форма 3+1 почти равна 2+2</td><td>разнести группы</td></tr>
+          <tr><td>Ступень аффикса не катается</td><td>всегда берётся лучшая доступная; высшая по оружию — ilvl 24</td><td>решение отдельно</td></tr>
+          <tr><td><code>twoHandedPowerMult</code> мёртв</td><td>не читает ни одна строка кода; двуручное отдаёт offhand и не получает ничего</td><td>решение отдельно</td></tr>
+          <tr><td>Симулятор не годится в оракулы</td><td><code>damagePct</code> весит 0, <code>attackSpeed</code> 60, блок недооценён в 11 раз</td><td>мерить <code>microFight</code></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="fazy">
+      <div class="sechead"><span class="n">21</span><h2>Фазы</h2></div>
+      <div class="tw"><table>
+        <thead><tr><th>Фаза</th><th>Что</th><th>Результат</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Ф0</td><td>Долги — всё из §20, без ковки вовсе</td><td>база под ковку честная</td></tr>
+          <tr><td class="mono">Ф1</td><td><strong>Контур:</strong> ковка без деталей и без ёмкости. Разобрал меч → база открылась → куёшь обычный меч выбранной ступени</td><td>прогоняет весь контур и <strong>не трогает ни одну боевую формулу</strong></td></tr>
+          <tr><td class="mono">Ф2</td><td>Материалы: восемь семей, лестницы, разбор по паре «тир × редкость»</td><td>«тиры запчастей» работают</td></tr>
+          <tr><td class="mono">Ф3</td><td>Ёмкость: поле на предмете, глагол «зачаровать» + правки перекатки и цены</td><td>«сперва база, потом редкость»</td></tr>
+          <tr><td class="mono">Ф4</td><td>Одно гнездо: только ударная часть, запекание, сторож на реальном бою</td><td>ось ДПС живая и померена</td></tr>
+          <tr><td class="mono">Ф5</td><td>Три остальных гнезда — только ближний бой (30 баз)</td><td>ковка целиком для тех, у кого всё живо</td></tr>
+          <tr><td class="mono">Ф6</td><td>Снаряд: константы в конфиг, пробой с затуханием</td><td>закрывает оставшиеся 20 баз</td></tr>
+          <tr><td class="mono">Ф7</td><td>Каталог и церемония зачарования</td><td>вкладка живёт между ковками</td></tr>
+          <tr><td class="mono">Ф8</td><td>Визуал: тинт и параметры, потом GLB</td><td>«модель собирается из частей»</td></tr>
+          <tr><td class="mono">Ф9</td><td>t6 и экономика — только после того, как закрыт кран лавки</td><td>верх доступен и дорог</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="proverka">
+      <div class="sechead"><span class="n">22</span><h2>Чем проверяем</h2></div>
+      <ul class="plain">
+        <li><strong>Разброс ДПС ≤ 8 % в объявленном конверте</strong>, на всех 50 базах, <strong>на реальном бою</strong> — не закрытой формулой. Сетка обязана шагать <strong>по темпу</strong>, а не только по ДПС: уптайм статуса — ступенька по ударам в секунду, и при неизменном ДПС она не видна.</li>
+        <li><strong>Инвариант объявляется на руку</strong>, дуал-вилд мерится отдельным прогоном.</li>
+        <li><strong>Число задетых целей</strong> в симе для гнезда 2 — иначе «площадь-нейтрально» останется формулой.</li>
+        <li><strong>Не прачечная:</strong> «сковать и переплавить» не создаёт ни сырья дороже потраченного, ни меток в журнале — ни на одном пути.</li>
+        <li><strong>Редактор ≡ сервер:</strong> предпросмотр совпадает с расчётом сервера до числа.</li>
+        <li><strong>Телеметрия:</strong> счётчик скованного и разобранного — иначе проверить «цена ≈ времени фарма» после запуска будет нечем.</li>
+      </ul>
+    </section>
+
+    <section id="net">
+      <div class="sechead"><span class="n">23</span><h2>Чего сознательно не делаем</h2></div>
+      <div class="tw"><table>
+        <thead><tr><th>Отвергнуто</th><th>Почему</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Вторая ось у ударной части</strong></td><td>25 ячеек вместо 5, три числа в тултипе; при дуал-вилде складывается и даёт +5.8 % вместо +3.4 %</td></tr>
+          <tr><td><strong>Статусный рычаг в двух гнёздах сразу</strong></td><td>статусные статы складываются аддитивно в одном пуле — та же «сумма вкладов», ради запрета которой заведено правило Р2</td></tr>
+          <tr><td><strong>Масса как торгуемая колонка</strong></td><td>вся лестница весов двигает нокдаун на 0.44 п.п.; потолок всей механики +2.37 % урона</td></tr>
+          <tr><td><strong>Дальность и разброс у стрелкового</strong></td><td>дальность — константа 1100 px при зрении 240–320; поля разброса у оружия нет вовсе</td></tr>
+          <tr><td><strong>Радиус снаряда как «геометрия»</strong></td><td>это весь коридор попадания — вторая ось ДПС под другим именем</td></tr>
+          <tr><td><strong>Покупка числа слотов</strong></td><td>полезность слота почти линейна — это ценник, а не выбор. Число слотов даёт ступень, выбор даёт форма</td></tr>
+          <tr><td><strong>Лестница редкости в два платежа</strong></td><td>два действия, ноль решений</td></tr>
+          <tr><td><strong>Отдельная семья под магию и под оплётку</strong></td><td>прибор исторически один гарнитур; оплётка уехала в кожу, а витая проволока стала формой</td></tr>
+          <tr><td><strong>Шестая ступень материала</strong></td><td>согласованность гнёзд выполнима только при одинаковой полосе</td></tr>
+          <tr><td><strong>Потолок материала по роли гнезда</strong></td><td>«булава не может быть t5» — запрет на ковку целого класса</td></tr>
+          <tr><td><strong>Ролл качества у детали</strong></td><td>случайность в том, ЧТО дала система, ломает правило Р3</td></tr>
+          <tr><td><strong>Ковка брони</strong></td><td>второй заход ⚠ но решить надо сейчас: у брони группа жизни общая у префикса и суффикса, оплаченный сплит может не набраться</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </main>
+
+  <footer>
+    Документ решений, а не заявка на реализацию. Источник — <code>docs/CRAFT_WEAPONS.md</code>; экономика сырья и ступени — <code>docs/ECONOMY.md</code>.
+  </footer>
+</div>
+
+</body></html>

@@ -1,0 +1,444 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Кластер и потолок</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground: #EBEEEC; --surface: #FFFFFF; --surface-2: #F3F6F4;
+    --ink: #12181A; --ink-2: #354345; --muted: #647576;
+    --line: #D2DCD8; --line-strong: #B4C3BE;
+    --accent: #0F6E63; --accent-soft: #D9EAE6;
+    --ok: #2F7D5B; --warn: #96690A; --crit: #A32B23; --crit-soft: #F5DEDB;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+      --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+      --line: #253133; --line-strong: #34464A;
+      --accent: #45B7A5; --accent-soft: #12312E;
+      --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+    --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+    --line: #253133; --line-strong: #34464A;
+    --accent: #45B7A5; --accent-soft: #12312E;
+    --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: "IBM Plex Serif", Georgia, serif; font-size: 17px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .deck { height: 100svh; overflow-y: auto; scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { .deck { scroll-behavior: auto; } }
+  .slide {
+    min-height: 100svh; scroll-snap-align: start; scroll-snap-stop: always;
+    display: grid; align-content: center; padding: 64px 40px 72px;
+  }
+  .inner { max-width: 1020px; margin: 0 auto; width: 100%; }
+  @media (max-width: 640px) { .slide { padding: 48px 20px 60px; } }
+
+  h1, h2, h3, .label, th, .num { font-family: "IBM Plex Sans Condensed", system-ui, sans-serif; }
+  h1 { font-size: clamp(34px, 6vw, 68px); line-height: 1.02; letter-spacing: -.02em; margin: 0 0 18px; font-weight: 700; text-wrap: balance; }
+  h2 { font-size: clamp(24px, 3.4vw, 38px); line-height: 1.08; letter-spacing: -.015em; margin: 0 0 20px; font-weight: 700; text-wrap: balance; }
+  h3 { font-size: 18px; margin: 0 0 6px; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  .lead { font-size: clamp(17px, 2vw, 21px); color: var(--ink-2); max-width: 62ch; }
+  .label { font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 14px; display: block; }
+  code { font-family: "IBM Plex Mono", monospace; font-size: .87em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: .5px 5px; }
+  strong { font-weight: 600; }
+  .muted { color: var(--muted); }
+
+  /* большие числа */
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 2px; background: var(--line); border: 1px solid var(--line); margin: 26px 0 8px; }
+  .fig { background: var(--surface); padding: 20px 22px; }
+  .fig .num { display: block; font-size: clamp(30px, 4.6vw, 50px); line-height: 1; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .fig .cap { display: block; margin-top: 8px; font-size: 14px; color: var(--muted); }
+  .fig .was { display: block; margin-top: 3px; font-size: 13px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+  .fig.hero .num { color: var(--accent); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 15px; background: var(--surface); }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); margin: 18px 0; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); }
+  thead th { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tr.hi td { background: var(--accent-soft); font-weight: 600; }
+  tr.bad td { color: var(--crit); }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+  @media (max-width: 780px) { .cols { grid-template-columns: 1fr; gap: 20px; } }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 16px 18px; }
+  .card.crit { border-left-color: var(--crit); }
+  .card.warn { border-left-color: var(--warn); }
+  .card p:last-child { margin-bottom: 0; }
+
+  ol.rakes { list-style: none; padding: 0; margin: 18px 0 0; counter-reset: r; }
+  ol.rakes li { counter-increment: r; position: relative; padding: 14px 0 14px 52px; border-bottom: 1px solid var(--line); }
+  ol.rakes li:last-child { border-bottom: 0; }
+  ol.rakes li::before {
+    content: counter(r); position: absolute; left: 0; top: 13px;
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--crit);
+    border: 1px solid var(--line-strong); width: 30px; height: 26px; display: grid; place-items: center;
+  }
+
+  /* полоса «одно ядро» */
+  .bar { display: flex; align-items: center; gap: 10px; }
+  .bar .track { position: relative; flex: 1; max-width: 150px; height: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+  .bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+  .bar i.over { background: var(--crit); }
+  .bar span { font-family: "IBM Plex Mono", monospace; font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* навигация */
+  .dots { position: fixed; right: 18px; top: 50%; transform: translateY(-50%); display: grid; gap: 9px; z-index: 5; }
+  .dots a { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); display: block; text-decoration: none; }
+  .dots a[aria-current="true"] { background: var(--accent); transform: scale(1.4); }
+  .dots a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .foot { position: fixed; left: 18px; bottom: 14px; font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted); z-index: 5; }
+  @media (max-width: 640px) { .dots { display: none; } }
+</style>
+
+<div class="deck" id="deck">
+
+<!-- 1 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s1"><div class="inner">
+  <span class="label">Отчёт за ночь · 9 сентября 2026</span>
+  <h1>Кластер: сервер перестал упираться в одно ядро</h1>
+  <p class="lead">
+    Сделана фаза 4 плана — раскладка по процессам. Плюс включён uWebSockets, проверены
+    границы (очередь на вход, снятие узла) и пересчитано железо по фактическим числам.
+    Ниже — всё, что измерено, включая то, что вышло хуже ожидаемого.
+  </p>
+  <div class="figures">
+    <div class="fig hero"><span class="num">1000</span><span class="cap">игроков на одном сервере</span><span class="was">было 400 · в начале работ 50</span></div>
+    <div class="fig"><span class="num">7 мс</span><span class="cap">задержка на потолке</span><span class="was">в начале 12 449 мс</span></div>
+    <div class="fig"><span class="num">20,0</span><span class="cap">кадров мира в секунду</span><span class="was">норма 20 — держится ровно</span></div>
+    <div class="fig"><span class="num">0</span><span class="cap">расхождений в 318 543 сверках</span><span class="was">протокол не врёт</span></div>
+  </div>
+</div></section>
+
+<!-- 2 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s2"><div class="inner">
+  <span class="label">Путь</span>
+  <h2>Откуда пришли: ×20 по игрокам за все фазы</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Этап</th><th class="n">Игроков</th><th class="n">Задержка</th><th class="n">Трафик</th><th>Что дало</th></tr></thead>
+    <tbody>
+      <tr><td>Исходное состояние</td><td class="n">50</td><td class="n">12 449 мс</td><td class="n">228 КБ/с</td><td>на 100 — коллапс, мир шёл 13,9 Гц вместо 30</td></tr>
+      <tr><td>Ф0 — пожары</td><td class="n">100</td><td class="n">14 мс</td><td class="n">228 КБ/с</td><td>сжатие прочь, единый планировщик, замок, лимиты</td></tr>
+      <tr><td>Ф1 — протокол</td><td class="n">150</td><td class="n">10 мс</td><td class="n">6,2 КБ/с</td><td>дельты, область интереса, бинарный кадр</td></tr>
+      <tr><td>Ф2 — предметы</td><td class="n">150</td><td class="n">10 мс</td><td class="n">6,2 КБ/с</td><td>Postgres, леджер вещей, журнал происхождения</td></tr>
+      <tr><td>Ф3 — античит</td><td class="n">150</td><td class="n">10 мс</td><td class="n">6,2 КБ/с</td><td>телеметрия, детектор, границы команд</td></tr>
+      <tr><td>Общий кадр на комнату</td><td class="n">400</td><td class="n">14 мс</td><td class="n">10,5 КБ/с</td><td>вид мира один на всех в комнате</td></tr>
+      <tr><td>uWebSockets</td><td class="n">400</td><td class="n">14 мс</td><td class="n">11,3 КБ/с</td><td>−9…12 % CPU там, где транспорт стал главной работой</td></tr>
+      <tr class="hi"><td>Ф4 — кластер</td><td class="n">1000</td><td class="n">7 мс</td><td class="n">11,5 КБ/с</td><td>гейтвей + 4 игровых процесса</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted" style="font-size:14.5px">
+    Пати по 4, ввод 30 Гц, одна и та же машина (16 ядер). Трафик после общего кадра вырос
+    осознанно: клиент получает весь этаж — так задумана общая миникарта у пати.
+  </p>
+</div></section>
+
+<!-- 3 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s3"><div class="inner">
+  <span class="label">Что построено</span>
+  <h2>Ф4: четыре роли одного процесса</h2>
+  <div class="cols">
+    <div>
+      <div class="card"><h3>Супервизор</h3><p>Поднимает гейтвей и ноды, перезапускает упавших. Падение ноды не роняет кластер.</p></div>
+      <div class="card" style="margin-top:14px"><h3>Гейтвей</h3><p>HTTP, аккаунты, конфиг, статика, маршрутизация и очередь. <strong>Игру не проксирует</strong> — иначе вся разложенная работа снова сошлась бы в одном процессе.</p></div>
+    </div>
+    <div>
+      <div class="card"><h3>Игровая нода</h3><p>Только WebSocket и комнаты. Своё ядро, свой порт, своё сердцебиение в реестр.</p></div>
+      <div class="card" style="margin-top:14px"><h3>Одиночный режим</h3><p>Всё в одном процессе — как было. Остался умолчанием: для разработки, стенда и малого онлайна кластер не нужен.</p></div>
+    </div>
+  </div>
+  <div class="card warn" style="margin-top:22px">
+    <h3>Два решения, принятых против буквы плана</h3>
+    <p>
+      <strong>Реестр в Postgres, а не в Redis.</strong> Обращений единицы в секунду — вход, выход,
+      сердцебиение раз в две секунды. Вторая база ради этого — лишняя движущаяся часть в бою.
+      Интерфейс узкий, подмена позже — работа на час.
+    </p>
+    <p>
+      <strong>Глобальный замок сведён к локальному.</strong> Персонаж атомарно закрепляется за нодой,
+      и второй вход тем же персонажем попадает на ТУ ЖЕ ноду, где выселение работает с Ф0.3
+      и покрыто тестами. Новой сложности не появилось вовсе.
+    </p>
+  </div>
+</div></section>
+
+<!-- 4 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s4"><div class="inner">
+  <span class="label">Замер · потолок</span>
+  <h2>Четыре ноды: где кластер перестал держать</h2>
+  <div class="scroll"><table>
+    <thead><tr><th class="n">Игроков</th><th class="n">Кадры/с</th><th class="n">Тик</th><th class="n">RTT мед./p95</th><th class="n">КБ/с</th><th>CPU кластера</th></tr></thead>
+    <tbody>
+      <tr><td class="n">200</td><td class="n">20,0</td><td class="n">30,0</td><td class="n">3 / 3 мс</td><td class="n">12,9</td><td><div class="bar"><div class="track"><i style="width:18%"></i></div><span>91 %</span></div></td></tr>
+      <tr><td class="n">400</td><td class="n">20,0</td><td class="n">30,0</td><td class="n">4 / 5 мс</td><td class="n">12,5</td><td><div class="bar"><div class="track"><i style="width:31%"></i></div><span>155 %</span></div></td></tr>
+      <tr><td class="n">600</td><td class="n">20,0</td><td class="n">29,9</td><td class="n">4 / 6 мс</td><td class="n">12,2</td><td><div class="bar"><div class="track"><i style="width:47%"></i></div><span>233 %</span></div></td></tr>
+      <tr><td class="n">800</td><td class="n">20,0</td><td class="n">30,1</td><td class="n">5 / 6 мс</td><td class="n">11,7</td><td><div class="bar"><div class="track"><i style="width:61%"></i></div><span>304 %</span></div></td></tr>
+      <tr class="hi"><td class="n">1000</td><td class="n">20,0</td><td class="n">30,0</td><td class="n">7 / 11 мс</td><td class="n">11,5</td><td><div class="bar"><div class="track"><i style="width:77%"></i></div><span>386 %</span></div></td></tr>
+      <tr class="bad"><td class="n">1200</td><td class="n">16,5 ✗</td><td class="n">30,0</td><td class="n">30 / 50 мс</td><td class="n">9,0</td><td><div class="bar"><div class="track"><i class="over" style="width:89%"></i></div><span>446 %</span></div></td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    Полоса — доля <em>четырёх</em> ядер. Раскладка на предельной ступени ровная:
+    <strong>303 / 298 / 301 / 298</strong> игроков и 86 / 81 / 81 / 77 комнат — гейтвей держит баланс сам.
+  </p>
+</div></section>
+
+<!-- 5 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s5"><div class="inner">
+  <span class="label">Замер · масштабирование</span>
+  <h2>Одна нагрузка, разное число нод</h2>
+  <p class="lead">
+    Поиск потолка не отвечает, растёт ли отдача линейно: там меняется и нагрузка, и число
+    процессов сразу. Поэтому отдельный замер — 600 игроков на 1, 2, 4 и 8 нодах, прогоны подряд.
+  </p>
+  <div class="scroll"><table>
+    <thead><tr><th class="n">Нод</th><th class="n">Кадры/с</th><th class="n">RTT мед./p95</th><th class="n">CPU</th><th class="n">Память</th><th>Чем платим</th></tr></thead>
+    <tbody>
+      <tr class="bad"><td class="n">1</td><td colspan="4">процесс не принял 600 игроков — ступень не собралась</td><td>—</td></tr>
+      <tr><td class="n">2</td><td class="n">19,5</td><td class="n">14 / 18 мс</td><td class="n">211 %</td><td class="n">812 МБ</td><td>кадры на грани нормы</td></tr>
+      <tr class="hi"><td class="n">4</td><td class="n">20,0</td><td class="n">5 / 5 мс</td><td class="n">245 %</td><td class="n">1368 МБ</td><td>+16 % CPU к двум нодам</td></tr>
+      <tr><td class="n">8</td><td class="n">20,0</td><td class="n">3 / 4 мс</td><td class="n">314 %</td><td class="n">2505 МБ</td><td>+49 % CPU, память втрое</td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    Читается так: <strong>ноды покупают задержку и запас, а платят процессором и памятью.</strong>
+    От двух к восьми задержка падает вчетверо, но каждый процесс несёт свой конфиг и свою кучу —
+    около 270 МБ на ноду. Для 600 игроков четыре ноды — точка, после которой доплата перестаёт
+    окупаться.
+  </p>
+</div></section>
+
+<!-- 6 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s6"><div class="inner">
+  <span class="label">Честно</span>
+  <h2>Кластер не бесплатен: ядро подешевело на треть</h2>
+  <div class="figures">
+    <div class="fig"><span class="num">400</span><span class="cap">игроков на ядро в одиночку</span></div>
+    <div class="fig"><span class="num">250</span><span class="cap">игроков на ноду в кластере</span><span class="was">1000 ÷ 4</span></div>
+    <div class="fig hero"><span class="num">×2,5</span><span class="cap">множитель от четырёх нод</span><span class="was">а не ×4, как хотелось бы</span></div>
+  </div>
+  <p style="margin-top:22px">
+    Четыре занятых процесса конкурируют за память и кэш, под ними общая база, рядом гейтвей.
+    Это не мешает — пятнадцать простаивавших ядер всё равно дают больше, чем одно, — но
+    множитель честнее считать как <strong>×2,5 на четырёх нодах</strong>, а не по числу процессов.
+  </p>
+  <div class="card crit">
+    <p>
+      Из этого следует практический вывод: <strong>прикидку по железу пришлось пересчитать.</strong>
+      Вчерашние оценки исходили из 400 игроков на ядро — реальность кластера даёт 250,
+      и цена за игрока выросла примерно в полтора раза. Обновлённая таблица — на следующем слайде.
+    </p>
+  </div>
+</div></section>
+
+<!-- 7 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s7"><div class="inner">
+  <span class="label">Границы</span>
+  <h2>Что происходит, когда мест нет и когда узел уходит</h2>
+  <div class="cols">
+    <div>
+      <h3>Очередь на вход</h3>
+      <p class="muted" style="font-size:14.5px">Потолок 30, желающих 50.</p>
+      <div class="scroll"><table><tbody>
+        <tr><td>Впущено сразу</td><td class="n">30</td></tr>
+        <tr><td>Поставлено в очередь</td><td class="n">20</td></tr>
+        <tr><td>Освободили мест</td><td class="n">5</td></tr>
+        <tr class="hi"><td>Прошли из очереди</td><td class="n">ровно 5</td></tr>
+      </tbody></table></div>
+      <p style="font-size:15px">
+        На потолке новый игрок и так не мог зайти: цикл занят игрой. Очередь превращает
+        «не могу подключиться» в «вы девятый».
+      </p>
+    </div>
+    <div>
+      <h3>Снятие узла под нагрузкой</h3>
+      <p class="muted" style="font-size:14.5px">3 ноды, 40 игроков, снимаем самую нагруженную.</p>
+      <div class="scroll"><table><tbody>
+        <tr><td>Игроки на снятом узле</td><td class="n">14 → 0</td></tr>
+        <tr><td>Соседние узлы</td><td class="n">13 / 13 без изменений</td></tr>
+        <tr class="hi"><td>Игрок вернулся в игру</td><td class="n">да, прогресс цел</td></tr>
+      </tbody></table></div>
+      <p style="font-size:15px">
+        Это и есть выкатка без простоя: снять узел, дождаться пустоты, перезапустить —
+        и так по одному.
+      </p>
+    </div>
+  </div>
+</div></section>
+
+<!-- 8 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s8"><div class="inner">
+  <span class="label">Грабли</span>
+  <h2>Три вещи, которые нашёл первый же запуск кластера</h2>
+  <ol class="rakes">
+    <li>
+      <strong>Пять процессов одновременно создавали схему.</strong> «Триггер уже существует» —
+      и половина кластера не поднялась. Схема теперь заводится под консультативной блокировкой
+      базы: DDL выполняет ровно один процесс, остальные ждут.
+    </li>
+    <li>
+      <strong>Порты столкнулись.</strong> В режиме uWS express уезжает на <code>PORT+1</code> —
+      а там уже сидела СЛЕДУЮЩАЯ нода. Боты получали HTTP 200 вместо рукопожатия WebSocket.
+      Внутренние порты разведены в отдельный диапазон.
+    </li>
+    <li>
+      <strong>Всплеск подключений уходил на один узел</strong> — 40 / 0 / 0 / 0. Показатели
+      приходят раз в две секунды, и сорок человек видели «везде по нулю». Гейтвей теперь
+      прибавляет уже выданные, но ещё не отражённые направления: стало 12 / 8 / 8 / 12.
+      Ровно та же поправка понадобилась очереди — без неё потолок 30 пропускал всех 50.
+    </li>
+  </ol>
+  <p class="muted" style="margin-top:20px; font-size:14.5px">
+    Все три — про рассинхрон между «что уже произошло» и «что кластер про это знает».
+    Это типовая цена распределённости, и её стоит держать в голове при любой следующей правке.
+  </p>
+</div></section>
+
+<!-- 9 ─────────────────────────────────────────────────────── -->
+<section class="slide" id="s9"><div class="inner">
+  <span class="label">Железо · пересчёт</span>
+  <h2>Канал упирается раньше процессора</h2>
+  <p class="lead">
+    При 11,5 КБ/с полезной нагрузки плюс заголовки выходит 12,8 КБ/с на игрока.
+    Гигабитный канал — <strong>6 835 игроков</strong> при разумной загрузке 70 %
+    (9 765 теоретический максимум).
+  </p>
+  <div class="scroll"><table>
+    <thead><tr><th>Сервер</th><th class="n">Ядер</th><th class="n">₽/мес</th><th class="n">Игроков</th><th>Упор</th><th class="n">₽/игрок</th></tr></thead>
+    <tbody>
+      <tr class="hi"><td>2 × AMD EPYC 7452</td><td class="n">64</td><td class="n">43 460</td><td class="n">6 835</td><td>канал</td><td class="n">6,4</td></tr>
+      <tr><td>2 × Xeon Gold 6242R</td><td class="n">40</td><td class="n">53 840</td><td class="n">5 925</td><td>процессор</td><td class="n">9,1</td></tr>
+      <tr><td>AMD Ryzen 9 7950X</td><td class="n">16</td><td class="n">37 300</td><td class="n">3 750</td><td>процессор</td><td class="n">9,9</td></tr>
+      <tr><td>2 × Xeon Silver 4114</td><td class="n">20</td><td class="n">23 160</td><td class="n">2 250</td><td>процессор</td><td class="n">10,3</td></tr>
+      <tr><td>Xeon E-2236</td><td class="n">6</td><td class="n">11 960</td><td class="n">1 001</td><td>процессор</td><td class="n">11,9</td></tr>
+      <tr class="bad"><td>2 × Xeon 6710E (E-ядра)</td><td class="n">128</td><td class="n">108 230</td><td class="n">6 835</td><td>канал</td><td class="n">15,8</td></tr>
+    </tbody>
+  </table></div>
+  <div class="cols">
+    <div class="card"><h3>Рекомендация</h3><p><strong>2 × EPYC 7452 за 43 460 ₽</strong> — единственная машина, которая забивает гигабит целиком, и самая дешёвая на игрока. Запас по процессору вдвое — это место под утяжеление контента.</p></div>
+    <div class="card warn"><h3>Но не сегодня</h3><p>Для первой тысячи игроков хватит <strong>Xeon E-2236 за 11 960 ₽</strong>. Дорогая машина окупается только когда онлайн перевалит за две-три тысячи; до этого она простаивает.</p></div>
+  </div>
+</div></section>
+
+<!-- 10 ────────────────────────────────────────────────────── -->
+<section class="slide" id="s10"><div class="inner">
+  <span class="label">Что дальше</span>
+  <h2>Чего этот замер не проверял</h2>
+  <div class="cols">
+    <div>
+      <div class="card crit">
+        <h3>Долгая работа</h3>
+        <p>Прогоны — минуты, а не часы. Утечки памяти, дрейф и накопление в базе видны только на суточном прогоне.</p>
+      </div>
+      <div class="card crit" style="margin-top:14px">
+        <h3>Отказ базы</h3>
+        <p>Что делает кластер, когда Postgres недоступен, не проверялось вовсе. Сейчас узлы просто не смогут писать сейвы.</p>
+      </div>
+      <div class="card crit" style="margin-top:14px">
+        <h3>Живой 3D-клиент</h3>
+        <p>Он теперь рисует всех монстров этажа, а не ближних. На стенде это не видно — боты не рисуют. Нужен взгляд глазами.</p>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Ф4.6 — регионы</h3>
+        <p>В плане помечено как задел, не работа. Комната не должна выезжать за регион; аккаунты глобальные, персонажи региональные.</p>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>Привязка к ядрам (NUMA)</h3>
+        <p>На двухсокетной машине половину нод надо прибить к каждому узлу памяти. Делается снаружи (<code>numactl</code>), на нашей машине проверить негде.</p>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>Разбор ввода</h3>
+        <p>Двенадцать тысяч <code>JSON.parse</code> в секунду на потолке. Бинарный кадр ввода — та же правка, что уже сделана для кадров мира, но в другую сторону.</p>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 11 ────────────────────────────────────────────────────── -->
+<section class="slide" id="s11"><div class="inner">
+  <span class="label">Итог</span>
+  <h2>План закрыт целиком: Ф0 – Ф4</h2>
+  <div class="figures">
+    <div class="fig hero"><span class="num">×20</span><span class="cap">игроков на сервер</span><span class="was">50 → 1000</span></div>
+    <div class="fig"><span class="num">÷1800</span><span class="cap">задержка</span><span class="was">12 449 → 7 мс</span></div>
+    <div class="fig"><span class="num">÷20</span><span class="cap">трафик на игрока</span><span class="was">228 → 11,5 КБ/с</span></div>
+    <div class="fig"><span class="num">1125</span><span class="cap">тестов зелёные</span><span class="was">из них 7 против живой базы</span></div>
+  </div>
+  <p style="margin-top:24px">
+    Дюп закрыт и оснащён журналом происхождения, античит помечает без автобанов, предметы
+    стали данными, хранилище переехало на Postgres, протокол ужат в тридцать раз, а сервер
+    научился занимать все ядра машины.
+  </p>
+  <p class="muted" style="font-size:14.5px">
+    Все команды и полные протоколы прогонов — в <code>packages/server/src/loadtest/README.md</code>.
+    Ход работ — в истории коммитов ветки <code>feat/3d-online-client</code>.
+  </p>
+</div></section>
+
+</div>
+
+<nav class="dots" id="dots" aria-label="Слайды"></nav>
+<div class="foot" id="foot">1 / 11</div>
+
+<script>
+  (function () {
+    var deck = document.getElementById('deck');
+    var slides = Array.prototype.slice.call(deck.querySelectorAll('.slide'));
+    var dots = document.getElementById('dots');
+    var foot = document.getElementById('foot');
+
+    slides.forEach(function (s, i) {
+      var a = document.createElement('a');
+      a.href = '#' + s.id;
+      a.setAttribute('aria-label', 'Слайд ' + (i + 1));
+      dots.appendChild(a);
+    });
+    var links = Array.prototype.slice.call(dots.children);
+
+    var current = 0;
+    function mark(i) {
+      if (i === current) return;
+      current = i;
+      links.forEach(function (a, j) { a.setAttribute('aria-current', j === i ? 'true' : 'false'); });
+      foot.textContent = (i + 1) + ' / ' + slides.length;
+    }
+    mark(0);
+
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) mark(slides.indexOf(e.target));
+        });
+      }, { root: deck, threshold: 0.55 });
+      slides.forEach(function (s) { io.observe(s); });
+    }
+
+    // Стрелки и пробел — как в любой презентации.
+    document.addEventListener('keydown', function (e) {
+      var next = e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ';
+      var prev = e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp';
+      if (!next && !prev) return;
+      e.preventDefault();
+      var i = Math.max(0, Math.min(slides.length - 1, current + (next ? 1 : -1)));
+      slides[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  })();
+</script>
+
+</body></html>

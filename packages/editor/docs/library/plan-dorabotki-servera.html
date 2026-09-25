@@ -1,0 +1,1325 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>План доработки сервера</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground: #EBEEEC; --surface: #FFFFFF; --surface-2: #F3F6F4;
+    --ink: #12181A; --ink-2: #354345; --muted: #647576;
+    --line: #D2DCD8; --line-strong: #B4C3BE;
+    --accent: #0F6E63; --accent-soft: #D9EAE6;
+    --ok: #2F7D5B; --warn: #96690A; --crit: #A32B23; --crit-soft: #F5DEDB;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+      --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+      --line: #253133; --line-strong: #34464A;
+      --accent: #45B7A5; --accent-soft: #12312E;
+      --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D1214; --surface: #141C1E; --surface-2: #192325;
+    --ink: #E3EBE8; --ink-2: #BCCBC7; --muted: #8B9C9A;
+    --line: #253133; --line-strong: #34464A;
+    --accent: #45B7A5; --accent-soft: #12312E;
+    --ok: #57AC80; --warn: #D3A33B; --crit: #E27163; --crit-soft: #3A1F1D;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 16.5px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 96px; }
+  .col { max-width: 66ch; }
+
+  h1, h2, h3, h4, .label, th, .tid { font-family: "IBM Plex Sans Condensed", system-ui, sans-serif; }
+  h1 { font-size: clamp(30px, 4.6vw, 46px); line-height: 1.06; letter-spacing: -.015em; margin: 0; text-wrap: balance; font-weight: 700; }
+  h2 { font-size: 25px; line-height: 1.15; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+  h3 { font-size: 18.5px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -.005em; text-wrap: balance; }
+  h4 { font-size: 14px; margin: 0 0 4px; letter-spacing: .01em; }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+  code { font-size: .87em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; padding: .5px 4px; color: var(--ink-2); }
+  .label { font-size: 11.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+  header.top { padding: 54px 0 28px; border-bottom: 2px solid var(--ink); }
+  .kicker { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 16px; }
+  .lede { font-size: 19px; line-height: 1.5; color: var(--ink-2); margin: 20px 0 0; max-width: 62ch; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0 28px; margin-top: 26px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  section { padding: 46px 0 8px; }
+  section + section { border-top: 1px solid var(--line); }
+  .sec-head { display: grid; grid-template-columns: 108px 1fr; gap: 20px; align-items: start; margin-bottom: 22px; }
+  .sec-head .label { padding-top: 7px; }
+  @media (max-width: 760px) { .sec-head { grid-template-columns: 1fr; gap: 4px; } }
+
+  /* ── фаза ────────────────────────────────────── */
+  .phase-bar {
+    display: flex; flex-wrap: wrap; gap: 0 26px; align-items: baseline;
+    background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    padding: 13px 16px; border-radius: 2px; margin: 0 0 26px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted);
+  }
+  .phase-bar b { color: var(--ink); font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; font-size: 14px; }
+
+  /* ── задача ──────────────────────────────────── */
+  .task {
+    display: grid; grid-template-columns: 58px 1fr 230px; gap: 20px;
+    padding: 18px 0; border-bottom: 1px solid var(--line); align-items: start;
+  }
+  .tasks { border-top: 1px solid var(--line); margin: 8px 0 10px; }
+  .task .tid { font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .04em; padding-top: 2px; }
+  .task .body h3 { margin-bottom: 5px; }
+  .task .body p { margin: 0 0 8px; font-size: 15px; color: var(--ink-2); }
+  .task .body p:last-child { margin-bottom: 0; }
+  .task .check {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted);
+    line-height: 1.55; border-left: 1px solid var(--line); padding-left: 16px;
+  }
+  .task .check b { display: block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin-bottom: 5px; }
+  @media (max-width: 900px) {
+    .task { grid-template-columns: 48px 1fr; }
+    .task .check { grid-column: 2; border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 10px; }
+  }
+  .task.crit .tid { color: var(--crit); }
+  .task.crit .body h3::after { content: " ⚠"; color: var(--crit); font-size: 14px; }
+
+  .scroll { overflow-x: auto; margin: 20px 0 24px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  caption { text-align: left; padding: 12px 14px 0; font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tbody tr:hover { background: var(--surface-2); }
+  .rowhead { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; }
+
+  .chip { display: inline-block; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 2px; white-space: nowrap; }
+  .chip.crit { background: var(--crit-soft); color: var(--crit); }
+  .chip.ok { background: var(--accent-soft); color: var(--ok); }
+  .chip.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+
+  .note { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 16px 18px; margin: 22px 0; border-radius: 2px; font-size: 15px; }
+  .note.alarm { border-left-color: var(--crit); }
+  .note.warnb { border-left-color: var(--warn); }
+  .note p:last-child { margin-bottom: 0; }
+
+  pre { background: var(--surface); border: 1px solid var(--line); border-radius: 2px; padding: 14px 16px; overflow-x: auto; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); margin: 18px 0; }
+  pre b { color: var(--accent); font-weight: 500; }
+  pre i { color: var(--crit); font-style: normal; }
+
+  ul.plain { list-style: none; padding: 0; margin: 14px 0; }
+  ul.plain li { padding: 8px 0 8px 24px; border-bottom: 1px solid var(--line); position: relative; font-size: 15.5px; }
+  ul.plain li::before { content: "→"; position: absolute; left: 0; color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  ul.plain li:last-child { border-bottom: 0; }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 16px 0; }
+  ol.steps li { counter-increment: s; position: relative; padding: 10px 0 10px 40px; border-bottom: 1px solid var(--line); font-size: 15.5px; }
+  ol.steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 10px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--accent);
+    border: 1px solid var(--line-strong); border-radius: 2px; width: 24px; height: 22px;
+    display: grid; place-items: center;
+  }
+  ol.steps li:last-child { border-bottom: 0; }
+
+  .principle { display: grid; grid-template-columns: 34px 1fr; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .principle:last-of-type { border-bottom: 0; }
+  .principle .num { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--muted); padding-top: 3px; }
+  .principle b { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 16.5px; }
+  .principle p { margin: 4px 0 0; font-size: 15px; color: var(--ink-2); }
+
+  footer { padding-top: 34px; border-top: 2px solid var(--ink); margin-top: 46px; font-size: 14px; color: var(--muted); }
+  footer a { color: var(--accent); }
+  footer ul { padding-left: 18px; }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="kicker">
+    <span class="label">Часть 3 · рабочий план</span>
+    <span class="label" style="color:var(--accent)">8 сентября 2026</span>
+  </div>
+  <h1>План доработки сервера: производительность и безопасность</h1>
+  <p class="lede">
+    Пять фаз, 43 задачи. Каждая — с причиной из наших замеров, файлом, где её делать,
+    и способом проверить, что она сработала. Порядок не произвольный: сначала то, что уже
+    ломает игру, потом то, что даёт десятикратный рост, и только потом то, что нужно
+    на масштабе. Решение по языку принято: остаёмся на Node — переписывание давало 4 %.
+  </p>
+  <div class="meta">
+    <span><b>Основание:</b> замеры частей 1 и 2 этой серии</span>
+    <span><b>Стек:</b> Node 24 · TypeScript · Postgres · Redis · uWS</span>
+    <span><b>Итог:</b> 39 → ~500 игроков на ядро</span>
+  </div>
+</header>
+
+<!-- ══════════════ ПРИНЦИПЫ ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Основание</span>
+    <div class="col">
+      <h2>Восемь правил, которые не нарушаем</h2>
+      <p>
+        Каждое куплено чьей-то аварией — нашей или чужой. Если правка противоречит правилу,
+        не делаем правку, а не правило.
+      </p>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="principle">
+      <span class="num">01</span>
+      <div>
+        <b>Сервер — единственный источник истины о предмете.</b>
+        <p>Клиент не присылает предметы, характеристики и урон никогда, ни в каком виде.
+        Сейчас это соблюдается — не потерять при рефакторинге протокола.</p>
+      </div>
+    </div>
+    <div class="principle">
+      <span class="num">02</span>
+      <div>
+        <b>Один персонаж — ровно одна живая сессия во всём кластере.</b>
+        <p>Не «в комнате», не «в процессе», а глобально. Нарушение этого правила —
+        причина подтверждённого дюпа у нас и дюпа в D2R через сундук.</p>
+      </div>
+    </div>
+    <div class="principle">
+      <span class="num">03</span>
+      <div>
+        <b>Перемещение предмета — одна транзакция и один путь в коде.</b>
+        <p>Не две записи в две таблицы. Не пять мест, каждое со своей логикой. Один
+        <code>moveItem</code>, через который проходит всё: лут, магазин, кузница, сундук, торговля.</p>
+      </div>
+    </div>
+    <div class="principle">
+      <span class="num">04</span>
+      <div>
+        <b>У предмета есть глобальный id и журнал происхождения.</b>
+        <p>Blizzard в D2 ввела уникальные id и периодически удаляла дубли. Дуперы обошли это,
+        превращая руны в новые предметы через Куб — id менялся, дубль исчезал.
+        <b>Одного id мало: нужен журнал переходов</b>, иначе дюп нельзя ни найти, ни откатить.</p>
+      </div>
+    </div>
+    <div class="principle">
+      <span class="num">05</span>
+      <div>
+        <b>Кадр от клиента валидируется схемой, а не приводится типом.</b>
+        <p><code>JSON.parse(raw) as ClientFrame</code> — это не проверка. Zod в проекте уже есть
+        для конфигов; та же дисциплина нужна на сетевой границе.</p>
+      </div>
+    </div>
+    <div class="principle">
+      <span class="num">06</span>
+      <div>
+        <b>Не отправляем ничего, что можно не отправлять.</b>
+        <p>Это одновременно производительность и античит: область интереса убирает 95 % трафика
+        и вместе с ним встроенный maphack.</p>
+      </div>
+    </div>
+    <div class="principle">
+      <span class="num">07</span>
+      <div>
+        <b>Клиент открыт. Обфускация и клиентские проверки — самообман.</b>
+        <p>Веб-клиент читается любым желающим. Всё, что нельзя проверить на сервере,
+        считается доступным читеру.</p>
+      </div>
+    </div>
+    <div class="principle">
+      <span class="num">08</span>
+      <div>
+        <b>Каждая правка — с числом до и после.</b>
+        <p>Нагрузочный стенд из части 1 остаётся в репозитории и гоняется на каждой фазе.
+        Definition of Done по вашему <code>CLAUDE.md</code>: обновить README модуля
+        и строку в <code>docs/MODULE_MAP.md</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ Ф0 ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Фаза 0</span>
+    <div class="col">
+      <h2>Тушим то, что горит прямо сейчас</h2>
+      <p>
+        Двенадцать задач, ни одна не меняет архитектуру. После них сервер перестаёт падать
+        на сотне игроков, мир идёт в реальном времени, а подтверждённый дюп закрыт.
+      </p>
+    </div>
+  </div>
+
+  <div class="phase-bar">
+    <b>Ф0 · неделя работы</b>
+    <span>эффект: 39 → ~60 игроков на ядро</span>
+    <span>риск: низкий</span>
+    <span>откат: тривиальный</span>
+  </div>
+
+  <div class="tasks">
+
+    <div class="task crit">
+      <span class="tid">Ф0.1</span>
+      <div class="body">
+        <h3>Выключить <code>perMessageDeflate</code></h3>
+        <p>
+          Сжатие стоит <b>179 мкс на кадр на каждого клиента</b> и выполняется в пуле из четырёх
+          потоков libuv. На сотне клиентов пул захлёбывается, очередь исходящих растёт
+          (RSS 270 → 730 МБ), задержка уходит в <b>10,8 секунды</b>. Выключение на том же тесте:
+          RTT 8 мс, память стабильна.
+        </p>
+        <p>Файл: <code>packages/server/src/net/wsServer.ts:14–19</code>. Правка на одну строку.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        100 ботов, RTT медиана &lt; 20 мс, RSS не растёт за 5 минут
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф0.2</span>
+      <div class="body">
+        <h3>Один планировщик тиков вместо <code>setInterval</code> на комнату</h3>
+        <p>
+          Node переставляет интервал после колбэка, поэтому занятость цикла копится в дрейф:
+          при 200 игроках мир шёл <b>13,9 Гц вместо 30</b>, то есть игровое время текло
+          в 46 % от реального — слоу-мо, а не лаг. Плюс все таймеры заведены почти одновременно
+          и бьют одной пачкой.
+        </p>
+        <p>
+          Делаем: один таймер на процесс, аккумулятор фиксированного шага, комнаты разложены
+          по корзинам (bucket по индексу), обработка с ограничением догоняющих шагов.
+          Файл: <code>packages/server/src/net/room.ts:89</code> → новый <code>net/scheduler.ts</code>.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        снапшотов ровно 30/с при 100 ботах; loop p99 &lt; 20 мс
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф0.3</span>
+      <div class="body">
+        <h3>Глобальный замок на персонажа + версия сейва</h3>
+        <p>
+          Подтверждено PoC: один <code>charId</code> заходит в две комнаты одновременно
+          (<code>3SU0</code> и <code>RQFC</code>), обе держат свою копию сейва и пишут её раз
+          в 10 секунд. Схема дюпа ровно та же, что в D2R: положил вещь в сундук из первой сессии,
+          вторая через 10 секунд сохраняет устаревший инвентарь — вещь есть и там, и там.
+        </p>
+        <p>
+          Делаем два независимых барьера. Первый — реестр живых сессий
+          <code>charId → соединение</code> в <code>RoomManager</code>: второй вход выселяет первый.
+          Второй — колонка <code>version</code> у персонажа и запись через
+          <code>UPDATE … WHERE version = ?</code>: устаревшая запись просто не проходит.
+          Файлы: <code>net/roomManager.ts:108–120</code>, <code>db/db.ts</code>.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        PoC-скрипт из части 1 получает <code>error</code> на второй вход; тест на CAS-конфликт
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф0.4</span>
+      <div class="body">
+        <h3>Перемещение предмета — в одной транзакции</h3>
+        <p>
+          Сейв персонажа и сундук аккаунта — две строки в двух таблицах, пишутся раздельно
+          и без транзакции. Падение процесса между записями даёт дубль или потерю. В
+          <code>accountStash.ts</code> это даже задокументировано как «кэша нет намеренно,
+          last-writer-wins» — на одном процессе терпимо, на нескольких смертельно.
+        </p>
+        <p>
+          Пока БД — SQLite, оборачиваем оба <code>put</code> в одну явную транзакцию.
+          Настоящее решение — Ф2.2. Файлы: <code>net/accountStash.ts</code>, <code>db/db.ts</code>.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        тест: kill процесса между двумя записями → предмет ровно в одном месте
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф0.5</span>
+      <div class="body">
+        <h3>Лимиты частоты на всё, что снаружи</h3>
+        <p>
+          Сейчас лимитов нет нигде. <code>/api/register</code> и <code>/api/login</code> открыты
+          без капчи, а каждая попытка — это <code>scryptSync</code> (десятки мегабайт и ~100 мс):
+          один скрипт кладёт сервер, не открыв ни одного WebSocket. Каждый <code>join</code>
+          без кода создаёт новую комнату с таймером — тысяча join'ов кладёт процесс.
+        </p>
+        <p>
+          Ставим: токен-бакет на IP для <code>register</code>/<code>login</code> (плюс задержка
+          при серии неудач), лимит комнат на аккаунт и на IP, лимит кадров ws на соединение
+          с разрывом при превышении, глобальный потолок соединений с очередью.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        скрипт-флудер: 1000 запросов/с → 429 без роста CPU выше 20 %
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф0.6</span>
+      <div class="body">
+        <h3>Валидация кадров схемой на сетевой границе</h3>
+        <p>
+          <code>JSON.parse(raw) as ClientFrame</code> пропускает в игровое ядро
+          <code>NaN</code>, <code>Infinity</code>, отрицательные индексы и произвольные строки.
+          Zod в проекте уже есть — переиспользуем. Разбор один раз, на входе, с отбрасыванием
+          кадра и счётчиком нарушений на соединение.
+        </p>
+        <p>Файл: <code>net/roomManager.ts:56</code> → новый <code>shared/session/netSchemas.ts</code>.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        фаззер шлёт мусорные кадры 60 с → сервер жив, позиции без NaN
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф0.7</span>
+      <div class="body">
+        <h3>Кэшировать <code>/api/config</code></h3>
+        <p>
+          <code>structuredClone</code> всего конфига плюс <code>JSON.stringify</code> на каждый
+          запрос — <b>8,58 мс блокировки цикла</b> и 436 КБ тела, без кэша и ETag. Один вход
+          игрока съедает четверть тикового бюджета; сто входов в секунду — 86 % ядра
+          на один роут.
+        </p>
+        <p>
+          Сериализуем и сжимаем один раз при старте и при правке из редактора, отдаём готовый
+          буфер с ETag. Файлы: <code>server/src/index.ts</code>, <code>shared/config/registry.ts:55</code>.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        100 параллельных GET → loop p99 не растёт; второй запрос отдаёт 304
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф0.8</span>
+      <div class="body">
+        <h3>Троттлинг ввода до частоты тика</h3>
+        <p>
+          <code>sendInput()</code> зовётся из рендер-цикла, то есть 60–144 раза в секунду,
+          и каждый кадр — <code>JSON.parse</code> на сервере. Полезны из них 30:
+          <code>setInput</code> просто перезаписывает последний. Приём стоит
+          <b>~13,3 мкс на сообщение</b> — столько же, сколько отправка, так что экономия здесь
+          равна экономии на снапшотах.
+        </p>
+        <p>
+          Клиент шлёт не чаще тика (<code>online3d.ts:1033</code>), сервер жёстко режет лишнее
+          и считает нарушителей.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        счётчик входящих на сервере ≈ 30·N, а не 60–144·N
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф0.9</span>
+      <div class="body">
+        <h3>Статику и ассеты — прочь с игрового процесса</h3>
+        <p>
+          7,4 МБ клиентского бандла и 31 МБ GLB идут через <code>express.static</code> того же
+          процесса, что крутит тики. Один холодный заход — десятки мегабайт с игрового ядра.
+        </p>
+        <p>
+          Минимум — отдельный процесс на другом порту. Правильно — CDN с длинным кэшем
+          и хешами в именах файлов.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        игровой процесс не отдаёт ни одного байта статики (лог доступа пуст)
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф0.10</span>
+      <div class="body">
+        <h3>SQLite в WAL, автосейвы пачками и вразбивку</h3>
+        <p>
+          <code>node:sqlite</code> блокирующий, автосейв каждые 10 с на комнату плюс запись
+          на вход, левелап и смену этажа. Отсюда выбросы <code>loop max</code> в 200–300 мс —
+          шесть потерянных тиков подряд.
+        </p>
+        <p>
+          Включаем WAL, объединяем записи цикла в одну транзакцию, разносим автосейвы комнат
+          по фазе (комната <code>i</code> сохраняется в свою секунду), выносим сериализацию
+          сейва из горячего пути.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        loop max &lt; 50 мс на 100 ботах в течение 10 минут
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф0.11</span>
+      <div class="body">
+        <h3>Убрать дорогую математику из горячих циклов</h3>
+        <p>
+          <code>Math.hypot</code> в V8 стоит <b>12,8 нс</b> против <b>1,5 нс</b> у
+          <code>sqrt(dx*dx+dy*dy)</code> — в 8,7 раза дороже, а стоит он в каждом горячем цикле.
+          Нормализация угла сделана как <code>atan2(sin a, cos a)</code> — три тригонометрические
+          функции там, где хватает вычитания; замена на <code>a − 2π·round(a/2π)</code> даёт
+          бит-в-бит тот же результат и −5 % тика.
+        </p>
+        <p>Файлы: <code>shared/session/ai.ts</code>, <code>shared/world/*</code>, <code>shared/session/session.ts</code>.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        <code>npm test</code> зелёный (результат не меняется), бенч тика −5 %
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф0.12</span>
+      <div class="body">
+        <h3>Закрыть редакторские роуты ролью, а не переменной среды</h3>
+        <p>
+          <code>NODE_ENV !== 'production'</code> — единственное, что отделяет постороннего от
+          <code>/api/dev/config</code> (переписать баланс сервера),
+          <code>/api/dev/assets/:id</code> (залить 64 МБ файл) и
+          <code>/api/dev/characters</code> (прочитать всех персонажей всех игроков). Одна ошибка
+          в деплое — и это открыто наружу.
+        </p>
+        <p>
+          Роль <code>admin</code> у пользователя, проверка на каждом dev-роуте, отдельный
+          лог всех правок конфига с указанием кто и что.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        тест: обычный токен и отсутствие токена → 403 на всех <code>/api/dev/*</code>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════ Ф1 ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Фаза 1</span>
+    <div class="col">
+      <h2>Протокол: перестать возить весь мир каждому</h2>
+      <p>
+        Это фаза с наибольшей отдачей во всём плане: рост в десять раз по игрокам на ядро
+        и в двадцать по трафику. Она же закрывает maphack — не как отдельную задачу,
+        а как побочный эффект.
+      </p>
+    </div>
+  </div>
+
+  <div class="phase-bar">
+    <b>Ф1 · 2–4 недели</b>
+    <span>эффект: ~60 → ~500 игроков на ядро</span>
+    <span>трафик: 180 → 6–10 КБ/с</span>
+    <span>риск: средний, нужна версия протокола</span>
+  </div>
+
+  <div class="tasks">
+
+    <div class="task">
+      <span class="tid">Ф1.1</span>
+      <div class="body">
+        <h3>Вынести статику из кадра</h3>
+        <p>
+          Сейчас в каждом снапшоте на каждого игрока едут <code>name</code>, <code>classId</code>,
+          <code>maxHp</code>, <code>weaponKey</code>, <code>armorModels</code> — данные, которые
+          не меняются между этажами. Это самая дешёвая правка фазы: отправлять один раз
+          при входе и при изменении экипировки.
+        </p>
+        <p>Файл: <code>shared/session/serialize.ts:38</code>, новый кадр <code>peerInfo</code>.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        размер снапшота падает примерно вдвое без потери картинки
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф1.2</span>
+      <div class="body">
+        <h3>Область интереса (AoI)</h3>
+        <p>
+          Клиент получает только то, что рядом — примерно полтора экрана плюс запас на скорость
+          движения. Реализация: равномерная сетка ячеек по этажу, у каждого игрока набор видимых
+          сущностей, события входа и выхода из области.
+        </p>
+        <p>
+          <b>Это же и есть лечение maphack.</b> Сегодня <code>FloorInit</code> отдаёт весь этаж
+          целиком: сетку, весь декор, всех монстров с характеристиками — то есть карта у читера
+          есть по построению, и никакой обфускацией это не закрыть, потому что клиент открыт.
+          После AoI сервер физически не отправляет того, чего игрок не видит.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        бот на одном конце карты не получает ни одной сущности с другого конца
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф1.3</span>
+      <div class="body">
+        <h3>Дельта-снапшоты</h3>
+        <p>
+          Шлём только изменившиеся поля изменившихся сущностей. Схема: сервер держит на клиента
+          последний подтверждённый кадр, клиент подтверждает номер, дельта считается от него;
+          при потере подтверждений — полный кадр.
+        </p>
+        <p>
+          В бенчмарке дельта-кадр на 60 монстров занял <b>185 байт</b> против
+          <b>9 971 байт</b> у полного JSON-снапшота той же сцены.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        средний кадр &lt; 500 Б в бою; полный кадр не чаще раза в 2 с
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф1.4</span>
+      <div class="body">
+        <h3>Бинарный кадр вместо JSON</h3>
+        <p>
+          JSON-кадр стоит <b>+40 мкс на тик</b> (и, что показательно, в C# он ещё дороже —
+          так что это не проблема языка). Координаты в int16 в долях тайла, состояния битами,
+          строки — только в редких командах.
+        </p>
+        <p>
+          Схему кадра описываем один раз в <code>shared</code> и генерируем из неё
+          кодек для клиента и сервера — чтобы не разъехались.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        round-trip тест кодека на случайных мирах; тик −40 мкс
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф1.5</span>
+      <div class="body">
+        <h3>Снапшоты 20 Гц, симуляция 30 Гц</h3>
+        <p>
+          Отправка стоит ~19 мкс на кадр независимо от его размера — значит цена линейна
+          по числу кадров. Снижение с 30 до 20 Гц снимает треть транспорта; плавность
+          добирается интерполяцией на клиенте, которая там уже есть.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        глазами на 3D-клиенте: движение монстров без рывков при 20 Гц
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф1.6</span>
+      <div class="body">
+        <h3>Перевести транспорт на <code>uWebSockets.js</code></h3>
+        <p>
+          Замер: при одинаковой работе процесс на <code>uWS</code> ест <b>21,5 %</b> ядра против
+          <b>28,0 %</b> у <code>ws</code> — на 23 % меньше. Цена кадра та же (19,9 против 19,2 мкс),
+          так что чуда не ждём, но запас по CPU реальный, а режим <code>publish</code> по топикам
+          ложится ровно на схему «кадр всем в комнате».
+        </p>
+        <p>Версия v20.69.0, бинарь под ABI 137 (Node 24) в пакете есть.</p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        500 ботов: CPU процесса ниже, чем на <code>ws</code>, при той же частоте
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф1.7</span>
+      <div class="body">
+        <h3>Метрики протокола в рантайме</h3>
+        <p>
+          Чтобы следующая правка тоже была с числом: счётчики байт на игрока, кадров в секунду,
+          размера дельты, времени тика и лага цикла — в <code>/metrics</code> в формате
+          Prometheus. Без этого фаза 1 непроверяема на живых игроках.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        дашборд показывает КБ/с на игрока и тикрейт по каждой ноде
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <h4>Про версию протокола</h4>
+    <p>
+      <code>PROTOCOL_VERSION</code> в <code>netTypes.ts</code> уже есть — поднять и заставить
+      клиент проверять при <code>joined</code>, иначе после деплоя старые вкладки будут
+      молча ломаться. Клиент старой версии должен получать понятное «обновите страницу»,
+      а не пустой экран.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════ Ф2 ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Фаза 2</span>
+    <div class="col">
+      <h2>Предметы как данные: фундамент против дюпа</h2>
+      <p>
+        Ф0.3 и Ф0.4 закрывают известные дыры. Эта фаза делает так, чтобы <b>неизвестные</b>
+        дыры были обнаружимы и обратимы. Именно этого не хватало Blizzard: id у предметов был,
+        а происхождения не было.
+      </p>
+    </div>
+  </div>
+
+  <div class="phase-bar">
+    <b>Ф2 · 3–5 недель</b>
+    <span>эффект: дюп становится находимым и откатываемым</span>
+    <span>риск: миграция данных</span>
+  </div>
+
+  <div class="tasks">
+
+    <div class="task">
+      <span class="tid">Ф2.1</span>
+      <div class="body">
+        <h3>Postgres вместо SQLite</h3>
+        <p>
+          SQLite — один файл, синхронный, в игровом потоке. На 10 тысячах комнат это
+          1 000 записей в секунду в один файл из 48 процессов. Postgres даёт настоящие
+          транзакции между таблицами, конкурентный доступ и, главное, возможность
+          спросить у данных «а нет ли у нас дублей».
+        </p>
+        <p>
+          Драйвер асинхронный, пул на процесс, вся работа с БД — вне тика.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        1 000 записей/с без роста loop p99; миграция сейвов без потерь на копии базы
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф2.2</span>
+      <div class="body">
+        <h3>Предмет — строка в таблице, а не поле в JSON-блобе</h3>
+        <p>
+          Сейчас предмет живёт внутри JSON сейва персонажа. Пока так — <b>найти дюп нечем</b>:
+          ни владельца, ни истории, ни возможности спросить «сколько в мире копий этого предмета».
+        </p>
+        <p>
+          Делаем таблицу <code>items</code>: <code>id</code> (UUIDv7 — сортируемый по времени),
+          <code>owner_type</code> (персонаж / сундук / пол / магазин / удалён),
+          <code>owner_id</code>, позиция, свойства, <code>created_at</code>, <code>seed</code>
+          генерации. Уникальность местоположения — ограничением базы, а не соглашением в коде.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        запрос «предметы с более чем одним владельцем» возвращает ноль строк
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф2.3</span>
+      <div class="body">
+        <h3>Журнал переходов, только на дозапись</h3>
+        <p>
+          Таблица <code>item_events</code>: id предмета, откуда, куда, кто инициировал, причина
+          (лут / покупка / продажа / крафт / сундук / смерть / торговля), метка времени,
+          id команды. Никаких обновлений и удалений — только вставка.
+        </p>
+        <p>
+          Это единственное, что позволяет: доказать факт дюпа, найти всех причастных,
+          откатить точечно, а не всей базой. Урок D2 прямой: удаление по совпадению id обходится
+          превращением предмета в другой предмет — журнал происхождения обойти нельзя.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        по журналу восстанавливается полная история любого предмета за месяц
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф2.4</span>
+      <div class="body">
+        <h3>Один путь для всех перемещений</h3>
+        <p>
+          Функция <code>transferItem(itemId, from, to, reason, cmdId)</code> — единственная,
+          кто двигает предметы. Внутри: транзакция, проверка что предмет действительно у
+          <code>from</code>, запись новой позиции, запись в журнал. Всё остальное —
+          лут, магазин, кузница, сундук, смерть, будущая торговля — зовёт только её.
+        </p>
+        <p>
+          Отраслевая практика формулирует это так: одна авторитетная дорожка изменений
+          эксплуатируется намного тяжелее, чем пять разных.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        grep по коду: ни одной записи в <code>items</code> мимо <code>transferItem</code>
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф2.5</span>
+      <div class="body">
+        <h3>Идемпотентность команд</h3>
+        <p>
+          Клиент присваивает команде номер, сервер хранит последний обработанный номер
+          на сессию. Повтор при реконнекте не выполняется дважды. Это закрывает целый класс
+          дюпов «отправил купить, разорвал связь, отправил снова».
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        тест: одна команда, отправленная трижды, применяется один раз
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф2.6</span>
+      <div class="body">
+        <h3>Ночной аудит инвариантов</h3>
+        <p>
+          Задача по расписанию, которая проверяет: нет предметов у двух владельцев;
+          нет предметов без владельца; сумма золота изменилась не больше, чем позволяет
+          сумма источников; нет аккаунтов с приростом ценности выше N сигм от медианы.
+          Расхождение — не автобан, а алерт с выгрузкой.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        подсаженный вручную дубль ловится ближайшим прогоном
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф2.7</span>
+      <div class="body">
+        <h3>Инструмент точечного отката</h3>
+        <p>
+          Скрипт, который по журналу откатывает конкретные предметы и конкретных игроков
+          на конкретный момент, не трогая остальных. Отраслевой опыт: откат всей базы карает
+          невиновных и убивает доверие, поэтому логи надо хранить и откатывать выборочно.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        учение на копии базы: откатить один аккаунт на 6 часов назад
+      </div>
+    </div>
+
+  </div>
+
+  <pre>Схема данных, к которой идём:
+
+  characters(char_id, user_id, <b>version</b>, data_json, updated_at)
+  items(<b>item_id uuidv7</b>, owner_type, owner_id, slot, x, y, props_json, created_at)
+      <i>UNIQUE(item_id)</i> · <i>INDEX(owner_type, owner_id)</i>
+  item_events(event_id, item_id, from_type, from_id, to_type, to_id,
+              reason, actor_user_id, cmd_id, at)   <i>только INSERT</i>
+  sessions_live(char_id → node_id, conn_id, since)  <i>в Redis, TTL</i></pre>
+</section>
+
+<!-- ══════════════ Ф3 ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Фаза 3</span>
+    <div class="col">
+      <h2>Античит: что невозможно, что ловим, что принимаем</h2>
+      <p>
+        Начинаем с честной модели угроз. Клиент — это открытый JavaScript в браузере:
+        любой протокол воспроизводим, любая клиентская проверка снимается. Значит защита
+        бывает только двух видов: сервер не даёт сделать, или сервер замечает, что сделали.
+      </p>
+    </div>
+  </div>
+
+  <div class="phase-bar">
+    <b>Ф3 · 2–3 недели + постоянная работа</b>
+    <span>подход как у GGG: серверная сторона, без кернел-драйверов</span>
+  </div>
+
+  <div class="scroll">
+    <caption>Модель угроз: что может читер и что мы с этим делаем</caption>
+    <table>
+      <thead>
+        <tr><th>Угроза</th><th>Возможна?</th><th>Чем закрыта</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rowhead">Подделать предмет, урон, характеристики</td>
+          <td><span class="chip ok">невозможна</span></td>
+          <td>Клиент шлёт только ввод и команды. Уже так — не сломать при Ф1</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Спидхак через вектор движения</td>
+          <td><span class="chip ok">невозможна</span></td>
+          <td>Вектор нормализуется на сервере, скорость из серверных статов</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Играть чужим персонажем</td>
+          <td><span class="chip ok">невозможна</span></td>
+          <td>Владение проверяется по <code>userId</code> при каждом входе</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Телепорт, проход сквозь стены</td>
+          <td><span class="chip warn">частично</span></td>
+          <td>Движение считает сервер; добавить проверку «дистанция за тик ≤ максимума» (Ф3.1)</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Maphack, ESP, видеть монстров за стеной</td>
+          <td><span class="chip crit">да, сейчас</span></td>
+          <td>Только AoI из Ф1.2. Обфускация бессмысленна — клиент открыт</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Автоприцел, автокаст, идеальный ритм</td>
+          <td><span class="chip crit">да</span></td>
+          <td>Не запретить, но видно в телеметрии (Ф3.2, Ф3.3)</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Боты-фармеры, мульти-аккаунты</td>
+          <td><span class="chip crit">да</span></td>
+          <td>Главная долгая угроза для экономики. Телеметрия + ручная проверка (Ф3.3)</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Дюп предметов</td>
+          <td><span class="chip warn">закрывается</span></td>
+          <td>Ф0.3, Ф0.4, вся Ф2</td>
+        </tr>
+        <tr>
+          <td class="rowhead">DoS регистрацией и комнатами</td>
+          <td><span class="chip warn">закрывается</span></td>
+          <td>Ф0.5</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tasks">
+
+    <div class="task">
+      <span class="tid">Ф3.1</span>
+      <div class="body">
+        <h3>Санитарные проверки движения и действий</h3>
+        <p>
+          На сервере: пройденная за тик дистанция не больше максимальной скорости с запасом;
+          позиция всегда в проходимой клетке; интервал между атаками не меньше кулдауна;
+          подбор предмета только в радиусе. Нарушение — не бан, а счётчик на сессию
+          и запись в телеметрию.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        модифицированный бот-клиент с телепортом ловится за 1 тик
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф3.2</span>
+      <div class="body">
+        <h3>Телеметрия поведения</h3>
+        <p>
+          Пишем в отдельное хранилище: килы в час, золото в час, опыт в час, длительность
+          сессии, распределение интервалов между действиями, доля времени в бою, маршруты
+          по этажу, число этажей за час, соотношение подобранного к оставленному.
+        </p>
+        <p>
+          Исследования по детекту ботов в RPG сходятся на шести группах признаков: частота
+          действий, социальная активность, признаки групп золотодобытчиков,
+          последовательности действий, схожесть между аккаунтами и траектории движения.
+          Первые четыре мы можем считать сразу, траектории — после AoI.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        дашборд: распределение «золото в час» по популяции с хвостами
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф3.3</span>
+      <div class="body">
+        <h3>Детектор аномалий и процесс санкций</h3>
+        <p>
+          Правило простое: <b>ни одна автоматика не банит сама</b>. Детектор помечает аккаунт,
+          человек смотрит выгрузку, решение фиксируется. Один ложный бан стоит дороже, чем
+          десять пропущенных ботов, а автоматика по единственному сигналу ложно срабатывает
+          гарантированно.
+        </p>
+        <p>
+          Сигнатуры для старта: сессии длиннее 16 часов без пауз; дисперсия интервалов между
+          действиями ниже человеческой; одинаковые маршруты по этажу у разных аккаунтов;
+          несколько аккаунтов с одного IP, синхронно входящие и выходящие; прирост ценности
+          выше 99-го процентиля три дня подряд.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        собственный бот из нагрузочного стенда попадает в список за час
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф3.4</span>
+      <div class="body">
+        <h3>Гигиена аккаунтов и сессий</h3>
+        <p>
+          Сейчас: токен живёт 30 дней, не отзывается при смене пароля, TLS в репозитории
+          не настроен. Делаем: срок токена короче с продлением, отзыв всех сессий при смене
+          пароля, привязка сессии к устройству с уведомлением о новом входе,
+          обязательный TLS с проверкой на старте, что в проде не слушаем голый ws.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        смена пароля рвёт все живые соединения аккаунта
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф3.5</span>
+      <div class="body">
+        <h3>Экономические предохранители</h3>
+        <p>
+          Лимиты, которые ничего не стоят честному игроку и ломают экономику ботоводу:
+          потолок передачи ценности между аккаунтами в сутки, задержка перед выводом
+          свежедобытого в общий сундук, лимит на число персонажей с одного IP.
+          Когда появится торговля — она сразу с журналом и лимитами, а не потом.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        сценарий «слить всё на мула» упирается в лимит
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note warnb">
+    <h4>Чего мы сознательно не делаем</h4>
+    <p>
+      Никаких кернел-драйверов и агрессивных клиентских античитов — для браузерной игры это
+      невозможно, а для будущего Unity-клиента преждевременно. GGG держит Path of Exile
+      без кернел-драйвера на серверной детекции уже больше десяти лет, и основной удар
+      направлен на ботов и манипуляции рынком, а не на «идеальный» бан читеров. Наш случай проще:
+      у нас нет торговли между игроками, значит нет и главного двигателя ботоводства.
+      <b>Пока её нет — экономика в безопасности, и это ещё один аргумент вводить торговлю
+      только вместе с Ф2 и Ф3.</b>
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════ Ф4 ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Фаза 4</span>
+    <div class="col">
+      <h2>Раскладка: как занять все 64 ядра</h2>
+      <p>
+        До этой фазы весь сервер живёт в одном процессе на одном ядре. Node не умеет иначе,
+        поэтому масштаб — это архитектура, а не настройка.
+      </p>
+    </div>
+  </div>
+
+  <div class="phase-bar">
+    <b>Ф4 · 4–6 недель</b>
+    <span>эффект: 500 игроков на ядро → десятки тысяч на ноду</span>
+    <span>нужен, когда онлайн переваливает за 400–500</span>
+  </div>
+
+  <div class="tasks">
+
+    <div class="task">
+      <span class="tid">Ф4.1</span>
+      <div class="body">
+        <h3>Разделить роли: гейтвей, игровые ноды, БД</h3>
+        <p>
+          Гейтвей держит HTTP, авторизацию, ростер, конфиг и раздаёт клиенту адрес игровой ноды.
+          Игровые процессы занимаются только комнатами. БД отдельно. Это же прямой урок D2R:
+          у них монолит и синглтон списка игр стали потолком, чинили дроблением на сервисы.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        падение гейтвея не выкидывает игроков из подземелий
+      </div>
+    </div>
+
+    <div class="task crit">
+      <span class="tid">Ф4.2</span>
+      <div class="body">
+        <h3>Реестр состояния в Redis</h3>
+        <p>
+          Две карты: <code>roomCode → нода</code> и <code>charId → живая сессия</code>.
+          Вторая — это тот самый глобальный замок из Ф0.3, но настоящий: он работает и между
+          процессами. Замок с TTL и продлением, чтобы падение ноды не заперло персонажа навсегда.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        вход тем же персонажем на две разные ноды → второй отказ
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф4.3</span>
+      <div class="body">
+        <h3>Кластер процессов, привязка к сокетам</h3>
+        <p>
+          По процессу на ядро, комнаты закреплены за процессом на всё время жизни
+          (комната живёт минуты — переезд не нужен). На двухсокетной машине половину процессов
+          прибить к каждому NUMA-узлу, иначе память ходит через межпроцессорную шину.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        64 процесса, суммарный CPU растёт линейно с онлайном
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф4.4</span>
+      <div class="body">
+        <h3>Очередь на вход и мягкая деградация</h3>
+        <p>
+          Гейтвей знает потолок кластера и держит очередь, вместо того чтобы принять всех
+          и лечь. Отдельно — деградация: при перегрузке сначала снижаем частоту снапшотов
+          до 15 Гц, потом сужаем область интереса, и только потом отказываем во входе.
+          D2R пришли к очереди после падения на старте — дешевле подержать 500 человек
+          в очереди, чем уронить 5 000.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        нагрузка ×2 от потолка: тикрейт держится, очередь растёт, никто не выпадает
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф4.5</span>
+      <div class="body">
+        <h3>Деплой без потери забегов</h3>
+        <p>
+          Слив ноды: перестать принимать новые комнаты, дождаться завершения текущих
+          (или мягко вернуть игроков в город с сохранением), потом гасить. Механизм грейс-комнат
+          у вас уже есть — переиспользовать его для деплоя.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        деплой под нагрузкой 200 ботов без единого потерянного сейва
+      </div>
+    </div>
+
+    <div class="task">
+      <span class="tid">Ф4.6</span>
+      <div class="body">
+        <h3>Регионализация — задел, не работа</h3>
+        <p>
+          Пока не делаем, но закладываем: комната не выезжает за регион, аккаунты глобальные,
+          персонажи и сундуки региональные. Это прямой урок D2R — они клали сейвы в глобальную
+          базу слишком часто и уронили её; чинили переносом в региональные.
+        </p>
+      </div>
+      <div class="check">
+        <b>Проверка</b>
+        в схеме БД есть <code>region</code>, код не предполагает единственный регион
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════ ЭКСПЛУАТАЦИЯ ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Дальше</span>
+    <div class="col">
+      <h2>Эксплуатация: без этого всё вышеперечисленное протухнет</h2>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>Что мониторим постоянно</h3>
+    <ul class="plain">
+      <li><b>Тикрейт по нодам</b> — падение ниже 28 Гц значит мир идёт в слоу-мо; это симптом, который мы уже один раз проглядели.</li>
+      <li><b>Лаг цикла p99 и max</b> — выбросы выше 50 мс означают блокирующую операцию в горячем пути.</li>
+      <li><b>RTT p95 по игрокам</b> и размер очереди исходящих — рост очереди предвещает коллапс за минуты до него.</li>
+      <li><b>КБ/с на игрока</b> — если после Ф1 поползёт вверх, значит в кадр вернулось что-то лишнее.</li>
+      <li><b>Экономика</b>: медиана и 99-й процентиль золота в час, число предметов в мире, скорость роста сундуков.</li>
+      <li><b>Инварианты Ф2.6</b> — ноль расхождений каждую ночь; любое ненулевое значение это инцидент.</li>
+    </ul>
+
+    <h3 style="margin-top:28px">Что делаем, когда дюп всё-таки нашли</h3>
+    <ol class="steps">
+      <li>Не банить и не откатывать сразу. Сначала зафиксировать: выгрузить журнал по подозрительным предметам.</li>
+      <li>Понять механику по журналу — какая последовательность переходов невозможна легально.</li>
+      <li>Закрыть дыру в коде и выкатить. Пока не закрыта, откат бессмысленен.</li>
+      <li>Найти все затронутые предметы запросом к журналу, а не глазами.</li>
+      <li>Точечный откат по Ф2.7: только эти предметы, только эти аккаунты.</li>
+      <li>Решение по санкциям — человеком, с сохранением выгрузки как доказательства.</li>
+      <li>Разбор: почему инварианты не поймали раньше, и какой инвариант добавить.</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ══════════════ ТЕХНОЛОГИИ ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Приложение</span>
+    <div class="col">
+      <h2>Технологии и на основании чего выбраны</h2>
+      <p>Всё из этого списка — следствие конкретного замера этой серии, а не вкуса.</p>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Технология</th><th>Где</th><th>Основание</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rowhead">Node 24 + TypeScript</td><td>остаётся</td>
+          <td>Переписывание на Rust дало бы <b>+4 %</b> (519 против 498 игроков на ядро) и стоило бы дублирования всех формул</td>
+        </tr>
+        <tr>
+          <td class="rowhead"><code>uWebSockets.js</code> v20.69</td><td>транспорт</td>
+          <td>При равной работе <b>21,5 % ядра против 28,0 %</b> у <code>ws</code>; publish по топикам ложится на схему комнат</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Сжатие — выключить</td><td>транспорт</td>
+          <td><b>179 мкс на кадр на клиента</b>, коллапс на 100 CCU с задержкой 10,8 с</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Бинарный кадр + дельты</td><td>протокол</td>
+          <td><b>185 Б против 9 971 Б</b> на ту же сцену; JSON стоит +40 мкс на тик</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Zod на сетевой границе</td><td>протокол</td>
+          <td>Сейчас кадр приводится типом; zod уже в проекте для конфигов</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Postgres</td><td>хранилище</td>
+          <td>Транзакции между таблицами, конкурентный доступ, запросы к журналу предметов</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Redis</td><td>реестр</td>
+          <td>Глобальный замок <code>charId</code> и карта комнат между процессами</td>
+        </tr>
+        <tr>
+          <td class="rowhead">UUIDv7 для предметов</td><td>данные</td>
+          <td>Текущий <code>it_&lt;время&gt;_&lt;счётчик&gt;</code> локален процессу и обнуляется при рестарте</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Prometheus + дашборд</td><td>эксплуатация</td>
+          <td>Сейчас метрик нет вообще; без них ни одна фаза непроверяема на живых игроках</td>
+        </tr>
+        <tr>
+          <td class="rowhead">Нагрузочный стенд в репозитории</td><td>тесты</td>
+          <td>Скрипты из части 1 (боты, замер тикрейта, RTT, PoC дюпа) — привести в порядок и закоммитить</td>
+        </tr>
+        <tr>
+          <td class="rowhead">CDN для статики</td><td>раздача</td>
+          <td>38 МБ холодной загрузки сейчас идут с игрового процесса</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════ ИТОГ ══════════════ -->
+<section>
+  <div class="sec-head">
+    <span class="label">Итог</span>
+    <div class="col">
+      <h2>Порядок и что он даёт</h2>
+    </div>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Фаза</th><th class="n">Срок</th><th class="n">Игроков на ядро</th><th class="n">CCU на ноде 64c</th><th>Главное</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="rowhead">Сейчас</td><td class="n">—</td><td class="n">39</td><td class="n">~1 500</td><td>Коллапс на 100 игроках, открытый дюп</td></tr>
+        <tr><td class="rowhead">Ф0</td><td class="n">неделя</td><td class="n">~60</td><td class="n">~2 500</td><td>Не падает, мир в реальном времени, дюп закрыт</td></tr>
+        <tr><td class="rowhead">Ф1</td><td class="n">2–4 недели</td><td class="n">~500</td><td class="n">~19 000</td><td>Десятикратный рост, maphack закрыт</td></tr>
+        <tr><td class="rowhead">Ф2</td><td class="n">3–5 недель</td><td class="n">~500</td><td class="n">~19 000</td><td>Дюп находим и обратим</td></tr>
+        <tr><td class="rowhead">Ф3</td><td class="n">2–3 недели</td><td class="n">~500</td><td class="n">~19 000</td><td>Видно ботов, экономика под наблюдением</td></tr>
+        <tr><td class="rowhead">Ф4</td><td class="n">4–6 недель</td><td class="n">~500</td><td class="n">~19 000</td><td>Все ядра заняты, деплой без потерь</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <div class="note">
+      <h4>Две развилки, где можно остановиться</h4>
+      <p>
+        <b>После Ф1</b> — если онлайн не превышает пары сотен, Ф4 не нужна: одна нода
+        на одном процессе уже держит впятеро больше. Ф2 и Ф3 при этом делать всё равно,
+        они не про нагрузку.
+      </p>
+      <p>
+        <b>Перед торговлей между игроками</b> — вот здесь останавливаться нельзя. Пока обмена
+        предметами нет, дюп вредит только самому дуперу, и ботоводство лишено смысла.
+        В день, когда появится торговля, Ф2 и Ф3 должны быть уже сделаны, иначе экономику
+        разберут за неделю.
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p><b>Отраслевые источники</b></p>
+  <ul>
+    <li>Практика защиты от дюпа: атомарные транзакции, единый путь изменения инвентаря, аудит-логи, выборочный откат — <a href="https://munique.net/item-duplication-exploits/">munique.net</a>, <a href="https://bugnet.io/blog/how-to-fix-inventory-item-duplication-bug">Bugnet</a>, <a href="https://en.wikipedia.org/wiki/Duping_(video_games)">Wikipedia</a></li>
+    <li>Уроки Diablo 2 и D2R (уникальные id и их обход, дюп через сундук, разбор падения серверов) — <a href="https://www.purediablo.com/forums/threads/what-i-so-difficult-for-blizzard-about-detecting-and-eliminating-dupes.23877/">PureDiablo</a>, <a href="https://www.pcgamesn.com/diablo-2-resurrected/item-duping-bug">PCGamesN</a>, <a href="https://kotaku.com/fixing-the-diablo-ii-resurrected-servers-sounds-like-a-1847871074">Kotaku</a></li>
+    <li>Серверный античит без кернел-драйвера, ставка на ботов и рынок — <a href="https://www.pathofexile.com/forum/view-thread/1589455">форум Path of Exile</a></li>
+    <li>Признаки ботов в RPG (частота действий, соц. активность, группы фарма, последовательности, схожесть, траектории) — <a href="https://dl.acm.org/doi/10.1145/3639631.3639683">BEAT, ACM</a>, <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4844581/">многомодальный детект, PMC</a></li>
+  </ul>
+  <p style="margin-top:18px">
+    Все внутренние числа — из частей
+    <a href="https://claude.ai/code/artifact/38153fa2-73fc-40b9-9730-c47e4d5e2f60">1</a> и
+    <a href="https://claude.ai/code/artifact/a13b0b9e-74b9-46d1-b3d0-6f3e473d9819">2</a>
+    этой серии: замеры на стенде i7-11800H, Node 24.18 / .NET 10 / Rust 1.98 / GCC 16.2.
+  </p>
+</footer>
+
+</div>
+
+</body></html>

@@ -1,0 +1,640 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Экономика добычи</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+
+<style>
+  /* Палитра взята из конфиг-редактора проекта — план должен читаться как часть инструмента. */
+  :root {
+    --ground: #f0f0f4;
+    --surface: #ffffff;
+    --edge: #d6d6e0;
+    --hair: #e4e4ec;
+    --text: #1c1c26;
+    --dim: #55556b;
+    --faint: #7c7c92;
+    --brass: #8a6520;
+    --brass-soft: #f3ead8;
+    --good: #2f7a4a;
+    --warn: #a8412c;
+
+    --serif: 'Literata', 'Iowan Old Style', Georgia, serif;
+    --sans: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', 'Consolas', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #1c1c26;
+      --surface: #22222e;
+      --edge: #33334280;
+      --hair: #2c2c3a;
+      --text: #e8e8f0;
+      --dim: #a4a4b8;
+      --faint: #7b7b92;
+      --brass: #c79a44;
+      --brass-soft: #2c2718;
+      --good: #5fbf7f;
+      --warn: #d4634a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #1c1c26;
+    --surface: #22222e;
+    --edge: #33334280;
+    --hair: #2c2c3a;
+    --text: #e8e8f0;
+    --dim: #a4a4b8;
+    --faint: #7b7b92;
+    --brass: #c79a44;
+    --brass-soft: #2c2718;
+    --good: #5fbf7f;
+    --warn: #d4634a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 24px 96px;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  /* ── Шапка ───────────────────────────────────────────────────────────── */
+  header { padding: 56px 0 34px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(34px, 6vw, 50px);
+    line-height: 1.08;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 16px;
+  }
+  .lede {
+    font-size: 18px;
+    line-height: 1.6;
+    color: var(--dim);
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0;
+    margin-top: 34px;
+    border-top: 1px solid var(--hair);
+    border-bottom: 1px solid var(--hair);
+  }
+  .fact { padding: 16px 18px 16px 0; }
+  .fact dt {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 4px;
+  }
+  .fact dd {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 21px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Секции ──────────────────────────────────────────────────────────── */
+  section { padding-top: 52px; }
+  h2 {
+    font-family: var(--serif);
+    font-size: 27px;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+    margin: 0 0 6px;
+  }
+  .sub {
+    color: var(--faint);
+    font-size: 14.5px;
+    margin: 0 0 26px;
+    max-width: 60ch;
+  }
+  p { max-width: 66ch; margin: 0 0 16px; }
+  strong { font-weight: 600; }
+  em { font-style: normal; color: var(--brass); font-weight: 500; }
+  code {
+    font-family: var(--mono);
+    font-size: .875em;
+    background: var(--brass-soft);
+    padding: .1em .38em;
+    border-radius: 3px;
+  }
+
+  /* ── Правила ─────────────────────────────────────────────────────────── */
+  .rules { display: flex; flex-direction: column; gap: 0; }
+  .rule {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 16px;
+    padding: 20px 0;
+    border-top: 1px solid var(--hair);
+    align-items: start;
+  }
+  .rule:last-child { border-bottom: 1px solid var(--hair); }
+  .rule .n {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--brass);
+    padding-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .rule h3 {
+    font-family: var(--sans);
+    font-size: 16.5px;
+    font-weight: 600;
+    margin: 0 0 5px;
+  }
+  .rule p { margin: 0; color: var(--dim); font-size: 15px; max-width: 62ch; }
+
+  /* ── Фигура ──────────────────────────────────────────────────────────── */
+  figure { margin: 30px 0 0; }
+  .figbox { overflow-x: auto; }
+  figure svg { display: block; width: 100%; height: auto; min-width: 520px; }
+  figcaption {
+    font-size: 14px;
+    color: var(--faint);
+    margin-top: 12px;
+    max-width: 62ch;
+    line-height: 1.55;
+  }
+
+  /* ── Части ───────────────────────────────────────────────────────────── */
+  .part {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    gap: 22px;
+    padding: 26px 0;
+    border-top: 1px solid var(--hair);
+  }
+  .part:last-of-type { border-bottom: 1px solid var(--hair); }
+  .code {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--brass);
+    padding-top: 2px;
+  }
+  .part h3 {
+    font-family: var(--serif);
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 8px;
+    line-height: 1.25;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--faint);
+    margin: 0 0 12px;
+  }
+  .meta b { color: var(--dim); font-weight: 500; }
+  .part p { margin: 0 0 12px; font-size: 15.5px; color: var(--dim); }
+  .part p:last-child { margin-bottom: 0; }
+  .part p.lead { color: var(--text); }
+  .later .code { color: var(--faint); }
+
+  .stage-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 40px 0 0;
+    padding-bottom: 6px;
+  }
+
+  /* ── Таблица ─────────────────────────────────────────────────────────── */
+  .tablewrap { overflow-x: auto; margin-top: 8px; }
+  table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 16px 11px 0; border-bottom: 1px solid var(--hair); }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 400;
+    border-bottom-color: var(--edge);
+  }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .keep { color: var(--good); font-weight: 500; }
+  .lose { color: var(--warn); font-weight: 500; }
+
+  /* ── Решения ─────────────────────────────────────────────────────────── */
+  .q {
+    padding: 24px 0;
+    border-top: 1px solid var(--hair);
+  }
+  .q:last-of-type { border-bottom: 1px solid var(--hair); }
+  .q-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .q-code {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--brass);
+    flex: none;
+  }
+  .q h3 {
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+    line-height: 1.35;
+  }
+  .q p { margin: 0 0 10px 27px; color: var(--dim); font-size: 15px; max-width: 60ch; }
+  .rec {
+    margin-left: 27px;
+    font-size: 15px;
+    color: var(--text);
+    border-left: 2px solid var(--brass);
+    padding-left: 14px;
+    max-width: 58ch;
+  }
+  .rec b {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--brass);
+    display: block;
+    margin-bottom: 2px;
+    font-weight: 500;
+  }
+
+  .note {
+    margin-top: 40px;
+    padding-top: 18px;
+    border-top: 1px solid var(--hair);
+    font-size: 14px;
+    color: var(--faint);
+    max-width: 62ch;
+  }
+
+  a { color: var(--brass); text-underline-offset: 3px; }
+  a:focus-visible, :focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+
+  @media (max-width: 620px) {
+    .part { grid-template-columns: 1fr; gap: 8px; }
+    .rule { grid-template-columns: 22px 1fr; gap: 12px; }
+    .q p, .rec { margin-left: 0; }
+  }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">The Fourth Bequest · веха М06 · март 2027</p>
+  <h1>Экономика добычи</h1>
+  <p class="lede">Убийство перестаёт ронять хлам на продажу и начинает давать материалы. Готовая
+    вещь становится событием, сломанный трофей — решением, а улучшение — выбором с конечным запасом.
+    Восемь частей, каждая ставится отдельно.</p>
+
+  <dl class="facts">
+    <div class="fact"><dt>Срок</dt><dd>1 месяц</dd></div>
+    <div class="fact"><dt>Кода</dt><dd>14–17 дней</dd></div>
+    <div class="fact"><dt>Частей</dt><dd>8</dd></div>
+    <div class="fact"><dt>Сдвиг релиза</dt><dd class="keep">нет</dd></div>
+  </dl>
+</header>
+
+<section>
+  <h2>Три правила, которые нельзя нарушать</h2>
+  <p class="sub">Всё остальное в плане можно резать и переставлять. Эти три — нет: каждое куплено
+    чужой ошибкой, которую видно в отзывах.</p>
+
+  <div class="rules">
+    <div class="rule">
+      <div class="n">Р1</div>
+      <div>
+        <h3>Суммарная частота наград не падает — меняется только их вид</h3>
+        <p>Было 55&nbsp;% убийств с предметом. Стало ~10&nbsp;% предмет плюс ~55–60&nbsp;% материалы.
+          Path of Exile 2 сделал дроп скупым без замены и получил волну недовольства вида «пятнадцать
+          редких сундуков подряд и ни одной награды». Если при балансировке придётся чем-то
+          жертвовать — жертвуем чем угодно, кроме этого.</p>
+      </div>
+    </div>
+    <div class="rule">
+      <div class="n">Р2</div>
+      <div>
+        <h3>Обычные вещи не изнашиваются никогда</h3>
+        <p>Прочность в жанре считают повинностью — наказанием за то, что забыл сходить в город.
+          «Сломанность» есть только у трофеев с монстров, и это разовое решение, а не режим
+          обслуживания. Роль стока ресурсов играет запас ковки, а не износ.</p>
+      </div>
+    </div>
+    <div class="rule">
+      <div class="n">Р3</div>
+      <div>
+        <h3>Улучшение конечно</h3>
+        <p>Сейчас <code>forgeUpgrade</code> множит статы на 1.2 без предела, сколько угодно раз за
+          200 золота. Ровно за это ругают кузнеца в Oniro: «всё, что он делает — поднимает базовый
+          урон предмета». Запас ковки закрывает нашу дыру и делает улучшение выбором.</p>
+      </div>
+    </div>
+  </div>
+
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 640 262" role="img"
+           aria-label="Что даёт убийство монстра до и после правки: было — один бросок на предмет с шансом 55 процентов; стало — три исхода: материалы 55–60 процентов, сломанный трофей иногда, готовая вещь 10 процентов">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"></path>
+          </marker>
+          <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--brass)"></path>
+          </marker>
+        </defs>
+
+        <!-- БЫЛО -->
+        <text x="16" y="18" font-family="IBM Plex Mono, monospace" font-size="11"
+              letter-spacing="1.6" fill="currentColor" opacity=".5">БЫЛО</text>
+        <rect x="16" y="32" width="130" height="42" rx="2" fill="none" stroke="currentColor" stroke-opacity=".38"></rect>
+        <text x="81" y="58" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">убийство</text>
+        <line x1="150" y1="53" x2="272" y2="53" stroke="currentColor" stroke-opacity=".45" marker-end="url(#ar)"></line>
+        <text x="211" y="45" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor" opacity=".7">55 %</text>
+        <rect x="280" y="32" width="220" height="42" rx="2" fill="none" stroke="currentColor" stroke-opacity=".38"></rect>
+        <text x="298" y="58" font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">предмет — обычно на продажу</text>
+
+        <line x1="16" y1="104" x2="624" y2="104" stroke="currentColor" stroke-opacity=".14"></line>
+
+        <!-- СТАЛО -->
+        <text x="16" y="134" font-family="IBM Plex Mono, monospace" font-size="11"
+              letter-spacing="1.6" fill="currentColor" opacity=".5">СТАЛО</text>
+        <rect x="16" y="148" width="130" height="42" rx="2" fill="none" stroke="currentColor" stroke-opacity=".38"></rect>
+        <text x="81" y="174" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">убийство</text>
+
+        <line x1="150" y1="169" x2="186" y2="169" stroke="currentColor" stroke-opacity=".45"></line>
+        <line x1="186" y1="147" x2="186" y2="235" stroke="currentColor" stroke-opacity=".45"></line>
+
+        <line x1="186" y1="147" x2="272" y2="147" stroke="var(--brass)" stroke-width="1.6" marker-end="url(#arb)"></line>
+        <text x="229" y="139" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--brass)">55–60 %</text>
+        <rect x="280" y="129" width="220" height="36" rx="2" fill="none" stroke="var(--brass)" stroke-opacity=".8"></rect>
+        <text x="298" y="152" font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">материалы</text>
+
+        <line x1="186" y1="191" x2="272" y2="191" stroke="currentColor" stroke-opacity=".45" marker-end="url(#ar)"></line>
+        <text x="229" y="183" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor" opacity=".7">иногда</text>
+        <rect x="280" y="173" width="220" height="36" rx="2" fill="none" stroke="currentColor" stroke-opacity=".38"></rect>
+        <text x="298" y="196" font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">сломанный трофей</text>
+
+        <line x1="186" y1="235" x2="272" y2="235" stroke="currentColor" stroke-opacity=".45" marker-end="url(#ar)"></line>
+        <text x="229" y="227" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="currentColor" opacity=".7">10 %</text>
+        <rect x="280" y="217" width="220" height="36" rx="2" fill="none" stroke="currentColor" stroke-opacity=".38"></rect>
+        <text x="298" y="240" font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">готовая вещь</text>
+
+        <text x="516" y="152" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--brass)">основной поток</text>
+        <text x="516" y="196" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" opacity=".55">выбор игрока</text>
+        <text x="516" y="240" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" opacity=".55">событие</text>
+      </svg>
+    </div>
+    <figcaption>Правило Р1 в одной картинке: доля убийств, дающих хоть какую-то награду, остаётся
+      прежней. Уходит не награда, а её однообразие. Золото начисляется в обоих случаях и на схеме
+      не показано.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Что носит — то и падает</h2>
+  <p>На момент смерти у монстра уже известно, что на нём надето, а монстровое снаряжение живёт
+    отдельными 22 записями конфига. Связываем их с материалами — и модульный персонаж начинает
+    работать как <em>предпросмотр лута</em>: видно, кого стоит убивать. Редкость монстра уже задаёт
+    ему 1–4 предмета снаряжения, поэтому правило «больше носит — больше даёт» получается бесплатно.</p>
+  <p>Для крипты это ложится и на лор: обираем сгнившие легионы Мёртвой Короны. Дальше масштабируется
+    на все четыре павшие империи — ржавое железо и кость, шкура и жила, нефрит и бумага, сера и ихор.
+    Это же даёт причину возвращаться в пройденный биом.</p>
+</section>
+
+<section>
+  <h2>Части</h2>
+  <p class="sub">Ч1–Ч5 идут в веху М06 и составляют полную петлю — её показывает демо.
+    Ч6–Ч8 распределяются по вехам второго биома. Порядок только по зависимостям от кошелька.</p>
+
+  <p class="stage-label">Минимальный срез — веха М06</p>
+
+  <div class="part">
+    <div class="code">Ч1</div>
+    <div>
+      <h3>Кошель материалов</h3>
+      <p class="meta"><span><b>зависит:</b> ни от чего</span><span><b>оценка:</b> 4–5 дней</span><span><b>кто:</b> код</span></p>
+      <p class="lead">Секция конфига <code>craft-materials</code>, поле <code>save.materials</code>
+        и панель. Фундамент, на котором стоит всё остальное.</p>
+      <p>⚠ Главное архитектурное решение: <strong>материалы не идут в сетку инвентаря</strong>.
+        Стекирования в игре нет нигде — предмет всегда добавляется отдельной штукой, а сетка 10×6
+        забьётся за один забег. Материалы живут отдельным кошельком, как золото. Это снимает всю
+        работу по стекам, перетаскиванию и сундуку; так же сделано в Diablo 4 и Last Epoch.</p>
+      <p>Схема секции стоит около тридцати строк плюс четыре строки регистрации — форму редактор
+        рисует по схеме сам, реестр конфигов трогать не надо. Ключ <code>materials</code> уже занят
+        PBR-материалами рендера, поэтому секции зовутся <code>craft-materials</code> и <code>recipes</code>.</p>
+    </div>
+  </div>
+
+  <div class="part">
+    <div class="code">Ч2</div>
+    <div>
+      <h3>Дроп материалов вместо хлама</h3>
+      <p class="meta"><span><b>зависит:</b> Ч1</span><span><b>оценка:</b> 3–4 дня</span><span><b>кто:</b> код</span></p>
+      <p class="lead">Весь дроп игры живёт в одной строке — это единственная точка правки.
+        Вместо одного броска становится два.</p>
+      <p>Шанс готовой вещи 55&nbsp;% → 10&nbsp;% правится в конфиге, а не в коде. Материалы падают
+        по тому, что на монстре надето: таблицу кладу полем прямо в записи снаряжения, а не отдельной
+        секцией, чтобы связь «носит → даёт» была видна в одном месте. Количество: база 1–2 плюс
+        единица за каждый предмет снаряжения сверх первого.</p>
+      <p>⚠ Здесь же чиню давнюю ошибку: биом этажа в расчёте дропа игнорируется — код всегда берёт
+        первый биом из списка. Без этого «у каждого биома свои материалы» не заработает.</p>
+    </div>
+  </div>
+
+  <div class="part">
+    <div class="code">Ч3</div>
+    <div>
+      <h3>Разбор в кузнице</h3>
+      <p class="meta"><span><b>зависит:</b> Ч1</span><span><b>оценка:</b> 2 дня</span><span><b>кто:</b> код</span></p>
+      <p class="lead">Новая команда кузницы: вещь превращается в материалы.</p>
+      <p>Кузница уже умеет менять предметы на сервере — команды улучшения и перекатки аффиксов
+        работают, валидируются и гейтятся городом. Разбор это расширение готового шва: три
+        механические правки плюс обработчик. Выход: металл с оружия, кожа или металл с брони по её
+        классу, количество по тиру и редкости.</p>
+    </div>
+  </div>
+
+  <div class="part">
+    <div class="code">Ч4</div>
+    <div>
+      <h3>Сломанные трофеи и починка</h3>
+      <p class="meta"><span><b>зависит:</b> Ч1, Ч2</span><span><b>оценка:</b> 3 дня</span><span><b>кто:</b> код + графика</span></p>
+      <p class="lead">То, что падает с зомби, надеть нельзя: сначала почини или разбери.</p>
+      <p>Флаг на предмете, одна проверка при экипировке, команда починки за материалы. После починки
+        это обычная вещь своего тира. Здесь же графика: ржавые и поломанные варианты моделей
+        монстрового снаряжения — то, ради чего вся тема и затевалась.</p>
+    </div>
+  </div>
+
+  <div class="part">
+    <div class="code">Ч5</div>
+    <div>
+      <h3>Запас ковки</h3>
+      <p class="meta"><span><b>зависит:</b> Ч1</span><span><b>оценка:</b> 2–3 дня</span><span><b>кто:</b> код</span></p>
+      <p class="lead">У вещи конечный бюджет правок. Кончился — вещь готова, дальше только новая.</p>
+      <p>Запас ставится при создании предмета по редкости; улучшение и перекатка тратят по единице
+        и требуют материалов. Это меняет существующее поведение: сейчас улучшать можно бесконечно.
+        У предметов из старых сохранений поля нет — считаю, что запас полный.</p>
+    </div>
+  </div>
+
+  <p class="stage-label">После демо — вехи второго биома</p>
+
+  <div class="part later">
+    <div class="code">Ч6</div>
+    <div>
+      <h3>Рецепты</h3>
+      <p class="meta"><span><b>зависит:</b> Ч1</span><span><b>оценка:</b> 5 дней</span><span><b>кто:</b> код + дизайн</span></p>
+      <p class="lead">Секция <code>recipes</code>, команда крафта, вкладка кузницы. Материалы получают
+        второе применение помимо починки и улучшения.</p>
+    </div>
+  </div>
+
+  <div class="part later">
+    <div class="code">Ч7</div>
+    <div>
+      <h3>Сокеты и камни</h3>
+      <p class="meta"><span><b>зависит:</b> Ч1, Ч6</span><span><b>оценка:</b> 5–6 дней</span><span><b>кто:</b> код + графика</span></p>
+      <p class="lead">Вторая ось силы помимо аффиксов — то, за что хвалят Oniro.</p>
+      <p>Интерфейс собирается по образцу гнёзд активных скилов: там уже есть работающая панель
+        вставок, и игрок узнает знакомый жест.</p>
+    </div>
+  </div>
+
+  <div class="part later">
+    <div class="code">Ч8</div>
+    <div>
+      <h3>Сундуки и биомные семейства</h3>
+      <p class="meta"><span><b>зависит:</b> Ч1, Ч2</span><span><b>оценка:</b> 3 дня</span><span><b>кто:</b> код + дизайн</span></p>
+      <p class="lead">Сундуки наконец начинают что-то давать, а у каждого биома появляется своё
+        семейство материалов.</p>
+      <p>⚠ Сейчас сундук — это только меш: сокровищница представляет собой сундук с охраной и без
+        награды. Материалы — естественная награда для него.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Пять решений за тобой</h2>
+  <p class="sub">Каждое меняет ощущение системы, а не только код. Ниже моя рекомендация, но выбор
+    дизайнерский — оставь комментарий прямо здесь, и я внесу в документ и в веху.</p>
+
+  <div class="q">
+    <div class="q-head"><span class="q-code">В1</span><h3>Материалы падают на землю или сразу в кошелёк?</h3></div>
+    <p>Сразу в кошелёк — меньше кода и нельзя «забыть подобрать», но теряется физическое ощущение
+      дропа: убил, и ничего не выпало.</p>
+    <div class="rec"><b>рекомендую</b>Падают на землю и подбираются автоматически в радиусе. Заодно
+      оживает ключ автоподбора, который сейчас лежит в конфиге и не читается ни одной строкой кода.</div>
+  </div>
+
+  <div class="q">
+    <div class="q-head"><span class="q-code">В2</span><h3>Уники куются?</h3></div>
+    <p>Если да — у них тоже запас ковки, и уник можно испортить неудачной перекаткой. Если нет —
+      уник это законченная вещь, а вся ковка про обычные и редкие.</p>
+    <div class="rec"><b>рекомендую</b>Нулевой запас: нашёл — носи как есть. Уник и так редчайшее
+      событие, превращать его в заготовку жалко.</div>
+  </div>
+
+  <div class="q">
+    <div class="q-head"><span class="q-code">В3</span><h3>Материалы продаются торговцу?</h3></div>
+    <p>Если да — они превращаются в золото и обесцениваются как отдельный ресурс. Если нет — избыток
+      некуда девать, и он копится мёртвым грузом.</p>
+    <div class="rec"><b>рекомендую</b>Продавать нельзя, но можно переплавлять три низких тира в один
+      высокий. Избыток уходит вверх по лестнице, а не в золото.</div>
+  </div>
+
+  <div class="q">
+    <div class="q-head"><span class="q-code">В4</span><h3>Сколько семейств материалов в первом биоме?</h3></div>
+    <p>Заложено три — ржавое железо, истлевшая кожа, кость — по три тира, плюс три особых с редких
+      монстров. Итого двенадцать видов.</p>
+    <div class="rec"><b>рекомендую</b>Оставить три семейства. Двенадцать видов — это уже заметный
+      кошелёк; если на первом биоме покажется много, сужаем до двух и добираем на втором.</div>
+  </div>
+
+  <div class="q">
+    <div class="q-head"><span class="q-code">В5</span><h3>Сломанный трофей падает вместо материалов или вместе с ними?</h3></div>
+    <p>«Вместо» делает трофей самостоятельным событием со своим весом. «Вместе» превращает его
+      в бесплатную добавку к обычному дропу.</p>
+    <div class="rec"><b>рекомендую</b>Вместо. Тогда каждый трофей — это выбор чинить или разобрать,
+      а не подарок, который всё равно уйдёт в переплавку.</div>
+  </div>
+</section>
+
+<section>
+  <h2>Цена месяца</h2>
+  <p class="sub">Замерено пересчётом плана, а не прикинуто. Разница берётся не из объёма работы,
+    а из календаря Steam.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Как платим за месяц</th><th>Фестиваль</th><th>Запуск раннего доступа</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Месяцем контента<br><span style="color:var(--faint);font-size:13.5px">вырезан 4-й класс</span></td>
+          <td class="num keep">октябрь 2027</td>
+          <td class="num keep">24.01.2028</td>
+        </tr>
+        <tr>
+          <td>Месяцем сверху<br><span style="color:var(--faint);font-size:13.5px">всё едет на месяц</span></td>
+          <td class="num lose">февраль 2028</td>
+          <td class="num lose">22.05.2028</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:20px">Сдвиг на месяц выносит сдачу демо за срок приёма билдов, фестиваль
+    перепрыгивает на следующий, а запуск обязан быть позже него — отсюда четыре месяца из одного.
+    Поэтому месяц взят из контента: вырезан 4-й класс, женское тело переехало в веху бестиария,
+    заявка на фестиваль — в сентябрьскую. У вех М07–М11 теперь расходятся «изначально» и «сейчас»:
+    это сознательный сдвиг, и он оставлен видимым намеренно.</p>
+
+  <p>⚠ Запас сдачи демо — <strong>четыре дня</strong>, и он держится на непроверенном прогнозе:
+    октябрьский фестиваль 2026 принимал билды за 21 день до старта, февральский и июньский 2027 —
+    за 14. Взял 14 как более свежую практику. Как Valve объявит даты октября 2027 — сверить первым делом.</p>
+
+  <p class="note">Если по итогам разбора объём вырастет, резать надо содержимое частей, а не двигать
+    сроки: месяц, добавленный сверху вместо взятого из контента, стоит четырёх месяцев релиза.</p>
+</section>
+
+</div>
+
+</body></html>

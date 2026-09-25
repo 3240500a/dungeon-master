@@ -1,0 +1,412 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Одна истина или два движка</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:wght@600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap&subset=cyrillic,latin">
+<style>
+  :root{
+    --ground:#F5F6F5;
+    --surface:#EAEDEC;
+    --surface-2:#E1E5E3;
+    --ink:#14181A;
+    --ink-2:#39433F;
+    --muted:#5A6467;
+    --line:#D2D6D4;
+    --line-strong:#B9C0BD;
+    --accent:#0E6E6E;
+    --accent-soft:#D8E8E6;
+    --warn:#8A5A0A;
+    --warn-soft:#F0E5D0;
+    --good:#2E6B3F;
+    --good-soft:#DCE9DE;
+    --shadow:0 1px 2px rgba(20,24,26,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#101413;
+      --surface:#171C1B;
+      --surface-2:#1D2422;
+      --ink:#E7EBE9;
+      --ink-2:#BFC8C5;
+      --muted:#8E9A97;
+      --line:#242B29;
+      --line-strong:#333D3A;
+      --accent:#45BDB4;
+      --accent-soft:#12302E;
+      --warn:#D2A054;
+      --warn-soft:#2E2618;
+      --good:#6FBF85;
+      --good-soft:#16291B;
+      --shadow:0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#101413;
+    --surface:#171C1B;
+    --surface-2:#1D2422;
+    --ink:#E7EBE9;
+    --ink-2:#BFC8C5;
+    --muted:#8E9A97;
+    --line:#242B29;
+    --line-strong:#333D3A;
+    --accent:#45BDB4;
+    --accent-soft:#12302E;
+    --warn:#D2A054;
+    --warn-soft:#2E2618;
+    --good:#6FBF85;
+    --good-soft:#16291B;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground);
+    color:var(--ink);
+    font-family:"Source Sans 3",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-size:17px; line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:56px 28px 96px}
+  .col{max-width:68ch}
+
+  h1,h2,h3{font-family:Bitter,Georgia,serif;font-weight:700;text-wrap:balance;line-height:1.18;margin:0}
+  h1{font-size:clamp(30px,5vw,44px);letter-spacing:-.015em}
+  h2{font-size:clamp(22px,3vw,28px);letter-spacing:-.01em}
+  h3{font-size:19px;font-weight:600}
+  p{margin:0}
+  strong{font-weight:600;color:var(--ink)}
+  code,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
+  code{background:var(--surface-2);padding:.1em .38em;border-radius:3px}
+
+  .eyebrow{
+    font-family:"JetBrains Mono",monospace;font-size:11.5px;font-weight:600;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+  }
+
+  header{border-bottom:1px solid var(--line);padding-bottom:32px;margin-bottom:40px}
+  .lede{font-size:19px;color:var(--ink-2);margin-top:16px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:20px;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+
+  section{margin-top:56px;display:flex;flex-direction:column;gap:18px}
+  section > .col{display:flex;flex-direction:column;gap:16px}
+  .sechead{display:flex;flex-direction:column;gap:7px}
+
+  /* Вердикт */
+  .verdict{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-left:3px solid var(--accent);
+    padding:26px 28px;
+    display:flex;flex-direction:column;gap:16px;
+  }
+  .verdict h2{font-size:24px}
+  .verdict .call{font-size:19px;color:var(--ink)}
+  .cond{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+  .cond li{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:baseline;color:var(--ink-2)}
+  .cond .k{font-family:"JetBrains Mono",monospace;font-size:11.5px;font-weight:600;letter-spacing:.06em;color:var(--accent);white-space:nowrap;padding-top:2px}
+
+  /* таблицы */
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);background:var(--surface)}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:15px}
+  th,td{text-align:left;padding:11px 16px;border-bottom:1px solid var(--line)}
+  thead th{
+    font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+    background:var(--surface-2);border-bottom:1px solid var(--line-strong);
+  }
+  tbody tr:last-child td{border-bottom:none}
+  td.num{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  td.name{font-weight:600}
+
+  /* врезки */
+  .note{
+    padding:16px 20px;border:1px solid var(--line);
+    background:var(--surface);font-size:16px;color:var(--ink-2);
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .note.key{background:var(--accent-soft);border-color:transparent}
+  .note.warn{background:var(--warn-soft);border-color:transparent}
+  .note .tag{
+    font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600;
+    letter-spacing:.12em;text-transform:uppercase;
+  }
+  .note.key .tag{color:var(--accent)}
+  .note.warn .tag{color:var(--warn)}
+
+  pre{
+    margin:0;padding:16px 18px;background:var(--surface-2);border:1px solid var(--line);
+    overflow-x:auto;font-family:"JetBrains Mono",monospace;font-size:13px;line-height:1.6;color:var(--ink-2);
+  }
+
+  ul.plain{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:9px;color:var(--ink-2)}
+  ul.plain li::marker{color:var(--line-strong)}
+
+  .split{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  .panel{border:1px solid var(--line);background:var(--surface);padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+  .panel h3{color:var(--ink)}
+  .panel .verdictline{font-family:"JetBrains Mono",monospace;font-size:12px;letter-spacing:.06em;font-weight:600}
+  .yes{color:var(--good)}
+  .no{color:var(--warn)}
+
+  ol.steps{margin:0;padding:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:14px}
+  ol.steps li{counter-increment:s;display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:baseline;color:var(--ink-2)}
+  ol.steps li::before{
+    content:counter(s);font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:600;
+    color:var(--accent);border:1px solid var(--line-strong);border-radius:2px;
+    width:22px;height:22px;display:grid;place-items:center;
+  }
+
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+  a{color:var(--accent)}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+  <header class="col">
+    <div class="eyebrow">Архитектурная развилка</div>
+    <h1 style="margin-top:10px">Одна истина или два движка</h1>
+    <p class="lede">Держать лёгкий веб-клиент на Three.js рядом с Unity — или схлопнуть всё в Unity, включая веб-сборку. Разбор по замерам: формат поз, скорость разработки, переносимость на другие движки.</p>
+    <div class="meta">
+      <span>Ashes of the past · dungeon_master</span>
+      <span>замеры от 5 сентября 2026</span>
+    </div>
+  </header>
+
+  <div class="verdict col">
+    <div class="eyebrow">Вердикт</div>
+    <h2>Схлопывать в Unity — да, но по фактам, а не на вере</h2>
+    <p class="call">Главный аргумент не «Unity лучше», а <strong>исчезновение шва</strong>. Координатная война, которая съела эту сессию, существует ровно потому, что игра крутится в двух движках. Один движок — шва нет, и чинить <code>ConvertPoseQuat</code> больше не нужно вообще.</p>
+    <p>Второй аргумент — экономика: <strong>Unity-порт уже ~60% по объёму</strong>. Это не «начать заново», а «доделать начатое и выключить дубль».</p>
+    <ul class="cond">
+      <li><span class="k">условие 1</span><span>Поз-редактор делаем <strong>инструментом Unity Editor</strong>, не WebGL-рантаймом. Тут вся экономия.</span></li>
+      <li><span class="k">условие 2</span><span>Сначала <strong>замерить реальный WebGL-билд</strong> (вес, время захода, fps). Решать по цифрам.</span></li>
+      <li><span class="k">условие 3</span><span>Ядро анимации держать <strong>чистым</strong> — без типов движка. Это опцион на Unreal/Godot почти бесплатно.</span></li>
+    </ul>
+  </div>
+
+  <section>
+    <div class="col sechead">
+      <div class="eyebrow">Вопрос В · факты</div>
+      <h2>Формат поз: вес и скорость</h2>
+      <p>Замерил то, что реально лежит на сервере (<code>pe_clips</code>), а не по ощущениям.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Метрика</th><th>Значение</th><th>Комментарий</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Клипов</td><td class="num">41</td><td>idle / hit / s_hit по персонажам и оружию</td></tr>
+          <tr><td class="name">Кадров всего</td><td class="num">137</td><td>в среднем 3,3 на клип — разрежённые</td></tr>
+          <tr><td class="name">Каналов в кадре</td><td class="num">13,9</td><td>от 4 до 28 (кости + спец-ключи)</td></tr>
+          <tr><td class="name">Костей в схеме</td><td class="num">22</td><td>наш гуманоид; пальцев пока нет</td></tr>
+          <tr><td class="name">Спец-ключей</td><td class="num">8</td><td><code>__hipsY</code>, <code>__wpnMain</code>, <code>__lgripP</code>, <code>__match</code>…</td></tr>
+          <tr><td class="name">Вес всего</td><td class="num">62 KB</td><td>JSON, без сжатия</td></tr>
+          <tr><td class="name">На кадр</td><td class="num">464 B</td><td>≈ 1,5 KB на клип</td></tr>
+          <tr><td class="name">На канал</td><td class="num">33,5 B</td><td>текстовый JSON с 3 знаками</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <p>Формат — имя кости в тройку эйлеров (радианы), разрежённые кадры, интерполяция слерпом в рантайме:</p>
+    </div>
+    <pre>"Hips":[-0.001,-0.244,-0.003], "Spine":[0,0,0], "Chest":[0,0,0],
+"UpperChest":[-0.076,-0.463,-0.02], "Neck":[0.16,-0.003,-0.043]</pre>
+
+    <div class="col">
+      <h3>Сравнение с индустрией</h3>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Аспект</th><th>У нас</th><th>Индустрия</th><th>Вывод</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="name">Вращения</td><td>эйлер XYZ</td><td>glTF — кватернионы; Maya / 3ds&nbsp;Max / Blender — эйлер</td>
+            <td>Мы совпадаем с DCC. Эйлер даёт повороты &gt;180° двумя ключами, кватернион требует досэмплинга</td>
+          </tr>
+          <tr>
+            <td class="name">Плотность</td><td>3,3 ключа на клип, процедурная интерполяция</td><td>запечённые 30 fps дорожки</td>
+            <td>Наш подход <strong>кратно легче</strong>: мы храним авторские позы, а не сэмплы</td>
+          </tr>
+          <tr>
+            <td class="name">Кодировка</td><td>JSON-текст</td><td>бинарные аксессоры, ACL-сжатие 10–20×</td>
+            <td>В 2–4× толще бинарного — при 62 KB это неразличимо</td>
+          </tr>
+          <tr>
+            <td class="name">Интероп</td><td>свой формат</td><td>glTF / FBX как обмен</td>
+            <td><strong>Единственная реальная слабость</strong> — не открыть в Blender, не отдать аниматору</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <div class="note key">
+        <span class="tag">Ответ на вопрос</span>
+        <p>Формат <strong>не хуже индустриального — он легче</strong>, потому что мы храним разрежённые авторские позы и досчитываем движение процедурно, вместо запечённых дорожек. Парс 62 KB — около миллисекунды однократно; в кадре это ~14 каналов «эйлер → кватернион → слерп», то есть микросекунды. Узким местом это не будет и близко.</p>
+      </div>
+      <p><strong>Как масштабируется.</strong> 41 клип = 62 KB. Тысяча клипов ≈ 1,5 MB JSON — всё ещё нормально (парс ~20 мс, можно лениво). Десять тысяч — тогда захочется бинарь и ленивая подгрузка. До этого далеко.</p>
+      <p><strong>Что стоит поправить независимо от развилки.</strong> Хранить кватернионы вместо эйлеров убрало бы риск гимбала в данных (мы на него уже наступали и лечили слерпом) и конверсию в рантайме. Это небольшая, изолированная правка формата — но не срочная.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col sechead">
+      <div class="eyebrow">Вопрос А</div>
+      <h2>Станет ли проще добавлять функционал</h2>
+      <p>Да — но важно понимать, <em>за счёт чего именно</em>, иначе легко переплатить не за то.</p>
+    </div>
+
+    <div class="col">
+      <div class="note warn">
+        <span class="tag">Развилка внутри развилки</span>
+        <p>«Поз-редактор в Unity» — это два очень разных проекта. Разница в стоимости — кратная.</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="panel">
+        <h3>Инструмент Unity Editor</h3>
+        <p>Гизмо (Handles), инспекторы, сцена, undo, выбор костей — <strong>всё готовое</strong>. Итерация в play-mode быстрая.</p>
+        <p>Минус: нужен установленный Unity. Для соло-разработки это норма индустрии.</p>
+        <div class="verdictline yes">дёшево · рекомендую</div>
+      </div>
+      <div class="panel">
+        <h3>WebGL-редактор в браузере</h3>
+        <p>В сборке <strong>нет</strong> Editor-тулинга: гизмо, рейкаст выбора, панели, таймлайн — пишутся заново как рантайм-код.</p>
+        <p>Плюс минуты на каждую WebGL-сборку вместо секунд.</p>
+        <div class="verdictline no">дорого · только если нужен доступ из браузера</div>
+      </div>
+    </div>
+
+    <div class="col">
+      <h3>Что реально становится проще</h3>
+      <ul class="plain">
+        <li><strong>Пишем один раз.</strong> Сейчас новое рантайм-поведение — это TypeScript и C#, плюс риск рассинхрона. Станет — один раз.</li>
+        <li><strong>Шва нет.</strong> Вся история с <code>ConvertPoseQuat</code>, зеркалом ретаргета и двумя пространствами поз просто перестаёт существовать.</li>
+        <li><strong>«Редактор = игра» становится структурным.</strong> Сейчас это обещание, которое держится вручную и зависит от корректности конверсии. Один движок — один рендер, одно поведение.</li>
+        <li><strong>Один скелет.</strong> Пальцы, носки, твисты — просто кости того же скелета. Не нужно расширять наш риг и карту ретаргета ради каждой новой кости.</li>
+        <li><strong>Экосистема.</strong> Animation Rigging даёт готовые рантайм-IK-констрейнты и пиннинг — половина того, что мы планировали писать руками под Cascadeur-модель.</li>
+      </ul>
+
+      <h3>Что станет медленнее</h3>
+      <ul class="plain">
+        <li><strong>Итерация.</strong> Vite с горячей перезагрузкой — доли секунды. Unity — секунды на domain reload, минуты на WebGL-сборку. Ежедневная возня с UI редактора в вебе комфортнее.</li>
+        <li><strong>Разовая доделка.</strong> Порт надо довести и выключить веб-дубль.</li>
+      </ul>
+
+      <div class="note key">
+        <span class="tag">Важная поправка</span>
+        <p>Большинство фич поз-<em>редактора</em> — это <strong>авторинг</strong> (гизмо, IK-посинг, таймлайн, зеркалирование). Они и так писались один раз и Unity-цены не имели. Двойную цену платили <strong>только новые рантайм-поведения</strong>. Значит выигрыш скорости реален, но сконцентрирован в двух местах: рантайм-работа и исчезновение шва — а не «в Unity вообще всё быстрее».</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col sechead">
+      <div class="eyebrow">Вопрос Б</div>
+      <h2>Если завтра Unreal или Godot</h2>
+      <p>Тут надо разделить два слоя, у них принципиально разная переносимость.</p>
+    </div>
+
+    <div class="split">
+      <div class="panel">
+        <h3>Данные — не проблема</h3>
+        <p>Наш формат прост до предела: имя кости → тройка чисел. Импортёр под любой движок — это порядка сотни строк.</p>
+        <p>Для передачи аниматору или в Blender правильный путь — экспорт в glTF, а не свой формат.</p>
+        <div class="verdictline yes">переносится дёшево</div>
+      </div>
+      <div class="panel">
+        <h3>Система — вот она дорогая</h3>
+        <p>StepPlanner, IK, блендинг, torso-lead — это и есть IP, и это код. Мы уже прочувствовали цену на переносе веб → Unity.</p>
+        <p>Индустрия: большинство анимационных систем прибиты к движку и переписываются целиком.</p>
+        <div class="verdictline no">переносится дорого</div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="note key">
+        <span class="tag">У нас уже есть половина решения</span>
+        <p>Наш <strong>StepPlanner — чистая математика без типов движка</strong>. Именно поэтому golden-вектора сошлись между TypeScript и C# <em>до нуля</em> — байт в байт. Мы случайно уже наполовину сделали портируемое ядро.</p>
+      </div>
+
+      <p><strong>Правильная стратегия — не строить мидлварь сейчас</strong>, а держать дисциплину: ядро принимает простые числа и возвращает простые числа, ноль типов движка. Тогда вынос его позже — механическая работа, а не переписывание.</p>
+
+      <ul class="plain">
+        <li>Чистое ядро на <strong>C#</strong> закрывает Unity и Godot (там C# первого класса).</li>
+        <li>Для <strong>Unreal</strong> нужен C++ или C-ABI, значит ядро на <strong>Rust/C++</strong> закрывает все три плюс WASM для веба.</li>
+        <li>Решать это <em>сейчас</em> не нужно. Нужно лишь не загрязнять ядро типами движка — это бесплатно и даёт опцион.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="col sechead">
+      <div class="eyebrow">Экономика</div>
+      <h2>Сколько это стоит на самом деле</h2>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Слой</th><th>Веб (TS)</th><th>Unity (C#)</th><th>Состояние</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Рантайм анимации</td><td class="num">1 655</td><td class="num">~1 100</td><td>перенесён: StepPlanner, PosePlayer, Retarget, PoseData, GaitParams</td></tr>
+          <tr><td class="name">UI редактора</td><td class="num">1 782</td><td class="num">601</td><td>начат</td></tr>
+          <tr><td class="name">Прочее ядро</td><td class="num">615</td><td class="num">~700</td><td>риг, стопы, рагдолл, твисты</td></tr>
+          <tr><td class="name">Итого</td><td class="num">4 052</td><td class="num">2 404</td><td><strong>~60% объёма уже написано</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <p>Это переворачивает расклад. Схлопывание — <strong>не «выбросить и начать заново»</strong>, а доделать то, что уже больше чем наполовину сделано, и перестать содержать дубль.</p>
+      <p><strong>Что перестаём платить:</strong> двойную реализацию рантайма, координатный шов, ручную проверку «редактор = игра» через конверсию.</p>
+      <p><strong>Чем платим:</strong> лёгким мгновенным заходом в браузере (Unity-WebGL грузится дольше) и инвестицией в Three.js-редактор.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col sechead">
+      <div class="eyebrow">Риски</div>
+      <h2>Где это может не сойтись</h2>
+    </div>
+    <div class="col">
+      <ul class="plain">
+        <li><strong>Время захода в браузер.</strong> Главный риск. Для ARPG-демо 20–40 секунд, вероятно, приемлемо — люди качают Diablo дольше. Но это <em>гипотеза</em>, её надо проверить сборкой, а не согласиться на неё.</li>
+        <li><strong>Мобильный браузер.</strong> У Unity-WebGL он слабый. Закрывается нативными мобильными сборками — то есть перестаёт быть проблемой.</li>
+        <li><strong>WebGPU.</strong> В Unity 6.6 уже готов к продакшену, но по умолчанию WebGL 2 с автофолбэком. Значит рассчитывать надо на WebGL 2.</li>
+        <li><strong>Редактирование поз из браузера.</strong> Если это когда-нибудь понадобится не тебе одному — Editor-инструмент этого не даёт.</li>
+        <li><strong>Лицензия — не риск.</strong> Unity берёт не процент, а подписку за место, и бесплатен до 200 тыс. $ в год. Per-install-плату отменили в 2024-м. Процент с выручки — это Unreal, 5% свыше 1 млн $.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="col sechead">
+      <div class="eyebrow">План</div>
+      <h2>Что делаем в этом порядке</h2>
+    </div>
+    <div class="col">
+      <ol class="steps">
+        <li><span><strong>Замерить WebGL-сборку.</strong> Собрать текущий Unity-клиент под веб и снять три числа: вес, время до играбельности, fps. Это единственная реальная неизвестная — всё остальное посчитано.</span></li>
+        <li><span><strong>Принять решение по цифрам.</strong> Проходит — схлопываем. Не проходит — остаёмся на двух движках и добиваем координатный шов (он ограниченный, не бесконечный).</span></li>
+        <li><span><strong>Если схлопываем:</strong> доводим поз-редактор как инструмент Unity Editor, а не WebGL-рантайм. Веб-редактор выключаем только когда Unity-версия перекрыла его по функциям.</span></li>
+        <li><span><strong>Прекращаем чинить координату.</strong> Если движок один — <code>ConvertPoseQuat</code>, зеркало ретаргета и блейд плеч перестают быть задачей. Это немедленная экономия прямо сегодня.</span></li>
+        <li><span><strong>Держим ядро чистым.</strong> StepPlanner и вся математика — простые числа на входе и выходе. Дисциплина, а не архитектура. Опцион на Unreal/Godot остаётся открытым бесплатно.</span></li>
+      </ol>
+
+      <div class="note key" style="margin-top:6px">
+        <span class="tag">Если совсем коротко</span>
+        <p>Схлопывать стоит — потому что порт уже больше чем наполовину сделан, а шов, который съел эту сессию, порождён именно двумя движками. Но перед тем как выключать веб — <strong>собери WebGL-билд и посмотри на секундомер</strong>. Это единственное число, которого нам не хватает для решения.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="col">
+    Замеры: <code>pose-seed.json</code> (pe_clips), исходники <code>packages/client/src/render3d</code> и <code>Assets/DM/PoseEditor</code>. Данные по индустрии — glTF/FBX и лицензирование Unity, сентябрь 2026.
+  </footer>
+
+</div>
+
+</body></html>

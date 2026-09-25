@@ -1,0 +1,412 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Где жить инструменту анимации</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Commissioner:wght@600;700&family=Onest:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap&subset=cyrillic,latin">
+<style>
+  :root{
+    --ground:#F6F4F5; --surface:#ECE8EA; --surface-2:#E2DDE0;
+    --ink:#1A1518; --ink-2:#443B41; --muted:#6B5F66;
+    --line:#D8D0D4; --line-strong:#BFB4BA;
+    --accent:#7A2F5E; --accent-soft:#F1E3EC;
+    --warm:#8A5A12; --warm-soft:#F3E8D6;
+    --good:#2C6A46; --good-soft:#DCE9E1;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#131013; --surface:#1A161A; --surface-2:#211C21;
+      --ink:#EBE5E9; --ink-2:#C3B8BF; --muted:#948792;
+      --line:#2A242A; --line-strong:#3B333A;
+      --accent:#DB8FBB; --accent-soft:#2B1824;
+      --warm:#DBA455; --warm-soft:#2A2317;
+      --good:#6CBF8E; --good-soft:#14291D;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#131013; --surface:#1A161A; --surface-2:#211C21;
+    --ink:#EBE5E9; --ink-2:#C3B8BF; --muted:#948792;
+    --line:#2A242A; --line-strong:#3B333A;
+    --accent:#DB8FBB; --accent-soft:#2B1824;
+    --warm:#DBA455; --warm-soft:#2A2317;
+    --good:#6CBF8E; --good-soft:#14291D;
+  }
+
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--ink);
+    font-family:Onest,"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,sans-serif;
+    font-size:17px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:56px 26px 100px;display:flex;flex-direction:column;gap:58px}
+  .col{max-width:70ch}
+  h1,h2,h3{font-family:Commissioner,Onest,sans-serif;font-weight:700;line-height:1.16;text-wrap:balance;margin:0}
+  h1{font-size:clamp(30px,5.2vw,45px);letter-spacing:-.02em}
+  h2{font-size:clamp(21px,3vw,27px);letter-spacing:-.012em}
+  h3{font-size:16.5px;font-weight:600}
+  p{margin:0}
+  strong{font-weight:600;color:var(--ink)}
+  code{font-family:"IBM Plex Mono",monospace;font-size:.86em;background:var(--surface-2);padding:.1em .36em;border-radius:3px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11.5px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:var(--accent)}
+
+  header{border-bottom:1px solid var(--line);padding-bottom:34px}
+  .lede{font-size:19.5px;color:var(--ink-2);margin-top:16px}
+  .meta{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);margin-top:18px}
+
+  section{display:flex;flex-direction:column;gap:18px}
+  .sechead{display:flex;flex-direction:column;gap:8px}
+
+  .thesis{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);padding:26px 28px;display:flex;flex-direction:column;gap:14px}
+  .thesis p{font-size:19px}
+
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+  .tile{border:1px solid var(--line);background:var(--surface);padding:20px;display:flex;flex-direction:column;gap:6px}
+  .tile .n{font-family:Commissioner,sans-serif;font-weight:700;font-size:33px;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .tile .l{font-size:14.5px;color:var(--ink-2)}
+  .tile .s{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);background:var(--surface)}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:15px}
+  th,td{text-align:left;padding:11px 15px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);background:var(--surface-2);border-bottom:1px solid var(--line-strong)}
+  tbody tr:last-child td{border-bottom:none}
+  td.name{font-weight:600}
+  td.num{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .win{color:var(--good);font-weight:600}
+  .lose{color:var(--warm);font-weight:600}
+  .tie{color:var(--muted)}
+  tr.total td{background:var(--surface-2);font-weight:600;border-top:1px solid var(--line-strong)}
+
+  .note{padding:16px 20px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:8px;color:var(--ink-2);font-size:16px}
+  .note.key{background:var(--accent-soft);border-color:transparent}
+  .note.warn{background:var(--warm-soft);border-color:transparent}
+  .note.good{background:var(--good-soft);border-color:transparent}
+  .note .tag{font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase}
+  .note.key .tag{color:var(--accent)}
+  .note.warn .tag{color:var(--warm)}
+  .note.good .tag{color:var(--good)}
+
+  .chain{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .step{border:1px solid var(--line);background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+  .step .k{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .step .v{font-size:14.5px;color:var(--ink-2)}
+  .step.have{border-color:var(--good);background:var(--good-soft)}
+  .step.todo{border-color:var(--warm);background:var(--warm-soft)}
+
+  ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px;color:var(--ink-2)}
+  ul.plain li::marker{color:var(--line-strong)}
+
+  ol.steps{margin:0;padding:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:13px}
+  ol.steps li{counter-increment:s;display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:baseline;color:var(--ink-2)}
+  ol.steps li::before{content:counter(s);font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--accent);border:1px solid var(--line-strong);width:22px;height:22px;display:grid;place-items:center}
+
+  footer{border-top:1px solid var(--line);padding-top:22px;color:var(--muted);font-size:14px}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <div class="eyebrow">Платформа инструмента</div>
+  <h1 style="margin-top:10px">Где жить инструменту анимации</h1>
+  <p class="lede">Веб-редактор или переезд в Unity — если смотреть на инструмент сам по себе, без оглядки на клиент. Критерии: простота доработок, скорость внедрения новых инструментов, задел под ИИ-генерацию.</p>
+  <div class="meta">Ashes of the past · 5 сентября 2026</div>
+</header>
+
+<div class="thesis col">
+  <div class="eyebrow">Главное, что изменилось</div>
+  <p><strong>Запекание уже решило то, ради чего стоило переезжать в Unity.</strong></p>
+  <p>Главный довод за переезд был один — убить координатный шов. Но шов порождал <em>процедурный код, читающий мир движка</em>. Клиенты его больше не содержат, значит шва нет — и переезд инструмента для этого не нужен. Инструмент теперь можно ставить туда, где он <strong>продуктивнее</strong>, а не туда, где он «совпадает с игрой».</p>
+</div>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Смена роли</div>
+    <h2>Это больше не часть игры — это фабрика анимаций</h2>
+  </div>
+  <div class="col">
+    <p>До запекания редактор был «зеркалом клиента»: он обязан был показывать ровно то, что покажет игра, поэтому логично было жить в том же движке. После запекания у него другая работа:</p>
+    <ul class="plain">
+      <li><strong>Вход:</strong> модель, авторские позы, параметры процедурки, скоро — запрос к ИИ.</li>
+      <li><strong>Выход:</strong> обычные клипы в glTF, которые едут в Unity, Unreal, Godot, куда угодно.</li>
+    </ul>
+    <div class="note key">
+      <span class="tag">Следствие</span>
+      <p>Инструмент, который обслуживает <strong>любой</strong> движок, не должен жить <strong>внутри одного</strong> из них. Открывать Unity, чтобы наавторить анимацию для проекта на Unreal — архитектурно вывернуто.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Сравнение</div>
+    <h2>Ось за осью</h2>
+    <p>Оценка по твоим критериям: доработки, скорость внедрения нового, задел под ИИ.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Ось</th><th>Веб — Three.js / TypeScript</th><th>Unity</th><th>Кто</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="name">Цикл правки</td>
+          <td>Vite HMR — меньше секунды, состояние сцены живёт</td>
+          <td>domain reload несколько секунд; WebGL-сборка минуты</td>
+          <td class="win">веб</td>
+        </tr>
+        <tr>
+          <td class="name">UI инструмента<br><span style="font-weight:400;color:var(--muted);font-size:13.5px">таймлайн, дерево костей, история генераций</span></td>
+          <td>DOM и CSS — самый зрелый UI-стек, что существует</td>
+          <td>UGUI или UI Toolkit — беднее и медленнее писать</td>
+          <td class="win">веб</td>
+        </tr>
+        <tr>
+          <td class="name">3D-вьюпорт</td>
+          <td>свой — <strong>уже написан</strong>: гизмо, пикинг, IK-хэндлы, полюса</td>
+          <td>Scene view и Handles бесплатно — сильная сторона</td>
+          <td class="tie">ничья по факту</td>
+        </tr>
+        <tr>
+          <td class="name">Анимационная инфраструктура</td>
+          <td>своя: клипы, слерп-интерп, прореживание, ретаргет</td>
+          <td>Timeline, AnimationClip, Humanoid, Animation Rigging</td>
+          <td class="lose">Unity</td>
+        </tr>
+        <tr>
+          <td class="name">Приём FBX / GLB / BVH<br><span style="font-weight:400;color:var(--muted);font-size:13.5px">это формат выхода ИИ-сервисов</span></td>
+          <td>FBXLoader и GLTFLoader работают прямо в браузере</td>
+          <td>в редакторе да; в рантайме FBX-импорта <strong>нет</strong></td>
+          <td class="win">веб</td>
+        </tr>
+        <tr>
+          <td class="name">Связь с ИИ-сервисом</td>
+          <td>fetch и WebSocket нативно; ИИ-мир говорит по HTTP</td>
+          <td>UnityWebRequest — работает, но всё вокруг писать руками</td>
+          <td class="win">веб</td>
+        </tr>
+        <tr>
+          <td class="name">Доступ</td>
+          <td>ссылка, любой девайс, ноль установки</td>
+          <td>нужен Unity и проект, либо сборка под платформу</td>
+          <td class="win">веб</td>
+        </tr>
+        <tr>
+          <td class="name">Привязка к движку</td>
+          <td>нейтрален — просто отдаёт данные</td>
+          <td>инструмент живёт внутри Unity</td>
+          <td class="win">веб</td>
+        </tr>
+        <tr>
+          <td class="name">Подключить аниматора</td>
+          <td>кинул ссылку — работает</td>
+          <td>установка Unity, совпадение версии, чекаут проекта</td>
+          <td class="win">веб</td>
+        </tr>
+        <tr>
+          <td class="name">Физика и рагдолл в инструменте</td>
+          <td>Jolt — уже подключён</td>
+          <td>из коробки</td>
+          <td class="tie">ничья</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Что уже построено</div>
+    <h2>Стартовые позиции неравные</h2>
+  </div>
+  <div class="tiles">
+    <div class="tile"><div class="s">веб-инструмент</div><div class="n">4 052</div><div class="l">строки работающего редактора: гизмо, IK, таймлайн, хваты оружия, плант-грид, импорт FBX</div></div>
+    <div class="tile"><div class="s">Unity — UI инструмента</div><div class="n">601</div><div class="l">строка; остальные 1 800 — это рантайм, а не инструмент</div></div>
+    <div class="tile"><div class="s">обнуляется запеканием</div><div class="n">723</div><div class="l">строки Unity-процедурки в клиенте становятся не нужны — клиент играет клипы</div></div>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Слой</th><th>Веб, строк</th><th>Unity, строк</th><th>Судьба при запекании</th></tr></thead>
+      <tbody>
+        <tr><td class="name">UI редактора</td><td class="num">1 782</td><td class="num">601</td><td>это и есть инструмент — тут решается спор</td></tr>
+        <tr><td class="name">Процедурка (StepPlanner, PosePlayer, gait)</td><td class="num">1 315</td><td class="num">723</td><td>живёт только в редакторе</td></tr>
+        <tr><td class="name">Риг, ретаргет, стопы, прореживание</td><td class="num">955</td><td class="num">581</td><td>в клиенте заменяется штатным</td></tr>
+        <tr><td class="name">Рагдолл</td><td class="num">—</td><td class="num">150</td><td>в клиенте, нативный</td></tr>
+        <tr class="total"><td class="name">Итого</td><td class="num">4 052</td><td class="num">2 404</td><td>из Unity-порта инструментом является 601 строка</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note warn">
+      <span class="tag">Важная переоценка</span>
+      <p>Раньше я считал, что Unity-порт готов на 60% — и это был аргумент за переезд. Но <strong>эти 60% почти целиком рантайм</strong>, который запекание из клиента убирает. Инструментальной части там 601 строка против 1 782 в вебе. Аргумент «уже почти сделано» разворачивается в противоположную сторону.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">ИИ-генерация</div>
+    <h2>Как ляжет ИИ и почему это решает спор</h2>
+    <p>Твой сценарий: запрос → сервис генерит → результат в поз-плеере → посмотреть, перегенерить, сохранить.</p>
+  </div>
+  <div class="chain">
+    <div class="step"><div class="k">1 · запрос</div><div class="v">промпт или референс из UI редактора</div></div>
+    <div class="step"><div class="k">2 · сервис</div><div class="v">Python-инференс на отдельном сервере, HTTP или WebSocket</div></div>
+    <div class="step have"><div class="k">3 · ответ</div><div class="v">FBX / GLB / BVH — ровно то, что отдают Meshy, DeepMotion и text-to-motion модели</div></div>
+    <div class="step have"><div class="k">4 · приём</div><div class="v"><code>clipBaker.bakeAnimationToClip</code> — импорт и прореживание <strong>уже написаны</strong></div></div>
+    <div class="step todo"><div class="k">5 · превью</div><div class="v">кандидаты рядом, перегенерить, сохранить — это UI-работа</div></div>
+  </div>
+  <div class="col">
+    <p>Состояние области на сегодня: text-to-motion живёт двумя ветками — диффузионные модели (MDM, MotionDiffuse, MLD, GraphMotion и поток свежих работ 2026-го) и авторегрессионные. Коммерческое уже применимо: Meshy авто-риггает гуманоида меньше чем за 30 секунд и отдаёт FBX и GLB, рядом DeepMotion и видео-мокап-сервисы.</p>
+    <div class="note good">
+      <span class="tag">Ключевое совпадение</span>
+      <p>ИИ-сервисы отдают <strong>FBX и GLB</strong>. У нас <code>clipBaker</code> уже умеет их принимать и прореживать в наши ключи — я его смотрел, он писался под мокап-мост. То есть <strong>приёмник для ИИ наполовину готов</strong>, и он в вебе.</p>
+    </div>
+    <div class="note key">
+      <span class="tag">И техническая деталь, которая решает</span>
+      <p>FBX в браузере читается штатным <code>FBXLoader</code>. В Unity <strong>рантайм-импорта FBX нет вообще</strong> — только в редакторе. Значит инструмент на Unity либо остаётся Editor-инструментом навсегда, либо теряет способность принимать половину того, что отдаёт ИИ.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Честно</div>
+    <h2>Где Unity действительно сильнее</h2>
+  </div>
+  <div class="col">
+    <ul class="plain">
+      <li><strong>Handles и Scene view.</strong> Начинали бы с нуля — Unity сэкономил бы недели на гизмо, пикинге, снапе и undo. Но это уже написано в вебе, деньги потрачены.</li>
+      <li><strong>Animation Rigging.</strong> Готовые IK-констрейнты — часть того, что мы собирались писать под Cascadeur-модель пиннинга. Реальная экономия, но не вся: сам UX посинга всё равно свой.</li>
+      <li><strong>Timeline.</strong> Готовый редактор дорожек против нашего самописного таймлайна.</li>
+      <li><strong>Humanoid-ретаргет.</strong> Обкатанный движковый ретаргет вместо нашего — но при запекании ретаргет и так уезжает на сторону клиента.</li>
+      <li><strong>Профайлер и отладка сцены</strong> сильнее браузерных для тяжёлой 3D-логики.</li>
+    </ul>
+    <div class="note warn">
+      <span class="tag">Когда я бы выбрал Unity</span>
+      <p>Если бы инструмент писался <strong>с нуля</strong> и обслуживал <strong>только Unity-игру</strong>. Оба условия у нас не выполняются: 4 тысячи строк уже работают, а клиент по твоему же условию — любой.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Как отыграть</div>
+    <h2>Закрываем оси, где Unity впереди</h2>
+    <p>По каждой оси, где Unity выигрывает или ничья — что конкретно делаем и чем закрываем. Почти всё берётся готовым из экосистемы, писать с нуля почти нечего.</p>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Ось</th><th>Разрыв сейчас</th><th>Чем закрываем</th><th>Усилие</th><th>Станет</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="name">Анимационная инфраструктура</td>
+          <td class="lose">Timeline, AnimationClip, Animator, Animation Rigging</td>
+          <td>Перейти на штатные <code>THREE.AnimationClip</code> и <code>AnimationMixer</code>; IK взять из <code>CCDIKSolver</code> и своего аналитического 2-костного</td>
+          <td class="num">средне</td>
+          <td class="win">паритет плюс бесплатный экспорт glTF</td>
+        </tr>
+        <tr>
+          <td class="name">3D-вьюпорт</td>
+          <td class="tie">нет undo, подсветки выбора, вида по осям, снапа</td>
+          <td>Команд-паттерн из three.js editor, <code>OutlinePass</code>, <code>ViewHelper</code>, снап у <code>TransformControls</code></td>
+          <td class="num">мало</td>
+          <td class="win">обгон: несколько вьюпортов рядом</td>
+        </tr>
+        <tr>
+          <td class="name">Физика и рагдолл</td>
+          <td class="tie">паритет по возможностям</td>
+          <td>Переформулировка роли плюс UX настройки рагдолла поверх Jolt</td>
+          <td class="num">мало</td>
+          <td class="win">обгон: солвер уровня AAA</td>
+        </tr>
+        <tr>
+          <td class="name">Профайлер и отладка</td>
+          <td class="lose">инспектор сцены и профайлер Unity</td>
+          <td><code>Spector.js</code> для кадров GPU, DevTools для CPU, своя панель инспектора</td>
+          <td class="num">час</td>
+          <td class="win">обгон по CPU-отладке</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <div class="note good">
+      <span class="tag">Главная находка</span>
+      <p>Переход на штатный <code>THREE.AnimationClip</code> закрывает <strong>три дыры одним движением</strong>. Первое — это и есть эквивалент Unity AnimationClip: микшер, кросс-фейд и <strong>аддитивный бленд</strong> (<code>makeClipAdditive</code>), а аддитив — ровно то, что нужно для aim-офсетов прицела. Второе — дорожки там <strong>кватернионные</strong>, то есть попутно уходит риск гимбала, на который мы уже наступали с эйлерами. Третье — <code>GLTFExporter</code> умеет экспортировать <code>AnimationClip</code> напрямую, то есть <strong>экспорт запечённых клипов в glTF получается даром</strong>, без своего писателя формата.</p>
+    </div>
+  </div>
+
+  <div class="col sechead" style="margin-top:10px">
+    <h3 style="font-size:18px">Что берём готовым</h3>
+  </div>
+  <div class="chain">
+    <div class="step have"><div class="k">undo и redo</div><div class="v">команд-паттерн из three.js editor — реализация открыта и описана документом</div></div>
+    <div class="step have"><div class="k">выбор объекта</div><div class="v"><code>OutlinePass</code> — обводка выделенного, толщина и сила настраиваются</div></div>
+    <div class="step have"><div class="k">вид по осям</div><div class="v"><code>ViewHelper</code> — кубик осей в углу, клик по оси доворачивает камеру</div></div>
+    <div class="step have"><div class="k">снап</div><div class="v"><code>setTranslationSnap</code> и <code>setRotationSnap</code> уже есть у нашего <code>TransformControls</code></div></div>
+    <div class="step have"><div class="k">отладка GPU</div><div class="v"><code>Spector.js</code> — захват кадра, дроуколлы, состояние, шейдеры</div></div>
+    <div class="step todo"><div class="k">инспектор сцены</div><div class="v">своя панель — но это DOM, то есть быстро</div></div>
+  </div>
+
+  <div class="col">
+    <p><strong>Про физику — тут дело не в догоняющей работе, а в смене роли.</strong> После запекания физика в инструменте нужна только для превью: клиент подключает свою. Значит паритет с физикой конкретного движка перестаёт быть требованием — а Jolt, который у нас уже стоит, это солвер того же класса, что крутится в AAA-проектах. Остаётся дописать UX настройки рагдолла, и ось переворачивается в плюс.</p>
+
+    <div class="note key">
+      <span class="tag">Чего сознательно не берём</span>
+      <p>Animator-стейт-машину и blend-деревья <strong>в инструмент тащить не надо</strong> — они живут в клиенте, каждый движок делает их сам. Инструменту нужен только <em>предпросмотр</em> смешивания, а его даёт микшер весами. Так же и Timeline: нам нужен редактор ключей, а не монтажка катсцен.</p>
+    </div>
+
+    <div class="note warn">
+      <span class="tag">Одна честная оговорка</span>
+      <p>Штатный ретаргет три.js (<code>SkeletonUtils.retarget</code>) известен своими болячками — выкрученные персонажи, вывернутые стопы на Mixamo-скелетах. Брать его не нужно: у нас свой ретаргет уже работает, а после запекания ретаргет вообще уезжает на сторону клиента, к штатным механизмам движка. Если понадобится альтернатива — есть отдельный солвер <code>retargeting-threejs</code>, он живее штатного.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">Вердикт</div>
+    <h2>Остаёмся в вебе</h2>
+  </div>
+  <div class="col">
+    <p>Три довода, каждый самостоятельно достаточный:</p>
+    <ul class="plain">
+      <li><strong>Инструмент обслуживает любой движок</strong> — значит не должен жить внутри одного. Это прямое следствие архитектуры, которую ты только что выбрал.</li>
+      <li><strong>Скорость доработок</strong> — HMR меньше секунды и DOM для UI против domain reload и UI Toolkit. Для инструмента, который будет постоянно обрастать панелями, это главный множитель.</li>
+      <li><strong>ИИ ложится в веб естественно</strong> — сервисы говорят по HTTP и отдают FBX и GLB, приёмник уже написан, а Unity в рантайме FBX не читает совсем.</li>
+    </ul>
+    <div class="note key">
+      <span class="tag">И побочная выгода</span>
+      <p>Веб-код при нужде <strong>заворачивается в десктоп</strong> (Tauri или Electron) — если понадобится нативный доступ к файлам или офлайн. Обратный путь, из Unity в лёгкий веб-инструмент, закрыт.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="col sechead">
+    <div class="eyebrow">План</div>
+    <h2>Что делать дальше</h2>
+  </div>
+  <div class="col">
+    <ol class="steps">
+      <li><span><strong>Заморозить Unity-порт анимации.</strong> Клиенту он больше не нужен: 723 строки процедурки заменяются проигрыванием клипов. Не доводим то, что выбрасываем.</span></li>
+      <li><span><strong>Прототип запекателя</strong> в вебе — склеить <code>gaitGolden</code>, <code>reduceKeyframes</code> и <code>exportGLB</code>. Первый запечённый шаг вперёд.</span></li>
+      <li><span><strong>Перейти на <code>THREE.AnimationClip</code>.</strong> Один шаг закрывает анимационную инфраструктуру, снимает риск гимбала кватернионными дорожками и даёт экспорт glTF даром. Наш JSON остаётся исходником авторинга.</span></li>
+      <li><span><strong>Собрать вьюпорт-кит:</strong> undo и redo команд-паттерном, <code>OutlinePass</code>, <code>ViewHelper</code>, снап. Всё готовое, день работы — и ось вьюпорта уходит в плюс.</span></li>
+      <li><span><strong>Довести редактор как инструмент:</strong> пины и IK по модели Cascadeur, все кости включая пальцы, мах таза в ударах. Всё это теперь чисто авторские фичи — без цены на второй движок.</span></li>
+      <li><span><strong>Заложить ИИ-шов:</strong> панель запроса, эндпоинт, приём ответа через существующий <code>clipBaker</code>, превью кандидатов. Сервис подключаем, когда выберем модель.</span></li>
+      <li><span><strong>Unity остаётся клиентом</strong> — играет клипы, foot IK, рагдолл. Никакой процедурки, никакого <code>ConvertPoseQuat</code>.</span></li>
+    </ol>
+    <div class="note good" style="margin-top:6px">
+      <span class="tag">Короткая версия</span>
+      <p>Раньше переезд в Unity был про то, чтобы убить шов. Запекание убило шов дешевле. Осталось выбирать по продуктивности — а по продуктивности инструмент выигрывает веб, причём с запасом, и с уже написанной половиной ИИ-приёмника.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="col">
+  Замеры по исходникам: <code>packages/client/src/render3d</code> и <code>Assets/DM/PoseEditor</code>. Состояние ИИ-генерации движения — обзор публикаций и коммерческих сервисов, сентябрь 2026.
+</footer>
+
+</div>
+
+</body></html>

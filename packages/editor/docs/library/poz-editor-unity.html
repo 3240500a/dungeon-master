@@ -1,0 +1,345 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Поз-эдитор на Unity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#f3f4f7; --surface:#ffffff; --surface-2:#eceef2; --sunk:#e7e9ee;
+    --ink:#191c22; --ink-soft:#565d6b; --ink-faint:#8a91a0;
+    --line:#dde0e6; --line-strong:#c9cdd6;
+    --accent:#c4611c; --accent-soft:#f3e2d3; --accent-ink:#8f4413;
+    --good:#3c8a58; --good-soft:#dcefe1;
+    --sched:#6b7280;
+    --shadow:0 1px 2px rgba(20,24,33,.05), 0 8px 24px rgba(20,24,33,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#13151a; --surface:#1b1e25; --surface-2:#22262e; --sunk:#171a20;
+      --ink:#e9ebf0; --ink-soft:#a6adba; --ink-faint:#6f7784;
+      --line:#2a2f39; --line-strong:#39404c;
+      --accent:#e28a4a; --accent-soft:#3a2a1c; --accent-ink:#e9a877;
+      --good:#5cb881; --good-soft:#22322a;
+      --sched:#8a92a0;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#13151a; --surface:#1b1e25; --surface-2:#22262e; --sunk:#171a20;
+    --ink:#e9ebf0; --ink-soft:#a6adba; --ink-faint:#6f7784;
+    --line:#2a2f39; --line-strong:#39404c;
+    --accent:#e28a4a; --accent-soft:#3a2a1c; --accent-ink:#e9a877;
+    --good:#5cb881; --good-soft:#22322a;
+    --sched:#8a92a0;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1000px; margin:0 auto; padding:clamp(28px,5vw,72px) clamp(18px,4vw,40px) 96px}
+
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:500;
+    letter-spacing:.16em; text-transform:uppercase; color:var(--accent-ink);
+    display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow::before{content:""; width:26px; height:2px; background:var(--accent); display:inline-block}
+
+  h1{
+    font-size:clamp(34px,6vw,56px); line-height:1.04; font-weight:700;
+    letter-spacing:-.02em; text-wrap:balance; margin:.35em 0 .3em;
+  }
+  .lede{font-size:clamp(17px,2.4vw,21px); color:var(--ink-soft); max-width:62ch; margin:0}
+
+  .meta{
+    margin-top:26px; display:flex; flex-wrap:wrap; gap:10px 8px;
+    font-family:"IBM Plex Mono",monospace; font-size:12.5px;
+  }
+  .tag{
+    border:1px solid var(--line-strong); border-radius:999px; padding:5px 12px;
+    color:var(--ink-soft); background:var(--surface);
+  }
+  .tag b{color:var(--ink); font-weight:600}
+
+  section{margin-top:clamp(46px,7vw,80px)}
+  h2{
+    font-size:clamp(22px,3.2vw,30px); font-weight:600; letter-spacing:-.01em;
+    text-wrap:balance; margin:0 0 6px;
+  }
+  .sub{color:var(--ink-soft); margin:0 0 26px; max-width:64ch}
+
+  /* server / two clients diagram */
+  .hub{
+    display:grid; gap:16px; align-items:stretch;
+    grid-template-columns:1fr;
+  }
+  .server{
+    background:var(--surface); border:1.5px solid var(--accent); border-radius:14px;
+    padding:20px 22px; box-shadow:var(--shadow); position:relative;
+  }
+  .server .lbl,.node .lbl{
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--ink-faint); margin-bottom:6px;
+  }
+  .server .name{font-size:19px; font-weight:600; margin-bottom:4px}
+  .server .desc,.node .desc{color:var(--ink-soft); font-size:14.5px}
+  .server .pill{
+    display:inline-block; margin-top:12px; font-family:"IBM Plex Mono",monospace;
+    font-size:12px; background:var(--accent-soft); color:var(--accent-ink);
+    padding:4px 10px; border-radius:7px; font-weight:500;
+  }
+  .clients{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .node{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    padding:18px 20px; box-shadow:var(--shadow);
+  }
+  .node.now{border-color:var(--good); border-width:1.5px}
+  .node .name{font-size:17px; font-weight:600; margin-bottom:3px; display:flex; gap:8px; align-items:center}
+  .flowline{
+    text-align:center; color:var(--ink-faint); font-family:"IBM Plex Mono",monospace;
+    font-size:12px; letter-spacing:.05em; margin:2px 0;
+  }
+  .flowline span{display:inline-flex; gap:8px; align-items:center}
+  .chip-good{font-size:11px; color:var(--good); border:1px solid var(--good); border-radius:6px; padding:1px 7px; font-family:"IBM Plex Mono",monospace}
+
+  /* decision cards */
+  .cards{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    padding:20px 22px; box-shadow:var(--shadow);
+  }
+  .card h3{font-size:17px; font-weight:600; margin:0 0 8px; display:flex; gap:10px; align-items:baseline}
+  .card h3 .k{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--accent); font-weight:600}
+  .card p{margin:0; color:var(--ink-soft); font-size:14.5px}
+
+  /* pipeline */
+  .pipe{
+    display:flex; flex-wrap:wrap; gap:10px; align-items:stretch;
+    background:var(--sunk); border:1px solid var(--line); border-radius:16px;
+    padding:18px;
+  }
+  .step{
+    flex:1 1 130px; background:var(--surface); border:1px solid var(--line);
+    border-radius:11px; padding:14px 14px; min-width:130px; position:relative;
+  }
+  .step .n{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-faint)}
+  .step .t{font-weight:600; font-size:14.5px; margin-top:3px}
+  .step .d{font-size:12.5px; color:var(--ink-soft); margin-top:4px}
+  .arrow{align-self:center; color:var(--accent); font-size:18px; flex:0 0 auto}
+
+  /* why t-pose */
+  .why{
+    display:grid; grid-template-columns:auto 1fr; gap:20px; align-items:start;
+    background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:14px; padding:22px 24px; box-shadow:var(--shadow);
+  }
+  .why .glyph{
+    font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--ink-soft);
+    background:var(--sunk); border:1px solid var(--line); border-radius:10px;
+    padding:14px 16px; white-space:pre; line-height:1.5;
+  }
+  .why p{margin:0 0 10px}
+  .why p:last-child{margin-bottom:0}
+  .why b{color:var(--ink)}
+
+  /* phases */
+  .phases{display:flex; flex-direction:column; gap:0}
+  .phase{
+    display:grid; grid-template-columns:44px 1fr auto; gap:16px; align-items:start;
+    padding:18px 0; border-top:1px solid var(--line);
+  }
+  .phase:first-child{border-top:none}
+  .phase .num{
+    font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:15px;
+    width:36px; height:36px; border-radius:9px; display:grid; place-items:center;
+    background:var(--surface-2); color:var(--ink-soft); border:1px solid var(--line);
+  }
+  .phase.done .num{background:var(--good-soft); color:var(--good); border-color:var(--good)}
+  .phase.next .num{background:var(--accent-soft); color:var(--accent-ink); border-color:var(--accent)}
+  .phase .body h4{margin:0 0 3px; font-size:16px; font-weight:600}
+  .phase .body p{margin:0; color:var(--ink-soft); font-size:14px; max-width:62ch}
+  .status{
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.04em;
+    padding:4px 10px; border-radius:999px; white-space:nowrap; align-self:center;
+    border:1px solid var(--line-strong); color:var(--ink-soft); background:var(--surface);
+  }
+  .status.done{color:var(--good); border-color:var(--good); background:var(--good-soft)}
+  .status.next{color:var(--accent-ink); border-color:var(--accent); background:var(--accent-soft)}
+
+  /* done checklist */
+  .checks{display:grid; grid-template-columns:1fr 1fr; gap:10px 22px}
+  .chk{display:flex; gap:11px; align-items:flex-start; font-size:14.5px; color:var(--ink-soft)}
+  .chk .mark{color:var(--good); font-weight:700; flex:0 0 auto; margin-top:1px}
+  .chk b{color:var(--ink); font-weight:600}
+
+  footer{
+    margin-top:64px; padding-top:22px; border-top:1px solid var(--line);
+    color:var(--ink-faint); font-family:"IBM Plex Mono",monospace; font-size:12.5px;
+    display:flex; flex-wrap:wrap; gap:6px 16px; justify-content:space-between;
+  }
+
+  @media (max-width:640px){
+    .clients,.cards,.checks{grid-template-columns:1fr}
+    .why{grid-template-columns:1fr}
+    .phase{grid-template-columns:36px 1fr; grid-template-areas:"num body" "num status"}
+    .phase .status{justify-self:start; margin-top:8px}
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Чертёж переноса · Web → Unity</div>
+    <h1>Поз-эдитор на Unity</h1>
+    <p class="lede">План, как перенести редактор анимаций и саму скелетную анимацию персонажей в Unity — точь-в-точь как в веб-версии, но на встроенной физике Unity.</p>
+    <div class="meta">
+      <span class="tag"><b>Цель:</b> паритет 1:1 с web</span>
+      <span class="tag"><b>Физика:</b> ArticulationBody (Unity)</span>
+      <span class="tag"><b>Данные:</b> с сервера, 51 клип</span>
+      <span class="tag"><b>Готово:</b> изучение + шаг 1а</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Одна база данных — два клиента</h2>
+    <p class="sub">Позы, походка и настройки уже лежат на сервере. Веб-клиент и новый Unity-клиент читают <b>одно и то же</b> — значит, заново рисовать анимации не нужно, Unity просто их подтягивает.</p>
+    <div class="hub">
+      <div class="server">
+        <div class="lbl">Сервер · /api/pose</div>
+        <div class="name">База поз и анимаций</div>
+        <div class="desc">51 готовый клип, настройки походки, поворотов корпуса, физики. Единственный источник правды.</div>
+        <span class="pill">переносить контент не нужно</span>
+      </div>
+      <div class="flowline"><span>↓ &nbsp; читают одни и те же данные &nbsp; ↓</span></div>
+      <div class="clients">
+        <div class="node">
+          <div class="lbl">Клиент</div>
+          <div class="name">Web (Three.js)</div>
+          <div class="desc">Работает сейчас. Остаётся как есть.</div>
+        </div>
+        <div class="node now">
+          <div class="lbl">Клиент</div>
+          <div class="name">Unity <span class="chip-good">новый</span></div>
+          <div class="desc">Тот же движок поз, только рендер и физика — на Unity.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Четыре решения</h2>
+    <p class="sub">Что именно берём из Unity, а что переносим из нашего кода — чтобы получить ровно то, что уже есть в вебе.</p>
+    <div class="cards">
+      <div class="card">
+        <h3><span class="k">01</span> Переносим наш «скелетный» движок</h3>
+        <p>Не берём готовый Unity-Avatar, а портируем наш ретаргет — только так поза встанет 1:1, как в вебе. Это чистая математика, переносится напрямую.</p>
+      </div>
+      <div class="card">
+        <h3><span class="k">02</span> Физика — на Unity</h3>
+        <p>Старый физ-манекен (движок Jolt) меняем на встроенный в Unity ArticulationBody. Ровно то, что ты и хотел — «юнитивский» манекен.</p>
+      </div>
+      <div class="card">
+        <h3><span class="k">03</span> Эдитор — инструмент внутри Unity</h3>
+        <p>FBX Unity умеет грузить только в редакторе. Поэтому поз-эдитор — это инструмент редактора Unity, и он двигает те же детали, что и игра. «В редакторе = в игре».</p>
+      </div>
+      <div class="card">
+        <h3><span class="k">04</span> Данные — с сервера</h3>
+        <p>Unity ничего не хранит у себя: тянет позы и настройки с сервера, туда же сохраняет. Веб и Unity всегда синхронны.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Как из FBX получается анимация в игре</h2>
+    <p class="sub">Путь одной анимации от исходника до персонажа в игре — тот же, что в вебе.</p>
+    <div class="pipe">
+      <div class="step"><div class="n">Шаг 1</div><div class="t">FBX-анимация</div><div class="d">Исходник из любой программы</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">Шаг 2</div><div class="t">Импорт в Unity</div><div class="d">Редактор читает движение</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">Шаг 3</div><div class="t">Наш скелет</div><div class="d">Ретаргет на наши кости</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">Шаг 4</div><div class="t">Наш формат позы</div><div class="d">Прореживаем кадры, чистим</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">Шаг 5</div><div class="t">Сервер → игра</div><div class="d">Игра рисует 1:1</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Почему рыцарь стоял в Т-позе</h2>
+    <p class="sub">Важная находка из изучения — она же объясняет, почему перенос эдитора заодно чинит анимацию в игре.</p>
+    <div class="why">
+      <div class="glyph">кость «бедро»
+ ├─ кость-двойник ← пустышка
+ └─ кость-двойник ← настоящая
+        └─ дети (голень…)</div>
+      <div>
+        <p>У модели скелет <b>задублирован</b>: на каждую кость приходится «настоящая» (с детьми, двигает меш) и «пустышка» (лист, ничего не двигает).</p>
+        <p>Раньше временная анимация крутила пустышки → <b>модель не деформировалась</b> и застывала в Т-позе.</p>
+        <p>Наш ретаргет умеет находить <b>правильные</b> кости (у которых есть дети). Поэтому, перенеся его, мы <b>одновременно оживим персонажей и в самой игре</b>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>План: пять шагов</h2>
+    <p class="sub">Каждый шаг — проверяемый результат. Первый — ключевой: он разблокирует анимацию не только в эдиторе, но и в игре.</p>
+    <div class="phases">
+      <div class="phase done">
+        <div class="num">1а</div>
+        <div class="body"><h4>Формат данных + математика поворотов</h4><p>Код поз и клипов, точная конвертация углов (в Unity другой порядок, чем в данных). Проверено: совпадает до цифры.</p></div>
+        <div class="status done">готово</div>
+      </div>
+      <div class="phase next">
+        <div class="num">1б</div>
+        <div class="body"><h4>Скелет + ретаргет → живая поза</h4><p>Собрать наш скелет и «надеть» позу на модель. Ключевой шаг: заодно чинит анимацию в игре (заменит заглушку).</p></div>
+        <div class="status next">дальше</div>
+      </div>
+      <div class="phase">
+        <div class="num">2</div>
+        <div class="body"><h4>Полная анимация</h4><p>Походка с постановкой стоп, повороты корпуса, взгляд на курсор, удары, стойка в бою, стопы на земле.</p></div>
+        <div class="status">в плане</div>
+      </div>
+      <div class="phase">
+        <div class="num">3</div>
+        <div class="body"><h4>Физ-манекен на Unity</h4><p>Активный рагдолл на ArticulationBody: реакция на удары, падение/подъём, смешивание физики и позы.</p></div>
+        <div class="status">в плане</div>
+      </div>
+      <div class="phase">
+        <div class="num">4</div>
+        <div class="body"><h4>Импорт FBX → наши клипы</h4><p>Инструмент редактора: загрузил FBX — получил наш клип, сохранил на сервер.</p></div>
+        <div class="status">в плане</div>
+      </div>
+      <div class="phase">
+        <div class="num">5</div>
+        <div class="body"><h4>Интерфейс поз-эдитора</h4><p>Вкладки, гизмо суставов, таймлайн, редактор походки и телосложения — всё как в вебе.</p></div>
+        <div class="status">в плане</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Что уже работает в Unity-клиенте</h2>
+    <p class="sub">Сделано этой ночью, помимо чертежа. Проверено скриншотами, в прод не отправлено.</p>
+    <div class="checks">
+      <div class="chk"><span class="mark">✓</span><div><b>Модели с сервера</b> — рыцарь и зомби по классу + надетая броня</div></div>
+      <div class="chk"><span class="mark">✓</span><div><b>Текстуры окружения</b> — пол и стены крипты из конфига</div></div>
+      <div class="chk"><span class="mark">✓</span><div><b>HUD</b> — имя и полоса здоровья</div></div>
+      <div class="chk"><span class="mark">✓</span><div><b>Миникарта</b> — сетка + точки монстров и игрока</div></div>
+      <div class="chk"><span class="mark">✓</span><div><b>Временная анимация</b> — качание/наклон при ходьбе, падение</div></div>
+      <div class="chk"><span class="mark">✓</span><div><b>Полный чертёж</b> — в проекте: PORT_SPEC.md</div></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Проект «Ashes of the past» · клиент Unity</span>
+    <span>Подробная техническая спека — Assets/DM/PoseEditor/PORT_SPEC.md</span>
+  </footer>
+
+</div>
+
+</body></html>

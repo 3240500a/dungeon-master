@@ -1,0 +1,851 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Спуск к релизу</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;600&display=swap">
+<style>
+  /* ── Палитра снята с артa проекта: латунь факела, патина доспеха, известняк крипты ── */
+  :root {
+    --ground:        #EDEBE6;
+    --surface:       #F6F5F2;
+    --surface-sunk:  #E4E2DB;
+    --edge:          #D2CFC6;
+    --edge-soft:     #E0DDD5;
+    --text:          #1F1E1B;
+    --text-dim:      #5C5A52;
+    --text-faint:    #85837A;
+    --brass:         #8A6420;
+    --brass-lit:     #B0812F;
+    --patina:        #2F6055;
+    --ember:         #A8431F;
+    --bar-track:     #DBD8D0;
+    --shadow:        0 1px 2px rgba(31,30,27,.06), 0 6px 18px -12px rgba(31,30,27,.28);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:       #100F0D;
+      --surface:      #1A1815;
+      --surface-sunk: #131211;
+      --edge:         #322E28;
+      --edge-soft:    #262320;
+      --text:         #EAE6DD;
+      --text-dim:     #A5A096;
+      --text-faint:   #7C776D;
+      --brass:        #C79A44;
+      --brass-lit:    #E0B65C;
+      --patina:       #5E9C8C;
+      --ember:        #D4713F;
+      --bar-track:    #2A2622;
+      --shadow:       0 1px 2px rgba(0,0,0,.5), 0 8px 24px -14px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:       #100F0D;
+    --surface:      #1A1815;
+    --surface-sunk: #131211;
+    --edge:         #322E28;
+    --edge-soft:    #262320;
+    --text:         #EAE6DD;
+    --text-dim:     #A5A096;
+    --text-faint:   #7C776D;
+    --brass:        #C79A44;
+    --brass-lit:    #E0B65C;
+    --patina:       #5E9C8C;
+    --ember:        #D4713F;
+    --bar-track:    #2A2622;
+    --shadow:       0 1px 2px rgba(0,0,0,.5), 0 8px 24px -14px rgba(0,0,0,.8);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font: 450 16px/1.62 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px 96px; }
+
+  /* ── Шапка ── */
+  header { padding: 72px 0 40px; border-bottom: 1px solid var(--edge); }
+  .eyebrow {
+    font: 500 11px/1 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--brass);
+    margin-bottom: 20px;
+  }
+  h1 {
+    font: 600 clamp(46px, 8vw, 78px)/0.98 "Cormorant Garamond", Georgia, serif;
+    margin: 0 0 18px; letter-spacing: -.01em; text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 19px; line-height: 1.55; color: var(--text-dim);
+    max-width: 60ch; margin: 0 0 32px;
+  }
+  .meta { display: flex; flex-wrap: wrap; gap: 0 40px; }
+  .meta div { padding: 10px 0; }
+  .meta dt {
+    font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 6px;
+  }
+  .meta dd { margin: 0; font-size: 15px; font-weight: 600; }
+
+  /* ── Разделы: номера настоящие, документ ссылается на них перекрёстно ── */
+  section { padding-top: 64px; scroll-margin-top: 24px; }
+  h2 {
+    font: 600 clamp(28px, 3.6vw, 38px)/1.12 "Cormorant Garamond", Georgia, serif;
+    margin: 0 0 8px; display: flex; gap: 16px; align-items: baseline; text-wrap: balance;
+  }
+  h2 .num {
+    font: 500 13px/1 "IBM Plex Mono", monospace; color: var(--brass);
+    letter-spacing: .06em; flex: none; padding-top: 4px;
+  }
+  h3 {
+    font: 600 19px/1.3 "IBM Plex Sans", sans-serif;
+    margin: 36px 0 10px; letter-spacing: -.005em;
+  }
+  .lede { color: var(--text-dim); max-width: 66ch; margin: 0 0 24px 40px; }
+  p { max-width: 68ch; margin: 0 0 16px; }
+  section > p, section > .block { margin-left: 40px; }
+  @media (max-width: 720px) { .lede, section > p, section > .block { margin-left: 0; } }
+  strong { font-weight: 600; }
+  a { color: var(--brass); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--patina); outline-offset: 3px; border-radius: 2px;
+  }
+
+  /* ── Таблицы ── */
+  .scroller { overflow-x: auto; margin: 0 0 24px; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 16px 11px 0; border-bottom: 1px solid var(--edge-soft); vertical-align: top; }
+  th {
+    font: 500 10px/1.3 "IBM Plex Mono", monospace; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--text-faint); border-bottom-color: var(--edge);
+    padding-bottom: 9px;
+  }
+  td.num, th.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* ── Врезка диагноза: одна на весь документ, поэтому и заметна ── */
+  .verdict {
+    border-left: 3px solid var(--brass); padding: 4px 0 4px 24px;
+    margin: 32px 0 32px 40px; max-width: 68ch;
+  }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict .rule {
+    font: 600 20px/1.4 "Cormorant Garamond", Georgia, serif; color: var(--text);
+    font-size: 21px;
+  }
+  @media (max-width: 720px) { .verdict { margin-left: 0; } }
+
+  /* ── Полосы контента: честные «есть из нужного» ── */
+  .split { display: grid; gap: 40px; grid-template-columns: 1fr 1.15fr; align-items: start; }
+  @media (max-width: 860px) { .split { grid-template-columns: 1fr; gap: 28px; } }
+  .panel-title {
+    font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 16px;
+  }
+  .sys { list-style: none; margin: 0; padding: 0; font-size: 14.5px; }
+  .sys li { padding: 6px 0 6px 22px; position: relative; color: var(--text-dim); }
+  .sys li::before {
+    content: ""; position: absolute; left: 0; top: 13px; width: 9px; height: 9px;
+    border-radius: 50%; background: var(--patina);
+  }
+  .sys li b { color: var(--text); font-weight: 600; }
+
+  .bars { display: flex; flex-direction: column; gap: 14px; }
+  .bar-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: baseline; }
+  .bar-label { font-size: 14.5px; }
+  .bar-val {
+    font: 500 13px/1 "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+  .bar-track {
+    grid-column: 1 / -1; height: 7px; background: var(--bar-track);
+    border-radius: 4px; overflow: hidden;
+  }
+  .bar-fill { height: 100%; background: var(--brass-lit); border-radius: 4px; }
+  .bar-fill.none { background: var(--ember); width: 2px !important; }
+
+  /* ── Сценарии ── */
+  .scenarios { display: grid; gap: 18px; grid-template-columns: repeat(2, 1fr); margin-bottom: 8px; }
+  @media (max-width: 860px) { .scenarios { grid-template-columns: 1fr; } }
+  .sc {
+    background: var(--surface); border: 1px solid var(--edge); border-radius: 3px;
+    padding: 22px 24px 24px; display: flex; flex-direction: column;
+  }
+  .sc.target { border-color: var(--brass); box-shadow: var(--shadow); }
+  .sc.rejected { opacity: .72; }
+  .sc-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .sc-letter {
+    font: 600 12px/1 "IBM Plex Mono", monospace; color: var(--brass);
+    letter-spacing: .08em;
+  }
+  .sc h3 { margin: 0; font-size: 20px; }
+  .sc .tier {
+    font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 14px;
+  }
+  .sc p { font-size: 14.5px; margin-bottom: 12px; color: var(--text-dim); max-width: none; }
+  .sc dl { margin: 0 0 14px; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; }
+  .sc dt { color: var(--text-faint); font: 500 12px/1.5 "IBM Plex Mono", monospace; }
+  .sc dd { margin: 0; font-weight: 600; }
+  .stamp {
+    margin-top: auto; padding-top: 14px; border-top: 1px solid var(--edge-soft);
+    font: 600 12px/1.4 "IBM Plex Mono", monospace; letter-spacing: .04em;
+  }
+  .stamp.no { color: var(--ember); }
+  .stamp.yes { color: var(--patina); }
+
+  /* ── Таймлайн фаз ── */
+  .phases { display: flex; flex-direction: column; gap: 0; margin-left: 40px; }
+  @media (max-width: 720px) { .phases { margin-left: 0; } }
+  .ph {
+    display: grid; grid-template-columns: 118px 1fr; gap: 24px;
+    padding: 20px 0; border-top: 1px solid var(--edge-soft); position: relative;
+  }
+  .ph:first-child { border-top: 1px solid var(--edge); }
+  .ph-when {
+    font: 500 12px/1.5 "IBM Plex Mono", monospace; color: var(--brass);
+    letter-spacing: .02em;
+  }
+  .ph-when span { display: block; color: var(--text-faint); font-size: 11px; margin-top: 3px; }
+  .ph h3 { margin: 0 0 6px; font-size: 17px; }
+  .ph p { font-size: 14.5px; color: var(--text-dim); margin: 0; max-width: 62ch; }
+  @media (max-width: 620px) { .ph { grid-template-columns: 1fr; gap: 8px; } }
+
+  /* ── Правила против выгорания ── */
+  .rules { display: grid; gap: 2px; margin-left: 40px; }
+  @media (max-width: 720px) { .rules { margin-left: 0; } }
+  .rule-row {
+    display: grid; grid-template-columns: 40px 1fr; gap: 18px;
+    padding: 16px 0; border-bottom: 1px solid var(--edge-soft);
+  }
+  .rule-row:last-child { border-bottom: none; }
+  .rule-n {
+    font: 500 12px/1.6 "IBM Plex Mono", monospace; color: var(--brass);
+    font-variant-numeric: tabular-nums;
+  }
+  .rule-row b { display: block; margin-bottom: 3px; font-weight: 600; }
+  .rule-row span { color: var(--text-dim); font-size: 14.5px; }
+
+  /* ── Оглавление ── */
+  nav.toc {
+    position: sticky; top: 0; z-index: 5; background: var(--ground);
+    border-bottom: 1px solid var(--edge); padding: 12px 0;
+    margin-bottom: -64px;
+  }
+  .toc-inner { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+  .toc a {
+    flex: none; font: 500 11px/1 "IBM Plex Mono", monospace; letter-spacing: .06em;
+    color: var(--text-dim); text-decoration: none; padding: 8px 11px; border-radius: 3px;
+    white-space: nowrap;
+  }
+  .toc a:hover { color: var(--brass); background: var(--surface-sunk); }
+
+  footer {
+    margin-top: 80px; padding-top: 28px; border-top: 1px solid var(--edge);
+    font-size: 13.5px; color: var(--text-faint);
+  }
+  footer a { color: var(--text-dim); }
+  footer ul { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 5px; }
+
+  .note {
+    background: var(--surface-sunk); border-radius: 3px; padding: 16px 20px;
+    font-size: 14.5px; color: var(--text-dim); margin: 0 0 24px 40px; max-width: 68ch;
+  }
+  @media (max-width: 720px) { .note { margin-left: 0; } }
+  .note b { color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<nav class="toc" aria-label="Разделы">
+  <div class="wrap toc-inner">
+    <a href="#s1">1 · Где мы</a>
+    <a href="#s2">2 · Рынок</a>
+    <a href="#s3">3 · Ниша</a>
+    <a href="#s4">4 · Сценарии</a>
+    <a href="#s5">5 · Что режем</a>
+    <a href="#s5a">5.1 · Персонажи</a>
+    <a href="#s6">6 · Монстры</a>
+    <a href="#s7">7 · Фазы</a>
+    <a href="#s7a">7.1 · Окно запуска</a>
+    <a href="#s7b">7.2 · Вишлисты</a>
+    <a href="#s8">8 · Выгорание</a>
+    <a href="#s9">9 · Решения</a>
+    <a href="#s10">10 · Риски</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">The Fourth Bequest · роадмап · 10 сентября 2026</div>
+  <h1>Спуск к релизу</h1>
+  <p class="standfirst">
+    Тёмное фэнтези-ARPG, два человека, два месяца за спиной. Документ решений о том,
+    как дойти до релиза и не бросить на восьмидесяти процентах.
+  </p>
+  <dl class="meta">
+    <div><dt>Возраст проекта</dt><dd>2 месяца 3 дня</dd></div>
+    <div><dt>Команда</dt><dd>Дизайн и графика · Код</dd></div>
+    <div><dt>Бюджет времени</dt><dd>30–40 ч / неделю</dd></div>
+    <div><dt>Цель</dt><dd>Опыт публикации, затем доход</dd></div>
+    <div><dt>Пол по вишлистам</dt><dd>10 000 к запуску</dd></div>
+    <div><dt>Дата запуска EA</dt><dd>Пн, 24 января 2028</dd></div>
+  </dl>
+</header>
+
+<section id="s1">
+  <h2><span class="num">01</span>Где мы сейчас</h2>
+  <p class="lede">Замеры по репозиторию, а не ощущения. Первый коммит — 7 июля 2026.</p>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Показатель</th><th class="num">Значение</th><th>Замечание</th></tr></thead>
+      <tbody>
+        <tr><td>Коммитов</td><td class="num">452</td><td>9,7 в день в сентябре</td></tr>
+        <tr><td>Кода TypeScript</td><td class="num">92 500</td><td>строк в 547 файлах</td></tr>
+        <tr><td>Тестов</td><td class="num">1 038</td><td>в 101 файле</td></tr>
+        <tr><td>Кода C# (Unity-клиент)</td><td class="num">7 146</td><td>в 47 файлах</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="block split">
+    <div>
+      <div class="panel-title">Системы — уровень AA</div>
+      <ul class="sys">
+        <li>Дерево навыков <b>427 узлов</b></li>
+        <li>Дерево мастерства <b>332 узла</b></li>
+        <li>Предметы, аффиксы, редкости, уники, крафт</li>
+        <li>Генератор забегов v2: граф этажей, Алтарь, модификаторы</li>
+        <li>ИИ монстров по фракциям, гир и атрибуты монстров</li>
+        <li>PvP-арена, сбивание с ног, уклонение</li>
+        <li>Сервер-авторитет, кластер до 1000 игроков</li>
+        <li>Поз-редактор с импортом мокапа, конфиг-редактор</li>
+      </ul>
+    </div>
+    <div>
+      <div class="panel-title">Контент — уровень прототипа</div>
+      <div class="bars">
+        <div class="bar-row">
+          <span class="bar-label">Типы монстров</span><span class="bar-val">13 / 35</span>
+          <div class="bar-track"><div class="bar-fill" style="width:37%"></div></div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">Активные скилы</span><span class="bar-val">7 / 40</span>
+          <div class="bar-track"><div class="bar-fill" style="width:18%"></div></div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">Модели персонажей</span><span class="bar-val">4 / 12</span>
+          <div class="bar-track"><div class="bar-fill" style="width:33%"></div></div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">Уникальные предметы</span><span class="bar-val">3 / 50</span>
+          <div class="bar-track"><div class="bar-fill" style="width:6%"></div></div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">Биомы</span><span class="bar-val">1 / 4</span>
+          <div class="bar-track"><div class="bar-fill" style="width:25%"></div></div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">Звуки</span><span class="bar-val">0 / 200</span>
+          <div class="bar-track"><div class="bar-fill none"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <p class="rule">Код обогнал контент примерно на порядок.</p>
+    <p>Это не лень и не случайность, а прямое следствие состава команды: код пишет ИИ — быстро
+    и почти бесплатно; контент делает человек — руками и медленно. При таком составе каждая
+    новая система увеличивает долг по контенту, который может закрыть только один из двоих.</p>
+    <p class="rule">Мы больше не расширяем системы. Мы наполняем то, что есть.</p>
+    <p>Новая механика допускается только если она <b>снижает</b> потребность в контенте —
+    как модульные монстры: одна система вместо сотни моделей.</p>
+  </div>
+
+  <h3>Второй диагноз: четыре открытых фронта</h3>
+  <p>Одновременно живут 2D-клиент на Phaser, 3D-веб на Three.js (34 тысячи строк),
+  Unity-клиент и серверный кластер на 1000 игроков. Плюс поз-редактор размером с отдельный
+  коммерческий продукт. Для двоих главный риск — не сложность кода, а <b>площадь поддержки</b>.</p>
+</section>
+
+<section id="s2">
+  <h2><span class="num">02</span>Рынок</h2>
+  <p class="lede">Цифры, на которых строятся все решения ниже.</p>
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Факт</th><th class="num">Значение</th><th>Что из этого следует</th></tr></thead>
+      <tbody>
+        <tr><td>Медианная инди-игра на Steam</td><td class="num">$249</td><td>«Просто выпустить» = не заработать ничего</td></tr>
+        <tr><td>Взяли $1 млн в 2025</td><td class="num">~300 / 20 000</td><td>1,5 %. Планируем на опыт, а не на успех</td></tr>
+        <tr><td>Доля инди в выручке Steam</td><td class="num">25 %</td><td>Ниша реально существует</td></tr>
+        <tr><td>Вишлистов для $250k+</td><td class="num">30–50 тыс.</td><td>Вишлисты — метрика №1, а не «фичи»</td></tr>
+        <tr><td>Причина провалов инди</td><td class="num">70 %</td><td>«Слишком большой скоуп». Резать раньше, чем захочется</td></tr>
+        <tr><td>Path of Exile 2 в раннем доступе</td><td class="num">5,3 млн · $138 млн</td><td>Но рейтинг 71 % — лидер уязвим</td></tr>
+        <tr><td>PoE 2 выходит в 1.0</td><td class="num">11.12.2026</td><td>Через три месяца конкурент станет бесплатным</td></tr>
+        <tr><td>Last Epoch в сезон</td><td class="num">150 000 CCU</td><td>Спрос на «ARPG подобрее» подтверждён</td></tr>
+        <tr><td>Grim Dawn</td><td class="num">9 человек</td><td>Наш ориентир по масштабу команды</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Жанр живой и голодный: рейтинг PoE 2 в 71 % и взлёт Last Epoch означают, что часть аудитории
+  активно ищет альтернативу. Но лобовая конкуренция закрыта — быть глубже PoE вдвоём невозможно,
+  а через три месяца он станет ещё и бесплатным. <b>Значит, выигрывать надо не глубиной,
+  а другим набором обещаний.</b></p>
+</section>
+
+<section id="s3">
+  <h2><span class="num">03</span>Ниша</h2>
+
+  <div class="verdict">
+    <p class="rule">Тёмное фэнтези-ARPG для тех, у кого есть работа.</p>
+    <p>Забег — на вечер, а не на сезон. Кооп — с друзьями по приглашению. Никакой обязаловки.
+    Толпа врагов, в которой не найти двух одинаковых.</p>
+  </div>
+
+  <h3>Четыре карты, которые уже на руках</h3>
+  <p><b>Модульная экипировка, видимая и на герое, и на монстрах.</b> В D2R и PoE монстры одинаковые —
+  «ещё один такой же скелет». У нас каждый носит свой комплект (расчёт в разделе 6).</p>
+  <p><b>Забег как осознанный выбор</b> — Алтарь задаёт биом, длину, тир и модификаторы,
+  дальше ветвящийся граф этажей. Сессия 20–40 минут.</p>
+  <p><b>Кооп 2–4 как в D2R</b> — сервер считает бой (античит), играем с друзьями, без обязательств MMO.</p>
+  <p><b>Семь культурных архетипов</b> вместо эльфов и гномов: рыцарь ордена, славянский дружинник,
+  дева-щитоносица севера, лучница Востока, чародей-звездочёт, африканская ворожея,
+  генуэзский арбалетчик. Почти никем не занято.</p>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th></th><th>PoE 2</th><th>Diablo IV</th><th>Last Epoch</th><th>Мы</th></tr></thead>
+      <tbody>
+        <tr><td>Порог входа</td><td>Очень высокий</td><td>Средний</td><td>Низкий</td><td><b>Низкий</b></td></tr>
+        <tr><td>Сессия</td><td>Часы</td><td>Часы</td><td>30–60 мин</td><td><b>20–40 мин</b></td></tr>
+        <tr><td>Обязаловка сезонов</td><td>Да</td><td>Да</td><td>Мягкая</td><td><b>Нет</b></td></tr>
+        <tr><td>Кооп</td><td>Онлайн-мир</td><td>Онлайн-мир</td><td>Онлайн</td><td><b>Пати 2–4</b></td></tr>
+        <tr><td>Вид монстров</td><td>Одинаковые</td><td>Одинаковые</td><td>Одинаковые</td><td><b>Все разные</b></td></tr>
+        <tr><td>Цена</td><td class="num">$0 с 11.12.26</td><td class="num">$70</td><td class="num">$35</td><td class="num"><b>$15–20</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Против бесплатной PoE 2 мы не «дешевле» — мы <b>другое обещание</b>: не вторая работа,
+  а игра, в которую заходишь на час и получаешь законченный забег.</p>
+</section>
+
+<section id="s4">
+  <h2><span class="num">04</span>Четыре сценария</h2>
+  <p class="lede">Сроки посчитаны при 30–40 ч в неделю и текущей скорости графики:
+  модульный тип монстра — 2–3 недели, пропсы — один крупный или 3–4 мелких в день, UI — месяц-полтора.</p>
+
+  <div class="block scenarios">
+    <article class="sc rejected">
+      <div class="sc-head"><span class="sc-letter">A</span><h3>Догнать PoE</h3></div>
+      <div class="tier">AAA-амбиция</div>
+      <p>Четыре биома, семь классов, сезоны, торговля, лиги. Полный живой сервис.</p>
+      <dl>
+        <dt>Срок</dt><dd>4–6 лет</dd>
+        <dt>Бестиарий</dt><dd>24–36 недель чистого 3D</dd>
+      </dl>
+      <p>Арифметика закрывает вопрос сама: только модели монстров четырёх биомов — это
+      8–12 типов по 2–3 недели, и это до боссов, до 40 скилов и до поддержки сервиса.</p>
+      <div class="stamp no">✕ Не берём — это тот самый скоуп из 70 % провалов</div>
+    </article>
+
+    <article class="sc">
+      <div class="sc-head"><span class="sc-letter">B</span><h3>Полная игра</h3></div>
+      <div class="tier">AA+</div>
+      <p>Четыре биома, семь классов, кампания, релиз сразу в 1.0 без раннего доступа.</p>
+      <dl>
+        <dt>Срок</dt><dd>2,5–3 года</dd>
+        <dt>Риск</dt><dd>Человеческий</dd>
+      </dl>
+      <p>Главная опасность не техническая: три года без единого отклика от игроков — самый
+      частый способ бросить проект на восьмидесяти процентах готовности.</p>
+      <div class="stamp">Возможен, но только после проверки спроса</div>
+    </article>
+
+    <article class="sc target">
+      <div class="sc-head"><span class="sc-letter">C</span><h3>Ранний доступ</h3></div>
+      <div class="tier">Инди-фокус · целевой</div>
+      <p>Два биома, четыре класса, забеги, кооп 2–4. Ранний доступ, дальше по отклику.</p>
+      <dl>
+        <dt>До EA</dt><dd>10–12 месяцев</dd>
+        <dt>До 1.0</dt><dd>~24 месяца</dd>
+      </dl>
+      <p>Даёт всё сразу: опыт публикации, обратную связь, доход и прямой путь дорасти
+      до сценария B, если пойдёт.</p>
+      <div class="stamp yes">✓ Наша цель</div>
+    </article>
+
+    <article class="sc target">
+      <div class="sc-head"><span class="sc-letter">D</span><h3>Витрина</h3></div>
+      <div class="tier">Первый шаг · начинаем отсюда</div>
+      <p>Вертикальный срез: один биом, три класса, полный луп, Steam-страница и демо.</p>
+      <dl>
+        <dt>Срок</dt><dd>4–6 месяцев</dd>
+        <dt>Риск</dt><dd>Минимальный</dd>
+      </dl>
+      <p>Закрывает главную заявленную цель — пройти весь путь публикации и понять индустрию
+      изнутри — без обязательств. По вишлистам решаем, идти в C или в B.</p>
+      <div class="stamp yes">✓ Стартуем</div>
+    </article>
+  </div>
+
+  <div class="note">
+    <b>Маршрут: D → C → (по желанию) B.</b> Сценарий D — не урезанная версия игры,
+    а первый этап C: всё сделанное идёт в дело целиком, ничего не выбрасывается.
+  </div>
+</section>
+
+<section id="s5">
+  <h2><span class="num">05</span>Что режем прямо сейчас</h2>
+  <p class="lede">Главное действие роадмапа: с четырёх фронтов до двух. Ни строчки работы
+  при этом не выбрасывается.</p>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Фронт</th><th>Решение</th><th>Почему</th></tr></thead>
+      <tbody>
+        <tr><td><b>Unity-клиент</b></td><td><b>⭐ Приоритет.</b> Единственный игровой</td><td>Steam, нативная производительность, и главное — туда идут ассеты, VFX и звук. Вся визуальная работа только здесь</td></tr>
+        <tr><td><b>3D-веб (Three.js)</b></td><td><b>Тестовый стенд.</b> Готов на ~90 %</td><td>Остаётся для прогона баланса и как хост поз- и конфиг-редактора. Как игровой клиент больше не рассматривается</td></tr>
+        <tr><td><b>2D-клиент (Phaser)</b></td><td><b>Убираем из проекта</b></td><td>В релизе не участвует, поддержки не получит. Код остаётся в истории git</td></tr>
+        <tr><td><b>Кластер на 1000 игроков</b></td><td>Заморозить готовым</td><td>Для пати 2–4 избыточен в 250 раз. Работа сделана, вернёмся при надобности</td></tr>
+        <tr><td><b>Поз-редактор</b></td><td>Стоп-развитие</td><td>Ф1–Ф28 закрыты, инструмент мощнее, чем требует проект. Только починки</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Это снимает больше половины площади поддержки. Правило теперь простое:
+  <b>всё, что игрок увидит, живёт в Unity; всё, что мы измеряем, — в вебе.</b></p>
+
+  <div class="note">
+    <b>Про сервер.</b> Онлайн остаётся: расчёты на сервере ради античита плюс пати 2–4,
+    как battle.net у D2R. Это не MMO и не живой сервис. Обязательство после релиза —
+    держать недорогой сервер, а не кормить игру сезонами.
+  </div>
+</section>
+
+<section id="s5a">
+  <h2><span class="num">5.1</span>Персонажи: одно тело, а не семь</h2>
+  <p class="lede">Решение: общее тело плюс морфы пропорций плюс фирменный стартовый комплект на класс.
+  Уникальные модели под каждый из семи классов не делаем.</p>
+
+  <div class="verdict">
+    <p class="rule">Число тел — это множитель на весь гардероб.</p>
+    <p>Модульная броня подгоняется под пропорции, поэтому семь тел означают не «в семь раз больше
+    работы по телам», а <b>гардероб, переделанный семь раз</b> — и каждая новая шмотка потом тоже
+    делается семь раз.</p>
+  </div>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Довод</th><th>Суть</th></tr></thead>
+      <tbody>
+        <tr><td>Камера съедает разницу</td><td>В топ-дауне читается силуэт и цвет, а их задаёт снаряжение, не тело под ним. Лица не видно вообще</td></tr>
+        <tr><td>Техника уже есть</td><td><code>bodyProfile</code> и <code>bodyMorph</code> написаны: рост, вес и телосложение через морф дают много силуэтов из одного меша и одного гардероба</td></tr>
+        <tr><td>Прецедент нашего масштаба</td><td><b>Grim Dawn</b> — 9 человек, миллионы копий — не имеет классовых моделей вовсе: выбор пола, мастерство на 2-м уровне, внешность из шмота. Titan Quest так же</td></tr>
+        <tr><td>Кто делает иначе</td><td>Diablo и PoE — команды по сотне человек</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><b>Чем возвращаем классовую узнаваемость:</b> фирменный стартовый комплект — характерный шлем
+  плюс оружие в уже существующей модульной системе. Несколько предметов, а не тело. На дистанции
+  камеры класс читается по оружию и шлему лучше, чем по анатомии.</p>
+
+  <p><b>Пол.</b> В лоре он закреплён за классами — Вьюга, Ловчая и Ворожея женские, остальные мужские, —
+  значит в итоге тел будет два и гардероб удвоится. Но не в демо: два класса одного пола дают ровно
+  одно тело. Женское подключаем в Ф3.</p>
+
+  <p><b>Настройка внешности</b> — рост, вес, причёска — делаем: морфы почти бесплатны, скрытие волос
+  под шлемом уже реализовано. Лицо не трогаем, его не видно. ⚠ Ограничитель: крайние значения морфов
+  ломают подгонку брони, это уже проходили на обжатии коллайдеров. Диапазон ползунков — только тот,
+  в котором каждая шмотка гарантированно сидит.</p>
+</section>
+
+<section id="s6">
+  <h2><span class="num">06</span>Модульные монстры: расчёт</h2>
+  <p class="lede">Пять слотов брони, ~60 видов оружия, ~10 щитов, 2–3 варианта текстуры на меш.
+  Считаю, сколько это даёт — и сколько из этого игрок вообще способен заметить.</p>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th class="num">Вар. на слот</th><th class="num">Комбинаций брони</th><th class="num">× текстуры</th><th class="num">× руки</th><th class="num">Всего</th></tr></thead>
+      <tbody>
+        <tr><td class="num">8</td><td class="num">32 768</td><td class="num">×32</td><td class="num">×660</td><td class="num"><b>692 млн</b></td></tr>
+        <tr><td class="num">15</td><td class="num">759 375</td><td class="num">×32</td><td class="num">×660</td><td class="num"><b>16 млрд</b></td></tr>
+        <tr><td class="num">20</td><td class="num">3 200 000</td><td class="num">×243</td><td class="num">×660</td><td class="num"><b>513 млрд</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Но комбинаторика — не то, что видит игрок. Глаз читает <b>силуэт</b>: шлем, доспех, оружие.
+  Вот сколько силуэтов получается и какова вероятность встретить двух одинаковых монстров
+  в толпе из тридцати:</p>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th class="num">Вар. на слот</th><th class="num">Различимых силуэтов</th><th class="num">Шанс пары в толпе из 30</th><th>Оценка</th></tr></thead>
+      <tbody>
+        <tr><td class="num"><b>8</b></td><td class="num">3 840</td><td class="num">10,7 %</td><td>Достаточно</td></tr>
+        <tr><td class="num"><b>10</b></td><td class="num">6 000</td><td class="num">7,0 %</td><td>С запасом</td></tr>
+        <tr><td class="num">15</td><td class="num">13 500</td><td class="num">3,2 %</td><td>Незаметно лучше</td></tr>
+        <tr><td class="num">20</td><td class="num">24 000</td><td class="num">1,8 %</td><td>Вдвое больше работы впустую</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="verdict">
+    <p class="rule">Режем до 8–10 вариантов на слот. Освободившееся время — на второй тип монстра.</p>
+    <p>Разница между восемью и двадцатью вариантами — падение шанса увидеть двух одинаковых
+    с 10,7 % до 1,8 %. Игрок этого не заметит, а работы вдвое больше. Разница между зомби
+    и скелетом видна всегда; разница между пятнадцатым и восьмым шлемом — никогда.</p>
+    <p>При таком раскладе один тип монстра за 2–3 недели закрывает целую фракцию биома,
+    и <b>2–3 типа дают полноценный биом</b>.</p>
+  </div>
+</section>
+
+<section id="s7">
+  <h2><span class="num">07</span>План по фазам</h2>
+  <p class="lede">Нумерация в стиле проекта: Ф0 — Ф5, как остальные планы в docs.</p>
+
+  <div class="phases">
+    <div class="ph">
+      <div class="ph-when">Ф0<span>сен – окт 2026</span></div>
+      <div>
+        <h3>Фокусировка</h3>
+        <p>Заморозить 2D-клиент и кластер, перевести веб-3D в режим инструмента. Выбрать
+        и проверить название — сейчас «Dungeon Master» это заглушка. Довести модульного зомби
+        до 8–10 вариантов на слот. Завести девлог: обратная связь нужна с самого начала.</p>
+      </div>
+    </div>
+    <div class="ph">
+      <div class="ph-when">Ф1<span>ноя 2026 – фев 2027</span></div>
+      <div>
+        <h3>Вертикальный срез</h3>
+        <p>Один биом от входа до босса, 30–40 минут удовольствия. Скоуп намеренно узкий, и всё
+        лишнее не вырезано, а <b>скрыто</b>: <b>2 класса</b> одного пола (латник и маг для контраста),
+        <b>1 биом</b>, <b>1 тип монстров</b> — зомби, разнообразие даёт генератор наборов, <b>1 босс</b>,
+        несколько веток древа навыков, остальные с пометкой «coming soon».</p>
+        <p>Показывать заблокированные ветки — не заглушка, а инструмент маркетинга: игрок видит
+        масштаб задуманного и понимает, за чем возвращаться. Против прежней версии ушёл целый
+        модульный тип монстра и треть скилов — около месяца работы графики уходит в запас на полировку.</p>
+      </div>
+    </div>
+    <div class="ph">
+      <div class="ph-when">Ф2<span>мар – апр 2027</span></div>
+      <div>
+        <h3>Витрина</h3>
+        <p>Steam-страница, капсулы, трейлер на 60–90 секунд, демо отдельной сборкой.
+        Публикация и сбор вишлистов. Здесь стоит первая точка принятия решения.</p>
+      </div>
+    </div>
+    <div class="ph">
+      <div class="ph-when">Ф3<span>май – сен 2027</span></div>
+      <div>
+        <h3>Наполнение до раннего доступа</h3>
+        <p>Второй биом с бестиарием и боссом, четвёртый класс, 20–30 уников,
+        баланс по данным симулятора. В августе — подать заявку на Next Fest.</p>
+      </div>
+    </div>
+    <div class="ph">
+      <div class="ph-when">Ф3.5<span>октябрь 2027</span></div>
+      <div>
+        <h3>Steam Next Fest</h3>
+        <p>Участвовать можно <b>один раз за всю жизнь игры</b>, поэтому тратим его за три месяца
+        до запуска и с отполированным демо. Обычно это самый крупный единичный источник вишлистов.</p>
+      </div>
+    </div>
+    <div class="ph">
+      <div class="ph-when">Ф4<span>24 янв 2028</span></div>
+      <div>
+        <h3>Ранний доступ</h3>
+        <p>Понедельник, 24 января, 21:00 МСК — почему именно так, в разделе 7.1. Цена $15–20.
+        Обещание: два биома, четыре класса, кооп, около двадцати часов. Обновления раз в 6–8 недель.</p>
+      </div>
+    </div>
+    <div class="ph">
+      <div class="ph-when">Ф5<span>2029</span></div>
+      <div>
+        <h3>Релиз 1.0</h3>
+        <p>Третий и четвёртый биомы, остальные классы, финальный босс, история.
+        По обстоятельствам и только если предыдущие фазы это подтвердили.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s7a">
+  <h2><span class="num">7.1</span>Окно запуска</h2>
+  <p class="lede">Сдвиг с ноября–декабря на январь — не косметика. Ноябрь–декабрь худший слот года:
+  релизов на 30 % больше, чем в январе, и обе распродажи приходятся туда же.</p>
+
+  <div class="verdict">
+    <p class="rule">Во время распродаж и Next Fest витрины Steam исчезают.</p>
+    <p>Виджеты «Popular Upcoming» и «New &amp; Trending» — то, через что новую игру вообще замечают, —
+    во время сезонных распродаж и фестивалей просто пропадают со страницы магазина. Распродажа это
+    не «много трафика, повезёт», а «трафик есть, а тебя на витрине нет».</p>
+  </div>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Параметр</th><th>Решение</th><th>Почему</th></tr></thead>
+      <tbody>
+        <tr><td>Месяц</td><td><b>вторая половина января</b></td><td>Зимняя распродажа кончается ~5 января, февральский Next Fest начинается ~9-го. Между ними чисто</td></tr>
+        <tr><td>День недели</td><td><b>понедельник</b></td><td>Игра стоит в «Popular Upcoming» все выходные перед релизом — на пике трафика Steam</td></tr>
+        <tr><td>Вторник</td><td><b>никогда</b></td><td>День техобслуживания Steam: магазин периодически лежит часами</td></tr>
+        <tr><td>Суббота, воскресенье</td><td>невозможно</td><td>Valve не даёт выпускаться — их поддержка не работает</td></tr>
+        <tr><td>Час</td><td><b>10:00 PT = 21:00 МСК</b></td><td>Обновляется витрина Steam; заодно ты не спишь и можешь тушить пожары</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><b>Недели, которые нельзя занимать:</b> середина марта, конец июня, конец ноября, Рождество —
+  сезонные распродажи; февраль, июнь, октябрь — Next Fest. Чистые окна года: вторая половина января,
+  апрель, май, сентябрь.</p>
+  <p><b>Жанровый календарь — отдельно.</b> Аудитория ARPG общая, и это не теория: Eleventh Hour Games
+  сдвинули сезон Last Epoch, когда GGG поставили патч в те же дни, чтобы не делить игроков. Перед
+  фиксацией даты сверяемся с анонсами сезонов Last Epoch, Diablo IV и лиг PoE.</p>
+</section>
+
+<section id="s7b">
+  <h2><span class="num">7.2</span>Вишлисты: цель 10 000</h2>
+  <p class="lede">Единственная метрика, которую надо вести как отдельный проект. Разница между
+  $30 тысячами и $250 тысячами выручки — это не качество игры, это вишлисты.</p>
+
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Источник</th><th class="num">Ожидание</th><th>Когда</th></tr></thead>
+      <tbody>
+        <tr><td>Органика страницы Steam</td><td class="num">2 000 – 3 000</td><td>10 месяцев жизни страницы, с апреля 2027</td></tr>
+        <tr><td><b>Steam Next Fest</b></td><td class="num"><b>4 000 – 8 000</b></td><td>октябрь 2027 — самый крупный единичный источник</td></tr>
+        <tr><td>Прочие витрины и фестивали</td><td class="num">1 000 – 2 000</td><td>по календарю подач</td></tr>
+        <tr><td>Стримеры, трейлер, соцсети</td><td class="num">1 000 – 3 000</td><td>непредсказуемо, но управляемо</td></tr>
+        <tr><td><b>Итого</b></td><td class="num"><b>8 000 – 16 000</b></td><td>цель достижима, но не гарантирована</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Из таблицы видно главное: <b>всё висит на Next Fest</b>. Если он даст две тысячи вместо шести —
+  плана нет. Поэтому демо к октябрю 2027 должно быть отполировано лучше, чем сама игра.</p>
+
+  <h3>Контрольные точки</h3>
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Дата</th><th class="num">Должно быть</th><th>Если меньше</th></tr></thead>
+      <tbody>
+        <tr><td>Июнь 2027 — странице 2 месяца</td><td class="num">800</td><td>Проблема в капсуле, тегах или трейлере. Переделать, а не ждать</td></tr>
+        <tr><td>Сентябрь 2027 — перед фестивалем</td><td class="num">2 500</td><td>Отложить Next Fest на февраль, запуск на апрель</td></tr>
+        <tr><td>Ноябрь 2027 — после фестиваля</td><td class="num">7 000</td><td>Пересмотр даты: выйти в пустоту хуже, чем выйти позже</td></tr>
+        <tr><td>Январь 2028 — запуск</td><td class="num"><b>10 000</b></td><td>Ниже 5 000 — переносим дату, а не выходим «как есть»</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Куда подаёмся</h3>
+  <p>Правило простое: <b>подаёмся везде, где заявка бесплатна и не требует эксклюзива по анонсу.</b>
+  Отказ не стоит ничего, а одно попадание окупает все заявки разом. Steam Next Fest — заявка за два
+  месяца, участие один раз за игру. Day of the Devs — подача летом, показ зимой, но там 1 700 заявок
+  на 20 мест. Future Games Show, Gamescom Awesome Indies и тематические Steam-фестивали по жанру —
+  берём все бесплатные слоты.</p>
+</section>
+
+<section id="s8">
+  <h2><span class="num">08</span>Как не выгореть</h2>
+  <p class="lede">Темп сентября — 9,7 коммита в день. Это отличная скорость и одновременно
+  главный симптом риска: такой режим не держат год без последствий.</p>
+
+  <div class="rules">
+    <div class="rule-row"><div class="rule-n">01</div><div>
+      <b>Ритм пять плюс один</b>
+      <span>Пять недель работы, шестая — без плана и без задач. Календарно, а не «когда устану».</span>
+    </div></div>
+    <div class="rule-row"><div class="rule-n">02</div><div>
+      <b>Один фронт в неделю</b>
+      <span>Не «немного Unity, немного контента, немного сервера». Переключение контекста —
+      главный пожиратель сил, когда вас двое.</span>
+    </div></div>
+    <div class="rule-row"><div class="rule-n">03</div><div>
+      <b>Бэклог вместо «сделаю сейчас»</b>
+      <span>Любая идея уходит в docs/BACKLOG.md и не трогается до следующей точки решения.
+      Именно так умирают проекты: «ещё одна фича».</span>
+    </div></div>
+    <div class="rule-row"><div class="rule-n">04</div><div>
+      <b>Метрика — закрытые вертикали, а не часы</b>
+      <span>«Биом играбелен от входа до босса» — метрика. «Написал три тысячи строк» — нет.</span>
+    </div></div>
+    <div class="rule-row"><div class="rule-n">05</div><div>
+      <b>Публичность с ранних пор</b>
+      <span>Девлог и отклик — топливо на длинной дистанции. Три года в тишине ломают вернее,
+      чем любой объём работы.</span>
+    </div></div>
+    <div class="rule-row"><div class="rule-n">06</div><div>
+      <b>Право остановиться</b>
+      <span>В каждой точке решения допустим ответ «дальше не идём». Заранее разрешённая остановка —
+      то, что отличает законченный проект от брошенного.</span>
+    </div></div>
+  </div>
+</section>
+
+<section id="s9">
+  <h2><span class="num">09</span>Точки принятия решения</h2>
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Когда</th><th>Что смотрим</th><th class="num">Порог</th><th>Решение</th></tr></thead>
+      <tbody>
+        <tr><td>Конец Ф1</td><td>Играется ли срез 30 минут с удовольствием — на 5–10 друзьях</td><td class="num">«Хочу ещё»</td><td>Нет → чиним петлю боя, а не наращиваем контент</td></tr>
+        <tr><td>Июнь 2027 — странице 2 мес.</td><td>Вишлисты</td><td class="num">&lt; 800</td><td>Проблема в витрине: капсула, теги, трейлер. Переделать</td></tr>
+        <tr><td></td><td></td><td class="num">800 – 2 000</td><td>Идём по плану, усиливаем девлог</td></tr>
+        <tr><td></td><td></td><td class="num">&gt; 2 000</td><td>Хороший старт, целимся выше 10 000</td></tr>
+        <tr><td>Ноябрь 2027 — после Next Fest</td><td>Вишлисты</td><td class="num">&lt; 7 000</td><td>Сдвигаем запуск: выйти в пустоту хуже, чем позже</td></tr>
+        <tr><td>Январь 2028 — запуск</td><td>Вишлисты</td><td class="num">цель 10 000</td><td>Ниже 5 000 — переносим дату, а не выходим «как есть»</td></tr>
+        <tr><td>Перед EA</td><td>Доходят ли до босса в демо</td><td class="num">&gt; 40 %</td><td>Ниже — проблема в первых пятнадцати минутах</td></tr>
+        <tr><td>EA + 3 месяца</td><td>Отзывы</td><td class="num">&gt; 80 % 👍</td><td>Ниже — сначала чиним, потом контент</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="s10">
+  <h2><span class="num">10</span>Риски</h2>
+  <div class="block scroller">
+    <table>
+      <thead><tr><th>Риск</th><th>Вероятность</th><th>Что делаем</th></tr></thead>
+      <tbody>
+        <tr><td>Скоуп снова разрастётся</td><td><b>Высокая</b></td><td>Раздел 5 и правило 3; ревизия на каждой точке решения</td></tr>
+        <tr><td>Контент — узкое место, и он на одном человеке</td><td><b>Высокая</b></td><td>Модульность, покупные ассеты для звука и части пропсов</td></tr>
+        <tr><td>PoE 2 становится бесплатной 11.12.2026</td><td>Точно</td><td>Не конкурируем лобово — ниша из раздела 3</td></tr>
+        <tr><td>Unity-порт не догонит веб-версию</td><td>Средняя</td><td>Паритет — явная задача Ф1, а не фоновая</td></tr>
+        <tr><td>Онлайн-обязательства после релиза</td><td>Средняя</td><td>Пати 2–4 вместо MMO; расходы на сервер малы</td></tr>
+        <tr><td>Выгорание</td><td>Средняя</td><td>Раздел 8, календарный отдых, право остановиться</td></tr>
+        <tr><td>Название занято или слабое</td><td>Средняя</td><td>Проверить в Ф0, до любых вложений в бренд</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Что делаем на этой неделе</h3>
+  <p>Утвердить или поправить этот документ. Заморозить 2D-клиент и кластер, перевести веб-3D
+  в режим инструмента. Выбрать название и проверить его в Steam и поиске. Завести
+  <code>docs/BACKLOG.md</code>. Догнать модульного зомби до 8–10 вариантов на слот — и не больше.</p>
+</section>
+
+<footer>
+  <div>Источники рыночных данных</div>
+  <ul>
+    <li><a href="https://gamedevreports.substack.com/p/alinea-analytics-2025-year-in-review">Alinea Analytics: 2025 Year in Review</a> — распределение выручки Steam</li>
+    <li><a href="https://www.steampageanalyzer.com/blog/indie-game-revenue-data">Indie Game Revenue: Median $5K–$15K (2026)</a> — медиана и пороги</li>
+    <li><a href="https://presskit.gg/field-guides/how-many-wishlists-to-launch">How Many Wishlists Do You Need to Launch</a> — вишлисты по тирам выручки</li>
+    <li><a href="https://www.notebookcheck.net/Indie-games-accounted-for-25-of-Steam-s-revenue-in-2025.1189429.0.html">Indie games = 25 % of Steam revenue in 2025</a></li>
+    <li><a href="https://www.pcgamer.com/games/rpg/path-of-exile-2-backlash-gives-last-epoch-a-150-000-player-boost/">PoE 2 backlash gives Last Epoch a 150 000-player boost</a> — PC Gamer</li>
+    <li><a href="https://medium.com/@research_86150/steam-in-2025-the-year-indie-games-ate-the-industry-alive-666abf04551f">Steam in 2025: The Year Indie Games Ate the Industry Alive</a> — продажи и рейтинг PoE 2</li>
+    <li><a href="https://www.wayline.io/blog/scope-creep-indie-games-avoiding-development-hell">Scope Creep in Indie Games</a> — 70 % провалов</li>
+    <li><a href="https://www.gamedeveloper.com/business/the-risk-of-online-multiplayer-games-in-indie-development">The Risk of Online Multiplayer in Indie development</a></li>
+    <li><a href="https://en.wikipedia.org/wiki/Halls_of_Torment">Halls of Torment</a> · <a href="https://steamcommunity.com/app/219990/discussions/0/4299320215881724128/">Grim Dawn — размер команды</a></li>
+  </ul>
+</footer>
+
+</div>
+
+</body></html>
