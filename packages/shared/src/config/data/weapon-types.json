@@ -10,11 +10,6 @@
       },
       {
         "hands": 1,
-        "key": "roman",
-        "base": "gladius"
-      },
-      {
-        "hands": 1,
         "key": "arming",
         "base": "long-sword"
       },
@@ -222,8 +217,11 @@
           "hands": [
             "1"
           ],
-          "strike.blade": [
-            "roman"
+          "strike.type": [
+            "hisp",
+            "mainz",
+            "fulham",
+            "pompeii"
           ],
           "bind.guard": [
             "shield"
@@ -400,7 +398,7 @@
       }
     ],
     "fallback": {
-      "template": "{strike.type.adj} {noun} {head.pommel.epoch}",
+      "template": "{strike.type.adj} {noun} {strike.type.epoch} {head.pommel.with}",
       "subtitle": "вольная сборка: такого сочетания свод не числит",
       "noun": [
         {
@@ -414,8 +412,11 @@
         },
         {
           "when": {
-            "strike.blade": [
-              "roman"
+            "strike.type": [
+              "hisp",
+              "mainz",
+              "fulham",
+              "pompeii"
             ]
           },
           "text": "гладиус",

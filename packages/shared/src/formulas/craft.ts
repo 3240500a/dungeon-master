@@ -199,14 +199,14 @@ export const clampStep = (p: WeaponPart, step: number): number => clamp(Math.rou
 /**
  * Сборка по умолчанию для семейства: в каждом гнезде вариант с осью ближе всего к нулю («эталон»),
  * у ключа — эталон базы с самым высоким потолком (при равенстве — эталонной базы класса, чья своя скорость
- * ближе всего к ×1, потом — с самым богатым пулом форм: у меча это рыцарский, а не архаичный); материалы —
+ * ближе всего к ×1, потом — с самым богатым пулом форм: у меча это длинный, а не короткий с его +6 %); материалы —
  * `step`, прижатый к окну формы.
  */
 export function defaultParts(reg: ConfigRegistry, weaponClass: string, hands: number, step = 1): CraftParts | null {
   const keySlot = keySlotOf(reg, weaponClass);
   const hiOf = (id: string): number => { const b = reg.get('items.base').find((x) => x.id === id); return b ? baseTierRange(reg, b).hi : -1; };
-  // При равном потолке — ЭТАЛОННАЯ база класса: своя скорость ближе всего к ×1 (рыцарский меч, а не архаичный
-  // с его +12 % — у того пул больше, но он не эталон). Потом — пул богаче.
+  // При равном потолке — ЭТАЛОННАЯ база класса: своя скорость ближе всего к ×1 (длинный меч, а не короткий
+  // с его +6 % — у того пул больше, но он не эталон). Потом — пул богаче.
   const speedOff = (id: string): number => {
     const b = reg.get('items.base').find((x) => x.id === id);
     return Math.abs(b ? baseFlat(b, 'attackSpeed') + b.baseStats.filter((m) => m.stat === 'attackSpeed' && m.kind === 'increased').reduce((s, m) => s + m.value, 0) : 0);

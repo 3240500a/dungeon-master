@@ -671,7 +671,8 @@ function probeRow(reg: ConfigRegistry | null, data: Record<string, unknown>, par
   const sug = suggestBracket(k, m.len);
   const bound = parts.find((x) => x.id === p.bind);
   const boundTag = bound?.tags?.blade;
-  const tag = boundTag || sug.bracket?.tag || '';
+  // Класс клинка — по ДЛИНЕ (решение 24.09); тег детали учитывается, только если длина вне всех вилок.
+  const tag = (sug.bracket && !sug.gap ? sug.bracket.tag : boundTag || sug.bracket?.tag) || '';
   const sf = suggestForm(k, m, p.edge === 'single' ? 'single' : undefined);
   const form: FormPick = p.form ?? sf ?? '';
   const g = geomOf(m);
@@ -682,9 +683,9 @@ function probeRow(reg: ConfigRegistry | null, data: Record<string, unknown>, par
   if (!sug.bracket) sugLine.append(h('span', 'color:#c85a48', 'вилок в конфиге нет'));
   else if (sug.gap) sugLine.append(chip(`зазор, ближайшая «${sug.bracket.name}» (${sug.bracket.lo}–${sug.bracket.hi}, ${sug.dist} см до края)`, 'Ни одна вилка не берёт такую длину: клинок упрётся в край ближайшей.'));
   else sugLine.append(h('b', '', `«${esc(sug.bracket.name)}» ${sug.bracket.lo}–${sug.bracket.hi} см`));
-  if (boundTag && sug.bracket && boundTag !== sug.bracket.tag) {
+  if (boundTag && sug.bracket && !sug.gap && boundTag !== sug.bracket.tag) {
     const bn = k.brackets.find((b) => b.tag === boundTag)?.name ?? boundTag;
-    sugLine.append(' ', chip(`деталь в вилке «${bn}»`, `У привязанной детали тег blade «${boundTag}» — он остаётся (тег задаёт базу), статы ниже посчитаны в её вилке.`));
+    sugLine.append(' ', chip(`сейчас «${bn}» → станет «${sug.bracket.name}»`, `Класс клинка задаёт длина. «Записать geom» переставит тег blade детали на «${sug.bracket.tag}», а с ним и базу, на которой деталь куётся.`));
   }
   c3.append(sugLine);
 
@@ -714,17 +715,19 @@ function probeRow(reg: ConfigRegistry | null, data: Record<string, unknown>, par
   const wr = h('button', `${BTN};border-color:#e39a3c`, 'Записать geom в деталь') as HTMLButtonElement;
   wr.disabled = !bound;
   if (!bound) wr.style.opacity = '0.5';
-  wr.title = 'Кладёт замер (и выбранную форму) в строку weapon-parts рабочей копии. Нет тега blade — ставит вилку по подсказке. Сохранить — кнопками сверху.';
+  wr.title = 'Кладёт замер (и выбранную форму) в строку weapon-parts рабочей копии и ставит класс клинка (тег blade) по длине. Сохранить — кнопками сверху.';
   wr.addEventListener('click', () => {
     const raw = ((data['weapon-parts'] as RawPart[] | undefined) ?? []).find((x) => x.id === p.bind);
     if (!raw) return;
     raw.geom = geomOf(m);
     raw.form = form;
     const tags = (raw.tags ??= {});
-    if (!tags.blade && sug.bracket) tags.blade = sug.bracket.tag;
+    const was = tags.blade;
+    if (sug.bracket && (!sug.gap || !tags.blade)) tags.blade = sug.bracket.tag;
     if (p.edge === 'single') tags.edge = 'single';
     else if (tags.edge === 'single') delete tags.edge;
-    p.note = `✓ записано в «${raw.name}» — сохрани кнопками сверху`;
+    const moved = was && was !== tags.blade ? ` · класс «${k.brackets.find((b) => b.tag === was)?.name ?? was}» → «${sug.bracket?.name ?? tags.blade}»` : '';
+    p.note = `✓ записано в «${raw.name}»${moved} — сохрани кнопками сверху`;
     touch('weapon-parts');
   });
   bindRow.append(wr);

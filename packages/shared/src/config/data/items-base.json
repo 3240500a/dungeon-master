@@ -54,7 +54,7 @@
     "kind": "weapon",
     "id": "gladius",
     "name": "Архаичный меч",
-    "enabled": true,
+    "enabled": false,
     "gender": "m",
     "minTier": "t0",
     "maxTier": "t6",

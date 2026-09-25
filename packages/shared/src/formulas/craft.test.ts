@@ -29,7 +29,8 @@ import type { CraftParts } from '../types/items.js';
 const reg = new ConfigRegistry();
 reg.loadAll();
 type WBase = Extract<ReturnType<typeof reg.get<'items.base'>>[number], { kind: 'weapon' }>;
-const weapons = reg.get('items.base').filter((b): b is WBase => b.kind === 'weapon');
+// Выключенная база (гладиус с 25.09: архаичный — эпоха, а не класс) из игры ушла и в тотальность не входит.
+const weapons = reg.get('items.base').filter((b): b is WBase => b.kind === 'weapon' && b.enabled !== false);
 const CLASSES = [...new Set(weapons.map((w) => w.weaponClass))];
 const price = new Map(reg.get('craft-materials').map((m) => [m.id, m.sellPrice]));
 const value = (c: Record<string, number>): number => Object.entries(c).reduce((s, [id, n]) => s + (price.get(id) ?? 0) * n, 0);
@@ -189,8 +190,11 @@ describe('⭐ классификатор: тип из ключевой дета�
   // моделями от края до края: заглушки полуторного и двуручного не дотягивают, у короткого нет самого
   // короткого клинка. Это известный долг контента — владелец докидывает ~40 настоящих моделей клинков.
   // Список ниже — ровно сегодняшние дыры: НОВАЯ дыра валит тест, закрытая — просто пропадает из замера.
-  const KNOWN_AXIS_GAPS = new Set(['short-sword −1', 'greatsword −1', 'greatsword +1', 'claymore −1', 'claymore +1']);
-  const KNOWN_STEP_GAPS = new Set(['short-sword ст.4 лёгкой', 'short-sword ст.5 лёгкой', 'greatsword ст.1 лёгкой']);
+  // С 25.09 классы — только по длине, и длины заглушек сняты с оригиналов: у полуторных и двуручных клинков
+  // исторические длины не тянутся к верху класса, а длинный класс кончается на 90 НЕ включительно — самый
+  // длинный рыцарский (XIX, 89 см) даёт +0.83.
+  const KNOWN_AXIS_GAPS = new Set(['long-sword +1', 'greatsword −1', 'greatsword +1', 'claymore −1', 'claymore +1']);
+  const KNOWN_STEP_GAPS = new Set<string>();
   const hasGeom = (baseId: string): boolean => poolsOf(baseId).strike.some((p) => !!bladeStats(reg, p));
 
   it('покрытие оси: ключевые формы каждой базы (ключ — ударная часть) дотягиваются до −1 и +1', () => {
@@ -311,7 +315,11 @@ describe('⭐ классификатор: тип из ключевой дета�
     const input = buildFor('long-sword', uniform(3), { strike: 'sw-a-xi', grip: 'sw-gr-one', bind: 'sw-gd-long', head: 'sw-pm-pear' });
     const t = resolveType(reg, 'sword', 1, partsSet(input));
     expect(t.fallback).toBe(true);
-    expect(t.name).toBe('Узкий меч имперской эпохи');
+    // Эпоху задаёт КЛИНОК (решение 24.09): XI — классический, хоть навершие-груша и имперское.
+    expect(t.name).toBe('Узкий меч классической эпохи');
+    // Шипастое навершие (фэнтези) эпохи не несёт — оно дописывает себя оборотом «с …».
+    const spiked = buildFor('long-sword', uniform(3), { strike: 'sw-a-xi', grip: 'sw-gr-one', bind: 'sw-gd-long', head: 'sw-pm-spiked' });
+    expect(resolveType(reg, 'sword', 1, partsSet(spiked)).name).toBe('Узкий меч классической эпохи с шипастым навершием');
     const spear = buildFor('pike', uniform(3), { strike: 'sp-awl', grip: 'sp-gr2-heel' });
     expect(resolveType(reg, 'spear', 2, partsSet(spear)).name).toBe('Шиловидная пика');
     expect(agree('поздний', 'f')).toBe('поздняя');
@@ -354,14 +362,15 @@ describe('⭐ замок «одна ось ДПС внутри типа»: вк�
   });
   it('⭐ форма клинка — множитель удара вещи и плоская часть скорости оружия; в подсказке без приписок', () => {
     // Ось клинка с геометрией ВЫВЕДЕНА из длины (§26): ожидания — от `strikeAxisOf`, а не от ручного числа.
-    const res = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xi' }));
+    const res = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-x' }));
     const light = res.item!;
-    const a = strikeAxisOf(reg, partById(reg, 'sw-a-xi')!);
-    expect(a).toBeLessThan(0); // XI — короткий для своей вилки: лёгкая сторона
+    const a = strikeAxisOf(reg, partById(reg, 'sw-a-x')!);
+    expect(a).toBeLessThan(0); // X (80 см) — короткий для длинного класса 78–90: лёгкая сторона
     const f = (it: { baseStats: { stat: string; kind: string; value: number }[] }, st: string) => it.baseStats.find((m) => m.stat === st && m.kind === 'flat')?.value ?? 0;
     const k = reg.get('balance').craft.strike;
-    expect(light.damageMult).toBeCloseTo(1 + a * k.damagePct, 6);
-    expect(f(light, 'attackSpeed')).toBeCloseTo(-a * k.attackSpeed, 6);
+    // Множитель и плоская скорость пишутся в вещь с 4 знаками: у оси −0.6667 точнее не сойдётся.
+    expect(light.damageMult).toBeCloseTo(1 + a * k.damagePct, 4);
+    expect(f(light, 'attackSpeed')).toBeCloseTo(-a * k.attackSpeed, 4);
     // Цифры урона в статах — числа базы на тире (с разбросом ширины клинка), БЕЗ множителя удара: он живёт в `damageMult`.
     const base = baseOf('long-sword');
     const numbers = scaleBaseStats(base.baseStats, craftTiers(reg)[res.tier!]!.statMult, undefined, reg.get('balance').loot.baseRoll, shapeOfItem(light));
@@ -380,7 +389,7 @@ describe('⭐ замок «одна ось ДПС внутри типа»: вк�
     const r = light.rollPreview!, dm = light.damageMult!, R = (v: number) => Math.round(v * dm);
     expect(lines.find((t) => t.startsWith('Урон:'))).toContain(`(${R(r.minDamage![0])}–${R(r.minDamage![1])})–(${R(r.maxDamage![0])}–${R(r.maxDamage![1])})`);
     // Скованная (бросок случился) — просто числа × форма клинка.
-    const forged = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-xi' }), { rng: createRng(7) }).item!;
+    const forged = craftWeapon(reg, buildFor('long-sword', uniform(3), { strike: 'sw-a-x' }), { rng: createRng(7) }).item!;
     const shown = describeItem(forged, ITEM_LABELS).map((l) => l.text).find((t) => t.startsWith('Урон:'))!;
     expect(shown).toContain(`${R(f(forged, 'minDamage'))}–${R(f(forged, 'maxDamage'))} (`);
     // Скорость — множителем от эталона: собственная скорость базы × плоская часть клинка.
@@ -644,7 +653,8 @@ describe('⭐ вилка базы: урон и броня катаются, ко
   it('⭐ подъём тира сохраняет место в вилке: удачный меч остаётся удачным', () => {
     const b = baseOf('long-sword');
     const lo = tiers.find((x) => x.id === b.minTier) ?? tiers[0]!;
-    const item = retierItem(b, { ...craftWeapon(reg, buildFor('long-sword', uniform(1))).item!, rollPreview: undefined, parts: undefined, damageMult: undefined, affixCap: undefined, baseRoll: { minDamage: 0.9, maxDamage: 0.2 } }, lo, { spread });
+    // Клинок нарочно широкий (XIII, 6.2 см при эталоне длинного класса 3.5): разброс ширины должен быть заметен в числах.
+    const item = retierItem(b, { ...craftWeapon(reg, buildFor('long-sword', uniform(1), { strike: 'sw-a-xiii' })).item!, rollPreview: undefined, parts: undefined, damageMult: undefined, affixCap: undefined, baseRoll: { minDamage: 0.9, maxDamage: 0.2 } }, lo, { spread });
     const up = upgradedItem(reg, item)!;
     expect(up.baseRoll).toEqual({ minDamage: 0.9, maxDamage: 0.2 });
     const next = tiers.find((x) => x.id === up.tier)!;
@@ -824,7 +834,7 @@ describe('журнал кузнеца: разобрал — открыл (§12)'
   });
   it('⚠ эскиз не открывает ключевую форму неоткрытой базы — базы открываются только разбором', () => {
     const j = { ...emptyJournal(), bases: ['long-sword'], sketches: 3 };
-    expect(sketchable(reg, j, 'sw-a-xv')).toBe(true);    // ключ открытой базы
+    expect(sketchable(reg, j, 'sw-a-xviii')).toBe(true); // ключ открытой базы
     expect(sketchable(reg, j, 'sw-h-wavy')).toBe(false); // ключ неоткрытого огромного меча
     expect(sketchable(reg, j, 'sw-gd-rings')).toBe(true); // не ключ
     expect(useSketch(reg, j, 'sw-h-wavy')).toBe(j);

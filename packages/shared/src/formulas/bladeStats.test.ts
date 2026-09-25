@@ -33,7 +33,8 @@ const K: BladeTuning = reg.get('balance').craft.blade;
 const CK = reg.get('balance').craft;
 const ROLL = reg.get('balance').loot.baseRoll;
 type WBase = Extract<ReturnType<typeof reg.get<'items.base'>>[number], { kind: 'weapon' }>;
-const weapons = reg.get('items.base').filter((b): b is WBase => b.kind === 'weapon');
+// Выключенная база (гладиус с 25.09: архаичный — эпоха, а не класс) из игры ушла.
+const weapons = reg.get('items.base').filter((b): b is WBase => b.kind === 'weapon' && b.enabled !== false);
 const baseOf = (id: string): WBase => weapons.find((b) => b.id === id)!;
 const swordBases = weapons.filter((b) => b.weaponClass === 'sword');
 const blades = reg.get('weapon-parts').filter((p) => p.slot === 'strike' && !!p.geom);
@@ -148,18 +149,32 @@ describe('⭐ §26: единицы — длина, ширина, центр тя
 });
 
 describe('⭐ §26: подсказки измерителя', () => {
-  it('вилка по длине: внутри — без зазора; в зазоре — ближайшая и сколько не хватает', () => {
+  it('⭐ класс клинка = его длина: тег `blade` у каждого клинка с замером совпадает с классом по длине (решение 24.09)', () => {
+    // Класс задаёт ТОЛЬКО длина, эпоха живёт у типа клинка. Разошлись — клинок куётся не на той базе:
+    // поправь длину заглушки (blades.ts) и перемерь, либо «Записать geom» в редакторе — он ставит тег сам.
+    const wrong = blades.filter((p) => p.classes.includes('sword'))
+      .map((p) => ({ id: p.id, tag: p.tags.blade, len: p.geom!.len, by: suggestBracket(K, p.geom!.len) }))
+      .filter((x) => x.by.gap || x.by.bracket?.tag !== x.tag)
+      .map((x) => `${x.id}: ${x.len} см в «${x.tag}», по длине «${x.by.bracket?.tag}»`);
+    expect(wrong).toEqual([]);
+    // Эпоха — у каждого типа клинка меча: имя «… архаичной эпохи» берётся от клинка, а не от навершия.
+    const types = anatomyOf(reg, 'sword')!.strike.tags.find((t) => t.key === 'type')!.values;
+    expect(types.filter((v) => !(v as { epoch?: string }).epoch).map((v) => v.id)).toEqual([]);
+  });
+  it('класс по длине: до 78 короткий, 78–90 длинный, 90–110 полуторный, от 110 двуручный; в зазоре — ближайшая', () => {
     const inside = suggestBracket(K, 87);
     expect(inside.gap).toBe(false);
     expect(inside.dist).toBe(0);
     expect(inside.bracket?.tag).toBe('arming');
-    // 82 см — между «коротким» (до 80) и «длинным» (от 85): ближе короткий, на 2 см.
-    const gap = suggestBracket(K, 82);
-    expect(gap.gap).toBe(true);
-    expect(gap.bracket?.tag).toBe('short');
-    expect(gap.dist).toBe(2);
-    const over = suggestBracket(K, 200);
-    expect(over).toMatchObject({ gap: true, dist: 200 - Math.max(...K.brackets.map((b) => b.hi)) });
+    // Границы полуоткрытые (решение 24.09: «до 78 — короткие, 78–90 — длинные»): край — уже следующий класс.
+    const tag = (len: number): string | undefined => suggestBracket(K, len).bracket?.tag;
+    expect([tag(77.9), tag(78), tag(89.9), tag(90), tag(109.9), tag(110)]).toEqual(['short', 'arming', 'arming', 'great', 'great', 'huge']);
+    // Крайние классы открыты наружу: 30 см — всё ещё короткий, 200 — всё ещё двуручный, без «зазора».
+    expect(suggestBracket(K, 30)).toMatchObject({ gap: false, bracket: { tag: 'short' } });
+    expect(suggestBracket(K, 200)).toMatchObject({ gap: false, bracket: { tag: 'huge' } });
+    // Зазор между вилками (в данных их нет, но ручки редактора их позволяют): ближайшая и сколько не хватает.
+    const holes = { ...K, brackets: [{ tag: 'a', name: 'a', lo: 45, hi: 70, width: 4 }, { tag: 'b', name: 'b', lo: 75, hi: 90, width: 4 }] };
+    expect(suggestBracket(holes, 72)).toMatchObject({ gap: true, dist: 2, bracket: { tag: 'a' } });
     // Вилок нет вовсе — клинок никуда не лёг: зазор без подсказки, а не «всё в порядке».
     expect(suggestBracket({ ...K, brackets: [] }, 90)).toEqual({ bracket: undefined, gap: true, dist: 0 });
   });
@@ -183,20 +198,22 @@ describe('⭐ §26: подсказки измерителя', () => {
     }
   });
   it('подпись клинка — из его чисел: форма, длина в вилке, ширина, баланс', () => {
-    const fal = bladeStats(reg, partById(reg, 'sw-a-falchion')!)!;
+    // Хопеш — фальшион по форме: 45 см из короткого класса 45–78 — самый короткий, хоть форма и тянет к тяжёлому.
+    const fal = bladeStats(reg, partById(reg, 'sw-r-sickle')!)!;
     expect(bladeCaption(fal)).toMatch(/^фальшион: тяжелее прямого/);
-    // Длина — по НАСТОЯЩЕМУ месту в вилке: 73 см из 70–80 короткий, хоть форма и бьёт как тяжёлый.
-    expect(fal.place).toBeLessThan(0);
-    expect(fal.axis).toBeGreaterThan(0);
+    // Длина — по НАСТОЯЩЕМУ месту в вилке, форма — своей фразой.
+    expect(fal.place).toBeLessThan(-0.35);
+    expect(fal.axis).toBeGreaterThan(fal.place);
     expect(bladeCaption(fal)).toContain('короткий для вилки');
     const sabre = bladeStats(reg, partById(reg, 'sw-a-sabre')!)!;
     expect(bladeCaption(sabre)).toMatch(/^сабля: легче прямой/);
-    expect(bladeCaption(sabre)).not.toContain('короткий для вилки'); // 88 см из 85–90 — не короткая
+    expect(bladeCaption(sabre)).not.toContain('короткий для вилки'); // 83 см из 78–90 — середина класса
     const wide = bladeStats(reg, partById(reg, 'sw-a-xiii')!)!;
     expect(wide.spread).toBeLessThanOrEqual(0.8);
     expect(bladeCaption(wide)).toContain('широкий');
+    // XI — самый длинный рыцарский (87 см из 78–90), как и у оригиналов.
     const xi = bladeStats(reg, partById(reg, 'sw-a-xi')!)!;
-    expect(bladeCaption(xi)).toContain('короткий для вилки');
+    expect(bladeCaption(xi)).toContain('длинный для вилки');
   });
 });
 
@@ -353,14 +370,15 @@ describe('⭐ §26 сторож 4: ДПС клинка — в коридоре �
 
   // ⚠ ШУМ ОКРУГЛЕНИЯ, а не дефект: мин и макс формы округляются ПОРОЗНЬ (`scaleBaseStats`) — иначе вещь
   // выкатывалась бы за показанную вилку «от и до» (мин зависел бы от броска макса). Середина клинка поэтому
-  // уезжает до полединицы. У гладиуса числа мелкие (5–9), а ось длины уже съела 4.1 % из 5: игла на t3 —
-  // (7∓3.2)×2.5 = 9.5 / 25.5 → 10 / 26, середина 18 против 17.5 у соседей (+2.9 %). Герою 1-го уровня (урон
-  // почти весь — оружие) разброс ДПС гладиуса до 7 %; с 40-го уровня и на остальных базах — в пределах 5 %.
-  it('⭐ ДПС в модели героя: ≤ 5 % везде, кроме шума округления гладиуса у героя 1-го уровня (новый случай валит тест)', () => {
-    const KNOWN_ROUNDING = new Set(['gladius t1 L1', 'gladius t2 L1', 'gladius t3 L1', 'gladius t5 L1']);
+  // уезжает до полединицы. У короткого меча числа мелкие (6–11), а ось длины уже съела 4.1 % из 5; с 25.09 в
+  // его класс вошли и архаичные клинки (архаичный — эпоха, а не класс), и у самого узкого из них разброс
+  // ширины самый крупный. Герою 1-го уровня (урон почти весь — оружие) это до 8 %; с 40-го уровня и на
+  // остальных базах — в пределах 5 %. (До 25.09 тот же шум жил у гладиуса — теперь его клинки здесь.)
+  it('⭐ ДПС в модели героя: ≤ 5 % везде, кроме шума округления короткого меча у героя 1-го уровня (новый случай валит тест)', () => {
+    const KNOWN_ROUNDING = new Set(['short-sword t0 L1', 'short-sword t1 L1', 'short-sword t2 L1', 'short-sword t3 L1', 'short-sword t5 L1']);
     const over = [...dpsSpreads()].filter(([, s]) => s > 0.05).map(([k]) => k);
     expect(over.filter((k) => !KNOWN_ROUNDING.has(k)), 'новый разброс ДПС сверх 5 %').toEqual([]);
-    // Даже в известных случаях — не больше оси длины (4.1 %) плюс полединицы середины на числах гладиуса.
+    // Даже в известных случаях — не больше оси длины (4.1 %) плюс полединицы середины на мелких числах.
     for (const k of over) expect(dpsSpreads().get(k)!, k).toBeLessThanOrEqual(0.08);
   }, 120_000);
 });
@@ -429,7 +447,8 @@ describe('⭐ §26 найденный меч = скованный из тех ж
       expect(bs, tag).toBeTruthy();
       const a = strikeAxisOf(reg, strike);
       if (a === 0) expect(it.damageMult, tag).toBeUndefined();
-      else expect(it.damageMult!, tag).toBeCloseTo(1 + CK.strike.damagePct * a, 4);
+      // Множитель пишется с 4 знаками: 1.01515 хранится как 1.0152 — сравнение до трёх.
+      else expect(it.damageMult!, tag).toBeCloseTo(1 + CK.strike.damagePct * a, 3);
       if (bs.spread === 1) expect(it.spreadMult, tag).toBeUndefined();
       else expect(it.spreadMult, tag).toBe(bs.spread);
       // Числа базы — на тире вещи, её бросок, вокруг формы клинка.
@@ -555,7 +574,7 @@ describe('§26: бот сима видит клинок так же, как бо
       const m = makePlayerModel(reg, s);
       return weaponCard(reg, { derived: m.derived, attrs: m.attrs, weapon: w, scaling: m.scaling, weights: m.weights, attackInterval: m.attackInterval }).dps;
     };
-    for (const id of ['long-sword', 'gladius', 'claymore']) {
+    for (const id of ['long-sword', 'short-sword', 'claymore']) {
       const pool = [...keyPool(id)].sort((a, b) => axisOf(reg, a) - axisOf(reg, b));
       const [short, long] = [pool[0]!, pool[pool.length - 1]!].map((p) => craftWeapon(reg, buildWith(p), { atTier: 3 }).item!);
       const botRatio = scoreItem(reg, save, long!, DEFAULT_BUILD) / scoreItem(reg, save, short!, DEFAULT_BUILD);

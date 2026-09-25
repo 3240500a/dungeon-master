@@ -45,10 +45,11 @@ describe('⭐ подсказка: одинаковые моды — одной �
     expect(acc).toEqual([`+${own} Меткость`, '+10% Меткость']);
     expect(it.baseStats).toEqual(before);
   });
-  it('скованный гладиус: блок базы и блок точки баланса — одной строкой, ровно их сумма', () => {
-    // Клинок с весом у руки и оголовье-диск: точка баланса > 0, блок добавляется к блоку базы.
+  it('скованный короткий меч с архаичным клинком: блок базы и блок точки баланса — одной строкой, ровно их сумма', () => {
+    // Клинок с весом у руки и оголовье-диск: точка баланса > 0, блок добавляется к блоку базы. Архаичный
+    // клинок (эпоха, а не класс, с 25.09) куётся на базе короткого меча — у неё свой блок.
     const strike = variantsFor(reg, 'sword', 'strike', 1)
-      .find((p) => p.tags.blade === 'roman' && p.stepMin <= 3 && 3 <= p.stepMax && (bladeStats(reg, p)?.balance ?? 0) > 0)!;
+      .find((p) => p.tags.blade === 'short' && p.id.startsWith('sw-r-') && p.stepMin <= 3 && 3 <= p.stepMax && (bladeStats(reg, p)?.balance ?? 0) > 0)!;
     expect(strike, 'нужен архаичный клинок с весом у руки').toBeTruthy();
     const parts = {} as CraftParts;
     for (const slot of CRAFT_SLOT_LIST) {

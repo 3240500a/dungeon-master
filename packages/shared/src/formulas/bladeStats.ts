@@ -26,7 +26,11 @@ export type BladeForm = 'falchion' | 'sabre';
 const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
 const r4 = (x: number): number => Math.round(x * 10000) / 10000;
 
-/** Вилка клинка — по значению его тега `blade` (архаичный, короткий, длинный, …). */
+/**
+ * Вилка клинка — по значению его тега `blade`: короткий, длинный, полуторный, двуручный. ⚠ Класс — ТОЛЬКО
+ * длина (решение 24.09): эпоха живёт отдельно, у типа клинка. Тег обязан совпадать с классом по длине
+ * (`suggestBracket`) — это стережёт `bladeStats.test`, и его же ставит «Записать geom» в редакторе.
+ */
 export function bracketOf(k: BladeTuning, part: { tags: Record<string, string> }): BladeBracket | undefined {
   const tag = part.tags.blade;
   return tag ? k.brackets.find((b) => b.tag === tag) : undefined;
@@ -128,13 +132,21 @@ export function balanceAxisOf(reg: ConfigRegistry, strike: WeaponPart, head: Wea
 
 // ── Подсказки измерителя ─────────────────────────────────────────────────────────────────────────
 
-/** В какую вилку просится клинок этой длины. Вне всех — ближайшая, с пометкой «в зазоре». */
+/**
+ * В какой класс просится клинок этой длины. Границы ПОЛУОТКРЫТЫЕ: «до 78 — короткие, 78–90 — длинные»,
+ * то есть 78 см — уже длинный. Крайние классы открыты наружу: «до 78» и «от 110» — у самого короткого
+ * класса нет нижней границы, у самого длинного верхней; их `lo`/`hi` — только масштаб места внутри
+ * класса. Вне всех (зазор между вилками) — ближайшая, с пометкой «в зазоре».
+ */
 export function suggestBracket(k: BladeTuning, len: number): { bracket?: BladeBracket; gap: boolean; dist: number } {
   let best: BladeBracket | undefined;
   let bestD = Infinity;
+  const top = Math.max(...k.brackets.map((b) => b.hi));
+  const bottom = Math.min(...k.brackets.map((b) => b.lo));
   for (const b of k.brackets) {
-    const d = len < b.lo ? b.lo - len : len > b.hi ? len - b.hi : 0;
-    if (d < bestD) { bestD = d; best = b; }
+    const inside = (len >= b.lo || b.lo === bottom) && (len < b.hi || b.hi === top);
+    const d = inside ? 0 : len < b.lo ? b.lo - len : len - b.hi;
+    if (d < bestD || (d === bestD && inside)) { bestD = d; best = b; }
   }
   return { bracket: best, gap: bestD > 0, dist: bestD === Infinity ? 0 : r4(bestD) };
 }

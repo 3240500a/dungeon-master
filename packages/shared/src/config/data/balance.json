@@ -441,39 +441,32 @@
     "blade": {
       "brackets": [
         {
-          "tag": "roman",
-          "name": "архаичный",
-          "lo": 45,
-          "hi": 70,
-          "width": 4.7
-        },
-        {
           "tag": "short",
           "name": "короткий",
-          "lo": 70,
-          "hi": 80,
-          "width": 5.2
+          "lo": 45,
+          "hi": 78,
+          "width": 4.7
         },
         {
           "tag": "arming",
           "name": "длинный",
-          "lo": 85,
+          "lo": 78,
           "hi": 90,
-          "width": 3.3
+          "width": 3.5
         },
         {
           "tag": "great",
           "name": "полуторный",
-          "lo": 95,
-          "hi": 105,
-          "width": 3.8
+          "lo": 90,
+          "hi": 110,
+          "width": 3.9
         },
         {
           "tag": "huge",
           "name": "двуручный",
           "lo": 110,
-          "hi": 150,
-          "width": 4.8
+          "hi": 136,
+          "width": 4.6
         }
       ],
       "spread": {

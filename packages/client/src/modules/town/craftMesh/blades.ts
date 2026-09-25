@@ -334,10 +334,11 @@ function bladeGroup(def: BladeDef, y0: number, ctx: MeshCtx): THREE.Group {
 
 // ── МЕЧ: клинки ─────────────────────────────────────────────────────────────────────────────────
 
-// Середины вилок по длине клинка (§3.3): архаичный ≤70 · короткий 70–80 · длинный 85–90 ·
-// полуторный 95–105 · двуручный 110–150. ⚠ Это ФОЛБЭК: у каждого типа своя длина в его `case`.
-const SWORD_LEN: Record<string, number> = { short: 76, roman: 58, arming: 87, great: 102, huge: 128 };
-const BASE_BLADE: Record<string, string> = { 'short-sword': 'short', gladius: 'roman', 'long-sword': 'arming', greatsword: 'great', claymore: 'huge' };
+// Классы клинка только по ДЛИНЕ (§3.5, решение 24.09): короткий до 78 · длинный 78–90 · полуторный
+// 90–110 · двуручный от 110. Эпоха — отдельно, у типа клинка. Длины типов сняты с медиан оригиналов
+// («Размеры исторических мечей»). ⚠ Это ФОЛБЭК: у каждого типа своя длина в его `case`.
+const SWORD_LEN: Record<string, number> = { short: 70, arming: 84, great: 100, huge: 124 };
+const BASE_BLADE: Record<string, string> = { 'short-sword': 'short', gladius: 'short', 'long-sword': 'arming', greatsword: 'great', claymore: 'huge' };
 
 /** Клинок меча по типу Окшотта / римскому типу, пропорции — от оси. */
 function swordBlade(ctx: MeshCtx): BladeDef {
@@ -353,7 +354,7 @@ function swordBlade(ctx: MeshCtx): BladeDef {
   let d: SymDef | null = null;
   switch (type) {
     // ─ короткие ─
-    case 'XXII': d = { len: 78, w: taper(3.3 * A, 2.3 * A, 0.74, 0.5), th: th(0.6, 0.32),
+    case 'XXII': d = { len: 76, w: taper(3.3 * A, 2.3 * A, 0.74, 0.5), th: th(0.6, 0.32),
       side: (t) => ({ sx: 0.75 * A, sg: t < 0.3 ? 0.26 * Math.sqrt(clamp((0.3 - t) / 0.03, 0, 1)) : 0, sgd: 0.13 }), n: 18, tipFrom: 0.74, breaks: [0.28, 0.3] }; break;
     case 'XIIIb': d = { len: 75, w: taper(2.75 * A, 2.55 * A, 0.9, 'round'), th: th(0.55, 0.32), fuller: fullerFn(0.5, 0.62 * A), tipFrom: 0.9, tipN: 7 }; break;
     case 'XIV': d = { len: 72, w: taper(3.35 * A, 1.25 * A, 0.82, 0.35), th: th(0.6, 0.3), fuller: fullerFn(0.38, 0.8 * A, 0.5 * A), tipFrom: 0.82 }; break;
@@ -390,7 +391,7 @@ function swordBlade(ctx: MeshCtx): BladeDef {
     case 'arch-needle': {
       // Рапира Сандарса: резать ей нечем — кромки идут почти параллельно, весь смысл в уколе.
       // Потому гребень тянется во всю длину и толщина близка к полуширине: иначе сложится о кость.
-      d = { len: 68, w: taper(1.3 * A, 1.1 * A, 0.9, 0.15), th: th(1.2, 0.5), shape: () => DIAM,
+      d = { len: 88, w: taper(1.3 * A, 1.1 * A, 0.9, 0.15), th: th(1.2, 0.5), shape: () => DIAM,
         lay: { lean: true }, n: 20, tipFrom: 0.9, tipN: 8 };
       break;
     }
@@ -417,7 +418,7 @@ function swordBlade(ctx: MeshCtx): BladeDef {
     case 'arch-blunt': {
       // Латен III: острия нет вовсе — конец срезан и скруглён, колоть таким нечем. Широкий дол
       // почти во всю длину снимает вес с полотна, которому остаётся только рубить.
-      d = { len: 70, w: taper(2.95 * A, 2.8 * A, 0.95, 'round'), th: th(0.55, 0.38),
+      d = { len: 84, w: taper(2.95 * A, 2.8 * A, 0.95, 'round'), th: th(0.55, 0.38),
         fuller: fullerFn(0.88, 0.9 * A, 0.7 * A, 0.17), tipFrom: 0.95, tipN: 8 };
       break;
     }
@@ -430,26 +431,26 @@ function swordBlade(ctx: MeshCtx): BladeDef {
     }
     // ─ рыцарские ─
     case 'X': d = { len: 80, w: taper(2.9 * A, 2.45 * A, 0.9, 0.9), th: th(0.5, 0.3), fuller: fullerFn(0.86, 0.85 * A, 0.62 * A, 0.18), tipFrom: 0.9 }; break;
-    case 'XI': d = { len: 85, w: taper(2.1 * A, 1.75 * A, 0.86, 0.6), th: th(0.5, 0.3), fuller: fullerFn(0.82, 0.32, 0.26, 0.13), tipFrom: 0.86 }; break;
-    case 'XII': d = { len: 86, w: taper(2.6 * A, 1.5 * A, 0.84, 0.5), th: th(0.55, 0.3), fuller: fullerFn(0.66, 0.68 * A, 0.4 * A), tipFrom: 0.84 }; break;
-    case 'XIIa': d = { len: 102, w: taper(2.75 * A, 1.55 * A, 0.85, 0.5), th: th(0.6, 0.3), fuller: fullerFn(0.66, 0.72 * A, 0.42 * A), tipFrom: 0.85 }; break;
-    case 'XIII': d = { len: 88, w: taper(2.8 * A, 2.68 * A, 0.915, 'round'), th: th(0.5, 0.32), fuller: fullerFn(0.5, 0.75 * A), tipFrom: 0.915, tipN: 7 }; break;
-    case 'XIIIa': d = { len: 104, w: taper(3.05 * A, 2.85 * A, 0.925, 'round'), th: th(0.55, 0.32), fuller: fullerFn(0.5, 0.8 * A), tipFrom: 0.925, tipN: 7 }; break;
-    case 'XV': d = { len: 89, w: (t) => 2.4 * A * (1 - t) * (1 + 0.15 * t), th: th(1.0, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
-    case 'XVa': d = { len: 104, w: (t) => 1.95 * A * (1 - t) * (1 + 0.25 * t), th: th(1.1, 0.35), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
-    case 'XVI': d = { len: 79, w: taper(2.6 * A, 1.85 * A, 0.58, 0.25), th: th(0.6, 0.45), fuller: fullerFn(0.47, 0.62 * A),
+    case 'XI': d = { len: 87, w: taper(2.1 * A, 1.75 * A, 0.86, 0.6), th: th(0.5, 0.3), fuller: fullerFn(0.82, 0.32, 0.26, 0.13), tipFrom: 0.86 }; break;
+    case 'XII': d = { len: 84, w: taper(2.6 * A, 1.5 * A, 0.84, 0.5), th: th(0.55, 0.3), fuller: fullerFn(0.66, 0.68 * A, 0.4 * A), tipFrom: 0.84 }; break;
+    case 'XIIa': d = { len: 104, w: taper(2.75 * A, 1.55 * A, 0.85, 0.5), th: th(0.6, 0.3), fuller: fullerFn(0.66, 0.72 * A, 0.42 * A), tipFrom: 0.85 }; break;
+    case 'XIII': d = { len: 82, w: taper(2.8 * A, 2.68 * A, 0.915, 'round'), th: th(0.5, 0.32), fuller: fullerFn(0.5, 0.75 * A), tipFrom: 0.915, tipN: 7 }; break;
+    case 'XIIIa': d = { len: 93, w: taper(3.05 * A, 2.85 * A, 0.925, 'round'), th: th(0.55, 0.32), fuller: fullerFn(0.5, 0.8 * A), tipFrom: 0.925, tipN: 7 }; break;
+    case 'XV': d = { len: 74, w: (t) => 2.4 * A * (1 - t) * (1 + 0.15 * t), th: th(1.0, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
+    case 'XVa': d = { len: 91, w: (t) => 1.95 * A * (1 - t) * (1 + 0.25 * t), th: th(1.1, 0.35), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
+    case 'XVI': d = { len: 76, w: taper(2.6 * A, 1.85 * A, 0.58, 0.25), th: th(0.6, 0.45), fuller: fullerFn(0.47, 0.62 * A),
       shape: (t) => mixShape(FLAT, DIAM, smooth((t - 0.42) / 0.14)), tipFrom: 0.58, breaks: [0.47, 0.5, 0.56] }; break;
-    case 'XVII': d = { len: 98, w: (t) => 2.25 * A * (1 - t) * (1 + 0.35 * t), th: th(1.0, 0.35), shape: () => HEX, fuller: fullerFn(0.2, 0.38), tipFrom: 0.85 }; break;
-    case 'XVIII': d = { len: 87, w: (t) => 3.0 * A * (1 - t) * (1 + 0.5 * t), th: th(0.95, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
-    case 'XIX': d = { len: 90, w: taper(1.85 * A, 1.7 * A, 0.88, 0.5), th: th(0.72, 0.35), shape: () => HEX, fuller: fullerFn(0.34, 0.28, 0.24, 0.12, 0.07),
+    case 'XVII': d = { len: 92, w: (t) => 2.25 * A * (1 - t) * (1 + 0.35 * t), th: th(1.0, 0.35), shape: () => HEX, fuller: fullerFn(0.2, 0.38), tipFrom: 0.85 }; break;
+    case 'XVIII': d = { len: 80, w: (t) => 3.0 * A * (1 - t) * (1 + 0.5 * t), th: th(0.95, 0.3), shape: () => DIAM, lay: { lean: true }, tipFrom: 0.8 }; break;
+    case 'XIX': d = { len: 89, w: taper(1.85 * A, 1.7 * A, 0.88, 0.5), th: th(0.72, 0.35), shape: () => HEX, fuller: fullerFn(0.34, 0.28, 0.24, 0.12, 0.07),
       ric: { len: 5, w: 1.45 * A, wrap: false, lug: 0 }, tipFrom: 0.88 }; break;
-    case 'XX': d = { len: 100, w: taper(3.0 * A, 2.1 * A, 0.85, 0.5), th: th(0.6, 0.3), fuller: fullerFn(0.55, 0.55 * A, 0.4 * A),
+    case 'XX': d = { len: 102, w: taper(3.0 * A, 2.1 * A, 0.85, 0.5), th: th(0.6, 0.3), fuller: fullerFn(0.55, 0.55 * A, 0.4 * A),
       side: (t) => ({ sx: 1.45 * A, sg: t < 0.3 ? 0.3 * Math.sqrt(clamp((0.3 - t) / 0.03, 0, 1)) : 0, sgd: 0.12 }), n: 17, tipFrom: 0.85, breaks: [0.28, 0.3] }; break;
     // ─ огромные ─
-    case 'straight': d = { len: 120, w: taper(2.9 * A, 2.4 * A, 0.9, 0.6), th: th(0.7, 0.32), fuller: fullerFn(0.36, 0.72 * A), tipFrom: 0.9 }; break;
+    case 'straight': d = { len: 114, w: taper(2.9 * A, 2.4 * A, 0.9, 0.6), th: th(0.7, 0.32), fuller: fullerFn(0.36, 0.72 * A), tipFrom: 0.9 }; break;
     case 'wide-ricasso': d = { len: 124, w: taper(3.1 * A, 2.4 * A, 0.9, 0.55), th: th(0.72, 0.32), fuller: fullerFn(0.46, 0.7 * A, 0.55 * A, 0.18, 0.16),
       ric: { len: 18, w: 1.55 * A, wrap: true, lug: 2.6 }, tipFrom: 0.9 }; break;
-    case 'narrow-ricasso': d = { len: 132, w: (t) => 2.5 * A * (1 - t) * (1 + 0.35 * t), th: th(1.0, 0.32), shape: () => DIAM,
+    case 'narrow-ricasso': d = { len: 130, w: (t) => 2.5 * A * (1 - t) * (1 + 0.35 * t), th: th(1.0, 0.32), shape: () => DIAM,
       ric: { len: 20, w: 1.3 * A, wrap: false, lug: 2.0 }, tipFrom: 0.85 }; break;
     case 'wavy': {
       const from = 0.05, to = 0.93, count = 16;
@@ -484,7 +485,7 @@ function swordBlade(ctx: MeshCtx): BladeDef {
   if (type === 'sabre') {
     const sag = 4.2, w0 = 3.25 * A, w1 = 2.75 * A;
     return {
-      len: 88, lay: { center: true, side: false }, tipFrom: 0.85, tipN: 7, n: 26,
+      len: 83, lay: { center: true, side: false }, tipFrom: 0.85, tipN: 7, n: 26,
       prof: (t) => {
         const spine = -sag * t * t - 1.15 * A;
         const f = fullerFn(0.72, 0.26, 0.22, 0.11)(t);
@@ -502,7 +503,7 @@ function swordBlade(ctx: MeshCtx): BladeDef {
     // ВНЕШНЕЙ стороне изгиба, поэтому ось уходит в −X: выпуклой выходит кромка, а не спинка.
     const tr = 0.2, hook = 10.5 * A, wm = 3.6 * A;
     return {
-      len: 55, lay: { center: false, side: false }, n: 26, tipFrom: 0.86, tipN: 7, breaks: [tr - 0.015, tr],
+      len: 45, lay: { center: false, side: false }, n: 26, tipFrom: 0.86, tipN: 7, breaks: [tr - 0.015, tr],
       prof: (t) => {
         const tk = lerp(0.85, 0.5, t) * At;
         // Пята — симметричный тупой брусок: за неё берутся второй рукой, затачивать её нечем.
@@ -565,7 +566,9 @@ function swordBlade(ctx: MeshCtx): BladeDef {
 
 // ── МЕЧ: рукоять ────────────────────────────────────────────────────────────────────────────────
 
-const HOLD_LEN: Record<string, number> = { cramped: 9, short: 10, one: 11, 'hand-half': 19, long: 23, two: 26, 'two-long': 33 };
+// Длины хвата, см (без навершия): у одноручных 9–11 (история 8.5–11.5), полуторная 19, двуручная 22 —
+// полуторник держат двумя на 20–22, длинная двуручная 33 × 1.1 ≈ 36 — хват цвайхендера (30–40).
+const HOLD_LEN: Record<string, number> = { cramped: 9, short: 10, one: 11, 'hand-half': 19, long: 23, two: 22, 'two-long': 33 };
 const BARREL = [0.86, 0.97, 1.02, 0.97, 0.86];
 /** Профиль рукояти по хвату: бочонок, «бутылка» полуторника, длинная к навершию тоньше, двуручная с перехватом. */
 const HOLD_SHAPE: Record<string, readonly number[]> = {
@@ -599,7 +602,7 @@ function knifeGrip(len: number, halfW: number, ctx: MeshCtx, rivets: number): TH
 function swordGrip(ctx: MeshCtx, two: boolean): { group: THREE.Group; len: number } {
   const p = ctx.parts.grip;
   const hold = ctx.tag('grip', 'hold') || (two ? 'two' : 'one');
-  const len = (HOLD_LEN[hold] ?? (two ? 26 : 11)) * byAxis(p.axis, 0.9, 1.1);
+  const len = (HOLD_LEN[hold] ?? (two ? 22 : 11)) * byAxis(p.axis, 0.9, 1.1);
   const R = (two ? 1.62 : 1.42) * byAxis(p.axis, 0.95, 1.05);
   const quirk = hash01(p.id) < 0.5 ? 0 : 1;
   const g = new THREE.Group();
@@ -722,7 +725,8 @@ function swordGuard(ctx: MeshCtx, two: boolean): THREE.Group {
     }
     case 'claymore': {
       // Шотландский двуручник: дужки наклонены к клинку, на концах четырёхлистники; язычки на клинок.
-      const a = 0.66, L = 10.5 * s, dir = [Math.cos(a), -Math.sin(a)] as const, y = -H / 2;
+      // Размах гарды — 27–32 см у горских оригиналов (RA IX.912: 27.2): дужка 8.8·s даёт ≈30.
+      const a = 0.66, L = 8.8 * s, dir = [Math.cos(a), -Math.sin(a)] as const, y = -H / 2;
       gr.add(at(box(3.2, H * 1.2, D, m), 0, y));
       const arm = at(cyl(H * 0.26, H * 0.4, L, m, 8), (dir[0] * L) / 2, y + (dir[1] * L) / 2, 0, 0, 0, -(PI / 2 + a));
       gr.add(arm, mirrorX(arm));
